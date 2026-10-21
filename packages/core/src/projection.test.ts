@@ -156,6 +156,30 @@ describe("project", () => {
     expect(task?.pausedReason).toBeUndefined();
   });
 
+  it("工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上限を変え、80% の通知をし直す", () => {
+    seq = 0;
+    const tasks = project([
+      created("t1"),
+      ev("t1", { type: "BudgetWarned", payload: { usedUsd: 0.9, capUsd: 1 } }),
+      ev("t1", {
+        type: "StepsChosen",
+        payload: { steps: [...MVP_STEPS], plan: "standard", budgetCapUsd: 5 },
+      }),
+    ]);
+    expect(tasks.get("t1")?.budget).toMatchObject({ capUsd: 5, warned: false });
+    // 持っていなければ、作ったときの上限のまま
+    expect(project([created("t2", 2), steps("t2")]).get("t2")?.budget.capUsd).toBe(2);
+  });
+
+  it("人が上限を上げたら、上げたことを持つ", () => {
+    seq = 0;
+    const task = project([
+      created("t1"),
+      ev("t1", { type: "BudgetCapRaised", payload: { capUsd: 3 } }, "person"),
+    ]).get("t1");
+    expect(task?.budget).toMatchObject({ capUsd: 3, raised: true });
+  });
+
   it("利用上限で失敗して止まり、再開するとやり直しのため実行待ちに戻る", () => {
     seq = 0;
     const untilPaused = [

@@ -48,7 +48,6 @@ export type PausedGroup = {
 export type BudgetRow = Pick<OpenTaskRow, "id" | "title" | "projectName"> & {
   usedUsd: number;
   capUsd: number;
-  estimated: boolean;
   /** 上限に達した。 */
   exceeded: boolean;
 };
@@ -188,7 +187,6 @@ export function nearBudgetRows(projects: readonly Project[], tasks: readonly Tas
       projectName: names.get(t.projectId) ?? t.projectId,
       usedUsd: t.budget.usedUsd,
       capUsd: t.budget.capUsd,
-      estimated: t.budget.estimated,
       exceeded: t.budget.usedUsd >= t.budget.capUsd,
     }));
 }

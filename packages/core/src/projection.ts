@@ -431,6 +431,8 @@ export type Task = {
     warned: boolean;
     /** 換算値（サブスクリプションなど）を含むか。 */
     estimated: boolean;
+    /** 人が上限を上げた（BudgetCapRaised）。工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上書きしない。 */
+    raised?: true;
   };
   currentRunId?: string;
   /** 外部操作の実行開始。再開・差し戻しでも消さず、二重実行を防ぐ。 */
@@ -843,6 +845,10 @@ export function applyEvent(
       if (event.payload.servicesReason) task.servicesReason = event.payload.servicesReason;
       if (event.payload.exports) task.exportPlans = event.payload.exports;
       if (event.payload.documentsDir) task.documentsDir = event.payload.documentsDir;
+      // 工程の組み合わせの予算（budget.per_plan_usd）。上限が変わるので、80% の通知をし直す
+      if (event.payload.budgetCapUsd !== undefined) {
+        task.budget = { ...task.budget, capUsd: event.payload.budgetCapUsd, warned: false };
+      }
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),
@@ -1864,7 +1870,7 @@ export function applyEvent(
       if (event.payload.capUsd <= task.budget.usedUsd) {
         throw new ActivityIntegrityError(event, "new cap must exceed the amount spent");
       }
-      task.budget = { ...task.budget, capUsd: event.payload.capUsd };
+      task.budget = { ...task.budget, capUsd: event.payload.capUsd, raised: true };
       break;
 
     // マージの後の監視（PBI-89）。PBI-116 からは、マージの後の監視の工程の中身で、監視が終わると工程を終える

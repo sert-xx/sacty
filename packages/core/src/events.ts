@@ -685,6 +685,12 @@ const StepsChosen = z.object({
     deployment: z
       .union([z.object({ skill: z.string().min(1) }), z.object({ skipped: DaemonText })])
       .optional(),
+    /**
+     * 選んだ工程の組み合わせ（plan）に設定した予算の上限（config.yaml の budget.per_plan_usd）。持っていれば、タスクの予算の
+     * 上限をこの値にする（タスクを作ったときの上限は budget.default_per_task_usd）。組み合わせに予算を設定していない・人が上限を
+     * 上げた後なら持たない。
+     */
+    budgetCapUsd: z.number().positive().optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     ...RunRef,

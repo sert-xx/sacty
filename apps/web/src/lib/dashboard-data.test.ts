@@ -78,8 +78,8 @@ const summary = (patch: Partial<DashboardSummary> = {}): DashboardSummary => ({
   timeZone: "Asia/Tokyo",
   waitingSince: {},
   costs: {
-    today: { actualUsd: 0.5, estimatedUsd: 0 },
-    days7: { actualUsd: 2, estimatedUsd: 1 },
+    today: 0.5,
+    days7: 3,
     since: { today: "2026-10-15T15:00:00.000Z", days7: "2026-10-09T15:00:00.000Z" },
   },
   flow: {
@@ -338,10 +338,10 @@ describe("ダッシュボードの予算に近いタスク（PBI-118）", () => 
       task({ id: "g", budget: budget(1, 1), projectId: "gone" }),
     ];
     const rows = nearBudgetRows(projects, tasks);
-    expect(rows.map((r) => [r.id, r.exceeded, r.estimated])).toEqual([
-      ["c", true, true],
-      ["d", false, false],
-      ["a", false, false],
+    expect(rows.map((r) => [r.id, r.exceeded])).toEqual([
+      ["c", true],
+      ["d", false],
+      ["a", false],
     ]);
     expect(rows[0]).toMatchObject({ usedUsd: 2, capUsd: 2, projectName: "決済" });
     expect(nearBudgetRows(projects, [])).toEqual([]);

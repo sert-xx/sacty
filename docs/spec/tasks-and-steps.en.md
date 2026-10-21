@@ -467,6 +467,9 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 
 ## Budget, pause, resume, and cancel
 
+- Budget cap: when a task is created, `budget.default_per_task_usd`. If the plan the orchestrator chose has a budget in `budget.per_plan_usd`,
+  it is recorded as `budgetCapUsd` of `StepsChosen` and becomes the cap (the 80% notice is reset). If a person raised the cap before the steps
+  were chosen (`BudgetCapRaised`; `budget.raised` in the projection), it is not recorded and the raised cap is kept.
 - Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps,
   before running a step (except opening the PR for a verified implementation), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget
   requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
@@ -485,7 +488,7 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
   5. Delete the workspace (not deleted if the containers cannot be confirmed as stopped).
   Session logs (`runs/`) are not deleted. Canceling a parent also cancels its unfinished child tasks.
 
-Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/cost.ts` (`budgetState`)
+Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`)
 
 ### Rerunning a cancelled task
 

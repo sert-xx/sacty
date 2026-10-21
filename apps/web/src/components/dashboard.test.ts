@@ -105,7 +105,6 @@ const attention = (
   ...patch,
 });
 
-const zero = { actualUsd: 0, estimatedUsd: 0 };
 const noFlow = { completed: 0, cancelled: 0, medianLeadMs: null };
 /** 何も無いときのデータ。欄ごとのテストは、ここに欄のデータを足す。 */
 const empty = (): DashboardData => ({
@@ -114,8 +113,8 @@ const empty = (): DashboardData => ({
   attention: [],
   paused: [],
   costs: {
-    today: zero,
-    days7: zero,
+    today: 0,
+    days7: 0,
     since: { today: "2026-10-15T15:00:00.000Z", days7: "2026-10-09T15:00:00.000Z" },
     timeZone: "Asia/Tokyo",
     nearBudget: [],
@@ -368,13 +367,13 @@ describe("ダッシュボードの止まっているタスクの理由（PBI-118
 });
 
 describe("ダッシュボードの費用と予算（PBI-118）", () => {
-  it("今日と直近7日の実請求を出し、概算があれば分けて出す。予算に近いタスクは使用済み / 上限と、上限に達した印", () => {
+  it("今日と直近7日の費用を概算の1行で出し（実請求の行は無い）、予算に近いタスクは使用済み / 上限と、上限に達した印", () => {
     show(
       base({
         costs: {
           ...empty().costs,
-          today: { actualUsd: 0.5, estimatedUsd: 0 },
-          days7: { actualUsd: 12.345, estimatedUsd: 0 },
+          today: 0.5,
+          days7: 12.345,
           nearBudget: [
             {
               id: "x",
@@ -382,7 +381,6 @@ describe("ダッシュボードの費用と予算（PBI-118）", () => {
               projectName: "決済",
               usedUsd: 2,
               capUsd: 2,
-              estimated: true,
               exceeded: true,
             },
             {
@@ -391,40 +389,23 @@ describe("ダッシュボードの費用と予算（PBI-118）", () => {
               projectName: "Webサイト",
               usedUsd: 0.8,
               capUsd: 1,
-              estimated: false,
               exceeded: false,
             },
           ],
         },
       }),
     );
-    expect(byId("cost-today-actual")?.textContent).toBe("$0.5000");
-    expect(byId("cost-days7-actual")?.textContent).toBe("$12.35");
-    expect(byId("cost-estimated")).toBeNull();
+    expect(byId("cost-today")?.textContent).toBe("$0.5000");
+    expect(byId("cost-days7")?.textContent).toBe("$12.35");
+    expect(byId("cost-estimated")?.textContent).toContain("概算");
+    expect(byId("cost-estimated")?.querySelector('[data-slot="hint"]')).not.toBeNull();
+    expect(text()).not.toContain("実請求");
     expect(byId("near-budget-x")?.querySelector("a")?.getAttribute("href")).toBe("/tasks/x");
     expect(byId("near-budget-used-x")?.textContent).toContain("$2.00 / $2.00");
     expect(byId("near-budget-exceeded-x")?.textContent).toBe("上限に達した");
-    expect(byId("near-budget-x")?.textContent).toContain("概算");
     expect(byId("near-budget-used-y")?.textContent).toContain("$0.8000 / $1.00");
     expect(byId("near-budget-exceeded-y")).toBeNull();
-    expect(byId("near-budget-y")?.textContent).not.toContain("概算");
     expect(byId("near-budget-list")?.className).toContain("max-h-80");
-  });
-
-  it("概算があるときは、概算の行を出す（補足つき）", () => {
-    show(
-      base({
-        costs: {
-          ...empty().costs,
-          today: { actualUsd: 0, estimatedUsd: 0.25 },
-          days7: { actualUsd: 1, estimatedUsd: 3 },
-        },
-      }),
-    );
-    expect(byId("cost-estimated")).not.toBeNull();
-    expect(byId("cost-today-estimated")?.textContent).toBe("$0.2500");
-    expect(byId("cost-days7-estimated")?.textContent).toBe("$3.00");
-    expect(byId("cost-estimated")?.querySelector('[data-slot="hint"]')).not.toBeNull();
   });
 });
 

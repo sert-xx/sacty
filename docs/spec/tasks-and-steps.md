@@ -469,6 +469,9 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 
 ## 予算・一時停止・再開・中止
 
+- 予算の上限：タスクを作ったときは `budget.default_per_task_usd`。オーケストレーターが選んだ組み合わせに `budget.per_plan_usd` の予算が
+  あれば、`StepsChosen` の `budgetCapUsd` に記録し、上限をその値にする（80% の通知はし直す）。工程を選ぶ前に人が上限を上げていたら
+  （`BudgetCapRaised`。投影の `budget.raised`）、記録せずにその上限を残す。
 - 予算：使った額が上限の 80%（`BUDGET_WARN_RATIO`）に達したら `BudgetWarned` を記録する（1回）。上限に達したら、工程を選ぶ前・
   工程を実行する前（検証に通った実装の PR の作成を除く）・検証の前に一時停止（`budget`）にする。承認待ちのタスクは止めない。予算で止まったタスクの
   再開には、使った額より大きい累計の新しい上限（10000 米ドルまで）が要る（`BudgetCapRaised`）。
@@ -487,7 +490,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
   セッションログ（`runs/`）は消さない。親を中止すると、終わっていない子タスクも中止する。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/cost.ts`（`budgetState`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）
 
 ### 中止したタスクの再実行
 

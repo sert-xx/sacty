@@ -443,13 +443,12 @@ export function OpenTasksCard({ data }: { data: DashboardData }) {
 }
 
 /**
- * 費用と予算（PBI-118）：今日と直近7日の費用（実請求と概算を分ける。概算が無ければ概算の行は出さない）と、予算に近いタスク
+ * 費用と予算（PBI-118）：今日と直近7日の費用（sacty が計算した概算。実際の請求とは分けない）と、予算に近いタスク
  * （80% 以上か上限に達した。終わっていないタスクだけ）。
  */
 export function CostsCard({ data }: { data: DashboardData }) {
   const m = useMessages().dashboard.costs;
   const { today, days7, nearBudget, timeZone } = data.costs;
-  const hasEstimated = today.estimatedUsd > 0 || days7.estimatedUsd > 0;
   const cell = "px-2 py-1 text-right whitespace-nowrap";
   return (
     <DashboardCard id="costs" title={m.title} hint={m.hint(timeZone)}>
@@ -467,36 +466,20 @@ export function CostsCard({ data }: { data: DashboardData }) {
             </tr>
           </thead>
           <tbody>
-            <tr>
+            <tr data-testid="cost-estimated">
               <th
                 scope="row"
                 className="px-2 py-1 text-left font-normal whitespace-nowrap text-muted-foreground"
               >
-                {m.actual}
+                <WithHint hint={m.estimatedHint}>{m.estimated}</WithHint>
               </th>
-              <td data-testid="cost-today-actual" className={cn(cell, "font-semibold")}>
-                {usd(today.actualUsd)}
+              <td data-testid="cost-today" className={cn(cell, "font-semibold")}>
+                {usd(today)}
               </td>
-              <td data-testid="cost-days7-actual" className={cn(cell, "font-semibold")}>
-                {usd(days7.actualUsd)}
+              <td data-testid="cost-days7" className={cn(cell, "font-semibold")}>
+                {usd(days7)}
               </td>
             </tr>
-            {hasEstimated && (
-              <tr data-testid="cost-estimated">
-                <th
-                  scope="row"
-                  className="px-2 py-1 text-left font-normal whitespace-nowrap text-muted-foreground"
-                >
-                  <WithHint hint={m.estimatedHint}>{m.estimated}</WithHint>
-                </th>
-                <td data-testid="cost-today-estimated" className={cn(cell, "font-semibold")}>
-                  {usd(today.estimatedUsd)}
-                </td>
-                <td data-testid="cost-days7-estimated" className={cn(cell, "font-semibold")}>
-                  {usd(days7.estimatedUsd)}
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
@@ -523,21 +506,14 @@ export function CostsCard({ data }: { data: DashboardData }) {
                     <span className="sr-only">{m.used}</span>
                     {usd(task.usedUsd)} / {usd(task.capUsd)}
                   </span>
-                  <span className="flex gap-1">
-                    {task.estimated && (
-                      <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
-                        {m.estimated}
-                      </span>
-                    )}
-                    {task.exceeded && (
-                      <span
-                        data-testid={`near-budget-exceeded-${task.id}`}
-                        className="rounded-full border border-warn-line bg-warn-soft px-2 py-0.5 text-xs text-warn"
-                      >
-                        {m.exceeded}
-                      </span>
-                    )}
-                  </span>
+                  {task.exceeded && (
+                    <span
+                      data-testid={`near-budget-exceeded-${task.id}`}
+                      className="rounded-full border border-warn-line bg-warn-soft px-2 py-0.5 text-xs text-warn"
+                    >
+                      {m.exceeded}
+                    </span>
+                  )}
                 </>
               }
             />

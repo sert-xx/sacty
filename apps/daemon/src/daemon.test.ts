@@ -2213,6 +2213,70 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  describe("工程の組み合わせごとの予算（budget.per_plan_usd）", () => {
+    const withPlanBudget = (): ConfigResult => {
+      const base = configOf(agent())();
+      return base.ok
+        ? { ok: true, config: { ...base.config, budgetPerPlanUsd: { standard: 5 } } }
+        : base;
+    };
+    const planner =
+      (plan: "standard" | "skip-design"): ServiceDeps["planner"] =>
+      async () => ({
+        steps: [...STEP_PLANS[plan]],
+        plan,
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      });
+
+    it("選んだ組み合わせに予算があれば、タスクの予算の上限をそれにする", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [completed(1_000)], {
+        config: withPlanBudget,
+        planner: planner("standard"),
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      expect(task.budget.capUsd).toBe(1);
+      await service.runNext(task.id);
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.payload).toMatchObject({ plan: "standard", budgetCapUsd: 5 });
+      expect(service.get(task.id)?.task.budget.capUsd).toBe(5);
+      activity.close();
+    });
+
+    it("予算を設定していない組み合わせは、タスクの予算（default_per_task_usd）のまま", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [completed(1_000)], {
+        config: withPlanBudget,
+        planner: planner("skip-design"),
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.payload).not.toHaveProperty("budgetCapUsd");
+      expect(service.get(task.id)?.task.budget.capUsd).toBe(1);
+      activity.close();
+    });
+
+    it("工程を選ぶ前に人が上限を上げていたら、その上限を残す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [completed(1_000)], {
+        config: withPlanBudget,
+        planner: planner("standard"),
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.pause(task.id);
+      service.resume(task.id, { capUsd: 3 });
+      await service.runNext(task.id);
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.payload).not.toHaveProperty("budgetCapUsd");
+      expect(service.get(task.id)?.task.budget.capUsd).toBe(3);
+      activity.close();
+    });
+  });
+
   it("利用上限で失敗したら一時停止し、再開すると実行し直す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [
@@ -11684,7 +11748,7 @@ describe("API", () => {
     ]);
     expect(created.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(created.waitingSince).toEqual({});
-    expect(created.costs.today).toEqual({ actualUsd: 0, estimatedUsd: 0 });
+    expect(created.costs.today).toBe(0);
     expect(created.queue).toEqual({ running: 0, queued: 1, max: 2 });
     expect(created.flow.days7).toEqual({ completed: 0, cancelled: 0, medianLeadMs: null });
     expect(created.quality.counts.changesRequested).toBe(0);
@@ -11696,11 +11760,7 @@ describe("API", () => {
     expect(waiting.waitingSince).toEqual({ [task.id]: submitted?.at });
     const budget = service.get(task.id)?.task.budget;
     expect(budget?.usedUsd).toBeGreaterThan(0);
-    expect(waiting.costs.today).toEqual(
-      budget?.estimated
-        ? { actualUsd: 0, estimatedUsd: budget.usedUsd }
-        : { actualUsd: budget?.usedUsd, estimatedUsd: 0 },
-    );
+    expect(waiting.costs.today).toBe(budget?.usedUsd);
     expect(waiting.costs.days7).toEqual(waiting.costs.today);
     expect(waiting.queue).toEqual({ running: 0, queued: 0, max: 2 });
 

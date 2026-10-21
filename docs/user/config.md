@@ -22,6 +22,7 @@
 | `step_agents` | 工程（マージの後の監視を含む）とオーケストレーターごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`） |
 | `agents` | sacty の既定のエージェントの上書き・追加（[エージェントの上書き](#エージェントの上書き)）。任意 | なし（sacty の既定を使う） |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
+| `budget.per_plan_usd` | 工程の組み合わせごとの予算（米ドル。0 より大きい数。[予算](#予算)） | なし（`budget.default_per_task_usd`） |
 | `budget.default_per_audit_usd` | 1回の監査の予算（米ドル。0 より大きい数。タスクの予算とは別。[監査](audit.md#予算)） | `1` |
 | `image` | エージェントとテストの実行に使うイメージ | `sacty-agent:1.7.1` |
 | `image_build` | `sacty image build` の元のイメージと npm の設定（[コンテナイメージ](images.md)） | なし |
@@ -254,6 +255,20 @@ agent_fallback:
 ## 予算
 
 - 1タスクあたりの予算の既定値は `budget.default_per_task_usd`（既定 $1）です。
+- 工程の組み合わせ（オーケストレーターが選ぶ `standard`・`split` など）ごとに予算を決めるときは、`budget.per_plan_usd` に組み合わせの
+  名前と金額を書きます。オーケストレーターがその組み合わせを選んだときに、タスクの予算の上限をその金額にします。書いていない組み合わせは
+  `budget.default_per_task_usd` のままです。工程を選ぶ前に、再開で上限を上げていたときは、上げた上限のままにします。
+
+  ```yaml
+  budget:
+    default_per_task_usd: 1
+    per_plan_usd:
+      standard: 3
+      split: 10
+  ```
+
+  組み合わせの名前は `standard`・`skip-design`・`direct`・`bugfix`・`investigate`・`design-only`・`review`・`split`・`document`・
+  `operation` です。ほかの名前を書くと、設定の誤りになります。
 - 予算の 80% で作業履歴に通知を記録し、上限に達したら一時停止します（作業は残します）。再開するときは、累計の新しい上限を画面で入力します。
 - サブスクリプションの利用上限や認証エラーでも一時停止し、再開すると止まった工程を実行し直します（代わりのエージェントを書けば、切り替えて続けます。[失敗したときの切り替え](#失敗したときの切り替え)）。ただし、開始済みの作業は再開できず、停止したままになります。
 

@@ -27,6 +27,7 @@
 | `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator` ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
 | `agents` | `{}` | エージェントの既定の上書きと追加（下の「エージェントの既定と上書き」） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |
+| `budget.per_plan_usd` | `{}` | 工程の組み合わせ（`StepPlan`）ごとの予算（米ドル。正の数）。オーケストレーターがその組み合わせを選んだら、タスクの予算の上限にする（[タスクと工程](tasks-and-steps.md#予算一時停止再開中止)）。書いていない組み合わせは `budget.default_per_task_usd` |
 | `budget.default_per_audit_usd` | `1`（`DEFAULT_AUDIT_BUDGET_USD`） | 1回の監査の予算（米ドル。正の数。タスクの予算とは別。[監査](audit.md)） |
 | `image_build` | なし | `sacty image build` の元（[エージェントの実行](agent-execution.md)の「イメージ」） |
 | `images` | `{}` | 言語ごとのイメージ（同上） |
