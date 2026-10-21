@@ -23,7 +23,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.default_per_audit_usd` | Budget per audit (US dollars. A number greater than 0. Separate from the task budget. [Audits](audit.en.md#budget)) | `1` |
-| `image` | The image used to run agents and tests | `sacty-agent:1.7.0` |
+| `image` | The image used to run agents and tests | `sacty-agent:1.7.1` |
 | `image_build` | The base image and npm settings for `sacty image build` ([Container images](images.en.md)) | None |
 | `images` | Images per language ([Container images](images.en.md#per-language-images)) | None |
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
