@@ -463,7 +463,11 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         actor,
       );
     case "TaskResumed":
-      return e.TaskResumed(actor);
+      return event.payload.rechooseSteps ? e.TaskResumedRechoose(actor) : e.TaskResumed(actor);
+    case "TestsDecided":
+      return event.payload.testCommand !== undefined
+        ? e.TestsDecidedCommand(event.payload.testCommand, actor)
+        : e.TestsDecidedNone(event.payload.noTestsReason ?? "", actor);
     case "StepSubmitted":
       return e.submittedStep(l.step[event.payload.step], event.payload.submission);
     case "StepApproved":

@@ -250,6 +250,13 @@ const ja = {
     StepImageChanged: (step: string, from: string, to: string, actor: string) =>
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
+    /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
+    TaskResumedRechoose: (actor: string) => `再開（${actor}）：工程の選択からやり直します`,
+    /** テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた。 */
+    TestsDecidedCommand: (command: string, actor: string) =>
+      `テストのコマンドを ${command} に決定（${actor}）`,
+    TestsDecidedNone: (reason: string, actor: string) =>
+      `テストなしで進めると決定（${actor}）：${reason}`,
     TaskPausedManual: (actor: string) => `一時停止（${actor}）`,
     submittedStep: (step: string, n: number) => `${step}を提出（${n}回目）`,
     approvedStep: (step: string, actor: string) => `${step}を承認・凍結（${actor}）`,
@@ -673,6 +680,9 @@ const en: LabelMessages = {
     StepImageChanged: (step, from, to, actor) =>
       `${step} image changed from ${from} to ${to} (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
+    TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,
+    TestsDecidedCommand: (command, actor) => `Set the test command to ${command} (${actor})`,
+    TestsDecidedNone: (reason, actor) => `Decided to proceed without tests (${actor}): ${reason}`,
     TaskPausedManual: (actor) => `Paused (${actor})`,
     submittedStep: (step, n) => `${step} submitted (submission ${n})`,
     approvedStep: (step, actor) => `${step} approved and frozen (${actor})`,

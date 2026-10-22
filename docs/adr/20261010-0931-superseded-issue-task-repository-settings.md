@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #8、PBI-5
 - 置き換え元: なし
-- 置き換え先: [画面で作るタスクの対象リポジトリは、プロジェクトに登録したリポジトリの設定から選び、config.yaml の repository は廃止する](20261011-1035-superseded-task-repository-from-project.md)（画面で作ったタスクに config.yaml の repository を使う部分）、[プロジェクトの設定を「対象」（Org またはリポジトリ）の一覧だけにし、タスクの対象は対象の中から選び、PR作成の工程は常に PR を作る](20261011-1520-superseded-project-targets.md)（リポジトリの設定から PR を作るかを取る部分）、[ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決めて記録し、人が直す手段は設けない](20261011-1520-orchestrator-decides-base-branch-and-test-command.md)（ベースブランチとテストのコマンドをリポジトリの設定から取る部分）
+- 置き換え先: [画面で作るタスクの対象リポジトリは、プロジェクトに登録したリポジトリの設定から選び、config.yaml の repository は廃止する](20261011-1035-superseded-task-repository-from-project.md)（画面で作ったタスクに config.yaml の repository を使う部分）、[プロジェクトの設定を「対象」（Org またはリポジトリ）の一覧だけにし、タスクの対象は対象の中から選び、PR作成の工程は常に PR を作る](20261011-1520-superseded-project-targets.md)（リポジトリの設定から PR を作るかを取る部分）、[ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決めて記録し、人が直す手段は設けない](20261011-1520-superseded-orchestrator-decides-base-branch-and-test-command.md)（ベースブランチとテストのコマンドをリポジトリの設定から取る部分）
 
 ## 背景
 

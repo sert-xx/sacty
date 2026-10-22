@@ -139,6 +139,22 @@ const ja = {
       "プロジェクトの対象に、選べるリポジトリがありません。プロジェクトの設定を見直してください。",
     resume: "再開する",
     capNote: "上限に達したら、もう一度ここで決めます。",
+    /** テストのコマンドが決まらずに止まったタスクの、再開のときのテストの扱い。 */
+    tests: {
+      legend: "テストの扱い",
+      keep: "決めずに再開する",
+      keepRechooseHint: "オーケストレーターが、工程の選択からやり直します。",
+      command: "テストのコマンドを指定する",
+      commandLabel: "テストのコマンド",
+      commandHint: "sh -c で実行し、終了コード 0 で合格とみなします。",
+      none: "テストなしで進める",
+      noneHint:
+        "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを実行せず、ゴールガーディアンがタスクの目的から判定します。",
+      noneBugfix: "不具合の修正は、テストなしでは進められません。",
+      reasonLabel: "テストなしで進める理由",
+      reasonHint: "ゴールガーディアンへの指示と、PR の本文に渡します。",
+      reasonDefault: "テストを書く種類のリポジトリではありません。",
+    },
   },
   control: {
     pause: "一時停止",
@@ -332,6 +348,21 @@ const en: PartsMessages = {
     ticketNoRepo: "The project has no repositories to choose from. Check the project settings.",
     resume: "Resume",
     capNote: "When the cap is reached, you decide here again.",
+    tests: {
+      legend: "Tests",
+      keep: "Resume without deciding",
+      keepRechooseHint: "The Orchestrator chooses the steps again.",
+      command: "Specify the test command",
+      commandLabel: "Test command",
+      commandHint: "Run with sh -c. Exit code 0 passes.",
+      none: "Proceed without tests",
+      noneHint:
+        "For repositories without tests (only skills or documents, for example). Tests are not run; the Goal Guardian judges by the purpose of the task.",
+      noneBugfix: "A bug fix cannot proceed without tests.",
+      reasonLabel: "Why to proceed without tests",
+      reasonHint: "Passed to the Goal Guardian and the PR description.",
+      reasonDefault: "This repository is not the kind that has tests.",
+    },
   },
   control: {
     pause: "Pause",

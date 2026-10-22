@@ -21486,16 +21486,12 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
-  it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストなしで進めずに止め、再開してもテストを飛ばさない", async () => {
+  it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストなしで進めずに止め、テストを決めずに再開すると工程の選択からやり直す", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor } = makeService(
-      activity,
-      [plan(), out("# 前段の調査"), stepReview(), out("# 要求要件"), out("# 実装の説明")],
-      {
-        realPlanner: true,
-        repos: new FilesRepos({ "README.md": "# app", "src/pay.test.js": "test()" }),
-      },
-    );
+    const { service, executor } = makeService(activity, [plan(), plan()], {
+      realPlanner: true,
+      repos: new FilesRepos({ "README.md": "# app", "src/pay.test.js": "test()" }),
+    });
     const { id } = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(id);
     const task = taskOf(service, id);
@@ -21509,13 +21505,159 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBeUndefined();
     expect(executor.calls).toHaveLength(1);
-    // 再開して実装まで進めても、検証でテストを飛ばさずに止まる
+    // テストを決めずに再開すると、同じ工程のまま進めず（費用をかけた後の検証で止まらないように）、工程の選択からやり直す
     service.resume(id, {});
+    const resumed = service.get(id)?.activity.find((e) => e.type === "TaskResumed");
+    expect(resumed?.type === "TaskResumed" && resumed.payload.rechooseSteps).toBe(true);
+    expect(taskOf(service, id).steps).toEqual([]);
+    await drain(service);
+    // 2回目の選択でも同じ答えなら、テストなしでは進めずに、また費用をかける前に止まる（調査の工程は実行しない）
+    expect(executor.calls).toHaveLength(2);
+    expect(typesOf(service, id).filter((t) => t === "StepsChosen")).toHaveLength(2);
+    expect(typesOf(service, id)).not.toContain("AgentRunStarted");
+    expect(taskOf(service, id).noTestsReason).toBeUndefined();
+    expect(taskOf(service, id).pausedMessage).toEqual({
+      code: "orchestrator.noTestsContradicted",
+      params: { reason: NO_TESTS, files: "src/pay.test.js" },
+    });
+    activity.close();
+  });
+
+  it("テストのコマンドを決められずに止まったら、決めずに再開すると選び直し、オーケストレーターがテストの仕組みが無いと答えれば進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(block({ "sacty-steps": { plan: "skip-design", reason: "小さい" } })),
+        plan(),
+        out("# 前段の調査"),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "スキルを足す" });
+    await service.runNext(id);
+    expect(taskOf(service, id).pausedMessage).toEqual({ code: "orchestrator.testCommandUnknown" });
+    service.resume(id, {});
+    await service.runNext(id);
+    const task = taskOf(service, id);
+    // 選び直した（2回目のオーケストレーター）うえで、調査の工程へ進む
+    expect(executor.calls).toHaveLength(3);
+    expect(typesOf(service, id).filter((t) => t === "StepsChosen")).toHaveLength(2);
+    expect(task.noTestsReason).toBe(NO_TESTS);
+    expect(task.testsDecidedBy).toBeUndefined();
+    expect(task.status).not.toBe("paused");
+    activity.close();
+  });
+
+  it("テストが決まらずに止まったタスクは、人がテストなしで進めると決めて再開でき、テストのファイルがあっても止めずに目的から判定する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const REASON =
+      "スキルを集めたリポジトリで、テストは書かない（scripts/test_helper.sh はテストではない）";
+    const { service, executor, pulls } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 前段の調査"),
+        stepReview(),
+        out("# 要求要件\n\n- スキルを足す"),
+        out("# 実装の説明\n\n- スキルを足した"),
+        review(),
+      ],
+      {
+        realPlanner: true,
+        repos: new FilesRepos({ "README.md": "# skills", "scripts/test_helper.sh": "echo" }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "スキルを足す" });
+    await service.runNext(id);
+    expect(taskOf(service, id).pausedMessage?.code).toBe("orchestrator.noTestsContradicted");
+    service.resume(id, { tests: { noTestsReason: REASON } });
+    // 人の判断を記録し、工程は選び直さない（オーケストレーターをもう一度実行しない）
+    const decided = service.get(id)?.activity.find((e) => e.type === "TestsDecided");
+    expect(decided?.actor).toBe("person");
+    expect(decided?.type === "TestsDecided" && decided.payload).toEqual({ noTestsReason: REASON });
+    const resumed = service.get(id)?.activity.find((e) => e.type === "TaskResumed");
+    expect(resumed?.type === "TaskResumed" && resumed.payload.rechooseSteps).toBeUndefined();
+    expect(taskOf(service, id).noTestsReason).toBe(REASON);
+    expect(taskOf(service, id).testsDecidedBy).toBe("person");
     await drain(service);
     service.approve(id, { step: "requirements", submission: 1 });
     await drain(service);
-    expect(typesOf(service, id)).not.toContain("FinalReviewed");
+    const task = taskOf(service, id);
+    expect(typesOf(service, id).filter((t) => t === "StepsChosen")).toHaveLength(1);
+    expect(typesOf(service, id)).not.toContain("TestsRun");
+    expect(task.lastReview?.passed).toBe(true);
+    expect(task.gate).toEqual({ step: "implement", submission: 1 });
+    // 実装・最終レビューの指示と PR の本文で、人が決めた理由だとわかる
+    expect(promptOf(executor, 4)).toContain("人が再開のときにテストなしで進めると決めました");
+    expect(promptOf(executor, 5)).toContain(
+      "--- テストなしで進める理由（人が再開のときに書いたもの。",
+    );
+    expect(promptOf(executor, 5)).toContain(JSON.stringify(REASON));
+    expect(pulls.calls[0]?.body).toContain(`テストなしで進める理由（人が決めました）：${REASON}`);
+    activity.close();
+  });
+
+  it("テストが決まらずに止まったタスクは、人がテストのコマンドを指定して再開でき、ゴールガーディアンがそのコマンドを実行する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, pulls } = makeService(
+      activity,
+      [
+        out(block({ "sacty-steps": { plan: "direct", reason: "小さい" } })),
+        out("# 前段の調査"),
+        out(
+          `# 実装の説明\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["check › a"] }] })}`,
+        ),
+        review(),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "直す" });
+    await service.runNext(id);
     expect(taskOf(service, id).pausedMessage).toEqual({ code: "orchestrator.testCommandUnknown" });
+    service.resume(id, { tests: { testCommand: "make test" } });
+    expect(taskOf(service, id).testCommand).toBe("make test");
+    await drain(service);
+    expect(executor.calls).toHaveLength(4);
+    expect(promptOf(executor, 3)).toContain("```sh\nmake test\n```");
+    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    // 実装・最終レビューの指示と PR の本文で、人が指定したコマンドだとわかる
+    expect(promptOf(executor, 2)).toContain(
+      "人が再開のときに指定したテストのコマンド（make test）",
+    );
+    expect(promptOf(executor, 3)).toContain(
+      "テスト（検証）のコマンド（人が再開のときに指定したもの）",
+    );
+    expect(pulls.calls[0]?.body).toContain("（人が指定したテストのコマンド）");
+    activity.close();
+  });
+
+  it("テストの扱いは、テストが決まらずに止まったタスクでだけ指定でき、不具合の修正はテストなしにできない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [plan({ investigation: "bug" }, "bugfix")], {
+      realPlanner: true,
+      repos: new FilesRepos({ "README.md": "# app" }),
+    });
+    const bug = service.createTask({ projectId: "default", title: "不具合" });
+    await service.runNext(bug.id);
+    expect(() => service.resume(bug.id, { tests: { noTestsReason: "テストは無い" } })).toThrow(
+      expect.objectContaining({ messages: [{ code: "resume.bugfixNeedsTestCommand" }] }),
+    );
+    expect(taskOf(service, bug.id).status).toBe("paused");
+    // テストのコマンドなら指定できる
+    service.resume(bug.id, { tests: { testCommand: "make test" } });
+    expect(taskOf(service, bug.id).testCommand).toBe("make test");
+    // テストが決まらずに止まったのではないタスク（工程を選ぶ前に人が止めた）は、テストの扱いを受け付けない
+    const ok = service.createTask({ projectId: "default", title: "ふつう" });
+    await service.pause(ok.id);
+    expect(taskOf(service, ok.id).status).toBe("paused");
+    expect(() => service.resume(ok.id, { tests: { testCommand: "npm test" } })).toThrow(
+      expect.objectContaining({ messages: [{ code: "resume.testsNotUndecided" }] }),
+    );
+    // テストのコマンドと理由の両方は渡せない
+    expect(() =>
+      service.resume(ok.id, { tests: { testCommand: "npm test", noTestsReason: "x" } }),
+    ).toThrow();
     activity.close();
   });
 

@@ -55,6 +55,8 @@ const PARAMS = {
   "rerun.notRerunnable": null,
   "rerun.alreadyRerun": null,
   "resume.notPaused": null,
+  "resume.testsNotUndecided": null,
+  "resume.bugfixNeedsTestCommand": null,
   "operation.incomplete": null,
   "operation.attempted": null,
   "operation.unconfirmed": null,
@@ -642,6 +644,10 @@ const ja: MessageDictionary = {
     "このタスクは再実行できません（分割で作った子タスクは親から、PR のレビューは PR から依頼し直してください）。",
   "rerun.alreadyRerun": "このタスクは再実行済みです。再実行で作ったタスクを確かめてください。",
   "resume.notPaused": "一時停止中のタスクではありません。",
+  "resume.testsNotUndecided":
+    "このタスクは、テストのコマンドが決まらずに止まったタスクではありません。テストの扱いを指定せずに再開してください。",
+  "resume.bugfixNeedsTestCommand":
+    "不具合の修正（再現の工程がある）は、テストなしでは進められません。テストのコマンドを指定してください。",
   "operation.incomplete":
     "外部作業は開始していません。対象・変更内容・確認方法・接続先が未確定です。依頼を具体的にした新しいタスクを作成してください。",
   "operation.attempted":
@@ -953,15 +959,15 @@ const ja: MessageDictionary = {
   "orchestrator.failed": ({ detail }, text) =>
     `オーケストレーターを実行できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
-    "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
+    "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので、費用をかける前に止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。",
   "orchestrator.noTestsContradicted": ({ reason, files }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、テストのように見えるファイルがあります（${files}）。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、テストのように見えるファイルがあります（${files}）。テストなしでは進めずに止めます。ファイルが本当にテストなら、再開するときにそのテストのコマンドを指定してください。テストではないなら、「テストなしで進める」を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、止めます。Sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてから、タスクを作り直してください（再開しても、テストなしでは進めません）。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。Sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてください。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。再開するときに、テストのコマンドを指定してください（不具合の修正は、テストなしでは進められません）。指定せずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "implement.testCommandInvalid":
     "実装の工程が申告したテストのコマンド（sacty-test-command）の形が正しくありません（JSON として読めない、または command が空・文字列でない・1000 文字を超える）。用意したテストを飛ばさないように止めます。再開すると、実装をやり直します。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -1229,6 +1235,10 @@ const en: MessageDictionary = {
     "This task can't be rerun (rerun a subtask from its parent, and request a PR review again on the PR).",
   "rerun.alreadyRerun": "This task has already been rerun. Check the task created by the rerun.",
   "resume.notPaused": "The task is not paused.",
+  "resume.testsNotUndecided":
+    "This task did not stop because its test command was undetermined. Resume without specifying how to handle tests.",
+  "resume.bugfixNeedsTestCommand":
+    "A bug fix (with a reproduce step) cannot proceed without tests. Specify the test command.",
   "operation.incomplete":
     "The operation has not started. The target, changes, verification, or connection is missing. Create a new task with the missing details.",
   "operation.attempted":
@@ -1542,15 +1552,15 @@ const en: MessageDictionary = {
   "orchestrator.failed": ({ detail }, text) =>
     `Could not run the Orchestrator: ${text(detail).replace(/[。.]\s*$/, "")}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
-    "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
+    'The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Stopping before spending on the steps. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.',
   "orchestrator.noTestsContradicted": ({ reason, files }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but some files look like tests (${files}). This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but some files look like tests (${files}). Stopping instead of proceeding without tests. If the files really are tests, specify their test command when resuming. If they are not, choose "Proceed without tests". Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. Stopping instead of proceeding without tests. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. This is treated as an undetermined test command. Check that the user running Sacty can read that directory (permissions, disk state), then create the task again (resuming does not proceed without tests).`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. Stopping instead of proceeding without tests. Check that the user running Sacty can read that directory (permissions, disk state). When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. The implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. Specify the test command when resuming (a bug fix cannot proceed without tests). Resuming without it chooses the steps again if no step has started yet.`,
   "implement.testCommandInvalid":
     "The test command the implementation reported (sacty-test-command) is malformed (not readable as JSON, or command is empty, not a string, or longer than 1000 characters). Stopping so that the added tests are not skipped. Resume to run the implementation again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
