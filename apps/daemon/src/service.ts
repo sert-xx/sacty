@@ -5213,35 +5213,30 @@ export class TaskService {
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
     let context: RunContext | undefined;
-    if (step !== "document") {
-      const usedSecrets: string[] = [];
-      try {
-        context = await this.runContext(task, agent, config.config, usedSecrets, undefined, step);
-      } catch (error) {
-        this.append(task, [
-          {
-            actor: "sacty",
-            event: {
-              type: "AgentRunFailed",
-              payload: {
-                runId,
-                step,
-                agentId: agent.id,
-                reason: "error",
-                message: redactText(errorText(error), usedSecrets),
-              },
+    const contextSecrets: string[] = [];
+    try {
+      context = await this.runContext(task, agent, config.config, contextSecrets, undefined, step);
+    } catch (error) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message: redactText(errorText(error), contextSecrets),
             },
           },
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-        ]);
-        return;
-      }
+        },
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+      ]);
+      return;
     }
     // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（同じ名前ならホストのもの。PBI-74）
-    const runPlatforms = mergePlatforms(
-      step === "document" ? [] : config.config.platforms,
-      context?.platforms ?? [],
-    );
+    const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
     let splitCandidates: string[] | undefined;
@@ -8014,10 +8009,8 @@ export class TaskService {
       );
       let gateway: { origin: string; token: string } | undefined;
       // GitHub の読み取りの中継は、タスクのプロジェクトで gh のアカウントを選んだホストなら、どの実行でも使える
-      // （設定で切れない）。トークンはゲートウェイがホストで付ける。文書作成は、承認の前に外部の接続を渡さない決まり
-      // （PBI-112）なので除く
-      const github =
-        this.deps.gateway && run.role !== "document" ? this.githubRelayHosts(run.taskId) : {};
+      // （設定で切れない）。トークンはゲートウェイがホストで付ける
+      const github = this.deps.gateway ? this.githubRelayHosts(run.taskId) : {};
       const githubHosts = Object.keys(github);
       if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0 || githubHosts.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
@@ -8067,9 +8060,9 @@ export class TaskService {
           route,
           contextMcp,
           platforms.filter((p) => p.from !== undefined),
-          // 接続先を決めて使う実行（操作・文書・書き出し）は、決めた PF・MCP だけを使える。書き出しは、選んだ PF か、
+          // 接続先を決めて使う実行（操作・書き出し）は、決めた PF・MCP だけを使える。書き出しは、選んだ PF か、
           // 選んだ MCP だけを置いたコンテキストを渡すので、その範囲に縛る（PBI-131）
-          run.role === "operation" || run.role === "document" || run.role === "export"
+          run.role === "operation" || run.role === "export"
             ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
             : undefined,
           github,

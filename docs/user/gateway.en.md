@@ -200,7 +200,6 @@ Step agents can read the GitHub API through the gateway. No setting is needed, a
 - It is read-only. The gateway sends only REST `GET` and `HEAD` and GraphQL `query`, and refuses writes (`POST`, `PATCH`, `mutation`, and so on).
 - The `gh` in the agent image can use only `gh api` (for example `gh api repos/acme/app/pulls/12/comments`). Other commands such as `gh pr view` cannot be used. With curl, read `$SACTY_GITHUB_URL/<host>/<API path>`.
 - For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it ([Working on tasks](tasks.en.md#comments-on-prs-and-issues)).
-- It is not available in the document writing step, because no external connection is used before approval.
 - To use `gh`, you need an image rebuilt with this version (`npx sacty image build`). Even with an image built before that, curl can read.
 
 ## Related pages
