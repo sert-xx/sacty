@@ -409,6 +409,19 @@ function noTestsReasonLines(task: Task, reason: string): string[] {
   ];
 }
 
+/** 人が再開のときに指定したテストのコマンドか（TestsDecided）。 */
+function personTestCommand(task: Task): string | undefined {
+  return task.testsDecidedBy === "person" ? task.testCommand : undefined;
+}
+
+/** 実装・再現の指示の、書いたテストを実行するコマンドの行。人が指定したコマンドなら、そう示す。 */
+function testCommandLine(task: Task): string {
+  const byPerson = personTestCommand(task);
+  return byPerson
+    ? `- 書いたテストは、人が再開のときに指定したテストのコマンド（${byPerson}）で実行されるようにする`
+    : "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする";
+}
+
 /** テストの仕組みが無いと決めたのは誰か（指示の文の括弧書き。人が再開のときに決めたか、オーケストレーターの判断か）。 */
 function noTestsJudge(task: Task): string {
   return task.testsDecidedBy === "person"
@@ -739,7 +752,7 @@ function directImplementLines(
           `依頼が求める振る舞いを検証するテストを書き、観点とテストの対応は、タスクの目的の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください。`,
           "",
           "- テストは、依頼が求める振る舞いを与えて確かめるものにする（形だけのテストにしない）",
-          "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
+          testCommandLine(task),
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
           "- 実装の説明をMarkdownで書き、そのあとに、観点とテストの対応を次の形式で必ず付ける",
@@ -1106,7 +1119,9 @@ export function buildPrompt(
         "",
         "- 不具合があるために失敗するテストを書く。不具合が直れば通るテストにする（期待する正しい振る舞いを確かめる）",
         "- 不具合そのものは直さない。テスト以外のコードは変えない",
-        `- 書いたテストは、リポジトリのテストのコマンド（${task.testCommand ?? "オーケストレーターが決めたもの"}）で実行されるようにする`,
+        personTestCommand(task)
+          ? testCommandLine(task)
+          : `- 書いたテストは、リポジトリのテストのコマンド（${task.testCommand ?? "オーケストレーターが決めたもの"}）で実行されるようにする`,
         "- 書いたら、そのテストのコマンドを自分で実行し、書いたテストが不具合のために失敗することを確かめる（sacty はテストを実行しません。あなたの申告で再現できたかを決めます）",
         "- テストの失敗が、不具合以外の理由（構文の誤り・依存の不足など）にならないようにする",
         "- コミットやプッシュはしない（sacty が行います）",
@@ -1229,7 +1244,7 @@ export function buildPrompt(
             ]
           : [
               "- テストは、観点の入力を与え、期待結果を確かめるものにする（観点を検証しない形だけのテストにしない）",
-              "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
+              testCommandLine(task),
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
               "- 実装の説明をMarkdownで書き、そのあとに、観点ごとのテストの対応を次の形式で必ず付ける",
@@ -1584,7 +1599,7 @@ export function buildFinalReviewPrompt(
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
     ...guardianCodeLines(task, "implemented"),
     "",
-    ...(testCommand ? testRunLines(testCommand) : []),
+    ...(testCommand ? testRunLines(testCommand, personTestCommand(task) === testCommand) : []),
     ...(noTests
       ? [
           `- このタスクの対象リポジトリには、テストの仕組みがありません（${noTestsJudge(task)}）。${testCommand ? "実装がテストを用意したので、そのコマンドを実行して確かめてください（上の手順）。" : "テストのコマンドが無いので、テストは実行しません。"}`,
@@ -1705,10 +1720,10 @@ export function buildFinalReviewPrompt(
 }
 
 /** ゴールガーディアンが、最終レビューの中でテスト（検証）のコマンドを実行する手順。 */
-function testRunLines(command: string): string[] {
+function testRunLines(command: string, byPerson = false): string[] {
   return [
     "--- テスト（検証）の実行 ---",
-    "判定の前に、次のテスト（検証）のコマンドを、作業領域（カレントディレクトリ）で実行してください。",
+    `判定の前に、次のテスト（検証）のコマンド${byPerson ? "（人が再開のときに指定したもの）" : ""}を、作業領域（カレントディレクトリ）で実行してください。`,
     "```sh",
     command,
     "```",
@@ -2029,9 +2044,9 @@ function resultTableLines(task: Task): string[] {
     }),
     "",
     guardianTests
-      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.exitCode === 0 ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}）${task.noTestsReason ? "（実装で用意したテスト）" : ""}`
+      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.exitCode === 0 ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
       : tests
-        ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : ""}`
+        ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
         : task.noTestsReason
           ? "テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。"
           : "テスト：（未実行）",

@@ -601,7 +601,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 画面の再開の欄では、テストの扱い（決めずに再開する・テストのコマンドを指定する・テストなしで進める）を選べる。
   不具合の修正では、テストなしを選べない。
 
-コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）
+コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
 
 ## ゴールガーディアン
 

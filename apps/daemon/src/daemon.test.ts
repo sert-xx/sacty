@@ -21600,7 +21600,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
 
   it("テストが決まらずに止まったタスクは、人がテストのコマンドを指定して再開でき、ゴールガーディアンがそのコマンドを実行する", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor } = makeService(
+    const { service, executor, pulls } = makeService(
       activity,
       [
         out(block({ "sacty-steps": { plan: "direct", reason: "小さい" } })),
@@ -21615,12 +21615,20 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const { id } = service.createTask({ projectId: "default", title: "直す" });
     await service.runNext(id);
     expect(taskOf(service, id).pausedMessage).toEqual({ code: "orchestrator.testCommandUnknown" });
-    service.resume(id, { tests: { testCommand: "make check" } });
-    expect(taskOf(service, id).testCommand).toBe("make check");
+    service.resume(id, { tests: { testCommand: "make test" } });
+    expect(taskOf(service, id).testCommand).toBe("make test");
     await drain(service);
     expect(executor.calls).toHaveLength(4);
-    expect(promptOf(executor, 3)).toContain("```sh\nmake check\n```");
+    expect(promptOf(executor, 3)).toContain("```sh\nmake test\n```");
     expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    // 実装・最終レビューの指示と PR の本文で、人が指定したコマンドだとわかる
+    expect(promptOf(executor, 2)).toContain(
+      "人が再開のときに指定したテストのコマンド（make test）",
+    );
+    expect(promptOf(executor, 3)).toContain(
+      "テスト（検証）のコマンド（人が再開のときに指定したもの）",
+    );
+    expect(pulls.calls[0]?.body).toContain("（人が指定したテストのコマンド）");
     activity.close();
   });
 
