@@ -39,7 +39,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
-| プロジェクト | `GET/POST /api/projects`・`GET/PUT /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
+| プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
@@ -367,5 +367,11 @@ sacty は、npm workspaces の4つのパッケージでできている。
   設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば、消して書き直す。
   消すものが無ければ書かない。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
+  - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義だけを消す。タスクと作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
+    プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）があれば、
+    削除せずに 409（`project.hasActiveTasks`。件数を添える）を返す。消したら、そのプロジェクトの秘密情報の警告も消す。
+  - 画面では、プロジェクトの設定の最後の「危険な操作」から削除する。確認のダイアログでプロジェクトの名前を入力したときだけ削除でき（サーバーアクションでも一致を確かめる）、
+    消したらプロジェクトの一覧へ移る。表示しているプロジェクト（cookie）が消えたら、最初のプロジェクトを表示する。
 
-コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`
+コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`、
+`apps/daemon/src/service.ts`（`deleteProject`）、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`deleteProjectAction`）

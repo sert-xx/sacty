@@ -303,6 +303,18 @@ export function createApp(
     }
   });
 
+  // プロジェクトの削除（プロジェクトの設定の「危険な操作」）。終わっていないタスクがあれば 409 で理由を返す
+  app.delete("/api/projects/:id", (c) => {
+    const id = c.req.param("id");
+    if (!service.getProject(id)) return c.json({ error: "not_found" }, 404);
+    try {
+      service.deleteProject(id);
+      return c.json({ ok: true });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
   app.post("/api/intake/run", async (c) => {
     if (!options.intake) return c.json({ error: "not_configured" }, 409);

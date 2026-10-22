@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
+import { DeleteProjectSection } from "@/components/delete-project";
 import { ProjectEditor } from "@/components/project-editor";
 import { FollowProject } from "@/components/shell/follow-project";
 import { Hint } from "@/components/ui/hint";
@@ -95,6 +96,8 @@ async function ProjectSettings({
         // プロジェクトで使える外部 PF（コンテキストの platforms.yaml も。PBI-74）。取れなければ一覧を出さない
         projectPlatforms={await getProjectPlatforms(view.project.id).catch(() => undefined)}
       />
+      {/* 危険な操作は、設定の最後に分けて置く */}
+      <DeleteProjectSection id={view.project.id} name={view.project.name} />
     </>
   );
 }

@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx -->
+<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx, apps/web/src/components/delete-project.tsx, apps/web/src/app/actions.ts (deleteProjectAction) -->
 
 [日本語](project-settings.md) | **English**
 
@@ -87,6 +87,19 @@ You can export a project definition and import it into another sacty.
 - Not included: GitHub accounts (personal settings), tokens, and Slack notifications (they are in the "Sacty settings", not in project settings).
 - On import, files with unknown fields are rejected.
 - Files exported with an earlier version (version 3 or 4) cannot be imported, whether or not they include a notification destination. The web UI shows the reason; export the project again with the current sacty.
+
+## Deleting a project
+
+You can delete a project from the "Danger zone" at the end of the project settings page.
+
+1. Click "Delete project".
+2. In the confirmation dialog, type the project name exactly. When the name matches, you can click "Delete".
+3. After deleting, the web UI moves to the project list.
+
+- A deleted project cannot be restored. If you want to keep its definition, export it first.
+- Only the project settings are deleted. Tasks and the activity log are kept, but they no longer appear on any screen or count on the dashboard.
+- While the project has unfinished tasks (other than completed and cancelled ones) or work still running or queued (such as audits), it cannot be deleted.
+  The dialog shows the count; complete or cancel the tasks, then delete the project again.
 
 ## Related pages
 

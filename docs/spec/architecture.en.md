@@ -34,7 +34,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
-| Projects | `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
+| Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
@@ -293,5 +293,11 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
 
   When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten. Nothing is written if there is nothing to remove.
 - Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).
+  - Deleting (`DELETE /api/projects/:id`) removes only the project definition. Tasks and the activity log are not deleted (tasks of a deleted project are not shown or counted).
+    If the project does not exist, it returns 404. If the project has unfinished tasks, or completed tasks with work still running or queued (audits, deployment checks, and so on),
+    it does not delete the project and returns 409 (`project.hasActiveTasks`, with the count). After deleting, it also removes the secret warnings of that project.
+  - In the web UI, you delete a project from the "Danger zone" at the end of the project settings. Deletion is allowed only after typing the project name in the confirmation dialog (the server action also checks the match),
+    and then the web UI moves to the project list. If the displayed project (cookie) is deleted, the first project is displayed.
 
-Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`
+Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`,
+`apps/daemon/src/service.ts` (`deleteProject`), `apps/web/src/components/delete-project.tsx` (`DeleteProjectSection`), `apps/web/src/app/actions.ts` (`deleteProjectAction`)

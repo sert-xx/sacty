@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx -->
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（deleteProjectAction） -->
 
 **日本語** | [English](project-settings.en.md)
 
@@ -104,6 +104,19 @@ gh auth login --hostname ghe.example.com      # GitHub Enterprise Server も、�
 - インポートでは、知らない項目があるファイルを受け付けません。
 - 以前の版（版 3・4）でエクスポートしたファイルは、通知先を含むかによらず、インポートできません。
   画面に理由を出すので、今の sacty でエクスポートし直してください。
+
+## プロジェクトを削除する
+
+プロジェクトの設定の画面の最後にある「危険な操作」から、プロジェクトを削除できます。
+
+1. 「プロジェクトを削除」を押します。
+2. 確認のダイアログに、プロジェクトの名前をそのまま入力します。名前が一致すると「削除する」を押せます。
+3. 削除すると、プロジェクトの一覧に移ります。
+
+- 削除したプロジェクトは元に戻せません。定義を残したいときは、先にエクスポートしてください。
+- 消えるのはプロジェクトの設定だけです。タスクと作業履歴は残りますが、どの画面にも出ず、ダッシュボードでも数えません。
+- 終わっていないタスク（完了・中止のほか）や、実行中・実行待ちの処理（監査など）があるあいだは削除できません。
+  ダイアログに件数を出すので、タスクを完了するか中止してから、もう一度削除してください。
 
 ## 関係するページ
 

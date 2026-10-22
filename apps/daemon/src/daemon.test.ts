@@ -10445,6 +10445,52 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
+describe("プロジェクトの削除", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+
+  it("終わっていないタスクがあれば拒否し、中止した後は削除できる（タスクは残す）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    const { service } = makeService(activity, [], { projects });
+    const pay = service.saveProject(undefined, {
+      name: "決済",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+    });
+    const app = createApp(service, token);
+    const remove = (id: string) =>
+      app.request(`/api/projects/${id}`, { method: "DELETE", headers: auth });
+
+    expect((await remove("no-such")).status).toBe(404);
+
+    const task = service.createTask({ projectId: pay.id, title: "A" });
+    const refused = await remove(pay.id);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { messages: unknown[] }).messages).toEqual([
+      { code: "project.hasActiveTasks", params: { count: 1 } },
+    ]);
+    expect(service.getProject(pay.id)).toBeDefined();
+
+    await service.cancel(task.id);
+    const deleted = await remove(pay.id);
+    expect(deleted.status).toBe(200);
+    expect(service.getProject(pay.id)).toBeUndefined();
+    expect(service.listProjects()).toHaveLength(0);
+    // タスクと作業履歴は残す
+    expect(service.get(task.id)).toBeDefined();
+    activity.close();
+  });
+
+  it("SQLite の保存先から消える", () => {
+    const store = new SqliteProjectStore(join(dir, "projects.db"));
+    store.put("p1", { name: "決済", targets: [] });
+    expect(store.delete("p1")).toBe(true);
+    expect(store.get("p1")).toBeUndefined();
+    expect(store.delete("p1")).toBe(false);
+    store.close();
+  });
+});
+
 describe("Slack の通知先は sacty の設定（PBI-115）", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };

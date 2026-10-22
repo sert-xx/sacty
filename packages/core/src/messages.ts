@@ -43,6 +43,7 @@ const PARAMS = {
     project: z.string(),
   }),
   "project.sharedComposeDuplicated": z.object({ name: z.string() }),
+  "project.hasActiveTasks": z.object({ count: Count }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
@@ -626,6 +627,8 @@ const ja: MessageDictionary = {
     `チケットの取り込み先（${platform}）のキー「${key}」は、プロジェクト「${project}」が取り込んでいます。`,
   "project.sharedComposeDuplicated": ({ name }) =>
     `共用の compose の名前「${name}」が重複しています。`,
+  "project.hasActiveTasks": ({ count }) =>
+    `終わっていないタスク（または、実行中・実行待ちの処理）が${count}件あるため、プロジェクトを削除できません。タスクを完了するか中止してから、削除してください。`,
   "project.targetTaken": ({ scope, target, project }) =>
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
@@ -1216,6 +1219,8 @@ const en: MessageDictionary = {
     `The key "${key}" of the ticket source (${platform}) is already imported by the project "${project}".`,
   "project.sharedComposeDuplicated": ({ name }) =>
     `The shared compose name "${name}" is duplicated.`,
+  "project.hasActiveTasks": ({ count }) =>
+    `The project cannot be deleted because ${count} task(s) are unfinished (or still running or queued). Complete or cancel them, then delete the project.`,
   "project.targetTaken": ({ scope, target, project }) =>
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",

@@ -58,6 +58,7 @@ import {
   investigationIsGoal,
   isAuditTarget,
   isCompleted,
+  isFinished,
   isRepoless,
   latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
@@ -3424,6 +3425,32 @@ export class TaskService {
   importProject(raw: unknown): Project {
     const { project } = ProjectExport.parse(raw);
     return this.saveProject(undefined, project);
+  }
+
+  /**
+   * プロジェクトを削除する（プロジェクトの設定の「危険な操作」）。消すのはプロジェクトの定義だけで、タスクと作業履歴は
+   * 残す（消したプロジェクトのタスクは、画面に出さず、数えない）。終わっていないタスクや、完了したタスクでも実行中・実行待ちの
+   * 処理（監査・デプロイの確認など）があれば拒否する（消した後に、プロジェクトの設定の無いまま進めないため）。
+   */
+  deleteProject(id: string): void {
+    if (!this.deps.projects.get(id)) throw new InvalidOperationError(message("project.notFound"));
+    let queued = new Set<string>();
+    try {
+      queued = new Set(this.queuedTaskIds());
+    } catch {
+      // 設定を読めないときは、ワーカーも実行対象を取れない（終わっていないタスクと実行中だけで判断する）
+    }
+    const active = [...this.tasks.values()].filter(
+      (t) => t.projectId === id && (!isFinished(t) || this.inflight.has(t.id) || queued.has(t.id)),
+    ).length;
+    if (active > 0)
+      throw new InvalidOperationError(message("project.hasActiveTasks", { count: active }));
+    this.deps.projects.delete(id);
+    // 消したプロジェクトの秘密情報の警告を、画面に残さない
+    this.secretProblems = this.secretProblems.filter((p) => p.projectId !== id);
+    this.projectSecretRounds.delete(id);
+    // プロジェクトが減ると、数える実行待ちも変わる（PBI-118）
+    this.trackQueue();
   }
 
   /**
