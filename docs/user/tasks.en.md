@@ -9,120 +9,117 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
 ## Create a task
 
 - When you create a task in the web UI, you choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)).
-  - The repository suggestions are read when you press "Create task" and the dialog opens (for an org target, `gh` asks GitHub, which can
-    take a few seconds). While they load, when they cannot be read, or when there are none, the dialog says so. In every case, you can type
-    the repository URL and create the task.
-  You can also import tasks from issues, PRs, and tickets ([Intake](intake.en.md)).
-- You can also create a task without choosing a repository (research, overall design, or a large task to split). The Orchestrator chooses how to proceed from the project's
-  context (the rules in the context repository and the export destinations) and its targets (the list of repositories).
-  - Work that does not change code (investigation only, design only) proceeds without a repository and finishes when you approve it in the sacty web UI (no PR or branch is created.
-    If there is an export destination, the results are exported).
-  - For a large task to split, Task split chooses a repository from the targets for each child task (and records why), and Integration review reads the latest base branch
-    of each child task's repository.
-  - For a task that needs code changes and is not split, the Orchestrator chooses a repository from the targets, prepares it, and then chooses the steps again. If it cannot choose, the task stops,
-    and you can choose the repository in the task details and resume.
-- The base branch and the test command are decided by the Orchestrator at the start of the task by reading the repository. In a repository without tests,
-  the task proceeds without using tests ("Repositories without tests" below).
-- A small change whose request is clear and that uses existing mechanisms may proceed as "investigation → implementation", without requirements or design. Also, each time
-  a step finishes (after the preliminary investigation, after the requirements are approved, and so on), the Orchestrator reviews whether the remaining requirements, design, and
-  reproduction steps are needed and skips the ones that are not. Skipped steps are shown struck through in the list of steps, and the reason appears in the activity log. For what was skipped,
-  the Goal Guardian reviews the implementation against the task's purpose (the request), and you approve it by merging the PR.
-- Choosing the steps, and investigations that read and explain code or how things work, do not run the development setup (installing dependencies, building, and so on) (this takes precedence even if the repository's
-  AGENTS.md or similar has setup instructions). Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
+  - sacty reads the repository suggestions when you press "Create task" and the dialog opens. For an org target, `gh` asks GitHub, which can take a few seconds.
+  - While they load, when they cannot be read, or when there are none, the dialog says so. In every case, you can type the repository URL and create the task.
+- You can also import tasks from issues, PRs, and tickets ([Intake](intake.en.md)).
+- You can also create a task without choosing a repository (research, overall design, or a large task to split). The Orchestrator chooses how to proceed from the project's context (the rules in the context repository and the export destinations) and its targets (the list of repositories).
+  - Work that does not change code (investigation only, design only) proceeds without a repository and finishes when you approve it in the sacty web UI. No PR or branch is created. If there is an export destination, the results are exported.
+  - For a large task to split, Task split chooses a repository from the targets for each child task (and records why). Integration review reads the latest base branch of each child task's repository.
+  - For a task that needs code changes and is not split, the Orchestrator chooses a repository from the targets, prepares it, and then chooses the steps again. If it cannot choose, the task stops. You can choose the repository in the task details and resume.
+- The Orchestrator decides the base branch and the test command at the start of the task by reading the repository. In a repository without tests, the task proceeds without using tests ("Repositories without tests" below).
+- The Orchestrator leaves out steps that are not needed.
+  - A small change whose request is clear and that uses existing mechanisms may proceed as "investigation → implementation", without requirements or design.
+  - Each time a step finishes (after the preliminary investigation, after the requirements are approved, and so on), it reviews whether the remaining requirements, design, and reproduction steps are needed and skips the ones that are not.
+  - Skipped steps are shown struck through in the list of steps. The reason appears in the activity log.
+  - For what was skipped, the Goal Guardian reviews the implementation against the task's purpose (the request), and you approve it by merging the PR.
+- Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
+  - Choosing the steps, and investigations that read and explain code or how things work, do not run it. This takes precedence even if the repository's AGENTS.md or similar has setup instructions.
+  - Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
 
 ### Template "Sacty setup"
 
 You can create a task that prepares the AI agent settings of a repository so that sacty can work with it, just by choosing the repository.
 
 1. On the "Create task" screen, choose the "Sacty setup" template.
-2. Choose the target repository and press "Create" (you do not enter a title or contents; sacty decides them).
+2. Choose the target repository and press "Create". You do not enter a title or contents (sacty decides them).
 
-Like a normal task, the Orchestrator chooses how to proceed, and the task goes through approvals and PRs. The agent checks the following and opens a PR
-that fills in what is missing.
+Like a normal task, the Orchestrator chooses how to proceed, and the task goes through approvals and PRs. The agent checks the following and opens a PR that fills in what is missing.
 
 - Instructions for agents (AGENTS.md, CLAUDE.md, and so on)
-- How to run the tests (if the repository has no tests yet, that there are none and how to check changes; this task does not add a new language or test framework)
+- How to run the tests
+  - If the repository has no tests yet, the agent writes that there are none and how to check changes.
+  - This task does not add a new language or test framework.
 - Services the tests need (databases, mocks, and so on)
-- For repositories with CI/CD (even if they do not deploy), the after-merge watch skill `deployment-observer`. The original is
-  `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` for Claude Code is a relative symbolic
-  link to the original. A reference on how to check CI/CD (`references/ci.md`) is also created, and if the repository does not deploy, the skill says to skip the deployment check
-  ([After-merge watch](deployment-watch.en.md#skill)). If there is no CI/CD, it is not created.
+- The after-merge watch skill `deployment-observer` ([After-merge watch](deployment-watch.en.md#skill))
+  - It is created for repositories with CI/CD (even if they do not deploy). If there is no CI/CD, it is not created.
+  - The original is `.agents/skills/deployment-observer/SKILL.md`. `.claude/skills/deployment-observer` for Claude Code is a relative symbolic link to the original.
+  - A reference on how to check CI/CD (`references/ci.md`) is also created. If the repository does not deploy, the skill says to skip the deployment check.
 
-If everything is already in place and nothing needs to change, the task finishes without a PR, keeping the check results as investigation results (you approve it in the web UI to finish).
-If, after Requirements, Design, and Implementation, it turns out that nothing needs to change, the task also finishes without a PR, keeping the check results in the implementation notes, when you approve it in the web UI
-(see "When the implementation has no changes" below).
+If everything is already in place and nothing needs to change, the task finishes without a PR, keeping the check results as investigation results (you approve it in the web UI to finish). If, after Requirements, Design, and Implementation, it turns out that nothing needs to change, no PR is created either. The check results are kept in the implementation notes, and the task finishes when you approve it in the web UI (see "When the implementation has no changes" below).
+
 For tasks created from a template, the template name appears in "Started from" in the list, at the top of the details, and in "Task created" in the Activity.
 
-From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks`
-(do not pass `title` or `body`). The CLI has no command to create tasks.
+From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks` (do not pass `title` or `body`). The CLI has no command to create tasks.
 
 ## Documents and one-off external work
 
-To create a user guide, meeting notes, or a translated draft, leave the repository unselected and include the audience, purpose, and source contents in the task. Review the Markdown draft in Document, request changes, and approve it. Export follows approval only if the Orchestrator selected a destination. Check the selected destination and reason in the task’s steps section ([Exporting results](result-export.en.md)). An export failure does not stop completion of the draft, so also check the external publication result. To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
+To create a user guide, meeting notes, or a translated draft, leave the repository unselected and write the audience, purpose, and source contents in the task.
 
-Document does not use external connections or project context and does not read drafts from external sources. Include the source text and any necessary rules in the task body; supply missing details through Request changes. Providing only a URL does not let this step retrieve the page’s contents to write the draft.
+- Review the Markdown draft in Document, request changes, and approve it.
+- The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason in the task's steps section ([Exporting results](result-export.en.md)).
+- An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
+- To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
-You can also request a calendar, register, or existing external page update without choosing a repository. This covers one-off changes that use one configured destination.
-Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
+While Document runs, it does not use external connections or the project context, and does not read drafts from external sources. Include the source text and any necessary rules in the task body, and supply missing details through Request changes. If you provide only a URL, this step cannot retrieve the page's contents to write the draft.
 
-1. Include the specific target ID/URL, change and preconditions, and desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. Missing target or connection details stop the task before execution starts.
-2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval, so confirm the request is correct before starting the task.
+You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes that use one configured destination. Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
+
+1. Write the specific target ID/URL, the change and its preconditions, and the desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. If target or connection details are missing, the task stops before execution starts.
+2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval. Confirm that the request is correct before starting the task.
 3. Check the evidence in the successful result and approve it to complete the task. Failure or an unknown result does not count as completion.
 
-After step selection, the task details show the selected destination and connection type, target, requested change, and verification method as read-only information. This view does not add a pre-execution approval gate or pause the task.
+After step selection, the task details show the selected destination and connection type, target, requested change, and verification method as read-only information. This view is not a pre-execution approval gate and does not stop the task.
 
-If target details are missing, create a new task with the missing information included in the request. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
+If target details are missing, add the missing information to the request and create a new task. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
 
-You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone. The agent is instructed to write once and check the result, but this does not guarantee duplicate prevention by the external service.
+You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone.
 
-You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12").
-The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its
-output. When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push
-code. To fix a PR's code, create a task with the repository selected.
+sacty instructs the agent to write once and check the result after the change. However, this does not guarantee that the external service prevents duplicates.
+
+You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12"). The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its output.
+
+When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push code. To fix a PR's code, create a task with the repository selected.
 
 Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
 
 ## Comments on PRs and issues
 
-A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue
-is needed, the agent writes the comment in the step's output, and after a person approves the step's output, sacty posts it with the project's GitHub
-account. Nothing is posted unless you approve.
+A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue is needed, the agent writes the comment in the step's output. After a person approves the step's output, sacty posts it with the project's GitHub account.
 
-- Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, the revised version is posted.
-- Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. Other URLs are not posted to, and
-  the reason appears in the activity history.
+Nothing is posted unless you approve.
+
+- Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, sacty posts the revised version.
+- Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. sacty does not post to other URLs and shows the reason in the activity history.
 - The end of the comment notes that AI wrote it in a sacty task and a person approved it.
 - The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop.
 - The review step, as before, has sacty post the written review to the PR.
 
 ## Test (verification) commands
 
-To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review.
-The Goal Guardian uses the Implementation step's image and a copy of the implemented code, checks the whole output of the command (every kind of test the
-command runs, such as unit and integration tests), and judges from that result, the diff, and the code. sacty does not run the tests separately.
+To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. The Goal Guardian uses the Implementation step's image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
+
+sacty does not run the tests separately.
+
 Even a repository without test code uses a check that mechanically validates its artifacts, if there is one.
 
-- For a repository of Kubernetes manifests, that is `kustomize build`, `helm lint` or `kubeconform`; for Terraform, `terraform validate`;
-  for YAML, `yamllint`, and so on. sacty uses what CI, a Makefile or pre-commit runs, or what the shape of the repository decides (`kustomize build`
-  when there is a `kustomization.yaml`, and so on).
+- sacty uses what CI, a Makefile or pre-commit runs, or what the shape of the repository decides (`kustomize build` when there is a `kustomization.yaml`, and so on).
+  - For a repository of Kubernetes manifests, `kustomize build`, `helm lint` or `kubeconform`
+  - For Terraform, `terraform validate`
+  - For YAML, `yamllint`, and so on
 - The chosen command appears as "Test command" in the Steps section of the task details.
-- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable.
-  The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）".
-- If the Goal Guardian does not report exit code 0, or if there is a viewpoint the implementation did not map to a test, the final review fails and
-  the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
-- In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug.
-  If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
+- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）".
+- In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
+  - The Goal Guardian does not report exit code 0
+  - There is a viewpoint the implementation did not map to a test
+- In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### When the verification tool is not in the image
 
-If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the Implementation step's image), the Goal Guardian
-reports it, and the task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
-Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the
-implementation.
+If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the Implementation step's image), the Goal Guardian reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
 
-1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands).
-   If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too
-   ([Container images](images.en.md#per-language-images)).
+Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the implementation.
+
+1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands). If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too ([Container images](images.en.md#per-language-images)).
 
    ```yaml
    images:
@@ -135,30 +132,22 @@ implementation.
    ```
 
 2. Rebuild the image with `npx sacty image build <name>`.
-3. If you added a new image, change the image of the Implementation step
-   under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
+3. If you added a new image, change the image of the Implementation step under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
 
-If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, it is treated as a problem
-with the repository's dependencies, and the implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
+If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
 
 ## Repositories without tests
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
 
-- The Orchestrator leaves the basis for judging that the repository has no tests. The step field of the task details shows "Test command: none · judged by the goal",
-  and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
-- Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description.
-  If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
-- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also
-  includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests,
-  check the content of the changes yourself before you approve.
-- When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, those tests are run before the judgment by the goal
-  (the web UI shows "Verified by the tests added in the implementation" if they pass, and "The tests added in the implementation failed" if they do not.
-  If they fail, the implementation is redone). If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON),
-  the task
-  is paused with an error (resuming redoes the implementation).
-- While the implementation is being redone after failing the tests, the previous implementation's test results and final review are shown under headings such as "… for the previous submission"
-  (the hint mark next to them says that nothing has run or been judged for the current submission yet). They are not results for the current implementation (this is the same for tasks with tests).
+- The Orchestrator leaves the basis for judging that the repository has no tests. The step field of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
+- Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description. If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
+- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests, check the content of the changes yourself before you approve.
+- When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, those tests are run before the judgment by the goal.
+  - If they pass, the web UI shows "Verified by the tests added in the implementation".
+  - If they fail, it shows "The tests added in the implementation failed", and the implementation is redone.
+  - If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON), the task is paused with an error. Resuming redoes the implementation.
+- While the implementation is being redone after failing the tests, the previous implementation's test results and final review are shown under headings such as "… for the previous submission". The hint mark next to them says that nothing has run or been judged for the current submission yet. They are not results for the current implementation (this is the same for tasks with tests).
 - A bug fix (Reproduce → Implementation) confirms the reproduction with tests, so it is not chosen for a repository without tests. If it is chosen, the task stops.
 
 ### When the task stopped instead of proceeding without tests
@@ -173,84 +162,82 @@ In the following cases, the task does not proceed without tests and is paused (t
 | A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), fix it, and then create the task again. Resuming does not proceed without tests. |
 | A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Write how to run the tests and create the task again, or create it again as an ordinary task that describes what to fix instead of as a bug fix. |
 
-Files that look like tests are files inside `test`, `tests`, and `__tests__` directories, and files with names like `*.test.*`, `*.spec.*`,
-`*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`. Document files (`.md`, `.txt`, `.rst`, `.adoc`,
-and so on) do not match (`tests/README.md` does not match).
+The following files count as files that look like tests.
+
+- Files inside `test`, `tests`, and `__tests__` directories
+- Files with names like `*.test.*`, `*.spec.*`, `*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`
+
+Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/README.md` does not match).
 
 ## When the implementation has no changes
 
 When the Implementation step changes nothing (it decided the requirements are already met and no change is needed), no PR is created. This is the same for every task.
 
-- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence), the test results, and the final
-  review.
+- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence), the test results, and the final review.
 - If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
 - If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
 - In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
-- If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error (decide what to do with the open PR, then
-  cancel the task or request changes again).
+- If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
 
 ## Approval in PRs (Requirements, Design, Implement)
 
-Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval = merge, and steps that created a PR
-are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
+Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval is the merge. Steps that created a PR are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
 While awaiting approval, if the PR of the current submission is open, you can open the GitHub PR directly in a new tab (without the sacty approval screen in between).
 
 - In the task details and "Needs you" in the task list: press "Review on the PR ↗".
 - In "Needs you" on the dashboard and the header notifications: press the task title (marked with ↗ at the end).
 
-Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty
-approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
+Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
 - When the PR was closed without merging, was merged with content different from the submission, or does not exist yet.
 
+Approval in PRs proceeds in this order.
+
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
-2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged,
-   it is recorded as approval of the Requirements and the task moves to the next step.
+2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
 3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
-4. When the Design PR is merged, the task moves to the Implementation step. When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the
-   implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). Implement waits for approval, and merging the PR approves the implementation and
-   moves on to the after-merge watch step (if the target repository has no skill and the step was skipped, the task is completed). The implementation PR also contains the Requirements and Design
-   files. In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
+4. When the Design PR is merged, the task moves to the Implementation step.
+   - When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). The implementation PR also contains the Requirements and Design files.
+   - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no skill and the step was skipped, the task is completed.
+   - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
-- PR reviews, line comments, and regular comments (excluding bots and sacty's own posts, but including posts by the sacty review task that imported that PR.
-  [Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)) are taken in as findings (checked every minute, 2 minutes after the last
-  comment), and the Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step (no human check in between; the decision and
-  its reasons are kept in the Activity and the PR section). If requests for changes to the same step exceed the limit, it becomes an Escalation.
-- When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are
-  recreated (the previous open PRs are closed. The implementation PR is updated in place).
-- If a PR is closed without being merged, or merged with contents different from what sacty submitted, it is not treated as approval and sacty waits for your decision (if you request changes from the web UI, the
-  redone contents are submitted in a new PR).
-- Steps that need no approval (such as an earlier Investigation), and tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design), do not create Requirements or Design
-  PRs (investigation-only tasks are approved in the web UI). Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed
-  are still approved in the web UI.
-- Each child task of a Task split has its own task branch (the parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's
-  task branch is not merged into the base branch).
-- If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body
-  follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable), and checkboxes are left unchecked (the reviewer
-  checks them). If there is no template or it cannot be read, sacty uses its own format. Which one was used appears in "Body" in the PR section of the task page.
-  See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
+- sacty takes in PR reviews, line comments, and regular comments as findings.
+  - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+  - It checks every minute and takes them in 2 minutes after the last comment.
+  - The Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between. The decision and its reasons are kept in the Activity and the PR section.
+  - If requests for changes to the same step exceed the limit, it becomes an Escalation.
+- When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
+- If a PR is closed without being merged, or merged with contents different from what sacty submitted, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- In the following cases, no Requirements or Design PRs are created.
+  - Steps that need no approval (such as an earlier Investigation)
+  - Tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design). Investigation-only tasks are approved in the web UI.
+  - Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed. They are still approved in the web UI.
+- Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
+- The form of the PR body
+  - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
+  - If there is no template or it cannot be read, sacty uses its own format.
+  - Which one was used appears in "Body" in the PR section of the task page.
+  - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
 
 ## Ask the Orchestrator
 
 Use "Ask the Orchestrator" in the task details to ask about the status of the task.
 
-- The Orchestrator (`step_agents.orchestrator` or `default_agent`) answers by reading the task's ledger (the Activity, approved deliverables, step outputs, verdicts, and
-  costs) and, if prepared, the code of the target repository at the starting commit (a disposable copy).
-- It also examines, read-only, the session logs of each run, such as the agents of each step and the Orchestrator itself (with secrets masked; this includes the original files written by
-  Claude Code and Codex), and answers what the agents actually did. Answers state which step and which run the log is from.
-  For runs without logs, logs with parts omitted due to limits, and logs that cannot be read, the answer says so.
-- If a step is running, it also examines that step's log up to the time you asked. When work is taking a long time, ask "What is it doing now?" or
-  "Where is it taking time?" and it answers with the current state, noting as of when.
-- Asking does not change the steps or approved contents, and does not stop work, even on a task in progress.
+- The Orchestrator (`step_agents.orchestrator` or `default_agent`) answers by reading the task's ledger (the Activity, approved deliverables, step outputs, verdicts, and costs) and, if prepared, the code of the target repository at the starting commit (a disposable copy).
+- It also examines, read-only, the session logs of each run, such as the agents of each step and the Orchestrator itself, and answers what the agents actually did.
+  - The logs have secrets masked. It also examines the original files written by Claude Code and Codex.
+  - Answers state which step and which run the log is from.
+  - For runs without logs, logs with parts omitted due to limits, and logs that cannot be read, the answer says so.
+- If a step is running, it also examines that step's log up to the time you asked. When work is taking a long time, ask "What is it doing now?" or "Where is it taking time?" and it answers with the current state, noting as of when.
+- Asking does not change the steps or approved contents. It does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
 
 ## Self-review before submitting
 
-In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting,
-and fixes it until no `must` findings are left (up to 5 rounds including the first).
+In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
 
 The result appears on the deliverable cards, the Implementation card, and the approval screen.
 
@@ -264,15 +251,15 @@ The cost of the self-review is included in the cost of that step.
 
 ## Changing a step's image
 
-The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person).
-It is usually left as is, so only its heading is shown, collapsed (click the heading to open it). If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run).
-See [Container images](images.en.md#changing-a-steps-image) for details.
+The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
+
+If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Changing a step's agent
 
-In "Step agents" in the "Steps" section of the task details, you can choose again the agent each step uses, from the usable agents (sacty's defaults and `agents` in config.yaml that have a connection and a price).
-It is usually left as is, so only its heading is shown, collapsed (it is shown open when something needs checking, such as a name removed from the settings).
-For example, run only a step that stopped on an error or was sent back with a stronger agent (one with a stronger model or reasoning effort, written as in [Models per step](config.en.md#models-per-step)).
+In "Step agents" in the "Steps" section of the task details, you can choose again the agent each step uses. You can choose from the usable agents (sacty's defaults and `agents` in config.yaml that have a connection and a price). It is usually left as is, so only its heading is shown, collapsed (it is shown open when something needs checking, such as a name removed from the settings).
+
+For example, you can rerun only a step that stopped on an error or was sent back with a stronger agent (one with a stronger model or reasoning effort, written as in [Models per step](config.en.md#models-per-step)).
 
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
 - Who changed what, when, and from what to what is kept in the Activity.
@@ -281,65 +268,60 @@ For example, run only a step that stopped on an error or was sent back with a st
 
 ## Pause, resume, and cancel
 
-- For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see
-  [config.yaml settings](config.en.md#budget)).
-- Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
-  A cancelled task cannot be resumed.
-- A cancelled task can be started over from "Rerun" on its detail page. In the dialog, you can change the repository to work in (empty means no
-  repository), the image, the title, and the description, and add notes. It creates a new task that takes over the cancelled one, and adds the notes and
-  the record of the previous attempt (step outputs, remarks, questions and answers, why it stopped) after the description. A task imported from a ticket
-  keeps the ticket and doesn't read it again. A task can be rerun only once; afterwards, the cancelled task shows a link to the new task.
-- If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
-  Decide on the PR, or cancel the task to stop it.
+- For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see [config.yaml settings](config.en.md#budget)).
+- Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched). A cancelled task cannot be resumed.
+- A cancelled task can be started over from "Rerun" on its detail page.
+  - In the dialog, you can change the repository to work in (empty means no repository), the image, the title, and the description, and add notes.
+  - sacty creates a new task that takes over the cancelled one. It adds the notes and the record of the previous attempt (step outputs, remarks, questions and answers, why it stopped) after the description.
+  - A task imported from a ticket keeps the ticket and doesn't read it again.
+  - A task can be rerun only once. Afterwards, the cancelled task shows a link to the new task.
+- If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused). Decide on the PR, or cancel the task to stop it.
 
 ## Task list
 
-Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository
-is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number
-(such as `#7`) under where they started.
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 
 ## Hints on the screen
 
 The text on the screen says only the current state and what to do next, briefly. How things work and why is shown when you hover over the hint mark (i) next to a heading or item.
+
 With the keyboard, it opens when you stop on the mark with Tab; on a phone, it opens on tap. Esc or a tap outside closes it. Items without a hint have no mark.
 
 ## Automatic updates on the screen
 
-While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever
-the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed), so tasks added by intake,
-approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
+While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
 
-- The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open
-  dialogs and sections, focus, and the scroll position stay as they are.
+- The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open dialogs and sections, focus, and the scroll position stay as they are.
 - While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
-- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what
-  was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
-- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
-  writing are not lost.
-- While a run is in progress, the run log adds new lines at the end automatically. The scroll position does not move while you are reading in the middle;
-  the screen follows new lines only while you are looking at the bottom. If the list of the agent's original files cannot be read after the run has finished,
-  the screen shows that and that it is retrying, and shows the list once it can be read.
-- The Sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
-  again or reload it in the browser.
+- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
+- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are writing are not lost.
+- While a run is in progress, the run log adds new lines at the end automatically.
+  - The scroll position does not move while you are reading in the middle. The screen follows new lines only while you are looking at the bottom.
+  - If the list of the agent's original files cannot be read after the run has finished, the screen shows that and that it is retrying, and shows the list once it can be read.
+- The Sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen again or reload it in the browser.
 
 ## Back up before updating and returning to an older version
 
-A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, and so on) cannot be read by an older version that does not support them, and startup fails. Stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`) before updating. To return to an older version, use the backup made before the update. If your settings include the new steps, also restore settings compatible with the older version.
+A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, and so on) cannot be read by an older version that does not support them, and startup fails.
 
-Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost. External changes, such as calendar updates, are not rolled back. Fix tasks created from adopted audit proposals may already have opened PRs. External operation start records made after the backup are also lost, so check the actual external state and do not repeat changes already made.
+- Stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`) before updating.
+- To return to an older version, use the backup made before the update.
+- If your settings include the new steps, also restore settings compatible with the older version.
+
+Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost.
+
+- External changes, such as calendar updates, are not rolled back.
+- Fix tasks created from adopted audit proposals may already have opened PRs.
+- External operation start records made after the backup are also lost. Check the actual external state and do not repeat changes already made.
 
 ## Tasks from earlier versions (with the Open PR step)
 
-Earlier versions had an "Open PR" step (`pr`; "PR作成" on the Japanese screen) after Implementation, whose approval screen was titled "Deliverable review". The current version removes this step:
-the PR is opened inside the Implementation step, which then waits for the Implement approval (on the Approval screen). Tasks from earlier versions cannot be carried over as they are.
+Earlier versions had an "Open PR" step (`pr`; "PR作成" on the Japanese screen) after Implementation, whose approval screen was titled "Deliverable review". The current version removes this step: the PR is opened inside the Implementation step, which then waits for the Implement approval (on the Approval screen). Tasks from earlier versions cannot be carried over as they are.
 
-- Tasks created in an earlier version that contain the Open PR step (`pr`) are deleted from the Activity when the daemon starts. **Tasks in progress (running, awaiting approval,
-  paused, and so on) are deleted too.** The parent and children of a task split, and a fix task from the after-merge watch and its original task, are deleted together when either is deleted.
+- Tasks created in an earlier version that contain the Open PR step (`pr`) are deleted from the Activity when the daemon starts. **Tasks in progress (running, awaiting approval, paused, and so on) are deleted too.** The parent and children of a task split, and a fix task from the after-merge watch and its original task, are deleted together when either is deleted.
 - The number and IDs of the deleted tasks are written to the daemon log.
-- GitHub branches and PRs are left as they are. If you won't use an open PR, close it on GitHub. Create the work you want to continue as a new
-  task.
-- If you wrote `pr` in `step_agents` in `config.yaml`, delete it. Leaving it is a settings error, and while there are old tasks, the daemon does not start
-  and does not delete them (the log shows the settings error and asks you to delete it). Delete it and start again.
+- GitHub branches and PRs are left as they are. If you won't use an open PR, close it on GitHub. Create the work you want to continue as a new task.
+- If you wrote `pr` in `step_agents` in `config.yaml`, delete it. Leaving it is a settings error. While there are old tasks, the daemon does not start and does not delete them (the log shows the settings error and asks you to delete it). Delete it and start again.
 
 ## Related pages
 

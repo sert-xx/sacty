@@ -3,7 +3,8 @@
 # ユーザードキュメント
 
 sacty を使う方に向けて、インストール・設定・コマンド・画面の使い方を説明します。
-はじめての方は、[はじめに](getting-started.md) から読んでください。仕組みの詳細は [仕様書](../spec/README.md) にあります。
+はじめての方は、[はじめに](getting-started.md) から読んでください。
+仕組みの詳細は [仕様書](../spec/README.md) にあります。
 
 ## 目次
 
@@ -20,7 +21,8 @@ sacty を使う方に向けて、インストール・設定・コマンド・�
 11. [docker compose のサービス](compose.md)：DB・モック API・共用の compose
 12. [成果の書き出し](result-export.md)：Confluence・Notion などへの書き出し
 13. [Slack の通知](notifications.md)：Sacty の設定の送り先・メンション
-14. [マージの後の監視](deployment-watch.md)：実装の後の工程。CI/CD とデプロイ後のアプリの確認・スキルの置き方・修正のタスクの自動の登録
+14. [マージの後の監視](deployment-watch.md)：実装の後の工程。
+    CI/CD とデプロイ後のアプリの確認・スキルの置き方・修正のタスクの自動の登録
 15. [CLI](cli.md)：sacty コマンドとオプション
 16. [困ったとき](troubleshooting.md)：よくある止まり方と確かめること
 17. [監査](audit.md)：完了したタスクの監査・改修の提案の採用と却下・監査の画面・レポート
