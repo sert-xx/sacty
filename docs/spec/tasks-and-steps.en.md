@@ -2,9 +2,9 @@
 
 # Tasks and steps
 
-A task proceeds as a sequence of steps (Investigation, Requirements, Design, Implementation, and so on). Which combination of steps (plan) to use is
-chosen by the Orchestrator when the task starts. Agents run the steps, and people decide only at approval steps (approval gates). The Goal Guardian
-judges change requests, the final review, where to send PR comments back to, and Integration review.
+A task proceeds as a sequence of steps (Investigation, Requirements, Design, Implementation, and so on). The Orchestrator chooses which combination of steps (plan) to use when the task starts. Agents run the steps, and people decide only at approval steps (approval gates).
+
+The Goal Guardian judges change requests, the final review, where to send PR comments back to, and Integration review.
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
@@ -23,13 +23,8 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
 | `split` | A child task of Task split (`parent` holds the parent's ID and the child tasks that must finish first, `dependsOn`) |
 
 - A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that sacty created and gave the review label).
-- When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository,
-  the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
-- The "Create task" button in the web UI reads only the list's project (the ID in the URL) before it appears (it does not appear for a project that does not exist). The repository suggestions (the daemon's
-  `GET /api/projects/:id/repositories`; org targets are read with `gh`) are read when the create dialog opens, through the web route
-  `GET /projects/:id/repositories` (read again on every open; a late result from an earlier open is dropped). Rendering the task list and its
-  automatic refresh do not read them. The dialog shows that the suggestions are loading, could not be read, or are empty, and in every state the
-  repository can be typed and the task created. For an org that could not be read, it shows the reason. Projects without targets do not read them.
+- When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository, the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
+- The "Create task" button in the web UI reads only the list's project (the ID in the URL) before it appears (it does not appear for a project that does not exist). The repository suggestions (the daemon's `GET /api/projects/:id/repositories`; org targets are read with `gh`) are read when the create dialog opens, through the web route `GET /projects/:id/repositories` (read again on every open; a late result from an earlier open is dropped). Rendering the task list and its automatic refresh do not read them. The dialog shows that the suggestions are loading, could not be read, or are empty, and in every state the repository can be typed and the task created. For an org that could not be read, it shows the reason. Projects without targets do not read them.
 - The initial budget cap is `budget.default_per_task_usd` (default 1 US dollar).
 - The status values are in the "Projection" table of [Activity log](event-log.en.md). There is no "completed" status; a task is complete when every step is `done` or `skip` (`isCompleted`).
 
@@ -37,34 +32,18 @@ Code: `packages/core/src/events.ts` (`TaskCreated`, `TaskSource`), `packages/cor
 
 ### Task templates
 
-If the body of `POST /api/tasks` has `template`, the task is created from a template (`CreateTemplateTaskInput`). The only template is
-`sacty-setup` (Sacty setup).
+If the body of `POST /api/tasks` has `template`, the task is created from a template (`CreateTemplateTaskInput`). The only template is `sacty-setup` (Sacty setup).
 
-- Only `template`, `projectId`, and `repo` are accepted. Passing `title`, `body`, or any other item gives 400 (sacty decides the title and description).
-  An unknown template, an empty `repo`, or `repo: null` also gives 400.
-- The target repository is required. If omitted and the project's targets are exactly one repository, that one is used. Otherwise the task is not created
-  (`task.templateRepositoryRequired`, 409). A repository outside the targets is not accepted, as with ordinary tasks (`task.repositoryUnknown`).
-- `template` is recorded in `TaskCreated` (`start` is `sacty`, and `repo` is normalized to the registered name, as with ordinary tasks). It remains in the projection's
-  `Task.template`.
-- The title is `Sacty セットアップ（<owner>/<name>）`, and the description (goal) is the text decided by `templateTask`. After creation, as with an ordinary task,
-  the Orchestrator chooses the plan (the template does not decide the steps).
-- The goal of `sacty-setup` is to check the agent configuration needed to handle the target repository with sacty, and to open a PR that fills in what is missing.
-  The text does not assume any particular language or tool. What it checks and fills in:
+- Only `template`, `projectId`, and `repo` are accepted. Passing `title`, `body`, or any other item gives 400 (sacty decides the title and description). An unknown template, an empty `repo`, or `repo: null` also gives 400.
+- The target repository is required. If omitted and the project's targets are exactly one repository, that one is used. Otherwise the task is not created (`task.templateRepositoryRequired`, 409). A repository outside the targets is not accepted, as with ordinary tasks (`task.repositoryUnknown`).
+- `template` is recorded in `TaskCreated` (`start` is `sacty`, and `repo` is normalized to the registered name, as with ordinary tasks). It remains in the projection's `Task.template`.
+- The title is `Sacty セットアップ（<owner>/<name>）`, and the description (goal) is the text decided by `templateTask`. After creation, as with an ordinary task, the Orchestrator chooses the plan (the template does not decide the steps).
+- The goal of `sacty-setup` is to check the agent configuration needed to handle the target repository with sacty, and to open a PR that fills in what is missing. The text does not assume any particular language or tool. It checks and fills in the following four items.
   1. Instructions for agents (AGENTS.md, CLAUDE.md, and so on; not maintained in two places)
-  2. How to run tests (the command and prerequisites; whether they match the current configuration). If the repository has no tests yet, the agent writes that there are none and how to check changes,
-     and does not add a new language or test framework (that is a separate task)
+  2. How to run tests (the command and prerequisites; whether they match the current configuration). If the repository has no tests yet, the agent writes that there are none and how to check changes, and does not add a new language or test framework (that is a separate task)
   3. Services needed for tests (how to start them and where to connect; if none are needed, say so)
-  4. For repositories with CI/CD (even if they do not deploy), the after-merge watch skill `deployment-observer`. If there is no CI/CD, it is not created
-     (the after-merge watch step is skipped). The original goes in `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` is
-     a relative symbolic link to `../../.agents/skills/deployment-observer`. It has the agent write the front matter (`name`, `description`) and a reference on how to check
-     CI/CD (`references/ci.md`: which workflows and checks verify what, failures that can be ignored, and how to read results and logs).
-     If the repository deploys, the agent writes how to tell that a deployment finished, how to check it, how to connect, and what counts as an error; if it does not deploy, that the deployment check
-     is skipped (`skipped` with a reason). It also writes the promises not to change anything, not to reveal secrets, not to wait long, and to answer `unknown` when it cannot judge, and the shape of
-     the JSON answer under the heading `sacty-deployment` (the results of the CI/CD check and the deployment check). The location, link target, reference, and heading are built from
-     the after-merge watch's `DEPLOYMENT_SKILL_PATHS`, `CI_REFERENCE`, and `DEPLOYMENT_HEADING` ([After-merge watch](deployment-watch.en.md)).
-- The goal also says that if everything is in place and no change is needed, the task ends with Investigation only, without a PR, and leaves the check result for each item (if the Orchestrator
-  chooses `investigate`, the task completes when the investigation result is approved in the web UI). If it turns out after the steps have run that no change is needed, the agent is asked to
-  leave the files unchanged and write the check results and reasons in the implementation notes (no PR is opened; a person checks it and the task completes without changes. [Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
+  4. For repositories with CI/CD (even if they do not deploy), the after-merge watch skill `deployment-observer`. If there is no CI/CD, it is not created (the after-merge watch step is skipped). The original goes in `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` is a relative symbolic link to `../../.agents/skills/deployment-observer`. It has the agent write the front matter (`name`, `description`) and a reference on how to check CI/CD (`references/ci.md`: which workflows and checks verify what, failures that can be ignored, and how to read results and logs). If the repository deploys, the agent writes how to tell that a deployment finished, how to check it, how to connect, and what counts as an error; if it does not deploy, that the deployment check is skipped (`skipped` with a reason). It also writes the promises not to change anything, not to reveal secrets, not to wait long, and to answer `unknown` when it cannot judge, and the shape of the JSON answer under the heading `sacty-deployment` (the results of the CI/CD check and the deployment check). The location, link target, reference, and heading are built from the after-merge watch's `DEPLOYMENT_SKILL_PATHS`, `CI_REFERENCE`, and `DEPLOYMENT_HEADING` ([After-merge watch](deployment-watch.en.md)).
+- The goal also says that if everything is in place and no change is needed, the task ends with Investigation only, without a PR, and leaves the check result for each item (if the Orchestrator chooses `investigate`, the task completes when the investigation result is approved in the web UI). If it turns out after the steps have run that no change is needed, the agent is asked to leave the files unchanged and write the check results and reasons in the implementation notes (no PR is opened; a person checks it and the task completes without changes. [Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
 
 Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, `TaskCreated`), `apps/daemon/src/service.ts` (`createTask`, `createTemplateTask`, `projectRepository`), `apps/daemon/src/task-templates.ts` (`templateTask`), `apps/daemon/src/deployment.ts` (`DEPLOYMENT_SKILL_PATHS`, `CI_REFERENCE`, `DEPLOYMENT_HEADING`)
 
@@ -84,39 +63,25 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
 | `operation` | Operation | Performs the requested external change once and submits evidence for result approval |
 
-Step categories:
+The steps fall into the following categories.
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a plan that implements
-  (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved.
-  Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a plan that implements (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
 - Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`, `document`.
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
 - Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`, `document`.
-- Steps that are not run (not in `EXECUTABLE_STEPS`): `deployment`. After the previous step is approved, the task becomes idle and sacty advances it in the PR check. If the target repository
-  has no skill, the step is skipped when the steps are chosen (`skip`. [After-merge watch](deployment-watch.en.md)). When moving to the next step, `skip` steps are passed over.
+- Steps that are not run (not in `EXECUTABLE_STEPS`): `deployment`. After the previous step is approved, the task becomes idle and sacty advances it in the PR check. If the target repository has no skill, the step is skipped when the steps are chosen (`skip`. [After-merge watch](deployment-watch.en.md)). When moving to the next step, `skip` steps are passed over.
 - Steps that the step review can skip (`SKIPPABLE_STEPS`): `requirements`, `design`, `reproduce`. Only when the plan has an implementation ("Step review" below).
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
 
 ### Self-review before submitting
 
-- The instructions of the Requirements, Design, and Implementation steps (`SELF_REVIEW_STEPS`; Implementation includes bug fixes and tasks without tests) tell the agent to
-  self-review with the `self-review` flow of the default skill `review-dispatch` before submitting, and to repeat fixing and re-reviewing until no `must` findings are left (it passes)
-  (`selfReviewLines`). The target kind is `design-doc` for Requirements and Design (the draft is written to a temporary file outside the workspace and reviewed) and `code` for Implementation.
-  The round limit follows the skill (up to 5 including the first); if `must` findings are still left at the limit, the agent reports them and submits. Redoing after requested changes or
-  PR comments runs with the same instructions.
-- The agent reports the result as JSON under the heading `sacty-self-review` (`rounds`, `passed`, `remaining`, `notReviewed`, `summary`). sacty reads only the last one (`extractBlocks`)
-  and removes every report from the deliverable. A report is found as an object whose first key is the heading, even when it is not valid JSON (`headingSpans`).
-  For an unreadable report outside a code fence, only up to the end of the line where it starts is removed, and the text after it is kept. When the last
-  report cannot be read, sacty does not fall back to an earlier one. The agent does not write the "self-review" section the skill puts at the end of the description.
+- The instructions of the Requirements, Design, and Implementation steps (`SELF_REVIEW_STEPS`; Implementation includes bug fixes and tasks without tests) tell the agent to self-review with the `self-review` flow of the default skill `review-dispatch` before submitting, and to repeat fixing and re-reviewing until no `must` findings are left (it passes) (`selfReviewLines`). The target kind is `design-doc` for Requirements and Design (the draft is written to a temporary file outside the workspace and reviewed) and `code` for Implementation. The round limit follows the skill (up to 5 including the first); if `must` findings are still left at the limit, the agent reports them and submits. Redoing after requested changes or PR comments runs with the same instructions.
+- The agent reports the result as JSON under the heading `sacty-self-review` (`rounds`, `passed`, `remaining`, `notReviewed`, `summary`). sacty reads only the last one (`extractBlocks`) and removes every report from the deliverable. A report is found as an object whose first key is the heading, even when it is not valid JSON (`headingSpans`). For an unreadable report outside a code fence, only up to the end of the line where it starts is removed, and the text after it is kept. When the last report cannot be read, sacty does not fall back to an earlier one. The agent does not write the "self-review" section the skill puts at the end of the description.
 - `rounds` is 1 to 5, and `passed: true` is allowed only when `remaining` is empty. A report that does not match is treated as a wrong shape (`SelfReview`).
-- The report is recorded in `selfReview` of `AgentRunCompleted`. When there is no report, or it cannot be read or its shape is wrong, it is `null` (no record). The step does not stop.
-  The projection keeps the report of the latest submission per step in `selfReviews` (absent for steps that do not self-review and for earlier records). When the text is replaced
-  outside a step run (applying a change proposal, or a merge after a person edited the document in the PR), the earlier report did not see the new text, so it becomes no record.
-- The screen shows passed (rounds), not passed (rounds and the number of findings left), or no record on the deliverable cards (not on approved deliverables), the Implementation card,
-  and the approval screen. Not passed and no record use the warning color, and when it did not pass, the findings left and the viewpoints not reviewed are shown open.
-  The "finished" line of the Activity also shows it.
+- The report is recorded in `selfReview` of `AgentRunCompleted`. When there is no report, or it cannot be read or its shape is wrong, it is `null` (no record). The step does not stop. The projection keeps the report of the latest submission per step in `selfReviews` (absent for steps that do not self-review and for earlier records). When the text is replaced outside a step run (applying a change proposal, or a merge after a person edited the document in the PR), the earlier report did not see the new text, so it becomes no record.
+- The screen shows passed (rounds), not passed (rounds and the number of findings left), or no record on the deliverable cards (not on approved deliverables), the Implementation card, and the approval screen. Not passed and no record use the warning color, and when it did not pass, the findings left and the viewpoints not reviewed are shown open. The "finished" line of the Activity also shows it.
 
 Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `extractBlocks`), `packages/core/src/events.ts` (`SelfReview`, `SELF_REVIEW_STEPS`), `packages/core/src/projection.ts`, `apps/web/src/components/self-review.tsx` (`SelfReviewNote`)
 
@@ -135,57 +100,63 @@ Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `e
 | `document` | `document` |
 | `operation` | `operation` |
 
-Restrictions on which plans can be chosen (`allowedPlans`): `review` only when there is a repository and the task points to a PR. `design-only` only for tasks
-without a repository. `document` and `operation` are also restricted to tasks without a repository. `split` cannot be chosen by child tasks (splitting is one level only).
+The plans that can be chosen are restricted as follows (`allowedPlans`).
+
+- `review`: only when there is a repository and the task points to a PR
+- `design-only`, `document`, `operation`: only for tasks without a repository
+- `split`: child tasks cannot choose it (splitting is one level only)
 
 Code: `packages/core/src/events.ts` (`STEP_PLANS`), `apps/daemon/src/prompts.ts` (`allowedPlans`, `REPO_PLANS`)
 
 ## Non-development work and plan selection
 
-The Orchestrator compares the purpose, deliverable, change target, and scope rather than recommending `standard` unconditionally. Questions and cause analysis use `investigate`, existing PR reviews use `review`, overall design uses `design-only`, and drafts use `document`. Local changes whose request is already clear as acceptance criteria and that use existing mechanisms use `direct` (no requirements or design); the Orchestrator does not add steps by guessing at mechanisms the request does not mention (new roles, admin screens, and so on). Repository file changes, including documentation, use `direct` or `skip-design` for local changes, `standard` for broader design decisions, or `split` for work spanning multiple PRs. Reproducible bugs use `bugfix`; bugs requiring design decisions use `standard`.
+The Orchestrator does not recommend `standard` unconditionally. It compares the purpose, deliverable, change target, and scope, and chooses as follows.
 
-- `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, it receives no MCP/PF access or project context and does not read external drafts. Source text and rules must come from the task body or human feedback through Request changes. Optional export follows the existing export mechanism; an export failure does not stop task completion. Direct updates to existing external documents use `operation`.
-- `operation` is a single step. The existing Orchestrator selects one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. This does not add a preparation agent, proposal deliverable, or pre-execution approval gate. If the target or connection is missing, the task stops before execution starts.
+| Request | Plan |
+| --- | --- |
+| A question or cause analysis | `investigate` |
+| A review of an existing PR | `review` |
+| Overall design | `design-only` |
+| Writing a draft | `document` |
+| A local change whose request is clear as acceptance criteria and that uses existing mechanisms | `direct` (no requirements or design) |
+| A file change in a repository, including documentation, that is local | `direct` or `skip-design` |
+| A file change in a repository, including documentation, that needs broad design decisions | `standard` |
+| A file change in a repository, including documentation, split into several PRs | `split` |
+| A reproducible bug | `bugfix` |
+| A bug that needs design decisions | `standard` |
+
+The Orchestrator does not add steps by guessing at mechanisms the request does not mention (new roles, admin screens, and so on).
+
+- `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, the agent gets no MCP/PF access or project context and does not read external drafts. The source text and rules come from the task body or from a person's Request changes. Export is optional and uses the existing mechanism; an export failure does not stop the task from completing. To update an existing external document directly, use `operation`.
+- `operation` runs as a single step. The existing Orchestrator chooses one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. sacty adds no separate preparation agent, preparation deliverable, or approval gate before execution. If the target or destination is missing, the task stops before execution starts.
 - The destination kind of an operation (`via`) is `platform`, `mcp`, or `github`. `github` is a GitHub host for which the project chose a gh account, and `name` is the host. The host is listed among the Orchestrator's destination candidates. Reading uses [the GitHub read relay](gateway.en.md#relaying-github-reads), and comments on PRs and issues are written by the agent in its output and posted by sacty after the result is approved ([Requesting comments on PRs and issues](#requesting-comments-on-prs-and-issues)). It cannot change or push code. If no account is chosen for the host, the task stops before execution (`operation.connectionMissing`).
-- The task details display the selected operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only information. They are execution settings selected by the Orchestrator, not a new deliverable or approval gate.
-- The operation receives only the selected destination and performs the request. Apart from the selected destination, however, [the GitHub read relay](gateway.en.md#relaying-github-reads) is always available (read-only; writes go only to the selected destination and to sacty's posting after approval). Its prompt requires checking the target and preconditions, sending one write request without retrying, and reading back the result. A successful result with evidence waits for human approval. Failure, interruption, restart, or an unknown result stops execution; the persisted start record rejects Resume and keeps the task paused. After execution starts, Request changes is unavailable. A person checks external state, cancels the task, and creates a new task for any remaining work.
-- This is not an external exactly-once guarantee: one write and read-back verification are agent instructions. It does not add recurring work, monitoring, arbitrary integrations, or orchestration across several destinations. Separate mixed deliverables into tasks with explicit approval boundaries.
+- The task details show the chosen operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only. These are the execution settings the Orchestrator chose, not a new deliverable or approval gate.
+- The operation gets only the chosen destination and carries out the request. Apart from the chosen destination, however, [the GitHub read relay](gateway.en.md#relaying-github-reads) is always available (read-only; writes go only to the chosen destination and to sacty's posting after approval). The prompt requires checking the target and preconditions, a single write without retrying, and checking the change by reading it back. When a successful result with evidence comes back, the task waits for a person's result approval. On failure, interruption, restart, or an unknown result, the task stops. Based on the persisted start record, sacty rejects Resume and keeps the task stopped. After execution starts, Request changes is unavailable. A person checks the external state, cancels the task, and creates a new task for the work not yet done.
+- sacty does not guarantee exactly-once on the external side. The single write and the read-back check are instructions to the agent. sacty does not add recurring runs, monitoring, arbitrary integrations, or control of work across several destinations. Split a request with several kinds of deliverables into tasks with clear approval boundaries.
 
 Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core/src/events.ts`, `packages/core/src/projection.ts`, `apps/web/src/components/task-detail.tsx`
 
 ## Requesting comments on PRs and issues
 
-A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#relaying-github-reads) is read-only). To comment on a PR or an issue, it writes exactly
-one of the following JSON in its output. After a person approves the step's output, sacty posts it with the project's gh account.
+A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#relaying-github-reads) is read-only). To comment on a PR or an issue, it writes exactly one of the following JSON in its output. After a person approves the step's output, sacty posts it with the project's gh account.
 
 ```json
 {"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/12", "body": "Markdown body"}]}}
 ```
 
-- Every step except review can request comments (for `review`, sacty posts the written review). Posting uses the request in the approved output (`approved`).
-  When the output is approved again (the approval time changes), the request of that version is posted. Nothing is posted for a cancelled, paused, or running task.
-  It is posted before the next step (`awaitingGitHubComments`).
-- If the request cannot be read (two or more, not JSON, a wrong shape, an empty body), there are more than 10 comments (`GITHUB_COMMENTS_MAX`), or a
-  body is longer than 60000 characters (`GITHUB_COMMENT_BODY_MAX`), nothing is posted and the reason is recorded.
-- The target must be the URL of a PR (`/pull/<number>`) or an issue (`/issues/<number>`) in the project's targets (a repository or its organization), or in the
-  task's source or working repository. Otherwise only that comment is not posted, and the reason is recorded.
-- Right before posting each comment, it checks that no pause or cancel has been requested and that the step's approval has not changed. If it has, no new
-  comment is posted and nothing is recorded (on resume, the already posted ones are found by their markers and it continues).
-- A marker (`<!-- sacty-comment:<task>:<step>:<approval time>:<index> -->`) is put at the top of the body and a note that AI wrote it and a person approved it at
-  the end, and it is posted with the issue comments API. Before posting, a comment with the marker is searched for and used if found (no double posting even if it stops after posting and before recording).
-- The result is recorded in `GitHubCommentsPosted` (the step, the approval time, the URL or the reason per comment, and the reason if unreadable). Even if
-  posting fails, the task does not stop.
+- Every step except review can request comments (for `review`, sacty posts the written review). Posting uses the request in the approved output (`approved`). When the output is approved again (the approval time changes), the request of that version is posted. Nothing is posted for a cancelled, paused, or running task. It is posted before the next step (`awaitingGitHubComments`).
+- If the request cannot be read (two or more, not JSON, a wrong shape, an empty body), there are more than 10 comments (`GITHUB_COMMENTS_MAX`), or a body is longer than 60000 characters (`GITHUB_COMMENT_BODY_MAX`), nothing is posted and the reason is recorded.
+- The target must be the URL of a PR (`/pull/<number>`) or an issue (`/issues/<number>`) in the project's targets (a repository or its organization), or in the task's source or working repository. Otherwise only that comment is not posted, and the reason is recorded.
+- Right before posting each comment, it checks that no pause or cancel has been requested and that the step's approval has not changed. If it has, no new comment is posted and nothing is recorded (on resume, the already posted ones are found by their markers and it continues).
+- A marker (`<!-- sacty-comment:<task>:<step>:<approval time>:<index> -->`) is put at the top of the body and a note that AI wrote it and a person approved it at the end, and it is posted with the issue comments API. Before posting, a comment with the marker is searched for and used if found (no double posting even if it stops after posting and before recording).
+- The result is recorded in `GitHubCommentsPosted` (the step, the approval time, the URL or the reason per comment, and the reason if unreadable). Even if posting fails, the task does not stop.
 - The JSON request is removed from the investigation result returned to the source issue (`buildInvestigationComment`).
 
 Code: `apps/daemon/src/github-comments.ts` (`requestedGitHubComments`, `commentTarget`, `commentAllowed`, `buildGitHubComment`, `githubCommentMarker`, `withoutGitHubComments`), `apps/daemon/src/github-relay.ts` (`GITHUB_COMMENTS_MAX`, `GITHUB_COMMENT_BODY_MAX`), `apps/daemon/src/service.ts` (`postGitHubComments`, `awaitingGitHubComments`), `packages/core/src/events.ts` (`GitHubCommentsPosted`, `OperationVia`), `packages/core/src/projection.ts`
 
 ## Orchestrator
 
-It runs once before the steps are chosen (when the task starts). The AI is `step_agents.orchestrator` (or `default_agent` if absent); it uses the default image and
-reads a disposable copy of the code at the base commit. Its cost counts toward the task's budget. If the budget cap has been reached, the task is paused without running it.
-Like step runs, it receives the default context and the project's context (rules, skills, MCP servers, external PFs, tier definitions), is told the usable PFs together with the
-host's PFs, and records `ContextResolved` (PBI-146). When a session that could not be resumed is started anew, it is recorded with that run's ID as well.
-If the context cannot be prepared, `OrchestratorFailed` is recorded and the task is paused without running it (no cost).
+It runs once before the steps are chosen (when the task starts). The AI is `step_agents.orchestrator` (or `default_agent` if absent); it uses the default image and reads a disposable copy of the code at the base commit. Its cost counts toward the task's budget. If the budget cap has been reached, the task is paused without running it. Like step runs, it receives the default context and the project's context (rules, skills, MCP servers, external PFs, tier definitions), is told the usable PFs together with the host's PFs, and records `ContextResolved` (PBI-146). When a session that could not be resumed is started anew, it is recorded with that run's ID as well. If the context cannot be prepared, `OrchestratorFailed` is recorded and the task is paused without running it (no cost).
 
 The following are read from the answer (JSON under the heading `sacty-steps`) and recorded in `StepsChosen`.
 
@@ -204,31 +175,18 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | `documentsDir` | The directory for the requirements and design files ([Approval and request changes](approval.en.md)) |
 | `repo`, `repoReason` | For a task without a repository that chose a plan needing one, the repository to work in |
 
-- Step images (when `images` is configured and the project's target does not specify an image):
-  - The prompt asks for an image from `images` for every step in the chosen plan. The default image is not listed as a candidate; it is described as
-    the last resort when none of `images` fits (only Node.js and git to run Claude Code and Codex, with no test browsers, DB clients, or tools for other languages),
-    and for a step that uses it, the reason goes in `defaultReasons`. The image that runs the tests (Implementation, and Reproduce for bug fixes) is to be chosen from
-    `testCommand` and the repository's dependencies (browser tests, DB clients, and so on).
-  - For each step that runs in the default image (a chosen step whose image is absent or `default`), the reason is recorded in
-    `defaultImageReasons` of `StepsChosen`; a step without a reason (no image written, or `default` without a reason) is recorded in `imagesUnexplained`.
-    The task does not stop; it proceeds in the default image, and the Activity (the task page) shows that there is no reason.
+- Step images (when `images` is configured and the project's target does not specify an image)
+  - The prompt asks for an image from `images` for every step in the chosen plan. The default image is not listed as a candidate; it is described as the last resort when none of `images` fits (only Node.js and git to run Claude Code and Codex, with no test browsers, DB clients, or tools for other languages), and for a step that uses it, the reason goes in `defaultReasons`. The image that runs the tests (Implementation, and Reproduce for bug fixes) is to be chosen from `testCommand` and the repository's dependencies (browser tests, DB clients, and so on).
+  - For each step that runs in the default image (a chosen step whose image is absent or `default`), the reason is recorded in `defaultImageReasons` of `StepsChosen`; a step without a reason (no image written, or `default` without a reason) is recorded in `imagesUnexplained`. The task does not stop; it proceeds in the default image, and the Activity (the task page) shows that there is no reason.
   - Neither is recorded when `images` is not configured, when the project's target specifies an image, or for a task that proceeds without a repository.
-- When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded,
-  and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and
-  waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
-- How to answer (PBI-146): the prompt asks it to follow the default skill `plan-steps` if present to compare the candidates, to write the answer JSON to a file and check it with a tool such as `jq` before output,
-  and to fix it until the check passes and then output it exactly once at the end of the text (`planAnswerLines`; [Context composition](context.en.md#default-plan-selection-skill)). The reader (`extractStepPlan`) is
-  unchanged: a broken answer still stops the task as unreadable.
+- When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded, and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
+- How to answer (PBI-146): the prompt asks it to follow the default skill `plan-steps` if present to compare the candidates, to write the answer JSON to a file and check it with a tool such as `jq` before output, and to fix it until the check passes and then output it exactly once at the end of the text (`planAnswerLines`; [Context composition](context.en.md#default-plan-selection-skill)). The reader (`extractStepPlan`) is unchanged: a broken answer still stops the task as unreadable.
 - When the run fails or the answer cannot be read, `OrchestratorFailed` is recorded and the task is paused (it does not fall back to the standard plan).
 - For a task taken in from a ticket, before choosing steps the Orchestrator reads the ticket and decides the repository, title, and summary (`TicketTriaged`).
 - A PR-review-only task uses the `review` plan without asking the Orchestrator to choose steps (`chooseReviewSteps`, `reviewOnlySteps`).
-  - Only when `images` is configured and neither the project's target nor a rerun decides the image, the Orchestrator chooses just the image for the `review` step
-    (`buildReviewImagePrompt`; the answer is `image`, `reason`, and `defaultReason` under `sacty-review-image`, read by `extractReviewImage`). The prompt asks it to choose from the language and version
-    of the code the PR touches and from what the verification commands need (browser tests, DB clients, and so on), with the default image as the last resort.
-  - When it chooses, `StepsChosen` is recorded as the Orchestrator's (`imageSource: orchestrator`, `imageReason`, and the cost of the run), and for the default image
-    `defaultImageReasons` or `imagesUnexplained` is recorded as above. The reason text is `review.reviewOnlyImageChosen`.
-  - When the run fails, the answer cannot be read, or the name is not in `images`, `OrchestratorFailed` is recorded and the task stops, as for choosing steps (if there is a fallback agent,
-    it chooses again with that agent).
+  - Only when `images` is configured and neither the project's target nor a rerun decides the image, the Orchestrator chooses just the image for the `review` step (`buildReviewImagePrompt`; the answer is `image`, `reason`, and `defaultReason` under `sacty-review-image`, read by `extractReviewImage`). The prompt asks it to choose from the language and version of the code the PR touches and from what the verification commands need (browser tests, DB clients, and so on), with the default image as the last resort.
+  - When it chooses, `StepsChosen` is recorded as the Orchestrator's (`imageSource: orchestrator`, `imageReason`, and the cost of the run), and for the default image `defaultImageReasons` or `imagesUnexplained` is recorded as above. The reason text is `review.reviewOnlyImageChosen`.
+  - When the run fails, the answer cannot be read, or the name is not in `images`, `OrchestratorFailed` is recorded and the task stops, as for choosing steps (if there is a fallback agent, it chooses again with that agent).
   - Otherwise (no `images`, or the image is decided), the Orchestrator is not used (`StepsChosen` is recorded by sacty, and the cost is 0).
 - Reuse of Orchestrator sessions is described in "Saving and reusing sessions" in [Agent execution](agent-execution.en.md).
 
@@ -236,99 +194,61 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 
 ## Step review
 
-After the steps are chosen, each time a step finishes, the Orchestrator skips the remaining steps that are not needed. It does not add or reorder steps.
-The final deliverable is judged by the Goal Guardian's final review and approved by a person merging the PR.
+After the steps are chosen, each time a step finishes, the Orchestrator skips the remaining steps that are not needed. It does not add or reorder steps. The final deliverable is judged by the Goal Guardian's final review and approved by a person merging the PR.
 
-- Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan
-  has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped.
-- When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain,
-  the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`).
-  For example, `standard` is reviewed after the preliminary investigation (requirements, design) and after the requirements are approved (design); `bugfix` after the preliminary investigation (reproduce). `direct` is not reviewed.
-- Prompt (`buildStepReviewPrompt`): it passes the task, the finished step's output (up to the first 30,000 characters), the remaining steps, and the skippable steps, and gives guidelines
-  (skip the requirements when the request itself is the acceptance criteria, the design for a local change that follows existing mechanisms, the reproduction when the cause and fix are clear),
-  and says not to keep steps by guessing at mechanisms the request does not mention. It runs as an Orchestrator run (`runOrchestrator`), resuming the task's
-  Orchestrator session.
-- The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is
-  recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.
-- When the run fails or the answer cannot be read, the task does not stop: nothing is skipped and `StepsSkipped` (empty `steps`) is recorded by sacty (the reason is
-  `orchestrator.stepReviewFailed`). However, if the run failed without confirming that its container stopped (`run.containerNotConfirmed`), the task
-  then pauses (`TaskPaused`) so that the original container and the next step's run do not overlap. When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels
-  during the review, nothing is recorded.
-- Projection: skipped steps become `skip`, and if the active step is skipped, the next step to do becomes active. `stepReview` is cleared by `StepsSkipped`, by redoing from
-  an earlier step (`reopen`), and by starting a step's run (`AgentRunStarted`). A record when no review is pending, or that skips a step that cannot be skipped, is rejected.
+- Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped.
+- When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain, the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`). For example, `standard` is reviewed after the preliminary investigation (requirements, design) and after the requirements are approved (design); `bugfix` after the preliminary investigation (reproduce). `direct` is not reviewed.
+- Prompt (`buildStepReviewPrompt`): it passes the task, the finished step's output (up to the first 30,000 characters), the remaining steps, and the skippable steps, and gives guidelines (skip the requirements when the request itself is the acceptance criteria, the design for a local change that follows existing mechanisms, the reproduction when the cause and fix are clear), and says not to keep steps by guessing at mechanisms the request does not mention. It runs as an Orchestrator run (`runOrchestrator`), resuming the task's Orchestrator session.
+- The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.
+- When the run fails or the answer cannot be read, the task does not stop: nothing is skipped and `StepsSkipped` (empty `steps`) is recorded by sacty (the reason is `orchestrator.stepReviewFailed`). However, if the run failed without confirming that its container stopped (`run.containerNotConfirmed`), the task then pauses (`TaskPaused`) so that the original container and the next step's run do not overlap. When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels during the review, nothing is recorded.
+- Projection: skipped steps become `skip`, and if the active step is skipped, the next step to do becomes active. `stepReview` is cleared by `StepsSkipped`, by redoing from an earlier step (`reopen`), and by starting a step's run (`AgentRunStarted`). A record when no review is pending, or that skips a step that cannot be skipped, is rejected.
 - Changes are not sent back to skipped steps (`reworkTargets`). The task screen does not show the deliverables of skipped requirements, design, or reproduction.
-- Steps after skipping: a design whose requirements were skipped treats the task as the requirements. An implementation without requirements and design (`direct`, or both skipped)
-  follows the task and the preliminary investigation and verifies the viewpoint `REQ` as the task's purpose (the request) (`withoutRequirements`, `directImplementLines`).
-  The final review and the PR body also treat `REQ` as the task's purpose. The verification basis (`verificationBasis`) treats skipped steps as absent.
+- Steps after skipping: a design whose requirements were skipped treats the task as the requirements. An implementation without requirements and design (`direct`, or both skipped) follows the task and the preliminary investigation and verifies the viewpoint `REQ` as the task's purpose (the request) (`withoutRequirements`, `directImplementLines`). The final review and the PR body also treat `REQ` as the task's purpose. The verification basis (`verificationBasis`) treats skipped steps as absent.
 
 Code: `packages/core/src/events.ts` (`SKIPPABLE_STEPS`, `StepsSkipped`), `packages/core/src/projection.ts` (`skippableSteps`, `advance`, `reworkTargets`), `apps/daemon/src/service.ts` (`runNextInner`, `reviewSteps`), `apps/daemon/src/prompts.ts` (`buildStepReviewPrompt`, `extractStepReview`, `withoutRequirements`, `directImplementLines`, `verificationBasis`)
 
 ## Changing a step's image
 
-- On the task detail, a person can change the image of each step (`POST /api/tasks/:id/images`, input `step` and `image` of `ChangeStepImageInput`).
-  The step's state does not matter (a step yet to run, running, failed or paused, awaiting approval, or done). A cancelled task cannot be changed.
-- The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). These are
-  refused with the reason (409): a name not in `images` (including a name removed from config.yaml; `image.notInImages`), the current name
-  (`image.unchanged`), and a step the task doesn't have (`image.stepMissing`). Every step can be changed. When config.yaml can't be read or parsed, the names can't be checked, so the change is refused with the settings problem as the
-  reason (`image.configUnavailable`; `default` too). When the daemon's status can't be fetched or the settings can't be read, the screen says the choices
-  can't be checked and shows neither the warning that a name is not in `images` nor the change form (`stepImageOptions`; a temporary failure is not mistaken for a removed name).
-- A change appends `StepImageChanged` (`step`, `from`, `to`; the actor is `person`). `from` is the name before the change (`default` if none was set).
-  The projection sets the step's `images` to `to` and keeps the last change of each step in `imageChanges` (`from`, `to`, time). `StepsChosen` is not rewritten.
-- The changed image is used from the next run of the step (starting a step that hasn't started, a retry, or a rerun after rework). The current run is not stopped.
-  A step run fixes its image when `AgentRunStarted` is appended (a change while the run is being prepared does not change that run). The integration review works the same way.
-- The final review that runs the tests also uses the Implementation step's image at the time the final review starts ("Verifying the implementation" below). If the Implementation image is
-  changed while the Implementation step runs, the final review after that run uses the changed image.
-- Tasks whose project target specifies an image can be changed too. The person's change takes precedence for that step only (other steps keep the target's image).
-  Changing the target's image does not change the images of a task whose steps are already chosen.
-- The screen shows, for each step, the image, where it came from (the time a person changed it and the previous name, the project target, the Orchestrator,
-  or not set) and when a change takes effect (from the next run while running; from a retry or rework for a done step) (`stepImageRows`).
-  Running means the agent run, the implementation verification, and the reproduction check (`stepRunning`). The Activity shows who changed which step, when, and from what to what.
-- For a step the Orchestrator left on the default image, where it came from shows the reason for the default image (`defaultImageReasons`) or that no reason was
-  given (`imagesUnexplained`) until a person changes it. After a person changes it, the person's change is shown. The "Steps chosen" line in the Activity stays as recorded
-  when the steps were chosen (the later `StepImageChanged` line shows the change).
-- On the screen, "Step images" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not in `images`
-  is in use, it is shown open so it is not overlooked.
+- On the task detail, a person can change the image of each step (`POST /api/tasks/:id/images`, input `step` and `image` of `ChangeStepImageInput`). The step's state does not matter (a step yet to run, running, failed or paused, awaiting approval, or done). A cancelled task cannot be changed.
+- The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). Every step can be changed. sacty refuses the change with the reason (409) in these cases.
+  - A name not in `images` (including a name removed from config.yaml; `image.notInImages`)
+  - The current name (`image.unchanged`)
+  - A step the task doesn't have (`image.stepMissing`)
+  - config.yaml can't be read or parsed. The names can't be checked, so sacty refuses with the settings problem as the reason (`image.configUnavailable`; `default` too)
+- When the daemon's status can't be fetched or the settings can't be read, the screen says the choices can't be checked and shows neither the warning that a name is not in `images` nor the change form (`stepImageOptions`; a temporary failure is not mistaken for a removed name).
+- A change appends `StepImageChanged` (`step`, `from`, `to`; the actor is `person`). `from` is the name before the change (`default` if none was set). The projection sets the step's `images` to `to` and keeps the last change of each step in `imageChanges` (`from`, `to`, time). `StepsChosen` is not rewritten.
+- The changed image is used from the next run of the step (starting a step that hasn't started, a retry, or a rerun after rework). The current run is not stopped. A step run fixes its image when `AgentRunStarted` is appended (a change while the run is being prepared does not change that run). The integration review works the same way.
+- The final review that runs the tests also uses the Implementation step's image at the time the final review starts ("Verifying the implementation" below). If the Implementation image is changed while the Implementation step runs, the final review after that run uses the changed image.
+- Tasks whose project target specifies an image can be changed too. The person's change takes precedence for that step only (other steps keep the target's image). Changing the target's image does not change the images of a task whose steps are already chosen.
+- The screen shows, for each step, the image, where it came from (the time a person changed it and the previous name, the project target, the Orchestrator, or not set) and when a change takes effect (from the next run while running; from a retry or rework for a done step) (`stepImageRows`). Running means the agent run, the implementation verification, and the reproduction check (`stepRunning`). The Activity shows who changed which step, when, and from what to what.
+- For a step the Orchestrator left on the default image, where it came from shows the reason for the default image (`defaultImageReasons`) or that no reason was given (`imagesUnexplained`) until a person changes it. After a person changes it, the person's change is shown. The "Steps chosen" line in the Activity stays as recorded when the steps were chosen (the later `StepImageChanged` line shows the change).
+- On the screen, "Step images" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not in `images` is in use, it is shown open so it is not overlooked.
 
 Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`, `stepImageOptions`)
 
 ## Changing a step's agent
 
-- In the task details, a person can change the agent of each step (`POST /api/tasks/:id/agents`; the input is `step` and `agent` of `ChangeStepAgentInput`).
-  The state of the step does not matter. A cancelled task cannot be changed. The targets are the steps run by step agents (`stepAgentChangeable`). Integration review is
-  done by the Goal Guardian, so it is not shown on the screen and is also rejected by the API (`agent.stepNotChangeable`).
-- The choices are the names of the usable agents (the defaults in `config/agents.yaml` with `agents` of config.yaml laid over them, that have an endpoint and a price; [Configuration](configuration.en.md#usable-agents)). A name is taken exactly as the key, without trimming spaces or limiting its length. Inherited
-  names (`constructor`, `toString`, and so on) are not agent names (`definedAgent`). These are rejected with a reason (409): a name not among the usable agents
-  (`agent.notInAgents`), the same name as now (`agent.unchanged`), a step not in the task (`agent.stepMissing`), Integration review (`agent.stepNotChangeable`), and
-  config.yaml that cannot be read (`agent.configUnavailable`).
-- A change adds `StepAgentChanged` (`step`, `from`, `to`; actor `person`). `from` is the name before the change (the name decided by config.yaml if no person chose one).
-  The projection sets `agents` to `to` and keeps the last change per step in `agentChanges`.
-- Step runs, the check of the after-merge watch, operations, and exports use the agent a person chose in preference to `step_agents` and `default_agent` in config.yaml
-  (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. Step runs and the watch read it from the latest task after
-  preparing. An operation reads it from the latest task after looking up its connection. If it changes while an operation or export is preparing (its connection and context), the run does not start with the old agent; the task stays queued and
-  the next run prepares again with the new agent. If a name chosen again while preparing is not in the settings that run read (it was added to config.yaml meanwhile),
-  the task also stays queued without pausing, and the next run decides from the latest settings. If the chosen name is no longer among the usable agents (removed from the settings, or no endpoint or price), the task
-  does not fall back to the default and pauses with `agent.chosenMissing` (an export records it as the reason it could not export). Tier subagents are placed with the
-  chosen agent as the parent.
-- The status (`GET /api/status`) returns the agents that can be chosen (name, runtime, model, reasoning effort; no secret values or endpoint URLs) and the name per step
-  decided by config.yaml (`stepAgents`). The screen shows, for each step, the agent, where it came from (config.yaml, or the time and previous name of a person's change),
-  and when it is used (`stepAgentRows`). The choices are not shown when the status cannot be read or the settings cannot be read, and stub is offered only when the
-  current agent is stub (`stepAgentOptions`). A chosen name not among the usable agents is shown with a warning.
-- On the screen, "Step agents" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not among the
-  usable agents is in use, it is shown open so it is not overlooked.
+- In the task details, a person can change the agent of each step (`POST /api/tasks/:id/agents`; the input is `step` and `agent` of `ChangeStepAgentInput`). The state of the step does not matter. A cancelled task cannot be changed. The targets are the steps run by step agents (`stepAgentChangeable`). Integration review is done by the Goal Guardian, so it is not shown on the screen and is also rejected by the API (`agent.stepNotChangeable`).
+- The choices are the names of the usable agents (the defaults in `config/agents.yaml` with `agents` of config.yaml laid over them, that have an endpoint and a price; [Configuration](configuration.en.md#usable-agents)). A name is taken exactly as the key, without trimming spaces or limiting its length. Inherited names (`constructor`, `toString`, and so on) are not agent names (`definedAgent`). sacty rejects the change with a reason (409) in these cases.
+  - A name not among the usable agents (`agent.notInAgents`)
+  - The same name as now (`agent.unchanged`)
+  - A step not in the task (`agent.stepMissing`)
+  - Integration review (`agent.stepNotChangeable`)
+  - config.yaml cannot be read (`agent.configUnavailable`)
+- A change adds `StepAgentChanged` (`step`, `from`, `to`; actor `person`). `from` is the name before the change (the name decided by config.yaml if no person chose one). The projection sets `agents` to `to` and keeps the last change per step in `agentChanges`.
+- Step runs, the check of the after-merge watch, operations, and exports use the agent a person chose in preference to `step_agents` and `default_agent` in config.yaml (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. Step runs and the watch read it from the latest task after preparing. An operation reads it from the latest task after looking up its connection. If it changes while an operation or export is preparing (its connection and context), the run does not start with the old agent; the task stays queued and the next run prepares again with the new agent. If a name chosen again while preparing is not in the settings that run read (it was added to config.yaml meanwhile), the task also stays queued without pausing, and the next run decides from the latest settings. If the chosen name is no longer among the usable agents (removed from the settings, or no endpoint or price), the task does not fall back to the default and pauses with `agent.chosenMissing` (an export records it as the reason it could not export). Tier subagents are placed with the chosen agent as the parent.
+- The status (`GET /api/status`) returns the agents that can be chosen (name, runtime, model, reasoning effort; no secret values or endpoint URLs) and the name per step decided by config.yaml (`stepAgents`). The screen shows, for each step, the agent, where it came from (config.yaml, or the time and previous name of a person's change), and when it is used (`stepAgentRows`). The choices are not shown when the status cannot be read or the settings cannot be read, and stub is offered only when the current agent is stub (`stepAgentOptions`). A chosen name not among the usable agents is shown with a warning.
+- On the screen, "Step agents" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not among the usable agents is in use, it is shown open so it is not overlooked.
 
 Code: `apps/daemon/src/service.ts` (`changeStepAgent`, `pauseForMissingAgent`, `status`), `apps/daemon/src/config.ts` (`stepAgentFor`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepAgentChanged`, `ChangeStepAgentInput`), `apps/web/src/lib/labels.ts` (`stepAgentRows`, `stepAgentOptions`)
 
 ## Tasks from the version with the "PR作成" step
 
-Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. That step was removed, with no compatibility layer. Its records can't be read as a step name,
-so at daemon startup, before the Activity is read, tasks with those records are deleted from the Activity (`purgeLegacyPrStepTasks`).
+Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. That step was removed, with no compatibility layer. Its records can't be read as a step name, so at daemon startup, before the Activity is read, tasks with those records are deleted from the Activity (`purgeLegacyPrStepTasks`).
 
-- Deleted tasks: tasks whose plan (`steps` in `StepsChosen`) contains `pr`, and tasks with a record that points to the `pr` step (`step` or `target` is `pr`).
-  Tasks in progress (queued, waiting for approval, paused, and so on) are deleted too.
-- Tasks deleted together: the parent and children of a task split (if either is deleted, the parent and all children), and a fix task from the watch after merge and its original task (if either
-  is deleted, both). The links are followed through `parent` and `fix` of each `TaskCreated` (in both directions, repeatedly).
-- Before deleting, the settings (`config.yaml`) are read and checked (`purgeLegacyTasksAtStartup`). If they have an error, nothing is deleted; the number of tasks and the settings error
-  are written to the log and the daemon stops starting up (the old records can't be read). Fix the settings and start again to delete them. If there is nothing to delete, the settings are not read.
+- Deleted tasks: tasks whose plan (`steps` in `StepsChosen`) contains `pr`, and tasks with a record that points to the `pr` step (`step` or `target` is `pr`). Tasks in progress (queued, waiting for approval, paused, and so on) are deleted too.
+- Tasks deleted together: the parent and children of a task split (if either is deleted, the parent and all children), and a fix task from the watch after merge and its original task (if either is deleted, both). The links are followed through `parent` and `fix` of each `TaskCreated` (in both directions, repeatedly).
+- Before deleting, the settings (`config.yaml`) are read and checked (`purgeLegacyTasksAtStartup`). If they have an error, nothing is deleted; the number of tasks and the settings error are written to the log and the daemon stops starting up (the old records can't be read). Fix the settings and start again to delete them. If there is nothing to delete, the settings are not read.
 - The number of deleted tasks and their IDs are written to the daemon log. If there is nothing to delete, nothing is done.
 - The Activity is append-only (a trigger rejects deletes), so the trigger is dropped only while deleting, inside the same transaction, and recreated afterwards.
 - Not deleted: workspaces, session logs, Orchestrator sessions, and GitHub branches and PRs (open PRs stay open).
@@ -338,86 +258,41 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 
 ## Verifying the implementation
 
-- When the Implementation step finishes, the task waits for verification (`verification = "pending"`); sacty gets the diff and moves on to the Goal Guardian's final review.
-  sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused
-  without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
-- The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`.
-  The copy's .git is not the workspace's .git but a copy of the metadata saved before the agent touched it (tests can use git; the implementation shows as changes from the base).
-  If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started
-  and connected before the tests ([Services](services.en.md#when-services-start)).
-- If there is a test (verification) command (the Orchestrator's `testCommand`, or for a task without tests, the command the implementation declared), the prompt
-  (`testRunLines`) has the Goal Guardian run that command in the workspace before judging. The prompt says that setup (fetching dependencies and so on) is allowed, that the
-  whole output must be checked, not just the end (every kind of test the command runs), that the tests count as passing only when the exit code is 0 with no failing or erroring tests,
-  and that tests and commands must not be changed to make them pass. It also has the Goal Guardian check that the tests mapped to each viewpoint actually ran and passed (were not skipped or excluded),
-  and the basis of judgment is the diff, plus the implemented code in the workspace and the results of the tests the Goal Guardian ran.
-- The tests it ran are reported in `tests` (`command`, `exitCode`, `output` (an excerpt of the result), `missingCommands`) inside the same `sacty-final-review` as the verdicts.
-  sacty records them in `tests` of `FinalReviewed` (`command` is the command sacty passed; `output` is up to 8,000 characters).
+- When the Implementation step finishes, the task waits for verification (`verification = "pending"`); sacty gets the diff and moves on to the Goal Guardian's final review. sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
+- The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`. The copy's .git is not the workspace's .git but a copy of the metadata saved before the agent touched it (tests can use git; the implementation shows as changes from the base). If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started and connected before the tests ([Services](services.en.md#when-services-start)).
+- If there is a test (verification) command (the Orchestrator's `testCommand`, or for a task without tests, the command the implementation declared), the prompt (`testRunLines`) has the Goal Guardian run that command in the workspace before judging. The prompt says that setup (fetching dependencies and so on) is allowed, that the whole output must be checked, not just the end (every kind of test the command runs), that the tests count as passing only when the exit code is 0 with no failing or erroring tests, and that tests and commands must not be changed to make them pass. It also has the Goal Guardian check that the tests mapped to each viewpoint actually ran and passed (were not skipped or excluded), and the basis of judgment is the diff, plus the implemented code in the workspace and the results of the tests the Goal Guardian ran.
+- The tests it ran are reported in `tests` (`command`, `exitCode`, `output` (an excerpt of the result), `missingCommands`) inside the same `sacty-final-review` as the verdicts. sacty records them in `tests` of `FinalReviewed` (`command` is the command sacty passed; `output` is up to 8,000 characters).
 - The final review judges each viewpoint and each comment, and passes only when all are met. On top of that, sacty applies the following (`extractFinalReview`).
-  - When there is a test command, it passes only when the Goal Guardian reported exit code 0 (no report, or a code other than 0, fails regardless of the viewpoint
-    verdicts).
-  - A viewpoint the implementation did not map to a test fails regardless of the Goal Guardian's verdict, with the reason `review.viewpointUnmapped`
-    (the prompt also says to fail that viewpoint). This does not apply to a task without tests.
-  - The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above),
-    the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every
-    viewpoint ID under review as is (`REQ` for a task without a design, `REPRO` for a bug fix), and the instructions say to answer with those IDs (with the fixed
-    example `TV-1`, a `REQ` task was answered with the example's ID and treated as having no verdict; PBI-137).
-  - A viewpoint without a verdict fails. When the answer uses only IDs that are not under review, it is not reinterpreted: it fails with the reason
-    `review.verdictIdMismatch` (the viewpoint and the answered ID differ). If there is no other ID either, the reason is `review.verdictMissing` (no verdict).
+  - When there is a test command, it passes only when the Goal Guardian reported exit code 0 (no report, or a code other than 0, fails regardless of the viewpoint verdicts).
+  - A viewpoint the implementation did not map to a test fails regardless of the Goal Guardian's verdict, with the reason `review.viewpointUnmapped` (the prompt also says to fail that viewpoint). This does not apply to a task without tests.
+  - The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above), the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every viewpoint ID under review as is (`REQ` for a task without a design, `REPRO` for a bug fix), and the instructions say to answer with those IDs (with the fixed example `TV-1`, a `REQ` task was answered with the example's ID and treated as having no verdict; PBI-137).
+  - A viewpoint without a verdict fails. When the answer uses only IDs that are not under review, it is not reinterpreted: it fails with the reason `review.verdictIdMismatch` (the viewpoint and the answered ID differ). If there is no other ID either, the reason is `review.verdictMissing` (no verdict).
 
   If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
 
   Code: `apps/daemon/src/prompts.ts` (`finalReviewViewpointIds`, `buildFinalReviewPrompt`, `testRunLines`, `extractFinalReview`)
-- If the final review does not pass, the implementation is redone. The redo prompt gets the review's findings, the tests the Goal Guardian ran (command,
-  exit code, and excerpt), and the viewpoints that were not verified (`feedbackLines`). If it fails `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused
-  (`verification`). Resuming resets the count.
-- When a tool written in the test (verification) command is not in the image: if, among the names the Goal Guardian listed in `missingCommands`, there is one that is written
-  as a word in the test command and contains no `/`, redoing the implementation would not fix it, so no verdict is recorded; the cost spent is recorded in
-  `FinalReviewFailed` and the task is paused (`verify.commandMissing`. It shows the tool names, the image name and the step (Implementation), and guides to install them with `images.<name>`'s
-  `packages` or `run` and rebuild with `sacty image build`, or to change to another image; for the default image, to add an image to
-  `images`). Resuming redoes the final review (running the tests) without redoing the implementation. Names not written in the test command (such as tools used by scripts
-  inside `npm test`) and names containing `/` (such as `./scripts/check.sh`) are repository problems, are not matched, and the review is judged as usual.
+- If the final review does not pass, the implementation is redone. The redo prompt gets the review's findings, the tests the Goal Guardian ran (command, exit code, and excerpt), and the viewpoints that were not verified (`feedbackLines`). If it fails `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused (`verification`). Resuming resets the count.
+- When a tool written in the test (verification) command is not in the image, redoing the implementation does not fix it. If, among the names the Goal Guardian listed in `missingCommands`, there is one that is written as a word in the test command and contains no `/`, sacty records no verdict, records the cost spent in `FinalReviewFailed`, and pauses the task (`verify.commandMissing`). The pause shows the tool names, the image name, and the step (Implementation), and suggests installing them with `images.<name>`'s `packages` or `run` and rebuilding with `sacty image build`, or changing to another image. For the default image, it suggests adding an image to `images`. Resuming redoes the final review (running the tests) without redoing the implementation. Names not written in the test command (such as tools used by scripts inside `npm test`) and names containing `/` (such as `./scripts/check.sh`) are repository problems, are not matched, and the review is judged as usual.
 
   Code: `apps/daemon/src/prompts.ts` (`extractFinalReview`), `apps/daemon/src/service.ts` (`verify`)
-- After the Reproduce step (PBI-29): sacty does not run the reproduction test. The reproduce agent's prompt has it run the test it wrote with the test command itself,
-  confirm that it fails because of the bug, and write `tests`, `reproduced`, `command`, `exitCode`, and `output` (an excerpt of the result) in `sacty-reproduction`
-  (`extractReproduction`). sacty records `ReproductionChecked` in the same append as the step's completion (`reproductionChecked`). Only when a reproduction
-  test was declared, `reproduced` is `true`, and a non-zero integer exit code was declared is the bug treated as reproduced, and the task moves to Implementation. Without a declared test it is
-  `reproduce.noTests`, otherwise `reproduce.notChecked`; the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved;
-  request changes or cancel).
-  - A task that was waiting for sacty's check in an older version (`reproductionPending`) is recorded as not reproduced (`reproduce.notChecked`) on resume or restart,
-    without running the tests (`checkReproduction`).
+- After the Reproduce step (PBI-29): sacty does not run the reproduction test. The reproduce agent's prompt has it run the test it wrote with the test command itself, confirm that it fails because of the bug, and write `tests`, `reproduced`, `command`, `exitCode`, and `output` (an excerpt of the result) in `sacty-reproduction` (`extractReproduction`). sacty records `ReproductionChecked` in the same append as the step's completion (`reproductionChecked`). Only when a reproduction test was declared, `reproduced` is `true`, and a non-zero integer exit code was declared is the bug treated as reproduced, and the task moves to Implementation. Without a declared test it is `reproduce.noTests`, otherwise `reproduce.notChecked`; the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved; request changes or cancel).
+  - A task that was waiting for sacty's check in an older version (`reproductionPending`) is recorded as not reproduced (`reproduce.notChecked`) on resume or restart, without running the tests (`checkReproduction`).
 
   Code: `apps/daemon/src/prompts.ts` (`extractReproduction`), `apps/daemon/src/service.ts` (`reproductionChecked`, `checkReproduction`)
-- Activity logs from older versions: `TestsRun` (the result sacty ran in a test container), `TestsSkipped`, and `tests_passed` of `verification` are
-  kept only for reading them (the current version does not record them). `FinalReviewed` and `FinalReviewFailed` are accepted whether `verification` is `pending` or `tests_passed`.
-  The Implementation `AgentRunCompleted` clears the previous test results (`lastTests`, `testsSkippedAt`).
-- The implementation deliverable (the task screen and the Implement approval screen) shows the tests the Goal Guardian ran (`tests` of the final review) as "Tests run by the Goal
-  Guardian" (records from older versions as "Test run"). It shows the test results and the final review in the correspondence table only for the current submission's verification
-  (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and, in records from older
-  versions, final reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Tests run by
-  the Goal Guardian for the previous submission" (for records from older versions, "Test run for the previous submission") and "Final review of the previous submission" (that nothing has run
-  or been judged for the current submission yet is shown in the hint (tooltip) next to the heading), and the result in the correspondence table is
-  "Not run". For a task without tests, a viewpoint without tests is shown as "Judged by the goal" only when there is a final review of the current submission; while waiting for
-  verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
-- The test line of the PR body writes, after `テスト：`, the command, pass or fail, and `（ゴールガーディアンが実行。終了コード N）` (`resultTableLines`).
-  The chat's explanation of the judgment also shows the command and exit code of the tests the Goal Guardian ran (`chatJudgementLines`).
+- Activity logs from older versions: `TestsRun` (the result sacty ran in a test container), `TestsSkipped`, and `tests_passed` of `verification` are kept only for reading them (the current version does not record them). `FinalReviewed` and `FinalReviewFailed` are accepted whether `verification` is `pending` or `tests_passed`. The Implementation `AgentRunCompleted` clears the previous test results (`lastTests`, `testsSkippedAt`).
+- The implementation deliverable (the task screen and the Implement approval screen) shows the tests the Goal Guardian ran (`tests` of the final review) as "Tests run by the Goal Guardian" (records from older versions as "Test run"). It shows the test results and the final review in the correspondence table only for the current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`) are shown as the previous submission's. In records from older versions, final reviews older than the latest test result (or, if tests were skipped, the time they were skipped) are also shown as the previous submission's. These appear under the headings "Tests run by the Goal Guardian for the previous submission" (for records from older versions, "Test run for the previous submission") and "Final review of the previous submission", and the result in the correspondence table is "Not run". The hint (tooltip) next to the heading says that nothing has run or been judged for the current submission yet. For a task without tests, a viewpoint without tests is shown as "Judged by the goal" only when there is a final review of the current submission; while waiting for verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
+- The test line of the PR body writes, after `テスト：`, the command, pass or fail, and `（ゴールガーディアンが実行。終了コード N）` (`resultTableLines`). The chat's explanation of the judgment also shows the command and exit code of the tests the Goal Guardian ran (`chatJudgementLines`).
 
 ### The PR for a verified implementation
 
-- When the final review passes, the Implementation step is not finished; the task waits to open the PR (`Task.publishPending`; the status is queued). sacty then
-  commits and pushes the implementation workspace and opens the PR ([Approval and request changes](approval.en.md#approval-through-prs)). No agent is used.
-- After opening the PR, sacty records `PullRequestPublished` and the implementation submission (`StepSubmitted`, with `step` set to `implement`) in the same append, and the task waits for the Implement approval.
-  If the implementation changed nothing, sacty records `NoChangesFound` and the implementation submission without opening a PR ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
-- If opening the PR fails, the reason is recorded and the task stops (`pr.failed` and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR
-  survives a pause and a restart).
+- When the final review passes, the Implementation step is not finished; the task waits to open the PR (`Task.publishPending`; the status is queued). sacty then commits and pushes the implementation workspace and opens the PR ([Approval and request changes](approval.en.md#approval-through-prs)). No agent is used.
+- After opening the PR, sacty records `PullRequestPublished` and the implementation submission (`StepSubmitted`, with `step` set to `implement`) in the same append, and the task waits for the Implement approval. If the implementation changed nothing, sacty records `NoChangesFound` and the implementation submission without opening a PR ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
+- If opening the PR fails, the reason is recorded and the task stops (`pr.failed` and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR survives a pause and a restart).
 - The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below).
-- Pausing by a person: if a pause or cancel has been requested before the push or right before opening the PR, the task stops without opening the PR (for a pause, it keeps waiting to open the PR;
-  resuming opens it). If the request comes after opening the PR has started, the PR is finished and recorded first (stopping without recording the opened PR could open a second PR on resume,
-  or leave a PR that cancelling can't close), and then the final state depends on the request.
+- Pausing by a person: if a pause or cancel has been requested before the push or right before opening the PR, the task stops without opening the PR (for a pause, it keeps waiting to open the PR; resuming opens it). If the request comes after opening the PR has started, the PR is finished and recorded first (stopping without recording the opened PR could open a second PR on resume, or leave a PR that cancelling can't close), and then the final state depends on the request.
   - Pause: the task stays waiting for the Implement approval and is not paused. The pause operation reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
   - Cancel: after opening the PR finishes, the recorded PR is closed and the task is cancelled (the cleanup in "Budget, pause, resume, and cancel" below).
-- Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)).
-  Approving the implementation by merging the PR moves on to the after-merge watch step (if it is skipped, the task is completed).
+- Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)). Approving the implementation by merging the PR moves on to the after-merge watch step (if it is skipped, the task is completed).
 
 Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`, `pause`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
 
@@ -425,59 +300,36 @@ Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerif
 
 ### Tasks without tests
 
-A task for which the Orchestrator left `testCommand` empty and wrote a basis in `noTests` (`Task.noTestsReason`) proceeds without stopping even though there is no
-test command, and acceptance is judged from the task's goal instead of by tests.
+A task for which the Orchestrator left `testCommand` empty and wrote a basis in `noTests` (`Task.noTestsReason`) proceeds without stopping even though there is no test command, and acceptance is judged from the task's goal instead of by tests.
 
-- Conditions for treating a task as one without tests (`checkNoTests`; checked right after the steps are chosen, when the plan includes Implementation):
-  - If there is a `testCommand`, `noTests` is discarded (the behavior with a test command does not change). If there is no `noTests` and `testCommand` is also empty,
-    the task stops as before (`orchestrator.testCommandUnknown`).
-  - If a bug fix (`bugfix`) is chosen, the task stops (`orchestrator.bugfixNeedsTests`). A reproduction is confirmed by tests, so it is not chosen for a task without
-    tests (the instructions to the Orchestrator also ask it not to choose it).
-  - If the base code of the target repository (the workspace, excluding `.git`) has a file that matches the naming conventions of test files, the task stops
-    (`orchestrator.noTestsContradicted`; up to 5 found files are shown). Matches are files inside `test`, `tests`, and `__tests__`
-    directories, and files whose name without the extension is `test`, `tests`, `test_*`, `test-*`, `*_test`, `*-test`, `*.test`, `*_spec`, `*.spec`
-    (and plurals), `*Test`, `*Tests`, or `Test*` (camel case) (`looksLikeTestFile`). Document files (extensions `md`,
-    `markdown`, `txt`, `rst`, `adoc`, `asciidoc`, `org`) do not match, even inside test directories.
+- Conditions for treating a task as one without tests (`checkNoTests`; checked right after the steps are chosen, when the plan includes Implementation)
+  - If there is a `testCommand`, `noTests` is discarded (the behavior with a test command does not change). If there is no `noTests` and `testCommand` is also empty, the task stops as before (`orchestrator.testCommandUnknown`).
+  - If a bug fix (`bugfix`) is chosen, the task stops (`orchestrator.bugfixNeedsTests`). A reproduction is confirmed by tests, so it is not chosen for a task without tests (the instructions to the Orchestrator also ask it not to choose it).
+  - If the base code of the target repository (the workspace, excluding `.git`) has a file that matches the naming conventions of test files, the task stops (`orchestrator.noTestsContradicted`; up to 5 found files are shown). Matches are files inside `test`, `tests`, and `__tests__` directories, and files whose name without the extension is `test`, `tests`, `test_*`, `test-*`, `*_test`, `*-test`, `*.test`, `*_spec`, `*.spec` (and plurals), `*Test`, `*Tests`, or `Test*` (camel case) (`looksLikeTestFile`). Document files (extensions `md`, `markdown`, `txt`, `rst`, `adoc`, `asciidoc`, `org`) do not match, even inside test directories.
   - The task also stops when the scan does not finish after 20,000 entries (`TEST_FILE_SCAN_LIMIT`) (`orchestrator.noTestsUncertain`).
-  - The task also stops when a directory cannot be read (including the workspace itself) (`orchestrator.noTestsUnreadable`; it shows the path of the unreadable directory
-    relative to the workspace (`.` for the workspace itself) and the error code (or the error message if there is none)).
+  - The task also stops when a directory cannot be read (including the workspace itself) (`orchestrator.noTestsUnreadable`; it shows the path of the unreadable directory relative to the workspace (`.` for the workspace itself) and the error code (or the error message if there is none)).
   - In either case, if a test file was found first, the result is `noTestsContradicted`. The message is chosen by `noTestsStop`.
-  - When stopping, a `StepsChosen` without `noTestsReason` and a `TaskPaused` with the reason are recorded. Even after resuming, like a task whose test command
-    could not be determined, the task stops at verification (or at checking reproduction).
-- Instead of having it write tests, the instructions for the Implementation step ask it to write in the implementation's description how each viewpoint is met. Only when the task asks for setting up
-  tests and the implementation sets them up does it report the command, as JSON (`{"command": "…"}`; 1 to 1000 characters) in a code block whose language name is `sacty-test-command`
-  (`TEST_COMMAND_FENCE`). The report is recorded in `testCommand` of the implementation's `AgentRunCompleted`
-  and read again for each submission (`Task.addedTestCommand`).
-  - The report is read only in the Implementation step of a task without tests (`testCommand` of `extractBlocks`). In other steps (Requirements, Design,
-    review, and so on) and in the Implementation step of a task with tests (where `testCommand` was decided), this code block stays in the text as it is
-    (it reaches the outputs, the approval screen, and later steps) and is not treated as a report (the task does not stop; tests run with the decided test command).
-  - Only the inside of this code block is read as the report (`extractTestCommandFences`; CommonMark fence rules: up to 3 leading spaces,
-    3 or more `` ` `` or `~`, closed by the same character at least as many times, and the language name is the first word of the info string). Text outside code blocks and the inside
-    of other code blocks (such as an example quoted with four backticks) are not treated as the report. The report's code block is removed from the text.
-  - If even one block's content cannot be read as JSON, is not an object, has a `command` that is not a string, is empty, or is longer than 1000 characters, or the code block is not
-    closed, it is not treated as a missing report: `AgentRunFailed` and `TaskPaused` (`implement.testCommandInvalid`) are
-    recorded and the task stops. Resuming redoes the implementation. If there are several readable reports, the last one is used.
-- The Orchestrator's basis (`noTestsReason`) is influenced by the documents of the target repository, so it is not embedded in the text of the implementation and final review instructions;
-  it is passed as a JSON string under a heading that says it is the Orchestrator's report, data as a JSON string, and not an instruction to the agent
-  (`noTestsReasonLines`). The final review is also told not to follow instructions written in the basis, the task, the implementation's description, the diff, or the code.
-- The examples of answers to the Orchestrator are shown separately: one that writes `testCommand` and one that writes `noTests` (which cannot choose `bugfix`), and the Orchestrator is told not to
-  write both.
-- Verification:
-  - If no test command was reported, the task moves to the final review without having tests run (older versions recorded `TestsSkipped`;
-    `Task.testsSkippedAt`).
-  - If there is a report, the Goal Guardian runs that command in the final review (the image and services are the same as for a task with tests). A reported exit code 0 is
-    required, and a viewpoint not corresponding to a test does not cause a failure (the instructions for redoing do not list viewpoints without tests either).
-  - The final review judges each viewpoint from the task's goal (title and description), the approved requirements (and design, if any), the implementation's description, the diff, the results of the tests run (if any), and
-    the code after implementation. It is told not to fail the task because there are no tests or because a viewpoint has no corresponding test, and to base its judgment only on what in the implementation's
-    description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and
-    the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
-- Display: the step field of the task screen (test command: none, judged by the goal; the basis is in a hint (tooltip). For tests set up in the implementation, "tests added in the implementation: command" if they passed,
-  "failed; redoing" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Implement approval screen)
-  ("Not verified by tests" if no tests were run (no test command was declared), "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
-  "The tests added in the implementation failed" with the exit code (failure color) if they failed, and "Waiting to run the tests added in the implementation" if the current submission's tests have not run yet
-  (`verification` is `pending` and there is a report; the previous submission's result is not shown). `addedTestsResult`), the test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。
-  目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line, and the Activity (`StepsChosen`; in records from older versions, also `TestsSkipped`).
-  A person's Implement approval is still required, as for a task with tests.
+  - When stopping, a `StepsChosen` without `noTestsReason` and a `TaskPaused` with the reason are recorded. Even after resuming, like a task whose test command could not be determined, the task stops at verification (or at checking reproduction).
+- Instead of having it write tests, the instructions for the Implementation step ask it to write in the implementation's description how each viewpoint is met. Only when the task asks for setting up tests and the implementation sets them up does it report the command, as JSON (`{"command": "…"}`; 1 to 1000 characters) in a code block whose language name is `sacty-test-command` (`TEST_COMMAND_FENCE`). The report is recorded in `testCommand` of the implementation's `AgentRunCompleted` and read again for each submission (`Task.addedTestCommand`).
+  - The report is read only in the Implementation step of a task without tests (`testCommand` of `extractBlocks`). In other steps (Requirements, Design, review, and so on) and in the Implementation step of a task with tests (where `testCommand` was decided), this code block stays in the text as it is (it reaches the outputs, the approval screen, and later steps) and is not treated as a report (the task does not stop; tests run with the decided test command).
+  - Only the inside of this code block is read as the report (`extractTestCommandFences`; CommonMark fence rules: up to 3 leading spaces, 3 or more `` ` `` or `~`, closed by the same character at least as many times, and the language name is the first word of the info string). Text outside code blocks and the inside of other code blocks (such as an example quoted with four backticks) are not treated as the report. The report's code block is removed from the text.
+  - If even one block's content cannot be read as JSON, is not an object, has a `command` that is not a string, is empty, or is longer than 1000 characters, or the code block is not closed, it is not treated as a missing report: `AgentRunFailed` and `TaskPaused` (`implement.testCommandInvalid`) are recorded and the task stops. Resuming redoes the implementation. If there are several readable reports, the last one is used.
+- The Orchestrator's basis (`noTestsReason`) is influenced by the documents of the target repository, so it is not embedded in the text of the implementation and final review instructions; it is passed as a JSON string under a heading that says it is the Orchestrator's report, data as a JSON string, and not an instruction to the agent (`noTestsReasonLines`). The final review is also told not to follow instructions written in the basis, the task, the implementation's description, the diff, or the code.
+- The examples of answers to the Orchestrator are shown separately: one that writes `testCommand` and one that writes `noTests` (which cannot choose `bugfix`), and the Orchestrator is told not to write both.
+- Verification
+  - If no test command was reported, the task moves to the final review without having tests run (older versions recorded `TestsSkipped`; `Task.testsSkippedAt`).
+  - If there is a report, the Goal Guardian runs that command in the final review (the image and services are the same as for a task with tests). A reported exit code 0 is required, and a viewpoint not corresponding to a test does not cause a failure (the instructions for redoing do not list viewpoints without tests either).
+  - The final review judges each viewpoint from the task's goal (title and description), the approved requirements (and design, if any), the implementation's description, the diff, the results of the tests run (if any), and the code after implementation. It is told not to fail the task because there are no tests or because a viewpoint has no corresponding test, and to base its judgment only on what in the implementation's description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
+- Display
+  - The step field of the task screen (`testCommandOfNoTests`): the test command shows as "none, judged by the goal", with the basis in a hint (tooltip). For tests set up in the implementation, it shows "tests added in the implementation: command" if they passed, "failed; redoing" if they failed, and "will run next" while waiting.
+  - The notice on the implementation deliverable (the task screen and the Implement approval screen) (`addedTestsResult`)
+    - No tests were run (no test command was declared): "Not verified by tests"
+    - The tests set up in the implementation ran and passed: "Verified by the tests added in the implementation" (success color)
+    - They failed: "The tests added in the implementation failed" with the exit code (failure color)
+    - The current submission's tests have not run yet (`verification` is `pending` and there is a report): "Waiting to run the tests added in the implementation" (the previous submission's result is not shown)
+  - The test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line
+  - The Activity (`StepsChosen`; in records from older versions, also `TestsSkipped`)
+- A person's Implement approval is still required, as for a task with tests.
 
 Code: `apps/daemon/src/service.ts` (`checkNoTests`, `runNextInner`, `verify`), `apps/daemon/src/test-files.ts` (`findTestFiles`, `looksLikeTestFile`, `noTestsStop`, `TEST_FILE_SCAN_LIMIT`), `apps/daemon/src/prompts.ts` (`buildOrchestratorPrompt`, `extractStepPlan`, `buildPrompt`, `extractBlocks`, `extractTestCommandFences`, `buildFinalReviewPrompt`, `noTestsReasonLines`, `resultTableLines`), `packages/core/src/events.ts` (`StepsChosen`, `AgentRunCompleted`, `TestsSkipped`), `packages/core/src/projection.ts` (`noTestsReason`, `addedTestCommand`, `testsSkippedAt`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`addedTestsResult`, `testCommandOfNoTests`)
 
@@ -492,140 +344,75 @@ The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes
 | Deciding where to send PR comments back to | The code after implementation for the implementation PR; the code at the base for the Requirements and Design PRs | The step to go back to, or `undecidable` ([Approval and request changes](approval.en.md)) |
 | Integration review | The latest base branch | This AI if `step_agents.integrate` is absent ([Task split and integration review](split-and-integrate.en.md)) |
 
-Change requests: a step's agent can request a change to approved requirements or design (IDs are `CP-<number>`). If approved, the requirements
-have their approval revoked and go back for re-approval, and the design replaces the approved version. If rejected, the requesting step submits its result.
+Change requests: a step's agent can request a change to approved requirements or design (IDs are `CP-<number>`). If approved, the requirements have their approval revoked and go back for re-approval, and the design replaces the approved version. If rejected, the requesting step submits its result.
 
 Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `verify`, `judgeRework`), `apps/daemon/src/prompts.ts` (`extractVerdict`, `extractFinalReview`, `extractRework`)
 
 ## Budget, pause, resume, and cancel
 
-- Budget cap: when a task is created, `budget.default_per_task_usd`. If the plan the orchestrator chose has a budget in `budget.per_plan_usd`,
-  it is recorded as `budgetCapUsd` of `StepsChosen` and becomes the cap (the 80% notice is reset). If a person raised the cap before the steps
-  were chosen (`BudgetCapRaised`; `budget.raised` in the projection), it is not recorded and the raised cap is kept.
-- Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps,
-  before running a step (except opening the PR for a verified implementation), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget
-  requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
-- Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`,
-  `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason
-  (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
-- Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container
-  and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
+- Budget cap: when a task is created, `budget.default_per_task_usd`. If the plan the orchestrator chose has a budget in `budget.per_plan_usd`, it is recorded as `budgetCapUsd` of `StepsChosen` and becomes the cap (the 80% notice is reset). If a person raised the cap before the steps were chosen (`BudgetCapRaised`; `budget.raised` in the projection), it is not recorded and the raised cap is kept.
+- Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps, before running a step (except opening the PR for a verified implementation), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
+- Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`, `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
+- Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
 - Resume: if the status before the pause was waiting to run, the stopped step is run again. Resume is rejected for an Operation that has started, keeping the task paused.
-- Cancel: a task cannot be canceled while the Goal Guardian is judging. Cleanup proceeds in the following order, and the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`,
-  `pull_request`) is recorded in `TaskCancelled`.
+- Cancel: a task cannot be canceled while the Goal Guardian is judging. Session logs (`runs/`) are not deleted. Canceling a parent also cancels its unfinished child tasks. sacty cleans up in the following order and records the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`, `pull_request`) in `TaskCancelled`.
   1. Stop runs answering questions and running containers.
   2. Delete the Orchestrator session.
   3. Close the implementation PR sacty opened and the open requirements and design PRs (without merging).
   4. Delete sacty's branches (the implementation PR's branch, the task branch, and step branches).
   5. Delete the workspace (not deleted if the containers cannot be confirmed as stopped).
-  Session logs (`runs/`) are not deleted. Canceling a parent also cancels its unfinished child tasks.
 
 Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`)
 
 ### Rerunning a cancelled task
 
-- A cancelled task can be started over from "Rerun" on its detail page (`POST /api/tasks/:id/rerun`). Nothing can be appended to the activity of a
-  cancelled task, so a new task that takes over the original is created (`rerun` in `TaskCreated`: the original task's ID and the image a person chose). When
-  the activity is replayed, the original task records the rerun task (`rerunBy`); a task can be rerun only once (a second rerun and a task that is not
-  cancelled are refused). Subtasks created by a split and PR review tasks can't be rerun (`canRerun`).
-- What a person decides (`RerunTaskInput`): the title, the description (the original one; for a rerun task, without the record sacty added.
-  `rerunEditableBody`), additional notes (up to 10000 characters), the repository to work in (from the project's targets; `null` means no repository,
-  and the task proceeds like a task created without one), and the image (a name in `images` or `default`; without it, the image is decided as usual).
-  A repository outside the targets and an image not in `images` are refused.
-- The description is the edited description followed by the notes (`## 補足（再実行で人が足したもの）`) and the record of the previous attempt
-  (`## 前の試行の記録（中止したタスク）`) (`buildRerunBody`). The record holds what cancelling did not remove: the original task, the repository it worked
-  in, the ticket and the source, the steps and their states, why the steps were chosen, why it last stopped, the closed PR, when it was cancelled, the step
-  outputs (the approved one if approved; up to 3000 characters each), remarks that were not voided, and questions with answers. Because cancelling removed
-  the workspace, branches, and PRs, it says to start over from the beginning.
+- A cancelled task can be started over from "Rerun" on its detail page (`POST /api/tasks/:id/rerun`). Nothing can be appended to the activity of a cancelled task, so a new task that takes over the original is created (`rerun` in `TaskCreated`: the original task's ID and the image a person chose). When the activity is replayed, the original task records the rerun task (`rerunBy`); a task can be rerun only once (a second rerun and a task that is not cancelled are refused). Subtasks created by a split and PR review tasks can't be rerun (`canRerun`).
+- A person decides the following (`RerunTaskInput`). sacty refuses a repository outside the targets and an image not in `images`.
+  - The title
+  - The description (the original one; for a rerun task, without the record sacty added. `rerunEditableBody`)
+  - Additional notes (up to 10000 characters)
+  - The repository to work in (from the project's targets; `null` means no repository, and the task proceeds like a task created without one)
+  - The image (a name in `images` or `default`; without it, the image is decided as usual)
+- The description is the edited description followed by the notes (`## 補足（再実行で人が足したもの）`) and the record of the previous attempt (`## 前の試行の記録（中止したタスク）`) (`buildRerunBody`). The record holds what cancelling did not remove: the original task, the repository it worked in, the ticket and the source, the steps and their states, why the steps were chosen, why it last stopped, the closed PR, when it was cancelled, the step outputs (the approved one if approved; up to 3000 characters each), remarks that were not voided, and questions with answers. Because cancelling removed the workspace, branches, and PRs, it says to start over from the beginning.
 - The chosen image takes priority over the project target's setting and is used for every step (`imageSource` in `StepsChosen` is `rerun`).
-- A task imported from a ticket keeps the ticket (`start` is `jira`; the PR URL is posted to the ticket, and the same ticket is not imported twice).
-  The ticket is not read again (`awaitingTicketTriage` does not apply), and the task proceeds with the repository the person chose. With no repository,
-  like a task created without one, the Orchestrator chooses a repository, and a person chooses it if the Orchestrator can't
-  (`isRepoless`, `awaitingRepository`, `chooseRepository`). A rerun of a task imported from a GitHub issue doesn't keep the source (`start` is `sacty`;
-  the record has the issue URL).
+- A task imported from a ticket keeps the ticket (`start` is `jira`; the PR URL is posted to the ticket, and the same ticket is not imported twice). The ticket is not read again (`awaitingTicketTriage` does not apply), and the task proceeds with the repository the person chose. With no repository, like a task created without one, the Orchestrator chooses a repository, and a person chooses it if the Orchestrator can't (`isRepoless`, `awaitingRepository`, `chooseRepository`). A rerun of a task imported from a GitHub issue doesn't keep the source (`start` is `sacty`; the record has the issue URL).
 - The budget cap is `budget.default_per_task_usd` at the time the rerun task is created (the original task's cap and the amount used are not carried over).
 
 Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
 
 ## Asking the Orchestrator
 
-- Questions are up to 2000 characters (`QUESTION_MAX`), and answers up to 20000 characters (`ANSWER_MAX`; truncated if longer). At most one question can be awaiting an answer.
-  Questions cannot be asked on canceled tasks or tasks that reached the budget cap. IDs are `Q-<number>`.
-- The AI is the same as the Orchestrator; it reads a copy of the code at the base and answers by duplicating the saved Orchestrator session (the original session
-  is not changed). The instructions include the task's title, status, steps, PR, cost and budget, body, approved results and latest outputs, verdicts, comments, recent questions and answers,
-  and the Activity (as much as fits in 40000 characters in total).
-- Session logs of each run: before the answering run, this task's per-run session logs (`SACTY_HOME/runs/<task ID>/` in [Agent execution](agent-execution.en.md))
-  are laid out in a per-answer-run location (`<workspaces>/_question-logs/<run ID>/`) and mounted read-only at the container's
-  `/sacty-logs` (Claude Code is also given `--add-dir /sacty-logs`). They are deleted when the answering run finishes.
-  - What is laid out: `index.json` (the list of runs) and, for each finished run, `<run ID>/meta.json`, `events.jsonl`, and `stderr.log` (only those that exist),
-    and the agent's original files recorded in the Activity's `AgentSessionArchived` (`<run ID>/agent/<relative path>`; files whose size differs from the record or that are not regular
-    files are not laid out). Every run that goes through execute is covered: steps, the Orchestrator, the Goal Guardian, answers to earlier questions, and so on.
-    Hard links are used on the same file system; otherwise the files are copied.
-  - For a running run (a log this daemon has opened and not yet closed), a snapshot of the log at the time the question was received (the snapshot of a running run in
-    [Event log](event-log.en.md#session-logs-files-per-run), with secrets hidden again using the current secrets) is written to `<run ID>/meta.json`, `events.jsonl`, and `stderr.log` (only those with output)
-    (not hard links). The agent's original files do not exist until the run finishes.
-  - What is not laid out: other tasks' logs (only this task's location is looked at), files other than the above, the answering run itself, runs whose end is not recorded
-    and that are not running (no `finishedAt` in `meta.json` and not opened by this daemon; the daemon stopped), and the files themselves of runs whose end is not recorded
-    (secrets found after writing started are redacted again when the file is closed, so a file not yet closed may still contain them).
-  - Status in the list: `available` (readable), `running` (running; has the snapshot time `snapshotAt`), `unfinished` (end not recorded),
-    `missing` (the Activity has the run's ID but there is no log), `unreadable` (`meta.json` cannot be read). It also holds logs with the middle omitted due to limits, the number of agent
-    files, reasons for not copying, and files that could not be laid out.
-  - The instructions include, before the ledger, the location and how to read it (search rather than read everything; it cannot be modified; state which run of which step; say so if any run
-    has no log, was omitted, or is unreadable), and the list of runs (the step or role name and which attempt, the run ID, the agent, start and end, the result, the log size, truncation;
-    up to 8000 characters; if it does not fit, older runs are omitted and the agent is told to read `index.json`). The logs' contents are not included.
-    If there is a running run, its line in the list says when the snapshot was taken (and that the run continues), and the agent is told to read `events.jsonl` from the end when asked about
-    the current state, and to say in the answer as of when it describes the state.
-  - If the task's log location (`runs/<task ID>/`) does not exist, there are no runs yet (runs in the Activity are `missing`). If the location cannot be opened
-    (no permission, not a directory, and so on, other than ENOENT), cannot be laid out, or no logs were kept, nothing is mounted; the instructions say the logs cannot be read and
-    why (the kind of error, for example `ENOTDIR`), and the agent answers from the ledger (a warning goes to the daemon's log).
+- Questions are up to 2000 characters (`QUESTION_MAX`), and answers up to 20000 characters (`ANSWER_MAX`; truncated if longer). At most one question can be awaiting an answer. Questions cannot be asked on canceled tasks or tasks that reached the budget cap. IDs are `Q-<number>`.
+- The AI is the same as the Orchestrator; it reads a copy of the code at the base and answers by duplicating the saved Orchestrator session (the original session is not changed). The instructions include the task's title, status, steps, PR, cost and budget, body, approved results and latest outputs, verdicts, comments, recent questions and answers, and the Activity (as much as fits in 40000 characters in total).
+- Session logs of each run: before the answering run, this task's per-run session logs (`SACTY_HOME/runs/<task ID>/` in [Agent execution](agent-execution.en.md)) are laid out in a per-answer-run location (`<workspaces>/_question-logs/<run ID>/`) and mounted read-only at the container's `/sacty-logs` (Claude Code is also given `--add-dir /sacty-logs`). They are deleted when the answering run finishes.
+  - What is laid out: `index.json` (the list of runs) and, for each finished run, `<run ID>/meta.json`, `events.jsonl`, and `stderr.log` (only those that exist), and the agent's original files recorded in the Activity's `AgentSessionArchived` (`<run ID>/agent/<relative path>`; files whose size differs from the record or that are not regular files are not laid out). Every run that goes through execute is covered: steps, the Orchestrator, the Goal Guardian, answers to earlier questions, and so on. Hard links are used on the same file system; otherwise the files are copied.
+  - For a running run (a log this daemon has opened and not yet closed), a snapshot of the log at the time the question was received (the snapshot of a running run in [Event log](event-log.en.md#session-logs-files-per-run), with secrets hidden again using the current secrets) is written to `<run ID>/meta.json`, `events.jsonl`, and `stderr.log` (only those with output) (not hard links). The agent's original files do not exist until the run finishes.
+  - What is not laid out
+    - Other tasks' logs (only this task's location is looked at)
+    - Files other than the above
+    - The answering run itself
+    - Runs whose end is not recorded and that are not running (no `finishedAt` in `meta.json` and not opened by this daemon; the daemon stopped)
+    - The files themselves of runs whose end is not recorded (secrets found after writing started are redacted again when the file is closed, so a file not yet closed may still contain them)
+  - Status in the list: `available` (readable), `running` (running; has the snapshot time `snapshotAt`), `unfinished` (end not recorded), `missing` (the Activity has the run's ID but there is no log), `unreadable` (`meta.json` cannot be read). It also holds logs with the middle omitted due to limits, the number of agent files, reasons for not copying, and files that could not be laid out.
+  - The instructions include, before the ledger, the location and how to read it (search rather than read everything; it cannot be modified; state which run of which step; say so if any run has no log, was omitted, or is unreadable), and the list of runs (the step or role name and which attempt, the run ID, the agent, start and end, the result, the log size, truncation; up to 8000 characters; if it does not fit, older runs are omitted and the agent is told to read `index.json`). The logs' contents are not included. If there is a running run, its line in the list says when the snapshot was taken (and that the run continues), and the agent is told to read `events.jsonl` from the end when asked about the current state, and to say in the answer as of when it describes the state.
+  - If the task's log location (`runs/<task ID>/`) does not exist, there are no runs yet (runs in the Activity are `missing`). If the location cannot be opened (no permission, not a directory, and so on, other than ENOENT), cannot be laid out, or no logs were kept, nothing is mounted; the instructions say the logs cannot be read and why (the kind of error, for example `ENOTDIR`), and the agent answers from the ledger (a warning goes to the daemon's log).
 - Asking a question does not change the status, steps, or approved content, and does not stop a running task. The cost of answering (even when no answer could be given) counts toward the task's budget.
 
 Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuestionLogs`), `apps/daemon/src/question-logs.ts` (`stageQuestionLogs`, `stageRunning`, `CONTAINER_LOGS_DIR`), `apps/daemon/src/session-logs.ts` (`SessionLogStore.snapshot`), `apps/daemon/src/prompts.ts` (`buildChatPrompt`, `CHAT_PROMPT_MAX`, `CHAT_LOGS_IN_PROMPT`), `packages/core/src/events.ts` (`QUESTION_MAX`, `ANSWER_MAX`), `packages/core/src/projection.ts` (`questionBlocked`)
 
 ## PR-review-only tasks
 
-- The only step is `review`. Before running, the head of the target PR, the base commit, and the PR author's login are recorded (`ReviewTargetResolved`; empty if the author cannot be read).
-  The code at the PR's head commit and the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
-- Reviews already on the PR: before running, the PR's reviews, line comments, and ordinary comments (excluding posts by bots and posts by this task's account that start with
-  the marker, that is, its previous posts; findings by other reviewers and the author's replies; approving reviews with a body are included too (`includeApprovals`; they are not
-  included when importing PR comments)) are read and passed as JSON data separate from the instructions
-  (`existingReviews`; oldest first; the newest 30 (`EXISTING_IN_PROMPT`), 2000 characters each), for the first review and re-reviews alike. The instructions tell the agent
-  to check the state of the existing findings before reviewing, not to repeat a problem already raised at the same place, to decide the verdict without the findings it did not
-  repeat, and to write briefly in the summary how many were left out (without copying them). If there are none, "none yet" is passed. If they cannot be read, the instructions say so,
-  the review is not stopped, and the reason is kept in the daemon log (secret values redacted). The author's replies for a re-review (below) are picked from the same read
-  (if the author cannot be read, only the replies are treated as unreadable).
-- sacty does the posting. The instructions tell the agent to use the default skills `review-dispatch` (with the `pr-review` flow) and `writing`, not to post by itself
-  (not to write on the PR with gh or the GitHub API), and to give priority to the output format of the instructions when they conflict with the skills. sacty adds the verdict, the @ mention of the author,
-  and the statement that AI posted the review, so the agent does not write them.
-- Finding prefixes: `[要修正]` (must fix before merging) and `[提案]` (worth fixing). The agent adds them to findings in the body. For line comments
-  (`sacty-review-comments`), the agent writes the severity (`severity`: `must` or `should`; `nit` is treated as `should`) and sacty adds the prefix at the start of the comment body
-  (a prefix already at the start is replaced; with neither severity nor prefix, nothing is added). Findings with no line in the diff to attach to are written in the body without asking a person.
-- Documents shown in the PR description (such as a design outside Git): following the skill, the agent sorts each into a review target or evidence, and reviews the targets too.
-  Findings on documents go in the body. If a document chosen as a target cannot be read, the review is treated as not completed and no verdict is given.
-- Verdict: the agent adds `verdict` in `sacty-review-verdict` (`changes_required`: changes required, `suggestions`: suggestions only (OK to merge),
-  `no_findings`: no findings). sacty raises it to `changes_required` if a line comment has `[要修正]`, and to `suggestions` if there are findings but the verdict is `no_findings`.
-  Line comments alone do not make it `changes_required`. If there is no verdict or it is not one of the values, and there is no `[要修正]` finding,
-  nothing is kept (unreadable). When the review could not be completed, the agent is told not to add a verdict. The verdict block is removed from the posted body and kept in
-  `reviewVerdict` of `AgentRunCompleted` (per round in `reviewVerdicts`). A review of a PR sacty opened is delivered to the original task for rounds with
-  `changes_required`, `suggestions`, or an unreadable verdict (rounds with `no_findings` are not delivered; [Approval and request changes](approval.en.md#importing-pr-comments)).
-- Posted body: the marker, the heading "sacty のレビュー", one line with the @ mention of the author and the verdict (no @ if the author is not in the form of a login; says so if the verdict is unreadable),
-  the agent's body, and the fixed sentence saying that AI reviewed it, in this order.
-- Right before posting, the PR's head commit is checked (not when an already posted review is found by the marker). If it differs from the reviewed commit
-  (pushed in the meantime), the review is posted against the reviewed commit, and the body says which commit was reviewed and that "Re-review" reviews the latest one.
-  That head is kept in `latestCommit` of `PullRequestReviewPosted`, and also in the body as a hidden marker. If it cannot be checked (including when the response has
-  no head commit or an empty one), the task pauses without posting (`review.headUnknown`; resuming checks again). If sacty stopped after posting and before recording,
-  the head is recorded again from the marker in the body of the posted review.
-- The result is posted to the PR as a review (`COMMENT`) without waiting for a person's approval. If line comments are rejected with 422, they are put into the body and posted again.
-  The task completes once posted.
-- Re-review: a task that completed after posting can put `review` back to waiting to run and review the latest commit again (`ReviewRestarted`).
-  This is the behavior when a person presses "Review again" in the UI. A GitHub review re-request creates a separate review-only task without reopening the completed task
-  (see [Intake](intake.en.md)).
-  In both cases, the previous body, line comments, reviewed commit, and posting time are kept in `previousReview`. The instructions include the previous findings and the PR author's
-  replies since the previous post (PR reviews, line comments, and regular comments by the author's login, excluding those starting with sacty's review marker; the newest 30, up to
-  2000 characters each) as JSON data separate from the instructions, and the agent writes, for each previous finding, whether it confirmed the fix or it is still open. If the replies cannot be read
-  (including when the author is unknown), the instructions say so and the review continues, and the reason is written to the daemon log with the task and the PR (secret values are masked).
-- Language: the heading, verdict, note, and fixed sentence added by sacty, and the finding prefixes, are fixed in Japanese. The agent's body and findings follow the writing rules
-  of the target repository (in the order of the skill `writing`), and Japanese when there are none.
+- The only step is `review`. Before running, the head of the target PR, the base commit, and the PR author's login are recorded (`ReviewTargetResolved`; empty if the author cannot be read). The code at the PR's head commit and the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
+- Reviews already on the PR: before running, sacty reads the PR's reviews, line comments, and ordinary comments. It reads the findings by other reviewers and the author's replies, excluding posts by bots and posts by this task's account that start with the marker (its previous posts). Approving reviews with a body are included too (`includeApprovals`; they are not included when importing PR comments). What it read is passed as JSON data separate from the instructions (`existingReviews`; oldest first; the newest 30 (`EXISTING_IN_PROMPT`), 2000 characters each), for the first review and re-reviews alike. The instructions tell the agent to check the state of the existing findings before reviewing, not to repeat a problem already raised at the same place, to decide the verdict without the findings it did not repeat, and to write briefly in the summary how many were left out (without copying them). If there are none, "none yet" is passed. If they cannot be read, the instructions say so, the review is not stopped, and the reason is kept in the daemon log (secret values redacted). The author's replies for a re-review (below) are picked from the same read (if the author cannot be read, only the replies are treated as unreadable).
+- sacty does the posting. The instructions tell the agent to use the default skills `review-dispatch` (with the `pr-review` flow) and `writing`, not to post by itself (not to write on the PR with gh or the GitHub API), and to give priority to the output format of the instructions when they conflict with the skills. sacty adds the verdict, the @ mention of the author, and the statement that AI posted the review, so the agent does not write them.
+- Finding prefixes: `[要修正]` (must fix before merging) and `[提案]` (worth fixing). The agent adds them to findings in the body. For line comments (`sacty-review-comments`), the agent writes the severity (`severity`: `must` or `should`; `nit` is treated as `should`) and sacty adds the prefix at the start of the comment body (a prefix already at the start is replaced; with neither severity nor prefix, nothing is added). Findings with no line in the diff to attach to are written in the body without asking a person.
+- Documents shown in the PR description (such as a design outside Git): following the skill, the agent sorts each into a review target or evidence, and reviews the targets too. Findings on documents go in the body. If a document chosen as a target cannot be read, the review is treated as not completed and no verdict is given.
+- Verdict: the agent adds `verdict` in `sacty-review-verdict` (`changes_required`: changes required, `suggestions`: suggestions only (OK to merge), `no_findings`: no findings). sacty raises it to `changes_required` if a line comment has `[要修正]`, and to `suggestions` if there are findings but the verdict is `no_findings`. Line comments alone do not make it `changes_required`. If there is no verdict or it is not one of the values, and there is no `[要修正]` finding, nothing is kept (unreadable). When the review could not be completed, the agent is told not to add a verdict. The verdict block is removed from the posted body and kept in `reviewVerdict` of `AgentRunCompleted` (per round in `reviewVerdicts`). A review of a PR sacty opened is delivered to the original task for rounds with `changes_required`, `suggestions`, or an unreadable verdict (rounds with `no_findings` are not delivered; [Approval and request changes](approval.en.md#importing-pr-comments)).
+- Posted body: the marker, the heading "sacty のレビュー", one line with the @ mention of the author and the verdict (no @ if the author is not in the form of a login; says so if the verdict is unreadable), the agent's body, and the fixed sentence saying that AI reviewed it, in this order.
+- Right before posting, the PR's head commit is checked (not when an already posted review is found by the marker). If it differs from the reviewed commit (pushed in the meantime), the review is posted against the reviewed commit, and the body says which commit was reviewed and that "Re-review" reviews the latest one. That head is kept in `latestCommit` of `PullRequestReviewPosted`, and also in the body as a hidden marker. If it cannot be checked (including when the response has no head commit or an empty one), the task pauses without posting (`review.headUnknown`; resuming checks again). If sacty stopped after posting and before recording, the head is recorded again from the marker in the body of the posted review.
+- The result is posted to the PR as a review (`COMMENT`) without waiting for a person's approval. If line comments are rejected with 422, they are put into the body and posted again. The task completes once posted.
+- Re-review: a task that completed after posting can put `review` back to waiting to run and review the latest commit again (`ReviewRestarted`). This is the behavior when a person presses "Review again" in the UI. A GitHub review re-request creates a separate review-only task without reopening the completed task (see [Intake](intake.en.md)). In both cases, the previous body, line comments, reviewed commit, and posting time are kept in `previousReview`. The instructions include the previous findings and the PR author's replies since the previous post, as JSON data separate from the instructions. The author's replies are the PR reviews, line comments, and regular comments by the author's login (excluding those starting with sacty's review marker; the newest 30, up to 2000 characters each). For each previous finding, the agent writes whether it confirmed the fix or it is still open. If the replies cannot be read (including when the author is unknown), the instructions say so and the review continues, and the reason is written to the daemon log with the task and the PR (secret values are masked).
+- Language: the heading, verdict, note, and fixed sentence added by sacty, and the finding prefixes, are fixed in Japanese. The agent's body and findings follow the writing rules of the target repository (in the order of the skill `writing`), and Japanese when there are none.
 - In the PR check (every 60 seconds), if the PR of an unfinished review task has been merged or closed, the task is canceled.
 
 Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `resolveReviewTarget`, `reviewFeedback`, `postReview`, `rereview`, `checkReviewPullRequests`), `apps/daemon/src/prompts.ts` (`PR_DIFF_IN_PROMPT`, `existingReviewLines`, `EXISTING_IN_PROMPT`, `rereviewLines`, `extractReviewComments`, `buildReviewBody`, `MUST_TAG`, `SUGGESTION_TAG`), `packages/core/src/events.ts` (`ReviewVerdict`)
