@@ -3972,22 +3972,23 @@ export function postedLatestCommit(body: string): string | undefined {
 }
 
 /**
- * 総評で @ を付けて知らせる、PR の作者の login（login の形のものだけ。GitHub Enterprise の `_` を含むものも。`[bot]` の付く bot は
- * 知らせない）。
+ * 総評で @ を付けて知らせる login（PR の作者か、自分。login の形のものだけ。GitHub Enterprise の `_` を含むものも。`[bot]` の付く
+ * bot は知らせない）。
  */
-function mentionOf(author: string | undefined): string | undefined {
-  return author && /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(author) ? `@${author}` : undefined;
+function mentionOf(login: string | undefined): string | undefined {
+  return login && /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(login) ? `@${login}` : undefined;
 }
 
 /**
  * レビューの工程の結果を、対象の PR に投稿するレビューの本文（PBI-19）。人間の承認は無い。
  * foldComments なら、行へのコメントも本文に入れる（行へのコメントを受け付けられなかったとき）。
- * 先頭に、PR の作者への @ メンションと判定を書く（PBI-111）。latestCommit が、レビューしたコミットと違えば（レビューの間に
- * push された）、このレビューがどのコミットに対するものかを書く。
+ * 先頭に、PR の作者への @ メンションと判定を書く（PBI-111）。mentionSelf があれば（sacty の設定の reviewMentionSelf）、作者の
+ * 代わりに、その login（投稿する自分のアカウント）にメンションする（AI のレビューを自分で確かめてから作者に知らせるため）。
+ * latestCommit が、レビューしたコミットと違えば（レビューの間に push された）、このレビューがどのコミットに対するものかを書く。
  */
 export function buildReviewBody(
   task: Task,
-  options: { foldComments?: boolean; latestCommit?: string } = {},
+  options: { foldComments?: boolean; latestCommit?: string; mentionSelf?: string } = {},
 ): string {
   const folded =
     options.foldComments && task.reviewComments.length > 0
@@ -4000,7 +4001,8 @@ export function buildReviewBody(
       : review;
   const round = task.reviewRound ?? 1;
   const verdict = task.reviewVerdicts?.find((v) => v.round === round)?.verdict;
-  const mention = mentionOf(task.reviewTarget?.author);
+  // 自分にメンションするときは、自分の login が読めなくても作者には知らせない
+  const mention = mentionOf(options.mentionSelf ?? task.reviewTarget?.author);
   const reviewed = task.reviewTarget?.headCommit ?? "";
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed

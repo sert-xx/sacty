@@ -400,6 +400,8 @@ export async function saveSettingsAction(
       // PR のレビューの取り込み（PBI-44）
       reviewLabel: String(formData.get("reviewLabel") ?? ""),
       reviewRequested: formData.get("reviewRequested") === "on",
+      // レビューの投稿で、PR の作者ではなく自分にメンションする
+      reviewMentionSelf: formData.get("reviewMentionSelf") === "on",
       // チェックを外した種類を Off にする（PBI-53）
       // チケット（PBI-52）
       ticketLabel: String(formData.get("ticketLabel") ?? ""),

@@ -353,6 +353,7 @@ sacty up（packages/cli）
   | `ticketLabel` | チケットの取り込むラベル |
   | `reviewLabel` | PR のレビュー用のラベル |
   | `reviewRequested` | 自分へのレビュー依頼の取り込み |
+  | `reviewMentionSelf` | レビューの投稿で、PR の作者ではなく自分（投稿するアカウント）に @ メンションする（既定 Off。[タスクと工程](tasks-and-steps.md)） |
   | `triageOff` | Off にしたトリアージの種類（`issues`・`reviewLabel`・`tickets`） |
   | `maxParallelTasks` | 同時に実行するタスクの数（既定 3） |
   | `issueIntervalSec`・`reviewIntervalSec`・`ticketIntervalSec` | 取り込みの種類ごとの間隔（秒。60 以上。既定 300。[取り込み](intake.md#間隔)） |

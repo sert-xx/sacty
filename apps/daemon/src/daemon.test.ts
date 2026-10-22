@@ -5684,6 +5684,31 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(
+        activity,
+        [out(`# 総評\n\n${block({ "sacty-review-verdict": { verdict: "suggestions" } })}`)],
+        {
+          pulls,
+          planner: reviewPlanner,
+          settings: new MemorySettingsStore({
+            intakeLabel: "sacty",
+            reviewLabel: "sacty-review",
+            reviewMentionSelf: true,
+          }),
+        },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      await service.runNext(id);
+      const body = pulls.reviews[0]?.body ?? "";
+      expect(body.split("\n")[3]).toBe("@me 判定：提案あり（マージは可）");
+      expect(body).not.toContain("@alice");
+      activity.close();
+    });
+
     it("投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();

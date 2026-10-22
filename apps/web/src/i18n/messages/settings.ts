@@ -28,6 +28,9 @@ const ja = {
   reviewLabelHint:
     "レビュー用のラベルを設定していると、Sacty が作る PR にもこのラベルを付け、別のタスクでレビューします（取り込みが Off の間も付けます）。直す点があれば、PR を作ったタスクが直します。取り込むラベルと同じ名前にもできます。",
   reviewRequested: "自分にレビューが依頼された PR を取り込む",
+  reviewMentionSelf: "レビューの投稿で、PR の作者ではなく自分にメンションする",
+  reviewMentionSelfHint:
+    "Off（既定）なら、投稿するレビューの先頭で PR の作者にメンションします。On にすると、作者の代わりに、プロジェクトで選んだ GitHub アカウント（投稿する自分）にメンションします。AI のレビューを自分で確かめてから作者に知らせたいときに使います。",
   reviewLabel: "PR のレビュー用のラベル",
   reviewPlaceholder: "例：sacty-review",
   reviewOff: "止まっています。",
@@ -133,6 +136,9 @@ const en: SettingsMessages = {
   reviewLabelHint:
     "When the review label is set, Sacty also adds this label to the PRs it creates (even while importing them is off), so another task reviews them. If changes are needed, the task that created the PR makes them. The review label can be the same as the label to import.",
   reviewRequested: "Import PRs that request my review",
+  reviewMentionSelf: "Mention me instead of the PR author in posted reviews",
+  reviewMentionSelfHint:
+    "When off (the default), a posted review starts by mentioning the PR author. When on, it mentions the GitHub account chosen in the project (you, the poster) instead. Use this to check the AI review yourself before letting the author know.",
   reviewLabel: "Label for PR reviews",
   reviewPlaceholder: "e.g. sacty-review",
   reviewOff: "Stopped.",

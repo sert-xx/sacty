@@ -2042,11 +2042,17 @@ export class TaskService {
           throw new MessageError(message("review.headUnknown"));
         latestCommit = head !== target.headCommit ? head : undefined;
       }
+      // sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする
+      const mentionSelf = this.deps.settings.get().reviewMentionSelf ? account : undefined;
       const post = (foldComments: boolean) =>
         this.deps.pulls.postReview({
           ...pr,
           commit: target.headCommit,
-          body: buildReviewBody(task, { foldComments, ...(latestCommit ? { latestCommit } : {}) }),
+          body: buildReviewBody(task, {
+            foldComments,
+            ...(latestCommit ? { latestCommit } : {}),
+            ...(mentionSelf !== undefined ? { mentionSelf } : {}),
+          }),
           comments: foldComments ? [] : buildReviewComments(task),
         });
       const { url } =

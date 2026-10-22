@@ -783,3 +783,12 @@ describe("メモリーを残す日数（PBI-127）", () => {
     }
   });
 });
+
+describe("レビューのメンションの相手", () => {
+  it("On（画面のチェックボックスの on も）なら true を持ち、Off なら持たない（既定は PR の作者にメンションする）", () => {
+    expect(SactySettings.parse({ reviewMentionSelf: "on" })).toEqual({ reviewMentionSelf: true });
+    expect(SactySettings.parse({ reviewMentionSelf: true })).toEqual({ reviewMentionSelf: true });
+    expect(SactySettings.parse({ reviewMentionSelf: false })).toEqual({});
+    expect(SactySettings.parse({})).toEqual({});
+  });
+});
