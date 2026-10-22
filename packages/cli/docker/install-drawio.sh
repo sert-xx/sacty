@@ -48,7 +48,9 @@ command -v curl >/dev/null 2>&1 || warn "curl が無い"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-# 接続や転送が止まっても、期限内に警告して続ける（接続 30 秒、60 秒のあいだ 1KB/s を下回れば打ち切り、1 回 15 分・再試行を含めて 20 分まで）
+# 接続や転送が止まっても、いつまでも待たずに警告して続ける
+# （接続 30 秒、60 秒のあいだ 1KB/s を下回れば打ち切り、1 回 900 秒。再試行は 3 回までで、最初から 1200 秒を過ぎたら始めない。
+# 1200 秒の前に始めた再試行は最大 900 秒続くので、全体は 1200 秒を超えることがある（最長でおよそ 2100 秒））
 curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 --max-time 900 \
   --retry 3 --retry-max-time 1200 -o "$dir/$file" "$BASE_URL/$file" \
   || warn "$BASE_URL/$file を取得できない"

@@ -178,7 +178,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     Debian/Ubuntu's `fdfind` is also available as `/usr/local/bin/fd`.
   - The draw.io CLI (`packages/cli/docker/install-drawio.sh`): when the build-arg `SACTY_DRAWIO` (default `1`; `0` when `image_build.drawio` is `false`) is `1`,
     the deb (apt-get; `amd64`, `arm64`) or rpm (dnf, yum; `x86_64`, `aarch64`) of the official draw.io Desktop release (`v32.4.1` of `jgraph/drawio-desktop`) is
-    fetched with `curl` (30 seconds to connect, aborted when below 1KB/s for 60 seconds, 900 seconds per attempt, up to 1200 seconds including 3 retries), checked against a SHA-256 pinned per version, and installed together with `Xvfb` (`xvfb`, `xorg-x11-server-Xvfb`) and `libasound2` (`libasound2t64` from Ubuntu 24.04) or
+    fetched with `curl` (30 seconds to connect, aborted when below 1KB/s for 60 seconds, 900 seconds per attempt, at most 3 retries, none started after 1200 seconds from the first attempt; the total can exceed 1200 seconds), checked against a SHA-256 pinned per version, and installed together with `Xvfb` (`xvfb`, `xorg-x11-server-Xvfb`) and `libasound2` (`libasound2t64` from Ubuntu 24.04) or
     `alsa-lib`. CJK fonts (`fonts-noto-cjk`, `google-noto-sans-cjk-ttc-fonts`) are reported as a warning and skipped if they cannot be installed.
     A hash mismatch stops the build; for other reasons (cannot fetch, no package manager or `curl`, an unsupported architecture, cannot install) it warns and continues.
     After installing, it removes the setuid bit of `/opt/drawio/chrome-sandbox` (`0755`), creates `/tmp/.X11-unix` with `1777`, and makes `/opt/sacty/bin/drawio`
