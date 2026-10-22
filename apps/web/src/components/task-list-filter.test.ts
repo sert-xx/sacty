@@ -75,6 +75,27 @@ describe("タスクの一覧の絞り込み", () => {
     expect(ids({ from: "2026-10-01", to: "2026-10-01" })).toEqual(["b"]);
   });
 
+  it("開始時期は、UTC の日ではなく、画面のタイムゾーンの日で比べる", () => {
+    const tz = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      const day = (createdAt: string) =>
+        matchesFilter(row({ createdAt }), {
+          ...EMPTY_FILTER,
+          from: "2026-10-01",
+          to: "2026-10-01",
+        });
+      // 東京の 10月1日 0:00 は UTC の 9月30日 15:00
+      expect(day("2026-09-30T15:00:00Z")).toBe(true);
+      expect(day("2026-09-30T14:59:59Z")).toBe(false);
+      expect(day("2026-10-01T14:59:59Z")).toBe(true);
+      expect(day("2026-10-01T15:00:00Z")).toBe(false);
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
+
   it("開始地点・リポジトリ・状態で絞り込む。リポジトリが決まっていないタスクも選べる", () => {
     expect(ids({ start: "github_issue" })).toEqual(["b"]);
     expect(ids({ repo: "web" })).toEqual(["a"]);
@@ -90,6 +111,11 @@ describe("タスクの一覧の絞り込み", () => {
       repos: ["api", "web", NO_REPO],
     });
     expect(filterOptions([rows[0]]).repos).toEqual(["web"]);
+    // 選んでいる値は、一覧から消えても選択肢に残す（取り直しで条件の表示と中身をずらさない）
+    expect(filterOptions([rows[0]], { ...EMPTY_FILTER, start: "jira", repo: NO_REPO })).toEqual({
+      starts: ["sacty", "jira"],
+      repos: ["web", NO_REPO],
+    });
   });
 });
 
@@ -113,7 +139,7 @@ describe("タスクの一覧の絞り込みの操作", () => {
     act(() =>
       root.render(
         h(
-          I18nProvider as unknown as FC<{ locale: "ja"; children: ReactNode }>,
+          I18nProvider as unknown as FC<{ locale: "ja" }>,
           { locale: "ja" },
           h(LiveTaskList, { projectId: "p1", initial: data, initialVersion: liveVersion(data) }),
         ),

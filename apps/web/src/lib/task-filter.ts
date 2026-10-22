@@ -58,10 +58,23 @@ export function matchesFilter(row: TaskRow, filter: TaskFilter): boolean {
   return true;
 }
 
-/** 絞り込みの選択肢：一覧にある開始地点と、リポジトリの名前（名前の順。決まっていないタスクがあれば NO_REPO を最後に）。 */
-export function filterOptions(rows: TaskRow[]): { starts: TaskRow["start"][]; repos: string[] } {
-  const starts = [...new Set(rows.map((r) => r.start))];
-  const names = [...new Set(rows.flatMap((r) => (r.repoName ? [r.repoName] : [])))].sort();
-  const repos = rows.some((r) => !r.repoName) ? [...names, NO_REPO] : names;
-  return { starts, repos };
+/**
+ * 絞り込みの選択肢：一覧にある開始地点と、リポジトリの名前（名前の順。決まっていないタスクがあれば NO_REPO を最後に）。
+ * 選んでいる値は、取り直しで一覧から消えても残す（選択肢から消えると「すべて」と表示されたまま0件になるため）。
+ */
+export function filterOptions(
+  rows: TaskRow[],
+  filter: TaskFilter = EMPTY_FILTER,
+): { starts: TaskRow["start"][]; repos: string[] } {
+  const starts = [
+    ...new Set([...rows.map((r) => r.start), ...(filter.start ? [filter.start] : [])]),
+  ];
+  const names = [
+    ...new Set([
+      ...rows.flatMap((r) => (r.repoName ? [r.repoName] : [])),
+      ...(filter.repo && filter.repo !== NO_REPO ? [filter.repo] : []),
+    ]),
+  ].sort();
+  const noRepo = filter.repo === NO_REPO || rows.some((r) => !r.repoName);
+  return { starts, repos: noRepo ? [...names, NO_REPO] : names };
 }

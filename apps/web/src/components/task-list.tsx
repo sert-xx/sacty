@@ -204,7 +204,7 @@ function TaskFilterBar({
 }) {
   const { tasks: m, labels } = useMessages();
   const uid = useId();
-  const { starts, repos } = filterOptions(rows);
+  const { starts, repos } = filterOptions(rows, filter);
   const set = <K extends keyof TaskFilter>(key: K, value: TaskFilter[K]) =>
     onChange({ ...filter, [key]: value });
   const field = "flex flex-col gap-1 text-xs text-muted-foreground";

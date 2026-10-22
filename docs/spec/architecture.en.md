@@ -66,6 +66,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 - "All tasks" in the task list can be filtered on the screen (`TaskFilterBar`, `matchesFilter`). The filters are not shown when there are no tasks.
   - Filters: text in the title (case-insensitive), start date (the creation time `createdAt` turned into a day in the screen's time zone; the from and to days are included), where the task started, the name of the repository it works on ("Not decided / No repository" for tasks without one), and the kind of status (`statusTone`; "Not finished" is anything but completed and cancelled). Empty filters do not filter. Only rows that match every filter are shown.
   - The choices for where the task started and the repository are only those in the list (repositories sorted by name).
+    A selected value stays among the choices even when a refetch removes it from the list (`filterOptions`).
   - The filters live only in the browser and are not kept in the URL or a cookie. The 3-second refetch keeps them; moving to another project's list clears them.
   - The count ("shown of total") is shown, and "Clear filters" while any filter is set. When no row matches, the screen says so.
   - The "Needs you" cards are not filtered.
