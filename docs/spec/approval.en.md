@@ -28,6 +28,26 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 
 Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened inside the Implementation step after it passes verification ([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
+When Requirements, Design, and Implementation are all approved through PRs, the branches look like this (an example where the task ID starts with 1a2b3c4d).
+
+```mermaid
+%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
+gitGraph
+  commit id: "base commit"
+  branch "sacty/task-1a2b3c4d"
+  branch "sacty/task-1a2b3c4d-requirements-1"
+  commit id: "requirements.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-requirements-1" id: "requirements approved"
+  branch "sacty/task-1a2b3c4d-design-1"
+  commit id: "design.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-design-1" id: "design approved"
+  commit id: "implementation"
+  checkout main
+  merge "sacty/task-1a2b3c4d" id: "implementation approved"
+```
+
 - Whether a task is approved through PRs (`stepPullRequestsOn`)
   - If it has a task branch, it is always approved through PRs.
   - Without a task branch, it is approved through PRs when all of the following hold.

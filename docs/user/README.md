@@ -6,6 +6,32 @@ sacty を使う方に向けて、インストール・設定・コマンド・�
 はじめての方は、[はじめに](getting-started.md) から読んでください。
 仕組みの詳細は [仕様書](../spec/README.md) にあります。
 
+sacty の全体像は次のとおりです。
+
+```mermaid
+flowchart TB
+  you["あなた"]
+  subgraph mac["sacty を動かすマシン"]
+    ui["画面（ブラウザー）"]
+    daemon["デーモン<br/>作業履歴・工程の実行・取り込み"]
+    agents["エージェントのコンテナ<br/>オーケストレーター・工程エージェント・ゴールガーディアン"]
+    gw["ゲートウェイ<br/>認証の値を持つ"]
+  end
+  github["GitHub<br/>Issue・PR"]
+  ai["AI の接続先"]
+  ext["組織内 PF・MCP サーバー"]
+  you -- "タスクを作る・承認する" --> ui
+  ui --> daemon
+  daemon -- "起動する" --> agents
+  agents -- "AI の呼び出し（ゲートウェイを通さないとき）" --> ai
+  gw -. "providers.codex の via_gateway のとき" .-> ai
+  agents -- "実行ごとのトークン" --> gw
+  gw --> ext
+  gw -- "読み取り" --> github
+  daemon -- "取り込み・PR の作成・確認" --> github
+  you -- "PR をマージして承認する" --> github
+```
+
 ## 目次
 
 1. [はじめに](getting-started.md)：インストール・起動・最初のプロジェクトとタスク・データの置き場所

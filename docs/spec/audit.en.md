@@ -20,6 +20,20 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
 
 ## Two stages
 
+The audit flows as follows.
+
+```mermaid
+flowchart TB
+  done["Append that completes the task<br/>AuditQueued in the same append"] --> survey["Overview audit (audit)<br/>up to 3 steps of concern from the ledger and session logs"]
+  survey -- "no steps of concern" --> completed["AuditCompleted"]
+  survey -- "some" --> dive["Deep dive (audit-dive)<br/>a new session per step"]
+  dive --> found["Causes (up to 3) and improvement proposals per cause (up to 2)<br/>memory registration"]
+  found --> rest{"Steps not yet deep-dived?"}
+  rest -- "yes" --> dive
+  rest -- "no" --> completed
+  completed -.-> person["A person adopts or rejects proposals<br/>adopted ones become improvement tasks"]
+```
+
 1. **Survey** (role `audit`)
    - The agent reads the whole ledger of the task (body, approved outputs, evidence counts, human remarks, judgments, activity) and each run's session log.
    - It flags up to 3 steps of concern (`AuditSurveyed`).

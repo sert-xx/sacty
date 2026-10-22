@@ -43,6 +43,28 @@ Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `deploymentWatchEvents`
 
 Stored in the task's `deployment` (`DeploymentWatch`).
 
+The state changes as follows.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "waiting (phase: ci)" as ci
+  state "waiting (phase: check)" as check
+  [*] --> ci: implementation PR merged
+  ci --> check: all passed, skill present
+  ci --> passed: all passed, no skill (no_skill)
+  ci --> failed: a failure
+  ci --> skipped: none after 5 minutes (no_ci)
+  ci --> timed_out: not finished in 60 minutes
+  check --> passed: healthy
+  check --> failed: unhealthy
+  check --> skipped: undetermined (check_unknown), budget (budget)
+  failed --> [*]: decide on the fix task
+  passed --> [*]
+  skipped --> [*]
+  timed_out --> [*]
+```
+
 | `state` | Meaning |
 | --- | --- |
 | `waiting` | Waiting. If `phase` is `ci`, for the CI/CD result; if `check`, for the check by the skill (running if `check` is present) |
