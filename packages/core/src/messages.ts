@@ -134,6 +134,7 @@ const PARAMS = {
   "input.sharedComposeRepoForm": null,
   "input.sharedComposeFile": null,
   "input.invalidRef": null,
+  "input.invalidContextPath": null,
   "input.invalidLabel": null,
   "input.issueIntervalInvalid": null,
   "input.reviewIntervalInvalid": null,
@@ -393,6 +394,10 @@ const PARAMS = {
     detail: TextParam,
   }),
   "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
+  "context.pathMissing": z.object({ key: z.string(), path: z.string() }),
+  "context.copyAborted": z.object({ key: z.string() }),
+  "context.extendsOutside": z.object({ key: z.string(), value: z.string() }),
+  "context.localExtendsFromRemote": z.object({ key: z.string(), value: z.string() }),
   "context.lockedOverride": z.object({
     from: z.string(),
     kind: z.enum(["skills", "mcp", "platforms"]),
@@ -743,6 +748,8 @@ const ja: MessageDictionary = {
   "input.sharedComposeFile":
     "共用の compose の compose ファイルは、リポジトリの根からの相対パス（.. や $ を含まない）で入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
+  "input.invalidContextPath":
+    "パスは、リポジトリの根からの相対パス（例 contexts/team。. と .. の部分は使えない）で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
   // 取り込みの間隔（PBI-100）。60 と 300 は MIN_INTAKE_INTERVAL_SEC・DEFAULT_INTAKE_INTERVAL_SEC（テストで一致を確かめる）
   "input.issueIntervalInvalid":
@@ -1063,6 +1070,14 @@ const ja: MessageDictionary = {
     `${key} の ${file} に誤りがあります（${path}）：${text(detail)}`,
   "context.notPlainFile": ({ key, path, symlink }) =>
     `${key} の ${path} は${symlink ? "シンボリックリンク" : "通常のファイルでないもの"}です。コンテキストリポジトリでは、設定・規約・スキルに通常のファイルとディレクトリだけを使えます。`,
+  "context.pathMissing": ({ key, path }) =>
+    `${key} に、コンテキストのディレクトリ ${path} がありません（ディレクトリの途中にシンボリックリンクも使えません）。`,
+  "context.copyAborted": ({ key }) =>
+    `上限の時間を過ぎたので、ローカルのディレクトリ（${key}）を写すのを止めました。`,
+  "context.extendsOutside": ({ key, value }) =>
+    `${key} の sacty-context.yaml の extends（${value}）は、リポジトリの外を指しています。`,
+  "context.localExtendsFromRemote": ({ key, value }) =>
+    `${key} は git で取得した層のため、ローカルのパス（${value}）を継承できません。ローカルのパスは、プロジェクトの設定か、ブランチ・タグの無いローカルのパスの層の extends にだけ書けます。`,
   "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
     `${from} は${contextKindJa[kind]}「${name}」を上書きしようとしましたが、${lockedBy} で上書き禁止のため上位のものを使いました。`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
@@ -1317,6 +1332,8 @@ const en: MessageDictionary = {
   "input.sharedComposeFile":
     "Enter the compose file of the shared compose as a path relative to the repository root (without .. or $).",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
+  "input.invalidContextPath":
+    "Enter the path relative to the repository root (e.g. contexts/team, without . or .. parts).",
   "input.invalidLabel": "A label can't contain \" or \\.",
   "input.issueIntervalInvalid":
     "Enter a whole number of 60 or more (seconds) for the issue intake interval (300 seconds if empty).",
@@ -1636,6 +1653,14 @@ const en: MessageDictionary = {
     `${file} in ${key} has an error (${path}): ${text(detail)}`,
   "context.notPlainFile": ({ key, path, symlink }) =>
     `${path} in ${key} is ${symlink ? "a symbolic link" : "not a regular file"}. Context repositories can use only regular files and directories for settings, rules, and skills.`,
+  "context.pathMissing": ({ key, path }) =>
+    `${key} has no context directory ${path} (symbolic links can't be used along the path either).`,
+  "context.copyAborted": ({ key }) =>
+    `Stopped copying the local directory (${key}) because the time limit passed.`,
+  "context.extendsOutside": ({ key, value }) =>
+    `The extends (${value}) in sacty-context.yaml of ${key} points outside the repository.`,
+  "context.localExtendsFromRemote": ({ key, value }) =>
+    `${key} is a layer fetched with git, so it can't extend a local path (${value}). Local paths can be written only in the project settings or in the extends of a local path layer without a branch or tag.`,
   "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
     `${from} tried to override the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so the upper one was used.`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>

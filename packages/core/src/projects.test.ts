@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parseRepoUrl, RepoUrl, targetUrlProblem } from "./github-url.js";
 import { issueMessage, renderMessage } from "./messages.js";
 import {
+  ContextSource,
+  contextLabel,
   DEFAULT_INTAKE_INTERVAL_SEC,
   DEFAULT_MEMORY_RETENTION_DAYS,
   excludedRepositories,
@@ -226,6 +228,30 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
   });
 });
 
+describe("コンテキストリポジトリの指定", () => {
+  it("path はリポジトリの根からの相対パスだけで、. と .. の部分は使えない", () => {
+    for (const path of ["contexts/team", "a", "pkg/@scope/ctx", "v1.2/ctx", ""]) {
+      expect(ContextSource.safeParse({ repo: "/Users/acme/mono", path }).success).toBe(true);
+    }
+    for (const path of ["/etc", "../x", "a/../../b", "a/./b", ".", "a//b", "a/", "a\\b", "a b"]) {
+      const parsed = ContextSource.safeParse({ repo: "/Users/acme/mono", path });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues.map((i) => renderMessage(issueMessage(i), "ja"))).toEqual([
+        "パスは、リポジトリの根からの相対パス（例 contexts/team。. と .. の部分は使えない）で入力してください。",
+      ]);
+    }
+  });
+
+  it("層は <repo>//<path>#<ref> で表す", () => {
+    expect(contextLabel({ repo: "git@github.com:acme/mono.git" })).toBe(
+      "git@github.com:acme/mono.git",
+    );
+    expect(
+      contextLabel({ repo: "git@github.com:acme/mono.git", ref: "main", path: "contexts/team" }),
+    ).toBe("git@github.com:acme/mono.git//contexts/team#main");
+  });
+});
+
 describe("プロジェクト定義のエクスポート・インポート（PBI-5b）", () => {
   const full = make("p9", {
     name: "決済",
@@ -233,7 +259,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
       { scope: "org", target: "https://github.com/acme" },
       { scope: "repo", target: "https://github.com/other/payments" },
     ],
-    context: { repo: "https://example.com/ctx.git", ref: "main" },
+    context: { repo: "https://example.com/ctx.git", ref: "main", path: "contexts/pay" },
     // 個人の設定（gh のアカウント。PBI-13）は書き出さない
     githubAccounts: { "github.com": "side-job" },
   });
@@ -249,7 +275,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
           { scope: "org", target: "https://github.com/acme" },
           { scope: "repo", target: "https://github.com/other/payments" },
         ],
-        context: { repo: "https://example.com/ctx.git", ref: "main" },
+        context: { repo: "https://example.com/ctx.git", ref: "main", path: "contexts/pay" },
       },
     });
     const text = JSON.stringify(exported);

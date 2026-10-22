@@ -3,6 +3,7 @@ import {
   activeStep,
   awaitingRepository,
   awaitingTicketTriage,
+  contextLabel,
   deliveredWithoutChanges,
   formatUsd,
   GATED_STEPS,
@@ -313,9 +314,7 @@ export function describeEventParts(
       .join("\n");
     return {
       text: l.event.ContextResolved(
-        event.payload.layers.map(
-          (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
-        ),
+        event.payload.layers.map((layer) => `${contextLabel(layer)}@${layer.commit.slice(0, 7)}`),
         event.payload.warnings.map(l.text),
       ),
       ...(detail ? { detail } : {}),

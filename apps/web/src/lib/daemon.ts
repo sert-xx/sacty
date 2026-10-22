@@ -234,6 +234,7 @@ export type ContextPreview = {
   layers: {
     repo: string;
     ref?: string;
+    path?: string;
     commit: string;
     locked: { skills: string[]; mcp: string[]; platforms: string[] };
     remove: { skills: string[]; mcp: string[]; platforms: string[] };

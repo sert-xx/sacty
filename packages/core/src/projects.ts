@@ -224,8 +224,25 @@ export function intakeIntervalSec(settings: SactySettings, kind: IntakeKind): nu
 }
 
 /**
+ * コンテキストの、リポジトリの中のディレクトリ（モノレポの一部をコンテキストにする）。リポジトリの根からの相対パスで、
+ * `.`・`..` の部分は書けない（リポジトリの外を指させない）。空はリポジトリの根。
+ */
+export const ContextPath = z
+  .string()
+  .trim()
+  .max(300)
+  .refine(
+    (path) =>
+      path === "" ||
+      (/^[\w.@+-]+(?:\/[\w.@+-]+)*$/.test(path) &&
+        path.split("/").every((segment) => segment !== "." && segment !== "..")),
+    code("input.invalidContextPath"),
+  );
+
+/**
  * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ
- * （省略すると既定のブランチ）。
+ * （省略すると既定のブランチ。ローカルのパスで省略すると、ディレクトリの今の中身）、path はリポジトリの中の
+ * ディレクトリ（省略するとリポジトリの根）。
  */
 export const ContextSource = z.object({
   repo: z.string().trim().min(1, code("input.contextRepoRequired")).max(500),
@@ -235,8 +252,16 @@ export const ContextSource = z.object({
     .max(200)
     .regex(/^[\w./-]*$/, code("input.invalidRef"))
     .optional(),
+  path: ContextPath.optional(),
 });
 export type ContextSource = z.infer<typeof ContextSource>;
+
+/**
+ * コンテキストの層の表し方（画面・作業履歴・誤りの文で使う）。`<repo>//<path>#<ref>`（path と ref は、あるときだけ）。
+ */
+export function contextLabel(source: { repo: string; ref?: string; path?: string }): string {
+  return `${source.repo}${source.path ? `//${source.path}` : ""}${source.ref ? `#${source.ref}` : ""}`;
+}
 
 /** 共用の compose の名前（オーケストレーターが選ぶときの名前。PBI-70）。 */
 export const SharedComposeName = z
@@ -586,6 +611,7 @@ export function exportProject(project: Project): ProjectExport {
             context: {
               repo: project.context.repo,
               ...(project.context.ref ? { ref: project.context.ref } : {}),
+              ...(project.context.path ? { path: project.context.path } : {}),
             },
           }
         : {}),

@@ -135,11 +135,13 @@ const ja = {
     addTarget: "対象を追加",
     contextTitle: "コンテキストリポジトリ（任意）",
     contextHint:
-      "工程エージェントに渡す規約・スキル・MCP・外部 PF を置いたリポジトリです（rules.md・skills/・mcp.yaml・platforms.yaml・agents/ など）。Sacty の既定のコンテキストの上に重ねます。外すときは、リポジトリを空にして保存します。",
+      "工程エージェントに渡す規約・スキル・MCP・外部 PF のリポジトリ（git の URL かローカルの絶対パス）。ローカルのパスでブランチ・タグが空なら、今の中身を使います。モノレポは、ディレクトリに根からの相対パスを書きます。既定のコンテキストの上に重ね、外すときはリポジトリを空にして保存します。",
     contextRepo: "リポジトリ",
     contextRef: "ブランチ・タグ",
-    contextRepoPlaceholder: "例：git@github.com:acme/sacty-context.git",
+    contextRepoPlaceholder: "例：git@github.com:acme/ctx.git・/Users/acme/ctx",
     contextRefPlaceholder: "既定のブランチ",
+    contextPath: "ディレクトリ",
+    contextPathPlaceholder: "例：contexts/team（空ならリポジトリの根）",
     platformsTitle: "使える外部 PF",
     platformsHint:
       "工程エージェントが $SACTY_PF_URL で呼べる API。gateway.platforms（config.yaml）は全プロジェクト、platforms.yaml（コンテキスト）はこのプロジェクトだけ。同名なら config.yaml が優先。保存した設定から読み、秘密情報は出しません。",
@@ -336,11 +338,13 @@ const en: ProjectsMessages = {
     addTarget: "Add target",
     contextTitle: "Context repository (optional)",
     contextHint:
-      "A repository with the rules, skills, MCP, and external platforms for step agents (rules.md, skills/, mcp.yaml, platforms.yaml, agents/, and so on). It is layered on top of Sacty's default context. To remove it, clear the repository and save.",
+      "Rules, skills, MCP, and external platforms for step agents (a git URL or an absolute local path). For a local path with no branch or tag, its current contents are used. For a monorepo, enter the path from the root in Directory. Layered on Sacty's default context; to remove it, clear the repository and save.",
     contextRepo: "Repository",
     contextRef: "Branch or tag",
-    contextRepoPlaceholder: "e.g. git@github.com:acme/sacty-context.git",
+    contextRepoPlaceholder: "e.g. git@github.com:acme/ctx.git, /Users/acme/ctx",
     contextRefPlaceholder: "Default branch",
+    contextPath: "Directory",
+    contextPathPlaceholder: "e.g. contexts/team (repository root if empty)",
     platformsTitle: "Available external platforms",
     platformsHint:
       "APIs step agents can call with $SACTY_PF_URL. Platforms in gateway.platforms of config.yaml work in every project; platforms in platforms.yaml of the context repository work only in this project (on the same name, config.yaml wins). Read from the saved context; secrets for authentication are not shown.",

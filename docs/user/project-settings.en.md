@@ -64,7 +64,13 @@ gh auth login --hostname ghe.example.com      # Sign in to each GitHub Enterpris
 
 ## Context repository
 
-In the "Context repository" field, write the repository (a git URL or a local path) and, optionally, a branch or tag (the default branch if empty). See [Context repository](context.en.md) for how to write it and what it contains. To remove it, clear the repository and save.
+In the "Context repository" field, write the following.
+
+- Repository: a git URL or an absolute local path (a path starting with `~/` also works).
+- Branch or tag (optional): if empty, a git URL uses the default branch, and a local path uses the current contents of the directory.
+- Directory (optional): to use part of a monorepo as the context, the path relative to the repository root (e.g. `contexts/team`). If empty, the repository root is used.
+
+See [Context repository](context.en.md) ([Where to put it](context.en.md#where-to-put-it)) for how to write it and what it contains. To remove it, clear the repository and save.
 
 When you save, sacty reads and checks the context, and tells you if `mcp.yaml`, `platforms.yaml`, or other files have errors. sacty still saves the settings, but as they are, step runs will stop.
 

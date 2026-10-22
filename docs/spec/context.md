@@ -6,7 +6,7 @@
 sacty はコンテキストを層を重ねて合成し、実行のたびに Claude Code・Codex の設定の場所に置く。
 層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その継承の鎖）。
 
-関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)
+関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)
 
 ## 層
 
@@ -16,13 +16,32 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
      名前は `sacty-default` で、コミットの代わりに中身の SHA-256 を記録する。
   2. コンテキストリポジトリの継承の鎖の最も上の祖先 → …
   3. プロジェクトが指定したリポジトリ（最下位）
-- 継承：`sacty-context.yaml` の `extends` に `<URL>[#<ref>]` を書く（最後の `#` で分ける）。
-  - 同じ `repo#ref` が2度出たら `context.cycle` で止める。
+- プロジェクトの指定（`ContextSource`）
+  - `repo`：git の URL かローカルのパス（500 文字まで）。
+    ローカルのパスは、絶対パスか `~/` で始まるもの（`~` はホームのディレクトリ）。
+  - `ref`：ブランチやタグ。省けば、git の URL は既定のブランチ、ローカルのパスはディレクトリの今の中身。
+  - `path`：リポジトリの中のディレクトリ（モノレポの一部を層にする）。リポジトリの根からの相対パスで、`.`・`..` の部分は書けない（`input.invalidContextPath`）。省けばリポジトリの根。
+- 層は `<repo>//<path>#<ref>`（`path`・`ref` はあるときだけ）で表す。
+  作業履歴（`ContextResolved` の `layers`）には `repo`・`ref`・`path`・`commit` を記録する。
+- 継承：`sacty-context.yaml` の `extends` に、次のどれかを書く。
+  - `<URL>[#<ref>]`：ほかのリポジトリ（最後の `#` で分ける）。
+  - `{ repo, ref, path }`：ほかのリポジトリの中のディレクトリ（`ref`・`path` は任意）。
+  - `./`・`../` で始まる相対パス：同じリポジトリ・同じ `ref` の中の、その層のディレクトリから見たディレクトリ。
+    リポジトリの外を指したら `context.extendsOutside` で止める。
+  - git で取得した層（`ref` のあるローカルのパスを含む）は、ローカルのパスを継承できない（`context.localExtendsFromRemote`）。
+    ローカルのパスを書けるのは、プロジェクトの指定と、`ref` の無いローカルのパスの層（今の中身を読む層）の `extends` だけ。
+  - 同じ層（`repo`・`path`・`ref`）が2度出たら `context.cycle` で止める。
   - 深さが `MAX_CONTEXT_DEPTH`（10）に達したら `context.tooDeep` で止める。
-- プロジェクトの指定（`ContextSource`）は `repo`（git の URL かローカルのパス。500 文字まで）と `ref`（ブランチやタグ。省けば既定のブランチ）。
-- 取得はキャッシュしない。
-  合成のたびに一時ディレクトリ（`sacty-context-*`）に `git clone --depth 1 [--branch <ref>]` し、使い終わったら消す。
-  git に渡す環境は `GIT_TERMINAL_PROMPT=0` とホストの `PATH`・`HOME`・`SSH_AUTH_SOCK`・`TMPDIR`・`LANG` と認証だけ。
+- 取得はキャッシュしない。合成のたびに一時ディレクトリ（`sacty-context-*`）に置き、使い終わったら消す。
+  - git の URL と、`ref` のあるローカルのパス：`git clone --depth 1 [--branch <ref>]` する。
+    同じ合成の中では、同じ `repo#ref` を1回だけ取得し、中のディレクトリの違う層は同じ取得（同じコミット）を使う。
+  - `ref` の無いローカルのパス：取得せず、層のディレクトリ（`<repo>/<path>`）を `.git` を除いて写す。
+    写すのとハッシュは非同期に行い、ファイルは少しずつ読む。中止（上限の時間）されたら途中で止め、`context.copyAborted` で止める。
+    git で管理していなくても、コミットしていない変更があってもよい。
+    リンクはたどらずにリンクのまま写す。
+    コミットの代わりに、写した中身すべての SHA-256 を記録する。
+  - 層のディレクトリが無い・途中にシンボリックリンクがあるときは `context.pathMissing` で止める。
+  - git に渡す環境は `GIT_TERMINAL_PROMPT=0` とホストの `PATH`・`HOME`・`SSH_AUTH_SOCK`・`TMPDIR`・`LANG` と認証だけ。
 - 認証
   - HTTPS の URL で、次のどちらかに当たれば、gh のトークンを `http.https://<ホスト>/.extraheader` の設定（環境変数 `GIT_CONFIG_*`）で渡す。
     - そのホストの GitHub のアカウントをプロジェクトで選んでいる。
@@ -31,7 +50,7 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
   - SSH・ローカルのパス・ほかのサーバーは、ホストの git の認証を使う。
   - トークンは誤りの文から伏せる。
 
-コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`）
+コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`extendsRef`・`localContextDir`・`layerDir`・`copyLocalLayer`・`hashTree`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`・`ContextPath`・`contextLabel`）
 
 ## 既定のレビュー用スキル
 
@@ -276,7 +295,8 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 - 使い回し：同じプロジェクトで同じ中身なら、実行をまたいで同じプロセスを使う。
   中身（層の commit を含む）が変われば、新しい名前で起動する。
 - 作業ディレクトリ
-  - そのサーバーを書いた層のリポジトリの写し（`SACTY_HOME/context-mcp/layers/<プロジェクトと commit の識別>-<乱数>`。`.git` は写さない）。
+  - そのサーバーを書いた層のディレクトリ（`path` があればリポジトリの中のそのディレクトリ）の写し（`SACTY_HOME/context-mcp/layers/<プロジェクトと層の識別>-<乱数>`。`.git` は写さない）。
+    層の識別は、`repo`・`ref`・`path`・`commit` から作る。
   - 取得した層は実行の後に消えるので、確保のときに写し、使うものが無くなったら消す。
   - 相対パスのコマンドは作業ディレクトリから、ほかは `PATH` から探す。
     無ければ起動する前に理由（`context.mcpHostCommandMissing`）にする。

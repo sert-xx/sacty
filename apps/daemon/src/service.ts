@@ -2104,7 +2104,7 @@ export class TaskService {
           repositories: (await this.projectRepositories(task.projectId))?.repositories ?? [],
           ...(contextSource
             ? {
-                context: `${contextSource.repo}${contextSource.ref ? `（${contextSource.ref}）` : ""}`,
+                context: `${contextSource.repo}${contextSource.path ? `の ${contextSource.path}` : ""}${contextSource.ref ? `（${contextSource.ref}）` : ""}`,
               }
             : {}),
           rules: exports.rules,

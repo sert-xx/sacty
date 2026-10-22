@@ -1,5 +1,6 @@
 "use client";
 
+import { contextLabel } from "@sacty/core";
 import { useState, useTransition } from "react";
 import { previewContextAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -158,10 +159,9 @@ function PreviewBody({ preview }: { preview: ContextPreview }) {
             const locked = named(l.locked);
             const remove = named(l.remove);
             return (
-              <li key={`${l.repo}#${l.ref ?? ""}`} className="rounded-lg border border-border p-2">
+              <li key={contextLabel(l)} className="rounded-lg border border-border p-2">
                 <div className={mono}>
-                  {l.repo}
-                  {l.ref ? `#${l.ref}` : ""} @ {l.commit}
+                  {contextLabel(l)} @ {l.commit}
                 </div>
                 {locked && (
                   <div className="text-xs text-muted-foreground">

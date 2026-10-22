@@ -109,6 +109,8 @@ export function ProjectEditor({
   // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
   const needsAccount = Boolean(project) && missing;
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
+  // リポジトリの中のディレクトリ（モノレポの一部をコンテキストにする）。空ならリポジトリの根
+  const [contextPath, setContextPath] = useState(project?.context?.path ?? "");
   const definition = JSON.stringify({
     name,
     targets,
@@ -118,6 +120,7 @@ export function ProjectEditor({
           context: {
             repo: contextRepo.trim(),
             ...(contextRef.trim() ? { ref: contextRef.trim() } : {}),
+            ...(contextPath.trim() ? { path: contextPath.trim() } : {}),
           },
         }
       : {}),
@@ -339,6 +342,20 @@ export function ProjectEditor({
                   // ブランチ・タグは、リポジトリを設定したときだけ使う
                   disabled={!contextRepo.trim()}
                   onChange={(e) => setContextRef(e.target.value)}
+                  className="font-mono"
+                />
+              </label>
+              <label
+                htmlFor={`${uid}-context-path`}
+                className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+              >
+                {t.contextPath}
+                <Input
+                  id={`${uid}-context-path`}
+                  value={contextPath}
+                  placeholder={t.contextPathPlaceholder}
+                  disabled={!contextRepo.trim()}
+                  onChange={(e) => setContextPath(e.target.value)}
                   className="font-mono"
                 />
               </label>

@@ -86,6 +86,8 @@ description: リリースの手順
 #       - GET /api/v1/tickets/**
 `,
   "sacty-context.yaml": `# extends：このリポジトリの親（上位の層）のコンテキストリポジトリ。URL#ref で ref を指定できる
+#   同じリポジトリの中のディレクトリ（モノレポ）は、この層から見た相対パス（例 ../base）で書ける。
+#   ほかのリポジトリの中のディレクトリは、repo・ref・path の3つの項目で書く
 # extends: git@github.com:acme/sacty-context.git#main
 # locked：下位の層で上書き・取り除きできないスキル・MCP サーバー・外部 PF
 # locked:

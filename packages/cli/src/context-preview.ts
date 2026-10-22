@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { renderMessage } from "@sacty/core";
+import { contextLabel, renderMessage } from "@sacty/core";
 
 /**
  * 起動中のデーモンの接続先とトークンを置くファイル（SACTY_HOME の下。PBI-76）。`sacty up` が、デーモンが起動できた
@@ -86,6 +86,7 @@ export type PreviewView = {
   layers: {
     repo: string;
     ref?: string;
+    path?: string;
     commit: string;
     locked: Record<string, string[]>;
     remove: Record<string, string[]>;
@@ -220,7 +221,7 @@ export function formatContextPreview(result: PreviewResult, showContent = true):
     const locked = named(l.locked);
     const remove = named(l.remove);
     out.push(
-      `- ${l.repo}${l.ref ? `#${l.ref}` : ""} @ ${l.commit}${locked ? `\n    locked: ${locked}` : ""}${remove ? `\n    remove: ${remove}` : ""}`,
+      `- ${contextLabel(l)} @ ${l.commit}${locked ? `\n    locked: ${locked}` : ""}${remove ? `\n    remove: ${remove}` : ""}`,
     );
   }
   if (p.warnings.length > 0) {
