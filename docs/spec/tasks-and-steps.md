@@ -4,12 +4,13 @@
 
 タスクは、工程（調査・要求要件・設計・実装など）の並びとして進む。
 どの工程の組み合わせ（進め方）にするかは、タスクの開始時にオーケストレーターが選ぶ（人がタスクの作成時に指定していれば、それを使う）。
+その前に、情報収集のエージェントがタスクに関係する情報を集めて絞り込み、まとめをオーケストレーター・すべての工程・ゴールガーディアンに渡す（下の「情報収集」）。
 工程はエージェントが実行し、人間は承認の工程（承認ゲート）でだけ判断する。
 ゴールガーディアンは、変更の申し出・最終レビュー・PR の指摘の戻し先・統合レビューを判定する。
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-gather-information-before-orchestrator.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -263,6 +264,37 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 
 コード: `apps/daemon/src/github-comments.ts`（`requestedGitHubComments`・`commentTarget`・`commentAllowed`・`buildGitHubComment`・`githubCommentMarker`・`withoutGitHubComments`）、`apps/daemon/src/github-relay.ts`（`GITHUB_COMMENTS_MAX`・`GITHUB_COMMENT_BODY_MAX`）、`apps/daemon/src/service.ts`（`postGitHubComments`・`awaitingGitHubComments`）、`packages/core/src/events.ts`（`GitHubCommentsPosted`・`OperationVia`）、`packages/core/src/projection.ts`
 
+## 情報収集
+
+タスクの開始時（工程を選ぶ前、チケットのトリアージより前）に1回、情報収集のエージェントがタスクに関係する情報を集め、関係するものだけに絞り込んでまとめる（`InformationGathered`。actor は `gatherer`）。
+人間が暗黙のうちに前提にしている背景・目的・制約を、オーケストレーターが進め方を選ぶ前に揃えるためのもの。
+承認ゲートは無く、まとめはタスクの詳細の「集めた情報」に出す（工程が始まったら折りたたむ）。
+
+- 集める対象（指示。強制はしない）：
+  - 取り込み元のチケットの説明・コメント・リンクしたチケットと、親（サブタスクならストーリー、ストーリーならエピック）を上まで辿ったもの。GitHub の Issue・PR なら本文・コメント・リンクした Issue・PR
+  - タスクの内容・チケット・コメントにある URL の中身
+  - 使える MCP サーバー・外部 PF・プロジェクトのコンテキストの規約で、タスクの語を探して見つけた仕様・設計・決定・経緯
+- 指示では、関係の薄いもの・置き換わった古いものを落とし、食い違いは両方を書かせる。
+  まとめは決まった見出し（目的と背景・やること・範囲外と制約・関係する仕様と経緯・食い違いと未確定のこと・読めなかった情報源）で書かせる。
+  読むだけで、書き込み・送信はさせない。
+  対象リポジトリのコードの調査は後の工程（調査）に任せる（この時点ではふつう、リポジトリを用意していない）。
+- 実行は、オーケストレーターと同じ形（既定のイメージ・合成したコンテキスト・ホストとコンテキストの外部 PF・MCP サーバー・GitHub の読み取りの中継。`ContextResolved` を記録する）。
+  AI は `step_agents.gather`、無ければ `step_agents.orchestrator`、それも無ければ `default_agent`。
+  セッションは保存しない。
+  費用はタスクの予算に入れる（予算の上限に達していれば、実行せずに一時停止する）。
+- 答え（見出し `sacty-gathered` の JSON）から、まとめ（`brief`。前後の空白を除いて1文字以上、30000 文字（`GATHERED_BRIEF_MAX`）まで）と情報源（`sources`。題と URL。100 件まで）を読む。
+  まとめが無い・読めないときと、実行に失敗したときは、`OrchestratorFailed`（actor は `gatherer`）を記録し、代わりのエージェントがあれば集め直し、無ければ一時停止する（再開すると集め直す）。
+  集めずに先へは進めない。
+- まとめは、次の指示に添える（`gatheredLines`）。
+  - チケットのトリアージ・オーケストレーター（工程の選択・レビューのイメージの選択・工程の見直し・質問への答え）
+  - すべての工程（工程のタスクの内容に添える）
+  - ゴールガーディアン（変更の申し出の判定・最終レビュー・PR の指摘の戻し先の判断・統合レビュー）。人間が承認したものではないので、背景の理解にだけ使い、判定の根拠にしないよう添える
+- 工程を選んだ後のタスク（この仕組みの前の作業履歴を含む）と、分割の子タスク（`parent` のあるもの）では集めない（`awaitingGathering`）。
+  子タスクの内容には、親のまとめを添える（`buildChildBody`）。
+  再実行で作ったタスクは、新しいタスクとして集める。
+
+コード: `apps/daemon/src/service.ts`（`gatherInformation`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
+
 ## オーケストレーター
 
 工程を選ぶ前（タスクの開始時）に1回実行する。
@@ -303,7 +335,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 答えの出し方（PBI-146）：指示は、既定のスキル `plan-steps` があればその手順で候補を比べ、答えの JSON を出す前にファイルに書いて `jq` などの道具で検査し、通るまで直してから本文の最後に 1 回だけ出すよう求める（`planAnswerLines`。[コンテキストの合成](context.md#既定の工程の選択用スキル)）。
   読み手（`extractStepPlan`）は変えず、壊れた答えは今までどおり読めないものとして止める。
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
-- チケットから取り込んだタスクは、工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
+- チケットから取り込んだタスクは、情報収集の後・工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
 - PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
   - `images` を設定していて、プロジェクトの対象・再実行でイメージを決めていないときだけ、オーケストレーターに `review` の工程のイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
     指示では、PR が触るコードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。
@@ -626,6 +658,9 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 変更の申し出：工程のエージェントは、承認済みの要求要件・設計の変更を申し出られる（ID は `CP-<番号>`）。
 承認されたら、要求要件は承認を取り消して承認し直しに回し、設計は承認済みの版を置き換える。
 却下されたら、申し出た工程の成果を提出する。
+
+どの判定の指示にも、タスクの開始時に集めた情報を添える（上の「情報収集」）。
+判定の基準は承認済みの成果物（無ければタスクの内容）と人間の指摘のままで、集めた情報は背景の理解にだけ使わせる。
 
 コード: `apps/daemon/src/service.ts`（`judge`・`settleEvents`・`runGuardian`・`verify`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`extractVerdict`・`extractFinalReview`・`extractRework`）
 

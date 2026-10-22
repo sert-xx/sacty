@@ -3,6 +3,7 @@ import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from "./events.js";
 import {
+  awaitingGathering,
   awaitingRepository,
   awaitingTicketTriage,
   canDecideTests,
@@ -2218,5 +2219,55 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
     const redone = project([...events, ...implemented(id, "i2")]).get(id);
     expect(redone?.verification).toBe("pending");
     expect(redone?.lastTests).toBeUndefined();
+  });
+});
+
+describe("タスクの開始時の情報収集", () => {
+  const gathered = (taskId: string) =>
+    ev(
+      taskId,
+      {
+        type: "InformationGathered",
+        payload: { brief: "まとめ", sources: [{ title: "PAY-100" }], agentId: "a", costUsd: 0.5 },
+      },
+      "gatherer",
+    );
+
+  it("工程を選ぶ前に1回だけ集める。集めたまとめと費用をタスクに持つ", () => {
+    const before = project([created("t1")]).get("t1");
+    expect(before && awaitingGathering(before)).toBe(true);
+    const task = project([created("t1"), gathered("t1")]).get("t1");
+    expect(task?.gathered).toEqual({
+      brief: "まとめ",
+      sources: [{ title: "PAY-100" }],
+      at: "2026-10-10T00:00:00.000Z",
+    });
+    expect(task?.budget.usedUsd).toBe(0.5);
+    expect(task && awaitingGathering(task)).toBe(false);
+    // 二度目・工程を選んだ後は記録できない
+    expect(() => project([created("t1"), gathered("t1"), gathered("t1")])).toThrow();
+    expect(() => project([created("t1"), steps("t1"), gathered("t1")])).toThrow();
+    // 集める前の版のタスク（工程を選び終えた）は集めない
+    const old = project([created("t1"), steps("t1")]).get("t1");
+    expect(old && awaitingGathering(old)).toBe(false);
+  });
+
+  it("分割の子タスクは集めない（親のまとめを内容に持つ）", () => {
+    const child = project([
+      ev(
+        "c1",
+        {
+          type: "TaskCreated",
+          payload: {
+            title: "子",
+            body: "親の集めた情報を含む",
+            start: "split",
+            parent: { taskId: "t1", dependsOn: [] },
+          },
+        },
+        "agent",
+      ),
+    ]).get("c1");
+    expect(child && awaitingGathering(child)).toBe(false);
   });
 });

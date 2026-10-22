@@ -211,6 +211,9 @@ const PARAMS = {
     status: z.number(),
     detail: z.string(),
   }),
+  // タスクの開始時の情報収集
+  "gather.failed": z.object({ detail: TextParam }),
+  "gather.unreadable": null,
   "ticket.triageFailed": z.object({ detail: TextParam }),
   "ticket.triageUnreadable": null,
   "ticket.repoNotCandidate": z.object({ repo: z.string() }),
@@ -795,6 +798,10 @@ const ja: MessageDictionary = {
     `接続先「${platform}」の allow に「${method} ${path}」がありません。config.yaml の gateway.platforms.${platform}.allow（プロジェクトのコンテキストの PF なら、platforms.yaml の platforms.${platform}.allow）に足してください。`,
   "ticket.requestFailed": ({ platform, status, detail }) =>
     `接続先「${platform}」の API が失敗しました（${status}）：${detail}`,
+  "gather.failed": ({ detail }, text) =>
+    `情報収集のエージェントが、タスクに関係する情報をまとめられませんでした：${text(detail)} 再開すると、もう一度集めます。`,
+  "gather.unreadable":
+    "情報収集のエージェントの出力から、集めた情報のまとめを読み取れませんでした。",
   "ticket.triageFailed": ({ detail }, text) =>
     `オーケストレーターが、チケットを読んで作業するリポジトリを決められませんでした：${text(detail)} リポジトリを選んで再開してください。`,
   "ticket.triageUnreadable":
@@ -1385,6 +1392,10 @@ const en: MessageDictionary = {
     `"${method} ${path}" is not in the allow list of "${platform}". Add it to gateway.platforms.${platform}.allow in config.yaml (for a platform of the project's context, platforms.${platform}.allow in platforms.yaml).`,
   "ticket.requestFailed": ({ platform, status, detail }) =>
     `The API of "${platform}" failed (${status}): ${detail}`,
+  "gather.failed": ({ detail }, text) =>
+    `The information gatherer could not summarize the information related to the task: ${text(detail)} Resume to gather again.`,
+  "gather.unreadable":
+    "Could not read the summary of the gathered information from the gatherer's output.",
   "ticket.triageFailed": ({ detail }, text) =>
     `The Orchestrator could not decide the repository from the ticket: ${text(detail)} Choose a repository and resume.`,
   "ticket.triageUnreadable":

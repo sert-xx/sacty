@@ -88,7 +88,7 @@ gateway:
         secret: op://Work/Jira/token
       allow:
         - GET /rest/api/2/search              # intake (the daemon searches for tickets)
-        - GET /rest/api/2/issue/**            # the Orchestrator reads the ticket, its parent, and subtasks
+        - GET /rest/api/2/issue/**            # the gatherer and the Orchestrator read the ticket, its parent, and subtasks
         - POST /rest/api/2/issue/*/comment    # comments the investigation results and the PR URL
     jira-cloud:                               # Jira Cloud (base64 of email:API token)
       upstream: https://acme.atlassian.net

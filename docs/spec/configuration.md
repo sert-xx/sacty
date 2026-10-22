@@ -28,7 +28,7 @@
 | `guardian_agent` | `default_agent` | ゴールガーディアンの AI |
 | `audit_agent` | `guardian_agent`（無ければ `default_agent`） | 完了したタスクの監査の AI（[監査](audit.md)） |
 | `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 失敗したエージェントを使わない時間（分。1〜1440 の整数）。利用制限（`usage_limit`）ならすべてのタスクで、ほかの失敗ならそのタスクで、その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#失敗したときの代わりのエージェント)） |
-| `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator` ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
+| `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator`・`gather`（タスクの開始時の情報収集）ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent`、情報収集（`gather`）は `orchestrator` の AI |
 | `agents` | `{}` | エージェントの既定の上書きと追加（下の「エージェントの既定と上書き」） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |
 | `budget.per_plan_usd` | `{}` | 工程の組み合わせ（`StepPlan`）ごとの予算（米ドル。正の数）。オーケストレーターがその組み合わせを選んだら、タスクの予算の上限にする（[タスクと工程](tasks-and-steps.md#予算一時停止再開中止)）。書いていない組み合わせは `budget.default_per_task_usd` |
@@ -44,7 +44,7 @@
 | `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
 | `run_timeout.agent_minutes` | `30` | エージェントの1回の実行の上限（分。1〜720 の整数。PBI-150）。過ぎたらコンテナを止め、時間切れ（`run.timeout`）にする（[エージェントの実行](agent-execution.md#コンテナ)） |
 | `run_timeout.test_minutes` | `20` | テストを実行する役割（`final-review`・`reproduce`）の上限に足す分（分。1〜720 の整数）。その役割の `roles` の上書きが無ければ、上限は `agent_minutes` + `test_minutes`（[エージェントの実行](agent-execution.md#コンテナ)） |
-| `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り |
+| `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`gather`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り |
 | `update_check` | `true` | sacty の最新版（GitHub Releases の最新のリリース）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
 
 ほかに、次のときも誤りにする。
@@ -156,7 +156,7 @@ sacty の更新で既定のモデルが変わっても、設定が読めなく�
 `runtime: stub` のエージェントは、接続先・単価を見ずに使える（単価は `price_per_mtok_usd`、無ければ 0）。
 
 使う AI と役割の対応は `agentFor` が決める。
-`step_agents` にあればそれを使い、無ければ `default_agent`（`integrate` は `guardian_agent`）を使う。
+`step_agents` にあればそれを使い、無ければ `default_agent`（`integrate` は `guardian_agent`、`gather` は `orchestrator` の AI）を使う。
 工程（マージの後の監視・外部作業・書き出しを含む）は、人がタスクの詳細で選んだエージェントがあれば、それを優先する（`stepAgentFor`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
 作業履歴には、使った AI の `authMode`・`model`・`reasoningEffort` だけを残す（秘密の値・接続先の URL は残さない。`agentSetting`）。
 

@@ -18,7 +18,7 @@
 | `guardian_agent` | ゴールガーディアンに使う AI | `default_agent` |
 | `audit_agent` | 完了したタスクの監査に使う AI（[監査](audit.md)） | `guardian_agent`（無ければ `default_agent`） |
 | `agent_fallback.cooldown_minutes` | 失敗したエージェントを使わず、代わりのエージェントを使う時間（分。1〜1440 の整数。[失敗したときの切り替え](#失敗したときの切り替え)） | `60` |
-| `step_agents` | 工程（マージの後の監視を含む）とオーケストレーターごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`） |
+| `step_agents` | 工程（マージの後の監視を含む）・オーケストレーター・情報収集ごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`、情報収集はオーケストレーターの AI） |
 | `agents` | sacty の既定のエージェントの上書き・追加（[エージェントの上書き](#エージェントの上書き)）。任意 | なし（sacty の既定を使う） |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
 | `budget.per_plan_usd` | 工程の組み合わせごとの予算（米ドル。0 より大きい数。[予算](#予算)） | なし（`budget.default_per_task_usd`） |
@@ -187,6 +187,7 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 | キー | 対象 |
 | --- | --- |
 | `orchestrator` | オーケストレーター |
+| `gather` | タスクの開始時の情報収集（書かなければ `orchestrator` の AI） |
 | `investigate` | 調査 |
 | `review` | レビュー |
 | `requirements` | 要求要件 |

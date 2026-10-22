@@ -17,7 +17,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `guardian_agent` | The AI used for the Goal Guardian | `default_agent` |
 | `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `guardian_agent` (or `default_agent`) |
 | `agent_fallback.cooldown_minutes` | How long an agent that failed is not used and the fallback agent is used instead (minutes; an integer from 1 to 1440; [Switching agents on failure](#switching-agents-on-failure)) | `60` |
-| `step_agents` | The AI to use for each step (including the after-merge watch) and the Orchestrator ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review) |
+| `step_agents` | The AI to use for each step (including the after-merge watch), the Orchestrator and information gathering ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review, the Orchestrator's AI for information gathering) |
 | `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.per_plan_usd` | Budget per step plan (US dollars. A number greater than 0. [Budget](#budget)) | None (`budget.default_per_task_usd`) |
@@ -172,6 +172,7 @@ You can write the following keys in `step_agents`.
 | Key | Target |
 | --- | --- |
 | `orchestrator` | Orchestrator |
+| `gather` | Information gathering at the start of a task (the AI of `orchestrator` if omitted) |
 | `investigate` | Investigation |
 | `review` | Review |
 | `requirements` | Requirements |

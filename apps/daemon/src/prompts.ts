@@ -4,6 +4,7 @@ import {
   DEFAULT_DOCUMENTS_DIR,
   ExportVia,
   type FinalReview,
+  GATHERED_BRIEF_MAX,
   type IntegrationReview,
   InvestigationKind,
   investigationIsGoal,
@@ -807,7 +808,10 @@ export function buildPrompt(
     existing?: readonly PullRequestFeedback[] | "unreadable";
   } = {},
 ): string {
-  const content = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
+  // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
+  const content = [`# ${task.title}`, "", task.body || "（内容なし）", ...gatheredLines(task)].join(
+    "\n",
+  );
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 
@@ -1513,7 +1517,8 @@ function toProposal(
 
 /**
  * ゴールガーディアンへの指示。判定ごとに新しいセッションで実行し、承認済みの要求要件・設計、
- * 変更理由、根拠となる事実（と変更後の全文）だけを渡す。タスクの内容や工程の経緯、過去の判定は渡さない。
+ * 変更理由、根拠となる事実（と変更後の全文）と、タスクの開始時に集めた情報を渡す。タスクの内容や工程の経緯、過去の判定は
+ * 渡さない。
  */
 export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string {
   const approved = (["requirements", "design"] as const)
@@ -1552,6 +1557,7 @@ export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string 
         ]
       : []),
     "",
+    ...gatheredLines(task, "guardian"),
     "判定を、次の形式で必ず出してください。",
     "```json",
     `{"${VERDICT_HEADING}": {"verdict": "approved または rejected または undecidable", "reason": "判定の理由"}}`,
@@ -1695,6 +1701,7 @@ export function buildFinalReviewPrompt(
     "--- 差分 ---",
     diff || "（差分がありません）",
     "",
+    ...gatheredLines(task, "guardian"),
     "判定を、次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
     ...verdictFormatLines(
       FINAL_REVIEW_HEADING,
@@ -1942,6 +1949,7 @@ export function buildIntegrationReviewPrompt(
     "",
     task.body || "（内容なし）",
     "",
+    ...gatheredLines(task, "guardian"),
     "判定の説明をMarkdownで書き、そのあとに判定を次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
     ...verdictFormatLines(INTEGRATION_HEADING, integrationViewpointIds(task), {
       findings: ["直す必要があること"],
@@ -2333,7 +2341,8 @@ export function buildStepPullRequestBodyParts(
 
 /**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
- * セッションで実行し、承認済みの要求要件・設計と、指摘だけを渡す（タスクの内容や工程の経緯は渡さない）。
+ * セッションで実行し、承認済みの要求要件・設計と、指摘と、タスクの開始時に集めた情報を渡す（タスクの内容や工程の経緯は
+ * 渡さない）。
  */
 export function buildReworkPrompt(
   task: Task,
@@ -2377,6 +2386,7 @@ export function buildReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
     `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
@@ -2436,6 +2446,7 @@ function buildStepReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
     `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
@@ -2806,6 +2817,7 @@ export function buildChatPrompt(
     "",
     "--- タスクの内容 ---",
     clip(task.body, CHAT_TEXT_IN_PROMPT) || "（なし）",
+    ...gatheredLines(task),
     ...approved,
     ...drafts,
     "",
@@ -3065,6 +3077,7 @@ export function buildOrchestratorPrompt(
     `# ${task.title}`,
     "",
     task.body || "（内容なし）",
+    ...gatheredLines(task),
     "",
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
@@ -3199,6 +3212,7 @@ function buildRepolessOrchestratorPrompt(
     `# ${task.title}`,
     "",
     task.body || "（内容なし）",
+    ...gatheredLines(task),
     "",
     ...planAnswerLines(),
     "選んだ進め方を、次の形式で必ず出してください。",
@@ -3300,7 +3314,7 @@ export function extractSplitPlan(
 }
 
 /**
- * 子タスクの内容。分割案の内容に、親タスクの承認済みの要求要件と設計を添える
+ * 子タスクの内容。分割案の内容に、親タスクの承認済みの要求要件と設計と、親が開始時に集めた情報を添える
  * （子タスクの工程エージェントが、親の決めたことを引き継げるように）。
  */
 export function buildChildBody(
@@ -3326,6 +3340,8 @@ export function buildChildBody(
     "## 親タスクの設計（承認済み）",
     "",
     parent.approved.design?.output ?? "（なし）",
+    // 子タスクは情報を集め直さないので、親がタスクの開始時に集めた情報を引き継ぐ
+    ...(parent.gathered ? ["", "## 親タスクの開始時に集めた情報", "", parent.gathered.brief] : []),
   ].join("\n");
 }
 
@@ -3715,6 +3731,109 @@ export function extractExport(output: string): { url: string } | { error: string
 }
 
 /** チケットの取り込みの1段目（PBI-52）の出力の見出し。 */
+const GATHER_HEADING = "sacty-gathered";
+
+/**
+ * タスクの開始時の情報収集の指示。チケットの親（ストーリー・エピック）・リンク・本文の URL・MCP・外部 PF などから、
+ * タスクに関係する情報を集めて絞り込み、まとめさせる。まとめはオーケストレーター・すべての工程・ゴールガーディアンの
+ * 指示に添える（gatheredLines）。読むだけで、コードの調査は後の工程に任せる。
+ */
+export function buildGatherPrompt(task: Task): string {
+  const ticket = task.ticket;
+  const origin = ticket
+    ? [
+        `取り込み元：JIRA のチケット ${ticket.key}（${ticket.url}）。接続先は $SACTY_PF_URL/${ticket.platform}（${
+          ticket.service === "jira-cloud"
+            ? "Jira Cloud（REST API：/rest/api/3/issue/<キー>、/rest/api/3/search/jql?jql=…）"
+            : "Jira Server / Data Center（REST API：/rest/api/2/issue/<キー>、/rest/api/2/search?jql=…）"
+        }）`,
+      ]
+    : task.source
+      ? [
+          `取り込み元：GitHub の${task.source.kind === "github_pull_request" ? " PR" : " Issue"}（${task.source.url}）。下の「GitHub（読み取り）」の gh api で読めます`,
+        ]
+      : [];
+  return [
+    "あなたは情報収集エージェントです。このタスクの進め方を決める前に、タスクに関係する情報をできるだけ集め、関係するものだけに絞り込んでまとめてください。",
+    "まとめは、このあと進め方（工程）を選ぶオーケストレーター、各工程のエージェント、成果を判定するゴールガーディアンが、タスクの内容と一緒に読みます。人間なら暗黙のうちに知っている背景・目的・制約を、後の判断に使える形で残すことが目的です。",
+    "",
+    ...origin,
+    ...(origin.length > 0 ? [""] : []),
+    "手順：",
+    "1. タスクの題と内容を読み、何を求めているか、判断に足りない情報は何かを洗い出す",
+    "2. 取り込み元を辿る。チケットなら、説明・コメント・ラベル・コンポーネント・リンクしたチケットを読み、親（サブタスクならストーリー、ストーリーならエピック）とその説明・ほかの子を上まで辿る。GitHub の Issue・PR なら、本文・コメント・リンクした Issue・PR を読む",
+    "3. タスクの内容・チケット・コメントにある URL を開いて、中身を確かめる（組織内の文書は、使える外部 PF・MCP サーバーで読む）。開けなかったものは、開けなかったと書く",
+    "4. 使える MCP サーバー・外部 PF（文書・チャット・チケットなど）・プロジェクトのコンテキストの規約で、タスクの語（機能名・画面名・エラーの文言・チケットのキーなど）を探し、関係する仕様・設計・決定・過去の障害や議論を見つける",
+    "5. 集めた情報を、タスクとの関係で絞り込む。関係の薄いもの・後の決定で置き換わった古いものは落とす。情報源の間で食い違うことは、両方を書く",
+    "",
+    "まとめ（brief）は Markdown で、次の見出しで書いてください（無い見出しは「なし」）。",
+    "- 目的と背景（なぜ必要か。親のストーリー・エピックの目的）",
+    "- やること・受け入れの条件",
+    "- 範囲外・制約・前提（決まっていること、変えてはいけないもの）",
+    "- 関係する仕様・決定・経緯（それぞれに情報源を添える）",
+    "- 食い違い・未確定のこと（後の工程や人間に確かめたいこと）",
+    "- 読めなかった情報源",
+    "",
+    "- 事実と推測を区別する。情報源に無いことを作らない",
+    "- 対象リポジトリのコードの調査は後の工程で行うので、ここでは行わない（作業領域にコードがあっても読まなくてよい）",
+    "- 読むだけにする。チケット・文書・リポジトリへの書き込みや、コメント・メッセージの送信はしない",
+    "- 秘密の値（トークン・パスワード・鍵）や個人の連絡先は書かない",
+    `- まとめは ${GATHERED_BRIEF_MAX} 文字以内。後の指示に毎回入るので、関係するものだけを簡潔に書く`,
+    "",
+    "--- タスク ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    "最後に、次の形式で必ず出してください（sources は、読んで関係があると判断した情報源。URL が無ければ省く）。",
+    "```json",
+    `{"${GATHER_HEADING}": {"brief": "まとめ（Markdown）", "sources": [{"title": "情報源の名前（例 PAY-100 エピック：決済の刷新）", "url": "https://example.com/..."}]}}`,
+    "```",
+  ].join("\n");
+}
+
+/** 情報収集の出力を読む。まとめが無ければ読めないものにする。 */
+export function extractGathered(
+  output: string,
+): { brief: string; sources: { title: string; url?: string }[] } | undefined {
+  return lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, GATHER_HEADING);
+    if (!v) return undefined;
+    const brief = typeof v.brief === "string" ? v.brief.trim() : "";
+    if (!brief) return undefined;
+    const sources = (Array.isArray(v.sources) ? v.sources : [])
+      .map((source: unknown) => {
+        if (!source || typeof source !== "object") return undefined;
+        const title = text((source as { title?: unknown }).title).slice(0, 500);
+        const url = text((source as { url?: unknown }).url).slice(0, 2000);
+        return title ? { title, ...(url ? { url } : {}) } : undefined;
+      })
+      .filter((source): source is { title: string; url?: string } => source !== undefined)
+      .slice(0, 100);
+    return { brief: brief.slice(0, GATHERED_BRIEF_MAX), sources };
+  })?.value;
+}
+
+/**
+ * タスクの開始時に集めた情報（情報収集のエージェントのまとめ）を、オーケストレーター・工程・ゴールガーディアンの指示に
+ * 添える行。集めていないタスク（集める前の版のタスク・分割の子タスク）では何も足さない。ゴールガーディアン（guardian）には、
+ * 承認されていない情報なので判定の根拠にしないことを添える。
+ */
+export function gatheredLines(task: Task, reader: "agent" | "guardian" = "agent"): string[] {
+  if (!task.gathered) return [];
+  return [
+    "",
+    "--- タスクの開始時に集めた情報 ---",
+    "情報収集のエージェントが、取り込み元のチケットの親・リンク先・URL・MCP サーバー・外部 PF などから集め、このタスクに関係するものだけにまとめたものです。",
+    // ゴールガーディアンの判定の材料は、人間が承認したものに限る（公正さの原則）。集めた情報は承認されていないので、背景にだけ使わせる
+    reader === "guardian"
+      ? "人間が承認したものではありません。判定の基準は、上の承認済みの成果物（無ければタスクの内容）と人間の指摘です。集めた情報は、背景（用語・経緯・関係する仕様）の理解にだけ使い、これを根拠に判定を決めないでください。"
+      : "タスクの内容を補う背景として使ってください。タスクの内容と食い違うときは、タスクの内容（と人間の指摘）を優先し、食い違いを書いてください。",
+    task.gathered.brief,
+    "--- 集めた情報ここまで ---",
+  ];
+}
+
 const TICKET_HEADING = "sacty-ticket";
 
 /**
@@ -3753,6 +3872,8 @@ export function buildTicketTriagePrompt(
     "4. タスクの題（チケットのキーを先頭に付ける。例 PAY-123 決済の再送で二重に請求される）と、概要（チケットの目的・やること・受け入れの条件、サブタスクならスコープとほかのサブタスクとの境目。後の工程のエージェントは、この概要を読んで作業する）を書く",
     "",
     "コードの変更や、チケットへの書き込みはしないでください（読むだけ）。決められなければ、repo を空にして、理由を reason に書いてください。",
+    "",
+    ...gatheredLines(task),
     "",
     "最後に、次の形式で必ず出してください。",
     "```json",
@@ -3808,6 +3929,7 @@ export function buildReviewImagePrompt(
     `# ${task.title}`,
     "",
     task.body || "（内容なし）",
+    ...gatheredLines(task),
     "",
     ...planAnswerLines(),
     "選んだイメージを、次の形式で必ず出してください。",
@@ -3871,6 +3993,7 @@ export function buildStepReviewPrompt(
     `# ${task.title}`,
     "",
     task.body || "（内容なし）",
+    ...gatheredLines(task),
     "",
     `--- 終わった工程「${STEP_NAME[after]}」の成果 ---`,
     output.length > STEP_REVIEW_OUTPUT_IN_PROMPT

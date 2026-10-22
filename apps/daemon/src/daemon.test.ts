@@ -56,7 +56,13 @@ import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
-import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
+import {
+  type AgentConfig,
+  agentFor,
+  type ConfigResult,
+  loadConfig,
+  type SactyConfig,
+} from "./config.js";
 import {
   type ContextFetcher,
   type ContextRef,
@@ -978,6 +984,9 @@ function makeService(
     planner?: ServiceDeps["planner"];
     /** オーケストレーターを差し替えず、エージェントで工程を選ばせる（PBI-17 のテスト）。 */
     realPlanner?: boolean;
+    /** 情報収集を差し替える。既定は集めずに進める（realGatherer なら、エージェントで集める）。 */
+    gatherer?: ServiceDeps["gatherer"];
+    realGatherer?: boolean;
     gateway?: ServiceDeps["gateway"];
     /** 秘密情報の取り出し口を差し替える（1Password。PBI-34）。 */
     secretStore?: ServiceDeps["secrets"];
@@ -1033,6 +1042,8 @@ function makeService(
     defaultContext: options.defaultContext,
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
+    // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
+    ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
     ...(options.realPlanner
       ? {}
@@ -13164,6 +13175,8 @@ describe("タスクの並行実行（PBI-30）", () => {
       contexts: new FakeContexts(),
       settings,
       github: new FakeGitHub(),
+      // 情報収集はせずに進める（工程の並行実行だけを確かめる）
+      gatherer: async () => undefined,
       planner:
         planner ??
         (async () => ({
@@ -26890,5 +26903,144 @@ describe("中止したタスクの再実行", () => {
     // 同じチケットは、取り込み直さない
     expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
     activity.close();
+  });
+});
+
+describe("タスクの開始時の情報収集", () => {
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const BRIEF = "## 目的と背景\n\nPAY-100 エピック：二重請求をなくす";
+  const gathered = (brief = BRIEF, output = 100): AgentOutcome => ({
+    kind: "completed",
+    output: `集めました\n\n\`\`\`json\n${JSON.stringify({
+      "sacty-gathered": {
+        brief,
+        sources: [{ title: "PAY-100 エピック", url: "https://jira.example.com/browse/PAY-100" }],
+      },
+    })}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+  const investigateOnly: AgentOutcome = {
+    kind: "completed",
+    output: '```json\n{"sacty-steps": {"plan": "investigate", "reason": "調査だけ"}}\n```',
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+  };
+
+  it("工程を選ぶ前に1回だけ集めて記録し、オーケストレーターと工程の指示に添える", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather.db"));
+    const { service, executor } = makeService(
+      activity,
+      [gathered(), investigateOnly, completed(10)],
+      { realPlanner: true, realGatherer: true },
+    );
+    const task = service.createTask({
+      projectId: "default",
+      title: "PAY-1 決済の再送",
+      body: "再送で二重に請求される",
+    });
+    await service.runNext(task.id); // 情報を集める
+    const recorded = service.get(task.id)?.activity.find((e) => e.type === "InformationGathered");
+    expect(recorded?.actor).toBe("gatherer");
+    expect(recorded?.type === "InformationGathered" && recorded.payload).toMatchObject({
+      brief: BRIEF,
+      sources: [{ title: "PAY-100 エピック", url: "https://jira.example.com/browse/PAY-100" }],
+      costUsd: 0.0015,
+    });
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    expect(service.get(task.id)?.task.budget.usedUsd).toBe(0.0015);
+    expect(service.get(task.id)?.task.steps).toEqual([]);
+    expect(executor.stdins[0]).toContain("あなたは情報収集エージェントです");
+    expect(executor.stdins[0]).toContain("再送で二重に請求される");
+    await service.runNext(task.id); // 工程を選ぶ（集め直さない）
+    await service.runNext(task.id); // 調査
+    expect(types(service, task.id).filter((t) => t === "InformationGathered")).toHaveLength(1);
+    expect(executor.stdins[1]).toContain("あなたはオーケストレーターです");
+    expect(executor.stdins[2]).toContain("あなたはソフトウェア開発の調査エージェントです");
+    for (const prompt of executor.stdins.slice(1)) {
+      expect(prompt).toContain("--- タスクの開始時に集めた情報 ---");
+      expect(prompt).toContain("PAY-100 エピック：二重請求をなくす");
+    }
+    activity.close();
+  });
+
+  it("集められない・読めないときは理由を記録して止め、再開すると集め直す", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-fail.db"));
+    const unreadable: AgentOutcome = {
+      kind: "completed",
+      output: "まとめられませんでした",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+    };
+    const { service } = makeService(activity, [unreadable, gathered()], {
+      realGatherer: true,
+    });
+    const task = service.createTask({ projectId: "default", title: "PAY-1 決済の再送" });
+    await service.runNext(task.id);
+    const failed = service.get(task.id)?.activity.find((e) => e.type === "OrchestratorFailed");
+    expect(failed?.actor).toBe("gatherer");
+    expect(failed?.type === "OrchestratorFailed" && ja(failed.payload.message)).toContain(
+      "集めた情報のまとめを読み取れませんでした",
+    );
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    expect(service.get(task.id)?.task.gathered).toBeUndefined();
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    activity.close();
+  });
+
+  it("チケットのタスクは、チケットを読んでリポジトリを決める前に集め、その指示にも添える", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-ticket.db"));
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        gathered(),
+        triageOut({
+          repo: "https://github.com/acme/app",
+          title: "PAY-1 決済の再送",
+          summary: "再送で二重に請求される",
+          reason: "決済のコードがある",
+        }),
+      ],
+      {
+        realGatherer: true,
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+        gateway: fakeGateway(),
+        projects,
+        settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+        tickets: new FakeTickets(),
+      },
+    );
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    await service.runNext(id); // 情報を集める
+    await service.runNext(id); // チケットを読む
+    expect(types(service, id).filter((t) => t !== "TaskCreated")).toEqual(
+      expect.arrayContaining(["InformationGathered", "TicketTriaged"]),
+    );
+    const order = types(service, id);
+    expect(order.indexOf("InformationGathered")).toBeLessThan(order.indexOf("TicketTriaged"));
+    expect(executor.stdins[0]).toContain("JIRA のチケット PAY-1");
+    expect(executor.stdins[0]).toContain("$SACTY_PF_URL/jira");
+    expect(executor.stdins[1]).toContain("取り込んだ JIRA のチケットを読んで");
+    expect(executor.stdins[1]).toContain("PAY-100 エピック：二重請求をなくす");
+    activity.close();
+  });
+
+  it("情報収集の AI は step_agents.gather、無ければオーケストレーターの AI", async () => {
+    const base = (configOf(agent())() as { ok: true; config: SactyConfig }).config;
+    const orchestrator = agent({ id: "orch" });
+    const gatherer = agent({ id: "gath" });
+    expect(agentFor({ ...base, stepAgents: { orchestrator } }, "gather").id).toBe("orch");
+    expect(agentFor({ ...base, stepAgents: { orchestrator, gather: gatherer } }, "gather").id).toBe(
+      "gath",
+    );
+    expect(agentFor(base, "gather").id).toBe(base.defaultAgent.id);
   });
 });

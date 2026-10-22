@@ -19,7 +19,7 @@
   - `taskId`・`projectId`
   - `at`（同じ追記の中のイベントは同じ時刻）
   - `actor`
-- `actor` は `person`・`sacty`・`orchestrator`・`guardian`・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
+- `actor` は `person`・`sacty`・`orchestrator`・`gatherer`（タスクの開始時の情報収集。[タスクと工程](tasks-and-steps.md#情報収集)）・`guardian`・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
 - AI を使ったイベントの多くは、次を持つ。
   - トークン数（`usage`：`input`・`cacheRead`・`cacheWrite`・`output`）
   - 費用（`costUsd`）と、推定かどうか（`estimated`）
@@ -58,7 +58,7 @@
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`）。
-- 費用を持つイベント（[費用](#費用)の14種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
+- 費用を持つイベント（[費用](#費用)の15種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
   - `status`
@@ -92,15 +92,16 @@
 - 単価（`PricePerMTok`）は100万トークンあたりの米ドルで、`input`・`cachedInput`・`cacheWrite`（既定 0）・`output`。
 - 費用 = (`input`×`input` の単価 + `cacheRead`×`cachedInput` の単価 + `cacheWrite`×`cacheWrite` の単価 + `output`×`output` の単価) ÷ 10^6（分子を整数に丸めてから割る）。
 - サブスクリプションとスタブの実行は、同じ単価で換算した推定の費用（`estimated`）として扱い、予算の判定に使う。
-- タスクの予算に入れる費用を持つイベントは、次の14種類（`CHARGED_EVENT_TYPES`）。
+- タスクの予算に入れる費用を持つイベントは、次の15種類（`CHARGED_EVENT_TYPES`）。
   `costUsd` を持つイベントはこれですべて。
   統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する。
 
   | イベント | 工程ごとの費用の表の行 |
   | --- | --- |
+  | `InformationGathered`（と、actor が `gatherer` の `OrchestratorFailed`） | 情報収集（`gather`） |
   | `TicketTriaged` | チケットの読み取り（`triage`） |
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
-  | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed` | オーケストレーター（`orchestrator`） |
+  | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed`（actor が `gatherer` のものを除く） | オーケストレーター（`orchestrator`） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |

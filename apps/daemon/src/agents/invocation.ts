@@ -8,7 +8,7 @@ import { secretStringsInJson } from "./redact.js";
 
 /**
  * 何として実行するか。工程か、ゴールガーディアン（変更の申し出の判定・最終レビュー）か、オーケストレーター
- * （工程の選択。chat はタスクの詳細での質問への答え。PBI-54）。export は、承認した成果の書き出し（PBI-56）。
+ * （工程の選択。chat はタスクの詳細での質問への答え。PBI-54）。gather は、タスクの開始時の情報収集。export は、承認した成果の書き出し（PBI-56）。
  */
 export type AgentRole =
   | StepKey
@@ -16,6 +16,7 @@ export type AgentRole =
   | "final-review"
   | "rework"
   | "orchestrator"
+  | "gather"
   | "chat"
   | "export"
   | "deployment"
@@ -313,6 +314,7 @@ export async function buildInvocation(
         final_review: "",
         rework: "",
         orchestrator: "",
+        gather: "",
         chat: "",
         export: "",
         deployment: "",
@@ -343,13 +345,15 @@ export async function buildInvocation(
                         ? stub.rework
                         : role === "orchestrator"
                           ? stub.orchestrator
-                          : role === "chat"
-                            ? stub.chat
-                            : role === "export"
-                              ? stub.export
-                              : role === "deployment"
-                                ? stub.deployment
-                                : ((role && stub.outputs[role]) ?? stub.output),
+                          : role === "gather"
+                            ? stub.gather
+                            : role === "chat"
+                              ? stub.chat
+                              : role === "export"
+                                ? stub.export
+                                : role === "deployment"
+                                  ? stub.deployment
+                                  : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

@@ -105,6 +105,7 @@ const ja = {
     person: "人間",
     sacty: "Sacty",
     orchestrator: "オーケストレーター",
+    gatherer: "情報収集",
     guardian: "ゴールガーディアン",
     agent: "工程エージェント",
     auditor: "監査",
@@ -208,6 +209,8 @@ const ja = {
       reason: string,
     ) =>
       `${step}＝${to ? `${to.name}${to.location ? `：${to.location}` : ""}` : "書き出さない"}${reason ? `（${reason}）` : ""}`,
+    InformationGathered: (sources: number) =>
+      `タスクに関係する情報を集めて、まとめた（情報源 ${sources} 件）`,
     TicketTriaged: (repo: string, reason: string, byPerson: boolean) =>
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
@@ -565,6 +568,7 @@ const en: LabelMessages = {
     person: "person",
     sacty: "Sacty",
     orchestrator: "Orchestrator",
+    gatherer: "Information gatherer",
     guardian: "Goal Guardian",
     agent: "step agent",
     auditor: "audit",
@@ -653,6 +657,8 @@ const en: LabelMessages = {
       `${file} of the shared compose "${name}"${where ? ` (${where})` : ""}`,
     stepExport: (step, to, reason) =>
       `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}${reason ? ` (${reason})` : ""}`,
+    InformationGathered: (sources) =>
+      `Gathered and summarized the information related to the task (${sources} sources)`,
     TicketTriaged: (repo, reason, byPerson) =>
       byPerson
         ? `Chose the repository: ${repo} (person)`

@@ -134,7 +134,7 @@ gateway:
         secret: op://Work/Jira/token
       allow:
         - GET /rest/api/2/search              # 取り込み（デーモンがチケットを探す）
-        - GET /rest/api/2/issue/**            # オーケストレーターがチケット・親・サブタスクを読む
+        - GET /rest/api/2/issue/**            # 情報収集とオーケストレーターがチケット・親・サブタスクを読む
         - POST /rest/api/2/issue/*/comment    # 調査の結果と PR の URL をコメントする
     jira-cloud:                               # Jira Cloud（メールアドレス:API トークン を base64 にした値）
       upstream: https://acme.atlassian.net

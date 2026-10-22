@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 600" width="1040" height="600" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/tasks-overview.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">How a task proceeds</title>
-  <desc id="desc">The orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.</desc>
+  <desc id="desc">After the information related to the task is gathered, the orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -59,7 +59,7 @@
   <rect x="250" y="130" width="300" height="76" rx="10" class="card" style=""/>
   <svg x="266" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
   <text x="302" y="162" class="title">Orchestrator</text>
-  <text x="266" y="190" class="sub">Chooses the plan</text>
+  <text x="266" y="190" class="sub">Gathers information, then plans</text>
   <rect x="250" y="240" width="300" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
   <svg x="266" y="254" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="302" y="272" class="title">Step agent</text>

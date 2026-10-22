@@ -24,7 +24,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
 | `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
 | `agent_fallback.cooldown_minutes` | `60` (`DEFAULT_FALLBACK_COOLDOWN_MINUTES`) | How long an agent that failed is not used (minutes; an integer from 1 to 1440). During that time, the `fallback` in `agents` is used, for all tasks at a usage limit (`usage_limit`) and for that task on other failures ([Agent execution](agent-execution.en.md#fallback-agents-on-failure)) |
-| `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
+| `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator` and `gather` (information gathering at the start of a task). If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent`; for information gathering (`gather`), the AI of `orchestrator` |
 | `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
 | `budget.per_plan_usd` | `{}` | The budget per step plan (`StepPlan`; US dollars; a positive number). When the orchestrator chooses that plan, it becomes the task's budget cap ([Tasks and steps](tasks-and-steps.en.md#budget-pause-resume-and-cancel)). Plans not listed use `budget.default_per_task_usd` |
@@ -40,7 +40,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 | `run_timeout.agent_minutes` | `30` | Limit of one agent run (minutes; an integer from 1 to 720; PBI-150). When it passes, the container is stopped and the run times out (`run.timeout`) ([Agent execution](agent-execution.en.md#container)) |
 | `run_timeout.test_minutes` | `20` | The amount added to the limit of the roles that run tests (`final-review`, `reproduce`) (minutes; an integer from 1 to 720). Without a `roles` override for that role, the limit is `agent_minutes` + `test_minutes` ([Agent execution](agent-execution.en.md#container)) |
-| `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors |
+| `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `gather`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors |
 | `update_check` | `true` | Check for a newer sacty (the latest GitHub release) and tell the web UI. `false` does not contact GitHub (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-for-a-newer-version)) |
 
 The following are also errors.
@@ -128,7 +128,7 @@ Of the agents merged from the defaults and the overrides, the following cannot b
 
 The warnings are kept in `agentWarnings` and shown as warnings in the web UI (`warnings` of `GET /api/status`). Agents with `runtime: stub` are usable without looking at endpoints or prices (the price is `price_per_mtok_usd`, or 0).
 
-`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`). For steps (including the after-merge watch, operations, and exports), an agent a person chose in the task details takes precedence (`stepAgentFor`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
+`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`, the AI of `orchestrator` for `gather`). For steps (including the after-merge watch, operations, and exports), an agent a person chose in the task details takes precedence (`stepAgentFor`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
 The Activity keeps only the `authMode`, `model`, and `reasoningEffort` of the AI used (it does not keep secret values or endpoint URLs; `agentSetting`).
 
 Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `stepAgentFor`, `agentSetting`), `apps/daemon/src/service.ts` (`TaskService.status`)
