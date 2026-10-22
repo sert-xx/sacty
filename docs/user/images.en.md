@@ -38,19 +38,13 @@ The default skill `drawio` ([Context repository](context.en.md)) uses it to conv
 The official release of draw.io Desktop (Apache-2.0) is fetched from GitHub and installed after its version and hash are checked against pinned values. CJK fonts (Noto CJK) are also installed
 so that Japanese labels can be exported.
 
-- The image becomes larger (about 800MB uncompressed). When you want a smaller image, set `image_build.drawio` to `false`.
-  Even without it, the skill can make diagrams (`.drawio`) in XML.
-- In environments that cannot reach GitHub releases (`github.com` and `release-assets.githubusercontent.com`), write the URL of your organization's mirror
-  (a repository that proxies GitHub releases, or a generic repository where you placed the files) in `image_build.drawio_mirror`. The files are fetched from `<URL>/v<version>/<file name>`
-  (the same layout as under GitHub's `https://github.com/jgraph/drawio-desktop/releases/download`). Place the files that match the architecture and OS family you use
-  (those you need of `drawio-amd64-32.4.1.deb`, `drawio-arm64-32.4.1.deb`, `drawio-x86_64-32.4.1.rpm`, and `drawio-aarch64-32.4.1.rpm`) in the mirror.
-- When the file cannot be fetched, a warning is shown in the build log and the image is built without the draw.io CLI. When the hash of the fetched file does not match the official release's
-  (including when the mirror has different content), the build stops.
+- The image becomes larger (about 800MB uncompressed). In environments that cannot reach GitHub releases (`github.com` and `release-assets.githubusercontent.com`), or
+  when you want a smaller image, set `image_build.drawio` to `false`. Even without it, the skill can make diagrams (`.drawio`) in XML.
+- When GitHub is unreachable, a warning is shown in the build log and the image is built without the draw.io CLI. When the hash of the fetched file does not match, the build stops.
 
 ```yaml
 image_build:
-  drawio_mirror: https://artifacts.example.com/github-releases/jgraph/drawio-desktop/releases/download   # fetch from here instead of GitHub
-  # drawio: false   # do not install the draw.io CLI
+  drawio: false   # do not install the draw.io CLI
 ```
 
 ## Building images from a private registry
@@ -79,7 +73,6 @@ image_build:
 | `npm_version` | The npm version installed in the image (`latest`, or a form like `11`, `11.4`, `11.4.2`) | The base image's npm |
 | `npm_config` | npm-wide settings inside the container | None |
 | `drawio` | Whether to install the draw.io CLI ([The draw.io CLI](#the-drawio-cli); also applies to per-language images) | `true` |
-| `drawio_mirror` | Where to fetch the draw.io package (an `http` or `https` URL; a user name or password cannot be written) | GitHub releases |
 
 - The npm token is made available only during the build (a BuildKit secret). It does not remain in the image layers, history, or environment variables.
 - If the base image has git, the image can be built even if Debian mirrors are unreachable.

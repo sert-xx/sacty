@@ -170,7 +170,6 @@ const PARAMS = {
   "config.imageEnvSecret": null,
   "config.imageEnvReserved": null,
   "config.mavenMirror": null,
-  "config.drawioMirror": null,
   "config.imagePackage": null,
   "config.imageRun": null,
   "config.imageRepo": null,
@@ -834,8 +833,6 @@ const ja: MessageDictionary = {
     "images の enable_repos は、packages を入れるときに有効にするリポジトリです。packages も書いてください。",
   "config.mavenMirror":
     "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
-  "config.drawioMirror":
-    "image_build の drawio_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
   "services.unsafe": ({ file, detail }) =>
     `compose ファイル（${file}）に、Sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・作業領域の外のマウントなどは使えません。`,
   "services.failed": ({ file, detail }) =>
@@ -1409,8 +1406,6 @@ const en: MessageDictionary = {
     "images enable_repos are the repositories enabled while installing packages. Write packages as well.",
   "config.mavenMirror":
     "Write images maven_mirror as a URL (http or https) without a user name or password.",
-  "config.drawioMirror":
-    "Write image_build drawio_mirror as a URL (http or https) without a user name or password.",
   "services.unsafe": ({ file, detail }) =>
     `The compose file (${file}) has settings Sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the workspace and so on are not allowed.`,
   "services.failed": ({ file, detail }) =>

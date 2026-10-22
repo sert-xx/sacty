@@ -199,38 +199,6 @@ describe("イメージの作成（PBI-33）", () => {
     expect(seen[2]?.join(" ")).not.toContain("SACTY_DRAWIO");
   });
 
-  it("image_build.drawio_mirror があれば、draw.io のパッケージの取得先として渡す（入れないときは渡さない）", async () => {
-    const seen: string[][] = [];
-    const run = async (args: string[]) => {
-      seen.push(args);
-      return 1;
-    };
-    const secrets = new MemorySecretStore({});
-    const drawioMirror = "https://artifacts.example.com/drawio";
-    const failure = await buildImage({
-      image: "i",
-      build: { drawioMirror },
-      dockerDir: "/d",
-      secrets,
-      run,
-    });
-    await buildImage({
-      image: "i",
-      build: { drawio: false, drawioMirror },
-      dockerDir: "/d",
-      secrets,
-      run,
-    });
-    expect(seen[0]).toContain(`SACTY_DRAWIO_MIRROR=${drawioMirror}`);
-    expect(seen[0]?.[seen[0].indexOf(`SACTY_DRAWIO_MIRROR=${drawioMirror}`) - 1]).toBe(
-      "--build-arg",
-    );
-    expect(failure).toContain(
-      `draw.io のミラー（${drawioMirror}）に、公式のリリースと同じファイルがあるか`,
-    );
-    expect(seen[1]?.join(" ")).not.toContain("SACTY_DRAWIO_MIRROR");
-  });
-
   it("失敗したら確かめることを返し、一時ファイルは消す。トークンが無ければ作らずに止める", async () => {
     let path = "";
     const failure = await buildImage({

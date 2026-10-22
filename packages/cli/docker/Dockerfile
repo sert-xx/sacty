@@ -84,10 +84,8 @@ RUN /opt/sacty/lib/install-tools.sh
 
 # draw.io の CLI（既定のスキル drawio が使う）。公式のリリースのパッケージを、版とハッシュを固定して入れ、画面の無い
 # コンテナで動かすための包むスクリプトを /opt/sacty/bin/drawio に置く（config.yaml の image_build.drawio が false なら
-# 入れない。drawio_mirror があれば、そこから取る）。取得できないときは警告して続け、ハッシュが合わないときは止める（中身は install-drawio.sh）
+# 入れない）。取得できないときは警告して続け、ハッシュが合わないときは止める（中身は install-drawio.sh）
 ARG SACTY_DRAWIO=1
-# draw.io のパッケージの取得先（config.yaml の image_build.drawio_mirror。空なら GitHub のリリース）
-ARG SACTY_DRAWIO_MIRROR=
 COPY --chmod=755 install-drawio.sh drawio-shim.cjs /opt/sacty/lib/
 RUN /opt/sacty/lib/install-drawio.sh
 

@@ -124,8 +124,6 @@ export function imageBuildArgs(input: {
   };
   /** draw.io の CLI を入れないとき false（image_build.drawio）。 */
   drawio?: false;
-  /** draw.io のパッケージの取得先（image_build.drawio_mirror）。 */
-  drawioMirror?: string;
 }): string[] {
   return [
     "build",
@@ -146,9 +144,6 @@ export function imageBuildArgs(input: {
       : []),
     ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
     ...(input.drawio === false ? ["--build-arg", "SACTY_DRAWIO=0"] : []),
-    ...(input.drawio !== false && input.drawioMirror
-      ? ["--build-arg", `SACTY_DRAWIO_MIRROR=${input.drawioMirror}`]
-      : []),
     "--build-arg",
     `NPM_CONFIG_HASH=${input.npmConfigHash}`,
     "--secret",
@@ -186,11 +181,6 @@ export function imageBuildFailure(
       : [`元のイメージ（${node}）を取得できるか`]),
     `npm のレジストリ（${build.npmRegistry ?? "https://registry.npmjs.org/"}）に届くか${build.npmToken ? "・認証トークンが正しいか" : ""}`,
     "元のイメージに git が無い場合は、Debian のミラーに届くか",
-    ...(build.drawioMirror && build.drawio !== false
-      ? [
-          `draw.io のミラー（${build.drawioMirror}）に、公式のリリースと同じファイルがあるか（ハッシュが合わないと止まる）`,
-        ]
-      : []),
   ];
   return `イメージを作成できませんでした。上のログで原因を確認してください。確かめること：${hints.join("、")}。`;
 }
@@ -257,7 +247,6 @@ export async function buildImage(deps: {
         npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
         setup: { packages, enableRepos, path: setupPath, hash: setupHash },
         ...(deps.build.drawio === false ? { drawio: false as const } : {}),
-        ...(deps.build.drawioMirror ? { drawioMirror: deps.build.drawioMirror } : {}),
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build, language);

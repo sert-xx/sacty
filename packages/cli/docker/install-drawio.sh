@@ -12,10 +12,7 @@ SHA256_AMD64_DEB=f4455b3bba3d3b539c3cd069218fc64f0462b1b01610fe8d11acc3ca8566f32
 SHA256_ARM64_DEB=724d3f18c18dc42489760c7811508581803824880d1e98e035e3a8dd3b5c7bba
 SHA256_X86_64_RPM=68ad7b4743478913738b0bfc7bc1b5cf62fac4498d3985ff29274455d65d2189
 SHA256_AARCH64_RPM=a96878567962e0443f9deb88d0951c8f53105dd91afdbc5717edf737fb61ab60
-# 取得先。image_build.drawio_mirror（SACTY_DRAWIO_MIRROR）があれば、GitHub の代わりに組織のミラーの <URL>/v<版>/<ファイル名> から取る
-# （GitHub のリリースの releases/download の下と同じ並び）。ハッシュは同じものを確かめる
-BASE_URL="${SACTY_DRAWIO_MIRROR:-https://github.com/jgraph/drawio-desktop/releases/download}"
-BASE_URL="${BASE_URL%/}/v$VERSION"
+BASE_URL="https://github.com/jgraph/drawio-desktop/releases/download/v$VERSION"
 
 warn() {
   echo "sacty: 警告：draw.io の CLI を入れません（$1）。図は XML で作れますが、Mermaid の変換と画像の書き出しはできません。" >&2

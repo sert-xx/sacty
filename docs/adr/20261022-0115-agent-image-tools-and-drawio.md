@@ -29,9 +29,8 @@ draw.io Desktop の CLI を使う。
   `python3`・`shellcheck`）を、元のイメージに無いものだけ、元のイメージにあるパッケージの管理のコマンドで、OS の配布元から入れる。
   入れられないものは警告して続ける（`packages/cli/docker/install-tools.sh`）。
 - draw.io Desktop の公式のリリースの deb・rpm を、版（`32.4.1`）と SHA-256 を固定して GitHub から取り、Xvfb と一緒に入れる。CJK のフォントも入れる。
-  取得できない・入れられないときは警告して続け、ハッシュが合わないときだけ止める。`image_build.drawio: false` で入れないようにできる。
-  GitHub に届かない環境のために、`image_build.drawio_mirror` で取得先を組織のミラー（`<URL>/v<版>/<ファイル名>`）に変えられる
-  （`packages/cli/docker/install-drawio.sh`）。draw.io の Docker イメージは使わない。
+  取得できない・入れられないときは警告して続け、ハッシュが合わないときだけ止める。`image_build.drawio: false` で入れないようにできる
+  （`packages/cli/docker/install-drawio.sh`）。
 - `drawio` は、画面の無いコンテナで動かすための包むスクリプト（`packages/cli/docker/drawio-shim.cjs`）にする。Xvfb を空いている番号で起動し、
   `--no-sandbox --disable-gpu` で draw.io を動かし、D-Bus が無いことのログを除く。使わない `chrome-sandbox` の setuid は外す。
 - draw.io の公式のスキルを、手を加えずにライセンスとともに既定のコンテキストに置く（`apps/daemon/default-context/skills/drawio/`）。SKILL.md の
@@ -53,9 +52,7 @@ draw.io Desktop の CLI を使う。
   無いツールは、エージェントが別の方法で代えられる（スキルも `jq` が無いときの手順を持つ）。draw.io の公式のスキルも、CLI が無ければ XML で図を作る。
   一方、ハッシュが合わないのは、取得したものが壊れているか、すり替わっているので止める。
 - draw.io の取り方：OS のパッケージに無いので公式のリリースから取る。組織のレジストリにあるイメージしか使えない環境があるので、draw.io の Docker
-  イメージ（から写す・それを元にする）は使わず、元のイメージの上にパッケージを入れる。GitHub に届かない環境では、組織のミラーから同じファイルを
-  取れるようにし、ハッシュは版ごとに固定のものを確かめる（ミラーを信じなくてよい）。並びを GitHub の `releases/download` の下と同じにしたのは、
-  GitHub のリリースを中継するリポジトリをそのまま指せるようにするため。AppImage は FUSE が要るので、依存を OS のパッケージで解決できる deb・rpm にした。
+  イメージ（から写す・それを元にする）は使わず、元のイメージの上にパッケージを入れる。AppImage は FUSE が要るので、依存を OS のパッケージで解決できる deb・rpm にした。
   版は、公開から2週間たったもの（`32.4.1`）にした。
 - 画面の無いところでの動かし方：Electron の `--ozone-platform=headless` は、試したところ draw.io の書き出しで落ちた（Segmentation fault）ので、
   Xvfb を使う。`xvfb-run` は RHEL 系で別のパッケージになっていることがあり、`xauth` も要るので、包むスクリプトが `Xvfb -displayfd` で直接起動する。
@@ -68,8 +65,7 @@ draw.io Desktop の CLI を使う。
 
 - 既定のイメージが大きくなる（試した Ubuntu 24.04 の元のイメージで、作業用の CLI が 85MB ほど、draw.io の CLI と依存・フォントが 800MB ほど。
   展開した大きさ）。小さくしたいときは `image_build.drawio: false` にする。
-- 既定のイメージを作るときに、GitHub のリリース（`github.com`・`release-assets.githubusercontent.com`）か `drawio_mirror` に取りに行く。届かなければ警告して draw.io を入れない。
-- draw.io の版を上げたら、`drawio_mirror` を使う利用者は、ミラーに新しい版のファイルを置く必要がある。
+- 既定のイメージを作るときに、GitHub のリリース（`github.com`・`release-assets.githubusercontent.com`）に取りに行く。届かなければ警告して draw.io を入れない。
 - draw.io の版を上げるときは、`install-drawio.sh` の版と4つのハッシュ（リリースの `Files-SHA256-Hashes.txt`）を変える。スキルを上げるときは、公式の
   SKILL.md を写し、`apps/daemon/src/default-skills.test.ts` のハッシュを変える。
 - 公式のスキルは、Mermaid・XML の詳しい書き方を実行のときに `raw.githubusercontent.com` から取る。届かない環境では、SKILL.md の内容だけで書く。

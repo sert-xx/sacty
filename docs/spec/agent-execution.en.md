@@ -177,8 +177,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     they are installed one by one, and the commands that could not be installed are reported as a warning and the build continues (the mirror is unreachable, or `rg`, `fd`, `shellcheck` and others exist only in EPEL on RHEL-family images).
     Debian/Ubuntu's `fdfind` is also available as `/usr/local/bin/fd`.
   - The draw.io CLI (`packages/cli/docker/install-drawio.sh`): when the build-arg `SACTY_DRAWIO` (default `1`; `0` when `image_build.drawio` is `false`) is `1`,
-    the deb (apt-get; `amd64`, `arm64`) or rpm (dnf, yum; `x86_64`, `aarch64`) of the official draw.io Desktop release (`v32.4.1` of `jgraph/drawio-desktop`; with the build-arg `SACTY_DRAWIO_MIRROR`
-    (`image_build.drawio_mirror`), `v<version>/<file name>` under that URL instead of GitHub's `releases/download`) is
+    the deb (apt-get; `amd64`, `arm64`) or rpm (dnf, yum; `x86_64`, `aarch64`) of the official draw.io Desktop release (`v32.4.1` of `jgraph/drawio-desktop`) is
     fetched with `curl`, checked against a SHA-256 pinned per version, and installed together with `Xvfb` (`xvfb`, `xorg-x11-server-Xvfb`) and `libasound2` (`libasound2t64` from Ubuntu 24.04) or
     `alsa-lib`. CJK fonts (`fonts-noto-cjk`, `google-noto-sans-cjk-ttc-fonts`) are reported as a warning and skipped if they cannot be installed.
     A hash mismatch stops the build; for other reasons (cannot fetch, no package manager or `curl`, an unsupported architecture, cannot install) it warns and continues.

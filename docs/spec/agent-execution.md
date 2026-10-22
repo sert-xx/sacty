@@ -175,8 +175,7 @@ docker のコンテナの中で1回実行して行う。テストは、sacty が
     1つずつ入れ、入れられなかったコマンドを警告して続ける（ミラーに届かない、RHEL 系で EPEL にしか無い `rg`・`fd`・`shellcheck` など）。
     Debian・Ubuntu 系の `fdfind` は `/usr/local/bin/fd` からも使える。
   - draw.io の CLI（`packages/cli/docker/install-drawio.sh`）：build-arg `SACTY_DRAWIO`（既定 `1`。`image_build.drawio` が `false` なら `0`）が `1` のとき、
-    draw.io Desktop の公式のリリース（`jgraph/drawio-desktop` の `v32.4.1`。build-arg `SACTY_DRAWIO_MIRROR`（`image_build.drawio_mirror`）があれば、GitHub の
-    `releases/download` の代わりにその URL の `v<版>/<ファイル名>`）の deb（apt-get。`amd64`・`arm64`）か rpm（dnf・yum。`x86_64`・`aarch64`）を
+    draw.io Desktop の公式のリリース（`jgraph/drawio-desktop` の `v32.4.1`）の deb（apt-get。`amd64`・`arm64`）か rpm（dnf・yum。`x86_64`・`aarch64`）を
     `curl` で取り、版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・
     `alsa-lib` と一緒に入れる。CJK のフォント（`fonts-noto-cjk`・`google-noto-sans-cjk-ttc-fonts`）は、入れられなければ警告して続ける。
     ハッシュが合わなければ止め、ほかの理由（取得できない・パッケージの管理のコマンドや `curl` が無い・アーキテクチャが違う・入れられない）では警告して続ける。

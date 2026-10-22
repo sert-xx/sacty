@@ -38,19 +38,13 @@
 書き出しに使います。draw.io Desktop（Apache-2.0）の公式のリリースを GitHub から取り、版とハッシュを固定して確かめてから入れます。日本語のラベルを
 書き出せるように、CJK のフォント（Noto CJK）も入れます。
 
-- イメージが大きくなります（展開した大きさで 800MB ほど）。イメージを小さくしたいときは、`image_build.drawio` を `false` にしてください。
-  入れないときも、スキルは XML で図（`.drawio`）を作れます。
-- GitHub のリリース（`github.com` と `release-assets.githubusercontent.com`）に届かない環境では、`image_build.drawio_mirror` に組織のミラー
-  （GitHub のリリースを中継するリポジトリや、ファイルを置いた汎用のリポジトリ）の URL を書いてください。`<URL>/v<版>/<ファイル名>` から取ります
-  （GitHub の `https://github.com/jgraph/drawio-desktop/releases/download` の下と同じ並びです）。ミラーに置くのは、使うアーキテクチャと OS の系統に合う
-  ファイル（`drawio-amd64-32.4.1.deb`・`drawio-arm64-32.4.1.deb`・`drawio-x86_64-32.4.1.rpm`・`drawio-aarch64-32.4.1.rpm` のうち要るもの）です。
-- 取得できないときは、ビルドのログに警告を出して、draw.io の CLI を入れずに作ります。取得したファイルのハッシュが公式のリリースのものと合わないときは
-  （ミラーの中身が違うときも）、作るのを止めます。
+- イメージが大きくなります（展開した大きさで 800MB ほど）。GitHub のリリース（`github.com` と `release-assets.githubusercontent.com`）に届かない環境や、
+  イメージを小さくしたいときは、`image_build.drawio` を `false` にしてください。入れないときも、スキルは XML で図（`.drawio`）を作れます。
+- GitHub に届かないときは、ビルドのログに警告を出して、draw.io の CLI を入れずに作ります。取得したファイルのハッシュが合わないときは、作るのを止めます。
 
 ```yaml
 image_build:
-  drawio_mirror: https://artifacts.example.com/github-releases/jgraph/drawio-desktop/releases/download   # GitHub の代わりに取る
-  # drawio: false   # draw.io の CLI を入れない
+  drawio: false   # draw.io の CLI を入れない
 ```
 
 ## プライベートのレジストリからイメージを作る
@@ -79,7 +73,6 @@ image_build:
 | `npm_version` | イメージに入れる npm の版（`latest` か、`11`・`11.4`・`11.4.2` の形） | 元のイメージの npm |
 | `npm_config` | コンテナの中の npm 全体の設定 | なし |
 | `drawio` | draw.io の CLI を入れるか（[draw.io の CLI](#drawio-の-cli)。言語ごとのイメージにも効きます） | `true` |
-| `drawio_mirror` | draw.io のパッケージの取得先（`http`・`https` の URL。ユーザー名・パスワードは書けません） | GitHub のリリース |
 
 - npm のトークンは、ビルドのときだけ読ませます（BuildKit の secret）。イメージの層・履歴・環境変数には残りません。
 - 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れます。
