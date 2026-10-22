@@ -98,7 +98,7 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
   - Target values: retrieved secrets, the gateway token, MCP header values, the gh token, and strings of 16 or more characters in auth files
   - It replaces the longest values first, regardless of length.
   - It does not change message codes and arguments with fixed values; it replaces only free text.
-- sacty also replaces JSON strings (`"…"`) in the output that contain a value once their escapes (such as `s`) are decoded with redacted strings. This is because sacty decodes the output's JSON for review comments, audits, reproduction tests, and so on.
+- sacty also replaces JSON strings (`"…"`) in the output that contain a value once their escapes (such as `\u0073`) are decoded with redacted strings. This is because sacty decodes the output's JSON for review comments, audits, reproduction tests, and so on.
   - A string may start at any `"` in the output (except escaped `"`). Each position is read once, so the time is proportional to the output length.
   - JSON inside escaped JSON is checked too.
 - sacty writes session logs after redacting both the values themselves and their JSON-string forms ([Activity log](event-log.en.md)).
