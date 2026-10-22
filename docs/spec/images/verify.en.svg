@@ -55,56 +55,56 @@
   <path d="M450 456 L450 472 Q450 482 460 482 L475 482 Q485 482 485 492 L485 510" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M190 620 L190 660" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="260" y="20" width="300" height="76" rx="10" class="card" style=""/>
-  <svg x="276" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <svg x="276" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="312" y="52" class="title">Implementation step</text>
   <text x="276" y="80" class="sub">The agent implements</text>
   <rect x="260" y="130" width="300" height="56" rx="10" class="card" style=""/>
-  <svg x="276" y="145" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <svg x="276" y="145" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
   <text x="312" y="163" class="title">Diff available?</text>
   <rect x="640" y="120" width="300" height="84" rx="10" class="card" style=""/>
-  <svg x="656" y="134" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <svg x="656" y="134" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
   <text x="692" y="152" class="title">Pause</text>
   <rect x="656" y="165" width="167.8" height="21" rx="5" class="pill"/>
   <text x="664" y="180" class="code">verify.diffUnavailable</text>
   <rect x="260" y="230" width="300" height="116" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
-  <svg x="276" y="244" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
+  <svg x="276" y="244" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
   <text x="312" y="262" class="title">Final review</text>
   <text x="276" y="290" class="sub">The goal guardian runs the</text>
   <text x="276" y="310" class="sub">tests in the implementation image</text>
   <text x="276" y="330" class="sub">and judges each viewpoint</text>
   <rect x="640" y="230" width="300" height="108" rx="10" class="card" style=""/>
-  <svg x="656" y="244" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <svg x="656" y="244" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
   <text x="692" y="262" class="title">Pause</text>
   <rect x="656" y="275" width="160.9" height="21" rx="5" class="pill"/>
   <text x="664" y="290" class="code">verify.commandMissing</text>
   <text x="656" y="316" class="sub">Resume restarts the final review</text>
   <rect x="640" y="380" width="300" height="84" rx="10" class="card" style=""/>
-  <svg x="656" y="394" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <svg x="656" y="394" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
   <text x="692" y="412" class="title">Third failure in a row?</text>
   <rect x="656" y="425" width="147.1" height="21" rx="5" class="pill"/>
   <text x="664" y="440" class="code">MAX_VERIFY_ATTEMPTS</text>
   <rect x="640" y="510" width="300" height="84" rx="10" class="card" style=""/>
-  <svg x="656" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <svg x="656" y="524" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
   <text x="692" y="542" class="title">Pause</text>
   <rect x="656" y="555" width="98.8" height="21" rx="5" class="pill"/>
   <text x="664" y="570" class="code">verification</text>
   <rect x="260" y="400" width="300" height="56" rx="10" class="card" style=""/>
-  <svg x="276" y="415" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <svg x="276" y="415" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
   <text x="312" y="433" class="title">Changes from the base?</text>
   <rect x="40" y="510" width="300" height="110" rx="10" class="card" style=""/>
-  <svg x="56" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <svg x="56" y="524" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
   <text x="92" y="542" class="title">Open the implementation PR</text>
   <text x="56" y="570" class="sub">sacty commits and pushes</text>
   <rect x="56" y="579" width="154" height="21" rx="5" class="pill"/>
   <text x="64" y="594" class="code">PullRequestPublished</text>
   <rect x="360" y="510" width="250" height="110" rx="10" class="card" style=""/>
-  <svg x="376" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <svg x="376" y="524" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
   <text x="412" y="542" class="title">No PR</text>
   <text x="376" y="570" class="sub">Approved in the UI</text>
   <rect x="376" y="579" width="112.6" height="21" rx="5" class="pill"/>
   <text x="384" y="594" class="code">NoChangesFound</text>
   <rect x="40" y="660" width="300" height="76" rx="10" class="card" style=""/>
-  <svg x="56" y="674" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <svg x="56" y="674" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
   <text x="92" y="692" class="title">Implementation awaits approval</text>
   <text x="56" y="720" class="sub">Approved by merging the PR</text>
   <rect x="589" y="137" width="22" height="18" rx="4" class="label-bg"/>

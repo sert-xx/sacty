@@ -49,21 +49,21 @@
   <path d="M410 370 L410 326" class="muted" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 270 L410 226" class="muted" style="" marker-end="url(#ah-arrow)"/>
   <rect x="60" y="30" width="460" height="76" rx="10" class="card" style=""/>
-  <svg x="76" y="44" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <svg x="76" y="44" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="112" y="62" class="title">sacty default context (top)</text>
   <text x="76" y="90" class="sub">apps/daemon/default-context</text>
   <rect x="60" y="150" width="460" height="76" rx="10" class="card" style=""/>
-  <svg x="76" y="164" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <svg x="76" y="164" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="112" y="182" class="title">Topmost ancestor in the chain</text>
   <text x="76" y="210" class="sub">Pointed to by another layer's extends</text>
   <rect x="60" y="270" width="460" height="56" rx="10" class="card" style=""/>
   <text x="290" y="303" class="title" text-anchor="middle">…</text>
   <rect x="60" y="370" width="460" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="76" y="384" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <svg x="76" y="384" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="112" y="402" class="title">Context the project specifies (bottom)</text>
   <text x="76" y="430" class="sub">repo・ref・path</text>
   <rect x="580" y="30" width="440" height="236" rx="10" class="card" style=""/>
-  <svg x="596" y="44" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
+  <svg x="596" y="44" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
   <text x="632" y="62" class="title">How layers combine</text>
   <text x="596" y="90" class="strong">Rules (rules.md)</text>
   <text x="596" y="110" class="sub">Concatenated from the top layer down</text>
@@ -73,7 +73,7 @@
   <text x="596" y="190" class="sub">Tables merge by key; other values take the lower one</text>
   <text x="596" y="210" class="sub">permissions allow, deny, and ask are combined</text>
   <rect x="580" y="290" width="440" height="156" rx="10" class="card" style=""/>
-  <svg x="596" y="304" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <svg x="596" y="304" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
   <text x="632" y="322" class="title">What extends can name</text>
   <rect x="596" y="335" width="91.9" height="21" rx="5" class="pill"/>
   <text x="604" y="350" class="code">&lt;URL&gt;#&lt;ref&gt;</text>

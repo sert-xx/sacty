@@ -232,7 +232,7 @@ export function render(def, lang) {
           const size = 26;
           const iy = item.y + (titleLines.length && !item.lines ? (item.h - size) / 2 : 14);
           layers.nodes.push(
-            `<svg x="${item.x + pad}" y="${round(iy)}" width="${size}" height="${size}" viewBox="0 0 24 24" class="icon" style="stroke:var(--${c})">${ICONS[item.icon]}</svg>`,
+            `<svg x="${item.x + pad}" y="${round(iy)}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--${c})">${ICONS[item.icon]}</svg>`,
           );
           tx = item.x + pad + size + 10;
         }

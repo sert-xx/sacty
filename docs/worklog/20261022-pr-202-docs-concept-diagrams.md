@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #202
 - ブランチ: claude/magical-clarke-2cpczd
-- 関係する ADR: [仕様書とユーザードキュメントの概念図を、Mermaid のコードブロックで本文の中に書く](../adr/20261022-1623-docs-diagrams-in-mermaid.md)
+- 関係する ADR: [仕様書とユーザードキュメントの概念図を、Mermaid のコードブロックで本文の中に書く](../adr/20261022-1623-superseded-docs-diagrams-in-mermaid.md)
 
 ## 目的
 

@@ -46,21 +46,21 @@
   <path d="M320 98 L370 98" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M670 98 L720 98" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="20" y="40" width="300" height="116" rx="10" class="card" style=""/>
-  <svg x="36" y="54" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <svg x="36" y="54" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="72" y="72" class="title">Upper layer (organization)</text>
   <rect x="36" y="85" width="160.9" height="21" rx="5" class="pill"/>
   <text x="44" y="100" class="code">skills: review, guide</text>
   <rect x="36" y="111" width="160.9" height="21" rx="5" class="pill"/>
   <text x="44" y="126" class="code">locked.skills: review</text>
   <rect x="370" y="40" width="300" height="116" rx="10" class="card" style=""/>
-  <svg x="386" y="54" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <svg x="386" y="54" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="422" y="72" class="title">Lower layer (project)</text>
   <rect x="386" y="85" width="167.8" height="21" rx="5" class="pill"/>
   <text x="394" y="100" class="code">skills: review, deploy</text>
   <rect x="386" y="111" width="154" height="21" rx="5" class="pill"/>
   <text x="394" y="126" class="code">remove.skills: guide</text>
   <rect x="720" y="30" width="300" height="136" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
-  <svg x="736" y="44" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
+  <svg x="736" y="44" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
   <text x="772" y="62" class="title">Skills passed to the agent</text>
   <text x="736" y="90" class="strong">review: the upper one (warning)</text>
   <text x="736" y="110" class="strong">deploy: the lower one</text>

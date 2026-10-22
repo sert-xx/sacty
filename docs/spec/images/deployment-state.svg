@@ -53,38 +53,38 @@
   <path d="M470 232 L780 232 Q790 232 790 242 L790 286 Q790 296 800 297 L830 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M360 264 L360 378 Q360 388 370 388 L830 388" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="20" y="170" width="180" height="76" rx="10" class="card" style=""/>
-  <svg x="36" y="184" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <svg x="36" y="184" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
   <text x="72" y="202" class="title">PR のマージ</text>
   <text x="36" y="230" class="sub">監視を始める</text>
   <rect x="250" y="160" width="220" height="104" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="266" y="174" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+  <svg x="266" y="174" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="302" y="192" class="title">waiting</text>
   <rect x="266" y="205" width="78.1" height="21" rx="5" class="pill"/>
   <text x="274" y="220" class="code">phase: ci</text>
   <text x="266" y="246" class="sub">CI/CD を待つ（sacty）</text>
   <rect x="540" y="20" width="220" height="104" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="556" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+  <svg x="556" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
   <text x="592" y="52" class="title">waiting</text>
   <rect x="556" y="65" width="98.8" height="21" rx="5" class="pill"/>
   <text x="564" y="80" class="code">phase: check</text>
   <text x="556" y="106" class="sub">スキルに従って確かめる</text>
   <rect x="830" y="20" width="190" height="76" rx="10" class="card" style=""/>
-  <svg x="846" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
+  <svg x="846" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
   <text x="882" y="52" class="title">passed</text>
   <text x="846" y="80" class="sub">通った</text>
   <rect x="830" y="130" width="190" height="76" rx="10" class="card" style=""/>
-  <svg x="846" y="144" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>
+  <svg x="846" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>
   <text x="882" y="162" class="title">failed</text>
   <text x="846" y="190" class="sub">修正のタスクを決める</text>
   <rect x="830" y="232" width="190" height="108" rx="10" class="card" style=""/>
-  <svg x="846" y="246" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
+  <svg x="846" y="246" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
   <text x="882" y="264" class="title">skipped</text>
   <rect x="846" y="277" width="151.7" height="21" rx="5" class="pill"/>
   <text x="854" y="292" class="code">no_ci・check_unknown</text>
   <rect x="846" y="303" width="57.4" height="21" rx="5" class="pill"/>
   <text x="854" y="318" class="code">budget</text>
   <rect x="830" y="350" width="190" height="76" rx="10" class="card" style=""/>
-  <svg x="846" y="364" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+  <svg x="846" y="364" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="882" y="382" class="title">timed_out</text>
   <text x="846" y="410" class="sub">修正のタスクは作らない</text>
   <rect x="376" y="53" width="148" height="18" rx="4" class="label-bg"/>

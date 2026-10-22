@@ -58,48 +58,48 @@
   <path d="M500 252 L500 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M355 508 L348.5 508 Q342 508 342 501.5 L342 213.5 Q342 207 348.5 207 L355 207" class="muted" style="stroke:var(--amber)" marker-end="url(#ah-amber)"/>
   <rect x="40" y="102" width="230" height="130" rx="10" class="card" style=""/>
-  <svg x="56" y="116" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <svg x="56" y="116" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="92" y="134" class="title">Claude Code・Codex</text>
   <text x="56" y="162" class="sub">Holds no credentials</text>
   <rect x="56" y="171" width="140.2" height="21" rx="5" class="pill"/>
   <text x="64" y="186" class="code">per-run token only</text>
   <rect x="355" y="102" width="290" height="150" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
-  <svg x="371" y="116" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
+  <svg x="371" y="116" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
   <text x="407" y="134" class="title">Gateway</text>
   <text x="371" y="162" class="sub">A free port on 127.0.0.1</text>
   <text x="371" y="182" class="sub">Bound to each token:</text>
   <text x="371" y="202" class="strong">AI endpoint, MCP servers,</text>
   <text x="371" y="222" class="strong">project PFs, gh accounts</text>
   <rect x="355" y="300" width="290" height="110" rx="10" class="card" style=""/>
-  <svg x="371" y="314" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/></svg>
+  <svg x="371" y="314" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/></svg>
   <text x="407" y="332" class="title">MCP servers on the host</text>
   <text x="371" y="360" class="sub">gateway.mcp_servers</text>
   <text x="371" y="380" class="sub">Context command type (default)</text>
   <rect x="355" y="460" width="290" height="96" rx="10" class="card" style="stroke:var(--amber);stroke-dasharray:5 4"/>
-  <svg x="371" y="474" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--amber)"><circle cx="7.5" cy="15.5" r="4"/><path d="m10.5 12.5 9-9M16.5 6.5l2.5 2.5M14 9l2 2"/></svg>
+  <svg x="371" y="474" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="7.5" cy="15.5" r="4"/><path d="m10.5 12.5 9-9M16.5 6.5l2.5 2.5M14 9l2 2"/></svg>
   <text x="407" y="492" class="title">Secrets</text>
   <text x="371" y="520" class="sub">Keychain, 1Password, gh</text>
   <text x="371" y="540" class="sub">Fetched on the host, never sent in</text>
   <rect x="740" y="102" width="260" height="100" rx="10" class="card" style=""/>
-  <svg x="756" y="116" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></svg>
+  <svg x="756" y="116" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></svg>
   <text x="792" y="134" class="title">AI endpoint</text>
   <text x="756" y="162" class="sub">Bedrock・openai-compatible</text>
   <rect x="756" y="171" width="98.8" height="21" rx="5" class="pill"/>
   <text x="764" y="186" class="code">/openai/v1/…</text>
   <rect x="740" y="218" width="260" height="100" rx="10" class="card" style=""/>
-  <svg x="756" y="232" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><rect x="3.5" y="3.5" width="17" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>
+  <svg x="756" y="232" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="3.5" y="3.5" width="17" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>
   <text x="792" y="250" class="title">Internal PF APIs</text>
   <text x="756" y="278" class="sub">Only APIs listed in allow</text>
   <rect x="756" y="287" width="140.2" height="21" rx="5" class="pill"/>
   <text x="764" y="302" class="code">/r/token/pf/name/…</text>
   <rect x="740" y="334" width="260" height="100" rx="10" class="card" style=""/>
-  <svg x="756" y="348" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="7" r="2.2"/><path d="M6 7.2v9.6M18 9.2c0 4.8-4 5.3-8.5 6.6-1.6.5-2.9 1.1-3.5 1.4"/></svg>
+  <svg x="756" y="348" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="7" r="2.2"/><path d="M6 7.2v9.6M18 9.2c0 4.8-4 5.3-8.5 6.6-1.6.5-2.9 1.1-3.5 1.4"/></svg>
   <text x="792" y="366" class="title">GitHub API</text>
   <text x="756" y="394" class="sub">Read only (GET, GraphQL query)</text>
   <rect x="756" y="403" width="167.8" height="21" rx="5" class="pill"/>
   <text x="764" y="418" class="code">/r/token/github/host/…</text>
   <rect x="740" y="450" width="260" height="100" rx="10" class="card" style=""/>
-  <svg x="756" y="464" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M9 2.5v4.5M15 2.5v4.5M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0zM12 16v5.5"/></svg>
+  <svg x="756" y="464" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M9 2.5v4.5M15 2.5v4.5M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0zM12 16v5.5"/></svg>
   <text x="792" y="482" class="title">URL-type MCP servers</text>
   <text x="756" y="510" class="sub">From the context's mcp.yaml</text>
   <rect x="756" y="519" width="105.7" height="21" rx="5" class="pill"/>
