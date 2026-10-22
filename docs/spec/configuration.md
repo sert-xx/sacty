@@ -2,15 +2,19 @@
 
 # 設定（config.yaml）
 
-`SACTY_HOME/config.yaml` は、マシンごとの設定（AI の接続先と単価・エージェントの上書き・イメージ・ゲートウェイ）を持つ。デーモンは
-使うたびに読み直す（止めずに変えられる）。ただし `web.auth` は、`sacty up` の起動のときだけ読む（画面の子プロセスの環境に固定する。
-変えたら起動し直す）。読めない・形が違うときは、最初の誤りの場所（`path`）と理由を、画面の警告に出す文言にする。
+`SACTY_HOME/config.yaml` は、マシンごとの設定（AI の接続先と単価・エージェントの上書き・イメージ・ゲートウェイ）を持つ。
+デーモンは使うたびに読み直す（止めずに変えられる）。
+ただし `web.auth` は、`sacty up` の起動のときだけ読む。
+画面の子プロセスの環境に固定するので、変えたら起動し直す。
+読めない・形が違うときは、最初の誤りの場所（`path`）と理由を、画面の警告に出す文言にする。
+
 `sacty config init` は雛形（`CONFIG_TEMPLATE`）を権限 0600 で書く（あれば `--force` が無いと止まる）。
 
 エージェントの定義（モデル・リーズニングエフォート）の既定は、リポジトリの `config/agents.yaml` に持つ（`DEFAULT_AGENTS_PATH`）。
 `loadConfig(home, defaultsPath)` は、既定に `config.yaml` の `agents` を重ねる。
 
-利用者向けの書き方は [ユーザードキュメント](../user/README.md) にある。ここでは項目の意味と既定値、検査の規則を書く。
+このページには、項目の意味と既定値、検査の規則を書く。
+利用者向けの書き方は [ユーザードキュメント](../user/README.md) にある。
 
 関係する ADR: [エージェントの既定をリポジトリに持ち、config.yaml は接続先と単価だけにする](../adr/20261018-1105-agent-defaults-in-repo.md)
 
@@ -43,21 +47,30 @@
 | `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り |
 | `update_check` | `true` | sacty の最新版（GitHub Releases の最新のリリース）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
 
-ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無いときは誤り（`config.agentMissing`）、
-使えないエージェント（下の「使えるエージェント」）のときも誤り（`config.agentUnavailable`。使えない理由の文言を `reason` に載せる。設定が誤りのときは画面の警告を出さないため）。
-`agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに
-`runtime` が接頭辞と合わないときも誤り（`config.tierRuntime`）。使える段階のエージェントは `tierAgents`（runtime ごと・段階ごと）にも集める
-（`parseTierId`・`tierAgentsFor`）。置き方は [コンテキストの合成](context.md#実行のときに置くファイル)。
+ほかに、次のときも誤りにする。
 
-知らない項目は、誤りにせずに読まない。取り込みの間隔は `config.yaml` には無く、sacty の設定に持つ（[取り込み](intake.md#間隔)）。
+- `default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無い（`config.agentMissing`）。
+- 同じ値が、使えないエージェント（下の「使えるエージェント」）である（`config.agentUnavailable`）。
+  使えない理由の文言を `reason` に載せる。
+  設定が誤りのときは画面の警告を出さないためである。
+- `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`）なのに、`runtime` が接頭辞と合わない（`config.tierRuntime`）。
+  段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`。
+
+使える段階のエージェントは、`tierAgents`（runtime ごと・段階ごと）にも集める（`parseTierId`・`tierAgentsFor`）。
+置き方は [コンテキストの合成](context.md#実行のときに置くファイル) にある。
+
+知らない項目は、誤りにせずに読まない。
+取り込みの間隔は `config.yaml` には無く、sacty の設定に持つ（[取り込み](intake.md#間隔)）。
 以前の `github.poll_interval_sec`（`github:`）も、書いてあれば読まない（警告もしない）。
 
 コード: `apps/daemon/src/config.ts`（`ConfigFile`・`loadConfig`・`DEFAULT_AGENTS_PATH`・`agentFor`・`CONFIG_TEMPLATE`）
 
 ## 接続先（providers）
 
-`providers` は runtime ごとに1つ：`codex`（`runtime: codex`）と `claude`（`runtime: claude-code`）。`stub` は接続先を使わない。
-ほかの名前は誤り（`config.providerLegacyName`。以前の、名前を付けた OpenAI 互換の接続先は、`providers.codex` の `auth` に書き直すよう示す）。
+`providers` は runtime ごとに1つで、`codex`（`runtime: codex`）と `claude`（`runtime: claude-code`）がある。
+`stub` は接続先を使わない。
+ほかの名前は誤りにする（`config.providerLegacyName`）。
+以前の、名前を付けた OpenAI 互換の接続先には、`providers.codex` の `auth` に書き直すよう示す。
 
 | 項目 | 既定値 | 意味 |
 | --- | --- | --- |
@@ -65,7 +78,7 @@
 | `via_gateway` | `false` | AI の呼び出しをホストのゲートウェイ経由にする。`true` にできるのは `codex` の `auth.mode` が `bedrock`・`openai-compatible` のときだけ（`config.gatewayUnsupported`） |
 | `available_models` | `{}` | モデルの名前ごとの単価（100万トークンあたりの米ドル）。`input`・`cached_input`・`output`（必須）・`cache_write`（既定 0） |
 
-`auth.mode` と使える接続先：
+`auth.mode` ごとの項目と使える接続先は、次のとおり。
 
 | `auth.mode` | 項目 | `claude` | `codex` |
 | --- | --- | --- | --- |
@@ -74,9 +87,10 @@
 | `bedrock` | `secret`・`region`・`endpoint`（`runtime`｜`mantle`。`codex` だけ（`config.bedrockEndpointCodexOnly`）。省略は `runtime`） | 可 | 可 |
 | `openai-compatible` | `base_url`（http・https）・`secret`（任意） | 不可 | 可 |
 
-使えない組み合わせは誤り（`config.authUnsupported`）。実行のときは、エージェントの runtime の接続先から認証・ゲートウェイ・接続先を作る
-（`providerKeyOf`・`connectionOf`）。`openai-compatible` は、実行のときの `auth.mode` を `provider` にし、`base_url`（末尾の `/` を除く）・
-`secret`・`via_gateway` を `endpoint` に置く（名前は `codex`。[エージェントの実行](agent-execution.md#認証)）。
+使えない組み合わせは誤りにする（`config.authUnsupported`）。
+
+実行のときは、エージェントの runtime の接続先から、認証・ゲートウェイ・接続先を作る（`providerKeyOf`・`connectionOf`）。
+`openai-compatible` では、実行のときの `auth.mode` を `provider` にし、`base_url`（末尾の `/` を除く）・`secret`・`via_gateway` を `endpoint` に置く（名前は `codex`。[エージェントの実行](agent-execution.md#認証)）。
 
 コード: `apps/daemon/src/config.ts`（`ProviderFile`・`ProviderAuth`・`PriceFile`・`refineProvider`・`providerKeyOf`・`connectionOf`）
 
@@ -84,6 +98,7 @@
 
 リポジトリの `config/agents.yaml`（`DefaultsFile`）は、`default_agent`（候補の並び。1つ以上）と `agents`（名前ごとの定義。`runtime` は必須）を持つ。
 読めない・形が違うときは、ファイルの場所と理由を示して止める（`config.defaultsUnreadable`）。
+既定のエージェントは次のとおり。
 
 | 名前 | `runtime` | `model` | `reasoning_effort` |
 | --- | --- | --- | --- |
@@ -98,10 +113,11 @@
 | `claude_advanced` | `claude-code` | `claude-opus-5-5` | `medium` |
 | `claude_ultimate` | `claude-code` | `claude-opus-5-5` | `high` |
 
-`default_agent` の候補は `codex_standard`、`claude_standard` の順。`config.yaml` に `default_agent` が無ければ、候補のうち使える最初のものにする。
-使えるものが無ければ誤り（`config.noDefaultAgent`）。
+`default_agent` の候補は `codex_standard`、`claude_standard` の順。
+`config.yaml` に `default_agent` が無ければ、候補のうち使える最初のものにする。
+使えるものが無ければ誤りにする（`config.noDefaultAgent`）。
 
-`config.yaml` の `agents`（`AgentFile`）：
+`config.yaml` の `agents`（`AgentFile`）の項目は、次のとおり。
 
 | 項目 | 意味 |
 | --- | --- |
@@ -112,27 +128,35 @@
 | `price_per_mtok_usd` | `runtime: stub` だけ。単価（書き方は `available_models` と同じ。書かなければ 0） |
 | `stub` | `runtime: stub` の出力（工程・オーケストレーター・ゴールガーディアンなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
 
-- 既定と同じ名前は、書いた項目だけを既定に重ねる（書いていない項目は既定のまま）。既定に無い名前は、そのエージェントを足す。
-- エージェントに `auth`・`provider`・`via_gateway` を書くと誤り。`stub` 以外に `price_per_mtok_usd` を書いても誤り（`config.agentLegacyKey`。
-  `providers` の `auth`・`via_gateway`・`available_models` に書くよう示す）。以前の書き方は自動では読み替えない。
-- `agents` の名前は空にできない（`config.agentNameEmpty`。タスクの詳細で選んだ名前を作業履歴に残すため）。
+- 既定と同じ名前は、書いた項目だけを既定に重ねる（書いていない項目は既定のまま）。
+  既定に無い名前は、そのエージェントを足す。
+- エージェントに `auth`・`provider`・`via_gateway` を書くと誤りにする。
+  `stub` 以外に `price_per_mtok_usd` を書いても誤りにする（`config.agentLegacyKey`）。
+  その誤りでは、`providers` の `auth`・`via_gateway`・`available_models` に書くよう示す。
+  以前の書き方は自動では読み替えない。
+- `agents` の名前は空にできない（`config.agentNameEmpty`）。
+  タスクの詳細で選んだ名前を作業履歴に残すためである。
 
 コード: `apps/daemon/src/config.ts`（`DefaultsFile`・`AgentFile`・`LEGACY_AGENT_KEYS`・`loadDefaults`・`buildAgents`・`StubBehavior`・`fallbackAgentFor`）
 
 ## 使えるエージェント
 
-既定と上書きを重ねたエージェントのうち、次のものは使えない扱い（unusable）にする。設定の誤りにはしない（sacty の更新で既定のモデルが
-変わっても、設定が読めなくならないように）。使えないエージェントは `agents`・`tierAgents` に入れず、タスクの詳細の選択肢にも出さない。
+既定と上書きを重ねたエージェントのうち、次のものは使えない扱い（unusable）にする。
+設定の誤りにはしない。
+sacty の更新で既定のモデルが変わっても、設定が読めなくならないようにするためである。
+使えないエージェントは `agents`・`tierAgents` に入れず、タスクの詳細の選択肢にも出さない。
 
-- runtime の接続先（`providers.codex`・`providers.claude`）が無い。利用者が `config.yaml` の `agents` に書いたエージェントだけ警告する
-  （`config.agentProviderMissing`）。既定のエージェントは、その runtime を使っていないだけなので警告しない。
-- モデルの単価が、接続先の `available_models` に無い（継承したプロパティの名前は単価としない）。モデルごとにまとめて、使えないエージェントの
-  名前を並べて警告する（`config.modelPriceMissing`）。
+- runtime の接続先（`providers.codex`・`providers.claude`）が無い。
+  - 利用者が `config.yaml` の `agents` に書いたエージェントだけ警告する（`config.agentProviderMissing`）。
+  - 既定のエージェントは、その runtime を使っていないだけなので警告しない。
+- モデルの単価が、接続先の `available_models` に無い（継承したプロパティの名前は単価としない）。
+  - モデルごとにまとめて、使えないエージェントの名前を並べて警告する（`config.modelPriceMissing`）。
 
-警告は `agentWarnings` に持ち、画面の警告（`GET /api/status` の `warnings`）に出す。`runtime: stub` のエージェントは、接続先・単価を
-見ずに使える（単価は `price_per_mtok_usd`、無ければ 0）。
+警告は `agentWarnings` に持ち、画面の警告（`GET /api/status` の `warnings`）に出す。
+`runtime: stub` のエージェントは、接続先・単価を見ずに使える（単価は `price_per_mtok_usd`、無ければ 0）。
 
-使う AI と役割の対応は `agentFor`：`step_agents` にあればそれ、無ければ `default_agent`（`integrate` は `guardian_agent`）。
+使う AI と役割の対応は `agentFor` が決める。
+`step_agents` にあればそれを使い、無ければ `default_agent`（`integrate` は `guardian_agent`）を使う。
 工程（マージの後の監視・外部作業・書き出しを含む）は、人がタスクの詳細で選んだエージェントがあれば、それを優先する（`stepAgentFor`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
 作業履歴には、使った AI の `authMode`・`model`・`reasoningEffort` だけを残す（秘密の値・接続先の URL は残さない。`agentSetting`）。
 
@@ -140,16 +164,20 @@
 
 ## イメージの設定の検査
 
-- `image_build.npm_config`：認証の項目（`_auth`・`_authToken`・`_password`・`username`・`email`・`certfile`・`keyfile`・`cert`・`key`。
-  `//host/:_authToken` のようにレジストリに結びつけたものも）は書けない。値に改行は書けない。
+- `image_build.npm_config`
+  - 認証の項目は書けない（`_auth`・`_authToken`・`_password`・`username`・`email`・`certfile`・`keyfile`・`cert`・`key`。`//host/:_authToken` のようにレジストリに結びつけたものも）。
+  - 値に改行は書けない。
 - `image_build.npm_version`：`latest` か `数字(.数字){0,2}`。
-- `image_build.drawio`：真偽値。`false` のときだけ、draw.io の CLI を入れない（`SACTY_DRAWIO=0` を渡す）。
+- `image_build.drawio`：真偽値。
+  `false` のときだけ、draw.io の CLI を入れない（`SACTY_DRAWIO=0` を渡す）。
 - `images` の名前：`^(?!default$)[a-z0-9][a-z0-9_-]{0,39}$`（`default` は既定のイメージを指すので使えない）。
-- `images.<名前>.env`：名前は `^[A-Z_][A-Z0-9_]*$`。認証の値らしい名前（`TOKEN`・`PASSWORD`・`PASSWD`・`SECRET`・`CREDENTIAL`・`AUTH`・
-  `API_KEY`・`PRIVATE_KEY` を含む）とユーザー名・パスワードを含む URL は書けない。`PATH`・`HOME`・`USER`・`SHELL`・`TMPDIR`・
-  `NODE_OPTIONS` と、`DOCKER_`・`SACTY_`・`CODEX_`・`CLAUDE_`・`ANTHROPIC_`・`OPENAI_`・`NPM_CONFIG_` で始まる名前は書けない。
-- `images.<名前>.packages`・`enable_repos`・`run`：決まった文字だけ（シェルの特別な文字を含まない）。`run` は1行ずつ。
-  `enable_repos` は `packages` と一緒に書く。
+- `images.<名前>.env`
+  - 名前は `^[A-Z_][A-Z0-9_]*$`。
+  - 認証の値らしい名前（`TOKEN`・`PASSWORD`・`PASSWD`・`SECRET`・`CREDENTIAL`・`AUTH`・`API_KEY`・`PRIVATE_KEY` を含む）と、ユーザー名・パスワードを含む URL は書けない。
+  - `PATH`・`HOME`・`USER`・`SHELL`・`TMPDIR`・`NODE_OPTIONS` と、`DOCKER_`・`SACTY_`・`CODEX_`・`CLAUDE_`・`ANTHROPIC_`・`OPENAI_`・`NPM_CONFIG_` で始まる名前は書けない。
+- `images.<名前>.packages`・`enable_repos`・`run`：決まった文字だけ（シェルの特別な文字を含まない）。
+  - `run` は1行ずつ。
+  - `enable_repos` は `packages` と一緒に書く。
 - `images.<名前>.maven_mirror`：http・https の URL で、ユーザー名・パスワードや引用符などの記号を含まない。
 
 コード: `apps/daemon/src/config.ts`（`NPM_SECRET_KEY`・`IMAGE_ENV_SECRET_NAME`・`IMAGE_ENV_RESERVED`・`hasUserInfo`）
