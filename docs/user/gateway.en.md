@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (gateway, providers, ProviderFile, ProviderAuth), apps/daemon/src/gateway.ts (DEFAULT_RETRY_POLICY, DEFAULT_HOST_ADDRESS), apps/daemon/src/host-mcp.ts (HostMcpFile), apps/daemon/src/host-mcp-processes.ts, apps/daemon/src/platforms.ts (PlatformFile) -->
+<!-- Code: apps/daemon/src/config.ts (gateway, providers, ProviderFile, ProviderAuth), apps/daemon/src/gateway.ts (DEFAULT_RETRY_POLICY, DEFAULT_HOST_ADDRESS), apps/daemon/src/host-mcp.ts (HostMcpFile), apps/daemon/src/host-mcp-processes.ts, apps/daemon/src/platforms.ts (PlatformFile), apps/daemon/src/github-relay.ts, packages/cli/docker/gh-shim.cjs -->
 
 [日本語](gateway.md) | **English**
 
