@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-22（UTC）
 - タスク: なし
-- PR: なし
+- PR: #191
 - ブランチ: claude/relaxed-lamport-g4xx12
 - 関係する ADR: [エージェントのイメージに作業用の CLI と draw.io の CLI を入れ、draw.io の公式のスキルを既定のスキルにする](../adr/20261022-0115-agent-image-tools-and-drawio.md)
 
