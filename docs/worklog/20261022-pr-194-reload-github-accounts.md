@@ -22,14 +22,20 @@
 
 - `npm run lint`：指摘なし。
 - `npm run typecheck`：エラーなし。
-- `npx vitest run apps/web/src/components/project-editor.test.ts`：2 件が通った（足したテストは、設定画面に読み直すボタンが日英で出ることを確かめる）。
+- `npx vitest run apps/web/src/components/project-editor.test.ts`：2 件が通った（このときは、設定画面に読み直すボタンが日英で出ることだけを確かめていた）。
 - `npx vitest run apps/web tests/docs`：すべて通った。
 - 実際の画面でボタンを押して一覧が変わることは、この環境にデーモンと `gh` のログインが無いため確かめていない。
+- レビューの対応の後
+  - `npm run lint`：指摘なし。`npm run typecheck`：エラーなし。
+  - `npx vitest run apps/web tests/docs`：61 ファイル・537 件が通った。
+  - `setGithub` を外した実装で `project-editor-reload.test.ts` を実行すると、2 件とも落ちることを確かめた（戻して通ることも確かめた）。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
+| 読み直しの問い合わせに期限が無く、デーモンが応答しないとボタンが止まったままになる（`daemonFetch` の既定の中断は `/live` の `withDaemonSignal` の中でだけ効く） | `getGitHubAccounts` に `signal` を渡せるようにし、`reloadGitHubAccountsAction` で `AbortSignal.timeout(30_000)` を渡した（本文を読み終えるまで効く）。時間切れなら `githubReloadTimeout`（日英）を `error` で返し、既存の理由の表示に戻ってもう一度押せる。期限は、`gh auth status` が届かない GitHub Enterprise Server を待つことがあるので長めにした |
+| テストが静的な HTML のボタンの文言しか見ておらず、`onClick`・`setGithub` を外しても通る | 静的なテストをやめ、jsdom で操作するテスト（`apps/web/src/components/project-editor-reload.test.ts`）を足した。名前を編集してから読み直しを押し、待たせられる Action のモックで、読み直すあいだのボタンの無効・文言、結果での選択肢と認識済みの一覧の置き換え、編集中の入力が残ること、`error` のときの理由の表示ともう一度押せることを確かめる。Action の時間切れと、届かないときの理由は `apps/web/src/app/actions.test.ts` で確かめる |
 
 ## 残したこと
 

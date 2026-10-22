@@ -475,9 +475,9 @@ export type GitHubAccount = {
 
 export type GitHubAccounts = { accounts: GitHubAccount[] } | { error: DaemonText };
 
-/** gh にログイン済みの GitHub のアカウント（PBI-13）。 */
-export async function getGitHubAccounts(): Promise<GitHubAccounts> {
-  const res = await ensureOk(await daemonFetch("/api/github/accounts"));
+/** gh にログイン済みの GitHub のアカウント（PBI-13）。signal は、本文を読み終えるまで効く。 */
+export async function getGitHubAccounts(signal?: AbortSignal): Promise<GitHubAccounts> {
+  const res = await ensureOk(await daemonFetch("/api/github/accounts", signal ? { signal } : {}));
   return (await res.json()) as GitHubAccounts;
 }
 

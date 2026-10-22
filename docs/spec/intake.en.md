@@ -137,7 +137,7 @@ Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueCommen
   - sacty reads the list with `gh auth status --json hosts`, and reads the token with `gh auth token --hostname <host> --user <account>` each time it uses it.
   - The list also includes accounts whose token gh could not verify (`state` is `error` or `timeout`), with `state` and `error` (gh's reason).
   - The project settings screen lets you choose such an account, marked "not verified", and also shows the list of accounts read (host, account, status).
-  - "Reload accounts" on the project settings screen calls `GET /api/github/accounts` again (checking gh auth status again) and replaces the choosable accounts and the list, keeping the unsaved input. If the daemon cannot be reached, it shows the reason instead of the list.
+  - "Reload accounts" on the project settings screen calls `GET /api/github/accounts` again (checking gh auth status again) and replaces the choosable accounts and the list, keeping the unsaved input. If the daemon cannot be reached or does not finish answering within 30 seconds (including reading the body), it stops the request and shows the reason instead of the list. You can press it again.
   - sacty passes gh only `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, and a limited set of the host's environment variables (config, keyring, proxy, and CA locations). It does not pass `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_ENTERPRISE_TOKEN`.
 - sacty reads the target host from the target URL (`https://<host>/<owner>[/<name>]`).
   - Before reading, it converts full-width characters with NFKC, removes invisible characters (zero-width spaces, BOM), the query, the fragment, a trailing `/`, and `.git`, and lowercases the host.

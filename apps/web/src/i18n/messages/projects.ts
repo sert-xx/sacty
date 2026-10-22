@@ -183,6 +183,8 @@ const ja = {
     githubKnownNone: "gh にログイン済みのアカウントはありません。",
     githubReload: "アカウントを読み直す",
     githubReloading: "読み直しています…",
+    githubReloadTimeout:
+      "アカウントを読み直せませんでした（時間切れ）。デーモンが動いているか確かめて、もう一度押してください。",
     githubKnownHost: "ホスト",
     githubKnownLogin: "アカウント",
     githubKnownState: "状態",
@@ -383,6 +385,8 @@ const en: ProjectsMessages = {
     githubKnownNone: "No accounts are signed in to gh.",
     githubReload: "Reload accounts",
     githubReloading: "Reloading…",
+    githubReloadTimeout:
+      "Could not reload the accounts (timed out). Check that the daemon is running, then try again.",
     githubKnownHost: "Host",
     githubKnownLogin: "Account",
     githubKnownState: "Status",

@@ -61,27 +61,3 @@ describe("プロジェクトの設定に Slack の通知の項目は無い（PBI
     locale = "ja";
   });
 });
-
-describe("gh のアカウントを画面から読み直せる", () => {
-  it("GitHub アカウントの区画に、読み直すボタンを出す（日英）", () => {
-    for (const lang of ["ja", "en"] as const) {
-      locale = lang;
-      const html = renderToStaticMarkup(
-        createElement(ProjectEditor, {
-          project: {
-            id: "p1",
-            name: "決済",
-            targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
-            createdAt: "",
-            updatedAt: "",
-          } as unknown as Project,
-          github: {
-            accounts: [{ host: "github.com", login: "me", active: true, state: "success" }],
-          },
-        }),
-      );
-      expect(html, lang).toContain(messagesFor(lang).projects.editor.githubReload);
-    }
-    locale = "ja";
-  });
-});

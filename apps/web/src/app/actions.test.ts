@@ -6,6 +6,7 @@ const importProject = vi.fn();
 const approveStep = vi.fn();
 const requestChanges = vi.fn();
 const saveSettings = vi.fn();
+const getGitHubAccounts = vi.fn();
 const cookieSet = vi.fn();
 const refresh = vi.fn();
 const order: string[] = [];
@@ -16,6 +17,7 @@ vi.mock("@/lib/daemon", () => ({
   approveStep,
   requestChanges,
   saveSettings,
+  getGitHubAccounts,
   CONTEXT_CHECK_PARAM: "contextCheck",
 }));
 // 送信時の cookie は、別のタブで切り替えた「B」になっている
@@ -44,6 +46,7 @@ const {
   createTaskAction,
   gateAction,
   importProjectAction,
+  reloadGitHubAccountsAction,
   saveProjectAction,
   saveSettingsAction,
   selectProjectAction,
@@ -374,5 +377,38 @@ describe("sacty の設定の保存（PBI-99）", () => {
     expect(await saveSettingsAction({}, form({ intakeLabel: 'a"b' }))).toEqual({
       message: 'ラベルに " と \\ は使えません。',
     });
+  });
+});
+
+describe("gh のアカウントの読み直し（PR #194 レビュー指摘）", () => {
+  beforeEach(() => {
+    getGitHubAccounts.mockReset();
+  });
+
+  it("デーモンが答えないまま期限が来たら、問い合わせを止めて、時間切れの理由を返す", async () => {
+    // 期限の中断は、テストから起こす
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    getGitHubAccounts.mockImplementation(
+      (signal: AbortSignal) =>
+        new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    );
+    const result = reloadGitHubAccountsAction();
+    deadline.abort(new Error("timeout"));
+    expect(await result).toEqual({
+      error: expect.stringMatching(/アカウントを読み直せませんでした（時間切れ）/),
+    });
+    expect(getGitHubAccounts).toHaveBeenCalledWith(deadline.signal);
+    timeout.mockRestore();
+  });
+
+  it("デーモンに届かなければ、届かない理由を返す。読めたら一覧をそのまま返す", async () => {
+    getGitHubAccounts.mockRejectedValueOnce(new Error("unreachable"));
+    expect(await reloadGitHubAccountsAction()).toEqual({
+      error: expect.stringMatching(/デーモンが動いているか確認してください/),
+    });
+    const accounts = [{ host: "github.com", login: "me", active: true, state: "success" }];
+    getGitHubAccounts.mockResolvedValueOnce({ accounts });
+    expect(await reloadGitHubAccountsAction()).toEqual({ accounts });
   });
 });
