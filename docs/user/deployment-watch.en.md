@@ -42,20 +42,7 @@ If something failed, sacty registers a fix task automatically. This is done as t
 
 In summary, the flow is as follows.
 
-```mermaid
-flowchart TB
-  merge["Merge the implementation PR"] --> ci{"CI/CD on the merge commit<br/>(checked every minute)"}
-  ci -- "none after 5 minutes" --> skip["Skip the watch"]
-  ci -- "not finished in 60 minutes" --> timeout["End as timed out"]
-  ci -- "failed" --> fix["Decide whether to register a fix task<br/>none if a fix task for the same failure is still open or the chain limit is reached"]
-  ci -- "passed" --> skill["An agent checks according to<br/>the deployment-observer skill"]
-  skill -- "failure or error" --> fix
-  skill -- "no problem" --> done["The task completes"]
-  skill -- "cannot tell" --> skip
-  skip --> done
-  timeout --> done
-  fix --> done
-```
+![After-merge watch flow](images/deployment-overview.en.svg)
 
 Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 

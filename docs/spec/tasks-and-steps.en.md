@@ -12,19 +12,7 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
 
 The overall flow of a task is as follows.
 
-```mermaid
-flowchart TB
-  created["Task created<br/>UI, intake, task split, or a watch fix"] --> orch["Orchestrator<br/>chooses the plan, base branch, test command, and so on"]
-  orch --> run["Run the next step<br/>step agent (implementation runs through verification and the PR)"]
-  run --> gated{"Step has an approval gate?"}
-  gated -- "no (preliminary investigation, etc.)" --> next
-  gated -- "yes" --> wait["Awaiting approval<br/>a person decides in the UI or by merging the PR"]
-  wait -- "request changes (from the chosen step)" --> run
-  wait -- "approve" --> next{"Steps remaining?"}
-  next -- "yes" --> review["Step review<br/>skip requirements, design, or reproduction that are not needed"]
-  review --> run
-  next -- "no" --> done["Completed (then audited)"]
-```
+![How a task proceeds](images/tasks-flow.en.svg)
 
 ## How tasks are created
 
@@ -287,20 +275,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 
 The flow from the end of the Implementation step to awaiting approval is as follows.
 
-```mermaid
-flowchart TB
-  impl["Implementation step (agent)"] --> diff{"Diff available?"}
-  diff -- "no" --> p1["Pause (verify.diffUnavailable)"]
-  diff -- "yes" --> fr["Goal guardian's final review<br/>runs the test command in the implementation step's image and judges each viewpoint"]
-  fr -- "tool missing from the image" --> p2["Pause (verify.commandMissing)<br/>resume restarts from the final review"]
-  fr -- "fail" --> count{"3 in a row<br/>(MAX_VERIFY_ATTEMPTS)"}
-  count -- "not yet" --> impl
-  count -- "reached" --> p3["Pause (verification)"]
-  fr -- "pass" --> change{"Changes from the base commit?"}
-  change -- "yes" --> pr["sacty commits, pushes, and opens the implementation PR<br/>PullRequestPublished, StepSubmitted"]
-  change -- "no" --> nc["No PR<br/>NoChangesFound, StepSubmitted (approved in the UI)"]
-  pr --> wait["Implementation awaiting approval (approved by merging the PR)"]
-```
+![From implementation to awaiting approval](images/verify.en.svg)
 
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`); sacty gets the diff and moves on to the Goal Guardian's final review. sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
 - The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`. The copy's .git is not the workspace's .git but a copy of the metadata saved before the agent touched it (tests can use git; the implementation shows as changes from the base). If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started and connected before the tests ([Services](services.en.md#when-services-start)).

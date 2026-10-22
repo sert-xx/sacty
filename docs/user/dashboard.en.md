@@ -8,6 +8,10 @@ The dashboard (`/dashboard`) shows, across all projects, what needs you, how the
 
 Hover over or tap the mark (i) next to a heading to see what the numbers mean and where the periods start.
 
+The dashboard looks like this.
+
+![The dashboard (Needs you, why tasks are paused, open tasks, cost and budget)](images/dashboard.en.png)
+
 ## Sections
 
 | Section | What it shows | When empty |

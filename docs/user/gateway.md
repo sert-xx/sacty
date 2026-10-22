@@ -10,24 +10,7 @@ sacty は、ホストでゲートウェイを動かします。
 
 ゲートウェイを通る経路は次のとおりです。
 
-```mermaid
-flowchart LR
-  subgraph container["工程エージェントのコンテナ"]
-    agent["エージェント<br/>実行ごとのトークンだけを持つ"]
-  end
-  gw["ゲートウェイ<br/>ホストの 127.0.0.1<br/>認証の値を付けて中継する"]
-  secrets["キーチェーン・1Password・gh"]
-  ai["AI の接続先<br/>providers.codex の via_gateway"]
-  pf["組織内 PF の API<br/>gateway.platforms・platforms.yaml"]
-  gh["GitHub の API<br/>読み取りだけ"]
-  mcp["MCP サーバー<br/>gateway.mcp_servers・mcp.yaml"]
-  agent -- "AI の呼び出し<br/>$SACTY_PF_URL/名前/…<br/>$SACTY_GITHUB_URL/ホスト/…<br/>MCP（HTTP）" --> gw
-  secrets -. "認証の値" .-> gw
-  gw --> ai
-  gw --> pf
-  gw --> gh
-  gw --> mcp
-```
+![ゲートウェイを通る経路](images/gateway-overview.svg)
 
 - ゲートウェイは 127.0.0.1 だけで待ち受け、実行中のエージェントのトークンを持つリクエストだけを受け付けます。
 - 設定は `config.yaml` の `gateway`（と `providers.codex` の `via_gateway`）に書きます。

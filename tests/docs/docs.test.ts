@@ -486,6 +486,11 @@ function englishPath(path: string): string {
   return path.replace(/\.md$/, ".en.md");
 }
 
+/** 日本語の版の画像のパス → 英語の版の画像のパス（`x.svg` → `x.en.svg`、`x.png` → `x.en.png`）。 */
+function englishImagePath(path: string): string {
+  return path.replace(/\.(svg|png)$/, ".en.$1");
+}
+
 /** 英語の版のパス → 日本語の版のパス（`x.en.md` → `x.md`）。 */
 function japanesePath(path: string): string {
   return path.replace(/\.en\.md$/, ".md");
@@ -593,7 +598,9 @@ function checkPair(
   };
   const jaShape = shapeOf(strip("ja", ja, en.path), (target) => {
     const path = resolve(dirname(ja.path), target);
-    return path.endsWith(".md") && exists(englishPath(path)) ? englishPath(path) : path;
+    if (path.endsWith(".md") && exists(englishPath(path))) return englishPath(path);
+    if (/\.(svg|png)$/.test(path) && exists(englishImagePath(path))) return englishImagePath(path);
+    return path;
   });
   const enShape = shapeOf(strip("en", en, ja.path), (target) => resolve(dirname(en.path), target));
 

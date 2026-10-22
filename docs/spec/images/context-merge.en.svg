@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 300" width="1040" height="300" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/context-merge.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">How a context is composed</title>
+  <desc id="desc">For each layer from the top, process remove, add the items, and register locked. Then add the host's gateway.mcp_servers and gateway.platforms, and record the result in ContextResolved.</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <rect x="20" y="30" width="610" height="250" rx="8" style="fill:none;stroke:var(--gray-line);stroke-dasharray:6 4"/>
+  <text x="30" y="48" class="label" style="fill:var(--gray)">Per layer, from the top (per skill, MCP, and PF name)</text>
+  <path d="M222 165 L232 165" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M418 165 L428 165" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M614 165 L656 165" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M826 165 L850 165" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="36" y="70" width="186" height="190" rx="10" class="card" style=""/>
+  <text x="52" y="102" class="title">1. remove</text>
+  <text x="52" y="130" class="sub">Removes inherited</text>
+  <text x="52" y="150" class="sub">items</text>
+  <text x="52" y="170" class="sub">Kept if an upper</text>
+  <text x="52" y="190" class="sub">layer locked it</text>
+  <rect x="52" y="199" width="98.8" height="21" rx="5" class="pill"/>
+  <text x="60" y="214" class="code">lockedRemove</text>
+  <rect x="232" y="70" width="186" height="190" rx="10" class="card" style=""/>
+  <text x="248" y="102" class="title">2. Add items</text>
+  <text x="248" y="130" class="sub">The same name is</text>
+  <text x="248" y="150" class="sub">overridden below</text>
+  <text x="248" y="170" class="sub">Upper one kept</text>
+  <text x="248" y="190" class="sub">if locked</text>
+  <rect x="248" y="199" width="112.6" height="21" rx="5" class="pill"/>
+  <text x="256" y="214" class="code">lockedOverride</text>
+  <rect x="428" y="70" width="186" height="190" rx="10" class="card" style=""/>
+  <text x="444" y="102" class="title">3. Register locked</text>
+  <text x="444" y="130" class="sub">Layers below can't</text>
+  <text x="444" y="150" class="sub">override or remove</text>
+  <text x="444" y="170" class="sub">these names</text>
+  <rect x="656" y="70" width="170" height="190" rx="10" class="card" style=""/>
+  <text x="672" y="102" class="title">Add the host's</text>
+  <rect x="672" y="115" width="91.9" height="21" rx="5" class="pill"/>
+  <text x="680" y="130" class="code">mcp_servers</text>
+  <rect x="672" y="141" width="78.1" height="21" rx="5" class="pill"/>
+  <text x="680" y="156" class="code">platforms</text>
+  <text x="672" y="182" class="sub">On the same name</text>
+  <text x="672" y="202" class="sub">the host's wins</text>
+  <text x="672" y="222" class="sub">(warning)</text>
+  <rect x="850" y="70" width="170" height="190" rx="10" class="card" style=""/>
+  <text x="866" y="102" class="title">Result</text>
+  <text x="866" y="130" class="sub">Layers, warnings,</text>
+  <text x="866" y="150" class="sub">PFs per run in</text>
+  <rect x="866" y="159" width="119.5" height="21" rx="5" class="pill"/>
+  <text x="874" y="174" class="code">ContextResolved</text>
+</svg>

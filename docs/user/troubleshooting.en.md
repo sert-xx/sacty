@@ -29,6 +29,10 @@ This page lists common ways sacty stops and what to check.
 
 ## Tasks stop or do not progress
 
+A paused task's details show why it stopped and a "Resume" button.
+
+![Details of a task paused at the usage limit](images/task-paused.en.png)
+
 | Symptom | What to check |
 | --- | --- |
 | Issues are not taken in | Check that you set the label to import and turned it On in "Issue intake" of "Sacty settings", and that you chose the project's targets and GitHub account. The reason may appear in "Some targets could not be imported" on the project page ([Intake](intake.en.md)) |

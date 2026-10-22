@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 520" width="1040" height="520" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/context-extends.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">コンテキストの継承の例</title>
+  <desc id="desc">モノレポの contexts/team が ../base を、contexts/base が組織のリポジトリを extends で継承する。既定のコンテキストの上に、上の層から順に重なる。</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <path d="M130 86 L130 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M130 234 L130 280" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M130 364 L130 410" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M390 280 L390 234" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M390 410 L390 364" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M560 322 L480 322" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M560 452 L480 452" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="40" y="30" width="440" height="56" rx="10" class="card" style=""/>
+  <svg x="56" y="45" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="63" class="title">sacty の既定のコンテキスト</text>
+  <rect x="40" y="130" width="440" height="104" rx="10" class="card" style=""/>
+  <svg x="56" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="7" r="2.2"/><path d="M6 7.2v9.6M18 9.2c0 4.8-4 5.3-8.5 6.6-1.6.5-2.9 1.1-3.5 1.4"/></svg>
+  <text x="92" y="162" class="title">組織で共通</text>
+  <rect x="56" y="175" width="271.3" height="21" rx="5" class="pill"/>
+  <text x="64" y="190" class="code">git@github.com:acme/sacty-context.git</text>
+  <text x="56" y="216" class="sub">ブランチ main</text>
+  <rect x="40" y="280" width="440" height="84" rx="10" class="card" style=""/>
+  <svg x="56" y="294" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="312" class="title">チームで共通</text>
+  <rect x="56" y="325" width="220.7" height="21" rx="5" class="pill"/>
+  <text x="64" y="340" class="code">acme/monorepo の contexts/base</text>
+  <rect x="40" y="410" width="440" height="84" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="56" y="424" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="442" class="title">プロジェクトの設定で指定</text>
+  <rect x="56" y="455" width="220.7" height="21" rx="5" class="pill"/>
+  <text x="64" y="470" class="code">acme/monorepo の contexts/team</text>
+  <rect x="560" y="280" width="460" height="84" rx="10" class="card" style=""/>
+  <svg x="576" y="294" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <text x="612" y="312" class="title">contexts/base/sacty-context.yaml</text>
+  <rect x="576" y="325" width="367.9" height="21" rx="5" class="pill"/>
+  <text x="584" y="340" class="code">extends: git@github.com:acme/sacty-context.git#main</text>
+  <rect x="560" y="410" width="460" height="84" rx="10" class="card" style=""/>
+  <svg x="576" y="424" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <text x="612" y="442" class="title">contexts/team/sacty-context.yaml</text>
+  <rect x="576" y="455" width="126.4" height="21" rx="5" class="pill"/>
+  <text x="584" y="470" class="code">extends: ../base</text>
+  <rect x="117.8" y="100" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="140" y="113" class="label" text-anchor="middle">重ねる</text>
+  <rect x="117.8" y="249" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="140" y="262" class="label" text-anchor="middle">重ねる</text>
+  <rect x="117.8" y="379" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="140" y="392" class="label" text-anchor="middle">重ねる</text>
+  <rect x="364.1" y="249" width="51.9" height="18" rx="4" class="label-bg"/>
+  <text x="390" y="262" class="label" text-anchor="middle">extends</text>
+  <rect x="364.1" y="379" width="51.9" height="18" rx="4" class="label-bg"/>
+  <text x="390" y="392" class="label" text-anchor="middle">extends</text>
+</svg>

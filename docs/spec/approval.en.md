@@ -30,23 +30,7 @@ Requirements and Design (`StepPullRequestKey`) and Implementation are approved t
 
 When Requirements, Design, and Implementation are all approved through PRs, the branches look like this (an example where the task ID starts with 1a2b3c4d).
 
-```mermaid
-%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
-gitGraph
-  commit id: "base commit"
-  branch "sacty/task-1a2b3c4d"
-  branch "sacty/task-1a2b3c4d-requirements-1"
-  commit id: "requirements.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-requirements-1" id: "requirements approved"
-  branch "sacty/task-1a2b3c4d-design-1"
-  commit id: "design.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-design-1" id: "design approved"
-  commit id: "implementation"
-  checkout main
-  merge "sacty/task-1a2b3c4d" id: "implementation approved"
-```
+![Branches when approving through PRs](images/approval-branches.en.svg)
 
 - Whether a task is approved through PRs (`stepPullRequestsOn`)
   - If it has a task branch, it is always approved through PRs.

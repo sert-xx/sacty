@@ -127,34 +127,11 @@ remove:            # remove skills, MCP servers, and external platforms inherite
 
 For example, with the following inheritance, the layers are stacked on top of the default context, from the top down.
 
-```mermaid
-flowchart TB
-  default["sacty default context"]
-  org["git@github.com:acme/sacty-context.git (main)<br/>organization-wide context"]
-  base["contexts/base in acme/monorepo<br/>team-wide context"]
-  team["contexts/team in acme/monorepo<br/>context specified in the project settings"]
-  default -- "layered onto" --> org
-  org -- "layered onto" --> base
-  base -- "layered onto" --> team
-  team -. "extends: ../base" .-> base
-  base -. "extends: git@github.com:acme/sacty-context.git#main" .-> org
-```
+![Context inheritance example](images/context-extends.en.svg)
 
 Locking and removal work like this.
 
-```mermaid
-flowchart LR
-  subgraph upper["Upper layer (organization)"]
-    u["skills: review, guide<br/>locked.skills: review"]
-  end
-  subgraph lower["Lower layer (project)"]
-    l["skills: review, deploy<br/>remove.skills: guide"]
-  end
-  subgraph result["Skills passed to the agent"]
-    r["review (the upper one, with a warning)<br/>deploy"]
-  end
-  upper --> lower --> result
-```
+![How locked and remove work](images/context-locked.en.svg)
 
 ## mcp.yaml
 
@@ -183,23 +160,7 @@ servers:
 
 Where MCP servers run is shown below.
 
-```mermaid
-flowchart LR
-  subgraph container["Step agent container"]
-    agent["Agent"]
-    inbox["command server with<br/>via_gateway: false"]
-  end
-  subgraph host["Host running sacty"]
-    gw["Gateway"]
-    cmd["command server (default)<br/>runs in a copy of the layer's repository"]
-  end
-  remote["url server"]
-  agent -- "/ctx-mcp/name<br/>(per-run token)" --> gw
-  gw --> cmd
-  gw -- "adds header secrets" --> remote
-  agent --> inbox
-  agent -. "url with via_gateway: false" .-> remote
-```
+![Where MCP servers run](images/context-mcp-placement.en.svg)
 
 ### HTTP MCP servers
 
@@ -319,6 +280,10 @@ platforms:
 - For platforms written in a context repository, the host adds the secrets written there and sends them to the upstream and token endpoint written there. As with `mcp.yaml`, make sure only trusted people can change the context repository ([Trust assumptions](#trust-assumptions)).
 
 ## Checking the composed result
+
+Press "Preview the saved settings" to see the result like this.
+
+![Context preview (layers, skills, MCP servers, files to place)](images/context-preview.en.png)
 
 You can check the composed result in "Context preview" in the project settings (for both saved settings and settings being edited). The result shows the files placed in Claude Code's and Codex's configuration directories at run time, along with the layers, warnings, MCP endpoints, and so on.
 

@@ -7,29 +7,7 @@ If you are new to sacty, start with [Getting started](getting-started.en.md). Fo
 
 Here is an overview of sacty.
 
-```mermaid
-flowchart TB
-  you["You"]
-  subgraph mac["Machine running sacty"]
-    ui["Web UI (browser)"]
-    daemon["Daemon<br/>activity log, step execution, intake"]
-    agents["Agent containers<br/>orchestrator, step agents, goal guardian"]
-    gw["Gateway<br/>holds the credentials"]
-  end
-  github["GitHub<br/>issues, PRs"]
-  ai["AI endpoint"]
-  ext["Internal PFs, MCP servers"]
-  you -- "create tasks, approve" --> ui
-  ui --> daemon
-  daemon -- "starts" --> agents
-  agents -- "AI calls (when not through the gateway)" --> ai
-  gw -. "when via_gateway is set in providers.codex" .-> ai
-  agents -- "per-run token" --> gw
-  gw --> ext
-  gw -- "read" --> github
-  daemon -- "intake, opening and checking PRs" --> github
-  you -- "approve by merging PRs" --> github
-```
+![sacty at a glance](images/overview.en.svg)
 
 ## Contents
 

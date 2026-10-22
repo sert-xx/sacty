@@ -37,19 +37,7 @@
 
 例えば、db のサービスにつなぐときは、次のようになります。
 
-```mermaid
-flowchart LR
-  subgraph net["実行ごとの compose のネットワーク"]
-    subgraph agent["エージェントのコンテナ"]
-      app["テスト・アプリ"]
-      fwd["sacty の転送<br/>127.0.0.1:15432・127.0.0.1:5432"]
-    end
-    db["db（サービス）<br/>ports: 15432:5432"]
-  end
-  app -- "localhost:15432 か localhost:5432" --> fwd
-  fwd -- "db:5432" --> db
-  app -- "db:5432（サービス名）" --> db
-```
+![localhost の転送](images/compose-forwarding.svg)
 
 転送するのは、コマンドの前に sacty がコンテナの中で起動する小さな TCP の転送です。
 イメージにある Node.js で動くので、追加のパッケージは要りません。

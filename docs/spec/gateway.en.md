@@ -8,26 +8,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 
 The paths through the gateway are as follows.
 
-```mermaid
-flowchart LR
-  subgraph container["Agent container"]
-    agent["Claude Code / Codex<br/>holds only the per-run token"]
-  end
-  gw["Gateway<br/>inside the daemon, 127.0.0.1<br/>binds the AI endpoint, MCP servers,<br/>project PFs, and gh accounts to each token"]
-  secrets["Keychain, 1Password, gh<br/>credentials are fetched on the host"]
-  ai["AI endpoint<br/>Bedrock / openai-compatible"]
-  pf["Internal PF APIs"]
-  gh["GitHub API<br/>read only"]
-  urlmcp["URL-type MCP servers from the context"]
-  hostmcp["MCP servers started on the host<br/>gateway.mcp_servers and context command-type"]
-  agent -- "/openai/v1/…<br/>/r/token/pf/…<br/>/r/token/github/…<br/>/ctx-mcp/name, /mcp/name" --> gw
-  secrets -. "credentials" .-> gw
-  gw --> ai
-  gw --> pf
-  gw --> gh
-  gw --> urlmcp
-  gw --> hostmcp
-```
+![Gateway relay paths](images/gateway.en.svg)
 
 ## Listening and tokens
 
@@ -133,27 +114,7 @@ Two forms remain when relying only on the hiding rules.
 
 The relay flows as follows.
 
-```mermaid
-sequenceDiagram
-  participant A as Agent
-  participant G as Gateway
-  participant T as Token endpoint
-  participant P as PF (upstream)
-  A->>G: /r/token/pf/name/path
-  G->>G: Look up the host PF, otherwise the PF of the token's project (404 if none)
-  G->>G: Match against allow (403 with the list of allowed APIs if no match)
-  opt auth.token, and there is no token or it is within 30 seconds of expiry
-    G->>T: Request a token with the key
-    T-->>G: Token at token_path and expiry at expires_in_path
-  end
-  G->>P: Drop the agent's auth and cookies, add the auth header, and send
-  P-->>G: Response
-  opt 401 or 403 from a PF with auth.token
-    G->>T: Fetch the token again
-    G->>P: Resend once
-  end
-  G-->>A: Response (redirects are not followed)
-```
+![Relaying an internal PF request](images/gateway-pf.en.svg)
 
 - Lookup order is the host's PFs, then, if not found, the PFs of the project context bound to the run's token. Tokens of tasks in other projects do not find them (404).
 - Matching `allow`

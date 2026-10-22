@@ -8,24 +8,7 @@ sacty runs a gateway on the host. The gateway relays AI calls, MCP, and external
 
 The paths through the gateway are as follows.
 
-```mermaid
-flowchart LR
-  subgraph container["Step agent container"]
-    agent["Agent<br/>holds only the per-run token"]
-  end
-  gw["Gateway<br/>127.0.0.1 on the host<br/>adds credentials and relays"]
-  secrets["Keychain, 1Password, gh"]
-  ai["AI endpoint<br/>via_gateway in providers.codex"]
-  pf["Internal PF APIs<br/>gateway.platforms, platforms.yaml"]
-  gh["GitHub API<br/>read only"]
-  mcp["MCP servers<br/>gateway.mcp_servers, mcp.yaml"]
-  agent -- "AI calls<br/>$SACTY_PF_URL/name/…<br/>$SACTY_GITHUB_URL/host/…<br/>MCP (HTTP)" --> gw
-  secrets -. "credentials" .-> gw
-  gw --> ai
-  gw --> pf
-  gw --> gh
-  gw --> mcp
-```
+![Paths through the gateway](images/gateway-overview.en.svg)
 
 - The gateway listens only on 127.0.0.1 and accepts only requests that carry the token of a running agent.
 - Configure it in `gateway` in `config.yaml` (along with `via_gateway` of `providers.codex`).

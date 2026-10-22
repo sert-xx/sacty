@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 600" width="1040" height="600" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/tasks-overview.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">How a task proceeds</title>
+  <desc id="desc">The orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <path d="M400 96 L400 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M400 206 L400 240" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M400 316 L400 350" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M400 406 L400 440" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M550 378 L740 378 Q750 378 750 388 L750 440" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M550 468 L640 468" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 478 L210 478 Q200 478 200 468 L200 300 Q200 290 210 290 L250 290" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M860 468 L910 468 Q920 468 920 458 L920 288 Q920 278 910 278 L550 278" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M750 496 L750 530" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="250" y="20" width="300" height="76" rx="10" class="card" style=""/>
+  <svg x="266" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <text x="302" y="52" class="title">Create a task</text>
+  <text x="266" y="80" class="sub">UI, issue, PR, or ticket</text>
+  <rect x="250" y="130" width="300" height="76" rx="10" class="card" style=""/>
+  <svg x="266" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
+  <text x="302" y="162" class="title">Orchestrator</text>
+  <text x="266" y="190" class="sub">Chooses the plan</text>
+  <rect x="250" y="240" width="300" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="266" y="254" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="302" y="272" class="title">Step agent</text>
+  <text x="266" y="300" class="sub">Runs the step</text>
+  <rect x="250" y="350" width="300" height="56" rx="10" class="card" style=""/>
+  <svg x="266" y="365" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="302" y="383" class="title">Needs approval?</text>
+  <rect x="250" y="440" width="300" height="76" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="266" y="454" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <text x="302" y="472" class="title">You decide</text>
+  <text x="266" y="500" class="sub">In the UI or by merging the PR</text>
+  <rect x="640" y="440" width="220" height="56" rx="10" class="card" style=""/>
+  <svg x="656" y="455" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="692" y="473" class="title">Steps left?</text>
+  <rect x="640" y="530" width="220" height="56" rx="10" class="card" style=""/>
+  <svg x="656" y="545" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
+  <text x="692" y="563" class="title">Completed</text>
+  <rect x="405" y="414" width="27.9" height="18" rx="4" class="label-bg"/>
+  <text x="410" y="427" class="label" text-anchor="start">yes</text>
+  <rect x="639" y="359" width="22" height="18" rx="4" class="label-bg"/>
+  <text x="650" y="372" class="label" text-anchor="middle">no</text>
+  <rect x="569.1" y="449" width="51.9" height="18" rx="4" class="label-bg"/>
+  <text x="595" y="462" class="label" text-anchor="middle">approve</text>
+  <rect x="94.8" y="387" width="97.2" height="18" rx="4" class="label-bg"/>
+  <text x="192" y="400" class="label" text-anchor="end">request changes</text>
+  <rect x="923" y="359" width="27.9" height="18" rx="4" class="label-bg"/>
+  <text x="928" y="372" class="label" text-anchor="start">yes</text>
+  <rect x="755" y="504" width="22" height="18" rx="4" class="label-bg"/>
+  <text x="760" y="517" class="label" text-anchor="start">no</text>
+</svg>

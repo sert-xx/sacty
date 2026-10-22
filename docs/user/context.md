@@ -157,34 +157,11 @@ remove:            # 上位の層から引き継いだスキル・MCP サーバ�
 
 例えば、次のように継承すると、既定のコンテキストの上に、上の層から順に重なります。
 
-```mermaid
-flowchart TB
-  default["sacty の既定のコンテキスト"]
-  org["git@github.com:acme/sacty-context.git（main）<br/>組織で共通のコンテキスト"]
-  base["acme/monorepo の contexts/base<br/>チームで共通のコンテキスト"]
-  team["acme/monorepo の contexts/team<br/>プロジェクトの設定で指定したコンテキスト"]
-  default -- "重ねる" --> org
-  org -- "重ねる" --> base
-  base -- "重ねる" --> team
-  team -. "extends: ../base" .-> base
-  base -. "extends: git@github.com:acme/sacty-context.git#main" .-> org
-```
+![コンテキストの継承の例](images/context-extends.svg)
 
 上書き禁止と取り除きは、次のように効きます。
 
-```mermaid
-flowchart LR
-  subgraph upper["上位の層（組織）"]
-    u["skills: review・guide<br/>locked.skills: review"]
-  end
-  subgraph lower["下位の層（プロジェクト）"]
-    l["skills: review・deploy<br/>remove.skills: guide"]
-  end
-  subgraph result["エージェントに渡すスキル"]
-    r["review（上位のもの。警告を残す）<br/>deploy"]
-  end
-  upper --> lower --> result
-```
+![上書き禁止と取り除きの効き方](images/context-locked.svg)
 
 ## mcp.yaml
 
@@ -218,23 +195,7 @@ servers:
 
 MCP サーバーが動く場所は、次のとおりです。
 
-```mermaid
-flowchart LR
-  subgraph container["工程エージェントのコンテナ"]
-    agent["エージェント"]
-    inbox["via_gateway: false の<br/>command のサーバー"]
-  end
-  subgraph host["sacty を動かすホスト"]
-    gw["ゲートウェイ"]
-    cmd["command のサーバー（既定）<br/>層のリポジトリの写しで動く"]
-  end
-  remote["url のサーバー"]
-  agent -- "/ctx-mcp/名前<br/>（実行ごとのトークン）" --> gw
-  gw --> cmd
-  gw -- "ヘッダーの秘密情報を付ける" --> remote
-  agent --> inbox
-  agent -. "url で via_gateway: false" .-> remote
-```
+![MCP サーバーが動く場所](images/context-mcp-placement.svg)
 
 ### HTTP の MCP サーバー
 
@@ -374,6 +335,10 @@ platforms:
   `mcp.yaml` と同じく、コンテキストリポジトリは信頼できる人だけが変えられるようにしてください（[信頼の前提](#信頼の前提)）。
 
 ## 合成の結果を確かめる
+
+「保存した設定でプレビュー」を押すと、次のように結果が出ます。
+
+![コンテキストのプレビュー（層・スキル・MCP サーバー・置くファイル）](images/context-preview.png)
 
 合成の結果は、プロジェクトの設定の「コンテキストのプレビュー」で確かめられます（保存した設定でも、編集中の設定でも）。
 結果には、実行のときに Claude Code・Codex の設定のディレクトリに置くファイルと、層・警告・MCP の接続先などが出ます。

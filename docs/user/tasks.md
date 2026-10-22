@@ -9,20 +9,13 @@
 
 タスクは次のように進みます。
 
-```mermaid
-flowchart TB
-  create["タスクを作る<br/>画面・Issue・PR・チケット"] --> orch["オーケストレーターが進め方を選ぶ"]
-  orch --> step["工程エージェントが工程を実行する"]
-  step --> gate{"承認が要る工程か"}
-  gate -- "いいえ" --> more
-  gate -- "はい" --> you["あなたが判断する<br/>画面か PR のマージ"]
-  you -- "差し戻す" --> step
-  you -- "承認する" --> more{"残りの工程がある"}
-  more -- "ある" --> step
-  more -- "無い" --> done["完了"]
-```
+![タスクの進み方](images/tasks-overview.svg)
 
 ## タスクを作る
+
+タスクの一覧の「タスクを作成」を押すと、次のダイアログが開きます。
+
+![「タスクを作成」のダイアログ](images/new-task.png)
 
 - 画面でタスクを作るときは、プロジェクトの対象の中からリポジトリを選びます（[プロジェクトの設定](project-settings.md#対象)）。
   - リポジトリの候補は、「タスクを作成」を押してダイアログを開いたときに読みます。
@@ -305,6 +298,10 @@ README しかないリポジトリのように、テストの仕組みがそも�
 
 ## PR での承認（要求要件・設計・実装）
 
+実装の PR のマージを待っているタスクの詳細は、次のように表示されます。
+
+![実装の PR のマージを待っているタスクの詳細（「PR でチェックする」のボタン）](images/task-pull-request.png)
+
 人間の承認が要る工程（要求要件・設計・実装）は、対象のリポジトリへの PR で判断します。
 承認はマージです。
 PR を作った工程は、sacty の画面からは承認しません（画面は PR への案内と状況の表示です）。
@@ -335,23 +332,7 @@ PR での承認は、次の順に進みます。
 
 要求要件・設計・実装をすべて PR で承認するときのブランチと PR は、次のようになります（タスクの短い ID が 1a2b3c4d の例）。
 
-```mermaid
-%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
-gitGraph
-  commit id: "起点"
-  branch "sacty/task-1a2b3c4d"
-  branch "sacty/task-1a2b3c4d-requirements-1"
-  commit id: "requirements.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-requirements-1" id: "要求要件の承認"
-  branch "sacty/task-1a2b3c4d-design-1"
-  commit id: "design.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-design-1" id: "設計の承認"
-  commit id: "実装"
-  checkout main
-  merge "sacty/task-1a2b3c4d" id: "実装の承認"
-```
+![PR で承認するときのブランチ](images/approval-branches.svg)
 
 - ファイルの置き場所は、リポジトリやプロジェクトのコンテキストの規約に決まっていれば、オーケストレーターがそれに従います。
 - PR のレビュー・行へのコメント・通常のコメントを、指摘として取り込みます。
@@ -454,6 +435,10 @@ gitGraph
   PR で判断するか、止めるなら中止してください。
 
 ## タスクの一覧
+
+プロジェクトのタスクの一覧は、次のように表示されます。
+
+![タスクの一覧（あなたの出番のカードと、すべてのタスク）](images/task-list.png)
 
 タスクの一覧の各行には、題の下に、作業するリポジトリの名前（`org/repo` の `repo` だけ）が出ます。
 リポジトリがまだ決まっていないタスクには出ません（リポジトリを指定せずに作ったタスクは「リポジトリなし」）。
