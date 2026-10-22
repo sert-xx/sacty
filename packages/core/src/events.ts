@@ -846,7 +846,30 @@ const TaskResumed = z.object({
   payload: z.object({
     /** 実行待ちに戻して実行するか（失敗した実行のやり直しなど）、待機に戻すか。 */
     retry: z.boolean(),
+    /**
+     * 選んだ工程を捨て、工程の選択からやり直す。テストのコマンドが決まらずに止まり、まだどの工程も実行していないタスクを、
+     * 人がテストを決めずに再開したとき（同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないように）。
+     */
+    rechooseSteps: z.literal(true).optional(),
   }),
+});
+
+/**
+ * テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた（再開と一緒に記録する）。テストのコマンドを
+ * 指定したか、テストなしで進めると決めて理由を書いたかのどちらか。テストなしは、オーケストレーターが noTests を答えた
+ * タスク（PBI-94）と同じく、テストを実行せずに、ゴールガーディアンがタスクの目的から判定する。人の判断なので、
+ * sacty がテストのファイルを探す歯止めは当てない。不具合の修正（再現の工程がある）は、テストなしにできない。
+ */
+const TestsDecided = z.object({
+  type: z.literal("TestsDecided"),
+  payload: z
+    .object({
+      testCommand: z.string().trim().min(1).max(1000).optional(),
+      noTestsReason: z.string().trim().min(1).max(2000).optional(),
+    })
+    .refine((d) => (d.testCommand === undefined) !== (d.noTestsReason === undefined), {
+      message: "testCommand か noTestsReason のどちらか1つ",
+    }),
 });
 
 const StepSubmitted = z.object({
@@ -2254,6 +2277,7 @@ export const EventInput = z.discriminatedUnion("type", [
   BudgetWarned,
   TaskPaused,
   BudgetCapRaised,
+  TestsDecided,
   TaskResumed,
   StepSubmitted,
   StepApproved,
@@ -2406,9 +2430,13 @@ export function rerunEditableBody(task: { body: string; rerun?: unknown }): stri
   return (at >= 0 ? task.body.slice(0, at) : task.body).trimEnd();
 }
 
-/** 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。 */
+/**
+ * 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。テストのコマンドが決まらずに止まった
+ * タスクは、tests でテストのコマンドか、テストなしで進める理由を渡せる（TestsDecided）。
+ */
 export const ResumeTaskInput = z.object({
   capUsd: z.number().positive().max(10_000).optional(),
+  tests: TestsDecided.shape.payload.optional(),
 });
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 

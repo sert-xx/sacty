@@ -3,6 +3,8 @@
 import {
   type ActivityEvent,
   appliedProposalFor,
+  canDecideTests,
+  canRechooseSteps,
   canRereview,
   canRerun,
   canRetryExport,
@@ -386,6 +388,14 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           repoLabel={task.ticket ? parts.resume.ticketRepo : parts.resume.chooseRepo}
           repoOptional={!task.ticket}
           chosenRepo={task.repo}
+          {...(canDecideTests(task)
+            ? {
+                tests: {
+                  bugfix: task.steps.some((s) => s.key === "reproduce"),
+                  rechoose: canRechooseSteps(task),
+                },
+              }
+            : {})}
           reason={task.pausedReason}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
@@ -429,12 +439,21 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                   <>
                     {m.testCommand}
                     {task.testCommand ? (
-                      <span className="font-mono">{task.testCommand}</span>
+                      <>
+                        <span className="font-mono">{task.testCommand}</span>
+                        {task.testsDecidedBy === "person" && m.testCommandByPerson}
+                      </>
                     ) : task.noTestsReason ? (
-                      // テストの仕組みが無いと判断したタスク（PBI-94）。根拠は補足に出す
+                      // テストの仕組みが無いと判断したタスク（PBI-94）。根拠は補足に出す。人が再開のときに決めたら、その理由
                       <>
                         {testCommandOfNoTests(task, m)}{" "}
-                        <Hint text={m.noTestsReason(task.noTestsReason)} />
+                        <Hint
+                          text={
+                            task.testsDecidedBy === "person"
+                              ? m.noTestsReasonByPerson(task.noTestsReason)
+                              : m.noTestsReason(task.noTestsReason)
+                          }
+                        />
                       </>
                     ) : (
                       m.testCommandUnknown

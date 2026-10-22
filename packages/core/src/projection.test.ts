@@ -5,6 +5,8 @@ import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from ".
 import {
   awaitingRepository,
   awaitingTicketTriage,
+  canDecideTests,
+  canRechooseSteps,
   canRerun,
   canRetryExport,
   deliveredWithoutChanges,
@@ -1220,6 +1222,156 @@ describe("テストの仕組みが無いタスクの検証（PBI-94）", () => {
     const task = project(implemented("t1", "テストが無い", "npm test")).get("t1");
     expect(task?.testCommand).toBe("npm test");
     expect(task?.noTestsReason).toBeUndefined();
+  });
+});
+
+describe("テストが決まらずに止まったタスクの再開（人がテストを決める・工程の選択からやり直す）", () => {
+  const undecided = (taskId: string, chosenSteps: EventInput & { type: "StepsChosen" }) => [
+    created(taskId),
+    ev(taskId, chosenSteps),
+    ev(taskId, {
+      type: "TaskPaused",
+      payload: { reason: "error", message: { code: "orchestrator.testCommandUnknown" } },
+    }),
+  ];
+  const chosen = (stepsOf: (typeof STEP_PLANS)[keyof typeof STEP_PLANS]) =>
+    ({
+      type: "StepsChosen",
+      payload: {
+        steps: [...stepsOf],
+        plan: "direct",
+        reason: "小さい",
+        images: { implement: "node" },
+        investigation: "content",
+      },
+    }) as EventInput & { type: "StepsChosen" };
+  const decided = (taskId: string, payload: { testCommand?: string; noTestsReason?: string }) =>
+    ev(taskId, { type: "TestsDecided", payload }, "person");
+  const resumed = (taskId: string, rechooseSteps?: true) =>
+    ev(
+      taskId,
+      {
+        type: "TaskResumed",
+        payload: { retry: true, ...(rechooseSteps ? { rechooseSteps } : {}) },
+      },
+      "person",
+    );
+
+  it("人がテストのコマンドかテストなしの理由を決めると、タスクに持ち、人が決めたことがわかる", () => {
+    seq = 0;
+    const events = undecided("t1", chosen(STEP_PLANS.direct));
+    const paused = project(events).get("t1") as Task;
+    expect(canDecideTests(paused)).toBe(true);
+    expect(canRechooseSteps(paused)).toBe(true);
+    const withCommand = project([...events, decided("t1", { testCommand: "make check" })]).get(
+      "t1",
+    );
+    expect(withCommand?.testCommand).toBe("make check");
+    expect(withCommand?.testsDecidedBy).toBe("person");
+    const none = project([
+      ...undecided("t2", chosen(STEP_PLANS.direct)),
+      decided("t2", { noTestsReason: "テストを書かない" }),
+      resumed("t2"),
+    ]).get("t2");
+    expect(none?.noTestsReason).toBe("テストを書かない");
+    expect(none?.status).toBe("queued");
+    expect(none?.steps.length).toBe(STEP_PLANS.direct.length);
+  });
+
+  it("テストのコマンドと理由は、どちらか1つだけ", () => {
+    expect(() => decided("t0", {})).toThrow();
+    expect(() => decided("t0", { testCommand: "a", noTestsReason: "b" })).toThrow();
+  });
+
+  it("テストが決まっているタスク・止まっていないタスクでは決められず、不具合の修正はテストなしにできない", () => {
+    seq = 0;
+    const decidedTwice = [
+      ...undecided("t1", chosen(STEP_PLANS.direct)),
+      decided("t1", { testCommand: "make check" }),
+      decided("t1", { testCommand: "make test" }),
+    ];
+    expect(() => project(decidedTwice)).toThrow(/not undecided/);
+    const notPaused = [
+      created("t2"),
+      ev("t2", chosen(STEP_PLANS.direct)),
+      decided("t2", { testCommand: "x" }),
+    ];
+    expect(() => project(notPaused)).toThrow(/not undecided/);
+    const bugfix = [
+      ...undecided("t3", chosen(STEP_PLANS.bugfix)),
+      decided("t3", { noTestsReason: "テストは無い" }),
+    ];
+    expect(() => project(bugfix)).toThrow(/needs a test command/);
+    expect(
+      project([
+        ...undecided("t4", chosen(STEP_PLANS.bugfix)),
+        decided("t4", { testCommand: "x" }),
+      ]).get("t4")?.testCommand,
+    ).toBe("x");
+  });
+
+  it("工程の選択からやり直すと、選んだ工程と、選択で決めたものを消して実行待ちにする（予算の上限は残す）", () => {
+    seq = 0;
+    const task = project([
+      ...undecided("t1", chosen(STEP_PLANS.direct)),
+      ev(
+        "t1",
+        { type: "StepImageChanged", payload: { step: "implement", from: "node", to: "java" } },
+        "person",
+      ),
+      resumed("t1", true),
+    ]).get("t1");
+    expect(task?.status).toBe("queued");
+    expect(task?.steps).toEqual([]);
+    expect(task?.stepsChoice).toBeUndefined();
+    expect(task?.images).toBeUndefined();
+    expect(task?.imageChanges).toBeUndefined();
+    expect(task?.investigation).toBeUndefined();
+    expect(task?.budget.capUsd).toBeGreaterThan(0);
+    // もう一度選べる
+    const again = project([
+      ...undecided("t2", chosen(STEP_PLANS.direct)),
+      resumed("t2", true),
+      ev("t2", {
+        type: "StepsChosen",
+        payload: { steps: [...STEP_PLANS.direct], testCommand: "npm test" },
+      }),
+    ]).get("t2");
+    expect(again?.testCommand).toBe("npm test");
+    expect(again?.steps.map((s) => s.state)[0]).toBe("active");
+  });
+
+  it("工程を始めて成果ができた後は、工程の選択からやり直せない", () => {
+    seq = 0;
+    const events = [
+      created("t1"),
+      ev("t1", chosen(STEP_PLANS.direct)),
+      ev("t1", {
+        type: "AgentRunStarted",
+        payload: { runId: "r1", step: "investigate", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t1", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "r1",
+          step: "investigate",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 調査",
+        },
+      }),
+      ev("t1", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: { code: "orchestrator.testCommandUnknown" } },
+      }),
+    ];
+    const task = project(events).get("t1") as Task;
+    expect(canDecideTests(task)).toBe(true);
+    expect(canRechooseSteps(task)).toBe(false);
+    expect(() => project([...events, resumed("t1", true)])).toThrow(/cannot be chosen again/);
   });
 });
 

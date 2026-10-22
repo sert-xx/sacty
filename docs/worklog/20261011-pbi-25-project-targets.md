@@ -4,7 +4,7 @@
 - タスク: PBI-25
 - PR: #30
 - ブランチ: feat/issue-25-project-targets
-- 関係する ADR: [プロジェクトの設定を「対象」（Org またはリポジトリ）の一覧だけにし、タスクの対象は対象の中から選び、PR作成の工程は常に PR を作る](../adr/20261011-1520-superseded-project-targets.md)、[ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決めて記録し、人が直す手段は設けない](../adr/20261011-1520-orchestrator-decides-base-branch-and-test-command.md)
+- 関係する ADR: [プロジェクトの設定を「対象」（Org またはリポジトリ）の一覧だけにし、タスクの対象は対象の中から選び、PR作成の工程は常に PR を作る](../adr/20261011-1520-superseded-project-targets.md)、[ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決めて記録し、人が直す手段は設けない](../adr/20261011-1520-superseded-orchestrator-decides-base-branch-and-test-command.md)
 
 ## 目的
 

@@ -1577,10 +1577,18 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
   const plan = (v: Record<string, unknown>) =>
     `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "skip-design", reason: "r", ...v } })}\n\`\`\``;
 
-  it("オーケストレーターに、テストの仕組みが無いときだけ根拠を書かせ、不具合の修正を選ばせない", () => {
+  it("オーケストレーターに、調べてもテストの仕組みが見つからなければ noTests に根拠を書かせ、不具合の修正を選ばせない", () => {
     const prompt = buildOrchestratorPrompt(task());
-    expect(prompt).toContain("- noTests：testCommand を空にしたときだけ書く");
-    expect(prompt).toContain("テストの仕組みはあるのにコマンドが分からないときは書かない");
+    // 両方を空にさせない（空だと、検証できずに止まる）
+    expect(prompt).toContain("testCommand か noTests のどちらかを必ず書く（両方を空にしない");
+    expect(prompt).toContain("実装する組み合わせでは、両方を空にしないでください");
+    // 調べる場所を挙げ、見つからなければ noTests にする（スキル集・ドキュメントだけのリポジトリも）
+    expect(prompt).toContain("CI の設定（.github/workflows・.gitlab-ci.yml など）");
+    expect(prompt).toContain("見つからなければ、testCommand を書かずに、noTests にその根拠");
+    expect(prompt).toContain("エージェントのスキル（SKILL.md など）を集めたリポジトリ");
+    // 迷ったら止める側に倒す前の指示は無い
+    expect(prompt).not.toContain("分からなければ空");
+    expect(prompt).not.toContain("コマンドが分からないときは書かない");
     expect(prompt).toContain("テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない");
     expect(prompt).toContain('"noTests": ');
   });
@@ -1594,7 +1602,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(prompt).toContain(
       "選べるイメージのどれにも入っていなくても、testCommand は書く（空にしない）",
     );
-    expect(prompt).toContain("上の検証のコマンドも無いと判断したら");
+    expect(prompt).toContain("上の検証のコマンドも見つからなければ");
   });
 
   it("オーケストレーターに、複数の検証は && でつないで1つの testCommand にさせる", () => {

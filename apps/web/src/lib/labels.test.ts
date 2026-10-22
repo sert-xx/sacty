@@ -134,6 +134,27 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     ).toBe("実装を承認・凍結（人間）");
   });
 
+  it("人がテストの扱いを決めた記録と、工程の選択からやり直す再開を、日英で作業履歴に出す", () => {
+    expect(
+      describeEvent(event({ type: "TestsDecided", payload: { testCommand: "make check" } })),
+    ).toBe("テストのコマンドを make check に決定（人間）");
+    expect(
+      describeEvent(event({ type: "TestsDecided", payload: { noTestsReason: "スキル集" } })),
+    ).toBe("テストなしで進めると決定（人間）：スキル集");
+    expect(
+      describeEvent(event({ type: "TaskResumed", payload: { retry: true, rechooseSteps: true } })),
+    ).toBe("再開（人間）：工程の選択からやり直します");
+    expect(describeEvent(event({ type: "TaskResumed", payload: { retry: true } }))).toBe(
+      "再開（人間）",
+    );
+    expect(
+      describeIn(
+        event({ type: "TestsDecided", payload: { noTestsReason: "docs only" } }),
+        labels.en,
+      ),
+    ).toBe("Decided to proceed without tests (person): docs only");
+  });
+
   it("実装の承認待ちと完了を表示する", () => {
     expect(
       statusText(task({ status: "awaiting_approval", gate: { step: "implement", submission: 1 } })),

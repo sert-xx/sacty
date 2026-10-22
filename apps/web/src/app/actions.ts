@@ -142,7 +142,14 @@ async function createTemplateTask(
   redirect(`/tasks/${result.task.id}`);
 }
 
-export type ResumeState = { message?: string; capUsd?: string };
+export type ResumeState = {
+  message?: string;
+  capUsd?: string;
+  /** テストのコマンドが決まらずに止まったタスクで選んだテストの扱いと、入力した値（エラーのときに戻す）。 */
+  tests?: "command" | "none";
+  testCommand?: string;
+  noTestsReason?: string;
+};
 
 /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限を受け取る。 */
 export async function resumeTaskAction(
@@ -161,17 +168,39 @@ export async function resumeTaskAction(
     }
   }
 
+  // テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた
+  const choice = String(formData.get("tests") ?? "");
+  const testCommand = String(formData.get("testCommand") ?? "").trim();
+  const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
+  const kept: ResumeState = {
+    capUsd: capText,
+    ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
+    testCommand,
+    noTestsReason,
+  };
+  let tests: { testCommand: string } | { noTestsReason: string } | undefined;
+  if (choice === "command") {
+    if (!testCommand || testCommand.length > 1000)
+      return { ...kept, message: a.testCommandInvalid };
+    tests = { testCommand };
+  } else if (choice === "none") {
+    if (!noTestsReason || noTestsReason.length > 2000) {
+      return { ...kept, message: a.noTestsReasonInvalid };
+    }
+    tests = { noTestsReason };
+  }
+
   // チケットのタスクで、リポジトリを人が選んだ（PBI-52）
   const repo = String(formData.get("repo") ?? "");
   try {
     if (repo) {
       const chosen = await chooseTicketRepository(taskId, repo);
-      if (!chosen.ok) return { message: chosen.message, capUsd: capText };
+      if (!chosen.ok) return { ...kept, message: chosen.message };
     }
-    const result = await resumeTask(taskId, capUsd);
-    if (!result.ok) return { message: result.message, capUsd: capText };
+    const result = await resumeTask(taskId, capUsd, tests);
+    if (!result.ok) return { ...kept, message: result.message };
   } catch {
-    return { message: a.resumeFailed, capUsd: capText };
+    return { ...kept, message: a.resumeFailed };
   }
   refresh();
   return {};

@@ -26,6 +26,8 @@ import {
   type CleanupTarget,
   CreateTaskInput,
   CreateTemplateTaskInput,
+  canDecideTests,
+  canRechooseSteps,
   canRereview,
   canRerun,
   canRetryExport,
@@ -10068,9 +10070,30 @@ export class TaskService {
         event: { type: "BudgetCapRaised", payload: { capUsd: input.capUsd } },
       });
     }
+    // テストのコマンドが決まらずに止まったタスクは、人がテストの扱いを決めて再開できる。決めずに再開したら、まだどの
+    // 工程も始めていなければ、工程の選択からやり直す（同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないように）
+    if (input.tests) {
+      if (!canDecideTests(task)) {
+        throw new InvalidOperationError(message("resume.testsNotUndecided"));
+      }
+      if (
+        input.tests.noTestsReason !== undefined &&
+        task.steps.some((s) => s.key === "reproduce")
+      ) {
+        throw new InvalidOperationError(message("resume.bugfixNeedsTestCommand"));
+      }
+      events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
+    }
+    const rechooseSteps = !input.tests && canRechooseSteps(task);
     events.push({
       actor: "person",
-      event: { type: "TaskResumed", payload: { retry: task.resumeTo === "queued" } },
+      event: {
+        type: "TaskResumed",
+        payload: {
+          retry: task.resumeTo === "queued",
+          ...(rechooseSteps ? { rechooseSteps: true as const } : {}),
+        },
+      },
     });
     // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
     this.fallbackTried.delete(id);

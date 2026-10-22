@@ -1,12 +1,13 @@
 "use client";
 
 import type { PauseReason } from "@sacty/core";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { type ResumeState, resumeTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { usd } from "@/lib/labels";
 
@@ -22,6 +23,7 @@ export function ResumeForm({
   repoLabel,
   repoOptional = false,
   chosenRepo,
+  tests,
 }: {
   taskId: string;
   reason: PauseReason;
@@ -39,11 +41,18 @@ export function ResumeForm({
    * もう一度決める・決めたリポジトリのまま再開する）。
    */
   repoOptional?: boolean;
+  /**
+   * テストのコマンドが決まらずに止まったタスク。再開のときに、テストのコマンドを指定するか、テストなしで進めるかを選べる。
+   * bugfix：不具合の修正（テストなしにできない）。rechoose：決めずに再開すると、工程の選択からやり直す。
+   */
+  tests?: { bugfix: boolean; rechoose: boolean };
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
   const needsCap = reason === "budget";
   const suggested = Math.max(capUsd * 2, Math.ceil(usedUsd) + 1);
+  const t = m.parts.resume.tests;
+  const [testsChoice, setTestsChoice] = useState<"" | "command" | "none">(state.tests ?? "");
 
   return (
     <section
@@ -86,6 +95,86 @@ export function ResumeForm({
               <p className="text-sm text-warn">{m.parts.resume.ticketNoRepo}</p>
             )}
           </div>
+        )}
+        {tests && (
+          <fieldset className="flex w-full flex-col gap-1.5">
+            <legend className="pb-1 text-sm font-medium">{t.legend}</legend>
+            <label className="flex min-h-9 items-start gap-2 text-sm leading-6">
+              <input
+                type="radio"
+                name="tests"
+                value=""
+                checked={testsChoice === ""}
+                onChange={() => setTestsChoice("")}
+                className="mt-1.5 size-4 accent-primary"
+              />
+              <span>
+                {t.keep} {tests.rechoose && <Hint text={t.keepRechooseHint} />}
+              </span>
+            </label>
+            <label className="flex min-h-9 items-start gap-2 text-sm leading-6">
+              <input
+                type="radio"
+                name="tests"
+                value="command"
+                checked={testsChoice === "command"}
+                onChange={() => setTestsChoice("command")}
+                className="mt-1.5 size-4 accent-primary"
+              />
+              <span>{t.command}</span>
+            </label>
+            {testsChoice === "command" && (
+              <div className="flex flex-col gap-1.5 pl-6">
+                <span className="flex items-center gap-1">
+                  <Label htmlFor="test-command">{t.commandLabel}</Label>
+                  <Hint text={t.commandHint} />
+                </span>
+                <Input
+                  id="test-command"
+                  name="testCommand"
+                  required
+                  maxLength={1000}
+                  defaultValue={state.testCommand ?? ""}
+                  placeholder="npm ci && npm test"
+                  className="bg-card font-mono"
+                />
+              </div>
+            )}
+            <label className="flex min-h-9 items-start gap-2 text-sm leading-6">
+              <input
+                type="radio"
+                name="tests"
+                value="none"
+                disabled={tests.bugfix}
+                checked={testsChoice === "none"}
+                onChange={() => setTestsChoice("none")}
+                className="mt-1.5 size-4 accent-primary"
+              />
+              <span>
+                {t.none} <Hint text={t.noneHint} />
+                {tests.bugfix && (
+                  <span className="block text-xs text-muted-foreground">{t.noneBugfix}</span>
+                )}
+              </span>
+            </label>
+            {testsChoice === "none" && (
+              <div className="flex flex-col gap-1.5 pl-6">
+                <span className="flex items-center gap-1">
+                  <Label htmlFor="no-tests-reason">{t.reasonLabel}</Label>
+                  <Hint text={t.reasonHint} />
+                </span>
+                <Textarea
+                  id="no-tests-reason"
+                  name="noTestsReason"
+                  required
+                  maxLength={2000}
+                  rows={2}
+                  defaultValue={state.noTestsReason ?? t.reasonDefault}
+                  className="bg-card"
+                />
+              </div>
+            )}
+          </fieldset>
         )}
         {needsCap && (
           <div className="flex flex-col gap-1.5">

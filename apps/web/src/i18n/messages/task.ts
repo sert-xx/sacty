@@ -136,6 +136,10 @@ const ja = {
   /** 今の実装が用意したテストを、まだ実行していない。 */
   testCommandAddedPending: (command: string) => `実装で用意したテスト（${command}）を実行待ち`,
   noTestsReason: (reason: string) => `テストの仕組みが無いと判断した根拠：${reason}`,
+  /** 人が再開のときに、テストなしで進めると決めた理由。 */
+  noTestsReasonByPerson: (reason: string) => `テストなしで進める理由（人が決めました）：${reason}`,
+  /** 人が再開のときに指定したテストのコマンドに添える。 */
+  testCommandByPerson: "（人が指定）",
   activity: "作業履歴",
   reproduction: {
     title: "再現の確かめ",
@@ -466,6 +470,9 @@ const en: TaskMessages = {
   testCommandAddedPending: (command) =>
     `tests added in the implementation (${command}) will run next`,
   noTestsReason: (reason) => `Why the repository has no tests: ${reason}`,
+  noTestsReasonByPerson: (reason) =>
+    `Why to proceed without tests (decided by a person): ${reason}`,
+  testCommandByPerson: " (specified by a person)",
   activity: "Activity",
   reproduction: {
     title: "Reproduction check",

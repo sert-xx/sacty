@@ -561,6 +561,11 @@ export type Task = {
    * コマンドが無くても進め、実装の検証でテストを飛ばして、ゴールガーディアンがタスクの目的から判定する。
    */
   noTestsReason?: string;
+  /**
+   * テストのコマンドかテストなしの理由（noTestsReason）を、人が再開のときに決めた（TestsDecided）。無ければ
+   * オーケストレーターが決めたもの。
+   */
+  testsDecidedBy?: "person";
   /** テストの仕組みが無いタスクで、実装の最新の提出が用意して申告した、テストのコマンド（PBI-94）。 */
   addedTestCommand?: string;
   /** 最新の検証で、テストのコマンドが無いのでテストを飛ばした時刻（PBI-94）。テストを実行すると無くなる。 */
@@ -2016,9 +2021,30 @@ export function applyEvent(
       break;
     }
 
+    case "TestsDecided":
+      if (!canDecideTests(task)) {
+        throw new ActivityIntegrityError(event, "the tests are not undecided");
+      }
+      if (event.payload.testCommand !== undefined) {
+        task.testCommand = event.payload.testCommand;
+      } else {
+        if (task.steps.some((s) => s.key === "reproduce")) {
+          throw new ActivityIntegrityError(event, "a bug fix needs a test command");
+        }
+        task.noTestsReason = event.payload.noTestsReason;
+      }
+      task.testsDecidedBy = "person";
+      break;
+
     case "TaskResumed":
       if (task.status !== "paused")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
+      if (event.payload.rechooseSteps) {
+        if (!canRechooseSteps(task)) {
+          throw new ActivityIntegrityError(event, "the steps cannot be chosen again");
+        }
+        clearChosenSteps(task);
+      }
       task.status =
         task.resumeTo === "waiting_children"
           ? "waiting_children"
@@ -2504,6 +2530,63 @@ export function awaitingRepository(task: Task): boolean {
     task.repository === undefined &&
     task.status !== "cancelled"
   );
+}
+
+/**
+ * 実装（不具合の修正では再現も）を含む工程を選んだのに、テストのコマンドも、テストの仕組みが無いという判断
+ * （noTestsReason。PBI-94）も無いタスクか。検証できないので、工程を選んだ直後・検証の前に止まる。
+ */
+export function testsUndecided(task: Task): boolean {
+  return (
+    task.steps.some((s) => s.key === "implement" || s.key === "reproduce") &&
+    !task.testCommand &&
+    !task.noTestsReason
+  );
+}
+
+/** テストが決まらずに止まったタスクで、人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。 */
+export function canDecideTests(task: Task): boolean {
+  return task.status === "paused" && testsUndecided(task);
+}
+
+/**
+ * テストが決まらずに止まったタスクを、工程の選択からやり直せるか。工程を選んだ直後に止まり、まだどの工程の成果も無い
+ * （実行中でもない）ときだけ。人がテストを決めずに再開したら、同じ工程のまま進めずに選び直す（TaskResumed の rechooseSteps）。
+ */
+export function canRechooseSteps(task: Task): boolean {
+  return (
+    canDecideTests(task) &&
+    task.resumeTo === "queued" &&
+    task.currentRunId === undefined &&
+    !task.operationAttempted &&
+    task.steps.every((s) => s.state !== "done") &&
+    Object.keys(task.outputs).length === 0 &&
+    Object.keys(task.submissions).length === 0
+  );
+}
+
+/** 工程の選択（StepsChosen）で決めたものを消す（工程の選択からやり直す）。予算の上限は残す。 */
+function clearChosenSteps(task: Task): void {
+  task.steps = [];
+  task.stepsChoice = undefined;
+  task.deploymentChoice = undefined;
+  task.testCommand = undefined;
+  task.noTestsReason = undefined;
+  task.testsDecidedBy = undefined;
+  task.operation = undefined;
+  task.investigation = undefined;
+  task.images = undefined;
+  // 人が工程ごとに変えたイメージ・エージェントも、選んだ工程に結びつくので消す
+  task.imageChanges = undefined;
+  task.agents = undefined;
+  task.agentChanges = undefined;
+  task.imageSource = undefined;
+  task.defaultImageReasons = undefined;
+  task.imagesUnexplained = undefined;
+  task.services = undefined;
+  task.servicesReason = undefined;
+  task.exportPlans = undefined;
+  task.documentsDir = undefined;
 }
 
 /**

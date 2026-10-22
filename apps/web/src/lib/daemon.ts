@@ -497,11 +497,15 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 export async function resumeTask(
   id: string,
   capUsd: number | undefined,
+  tests?: { testCommand: string } | { noTestsReason: string },
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(capUsd === undefined ? {} : { capUsd }),
+    body: JSON.stringify({
+      ...(capUsd === undefined ? {} : { capUsd }),
+      ...(tests ? { tests } : {}),
+    }),
   });
   if (res.status === 409) {
     return { ok: false, message: await operationMessage(res) };
