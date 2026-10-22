@@ -7,7 +7,7 @@ AIソフトウェアファクトリー。タスクを取り込み、オーケス
 
 ## すぐ始める
 
-macOS・Node.js 22.13 以上・Docker・GitHub CLI（`gh`）が要る。
+macOS・Node.js 22.23.4 以上・Docker・GitHub CLI（`gh`）が要る。
 
 ```sh
 npm install

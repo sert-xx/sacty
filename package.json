@@ -10,7 +10,7 @@
     "packages/cli"
   ],
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.23.4"
   },
   "scripts": {
     "build": "npm run build -w @sacty/core -w @sacty/daemon -w @sacty/web -w @sacty/cli",

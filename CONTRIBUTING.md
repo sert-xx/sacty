@@ -11,7 +11,7 @@ sacty への Issue・Pull Request（PR）を歓迎します。ドキュメント
 
 ## 開発の環境を用意する
 
-macOS・Node.js 22.13 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
+macOS・Node.js 22.23.4 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
 
 以下のコマンドの例では、GitHub のアカウントを `your-account`、Issue の番号を `12`、ブランチを `fix/issue-12-typo` としています。
 貼り付ける前に、`your-account` などの例の値を、ご自身の値に置き換えてください。

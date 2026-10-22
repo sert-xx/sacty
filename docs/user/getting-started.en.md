@@ -9,7 +9,7 @@ This page walks you through installing sacty, starting it, and running your firs
 ## Requirements
 
 - macOS
-- Node.js 22.13 or later
+- Node.js 22.23.4 or later
 - Docker (Docker Desktop, OrbStack, Colima, and so on. Steps run inside containers)
 - GitHub CLI (`gh`). Sign in with the account you use to access GitHub ([Project settings](project-settings.en.md#github-account))
 

@@ -111,7 +111,7 @@ const timer = setInterval(() => {
 }, 20);
 `,
     );
-    // 型の取り除きが既定で切れている版（Node 22.13〜22.17。engines は 22.13 以上）では、フラグで有効にする
+    // 型の取り除きが既定で切れている版（Node 22.17 以前。engines は 22.23.4 以上だが、それより古い Node でも動かせる）では、フラグで有効にする
     const strip = (process.features as { typescript?: unknown }).typescript
       ? []
       : ["--experimental-strip-types"];

@@ -7,7 +7,7 @@ and humans make decisions only at the approval gates.
 
 ## Quick start
 
-You need macOS, Node.js 22.13 or later, Docker, and the GitHub CLI (`gh`).
+You need macOS, Node.js 22.23.4 or later, Docker, and the GitHub CLI (`gh`).
 
 ```sh
 npm install
