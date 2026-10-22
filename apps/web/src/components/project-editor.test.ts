@@ -9,6 +9,7 @@ let locale: Locale = "ja";
 vi.mock("@/app/actions", () => ({
   saveProjectAction: async () => ({}),
   previewContextAction: async () => ({}),
+  reloadGitHubAccountsAction: async () => ({ accounts: [] }),
 }));
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 

@@ -195,6 +195,8 @@ JIRA の接続先は、組織内 PF（`gateway.platforms`、無ければプロ�
     トークンは、使うたびに `gh auth token --hostname <ホスト> --user <アカウント>` で読む。
   - 一覧には、gh がトークンを確かめられなかったアカウント（`state` が `error`・`timeout`）も、`state` と `error`（gh の理由）を添えて含める。
   - プロジェクトの設定の画面は、そのアカウントに「確認できず」と添えて選ばせ、読めたアカウントの一覧（ホスト・アカウント・状態）も見せる。
+  - プロジェクトの設定の画面の「アカウントを読み直す」は、`GET /api/github/accounts` をもう一度呼び（gh auth status を確かめ直す）、編集中の入力を残したまま、選べるアカウントと一覧を置き換える。
+    デーモンに届かない・30 秒で答え終わらなければ（本文を読み終えるまでを含む）、問い合わせを止め、一覧の代わりに理由を出す。もう一度押せる。
   - gh には、`GH_PROMPT_DISABLED=1`・`NO_COLOR=1` と、限られたホストの環境変数（設定・キーリング・プロキシ・CA の場所）だけを渡す。
     `GH_TOKEN`・`GITHUB_TOKEN`・`GH_ENTERPRISE_TOKEN` は渡さない。
 - 対象のホストは、対象の URL（`https://<ホスト>/<owner>[/<name>]`）から読む。
@@ -205,4 +207,4 @@ JIRA の接続先は、組織内 PF（`gateway.platforms`、無ければプロ�
 - HTTPS のリポジトリの clone・プッシュでは、そのホストのアカウントのトークンを `http.https://<ホスト>/.extraheader` で渡す。
   SSH・ローカルのパスは、ホストの認証を使う。
 
-コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`packages/core/src/github-url.ts`（`githubApiBase`・`targetUrlProblem`）、`apps/daemon/src/github.ts`
+コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`apps/web/src/app/actions.ts`（`reloadGitHubAccountsAction`）、`packages/core/src/github-url.ts`（`githubApiBase`・`targetUrlProblem`）、`apps/daemon/src/github.ts`

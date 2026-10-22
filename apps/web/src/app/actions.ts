@@ -32,6 +32,8 @@ import {
   createTask,
   decideChange,
   deleteAuditMemory,
+  type GitHubAccounts,
+  getGitHubAccounts,
   importProject,
   listProjects,
   type PreviewRuntime,
@@ -358,6 +360,28 @@ export async function previewContextAction(
     return await previewProjectContext(id, runtime, parsed);
   } catch {
     return { ok: false, message: a.daemonDown };
+  }
+}
+
+/** アカウントの読み直しの期限。gh auth status は、届かない GitHub Enterprise Server を待つことがあるので長めにする。 */
+const RELOAD_GITHUB_ACCOUNTS_TIMEOUT_MS = 30_000;
+
+/**
+ * gh にログイン済みのアカウントを読み直す（gh auth status をもう一度確かめる）。画面で gh にログインし直したあと、
+ * 編集中の入力を残したまま選べるアカウントを新しくする。デーモンに届かない・期限までに答えなければ、その理由
+ * （応答しないデーモンを待ち続けて、ボタンが止まったままにならないようにする。PR #194 レビュー指摘）。
+ */
+export async function reloadGitHubAccountsAction(): Promise<GitHubAccounts> {
+  const signal = AbortSignal.timeout(RELOAD_GITHUB_ACCOUNTS_TIMEOUT_MS);
+  try {
+    return await getGitHubAccounts(signal);
+  } catch {
+    const messages = await getMessages();
+    return {
+      error: signal.aborted
+        ? messages.projects.editor.githubReloadTimeout
+        : messages.common.action.daemonDown,
+    };
   }
 }
 
