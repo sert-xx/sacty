@@ -122,6 +122,8 @@ export function imageBuildArgs(input: {
     path: string;
     hash: string;
   };
+  /** draw.io の CLI を入れないとき false（image_build.drawio）。 */
+  drawio?: false;
 }): string[] {
   return [
     "build",
@@ -141,6 +143,7 @@ export function imageBuildArgs(input: {
         ]
       : []),
     ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
+    ...(input.drawio === false ? ["--build-arg", "SACTY_DRAWIO=0"] : []),
     "--build-arg",
     `NPM_CONFIG_HASH=${input.npmConfigHash}`,
     "--secret",
@@ -243,6 +246,7 @@ export async function buildImage(deps: {
         npmConfigPath,
         npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
         setup: { packages, enableRepos, path: setupPath, hash: setupHash },
+        ...(deps.build.drawio === false ? { drawio: false as const } : {}),
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build, language);

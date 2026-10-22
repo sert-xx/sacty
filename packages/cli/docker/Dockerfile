@@ -77,6 +77,18 @@ RUN if ! command -v git >/dev/null 2>&1; then \
     fi; \
   fi
 
+# エージェントの作業で使う CLI（jq・rg・fd・python3 など）。元のイメージに無いものだけを、OS のパッケージで入れる。
+# パッケージのミラーに届かないなどで入れられないものは、警告して続ける（中身は install-tools.sh）
+COPY --chmod=755 install-tools.sh /opt/sacty/lib/install-tools.sh
+RUN /opt/sacty/lib/install-tools.sh
+
+# draw.io の CLI（既定のスキル drawio が使う）。公式のリリースのパッケージを、版とハッシュを固定して入れ、画面の無い
+# コンテナで動かすための包むスクリプトを /opt/sacty/bin/drawio に置く（config.yaml の image_build.drawio が false なら
+# 入れない）。取得できないときは警告して続け、ハッシュが合わないときは止める（中身は install-drawio.sh）
+ARG SACTY_DRAWIO=1
+COPY --chmod=755 install-drawio.sh drawio-shim.cjs /opt/sacty/lib/
+RUN /opt/sacty/lib/install-drawio.sh
+
 # エージェントのCLI。版を固定し、上げるときはこのファイルを変える。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
 # キャッシュは一時的な場所に置いて消す（HOME の下に root の持ち物を残すと、node ユーザーの npm が書けなくなるため）

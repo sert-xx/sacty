@@ -83,6 +83,19 @@ Related ADR: [オーケストレーターにもコンテキストを渡し、工
 
 Code: `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `apps/daemon/default-context/skills/plan-steps/references/json-check.md`, `apps/daemon/src/prompts.ts` (`planAnswerLines`, `PLAN_SKILL`)
 
+## Default diagram skill
+
+The default context has `drawio`, a skill for making draw.io diagrams (`.drawio`, including export to PNG, SVG, and PDF).
+draw.io's official skill (`plugins/claude-code/skills/drawio/SKILL.md` of `jgraph/drawio-mcp`; the one for Codex has the same content; Apache-2.0) is placed unmodified,
+together with its license (`LICENSE`). The imported version is `307725c331847c15bf5ddeef64a9c8434a30fadf` of `jgraph/drawio-mcp`, and a test checks the SHA-256 of SKILL.md.
+The skill writes diagrams as Mermaid or draw.io XML, and uses the image's `drawio` ([Agent execution](agent-execution.en.md#images)) for converting Mermaid, ELK layouts, and export.
+Without `drawio`, it writes a `.drawio` in XML.
+The detailed Mermaid and XML references are fetched by the skill from `raw.githubusercontent.com` at run time (if unreachable, it writes with the content of SKILL.md only).
+
+Related ADR: [エージェントのイメージに作業用の CLI と draw.io の CLI を入れ、draw.io の公式のスキルを既定のスキルにする](../adr/20261022-0115-agent-image-tools-and-drawio.md)
+
+Code: `apps/daemon/default-context/skills/drawio/SKILL.md`, `apps/daemon/default-context/skills/drawio/LICENSE`, `apps/daemon/src/default-skills.test.ts`
+
 ## Context repository files
 
 Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).

@@ -15,6 +15,9 @@ The default requirements skill `ears-requirements` has the acceptance criteria o
 
 The default plan-selection skill `plan-steps` sets how the Orchestrator chooses the plan of steps for a task and checks the answer JSON with a tool such as `jq` before output, fixing it until the check passes. This reduces stops caused by broken answer JSON (such as a missing closing brace) when the steps themselves were chosen.
 
+The default diagram skill `drawio` is draw.io's official skill. Agents use it when making diagrams (`.drawio`, including export to PNG, SVG, and PDF).
+Converting diagrams written in Mermaid and exporting them uses the draw.io CLI in the image ([Container images](images.en.md#the-drawio-cli)).
+
 ## Creating the template
 
 ```sh

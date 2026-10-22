@@ -171,9 +171,26 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     `GH_HOST`). Fields (`-f`, `-F`) become the query for REST, and `query` and variables for GraphQL. It accepts `--paginate` (for REST it follows `link` and
     merges the arrays; for GraphQL, `$endCursor` and `pageInfo`), `--jq` (when `jq` exists), `-i`, `-H`, and `--input`.
     Write methods and other commands print the usage and exit with code 1 ([Gateway](gateway.en.md#relaying-github-reads)).
+  - Work CLIs (`packages/cli/docker/install-tools.sh`): of `jq`, `rg`, `fd`, `tree`, `file`, `less`, `curl`, `zip`, `unzip`, `xz`, `bzip2`,
+    `patch`, `diff`, `find`, `make`, `ps`, `sqlite3`, `python3`, and `shellcheck`, only the commands the base image lacks are installed with whichever of
+    apt-get, dnf, microdnf, or yum the base image has (on RHEL-family images the package names are `xz`, `procps-ng`, `sqlite`, `ShellCheck`, and so on). If they cannot be installed together,
+    they are installed one by one, and the commands that could not be installed are reported as a warning and the build continues (the mirror is unreachable, or `rg`, `fd`, `shellcheck` and others exist only in EPEL on RHEL-family images).
+    Debian/Ubuntu's `fdfind` is also available as `/usr/local/bin/fd`.
+  - The draw.io CLI (`packages/cli/docker/install-drawio.sh`): when the build-arg `SACTY_DRAWIO` (default `1`; `0` when `image_build.drawio` is `false`) is `1`,
+    the deb (apt-get; `amd64`, `arm64`) or rpm (dnf, yum; `x86_64`, `aarch64`) of the official draw.io Desktop release (`v32.4.1` of `jgraph/drawio-desktop`) is
+    fetched with `curl` (30 seconds to connect, aborted when below 1KB/s for 60 seconds, 900 seconds per attempt, at most 3 retries, none started after 1200 seconds from the first attempt; the total can exceed 1200 seconds), checked against a SHA-256 pinned per version, and installed together with `Xvfb` (`xvfb`, `xorg-x11-server-Xvfb`) and `libasound2` (`libasound2t64` from Ubuntu 24.04) or
+    `alsa-lib`. CJK fonts (`fonts-noto-cjk`, `google-noto-sans-cjk-ttc-fonts`) are reported as a warning and skipped if they cannot be installed.
+    A hash mismatch stops the build; for other reasons (cannot fetch, no package manager or `curl`, an unsupported architecture, cannot install) it warns and continues.
+    After installing, it removes the setuid bit of `/opt/drawio/chrome-sandbox` (`0755`), creates `/tmp/.X11-unix` with `1777`, and makes `/opt/sacty/bin/drawio`
+    a link to `packages/cli/docker/drawio-shim.cjs`.
+  - `drawio` (`drawio-shim.cjs`) starts `/opt/drawio/drawio` with `--no-sandbox --disable-gpu` and the arguments it received. Without `DISPLAY`, it starts a virtual display on a free number
+    with `Xvfb -displayfd`, and stops it and waits for it to end when done (`SIGKILL` if it has not ended in 3 seconds). It removes the `ERROR:dbus/` and `ERROR:bus.cc` lines from standard error,
+    and returns the exit code unchanged. Standard error is decoded as UTF-8 before it is split into lines. If the virtual display cannot be started, it prints the reason and exits with code 1.
+    On SIGINT or SIGTERM, it sends the same signal to draw.io while draw.io is running; if draw.io has not started yet (such as while waiting for Xvfb to start), it stops Xvfb,
+    waits for it to end, and exits with 128 plus the signal number.
 - The image's `env` is passed to the agent containers that run on that image (including the final review that runs the tests).
 
-Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`
+Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`, `packages/cli/docker/install-tools.sh`, `packages/cli/docker/install-drawio.sh`, `packages/cli/docker/drawio-shim.cjs`
 
 ## Running tests
 

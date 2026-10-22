@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -9,6 +9,56 @@ This page explains how to build the container images used to run agents (tests a
 
 The image includes a `gh` that can use only `gh api` (it is for reading GitHub through the gateway, and it is used before a `gh` in the base image;
 [Gateway](gateway.en.md#reading-github)). After updating sacty, rebuild the images.
+
+## Tools in the image
+
+The image includes the following commands that agents use in their work. Commands the base image already has are not reinstalled; they are used as they are.
+
+| Command | Use |
+| --- | --- |
+| `jq` | Read and transform JSON (`gh api --jq` also uses it) |
+| `rg` (ripgrep), `fd` | Quickly search file contents and file names |
+| `tree`, `file`, `less` | View directory structure, file types, and long files |
+| `curl` | Fetch over HTTP |
+| `zip`, `unzip`, `xz`, `bzip2` | Create and extract compressed files |
+| `patch`, `diff`, `find`, `make`, `ps` | Apply patches, compare, find files, run build recipes, check processes |
+| `sqlite3`, `python3` | Inspect SQLite databases, and write scripts to check things |
+| `shellcheck` | Check shell scripts |
+| `drawio` | Convert and export draw.io diagrams ([The draw.io CLI](#the-drawio-cli) below) |
+
+- All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). You get the versions current when the image was built.
+- `npx sacty image build` uses Docker's build cache, so rebuilding alone may not fetch the packages again. To pick up OS security
+  updates, use a newer base image (fetch it again with `docker pull <base image>`, or change to the tag of an updated version), or clear the build cache with `docker builder prune`
+  and then rebuild. Commands the base image already has are not reinstalled, so their updates come from the base image.
+- Commands that cannot be installed, for example because the package mirror is unreachable, are reported as warnings in the build log, and the image is built anyway (agents use other means instead).
+  On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available. Because `packages` are installed before `run`,
+  do not list EPEL packages in `packages`; install them in `run`, after the command that enables EPEL (if your organization has an EPEL mirror,
+  use a command that places that repository's settings instead of `epel-release`).
+
+  ```yaml
+  images:
+    rocky:
+      description: Rocky Linux 9
+      base_image: registry.example.com/ci/rocky:9
+      run:
+        - dnf install -y epel-release
+        - dnf install -y ripgrep fd-find ShellCheck
+  ```
+
+### The draw.io CLI
+
+The default skill `drawio` ([Context repository](context.en.md)) uses it to convert diagrams (from Mermaid to the draw.io format), lay them out automatically, and export them to PNG, SVG, and PDF.
+The official release of draw.io Desktop (Apache-2.0) is fetched from GitHub and installed after its version and hash are checked against pinned values. CJK fonts (Noto CJK) are also installed
+so that Japanese labels can be exported.
+
+- The image becomes larger (about 800MB uncompressed). In environments that cannot reach GitHub releases (`github.com` and `release-assets.githubusercontent.com`), or
+  when you want a smaller image, set `image_build.drawio` to `false`. Even without it, the skill can make diagrams (`.drawio`) in XML.
+- When GitHub is unreachable, a warning is shown in the build log and the image is built without the draw.io CLI. When the hash of the fetched file does not match, the build stops.
+
+```yaml
+image_build:
+  drawio: false   # do not install the draw.io CLI
+```
 
 ## Building images from a private registry
 
@@ -35,6 +85,7 @@ image_build:
 | `npm_token` | The authentication token for the npm registry (a secret name or a 1Password reference) | None |
 | `npm_version` | The npm version installed in the image (`latest`, or a form like `11`, `11.4`, `11.4.2`) | The base image's npm |
 | `npm_config` | npm-wide settings inside the container | None |
+| `drawio` | Whether to install the draw.io CLI ([The draw.io CLI](#the-drawio-cli); also applies to per-language images) | `true` |
 
 - The npm token is made available only during the build (a BuildKit secret). It does not remain in the image layers, history, or environment variables.
 - If the base image has git, the image can be built even if Debian mirrors are unreachable.

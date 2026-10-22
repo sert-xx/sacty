@@ -170,6 +170,35 @@ describe("イメージの作成（PBI-33）", () => {
     ).toBe("registry=https://run.example.com/\n");
   });
 
+  it("image_build.drawio が false なら、既定のイメージにも言語ごとのイメージにも draw.io の CLI を入れない", async () => {
+    const seen: string[][] = [];
+    const run = async (args: string[]) => {
+      seen.push(args);
+      return 0;
+    };
+    const secrets = new MemorySecretStore({});
+    const language = {
+      name: "go",
+      image: "sacty-agent-go:1.8.0",
+      description: "Go",
+      baseImage: "registry.example.com/ci/go:1.23",
+    };
+    await buildImage({ image: "i", build: { drawio: false }, dockerDir: "/d", secrets, run });
+    await buildImage({
+      image: "i",
+      build: { drawio: false },
+      dockerDir: "/d",
+      secrets,
+      run,
+      language,
+    });
+    // 書かなければ、Dockerfile の既定（入れる）のまま
+    await buildImage({ image: "i", build: {}, dockerDir: "/d", secrets, run });
+    expect(seen.map((args) => args.includes("SACTY_DRAWIO=0"))).toEqual([true, true, false]);
+    expect(seen[0]?.[seen[0].indexOf("SACTY_DRAWIO=0") - 1]).toBe("--build-arg");
+    expect(seen[2]?.join(" ")).not.toContain("SACTY_DRAWIO");
+  });
+
   it("失敗したら確かめることを返し、一時ファイルは消す。トークンが無ければ作らずに止める", async () => {
     let path = "";
     const failure = await buildImage({
