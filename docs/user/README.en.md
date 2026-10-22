@@ -22,7 +22,8 @@ flowchart TB
   you -- "create tasks, approve" --> ui
   ui --> daemon
   daemon -- "starts" --> agents
-  agents -- "AI calls" --> ai
+  agents -- "AI calls (when not through the gateway)" --> ai
+  gw -. "when via_gateway is set in providers.codex" .-> ai
   agents -- "per-run token" --> gw
   gw --> ext
   gw -- "read" --> github

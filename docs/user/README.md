@@ -23,7 +23,8 @@ flowchart TB
   you -- "タスクを作る・承認する" --> ui
   ui --> daemon
   daemon -- "起動する" --> agents
-  agents -- "AI の呼び出し" --> ai
+  agents -- "AI の呼び出し（ゲートウェイを通さないとき）" --> ai
+  gw -. "providers.codex の via_gateway のとき" .-> ai
   agents -- "実行ごとのトークン" --> gw
   gw --> ext
   gw -- "読み取り" --> github
