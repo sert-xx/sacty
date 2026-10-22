@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-22（UTC）
 - タスク: なし
-- PR: なし
+- PR: #202
 - ブランチ: claude/magical-clarke-2cpczd
 - 関係する ADR: [仕様書とユーザードキュメントの概念図を、Mermaid のコードブロックで本文の中に書く](../adr/20261022-1623-docs-diagrams-in-mermaid.md)
 
