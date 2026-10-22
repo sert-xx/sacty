@@ -326,6 +326,8 @@ async function copyLocalLayer(
   key: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  const aborted = () => new ContextError(message("context.copyAborted", { key }));
+  if (signal?.aborted) throw aborted();
   let isDirectory = false;
   try {
     isDirectory = (await stat(root)).isDirectory();
@@ -344,7 +346,7 @@ async function copyLocalLayer(
     });
     return await hashTree(out, signal);
   } catch (error) {
-    if (signal?.aborted) throw new MessageError(message("git.aborted"));
+    if (signal?.aborted) throw aborted();
     throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
   }
 }
@@ -404,7 +406,6 @@ export async function resolveContext(
     let dir: string;
     let commit: string;
     if (workingTree && local !== undefined) {
-      signal?.throwIfAborted();
       dir = join(workDir, "local", String(chain.length));
       commit = await copyLocalLayer(local, next.path, dir, key, signal);
     } else {

@@ -26,7 +26,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
   - If the depth reaches `MAX_CONTEXT_DEPTH` (10), it stops with `context.tooDeep`.
 - Fetches are not cached. Each composition places the layers in a temporary directory (`sacty-context-*`), which is deleted after use.
   - A git URL, and a local path with a `ref`: runs `git clone --depth 1 [--branch <ref>]`. Within one composition, the same `repo#ref` is fetched only once, and layers in different directories inside it use the same fetch (the same commit).
-  - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. Copying and hashing run asynchronously, and files are read in chunks. If aborted, they stop partway. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
+  - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. Copying and hashing run asynchronously, and files are read in chunks. If aborted (the time limit), they stop partway and composition stops with `context.copyAborted`. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
   - If the layer's directory doesn't exist or has a symbolic link along the way, composition stops with `context.pathMissing`.
   - The environment passed to git is only `GIT_TERMINAL_PROMPT=0`, the host's `PATH`, `HOME`, `SSH_AUTH_SOCK`, `TMPDIR`, and `LANG`, and authentication.
 - Authentication

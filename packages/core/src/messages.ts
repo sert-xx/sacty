@@ -395,6 +395,7 @@ const PARAMS = {
   }),
   "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
   "context.pathMissing": z.object({ key: z.string(), path: z.string() }),
+  "context.copyAborted": z.object({ key: z.string() }),
   "context.extendsOutside": z.object({ key: z.string(), value: z.string() }),
   "context.localExtendsFromRemote": z.object({ key: z.string(), value: z.string() }),
   "context.lockedOverride": z.object({
@@ -1071,6 +1072,8 @@ const ja: MessageDictionary = {
     `${key} の ${path} は${symlink ? "シンボリックリンク" : "通常のファイルでないもの"}です。コンテキストリポジトリでは、設定・規約・スキルに通常のファイルとディレクトリだけを使えます。`,
   "context.pathMissing": ({ key, path }) =>
     `${key} に、コンテキストのディレクトリ ${path} がありません（ディレクトリの途中にシンボリックリンクも使えません）。`,
+  "context.copyAborted": ({ key }) =>
+    `上限の時間を過ぎたので、ローカルのディレクトリ（${key}）を写すのを止めました。`,
   "context.extendsOutside": ({ key, value }) =>
     `${key} の sacty-context.yaml の extends（${value}）は、リポジトリの外を指しています。`,
   "context.localExtendsFromRemote": ({ key, value }) =>
@@ -1652,6 +1655,8 @@ const en: MessageDictionary = {
     `${path} in ${key} is ${symlink ? "a symbolic link" : "not a regular file"}. Context repositories can use only regular files and directories for settings, rules, and skills.`,
   "context.pathMissing": ({ key, path }) =>
     `${key} has no context directory ${path} (symbolic links can't be used along the path either).`,
+  "context.copyAborted": ({ key }) =>
+    `Stopped copying the local directory (${key}) because the time limit passed.`,
   "context.extendsOutside": ({ key, value }) =>
     `The extends (${value}) in sacty-context.yaml of ${key} points outside the repository.`,
   "context.localExtendsFromRemote": ({ key, value }) =>

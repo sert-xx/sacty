@@ -1730,6 +1730,38 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     expect(readFileSync(join(v1?.dir ?? "", "skills", "s", "SKILL.md"), "utf8")).toBe("版1");
   });
 
+  it("ローカルのディレクトリを写す前・写す途中に中止されたら、層を返さずに中止の理由で止め、写し終えない", async () => {
+    const local = join(dir, "big");
+    mkdirSync(join(local, "skills", "s"), { recursive: true });
+    writeFileSync(join(local, "rules.md"), "規約");
+    writeFileSync(join(local, "skills", "s", "SKILL.md"), "スキル");
+    // 中止済み
+    await expect(
+      resolveContext(
+        new GitContextFetcher(),
+        { repo: local },
+        join(dir, "w1"),
+        undefined,
+        AbortSignal.abort(),
+      ),
+    ).rejects.toThrow(
+      `上限の時間を過ぎたので、ローカルのディレクトリ（${local}）を写すのを止めました。`,
+    );
+    expect(existsSync(join(dir, "w1", "local"))).toBe(false);
+    // 写しを始めた後（ディレクトリを確かめている間）に中止する。写すのは、最初の項目で止まる
+    const controller = new AbortController();
+    const running = resolveContext(
+      new GitContextFetcher(),
+      { repo: local },
+      join(dir, "w2"),
+      undefined,
+      controller.signal,
+    );
+    controller.abort();
+    await expect(running).rejects.toThrow("写すのを止めました");
+    expect(existsSync(join(dir, "w2", "local", "0", "rules.md"))).toBe(false);
+  });
+
   it("~/ で始まるローカルのパスは、ホームのディレクトリから読む", async () => {
     const home = join(dir, "home");
     mkdirSync(join(home, "ctx"), { recursive: true });
