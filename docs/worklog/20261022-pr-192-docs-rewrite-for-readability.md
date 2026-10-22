@@ -8,7 +8,7 @@
 
 ## 目的
 
-`docs/spec/` と `docs/user/` の全ページ（日本語の版と英語の版）を、既定のコンテキストの writing スキル（`apps/daemon/default-context/skills/writing/`）の決まりに沿って読みやすくする。
+`docs/spec/` と `docs/user/` の全ページと、リポジトリの README（日本語の版と英語の版）を、既定のコンテキストの writing スキル（`apps/daemon/default-context/skills/writing/`）の決まりに沿って読みやすくする。
 中身（事実・設定の名前・既定値・コマンド・コードの参照）は変えない。
 
 ## したこと
@@ -26,6 +26,9 @@
 - 仕様書の event-log で、費用を持つイベントの数が節によって 13 種類と 14 種類に食い違っていた。
   `packages/core/src/cost.ts` の `CHARGED_EVENT_TYPES` は 14 種類なので、14 種類にそろえた（日英とも）。
 - `docs/user/gateway.en.md` の先頭の HTML コメントに、日本語の版にある対応するコード（`github-relay.ts`・`gh-shim.cjs`）が抜けていたので足した。
+- リポジトリの `README.md`・`README.en.md` の冒頭の段落を、1行1文（英語は折り返さない段落）にし、行為者を主語にした。
+  ほかの節（コマンドとリンクの一覧）は決まりに沿っていたので変えていない。
+  コードブロックの中のコメントも変えていない。
 - ADR は足していない（方針・仕様は変えていない）。
 
 ## 確かめたこと
