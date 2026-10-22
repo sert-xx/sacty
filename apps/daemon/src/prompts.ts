@@ -2896,6 +2896,33 @@ const planDescriptions: Record<StepPlan, string> = {
     "要求要件 → 設計（テスト観点）。コードを変えない全体の設計（システムの全体像・方針・分け方を決めて、人間と合意したい。実装は後で別のタスクにする）。成果は人間が承認する",
 };
 
+/** 作業のみ（operation）の実行設定を、工程の選択の答えに書かせる指示。 */
+const OPERATION_SETTINGS_LINE =
+  "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platform・mcp・github）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。";
+
+/** 答えの形の例の、作業のみの実行設定。 */
+const OPERATION_ANSWER =
+  '{"via": "platform・mcp・github のどれか", "name": "接続先名（github ならホスト）", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}';
+
+/** 作業のみに使える接続先（書き出しの接続先と、gh のアカウントを選んだ GitHub のホスト）。 */
+function operationDestinationLines(
+  destinations: readonly ExportDestination[],
+  githubHosts: readonly string[],
+): string[] {
+  return [
+    "--- 単発作業に使える接続先 ---",
+    ...(destinations.length || githubHosts.length
+      ? [
+          ...destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`),
+          ...githubHosts.map(
+            (host) =>
+              `- github/${host}：GitHub の PR・Issue（読み取りはゲートウェイ経由。コメントはエージェントが出力に書き、人間の承認の後に sacty が投稿する）。コードの変更・プッシュはできない（コードを変えるなら、実装する組み合わせにする）`,
+          ),
+        ]
+      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
+  ];
+}
+
 /**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。タスクのオーケストレーターのセッションを再開して実行する（PBI-67。指示は毎回台帳から作る）。
@@ -2927,6 +2954,8 @@ export function buildOrchestratorPrompt(
      * 対象リポジトリの無いタスク（PBI-73）。プロジェクトの対象のリポジトリ（コードの変更が要るときに選ぶ候補）・
      * コンテキストリポジトリ・プロジェクトのコンテキストの規約。リポジトリの無いタスクでだけ渡す。
      */
+    /** 作業のみ（operation）の接続先にできる GitHub のホスト（プロジェクトで gh のアカウントを選んだもの）。 */
+    githubHosts?: readonly string[];
     repoless?: {
       repositories: readonly string[];
       context?: string;
@@ -2942,6 +2971,8 @@ export function buildOrchestratorPrompt(
   const destinations = options.exports?.destinations ?? [];
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, planDescriptions[plan]]));
+  // 作業のみを選べるなら、実行設定と接続先を決めさせる
+  const operation = allowed.includes("operation");
   return [
     "あなたはオーケストレーターです。タスクの内容と対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
@@ -2991,6 +3022,13 @@ export function buildOrchestratorPrompt(
     ...(options.documents
       ? documentsChoiceLines(destinations.length > 0 ? undefined : options.documents.rules)
       : []),
+    ...(operation
+      ? [
+          OPERATION_SETTINGS_LINE,
+          "",
+          ...operationDestinationLines(destinations, options.githubHosts ?? []),
+        ]
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -3005,7 +3043,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
     "```",
     "",
     "リポジトリにテストの仕組みがそもそも無いときだけ、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。",
@@ -3082,7 +3120,7 @@ function buildRepolessOrchestratorPrompt(
   options: NonNullable<Parameters<typeof buildOrchestratorPrompt>[1]>,
 ): string {
   const repoless = options.repoless ?? { repositories: [] };
-  const githubHosts = repoless.githubHosts ?? [];
+  const githubHosts = repoless.githubHosts ?? options.githubHosts ?? [];
   const images = options.images ?? [];
   const destinations = options.exports?.destinations ?? [];
   const rules = repoless.rules ?? options.exports?.rules;
@@ -3115,7 +3153,7 @@ function buildRepolessOrchestratorPrompt(
     "",
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
-    "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platform・mcp・github）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
+    OPERATION_SETTINGS_LINE,
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
@@ -3126,16 +3164,7 @@ function buildRepolessOrchestratorPrompt(
     // 規約は上で渡したので、書き出し先の指示では繰り返さない
     ...(destinations.length > 0 ? exportChoiceLines(task, destinations, undefined) : []),
     "",
-    "--- 単発作業に使える接続先 ---",
-    ...(destinations.length || githubHosts.length
-      ? [
-          ...destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`),
-          ...githubHosts.map(
-            (host) =>
-              `- github/${host}：GitHub の PR・Issue（読み取りはゲートウェイ経由。コメントはエージェントが出力に書き、人間の承認の後に sacty が投稿する）。コードの変更・プッシュはできない（コードを変えるなら、リポジトリを選ぶ組み合わせにする）`,
-          ),
-        ]
-      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
+    ...operationDestinationLines(destinations, githubHosts),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -3149,7 +3178,7 @@ function buildRepolessOrchestratorPrompt(
     "選んだ進め方を、次の形式で必ず出してください。",
     "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": {"via": "platform・mcp・github のどれか", "name": "接続先名（github ならホスト）", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": ${OPERATION_ANSWER}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }

@@ -21895,6 +21895,73 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
+  it("対象リポジトリのあるタスクでも、オーケストレーターが作業の実行設定を決め、保存して作業を始める", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const github = {
+      via: "github" as const,
+      name: "github.com",
+      target: "https://github.com/acme/app/issues/7",
+      change: "調査の結果をコメントする",
+      verification: "Issue のコメントを読み直して確かめる",
+    };
+    const selected = out(
+      block({
+        "sacty-steps": {
+          plan: "operation",
+          reason: "Issue へのコメント",
+          baseBranch: "main",
+          operation: github,
+        },
+      }),
+    );
+    const result = out(
+      block({
+        "sacty-operation-result": { success: true, evidence: "Issue #7 を読み、コメントを頼んだ" },
+      }),
+    );
+    const { service, executor } = makeService(activity, [selected, result], {
+      realPlanner: true,
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "Issue #7 にコメントする",
+      repo: "https://github.com/acme/app",
+    });
+    await service.runNext(id);
+    const prompt = executor.calls[0]?.command.join(" ") ?? "";
+    // リポジトリのあるタスクの指示にも、実行設定の項目・接続先・答えの形を出す
+    expect(prompt).toContain("実行設定を同じ回答に書く");
+    expect(prompt).toContain("github/github.com");
+    expect(prompt).toContain('"operation": {"via"');
+    const task = service.get(id)?.task;
+    expect(task?.repository).toBeDefined();
+    expect(task?.operation).toEqual(github);
+    expect(task?.steps.map((step) => step.key)).toEqual(["operation"]);
+    expect(task?.gate?.step).toBe("operation");
+    expect(executor.calls[1]?.command.join(" ")).toContain("接続先は GitHub");
+    activity.close();
+  });
+
+  it("作業のみを選べないタスク（ほかの組み合わせを指定した）では、実行設定を決めさせない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const selected = out(block({ "sacty-steps": { plan: "investigate", reason: "調べる" } }));
+    const { service, executor } = makeService(activity, [selected, out("# 調査")], {
+      realPlanner: true,
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "仕組みを調べる",
+      repo: "https://github.com/acme/app",
+      plan: "investigate",
+    });
+    await service.runNext(id);
+    const prompt = executor.calls[0]?.command.join(" ") ?? "";
+    expect(prompt).not.toContain("実行設定を同じ回答に書く");
+    expect(prompt).not.toContain("単発作業に使える接続先");
+    activity.close();
+  });
+
   it("GitHub を接続先にした作業でも、アカウントを選んでいないホストなら始めずに止める", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], {

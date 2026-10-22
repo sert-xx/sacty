@@ -3043,6 +3043,8 @@ export class TaskService {
               }
             : {}),
           ...(repoless ? { repoless } : {}),
+          // 作業のみ（operation）の接続先にできる GitHub のホスト
+          githubHosts: Object.keys(this.githubRelayHosts(task.id)),
         }),
         // 使える組織内 PF の API（PBI-35・PBI-74）
         ...platformPromptLines(platforms),

@@ -33,7 +33,7 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | なし |
+| リポジトリ付きで `operation` を選べるようにしたのに、リポジトリ付きの指示（`buildOrchestratorPrompt`）には実行設定の項目・接続先・答えの形が無く、`task.operation` が入らずに `operation.incomplete` で止まる | 実行設定の指示・接続先の一覧・答えの例を共通の部品（`OPERATION_SETTINGS_LINE`・`operationDestinationLines`・`OPERATION_ANSWER`）にし、`operation` を選べるときはリポジトリ付きの指示にも出すようにした。GitHub のホストをリポジトリ付きのタスクにも渡す。リポジトリ付きで実行設定が保存されて作業が始まるテストと、選べないときは出さないテストを足した（修正前のコードで前者が落ちることを確かめた） |
 
 ## 残したこと
 
