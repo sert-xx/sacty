@@ -12,6 +12,10 @@ A task proceeds as follows.
 
 ## Create a task
 
+Press "Create task" in the task list to open this dialog.
+
+![The "Create task" dialog](images/new-task.en.png)
+
 - When you create a task in the web UI, you choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)).
   - sacty reads the repository suggestions when you press "Create task" and the dialog opens. For an org target, `gh` asks GitHub, which can take a few seconds.
   - While they load, when they cannot be read, or when there are none, the dialog says so. In every case, you can type the repository URL and create the task.
@@ -214,6 +218,10 @@ When the Implementation step changes nothing (it decided the requirements are al
 
 ## Approval in PRs (Requirements, Design, Implement)
 
+The details of a task waiting for its implementation PR to be merged look like this.
+
+![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button)](images/task-pull-request.en.png)
+
 Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval is the merge. Steps that created a PR are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
 While awaiting approval, if the PR of the current submission is open, you can open the GitHub PR directly in a new tab (without the sacty approval screen in between).
@@ -315,6 +323,10 @@ For example, you can rerun only a step that stopped on an error or was sent back
 - If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused). Decide on the PR, or cancel the task to stop it.
 
 ## Task list
+
+A project's task list looks like this.
+
+![The task list (Needs you cards and all tasks)](images/task-list.en.png)
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 

@@ -23,6 +23,10 @@ Slack notifications are not in project settings: set one destination shared by a
 
 The after-merge watch is not turned on or off in project settings. If the target repository has the skill, it is added to the task's steps ([After-merge watch](deployment-watch.en.md)).
 
+The project settings page looks like this.
+
+![Project settings (name, targets, context repository)](images/project-settings.en.png)
+
 ## Targets
 
 Write each target (a GitHub org or repository) as an `https://` URL that includes the host (for example `https://github.com/acme/app` or `https://ghe.example.com/acme`). github.com and GitHub Enterprise Server use the same form.

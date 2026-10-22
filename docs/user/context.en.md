@@ -281,6 +281,10 @@ platforms:
 
 ## Checking the composed result
 
+Press "Preview the saved settings" to see the result like this.
+
+![Context preview (layers, skills, MCP servers, files to place)](images/context-preview.en.png)
+
 You can check the composed result in "Context preview" in the project settings (for both saved settings and settings being edited). The result shows the files placed in Claude Code's and Codex's configuration directories at run time, along with the layers, warnings, MCP endpoints, and so on.
 
 From the CLI, you can get the same output by querying the running sacty (`sacty up`) ([CLI](cli.en.md#sacty-context-preview)). Only reference names are shown for secrets.

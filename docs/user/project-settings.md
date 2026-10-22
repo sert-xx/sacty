@@ -26,6 +26,10 @@ Slack の通知は、プロジェクトの設定ではなく「Sacty の設定�
 マージの後の監視は、プロジェクトの設定で On・Off しません。
 対象のリポジトリにスキルがあれば、タスクの工程に入ります（[マージの後の監視](deployment-watch.md)）。
 
+プロジェクトの設定の画面は、次のように表示されます。
+
+![プロジェクトの設定（名前・対象・コンテキストリポジトリ）](images/project-settings.png)
+
 ## 対象
 
 対象（GitHub の Org またはリポジトリ）は、ホストを含めた `https://` の URL で書きます（例 `https://github.com/acme/app`、`https://ghe.example.com/acme`）。
