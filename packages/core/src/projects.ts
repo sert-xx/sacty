@@ -194,6 +194,14 @@ export const SactySettings = z.object({
     (v) => (v === true || v === "on" || v === "true" ? true : undefined),
     z.literal(true).optional(),
   ),
+  /**
+   * レビューの投稿で、PR の作者ではなく自分（投稿する gh のアカウント）に @ メンションするか。AI のレビューを自分で
+   * 確かめてから作者に知らせたいとき。切っているとき（既定）は持たない（作者にメンションする）。
+   */
+  reviewMentionSelf: z.preprocess(
+    (v) => (v === true || v === "on" || v === "true" ? true : undefined),
+    z.literal(true).optional(),
+  ),
   // 画面の入力（文字列）も受け付ける。空は「設定しない」
   maxParallelTasks: numberInput(z.number().int().min(1).max(MAX_PARALLEL_TASKS_LIMIT)),
   /** 取り込みの種類ごとの間隔（秒。PBI-100）。空は「設定しない」（既定の間隔）。 */

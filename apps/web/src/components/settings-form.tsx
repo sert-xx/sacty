@@ -29,6 +29,7 @@ export function SettingsForm({
   intakeLabel,
   reviewLabel: savedReviewLabel,
   reviewRequested: savedReviewRequested,
+  reviewMentionSelf: savedReviewMentionSelf = false,
   triageOff = [],
   ticketLabel: savedTicketLabel = "",
   maxParallelTasks,
@@ -43,6 +44,8 @@ export function SettingsForm({
   /** PR のレビューの取り込み（PBI-44）。 */
   reviewLabel: string;
   reviewRequested: boolean;
+  /** レビューの投稿で、PR の作者ではなく自分にメンションするか。 */
+  reviewMentionSelf?: boolean;
   /** Off にしたトリアージの種類（PBI-53）。 */
   triageOff?: string[];
   /** チケットの取り込むラベル（PBI-52）。 */
@@ -66,6 +69,7 @@ export function SettingsForm({
   const [label, setLabel] = useState(intakeLabel);
   const [reviewLabel, setReviewLabel] = useState(savedReviewLabel);
   const [reviewRequested, setReviewRequested] = useState(savedReviewRequested);
+  const [reviewMentionSelf, setReviewMentionSelf] = useState(savedReviewMentionSelf);
   // トリアージの種類ごとの On/Off（PBI-53）。ラベルは残したまま Off にできる
   const savedOn = {
     issues: !triageOff.includes("issues"),
@@ -193,6 +197,19 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
+        <span className="flex items-center gap-1">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="reviewMentionSelf"
+              checked={reviewMentionSelf}
+              onChange={(e) => setReviewMentionSelf(e.target.checked)}
+              className="size-4"
+            />
+            {t.reviewMentionSelf}
+          </label>
+          <Hint text={t.reviewMentionSelfHint} />
+        </span>
         {interval(
           "reviewIntervalSec",
           reviewIntervalSec,

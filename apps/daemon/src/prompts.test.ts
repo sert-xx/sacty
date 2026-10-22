@@ -497,6 +497,16 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(second.startsWith("<!-- sacty-review:t-1:2 -->")).toBe(true);
   });
 
+  it("自分にメンションする設定なら、作者の代わりに自分にメンションする（読めない login なら誰にもメンションしない）", () => {
+    const task = reviewTask({ reviewVerdicts: [{ round: 1, verdict: "no_findings" }] });
+    const self = buildReviewBody(task, { mentionSelf: "bob" });
+    expect(self).toContain("\n@bob 判定：指摘なし\n");
+    expect(self).not.toContain("@alice");
+    expect(buildReviewBody(task, { mentionSelf: "" })).toContain("\n判定：指摘なし\n");
+    expect(buildReviewBody(task, { mentionSelf: "" })).not.toContain("@alice");
+    expect(buildReviewBody(task)).toContain("\n@alice 判定：指摘なし\n");
+  });
+
   it("投稿の直前に PR の先頭が変わっていたら、どのコミットのレビューかを本文に書く", () => {
     const task = reviewTask({ reviewVerdicts: [{ round: 1, verdict: "suggestions" }] });
     expect(buildReviewBody(task, { latestCommit: "n".repeat(40) })).toContain(

@@ -226,3 +226,20 @@ describe("sacty の設定の Slack の通知の区画の見え方（PBI-115 レ�
     }
   });
 });
+
+describe("レビューのメンションの相手", () => {
+  it("PR のレビューの取り込みの区画に、自分にメンションする切り替えを出す（既定は Off＝作者にメンションする）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const review = render().split("<section").at(2) ?? "";
+      expect(review, lang).toContain('name="reviewMentionSelf"');
+      expect(review, lang).toContain(t.reviewMentionSelf);
+      expect(review, lang).not.toContain('name="reviewMentionSelf" checked=""');
+      expect(render({ reviewMentionSelf: true }), lang).toContain(
+        'name="reviewMentionSelf" checked=""',
+      );
+    }
+    locale = "ja";
+  });
+});

@@ -290,6 +290,7 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
   | `ticketLabel` | The ticket intake label |
   | `reviewLabel` | The PR review label |
   | `reviewRequested` | Intake of review requests to yourself |
+  | `reviewMentionSelf` | In posted reviews, @ mention yourself (the posting account) instead of the PR author (default Off; [Tasks and steps](tasks-and-steps.en.md)) |
   | `triageOff` | The triage kinds turned Off (`issues`, `reviewLabel`, `tickets`) |
   | `maxParallelTasks` | The number of tasks run at the same time (default 3) |
   | `issueIntervalSec`, `reviewIntervalSec`, `ticketIntervalSec` | The interval per kind of intake (seconds; 60 or more; default 300; [Intake](intake.en.md#interval)) |
