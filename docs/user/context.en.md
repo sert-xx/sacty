@@ -25,7 +25,9 @@ npx sacty context init sacty-context   # create the template in the given direct
 - This creates `README.md`, `rules.md`, `skills/README.md`, `mcp.yaml`, `platforms.yaml`, `sacty-context.yaml`, and `agents/codex/config.toml`.
 - Each file contains an explanation of what to write there. As created, the files change nothing in the default context.
 - If a file with the same name (or `rules/`) already exists, the command stops without overwriting it. To overwrite, add `--force`.
-- When you have written the files, specify that repository or directory in "Context repository" in the project settings in the web UI ([Project settings](project-settings.en.md#context-repository), [Where to put it](#where-to-put-it)).
+- When you have written the files, specify them in "Context repository" in the project settings in the web UI ([Project settings](project-settings.en.md#context-repository), [Where to put it](#where-to-put-it)).
+  - To use them as a local directory, specify that directory as is (no commit is needed).
+  - To use them with a git URL, manage them with git, commit, and push, then specify that repository. Changes that are not pushed are not used.
 
 ## Where to put it
 
@@ -101,7 +103,7 @@ remove:            # remove skills, MCP servers, and external platforms inherite
   ```
 
 - A relative path starting with `./` or `../` points inside the same branch or tag of the same repository (for a local directory, inside the same directory). Use it in a monorepo when a team's directory inherits a shared directory. It can't point outside the repository.
-- Only a local path context can write a local path (an absolute path or one starting with `~/`) in `extends`. If a context fetched with git tries to inherit a local path, sacty stops and shows the reason.
+- Only a local path context without a branch or tag can write a local path (an absolute path or one starting with `~/`) in `extends`. If a context fetched with git (including a local git repository with a branch or tag) tries to inherit a local path, sacty stops and shows the reason.
 - Inheritance goes up to 10 layers. If the same repository, directory, and ref appear twice (a cycle), sacty stops and shows the reason.
 - If a lower layer tries to override or remove a locked item, a warning is recorded and the upper layer's item is used.
 

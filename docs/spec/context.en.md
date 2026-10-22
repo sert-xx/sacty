@@ -21,12 +21,12 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
   - `<URL>[#<ref>]`: another repository (split at the last `#`).
   - `{ repo, ref, path }`: a directory inside another repository (`ref` and `path` are optional).
   - A relative path starting with `./` or `../`: a directory in the same repository and the same `ref`, seen from that layer's directory. If it points outside the repository, composition stops with `context.extendsOutside`.
-  - A layer fetched with git can't extend a local path (`context.localExtendsFromRemote`). Local paths can be written only in the project's specification and in `extends` of a local path layer.
+  - A layer fetched with git (including a local path with a `ref`) can't extend a local path (`context.localExtendsFromRemote`). Local paths can be written only in the project's specification and in `extends` of a local path layer without a `ref` (a layer that reads the current contents).
   - If the same layer (`repo`, `path`, `ref`) appears twice, composition stops with `context.cycle`.
   - If the depth reaches `MAX_CONTEXT_DEPTH` (10), it stops with `context.tooDeep`.
 - Fetches are not cached. Each composition places the layers in a temporary directory (`sacty-context-*`), which is deleted after use.
   - A git URL, and a local path with a `ref`: runs `git clone --depth 1 [--branch <ref>]`. Within one composition, the same `repo#ref` is fetched only once, and layers in different directories inside it use the same fetch (the same commit).
-  - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
+  - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. Copying and hashing run asynchronously, and files are read in chunks. If aborted, they stop partway. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
   - If the layer's directory doesn't exist or has a symbolic link along the way, composition stops with `context.pathMissing`.
   - The environment passed to git is only `GIT_TERMINAL_PROMPT=0`, the host's `PATH`, `HOME`, `SSH_AUTH_SOCK`, `TMPDIR`, and `LANG`, and authentication.
 - Authentication

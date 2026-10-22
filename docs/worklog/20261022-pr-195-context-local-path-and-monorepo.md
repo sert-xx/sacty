@@ -38,3 +38,26 @@
   - `context.test.ts` の「実行全体の上限（30分）以上の時間切れは、警告を残す」（`docs/user/context.md` の文言をテストが探している）。
   - `context-mcp.test.ts`・`agent-sessions.test.ts`・`host-mcp-processes.test.ts` の 8 件（この環境では root で動かしているため、権限で読めないことを前提にしたテストなどが通らない）。
 - 実際の画面での入力と、実際のデーモンでのモノレポの取得は、この環境にデーモンを動かす準備が無いため確かめていない（取得は `GitContextFetcher` と実際の git でテストした）。
+
+## レビューの指摘と対応
+
+PR #195 のレビュー（AI エージェントによるもの）で、要修正1件・提案3件の指摘があった。すべて対応した。
+
+- [要修正] `ref` を付けたローカルの git のリポジトリの層が、ローカルのパスを継承できていた（`apps/daemon/src/context.ts` の判定が、repo がローカルかだけを見ていた）。
+  - 判定を、取得の仕方（今の中身を読む層か）にした（`extendsRef` の `workingTree`）。
+  - 回帰テストを足した（`context.test.ts` の「ref を付けたローカルの git のリポジトリも git で取得した層なので、ローカルのパスを継承できない」）。直す前に落ちることを確かめた。
+  - 文言（`context.localExtendsFromRemote`）・仕様書・ユーザードキュメント・ADR を合わせて直した。
+- [提案] ローカルのディレクトリの写しとハッシュが同期で、大きなディレクトリでデーモンを止める。
+  - `copyLocalLayer`・`hashTree` を非同期（`fs/promises` の `cp`・`lstat`・`readdir`・`readlink`）にし、ファイルは `createReadStream` で少しずつ読むようにした。中止（`AbortSignal`）されたら、写すのとハッシュを途中で止める。
+  - 大きなローカルの層で API の応答や停止を妨げないことは、実際のデーモンでは確かめていない。
+- [提案] MCP サーバーの写しの識別に `path` を入れたことを確かめるテストが無かった。
+  - `context-mcp.test.ts` に、同じ repo・commit で path と目印だけ違う2層が別の写しで起動し、同じ path なら使い回すテストを足した。`path` を識別から外すと落ちることを確かめた。
+- [提案] ユーザードキュメントから「git で管理して push」の手順が消えていた。
+  - ローカルのディレクトリはそのまま指定、git の URL はコミット・push してから指定、と分けて日英で書いた。
+
+### 対応の後に確かめたこと
+
+- `npm run lint`：指摘なし。
+- `npm run typecheck`：エラーなし。
+- `npx vitest run apps/daemon/src/context.test.ts apps/daemon/src/context-mcp.test.ts tests/docs`：足したテストは通った。落ちるのは、main でも落ちる既存の2件だけ。
+

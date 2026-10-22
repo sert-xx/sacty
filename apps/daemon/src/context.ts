@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   cpSync,
+  createReadStream,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -10,12 +11,12 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   readSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { cp, lstat, readdir, readlink, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -245,9 +246,15 @@ type ManifestExtends = NonNullable<z.output<typeof ContextManifest>["extends"]>;
  * - `./`・`../` で始まる相対パスは、同じリポジトリ・同じ ref の中の、その層のディレクトリから見たディレクトリ
  *   （モノレポの中で継承する）。リポジトリの外は指せない
  * - `URL#ref` と `{ repo, ref, path }` は、ほかのリポジトリ（かその中のディレクトリ）
- * git で取得した層は、ローカルのパスを継承できない（取得したリポジトリの中身で、ホストのディレクトリを読ませないため）。
+ * git で取得した層（ref を付けたローカルの git のリポジトリを含む）は、ローカルのパスを継承できない（取得したコミットの
+ * 中身で、ホストのディレクトリを読ませないため）。ローカルのパスを継承できるのは、今の中身を読む層（workingTree）だけ。
  */
-function extendsRef(value: ManifestExtends, from: ContextRef, key: string): ContextRef {
+function extendsRef(
+  value: ManifestExtends,
+  from: ContextRef,
+  key: string,
+  workingTree: boolean,
+): ContextRef {
   const shown = typeof value === "string" ? value : contextLabel(value);
   if (typeof value === "string" && /^\.\.?(?:\/|$)/.test(value)) {
     const joined = posix.normalize(posix.join(from.path ?? "", value)).replace(/\/+$/, "");
@@ -281,7 +288,7 @@ function extendsRef(value: ManifestExtends, from: ContextRef, key: string): Cont
           ...(value.ref ? { ref: value.ref } : {}),
           ...(value.path ? { path: value.path } : {}),
         };
-  if (localContextDir(from.repo) === undefined && localContextDir(parent.repo) !== undefined) {
+  if (!workingTree && localContextDir(parent.repo) !== undefined) {
     throw new ContextError(message("context.localExtendsFromRemote", { key, value: shown }));
   }
   return parent;
@@ -309,41 +316,58 @@ function layerDir(root: string, path: string | undefined, key: string): string {
 /**
  * ローカルのパスの層（ref の指定なし）を、ディレクトリの今の中身から out に写す（`.git` は写さない）。git で管理して
  * いなくても、コミットしていない変更があってもよい。コミットの代わりに、写した中身の SHA-256 を返す。
+ * 大きなディレクトリ（モノレポの node_modules など）でもデーモンを止めないよう、写すのもハッシュも非同期に行い、
+ * ファイルは少しずつ読む。中止されたら、写すのとハッシュを途中で止めて失敗にする。
  */
-function copyLocalLayer(root: string, path: string | undefined, out: string, key: string): string {
+async function copyLocalLayer(
+  root: string,
+  path: string | undefined,
+  out: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<string> {
   let isDirectory = false;
   try {
-    isDirectory = statSync(root).isDirectory();
+    isDirectory = (await stat(root)).isDirectory();
   } catch {}
   if (!isDirectory) throw new ContextError(message("context.pathMissing", { key, path: root }));
   const src = layerDir(root, path, key);
   try {
-    cpSync(src, out, {
+    await cp(src, out, {
       recursive: true,
       // リンクはたどらずに、リンクのまま写す（sacty が読む項目のリンクは、読むときに止める）
       verbatimSymlinks: true,
-      filter: (from) => basename(from) !== ".git",
+      filter: (from) => {
+        signal?.throwIfAborted();
+        return basename(from) !== ".git";
+      },
     });
+    return await hashTree(out, signal);
   } catch (error) {
+    if (signal?.aborted) throw new MessageError(message("git.aborted"));
     throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
   }
-  return hashTree(out);
 }
 
 /** ディレクトリの中身すべての SHA-256（パスの順に、パスと中身から作る。リンクはリンク先のパスを入れる）。 */
-function hashTree(dir: string): string {
+async function hashTree(dir: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
-  const visit = (path: string) => {
-    const stat = lstatSync(path);
-    if (stat.isDirectory()) {
-      for (const name of readdirSync(path).sort()) visit(join(path, name));
+  const visit = async (path: string): Promise<void> => {
+    signal?.throwIfAborted();
+    const entry = await lstat(path);
+    if (entry.isDirectory()) {
+      for (const name of (await readdir(path)).sort()) await visit(join(path, name));
       return;
     }
     hash.update(`${relative(dir, path)}\0`);
-    hash.update(stat.isSymbolicLink() ? `->${readlinkSync(path)}` : readFileSync(path));
+    if (entry.isSymbolicLink()) {
+      hash.update(`->${await readlink(path)}`);
+    } else {
+      for await (const chunk of createReadStream(path, { signal })) hash.update(chunk as Buffer);
+    }
     hash.update("\0");
   };
-  visit(dir);
+  await visit(dir);
   return hash.digest("hex");
 }
 
@@ -375,12 +399,14 @@ export async function resolveContext(
     }
     seen.add(key);
     const local = localContextDir(next.repo);
+    // ref の無いローカルのパスは、git で取得せずに今の中身を読む（それ以外は git で取得する）
+    const workingTree: boolean = local !== undefined && !next.ref;
     let dir: string;
     let commit: string;
-    if (local !== undefined && !next.ref) {
+    if (workingTree && local !== undefined) {
       signal?.throwIfAborted();
       dir = join(workDir, "local", String(chain.length));
-      commit = copyLocalLayer(local, next.path, dir, key);
+      commit = await copyLocalLayer(local, next.path, dir, key, signal);
     } else {
       const sourceKey = `${next.repo}#${next.ref ?? ""}`;
       let source = fetched.get(sourceKey);
@@ -402,7 +428,9 @@ export async function resolveContext(
     }
     const layer = readLayer(dir, key);
     chain.push({ ...next, commit, dir, ...layer });
-    next = layer.manifest.extends ? extendsRef(layer.manifest.extends, next, key) : undefined;
+    next = layer.manifest.extends
+      ? extendsRef(layer.manifest.extends, next, key, workingTree)
+      : undefined;
   }
   return chain.reverse();
 }

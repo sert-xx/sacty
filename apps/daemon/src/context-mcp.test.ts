@@ -226,6 +226,34 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     previous.release();
   });
 
+  it("同じリポジトリ・commit でも、中のディレクトリ（path）が違えば別の写しで起動し、同じ path なら使い回す", async () => {
+    const fake = fakeConnect();
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    manager.start();
+    const repo = "https://github.com/acme/mono.git";
+    const inMono = (name: string, path: string) => ({ ...layer(name, name), repo, path });
+    const a = manager.lease("p1", [server({ layer: inMono("team-a", "contexts/a") })]);
+    const b = manager.lease("p1", [server({ layer: inMono("team-b", "contexts/b") })]);
+    expect(b.keys).not.toEqual(a.keys);
+    expect(await manager.ready([...a.keys, ...b.keys])).toEqual([]);
+    const cwds = fake.started.map((s) => s.spec.cwd ?? "");
+    expect(new Set(cwds).size).toBe(2);
+    expect(cwds.map((cwd) => readFileSync(join(cwd, "marker.txt"), "utf8"))).toEqual([
+      "team-a",
+      "team-b",
+    ]);
+    const again = manager.lease("p1", [server({ layer: inMono("team-a", "contexts/a") })]);
+    expect(again.keys).toEqual(a.keys);
+    expect(fake.started).toHaveLength(2);
+    a.release();
+    b.release();
+    again.release();
+  });
+
   it("しばらく使われなければ止め、層の写しも消す。デーモンを止めたら、すべて止めて写しを消す", async () => {
     const fake = fakeConnect();
     let now = 1_000;

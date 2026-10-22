@@ -1795,6 +1795,19 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     local.dispose();
   });
 
+  it("ref を付けたローカルの git のリポジトリも git で取得した層なので、ローカルのパスを継承できない", async () => {
+    const local = join(dir, "host-dir");
+    mkdirSync(local);
+    writeFileSync(join(local, "rules.md"), "HOST-ONLY-MARKER");
+    const repo = makeRepo("local-git", { "sacty-context.yaml": `extends: ${local}\n` });
+    await expect(
+      resolveContext(new GitContextFetcher(), { repo, ref: "main" }, join(dir, "w")),
+    ).rejects.toThrow(/git で取得した層のため、ローカルのパス（.*）を継承できません/);
+    // ref が無ければ今の中身を読む層なので、ローカルのパスを継承できる
+    const layers = await resolveContext(new GitContextFetcher(), { repo }, join(dir, "w2"));
+    expect(layers.map((l) => l.repo)).toEqual([local, repo]);
+  });
+
   it("中のディレクトリが無い・途中がシンボリックリンクなら、理由を示して止める", async () => {
     const outside = join(dir, "outside");
     mkdirSync(outside);
