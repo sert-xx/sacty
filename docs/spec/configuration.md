@@ -144,6 +144,8 @@
   `//host/:_authToken` のようにレジストリに結びつけたものも）は書けない。値に改行は書けない。
 - `image_build.npm_version`：`latest` か `数字(.数字){0,2}`。
 - `image_build.drawio`：真偽値。`false` のときだけ、draw.io の CLI を入れない（`SACTY_DRAWIO=0` を渡す）。
+- `image_build.drawio_mirror`：`http`・`https` の URL。ユーザー名・パスワードと、空白・引用符・`<>&\$`・`` ` ``・`;|()` を含むものは書けない（`config.drawioMirror`）。
+  末尾の `/` は除いて `SACTY_DRAWIO_MIRROR` に渡す（`drawio` が `false` なら渡さない）。
 - `images` の名前：`^(?!default$)[a-z0-9][a-z0-9_-]{0,39}$`（`default` は既定のイメージを指すので使えない）。
 - `images.<名前>.env`：名前は `^[A-Z_][A-Z0-9_]*$`。認証の値らしい名前（`TOKEN`・`PASSWORD`・`PASSWD`・`SECRET`・`CREDENTIAL`・`AUTH`・
   `API_KEY`・`PRIVATE_KEY` を含む）とユーザー名・パスワードを含む URL は書けない。`PATH`・`HOME`・`USER`・`SHELL`・`TMPDIR`・

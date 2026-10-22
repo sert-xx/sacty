@@ -833,6 +833,29 @@ ${extra}`,
     write("image_build:\n  drawio: 'no'\n");
     const drawio = loadConfig(dir);
     expect(drawio.ok ? "" : ja(drawio.problem)).toContain("image_build.drawio");
+    // draw.io のパッケージの取得先（組織のミラー）。末尾の / は除く。認証の値・シェルの記号を含む URL は拒否する
+    write(
+      "image_build:\n  drawio_mirror: https://artifacts.example.com/github/jgraph/drawio-desktop/releases/download/\n",
+    );
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        imageBuild: {
+          drawioMirror:
+            "https://artifacts.example.com/github/jgraph/drawio-desktop/releases/download",
+        },
+      },
+    });
+    for (const bad of [
+      "https://user:pass@artifacts.example.com/x",
+      "https://artifacts.example.com/x;rm",
+      "https://artifacts.example.com/$(id)",
+      "ftp://artifacts.example.com/x",
+    ]) {
+      write(`image_build:\n  drawio_mirror: "${bad}"\n`);
+      const rejected = loadConfig(dir);
+      expect(rejected.ok ? "" : ja(rejected.problem), bad).toContain("image_build.drawio_mirror");
+    }
   });
 
   it("言語ごとのイメージ（images）を読み、認証の値・予約された名前・危ない URL は拒否する（PBI-41）", () => {
