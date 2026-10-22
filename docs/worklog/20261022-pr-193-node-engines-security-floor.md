@@ -18,20 +18,22 @@
 - ADR を足した。
 
 イメージの既定（`node:22-bookworm-slim`）は変えていない。Docker Hub の API で、2026-10-22 の時点で `node:22-bookworm-slim` と `node:22.23.4-bookworm-slim` の
-digest が同じであることを確かめた（イメージを作り直せば修正版になる）。
+digest が同じであることを確かめた。ただし `sacty image build` は `docker build` に `--pull` を付けず、前もって取り直しもしない（`apps/daemon/src/image.ts` の `imageBuildArgs`）ので、
+手元に古い `node:22-bookworm-slim` があると、作り直しただけでは修正版にならない。`docker pull node:22-bookworm-slim`（`image_build.base_image`・`node_image` を書いていればそのイメージ）で取り直してから作り直す。
 
 ## 確かめたこと
 
 - `npx vitest run tests/docs`：2 ファイル・89 件が通った。
 - `npx vitest run apps/daemon/src/context-fetch-exit.test.ts`：4 件が通った（Node v22.22.0）。
 - `npx biome check package.json apps/daemon/src/context-fetch-exit.test.ts`：指摘なし。
+- レビューの対応の後に `npx vitest run tests/docs`：89 件が通った。
 - Node v22.22.0 で `npm ci` を実行すると、`npm warn EBADENGINE`（`required: { node: '>=22.23.4' }`）が出て、インストールは止まらずに終わった。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | — |
+| （DA・提案）可変のタグが修正版を指すことと、手元の元のイメージが新しくなることは別。`imageBuildArgs` は `--pull` を付けないので、取り直してから作り直す条件を ADR と作業履歴に書く | `imageBuildArgs` に `--pull` が無く、前もって取り直さないことをコードで確かめ、ADR の理由と作業履歴の「したこと」に、`docker pull` で取り直してから作り直すことを書いた |
 
 ## 残したこと
 
