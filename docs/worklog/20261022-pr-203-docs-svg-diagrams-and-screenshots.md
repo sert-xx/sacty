@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-22（UTC）
 - タスク: なし
-- PR: なし
+- PR: #203
 - ブランチ: claude/magical-clarke-2cpczd
 - 関係する ADR: [仕様書とユーザードキュメントの図を、定義から作る SVG にし、ユーザードキュメントに画面のスクリーンショットを入れる](../adr/20261022-1732-docs-svg-diagrams-and-screenshots.md)
 
