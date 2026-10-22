@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-22（UTC）
 - タスク: なし
-- PR: なし
+- PR: #204
 - ブランチ: claude/youthful-brown-b4hr9a
 - 関係する ADR: [プロジェクトの削除は定義だけを消し、終わっていないタスクがあれば拒否する](../adr/20261022-2338-project-delete-keeps-tasks.md)
 
