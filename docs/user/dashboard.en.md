@@ -4,8 +4,7 @@
 
 # Reading the dashboard
 
-The dashboard (`/dashboard`) shows, across all projects, what needs you, how the factory is doing, the cost, and the quality in one place.
-You can act here before opening individual tasks. While it is open, it updates to the latest state without reloading the screen ([Working with tasks](tasks.en.md)).
+The dashboard (`/dashboard`) shows, across all projects, what needs you, how the factory is doing, the cost, and the quality in one place. You can act here before opening individual tasks. While it is open, it updates to the latest state without reloading the screen ([Working with tasks](tasks.en.md)).
 
 Hover over or tap the mark (i) next to a heading to see what the numbers mean and where the periods start.
 
@@ -27,14 +26,16 @@ Sections sit side by side when there is room and stack otherwise. The same secti
 
 ## Periods and counting
 
-- "Today", "last 7 days", and "last 30 days" are split by the date of the machine running sacty, not by the UI language. The last 7 and 30 days include today.
-- The cost includes completed and cancelled tasks. The cost is an estimate that Sacty calculates from usage and prices (including converted values such as subscriptions).
-  It may differ from what you are actually billed; Sacty does not handle actual billed amounts.
+- "Today", "last 7 days", and "last 30 days" are split by the date of the machine running sacty. The UI language does not affect them. The last 7 and 30 days include today.
+- Cost
+  - It includes completed and cancelled tasks.
+  - It is an estimate that Sacty calculates from usage and prices (including converted values such as subscriptions).
+  - It may differ from what you are actually billed. Sacty does not handle actual billed amounts.
 - The waiting time counts from the record that made the task await approval, pause, or escalate.
 - Tasks of deleted projects are neither shown nor counted in any section.
-- If the daemon cannot be reached when you open the page, the error is shown instead of the sections. The sections appear once it can be reached.
-- If the daemon becomes unreachable after the sections were shown, they keep what was last fetched and a notice above them says updates are
-  paused. Even though the sections are visible, their numbers are not current during that time. Updates resume once it can be reached.
+- When the daemon cannot be reached
+  - If it cannot be reached when you open the page, the page shows the error instead of the sections. The sections appear once it can be reached.
+  - If it becomes unreachable after the sections were shown, they keep what was last fetched and a notice above them says updates are paused. Even though the sections are visible, their numbers are not current during that time. Updates resume once it can be reached.
 
 ## Related pages
 

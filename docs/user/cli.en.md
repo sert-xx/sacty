@@ -12,7 +12,7 @@ Run it as `npx sacty <command>`. `npx sacty --help` (`-h`) shows the usage. If y
 npx sacty up [--port <web-ui-port>] [--daemon-port <daemon-port>]
 ```
 
-Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal (it does not open a browser). Ctrl+C stops both.
+This command starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal (it does not open a browser). Ctrl+C stops both.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -20,15 +20,10 @@ Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`h
 | `--daemon-port` | `4710` | Port of the daemon |
 
 - Both the web UI and the daemon listen only on 127.0.0.1.
-- Only browsers that opened the sign-in URL can use the web UI (so that step containers cannot operate it). The URL changes on every start,
-  and while that start lasts you can open it in another browser too. A browser that has not signed in sees only how to sign in.
-- Writing `web: { auth: false }` in `~/.sacty/config.yaml` turns this sign-in off, and you can just open `http://127.0.0.1:4700` shown in the terminal.
-  However, code running in step containers (tests in the target repository, prompt injection) can then approve or change settings through the web UI.
-  While it is off, a warning is shown on every start.
-  - `web.auth` is read only when `sacty up` starts. After changing it, stop the running `sacty up` with Ctrl+C and start it again
-    (while it keeps running, the previous setting stays in effect).
-  - You can tell whether it is on or off from the terminal output at startup: when on, the sign-in URL (`…/auth?token=…`); when off, `http://127.0.0.1:4700`
-    and a warning.
+- Only browsers that opened the sign-in URL can use the web UI (so that step containers cannot operate it). The URL changes on every start, and while that start lasts you can open it in another browser too. A browser that has not signed in sees only how to sign in.
+- Writing `web: { auth: false }` in `~/.sacty/config.yaml` turns this sign-in off, and you can just open `http://127.0.0.1:4700` shown in the terminal. However, code running in step containers (tests in the target repository, prompt injection) can then approve or change settings through the web UI. While it is off, sacty shows a warning on every start.
+  - `sacty up` reads `web.auth` only when it starts. After changing it, stop the running `sacty up` with Ctrl+C and start it again (while it keeps running, the previous setting stays in effect).
+  - You can tell whether it is on or off from the terminal output at startup. When on, it shows the sign-in URL (`…/auth?token=…`); when off, it shows `http://127.0.0.1:4700` and a warning.
 - Ports must be between 1 and 65535, and `--port` and `--daemon-port` must be different numbers.
 - You cannot start it twice with the same `SACTY_HOME` ([Getting started](getting-started.en.md#where-data-is-stored)).
 
@@ -38,7 +33,7 @@ Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`h
 npx sacty config init [--force]
 ```
 
-Creates a template of the configuration file (`~/.sacty/config.yaml`, or `$SACTY_HOME/config.yaml` if you changed `SACTY_HOME`) ([config.yaml settings](config.en.md)).
+This command creates a template of the configuration file (`~/.sacty/config.yaml`, or `$SACTY_HOME/config.yaml` if you changed `SACTY_HOME`) ([config.yaml settings](config.en.md)).
 If the file already exists, it stops. To overwrite it, add `--force`.
 
 ## sacty secret set
@@ -47,8 +42,7 @@ If the file already exists, it stops. To overwrite it, add `--force`.
 npx sacty secret set <name>
 ```
 
-Saves a secret (a token or API key) in the macOS Keychain. Names can contain only letters, digits, `.`, `_`, and `-`. The value is prompted for by the `security` command
-([Secrets](secrets.en.md)).
+This command saves a secret (a token or API key) in the macOS Keychain ([Secrets](secrets.en.md)). Names can contain only letters, digits, `.`, `_`, and `-`. The `security` command prompts you for the value.
 
 ## sacty image build
 
@@ -56,9 +50,11 @@ Saves a secret (a token or API key) in the macOS Keychain. Names can contain onl
 npx sacty image build [<name>...]
 ```
 
-Builds the container images for running agents. If you omit the names, it builds the default image and every per-language image listed under `images` in `config.yaml`
-(`default` is the default image). If you specify a name that is not in `images`, it stops and shows the names it can build. If `config.yaml` has an error, it stops without building
-([Container images](images.en.md)).
+This command builds the container images for running agents ([Container images](images.en.md)).
+
+- If you omit the names, it builds the default image and every per-language image listed under `images` in `config.yaml` (`default` is the default image).
+- If you specify a name that is not in `images`, it stops and shows the names it can build.
+- If `config.yaml` has an error, it stops without building.
 
 ## sacty context init
 
@@ -66,8 +62,7 @@ Builds the container images for running agents. If you omit the names, it builds
 npx sacty context init [<directory>] [--force]
 ```
 
-Creates a template of a context repository. The directory defaults to the current directory. If a file (or `rules/`) with the same name as one in the template exists, it stops.
-To overwrite, add `--force` ([Context repository](context.en.md#creating-the-template)).
+This command creates a template of a context repository ([Context repository](context.en.md#creating-the-template)). The directory defaults to the current directory. If a file (or `rules/`) with the same name as one in the template exists, it stops. To overwrite, add `--force`.
 
 ## sacty context preview
 
@@ -75,9 +70,9 @@ To overwrite, add `--force` ([Context repository](context.en.md#creating-the-tem
 npx sacty context preview <project> [--runtime claude-code|codex] [--json] [--no-content]
 ```
 
-Shows the result of composing the context of a project (by ID or name): the files placed at run time, the layers, warnings, and so on. It queries the running sacty (`sacty up`)
-(it stops if sacty is not running). Secrets are shown only as reference names. However, values written in the context repository, such as the contents of layer settings and string values in `mcp.yaml`,
-are shown as is.
+This command shows the result of composing the context of a project (by ID or name): the files placed at run time, the layers, warnings, and so on. It queries the running sacty (`sacty up`) (it stops if sacty is not running).
+
+It shows secrets only as reference names. However, it shows values written in the context repository as is, such as the contents of layer settings and string values in `mcp.yaml`.
 
 | Option | Default | Description |
 | --- | --- | --- |

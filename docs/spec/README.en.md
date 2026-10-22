@@ -2,13 +2,11 @@
 
 # Specifications
 
-These pages describe how sacty currently works, accurately and in a way people can follow. **They always match the implementation.**
-For the policy, see the [docs overview](../README.md) (in Japanese).
+These pages describe how sacty currently works, accurately and in a way people can follow. **They always match the implementation.** For the policy, see the [docs overview](../README.md) (in Japanese).
 
 ## How files are divided
 
-- One file per feature or mechanism (for example `architecture.md` (overall structure), `tasks-and-steps.md`, `context.md`,
-  `gateway.md`, `daemon-lifecycle.md`). Choose units so that a PR changing one feature usually needs to edit only one file.
+- One file per feature or mechanism (for example `architecture.md` (overall structure), `tasks-and-steps.md`, `context.md`, `gateway.md`, `daemon-lifecycle.md`). Choose units so that a PR changing one feature usually needs to edit only one file.
 - File names use only lowercase letters, digits, and `-`. Do not add dates (the files describe the current state).
 - When a file grows large, split it into a `<feature>/` directory and put a `README.md` (overview and contents) in it.
 - List links to all specifications in the "Contents" section of this file.
@@ -17,20 +15,16 @@ For the policy, see the [docs overview](../README.md) (in Japanese).
 
 - Describe the current behavior in the present tense. Do not write history or rejected alternatives; link to the related ADRs instead.
 - Do not guess. Leave out anything that cannot be confirmed in the code or tests, or mark it as `(unverified)`.
-- At the end of each main item (section), list the corresponding code locations. Write files as paths relative to the repository root,
-  adding function or type names when helpful. Do not write line numbers (they shift quickly).
+- At the end of each main item (section), list the corresponding code locations. Write files as paths relative to the repository root, adding function or type names when helpful. Do not write line numbers (they shift quickly).
 
   ```markdown
   Code: `apps/daemon/src/<file>.ts` (`<function name>`), `packages/core/src/<file>.ts`
   ```
 
-- `tests/docs/docs.test.ts` checks that each file in a "Code:" reference exists and that the names in the parentheses appear in that file
-  (it checks only that the names exist, not that the description is correct).
+- `tests/docs/docs.test.ts` checks that each file in a "Code:" reference exists and that the names in the parentheses appear in that file (it checks only that the names exist, not that the description is correct).
 - Write values that appear in the code, such as setting names, defaults, and state names, exactly as they are named in the code.
-- In a PR that changes the implementation, find the sections that describe the changed behavior and fix them in the same PR. Also fix them
-  when the corresponding code moves or is removed.
-- Fix the English version (`*.en.md`) in the same PR as well. In the English version, start code references with `Code:` and use ASCII
-  parentheses around the names (see ["English versions" in the docs overview](../README.md#英語の版), in Japanese).
+- In a PR that changes the implementation, find the sections that describe the changed behavior and fix them in the same PR. Also fix them when the corresponding code moves or is removed.
+- Fix the English version (`*.en.md`) in the same PR as well. In the English version, start code references with `Code:` and use ASCII parentheses around the names (see ["English versions" in the docs overview](../README.md#英語の版), in Japanese).
 
 ## Template
 

@@ -11,7 +11,8 @@ This page walks you through installing sacty, starting it, and running your firs
 - macOS
 - Node.js 22.13 or later
 - Docker (Docker Desktop, OrbStack, Colima, and so on. Steps run inside containers)
-- GitHub CLI (`gh`). Sign in with the account you use to access GitHub ([Project settings](project-settings.en.md#github-account))
+- GitHub CLI (`gh`)
+  - Sign in with the account you use to access GitHub ([Project settings](project-settings.en.md#github-account))
 
 ## Setup
 
@@ -21,14 +22,9 @@ npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml
 ```
 
-1. Open the `~/.sacty/config.yaml` created by `npx sacty config init`, and set in `providers` the authentication method of the tool you use and the prices
-   of the models you can use (`available_models`) ([config.yaml settings](config.en.md#connections-and-prices-providers)). The models of the AI that runs the steps come from sacty's
-   defaults, so you do not have to write `agents`. The template uses a Codex API key (`providers.codex`).
-2. Put the authentication tokens and API keys in the Keychain or 1Password ([Secrets](secrets.en.md)). If you keep the template as is,
-   save your OpenAI API key using `npx sacty secret set openai-api-key`.
-3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry,
-   write `image_build` before you build it ([Container images](images.en.md)).
-   If you start without the image, the output of `sacty up` and the top of the screen show the command to create it. They also tell you when Docker is not running.
+1. Open the `~/.sacty/config.yaml` created by `npx sacty config init`, and set in `providers` the authentication method of the tool you use and the prices of the models you can use (`available_models`) ([config.yaml settings](config.en.md#connections-and-prices-providers)). The models of the AI that runs the steps come from sacty's defaults, so you do not have to write `agents`. The template uses a Codex API key (`providers.codex`).
+2. Put the authentication tokens and API keys in the Keychain or 1Password ([Secrets](secrets.en.md)). If you keep the template as is, save your OpenAI API key using `npx sacty secret set openai-api-key`.
+3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry, write `image_build` before you build it ([Container images](images.en.md)). If you start without the image, the output of `sacty up` and the top of the screen show the command to create it. They also tell you when Docker is not running.
 
 ## Start
 
@@ -36,8 +32,9 @@ npx sacty config init   # creates ~/.sacty/config.yaml
 npx sacty up
 ```
 
-This starts the daemon and the web UI and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal. Open it in your browser (it does not open automatically). Only browsers that opened this URL can use the web UI. Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
-([CLI](cli.en.md#sacty-up)).
+`sacty up` starts the daemon and the web UI and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal. Open it in your browser (it does not open automatically). Only browsers that opened this URL can use the web UI.
+
+Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port` ([CLI](cli.en.md#sacty-up)).
 
 ## Web UI screens
 
@@ -51,26 +48,20 @@ When you open the web UI, it shows the dashboard first.
 | Project list | `/projects` | Create and import projects |
 | Task details | `/tasks/<ID>` | The task's progress, approvals, and run logs |
 
-- In the header's project switcher, choosing "All projects" moves to the dashboard, and choosing a project moves to that project's task
-  list. The header shows the project of the open screen ("All projects" on the dashboard and similar screens).
-- "Tasks" and "Settings" in the side menu open the task list and settings of the project selected in the header. While "All projects" is
-  selected, "Tasks" is not shown and "Settings" opens the project list.
+- In the header's project switcher, choosing "All projects" moves to the dashboard, and choosing a project moves to that project's task list. The header shows the project of the open screen ("All projects" on the dashboard and similar screens).
+- "Tasks" and "Settings" in the side menu open the task list and settings of the project selected in the header. While "All projects" is selected, "Tasks" is not shown and "Settings" opens the project list.
 - Opening `/projects/<ID>` moves to that project's task list. Opening the ID of a project that does not exist shows that the page was not found.
 
 ## First project and task
 
-1. In the web UI, create a project and register its "Targets" (GitHub orgs or repositories) and a "GitHub account" for each host
-   ([Project settings](project-settings.en.md)).
-2. Create a task in the web UI ([Working with tasks](tasks.en.md)). To turn issues and PRs into tasks,
-   set up [Issue, PR, and ticket intake](intake.en.md).
+1. In the web UI, create a project and register its "Targets" (GitHub orgs or repositories) and a "GitHub account" for each host ([Project settings](project-settings.en.md)).
+2. Create a task in the web UI ([Working with tasks](tasks.en.md)). To turn issues and PRs into tasks, set up [Issue, PR, and ticket intake](intake.en.md).
 
-Note: once you register a target, sacty may push branches to the target repositories and open PRs, depending on the task.
+Once you register a target, sacty may push branches to the target repositories and open PRs, depending on the task.
 
 ## Updating sacty
 
-Every day, sacty checks the latest release of the sacty repository on GitHub, and if a version newer than the running one has been released, every screen shows
-"A new version of Sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
-It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
+Every day, sacty checks the latest release of the sacty repository on GitHub. If a version newer than the running one has been released, every screen shows "A new version of Sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes. It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
 
 First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run the following in the sacty repository.
 
@@ -82,12 +73,12 @@ npx sacty image build
 npx sacty up
 ```
 
-`npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI,
-so always stop it first.
-`npx sacty image build` rebuilds the agent image. The default image name (`sacty-agent:<version>`) follows the version, so without rebuilding, runs stop
-because the image is missing. If `image` in `config.yaml` still has the previous version's name (`sacty-agent:<previous version>`), the output of `sacty up`
-and the top of the screen show how to fix it; change it as shown, then rebuild. Even if you set your own name in `image` of `config.yaml`, rebuilding is the safe choice, because a new version may raise the
-agent CLI versions.
+`npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI, so always stop it first.
+
+`npx sacty image build` rebuilds the agent image. The default image name (`sacty-agent:<version>`) follows the version, so without rebuilding, runs stop because the image is missing.
+
+- If `image` in `config.yaml` still has the previous version's name (`sacty-agent:<previous version>`), the output of `sacty up` and the top of the screen show how to fix it. Change it as shown, then rebuild.
+- Even if you set your own name in `image` of `config.yaml`, rebuilding is the safe choice, because a new version may raise the agent CLI versions.
 
 - "See the release notes" in the notice opens the release description on GitHub.
 - When it cannot check (no internet access, no release yet, and so on), nothing is shown. A version under development (newer than the latest release) shows nothing either.
@@ -96,10 +87,10 @@ agent CLI versions.
 
 ## Where data is stored
 
-- The activity log, settings, and workspaces are stored in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.
-- You cannot run two instances of sacty with the same `SACTY_HOME` (even on different ports). A second `sacty up` shows the address and PID of
-  the running daemon and fails before it touches any data. The check uses an OS file lock on `SACTY_HOME/daemon.lock`, so
-  if the previous daemon dies suddenly (SIGKILL and so on), the next start is not blocked.
+- sacty stores the activity log, settings, and workspaces in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.
+- You cannot run two instances of sacty with the same `SACTY_HOME` (even on different ports).
+  - A second `sacty up` shows the address and PID of the running daemon and fails before it touches any data.
+  - sacty checks this with an OS file lock on `SACTY_HOME/daemon.lock`, so if the previous daemon dies suddenly (SIGKILL and so on), the next start is not blocked.
 - With different `SACTY_HOME` directories, you can run instances side by side on different ports.
 
 ## Development
