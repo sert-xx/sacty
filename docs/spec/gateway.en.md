@@ -130,7 +130,6 @@ The gateway relays the GitHub API for reading only. It has no setting and is alw
 - When a run is registered, the gateway binds to it the gh accounts chosen per host in the task's project (`githubAccounts`). It does not bind them for the following runs.
   - Tasks of a project with no host that has an account
   - Runs that are not tasks
-  - Runs of document writing (`document`) (document writing passes no external connection before approval)
 - The gateway takes the token out with the host's gh (`gh auth token --hostname <host> --user <account>`) when the first request for that host arrives, and keeps it only for that run. If it cannot be taken out, the gateway returns 502 (naming the account), and the next request tries again. The token is not passed to the container.
 - Destination
 

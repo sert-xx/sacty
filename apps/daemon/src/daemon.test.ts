@@ -22193,7 +22193,7 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     },
   );
 
-  it("文書作成には登録済みPF・MCP・コンテキストを渡さず、承認前に外部更新できない", async () => {
+  it("文書作成にも、ほかの工程と同じく登録済みPF・MCP・コンテキスト・GitHub の読み取りを渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const gateway = fakeGateway();
     const register = vi.spyOn(gateway, "register");
@@ -22214,7 +22214,7 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
         [toHostMcp("notion", HostMcpFile.parse({ command: "notion-mcp" }))],
       ),
       contexts: new FakeContexts({
-        "https://github.com/acme/context": { "CLAUDE.md": "外部の予定を更新する" },
+        "https://github.com/acme/context": { "rules.md": "# 文書の規約" },
       }),
       gateway,
     });
@@ -22225,10 +22225,18 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(1);
-    expect(executor.calls[0]?.env.SACTY_PF_URL).toBeUndefined();
-    expect(executor.mcpConfigs[0]).toBeUndefined();
-    expect(executor.contexts[0]).toBeUndefined();
-    expect(register).not.toHaveBeenCalled();
+    expect(executor.calls[0]?.env.SACTY_PF_URL).toBeDefined();
+    expect(executor.mcpConfigs[0]).toContain("notion");
+    expect(executor.contexts[0]).toContain("文書の規約");
+    // 接続先を決めて使う実行（操作・書き出し）と違い、PF・MCP を絞らない
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(register.mock.calls[0]?.[3]).toBeUndefined();
+    expect(Object.keys(register.mock.calls[0]?.[4] ?? {})).toEqual(["github.com"]);
+    const prompt = executor.calls[0]?.command.join(" ") ?? "";
+    expect(prompt).toContain("- calendar：チームの予定表");
+    expect(prompt).toContain("--- GitHub（読み取り） ---");
+    const resolved = service.get(id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(resolved).toBeDefined();
     expect(service.get(id)?.task.gate?.step).toBe("document");
     activity.close();
   });

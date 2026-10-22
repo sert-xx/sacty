@@ -85,7 +85,7 @@ To create a user guide, a procedure document, meeting notes, or a translated dra
 - An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
 - To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
-While Document runs, it does not use external connections or the project context, and does not read drafts from external sources (when you choose a target repository, it reads only a copy of its code). Include the source text and any necessary rules in the task body, and supply missing details through Request changes. If you provide only a URL, this step cannot retrieve the page's contents to write the draft.
+Like the other steps, the Document step can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads. To have it use external material, write which destination to read and what to read in the task body or in a Request changes comment. The draft itself is not written to external services directly; it is exported after approval.
 
 You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes that use one configured destination. Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 

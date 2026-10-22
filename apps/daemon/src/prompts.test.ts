@@ -1866,7 +1866,9 @@ describe("non-code workflow boundaries", () => {
     const prompt = buildPrompt({ ...task, outputs: { document: "旧版" } }, "document");
     expect(prompt).toContain("完成原稿");
     expect(prompt).toContain("旧版");
-    expect(prompt).toContain("外部サービスやリポジトリを更新しない");
+    expect(prompt).toContain("原稿そのものは外部サービスやリポジトリに直接書かず");
+    expect(prompt).toContain("ほかの工程と同じく渡しています");
+    expect(prompt).not.toContain("渡していません");
   });
   it("無条件standard推奨を外し成果と変更対象から比較させる（実モデル分類の評価ではない）", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {
