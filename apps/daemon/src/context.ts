@@ -213,6 +213,16 @@ export interface ContextFetcher {
     /** 中止されたら、取得を止めて失敗にする（取得の子プロセスも止める。PBI-107）。 */
     signal?: AbortSignal,
   ): Promise<{ commit: string }>;
+  /**
+   * fetch で dir に置いたリポジトリの、層のディレクトリ（path。無ければリポジトリの根）に関わるサブモジュールを取得する
+   * （入れ子も）。無ければサブモジュールを取得しない（テストの偽物）。
+   */
+  submodules?(
+    dir: string,
+    path: string | undefined,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 /** リポジトリ（URL）ごとに、git の認証の環境変数を返す（HTTPS の GitHub 以外は undefined）。 */
@@ -334,6 +344,7 @@ async function copyLocalLayer(
   } catch {}
   if (!isDirectory) throw new ContextError(message("context.pathMissing", { key, path: root }));
   const src = layerDir(root, path, key);
+  await assertSubmodulesCheckedOut(src, key, signal);
   try {
     await cp(src, out, {
       recursive: true,
@@ -349,6 +360,47 @@ async function copyLocalLayer(
     if (signal?.aborted) throw aborted();
     throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
   }
+}
+
+/**
+ * 今の中身を読むローカルの層で、層のディレクトリの下のサブモジュール（入れ子も）が取り込まれているかを確かめる。取り込んで
+ * いないサブモジュールは空のディレクトリで、そのまま写すと中のスキルなどが黙って欠けるので、理由を示して止める
+ * （ホストのディレクトリは変えないので、sacty からは取り込まない）。git で管理していないディレクトリには、サブモジュールは無い。
+ */
+async function assertSubmodulesCheckedOut(
+  dir: string,
+  key: string,
+  signal?: AbortSignal,
+  prefix = "",
+): Promise<void> {
+  let links: string[];
+  try {
+    links = await gitlinks(dir, signal);
+  } catch {
+    if (signal?.aborted) throw new ContextError(message("context.copyAborted", { key }));
+    return;
+  }
+  for (const link of links) {
+    const shown = prefix ? `${prefix}/${link}` : link;
+    if (!existsSync(join(dir, link, ".git"))) {
+      throw new ContextError(message("context.submoduleNotCheckedOut", { key, path: shown }));
+    }
+    await assertSubmodulesCheckedOut(join(dir, link), key, signal, shown);
+  }
+}
+
+/** dir（git の作業ツリーの中）の下のサブモジュールのパス（dir からの相対パス）。 */
+async function gitlinks(dir: string, signal?: AbortSignal): Promise<string[]> {
+  const out = await run(["ls-files", "--stage", "-z"], dir, {}, signal);
+  return out
+    .split("\0")
+    .filter((entry) => entry.startsWith("160000 "))
+    .map((entry) => entry.slice(entry.indexOf("\t") + 1));
+}
+
+/** サブモジュール（sub）が、層のディレクトリ（path。無ければ根）の中にあるか、層のディレクトリを含むか。 */
+function submoduleInLayer(sub: string, path: string | undefined): boolean {
+  return !path || sub === path || sub.startsWith(`${path}/`) || path.startsWith(`${sub}/`);
 }
 
 /** ディレクトリの中身すべての SHA-256（パスの順に、パスと中身から作る。リンクはリンク先のパスを入れる）。 */
@@ -389,7 +441,16 @@ export async function resolveContext(
 ): Promise<ContextLayer[]> {
   const chain: ContextLayer[] = [];
   const seen = new Set<string>();
-  const fetched = new Map<string, { dir: string; commit: string }>();
+  const fetched = new Map<
+    string,
+    {
+      dir: string;
+      commit: string;
+      authEnv?: Record<string, string>;
+      /** サブモジュールを取得した層のディレクトリ（同じものを2度取得しない）。 */
+      submoduled: Set<string>;
+    }
+  >();
   let next: ContextRef | undefined = root;
   while (next) {
     const key = contextLabel(next);
@@ -418,11 +479,28 @@ export async function resolveContext(
         try {
           signal?.throwIfAborted();
           const repo = { repo: local ?? next.repo, ...(next.ref ? { ref: next.ref } : {}) };
-          source = { dir: out, ...(await fetcher.fetch(repo, out, authEnv, signal)) };
+          source = {
+            dir: out,
+            ...(await fetcher.fetch(repo, out, authEnv, signal)),
+            ...(authEnv ? { authEnv } : {}),
+            submoduled: new Set(),
+          };
         } catch (error) {
           throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
         }
         fetched.set(sourceKey, source);
+      }
+      // 層のディレクトリに関わるサブモジュールを取得する（組織で別に管理するスキルなどを、写さずに使えるように）。
+      // 中身は、取得したコミットが指すサブモジュールのコミットなので、記録するコミットは取得したリポジトリのものでよい
+      const at = next.path ?? "";
+      if (fetcher.submodules && !source.submoduled.has(at)) {
+        try {
+          signal?.throwIfAborted();
+          await fetcher.submodules(source.dir, next.path, source.authEnv, signal);
+        } catch (error) {
+          throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
+        }
+        source.submoduled.add(at);
       }
       dir = layerDir(source.dir, next.path, key);
       commit = source.commit;
@@ -807,7 +885,10 @@ function layerAgentFiles(layer: ContextLayer, kind: keyof AgentSettings): string
   const visit = (rel: string) => {
     const path = join(root, rel);
     if (statSync(path).isDirectory()) {
-      for (const name of readdirSync(path).sort()) visit(rel ? `${rel}/${name}` : name);
+      for (const name of readdirSync(path).sort()) {
+        // サブモジュールの .git（git の管理の情報を指すファイル）は置かない
+        if (name !== ".git") visit(rel ? `${rel}/${name}` : name);
+      }
     } else {
       files.push(rel);
     }
@@ -1187,7 +1268,10 @@ function filesUnder(root: string): string[] {
   const visit = (rel: string) => {
     const path = rel ? join(root, rel) : root;
     if (statSync(path).isDirectory()) {
-      for (const name of readdirSync(path).sort()) visit(rel ? `${rel}/${name}` : name);
+      for (const name of readdirSync(path).sort()) {
+        // サブモジュールの .git（git の管理の情報を指すファイル）は置かない
+        if (name !== ".git") visit(rel ? `${rel}/${name}` : name);
+      }
     } else {
       files.push(rel);
     }
@@ -1449,6 +1533,16 @@ function readSkillDescription(path: string): string {
 
 /** git で浅く clone してコンテキストリポジトリを取得する（ホストの認証を使う）。 */
 export class GitContextFetcher implements ContextFetcher {
+  constructor(
+    private readonly options: {
+      /**
+       * ローカルのパス（file のプロトコル）のサブモジュールを取得してよいか。既定は取得しない（取得したコミットの中身で、
+       * ホストのディレクトリを読ませないため。extends のローカルのパスと同じ）。テストで、ローカルの git だけで試すために使う。
+       */
+      allowLocalSubmodules?: boolean;
+    } = {},
+  ) {}
+
   async fetch(
     ref: ContextRef,
     dir: string,
@@ -1465,6 +1559,57 @@ export class GitContextFetcher implements ContextFetcher {
     );
     const commit = (await run(["rev-parse", "HEAD"], dir, {}, signal)).trim();
     return { commit };
+  }
+
+  /**
+   * 層のディレクトリに関わるサブモジュールを、取得したコミットが指すコミットで浅く取得する。層に関わらないサブモジュール
+   * （モノレポのアプリのものなど）は取得しない。
+   * - 層の中にあるものは、入れ子も含めて取得する
+   * - 層を含むもの（層がサブモジュールの中にある）は、それだけを取得し、その中で層への相対パスで選び直す（その中の、層に
+   *   関わらない入れ子は取得しない）
+   * 認証は、リポジトリと同じ環境変数（HTTPS で同じホストなら gh のアカウントのトークン）とホストの git の認証を使う。
+   */
+  async submodules(
+    dir: string,
+    path: string | undefined,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const links = (await gitlinks(dir, signal)).filter((sub) => submoduleInLayer(sub, path));
+    const containing = links.filter((sub) => path?.startsWith(`${sub}/`));
+    const inside = links.filter((sub) => !containing.includes(sub));
+    if (inside.length > 0) await this.update(dir, ["--recursive"], inside, authEnv, signal);
+    for (const sub of containing) {
+      await this.update(dir, [], [sub], authEnv, signal);
+      await this.submodules(join(dir, sub), path?.slice(sub.length + 1), authEnv, signal);
+    }
+  }
+
+  private async update(
+    dir: string,
+    flags: string[],
+    paths: string[],
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
+    const file = this.options.allowLocalSubmodules ? "always" : "never";
+    await run(
+      [
+        "-c",
+        `protocol.file.allow=${file}`,
+        "submodule",
+        "update",
+        "--init",
+        ...flags,
+        "--depth",
+        "1",
+        "--",
+        ...paths,
+      ],
+      dir,
+      authEnv,
+      signal,
+    );
   }
 }
 

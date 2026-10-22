@@ -397,6 +397,7 @@ const PARAMS = {
   "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
   "context.pathMissing": z.object({ key: z.string(), path: z.string() }),
   "context.copyAborted": z.object({ key: z.string() }),
+  "context.submoduleNotCheckedOut": z.object({ key: z.string(), path: z.string() }),
   "context.extendsOutside": z.object({ key: z.string(), value: z.string() }),
   "context.localExtendsFromRemote": z.object({ key: z.string(), value: z.string() }),
   "context.lockedOverride": z.object({
@@ -1077,6 +1078,8 @@ const ja: MessageDictionary = {
     `${key} に、コンテキストのディレクトリ ${path} がありません（ディレクトリの途中にシンボリックリンクも使えません）。`,
   "context.copyAborted": ({ key }) =>
     `上限の時間を過ぎたので、ローカルのディレクトリ（${key}）を写すのを止めました。`,
+  "context.submoduleNotCheckedOut": ({ key, path }) =>
+    `${key} のサブモジュール ${path} を取り込んでいません。そのディレクトリで git submodule update --init --recursive を実行してから、やり直してください。`,
   "context.extendsOutside": ({ key, value }) =>
     `${key} の sacty-context.yaml の extends（${value}）は、リポジトリの外を指しています。`,
   "context.localExtendsFromRemote": ({ key, value }) =>
@@ -1662,6 +1665,8 @@ const en: MessageDictionary = {
     `${key} has no context directory ${path} (symbolic links can't be used along the path either).`,
   "context.copyAborted": ({ key }) =>
     `Stopped copying the local directory (${key}) because the time limit passed.`,
+  "context.submoduleNotCheckedOut": ({ key, path }) =>
+    `The submodule ${path} in ${key} isn't checked out. Run git submodule update --init --recursive in that directory, then try again.`,
   "context.extendsOutside": ({ key, value }) =>
     `The extends (${value}) in sacty-context.yaml of ${key} points outside the repository.`,
   "context.localExtendsFromRemote": ({ key, value }) =>

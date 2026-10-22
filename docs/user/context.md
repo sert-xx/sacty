@@ -92,6 +92,29 @@ npx sacty context init sacty-context   # 指定したディレクトリ（省略
 - Codex のルール（`agents/codex/rules/*.rules`）は、既定のルールを消さないように `sacty.rules` 以外の名前にしてください。
 - モデルは、エージェントの `model`（sacty の既定か、`config.yaml` の `agents` の上書き）が、ここの設定より優先します。
 
+### サブモジュールで取り込む
+
+組織で別のリポジトリに管理しているスキルなどは、コンテキストリポジトリに写さず、git のサブモジュールとして置けます。
+sacty は、コンテキストを取得するときにサブモジュールも取得します。
+
+```sh
+git submodule add git@github.com:acme/org-skills.git skills/org   # skills/org/<名前>/SKILL.md がスキルになります
+git commit -m "組織のスキルを取り込む"
+```
+
+- 取得するのは、コンテキストリポジトリのコミットが指すサブモジュールのコミットです。
+  組織のスキルの更新を使うときは、サブモジュールを更新してコミットしてください（`git submodule update --remote skills/org` など）。
+- サブモジュールのリポジトリの認証は、URL によって次のとおりです。
+  - コンテキストリポジトリが HTTPS の URL で、サブモジュールも同じホストの HTTPS の URL（`../org-skills.git` のような相対の URL を含みます）なら、プロジェクトで選んだ GitHub のアカウントで取得します。
+  - SSH の URL（上の例の `git@github.com:…` など）は、ホストの SSH の認証を使います。
+  - ほかのホストの HTTPS の URL は、ホストの git の認証を使います。
+- モノレポでは、「ディレクトリ」に指定したディレクトリに関わるサブモジュール（その中にあるものと、そのディレクトリを含むもの）だけを取得します。
+- ローカルのパスを指すサブモジュール（`/Users/acme/org-skills` など）は、git で取得したコンテキストでは使えません。
+  git の URL を指定してください。
+- ブランチ・タグを指定していないローカルのディレクトリでは、sacty はサブモジュールを取り込みません。
+  そのディレクトリで `git submodule update --init --recursive` を実行して取り込んでおいてください。
+  取り込んでいないサブモジュールがあれば、理由を示して止まります。
+
 ## sacty-context.yaml
 
 ```yaml
