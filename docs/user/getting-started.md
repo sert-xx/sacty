@@ -9,7 +9,7 @@ sacty をインストールし、起動して、最初のタスクを動かす�
 ## 必要なもの
 
 - macOS
-- Node.js 22.13 以上
+- Node.js 22.23.4 以上
 - Docker（Docker Desktop・OrbStack・Colima など。工程はコンテナの中で実行します）
 - GitHub CLI（`gh`）
   - GitHub にアクセスするアカウントでログインしておいてください（[プロジェクトの設定](project-settings.md#github-アカウント)）

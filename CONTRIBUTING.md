@@ -13,7 +13,7 @@ README・仕様書・ユーザードキュメントには、英語の版 `*.en.m
 
 ## 開発の環境を用意する
 
-macOS・Node.js 22.13 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
+macOS・Node.js 22.23.4 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
 
 このページのコマンドの例では、次の値を使っています。
 貼り付ける前に、ご自身の値に置き換えてください。
