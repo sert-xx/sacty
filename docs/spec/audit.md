@@ -26,6 +26,20 @@
 
 ## 2段の監査
 
+監査の流れは次のとおり。
+
+```mermaid
+flowchart TB
+  done["タスクが完了する追記<br/>同じ追記で AuditQueued"] --> survey["大まかな監査（audit）<br/>台帳とセッションログから、懸念のある工程を最大 3 つ"]
+  survey -- "懸念のある工程が無い" --> completed["AuditCompleted"]
+  survey -- "ある" --> dive["深掘り（audit-dive）<br/>工程ごとに新しいセッション"]
+  dive --> found["原因（最大 3 つ）・原因ごとの改修の提案（最大 2 つ）<br/>メモリーの登録"]
+  found --> rest{"深掘りしていない工程がある"}
+  rest -- "ある" --> dive
+  rest -- "無い" --> completed
+  completed -.-> person["人が提案を採用・却下する<br/>採用したものは改修のタスクになる"]
+```
+
 1. **大まかな監査**（役割 `audit`）
    - タスク全体の台帳（本文・承認済みの成果物・根拠の件数・人の指摘・判定・作業履歴）と、各実行のセッションログをエージェントに読ませる。
    - 懸念のある工程を、最大 3 つ挙げさせる（`AuditSurveyed`）。

@@ -155,6 +155,37 @@ remove:            # 上位の層から引き継いだスキル・MCP サーバ�
   同じリポジトリ・ディレクトリ・ref が2度出てきたら（循環）、理由を示して止まります。
 - 上書き禁止の項目を下位で上書き・取り除きしようとしたときは、警告を残して上位のものを使います。
 
+例えば、次のように継承すると、既定のコンテキストの上に、上の層から順に重なります。
+
+```mermaid
+flowchart TB
+  default["sacty の既定のコンテキスト"]
+  org["git@github.com:acme/sacty-context.git（main）<br/>組織で共通のコンテキスト"]
+  base["acme/monorepo の contexts/base<br/>チームで共通のコンテキスト"]
+  team["acme/monorepo の contexts/team<br/>プロジェクトの設定で指定したコンテキスト"]
+  default -- "重ねる" --> org
+  org -- "重ねる" --> base
+  base -- "重ねる" --> team
+  team -. "extends: ../base" .-> base
+  base -. "extends: git@github.com:acme/sacty-context.git#main" .-> org
+```
+
+上書き禁止と取り除きは、次のように効きます。
+
+```mermaid
+flowchart LR
+  subgraph upper["上位の層（組織）"]
+    u["skills: review・guide<br/>locked.skills: review"]
+  end
+  subgraph lower["下位の層（プロジェクト）"]
+    l["skills: review・deploy<br/>remove.skills: guide"]
+  end
+  subgraph result["エージェントに渡すスキル"]
+    r["review（上位のもの。警告を残す）<br/>deploy"]
+  end
+  upper --> lower --> result
+```
+
 ## mcp.yaml
 
 ```yaml
@@ -184,6 +215,26 @@ servers:
 - コンテナの中で動かす（HTTP はコンテナから直接つなぐ）ときは、そのサーバーに `via_gateway: false` と書きます。
   書いたものはコンテナの中で起動・接続し、秘密情報の値は環境変数でコンテナに渡します。
 - `config.yaml` の `gateway.mcp_servers` と同じ名前のサーバーは、`gateway.mcp_servers` のものを使い、作業履歴に警告を残します（`mcp.yaml` のものは起動しません）。
+
+MCP サーバーが動く場所は、次のとおりです。
+
+```mermaid
+flowchart LR
+  subgraph container["工程エージェントのコンテナ"]
+    agent["エージェント"]
+    inbox["via_gateway: false の<br/>command のサーバー"]
+  end
+  subgraph host["sacty を動かすホスト"]
+    gw["ゲートウェイ"]
+    cmd["command のサーバー（既定）<br/>層のリポジトリの写しで動く"]
+  end
+  remote["url のサーバー"]
+  agent -- "/ctx-mcp/名前<br/>（実行ごとのトークン）" --> gw
+  gw --> cmd
+  gw -- "ヘッダーの秘密情報を付ける" --> remote
+  agent --> inbox
+  agent -. "url で via_gateway: false" .-> remote
+```
 
 ### HTTP の MCP サーバー
 

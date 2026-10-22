@@ -40,6 +40,23 @@ If something failed, sacty registers a fix task automatically. This is done as t
    - Even on failure, sacty does not stop the original task. If a fix task was registered, the fix task takes over.
    - If none was created because of duplicate registration or the chain limit, check the reason shown in "After-merge watch" in the task's details. The reason is a link to the open fix task for the same failure, or the chain limit.
 
+In summary, the flow is as follows.
+
+```mermaid
+flowchart TB
+  merge["Merge the implementation PR"] --> ci{"CI/CD on the merge commit<br/>(checked every minute)"}
+  ci -- "none after 5 minutes" --> skip["Skip the watch"]
+  ci -- "not finished in 60 minutes" --> timeout["End as timed out"]
+  ci -- "failed" --> fix["Register a fix task"]
+  ci -- "passed" --> skill["An agent checks according to<br/>the deployment-observer skill"]
+  skill -- "failure or error" --> fix
+  skill -- "no problem" --> done["The task completes"]
+  skill -- "cannot tell" --> skip
+  skip --> done
+  timeout --> done
+  fix --> done
+```
+
 Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 
 ## Skill

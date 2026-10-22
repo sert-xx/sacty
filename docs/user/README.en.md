@@ -5,6 +5,31 @@
 These pages explain how to install, configure, and use sacty, including its commands and web UI.
 If you are new to sacty, start with [Getting started](getting-started.en.md). For details of how it works, see the [specifications](../spec/README.en.md).
 
+Here is an overview of sacty.
+
+```mermaid
+flowchart TB
+  you["You"]
+  subgraph mac["Machine running sacty"]
+    ui["Web UI (browser)"]
+    daemon["Daemon<br/>activity log, step execution, intake"]
+    agents["Agent containers<br/>orchestrator, step agents, goal guardian"]
+    gw["Gateway<br/>holds the credentials"]
+  end
+  github["GitHub<br/>issues, PRs"]
+  ai["AI endpoint"]
+  ext["Internal PFs, MCP servers"]
+  you -- "create tasks, approve" --> ui
+  ui --> daemon
+  daemon -- "starts" --> agents
+  agents -- "AI calls" --> ai
+  agents -- "per-run token" --> gw
+  gw --> ext
+  gw -- "read" --> github
+  daemon -- "intake, opening and checking PRs" --> github
+  you -- "approve by merging PRs" --> github
+```
+
 ## Contents
 
 1. [Getting started](getting-started.en.md): installation, startup, your first project and task, where data is stored

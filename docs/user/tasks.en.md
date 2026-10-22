@@ -6,6 +6,21 @@
 
 When you create a task, the Orchestrator and the Goal Guardian move it through the steps. You make decisions only at approval gates.
 
+A task proceeds as follows.
+
+```mermaid
+flowchart TB
+  create["Create a task<br/>UI, issue, PR, or ticket"] --> orch["The orchestrator chooses the plan"]
+  orch --> step["A step agent runs the step"]
+  step --> gate{"Step needs approval?"}
+  gate -- "no" --> more
+  gate -- "yes" --> you["You decide<br/>in the UI or by merging the PR"]
+  you -- "request changes" --> step
+  you -- "approve" --> more{"Steps remaining?"}
+  more -- "yes" --> step
+  more -- "no" --> done["Completed"]
+```
+
 ## Create a task
 
 - When you create a task in the web UI, you choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)).
@@ -227,6 +242,26 @@ Approval in PRs proceeds in this order.
    - When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). The implementation PR also contains the Requirements and Design files.
    - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no skill and the step was skipped, the task is completed.
    - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
+
+When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
+
+```mermaid
+%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
+gitGraph
+  commit id: "base commit"
+  branch "sacty/task-1a2b3c4d"
+  branch "sacty/task-1a2b3c4d-requirements-1"
+  commit id: "requirements.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-requirements-1" id: "requirements approved"
+  branch "sacty/task-1a2b3c4d-design-1"
+  commit id: "design.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-design-1" id: "design approved"
+  commit id: "implementation"
+  checkout main
+  merge "sacty/task-1a2b3c4d" id: "implementation approved"
+```
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
 - sacty takes in PR reviews, line comments, and regular comments as findings.

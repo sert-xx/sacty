@@ -7,6 +7,21 @@
 タスクを作ると、オーケストレーターとゴールガーディアンが工程を進めます。
 人間は承認ゲートでだけ判断します。
 
+タスクは次のように進みます。
+
+```mermaid
+flowchart TB
+  create["タスクを作る<br/>画面・Issue・PR・チケット"] --> orch["オーケストレーターが進め方を選ぶ"]
+  orch --> step["工程エージェントが工程を実行する"]
+  step --> gate{"承認が要る工程か"}
+  gate -- "いいえ" --> more
+  gate -- "はい" --> you["あなたが判断する<br/>画面か PR のマージ"]
+  you -- "差し戻す" --> step
+  you -- "承認する" --> more{"残りの工程がある"}
+  more -- "ある" --> step
+  more -- "無い" --> done["完了"]
+```
+
 ## タスクを作る
 
 - 画面でタスクを作るときは、プロジェクトの対象の中からリポジトリを選びます（[プロジェクトの設定](project-settings.md#対象)）。
@@ -304,6 +319,26 @@ PR での承認は、次の順に進みます。
    - 実装の承認待ちになり、PR をマージすると実装の承認になって、マージの後の監視の工程に進みます。
      対象のリポジトリにスキルが無く、工程を飛ばしたときは、タスクが完了します。
    - マージの後の監視では、CI/CD とデプロイを sacty が見届け、終わるとタスクが完了します（[マージの後の監視](deployment-watch.md)）。
+
+要求要件・設計・実装をすべて PR で承認するときのブランチと PR は、次のようになります（タスクの短い ID が 1a2b3c4d の例）。
+
+```mermaid
+%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
+gitGraph
+  commit id: "起点"
+  branch "sacty/task-1a2b3c4d"
+  branch "sacty/task-1a2b3c4d-requirements-1"
+  commit id: "requirements.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-requirements-1" id: "要求要件の承認"
+  branch "sacty/task-1a2b3c4d-design-1"
+  commit id: "design.md"
+  checkout "sacty/task-1a2b3c4d"
+  merge "sacty/task-1a2b3c4d-design-1" id: "設計の承認"
+  commit id: "実装"
+  checkout main
+  merge "sacty/task-1a2b3c4d" id: "実装の承認"
+```
 
 - ファイルの置き場所は、リポジトリやプロジェクトのコンテキストの規約に決まっていれば、オーケストレーターがそれに従います。
 - PR のレビュー・行へのコメント・通常のコメントを、指摘として取り込みます。

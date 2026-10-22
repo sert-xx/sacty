@@ -19,12 +19,24 @@ Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/packag
 
 ## Processes and communication
 
-```text
-sacty up (packages/cli)
- ├─ daemon (apps/daemon)  127.0.0.1:<--daemon-port; default 4710>
- │    ├─ gateway (AI relay, PF relay, MCP relay)  127.0.0.1
- │    └─ docker (agent containers, compose services)
- └─ web UI (apps/web, next start)  127.0.0.1:<--port; default 4700>
+```mermaid
+flowchart LR
+  browser["Browser"]
+  subgraph host["Host (everything listens on 127.0.0.1)"]
+    cli["sacty up<br/>(packages/cli)"]
+    web["Web UI<br/>(apps/web, next start)<br/>--port (default 4700)"]
+    subgraph daemon["Daemon (apps/daemon)"]
+      api["API /api/*<br/>--daemon-port (default 4710)"]
+      gateway["Gateway<br/>relays AI, PF, GitHub, and MCP"]
+    end
+  end
+  docker["docker<br/>agent containers<br/>compose services"]
+  cli -. "starts" .-> web
+  cli -. "starts" .-> daemon
+  browser -- "UI cookie" --> web
+  web -- "Bearer token<br/>(server side only)" --> api
+  daemon -- "docker run" --> docker
+  docker -- "per-run token" --> gateway
 ```
 
 - The daemon's API (`/api/*`) requires the token that `sacty up` creates on every start, as `Authorization: Bearer` (compared with `timingSafeEqual`), and returns 401 (`unauthorized`) if it does not match. It listens only on `127.0.0.1`.

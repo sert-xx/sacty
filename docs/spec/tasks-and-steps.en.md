@@ -10,6 +10,22 @@ Approval and Request changes are in [Approval and request changes](approval.en.m
 
 Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-superseded-verify-without-test-command.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md), [Have the Orchestrator choose the plan from the deliverable, allow Document, Operation only, and Design only for tasks with a repository, and let people specify the plan when creating a task](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)
 
+The overall flow of a task is as follows.
+
+```mermaid
+flowchart TB
+  created["Task created<br/>UI, intake, task split, or a watch fix"] --> orch["Orchestrator<br/>chooses the plan, base branch, test command, and so on"]
+  orch --> run["Run the next step<br/>step agent (implementation runs through verification and the PR)"]
+  run --> gated{"Step has an approval gate?"}
+  gated -- "no (preliminary investigation, etc.)" --> next
+  gated -- "yes" --> wait["Awaiting approval<br/>a person decides in the UI or by merging the PR"]
+  wait -- "request changes (from the chosen step)" --> run
+  wait -- "approve" --> next{"Steps remaining?"}
+  next -- "yes" --> review["Step review<br/>skip requirements, design, or reproduction that are not needed"]
+  review --> run
+  next -- "no" --> done["Completed (then audited)"]
+```
+
 ## How tasks are created
 
 `start` in `TaskCreated` records where the task came from.
@@ -268,6 +284,23 @@ Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. Th
 Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasksAtStartup`), `apps/daemon/src/main.ts`, `apps/daemon/src/config.ts` (`loadConfig`)
 
 ## Verifying the implementation
+
+The flow from the end of the Implementation step to awaiting approval is as follows.
+
+```mermaid
+flowchart TB
+  impl["Implementation step (agent)"] --> diff{"Diff available?"}
+  diff -- "no" --> p1["Pause (verify.diffUnavailable)"]
+  diff -- "yes" --> fr["Goal guardian's final review<br/>runs the test command in the implementation step's image and judges each viewpoint"]
+  fr -- "tool missing from the image" --> p2["Pause (verify.commandMissing)<br/>resume restarts from the final review"]
+  fr -- "fail" --> count{"3 in a row<br/>(MAX_VERIFY_ATTEMPTS)"}
+  count -- "not yet" --> impl
+  count -- "reached" --> p3["Pause (verification)"]
+  fr -- "pass" --> change{"Changes from the base commit?"}
+  change -- "yes" --> pr["sacty commits, pushes, and opens the implementation PR<br/>PullRequestPublished, StepSubmitted"]
+  change -- "no" --> nc["No PR<br/>NoChangesFound, StepSubmitted (approved in the UI)"]
+  pr --> wait["Implementation awaiting approval (approved by merging the PR)"]
+```
 
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`); sacty gets the diff and moves on to the Goal Guardian's final review. sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
 - The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`. The copy's .git is not the workspace's .git but a copy of the metadata saved before the agent touched it (tests can use git; the implementation shows as changes from the base). If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started and connected before the tests ([Services](services.en.md#when-services-start)).

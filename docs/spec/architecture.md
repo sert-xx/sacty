@@ -21,12 +21,24 @@ sacty は、npm workspaces の4つのパッケージでできている。
 
 ## プロセスと通信
 
-```text
-sacty up（packages/cli）
- ├─ デーモン（apps/daemon）  127.0.0.1:<--daemon-port。既定 4710>
- │    ├─ ゲートウェイ（AI の中継・PF の中継・MCP の中継）  127.0.0.1
- │    └─ docker（エージェントのコンテナ、compose のサービス）
- └─ 画面（apps/web, next start）  127.0.0.1:<--port。既定 4700>
+```mermaid
+flowchart LR
+  browser["ブラウザー"]
+  subgraph host["ホスト（どれも 127.0.0.1 で待ち受ける）"]
+    cli["sacty up<br/>（packages/cli）"]
+    web["画面<br/>（apps/web, next start）<br/>--port（既定 4700）"]
+    subgraph daemon["デーモン（apps/daemon）"]
+      api["API /api/*<br/>--daemon-port（既定 4710）"]
+      gateway["ゲートウェイ<br/>AI・PF・GitHub・MCP の中継"]
+    end
+  end
+  docker["docker<br/>エージェントのコンテナ<br/>compose のサービス"]
+  cli -. "起動" .-> web
+  cli -. "起動" .-> daemon
+  browser -- "画面の cookie" --> web
+  web -- "Bearer トークン<br/>（サーバー側だけ）" --> api
+  daemon -- "docker run" --> docker
+  docker -- "実行ごとのトークン" --> gateway
 ```
 
 - デーモンの API（`/api/*`）は、`sacty up` が起動のたびに作るトークンを `Authorization: Bearer` で求め（`timingSafeEqual` で比べる）、合わなければ 401（`unauthorized`）を返す。

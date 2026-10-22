@@ -125,6 +125,37 @@ remove:            # remove skills, MCP servers, and external platforms inherite
 - Inheritance goes up to 10 layers. If the same repository, directory, and ref appear twice (a cycle), sacty stops and shows the reason.
 - If a lower layer tries to override or remove a locked item, a warning is recorded and the upper layer's item is used.
 
+For example, with the following inheritance, the layers are stacked on top of the default context, from the top down.
+
+```mermaid
+flowchart TB
+  default["sacty default context"]
+  org["git@github.com:acme/sacty-context.git (main)<br/>organization-wide context"]
+  base["contexts/base in acme/monorepo<br/>team-wide context"]
+  team["contexts/team in acme/monorepo<br/>context specified in the project settings"]
+  default -- "layered onto" --> org
+  org -- "layered onto" --> base
+  base -- "layered onto" --> team
+  team -. "extends: ../base" .-> base
+  base -. "extends: git@github.com:acme/sacty-context.git#main" .-> org
+```
+
+Locking and removal work like this.
+
+```mermaid
+flowchart LR
+  subgraph upper["Upper layer (organization)"]
+    u["skills: review, guide<br/>locked.skills: review"]
+  end
+  subgraph lower["Lower layer (project)"]
+    l["skills: review, deploy<br/>remove.skills: guide"]
+  end
+  subgraph result["Skills passed to the agent"]
+    r["review (the upper one, with a warning)<br/>deploy"]
+  end
+  upper --> lower --> result
+```
+
 ## mcp.yaml
 
 ```yaml
@@ -149,6 +180,26 @@ servers:
 - Both HTTP servers and `command` servers are used through sacty's gateway by default. Step agents receive only the gateway URL (`/ctx-mcp/<name>`) and a per-run token. It becomes an HTTP MCP server in both Claude Code's `mcp.json` and Codex's `config.toml`.
 - To run a server inside the container (for HTTP, connect directly from the container), write `via_gateway: false` for that server. Such servers are started and connected inside the container, and secret values are passed to the container as environment variables.
 - If a server has the same name as one in `gateway.mcp_servers` in `config.yaml`, the one in `gateway.mcp_servers` is used and a warning is recorded in the Activity (the one in `mcp.yaml` is not started).
+
+Where MCP servers run is shown below.
+
+```mermaid
+flowchart LR
+  subgraph container["Step agent container"]
+    agent["Agent"]
+    inbox["command server with<br/>via_gateway: false"]
+  end
+  subgraph host["Host running sacty"]
+    gw["Gateway"]
+    cmd["command server (default)<br/>runs in a copy of the layer's repository"]
+  end
+  remote["url server"]
+  agent -- "/ctx-mcp/name<br/>(per-run token)" --> gw
+  gw --> cmd
+  gw -- "adds header secrets" --> remote
+  agent --> inbox
+  agent -. "url with via_gateway: false" .-> remote
+```
 
 ### HTTP MCP servers
 

@@ -8,6 +8,29 @@
 
 関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[ゲートウェイが受け取る本文に上限を設ける](../adr/20261018-0450-gateway-body-limit.md)
 
+ゲートウェイを通る経路は次のとおり。
+
+```mermaid
+flowchart LR
+  subgraph container["エージェントのコンテナ"]
+    agent["Claude Code・Codex<br/>実行ごとのトークンだけを持つ"]
+  end
+  gw["ゲートウェイ<br/>デーモンの中・127.0.0.1<br/>トークンごとに AI の接続先・MCP・<br/>プロジェクトの PF・gh のアカウントを結びつける"]
+  secrets["キーチェーン・1Password・gh<br/>認証の値はホストで取り出す"]
+  ai["AI の接続先<br/>Bedrock・openai-compatible"]
+  pf["組織内 PF の API"]
+  gh["GitHub の API<br/>読み取りだけ"]
+  urlmcp["コンテキストの URL 型の MCP サーバー"]
+  hostmcp["ホストで起動した MCP サーバー<br/>gateway.mcp_servers・コンテキストのコマンド型"]
+  agent -- "/openai/v1/…<br/>/r/トークン/pf/…<br/>/r/トークン/github/…<br/>/ctx-mcp/名前・/mcp/名前" --> gw
+  secrets -. "認証の値" .-> gw
+  gw --> ai
+  gw --> pf
+  gw --> gh
+  gw --> urlmcp
+  gw --> hostmcp
+```
+
 ## 待ち受けとトークン
 
 - `127.0.0.1` の空いているポートで待ち受ける（ポートを決める設定は無い）。
@@ -129,6 +152,30 @@ sacty はキーを伏せてから、理由を600文字に切り詰める。
 - キーを本文・ヘッダーで送る窓口（`query` にキーを入れない）の失敗の本文に、短いキーが現れたとき（これまでどおり。4文字以上を伏せる）。
 
 ### 中継の振る舞い
+
+中継の流れは次のとおり。
+
+```mermaid
+sequenceDiagram
+  participant A as エージェント
+  participant G as ゲートウェイ
+  participant T as トークンの窓口
+  participant P as PF（upstream）
+  A->>G: /r/トークン/pf/名前/パス
+  G->>G: ホストの PF、無ければトークンのプロジェクトの PF を探す（無ければ 404）
+  G->>G: allow と照合する（合わなければ 403 と使える API の一覧）
+  opt auth.token で、トークンが無いか期限の30秒前を過ぎた
+    G->>T: キーを入れて取得する
+    T-->>G: token_path のトークンと expires_in_path の期限
+  end
+  G->>P: エージェントの認証・cookie を除き、認証のヘッダーを付けて送る
+  P-->>G: 応答
+  opt auth.token の PF で 401・403
+    G->>T: トークンを取り直す
+    G->>P: 1回だけ送り直す
+  end
+  G-->>A: 応答（リダイレクトはたどらない）
+```
 
 - 探す順は、ホストの PF、無ければその実行のトークンに結びつけたプロジェクトのコンテキストの PF。
   ほかのプロジェクトのタスクのトークンでは見つからない（404）。

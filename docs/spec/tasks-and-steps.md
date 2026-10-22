@@ -11,6 +11,22 @@
 
 関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)
 
+タスクの進み方の全体は次のとおり。
+
+```mermaid
+flowchart TB
+  created["タスクの作成<br/>画面・取り込み・タスク分割・監視の修正"] --> orch["オーケストレーター<br/>進め方（plan）・ベースブランチ・テストのコマンドなどを選ぶ"]
+  orch --> run["次の工程を実行する<br/>工程のエージェント（実装は検証と PR の作成まで）"]
+  run --> gated{"承認ゲートのある工程か"}
+  gated -- "いいえ（前段の調査など）" --> next
+  gated -- "はい" --> wait["承認待ち<br/>画面か PR のマージで人が判断する"]
+  wait -- "差し戻し（選んだ工程から）" --> run
+  wait -- "承認" --> next{"まだの工程がある"}
+  next -- "ある" --> review["工程の見直し<br/>要らない要求要件・設計・再現を飛ばす"]
+  review --> run
+  next -- "無い" --> done["完了（監査へ）"]
+```
+
 ## タスクの作られ方
 
 `TaskCreated` の `start` で、どこから作られたかを持つ。
@@ -446,6 +462,23 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 コード: `apps/daemon/src/activity.ts`（`purgeLegacyPrStepTasks`・`purgeLegacyTasksAtStartup`）、`apps/daemon/src/main.ts`、`apps/daemon/src/config.ts`（`loadConfig`）
 
 ## 実装の検証
+
+実装の工程が終わってから承認待ちになるまでの流れは次のとおり。
+
+```mermaid
+flowchart TB
+  impl["実装の工程（エージェント）"] --> diff{"差分を取れる"}
+  diff -- "いいえ" --> p1["一時停止（verify.diffUnavailable）"]
+  diff -- "はい" --> fr["ゴールガーディアンの最終レビュー<br/>実装の工程のイメージで、テストのコマンドを実行して観点ごとに判定する"]
+  fr -- "ツールがイメージに無い" --> p2["一時停止（verify.commandMissing）<br/>再開すると最終レビューから"]
+  fr -- "不合格" --> count{"続けて3回<br/>（MAX_VERIFY_ATTEMPTS）"}
+  count -- "まだ" --> impl
+  count -- "達した" --> p3["一時停止（verification）"]
+  fr -- "合格" --> change{"起点から変更がある"}
+  change -- "ある" --> pr["sacty がコミット・プッシュして実装の PR を作る<br/>PullRequestPublished・StepSubmitted"]
+  change -- "無い" --> nc["PR を作らない<br/>NoChangesFound・StepSubmitted（画面で承認）"]
+  pr --> wait["実装の承認待ち（PR のマージで承認）"]
+```
 
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、sacty は差分を取って、ゴールガーディアンの最終レビューに進む。
   sacty はテストを別のコンテナで実行しない（テストは、ゴールガーディアンが最終レビューの中で実行する）。

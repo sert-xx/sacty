@@ -8,6 +8,21 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 
 ## Layers
 
+Layers are stacked from the top, and a lower layer points to an upper one with `extends`.
+
+```mermaid
+flowchart TB
+  d["sacty default context (top)<br/>apps/daemon/default-context, sacty-default"]
+  a["Topmost ancestor in the inheritance chain"]
+  m["…"]
+  p["Context the project specifies (bottom)<br/>repo, ref, path"]
+  d -- "layered onto" --> a
+  a -- "layered onto" --> m
+  m -- "layered onto" --> p
+  p -. "extends" .-> m
+  m -. "extends" .-> a
+```
+
 - The layers, from the top, are as follows.
   1. sacty's default context (`apps/daemon/default-context/`). The bundled copy is read without fetching. Its name is `sacty-default`, and the SHA-256 of its contents is recorded instead of a commit.
   2. The topmost ancestor in the context repository's inheritance chain → …
@@ -160,6 +175,22 @@ Code: `apps/daemon/src/context.ts` (`CONTEXT_ENTRIES`, `assertPlainEntries`, `re
 
 ## Composition rules
 
+The composition flows as follows (the detailed rules are in the list below).
+
+```mermaid
+flowchart LR
+  subgraph layer["For each layer, from the top (per skill, MCP, and PF name)"]
+    direction TB
+    r["1. Process remove<br/>if an upper layer locked it, keep it and warn context.lockedRemove"]
+    i["2. Add the layer's items<br/>a lower layer overrides the same name<br/>if locked, keep the upper one and warn context.lockedOverride"]
+    l["3. Register locked"]
+    r --> i --> l
+  end
+  host["Add the host's gateway.mcp_servers and gateway.platforms<br/>the host's entry wins on the same name (context.hostMcpOverride, context.hostPlatform)"]
+  out["Composition result<br/>recorded in ContextResolved"]
+  layer --> host --> out
+```
+
 - Skills, MCP, and PFs are processed by name, layer by layer from the top. Within one layer, the steps are as follows.
   1. The layer's `remove` is applied. If a higher layer has it `locked`, it is kept with the warning `context.lockedRemove`.
   2. The layer's entries are added. The same name is overwritten by the lower layer. For a `locked` name, the higher one is kept with the warning `context.lockedOverride`.
@@ -213,6 +244,21 @@ Ones that differ are not placed, and `agents.tierConnectionDiffers` is left as a
 - The cost of a run that placed tiers is recorded as estimated (`estimated`). This is because a reviewer may run with a model other than the parent's, while the cost can only be computed from the parent's usage and unit prices ([Agent execution](agent-execution.en.md#authentication)).
 
 ### Passing MCP servers
+
+Where an MCP server runs and what the agent receives are decided as follows.
+
+```mermaid
+flowchart TB
+  s["Server in mcp.yaml"] --> same{"Same name exists in<br/>gateway.mcp_servers"}
+  same -- "yes" --> hostmcp["Use the host MCP server (warning)<br/>the agent gets /mcp/name"]
+  same -- "no" --> via{"via_gateway is true and<br/>a gateway exists"}
+  via -- "yes, command type" --> hc["The gateway starts it on the host<br/>working directory is a copy of the layer"]
+  via -- "yes, URL type" --> hu["The gateway relays to the upstream<br/>header secrets are added on the host"]
+  via -- "no, command type" --> cc["Started inside the container<br/>secrets are passed as environment variables"]
+  via -- "no, URL type" --> cu["The container connects directly"]
+  hc --> gwurl["The agent gets only /ctx-mcp/name and<br/>an Authorization with the per-run token"]
+  hu --> gwurl
+```
 
 - MCP secrets are written in the files as environment variables `SACTY_MCP_SECRET_<number>`, and the values are passed as container environment variables (retrieved on the host).
 - Secrets in the layers' `mcp.yaml` and `platforms.yaml` have already been retrieved together with the other secrets ([Secrets](secrets.en.md#retrieving-everything-at-startup)). They are retrieved at daemon startup, when secrets are retrieved again, and when the project is saved. Ones not retrieved yet (such as ones added to a layer later) are retrieved when used.

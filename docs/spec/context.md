@@ -10,6 +10,21 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 
 ## 層
 
+層は上位から重ね、下位の層が `extends` で上位の層を指す。
+
+```mermaid
+flowchart TB
+  d["sacty の既定のコンテキスト（最上位）<br/>apps/daemon/default-context・sacty-default"]
+  a["継承の鎖の最も上の祖先"]
+  m["…"]
+  p["プロジェクトが指定したコンテキスト（最下位）<br/>repo・ref・path"]
+  d -- "重ねる" --> a
+  a -- "重ねる" --> m
+  m -- "重ねる" --> p
+  p -. "extends" .-> m
+  m -. "extends" .-> a
+```
+
 - 層の順は、上位から次のとおり。
   1. sacty の既定のコンテキスト（`apps/daemon/default-context/`）。
      取得せずに同梱のものを読む。
@@ -208,6 +223,22 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 
 ## 合成の規則
 
+合成の流れは次のとおり（詳しい規則は下の箇条書き）。
+
+```mermaid
+flowchart LR
+  subgraph layer["層ごとに、上位から順に（スキル・MCP・PF の名前ごと）"]
+    direction TB
+    r["1. remove を処理する<br/>上位が locked なら残して context.lockedRemove"]
+    i["2. 項目を入れる<br/>同じ名前は下位が上書き<br/>locked なら上位を残して context.lockedOverride"]
+    l["3. locked を登録する"]
+    r --> i --> l
+  end
+  host["ホストの gateway.mcp_servers・gateway.platforms を足す<br/>同じ名前はホストのものを使う（context.hostMcpOverride・context.hostPlatform）"]
+  out["合成の結果<br/>ContextResolved に記録する"]
+  layer --> host --> out
+```
+
 - スキル・MCP・PF は、名前ごとに、層を上位から順に処理する。
   1つの層では、次の順に処理する。
   1. その層の `remove` を処理する。
@@ -277,6 +308,21 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
   担当が親と違うモデルで動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないためである（[エージェントの実行](agent-execution.md#認証)）。
 
 ### MCP の渡し方
+
+MCP サーバーの動く場所と、エージェントに渡すものは、次のように決まる。
+
+```mermaid
+flowchart TB
+  s["mcp.yaml のサーバー"] --> same{"gateway.mcp_servers に<br/>同じ名前がある"}
+  same -- "ある" --> hostmcp["ホストの MCP サーバーを使う（警告）<br/>エージェントには /mcp/名前"]
+  same -- "無い" --> via{"via_gateway が true で<br/>ゲートウェイがある"}
+  via -- "はい・コマンド型" --> hc["ゲートウェイがホストで起動する<br/>作業ディレクトリは層の写し"]
+  via -- "はい・URL 型" --> hu["ゲートウェイが上流に中継する<br/>ヘッダーの秘密情報はホストで付ける"]
+  via -- "いいえ・コマンド型" --> cc["コンテナの中で起動する<br/>秘密情報は環境変数で渡す"]
+  via -- "いいえ・URL 型" --> cu["コンテナから直接つなぐ"]
+  hc --> gwurl["エージェントには /ctx-mcp/名前 と<br/>実行ごとのトークンの Authorization だけ"]
+  hu --> gwurl
+```
 
 - MCP の秘密情報は、ファイルには `SACTY_MCP_SECRET_<番号>` の環境変数として書き、値はコンテナの環境変数で渡す（ホストで取り出す）。
 - 層の `mcp.yaml`・`platforms.yaml` の秘密情報は、ほかの秘密情報とまとめて取り出してある（[秘密情報](secrets.md#起動のときのまとめての取り出し)）。
