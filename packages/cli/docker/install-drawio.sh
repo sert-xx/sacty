@@ -48,7 +48,10 @@ command -v curl >/dev/null 2>&1 || warn "curl が無い"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-curl -fsSL --retry 3 -o "$dir/$file" "$BASE_URL/$file" || warn "$BASE_URL/$file を取得できない"
+# 接続や転送が止まっても、期限内に警告して続ける（接続 30 秒、60 秒のあいだ 1KB/s を下回れば打ち切り、1 回 15 分・再試行を含めて 20 分まで）
+curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 --max-time 900 \
+  --retry 3 --retry-max-time 1200 -o "$dir/$file" "$BASE_URL/$file" \
+  || warn "$BASE_URL/$file を取得できない"
 if ! echo "$sha  $dir/$file" | sha256sum -c - >/dev/null; then
   echo "sacty: 取得した draw.io のパッケージ（$file）のハッシュが合いません。取得したものが壊れているか、すり替わっています。" >&2
   exit 1

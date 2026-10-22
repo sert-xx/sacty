@@ -26,11 +26,24 @@ The image includes the following commands that agents use in their work. Command
 | `shellcheck` | Check shell scripts |
 | `drawio` | Convert and export draw.io diagrams ([The draw.io CLI](#the-drawio-cli) below) |
 
-- All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). OS security updates are
-  picked up when you rebuild the image with `npx sacty image build`.
+- All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). You get the versions current when the image was built.
+- `npx sacty image build` uses Docker's build cache, so rebuilding alone may not fetch the packages again. To pick up OS security
+  updates, use a newer base image (fetch it again with `docker pull <base image>`, or change to the tag of an updated version), or clear the build cache with `docker builder prune`
+  and then rebuild. Commands the base image already has are not reinstalled, so their updates come from the base image.
 - Commands that cannot be installed, for example because the package mirror is unreachable, are reported as warnings in the build log, and the image is built anyway (agents use other means instead).
-  On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available (to install them, enable EPEL with
-  `run` of a per-language image and list them in `packages`).
+  On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available. Because `packages` are installed before `run`,
+  do not list EPEL packages in `packages`; install them in `run`, after the command that enables EPEL (if your organization has an EPEL mirror,
+  use a command that places that repository's settings instead of `epel-release`).
+
+  ```yaml
+  images:
+    rocky:
+      description: Rocky Linux 9
+      base_image: registry.example.com/ci/rocky:9
+      run:
+        - dnf install -y epel-release
+        - dnf install -y ripgrep fd-find ShellCheck
+  ```
 
 ### The draw.io CLI
 

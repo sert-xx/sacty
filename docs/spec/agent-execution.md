@@ -176,14 +176,16 @@ docker のコンテナの中で1回実行して行う。テストは、sacty が
     Debian・Ubuntu 系の `fdfind` は `/usr/local/bin/fd` からも使える。
   - draw.io の CLI（`packages/cli/docker/install-drawio.sh`）：build-arg `SACTY_DRAWIO`（既定 `1`。`image_build.drawio` が `false` なら `0`）が `1` のとき、
     draw.io Desktop の公式のリリース（`jgraph/drawio-desktop` の `v32.4.1`）の deb（apt-get。`amd64`・`arm64`）か rpm（dnf・yum。`x86_64`・`aarch64`）を
-    `curl` で取り、版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・
+    `curl`（接続 30 秒・60 秒のあいだ 1KB/s を下回れば打ち切り・1 回 900 秒・再試行 3 回を含めて 1200 秒まで）で取り、版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・
     `alsa-lib` と一緒に入れる。CJK のフォント（`fonts-noto-cjk`・`google-noto-sans-cjk-ttc-fonts`）は、入れられなければ警告して続ける。
     ハッシュが合わなければ止め、ほかの理由（取得できない・パッケージの管理のコマンドや `curl` が無い・アーキテクチャが違う・入れられない）では警告して続ける。
     入れたら `/opt/drawio/chrome-sandbox` の setuid を外し（`0755`）、`/tmp/.X11-unix` を `1777` で作り、`/opt/sacty/bin/drawio` を
     `packages/cli/docker/drawio-shim.cjs` へのリンクにする。
   - `drawio`（`drawio-shim.cjs`）は、`/opt/drawio/drawio` を `--no-sandbox --disable-gpu` と受けた引数で起動する。`DISPLAY` が無ければ `Xvfb -displayfd`
     で空いている番号の仮想の画面を起動し、終わったら止めて、終わるまで待つ（3 秒で終わらなければ `SIGKILL`）。標準エラー出力から `ERROR:dbus/`・`ERROR:bus.cc` の行を除き、
-    終了コードはそのまま返す。仮想の画面を起動できなければ、理由を示して終了コード 1 で終わる。
+    終了コードはそのまま返す。標準エラー出力は UTF-8 として復号してから行に分ける。仮想の画面を起動できなければ、理由を示して終了コード 1 で終わる。
+    SIGINT・SIGTERM を受けたら、draw.io の実行中は同じシグナルを draw.io に送り、まだ起動していなければ（Xvfb の起動を待っている間など）Xvfb を止めて
+    終わるのを待ってから、128 にシグナルの番号を足した終了コードで終わる。
 - イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
 コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/drawio-shim.cjs`

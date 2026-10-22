@@ -26,11 +26,24 @@
 | `shellcheck` | シェルスクリプトを検査する |
 | `drawio` | draw.io の図を変換・書き出す（下の [draw.io の CLI](#drawio-の-cli)） |
 
-- どれもオープンソースのソフトウェアで、OS の配布元のパッケージ（元のイメージに設定してあるミラー）から入れます。OS のセキュリティの更新は、
-  `npx sacty image build` でイメージを作り直すと入ります。
+- どれもオープンソースのソフトウェアで、OS の配布元のパッケージ（元のイメージに設定してあるミラー）から入れます。入るのは、イメージを作った時点の版です。
+- `npx sacty image build` は Docker のビルドのキャッシュを使うので、作り直しただけでは、パッケージを取り直さないことがあります。OS のセキュリティの
+  更新を入れるときは、元のイメージを新しいものにする（`docker pull <元のイメージ>` で取り直す、更新した版のタグに変える）か、`docker builder prune` で
+  ビルドのキャッシュを消してから作り直してください。元のイメージにすでにあるコマンドは入れ直さないので、その更新は元のイメージの側で入れます。
 - パッケージのミラーに届かないなどで入れられなかったコマンドは、ビルドのログに警告を出して、そのまま作ります（エージェントは別の方法で代えます）。
-  RHEL 系の元のイメージでは、`rg`・`fd`・`shellcheck` は EPEL にしか無いので、EPEL を使えなければ入りません（入れるときは、言語ごとのイメージの
-  `run` で EPEL を有効にし、`packages` に書いてください）。
+  RHEL 系の元のイメージでは、`rg`・`fd`・`shellcheck` は EPEL にしか無いので、EPEL を使えなければ入りません。`packages` は `run` より先に入れるので、
+  EPEL のパッケージは `packages` に書かず、EPEL を有効にするコマンドの後に、同じ `run` の中で入れてください（組織の EPEL のミラーがあれば、
+  `epel-release` の代わりに、そのリポジトリの設定を置くコマンドにします）。
+
+  ```yaml
+  images:
+    rocky:
+      description: Rocky Linux 9
+      base_image: registry.example.com/ci/rocky:9
+      run:
+        - dnf install -y epel-release
+        - dnf install -y ripgrep fd-find ShellCheck
+  ```
 
 ### draw.io の CLI
 
