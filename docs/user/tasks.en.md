@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
+<!-- Code: apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -280,6 +280,24 @@ For example, you can rerun only a step that stopped on an error or was sent back
 ## Task list
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+
+### Find and filter tasks
+
+Use the fields above "All tasks" to filter the list.
+Only tasks that match every filter are shown.
+
+| Field | How it filters |
+| --- | --- |
+| Search | Tasks whose title contains the text (case-insensitive) |
+| Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
+| Started from | Where the task started, such as Sacty or GitHub Issue |
+| Repository | The repository the task works on. "Not decided / No repository" is for tasks whose repository is not decided yet |
+| Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
+
+The count (such as "1 of 5") is shown on the right of the fields.
+Press "Clear filters" to go back to all tasks.
+The filters stay only while the screen is open (automatic updates keep them; reloading or moving to another project clears them).
+The "Needs you" cards are not filtered.
 
 ## Hints on the screen
 

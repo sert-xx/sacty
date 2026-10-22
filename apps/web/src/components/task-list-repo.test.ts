@@ -56,6 +56,7 @@ describe("タスクの一覧のリポジトリ名（PBI-141）", () => {
       repoless: false,
       steps: [],
       status: { text: "実行待ち", tone: "waiting" },
+      createdAt: "2026-10-01T12:00:00.000Z",
       ...patch,
     });
     const data: TaskListData = {

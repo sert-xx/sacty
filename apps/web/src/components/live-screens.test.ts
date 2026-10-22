@@ -453,6 +453,7 @@ const row = (id: string, title: string, status: TaskRow["status"]): TaskRow => (
   repoless: false,
   steps: [],
   status,
+  createdAt: "2026-10-01T12:00:00.000Z",
 });
 
 describe("タスクの一覧：新しいタスク・状態の変化が、操作しなくても間隔のうちに出る（PBI-108）", () => {
@@ -528,7 +529,7 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
     render(
       h(LiveTaskList, { projectId: "p1", initial: still, initialVersion: liveVersion(still) }),
     );
-    expect(text()).toContain("あなたの出番");
+    expect(container.querySelector("#needs-you")?.textContent).toBe("あなたの出番");
     server = {
       ...still,
       needsYou: [],
@@ -543,7 +544,8 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
     expect(container.querySelector('[data-testid="task-row-b"]')?.textContent).toContain(
       "実行待ち",
     );
-    expect(text()).not.toContain("あなたの出番");
+    // 「あなたの出番」の欄が消える（絞り込みの状態の選択肢には、同じ語が残る）
+    expect(container.querySelector("#needs-you")).toBeNull();
   });
 });
 
