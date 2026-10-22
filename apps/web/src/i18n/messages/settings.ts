@@ -30,7 +30,7 @@ const ja = {
   reviewRequested: "自分にレビューが依頼された PR を取り込む",
   reviewMentionSelf: "レビューの投稿で、PR の作者ではなく自分にメンションする",
   reviewMentionSelfHint:
-    "Off（既定）なら、投稿するレビューの先頭で PR の作者にメンションします。On にすると、作者の代わりに、プロジェクトで選んだ GitHub アカウント（投稿する自分）にメンションします。変わるのは本文の @ メンションの相手だけです。レビューはこれまでどおり PR に公開され、PR を購読している作者には GitHub の通常の通知が届くことがあります。",
+    "On にすると、PR の作者の代わりに、プロジェクトで選んだ GitHub アカウント（自分）にメンションします。変わるのはメンションの相手だけです。レビューは公開され、作者に GitHub の通常の通知が届くことがあります。",
   reviewLabel: "PR のレビュー用のラベル",
   reviewPlaceholder: "例：sacty-review",
   reviewOff: "止まっています。",
@@ -138,7 +138,7 @@ const en: SettingsMessages = {
   reviewRequested: "Import PRs that request my review",
   reviewMentionSelf: "Mention me instead of the PR author in posted reviews",
   reviewMentionSelfHint:
-    "When off (the default), a posted review starts by mentioning the PR author. When on, it mentions the GitHub account chosen in the project (you, the poster) instead. Only the @ mention in the body changes. The review is still posted publicly on the PR, and the author, who usually follows the PR, may still get GitHub's usual notification.",
+    "When on, a posted review mentions the GitHub account chosen in the project (you) instead of the PR author. Only the mention changes. The review is still public, and the author may still get GitHub's usual notification.",
   reviewLabel: "Label for PR reviews",
   reviewPlaceholder: "e.g. sacty-review",
   reviewOff: "Stopped.",
