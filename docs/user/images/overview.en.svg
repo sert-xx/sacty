@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 470" width="1040" height="470" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/overview.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">sacty at a glance</title>
-  <desc id="desc">You create and approve tasks in the web UI. The daemon starts agent containers and handles GitHub intake and PRs. Agents use internal PFs, MCP servers, and GitHub reads through the gateway with a per-run token.</desc>
+  <desc id="desc">You create and approve tasks in the web UI. The daemon starts agent containers and handles GitHub intake and PRs. Agents use internal PFs, MCP servers, and GitHub reads through the gateway with a per-run token. AI is called directly, or through the gateway with via_gateway in providers.codex.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -47,9 +47,10 @@
   <text x="220" y="76" class="zone" style="fill:var(--green)">The machine running sacty</text>
   <path d="M160 224 L180 224 Q190 224 190 214 L190 144 Q190 134 200 134 L230 134" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M450 134 L500 134" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M730 124 L800 114" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M615 86 L615 72 Q615 62 625 62 L770 62 Q780 62 780 72 L780 104 Q780 114 790 114 L800 114" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M615 182 L615 236" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M730 284 L800 258" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M730 284 L800 246" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M450 380 L770 380 Q780 380 780 370 L780 282 Q780 272 790 272 L800 272" class="muted" style="" marker-end="url(#ah-arrow)"/>
   <path d="M500 284 L350 284 Q340 284 340 294 L340 356" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M450 400 L800 400" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M340 432 L340 446 Q340 456 350 456 L1020 456 Q1030 456 1030 446 L1030 180 Q1030 170 1020 170 L919 170 Q910 170 910 161 L910 152" class="muted" style="" marker-end="url(#ah-arrow)"/>
@@ -89,12 +90,14 @@
   <text x="816" y="416" class="sub">Internal APIs, etc.</text>
   <rect x="57.7" y="167" width="94.6" height="18" rx="4" class="label-bg"/>
   <text x="105" y="180" class="label" text-anchor="middle">create, approve</text>
-  <rect x="729.8" y="133" width="70.5" height="18" rx="4" class="label-bg"/>
-  <text x="765" y="146" class="label" text-anchor="middle">intake, PRs</text>
+  <rect x="661.8" y="53" width="70.5" height="18" rx="4" class="label-bg"/>
+  <text x="697" y="66" class="label" text-anchor="middle">intake, PRs</text>
   <rect x="620" y="201" width="45.9" height="18" rx="4" class="label-bg"/>
   <text x="625" y="214" class="label" text-anchor="start">starts</text>
-  <rect x="742.5" y="291" width="52.6" height="18" rx="4" class="label-bg"/>
-  <text x="795" y="304" class="label" text-anchor="end">AI calls</text>
+  <rect x="743.3" y="249" width="43.4" height="18" rx="4" class="label-bg"/>
+  <text x="765" y="262" class="label" text-anchor="middle">direct</text>
+  <rect x="783" y="317" width="98.1" height="18" rx="4" class="label-bg"/>
+  <text x="788" y="330" class="label" text-anchor="start">with via_gateway</text>
   <rect x="377.4" y="265" width="85.2" height="18" rx="4" class="label-bg"/>
   <text x="420" y="278" class="label" text-anchor="middle">per-run token</text>
   <rect x="650.5" y="447" width="79" height="18" rx="4" class="label-bg"/>

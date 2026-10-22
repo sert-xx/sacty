@@ -39,7 +39,7 @@ Mermaid は配置を自動で決めるので、入れ子の枠をまたぐ矢印
   - Mermaid のまま色を付ける：配置を決められず、崩れやすさは直らない。
 - スクリーンショットを架空のデータで撮るのは、実在の組織や秘密の値を写さず、撮り直しても同じ画面にするためである。
   実際のタスクを動かすには Docker と AI が要り、撮るたびに結果が変わる。
-- Playwright は撮るときだけ使い、依存には入れない（`npm install --no-save playwright`）。
+- Playwright は撮るときだけ使い、依存には入れない（`npm install --no-save playwright` と、ブラウザーが無ければ `npx playwright install chromium`）。
   ふだんの開発とテストには要らないためである。
 
 ## 影響

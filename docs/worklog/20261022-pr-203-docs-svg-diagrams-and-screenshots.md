@@ -39,13 +39,16 @@ PR #202 で入れた Mermaid の図を、色・アイコン・配置を整えた
 - `node scripts/docs-diagrams/build.mjs --check`：すべて定義と一致（幅の警告は、英語の題 2 つがカードの幅ぎりぎりのもので、描画して収まることを確かめた）。
 - 図は日英・ライトとダークで Chromium で描画し、目で確かめた。重なっていた文言・矢印は配置を直した。
 - スクリーンショットは `npm run build` の後に `node scripts/docs-screenshots/capture.mjs ja en` で撮り、16 枚を目で確かめた。
+- レビューの対応の後も `npx vitest run tests/docs`・`npm run lint` が通り、直した全体像の図を日英で描画して確かめた。
 - GitHub の上での表示（SVG の中のダークの切り替えを含む）は確かめていない。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| （まだ無い） | |
+| [要修正] ブラウザーを起動できないと、`try` の外なので `sacty up` と一時のディレクトリが残り、ポートを占有する | `sacty up` を起動する前から `try`/`finally` で囲み、ブラウザーの `close()` が失敗しても子プロセスを止めて一時のディレクトリを消すようにした。`PLAYWRIGHT_BROWSERS_PATH` を無い場所にして起動に失敗させ、プロセスと一時のディレクトリが残らず、ポートが空くことを確かめた |
+| [提案] Playwright のブラウザーが無い環境では `npm install --no-save playwright` だけでは撮れない | 撮り方の手順（`capture.mjs` の先頭）と ADR に `npx playwright install chromium` を足した |
+| [提案] 全体像の図で、ゲートウェイを通る AI の呼び出しが消えている | ゲートウェイから AI の接続先への点線（`providers.codex` の `via_gateway` のとき）を戻し、直接の矢印に「直接」と書いた（日英）。重なっていた「取り込み・PR の作成」の文言も、矢印の通り道を変えて重ならないようにした |
 
 ## 残したこと
 
