@@ -18,6 +18,30 @@ const ja = {
   },
   /** 工程の列の補足。 */
   stepsHint: "タスクの内容と対象リポジトリを読んで、オーケストレーターが選びます。",
+  /** 一覧の絞り込み。 */
+  filter: {
+    label: "タスクを絞り込む",
+    query: "検索",
+    queryPlaceholder: "題に含む文字",
+    from: "開始時期（から）",
+    to: "開始時期（まで）",
+    start: "開始地点",
+    repo: "リポジトリ",
+    status: "状態",
+    all: "すべて",
+    noRepo: "未定・リポジトリ無し",
+    tone: {
+      active: "終わっていない",
+      working: "進行中",
+      waiting: "待ち",
+      person: "あなたの出番",
+      completed: "完了",
+      cancelled: "中止",
+    },
+    clear: "条件をクリア",
+    count: (shown: number, total: number) => `${total}件中 ${shown}件`,
+    none: "条件に合うタスクはありません。",
+  },
 };
 
 export type TasksMessages = typeof ja;
@@ -40,6 +64,29 @@ const en: TasksMessages = {
     status: "Status",
   },
   stepsHint: "The Orchestrator chooses them from the task and the target repository.",
+  filter: {
+    label: "Filter tasks",
+    query: "Search",
+    queryPlaceholder: "Text in the title",
+    from: "Start date (from)",
+    to: "Start date (to)",
+    start: "Started from",
+    repo: "Repository",
+    status: "Status",
+    all: "All",
+    noRepo: "Not decided / No repository",
+    tone: {
+      active: "Not finished",
+      working: "In progress",
+      waiting: "Waiting",
+      person: "Needs you",
+      completed: "Completed",
+      cancelled: "Cancelled",
+    },
+    clear: "Clear filters",
+    count: (shown, total) => `${shown} of ${total}`,
+    none: "No tasks match the filters.",
+  },
 };
 
 export const tasks = { ja, en };

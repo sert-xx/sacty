@@ -63,6 +63,13 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - After creating or importing a project, the UI moves to that project's settings (`/projects/<ID>/settings`).
   - "Tasks" (the breadcrumb) on the task details goes back to the task list of the task's project. Before the task is read and while the daemon is unreachable, it goes back to `/projects/current/tasks`.
 - The ID in the URL decides the project of a project screen. An ID that is not in the daemon's project list is 404.
+- "All tasks" in the task list can be filtered on the screen (`TaskFilterBar`, `matchesFilter`). The filters are not shown when there are no tasks.
+  - Filters: text in the title (case-insensitive), start date (the creation time `createdAt` turned into a day in the screen's time zone; the from and to days are included), where the task started, the name of the repository it works on ("Not decided / No repository" for tasks without one), and the kind of status (`statusTone`; "Not finished" is anything but completed and cancelled). Empty filters do not filter. Only rows that match every filter are shown.
+  - The choices for where the task started and the repository are only those in the list (repositories sorted by name).
+    A selected value stays among the choices even when a refetch removes it from the list (`filterOptions`).
+  - The filters live only in the browser and are not kept in the URL or a cookie. The 3-second refetch keeps them; moving to another project's list clears them.
+  - The count ("shown of total") is shown, and "Clear filters" while any filter is set. When no row matches, the screen says so.
+  - The "Needs you" cards are not filtered.
 - The dashboard lays out sections (cards). They sit side by side when there is room and stack otherwise (a single section takes the full width). The order is: Needs you → Why tasks are paused → Open tasks → Cost and budget → Step queue → Intake → Throughput → Quality signals. Every section spans all projects, and tasks of deleted projects are neither shown nor counted.
   - The data comes through the following three routes. Neither all tasks nor the activity log is carried every 3 seconds.
     - The open tasks (`GET /api/tasks?open=1`; finished tasks are `isFinished`). This avoids carrying the deliverables of completed tasks every 3 seconds. All tasks including completed ones can be tens to hundreds of MB per fetch, depending on the size of the deliverables. The header's notices (tasks that need you) are fetched the same way.
@@ -127,6 +134,7 @@ Each dashboard section contains the following.
 
 Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
 `apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
+`apps/web/src/components/task-list.tsx` (`TaskFilterBar`), `apps/web/src/lib/task-filter.ts` (`matchesFilter`, `filterOptions`, `localDay`),
 `apps/web/src/app/projects/current/[[...view]]/route.ts`, `apps/web/src/app/tasks/[id]/page.tsx` (`Breadcrumb`),
 `packages/core/src/projection.ts` (`isFinished`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`, `attentionRows`, `pausedGroups`, `nearBudgetRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `AttentionCard`, `PausedCard`, `OpenTasksCard`, `CostsCard`, `QueueCard`, `IntakeCard`, `FlowCard`, `QualityCard`, `durationText`), `apps/web/src/components/intake-status.tsx` (`IntakeStatusView`, `IntakeRunNow`), `apps/web/src/lib/dashboard-rules.ts` (`PAUSE_REASON_ORDER`, `FIX_ONCE_REASONS`, `REWORK_STEPS`), `apps/web/src/lib/labels.ts` (`statusTone`, `personAction`)
 

@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -378,6 +378,24 @@ PR での承認は、次の順に進みます。
 タスクの一覧の各行には、題の下に、作業するリポジトリの名前（`org/repo` の `repo` だけ）が出ます。
 リポジトリがまだ決まっていないタスクには出ません（リポジトリを指定せずに作ったタスクは「リポジトリなし」）。
 Issue・PR から取り込んだタスクは、開始地点の下にその番号（`#7` など）が出ます。
+
+### タスクを探す・絞り込む
+
+「すべてのタスク」の上の欄で、一覧を絞り込めます。
+すべての条件に合うタスクだけが出ます。
+
+| 項目 | 絞り込み方 |
+| --- | --- |
+| 検索 | 題にその文字を含むタスク（大文字と小文字は区別しません） |
+| 開始時期（から）・（まで） | タスクを作った日がその間のタスク（両端の日を含みます。片方だけでも使えます） |
+| 開始地点 | Sacty・GitHub Issue など、タスクを始めた場所 |
+| リポジトリ | 作業するリポジトリ。「未定・リポジトリ無し」は、リポジトリがまだ決まっていないタスクです |
+| 状態 | 終わっていない・あなたの出番・進行中・待ち・完了・中止 |
+
+件数（「5件中 1件」など）が欄の右に出ます。
+「条件をクリア」を押すと、すべてのタスクに戻ります。
+条件は画面を開いている間だけ残ります（自動の更新では消えません。再読み込みや別のプロジェクトへの移動で消えます）。
+「あなたの出番」のカードは絞り込みません。
 
 ## 画面の補足
 

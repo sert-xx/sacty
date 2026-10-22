@@ -70,6 +70,15 @@ sacty up（packages/cli）
     タスクを読む前と、デーモンに届かないときは `/projects/current/tasks` へ戻る。
 - プロジェクトの画面のプロジェクトは、URL の ID で決める。
   デーモンのプロジェクトの一覧に無い ID なら 404。
+- タスクの一覧の「すべてのタスク」は、画面の中で絞り込める（`TaskFilterBar`・`matchesFilter`）。タスクが1件も無いときは出さない。
+  - 条件：題に含む文字（大文字と小文字を区別しない）・開始時期（作った日時 `createdAt` を、画面のタイムゾーンの日にして比べる。
+    から・まで の両端の日を含む）・開始地点・作業するリポジトリの名前（決まっていないタスクは「未定・リポジトリ無し」）・
+    状態の種類（`statusTone`。「終わっていない」は完了と中止のほか）。空の条件は絞り込まない。すべての条件に合う行だけを出す。
+  - 開始地点とリポジトリの選択肢は、一覧にあるものだけ（リポジトリは名前の順）。
+    選んでいる値は、取り直しで一覧から消えても選択肢に残す（`filterOptions`）。
+  - 条件はブラウザの中だけで持ち、URL・cookie には残さない。3秒ごとの取り直しでは消えず、別のプロジェクトの一覧へ移ると消える。
+  - 件数（「全体の件数中 出している件数」）と、条件があれば「条件をクリア」を出す。合う行が無ければ、そのことを出す。
+  - 「あなたの出番」のカードは絞り込まない。
 - ダッシュボードは、欄（カード）を並べる。
   幅が足りれば横に並べ、足りなければ縦に積む（欄が1つなら幅いっぱい）。
   欄の並びは、あなたの出番 → 止まっているタスクの理由 → 終わっていないタスク → 費用と予算 → 工程の待ち行列 → 取り込みの状況 → 流量 → 品質の信号。
@@ -164,6 +173,7 @@ sacty up（packages/cli）
 
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
+`apps/web/src/components/task-list.tsx`（`TaskFilterBar`）、`apps/web/src/lib/task-filter.ts`（`matchesFilter`・`filterOptions`・`localDay`）、
 `apps/web/src/app/projects/current/[[...view]]/route.ts`、`apps/web/src/app/tasks/[id]/page.tsx`（`Breadcrumb`）、
 `packages/core/src/projection.ts`（`isFinished`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`・`attentionRows`・`pausedGroups`・`nearBudgetRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`AttentionCard`・`PausedCard`・`OpenTasksCard`・`CostsCard`・`QueueCard`・`IntakeCard`・`FlowCard`・`QualityCard`・`durationText`）、`apps/web/src/components/intake-status.tsx`（`IntakeStatusView`・`IntakeRunNow`）、`apps/web/src/lib/dashboard-rules.ts`（`PAUSE_REASON_ORDER`・`FIX_ONCE_REASONS`・`REWORK_STEPS`）、`apps/web/src/lib/labels.ts`（`statusTone`・`personAction`）
 

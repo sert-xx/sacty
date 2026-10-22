@@ -23,6 +23,8 @@ export type TaskRow = {
   repoName?: string;
   steps: Pick<Task["steps"][number], "key" | "state">[];
   status: { text: string; tone: StatusTone };
+  /** 作った日時（ISO 8601）。一覧を開始時期で絞り込む。 */
+  createdAt: string;
 };
 
 /** 人間の判断が必要なタスクのカード。 */
@@ -74,6 +76,7 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       ...repoNameOf(task),
       steps: task.steps.map((s) => ({ key: s.key, state: s.state })),
       status: { text: statusText(task, labels), tone: statusTone(task) },
+      createdAt: task.createdAt,
     })),
   };
 }
