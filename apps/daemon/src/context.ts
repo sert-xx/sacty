@@ -1562,18 +1562,36 @@ export class GitContextFetcher implements ContextFetcher {
   }
 
   /**
-   * 層のディレクトリに関わるサブモジュール（層の中にあるもの・層を含むもの）を、取得したコミットが指すコミットで浅く取得する
-   * （入れ子も）。層に関わらないサブモジュール（モノレポのアプリのものなど）は取得しない。認証は、リポジトリと同じ環境変数
-   * （同じホストなら gh のアカウントのトークン）とホストの git の認証を使う。
+   * 層のディレクトリに関わるサブモジュールを、取得したコミットが指すコミットで浅く取得する。層に関わらないサブモジュール
+   * （モノレポのアプリのものなど）は取得しない。
+   * - 層の中にあるものは、入れ子も含めて取得する
+   * - 層を含むもの（層がサブモジュールの中にある）は、それだけを取得し、その中で層への相対パスで選び直す（その中の、層に
+   *   関わらない入れ子は取得しない）
+   * 認証は、リポジトリと同じ環境変数（HTTPS で同じホストなら gh のアカウントのトークン）とホストの git の認証を使う。
    */
   async submodules(
     dir: string,
     path: string | undefined,
     authEnv?: Record<string, string>,
     signal?: AbortSignal,
+  ): Promise<void> {
+    const links = (await gitlinks(dir, signal)).filter((sub) => submoduleInLayer(sub, path));
+    const containing = links.filter((sub) => path?.startsWith(`${sub}/`));
+    const inside = links.filter((sub) => !containing.includes(sub));
+    if (inside.length > 0) await this.update(dir, ["--recursive"], inside, authEnv, signal);
+    for (const sub of containing) {
+      await this.update(dir, [], [sub], authEnv, signal);
+      await this.submodules(join(dir, sub), path?.slice(sub.length + 1), authEnv, signal);
+    }
+  }
+
+  private async update(
+    dir: string,
+    flags: string[],
+    paths: string[],
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
   ) {
-    const paths = (await gitlinks(dir, signal)).filter((sub) => submoduleInLayer(sub, path));
-    if (paths.length === 0) return;
     const file = this.options.allowLocalSubmodules ? "always" : "never";
     await run(
       [
@@ -1582,7 +1600,7 @@ export class GitContextFetcher implements ContextFetcher {
         "submodule",
         "update",
         "--init",
-        "--recursive",
+        ...flags,
         "--depth",
         "1",
         "--",

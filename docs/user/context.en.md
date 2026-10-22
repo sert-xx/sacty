@@ -81,7 +81,10 @@ git commit -m "Bring in the organization's skills"
 ```
 
 - sacty fetches the submodule commits that the context repository's commit points to. To use updates to the organization's skills, update the submodule and commit (for example, `git submodule update --remote skills/org`).
-- The submodule repositories use the same authentication as the context repository. For the same host, they are fetched with the GitHub account selected in the project. Other hosts use the host's git authentication.
+- Authentication for the submodule repositories depends on their URLs.
+  - If the context repository has an HTTPS URL and the submodule has an HTTPS URL on the same host (including a relative URL such as `../org-skills.git`), it is fetched with the GitHub account selected in the project.
+  - An SSH URL (such as `git@github.com:…` in the example above) uses the host's SSH authentication.
+  - An HTTPS URL on another host uses the host's git authentication.
 - In a monorepo, only the submodules related to the directory specified in "Directory" (those inside it and those containing it) are fetched.
 - A submodule pointing to a local path (such as `/Users/acme/org-skills`) can't be used in a context fetched with git. Specify a git URL.
 - For a local directory without a branch or tag, sacty doesn't check out submodules. Run `git submodule update --init --recursive` in that directory to check them out beforehand. If a submodule isn't checked out, sacty stops and shows the reason.

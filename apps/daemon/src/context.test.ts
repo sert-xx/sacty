@@ -1828,22 +1828,35 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
   });
 
   describe("サブモジュール", () => {
-    /** 組織で管理するスキル（グループ）・1つのスキルのリポジトリと、それをサブモジュールで置いたモノレポを作る。 */
+    const addSubmodule = (repo: string, url: string, path: string) =>
+      git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", url, path);
+    /** 層に関わらないサブモジュールにする（取得すれば、無いリポジトリなので失敗する）。 */
+    function unreachable(repo: string, path: string) {
+      git(repo, "config", "-f", ".gitmodules", `submodule.${path}.url`, join(dir, "nothing"));
+      git(repo, "commit", "-qam", "unreachable");
+    }
+
+    /**
+     * 組織で管理するスキル（グループ。入れ子のサブモジュールにもスキルがある）・1つのスキルのリポジトリと、それを
+     * サブモジュールで置いたモノレポを作る。
+     */
     function makeMono() {
+      const deep = makeRepo("deep-skills", {
+        "deep/SKILL.md": "---\ndescription: 入れ子\n---\n入れ子のスキル",
+      });
       const org = makeRepo("org-skills", {
         "review/SKILL.md": "---\ndescription: 組織のレビュー\n---\n組織のレビュー",
       });
+      addSubmodule(org, deep, "more");
+      git(org, "commit", "-qm", "nested");
       const solo = makeRepo("solo-skill", { "SKILL.md": "---\ndescription: 単独\n---\n単独" });
       const app = makeRepo("app-lib", { "index.ts": "export {};" });
       const mono = makeRepo("mono-sub", { "contexts/team/rules.md": "チームの規約" });
-      const add = (url: string, path: string) =>
-        git(mono, "-c", "protocol.file.allow=always", "submodule", "add", "-q", url, path);
-      add(org, "contexts/team/skills/org");
-      add(solo, "contexts/team/skills/solo");
-      add(app, "app/vendor");
-      // 層に関わらないサブモジュールは取得しない（取得すれば、無いリポジトリなので失敗する）
-      git(mono, "config", "-f", ".gitmodules", "submodule.app/vendor.url", join(dir, "nothing"));
-      git(mono, "commit", "-qam", "submodules");
+      addSubmodule(mono, org, "contexts/team/skills/org");
+      addSubmodule(mono, solo, "contexts/team/skills/solo");
+      addSubmodule(mono, app, "app/vendor");
+      git(mono, "commit", "-qm", "submodules");
+      unreachable(mono, "app/vendor");
       return mono;
     }
 
@@ -1864,7 +1877,30 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
       expect(readFileSync(join(prepared.dir, "skills", "solo", "SKILL.md"), "utf8")).toMatch(
         "単独",
       );
+      // 入れ子のサブモジュールのスキルも読む
+      expect(readFileSync(join(prepared.dir, "skills", "deep", "SKILL.md"), "utf8")).toMatch(
+        "入れ子のスキル",
+      );
       expect(existsSync(join(prepared.dir, "skills", "solo", ".git"))).toBe(false);
+      prepared.dispose();
+    });
+
+    it("層がサブモジュールの中にあれば、そのサブモジュールを取得し、その中の層に関わらない入れ子は取得しない", async () => {
+      const app = makeRepo("vendor-app", { "index.ts": "export {};" });
+      const vendor = makeRepo("vendor-contexts", { "contexts/team/rules.md": "外の規約" });
+      addSubmodule(vendor, app, "app/vendor");
+      git(vendor, "commit", "-qm", "nested");
+      unreachable(vendor, "app/vendor");
+      const mono = makeRepo("mono-vendor", { "README.md": "x" });
+      addSubmodule(mono, vendor, "vendor");
+      git(mono, "commit", "-qm", "vendor");
+      const prepared = await prepareContext(
+        new GitContextFetcher({ allowLocalSubmodules: true }),
+        { repo: mono, ref: "main", path: "vendor/contexts/team" },
+        "claude-code",
+        "/tmp/x",
+      );
+      expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toMatch("外の規約");
       prepared.dispose();
     });
 
@@ -1892,22 +1928,36 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
       ).rejects.toThrow(
         `${clone}//contexts/team のサブモジュール skills/org を取り込んでいません。`,
       );
-      // 取り込めば、その中身を写す（層に関わらない app/vendor は取り込まなくてよい）
-      git(
-        clone,
-        "-c",
-        "protocol.file.allow=always",
-        "submodule",
-        "update",
-        "--init",
-        "-q",
-        "--",
-        "contexts/team",
+      // 親だけ取り込んでも、入れ子を取り込んでいなければ止める
+      const update = (...flags: string[]) =>
+        git(
+          clone,
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "update",
+          "--init",
+          "-q",
+          ...flags,
+          "--",
+          "contexts/team",
+        );
+      update();
+      await expect(
+        resolveContext(
+          new GitContextFetcher(),
+          { repo: clone, path: "contexts/team" },
+          join(dir, "w2"),
+        ),
+      ).rejects.toThrow(
+        `${clone}//contexts/team のサブモジュール skills/org/more を取り込んでいません。`,
       );
+      // 入れ子まで取り込めば、その中身を写す（層に関わらない app/vendor は取り込まなくてよい）
+      update("--recursive");
       const [layer] = await resolveContext(
         new GitContextFetcher(),
         { repo: clone, path: "contexts/team" },
-        join(dir, "w2"),
+        join(dir, "w3"),
       );
       expect(
         readFileSync(join(layer?.dir ?? "", "skills", "org", "review", "SKILL.md"), "utf8"),
