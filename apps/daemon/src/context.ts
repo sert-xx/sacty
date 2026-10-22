@@ -10,15 +10,24 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   readSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { code, type DaemonText, issueMessage, message } from "@sacty/core";
+import {
+  ContextPath,
+  ContextSource,
+  code,
+  contextLabel,
+  type DaemonText,
+  issueMessage,
+  message,
+} from "@sacty/core";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -31,7 +40,8 @@ import { SecretRef } from "./secrets.js";
 
 /**
  * コンテキストリポジトリ（PBI-6）。中立形式は次のとおり。
- * - `sacty-context.yaml`：extends（親のリポジトリ。`URL#ref` で ref を指定できる）、
+ * - `sacty-context.yaml`：extends（親。`URL#ref` で ref を指定できる。`./`・`../` で始まる相対パスは同じリポジトリの
+ *   中のディレクトリ、`{ repo, ref, path }` はリポジトリの中のディレクトリ）、
  *   locked（下位で上書き・取り除きできない項目）、remove（上位から引き継いだ項目を取り除く）
  * - `rules.md` か `rules/*.md`：規約（上位から順に連結する）
  * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）。SKILL.md の無いディレクトリはグループで、
@@ -50,7 +60,18 @@ const NamedItems = z
   .prefault({});
 const ContextManifest = z
   .object({
-    extends: z.string().trim().min(1).optional(),
+    extends: z
+      .union([
+        z.string().trim().min(1),
+        z
+          .object({
+            repo: ContextSource.shape.repo,
+            ref: ContextSource.shape.ref,
+            path: ContextSource.shape.path,
+          })
+          .strict(),
+      ])
+      .optional(),
     locked: NamedItems,
     remove: NamedItems,
   })
@@ -147,7 +168,8 @@ const PlatformsFile = z
 /** 層の外部 PF のファイル名（PBI-74）。 */
 export const PLATFORMS_FILE = "platforms.yaml";
 
-export type ContextRef = { repo: string; ref?: string };
+/** コンテキストの層の指定。path はリポジトリの中のディレクトリ（無ければリポジトリの根）。 */
+export type ContextRef = { repo: string; ref?: string; path?: string };
 
 /** 取得したコンテキストリポジトリの1層。 */
 export type ContextLayer = ContextRef & {
@@ -163,7 +185,7 @@ export type ContextLayer = ContextRef & {
 };
 
 /** MCP サーバーを書いた層（PBI-84）。dir は取得した層のディレクトリ（実行の後に消える）。 */
-export type McpLayer = { repo: string; ref?: string; commit: string; dir: string };
+export type McpLayer = { repo: string; ref?: string; path?: string; commit: string; dir: string };
 
 /** エージェントの設定（Codex は config.toml、Claude Code は settings.json の中身）。 */
 export type AgentSettings = { codex: Record<string, unknown>; claude: Record<string, unknown> };
@@ -180,7 +202,7 @@ export const AGENT_SETTINGS_FILES = {
 /** コンテキストリポジトリを取得する口。テストでは偽物に差し替える。 */
 export interface ContextFetcher {
   /**
-   * dir にリポジトリの中身を置き、そのコミットを返す。authEnv は HTTPS の GitHub に認証する環境変数
+   * dir にリポジトリ（ref.path に関わらず全体）の中身を置き、そのコミットを返す。authEnv は HTTPS の GitHub に認証する環境変数
    * （プロジェクトの gh のアカウントのトークン。PBI-13）。無ければホストの認証を使う。
    */
   fetch(
@@ -208,8 +230,129 @@ export function parseExtends(value: string): ContextRef {
 }
 
 /**
+ * ローカルのパスのコンテキスト（絶対パスか `~/` で始まるもの）なら、ホストの絶対パスを返す。git の URL などは undefined。
+ * 相対パスは、デーモンのカレントディレクトリ次第で指す先が変わるので、ローカルのパスとして扱わない。
+ */
+export function localContextDir(repo: string): string | undefined {
+  if (repo.startsWith("~/")) return join(homedir(), repo.slice(2));
+  return isAbsolute(repo) ? resolve(repo) : undefined;
+}
+
+type ManifestExtends = NonNullable<z.output<typeof ContextManifest>["extends"]>;
+
+/**
+ * 層の extends から、継承する親を決める。
+ * - `./`・`../` で始まる相対パスは、同じリポジトリ・同じ ref の中の、その層のディレクトリから見たディレクトリ
+ *   （モノレポの中で継承する）。リポジトリの外は指せない
+ * - `URL#ref` と `{ repo, ref, path }` は、ほかのリポジトリ（かその中のディレクトリ）
+ * git で取得した層は、ローカルのパスを継承できない（取得したリポジトリの中身で、ホストのディレクトリを読ませないため）。
+ */
+function extendsRef(value: ManifestExtends, from: ContextRef, key: string): ContextRef {
+  const shown = typeof value === "string" ? value : contextLabel(value);
+  if (typeof value === "string" && /^\.\.?(?:\/|$)/.test(value)) {
+    const joined = posix.normalize(posix.join(from.path ?? "", value)).replace(/\/+$/, "");
+    if (joined === ".." || joined.startsWith("../")) {
+      throw new ContextError(message("context.extendsOutside", { key, value }));
+    }
+    const path = joined === "." ? "" : joined;
+    const parsed = ContextPath.safeParse(path);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new ContextError(
+        message("context.fileInvalid", {
+          key,
+          file: "sacty-context.yaml",
+          path: "extends",
+          detail: issue ? issueMessage(issue) : "",
+        }),
+      );
+    }
+    return {
+      repo: from.repo,
+      ...(from.ref ? { ref: from.ref } : {}),
+      ...(path ? { path } : {}),
+    };
+  }
+  const parent =
+    typeof value === "string"
+      ? parseExtends(value)
+      : {
+          repo: value.repo,
+          ...(value.ref ? { ref: value.ref } : {}),
+          ...(value.path ? { path: value.path } : {}),
+        };
+  if (localContextDir(from.repo) === undefined && localContextDir(parent.repo) !== undefined) {
+    throw new ContextError(message("context.localExtendsFromRemote", { key, value: shown }));
+  }
+  return parent;
+}
+
+/**
+ * リポジトリの中の、層のディレクトリ。途中の部分がディレクトリでない（無い・シンボリックリンク）なら止める
+ * （取得したリポジトリのリンクで、ホストのディレクトリを読ませないため）。
+ */
+function layerDir(root: string, path: string | undefined, key: string): string {
+  let dir = root;
+  for (const segment of path ? path.split("/") : []) {
+    dir = join(dir, segment);
+    let isDirectory = false;
+    try {
+      isDirectory = lstatSync(dir).isDirectory();
+    } catch {}
+    if (!isDirectory) {
+      throw new ContextError(message("context.pathMissing", { key, path: path ?? "" }));
+    }
+  }
+  return dir;
+}
+
+/**
+ * ローカルのパスの層（ref の指定なし）を、ディレクトリの今の中身から out に写す（`.git` は写さない）。git で管理して
+ * いなくても、コミットしていない変更があってもよい。コミットの代わりに、写した中身の SHA-256 を返す。
+ */
+function copyLocalLayer(root: string, path: string | undefined, out: string, key: string): string {
+  let isDirectory = false;
+  try {
+    isDirectory = statSync(root).isDirectory();
+  } catch {}
+  if (!isDirectory) throw new ContextError(message("context.pathMissing", { key, path: root }));
+  const src = layerDir(root, path, key);
+  try {
+    cpSync(src, out, {
+      recursive: true,
+      // リンクはたどらずに、リンクのまま写す（sacty が読む項目のリンクは、読むときに止める）
+      verbatimSymlinks: true,
+      filter: (from) => basename(from) !== ".git",
+    });
+  } catch (error) {
+    throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
+  }
+  return hashTree(out);
+}
+
+/** ディレクトリの中身すべての SHA-256（パスの順に、パスと中身から作る。リンクはリンク先のパスを入れる）。 */
+function hashTree(dir: string): string {
+  const hash = createHash("sha256");
+  const visit = (path: string) => {
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(join(path, name));
+      return;
+    }
+    hash.update(`${relative(dir, path)}\0`);
+    hash.update(stat.isSymbolicLink() ? `->${readlinkSync(path)}` : readFileSync(path));
+    hash.update("\0");
+  };
+  visit(dir);
+  return hash.digest("hex");
+}
+
+/**
  * 継承をたどって、上位から順の層にする。各層は workDir の下に取得する。
- * 同じリポジトリと ref が2度出てきたら（循環）、深さが上限を超えたら、エラーにする。
+ * - git で取得するリポジトリは、repo と ref ごとに1回だけ取得し、同じリポジトリの中のディレクトリ（モノレポ）の層は、
+ *   同じ取得（同じコミット）を使う
+ * - ローカルのパスで ref が無ければ、取得せずにディレクトリの今の中身を写す
+ * 同じ層（repo・path・ref）が2度出てきたら（循環）、深さが上限を超えたら、エラーにする。
  */
 export async function resolveContext(
   fetcher: ContextFetcher,
@@ -220,9 +363,10 @@ export async function resolveContext(
 ): Promise<ContextLayer[]> {
   const chain: ContextLayer[] = [];
   const seen = new Set<string>();
+  const fetched = new Map<string, { dir: string; commit: string }>();
   let next: ContextRef | undefined = root;
   while (next) {
-    const key = `${next.repo}#${next.ref ?? ""}`;
+    const key = contextLabel(next);
     if (seen.has(key)) {
       throw new ContextError(message("context.cycle", { key }));
     }
@@ -230,19 +374,35 @@ export async function resolveContext(
       throw new ContextError(message("context.tooDeep", { max: MAX_CONTEXT_DEPTH }));
     }
     seen.add(key);
-    const dir = join(workDir, String(chain.length));
-    // 認証を用意できない（GitHub のアカウントを選んでいないなど）ときは、その理由のまま止める
-    const authEnv = await auth?.(next.repo);
+    const local = localContextDir(next.repo);
+    let dir: string;
     let commit: string;
-    try {
+    if (local !== undefined && !next.ref) {
       signal?.throwIfAborted();
-      ({ commit } = await fetcher.fetch(next, dir, authEnv, signal));
-    } catch (error) {
-      throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
+      dir = join(workDir, "local", String(chain.length));
+      commit = copyLocalLayer(local, next.path, dir, key);
+    } else {
+      const sourceKey = `${next.repo}#${next.ref ?? ""}`;
+      let source = fetched.get(sourceKey);
+      if (!source) {
+        const out = join(workDir, String(fetched.size));
+        // 認証を用意できない（GitHub のアカウントを選んでいないなど）ときは、その理由のまま止める
+        const authEnv = await auth?.(next.repo);
+        try {
+          signal?.throwIfAborted();
+          const repo = { repo: local ?? next.repo, ...(next.ref ? { ref: next.ref } : {}) };
+          source = { dir: out, ...(await fetcher.fetch(repo, out, authEnv, signal)) };
+        } catch (error) {
+          throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
+        }
+        fetched.set(sourceKey, source);
+      }
+      dir = layerDir(source.dir, next.path, key);
+      commit = source.commit;
     }
     const layer = readLayer(dir, key);
     chain.push({ ...next, commit, dir, ...layer });
-    next = layer.manifest.extends ? parseExtends(layer.manifest.extends) : undefined;
+    next = layer.manifest.extends ? extendsRef(layer.manifest.extends, next, key) : undefined;
   }
   return chain.reverse();
 }
@@ -676,8 +836,7 @@ export type ComposedContext = {
   agentsFrom: Record<keyof AgentSettings, string[]>;
 };
 
-const label = (layer: ContextLayer) =>
-  `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`;
+const label = (layer: ContextLayer) => `${contextLabel(layer)}@${layer.commit.slice(0, 7)}`;
 
 /** 層の規約。`rules.md` があればそれ、無ければ `rules/*.md` を名前の順に。 */
 function layerRules(layer: ContextLayer): string {
@@ -830,6 +989,7 @@ export function composeContext(
           layer: {
             repo: layer.repo,
             ...(layer.ref ? { ref: layer.ref } : {}),
+            ...(layer.path ? { path: layer.path } : {}),
             commit: layer.commit,
             dir: layer.dir,
           },
@@ -1501,10 +1661,11 @@ async function loadLayers(
   ];
 }
 
-/** 層の、作業履歴に記録する形（repo・ref・commit）。 */
+/** 層の、作業履歴に記録する形（repo・ref・path・commit）。 */
 const layerRecord = (l: ContextLayer) => ({
   repo: l.repo,
   ...(l.ref ? { ref: l.ref } : {}),
+  ...(l.path ? { path: l.path } : {}),
   commit: l.commit,
 });
 
@@ -1559,7 +1720,7 @@ export async function prepareContext(
   runLimitMs?: number,
 ): Promise<{
   dir: string;
-  layers: { repo: string; ref?: string; commit: string }[];
+  layers: { repo: string; ref?: string; path?: string; commit: string }[];
   warnings: DaemonText[];
   placed: PlacedContext;
   /**
@@ -1671,6 +1832,7 @@ export type ContextPreview = {
   layers: {
     repo: string;
     ref?: string;
+    path?: string;
     commit: string;
     locked: z.infer<typeof NamedItems>;
     remove: z.infer<typeof NamedItems>;

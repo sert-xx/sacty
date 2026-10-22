@@ -1751,7 +1751,15 @@ const ContextResolved = z.object({
   type: z.literal("ContextResolved"),
   payload: z.object({
     runId: z.string(),
-    layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
+    layers: z.array(
+      z.object({
+        repo: z.string(),
+        ref: z.string().optional(),
+        // リポジトリの中のディレクトリ（モノレポの一部をコンテキストにしたとき）
+        path: z.string().optional(),
+        commit: z.string(),
+      }),
+    ),
     warnings: z.array(DaemonText).default([]),
     /**
      * 使えるようにした外部 PF（PBI-74）。ホストの config.yaml の gateway.platforms と、プロジェクトのコンテキストで

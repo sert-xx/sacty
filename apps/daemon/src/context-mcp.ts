@@ -250,6 +250,8 @@ export class ContextMcpServers {
       const layer = {
         repo: server.layer.repo,
         ...(server.layer.ref ? { ref: server.layer.ref } : {}),
+        // 同じリポジトリ・コミットでも、中のディレクトリ（モノレポ）が違えば別の写しにする
+        ...(server.layer.path ? { path: server.layer.path } : {}),
         commit: server.layer.commit,
       };
       const content = {

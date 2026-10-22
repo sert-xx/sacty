@@ -179,6 +179,59 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
     );
   });
 
+  it("extends の { repo, ref, path } はほかのリポジトリの中のディレクトリを継承し、相対パスはリポジトリの外を指せない", async () => {
+    const fetcher = new FakeFetcher({
+      "mono.git": {
+        "contexts/base/rules.md": "共通",
+        "contexts/escape/sacty-context.yaml": "extends: ../../..\n",
+        "contexts/self/sacty-context.yaml": "extends: ./\n",
+      },
+      "team.git": {
+        "sacty-context.yaml": "extends:\n  repo: mono.git\n  ref: v1\n  path: contexts/base\n",
+      },
+    });
+    const layers = await resolveContext(fetcher, { repo: "team.git" }, join(dir, "w"));
+    expect(layers.map((l) => ({ repo: l.repo, ref: l.ref, path: l.path }))).toEqual([
+      { repo: "mono.git", ref: "v1", path: "contexts/base" },
+      { repo: "team.git", ref: undefined, path: undefined },
+    ]);
+    expect(composeContext(layers).rules).toContain("共通");
+    await expect(
+      resolveContext(fetcher, { repo: "mono.git", path: "contexts/escape" }, join(dir, "w2")),
+    ).rejects.toThrow(
+      "mono.git//contexts/escape の sacty-context.yaml の extends（../../..）は、リポジトリの外を指しています。",
+    );
+    await expect(
+      resolveContext(fetcher, { repo: "mono.git", path: "contexts/self" }, join(dir, "w3")),
+    ).rejects.toThrow(/循環/);
+    const badPath = new FakeFetcher({
+      "x.git": { "sacty-context.yaml": "extends:\n  repo: y.git\n  path: ../etc\n" },
+    });
+    await expect(resolveContext(badPath, { repo: "x.git" }, join(dir, "w4"))).rejects.toThrow(
+      /x\.git の sacty-context\.yaml に誤りがあります（extends/,
+    );
+  });
+
+  it("git で取得した層は、ローカルのパスを継承できない", async () => {
+    const local = join(dir, "local-ctx");
+    mkdirSync(local);
+    writeFileSync(join(local, "rules.md"), "HOST-ONLY-MARKER");
+    for (const value of [local, `${local}#main`, "~/ctx", `\n  repo: ${local}`]) {
+      const fetcher = new FakeFetcher({
+        "https://example.com/remote.git": { "sacty-context.yaml": `extends: ${value}\n` },
+      });
+      await expect(
+        resolveContext(fetcher, { repo: "https://example.com/remote.git" }, join(dir, "w")),
+      ).rejects.toThrow(/git で取得した層のため、ローカルのパス（.*）を継承できません/);
+    }
+    // ローカルのパスの層からは、ほかのローカルのパスを継承できる
+    const child = join(dir, "local-child");
+    mkdirSync(child);
+    writeFileSync(join(child, "sacty-context.yaml"), `extends: ${local}\n`);
+    const layers = await resolveContext(new FakeFetcher({}), { repo: child }, join(dir, "w2"));
+    expect(layers.map((l) => l.repo)).toEqual([local, child]);
+  });
+
   it("Claude Code には CLAUDE.md と skills/ を、Codex には AGENTS.md（スキルの一覧つき）と skills/ を書く", async () => {
     const fetcher = new FakeFetcher({
       "https://example.com/company.git": company,
@@ -1207,7 +1260,7 @@ describe("外部 PF の合成（PBI-74）", () => {
       // allow が無い
       [
         "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      secret: s\n",
-        /x\.git# の platforms\.yaml に誤りがあります（platforms\.a\.allow）/,
+        /x\.git の platforms\.yaml に誤りがあります（platforms\.a\.allow）/,
       ],
       // secret と token の両方
       [
@@ -1588,7 +1641,7 @@ describe("エージェントの設定の合成（PBI-24）", () => {
         (e) => ja(e.text),
       );
     expect(await broken({ "agents/codex/config.toml": "a = " })).toMatch(
-      /^https:\/\/example.com\/p.git# の agents\/codex\/config.toml を読めません/,
+      /^https:\/\/example.com\/p.git の agents\/codex\/config.toml を読めません/,
     );
     expect(await broken({ "agents/claude/settings.json": "{" })).toMatch(
       /agents\/claude\/settings.json を読めません/,
@@ -1640,12 +1693,127 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     );
     expect(prepared.layers).toEqual([
       { repo: parent, ref: "stable", commit: git(parent, "rev-parse", "HEAD") },
-      { repo: child, commit: git(child, "rev-parse", "HEAD") },
+      // ref の無いローカルのパスは、取得せずにディレクトリの中身を使い、コミットの代わりに中身のハッシュを記録する
+      { repo: child, commit: expect.stringMatching(/^[0-9a-f]{64}$/) },
     ]);
     expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toMatch(
       /会社の規約[\s\S]*チームの規約/,
     );
     prepared.dispose();
+  });
+
+  it("ref の無いローカルのパスは、コミットしていない変更も git で管理していないディレクトリも、今の中身を使う（.git は写さない）", async () => {
+    const repo = makeRepo("local", { "rules.md": "コミットした規約" });
+    writeFileSync(join(repo, "rules.md"), "まだコミットしていない規約");
+    const [layer] = await resolveContext(new GitContextFetcher(), { repo }, join(dir, "w1"));
+    expect(readFileSync(join(layer?.dir ?? "", "rules.md"), "utf8")).toBe(
+      "まだコミットしていない規約",
+    );
+    expect(existsSync(join(layer?.dir ?? "", ".git"))).toBe(false);
+    // ref を書けば、そのコミットを git で取得する
+    const [committed] = await resolveContext(
+      new GitContextFetcher(),
+      { repo, ref: "main" },
+      join(dir, "w2"),
+    );
+    expect(readFileSync(join(committed?.dir ?? "", "rules.md"), "utf8")).toBe("コミットした規約");
+    expect(committed?.commit).toBe(git(repo, "rev-parse", "HEAD"));
+    // 中身が変われば、記録するハッシュも変わる
+    const plain = join(dir, "plain");
+    mkdirSync(join(plain, "skills", "s"), { recursive: true });
+    writeFileSync(join(plain, "skills", "s", "SKILL.md"), "版1");
+    const [v1] = await resolveContext(new GitContextFetcher(), { repo: plain }, join(dir, "w3"));
+    writeFileSync(join(plain, "skills", "s", "SKILL.md"), "版2");
+    const [v2] = await resolveContext(new GitContextFetcher(), { repo: plain }, join(dir, "w4"));
+    expect(v1?.commit).not.toBe(v2?.commit);
+    // 写したものは、元のディレクトリが後で変わっても変わらない
+    expect(readFileSync(join(v1?.dir ?? "", "skills", "s", "SKILL.md"), "utf8")).toBe("版1");
+  });
+
+  it("~/ で始まるローカルのパスは、ホームのディレクトリから読む", async () => {
+    const home = join(dir, "home");
+    mkdirSync(join(home, "ctx"), { recursive: true });
+    writeFileSync(join(home, "ctx", "rules.md"), "ホームの規約");
+    const saved = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const [layer] = await resolveContext(
+        new GitContextFetcher(),
+        { repo: "~/ctx" },
+        join(dir, "w"),
+      );
+      expect(layer?.repo).toBe("~/ctx");
+      expect(readFileSync(join(layer?.dir ?? "", "rules.md"), "utf8")).toBe("ホームの規約");
+    } finally {
+      process.env.HOME = saved;
+    }
+  });
+
+  it("モノレポの中のディレクトリを、相対パスの extends でたどり、リポジトリは1回だけ取得する", async () => {
+    const mono = makeRepo("mono", {
+      "contexts/base/rules.md": "共通の規約",
+      "contexts/base/sacty-context.yaml": "extends: ../../shared\n",
+      "shared/rules.md": "根に近い規約",
+      "contexts/team/rules.md": "チームの規約",
+      "contexts/team/sacty-context.yaml": "extends: ../base\n",
+      "app/src/index.ts": "export {};",
+    });
+    const fetched: string[] = [];
+    const real = new GitContextFetcher();
+    const counting: ContextFetcher = {
+      fetch: (ref, out, authEnv, signal) => {
+        fetched.push(`${ref.repo}#${ref.ref ?? ""}`);
+        return real.fetch(ref, out, authEnv, signal);
+      },
+    };
+    const commit = git(mono, "rev-parse", "HEAD");
+    const prepared = await prepareContext(
+      counting,
+      { repo: mono, ref: "main", path: "contexts/team" },
+      "claude-code",
+      "/tmp/x",
+    );
+    expect(fetched).toEqual([`${mono}#main`]);
+    expect(prepared.layers).toEqual([
+      { repo: mono, ref: "main", path: "shared", commit },
+      { repo: mono, ref: "main", path: "contexts/base", commit },
+      { repo: mono, ref: "main", path: "contexts/team", commit },
+    ]);
+    expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toMatch(
+      /根に近い規約[\s\S]*共通の規約[\s\S]*チームの規約/,
+    );
+    prepared.dispose();
+
+    // ref の無いローカルのパスでも、相対パスで同じディレクトリの中をたどる
+    const local = await prepareContext(
+      new GitContextFetcher(),
+      { repo: mono, path: "contexts/team" },
+      "claude-code",
+      "/tmp/x",
+    );
+    expect(local.layers.map((l) => l.path)).toEqual(["shared", "contexts/base", "contexts/team"]);
+    local.dispose();
+  });
+
+  it("中のディレクトリが無い・途中がシンボリックリンクなら、理由を示して止める", async () => {
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "rules.md"), "HOST-ONLY-MARKER");
+    const repo = makeRepo("linked-path", { "README.md": "x" }, "main", (r) =>
+      symlinkSync(outside, join(r, "contexts")),
+    );
+    for (const source of [
+      { repo, ref: "main", path: "contexts" },
+      { repo, path: "contexts" },
+      { repo, ref: "main", path: "missing" },
+    ]) {
+      await expect(resolveContext(new GitContextFetcher(), source, join(dir, "w"))).rejects.toThrow(
+        /コンテキストのディレクトリ .* がありません/,
+      );
+    }
+    await expect(
+      resolveContext(new GitContextFetcher(), { repo: join(dir, "nothing") }, join(dir, "w")),
+    ).rejects.toThrow(/がありません/);
   });
 
   it("設定・規約・スキルのシンボリックリンクは、リポジトリの外を指しても中を指しても、理由を示して止める", async () => {
@@ -2100,7 +2268,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       "/c",
     ).catch((e: unknown) => e);
     expect(ja((pfError as ContextError).text)).toContain(
-      "https://example.com/ctx.git# の platforms.yaml に誤りがあります（platforms.Bad_Name）",
+      "https://example.com/ctx.git の platforms.yaml に誤りがあります（platforms.Bad_Name）",
     );
     const missing = await previewContext(
       recording({}, outs),
@@ -2109,7 +2277,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       "/c",
     ).catch((e: unknown) => e);
     expect(ja((missing as ContextError).text)).toContain(
-      "コンテキストリポジトリ（https://example.com/none.git#）を取得できません",
+      "コンテキストリポジトリ（https://example.com/none.git）を取得できません",
     );
     // 取得したリポジトリは、誤りのときも消す
     expect(outs).toHaveLength(3);

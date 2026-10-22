@@ -10973,10 +10973,10 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     // 作業履歴にはコードと引数で記録し、画面が画面の言語の文にする（PBI-11b）
     expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
       code: "context.fetchFailed",
-      params: { key: "https://example.com/missing.git#", detail: "repository not found" },
+      params: { key: "https://example.com/missing.git", detail: "repository not found" },
     });
     expect(failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "en")).toBe(
-      "Cannot fetch the context repository (https://example.com/missing.git#): repository not found",
+      "Cannot fetch the context repository (https://example.com/missing.git): repository not found",
     );
     activity.close();
   });
@@ -11001,9 +11001,9 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       },
       "https://github.com/acme/company-ctx.git": {
         "rules.md": "# 会社",
-        "sacty-context.yaml": "extends: /local/base\n",
+        "sacty-context.yaml": "extends: git@github.com:acme/base-ctx.git\n",
       },
-      "/local/base": { "rules.md": "# 共通" },
+      "git@github.com:acme/base-ctx.git": { "rules.md": "# 共通" },
     });
     const { service } = makeService(activity, [out("# 要求要件")], { contexts, github });
     const project = service.saveProject(undefined, {
@@ -11023,8 +11023,8 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
         repo: "https://github.com/acme/company-ctx.git",
         authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
       },
-      // GitHub の HTTPS でないもの（ローカルのパス・SSH）は、ホストの認証のまま
-      { repo: "/local/base" },
+      // GitHub の HTTPS でないもの（SSH など）は、ホストの認証のまま
+      { repo: "git@github.com:acme/base-ctx.git" },
     ];
     // 工程の選択（書き出し先の候補の MCP サーバーと規約を読む。PBI-56）と、工程の実行で取得する
     expect(contexts.fetched).toEqual([...chain, ...chain]);
@@ -19395,7 +19395,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     const res = await preview(app, "p");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { error: unknown };
-    expect(ja(body.error)).toContain(`${ctxRepo}# の mcp.yaml に誤りがあります（servers.bad.url）`);
+    expect(ja(body.error)).toContain(`${ctxRepo} の mcp.yaml に誤りがあります（servers.bad.url）`);
     activity.close();
 
     const failing = setup();
@@ -19429,7 +19429,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     const saved = (await broken.json()) as { project: { context: unknown }; contextError: unknown };
     expect(saved.project.context).toEqual({ repo: "https://github.com/acme/broken.git" });
     expect(ja(saved.contextError)).toContain(
-      "https://github.com/acme/broken.git# の platforms.yaml に誤りがあります（platforms.x",
+      "https://github.com/acme/broken.git の platforms.yaml に誤りがあります（platforms.x",
     );
     expect(service.getProject("p")?.project.context).toEqual({
       repo: "https://github.com/acme/broken.git",

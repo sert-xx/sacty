@@ -1350,11 +1350,11 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
       [expect.stringContaining('nowhere: project in ("OPSN")'), expect.stringContaining("nowhere")],
       [
         expect.stringContaining('team-jira: project in ("BRK")'),
-        expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
+        expect.stringContaining("https://example.com/broken.git の platforms.yaml を読めません"),
       ],
       [
         expect.stringContaining('nowhere: project in ("BRKN")'),
-        expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
+        expect.stringContaining("https://example.com/broken.git の platforms.yaml を読めません"),
       ],
     ]);
     expect(fetched.sort()).toEqual([

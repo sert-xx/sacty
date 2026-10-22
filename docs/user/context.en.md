@@ -25,7 +25,22 @@ npx sacty context init sacty-context   # create the template in the given direct
 - This creates `README.md`, `rules.md`, `skills/README.md`, `mcp.yaml`, `platforms.yaml`, `sacty-context.yaml`, and `agents/codex/config.toml`.
 - Each file contains an explanation of what to write there. As created, the files change nothing in the default context.
 - If a file with the same name (or `rules/`) already exists, the command stops without overwriting it. To overwrite, add `--force`.
-- When you have written the files, manage them with git and push, then specify that repository in "Context repository" in the project settings in the web UI ([Project settings](project-settings.en.md#context-repository)).
+- When you have written the files, specify that repository or directory in "Context repository" in the project settings in the web UI ([Project settings](project-settings.en.md#context-repository), [Where to put it](#where-to-put-it)).
+
+## Where to put it
+
+You can put the context in a git repository, in a local directory, or in a directory inside a monorepo.
+
+| Location | "Repository" | "Branch or tag" | "Directory" | Contents used |
+| --- | --- | --- | --- | --- |
+| A git repository | A git URL (e.g. `git@github.com:acme/sacty-context.git`) | Optional (the default branch if empty) | Empty | The commit of that branch or tag |
+| A local directory | An absolute path or a path starting with `~/` (e.g. `/Users/acme/sacty-context`) | Empty | Empty | The current contents of the directory |
+| A commit of a local git repository | An absolute path or a path starting with `~/` | A branch or tag | Empty | The commit of that branch or tag |
+| A directory inside a monorepo | Any of the above | As above | A path relative to the repository root (e.g. `contexts/team`) | The contents of that directory |
+
+- A local directory can be used even if it isn't managed with git or has uncommitted changes. sacty reads its contents at that moment on every run (`.git` is not read). The activity log records a hash of the contents instead of a commit.
+- A relative path (such as `./sacty-context`) points to a different place depending on the directory where the daemon was started, so it is not treated as a local directory. Write an absolute path.
+- In a monorepo, the directory written in "Directory" takes the place of the root of the context repository. Put `rules.md`, `skills/`, `mcp.yaml`, and so on in that directory. Paths that point outside the repository (those containing `..`) and paths with a symbolic link along the way can't be used.
 
 ## Files to put in it
 
@@ -57,7 +72,7 @@ npx sacty context init sacty-context   # create the template in the given direct
 ## sacty-context.yaml
 
 ```yaml
-extends: git@github.com:acme/sacty-context.git#main   # parent (upper layer) context repository. Specify a ref with URL#ref
+extends: git@github.com:acme/sacty-context.git#main   # parent (upper layer) context repository. Specify a ref with URL#ref (forms below)
 locked:            # skills, MCP servers, and external platforms that lower layers cannot override or remove
   skills: [review]
   mcp: [docs]
@@ -68,7 +83,26 @@ remove:            # remove skills, MCP servers, and external platforms inherite
   platforms: []
 ```
 
-- Inheritance goes up to 10 layers. If the same repository and ref appear twice (a cycle), sacty stops and shows the reason.
+- Write one of the following in `extends`.
+
+  ```yaml
+  extends: git@github.com:acme/sacty-context.git#main   # another repository (#ref is optional)
+  ```
+
+  ```yaml
+  extends: ../base   # a directory in the same repository (a path relative to this layer's directory)
+  ```
+
+  ```yaml
+  extends:           # a directory inside another repository (ref and path are optional)
+    repo: git@github.com:acme/monorepo.git
+    ref: main
+    path: contexts/base
+  ```
+
+- A relative path starting with `./` or `../` points inside the same branch or tag of the same repository (for a local directory, inside the same directory). Use it in a monorepo when a team's directory inherits a shared directory. It can't point outside the repository.
+- Only a local path context can write a local path (an absolute path or one starting with `~/`) in `extends`. If a context fetched with git tries to inherit a local path, sacty stops and shows the reason.
+- Inheritance goes up to 10 layers. If the same repository, directory, and ref appear twice (a cycle), sacty stops and shows the reason.
 - If a lower layer tries to override or remove a locked item, a warning is recorded and the upper layer's item is used.
 
 ## mcp.yaml

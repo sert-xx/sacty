@@ -4,7 +4,7 @@
 
 The context is the rules, skills, MCP servers, external PFs, and agent settings given to a step's agent and the Orchestrator. sacty composes the context by stacking layers, and on every run places it in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its inheritance chain).
 
-Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md)
+Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md)
 
 ## Layers
 
@@ -12,11 +12,23 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
   1. sacty's default context (`apps/daemon/default-context/`). The bundled copy is read without fetching. Its name is `sacty-default`, and the SHA-256 of its contents is recorded instead of a commit.
   2. The topmost ancestor in the context repository's inheritance chain → …
   3. The repository the project specified (the bottom)
-- Inheritance: write `<URL>[#<ref>]` in `extends` of `sacty-context.yaml` (split at the last `#`).
-  - If the same `repo#ref` appears twice, composition stops with `context.cycle`.
+- The project's specification (`ContextSource`)
+  - `repo`: a git URL or a local path (up to 500 characters). A local path is an absolute path or one starting with `~/` (`~` is the home directory).
+  - `ref`: a branch or tag. If omitted, a git URL uses the default branch, and a local path uses the current contents of the directory.
+  - `path`: a directory inside the repository (to make part of a monorepo a layer). A path relative to the repository root; `.` and `..` parts can't be written (`input.invalidContextPath`). If omitted, the repository root.
+- A layer is shown as `<repo>//<path>#<ref>` (`path` and `ref` only when present). The activity log (`layers` of `ContextResolved`) records `repo`, `ref`, `path`, and `commit`.
+- Inheritance: write one of the following in `extends` of `sacty-context.yaml`.
+  - `<URL>[#<ref>]`: another repository (split at the last `#`).
+  - `{ repo, ref, path }`: a directory inside another repository (`ref` and `path` are optional).
+  - A relative path starting with `./` or `../`: a directory in the same repository and the same `ref`, seen from that layer's directory. If it points outside the repository, composition stops with `context.extendsOutside`.
+  - A layer fetched with git can't extend a local path (`context.localExtendsFromRemote`). Local paths can be written only in the project's specification and in `extends` of a local path layer.
+  - If the same layer (`repo`, `path`, `ref`) appears twice, composition stops with `context.cycle`.
   - If the depth reaches `MAX_CONTEXT_DEPTH` (10), it stops with `context.tooDeep`.
-- The project's specification (`ContextSource`) is `repo` (a git URL or a local path, up to 500 characters) and `ref` (a branch or tag; the default branch if omitted).
-- Fetches are not cached. Each composition runs `git clone --depth 1 [--branch <ref>]` into a temporary directory (`sacty-context-*`), which is deleted after use. The environment passed to git is only `GIT_TERMINAL_PROMPT=0`, the host's `PATH`, `HOME`, `SSH_AUTH_SOCK`, `TMPDIR`, and `LANG`, and authentication.
+- Fetches are not cached. Each composition places the layers in a temporary directory (`sacty-context-*`), which is deleted after use.
+  - A git URL, and a local path with a `ref`: runs `git clone --depth 1 [--branch <ref>]`. Within one composition, the same `repo#ref` is fetched only once, and layers in different directories inside it use the same fetch (the same commit).
+  - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
+  - If the layer's directory doesn't exist or has a symbolic link along the way, composition stops with `context.pathMissing`.
+  - The environment passed to git is only `GIT_TERMINAL_PROMPT=0`, the host's `PATH`, `HOME`, `SSH_AUTH_SOCK`, `TMPDIR`, and `LANG`, and authentication.
 - Authentication
   - For an HTTPS URL, sacty passes the gh token through the `http.https://<host>/.extraheader` setting (environment variables `GIT_CONFIG_*`) if either of the following holds.
     - The project has selected a GitHub account for that host.
@@ -25,7 +37,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
   - SSH, local paths, and other servers use the host's git authentication.
   - The token is hidden in error text.
 
-Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`)
+Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `extendsRef`, `localContextDir`, `layerDir`, `copyLocalLayer`, `hashTree`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`, `ContextPath`, `contextLabel`)
 
 ## Default review skills
 
@@ -217,7 +229,7 @@ The gateway starts command-type MCP servers with `via_gateway` (default `true`) 
   - Different contents under the same name never mix.
 - Reuse: for the same project and the same contents, the same process is used across runs. If the contents change (including the layer's commit), it starts under a new name.
 - Working directory
-  - A copy of the repository of the layer that defined the server (`SACTY_HOME/context-mcp/layers/<project and commit identifier>-<random>`; `.git` is not copied).
+  - A copy of the directory of the layer that defined the server (with `path`, that directory inside the repository) (`SACTY_HOME/context-mcp/layers/<project and layer identifier>-<random>`; `.git` is not copied). The layer identifier is made from `repo`, `ref`, `path`, and `commit`.
   - Fetched layers are deleted after the run, so the copy is made at lease time and deleted when nothing uses it anymore.
   - A command with a relative path is looked up from the working directory, others from `PATH`. If not found, it becomes a reason (`context.mcpHostCommandMissing`) before starting.
 - Lease and release
