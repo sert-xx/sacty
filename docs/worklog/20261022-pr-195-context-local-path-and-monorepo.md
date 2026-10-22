@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-22（UTC）
 - タスク: なし
-- PR: なし
+- PR: #195
 - ブランチ: claude/local-path-monorepo-support-b13yn0
 - 関係する ADR: [コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)
 
