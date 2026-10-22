@@ -370,6 +370,8 @@ export type Task = {
   noRepo?: true;
   /** テンプレートで作った（PBI-90）。 */
   template?: TaskTemplate;
+  /** 人がタスクの作成時に指定した工程の組み合わせ（進め方）。無ければオーケストレーターが選ぶ。 */
+  requestedPlan?: StepPlan;
   /**
    * 実装の検証に通った後、実装に変更が無かったので PR を作らなかった、実装の提出回（PBI-90・PBI-110）。その提出回が承認待ち・
    * 承認済みなら、変更なしの実装の承認（変更なしで完了）。
@@ -656,9 +658,11 @@ function advance(task: Task, index: number) {
 /**
  * オーケストレーターが、工程の見直しで飛ばせる工程（工程の見直し）。まだの工程（実行対象・まだ）のうち、実装の前に置く
  * 文書やテストを作る工程（SKIPPABLE_STEPS）。組み合わせに実装の工程があるときだけ（成果物は実装で、ゴールガーディアンが
- * 最終レビューで判定する）。
+ * 最終レビューで判定する）。人がタスクの作成時に組み合わせを指定したタスクは、飛ばさない。
  */
 export function skippableSteps(task: Task): StepKey[] {
+  // 人が指定した組み合わせは、そのまま実行する（飛ばさない）
+  if (task.requestedPlan) return [];
   if (!task.steps.some((s) => s.key === "implement" && s.state !== "skip")) return [];
   return task.steps
     .filter((s) => (s.state === "todo" || s.state === "active") && SKIPPABLE_STEPS.includes(s.key))
@@ -766,6 +770,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
+      ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
       ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),

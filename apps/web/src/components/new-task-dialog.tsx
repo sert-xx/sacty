@@ -1,6 +1,6 @@
 "use client";
 
-import type { TaskTemplate } from "@sacty/core";
+import { STEP_PLANS, type StepPlan, type TaskTemplate } from "@sacty/core";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { type CreateTaskState, createTaskAction } from "@/app/actions";
@@ -25,6 +25,23 @@ import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-ca
 
 const initial: CreateTaskState = {};
 
+const SELECT =
+  "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+
+/** 選択肢に並べる進め方の順（実装する組み合わせ → 実装しない組み合わせ）。 */
+const PLAN_ORDER: readonly StepPlan[] = [
+  "standard",
+  "skip-design",
+  "direct",
+  "bugfix",
+  "split",
+  "investigate",
+  "review",
+  "document",
+  "operation",
+  "design-only",
+];
+
 /**
  * タスクの作成。作成先は、この画面を表示したときのプロジェクトに固定する
  * （入力中に別のタブでプロジェクトを切り替えても、表示していたプロジェクトに作るため）。
@@ -43,7 +60,8 @@ export function NewTaskDialog({
   hasTargets: boolean;
 }) {
   const [state, formAction, pending] = useActionState(createTaskAction, initial);
-  const t = useMessages().forms.task;
+  const messages = useMessages();
+  const t = messages.forms.task;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のタスクの作成先は変えないため）
@@ -56,6 +74,8 @@ export function NewTaskDialog({
   // タスクのテンプレート（PBI-90）。選ぶと、リポジトリを選ぶだけのフォームになる（題と説明は sacty が決める）
   // 送信の後も選んだままにする（理由を返したときも、同じフォームのまま直せる）
   const [template, setTemplate] = useState<TaskTemplate | "">("");
+  // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。送信の後も選んだままにする
+  const [plan, setPlan] = useState<StepPlan | "">("");
 
   return (
     <Dialog
@@ -63,6 +83,7 @@ export function NewTaskDialog({
         if (!open) return;
         setTarget({ id: projectId, name: projectName, hasTargets });
         setTemplate("");
+        setPlan("");
         // 対象が無ければ読まない（候補は無く、プロジェクトの設定を案内する）
         loadCandidates(projectId, hasTargets, t.repositoriesNoAnswer, setCandidates);
       }}
@@ -156,6 +177,36 @@ export function NewTaskDialog({
           {/* テンプレートでは、題と説明を入力させない（PBI-90） */}
           {!template && (
             <>
+              <div className="flex flex-col gap-2">
+                <span className="flex items-center gap-1">
+                  <Label htmlFor="task-plan">{t.plan}</Label>
+                  <Hint text={t.planHint} />
+                </span>
+                <select
+                  id="task-plan"
+                  name="plan"
+                  className={`${SELECT} self-start`}
+                  value={plan}
+                  onChange={(e) => setPlan(e.target.value as StepPlan | "")}
+                  aria-describedby="task-plan-note"
+                >
+                  <option value="">{t.planAuto}</option>
+                  {PLAN_ORDER.map((key) => (
+                    <option key={key} value={key}>
+                      {messages.labels.plan[key]}
+                    </option>
+                  ))}
+                </select>
+                <p
+                  id="task-plan-note"
+                  data-testid="task-plan-note"
+                  className="text-xs leading-5 text-muted-foreground"
+                >
+                  {plan
+                    ? STEP_PLANS[plan].map((step) => messages.labels.step[step]).join(" → ")
+                    : t.planAutoNote}
+                </p>
+              </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="task-title">{t.title}</Label>
                 <Input

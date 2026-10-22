@@ -307,6 +307,7 @@ import {
   investigationMarker,
   operationSucceeded,
   postedLatestCommit,
+  pullRequestInText,
   type RawExportPlan,
   type RawServices,
   referencedPullRequest,
@@ -314,6 +315,7 @@ import {
   type SplitChild,
   STEP_NAME,
   type SubtaskSummary,
+  selectablePlans,
   servicePromptLines,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
@@ -3041,6 +3043,8 @@ export class TaskService {
               }
             : {}),
           ...(repoless ? { repoless } : {}),
+          // 作業のみ（operation）の接続先にできる GitHub のホスト
+          githubHosts: Object.keys(this.githubRelayHosts(task.id)),
         }),
         // 使える組織内 PF の API（PBI-35・PBI-74）
         ...platformPromptLines(platforms),
@@ -4178,25 +4182,33 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
-    // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
-    if (!wanted) {
-      return this.append({ id: randomUUID(), projectId }, [
-        {
-          actor: "person",
-          event: {
-            type: "TaskCreated",
-            payload: { title, body, start: "sacty", noRepo: true, budgetCapUsd },
-          },
-        },
-      ]);
+    const repo = wanted ? this.projectRepository(project, wanted) : undefined;
+    // 人が指定した進め方は、タスクの形で選べるものだけ（レビューは、対象リポジトリの PR のリンクがあるときだけ）
+    const plan = input.plan;
+    if (
+      plan &&
+      !selectablePlans({
+        pullRequest:
+          repo !== undefined && pullRequestInText(repo, `${title}\n${body}`) !== undefined,
+        child: false,
+      }).includes(plan)
+    ) {
+      throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
-    const repo = this.projectRepository(project, wanted);
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
         event: {
           type: "TaskCreated",
-          payload: { title, body, start: "sacty", repo, budgetCapUsd },
+          payload: {
+            title,
+            body,
+            start: "sacty",
+            // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
+            ...(repo ? { repo } : { noRepo: true as const }),
+            budgetCapUsd,
+            ...(plan ? { plan } : {}),
+          },
         },
       },
     ]);

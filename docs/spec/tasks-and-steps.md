@@ -3,13 +3,13 @@
 # タスクと工程
 
 タスクは、工程（調査・要求要件・設計・実装など）の並びとして進む。
-どの工程の組み合わせ（進め方）にするかは、タスクの開始時にオーケストレーターが選ぶ。
+どの工程の組み合わせ（進め方）にするかは、タスクの開始時にオーケストレーターが選ぶ（人がタスクの作成時に指定していれば、それを使う）。
 工程はエージェントが実行し、人間は承認の工程（承認ゲート）でだけ判断する。
 ゴールガーディアンは、変更の申し出・最終レビュー・PR の指摘の戻し先・統合レビューを判定する。
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)
 
 ## タスクの作られ方
 
@@ -151,22 +151,41 @@
 選べる組み合わせは、次のように制限する（`allowedPlans`）。
 
 - `review`：リポジトリがあり、タスクが PR を指しているときだけ
-- `design-only`・`document`・`operation`：リポジトリの無いタスクだけ
 - `split`：子タスクでは選べない（分割は1段だけ）
+- そのほか（`design-only`・`document`・`operation` を含む）は、リポジトリの有無にかかわらず選べる（`selectablePlans`）
 
-コード: `packages/core/src/events.ts`（`STEP_PLANS`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`REPO_PLANS`）
+コード: `packages/core/src/events.ts`（`STEP_PLANS`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`selectablePlans`・`REPO_PLANS`）
+
+### 作成時に指定した進め方
+
+人は、タスクの作成時に組み合わせを指定できる（`CreateTaskInput` の `plan`。省略するとオーケストレーターが選ぶ）。
+指定は `TaskCreated` の `plan` に記録し、タスクの `requestedPlan` になる。
+
+- 作成の時に、タスクの形で選べるかを確かめる（`selectablePlans`）。
+  `review` は、対象リポジトリを選び、そのリポジトリの PR のリンクが題か内容にあるときだけ受け付け、そうでなければ断る（`task.reviewPlanNeedsPullRequest`）。
+  リポジトリを指定しないタスクでも、リポジトリが要る組み合わせ（`REPO_PLANS`）を指定できる（オーケストレーターがリポジトリを選び、用意してから同じ組み合わせで工程を決める）。
+- 工程を選ぶとき、`allowedPlans` は指定した組み合わせだけを返す。
+  指示では、組み合わせを選び直さずに `plan` にそれを書かせ、ベースブランチ・テストのコマンド・イメージ・サービス・書き出し先などはいつもどおり決めさせる（`pinnedPlanLines`）。
+  答えの `plan` が指定と違えば、読めない答えとして扱う。
+  指定がタスクの形で選べなくなっていれば（ふつうは起きない）、指定を使わずにいつもどおり選ばせる。
+- 指定した組み合わせは、工程の見直しで工程を飛ばさない（下の「工程の見直し」）。
+- タスクの詳細の「工程」の欄に、指定した進め方を出す。
+
+コード: `packages/core/src/events.ts`（`CreateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`pinnedPlanLines`・`pullRequestInText`）、`apps/web/src/components/new-task-dialog.tsx`
 
 ## 非開発作業と工程の選択
 
 オーケストレーターは `standard` を無条件に推奨しない。
-目的・成果物・変更対象・規模を比べて、次のように選ぶ。
+キーワードや対象リポジトリの有無ではなく、成果物（タスクが最終的に何を求めているか）から選ばせ、実装する組み合わせのときだけ規模と明確さで選ばせる（`PLAN_SELECTION_LINES`）。
+対象リポジトリがあることは、実装する組み合わせを選ぶ理由にしない（例：リポジトリを読んで手順書を作るなら `document`、README に手順を足すなら `direct` か `skip-design`）。
+迷うときは、成果を PR でレビューしてリポジトリに残すことが依頼に書かれているか（ファイル名・置き場所・PR の指示など）で決めさせる。
 
 | 依頼 | 組み合わせ |
 | --- | --- |
 | 質問・原因調査 | `investigate` |
 | 既存 PR のレビュー | `review` |
 | 全体設計 | `design-only` |
-| 原稿作成 | `document` |
+| リポジトリの外で読まれる原稿（手順書・ユーザーガイド・報告書など）の作成 | `document` |
 | 受け入れ条件として明確で、既存の仕組みを使う局所的な変更 | `direct`（要求要件・設計を省く） |
 | 文書を含むリポジトリのファイル変更で、局所的なもの | `direct` か `skip-design` |
 | 文書を含むリポジトリのファイル変更で、広い設計判断が必要なもの | `standard` |
@@ -179,12 +198,14 @@
 - `document` は、要求要件・設計の形式を強制せずに Markdown の原稿を作る。
   画面で差し戻し・承認できる。
   承認の前は、MCP/PF のアクセスとプロジェクトコンテキストを渡さず、外部の原稿も読まない。
+  対象リポジトリのあるタスクでは、起点のコミットのコードを使い捨ての写しで作業領域に置き、根拠として読ませる（リポジトリは変えない）。
   元の本文・規約などは、タスクの本文か人間の差し戻しで補う。
   書き出しは任意で、既存の仕組みを使う。
   書き出しに失敗しても、タスクの完了は止めない。
   既存の外部の文書を直接更新するときは、`operation` を使う。
 - `operation` は1つの工程だけで行う。
   既存のオーケストレーターが、接続先1つ・一意の対象 ID/URL・依頼の内容と前提・確かめ方を選ぶ。
+  `operation` を選べるタスクでは、対象リポジトリの有無にかかわらず、工程の選択の指示に実行設定の項目・使える接続先・答えの形を出す（`OPERATION_SETTINGS_LINE`・`operationDestinationLines`）。
   準備のための別のエージェント・準備の成果物・実行の前の承認ゲートは設けない。
   対象や接続先が足りないときは、実行を始める前に止める。
 - 作業の接続先の種類（`via`）は `platform`・`mcp`・`github`。
@@ -299,6 +320,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 飛ばせる工程（`skippableSteps`）：まだの工程（実行対象・まだ）のうち `SKIPPABLE_STEPS`（`requirements`・`design`・`reproduce`）。
   組み合わせに飛ばしていない実装（`implement`）があるときだけ。
   タスク分割の前の設計・設計だけの組み合わせは飛ばせない。
+  人がタスクの作成時に組み合わせを指定したタスク（`requestedPlan`）は飛ばさない（見直さない）。
 - いつ見直すか：工程が終わり（前段の調査の完了 `StepCompleted`、承認 `StepApproved` など。`advance`）、飛ばせる工程が残っていれば、タスクは終わった工程を `stepReview` に持つ。
   次に実行するとき（`runNextInner`）、工程を実行する前に見直す（`reviewSteps`）。
   例：`standard` では、前段の調査の後（要求要件・設計）と、要求要件の承認の後（設計）。

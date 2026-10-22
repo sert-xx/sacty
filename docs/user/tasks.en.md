@@ -16,6 +16,7 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
   - Work that does not change code (investigation only, design only) proceeds without a repository and finishes when you approve it in the sacty web UI. No PR or branch is created. If there is an export destination, the results are exported.
   - For a large task to split, Task split chooses a repository from the targets for each child task (and records why). Integration review reads the latest base branch of each child task's repository.
   - For a task that needs code changes and is not split, the Orchestrator chooses a repository from the targets, prepares it, and then chooses the steps again. If it cannot choose, the task stops. You can choose the repository in the task details and resume.
+- In "Plan", you can choose the combination of steps ("Specify the plan" below). With the default, "Automatic", the Orchestrator chooses from the task.
 - The Orchestrator decides the base branch and the test command at the start of the task by reading the repository. In a repository without tests, the task proceeds without using tests ("Repositories without tests" below).
 - The Orchestrator leaves out steps that are not needed.
   - A small change whose request is clear and that uses existing mechanisms may proceed as "investigation → implementation", without requirements or design.
@@ -25,6 +26,30 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
 - Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
   - Choosing the steps, and investigations that read and explain code or how things work, do not run it. This takes precedence even if the repository's AGENTS.md or similar has setup instructions.
   - Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
+
+### Specify the plan
+
+To proceed differently from how the Orchestrator would choose, pick a plan in "Plan" under "Create task". When you pick one, the sequence of steps appears below it.
+
+| Plan | Steps | When to use |
+| --- | --- | --- |
+| Automatic | The Orchestrator chooses | Default |
+| Standard | Investigate → Requirements → Design → Implement → After-merge watch | Changes with several behaviors or a wide impact |
+| Skip design | Investigate → Requirements → Implement → After-merge watch | Small, local changes |
+| Implement directly | Investigate → Implement → After-merge watch | Changes whose request is itself the acceptance criteria |
+| Bug fix | Investigate → Reproduce → Implement → After-merge watch | Bugs that tests can reproduce |
+| Split | Investigate → Requirements → Design → Task split → Integration review | Changes that do not fit in one PR |
+| Investigate only | Investigate | Questions, cause analysis, estimates |
+| Review only | Review | Reviewing the PR linked in the description |
+| Document | Document | Drafts such as procedure documents, user guides, and reports |
+| Operation only | Operation | One-off changes to external services |
+| Design only | Requirements → Design | Overall design without code changes |
+
+- When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual.
+- "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task.
+- You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
+- The specified plan appears in the "Steps" section of the task details.
+- When you choose a template, you cannot choose a plan.
 
 ### Template "Sacty setup"
 
@@ -53,14 +78,14 @@ From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "re
 
 ## Documents and one-off external work
 
-To create a user guide, meeting notes, or a translated draft, leave the repository unselected and write the audience, purpose, and source contents in the task.
+To create a user guide, a procedure document, meeting notes, or a translated draft, write the audience, purpose, and source contents in the task. To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed). If the Orchestrator chooses a different plan, choose "Document" in "Plan".
 
 - Review the Markdown draft in Document, request changes, and approve it.
 - The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason in the task's steps section ([Exporting results](result-export.en.md)).
 - An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
 - To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
-While Document runs, it does not use external connections or the project context, and does not read drafts from external sources. Include the source text and any necessary rules in the task body, and supply missing details through Request changes. If you provide only a URL, this step cannot retrieve the page's contents to write the draft.
+While Document runs, it does not use external connections or the project context, and does not read drafts from external sources (when you choose a target repository, it reads only a copy of its code). Include the source text and any necessary rules in the task body, and supply missing details through Request changes. If you provide only a URL, this step cannot retrieve the page's contents to write the draft.
 
 You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes that use one configured destination. Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 

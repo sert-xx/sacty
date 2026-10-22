@@ -584,10 +584,20 @@ export function referencedPullRequest(task: Task): { repo: string; number: numbe
   if (task.source?.kind === "github_pull_request") {
     return { repo: task.source.repo, number: task.source.number };
   }
-  const repo = task.repository && githubRepoOf(task.repository.url);
+  return task.repository
+    ? pullRequestInText(task.repository.url, `${task.title}\n${task.body}`)
+    : undefined;
+}
+
+/** 文の中にある、リポジトリ（URL）の PR へのリンク（最初のもの）。 */
+export function pullRequestInText(
+  repoUrl: string,
+  text: string,
+): { repo: string; number: number } | undefined {
+  const repo = githubRepoOf(repoUrl);
   if (!repo) return undefined;
   const pattern = /(https:\/\/[^\s/]+\/[\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
-  for (const match of `${task.title}\n${task.body}`.matchAll(pattern)) {
+  for (const match of text.matchAll(pattern)) {
     const number = Number(match[2]);
     if (match[1] && sameGitHubUrl(match[1], repo) && number > 0) return { repo, number };
   }
@@ -785,6 +795,11 @@ export function buildPrompt(
         "あなたは文書作成エージェントです。タスクが求めるユーザーガイド・手順書・報告書などの完成原稿をMarkdownで作成・編集してください。",
         "要求要件や設計の形式を強制せず、読者・目的・指定された形式に合わせてください。根拠と未確認事項を区別してください。",
         "この工程には外部サービスの接続・認証・プロジェクトコンテキストを渡していません。外部文書を読み取ることもできません。必要な原稿や根拠がタスクに無ければ不足情報を明記し、人間に本文等の提供と差し戻しを求めてください。",
+        ...(task.repository
+          ? [
+              `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。手順・設定・仕様などの根拠として読んでください（使い捨ての写しです。変更は残りません）。`,
+            ]
+          : []),
         "外部サービスやリポジトリを更新しないでください。原稿はsactyに保存し、人間の承認後に設定済みの書き出し先へ反映します。既存文書の直接更新依頼は作業で扱います。",
         "--- タスク ---",
         content,
@@ -2860,9 +2875,9 @@ const NO_CHANGE_LINE =
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {
   document:
-    "文書作成。ユーザーガイド・手順書・報告書などの原稿そのものを作り、画面で承認する。リポジトリのファイル変更や既存の外部文書の直接更新は含まない。",
+    "文書作成。ユーザーガイド・手順書・報告書・説明資料などの原稿そのものを作り、sacty の画面で承認する（書き出し先があれば、承認の後に書き出す）。対象リポジトリがあれば、そのコードを根拠として読んで書ける（リポジトリは変えない）。成果物がリポジトリの外で読まれる原稿のときに選ぶ。リポジトリのファイルとして文書を足す・直す（PR でレビューする）なら direct・skip-design・standard、既存の外部文書の直接更新なら operation",
   operation:
-    "作業のみ。予定表の更新・既存の外部文書の直接編集など、外部サービスへの単発の変更。タスクの依頼に従って実行し、確認した結果を人間が承認する。リポジトリ不要。",
+    "作業のみ。予定表の更新・既存の外部文書の直接編集・Issue へのコメントなど、外部サービスへの単発の変更。タスクの依頼に従って実行し、確認した結果を人間が承認する。リポジトリのコードは変えない",
   standard:
     "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
   "skip-design":
@@ -2878,8 +2893,35 @@ const planDescriptions: Record<StepPlan, string> = {
   split:
     "調査 → 要求要件 → 設計 → タスク分割 → 統合レビュー。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る。子タスクがすべて終わったら、組み合わせた結果が要求要件を満たすかをレビューする",
   "design-only":
-    "要求要件 → 設計（テスト観点）。コードを変えない全体の設計（システムの全体像・方針・分け方を決めて、人間と合意したい）。成果は sacty の画面で承認する（PR は作らない）",
+    "要求要件 → 設計（テスト観点）。コードを変えない全体の設計（システムの全体像・方針・分け方を決めて、人間と合意したい。実装は後で別のタスクにする）。成果は人間が承認する",
 };
+
+/** 作業のみ（operation）の実行設定を、工程の選択の答えに書かせる指示。 */
+const OPERATION_SETTINGS_LINE =
+  "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platform・mcp・github）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。";
+
+/** 答えの形の例の、作業のみの実行設定。 */
+const OPERATION_ANSWER =
+  '{"via": "platform・mcp・github のどれか", "name": "接続先名（github ならホスト）", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}';
+
+/** 作業のみに使える接続先（書き出しの接続先と、gh のアカウントを選んだ GitHub のホスト）。 */
+function operationDestinationLines(
+  destinations: readonly ExportDestination[],
+  githubHosts: readonly string[],
+): string[] {
+  return [
+    "--- 単発作業に使える接続先 ---",
+    ...(destinations.length || githubHosts.length
+      ? [
+          ...destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`),
+          ...githubHosts.map(
+            (host) =>
+              `- github/${host}：GitHub の PR・Issue（読み取りはゲートウェイ経由。コメントはエージェントが出力に書き、人間の承認の後に sacty が投稿する）。コードの変更・プッシュはできない（コードを変えるなら、実装する組み合わせにする）`,
+          ),
+        ]
+      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
+  ];
+}
 
 /**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
@@ -2912,6 +2954,8 @@ export function buildOrchestratorPrompt(
      * 対象リポジトリの無いタスク（PBI-73）。プロジェクトの対象のリポジトリ（コードの変更が要るときに選ぶ候補）・
      * コンテキストリポジトリ・プロジェクトのコンテキストの規約。リポジトリの無いタスクでだけ渡す。
      */
+    /** 作業のみ（operation）の接続先にできる GitHub のホスト（プロジェクトで gh のアカウントを選んだもの）。 */
+    githubHosts?: readonly string[];
     repoless?: {
       repositories: readonly string[];
       context?: string;
@@ -2927,6 +2971,8 @@ export function buildOrchestratorPrompt(
   const destinations = options.exports?.destinations ?? [];
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, planDescriptions[plan]]));
+  // 作業のみを選べるなら、実行設定と接続先を決めさせる
+  const operation = allowed.includes("operation");
   return [
     "あなたはオーケストレーターです。タスクの内容と対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
@@ -2976,11 +3022,18 @@ export function buildOrchestratorPrompt(
     ...(options.documents
       ? documentsChoiceLines(destinations.length > 0 ? undefined : options.documents.rules)
       : []),
+    ...(operation
+      ? [
+          OPERATION_SETTINGS_LINE,
+          "",
+          ...operationDestinationLines(destinations, options.githubHosts ?? []),
+        ]
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
     "",
-    ...PLAN_SELECTION_LINES,
+    ...(pinnedPlan(task) ? pinnedPlanLines(task) : PLAN_SELECTION_LINES),
     "",
     "--- タスク ---",
     `# ${task.title}`,
@@ -2990,7 +3043,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
     "```",
     "",
     "リポジトリにテストの仕組みがそもそも無いときだけ、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。",
@@ -3011,19 +3064,49 @@ export function buildOrchestratorPrompt(
 export const REPO_PLANS: readonly StepPlan[] = ["standard", "skip-design", "direct", "bugfix"];
 
 /**
- * オーケストレーターが選べる工程の組み合わせ。レビューは、タスクに対象リポジトリの PR があるときだけ（PBI-19）。
- * 設計だけは、対象リポジトリの無いタスクだけ（PBI-73）。対象リポジトリの無いタスクはレビューを選べない（PR を読めない）。
+ * タスクの形から選べる工程の組み合わせ。レビューは、対象リポジトリの PR があるときだけ（PBI-19。対象リポジトリの無いタスクは
+ * PR を読めない）。分割は1段だけ（子タスクは分割できない。PBI-27）。文書作成・作業のみ・設計だけは、対象リポジトリの有無に
+ * かかわらず選べる（対象リポジトリがあれば、文書作成はそのコードを根拠に読める）。
+ */
+export function selectablePlans(shape: {
+  /** 対象リポジトリの PR を参照している（PR から取り込んだ・説明に PR のリンクがある）。 */
+  pullRequest: boolean;
+  /** 分割で作った子タスク。 */
+  child: boolean;
+}): StepPlan[] {
+  return StepPlan.options.filter(
+    (plan) => (plan !== "review" || shape.pullRequest) && (plan !== "split" || !shape.child),
+  );
+}
+
+/**
+ * オーケストレーターが選べる工程の組み合わせ。人がタスクの作成時に組み合わせを指定していれば、それだけ（選べない形の
+ * タスクになっていれば、指定を使わずにいつもどおり選ばせる）。
  */
 export function allowedPlans(task: Task): StepPlan[] {
-  const repoless = isRepoless(task);
-  return StepPlan.options.filter(
-    (plan) =>
-      (plan !== "review" || (!repoless && referencedPullRequest(task))) &&
-      (plan !== "design-only" || repoless) &&
-      ((plan !== "document" && plan !== "operation") || repoless) &&
-      // 分割は1段だけ。子タスクは分割できない（PBI-27）
-      (plan !== "split" || !task.parent),
-  );
+  const plans = selectablePlans({
+    pullRequest: !isRepoless(task) && referencedPullRequest(task) !== undefined,
+    child: task.parent !== undefined,
+  });
+  return task.requestedPlan && plans.includes(task.requestedPlan) ? [task.requestedPlan] : plans;
+}
+
+/** 人が指定した組み合わせを、オーケストレーターに選び直させずに使うか。 */
+function pinnedPlan(task: Task): StepPlan | undefined {
+  const allowed = allowedPlans(task);
+  return task.requestedPlan && allowed.length === 1 && allowed[0] === task.requestedPlan
+    ? task.requestedPlan
+    : undefined;
+}
+
+/** 人が指定した組み合わせを伝える指示（指定が無ければ空）。 */
+function pinnedPlanLines(task: Task): string[] {
+  const pinned = pinnedPlan(task);
+  if (!pinned) return [];
+  return [
+    `人間がタスクの作成時に、工程の組み合わせ ${pinned} を指定しました。組み合わせは選び直さず、plan には ${pinned} を書いてください。`,
+    "reason には、指定された組み合わせで進めるうえで分かったこと（成果物・変更対象・不明点）を書き、ほかの項目は下の決まりどおりに決めてください。",
+  ];
 }
 
 /**
@@ -3037,7 +3120,7 @@ function buildRepolessOrchestratorPrompt(
   options: NonNullable<Parameters<typeof buildOrchestratorPrompt>[1]>,
 ): string {
   const repoless = options.repoless ?? { repositories: [] };
-  const githubHosts = repoless.githubHosts ?? [];
+  const githubHosts = repoless.githubHosts ?? options.githubHosts ?? [];
   const images = options.images ?? [];
   const destinations = options.exports?.destinations ?? [];
   const rules = repoless.rules ?? options.exports?.rules;
@@ -3048,7 +3131,7 @@ function buildRepolessOrchestratorPrompt(
     "あなたはオーケストレーターです。このタスクには対象リポジトリがありません（リポジトリを指定せずに作ったタスクです）。タスクの内容と、プロジェクトのコンテキスト・プロジェクトの対象をもとに、このタスクの進め方（工程の組み合わせ）を選んでください。",
     "作業領域（カレントディレクトリ）は空で、コードはありません。",
     "",
-    ...PLAN_SELECTION_LINES,
+    ...(pinnedPlan(task) ? pinnedPlanLines(task) : PLAN_SELECTION_LINES),
     "進め方は、次のどれかです。",
     "- コードを変えない仕事（調べもの・全体の設計など）：investigate・design-only・document・operation から目的に合うものを選ぶ。リポジトリ無しのまま進め、成果は sacty の画面で人間が承認する（PR やブランチは作らない）",
     "- 分ける必要がある大きなタスク：split を選ぶ。設計の承認の後に、タスク分割のエージェントが子タスクに分け、子タスクごとにプロジェクトの対象からリポジトリを選んで付ける（子タスクごとに違うリポジトリでよい）。ここではリポジトリを書かない",
@@ -3070,7 +3153,7 @@ function buildRepolessOrchestratorPrompt(
     "",
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
-    "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platform・mcp・github）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
+    OPERATION_SETTINGS_LINE,
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
@@ -3081,16 +3164,7 @@ function buildRepolessOrchestratorPrompt(
     // 規約は上で渡したので、書き出し先の指示では繰り返さない
     ...(destinations.length > 0 ? exportChoiceLines(task, destinations, undefined) : []),
     "",
-    "--- 単発作業に使える接続先 ---",
-    ...(destinations.length || githubHosts.length
-      ? [
-          ...destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`),
-          ...githubHosts.map(
-            (host) =>
-              `- github/${host}：GitHub の PR・Issue（読み取りはゲートウェイ経由。コメントはエージェントが出力に書き、人間の承認の後に sacty が投稿する）。コードの変更・プッシュはできない（コードを変えるなら、リポジトリを選ぶ組み合わせにする）`,
-          ),
-        ]
-      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
+    ...operationDestinationLines(destinations, githubHosts),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -3104,7 +3178,7 @@ function buildRepolessOrchestratorPrompt(
     "選んだ進め方を、次の形式で必ず出してください。",
     "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": {"via": "platform・mcp・github のどれか", "name": "接続先名（github ならホスト）", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": ${OPERATION_ANSWER}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -4039,14 +4113,13 @@ export function buildReviewComments(task: Task): ReviewComment[] {
 
 /** 候補の順序や無条件の既定値ではなく、利用者の求める成果から比較する。 */
 const PLAN_SELECTION_LINES = [
-  "実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
-  "目的・成果物・変更対象・規模の順に候補を比較してください。standardを無条件の既定や、不明な仕事の受け皿にしないでください。",
-  "質問・原因調査・見積もりはinvestigate、PRレビューはreview、全体設計だけならdesign-only、原稿の作成はdocument、予定表更新など外部への単発変更はoperationです。選べない候補を選ばないでください。",
-  "要求要件を書く工程は、依頼から受け入れ条件が決まらないときのためのものです。依頼が明確で、既存の仕組みを使う局所的な変更ならdirect（要求要件・設計を省く）を選んでください。依頼に書かれていない仕組み（新しい役割・管理画面・設定など）を、要るものと推測して工程を増やさないでください。",
-  "リポジトリ内の文書変更もファイル変更です。小さく局所的ならdirectかskip-design、設計判断や広い影響範囲があるならstandard。文書という語だけでdocumentにしないでください。",
-  "工程を選んだ後も、工程が終わるごとに（前段の調査の後など）、残りの要求要件・設計・再現の工程が要るかを、あなたに見直してもらいます。調査の前で判断しきれないときは、要りそうな工程を含む組み合わせを選び、調査の結果で省いてください。",
-  "期待動作が明確でテスト再現できる不具合はbugfix、設計判断が要る不具合はstandard。分割の候補がある場合は、1つのPRで扱えない変更に使います。",
-  "reasonには成果物と変更対象、候補を比較して必要な工程・省ける工程の根拠を書いてください。不足情報を隠して標準工程で進めず、不明点を明記してください。",
+  "組み合わせは、キーワードや対象リポジトリの有無ではなく、タスクが最終的に何を求めているか（成果物）から選んでください。次の順に考えます。",
+  "1. 成果物は何か：情報（質問への答え・原因・影響範囲・見積もり）ならinvestigate、PRへのレビューならreview、リポジトリの外で読まれる原稿（手順書・ユーザーガイド・報告書・説明資料など）ならdocument、外部サービスへの単発の変更（予定表・既存の外部文書・Issueへのコメントなど）ならoperation、コードを変えない全体の設計ならdesign-only、リポジトリのファイルの変更（コード・設定・リポジトリに置く文書）なら実装する組み合わせです。",
+  "2. 実装する組み合わせのときだけ、規模と明確さで選びます。依頼が受け入れ条件として明確で、既存の仕組みを使う局所的な変更ならdirect、小さく局所的だが受け入れ条件を決める必要があるならskip-design、振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したいならstandard、期待動作が明確でテストで再現できる不具合ならbugfix（設計判断が要る不具合はstandard）、1つのPRで扱えない大きさならsplitです。",
+  "対象リポジトリがあっても、実装する組み合わせを選ぶ理由にはなりません。たとえば「このリポジトリの使い方の手順書を作る」はリポジトリを読んで原稿を作るのでdocument、「READMEに手順を足す」はリポジトリのファイルを変えるのでdirectかskip-designです。どちらか迷うときは、成果をPRでレビューしてリポジトリに残すことが依頼に書かれているか（ファイル名・置き場所・PRの指示など）で決めてください。",
+  "standardを無条件の既定や、分からない仕事の受け皿にしないでください。依頼に書かれていない仕組み（新しい役割・管理画面・設定など）を要るものと推測して工程を増やさないでください。選べない候補を選ばないでください。",
+  "実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。工程を選んだ後も、工程が終わるごとに（前段の調査の後など）、残りの要求要件・設計・再現の工程が要るかを、あなたに見直してもらいます。調査の前で判断しきれないときは、要りそうな工程を含む組み合わせを選び、調査の結果で省いてください。",
+  "reasonには、成果物と変更対象、候補を比較して選んだ根拠（要る工程・省ける工程）を書いてください。不足情報を隠して標準工程で進めず、不明点を明記してください。",
 ];
 
 /** 操作は訂正前の案や成功だけを拾わない。壊れた当該JSONの併記も拒否する。 */

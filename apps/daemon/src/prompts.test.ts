@@ -41,6 +41,8 @@ import {
   extractStepReview,
   operationSucceeded,
   postedLatestCommit,
+  pullRequestInText,
+  selectablePlans,
   servicePromptLines,
 } from "./prompts.js";
 
@@ -541,7 +543,9 @@ describe("タスク分割（PBI-27）", () => {
     expect(allowedPlans(task())).toContain("split");
     expect(allowedPlans(task({ taskId: "p", dependsOn: [] }))).not.toContain("split");
     expect(buildOrchestratorPrompt(task())).toContain("- split：");
-    expect(buildOrchestratorPrompt(task({ taskId: "p", dependsOn: [] }))).not.toContain("split");
+    expect(buildOrchestratorPrompt(task({ taskId: "p", dependsOn: [] }))).not.toContain(
+      "- split：",
+    );
   });
 
   it("子タスクの一覧を読み、数・key の重複・存在しない依存・循環を確かめる", () => {
@@ -1453,7 +1457,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     },
   } as unknown as Task;
 
-  it("設計だけはリポジトリの無いタスクだけが選べ、リポジトリの無いタスクはレビューを選べない", () => {
+  it("文書作成・作業のみ・設計だけはリポジトリの有無にかかわらず選べ、リポジトリの無いタスクはレビューを選べない", () => {
     expect(allowedPlans(repoless)).toEqual([
       "document",
       "operation",
@@ -1465,11 +1469,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       "split",
       "bugfix",
     ]);
-    expect(allowedPlans(withRepo)).not.toContain("design-only");
-    expect(allowedPlans(withRepo)).toContain("review");
-    // 対象リポジトリを選ぶ前の版のタスク（noRepo が無い）は、今と同じ
-    expect(allowedPlans({ title: "古い", body: "", steps: [] } as unknown as Task)).not.toContain(
-      "design-only",
+    expect(allowedPlans(withRepo)).toEqual(
+      expect.arrayContaining(["design-only", "document", "operation", "review"]),
     );
   });
 
@@ -1831,14 +1832,35 @@ describe("non-code workflow boundaries", () => {
     change: "開始時刻を10時にする",
     verification: "event-1の開始時刻が10時",
   };
-  it("repo内文書変更を非開発専用経路へ逃がさない", () => {
-    expect(
-      allowedPlans({ ...task, noRepo: false, repo: "https://github.com/acme/app" }),
-    ).not.toContain("document");
-    expect(
-      allowedPlans({ ...task, noRepo: false, repo: "https://github.com/acme/app" }),
-    ).not.toContain("operation");
+  it("対象リポジトリがあっても文書作成・作業のみを選べ、リポジトリのファイルとしての文書は実装する組み合わせにさせる", () => {
+    const withRepo = { ...task, noRepo: false, repo: "https://github.com/acme/app" };
+    expect(allowedPlans(withRepo)).toEqual(expect.arrayContaining(["document", "operation"]));
     expect(allowedPlans(task)).toEqual(expect.arrayContaining(["document", "operation"]));
+    const prompt = buildOrchestratorPrompt(withRepo);
+    expect(prompt).toContain("- document：");
+    expect(prompt).toContain(
+      "リポジトリのファイルとして文書を足す・直す（PR でレビューする）なら direct",
+    );
+    expect(prompt).toContain(
+      "対象リポジトリがあっても、実装する組み合わせを選ぶ理由にはなりません",
+    );
+  });
+  it("対象リポジトリがあれば、文書作成の工程にそのコードを読ませる", () => {
+    const withRepository = {
+      ...task,
+      noRepo: false,
+      repository: {
+        url: "https://github.com/acme/app.git",
+        baseBranch: "main",
+        baseCommit: "abc1234def",
+      },
+    } as unknown as Task;
+    const prompt = buildPrompt(withRepository, "document");
+    expect(prompt).toContain("https://github.com/acme/app.git");
+    expect(prompt).toContain("abc1234");
+    expect(buildPrompt(task, "document")).not.toContain(
+      "作業領域（カレントディレクトリ）に、対象リポジトリ",
+    );
   });
   it("原稿を要求要件や設計にせず、既存出力と指摘を渡す", () => {
     const prompt = buildPrompt({ ...task, outputs: { document: "旧版" } }, "document");
@@ -1850,8 +1872,10 @@ describe("non-code workflow boundaries", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {
       const prompt = buildOrchestratorPrompt(candidate, { repoless: { repositories: [] } });
       expect(prompt).not.toContain("迷う場合は standard");
-      expect(prompt).toContain("目的・成果物・変更対象・規模");
-      expect(prompt).toContain("リポジトリ内の文書変更もファイル変更");
+      expect(prompt).toContain("タスクが最終的に何を求めているか（成果物）から選んで");
+      expect(prompt).toContain(
+        "リポジトリのファイルの変更（コード・設定・リポジトリに置く文書）なら実装する組み合わせ",
+      );
     }
   });
   it("不足/不正な具体案と根拠なしの成功は受け入れない", () => {
@@ -2618,5 +2642,68 @@ describe("申告されたテストの結果の抜粋（PR #188 レビュー提�
     );
     expect(check?.output).toHaveLength(7999);
     expect(lone(check?.output ?? "")).toBe(false);
+  });
+});
+
+describe("人がタスクの作成時に指定した進め方", () => {
+  const base = {
+    title: "手順書",
+    body: "このリポジトリのセットアップ手順書を作る",
+    steps: [],
+    remarks: [],
+    outputs: {},
+    approved: {},
+    repository: {
+      url: "https://github.com/acme/app.git",
+      baseBranch: "main",
+      baseCommit: "abc1234",
+    },
+  } as unknown as Task;
+
+  it("指定した組み合わせだけを候補にし、選び直させない", () => {
+    const task = { ...base, requestedPlan: "document" } as Task;
+    expect(allowedPlans(task)).toEqual(["document"]);
+    const prompt = buildOrchestratorPrompt(task);
+    expect(prompt).toContain("工程の組み合わせ document を指定しました");
+    expect(prompt).toContain("- document：");
+    expect(prompt).not.toContain("- standard：");
+    expect(prompt).not.toContain("standardを無条件の既定");
+    // 指定外の組み合わせの答えは読まない
+    const answer = (plan: string) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan, reason: "理由" } })}\n\`\`\``;
+    expect(extractStepPlan(answer("standard"), allowedPlans(task))).toBeUndefined();
+    expect(extractStepPlan(answer("document"), allowedPlans(task))?.plan).toBe("document");
+  });
+
+  it("リポジトリの無いタスクでも、指定を伝える", () => {
+    const task = {
+      ...base,
+      repository: undefined,
+      noRepo: true,
+      requestedPlan: "direct",
+    } as unknown as Task;
+    expect(allowedPlans(task)).toEqual(["direct"]);
+    expect(buildOrchestratorPrompt(task, { repoless: { repositories: [] } })).toContain(
+      "工程の組み合わせ direct を指定しました",
+    );
+  });
+
+  it("タスクの形で選べない組み合わせの指定は使わず、いつもどおり選ばせる", () => {
+    const task = { ...base, requestedPlan: "review" } as Task;
+    expect(allowedPlans(task)).not.toContain("review");
+    expect(allowedPlans(task)).toContain("standard");
+    expect(buildOrchestratorPrompt(task)).not.toContain("を指定しました");
+  });
+
+  it("レビューは対象リポジトリの PR のリンクがあるときだけ、分割は子タスクでないときだけ選べる", () => {
+    expect(selectablePlans({ pullRequest: false, child: false })).not.toContain("review");
+    expect(selectablePlans({ pullRequest: true, child: false })).toContain("review");
+    expect(selectablePlans({ pullRequest: false, child: true })).not.toContain("split");
+    expect(
+      pullRequestInText("https://github.com/acme/app", "見て https://github.com/acme/app/pull/12"),
+    ).toEqual({ repo: "https://github.com/acme/app", number: 12 });
+    expect(
+      pullRequestInText("https://github.com/acme/app", "https://github.com/acme/other/pull/12"),
+    ).toBeUndefined();
   });
 });

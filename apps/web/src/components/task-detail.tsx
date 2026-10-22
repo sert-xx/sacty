@@ -443,6 +443,12 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 )}
               </p>
             )}
+            {/* 人がタスクの作成時に指定した進め方 */}
+            {task.requestedPlan && (
+              <p className="text-sm leading-6 text-muted-foreground">
+                {m.stepsRequested(labels.plan[task.requestedPlan])}
+              </p>
+            )}
             {task.stepsChoice && (
               <p className="text-sm leading-6 text-muted-foreground">
                 {task.stepsChoice.fallback

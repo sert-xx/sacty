@@ -63,6 +63,7 @@ const ja = {
   stepsHint: "タスクの内容と対象リポジトリを読んで、オーケストレーターが選びます。",
   stepsNoteReview: "レビューだけ",
   stepsReason: (reason: string) => `選んだ理由：${reason}`,
+  stepsRequested: (plan: string) => `作成時に指定した進め方：${plan}`,
   exports: {
     title: "書き出し先",
     hint: "承認した成果を書き出す先です。オーケストレーターが工程ごとに決めます。",
@@ -397,6 +398,7 @@ const en: TaskMessages = {
   stepsHint: "The Orchestrator chooses them from the task and the target repository.",
   stepsNoteReview: "Review only",
   stepsReason: (reason) => `Why: ${reason}`,
+  stepsRequested: (plan) => `Plan chosen at creation: ${plan}`,
   exports: {
     title: "Export destinations",
     hint: "Where approved deliverables are exported. The Orchestrator decides per step.",
