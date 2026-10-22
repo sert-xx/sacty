@@ -2020,8 +2020,11 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      const token = await this.githubToken(task, target.repo, usedSecrets);
-      const account = this.githubAccountOf(task, target.repo).account ?? "";
+      // 認証・既存のレビューの検索・自分へのメンションに、同じアカウントを使う（トークンを取り出している間にプロジェクトの
+      // アカウントが変わっても、投稿するアカウントと違う人にメンションしないように。PR #197 レビュー指摘）
+      const project = this.deps.projects.get(task.projectId);
+      const token = await this.githubToken(task, target.repo, usedSecrets, project);
+      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""] ?? "";
       const pr = { repo: target.repo, token, number: target.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
       const existing = await this.deps.pulls.findReview({

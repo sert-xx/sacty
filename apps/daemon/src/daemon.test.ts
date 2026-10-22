@@ -5709,6 +5709,45 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("トークンを取り出している間にプロジェクトのアカウントが変わっても、投稿に使ったアカウントにメンションする（PR #197 レビュー指摘）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const github = new FakeGitHub({ me: "ghp_secret", alice: "ghp_alice" });
+      const { service } = makeService(
+        activity,
+        [out(`# 総評\n\n${block({ "sacty-review-verdict": { verdict: "suggestions" } })}`)],
+        {
+          pulls,
+          github,
+          planner: reviewPlanner,
+          settings: new MemorySettingsStore({
+            intakeLabel: "sacty",
+            reviewLabel: "sacty-review",
+            reviewMentionSelf: true,
+          }),
+        },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      // 投稿のためにトークンを取り出している間に、プロジェクトのアカウントを PR の作者（alice）に変える
+      const token = github.token.bind(github);
+      github.token = async (host, account) => {
+        const value = await token(host, account);
+        service.saveProject("default", {
+          name: "デフォルト",
+          targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+          githubAccounts: { "github.com": "alice" },
+        });
+        return value;
+      };
+      await service.runNext(id);
+      expect(pulls.reviews[0]?.token).toBe("ghp_secret");
+      const body = pulls.reviews[0]?.body ?? "";
+      expect(body.split("\n")[3]).toBe("@me 判定：提案あり（マージは可）");
+      expect(body).not.toContain("@alice");
+      activity.close();
+    });
+
     it("投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();

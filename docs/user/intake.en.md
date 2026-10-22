@@ -44,7 +44,7 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
 - The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
   - When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
-  - If you turn on "Mention me instead of the PR author in posted reviews" in "Sacty settings", the @ mention goes to the GitHub account chosen in the project (you, the poster) instead of the author (Off by default). Use this to check the AI review yourself before letting the author know.
+  - If you turn on "Mention me instead of the PR author in posted reviews" in "Sacty settings", the @ mention goes to the GitHub account chosen in the project (you, the poster) instead of the author (Off by default). Only the @ mention in the body changes. The review is still posted publicly on the PR, and the author, who usually follows the PR, may still get GitHub's usual review notification.
   - Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
   - The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
 - If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the body which commit was reviewed.
