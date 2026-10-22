@@ -4,7 +4,7 @@
 
 The context is the rules, skills, MCP servers, external PFs, and agent settings given to a step's agent and the Orchestrator. sacty composes the context by stacking layers, and on every run places it in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its inheritance chain).
 
-Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md)
+Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md), [Fetch the submodules of a context repository so that skills and other items managed separately by an organization can be used without copying them](../adr/20261022-1503-context-submodules.md)
 
 ## Layers
 
@@ -27,6 +27,12 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 - Fetches are not cached. Each composition places the layers in a temporary directory (`sacty-context-*`), which is deleted after use.
   - A git URL, and a local path with a `ref`: runs `git clone --depth 1 [--branch <ref>]`. Within one composition, the same `repo#ref` is fetched only once, and layers in different directories inside it use the same fetch (the same commit).
   - A local path without a `ref`: not fetched; the layer's directory (`<repo>/<path>`) is copied without `.git`. Copying and hashing run asynchronously, and files are read in chunks. If aborted (the time limit), they stop partway and composition stops with `context.copyAborted`. It doesn't have to be managed with git, and it may have uncommitted changes. Links are copied as links without following them. The SHA-256 of all the copied contents is recorded instead of a commit.
+  - Submodules
+    - A layer fetched with git: the submodules related to the layer (those inside the layer's directory and those containing it) are fetched with `git submodule update --init --recursive --depth 1 -- <paths>` (nested ones too). They are fetched at the commits the fetched commit points to, so only the fetched repository's commit is recorded. Submodules unrelated to the layer (such as an app's in a monorepo) are not fetched. They are fetched only once per layer directory in the same fetch.
+    - Submodules on a local path (the file protocol) are not fetched (`protocol.file.allow=never`), so that the contents of a fetched commit can't make sacty read host directories (the same as local paths in `extends`).
+    - Authentication is the same as for the repository (the gh token works for the same host; otherwise the host's git authentication). If they can't be fetched, composition stops with `context.fetchFailed` (git's error text is passed as is).
+    - A local path without a `ref`: if a submodule under the layer's directory (nested ones too) isn't checked out (the submodule has no `.git`), composition stops with `context.submoduleNotCheckedOut`. sacty doesn't change the host directory, so it doesn't check them out itself. A directory not managed with git (`git ls-files` fails) is treated as having no submodules.
+    - The contents of submodules stop on symbolic links, like other files.
   - If the layer's directory doesn't exist or has a symbolic link along the way, composition stops with `context.pathMissing`.
   - The environment passed to git is only `GIT_TERMINAL_PROMPT=0`, the host's `PATH`, `HOME`, `SSH_AUTH_SOCK`, `TMPDIR`, and `LANG`, and authentication.
 - Authentication
@@ -37,7 +43,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
   - SSH, local paths, and other servers use the host's git authentication.
   - The token is hidden in error text.
 
-Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `extendsRef`, `localContextDir`, `layerDir`, `copyLocalLayer`, `hashTree`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`, `ContextPath`, `contextLabel`)
+Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `extendsRef`, `localContextDir`, `layerDir`, `copyLocalLayer`, `hashTree`, `assertSubmodulesCheckedOut`, `gitlinks`, `submoduleInLayer`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`, `ContextPath`, `contextLabel`)
 
 ## Default review skills
 
@@ -179,6 +185,7 @@ Code: `apps/daemon/src/context.ts` (`composeContext`, `mergeNamed`, `mergeSettin
 ## Files placed for a run
 
 In the config location (`/tmp/sacty-claude-config` for Claude Code, `/.codex` for Codex), files are placed in this order: the layers' agent files → skills (`skills/<name>/…`) → files sacty generates (for the same path, the later one overwrites).
+The `.git` in the layers' agent files and skill directories (a submodule's file pointing to git's management data) is not placed (`filesUnder` and `layerAgentFiles` in `apps/daemon/src/context.ts`).
 
 | runtime | Files sacty generates |
 | --- | --- |

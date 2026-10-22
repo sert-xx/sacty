@@ -6,7 +6,7 @@
 sacty はコンテキストを層を重ねて合成し、実行のたびに Claude Code・Codex の設定の場所に置く。
 層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その継承の鎖）。
 
-関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)
+関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)、[コンテキストのリポジトリのサブモジュールを取得し、組織で別に管理するスキルなどを写さずに使えるようにする](../adr/20261022-1503-context-submodules.md)
 
 ## 層
 
@@ -40,6 +40,19 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
     git で管理していなくても、コミットしていない変更があってもよい。
     リンクはたどらずにリンクのまま写す。
     コミットの代わりに、写した中身すべての SHA-256 を記録する。
+  - サブモジュール
+    - git で取得した層：層に関わるサブモジュール（層のディレクトリの中にあるものと、層のディレクトリを含むもの）を、`git submodule update --init --recursive --depth 1 -- <パス>` で取得する（入れ子も）。
+      取得するのは、取得したコミットが指すサブモジュールのコミットなので、記録するのは取得したリポジトリのコミットだけ。
+      層に関わらないサブモジュール（モノレポのアプリのものなど）は取得しない。
+      同じ取得の同じ層のディレクトリでは1回だけ取得する。
+    - ローカルのパス（file のプロトコル）のサブモジュールは取得しない（`protocol.file.allow=never`）。
+      取得したコミットの中身で、ホストのディレクトリを読ませないため（`extends` のローカルのパスと同じ）。
+    - 認証は、リポジトリと同じ（同じホストなら gh のトークンが効く。それ以外はホストの git の認証）。
+      取得できなければ `context.fetchFailed` で止める（git の誤りの文をそのまま渡す）。
+    - `ref` の無いローカルのパス：層のディレクトリの下のサブモジュール（入れ子も）が取り込まれていなければ（サブモジュールの `.git` が無ければ）、`context.submoduleNotCheckedOut` で止める。
+      ホストのディレクトリは変えないので、sacty からは取り込まない。
+      git で管理していないディレクトリ（`git ls-files` が失敗する）には、サブモジュールは無いものとする。
+    - サブモジュールの中身も、ほかのファイルと同じく、シンボリックリンクがあれば止める。
   - 層のディレクトリが無い・途中にシンボリックリンクがあるときは `context.pathMissing` で止める。
   - git に渡す環境は `GIT_TERMINAL_PROMPT=0` とホストの `PATH`・`HOME`・`SSH_AUTH_SOCK`・`TMPDIR`・`LANG` と認証だけ。
 - 認証
@@ -50,7 +63,7 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
   - SSH・ローカルのパス・ほかのサーバーは、ホストの git の認証を使う。
   - トークンは誤りの文から伏せる。
 
-コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`extendsRef`・`localContextDir`・`layerDir`・`copyLocalLayer`・`hashTree`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`・`ContextPath`・`contextLabel`）
+コード: `apps/daemon/src/context.ts`（`loadLayers`・`loadDefaultContext`・`resolveContext`・`parseExtends`・`extendsRef`・`localContextDir`・`layerDir`・`copyLocalLayer`・`hashTree`・`assertSubmodulesCheckedOut`・`gitlinks`・`submoduleInLayer`・`GitContextFetcher`・`MAX_CONTEXT_DEPTH`・`DEFAULT_CONTEXT_REPO`）、`apps/daemon/src/service.ts`（`gitAuth`・`githubToken`）、`apps/daemon/src/gh.ts`（`gitAuthEnv`）、`packages/core/src/projects.ts`（`ContextSource`・`ContextPath`・`contextLabel`）
 
 ## 既定のレビュー用スキル
 
@@ -231,6 +244,7 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 ## 実行のときに置くファイル
 
 設定の場所（Claude Code は `/tmp/sacty-claude-config`、Codex は `/.codex`）に、層のエージェントのファイル → スキル（`skills/<名前>/…`）→ sacty が作るファイルの順に置く（同じパスは後のものが上書き）。
+層のエージェントのファイルとスキルのディレクトリの `.git`（サブモジュールの、git の管理の情報を指すファイル）は置かない（`apps/daemon/src/context.ts` の `filesUnder`・`layerAgentFiles`）。
 
 | runtime | sacty が作るファイル |
 | --- | --- |

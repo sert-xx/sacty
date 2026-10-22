@@ -1827,6 +1827,95 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     local.dispose();
   });
 
+  describe("サブモジュール", () => {
+    /** 組織で管理するスキル（グループ）・1つのスキルのリポジトリと、それをサブモジュールで置いたモノレポを作る。 */
+    function makeMono() {
+      const org = makeRepo("org-skills", {
+        "review/SKILL.md": "---\ndescription: 組織のレビュー\n---\n組織のレビュー",
+      });
+      const solo = makeRepo("solo-skill", { "SKILL.md": "---\ndescription: 単独\n---\n単独" });
+      const app = makeRepo("app-lib", { "index.ts": "export {};" });
+      const mono = makeRepo("mono-sub", { "contexts/team/rules.md": "チームの規約" });
+      const add = (url: string, path: string) =>
+        git(mono, "-c", "protocol.file.allow=always", "submodule", "add", "-q", url, path);
+      add(org, "contexts/team/skills/org");
+      add(solo, "contexts/team/skills/solo");
+      add(app, "app/vendor");
+      // 層に関わらないサブモジュールは取得しない（取得すれば、無いリポジトリなので失敗する）
+      git(mono, "config", "-f", ".gitmodules", "submodule.app/vendor.url", join(dir, "nothing"));
+      git(mono, "commit", "-qam", "submodules");
+      return mono;
+    }
+
+    it("git で取得する層は、層に関わるサブモジュールを取得し、スキルとして読む（.git は置かない）", async () => {
+      const mono = makeMono();
+      const prepared = await prepareContext(
+        new GitContextFetcher({ allowLocalSubmodules: true }),
+        { repo: mono, ref: "main", path: "contexts/team" },
+        "claude-code",
+        "/tmp/x",
+      );
+      expect(prepared.layers).toEqual([
+        { repo: mono, ref: "main", path: "contexts/team", commit: git(mono, "rev-parse", "HEAD") },
+      ]);
+      expect(readFileSync(join(prepared.dir, "skills", "review", "SKILL.md"), "utf8")).toMatch(
+        "組織のレビュー",
+      );
+      expect(readFileSync(join(prepared.dir, "skills", "solo", "SKILL.md"), "utf8")).toMatch(
+        "単独",
+      );
+      expect(existsSync(join(prepared.dir, "skills", "solo", ".git"))).toBe(false);
+      prepared.dispose();
+    });
+
+    it("git で取得する層は、既定ではローカルのパスのサブモジュールを取得しない", async () => {
+      const mono = makeMono();
+      await expect(
+        resolveContext(
+          new GitContextFetcher(),
+          { repo: mono, ref: "main", path: "contexts/team" },
+          join(dir, "w"),
+        ),
+      ).rejects.toThrow(/transport 'file' not allowed/);
+    });
+
+    it("今の中身を読むローカルの層は、取り込んでいない層の中のサブモジュールがあれば理由を示して止める", async () => {
+      const mono = makeMono();
+      const clone = join(dir, "mono-clone");
+      git(dir, "clone", "-q", mono, clone);
+      await expect(
+        resolveContext(
+          new GitContextFetcher(),
+          { repo: clone, path: "contexts/team" },
+          join(dir, "w1"),
+        ),
+      ).rejects.toThrow(
+        `${clone}//contexts/team のサブモジュール skills/org を取り込んでいません。`,
+      );
+      // 取り込めば、その中身を写す（層に関わらない app/vendor は取り込まなくてよい）
+      git(
+        clone,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "--init",
+        "-q",
+        "--",
+        "contexts/team",
+      );
+      const [layer] = await resolveContext(
+        new GitContextFetcher(),
+        { repo: clone, path: "contexts/team" },
+        join(dir, "w2"),
+      );
+      expect(
+        readFileSync(join(layer?.dir ?? "", "skills", "org", "review", "SKILL.md"), "utf8"),
+      ).toMatch("組織のレビュー");
+      expect(existsSync(join(layer?.dir ?? "", "skills", "org", ".git"))).toBe(false);
+    });
+  });
+
   it("ref を付けたローカルの git のリポジトリも git で取得した層なので、ローカルのパスを継承できない", async () => {
     const local = join(dir, "host-dir");
     mkdirSync(local);
