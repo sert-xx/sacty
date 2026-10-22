@@ -1,9 +1,13 @@
 "use client";
 
 import { type Project, type ProjectTarget, targetUrlProblem } from "@sacty/core";
-import { XIcon } from "lucide-react";
-import { startTransition, useActionState, useId, useState } from "react";
-import { type SaveProjectState, saveProjectAction } from "@/app/actions";
+import { RefreshCwIcon, XIcon } from "lucide-react";
+import { startTransition, useActionState, useId, useState, useTransition } from "react";
+import {
+  reloadGitHubAccountsAction,
+  type SaveProjectState,
+  saveProjectAction,
+} from "@/app/actions";
 import { ContextPreviewPanel } from "@/components/context-preview";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
@@ -33,7 +37,7 @@ const SELECT =
 export function ProjectEditor({
   project,
   exclusions = [],
-  github,
+  github: initialGithub,
   images = [],
   platforms: hostPlatforms = [],
   projectPlatforms,
@@ -61,6 +65,13 @@ export function ProjectEditor({
   const uid = useId();
   const messages = useMessages();
   const { editor: t, scope: scopeLabel } = messages.projects;
+  // gh のアカウントは、画面から読み直せる（gh にログインし直したあと。編集中の入力は残す）
+  const [github, setGithub] = useState(initialGithub);
+  const [reloadingAccounts, startReloadAccounts] = useTransition();
+  const reloadAccounts = () =>
+    startReloadAccounts(async () => {
+      setGithub(await reloadGitHubAccountsAction());
+    });
   const accounts = github && "accounts" in github ? github.accounts : [];
   const [name, setName] = useState(project?.name ?? "");
   const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
@@ -502,9 +513,24 @@ export function ProjectEditor({
             aria-labelledby="github"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
-            <h2 id="github" className="text-[15px] font-semibold">
-              {t.githubTitle} <Hint text={t.githubHint} />
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="github" className="text-[15px] font-semibold">
+                {t.githubTitle} <Hint text={t.githubHint} />
+              </h2>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={reloadingAccounts}
+                onClick={reloadAccounts}
+              >
+                <RefreshCwIcon
+                  data-icon="inline-start"
+                  className={reloadingAccounts ? "animate-spin" : undefined}
+                />
+                {reloadingAccounts ? t.githubReloading : t.githubReload}
+              </Button>
+            </div>
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}

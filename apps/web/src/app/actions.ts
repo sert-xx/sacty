@@ -32,6 +32,8 @@ import {
   createTask,
   decideChange,
   deleteAuditMemory,
+  type GitHubAccounts,
+  getGitHubAccounts,
   importProject,
   listProjects,
   type PreviewRuntime,
@@ -358,6 +360,18 @@ export async function previewContextAction(
     return await previewProjectContext(id, runtime, parsed);
   } catch {
     return { ok: false, message: a.daemonDown };
+  }
+}
+
+/**
+ * gh にログイン済みのアカウントを読み直す（gh auth status をもう一度確かめる）。画面で gh にログインし直したあと、
+ * 編集中の入力を残したまま選べるアカウントを新しくする。デーモンに届かなければ、その理由。
+ */
+export async function reloadGitHubAccountsAction(): Promise<GitHubAccounts> {
+  try {
+    return await getGitHubAccounts();
+  } catch {
+    return { error: (await getMessages()).common.action.daemonDown };
   }
 }
 

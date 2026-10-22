@@ -137,6 +137,7 @@ Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueCommen
   - sacty reads the list with `gh auth status --json hosts`, and reads the token with `gh auth token --hostname <host> --user <account>` each time it uses it.
   - The list also includes accounts whose token gh could not verify (`state` is `error` or `timeout`), with `state` and `error` (gh's reason).
   - The project settings screen lets you choose such an account, marked "not verified", and also shows the list of accounts read (host, account, status).
+  - "Reload accounts" on the project settings screen calls `GET /api/github/accounts` again (checking gh auth status again) and replaces the choosable accounts and the list, keeping the unsaved input. If the daemon cannot be reached, it shows the reason instead of the list.
   - sacty passes gh only `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, and a limited set of the host's environment variables (config, keyring, proxy, and CA locations). It does not pass `GH_TOKEN`, `GITHUB_TOKEN`, or `GH_ENTERPRISE_TOKEN`.
 - sacty reads the target host from the target URL (`https://<host>/<owner>[/<name>]`).
   - Before reading, it converts full-width characters with NFKC, removes invisible characters (zero-width spaces, BOM), the query, the fragment, a trailing `/`, and `.git`, and lowercases the host.
@@ -145,4 +146,4 @@ Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueCommen
 - The API is `https://api.github.com` for github.com, and `https://<host>/api/v3` for others (GitHub Enterprise Server).
 - When cloning and pushing HTTPS repositories, sacty passes the token of that host's account through `http.https://<host>/.extraheader`. SSH and local paths use the host's authentication.
 
-Code: `apps/daemon/src/gh.ts` (`GhCliAuth`, `ghEnv`, `gitAuthEnv`), `apps/web/src/components/project-editor.tsx`, `packages/core/src/github-url.ts` (`githubApiBase`, `targetUrlProblem`), `apps/daemon/src/github.ts`
+Code: `apps/daemon/src/gh.ts` (`GhCliAuth`, `ghEnv`, `gitAuthEnv`), `apps/web/src/components/project-editor.tsx`, `apps/web/src/app/actions.ts` (`reloadGitHubAccountsAction`), `packages/core/src/github-url.ts` (`githubApiBase`, `targetUrlProblem`), `apps/daemon/src/github.ts`

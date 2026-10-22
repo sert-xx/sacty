@@ -181,6 +181,8 @@ const ja = {
     githubKnownHint:
       "デーモンが gh auth status から読んだアカウントです。無いホストは、デーモンを動かすユーザーの gh にログインしていません。「確認できず」も選べますが、プロキシや社内の CA の設定をデーモンにも渡しているか確かめてください。",
     githubKnownNone: "gh にログイン済みのアカウントはありません。",
+    githubReload: "アカウントを読み直す",
+    githubReloading: "読み直しています…",
     githubKnownHost: "ホスト",
     githubKnownLogin: "アカウント",
     githubKnownState: "状態",
@@ -379,6 +381,8 @@ const en: ProjectsMessages = {
     githubKnownHint:
       'Accounts the Sacty daemon read from gh auth status. A host missing here is not signed in to gh for the user running the daemon (also check GH_CONFIG_DIR and similar). "Not verified" means gh could not verify the token; you can still choose it, but make sure the daemon also gets your proxy and corporate CA settings.',
     githubKnownNone: "No accounts are signed in to gh.",
+    githubReload: "Reload accounts",
+    githubReloading: "Reloading…",
     githubKnownHost: "Host",
     githubKnownLogin: "Account",
     githubKnownState: "Status",

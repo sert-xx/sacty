@@ -9,6 +9,7 @@ let locale: Locale = "ja";
 vi.mock("@/app/actions", () => ({
   saveProjectAction: async () => ({}),
   previewContextAction: async () => ({}),
+  reloadGitHubAccountsAction: async () => ({ accounts: [] }),
 }));
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 
@@ -56,6 +57,30 @@ describe("プロジェクトの設定に Slack の通知の項目は無い（PBI
       const definition = html.match(/name="definition" value="([^"]*)"/)?.[1] ?? "";
       expect(definition, lang).toContain("&quot;name&quot;");
       expect(definition, lang).not.toContain("notification");
+    }
+    locale = "ja";
+  });
+});
+
+describe("gh のアカウントを画面から読み直せる", () => {
+  it("GitHub アカウントの区画に、読み直すボタンを出す（日英）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const html = renderToStaticMarkup(
+        createElement(ProjectEditor, {
+          project: {
+            id: "p1",
+            name: "決済",
+            targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+            createdAt: "",
+            updatedAt: "",
+          } as unknown as Project,
+          github: {
+            accounts: [{ host: "github.com", login: "me", active: true, state: "success" }],
+          },
+        }),
+      );
+      expect(html, lang).toContain(messagesFor(lang).projects.editor.githubReload);
     }
     locale = "ja";
   });
