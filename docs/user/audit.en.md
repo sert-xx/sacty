@@ -12,16 +12,7 @@ When a task completes, sacty starts its audit automatically. No setup is needed.
 
 An audit proceeds as follows.
 
-```mermaid
-flowchart LR
-  done["A task completes"] --> survey["Overview audit<br/>up to 3 steps of concern"]
-  survey -- "no concerns" --> fin["Audited"]
-  survey -- "concerns" --> dive["Deep dive (per step)<br/>causes, improvement proposals, memories"]
-  dive --> fin
-  fin --> you{"You decide on proposals"}
-  you -- "adopt" --> task["Improvement task"]
-  you -- "reject" --> keep["Keep the reason"]
-```
+![How an audit runs](images/audit-overview.en.svg)
 
 1. **Survey**: an AI agent reads the task's whole activity and each run's session log, and flags up to 3 steps where changes were requested or there was trial and error (steps of concern).
 2. **Deep dive**: for each flagged step, in its own session, the agent finds the causes and proposes fixes for each cause.

@@ -51,20 +51,7 @@ sacty のタスクの実装の PR がマージされたら、sacty は次の2つ
 
 流れをまとめると、次のとおりです。
 
-```mermaid
-flowchart TB
-  merge["実装の PR をマージする"] --> ci{"マージのコミットの CI/CD<br/>（1分ごとに確かめる）"}
-  ci -- "5分たっても1つも無い" --> skip["監視を飛ばす"]
-  ci -- "60分で終わらない" --> timeout["時間切れで終える"]
-  ci -- "失敗" --> fix["修正のタスクを登録するか決める<br/>同じ失敗の修正のタスクが終わっていない・連鎖の上限なら作らない"]
-  ci -- "通った" --> skill["エージェントがスキル<br/>deployment-observer に従って確かめる"]
-  skill -- "失敗・エラー" --> fix
-  skill -- "問題なし" --> done["タスクが完了する"]
-  skill -- "判断できない" --> skip
-  skip --> done
-  timeout --> done
-  fix --> done
-```
+![マージの後の監視の流れ](images/deployment-overview.svg)
 
 修正のタスクは、ふつうのタスクとして進みます（そのマージでも、同じく監視します）。
 

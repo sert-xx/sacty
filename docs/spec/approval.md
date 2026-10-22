@@ -35,23 +35,7 @@
 
 要求要件・設計・実装をすべて PR で承認するときのブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
 
-```mermaid
-%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
-gitGraph
-  commit id: "起点"
-  branch "sacty/task-1a2b3c4d"
-  branch "sacty/task-1a2b3c4d-requirements-1"
-  commit id: "requirements.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-requirements-1" id: "要求要件の承認"
-  branch "sacty/task-1a2b3c4d-design-1"
-  commit id: "design.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-design-1" id: "設計の承認"
-  commit id: "実装"
-  checkout main
-  merge "sacty/task-1a2b3c4d" id: "実装の承認"
-```
+![PR で承認するときのブランチ](images/approval-branches.svg)
 
 - PR で承認するタスクか（`stepPullRequestsOn`）
   - タスクブランチがあれば、常に PR で承認する。

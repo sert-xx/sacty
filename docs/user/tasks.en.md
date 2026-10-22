@@ -8,18 +8,7 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
 
 A task proceeds as follows.
 
-```mermaid
-flowchart TB
-  create["Create a task<br/>UI, issue, PR, or ticket"] --> orch["The orchestrator chooses the plan"]
-  orch --> step["A step agent runs the step"]
-  step --> gate{"Step needs approval?"}
-  gate -- "no" --> more
-  gate -- "yes" --> you["You decide<br/>in the UI or by merging the PR"]
-  you -- "request changes" --> step
-  you -- "approve" --> more{"Steps remaining?"}
-  more -- "yes" --> step
-  more -- "no" --> done["Completed"]
-```
+![How a task proceeds](images/tasks-overview.en.svg)
 
 ## Create a task
 
@@ -249,23 +238,7 @@ Approval in PRs proceeds in this order.
 
 When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
 
-```mermaid
-%%{init: {"gitGraph": {"rotateCommitLabel": false}}}%%
-gitGraph
-  commit id: "base commit"
-  branch "sacty/task-1a2b3c4d"
-  branch "sacty/task-1a2b3c4d-requirements-1"
-  commit id: "requirements.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-requirements-1" id: "requirements approved"
-  branch "sacty/task-1a2b3c4d-design-1"
-  commit id: "design.md"
-  checkout "sacty/task-1a2b3c4d"
-  merge "sacty/task-1a2b3c4d-design-1" id: "design approved"
-  commit id: "implementation"
-  checkout main
-  merge "sacty/task-1a2b3c4d" id: "implementation approved"
-```
+![Branches when approving through PRs](images/approval-branches.en.svg)
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
 - sacty takes in PR reviews, line comments, and regular comments as findings.

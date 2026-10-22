@@ -60,25 +60,7 @@ sacty のタスクの実装の PR がマージされたら、sacty はマージ�
 
 状態は次のように移る。
 
-```mermaid
-stateDiagram-v2
-  direction LR
-  state "waiting（phase: ci）" as ci
-  state "waiting（phase: check）" as check
-  [*] --> ci: 実装の PR のマージ
-  ci --> check: すべて通り、スキルがある
-  ci --> passed: すべて通り、スキルが無い（no_skill）
-  ci --> failed: 失敗がある
-  ci --> skipped: 5分たっても1つも無い（no_ci）
-  ci --> timed_out: 60分で終わらない
-  check --> passed: healthy
-  check --> failed: unhealthy
-  check --> skipped: 判断できない（check_unknown）・予算（budget）
-  failed --> [*]: 修正のタスクを決める
-  passed --> [*]
-  skipped --> [*]
-  timed_out --> [*]
-```
+![マージの後の監視の状態](images/deployment-state.svg)
 
 | `state` | 意味 |
 | --- | --- |

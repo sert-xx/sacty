@@ -17,6 +17,7 @@
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "docs:diagrams": "node scripts/docs-diagrams/build.mjs",
     "typecheck": "tsc -b packages/core apps/daemon packages/cli && npm run typecheck -w @sacty/web"
   },
   "devDependencies": {

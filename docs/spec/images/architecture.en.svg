@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 400" width="1040" height="400" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/architecture.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">Processes and communication</title>
+  <desc id="desc">sacty up starts the web UI and the daemon. The browser reaches the web UI with its cookie, the web UI calls the daemon with a Bearer token from the server side only, and agent containers reach the gateway with a per-run token.</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <rect x="160" y="40" width="640" height="340" rx="14" style="fill:var(--green-bg);stroke:var(--green-line)"/>
+  <text x="180" y="66" class="zone" style="fill:var(--green)">Host (everything listens on 127.0.0.1)</text>
+  <rect x="410" y="74" width="370" height="290" rx="8" style="fill:none;stroke:var(--green-line);stroke-dasharray:6 4"/>
+  <text x="420" y="92" class="label" style="fill:var(--green)">Daemon (apps/daemon)</text>
+  <rect x="820" y="40" width="200" height="340" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
+  <text x="840" y="66" class="zone" style="fill:var(--blue)">docker</text>
+  <path d="M140 256 C164 256 156 258 180 258" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M280 160 L280 210" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M380 122 C405 122 405 132 430 132" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M380 248 C405 248 405 156 430 156" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M760 142 C797.5 142 797.5 132 835 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M835 182 C797.5 182 797.5 234 760 234" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="16" y="228" width="124" height="56" rx="10" class="card" style=""/>
+  <text x="78" y="261" class="title" text-anchor="middle">Browser</text>
+  <rect x="180" y="84" width="200" height="76" rx="10" class="card" style=""/>
+  <svg x="196" y="98" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/></svg>
+  <text x="232" y="116" class="title">sacty up</text>
+  <text x="196" y="144" class="sub">packages/cli</text>
+  <rect x="180" y="210" width="200" height="96" rx="10" class="card" style=""/>
+  <svg x="196" y="224" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M2.5 8.5h19M6 6.3h.01M8.5 6.3h.01"/></svg>
+  <text x="232" y="242" class="title">Web UI</text>
+  <text x="196" y="270" class="sub">apps/web（next start）</text>
+  <text x="196" y="290" class="sub">--port (default 4700)</text>
+  <rect x="430" y="104" width="330" height="76" rx="10" class="card" style=""/>
+  <svg x="446" y="118" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+  <text x="482" y="136" class="title">API /api/*</text>
+  <text x="446" y="164" class="sub">--daemon-port (default 4710)</text>
+  <rect x="430" y="196" width="330" height="76" rx="10" class="card" style=""/>
+  <svg x="446" y="210" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
+  <text x="482" y="228" class="title">Gateway</text>
+  <text x="446" y="256" class="sub">Relays AI, PF, GitHub, and MCP</text>
+  <rect x="430" y="288" width="330" height="56" rx="10" class="card" style=""/>
+  <svg x="446" y="303" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/></svg>
+  <text x="482" y="321" class="title">SACTY_HOME/sacty.db</text>
+  <rect x="835" y="104" width="170" height="96" rx="10" class="card" style=""/>
+  <svg x="851" y="118" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="887" y="136" class="title">Containers</text>
+  <text x="851" y="164" class="sub">One per</text>
+  <text x="851" y="184" class="sub">agent run</text>
+  <rect x="835" y="236" width="170" height="76" rx="10" class="card" style=""/>
+  <svg x="851" y="250" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5V12M5.5 16.5V12h13v4.5"/></svg>
+  <text x="887" y="268" class="title">Services</text>
+  <text x="851" y="296" class="sub">docker compose</text>
+  <rect x="138.3" y="223" width="43.4" height="18" rx="4" class="label-bg"/>
+  <text x="160" y="236" class="label" text-anchor="middle">cookie</text>
+  <rect x="227.1" y="177" width="45.9" height="18" rx="4" class="label-bg"/>
+  <text x="250" y="190" class="label" text-anchor="middle">starts</text>
+  <rect x="377.1" y="95" width="45.9" height="18" rx="4" class="label-bg"/>
+  <text x="400" y="108" class="label" text-anchor="middle">starts</text>
+  <rect x="328.5" y="175" width="142.9" height="18" rx="4" class="label-bg"/>
+  <text x="400" y="188" class="label" text-anchor="middle">Bearer (server side only)</text>
+  <rect x="766.4" y="115" width="67.3" height="18" rx="4" class="label-bg"/>
+  <text x="800" y="128" class="label" text-anchor="middle">docker run</text>
+  <rect x="755.4" y="239" width="85.2" height="18" rx="4" class="label-bg"/>
+  <text x="798" y="252" class="label" text-anchor="middle">per-run token</text>
+</svg>

@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 760" width="1040" height="760" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">実装の検証から承認待ちまで</title>
+  <desc id="desc">実装の工程の後、ゴールガーディアンが最終レビューの中でテストを実行して判定する。合格なら sacty が実装の PR を作って承認待ちにする。不合格が続けて3回になると一時停止する。</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <path d="M410 96 L410 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M560 158 L640 158" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M410 186 L410 230" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M560 258 L640 258" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M560 328 L590 328 Q600 328 600 338 L600 412 Q600 422 610 422 L640 422" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M790 464 L790 510" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M940 422 L980 422 Q990 422 990 412 L990 68 Q990 58 980 58 L560 58" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M410 346 L410 400" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M370 456 L370 472 Q370 482 360 482 L200 482 Q190 482 190 492 L190 510" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M450 456 L450 472 Q450 482 460 482 L475 482 Q485 482 485 492 L485 510" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M190 620 L190 660" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="260" y="20" width="300" height="76" rx="10" class="card" style=""/>
+  <svg x="276" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="312" y="52" class="title">実装の工程</text>
+  <text x="276" y="80" class="sub">エージェントが実装する</text>
+  <rect x="260" y="130" width="300" height="56" rx="10" class="card" style=""/>
+  <svg x="276" y="145" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="312" y="163" class="title">差分を取れる？</text>
+  <rect x="640" y="120" width="300" height="84" rx="10" class="card" style=""/>
+  <svg x="656" y="134" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <text x="692" y="152" class="title">一時停止</text>
+  <rect x="656" y="165" width="167.8" height="21" rx="5" class="pill"/>
+  <text x="664" y="180" class="code">verify.diffUnavailable</text>
+  <rect x="260" y="230" width="300" height="116" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
+  <svg x="276" y="244" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
+  <text x="312" y="262" class="title">最終レビュー</text>
+  <text x="276" y="290" class="sub">ゴールガーディアンが</text>
+  <text x="276" y="310" class="sub">実装のイメージでテストを実行し</text>
+  <text x="276" y="330" class="sub">観点ごとに判定する</text>
+  <rect x="640" y="230" width="300" height="108" rx="10" class="card" style=""/>
+  <svg x="656" y="244" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <text x="692" y="262" class="title">一時停止</text>
+  <rect x="656" y="275" width="160.9" height="21" rx="5" class="pill"/>
+  <text x="664" y="290" class="code">verify.commandMissing</text>
+  <text x="656" y="316" class="sub">再開すると最終レビューから</text>
+  <rect x="640" y="380" width="300" height="84" rx="10" class="card" style=""/>
+  <svg x="656" y="394" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="692" y="412" class="title">不合格が続けて3回？</text>
+  <rect x="656" y="425" width="147.1" height="21" rx="5" class="pill"/>
+  <text x="664" y="440" class="code">MAX_VERIFY_ATTEMPTS</text>
+  <rect x="640" y="510" width="300" height="84" rx="10" class="card" style=""/>
+  <svg x="656" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
+  <text x="692" y="542" class="title">一時停止</text>
+  <rect x="656" y="555" width="98.8" height="21" rx="5" class="pill"/>
+  <text x="664" y="570" class="code">verification</text>
+  <rect x="260" y="400" width="300" height="56" rx="10" class="card" style=""/>
+  <svg x="276" y="415" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="312" y="433" class="title">起点から変更がある？</text>
+  <rect x="40" y="510" width="300" height="110" rx="10" class="card" style=""/>
+  <svg x="56" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <text x="92" y="542" class="title">実装の PR を作る</text>
+  <text x="56" y="570" class="sub">sacty がコミット・プッシュする</text>
+  <rect x="56" y="579" width="154" height="21" rx="5" class="pill"/>
+  <text x="64" y="594" class="code">PullRequestPublished</text>
+  <rect x="360" y="510" width="250" height="110" rx="10" class="card" style=""/>
+  <svg x="376" y="524" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
+  <text x="412" y="542" class="title">PR を作らない</text>
+  <text x="376" y="570" class="sub">画面で承認する</text>
+  <rect x="376" y="579" width="112.6" height="21" rx="5" class="pill"/>
+  <text x="384" y="594" class="code">NoChangesFound</text>
+  <rect x="40" y="660" width="300" height="76" rx="10" class="card" style=""/>
+  <svg x="56" y="674" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <text x="92" y="692" class="title">実装の承認待ち</text>
+  <text x="56" y="720" class="sub">PR のマージで承認する</text>
+  <rect x="577.8" y="137" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="600" y="150" class="label" text-anchor="middle">いいえ</text>
+  <rect x="415" y="200" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="420" y="213" class="label" text-anchor="start">はい</text>
+  <rect x="560.5" y="239" width="79" height="18" rx="4" class="label-bg"/>
+  <text x="600" y="252" class="label" text-anchor="middle">ツールが無い</text>
+  <rect x="603" y="367" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="608" y="380" class="label" text-anchor="start">不合格</text>
+  <rect x="793" y="477" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="798" y="490" class="label" text-anchor="start">達した</text>
+  <rect x="724" y="39" width="102" height="18" rx="4" class="label-bg"/>
+  <text x="775" y="52" class="label" text-anchor="middle">まだ（やり直す）</text>
+  <rect x="415" y="365" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="420" y="378" class="label" text-anchor="start">合格</text>
+  <rect x="263.5" y="463" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="280" y="476" class="label" text-anchor="middle">ある</text>
+  <rect x="453.5" y="485" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="470" y="498" class="label" text-anchor="middle">無い</text>
+</svg>

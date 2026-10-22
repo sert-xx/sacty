@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 440" width="1040" height="440" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/deployment-state.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">After-merge watch states</title>
+  <desc id="desc">Merging the implementation PR starts waiting for CI/CD; if it passes and the skill exists, an agent checks as the skill says. The result is passed, failed, skipped, or timed_out; on failed a fix task is decided.</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <path d="M200 208 L250 212" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M360 160 L360 82 Q360 72 370 72 L540 72" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M760 58 L830 62" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M760 92 C795 92 795 158 830 158" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M720 124 L720 258 Q720 268 730 268.4 L830 272" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M470 172 L490 172 Q500 172 510 172 L790 172 Q800 172 800 162 L800 90 Q800 80 810 80 L830 80" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M470 202 L802 202 Q812 202 812 192 L812 191 Q812 182 821 182 L830 182" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M470 232 L780 232 Q790 232 790 242 L790 286 Q790 296 800 297 L830 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M360 264 L360 378 Q360 388 370 388 L830 388" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="20" y="170" width="180" height="76" rx="10" class="card" style=""/>
+  <svg x="36" y="184" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <text x="72" y="202" class="title">PR merged</text>
+  <text x="36" y="230" class="sub">Watch starts</text>
+  <rect x="250" y="160" width="220" height="104" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="266" y="174" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+  <text x="302" y="192" class="title">waiting</text>
+  <rect x="266" y="205" width="78.1" height="21" rx="5" class="pill"/>
+  <text x="274" y="220" class="code">phase: ci</text>
+  <text x="266" y="246" class="sub">sacty waits for CI/CD</text>
+  <rect x="540" y="20" width="220" height="104" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="556" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+  <text x="592" y="52" class="title">waiting</text>
+  <rect x="556" y="65" width="98.8" height="21" rx="5" class="pill"/>
+  <text x="564" y="80" class="code">phase: check</text>
+  <text x="556" y="106" class="sub">Checked as the skill says</text>
+  <rect x="830" y="20" width="190" height="76" rx="10" class="card" style=""/>
+  <svg x="846" y="34" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
+  <text x="882" y="52" class="title">passed</text>
+  <text x="846" y="80" class="sub">Passed</text>
+  <rect x="830" y="130" width="190" height="76" rx="10" class="card" style=""/>
+  <svg x="846" y="144" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>
+  <text x="882" y="162" class="title">failed</text>
+  <text x="846" y="190" class="sub">Decide on a fix task</text>
+  <rect x="830" y="232" width="190" height="108" rx="10" class="card" style=""/>
+  <svg x="846" y="246" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--gray)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
+  <text x="882" y="264" class="title">skipped</text>
+  <rect x="846" y="277" width="151.7" height="21" rx="5" class="pill"/>
+  <text x="854" y="292" class="code">no_ci・check_unknown</text>
+  <rect x="846" y="303" width="57.4" height="21" rx="5" class="pill"/>
+  <text x="854" y="318" class="code">budget</text>
+  <rect x="830" y="350" width="190" height="76" rx="10" class="card" style=""/>
+  <svg x="846" y="364" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+  <text x="882" y="382" class="title">timed_out</text>
+  <text x="846" y="410" class="sub">No fix task</text>
+  <rect x="381.6" y="53" width="136.7" height="18" rx="4" class="label-bg"/>
+  <text x="450" y="66" class="label" text-anchor="middle">all passed, skill present</text>
+  <rect x="770.3" y="35" width="49.3" height="18" rx="4" class="label-bg"/>
+  <text x="795" y="48" class="label" text-anchor="middle">healthy</text>
+  <rect x="764.4" y="107" width="61.3" height="18" rx="4" class="label-bg"/>
+  <text x="795" y="120" class="label" text-anchor="middle">unhealthy</text>
+  <rect x="590" y="137" width="122" height="18" rx="4" class="label-bg"/>
+  <text x="712" y="150" class="label" text-anchor="end">undetermined, budget</text>
+  <rect x="539.4" y="153" width="141.1" height="18" rx="4" class="label-bg"/>
+  <text x="610" y="166" class="label" text-anchor="middle">passed, no skill (no_skill)</text>
+  <rect x="581.9" y="183" width="56.2" height="18" rx="4" class="label-bg"/>
+  <text x="610" y="196" class="label" text-anchor="middle">a failure</text>
+  <rect x="530.8" y="213" width="158.4" height="18" rx="4" class="label-bg"/>
+  <text x="610" y="226" class="label" text-anchor="middle">none after 5 minutes (no_ci)</text>
+  <rect x="535.7" y="369" width="128.7" height="18" rx="4" class="label-bg"/>
+  <text x="600" y="382" class="label" text-anchor="middle">not done in 60 minutes</text>
+</svg>

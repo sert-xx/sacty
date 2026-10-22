@@ -8,15 +8,7 @@ Related ADR: [監査が登録したメモリーを、作業履歴を正本にし
 
 The flow from registering a memory to an agent reading it is as follows.
 
-```mermaid
-flowchart LR
-  dive["Audit deep dive<br/>memories in AuditDeepDived"] --> log[("Activity log (source of truth)")]
-  del["Deletion AuditMemoryDeleted<br/>person, capacity, expired, promoted"] --> log
-  log -- "the daemon rewrites" --> proj["memory/projects/project ID/<br/>SKILL.md (index) and references/"]
-  log -- "the daemon rewrites" --> repo["memory/repos/host/owner/name/<br/>SKILL.md (index) and references/"]
-  proj -- "/sacty-memory/project (read only)" --> agent["Step agent<br/>opens only the relevant ones from the index"]
-  repo -- "/sacty-memory/repository (read only)" --> agent
-```
+![From registering a memory to reading it](images/memory-flow.en.svg)
 
 ## Layers and locations
 
@@ -108,17 +100,7 @@ The audit outputs two kinds of promotion: moving between layers and promotion to
 
 The promotions the audit outputs flow as follows.
 
-```mermaid
-flowchart TB
-  survey["Overview audit<br/>input: undeleted memories and their useful counts"]
-  survey -- "memoryMoves (up to 3 per run)" --> move["Move between tiers<br/>project ⇄ repository"]
-  survey -- "memoryPromotions (up to 2 per run)" --> prop["Proposal to turn it into context"]
-  prop --> decide{"A person decides"}
-  decide -- "adopt" --> task["Improvement task in the target repository"]
-  task --> merged["Improvement PR merged"]
-  merged --> retire["Delete the original memory<br/>AuditMemoryDeleted (promoted)"]
-  decide -- "reject" --> keep["Keep the memory<br/>pass the rejection reason to the next input"]
-```
+![Promoting memories](images/memory-promotion.en.svg)
 
 ### Moving between layers
 

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 340" width="1040" height="340" role="img" aria-labelledby="title desc">
+  <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/compose-forwarding.mjs）を直して npm run docs:diagrams で作り直す -->
+  <title id="title">localhost の転送</title>
+  <desc id="desc">エージェントのコンテナの中で、sacty の転送が localhost のポートをサービスのポートにつなぐ。サービス名でもつなげる。</desc>
+  <style>
+    svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
+          --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
+          --green:#1a7f37; --green-bg:#dafbe1; --green-line:#4ac26b;
+          --gray:#59636e; --gray-bg:#f6f8fa; --gray-line:#d1d9e0;
+          --amber:#9a6700; --amber-bg:#fff8c5; --amber-line:#d4a72c;
+          --purple:#8250df; --purple-bg:#fbefff; --purple-line:#c297ff;
+          --red:#cf222e; --red-bg:#ffebe9; --red-line:#ff8182; }
+    @media (prefers-color-scheme: dark) {
+      svg { --text:#e6edf3; --sub:#9198a1; --card:#151b23; --line:#3d444d; --arrow:#9198a1; --code-bg:#262c36;
+            --blue:#4493f8; --blue-bg:#0d2a4a; --blue-line:#1f6feb;
+            --green:#3fb950; --green-bg:#0f2d1a; --green-line:#238636;
+            --gray:#9198a1; --gray-bg:#10151c; --gray-line:#3d444d;
+            --amber:#d29922; --amber-bg:#2e2410; --amber-line:#9e6a03;
+            --purple:#ab7df8; --purple-bg:#271a3f; --purple-line:#8957e5;
+            --red:#f85149; --red-bg:#3a1418; --red-line:#da3633; }
+    }
+    text { font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "IPAGothic", sans-serif; fill: var(--text); }
+    .zone { font-size: 13px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12.5px; fill: var(--sub); }
+    .strong { font-size: 12.5px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .label { font-size: 11.5px; fill: var(--sub); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .pill { fill: var(--code-bg); }
+    .label-bg { fill: var(--card); opacity: .92; }
+    .icon { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .flow { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+    .muted { fill: none; stroke: var(--arrow); stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .lifeline { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  </style>
+  <defs>
+    <marker id="ah-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--arrow)"/></marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--blue)"/></marker>
+    <marker id="ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--green)"/></marker>
+    <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--gray)"/></marker>
+    <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--amber)"/></marker>
+    <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
+    <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
+  </defs>
+  <rect x="20" y="30" width="1000" height="300" rx="14" style="fill:var(--gray-bg);stroke:var(--gray-line)"/>
+  <text x="40" y="56" class="zone" style="fill:var(--gray)">実行ごとの compose のネットワーク</text>
+  <rect x="50" y="70" width="570" height="190" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
+  <text x="70" y="96" class="zone" style="fill:var(--blue)">エージェントのコンテナ</text>
+  <path d="M300 158 L370 158" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M600 168 L730 168" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M185 206 L185 286 Q185 296 195 296 L855 296 Q865 296 865 286 L865 226" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="70" y="110" width="230" height="96" rx="10" class="card" style=""/>
+  <svg x="86" y="124" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/></svg>
+  <text x="122" y="142" class="title">テスト・アプリ</text>
+  <text x="86" y="170" class="sub">接続先は localhost の</text>
+  <text x="86" y="190" class="sub">ままでよい</text>
+  <rect x="370" y="110" width="230" height="116" rx="10" class="card" style=""/>
+  <svg x="386" y="124" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--blue)"><rect x="9" y="2.5" width="6" height="5" rx="1"/><rect x="2.5" y="16.5" width="6" height="5" rx="1"/><rect x="15.5" y="16.5" width="6" height="5" rx="1"/><path d="M12 7.5V12M5.5 16.5V12h13v4.5"/></svg>
+  <text x="422" y="142" class="title">sacty の転送</text>
+  <rect x="386" y="155" width="119.5" height="21" rx="5" class="pill"/>
+  <text x="394" y="170" class="code">127.0.0.1:15432</text>
+  <rect x="386" y="181" width="112.6" height="21" rx="5" class="pill"/>
+  <text x="394" y="196" class="code">127.0.0.1:5432</text>
+  <rect x="730" y="110" width="270" height="116" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
+  <svg x="746" y="124" width="26" height="26" viewBox="0 0 24 24" class="icon" style="stroke:var(--green)"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/></svg>
+  <text x="782" y="142" class="title">db（サービス）</text>
+  <rect x="746" y="155" width="160.9" height="21" rx="5" class="pill"/>
+  <text x="754" y="170" class="code">ports: [&quot;15432:5432&quot;]</text>
+  <text x="746" y="196" class="sub">コンテナのポート 5432</text>
+  <rect x="305.6" y="129" width="58.8" height="18" rx="4" class="label-bg"/>
+  <text x="335" y="142" class="label" text-anchor="middle">localhost</text>
+  <rect x="638" y="149" width="53.9" height="18" rx="4" class="label-bg"/>
+  <text x="665" y="162" class="label" text-anchor="middle">db:5432</text>
+  <rect x="440.5" y="287" width="168.9" height="18" rx="4" class="label-bg"/>
+  <text x="525" y="300" class="label" text-anchor="middle">サービス名でも届く：db:5432</text>
+</svg>

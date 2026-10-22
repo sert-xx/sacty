@@ -27,19 +27,7 @@ In runs that start services, sacty forwards `127.0.0.1:<port>` (and `[::1]:<port
 
 For example, connecting to a db service looks like this.
 
-```mermaid
-flowchart LR
-  subgraph net["Per-run compose network"]
-    subgraph agent["Agent container"]
-      app["Tests / app"]
-      fwd["sacty forwarder<br/>127.0.0.1:15432, 127.0.0.1:5432"]
-    end
-    db["db (service)<br/>ports: 15432:5432"]
-  end
-  app -- "localhost:15432 or localhost:5432" --> fwd
-  fwd -- "db:5432" --> db
-  app -- "db:5432 (service name)" --> db
-```
+![Forwarding localhost](images/compose-forwarding.en.svg)
 
 The forwarding is done by a small TCP forwarder that sacty starts inside the container before the command. It runs on the Node.js in the image, so no extra packages are needed. The forwarder stops when the command finishes, and the command's exit code and output do not change. In runs that do not start services, nothing changes (the command is the same).
 

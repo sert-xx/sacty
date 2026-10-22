@@ -10,15 +10,7 @@
 
 メモリーの登録から、エージェントが読むまでの流れは次のとおり。
 
-```mermaid
-flowchart LR
-  dive["監査の深掘り<br/>AuditDeepDived の memories"] --> log[("作業履歴（正本）")]
-  del["削除 AuditMemoryDeleted<br/>person・capacity・expired・promoted"] --> log
-  log -- "デーモンが書き直す" --> proj["memory/projects/プロジェクトの ID/<br/>SKILL.md（索引）と references/"]
-  log -- "デーモンが書き直す" --> repo["memory/repos/ホスト/オーナー/名前/<br/>SKILL.md（索引）と references/"]
-  proj -- "/sacty-memory/project（読み取り専用）" --> agent["工程のエージェント<br/>索引から関係するものだけを開く"]
-  repo -- "/sacty-memory/repository（読み取り専用）" --> agent
-```
+![メモリーの登録から読まれるまで](images/memory-flow.svg)
 
 ## 階層と置き場所
 
@@ -137,17 +129,7 @@ flowchart LR
 
 監査が出す昇格の流れは次のとおり。
 
-```mermaid
-flowchart TB
-  survey["大まかな監査<br/>材料：消していないメモリーと役に立った回数"]
-  survey -- "memoryMoves（1回 3 件まで）" --> move["階層の移動<br/>project ⇄ repository"]
-  survey -- "memoryPromotions（1回 2 件まで）" --> prop["コンテキストにする改修の提案"]
-  prop --> decide{"人が判断する"}
-  decide -- "採用" --> task["宛先のリポジトリに改修のタスク"]
-  task --> merged["改修の PR のマージ"]
-  merged --> retire["元のメモリーを消す<br/>AuditMemoryDeleted（promoted）"]
-  decide -- "却下" --> keep["メモリーは残す<br/>却下の理由を次の材料に添える"]
-```
+![メモリーの昇格](images/memory-promotion.svg)
 
 ### 階層の移動
 
