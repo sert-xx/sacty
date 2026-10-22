@@ -4,8 +4,7 @@
 
 # Gateway
 
-sacty runs a gateway on the host that relays AI calls, MCP, and external platform APIs from the step agents' containers.
-Only the gateway holds authentication values; the agent containers receive only a per-run token.
+sacty runs a gateway on the host. The gateway relays AI calls, MCP, and external platform APIs from the step agents' containers. Only the gateway holds authentication values; the agent containers receive only a per-run token.
 
 - The gateway listens only on 127.0.0.1 and accepts only requests that carry the token of a running agent.
 - Configure it in `gateway` in `config.yaml` (along with `via_gateway` of `providers.codex`).
@@ -20,15 +19,11 @@ Only the gateway holds authentication values; the agent containers receive only 
 
 ## Relaying AI calls
 
-If you write `via_gateway: true` in `providers.codex`, the AI calls of Codex agents go through sacty's gateway.
-It works only when `auth.mode` is `bedrock` or `openai-compatible` ([next section](#openai-compatible-endpoints)). Writing it with other authentication methods or
-in `providers.claude` is an error ([config.yaml settings](config.en.md#connections-and-prices-providers)).
+If you write `via_gateway: true` in `providers.codex`, the AI calls of Codex agents go through sacty's gateway. It works only when `auth.mode` is `bedrock` or `openai-compatible` ([next section](#openai-compatible-endpoints)). Writing it with other authentication methods or in `providers.claude` is an error ([config.yaml settings](config.en.md#connections-and-prices-providers)).
 
 - Only the gateway holds the API key; the agent containers receive only a per-run token.
-- Rate limits (429) and temporary failures (500, 502, 503, 504, connection failures) are retried after waiting for `Retry-After` (or, if there is none, an interval
-  that starts at 1 second, doubles each time, and caps at 60 seconds).
-- You can change the retry limits with `gateway.retry` (`max_attempts`, `max_wait_sec`). When a limit is reached, the agent pauses as having hit a usage limit,
-  and you can retry by resuming it.
+- The gateway waits and then retries rate limits (429) and temporary failures (500, 502, 503, 504, connection failures). The wait follows `Retry-After`. If there is no `Retry-After`, the interval starts at 1 second, doubles each time, and caps at 60 seconds.
+- You can change the retry limits with `gateway.retry` (`max_attempts`, `max_wait_sec`). When a limit is reached, the agent pauses as having hit a usage limit. You can retry by resuming it.
 - Runs that were retried record the number of retries and the time waited in the Activity.
 
 ```yaml
@@ -40,8 +35,7 @@ gateway:
 
 ## OpenAI-compatible endpoints
 
-Write an OpenAI-compatible (Responses API) endpoint (such as your organization's AI gateway) in the `auth` of `providers.codex` with `mode: openai-compatible`.
-Codex's default agents ([Default agents](config.en.md#default-agents)) use this endpoint.
+Write an OpenAI-compatible (Responses API) endpoint (such as your organization's AI gateway) in the `auth` of `providers.codex` with `mode: openai-compatible`. Codex's default agents ([Default agents](config.en.md#default-agents)) use this endpoint.
 
 ```yaml
 providers:
@@ -62,15 +56,14 @@ providers:
 | `auth.secret` | The API key (sent as Bearer; a secret name or a 1Password reference). Omit it if no authentication is needed | None |
 | `via_gateway` | Go through sacty's gateway | `false` |
 
-- When the endpoint uses different model names, change `model` with [Overriding agents](config.en.md#overriding-agents) and write the price for that name in
-  `available_models`.
+- When the endpoint uses different model names, change `model` with [Overriding agents](config.en.md#overriding-agents) and write the price for that name in `available_models`.
 - Named `providers` and `provider` of agents from earlier versions are errors. Rewrite them in the form above.
 
 ## Host address
 
 Containers connect to the gateway at `host.docker.internal`. With the default (`host-gateway`), this works as is on Docker Desktop.
-With Docker inside a virtual machine, such as Rancher Desktop, `host-gateway` points to the virtual machine and does not reach the host (the agent stays at `Reconnecting... error sending request`
-and makes no progress), so write an address that reaches the host in `gateway.host_address` (for Rancher Desktop, `192.168.5.2`).
+
+With Docker inside a virtual machine, such as Rancher Desktop, `host-gateway` points to the virtual machine, so containers cannot reach the gateway. The agent then stays at `Reconnecting... error sending request` and makes no progress. Write an address that reaches the host in `gateway.host_address` (for Rancher Desktop, `192.168.5.2`).
 
 ```yaml
 gateway:
@@ -79,8 +72,7 @@ gateway:
 
 ## Host MCP servers
 
-If you write a local command MCP server that authenticates in a browser at startup (Okta and so on) in `gateway.mcp_servers`, the gateway starts it on the host and
-keeps it running, and passes it to step agents as an HTTP MCP server (a browser cannot be opened inside a container).
+Write a local command MCP server that authenticates in a browser at startup (Okta and so on) in `gateway.mcp_servers`, because a browser cannot be opened inside a container. The gateway starts the server on the host, keeps it running, and passes it to step agents as an HTTP MCP server.
 
 ```yaml
 gateway:
@@ -105,30 +97,36 @@ gateway:
 | `ready_timeout_sec` | Maximum wait from start until the server is ready (authenticated) (seconds; 5 to 3600) | `300` |
 | `startup_timeout_sec`, `tool_timeout_sec` | Maximum time the agent waits for startup and for a tool call ([MCP server timeouts](context.en.md#mcp-server-timeouts)) | The agent's default |
 
-- The server is restarted every `restart_every_min` before the authentication expires. sacty switches over once the new process is ready (authenticated), then stops the old one
-  (agents in the middle of using it are not interrupted).
-- It is also restarted when the process exits or a tool returns an authentication error (this assumes that browser approval is automated; sacty does not wait for a person).
-- If it is still not ready after restarting, this is shown on the task list screen and the server is restarted every minute.
-- Before a step agent's run, the MCP servers that run uses are checked against the settings, and servers that were added or are in the middle of starting or re-authenticating are
-  waited for until ready (up to `ready_timeout_sec`) before the run starts (setting changes take effect immediately without stopping the daemon). Concurrent runs wait for the same startup to complete.
-  If a server is not ready, the run proceeds, and the Activity (the notes of "Context prepared") records which MCP server it is. Exports of results to that MCP server are
-  not performed, and the reason is recorded.
+### Restarts
+
+- The gateway restarts the server every `restart_every_min`, before the authentication expires. It switches over once the new process is ready (authenticated), and then stops the old one. Agents in the middle of using the server are not interrupted.
+- The gateway also restarts the server when the process exits or a tool returns an authentication error. This assumes that browser approval is automated; sacty does not wait for a person.
+- If the server is still not ready after restarting, this is shown on the task list screen and the server is restarted every minute.
+
+### Before a step agent's run
+
+- Before a step agent's run, sacty checks the MCP servers that run uses against the settings.
+  - For servers that were added or are in the middle of starting or re-authenticating, sacty waits until they are ready (up to `ready_timeout_sec`) before starting the run.
+  - Setting changes take effect immediately without stopping the daemon.
+  - Concurrent runs wait for the same startup to complete.
+- If a server is not ready, the run proceeds, and the Activity (the notes of "Context prepared") records which MCP server it is. Results are not exported to that MCP server, and the reason is recorded.
 - Containers receive only the HTTP MCP URL with a per-run token (it can be passed to both Claude Code and Codex).
-- `startup_timeout_sec` and `tool_timeout_sec` are passed to the agent, and the gateway's relay (10 minutes by default for tool calls and 60 seconds for the list)
-  does not cut off before the values you wrote either. Changing only the timeouts does not restart the MCP server.
-- If the same name exists in the context repository's `mcp.yaml`, the one here is used and a warning is recorded in the Activity.
-- `command` servers in the context repository's `mcp.yaml` also run on the host by default through the same mechanism (they are started per project;
-  see [Context repository](context.en.md#command-mcp-servers-run-on-the-host)).
-- Each MCP server is started in its own process group. Stopping `sacty up` (Ctrl-C, SIGTERM) also stops the MCP servers and the descendant processes
-  they started. Those left behind when the daemon crashed are cleaned up on the next start (only processes whose PID and start time match the records in `SACTY_HOME/host-mcp/processes`
-  are stopped, so other processes that reused the PID are not stopped. Processes whose recording daemon is still running, that is,
-  those of another sacty running with the same `SACTY_HOME`, are not stopped either).
+- `startup_timeout_sec` and `tool_timeout_sec` are passed to the agent. The gateway's relay (10 minutes by default for tool calls and 60 seconds for the list) does not cut off before the values you wrote either. Changing only the timeouts does not restart the MCP server.
+
+### Relation to the context repository's MCP servers
+
+- If the same name exists in the context repository's `mcp.yaml`, the one in `gateway.mcp_servers` is used and a warning is recorded in the Activity.
+- `command` servers in the context repository's `mcp.yaml` also run on the host by default through the same mechanism. They are started per project (see [Context repository](context.en.md#command-mcp-servers-run-on-the-host)).
+
+### Cleaning up processes
+
+Each MCP server is started in its own process group. Stopping `sacty up` (Ctrl-C, SIGTERM) also stops the MCP servers and the descendant processes they started.
+
+Processes left behind when the daemon crashed are cleaned up on the next start. Only processes whose PID and start time match the records in `SACTY_HOME/host-mcp/processes` are stopped, so other processes that reused the PID are not stopped. Processes whose recording daemon is still running (those of another sacty running with the same `SACTY_HOME`) are not stopped either.
 
 ## Organization platform (PF) APIs
 
-Organization platforms without an MCP server can be used by agents through their APIs if you write them in `gateway.platforms`. Only the gateway holds the credentials;
-they are not passed to agents. Per-project platforms can be written in the same form in the context repository's `platforms.yaml`
-([Context repository](context.en.md#platformsyaml)).
+Organization platforms without an MCP server can be used by agents through their APIs if you write them in `gateway.platforms`. Only the gateway holds the credentials; they are not passed to agents. Per-project platforms can be written in the same form in the context repository's `platforms.yaml` ([Context repository](context.en.md#platformsyaml)).
 
 ```yaml
 gateway:
@@ -187,29 +185,22 @@ gateway:
 | `auth.token.ttl_sec` | How long to keep the token when its expiry is unknown (seconds) | `300` |
 | `allow` | Allowed APIs (`<method> <path>`; the method is one of `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`). At least one line is required | None |
 
-- The step agent's instructions include the list of available platforms and APIs. Agents can call them without dealing with authentication.
-- Requests not on the allowlist are rejected (403, with a response that says what is allowed).
-- Tokens are fetched again before they expire, and if a request is rejected (401, 403), the token is fetched again and the request is resent once.
-- Even when the key is sent in the query, URLs containing the key are not shown in the web UI, logs, the Activity, or responses to agents (including the reasons for fetch failures)
-  (they are masked as `[secret]`). The key is sent only to the token endpoint and is not added to the URL forwarded to the platform.
-- When a token endpoint that receives the key in the query returns a failure (non-2xx), the reason shows only the status code, not the endpoint's body
-  (for example `token endpoint returned 403 (the response body is not shown because the key is sent in the query)`).
-  This is so that the key sent is never shown, in whatever form it appears in the body. Check the cause in the endpoint's own logs or similar.
+- sacty includes the list of available platforms and APIs in the step agent's instructions. Agents can call them without dealing with authentication.
+- The gateway rejects requests that are not on the allowlist (403, with a response that says what is allowed).
+- The gateway fetches tokens again before they expire. If a request is rejected (401, 403), it fetches the token again and resends the request once.
+- Even when the key is sent in the query, URLs containing the key are not shown in the web UI, logs, the Activity, or responses to agents, including the reasons for fetch failures (they are masked as `[secret]`). The key is sent only to the token endpoint and is not added to the URL forwarded to the platform.
+- When a token endpoint that receives the key in the query returns a failure (non-2xx), the reason shows only the status code, not the endpoint's body (for example `token endpoint returned 403 (the response body is not shown because the key is sent in the query)`). This ensures that the key is never shown, in whatever form it appears in the body. Check the cause in the endpoint's own logs or similar.
 - Credentials are prepared when the daemon starts. Platforms whose credentials cannot be prepared are shown on the task list screen (other platforms remain usable).
-- They are also used as the connection for JIRA intake ([Intake](intake.en.md#jira-tickets)) and result export ([Exporting results](result-export.en.md)).
+- The platforms are also used as the connection for JIRA intake ([Intake](intake.en.md#jira-tickets)) and result export ([Exporting results](result-export.en.md)).
 
 ## Reading GitHub
 
-Step agents can read the GitHub API through the gateway. No setting is needed, and it cannot be turned off. Only the hosts for which a GitHub account is chosen
-in the project settings ([Project settings](project-settings.en.md)) can be used, and the gateway adds the token
-(it is not passed to the agent's container).
+Step agents can read the GitHub API through the gateway. No setting is needed, and it cannot be turned off. Only the hosts for which a GitHub account is chosen in the project settings ([Project settings](project-settings.en.md)) can be used. The gateway adds the token, and the token is not passed to the agent's container.
 
-- It is read-only. Only REST `GET` and `HEAD` and GraphQL `query` are sent. Writes (`POST`, `PATCH`, `mutation`, and so on) are refused.
-- The `gh` in the agent image can use only `gh api` (for example `gh api repos/acme/app/pulls/12/comments`). Other commands such as `gh pr view`
-  cannot be used. With curl, read `$SACTY_GITHUB_URL/<host>/<API path>`.
-- For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it
-  ([Working on tasks](tasks.en.md#comments-on-prs-and-issues)).
-- It is not available in the document writing step (no external connection is used before approval).
+- It is read-only. The gateway sends only REST `GET` and `HEAD` and GraphQL `query`, and refuses writes (`POST`, `PATCH`, `mutation`, and so on).
+- The `gh` in the agent image can use only `gh api` (for example `gh api repos/acme/app/pulls/12/comments`). Other commands such as `gh pr view` cannot be used. With curl, read `$SACTY_GITHUB_URL/<host>/<API path>`.
+- For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it ([Working on tasks](tasks.en.md#comments-on-prs-and-issues)).
+- It is not available in the document writing step, because no external connection is used before approval.
 - To use `gh`, you need an image rebuilt with this version (`npx sacty image build`). Even with an image built before that, curl can read.
 
 ## Related pages
