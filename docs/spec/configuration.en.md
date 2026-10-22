@@ -143,6 +143,7 @@ Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `ste
 - `image_build.npm_config`: authentication items (`_auth`, `_authToken`, `_password`, `username`, `email`, `certfile`, `keyfile`, `cert`, `key`,
   including ones bound to a registry such as `//host/:_authToken`) cannot be written. Values cannot contain line breaks.
 - `image_build.npm_version`: `latest` or `digits(.digits){0,2}`.
+- `image_build.drawio`: a boolean. Only when it is `false`, the draw.io CLI is not installed (`SACTY_DRAWIO=0` is passed).
 - Names in `images`: `^(?!default$)[a-z0-9][a-z0-9_-]{0,39}$` (`default` cannot be used because it refers to the default image).
 - `images.<name>.env`: names match `^[A-Z_][A-Z0-9_]*$`. Names that look like credentials (containing `TOKEN`, `PASSWORD`, `PASSWD`, `SECRET`, `CREDENTIAL`, `AUTH`,
   `API_KEY`, or `PRIVATE_KEY`) and URLs containing a user name or password cannot be written. `PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`,

@@ -824,6 +824,15 @@ ${extra}`,
     write("image_build:\n  npm_version: '11; rm -rf /'\n");
     const version = loadConfig(dir);
     expect(version.ok ? "" : ja(version.problem)).toContain("image_build.npm_version");
+    // draw.io の CLI は、false と書いたときだけ入れない。真偽値のほかは拒否する
+    write("image_build:\n  drawio: false\n");
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { imageBuild: { drawio: false } } });
+    write("image_build:\n  drawio: true\n");
+    const withDrawio = loadConfig(dir);
+    expect(withDrawio.ok && withDrawio.config.imageBuild).toEqual({});
+    write("image_build:\n  drawio: 'no'\n");
+    const drawio = loadConfig(dir);
+    expect(drawio.ok ? "" : ja(drawio.problem)).toContain("image_build.drawio");
   });
 
   it("言語ごとのイメージ（images）を読み、認証の値・予約された名前・危ない URL は拒否する（PBI-41）", () => {

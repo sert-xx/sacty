@@ -83,6 +83,19 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 
 コード: `apps/daemon/default-context/skills/plan-steps/SKILL.md`、`apps/daemon/default-context/skills/plan-steps/references/json-check.md`、`apps/daemon/src/prompts.ts`（`planAnswerLines`・`PLAN_SKILL`）
 
+## 既定の図用スキル
+
+既定のコンテキストには、draw.io の図（`.drawio`。PNG・SVG・PDF への書き出しを含む）を作る `drawio` がある。
+draw.io の公式のスキル（`jgraph/drawio-mcp` の `plugins/claude-code/skills/drawio/SKILL.md`。Codex 用も同じ中身。Apache-2.0）を、手を加えずに
+ライセンス（`LICENSE`）とともに置く。取り込んだ版は `jgraph/drawio-mcp` の `307725c331847c15bf5ddeef64a9c8434a30fadf` で、SKILL.md の SHA-256 をテストで確かめる。
+スキルは、図を Mermaid か draw.io の XML で書き、Mermaid の変換・ELK のレイアウト・書き出しにイメージの `drawio`（[エージェントの実行](agent-execution.md#イメージ)）を使う。
+`drawio` が無ければ、XML で `.drawio` を作る。
+Mermaid・XML の詳しい書き方は、スキルが実行のときに `raw.githubusercontent.com` から取得する（届かなければ、SKILL.md の内容だけで書く）。
+
+関係する ADR: [エージェントのイメージに作業用の CLI と draw.io の CLI を入れ、draw.io の公式のスキルを既定のスキルにする](../adr/20261022-0115-agent-image-tools-and-drawio.md)
+
+コード: `apps/daemon/default-context/skills/drawio/SKILL.md`、`apps/daemon/default-context/skills/drawio/LICENSE`、`apps/daemon/src/default-skills.test.ts`
+
 ## コンテキストリポジトリのファイル
 
 読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。

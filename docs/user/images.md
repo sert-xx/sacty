@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
 
 **日本語** | [English](images.en.md)
 
@@ -9,6 +9,43 @@
 
 イメージには、`gh api` だけを使える `gh` が入ります（GitHub をゲートウェイ経由で読むためのもので、元のイメージの `gh` より先に使われます。
 [ゲートウェイ](gateway.md#github-の読み取り)）。sacty を更新したら、イメージを作り直してください。
+
+## イメージに入るツール
+
+エージェントが作業で使う、次のコマンドが入ります。元のイメージにすでにあるコマンドは入れ直さず、そのまま使います。
+
+| コマンド | 用途 |
+| --- | --- |
+| `jq` | JSON を読む・書き換える（`gh api --jq` もこれを使います） |
+| `rg`（ripgrep）・`fd` | ファイルの中身・ファイル名を速く探す |
+| `tree`・`file`・`less` | ディレクトリの構成・ファイルの種類・長いファイルを見る |
+| `curl` | HTTP で取得する |
+| `zip`・`unzip`・`xz`・`bzip2` | 圧縮したファイルを作る・展開する |
+| `patch`・`diff`・`find`・`make`・`ps` | パッチの適用・差分・ファイルの検索・ビルドの手順・プロセスの確認 |
+| `sqlite3`・`python3` | SQLite のデータベースを見る・スクリプトを書いて確かめる |
+| `shellcheck` | シェルスクリプトを検査する |
+| `drawio` | draw.io の図を変換・書き出す（下の [draw.io の CLI](#drawio-の-cli)） |
+
+- どれもオープンソースのソフトウェアで、OS の配布元のパッケージ（元のイメージに設定してあるミラー）から入れます。OS のセキュリティの更新は、
+  `npx sacty image build` でイメージを作り直すと入ります。
+- パッケージのミラーに届かないなどで入れられなかったコマンドは、ビルドのログに警告を出して、そのまま作ります（エージェントは別の方法で代えます）。
+  RHEL 系の元のイメージでは、`rg`・`fd`・`shellcheck` は EPEL にしか無いので、EPEL を使えなければ入りません（入れるときは、言語ごとのイメージの
+  `run` で EPEL を有効にし、`packages` に書いてください）。
+
+### draw.io の CLI
+
+既定のスキル `drawio`（[コンテキストリポジトリ](context.md)）が、図の変換（Mermaid から draw.io の形式へ）・自動のレイアウト・PNG・SVG・PDF への
+書き出しに使います。draw.io Desktop（Apache-2.0）の公式のリリースを GitHub から取り、版とハッシュを固定して確かめてから入れます。日本語のラベルを
+書き出せるように、CJK のフォント（Noto CJK）も入れます。
+
+- イメージが大きくなります（展開した大きさで 800MB ほど）。GitHub のリリース（`github.com` と `release-assets.githubusercontent.com`）に届かない環境や、
+  イメージを小さくしたいときは、`image_build.drawio` を `false` にしてください。入れないときも、スキルは XML で図（`.drawio`）を作れます。
+- GitHub に届かないときは、ビルドのログに警告を出して、draw.io の CLI を入れずに作ります。取得したファイルのハッシュが合わないときは、作るのを止めます。
+
+```yaml
+image_build:
+  drawio: false   # draw.io の CLI を入れない
+```
 
 ## プライベートのレジストリからイメージを作る
 
@@ -35,6 +72,7 @@ image_build:
 | `npm_token` | npm のレジストリの認証トークン（秘密情報の名前か 1Password の参照） | なし |
 | `npm_version` | イメージに入れる npm の版（`latest` か、`11`・`11.4`・`11.4.2` の形） | 元のイメージの npm |
 | `npm_config` | コンテナの中の npm 全体の設定 | なし |
+| `drawio` | draw.io の CLI を入れるか（[draw.io の CLI](#drawio-の-cli)。言語ごとのイメージにも効きます） | `true` |
 
 - npm のトークンは、ビルドのときだけ読ませます（BuildKit の secret）。イメージの層・履歴・環境変数には残りません。
 - 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れます。

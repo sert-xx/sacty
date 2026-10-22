@@ -169,9 +169,24 @@ docker のコンテナの中で1回実行して行う。テストは、sacty が
     無ければ `GH_HOST`）。フィールド（`-f`・`-F`）は、REST ではクエリ、GraphQL では `query` と変数にする。`--paginate`（REST は `link` を
     たどって配列をまとめる。GraphQL は `$endCursor` と `pageInfo`）・`--jq`（`jq` があるとき）・`-i`・`-H`・`--input` を受ける。
     書き込みのメソッドと、ほかのコマンドは、使い方を示して終了コード 1 で終わる（[ゲートウェイ](gateway.md#github-の読み取りの中継)）。
+  - 作業用の CLI（`packages/cli/docker/install-tools.sh`）：`jq`・`rg`・`fd`・`tree`・`file`・`less`・`curl`・`zip`・`unzip`・`xz`・`bzip2`・
+    `patch`・`diff`・`find`・`make`・`ps`・`sqlite3`・`python3`・`shellcheck` のうち、元のイメージに無いコマンドだけを、元のイメージにある
+    apt-get・dnf・microdnf・yum で入れる（RHEL 系のパッケージ名は `xz`・`procps-ng`・`sqlite`・`ShellCheck` など）。まとめて入れられなければ
+    1つずつ入れ、入れられなかったコマンドを警告して続ける（ミラーに届かない、RHEL 系で EPEL にしか無い `rg`・`fd`・`shellcheck` など）。
+    Debian・Ubuntu 系の `fdfind` は `/usr/local/bin/fd` からも使える。
+  - draw.io の CLI（`packages/cli/docker/install-drawio.sh`）：build-arg `SACTY_DRAWIO`（既定 `1`。`image_build.drawio` が `false` なら `0`）が `1` のとき、
+    draw.io Desktop の公式のリリース（`jgraph/drawio-desktop` の `v32.4.1`）の deb（apt-get。`amd64`・`arm64`）か rpm（dnf・yum。`x86_64`・`aarch64`）を
+    `curl` で取り、版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・
+    `alsa-lib` と一緒に入れる。CJK のフォント（`fonts-noto-cjk`・`google-noto-sans-cjk-ttc-fonts`）は、入れられなければ警告して続ける。
+    ハッシュが合わなければ止め、ほかの理由（取得できない・パッケージの管理のコマンドや `curl` が無い・アーキテクチャが違う・入れられない）では警告して続ける。
+    入れたら `/opt/drawio/chrome-sandbox` の setuid を外し（`0755`）、`/tmp/.X11-unix` を `1777` で作り、`/opt/sacty/bin/drawio` を
+    `packages/cli/docker/drawio-shim.cjs` へのリンクにする。
+  - `drawio`（`drawio-shim.cjs`）は、`/opt/drawio/drawio` を `--no-sandbox --disable-gpu` と受けた引数で起動する。`DISPLAY` が無ければ `Xvfb -displayfd`
+    で空いている番号の仮想の画面を起動し、終わったら止めて、終わるまで待つ（3 秒で終わらなければ `SIGKILL`）。標準エラー出力から `ERROR:dbus/`・`ERROR:bus.cc` の行を除き、
+    終了コードはそのまま返す。仮想の画面を起動できなければ、理由を示して終了コード 1 で終わる。
 - イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
-コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`
+コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/drawio-shim.cjs`
 
 ## テストの実行
 

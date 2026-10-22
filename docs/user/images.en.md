@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -9,6 +9,43 @@ This page explains how to build the container images used to run agents (tests a
 
 The image includes a `gh` that can use only `gh api` (it is for reading GitHub through the gateway, and it is used before a `gh` in the base image;
 [Gateway](gateway.en.md#reading-github)). After updating sacty, rebuild the images.
+
+## Tools in the image
+
+The image includes the following commands that agents use in their work. Commands the base image already has are not reinstalled; they are used as they are.
+
+| Command | Use |
+| --- | --- |
+| `jq` | Read and transform JSON (`gh api --jq` also uses it) |
+| `rg` (ripgrep), `fd` | Quickly search file contents and file names |
+| `tree`, `file`, `less` | View directory structure, file types, and long files |
+| `curl` | Fetch over HTTP |
+| `zip`, `unzip`, `xz`, `bzip2` | Create and extract compressed files |
+| `patch`, `diff`, `find`, `make`, `ps` | Apply patches, compare, find files, run build recipes, check processes |
+| `sqlite3`, `python3` | Inspect SQLite databases, and write scripts to check things |
+| `shellcheck` | Check shell scripts |
+| `drawio` | Convert and export draw.io diagrams ([The draw.io CLI](#the-drawio-cli) below) |
+
+- All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). OS security updates are
+  picked up when you rebuild the image with `npx sacty image build`.
+- Commands that cannot be installed, for example because the package mirror is unreachable, are reported as warnings in the build log, and the image is built anyway (agents use other means instead).
+  On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available (to install them, enable EPEL with
+  `run` of a per-language image and list them in `packages`).
+
+### The draw.io CLI
+
+The default skill `drawio` ([Context repository](context.en.md)) uses it to convert diagrams (from Mermaid to the draw.io format), lay them out automatically, and export them to PNG, SVG, and PDF.
+The official release of draw.io Desktop (Apache-2.0) is fetched from GitHub and installed after its version and hash are checked against pinned values. CJK fonts (Noto CJK) are also installed
+so that Japanese labels can be exported.
+
+- The image becomes larger (about 800MB uncompressed). In environments that cannot reach GitHub releases (`github.com` and `release-assets.githubusercontent.com`), or
+  when you want a smaller image, set `image_build.drawio` to `false`. Even without it, the skill can make diagrams (`.drawio`) in XML.
+- When GitHub is unreachable, a warning is shown in the build log and the image is built without the draw.io CLI. When the hash of the fetched file does not match, the build stops.
+
+```yaml
+image_build:
+  drawio: false   # do not install the draw.io CLI
+```
 
 ## Building images from a private registry
 
@@ -35,6 +72,7 @@ image_build:
 | `npm_token` | The authentication token for the npm registry (a secret name or a 1Password reference) | None |
 | `npm_version` | The npm version installed in the image (`latest`, or a form like `11`, `11.4`, `11.4.2`) | The base image's npm |
 | `npm_config` | npm-wide settings inside the container | None |
+| `drawio` | Whether to install the draw.io CLI ([The draw.io CLI](#the-drawio-cli); also applies to per-language images) | `true` |
 
 - The npm token is made available only during the build (a BuildKit secret). It does not remain in the image layers, history, or environment variables.
 - If the base image has git, the image can be built even if Debian mirrors are unreachable.

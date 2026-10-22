@@ -386,6 +386,11 @@ const ConfigFile = z.object({
       npm_registry: z.url({ protocol: /^https?$/ }).optional(),
       /** npm のレジストリの認証トークンの秘密情報名。イメージを作るときだけ使う（イメージには残さない）。 */
       npm_token: SecretName.optional(),
+      /**
+       * draw.io の CLI をイメージに入れるか（既定のスキル drawio が使う）。既定は入れる。公式のリリース（GitHub）から
+       * 取るので、届かない環境やイメージを小さくしたいときは false にする。
+       */
+      drawio: z.boolean().optional(),
     })
     .optional(),
   /**
@@ -787,6 +792,8 @@ export type SactyConfig = {
     npmVersion?: string;
     /** イメージの中の npm 全体の設定（PBI-40）。 */
     npmConfig?: Record<string, string>;
+    /** draw.io の CLI を入れないとき false（書かなければ入れる）。 */
+    drawio?: false;
   };
   /** 言語ごとのイメージ（PBI-41）。名前ごと。無ければ既定のイメージだけ。 */
   images?: Record<string, LanguageImage>;
@@ -1131,6 +1138,7 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
         ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
         ...(file.image_build?.npm_version ? { npmVersion: file.image_build.npm_version } : {}),
         ...(file.image_build?.npm_config ? { npmConfig: file.image_build.npm_config } : {}),
+        ...(file.image_build?.drawio === false ? { drawio: false as const } : {}),
       },
       images: Object.fromEntries(
         Object.entries(file.images).map(([name, image]) => [
@@ -1219,6 +1227,7 @@ image: ${DEFAULT_IMAGE}
 #     replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
 #     audit: false
 #     min-release-age: 7              # 公開から7日たっていない版は入れない
+#   drawio: false          # draw.io の CLI を入れない（GitHub のリリースに届かない環境や、イメージを小さくしたいとき）
 # 言語ごとのイメージ。工程ごとに、オーケストレーターが説明を見て選ぶ（プロジェクトの対象で指定もできる）。
 # 元のイメージは、言語のツールが入った Debian・Ubuntu 系か RHEL 系（Rocky Linux など）のイメージ（CI のイメージなど）。
 # sacty がエージェントの CLI を足して作る。元のイメージに Node.js 18 以上と npm が無ければ、node_image（無ければ image_build.base_image）から写す。

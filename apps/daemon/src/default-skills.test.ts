@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -270,5 +271,20 @@ describe("既定のスキル plan-steps（工程の組み合わせを選んで J
   it("特定の言語のツールチェーンに寄せない（検査の道具は複数を並べる）", () => {
     const check = read("skills/plan-steps/references/json-check.md");
     expect(check).not.toMatch(/npm|npx|package\.json/);
+  });
+});
+
+describe("既定のスキル drawio（draw.io の公式のスキル）", () => {
+  it("公式のスキル（jgraph/drawio-mcp の plugins/claude-code/skills/drawio。Apache-2.0）を、手を加えずにライセンスとともに置く", () => {
+    // 取り込んだ版：jgraph/drawio-mcp 307725c331847c15bf5ddeef64a9c8434a30fadf（Claude Code・Codex 用の SKILL.md は同じ中身）。
+    // 上げるときは、公式の SKILL.md をそのまま写し、このハッシュを変える
+    const skill = readFileSync(join(DEFAULT_CONTEXT_DIR, "skills/drawio/SKILL.md"));
+    expect(createHash("sha256").update(skill).digest("hex")).toBe(
+      "60e1fd54b577f41ba3297f492d22dc5d6ed94fac95c173b79e1bc549ec2629e4",
+    );
+    expect(skill.toString("utf8")).toMatch(/^---\nname: drawio\ndescription: .+\n---\n/);
+    expect(read("skills/drawio/LICENSE")).toContain(
+      "Apache License\n                           Version 2.0",
+    );
   });
 });
