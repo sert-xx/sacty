@@ -119,6 +119,38 @@ describe("タスクの対象リポジトリ（PBI-21）", () => {
   });
 });
 
+describe("タスクの進め方", () => {
+  beforeEach(() => createTask.mockReset());
+
+  it("選んだ進め方を渡し、自動（空）なら渡さない。作れなければ選んだまま理由を返す", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction(
+        {},
+        form({ title: "手順書", projectId: "project-a", repo: "acme/api", plan: "document" }),
+      ),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "手順書",
+      body: "",
+      projectId: "project-a",
+      repo: "acme/api",
+      plan: "document",
+    });
+
+    createTask.mockClear();
+    await expect(
+      createTaskAction({}, form({ title: "決済", projectId: "project-a", plan: "" })),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("plan");
+
+    createTask.mockResolvedValue({ ok: false, message: "進め方「レビューだけ」は…" });
+    expect(
+      await createTaskAction({}, form({ title: "見る", projectId: "project-a", plan: "review" })),
+    ).toMatchObject({ message: expect.stringMatching(/レビューだけ/), values: { plan: "review" } });
+  });
+});
+
 describe("タスクのテンプレート（PBI-90）", () => {
   beforeEach(() => createTask.mockReset());
 

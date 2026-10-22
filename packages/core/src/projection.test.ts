@@ -1942,6 +1942,26 @@ describe("工程の見直し", () => {
     expect(split?.stepReview).toBeUndefined();
   });
 
+  it("人がタスクの作成時に組み合わせを指定したタスクは、工程を飛ばさない（見直さない）", () => {
+    seq = 0;
+    const requested = ev(
+      "a",
+      {
+        type: "TaskCreated",
+        payload: { title: "a", body: "", start: "sacty", plan: "standard" },
+      },
+      "person",
+    );
+    const task = project([requested, chosen("a", "standard"), ...investigated("a")]).get("a");
+    expect(task?.requestedPlan).toBe("standard");
+    expect(task && skippableSteps(task)).toEqual([]);
+    expect(task?.stepReview).toBeUndefined();
+    expect(stateOf(task)?.slice(0, 2)).toEqual([
+      ["investigate", "done"],
+      ["requirements", "active"],
+    ]);
+  });
+
   it("見直す前に工程を始めた作業履歴（見直しより前の版）では、見直しを待たない", () => {
     seq = 0;
     const task = project([

@@ -2,13 +2,13 @@
 
 # Tasks and steps
 
-A task proceeds as a sequence of steps (Investigation, Requirements, Design, Implementation, and so on). The Orchestrator chooses which combination of steps (plan) to use when the task starts. Agents run the steps, and people decide only at approval steps (approval gates).
+A task proceeds as a sequence of steps (Investigation, Requirements, Design, Implementation, and so on). The Orchestrator chooses which combination of steps (plan) to use when the task starts (if a person specified a plan when creating the task, that plan is used). Agents run the steps, and people decide only at approval steps (approval gates).
 
 The Goal Guardian judges change requests, the final review, where to send PR comments back to, and Integration review.
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
-Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-superseded-verify-without-test-command.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-superseded-verify-without-test-command.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md), [Have the Orchestrator choose the plan from the deliverable, allow Document, Operation only, and Design only for tasks with a repository, and let people specify the plan when creating a task](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)
 
 ## How tasks are created
 
@@ -103,21 +103,32 @@ Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `e
 The plans that can be chosen are restricted as follows (`allowedPlans`).
 
 - `review`: only when there is a repository and the task points to a PR
-- `design-only`, `document`, `operation`: only for tasks without a repository
 - `split`: child tasks cannot choose it (splitting is one level only)
+- The others (including `design-only`, `document`, and `operation`) can be chosen with or without a repository (`selectablePlans`)
 
-Code: `packages/core/src/events.ts` (`STEP_PLANS`), `apps/daemon/src/prompts.ts` (`allowedPlans`, `REPO_PLANS`)
+Code: `packages/core/src/events.ts` (`STEP_PLANS`), `apps/daemon/src/prompts.ts` (`allowedPlans`, `selectablePlans`, `REPO_PLANS`)
+
+### Plan specified at creation
+
+A person can specify the plan when creating a task (`plan` in `CreateTaskInput`; when omitted, the Orchestrator chooses). The plan is recorded in `plan` of `TaskCreated` and becomes the task's `requestedPlan`.
+
+- At creation, sacty checks that the plan can be chosen for the shape of the task (`selectablePlans`). `review` is accepted only when a target repository is chosen and the title or description has a link to a PR of that repository; otherwise it is rejected (`task.reviewPlanNeedsPullRequest`). A task without a repository can still specify a plan that needs one (`REPO_PLANS`): the Orchestrator chooses the repository, and after it is prepared, the steps are decided with the same plan.
+- When choosing steps, `allowedPlans` returns only the specified plan. The prompt tells the Orchestrator not to choose again and to write that plan in `plan`, and to decide the base branch, test command, images, services, export destinations, and so on as usual (`pinnedPlanLines`). An answer whose `plan` differs from the specified one is treated as unreadable. If the specified plan can no longer be chosen for the shape of the task (which does not normally happen), it is ignored and the Orchestrator chooses as usual.
+- A specified plan does not skip steps in the step review (see "Step review" below).
+- The task details show the specified plan in the "Steps" section.
+
+Code: `packages/core/src/events.ts` (`CreateTaskInput`, `TaskCreated`), `apps/daemon/src/service.ts` (`createTask`), `apps/daemon/src/prompts.ts` (`allowedPlans`, `pinnedPlanLines`, `pullRequestInText`), `apps/web/src/components/new-task-dialog.tsx`
 
 ## Non-development work and plan selection
 
-The Orchestrator does not recommend `standard` unconditionally. It compares the purpose, deliverable, change target, and scope, and chooses as follows.
+The Orchestrator does not recommend `standard` unconditionally. It is told to choose from the deliverable (what the task ultimately asks for), not from keywords or whether there is a target repository, and to choose by scope and clarity only among the plans that implement (`PLAN_SELECTION_LINES`). Having a target repository is not a reason to choose a plan that implements (for example, writing a procedure document by reading the repository is `document`, and adding steps to the README is `direct` or `skip-design`). When in doubt, it decides by whether the request says the result should be reviewed in a PR and kept in the repository (a file name, a location, a PR instruction, and so on).
 
 | Request | Plan |
 | --- | --- |
 | A question or cause analysis | `investigate` |
 | A review of an existing PR | `review` |
 | Overall design | `design-only` |
-| Writing a draft | `document` |
+| Writing a draft read outside the repository (a procedure document, user guide, report, and so on) | `document` |
 | A local change whose request is clear as acceptance criteria and that uses existing mechanisms | `direct` (no requirements or design) |
 | A file change in a repository, including documentation, that is local | `direct` or `skip-design` |
 | A file change in a repository, including documentation, that needs broad design decisions | `standard` |
@@ -127,7 +138,7 @@ The Orchestrator does not recommend `standard` unconditionally. It compares the 
 
 The Orchestrator does not add steps by guessing at mechanisms the request does not mention (new roles, admin screens, and so on).
 
-- `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, the agent gets no MCP/PF access or project context and does not read external drafts. The source text and rules come from the task body or from a person's Request changes. Export is optional and uses the existing mechanism; an export failure does not stop the task from completing. To update an existing external document directly, use `operation`.
+- `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, the agent gets no MCP/PF access or project context and does not read external drafts. For a task with a target repository, the code at the base commit is placed in the workspace as a disposable copy for the agent to read as evidence (the repository is not changed). The source text and rules come from the task body or from a person's Request changes. Export is optional and uses the existing mechanism; an export failure does not stop the task from completing. To update an existing external document directly, use `operation`.
 - `operation` runs as a single step. The existing Orchestrator chooses one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. sacty adds no separate preparation agent, preparation deliverable, or approval gate before execution. If the target or destination is missing, the task stops before execution starts.
 - The destination kind of an operation (`via`) is `platform`, `mcp`, or `github`. `github` is a GitHub host for which the project chose a gh account, and `name` is the host. The host is listed among the Orchestrator's destination candidates. Reading uses [the GitHub read relay](gateway.en.md#relaying-github-reads), and comments on PRs and issues are written by the agent in its output and posted by sacty after the result is approved ([Requesting comments on PRs and issues](#requesting-comments-on-prs-and-issues)). It cannot change or push code. If no account is chosen for the host, the task stops before execution (`operation.connectionMissing`).
 - The task details show the chosen operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only. These are the execution settings the Orchestrator chose, not a new deliverable or approval gate.
@@ -196,7 +207,7 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 
 After the steps are chosen, each time a step finishes, the Orchestrator skips the remaining steps that are not needed. It does not add or reorder steps. The final deliverable is judged by the Goal Guardian's final review and approved by a person merging the PR.
 
-- Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped.
+- Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped. Tasks whose plan a person specified at creation (`requestedPlan`) skip nothing (no review).
 - When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain, the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`). For example, `standard` is reviewed after the preliminary investigation (requirements, design) and after the requirements are approved (design); `bugfix` after the preliminary investigation (reproduce). `direct` is not reviewed.
 - Prompt (`buildStepReviewPrompt`): it passes the task, the finished step's output (up to the first 30,000 characters), the remaining steps, and the skippable steps, and gives guidelines (skip the requirements when the request itself is the acceptance criteria, the design for a local change that follows existing mechanisms, the reproduction when the cause and fix are clear), and says not to keep steps by guessing at mechanisms the request does not mention. It runs as an Orchestrator run (`runOrchestrator`), resuming the task's Orchestrator session.
 - The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.

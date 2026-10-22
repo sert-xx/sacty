@@ -59,7 +59,7 @@ import { needsProjectSelect } from "@/lib/project-select";
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
   message?: string;
-  values?: { title: string; body: string; repo?: string; template?: TaskTemplate };
+  values?: { title: string; body: string; repo?: string; template?: TaskTemplate; plan?: string };
 };
 
 /** タスクを作成し、作ったタスクの詳細へ移る。 */
@@ -68,6 +68,7 @@ export async function createTaskAction(
   formData: FormData,
 ): Promise<CreateTaskState> {
   const repo = String(formData.get("repo") ?? "").trim();
+  const plan = String(formData.get("plan") ?? "").trim();
   const template = TaskTemplate.safeParse(formData.get("template"));
   // テンプレートで作る（PBI-90）。題と説明は sacty が決めるので、リポジトリだけを渡す
   if (template.success) return createTemplateTask(template.data, repo, formData);
@@ -76,6 +77,8 @@ export async function createTaskAction(
     body: String(formData.get("body") ?? ""),
     // 対象リポジトリ（PBI-21）。プロジェクトの設定にあるかは、デーモンが検査する
     ...(repo ? { repo } : {}),
+    // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。タスクの形で選べるかは、デーモンが検査する
+    ...(plan ? { plan } : {}),
   };
   const a = (await getMessages()).common.action;
   // 作成先のプロジェクトは、下で別に確かめる（無ければ、入力の誤りではなく理由を返す）

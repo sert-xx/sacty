@@ -7,7 +7,7 @@ const ja = {
     create: "タスクを作成",
     description: (project: string) => `プロジェクト：${project}`,
     descriptionHint:
-      "工程は、タスクの内容と対象リポジトリを読んでオーケストレーターが選び、作業履歴に記録します。",
+      "進め方を自動にすると、タスクの内容と対象リポジトリを読んでオーケストレーターが工程を選び、作業履歴に記録します。",
     title: "タイトル",
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
@@ -18,6 +18,11 @@ const ja = {
       "リポジトリのエージェントの設定を検査し、足りないものを整える PR を作ります。題と内容は Sacty が決めます。",
     templateSetupHint:
       "検査するもの：エージェント向けの指示・テストの実行の仕方・テストに要るサービス・デプロイの確認のスキル。整っていて変更が要らなければ、PR を作らずに検査の結果だけを残します。",
+    plan: "進め方",
+    planAuto: "自動",
+    planAutoNote: "タスクの内容からオーケストレーターが選択",
+    planHint:
+      "指定すると、オーケストレーターは組み合わせを選び直さず、途中で工程を省きません。ベースブランチ・テストのコマンド・イメージは、オーケストレーターが決めます。",
     repository: "対象リポジトリ（任意）",
     repositoryRequired: "対象リポジトリ",
     templateRepositoryHint: "検査して整えるリポジトリを、プロジェクトの対象から選びます。",
@@ -52,7 +57,7 @@ const en: FormsMessages = {
     create: "Create task",
     description: (project) => `Project: ${project}`,
     descriptionHint:
-      "The Orchestrator reads the task and the target repository, chooses the steps, and records them in the Activity.",
+      "With the automatic plan, the Orchestrator reads the task and the target repository, chooses the steps, and records them in the Activity.",
     title: "Title",
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",
@@ -63,6 +68,11 @@ const en: FormsMessages = {
       "Checks the agent setup of the repository and opens a PR that fills in what is missing. Sacty writes the title and description.",
     templateSetupHint:
       "It checks the instructions for agents, how to run the tests, the services the tests need, and the deployment check skill. If nothing needs to change, it keeps the results of the check without a PR.",
+    plan: "Plan",
+    planAuto: "Automatic",
+    planAutoNote: "The Orchestrator chooses from the task",
+    planHint:
+      "When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch, the test command, and the images.",
     repository: "Target repository (optional)",
     repositoryRequired: "Target repository",
     templateRepositoryHint: "The repository to check and set up, from the project's targets.",

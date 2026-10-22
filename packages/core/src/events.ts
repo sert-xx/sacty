@@ -56,8 +56,8 @@ export const STEP_PLANS = {
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /**
-   * 設計だけ：要求要件 → 設計。コードを変えない全体の設計（PBI-73）。対象リポジトリの無いタスクだけが選べる。
-   * 成果は sacty の画面で承認し、書き出し先があれば書き出す
+   * 設計だけ：要求要件 → 設計。コードを変えない全体の設計（PBI-73）。成果は sacty の画面で承認し（対象リポジトリがあり、
+   * 要求要件・設計を PR でレビューするなら、その PR のマージで承認する）、書き出し先があれば書き出す
    */
   "design-only": ["requirements", "design"],
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
@@ -507,6 +507,12 @@ const TaskCreated = z.object({
     rerun: z
       .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
       .optional(),
+    /**
+     * 人がタスクの作成時に指定した工程の組み合わせ（進め方）。オーケストレーターは、組み合わせを選ばずにこれを使い、
+     * ベースブランチ・テストのコマンド・イメージなどだけを決める。工程の見直しでも工程を飛ばさない。無ければ
+     * オーケストレーターが選ぶ。
+     */
+    plan: StepPlan.optional(),
   }),
 });
 
@@ -2343,6 +2349,11 @@ export const CreateTaskInput = z.object({
    * null は、リポジトリを指定しない（対象がリポジトリ1つだけでも）。
    */
   repo: z.string().trim().min(1).nullable().optional(),
+  /**
+   * 工程の組み合わせ（進め方）。省略すると、オーケストレーターが選ぶ。対象リポジトリの有無などで選べない組み合わせは、
+   * デーモンが理由を示して断る。
+   */
+  plan: StepPlan.optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 

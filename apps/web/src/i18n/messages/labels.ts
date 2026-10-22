@@ -7,6 +7,7 @@ import {
   type PauseReason,
   renderMessage,
   type StepKey,
+  type StepPlan,
   type Task,
   type Verdict,
 } from "@sacty/core";
@@ -34,6 +35,19 @@ const ja = {
     document: "文書作成",
     operation: "作業",
   } satisfies Record<StepKey, string>,
+  /** 工程の組み合わせ（進め方）。タスクの作成で人が選ぶ。 */
+  plan: {
+    standard: "標準",
+    "skip-design": "設計を省く",
+    direct: "直接実装",
+    bugfix: "不具合の修正",
+    split: "分割",
+    investigate: "調査だけ",
+    review: "レビューだけ",
+    document: "文書作成",
+    operation: "作業のみ",
+    "design-only": "設計だけ",
+  } satisfies Record<StepPlan, string>,
   start: {
     sacty: "Sacty",
     github_issue: "GitHub Issue",
@@ -479,6 +493,18 @@ const en: LabelMessages = {
     deployment: "After-merge watch",
     document: "Document",
     operation: "Operation",
+  },
+  plan: {
+    standard: "Standard",
+    "skip-design": "Skip design",
+    direct: "Implement directly",
+    bugfix: "Bug fix",
+    split: "Split",
+    investigate: "Investigate only",
+    review: "Review only",
+    document: "Document",
+    operation: "Operation only",
+    "design-only": "Design only",
   },
   start: {
     sacty: "Sacty",

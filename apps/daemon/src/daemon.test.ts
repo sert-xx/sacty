@@ -18626,6 +18626,47 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     single.close();
   });
 
+  it("作成時に進め方を指定でき、レビューだけは対象リポジトリの PR のリンクがあるときだけ選べる", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const doc = service.createTask({
+      projectId: "default",
+      title: "手順書",
+      repo: API,
+      plan: "document",
+    });
+    expect(doc.requestedPlan).toBe("document");
+    expect(activity.forTask(doc.id).find((e) => e.type === "TaskCreated")?.payload).toMatchObject({
+      repo: API,
+      plan: "document",
+    });
+    // リポジトリを指定しなくても、コードを変える組み合わせを指定できる（リポジトリはオーケストレーターが選ぶ）
+    expect(
+      service.createTask({ projectId: "default", title: "直す", repo: null, plan: "direct" }),
+    ).toMatchObject({ noRepo: true, requestedPlan: "direct" });
+    // 省略すれば、今と同じ（オーケストレーターが選ぶ）
+    expect(service.createTask({ projectId: "default", title: "A" }).requestedPlan).toBeUndefined();
+    for (const input of [
+      { repo: API, body: "" },
+      { repo: null, body: `${API}/pull/3` },
+      { repo: API, body: `${WEB}/pull/3` },
+    ]) {
+      expect(() =>
+        service.createTask({ projectId: "default", title: "見る", plan: "review", ...input }),
+      ).toThrow(/レビューだけ/);
+    }
+    expect(
+      service.createTask({
+        projectId: "default",
+        title: "見る",
+        body: `${API}/pull/3 をレビュー`,
+        repo: API,
+        plan: "review",
+      }).requestedPlan,
+    ).toBe("review");
+    activity.close();
+  });
+
   it("調べものは、オーケストレーターがプロジェクトのコンテキストと対象を読んで選び、リポジトリ無しのまま進めて完了する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor, repos } = makeService(

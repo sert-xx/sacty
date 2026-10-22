@@ -30,6 +30,7 @@ const PARAMS = {
   "task.repositoryMissing": z.object({ project: z.string() }),
   "task.repositoryUnknown": z.object({ project: z.string() }),
   "task.templateRepositoryRequired": null,
+  "task.reviewPlanNeedsPullRequest": null,
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
@@ -609,6 +610,8 @@ const ja: MessageDictionary = {
     `対象リポジトリを、プロジェクト「${project}」の対象（Org・リポジトリ）の中から選んでください。`,
   "task.templateRepositoryRequired":
     "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
+  "task.reviewPlanNeedsPullRequest":
+    "進め方「レビューだけ」は、対象リポジトリを選び、そのリポジトリの PR のリンクを題か内容に書いたときだけ選べます。",
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
@@ -1191,6 +1194,8 @@ const en: MessageDictionary = {
     `Choose the target repository from the targets (organizations or repositories) of the project "${project}".`,
   "task.templateRepositoryRequired":
     "Choose a target repository for this template (it cannot be created without one).",
+  "task.reviewPlanNeedsPullRequest":
+    'The plan "Review only" needs a target repository and a link to a pull request of that repository in the title or description.',
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
