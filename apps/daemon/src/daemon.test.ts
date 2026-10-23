@@ -27094,7 +27094,7 @@ describe("タスクの開始時の情報収集", () => {
 
   it("工程を選ぶ前に1回だけ集めて記録し、オーケストレーターと工程の指示に添える", async () => {
     const activity = new SqliteActivityStore(join(dir, "gather.db"));
-    const { service, executor } = makeService(
+    const { service, executor, repos } = makeService(
       activity,
       [gathered(), investigateOnly, completed(10)],
       { realPlanner: true, realGatherer: true },
@@ -27117,6 +27117,14 @@ describe("タスクの開始時の情報収集", () => {
     expect(service.get(task.id)?.task.steps).toEqual([]);
     expect(executor.stdins[0]).toContain("あなたは情報収集エージェントです");
     expect(executor.stdins[0]).toContain("再送で二重に請求される");
+    // リポジトリは情報収集の前に用意し、情報収集の作業領域に起点のコードを置いて読ませる
+    const order = types(service, task.id);
+    expect(order.indexOf("RepositoryPrepared")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("RepositoryPrepared")).toBeLessThan(order.indexOf("InformationGathered"));
+    expect(repos.snapshots).toHaveLength(1);
+    expect(executor.stdins[0]).toContain(
+      "対象リポジトリ https://github.com/acme/app.git のベースブランチ",
+    );
     await service.runNext(task.id); // 工程を選ぶ（集め直さない）
     await service.runNext(task.id); // 調査
     expect(types(service, task.id).filter((t) => t === "InformationGathered")).toHaveLength(1);
@@ -27126,6 +27134,34 @@ describe("タスクの開始時の情報収集", () => {
       expect(prompt).toContain("--- タスクの開始時に集めた情報 ---");
       expect(prompt).toContain("PAY-100 エピック：二重請求をなくす");
     }
+    activity.close();
+  });
+
+  it("リポジトリを指定せずに作ったタスクは、用意せずに集め、プロジェクトの対象を候補として読ませる", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-repoless.db"));
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "repo", target: "https://github.com/acme/api" },
+      ],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service, executor, repos } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+      gateway: fakeGateway(),
+    });
+    const task = service.createTask({ projectId: "default", title: "決済の再送", repo: null });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    expect(types(service, task.id)).not.toContain("RepositoryPrepared");
+    expect(repos.prepared).toHaveLength(0);
+    expect(executor.stdins[0]).toContain("関係しそうなリポジトリを洗い出し（多くても 3 つ）");
+    expect(executor.stdins[0]).toContain("- https://github.com/acme/app");
+    expect(executor.stdins[0]).toContain("- https://github.com/acme/api");
+    expect(executor.stdins[0]).toContain("--- GitHub（読み取り） ---");
     activity.close();
   });
 
@@ -27206,7 +27242,11 @@ describe("タスクの開始時の情報収集", () => {
     expect(executor.stdins[0]).toContain("$SACTY_PF_URL/jira");
     expect(executor.stdins[0]).toContain("作業するリポジトリを次の候補から1つ選ぶ");
     expect(executor.stdins[0]).toContain("   - https://github.com/acme/api");
+    // リポジトリが決まる前なので用意せず、候補のコードを GitHub の読み取りの中継で読ませる
+    expect(executor.stdins[0]).toContain("関係しそうなリポジトリを洗い出し");
+    expect(executor.stdins[0]).toContain("--- GitHub（読み取り） ---");
     const events = service.get(id)?.activity ?? [];
+    expect(events.map((e) => e.type)).not.toContain("RepositoryPrepared");
     // 集めた情報とトリアージを、同じ記録の中で続けて残す
     expect(events.slice(-2).map((e) => e.type)).toEqual(["InformationGathered", "TicketTriaged"]);
     const triaged = events.find((e) => e.type === "TicketTriaged");

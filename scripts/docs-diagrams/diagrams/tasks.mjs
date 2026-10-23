@@ -35,8 +35,8 @@ export const tasksFlow = {
       tone: "green",
       title: t("情報収集", "Information gathering"),
       lines: [
-        t("チケットの親・URL・MCP などから", "From ticket parents, URLs, MCP"),
-        t("集めて絞り込む", "and so on, then narrowed down"),
+        t("チケットの親・URL・コード・MCP", "From ticket parents, URLs, code,"),
+        t("などから集めて絞り込む", "MCP, etc., then narrowed down"),
       ],
     },
     {
