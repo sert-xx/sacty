@@ -146,6 +146,7 @@ sacty はキーを伏せてから、理由を600文字に切り詰める。
   - `.`・`..` の階層・`%2e`・`%2f`・`\` を含むパスは合わない。
   - URL にすると変わるパス（`#` や空白を含むなど）は 400。
   - 合わなければ 403（使える API の一覧を返す）。
+- 読み取りだけの実行（タスクの開始時の情報収集。`register` の `readOnly`）では、`allow` に合っても GET・HEAD 以外を 403 にする（上流に送らない）。
 - 送るヘッダーから、エージェントの認証・`cookie`・PF の認証のヘッダーを除き、認証の値を付ける。
   リダイレクトはたどらない。
 - トークンは期限（`expires_in_path`、無ければ `ttl_sec`）の30秒前から取り直す。
@@ -154,8 +155,9 @@ sacty はキーを伏せてから、理由を600文字に切り詰める。
 - ホストの PF の認証は、デーモンの起動のときに用意する。
   用意できないホストの PF は、画面の警告に出す（ほかの PF は使える）。
 - エージェントの指示に、そのタスクで使える PF と API の一覧を入れる。
+  読み取りだけの実行には、GET・HEAD のルールだけを入れる（残らない PF は出さない）。
 
-コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`tokenUrl`・`hideSecret`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REASON_MAX`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
+コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`tokenUrl`・`hideSecret`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REASON_MAX`・`REFRESH_MARGIN_MS`・`platformPromptLines`・`readOnlyPlatforms`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
 
 ## GitHub の読み取りの中継
 

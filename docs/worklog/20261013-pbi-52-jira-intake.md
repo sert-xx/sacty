@@ -4,7 +4,7 @@
 - タスク: PBI-52
 - PR: #62
 - ブランチ: feat/issue-52-jira-intake
-- 関係する ADR: [JIRA のチケットは、gateway.platforms の接続先をそのまま使い、プロジェクトに書いた取り込み先からラベルで取り込む](../adr/20261013-0819-jira-intake-via-gateway-platforms.md)、[取り込んだチケットは、オーケストレーターがゲートウェイ経由で読んで作業するリポジトリ・題・概要を決め、決められなければ人がリポジトリだけを選ぶ](../adr/20261013-0819-ticket-triage-by-orchestrator.md)
+- 関係する ADR: [JIRA のチケットは、gateway.platforms の接続先をそのまま使い、プロジェクトに書いた取り込み先からラベルで取り込む](../adr/20261013-0819-jira-intake-via-gateway-platforms.md)、[取り込んだチケットは、オーケストレーターがゲートウェイ経由で読んで作業するリポジトリ・題・概要を決め、決められなければ人がリポジトリだけを選ぶ](../adr/20261013-0819-superseded-ticket-triage-by-orchestrator.md)
 
 ## 目的
 

@@ -123,13 +123,14 @@ The relay flows as follows.
   - Paths containing `.` or `..` segments, `%2e`, `%2f`, or `\` do not match.
   - A path that changes when made into a URL (containing `#` or spaces, for example) is 400.
   - If nothing matches, 403 (the list of usable APIs is returned).
+- For a read-only run (information gathering at the start of a task; `readOnly` of `register`), anything other than GET and HEAD is 403 even if it matches `allow` (it is not sent upstream).
 - The gateway removes the agent's authentication, `cookie`, and the PF's authentication header from the headers sent, and attaches the authentication value. It does not follow redirects.
 - The gateway refetches the token from 30 seconds before its expiry (`expires_in_path`, or `ttl_sec` if absent). If a 401 or 403 is returned for an `auth.token` PF, it refetches the token and sends the request again once.
 - If the authentication value cannot be prepared, 502 (naming the PF, and for a context PF, the layer); if the upstream cannot be reached, 502.
 - The daemon prepares authentication for the host's PFs at startup. A host PF that cannot be prepared is shown as a warning in the web UI (other PFs remain usable).
-- The agent's instructions include the PFs and APIs usable in that task.
+- The agent's instructions include the PFs and APIs usable in that task. For a read-only run, only the GET and HEAD rules are included (a PF with none left is not shown).
 
-Code: `apps/daemon/src/platforms.ts` (`PlatformFile`, `TokenRequest`, `tokenUrl`, `hideSecret`, `pathPattern`, `isAllowed`, `PlatformCredentials`, `REASON_MAX`, `REFRESH_MARGIN_MS`, `platformPromptLines`), `apps/daemon/src/gateway.ts` (`handlePlatform`, `sentUrl`)
+Code: `apps/daemon/src/platforms.ts` (`PlatformFile`, `TokenRequest`, `tokenUrl`, `hideSecret`, `pathPattern`, `isAllowed`, `PlatformCredentials`, `REASON_MAX`, `REFRESH_MARGIN_MS`, `platformPromptLines`, `readOnlyPlatforms`), `apps/daemon/src/gateway.ts` (`handlePlatform`, `sentUrl`)
 
 ## Relaying GitHub reads
 

@@ -746,8 +746,8 @@ export const tasksUser = {
   height: 600,
   title: t("タスクの進み方", "How a task proceeds"),
   desc: t(
-    "オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し、差し戻すとやり直す。",
-    "The orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.",
+    "タスクに関係する情報を集めてから、オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し、差し戻すとやり直す。",
+    "After the information related to the task is gathered, the orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.",
   ),
   items: [
     {
@@ -769,7 +769,7 @@ export const tasksUser = {
       icon: "list",
       tone: "green",
       title: t("オーケストレーター", "Orchestrator"),
-      lines: [t("進め方を選ぶ", "Chooses the plan")],
+      lines: [t("情報を集めてから進め方を選ぶ", "Gathers information, then plans")],
     },
     {
       kind: "card",

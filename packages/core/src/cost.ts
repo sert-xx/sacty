@@ -46,6 +46,7 @@ export const CHARGED_EVENT_TYPES = [
   "StepsChosen",
   "StepsSkipped",
   "OrchestratorFailed",
+  "InformationGathered",
   "TicketTriaged",
   "RepositoryChosen",
   "AgentRunCompleted",

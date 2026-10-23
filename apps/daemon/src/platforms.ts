@@ -468,6 +468,17 @@ export class PlatformCredentials {
   }
 }
 
+/**
+ * 読み取りだけの実行（情報収集）に見せる PF。ホワイトリストのうち GET・HEAD のルールだけを残し、残らない PF は除く
+ * （ゲートウェイも、この実行では GET・HEAD 以外を拒否する）。
+ */
+export function readOnlyPlatforms(platforms: readonly Platform[]): Platform[] {
+  return platforms.flatMap((p) => {
+    const allow = p.allow.filter((rule) => /^(GET|HEAD) /.test(rule));
+    return allow.length > 0 ? [{ ...p, allow }] : [];
+  });
+}
+
 /** 工程エージェントに伝える、使える組織内 PF と API（PBI-35）。 */
 export function platformPromptLines(platforms: readonly Platform[]): string[] {
   if (platforms.length === 0) return [];

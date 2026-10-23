@@ -123,7 +123,7 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
   - The workspace is a copy of the code at the merge commit, written to `workspaces/_deployment/<run ID>` (deleted afterward).
   - The project's context (external PFs and MCP servers) is passed in the same way as for step agents.
 - Before the run, `DeploymentCheckStarted` (run ID and skill) is recorded.
-- The instructions (`buildDeploymentPrompt`) ask the agent to read and follow the skill. What to check (CI/CD, the deployment, or both) and how to check it follow the skill. The CI/CD runs and checks sacty saw (up to 50) are passed as JSON data that is not instructions. The agent is also asked to do the following.
+- The instructions (`buildDeploymentPrompt`) ask the agent to read and follow the skill. What to check (CI/CD, the deployment, or both) and how to check it follow the skill. The CI/CD runs and checks sacty saw (up to 50) are passed as JSON data that is not instructions. The information gathered at the start of the task, if any, is added as background ([Tasks and steps](tasks-and-steps.en.md#information-gathering)). The agent is also asked to do the following.
   - Only check and change nothing (no re-running CI/CD, no redeploying, no rollback)
   - Not write secrets
   - Not wait long for CI/CD or the deployment to finish (`unknown` if not finished or cannot be determined)

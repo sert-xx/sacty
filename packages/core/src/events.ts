@@ -195,7 +195,15 @@ export const MAX_INTEGRATION_ATTEMPTS = 3;
 export const BUDGET_WARN_RATIO = 0.8;
 
 /** 誰がその記録を残したか。 */
-export const Actor = z.enum(["person", "sacty", "orchestrator", "guardian", "agent", "auditor"]);
+export const Actor = z.enum([
+  "person",
+  "sacty",
+  "orchestrator",
+  "gatherer",
+  "guardian",
+  "agent",
+  "auditor",
+]);
 export type Actor = z.infer<typeof Actor>;
 
 /** エージェントの認証方式。 */
@@ -1203,6 +1211,36 @@ const AgentFellBack = z.object({
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
  */
 /** 工程・テストの実行のために、docker compose のサービスを起動した（PBI-47）。実行が終わると消す。 */
+/** 情報収集のまとめの上限（文字数）。オーケストレーター・工程・ゴールガーディアンの指示に毎回入れるので、長くしすぎない。 */
+export const GATHERED_BRIEF_MAX = 30_000;
+
+/**
+ * タスクの開始時に、情報収集のエージェントがタスクに関係する情報を集めて絞り込んだ（actor は gatherer。費用を含む）。
+ * チケットのトリアージ・工程の選択より前に1回だけ行い、まとめ（brief）はオーケストレーター・すべての工程・ゴールガーディアンの
+ * 指示に添える。sources は、読んで関係があると判断した情報源（チケット・URL・MCP など）。
+ */
+const InformationGathered = z.object({
+  type: z.literal("InformationGathered"),
+  payload: z.object({
+    brief: z.string().min(1).max(GATHERED_BRIEF_MAX),
+    sources: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(500),
+          url: z.string().max(2000).optional(),
+        }),
+      )
+      .max(100)
+      .default([]),
+    agentId: z.string(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 /**
  * チケットから取り込んだタスクの、作業するリポジトリ・題・概要を決めた（PBI-52）。オーケストレーターがチケットを読んで
  * 決める（actor は orchestrator。費用を含む）。決められなかったときは、人がリポジトリを選ぶ（actor は person）。
@@ -2263,6 +2301,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepImageChanged,
   StepAgentChanged,
   ServicesStarted,
+  InformationGathered,
   TicketTriaged,
   RepositoryChosen,
   TicketPullRequestCommented,

@@ -111,10 +111,10 @@ The JIRA connection is written as an organization platform (PF) (`gateway.platfo
   - Server / Data Center uses `GET /rest/api/2/search` (`startAt`).
   - sacty reads 50 at a time, up to 10 pages.
 - The daemon reads only the key and the summary (up to 200 characters). The daemon does not call APIs that are not in the PF's `allow` either (`ticket.notAllowed`).
-- The task title is `<key> <summary>`, with `start: jira`. The key prefix (`PAY` of `PAY-123`) decides the responsible project. The Orchestrator reads the ticket through the gateway and decides the repository, title, and summary ([Tasks and steps](tasks-and-steps.en.md)).
+- The task title is `<key> <summary>`, with `start: jira`. The key prefix (`PAY` of `PAY-123`) decides the responsible project. The information gatherer reads the ticket through the gateway and decides the repository, title, and summary ([Tasks and steps](tasks-and-steps.en.md#doubling-as-triage)).
 - The same key of the same connection can be written in only one project (PFs in a project's context are treated as separate for each project).
 
-Code: `apps/daemon/src/tickets.ts` (`JiraTickets`, `ticketJql`), `apps/daemon/src/service.ts` (`importTickets`, `triageTicket`), `packages/core/src/projects.ts` (`projectConflicts`, `responsibleTicketProject`)
+Code: `apps/daemon/src/tickets.ts` (`JiraTickets`, `ticketJql`), `apps/daemon/src/service.ts` (`importTickets`, `gatherInformation`, `triageTicket`), `packages/core/src/projects.ts` (`projectConflicts`, `responsibleTicketProject`)
 
 ## Comments on the intake source
 

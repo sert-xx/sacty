@@ -84,6 +84,18 @@ For tasks created from a template, the template name appears in "Started from" i
 
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks` (do not pass `title` or `body`). The CLI has no command to create tasks.
 
+## Information gathering at the start of a task
+
+When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary. If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on).
+
+- The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.
+- The summary is given to the Orchestrator, every step, and the Goal Guardian. The Goal Guardian uses it only to understand the background; the basis of its verdicts stays the approved deliverables.
+- You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)). The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
+- If it cannot summarize, the task is paused. Resuming gathers again.
+- Split child tasks do not gather again; they carry over the information their parent gathered in their content.
+- Information gathering only reads. For the gateway's external platforms, only GET and HEAD pass during information gathering, even if `allow` has write APIs. sacty cannot restrict the tools of MCP servers, so the instructions have it use only read operations. Be careful when the context includes an MCP server with write tools.
+- To let it read external documents or chat, add the destination as an external platform of the gateway or an MCP server of the context ([Gateway](gateway.en.md), [Context repository](context.en.md)).
+
 ## Documents and one-off external work
 
 To create a user guide, a procedure document, meeting notes, or a translated draft, write the audience, purpose, and source contents in the task. To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed). If the Orchestrator chooses a different plan, choose "Document" in "Plan".

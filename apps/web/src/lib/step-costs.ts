@@ -20,6 +20,7 @@ import {
  */
 export type CostRole =
   | StepKey
+  | "gather"
   | "triage"
   | "repository"
   | "orchestrator"
@@ -28,7 +29,7 @@ export type CostRole =
   | "guardian";
 
 /** 工程の外の行（表に出す順）。 */
-const OUTSIDE_BEFORE = ["triage", "repository", "orchestrator"] as const;
+const OUTSIDE_BEFORE = ["gather", "triage", "repository", "orchestrator"] as const;
 const OUTSIDE_AFTER = ["export", "chat", "guardian"] as const;
 const OUTSIDE: readonly CostRole[] = [...OUTSIDE_BEFORE, ...OUTSIDE_AFTER];
 
@@ -133,6 +134,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
   /** 費用を持つイベントを、行に振り分ける。費用を持つ種類を足したら、ここで行を決めないと typecheck で落ちる。 */
   const place = (event: ChargedEvent) => {
     switch (event.type) {
+      // タスクの開始時の情報収集
+      case "InformationGathered":
+        push("gather", runOf(event, event.payload, "completed"));
+        return;
       // チケットから作業するリポジトリ・題・概要を決めた（PBI-52）
       case "TicketTriaged":
         if (!notRun(event.payload)) push("triage", runOf(event, event.payload, "completed"));
@@ -146,7 +151,11 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
         if (!notRun(event.payload)) push("orchestrator", runOf(event, event.payload, "completed"));
         return;
       case "OrchestratorFailed":
-        push("orchestrator", runOf(event, event.payload, "failed"));
+        // 情報収集の失敗も OrchestratorFailed で記録する（actor で分ける）
+        push(
+          event.actor === "gatherer" ? "gather" : "orchestrator",
+          runOf(event, event.payload, "failed"),
+        );
         return;
       // 工程の見直し：実行できなかったときも、費用があれば行にする
       case "StepsSkipped":

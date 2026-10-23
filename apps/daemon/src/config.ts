@@ -134,6 +134,12 @@ const StubBehavior = z.object({
     .default(
       '```json\n{"sacty-steps": {"plan": "standard", "reason": "スタブのため標準の工程"}}\n```',
     ),
+  /** タスクの開始時に、情報を集めてまとめたときの出力。 */
+  gather: z
+    .string()
+    .default(
+      '```json\n{"sacty-gathered": {"brief": "スタブのため、情報を集めていません。", "sources": []}}\n```',
+    ),
   /** オーケストレーターとして、タスクの詳細での質問に答えたときの出力（PBI-54）。 */
   chat: z.string().default("スタブのため、質問には答えません。"),
   /** 承認した成果を書き出したときの出力（PBI-56）。 */
@@ -288,10 +294,11 @@ const ConfigFile = z.object({
   /** 書かなければ、config/agents.yaml の default_agent（上から順に、使えるもの）。 */
   default_agent: z.string().optional(),
   /**
-   * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent）。
+   * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent、
+   * 情報収集は orchestrator の AI）。
    */
   step_agents: z
-    .partialRecord(z.enum([...StepKey.options, "orchestrator"]), z.string())
+    .partialRecord(z.enum([...StepKey.options, "orchestrator", "gather"]), z.string())
     .default({}),
   /** ゴールガーディアンに使うAI。省略すると default_agent。 */
   guardian_agent: z.string().optional(),
@@ -672,13 +679,14 @@ export type AgentConfig = {
 };
 
 /** 工程・オーケストレーターの役割（step_agents のキー。PBI-40）。 */
-export type AgentRoleKey = StepKey | "orchestrator";
+export type AgentRoleKey = StepKey | "orchestrator" | "gather";
 
 /**
  * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent。統合レビューはゴールガーディアンが
- * 行うので、書いてなければ guardian_agent。
+ * 行うので、書いてなければ guardian_agent。情報収集はオーケストレーターの前段なので、書いてなければオーケストレーターの AI。
  */
 export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
+  if (role === "gather") return config.stepAgents?.gather ?? agentFor(config, "orchestrator");
   return (
     config.stepAgents?.[role] ?? (role === "integrate" ? config.guardianAgent : config.defaultAgent)
   );
@@ -1295,9 +1303,11 @@ providers:
 # guardian_agent: codex_advanced
 # 完了したタスクの監査に使う AI（書かなければ guardian_agent。無ければ default_agent）
 # audit_agent: codex_advanced
-# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent）
+# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent、
+# 情報収集は orchestrator の AI）
 # step_agents:
 #   orchestrator: codex_lite
+#   gather: codex_lite        # タスクの開始時の情報収集
 #   requirements: codex_advanced
 #   design: codex_advanced
 #   implement: codex_standard

@@ -20,6 +20,11 @@ const ja = {
   rerunOf: " ・ 再実行の元：",
   sourceOpen: "（",
   sourceClose: "）",
+  gathered: {
+    title: "集めた情報",
+    hint: "タスクの開始時に、情報収集のエージェントがチケットの親・リンク先・URL・MCP・外部 PF などから集め、関係するものだけにまとめた情報です。オーケストレーター・すべての工程・ゴールガーディアンに渡します。",
+    sources: (n: number) => `情報源 ${n} 件`,
+  },
   operationSettings: {
     title: "作業の実行設定",
     description: "作業結果と照合してください。",
@@ -267,6 +272,7 @@ const ja = {
     none: "—",
     setting: (agent: string, auth: string, model: string, effort: string) =>
       `${agent}・${auth}・${model}・${effort}`,
+    gather: "情報収集",
     triage: "チケットの読み取り",
     repository: "リポジトリの選択",
     chat: "質問への答え",
@@ -358,6 +364,11 @@ const en: TaskMessages = {
   rerunOf: " · Rerun of: ",
   sourceOpen: " (",
   sourceClose: ")",
+  gathered: {
+    title: "Gathered information",
+    hint: "At the start of the task, the information gatherer collected this from the ticket's parents, links, URLs, MCP servers and external platforms, and kept only what is relevant. It is given to the Orchestrator, every step and the Goal Guardian.",
+    sources: (n: number) => `${n} sources`,
+  },
   operationSettings: {
     title: "Operation settings",
     description: "Compare them with the operation result.",
@@ -598,6 +609,7 @@ const en: TaskMessages = {
     runs: (n) => `${n} run${n === 1 ? "" : "s"}`,
     none: "—",
     setting: (agent, auth, model, effort) => `${agent} · ${auth} · ${model} · ${effort}`,
+    gather: "Information gathering",
     triage: "Reading the ticket",
     repository: "Choosing the repository",
     chat: "Answers to questions",

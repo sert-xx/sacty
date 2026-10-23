@@ -166,10 +166,10 @@ JIRA の接続先は、組織内 PF（`gateway.platforms`、無ければプロ�
   PF の `allow` に無い API は、デーモンも呼ばない（`ticket.notAllowed`）。
 - タスクの題は `<キー> <要約>`、`start: jira`。
   担当のプロジェクトは、キーの接頭辞（`PAY-123` の `PAY`）で決める。
-  オーケストレーターがゲートウェイ経由でチケットを読み、リポジトリ・題・概要を決める（[タスクと工程](tasks-and-steps.md)）。
+  情報収集のエージェントがゲートウェイ経由でチケットを読み、リポジトリ・題・概要を決める（[タスクと工程](tasks-and-steps.md#トリアージを兼ねる)）。
 - 同じ接続先の同じキーは、1つのプロジェクトにだけ書ける（プロジェクトのコンテキストの PF は、プロジェクトごとに別のものとして扱う）。
 
-コード: `apps/daemon/src/tickets.ts`（`JiraTickets`・`ticketJql`）、`apps/daemon/src/service.ts`（`importTickets`・`triageTicket`）、`packages/core/src/projects.ts`（`projectConflicts`・`responsibleTicketProject`）
+コード: `apps/daemon/src/tickets.ts`（`JiraTickets`・`ticketJql`）、`apps/daemon/src/service.ts`（`importTickets`・`gatherInformation`・`triageTicket`）、`packages/core/src/projects.ts`（`projectConflicts`・`responsibleTicketProject`）
 
 ## 取り込み元へのコメント
 

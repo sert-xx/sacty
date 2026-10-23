@@ -384,6 +384,8 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         event.payload.steps.map((s) => l.step[s]).join(e.imagesJoin),
         l.text(event.payload.reason),
       );
+    case "InformationGathered":
+      return e.InformationGathered(event.payload.sources.length);
     case "TicketTriaged":
       return e.TicketTriaged(
         event.payload.repo,

@@ -21,6 +21,7 @@ export const RUN_TIMEOUT_ROLES = [
   "final-review",
   "rework",
   "orchestrator",
+  "gather",
   "chat",
   "export",
   "audit",

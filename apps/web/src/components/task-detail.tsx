@@ -558,6 +558,35 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               <p className="text-sm text-muted-foreground">{m.contentEmpty}</p>
             )}
           </section>
+          {/* タスクの開始時に集めた情報。工程が始まったら折りたたむ */}
+          {task.gathered && (
+            <CardSection
+              id="gathered"
+              title={m.gathered.title}
+              note={m.gathered.sources(task.gathered.sources.length)}
+              hint={m.gathered.hint}
+              collapsed={task.steps.some((s) => s.state !== "todo")}
+            >
+              <Markdown>{task.gathered.brief}</Markdown>
+              {task.gathered.sources.length > 0 && (
+                <ul className="list-disc pl-5 text-sm text-muted-foreground">
+                  {task.gathered.sources.map((source, index) => (
+                    // 同じ題の情報源もあるので、順番も鍵にする
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 並びは変わらない
+                    <li key={`${index}-${source.title}`} className="[overflow-wrap:anywhere]">
+                      {source.url && /^https?:\/\//.test(source.url) ? (
+                        <a href={source.url} target="_blank" rel="noreferrer" className="underline">
+                          {source.title}
+                        </a>
+                      ) : (
+                        source.title
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardSection>
+          )}
           {/* 調査の結果（PBI-18）。要求要件は、その工程があるタスクだけ */}
           {task.steps.some((s) => s.key === "investigate") && (
             <Deliverable task={task} step="investigate" />

@@ -346,6 +346,11 @@ export type Task = {
     /** プロジェクトのコンテキストの PF から取り込んだ（PBI-74）。 */
     scope?: "project";
   };
+  /**
+   * タスクの開始時に情報収集のエージェントが集めて絞り込んだ情報（まとめと情報源）。オーケストレーター・工程・ゴールガーディアンの
+   * 指示に添える。分割の子タスクは集めず、親のものを内容に添える。
+   */
+  gathered?: { brief: string; sources: { title: string; url?: string }[]; at: string };
   /** チケットから作業するリポジトリ・題・概要を決めた理由（PBI-52）。人が選んだら by は person。 */
   ticketTriage?: { reason: DaemonText; by: "orchestrator" | "person" };
   /**
@@ -1586,6 +1591,14 @@ export function applyEvent(
       task.misses = [...task.misses, { ...event.payload, at: event.at }];
       break;
 
+    // 情報収集のまとめ。工程を選ぶ前に1回だけ
+    case "InformationGathered":
+      if (task.steps.length > 0 || task.gathered) {
+        throw new ActivityIntegrityError(event, "information is not being gathered");
+      }
+      task.gathered = { brief: event.payload.brief, sources: event.payload.sources, at: event.at };
+      break;
+
     // チケットから作業するリポジトリ・題・概要を決めた（PBI-52）。工程を選ぶ前だけ
     case "TicketTriaged":
       if (!task.ticket || task.steps.length > 0) {
@@ -2600,6 +2613,14 @@ export function canRerun(task: Task): boolean {
     task.parent === undefined &&
     task.start !== "github_pull_request"
   );
+}
+
+/**
+ * タスクの開始時の情報収集を待っているか。工程を選ぶ前で、まだ集めていないタスク。分割の子タスクは親のまとめを内容に
+ * 持つので集めない。
+ */
+export function awaitingGathering(task: Task): boolean {
+  return task.steps.length === 0 && task.gathered === undefined && task.parent === undefined;
 }
 
 /**

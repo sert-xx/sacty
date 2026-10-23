@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 600" width="1040" height="600" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/tasks-overview.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">タスクの進み方</title>
-  <desc id="desc">オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し、差し戻すとやり直す。</desc>
+  <desc id="desc">タスクに関係する情報を集めてから、オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し、差し戻すとやり直す。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -59,7 +59,7 @@
   <rect x="250" y="130" width="300" height="76" rx="10" class="card" style=""/>
   <svg x="266" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
   <text x="302" y="162" class="title">オーケストレーター</text>
-  <text x="266" y="190" class="sub">進め方を選ぶ</text>
+  <text x="266" y="190" class="sub">情報を集めてから進め方を選ぶ</text>
   <rect x="250" y="240" width="300" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
   <svg x="266" y="254" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="302" y="272" class="title">工程エージェント</text>

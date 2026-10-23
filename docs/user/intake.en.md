@@ -88,7 +88,7 @@ gateway:
         secret: op://Work/Jira/token
       allow:
         - GET /rest/api/2/search              # intake (the daemon searches for tickets)
-        - GET /rest/api/2/issue/**            # the Orchestrator reads the ticket, its parent, and subtasks
+        - GET /rest/api/2/issue/**            # the information gatherer reads the ticket, its parent, and subtasks
         - POST /rest/api/2/issue/*/comment    # comments the investigation results and the PR URL
     jira-cloud:                               # Jira Cloud (base64 of email:API token)
       upstream: https://acme.atlassian.net
@@ -119,7 +119,7 @@ pbcopy < /dev/null
   - The JIRA project key (such as `PAY`. Uppercase letters, digits, and `_`, starting with an uppercase letter)
 - The same key on the same connection of a PF in `config.yaml` can be written in only one project. sacty identifies PFs in `platforms.yaml` of the context repository together with the project, so you can write ticket sources with the same name and key in different projects (different connections).
 - sacty turns unfinished tickets with the label to import in "Ticket intake" of "Sacty settings" (shared by all ticket sources) into tasks. You can turn this Off with "Import tickets".
-- The daemon searches only for the ticket keys and summaries. The Orchestrator reads the ticket through the gateway (and, for a subtask, its parent and the other subtasks), chooses the repository to work in from the project's targets, and writes the task title and summary. If it cannot choose, the task stops. You can choose the repository on the task page and resume.
+- The daemon searches only for the ticket keys and summaries. When the task starts, the information gatherer reads the ticket through the gateway (up to the parent story and epic, linked tickets, and URLs in comments), chooses the repository to work in from the project's targets based on the gathered information, and writes the task title and summary ([Information gathering at the start of a task](tasks.en.md#information-gathering-at-the-start-of-a-task)). If it cannot choose, the task stops. You can choose the repository on the task page and resume.
 - sacty comments the investigation results and the PR URL on the ticket (it does not change the ticket status).
 - The daemon does not call APIs that are not in `allow` either. Behavior is not guaranteed if you choose a connection that is not JIRA.
 

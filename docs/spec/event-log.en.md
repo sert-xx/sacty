@@ -15,7 +15,7 @@ Related ADRs: none
   - `taskId`, `projectId`
   - `at` (events in the same append share the same time)
   - `actor`
-- `actor` is one of `person`, `sacty`, `orchestrator`, `guardian`, `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
+- `actor` is one of `person`, `sacty`, `orchestrator`, `gatherer` (information gathering at the start of a task; [Tasks and steps](tasks-and-steps.en.md#information-gathering)), `guardian`, `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
 - Most events that used AI carry the following.
   - Token counts (`usage`: `input`, `cacheRead`, `cacheWrite`, `output`)
   - Cost (`costUsd`) and whether it is estimated (`estimated`)
@@ -48,7 +48,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   3. The event is applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw. Even for a cancelled task, however, the session-saving records `AgentSessionArchived` and `OrchestratorSessionUsed` are accepted.
 - Some events are records only and do not change state (`AiRequestsRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`).
-- When an event that carries cost (the 14 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
+- When an event that carries cost (the 15 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
 - Main fields of `Task`
   - `status`
   - `steps` (`todo`, `active`, `done`, or `skip` per step)
@@ -81,13 +81,14 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 - The unit price (`PricePerMTok`) is in US dollars per million tokens: `input`, `cachedInput`, `cacheWrite` (default 0), and `output`.
 - Cost = (`input` × the `input` price + `cacheRead` × the `cachedInput` price + `cacheWrite` × the `cacheWrite` price + `output` × the `output` price) ÷ 10^6 (the numerator is rounded to an integer before dividing).
 - Subscription and stub runs are treated as an estimated cost (`estimated`) converted at the same unit prices, and are used for budget checks.
-- The events that carry cost counted toward the task budget are the following 14 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
+- The events that carry cost counted toward the task budget are the following 15 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
 
   | Event | Row in the per-step cost table |
   | --- | --- |
-  | `TicketTriaged` | Ticket reading (`triage`) |
+  | `InformationGathered` (and `OrchestratorFailed` whose actor is `gatherer`) | Information gathering (`gather`) |
+  | `TicketTriaged` | Ticket reading (`triage`; when done by information gathering it carries no cost and gets no row) |
   | `RepositoryChosen` | Repository selection (`repository`) |
-  | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` | Orchestrator (`orchestrator`) |
+  | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` (except those whose actor is `gatherer`) | Orchestrator (`orchestrator`) |
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |

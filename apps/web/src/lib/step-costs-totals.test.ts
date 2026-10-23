@@ -159,6 +159,25 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     },
     "person",
   );
+  // タスクの開始時の情報収集（失敗は OrchestratorFailed を actor gatherer で記録する）
+  if (rand() < 0.5) {
+    for (let i = times(1); i > 0; i -= 1) {
+      add(
+        {
+          type: "OrchestratorFailed",
+          payload: { reason: "error", message: "失敗", ...charged() },
+        },
+        "gatherer",
+      );
+    }
+    add(
+      {
+        type: "InformationGathered",
+        payload: { brief: "まとめ", sources: [{ title: "ACME-0 エピック" }], ...charged() },
+      },
+      "gatherer",
+    );
+  }
   for (let i = times(2); i > 0; i -= 1) {
     add(
       {
@@ -401,6 +420,7 @@ describe("工程ごとの費用の表の合計とタスクの費用（PBI-86）"
       if (
         events[0] &&
         created(events[0]) &&
+        !events.some((e) => e.actor === "gatherer") &&
         decided?.actor === "orchestrator" &&
         isChargedEvent(decided) &&
         decided.payload.costUsd > 0
@@ -409,6 +429,22 @@ describe("工程ごとの費用の表の合計とタスクの費用（PBI-86）"
       }
     }
   }
+
+  it("情報収集の費用を、失敗も含めて「情報収集」の行に、ほかの行より前に出す", () => {
+    for (let seed = 1; ; seed += 1) {
+      const events = randomHistory(seed);
+      const gathering = events.filter((e) => e.actor === "gatherer");
+      if (!gathering.some((e) => e.type === "OrchestratorFailed")) continue;
+      const task = taskOf(events);
+      const { rows, total } = stepCosts(task, events);
+      expect(rows[0]?.role).toBe("gather");
+      expect(rows[0]?.runs.map((r) => [r.id, r.result])).toEqual(
+        gathering.map((e) => [e.id, e.type === "InformationGathered" ? "completed" : "failed"]),
+      );
+      expect(total.costUsd).toBe(task.budget.usedUsd);
+      return;
+    }
+  });
 
   it("チケットの読み取りの費用を「チケットの読み取り」の行に、工程の選択より前に出す", () => {
     const events = ticketEvents();
