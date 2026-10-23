@@ -2,7 +2,7 @@
 
 # Context composition
 
-The context is the rules, skills, MCP servers, external PFs, and agent settings given to a step's agent and the Orchestrator. sacty composes the context by stacking layers, and on every run places it in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its inheritance chain).
+The context is the rules, skills, MCP servers, external PFs, and agent settings given to a step's agent, information gathering, and the Orchestrator. sacty composes the context by stacking layers, and on every run places it in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its inheritance chain).
 
 Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md), [Fetch the submodules of a context repository so that skills and other items managed separately by an organization can be used without copying them](../adr/20261022-1503-context-submodules.md)
 
@@ -217,7 +217,7 @@ Ones that differ are not placed, and `agents.tierConnectionDiffers` is left as a
 - A tier without `reasoning_effort` (such as the default `claude_lite`) becomes a definition without it (the tool's default).
 - The placed tiers (tier, agent name, model, reasoning effort) are recorded in `tiers` of `ContextResolved`.
 - The preview shows the same files. The parent for the preview is the `default_agent` of that runtime, otherwise the first of `step_agents` and `guardian_agent` with that runtime.
-- `ContextResolved` is recorded with the `runId` of every run that receives a context (`contextResolved`). This covers not only step runs but also the Orchestrator (PBI-146), the after-merge watch, operations, and exports.
+- `ContextResolved` is recorded with the `runId` of every run that receives a context (`contextResolved`). This covers not only step runs but also information gathering, the Orchestrator (PBI-146), the after-merge watch, operations, and exports.
 - The cost of a run that placed tiers is recorded as estimated (`estimated`). This is because a reviewer may run with a model other than the parent's, while the cost can only be computed from the parent's usage and unit prices ([Agent execution](agent-execution.en.md#authentication)).
 
 ### Passing MCP servers
