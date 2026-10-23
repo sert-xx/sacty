@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-23（UTC）
 - タスク: PBI-152
-- PR: なし
+- PR: #211
 - ブランチ: feat/issue-152-gather-services
 - 関係する ADR: [情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
 
