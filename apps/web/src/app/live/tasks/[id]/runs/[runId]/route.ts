@@ -16,6 +16,8 @@ function chunk(log: RunLog | null, file: "events" | "stderr") {
  * 画面が持っている分の終わりを伝えると、デーモンもその位置より後だけを読み、続きだけを返す（PR #119 レビュー指摘）。
  * エージェントの元のファイルの一覧は、実行が終わってから返す。一覧を読めなくても、ログと終わったことは返し、
  * `agentFilesFailed` を付ける（画面は一覧だけを取り直す）。
+ * `?check=1` は、実行が終わった画面が、タスクがまだあるか（プロジェクトを削除していないか）だけを確かめる（ログ・ファイルは
+ * 読まない）。あれば `{ unchanged: true }`、無ければ `{ missing: true }`。
  */
 export async function GET(
   request: Request,
@@ -38,6 +40,7 @@ async function reply(request: Request, id: string, runId: string): Promise<Respo
   try {
     found = await getTask(id);
     if (!found) return send({ missing: true });
+    if (query.get("check") === "1") return send({ unchanged: true });
     log = await getRunLog(id, runId, { events: offset("events"), stderr: offset("stderr") });
   } catch {
     // デーモンに届かない・読めないときは、画面をそのまま残す（エラーを出し続けない）

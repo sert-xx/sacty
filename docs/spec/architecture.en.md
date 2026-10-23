@@ -219,7 +219,7 @@ Because the elements on the screen stay as they are, text being typed, selection
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |
 
 - The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
-- On `{ missing: true }`, the screen keeps showing the last data. The task details and the deliverable review redraw the screen (`RefreshWhenMissing`;
+- On `{ missing: true }`, the screen keeps showing the last data. The task details, the deliverable review, and the run log redraw the screen (`RefreshWhenMissing`;
   the server treats the task as missing and returns 404, so a task of a project deleted while it is open does not stay on screen).
 - While the screen is not visible (the tab is hidden), the web UI does not poll. When it becomes visible, it refetches the data once right away.
 - The task list is refetched for the URL's project, and the header for the project shown when the screen was drawn. This keeps a project switch in another tab from changing only the contents of this screen. The project changes when the screen is opened again (`/switch` and so on).
@@ -244,7 +244,8 @@ Because the elements on the screen stay as they are, text being typed, selection
   - After the run has finished and when the position is past the end of the file, the whole file is returned and the screen replaces what it has. After the run has finished, the file may have been rewritten when it was closed, by redacting again or by the limits.
   - The scroll position is not moved while you are reading in the middle, and the screen follows new lines only while you are looking at the bottom.
   - The list of the agent's original files (which computes hashes) is fetched after the run has finished. If only the list cannot be read, the log and the fact that the run finished are still returned (`agentFilesFailed`). The screen shows that the list could not be read and is being retried, and refetches only the list.
-  - Refetching stops when the run has finished and the list has been fetched.
+  - When the run has finished and the list has been fetched, refetching the log stops. After that, the screen only checks that the task still exists (`?check=1`; the log and files are not read).
+    If it does not (the project was deleted), the screen is redrawn and becomes 404 (`RefreshWhenMissing`).
 - The sacty settings and project settings screens are not redrawn automatically (only the header's notices are refetched). Their contents are settings that people edit, and they do not change with the state of tasks. To see the latest, open the screen again or reload it.
 
 Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`, `LIVE_TIMEOUT_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),

@@ -10479,9 +10479,7 @@ describe("プロジェクトの削除", () => {
     // タスクと作業履歴は残すが、画面の取得（タスクの詳細・実行の記録）では無いものとして返す
     expect(service.get(task.id)).toBeDefined();
     expect((await app.request(`/api/tasks/${task.id}`, { headers: auth })).status).toBe(404);
-    expect((await app.request(`/api/tasks/${task.id}/runs/r1/log`, { headers: auth })).status).toBe(
-      404,
-    );
+    // 実行の記録の API も 404 になること（実在する記録で）は、「エージェントの元のセッションのファイル」のテストで確かめる
     activity.close();
   });
 
@@ -17652,6 +17650,36 @@ describe("エージェントの元のセッションのファイル（PBI-66）"
       (await app.request(`/api/tasks/${task.id}/runs/a.b/agent-files`, { headers: auth })).status,
     ).toBe(400);
     expect((await app.request(base)).status).toBe(401);
+    activity.close();
+  });
+
+  it("API：プロジェクトを消したら、実在する実行の記録（ログ・生のファイル・元のファイルの一覧と中身）とタスクを 404 にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const app = createApp(service, token);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    const mainPath = "projects/-workspace/main-session.jsonl";
+    const paths = [
+      `/api/tasks/${task.id}`,
+      `/api/tasks/${task.id}/runs/${runId}/log`,
+      `/api/tasks/${task.id}/runs/${runId}/files/events`,
+      `/api/tasks/${task.id}/runs/${runId}/files/stderr`,
+      `/api/tasks/${task.id}/runs/${runId}/agent-files`,
+      `/api/tasks/${task.id}/runs/${runId}/agent-files/raw?path=${encodeURIComponent(mainPath)}`,
+    ];
+    const statuses = async () =>
+      Promise.all(paths.map(async (path) => (await app.request(path, { headers: auth })).status));
+    // 消す前は、どれも読める
+    expect(await statuses()).toEqual(paths.map(() => 200));
+    await service.cancel(task.id);
+    service.deleteProject("default");
+    expect(await statuses()).toEqual(paths.map(() => 404));
+    // 記録そのものは残す
+    expect(sessionLogs.read(task.id, runId)).toBeTruthy();
     activity.close();
   });
 });

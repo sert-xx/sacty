@@ -5,7 +5,11 @@ import { cn } from "cn";
 import Link from "next/link";
 import { useLayoutEffect, useRef, useState } from "react";
 import { DaemonError } from "@/components/daemon-error";
-import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
+import {
+  FollowProjectAfterRecovery,
+  RefreshWhenMissing,
+  StaleNotice,
+} from "@/components/live-status";
 import { EventText } from "@/components/task-detail";
 import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
@@ -71,6 +75,11 @@ export function runLogLiveUrl(
   return `/live/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}?${q}`;
 }
 
+/** 実行が終わった後に、タスクがまだあるか（プロジェクトを削除していないか）だけを確かめる先。 */
+export function runLogCheckUrl(taskId: string, runId: string): string {
+  return `/live/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}?check=1`;
+}
+
 /** 画面の一番下を見ているか（新しい行についていくか）。 */
 function atBottom(): boolean {
   const doc = document.documentElement;
@@ -80,7 +89,8 @@ function atBottom(): boolean {
 /**
  * エージェントの実行のセッションログ（PBI-62）。実行中は、画面をリロードせず、一定の間隔で足された行だけを取って後ろに
  * 足す（PBI-108）。読んでいる途中のスクロールの位置は動かさず、一番下を見ているときだけ、新しい行についていく。
- * 実行が終わり、エージェントの元のファイルの一覧も取れたら、取り直しを止める。更新できない間は、そのことを出す。
+ * 実行が終わり、エージェントの元のファイルの一覧も取れたら、ログの取り直しを止め、タスクがまだあるかだけを確かめる
+ * （開いている間にプロジェクトを削除したら、描き直して 404 にする）。更新できない間は、そのことを出す。
  * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出す。
  */
 export function LiveRunLog({
@@ -96,6 +106,7 @@ export function LiveRunLog({
 }) {
   const [data, setData] = useState(initial);
   const [stale, setStale] = useState<LiveStale>(false);
+  const [missing, setMissing] = useState(false);
   // 持っている分の終わりの位置（バイト）と、前に受け取った版
   const have = useRef({
     events: initial?.log?.offsets?.events.next ?? 0,
@@ -113,6 +124,18 @@ export function LiveRunLog({
     }
   });
   useLayoutEffect(() => {
+    if (!done) return;
+    return pollWhileVisible({
+      doc: document,
+      intervalMs: LIVE_INTERVAL_MS,
+      load: async () => {
+        const next = await fetchLive(runLogCheckUrl(taskId, runId), undefined);
+        setStale(next === "failed" || next === "signedOut" ? next : false);
+        setMissing(next === "missing");
+      },
+    });
+  }, [done, taskId, runId]);
+  useLayoutEffect(() => {
     if (done) return;
     return pollWhileVisible({
       doc: document,
@@ -124,6 +147,7 @@ export function LiveRunLog({
           have.current.version,
         );
         setStale(next === "failed" || next === "signedOut" ? next : false);
+        setMissing(next === "missing");
         if (typeof next !== "object") return;
         const reply = next.data;
         const now = latest.current;
@@ -174,6 +198,7 @@ export function LiveRunLog({
   return (
     <>
       <StaleNotice stale={stale} />
+      <RefreshWhenMissing missing={missing} />
       {initial === null && <FollowProjectAfterRecovery projectId={data.projectId || undefined} />}
       <RunLogView runId={runId} data={data} />
     </>
