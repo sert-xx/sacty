@@ -101,8 +101,8 @@
   <text x="830" y="97" class="label" text-anchor="middle">80%</text>
   <rect x="747" y="197" width="95.8" height="18" rx="4" class="label-bg"/>
   <text x="752" y="210" class="label" text-anchor="start">Reached the cap</text>
-  <rect x="256.5" y="303" width="47" height="18" rx="4" class="label-bg"/>
-  <text x="280" y="316" class="label" text-anchor="middle">Person</text>
+  <rect x="256.5" y="293" width="47" height="18" rx="4" class="label-bg"/>
+  <text x="280" y="306" class="label" text-anchor="middle">Person</text>
   <rect x="309.3" y="196" width="181.4" height="18" rx="4" class="label-bg"/>
   <text x="400" y="209" class="label" text-anchor="middle">Continues from where it stopped</text>
 </svg>

@@ -152,7 +152,7 @@ export const budgetFlow = {
       fromSide: "l",
       toSide: "r",
       label: t("人", "Person"),
-      labelAt: [280, 316],
+      labelAt: [280, 306],
     },
     {
       kind: "edge",
