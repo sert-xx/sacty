@@ -3980,13 +3980,21 @@ export class TaskService {
         : undefined;
     const candidates = listed?.repositories ?? [];
     const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
+    // 共用の compose（PBI-70）は、サービスを分けるときの候補にする（PBI-152。使うかはオーケストレーターが決める）
+    const sharedComposes = (this.deps.projects.get(task.projectId)?.sharedComposes ?? []).map(
+      (s) => ({
+        name: s.name,
+        file: s.file,
+        ...(s.description ? { description: s.description } : {}),
+      }),
+    );
     const ran = await this.runOrchestrator(
       task,
       config,
       // 書き込みの API は、指示にも出さない（ゲートウェイが拒否する）
       (platforms) =>
         [
-          buildGatherPrompt(task, triage, { candidates, unreadable }),
+          buildGatherPrompt(task, triage, { candidates, unreadable, sharedComposes }),
           ...platformPromptLines(readOnlyPlatforms(platforms)),
         ].join("\n"),
       "gather",

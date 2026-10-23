@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -319,6 +319,22 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   チケットのトリアージを待つタスクは、候補が無ければ実行の前に止まる（下の「トリアージを兼ねる」）。
 - 候補も読めなかった Org も無いタスクでは、コードの節を指示に足さない。
 
+### 実行の環境とサービス
+
+情報収集は、既定のイメージのコンテナで、サービスを起動せずに動く。後の工程の環境（オーケストレーターが選ぶイメージ・工程ごとに起動するサービス）とは違う。
+作業するリポジトリがある（トリアージで決まるものを含む）タスクでは、指示に「実行の環境とサービス」の節を足し、次をさせる（指示。強制はしない。`gatherServiceLines`）。
+
+- 情報収集のコンテナで確かめたツールの有無・版・動いているもの（DB など）を、後の工程の環境の事実として書かない。
+  要る言語の版・ツールは、リポジトリの設定から読んで書く。
+- sacty が、オーケストレーターの選んだ compose のサービスを工程の実行のたびに起動すること（情報収集の時点では起動していない）と、工程のエージェントは docker のコマンドを使えないがサービスにはつなげることを前提にする。
+- テストと動作確認に要るものを、compose の build の有無ではなく何を動かすかで、次の3つに分けて、まとめの見出し「テストと動作確認に要るサービス」に書く。
+  1. このリポジトリのコードを動かすアプリ：工程のエージェントがコンテナの中で起動する（起動の手順・要る環境変数の名前・つなぐサービス）
+  2. 別で管理されている依存アプリと、DB・キャッシュ・モックなど：sacty が起動できる候補（compose ファイルとサービスの名前）
+  3. compose に無い依存：プロジェクトの共用の compose（名前・ファイル・説明を指示に並べる）に合うものがあればその名前、無ければ sacty が起動できない依存
+
+オーケストレーターは、この分類をもとにサービスを確定させる（[サービス](services.md#いつ起動するか)）。
+リポジトリの無いタスクでは、この節を足さない。
+
 ### トリアージを兼ねる
 
 チケットから取り込んだタスクで、まだ作業するリポジトリを決めていない（`awaitingTicketTriage`）ときは、情報収集がチケットのトリアージを兼ねる。
@@ -338,7 +354,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
     この指示にも集めた情報を添える。
 - まとめを読めないときは、トリアージも記録しない（上と同じく、集め直すか止まる）。
 
-コード: `apps/daemon/src/service.ts`（`gatherInformation`・`ticketTriageTarget`・`ticketTriaged`・`triageTicket`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
+コード: `apps/daemon/src/service.ts`（`gatherInformation`・`ticketTriageTarget`・`ticketTriaged`・`triageTicket`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`gatherServiceLines`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
 
 ## オーケストレーター
 

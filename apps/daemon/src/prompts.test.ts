@@ -897,6 +897,18 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
     } as unknown as Task;
     expect(buildOrchestratorPrompt(withRepo)).toContain("- services：テストや動作確認に");
+    // このリポジトリのコードを動かすアプリは、工程がコンテナの中で起動する。依存アプリは含める（PBI-152）
+    const orchestrator = buildOrchestratorPrompt(withRepo);
+    expect(orchestrator).toContain(
+      "names に、このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は含めない",
+    );
+    expect(orchestrator).toContain("別で管理されている依存アプリ");
+    expect(orchestrator).toContain("compose の build の有無ではなく、何を動かすかで判断する");
+    expect(orchestrator).toContain("テストと動作確認に要るサービスの分類があれば、それをもとにし");
+    expect(orchestrator).not.toContain("アプリ本体など、要らないサービスは含めない");
+    // localhost の転送（PBI-60）の前の、古い記述を残さない
+    expect(orchestrator).not.toContain("localhost ではない");
+    expect(orchestrator).toContain("localhost のそのポートでも接続できる");
     expect(
       buildOrchestratorPrompt({ title: "x", body: "", steps: [] } as unknown as Task),
     ).not.toContain("- services：");
@@ -918,6 +930,10 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(intro).toContain("localhost のそのポート");
     expect(intro).toContain("書き換えずにそのまま使ってください");
     expect(intro).not.toContain("localhost ではありません");
+    // このリポジトリのアプリは、docker を使わずにコンテナの中で起動してつなぐ（PBI-152）
+    expect(intro).toContain(
+      "docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください",
+    );
     expect(servicePromptLines([{ name: "db", ports: [5432] }])[3]).toContain(
       "サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります",
     );
@@ -2891,6 +2907,56 @@ describe("タスクの開始時に集めた情報", () => {
     expect(prompt).not.toContain("読まなくてよい");
     // 候補を gh api で読ませるのは、リポジトリが決まっていないときだけ
     expect(prompt).not.toContain("gh api");
+  });
+
+  it("リポジトリのあるタスクの情報収集は、自分の環境を後の工程の事実にさせず、テストと動作確認に要るサービスを分けさせる（PBI-152）", () => {
+    const prompt = buildGatherPrompt(taskOf(false));
+    expect(prompt).toContain("--- 実行の環境とサービス ---");
+    expect(prompt).toContain("後の工程の環境の事実として書かないでください");
+    expect(prompt).toContain("工程の実行のたびに起動し");
+    expect(prompt).toContain("1. このリポジトリのコードを動かすアプリ");
+    expect(prompt).toContain("2. 別で管理されている依存アプリ");
+    expect(prompt).toContain("sacty が起動できない依存として書く");
+    expect(prompt).toContain("- テストと動作確認に要るサービス（");
+    // 節はコードの節の後、手順の前。手順の番号は変えない
+    expect(prompt.indexOf("--- 実行の環境とサービス ---")).toBeGreaterThan(
+      prompt.indexOf("--- コード ---"),
+    );
+    expect(prompt.indexOf("--- 実行の環境とサービス ---")).toBeLessThan(prompt.indexOf("手順："));
+    expect(prompt).toContain("6. 集めた情報を、タスクとの関係で絞り込む");
+    // 共用の compose が無ければ、候補を出さない
+    expect(prompt).not.toContain("共用の compose");
+    // 共用の compose があれば、compose に無い依存の候補として出す
+    const shared = buildGatherPrompt(taskOf(false), undefined, {
+      sharedComposes: [
+        { name: "auth-stack", file: "compose.yaml", description: "認証サーバーとモックの SMTP" },
+        { name: "queue", file: "infra/compose.yml" },
+      ],
+    });
+    expect(shared).toContain("次の共用の compose");
+    expect(shared).toContain(
+      "     - auth-stack：compose ファイル compose.yaml。認証サーバーとモックの SMTP",
+    );
+    expect(shared).toContain("     - queue：compose ファイル infra/compose.yml");
+  });
+
+  it("サービスを分けさせるのは、作業するリポジトリがある（決まる）タスクだけ（PBI-152）", () => {
+    const task = { ...taskOf(false, true), repository: undefined };
+    const candidates = ["https://github.com/acme/app", "https://github.com/acme/api"];
+    // トリアージを兼ねるタスクは、選んだリポジトリで工程が動くので分けさせる
+    expect(buildGatherPrompt(task, { candidates, fixed: false })).toContain(
+      "--- 実行の環境とサービス ---",
+    );
+    // リポジトリの無いタスク（候補を読むだけ）・コードの無いタスクでは分けさせない
+    for (const prompt of [
+      buildGatherPrompt(task, undefined, { candidates }),
+      buildGatherPrompt(task, undefined, {
+        sharedComposes: [{ name: "auth-stack", file: "compose.yaml" }],
+      }),
+    ]) {
+      expect(prompt).not.toContain("--- 実行の環境とサービス ---");
+      expect(prompt).not.toContain("テストと動作確認に要るサービス");
+    }
   });
 
   it("リポジトリが決まっていないタスクの情報収集は、候補から洗い出したリポジトリのコードを gh api で読ませる", () => {

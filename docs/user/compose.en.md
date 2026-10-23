@@ -10,7 +10,8 @@ When you use the target repository's own compose file, no configuration is neede
 
 ## How services are started
 
-- When the Orchestrator chooses the steps, it reads the repository (compose files, README, AGENTS.md, and test configuration). It then decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation). Services are not started for an Investigation of content (as opposed to a bug Investigation).
+- When the Orchestrator chooses the steps, it reads the repository (compose files, README, AGENTS.md, and test configuration). It then decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation). If the information gathering at the start of the task has sorted the services needed for tests and manual checks, the Orchestrator bases its choice on that. Services are not started for an Investigation of content (as opposed to a bug Investigation).
+- sacty starts dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. Apps that run this repository's code are started by the step agent inside the agent's container and connected to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (a database built from the repository's Dockerfile is also a dependency).
 - sacty starts the services under a separate project name (`docker compose up --wait`) for each of the following runs.
   - Each agent run of a step
   - Each final review that runs the tests (it uses the Implementation step's services)

@@ -3043,7 +3043,9 @@ export function buildOrchestratorPrompt(
       : []),
     ...(task.repository
       ? [
-          "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する。テストを動かすアプリ本体など、要らないサービスは含めない）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。サービスにはサービス名とコンテナのポートで接続する（例 db:5432。localhost ではない）。要らなければ書かない",
+          "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。工程のエージェントは、サービス名とコンテナのポート（例 db:5432）でも、localhost のそのポートでも接続できる。要らなければ書かない",
+          "  - names に、このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は含めない。工程のエージェントが、コンテナの中で起動してサービスにつなぐ。別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなどは含める。compose の build の有無ではなく、何を動かすかで判断する（このリポジトリの Dockerfile でビルドする DB も依存。このリポジトリのコードをマウントして動かすものは対象のアプリ）",
+          "  - 集めた情報に、テストと動作確認に要るサービスの分類があれば、それをもとにし、compose ファイルなどで確かめて確定する",
           ...(shared.length > 0
             ? [
                 "  - 共用の compose：このプロジェクトには、チームで共用するリポジトリの compose（対象リポジトリの外。PBI-70）があります。設定してあるだけでは起動しません。このタスク・このリポジトリのテストや動作確認に要るか（テストの設定・README・AGENTS.md・CI の設定が、そのサービスを前提にしているか）を、説明と照らして判断してください。使うときは、file の代わりに compose に共用の compose の名前を書く（対象リポジトリの compose と共用の compose は、どちらか一方）。names は説明から分かるサービスの名前（分からなければ空にすると、すべて起動する）。要らないタスクでは書かない（取得も起動もしない）",
@@ -3565,7 +3567,7 @@ export function servicePromptLines(services: readonly StartedService[]): string[
   return [
     "",
     "--- 起動しているサービス（docker compose） ---",
-    'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。',
+    'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。このリポジトリのアプリを起動して確かめるときは、docker を使わずに、このコンテナの中でリポジトリの手順のコマンドで起動し、これらのサービスにつないでください。この実行が終わると、サービスとデータは消えます。',
     "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
     ...services.map((s) => {
       const targets = [
@@ -3752,6 +3754,8 @@ export function buildGatherPrompt(
     candidates?: readonly string[];
     /** プロジェクトの対象のうち、リポジトリの一覧を読めなかった Org と理由（秘密は伏せたもの）。 */
     unreadable?: readonly { org: string; message: DaemonText }[];
+    /** プロジェクトの共用の compose（PBI-70）。サービスを分けるとき（gatherServiceLines）に、compose に無い依存の候補にする。 */
+    sharedComposes?: readonly { name: string; file: string; description?: string }[];
   } = {},
 ): string {
   const ticket = task.ticket;
@@ -3771,6 +3775,9 @@ export function buildGatherPrompt(
   const codeSection = gatherCodeLines(task, triage, code.candidates ?? [], code.unreadable ?? []);
   // 読めるコード（用意したリポジトリか、候補）があるときだけ、コードを読む手順とまとめの見出しを足す
   const readsCode = codeSection.reads;
+  // 作業するリポジトリがある（決まる）タスクだけ、サービスを分けさせる（オーケストレーターがサービスを選ぶのも、そのときだけ）
+  const servicesSection =
+    readsCode && (task.repository || triage) ? gatherServiceLines(code.sharedComposes ?? []) : [];
   return [
     "あなたは情報収集エージェントです。このタスクの進め方を決める前に、タスクに関係する情報をできるだけ集め、関係するものだけに絞り込んでまとめてください。",
     "まとめは、このあと進め方（工程）を選ぶオーケストレーター、各工程のエージェント、成果を判定するゴールガーディアンが、タスクの内容と一緒に読みます。人間なら暗黙のうちに知っている背景・目的・制約を、後の判断に使える形で残すことが目的です。",
@@ -3778,6 +3785,7 @@ export function buildGatherPrompt(
     ...origin,
     ...(origin.length > 0 ? [""] : []),
     ...(codeSection.lines.length > 0 ? [...codeSection.lines, ""] : []),
+    ...(servicesSection.length > 0 ? [...servicesSection, ""] : []),
     "手順：",
     "1. タスクの題と内容を読み、何を求めているか、判断に足りない情報は何かを洗い出す",
     "2. 取り込み元を辿る。チケットなら、説明・コメント・ラベル・コンポーネント・リンクしたチケットを読み、親（サブタスクならストーリー、ストーリーならエピック）とその説明・ほかの子を上まで辿る。GitHub の Issue・PR なら、本文・コメント・リンクした Issue・PR を読む",
@@ -3809,6 +3817,11 @@ export function buildGatherPrompt(
     ...(readsCode
       ? [
           "- 関係するコード（リポジトリ・ファイルの場所・いまの振る舞い。リポジトリの候補を読んだなら、それぞれのタスクとの関係）",
+        ]
+      : []),
+    ...(servicesSection.length > 0
+      ? [
+          "- テストと動作確認に要るサービス（上の「実行の環境とサービス」の分け方で。要らなければそう書く）",
         ]
       : []),
     "- 食い違い・未確定のこと（後の工程や人間に確かめたいこと）",
@@ -3858,6 +3871,30 @@ export const GATHER_GH_EXAMPLES: readonly { command: string; purpose: string }[]
     purpose: "コードの検索。既定のブランチだけ",
   },
 ];
+
+/**
+ * 情報収集の指示の「実行の環境とサービス」の節（PBI-152）。情報収集のコンテナ（既定のイメージ・サービスなし）で確かめたことを、
+ * 後の工程の環境の事実として書かせない。sacty が工程ごとに compose のサービスを起動することを伝え、テストと動作確認に要るものを、
+ * 工程がコンテナの中で起動するアプリと、sacty が起動できる依存と、起動できない依存に分けさせる（オーケストレーターがそれをもとに
+ * サービスを確定させる）。共用の compose（PBI-70）は、compose に無い依存の候補として出す。
+ */
+function gatherServiceLines(
+  sharedComposes: readonly { name: string; file: string; description?: string }[],
+): string[] {
+  return [
+    "--- 実行の環境とサービス ---",
+    "- あなたのコンテナは、情報収集のためのもので、後の工程の環境ではありません。後の工程は、オーケストレーターがリポジトリに合わせて選ぶイメージのコンテナで動きます。このコンテナで確かめたツールの有無・版・動いているもの（DB など）を、後の工程の環境の事実として書かないでください。要る言語の版・ツールは、リポジトリの設定（package.json・go.mod・pom.xml・pyproject.toml・.tool-versions・CI の設定など）から読んで書いてください",
+    "- sacty は、オーケストレーターが選んだ docker compose のサービス（DB・モック API など）を、工程の実行のたびに起動し、工程のコンテナから接続できるようにします（いまは起動していません）。工程のエージェントは docker のコマンドを使えませんが、起動したサービスにはつなげます",
+    "- compose ファイル・CI の設定・README・テストの設定から、テストと動作確認に要るものを次の3つに分けて、まとめに書いてください。compose の build の有無ではなく、何を動かすかで分けます",
+    "  1. このリポジトリのコードを動かすアプリ（工程で変える・確かめるもの）：工程のエージェントがコンテナの中で起動する。起動の手順（コマンド・要る環境変数の名前・つなぐサービス）を書く",
+    "  2. 別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなど：sacty が起動できる候補。compose ファイルとサービスの名前を書く（このリポジトリの Dockerfile でビルドする DB なども、ここに入る）",
+    `  3. compose に無い依存：${sharedComposes.length > 0 ? "次の共用の compose（チームで共用するリポジトリの compose）に合うものがあれば、その名前を書く。無ければ、" : ""}sacty が起動できない依存として書く`,
+    ...sharedComposes.map(
+      (s) =>
+        `     - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
+    ),
+  ];
+}
 
 /** 情報収集が読むリポジトリの候補の数の目安。 */
 const GATHER_CANDIDATES_TO_READ = 3;
