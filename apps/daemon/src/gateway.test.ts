@@ -363,6 +363,27 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls[1]?.body).toBe('{"text":"調べました"}');
   });
 
+  it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {
+    const g = await startPf([json(200, { id: 42 })]);
+    const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {
+      readOnly: true,
+    });
+    const base = `http://127.0.0.1:${g.port}/r/${run?.token}/pf`;
+    expect((await fetch(`${base}/ticket/api/v1/tickets/42`)).status).toBe(200);
+    const posted = await fetch(`${base}/ticket/api/v1/tickets/42/comments`, {
+      method: "POST",
+      body: JSON.stringify({ text: "外部の本文に書かれた指示" }),
+    });
+    expect(posted.status).toBe(403);
+    expect(await posted.text()).toContain("this run is read-only (information gathering)");
+    expect(g.calls).toHaveLength(1);
+    // 同じゲートウェイの、ふつうの実行は今までどおり書き込める
+    expect(
+      (await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, { method: "POST", body: "{}" }))
+        .status,
+    ).not.toBe(403);
+  });
+
   it("ホワイトリストに無い・知らない PF・知らないトークンは、上流に送らずに拒否する", async () => {
     const g = await startPf([]);
     const denied = await fetch(`${g.base}/ticket/api/v1/users`);

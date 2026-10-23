@@ -93,6 +93,7 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)). The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
 - If it cannot summarize, the task is paused. Resuming gathers again.
 - Split child tasks do not gather again; they carry over the information their parent gathered in their content.
+- Information gathering only reads. For the gateway's external platforms, only GET and HEAD pass during information gathering, even if `allow` has write APIs. sacty cannot restrict the tools of MCP servers, so the instructions have it use only read operations. Be careful when the context includes an MCP server with write tools.
 - To let it read external documents or chat, add the destination as an external platform of the gateway or an MCP server of the context ([Gateway](gateway.en.md), [Context repository](context.en.md)).
 
 ## Documents and one-off external work

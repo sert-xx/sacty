@@ -136,6 +136,11 @@ type RunState = Partial<GatewayRoute> & {
   platforms?: readonly Platform[];
   access?: { platforms: readonly string[]; hostMcp: readonly string[] };
   /**
+   * 読み取りだけの実行（タスクの開始時の情報収集）。外部 PF の API は、ホワイトリストに合っても GET・HEAD だけを中継する
+   * （チケットのコメント・リンク先などの外部の本文に書かれた指示に誘導されても、書き込めないようにする）。
+   */
+  readOnly?: boolean;
+  /**
    * GitHub の読み取りの中継で使える、ホストごとの gh のアカウント（タスクのプロジェクトで選んだもの）。トークンは
    * 使うときにホストで取り出し、この実行の間だけ持つ。
    */
@@ -307,11 +312,14 @@ export class AiGateway {
     access?: { platforms: readonly string[]; hostMcp: readonly string[] },
     /** GitHub の読み取りの中継で使える、ホストごとの gh のアカウント。 */
     github?: Record<string, string>,
+    /** readOnly：外部 PF の API を GET・HEAD だけにする（情報収集）。 */
+    options?: { readOnly?: boolean },
   ): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
       ...(access ? { access } : {}),
+      ...(options?.readOnly ? { readOnly: true } : {}),
       ...(github && Object.keys(github).length > 0
         ? {
             github: Object.fromEntries(
@@ -493,6 +501,13 @@ export class AiGateway {
         res,
         400,
         `sacty gateway: the path "${target.path}" changes when sent as a URL (remove characters such as #)`,
+      );
+    }
+    if (run.readOnly && method !== "GET" && method !== "HEAD") {
+      return fail(
+        res,
+        403,
+        `sacty gateway: this run is read-only (information gathering). ${method} ${target.path} is not allowed for "${platform.name}"; only GET and HEAD are relayed.`,
       );
     }
     if (!isAllowed(platform, method, target.path)) {

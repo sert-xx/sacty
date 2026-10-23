@@ -10,6 +10,7 @@ import {
 } from "@sacty/core";
 import { headedObject, lastJsonAnswer } from "./agent-json.js";
 import { errorText } from "./errors.js";
+import { gatheredLines } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 
 /**
@@ -271,6 +272,8 @@ export function buildDeploymentPrompt(task: Task, watch: DeploymentWatch, skill:
     "```json",
     JSON.stringify(checks),
     "```",
+    // タスクの開始時に集めた情報（何のための変更か・関係する仕様）を、確かめる観点の背景として添える
+    ...gatheredLines(task),
     "",
     "最後に、次の形式で必ず出してください（スキルに別の答えの形が書いてあっても、この形式を優先する）。",
     "- ci.result：passed（スキルに従って確かめ、通っている）、failed（失敗がある）、skipped（スキルが確かめないとしている）、unknown（判断できない）",

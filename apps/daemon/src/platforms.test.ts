@@ -13,6 +13,7 @@ import {
   PlatformFile,
   platformPromptLines,
   platformSummary,
+  readOnlyPlatforms,
   tokenUrl,
   toPlatform,
 } from "./platforms.js";
@@ -687,5 +688,29 @@ describe("ホストの PF とコンテキストの PF を合わせる（PBI-74�
     });
     expect(JSON.stringify(summary)).not.toContain("docs-token");
     expect(platformSummary(pf("jira"))).not.toHaveProperty("from");
+  });
+});
+
+describe("読み取りだけの実行に見せる PF（情報収集）", () => {
+  it("GET・HEAD のルールだけを残し、残らない PF は除く", () => {
+    const read = platform({
+      upstream: "https://jira.example.com",
+      auth: { header: "Authorization", secret: "jira-token" },
+      allow: ["GET /rest/api/**", "HEAD /rest/api/**", "POST /rest/api/2/issue/*/comment"],
+    });
+    const write = platform(
+      {
+        upstream: "https://chat.example.com",
+        auth: { header: "Authorization", secret: "chat-token" },
+        allow: ["POST /api/chat.postMessage", "DELETE /api/messages/*"],
+      },
+      "chat",
+    );
+    const kept = readOnlyPlatforms([read, write]);
+    expect(kept.map((p) => [p.name, p.allow])).toEqual([
+      ["ticket", ["GET /rest/api/**", "HEAD /rest/api/**"]],
+    ]);
+    // 元の PF は変えない
+    expect(read.allow).toHaveLength(3);
   });
 });

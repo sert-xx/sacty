@@ -249,6 +249,7 @@ import {
   type PlatformSummary,
   platformPromptLines,
   platformSummary,
+  readOnlyPlatforms,
 } from "./platforms.js";
 import {
   fillTemplate,
@@ -3937,8 +3938,12 @@ export class TaskService {
     const ran = await this.runOrchestrator(
       task,
       config,
+      // 書き込みの API は、指示にも出さない（ゲートウェイが拒否する）
       (platforms) =>
-        [buildGatherPrompt(task, triage), ...platformPromptLines(platforms)].join("\n"),
+        [
+          buildGatherPrompt(task, triage),
+          ...platformPromptLines(readOnlyPlatforms(platforms)),
+        ].join("\n"),
       "gather",
     );
     // 集めている間に、人間が止めた・中止した・ほかで決まったなら、記録しない（止めた記録は runNext の後始末で行う）
@@ -8242,6 +8247,8 @@ export class TaskService {
             ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
             : undefined,
           github,
+          // 情報収集は読むだけ。外部の本文に書かれた指示に誘導されても書き込めないよう、外部 PF を GET・HEAD に限る
+          run.role === "gather" ? { readOnly: true } : undefined,
         );
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {

@@ -27111,6 +27111,84 @@ describe("タスクの開始時の情報収集", () => {
     }
   });
 
+  it("実行に失敗したら、代わりのエージェントで集め直し、まとめを1回だけ記録して工程の選択へ進む", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-fallback.db"));
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
+        : base;
+    };
+    const { service, executor } = makeService(
+      activity,
+      [{ kind: "failed", reason: "usage_limit", message: "limit" }, gathered(), investigateOnly],
+      {
+        realGatherer: true,
+        realPlanner: true,
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+      },
+    );
+    const task = service.createTask({ projectId: "default", title: "PAY-1 決済の再送" });
+    await service.runNext(task.id); // 失敗して、代わりのエージェントに切り替える
+    let events = service.get(task.id)?.activity ?? [];
+    const failed = events.find((e) => e.type === "OrchestratorFailed");
+    expect(failed?.actor).toBe("gatherer");
+    expect(events.find((e) => e.type === "AgentFellBack")?.payload).toMatchObject({
+      role: "gather",
+      agentId: "claude-subscription",
+      fallbackAgentId: "claude-api",
+    });
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    await service.runNext(task.id); // 代わりのエージェントで集める
+    await service.runNext(task.id); // 工程を選ぶ
+    events = service.get(task.id)?.activity ?? [];
+    const recorded = events.filter((e) => e.type === "InformationGathered");
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.type === "InformationGathered" && recorded[0].payload).toMatchObject({
+      agentId: "claude-api",
+      costUsd: 0.0015,
+    });
+    expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    expect(events.some((e) => e.type === "StepsChosen")).toBe(true);
+    expect(executor.stdins[2]).toContain("PAY-100 エピック：二重請求をなくす");
+    activity.close();
+  });
+
+  it("情報収集の実行は、ゲートウェイに読み取りだけの実行として登録し、指示に書き込みの API を出さない", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-readonly.db"));
+    const options: unknown[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      ...fakeGateway(),
+      register: (...args: unknown[]) => {
+        options.push(args[5]);
+        return fakeGateway().register();
+      },
+    };
+    const { service, executor } = makeService(activity, [gathered(), investigateOnly], {
+      realGatherer: true,
+      realPlanner: true,
+      config: configOf(agent(), 1, [jiraPlatform()]),
+      secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+      gateway,
+    });
+    const task = service.createTask({ projectId: "default", title: "PAY-1 決済の再送" });
+    await service.runNext(task.id); // 集める
+    await service.runNext(task.id); // 工程を選ぶ
+    // 情報収集だけを読み取りだけの実行にする（工程の選択などの実行はそのまま）
+    expect(options[0]).toEqual({ readOnly: true });
+    expect(options.length).toBeGreaterThan(1);
+    expect(options.slice(1).every((o) => o === undefined)).toBe(true);
+    expect(executor.stdins[0]).toContain("GET /rest/api/**");
+    expect(executor.stdins[0]).not.toContain("POST /rest/api/2/issue/*/comment");
+    // オーケストレーターには、今までどおり書き込みの API も見せる
+    expect(executor.stdins[1]).toContain("POST /rest/api/2/issue/*/comment");
+    activity.close();
+  });
+
   it("情報収集の AI は step_agents.gather、無ければオーケストレーターの AI", async () => {
     const base = (configOf(agent())() as { ok: true; config: SactyConfig }).config;
     const orchestrator = agent({ id: "orch" });
