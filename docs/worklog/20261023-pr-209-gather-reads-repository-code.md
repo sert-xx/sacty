@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-23（UTC）
 - タスク: なし
-- PR: なし
+- PR: #209
 - ブランチ: claude/festive-feynman-hdieam
 - 関係する ADR: [情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)
 
