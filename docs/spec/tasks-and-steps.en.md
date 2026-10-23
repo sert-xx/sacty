@@ -171,7 +171,7 @@ Code: `apps/daemon/src/github-comments.ts` (`requestedGitHubComments`, `commentT
 
 ## Information gathering
 
-At the start of a task (before choosing steps, and before ticket triage), the information gatherer runs once, collects the information related to the task, and summarizes only what is relevant (`InformationGathered`; the actor is `gatherer`). It aligns the background, goals, and constraints that people take for granted before the Orchestrator chooses the plan. There is no approval gate; the summary is shown under "Gathered information" in the task details (collapsed once a step has started).
+At the start of a task (before choosing steps), the information gatherer runs once, collects the information related to the task, and summarizes only what is relevant (`InformationGathered`; the actor is `gatherer`). For a task taken in from a ticket, the same run also does ticket triage (deciding the repository to work in, the title, and the summary) ("Doubling as triage" below). It aligns the background, goals, and constraints that people take for granted before the Orchestrator chooses the plan. There is no approval gate; the summary is shown under "Gathered information" in the task details (collapsed once a step has started).
 
 - What to collect (instructions; not enforced):
   - The description, comments, and linked tickets of the ticket the task was taken in from, and its parents followed upward (the story for a sub-task, the epic for a story). For a GitHub Issue or PR, its body, comments, and linked Issues and PRs
@@ -181,12 +181,23 @@ At the start of a task (before choosing steps, and before ticket triage), the in
 - It runs the same way as the Orchestrator (the default image, the composed context, the host's and the context's external platforms, MCP servers, and the GitHub read relay; `ContextResolved` is recorded). The AI is `step_agents.gather`, otherwise `step_agents.orchestrator`, otherwise `default_agent`. The session is not saved. The cost is counted toward the task budget (if the budget cap is reached, the task is paused without running).
 - From the answer (JSON with the heading `sacty-gathered`) it reads the summary (`brief`; at least 1 character after trimming, up to 30000 characters (`GATHERED_BRIEF_MAX`)) and the sources (`sources`; title and URL; up to 100). When there is no summary or it cannot be read, or the run fails, it records `OrchestratorFailed` (the actor is `gatherer`) and gathers again with a fallback agent if there is one, otherwise pauses (resuming gathers again). It does not proceed without gathering.
 - The summary is added to the following instructions (`gatheredLines`).
-  - Ticket triage and the Orchestrator (choosing steps, choosing the review image, reviewing steps, answering questions)
+  - The Orchestrator (choosing steps, choosing the review image, reviewing steps, answering questions), and ticket triage when it is redone after information gathering
   - Every step (added to the step's task content)
   - The Goal Guardian (judging change requests, the final review, deciding where to send PR comments back to, Integration review). Since a person has not approved it, the instructions say to use it only to understand the background and not as grounds for the verdict
 - It does not gather for tasks whose steps are already chosen (including activity logs from before this mechanism) or for split child tasks (those with `parent`) (`awaitingGathering`). A child task's content includes the parent's summary (`buildChildBody`). A task created by a rerun gathers as a new task.
 
-Code: `apps/daemon/src/service.ts` (`gatherInformation`, `runOrchestrator`, `runNextInner`), `apps/daemon/src/prompts.ts` (`buildGatherPrompt`, `extractGathered`, `gatheredLines`, `buildChildBody`), `apps/daemon/src/config.ts` (`agentFor`), `packages/core/src/events.ts` (`InformationGathered`, `GATHERED_BRIEF_MAX`), `packages/core/src/projection.ts` (`awaitingGathering`), `apps/web/src/components/task-detail.tsx`
+### Doubling as triage
+
+For a task taken in from a ticket whose repository to work in is not decided yet (`awaitingTicketTriage`), information gathering doubles as ticket triage.
+
+- Before the run, it checks the ticket's destination (a platform of the host or the project's context) and the candidate repositories (the project's targets) (`ticketTriageTarget`). If there is no destination or no candidate, it records the reason (`ticket.triageFailed`) and stops without running.
+- The instructions list the candidates and have it choose one repository to work in from the gathered information and write the title (with the key first) and the summary. If a person chose the repository, it is fixed to that repository. The answer is the `sacty-gathered` JSON with `repo`, `title`, `summary`, and `reason` added.
+- When the summary of the gathered information can be read, it records `InformationGathered` and then one of the following (`ticketTriaged`).
+  - If the repository is a candidate and there is a summary, `TicketTriaged` (the actor is `gatherer`). The cost is in `InformationGathered`, so `TicketTriaged` carries no cost. The task's title and content become the written title and summary.
+  - If it could not decide (the repository is empty or not a candidate, there is no summary, or there is no answer), it records the reason and stops (`ticket.triageFailed`). The gathered information is kept. A person can choose the repository and resume; resuming redoes only ticket triage (`triageTicket`) (it does not gather again). That instruction also includes the gathered information.
+- When the summary cannot be read, triage is not recorded either (as above, it gathers again or stops).
+
+Code: `apps/daemon/src/service.ts` (`gatherInformation`, `ticketTriageTarget`, `ticketTriaged`, `triageTicket`, `runOrchestrator`, `runNextInner`), `apps/daemon/src/prompts.ts` (`buildGatherPrompt`, `extractGathered`, `gatheredLines`, `buildChildBody`), `apps/daemon/src/config.ts` (`agentFor`), `packages/core/src/events.ts` (`InformationGathered`, `GATHERED_BRIEF_MAX`), `packages/core/src/projection.ts` (`awaitingGathering`), `apps/web/src/components/task-detail.tsx`
 
 ## Orchestrator
 
@@ -216,7 +227,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 - When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded, and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
 - How to answer (PBI-146): the prompt asks it to follow the default skill `plan-steps` if present to compare the candidates, to write the answer JSON to a file and check it with a tool such as `jq` before output, and to fix it until the check passes and then output it exactly once at the end of the text (`planAnswerLines`; [Context composition](context.en.md#default-plan-selection-skill)). The reader (`extractStepPlan`) is unchanged: a broken answer still stops the task as unreadable.
 - When the run fails or the answer cannot be read, `OrchestratorFailed` is recorded and the task is paused (it does not fall back to the standard plan).
-- For a task taken in from a ticket, after information gathering and before choosing steps the Orchestrator reads the ticket and decides the repository, title, and summary (`TicketTriaged`).
+- For a task taken in from a ticket, before choosing steps, information gathering reads the ticket and decides the repository, title, and summary (`TicketTriaged`; "Doubling as triage" above).
 - A PR-review-only task uses the `review` plan without asking the Orchestrator to choose steps (`chooseReviewSteps`, `reviewOnlySteps`).
   - Only when `images` is configured and neither the project's target nor a rerun decides the image, the Orchestrator chooses just the image for the `review` step (`buildReviewImagePrompt`; the answer is `image`, `reason`, and `defaultReason` under `sacty-review-image`, read by `extractReviewImage`). The prompt asks it to choose from the language and version of the code the PR touches and from what the verification commands need (browser tests, DB clients, and so on), with the default image as the last resort.
   - When it chooses, `StepsChosen` is recorded as the Orchestrator's (`imageSource: orchestrator`, `imageReason`, and the cost of the run), and for the default image `defaultImageReasons` or `imagesUnexplained` is recorded as above. The reason text is `review.reviewOnlyImageChosen`.

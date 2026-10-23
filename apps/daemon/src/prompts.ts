@@ -3737,8 +3737,13 @@ const GATHER_HEADING = "sacty-gathered";
  * タスクの開始時の情報収集の指示。チケットの親（ストーリー・エピック）・リンク・本文の URL・MCP・外部 PF などから、
  * タスクに関係する情報を集めて絞り込み、まとめさせる。まとめはオーケストレーター・すべての工程・ゴールガーディアンの
  * 指示に添える（gatheredLines）。読むだけで、コードの調査は後の工程に任せる。
+ * triage を渡すと（チケットから取り込んだタスクのトリアージ。PBI-52）、集めた情報から作業するリポジトリを候補から選び
+ * （fixed なら人が選んだリポジトリのまま）、タスクの題と概要も書かせる。
  */
-export function buildGatherPrompt(task: Task): string {
+export function buildGatherPrompt(
+  task: Task,
+  triage?: { candidates: readonly string[]; fixed: boolean },
+): string {
   const ticket = task.ticket;
   const origin = ticket
     ? [
@@ -3765,6 +3770,17 @@ export function buildGatherPrompt(task: Task): string {
     "3. タスクの内容・チケット・コメントにある URL を開いて、中身を確かめる（組織内の文書は、使える外部 PF・MCP サーバーで読む）。開けなかったものは、開けなかったと書く",
     "4. 使える MCP サーバー・外部 PF（文書・チャット・チケットなど）・プロジェクトのコンテキストの規約で、タスクの語（機能名・画面名・エラーの文言・チケットのキーなど）を探し、関係する仕様・設計・決定・過去の障害や議論を見つける",
     "5. 集めた情報を、タスクとの関係で絞り込む。関係の薄いもの・後の決定で置き換わった古いものは落とす。情報源の間で食い違うことは、両方を書く",
+    ...(triage
+      ? [
+          triage.fixed
+            ? "6. 作業するリポジトリは、人が次のリポジトリに決めました（選び直さない）。このリポジトリで行う作業として、タスクの題と概要を書く"
+            : "6. 集めた情報から、作業するリポジトリを次の候補から1つ選ぶ（候補に無いリポジトリは選べない）。そのリポジトリで行う作業として、タスクの題と概要を書く",
+          ...triage.candidates.map((repo) => `   - ${repo}`),
+          "   - 題は、チケットのキーを先頭に付ける（例 PAY-123 決済の再送で二重に請求される）",
+          "   - 概要（summary）は、チケットの目的・やること・受け入れの条件を書く。サブタスクなら、親の目的の中で受け持つ範囲と、ほかのサブタスクとの境目も書く。この概要がタスクの内容になり、後の工程のエージェントが読む",
+          "   - リポジトリを決められなければ、repo を空にして、理由を reason に書く（まとめは書く）",
+        ]
+      : []),
     "",
     "まとめ（brief）は Markdown で、次の見出しで書いてください（無い見出しは「なし」）。",
     "- 目的と背景（なぜ必要か。親のストーリー・エピックの目的）",
@@ -3787,18 +3803,28 @@ export function buildGatherPrompt(task: Task): string {
     "",
     "最後に、次の形式で必ず出してください（sources は、読んで関係があると判断した情報源。URL が無ければ省く）。",
     "```json",
-    `{"${GATHER_HEADING}": {"brief": "まとめ（Markdown）", "sources": [{"title": "情報源の名前（例 PAY-100 エピック：決済の刷新）", "url": "https://example.com/..."}]}}`,
+    triage
+      ? `{"${GATHER_HEADING}": {"brief": "まとめ（Markdown）", "sources": [{"title": "情報源の名前（例 PAY-100 エピック：決済の刷新）", "url": "https://example.com/..."}], "repo": "候補のリポジトリの URL", "title": "タスクの題", "summary": "タスクの概要（Markdown）", "reason": "そのリポジトリを選んだ理由（サブタスクならスコープの判定も）"}}`
+      : `{"${GATHER_HEADING}": {"brief": "まとめ（Markdown）", "sources": [{"title": "情報源の名前（例 PAY-100 エピック：決済の刷新）", "url": "https://example.com/..."}]}}`,
     "```",
   ].join("\n");
 }
 
-/** 情報収集の出力を読む。まとめが無ければ読めないものにする。 */
-export function extractGathered(
-  output: string,
-): { brief: string; sources: { title: string; url?: string }[] } | undefined {
+/**
+ * 情報収集の出力を読む。まとめが無ければ読めないものにする。トリアージを兼ねたときの答え（repo・title・summary・reason）は
+ * triage に入れる（無ければ triage は無い。リポジトリが候補にあるかは、呼び出し側が確かめる）。
+ */
+export function extractGathered(output: string):
+  | {
+      brief: string;
+      sources: { title: string; url?: string }[];
+      triage?: ReturnType<typeof ticketTriageOf>;
+    }
+  | undefined {
   return lastJsonAnswer(output, (value) => {
     const v = headedObject(value, GATHER_HEADING);
     if (!v) return undefined;
+    const triage = ticketTriageOf(v);
     const brief = typeof v.brief === "string" ? v.brief.trim() : "";
     if (!brief) return undefined;
     const sources = (Array.isArray(v.sources) ? v.sources : [])
@@ -3810,7 +3836,7 @@ export function extractGathered(
       })
       .filter((source): source is { title: string; url?: string } => source !== undefined)
       .slice(0, 100);
-    return { brief: brief.slice(0, GATHERED_BRIEF_MAX), sources };
+    return { brief: brief.slice(0, GATHERED_BRIEF_MAX), sources, ...(triage ? { triage } : {}) };
   })?.value;
 }
 
@@ -3888,17 +3914,23 @@ export function extractTicketTriage(
 ): { repo: string; title: string; summary: string; reason: string } | undefined {
   return lastJsonAnswer(output, (value) => {
     const v = headedObject(value, TICKET_HEADING);
-    if (!v) return undefined;
-    const repo = text(v.repo);
-    const reason = text(v.reason);
-    if (!repo && !reason) return undefined;
-    return {
-      repo,
-      title: text(v.title).slice(0, 200),
-      summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
-      reason: reason.slice(0, 2000),
-    };
+    return v ? ticketTriageOf(v) : undefined;
   })?.value;
+}
+
+/** トリアージの答え（作業するリポジトリ・題・概要・理由）。リポジトリも理由も無ければ、答えていないものとする。 */
+function ticketTriageOf(
+  v: Record<string, unknown>,
+): { repo: string; title: string; summary: string; reason: string } | undefined {
+  const repo = text(v.repo);
+  const reason = text(v.reason);
+  if (!repo && !reason) return undefined;
+  return {
+    repo,
+    title: text(v.title).slice(0, 200),
+    summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
+    reason: reason.slice(0, 2000),
+  };
 }
 
 /**

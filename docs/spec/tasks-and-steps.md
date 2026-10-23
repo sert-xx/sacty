@@ -266,7 +266,8 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 
 ## 情報収集
 
-タスクの開始時（工程を選ぶ前、チケットのトリアージより前）に1回、情報収集のエージェントがタスクに関係する情報を集め、関係するものだけに絞り込んでまとめる（`InformationGathered`。actor は `gatherer`）。
+タスクの開始時（工程を選ぶ前）に1回、情報収集のエージェントがタスクに関係する情報を集め、関係するものだけに絞り込んでまとめる（`InformationGathered`。actor は `gatherer`）。
+チケットから取り込んだタスクでは、同じ実行でチケットのトリアージ（作業するリポジトリ・題・概要を決める）も兼ねる（下の「トリアージを兼ねる」）。
 人間が暗黙のうちに前提にしている背景・目的・制約を、オーケストレーターが進め方を選ぶ前に揃えるためのもの。
 承認ゲートは無く、まとめはタスクの詳細の「集めた情報」に出す（工程が始まったら折りたたむ）。
 
@@ -286,14 +287,33 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   まとめが無い・読めないときと、実行に失敗したときは、`OrchestratorFailed`（actor は `gatherer`）を記録し、代わりのエージェントがあれば集め直し、無ければ一時停止する（再開すると集め直す）。
   集めずに先へは進めない。
 - まとめは、次の指示に添える（`gatheredLines`）。
-  - チケットのトリアージ・オーケストレーター（工程の選択・レビューのイメージの選択・工程の見直し・質問への答え）
+  - オーケストレーター（工程の選択・レビューのイメージの選択・工程の見直し・質問への答え）と、情報収集の後にやり直すチケットのトリアージ
   - すべての工程（工程のタスクの内容に添える）
   - ゴールガーディアン（変更の申し出の判定・最終レビュー・PR の指摘の戻し先の判断・統合レビュー）。人間が承認したものではないので、背景の理解にだけ使い、判定の根拠にしないよう添える
 - 工程を選んだ後のタスク（この仕組みの前の作業履歴を含む）と、分割の子タスク（`parent` のあるもの）では集めない（`awaitingGathering`）。
   子タスクの内容には、親のまとめを添える（`buildChildBody`）。
   再実行で作ったタスクは、新しいタスクとして集める。
 
-コード: `apps/daemon/src/service.ts`（`gatherInformation`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
+### トリアージを兼ねる
+
+チケットから取り込んだタスクで、まだ作業するリポジトリを決めていない（`awaitingTicketTriage`）ときは、情報収集がチケットのトリアージを兼ねる。
+
+- 実行の前に、チケットの接続先（ホストかプロジェクトのコンテキストの PF）と作業するリポジトリの候補（プロジェクトの対象）を確かめる（`ticketTriageTarget`）。
+  接続先が無い・候補が無ければ、実行せずに理由（`ticket.triageFailed`）を記録して止める。
+- 指示に候補を並べ、集めた情報から作業するリポジトリを1つ選び、題（キーを先頭に付ける）と概要を書かせる。
+  人がリポジトリを選んでいれば、そのリポジトリに固定する。
+  答えは `sacty-gathered` の JSON に `repo`・`title`・`summary`・`reason` を足したもの。
+- まとめを読めたら `InformationGathered` を記録し、続けて次のどちらかを記録する（`ticketTriaged`）。
+  - リポジトリが候補にあり、概要があれば、`TicketTriaged`（actor は `gatherer`）。
+    費用は `InformationGathered` に入れたので、`TicketTriaged` は費用を持たない。
+    タスクの題と内容は、書いた題と概要になる。
+  - 決められなかった（リポジトリが空・候補に無い・概要が無い・答えが無い）ら、理由を記録して止める（`ticket.triageFailed`）。
+    集めた情報は残す。
+    人がリポジトリを選んで再開でき、再開するとチケットのトリアージ（`triageTicket`）だけをやり直す（集め直さない）。
+    この指示にも集めた情報を添える。
+- まとめを読めないときは、トリアージも記録しない（上と同じく、集め直すか止まる）。
+
+コード: `apps/daemon/src/service.ts`（`gatherInformation`・`ticketTriageTarget`・`ticketTriaged`・`triageTicket`・`runOrchestrator`・`runNextInner`）、`apps/daemon/src/prompts.ts`（`buildGatherPrompt`・`extractGathered`・`gatheredLines`・`buildChildBody`）、`apps/daemon/src/config.ts`（`agentFor`）、`packages/core/src/events.ts`（`InformationGathered`・`GATHERED_BRIEF_MAX`）、`packages/core/src/projection.ts`（`awaitingGathering`）、`apps/web/src/components/task-detail.tsx`
 
 ## オーケストレーター
 
@@ -335,7 +355,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 答えの出し方（PBI-146）：指示は、既定のスキル `plan-steps` があればその手順で候補を比べ、答えの JSON を出す前にファイルに書いて `jq` などの道具で検査し、通るまで直してから本文の最後に 1 回だけ出すよう求める（`planAnswerLines`。[コンテキストの合成](context.md#既定の工程の選択用スキル)）。
   読み手（`extractStepPlan`）は変えず、壊れた答えは今までどおり読めないものとして止める。
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
-- チケットから取り込んだタスクは、情報収集の後・工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
+- チケットから取り込んだタスクは、工程を選ぶ前に、情報収集がチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`。上の「トリアージを兼ねる」）。
 - PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
   - `images` を設定していて、プロジェクトの対象・再実行でイメージを決めていないときだけ、オーケストレーターに `review` の工程のイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
     指示では、PR が触るコードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。

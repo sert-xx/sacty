@@ -99,7 +99,7 @@
   | イベント | 工程ごとの費用の表の行 |
   | --- | --- |
   | `InformationGathered`（と、actor が `gatherer` の `OrchestratorFailed`） | 情報収集（`gather`） |
-  | `TicketTriaged` | チケットの読み取り（`triage`） |
+  | `TicketTriaged` | チケットの読み取り（`triage`。情報収集が兼ねたものは費用を持たず、行にしない） |
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
   | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed`（actor が `gatherer` のものを除く） | オーケストレーター（`orchestrator`） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |

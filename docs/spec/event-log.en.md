@@ -86,7 +86,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | Event | Row in the per-step cost table |
   | --- | --- |
   | `InformationGathered` (and `OrchestratorFailed` whose actor is `gatherer`) | Information gathering (`gather`) |
-  | `TicketTriaged` | Ticket reading (`triage`) |
+  | `TicketTriaged` | Ticket reading (`triage`; when done by information gathering it carries no cost and gets no row) |
   | `RepositoryChosen` | Repository selection (`repository`) |
   | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` (except those whose actor is `gatherer`) | Orchestrator (`orchestrator`) |
   | `AgentRunCompleted`, `AgentRunFailed` | That step |

@@ -2830,6 +2830,25 @@ describe("タスクの開始時に集めた情報", () => {
     expect(prompt).toContain('"sacty-gathered"');
   });
 
+  it("チケットのタスクでは、トリアージも兼ねて、候補からリポジトリを選び題と概要を書かせる", () => {
+    const task = taskOf(false, true);
+    const prompt = buildGatherPrompt(task, {
+      candidates: ["https://github.com/acme/app", "https://github.com/acme/api"],
+      fixed: false,
+    });
+    expect(prompt).toContain("作業するリポジトリを次の候補から1つ選ぶ");
+    expect(prompt).toContain("   - https://github.com/acme/api");
+    expect(prompt).toContain("repo を空にして、理由を reason に書く（まとめは書く）");
+    expect(prompt).toContain('"repo": "候補のリポジトリの URL"');
+    const fixed = buildGatherPrompt(task, {
+      candidates: ["https://github.com/acme/api"],
+      fixed: true,
+    });
+    expect(fixed).toContain("人が次のリポジトリに決めました（選び直さない）");
+    // トリアージを兼ねないときは、リポジトリを選ばせない
+    expect(buildGatherPrompt(task)).not.toContain('"repo"');
+  });
+
   it("情報収集の出力から、まとめと情報源を読む。まとめが無ければ読めない", () => {
     const json = (v: unknown) => `集めました\n\n\`\`\`json\n${JSON.stringify(v)}\n\`\`\``;
     expect(
@@ -2857,6 +2876,29 @@ describe("タスクの開始時に集めた情報", () => {
       undefined,
     );
     expect(extractGathered("まとめだけ")).toBe(undefined);
+    // トリアージを兼ねた答え
+    expect(
+      extractGathered(
+        json({
+          "sacty-gathered": {
+            brief: BRIEF,
+            repo: "https://github.com/acme/api",
+            title: "PAY-1 決済の再送",
+            summary: " 概要 ",
+            reason: "理由",
+          },
+        }),
+      ),
+    ).toEqual({
+      brief: BRIEF,
+      sources: [],
+      triage: {
+        repo: "https://github.com/acme/api",
+        title: "PAY-1 決済の再送",
+        summary: "概要",
+        reason: "理由",
+      },
+    });
   });
 
   it("子タスクの内容に、親がタスクの開始時に集めた情報を添える", () => {

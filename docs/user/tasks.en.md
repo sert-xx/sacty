@@ -86,7 +86,7 @@ From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "re
 
 ## Information gathering at the start of a task
 
-When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments. It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on).
+When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary. If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on).
 
 - The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.
 - The summary is given to the Orchestrator, every step, and the Goal Guardian. The Goal Guardian uses it only to understand the background; the basis of its verdicts stays the approved deliverables.

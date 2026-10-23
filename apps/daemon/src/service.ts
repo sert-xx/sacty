@@ -3916,10 +3916,29 @@ export class TaskService {
       ]);
       return true;
     }
+    // チケットから取り込んだタスクは、集めた情報からトリアージ（作業するリポジトリ・題・概要）も決めさせる（PBI-52）。
+    // チケットの接続先・リポジトリの候補が無ければ、集める前に止める（チケットを読めないと集められない）
+    const triaging = awaitingTicketTriage(task)
+      ? await this.ticketTriageTarget(task, config)
+      : undefined;
+    if (triaging && "failed" in triaging) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: triaging.failed } },
+        },
+      ]);
+      return true;
+    }
+    const triage = triaging && {
+      candidates: triaging.candidates,
+      fixed: triaging.fixed !== undefined,
+    };
     const ran = await this.runOrchestrator(
       task,
       config,
-      (platforms) => [buildGatherPrompt(task), ...platformPromptLines(platforms)].join("\n"),
+      (platforms) =>
+        [buildGatherPrompt(task, triage), ...platformPromptLines(platforms)].join("\n"),
       "gather",
     );
     // 集めている間に、人間が止めた・中止した・ほかで決まったなら、記録しない（止めた記録は runNext の後始末で行う）
@@ -3963,20 +3982,105 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return true;
     }
+    const { triage: triaged, ...information } = gathered;
     this.append(latest, [
       {
         actor: "gatherer",
-        event: { type: "InformationGathered", payload: { ...gathered, ...ran.cost } },
+        event: { type: "InformationGathered", payload: { ...information, ...ran.cost } },
       },
+      // 集めている間に、人がリポジトリを選んだなら、トリアージは記録しない（次の実行で、選んだリポジトリで書き直す）
+      ...(triaging && awaitingTicketTriage(latest) && latest.repo === task.repo
+        ? [this.ticketTriaged(triaged, triaging)]
+        : []),
     ]);
     this.warnIfNeeded(this.mustGet(task.id));
     return true;
   }
 
   /**
+   * 情報収集が兼ねたトリアージの答えを記録する（費用は InformationGathered に入れたので持たない）。リポジトリ・概要を
+   * 決められなかったら、理由を記録して止める（人がリポジトリを選んで再開できる。再開すると、トリアージだけをやり直す）。
+   */
+  private ticketTriaged(
+    triage: ReturnType<typeof extractTicketTriage>,
+    target: { candidates: string[]; fixed: string | undefined },
+  ): ActivityItem {
+    const paused = (detail: DaemonText): ActivityItem => ({
+      actor: "sacty",
+      event: {
+        type: "TaskPaused",
+        payload: { reason: "error", message: message("ticket.triageFailed", { detail }) },
+      },
+    });
+    // 後の工程は概要を読んで作業するので、概要が無ければ要件を書けていない（triageTicket と同じ）
+    if (!triage) return paused(message("ticket.triageUnreadable"));
+    if (!triage.summary || (!target.fixed && !triage.repo)) {
+      return paused(triage.reason || message("ticket.triageUnreadable"));
+    }
+    const repo = target.fixed ?? target.candidates.find((c) => sameGitHubUrl(c, triage.repo));
+    if (!repo) return paused(message("ticket.repoNotCandidate", { repo: triage.repo }));
+    return {
+      actor: "gatherer",
+      event: {
+        type: "TicketTriaged",
+        payload: {
+          repo,
+          ...(triage.title ? { title: triage.title } : {}),
+          body: triage.summary,
+          reason: triage.reason,
+        },
+      },
+    };
+  }
+
+  /**
+   * チケットのトリアージ（作業するリポジトリ・題・概要を決める。PBI-52）に使う、チケットの接続先と作業するリポジトリの候補。
+   * 人がリポジトリを選んでいれば、そのリポジトリに固定する（fixed。チケットの要件は読み直して書く）。接続先が無い・候補が
+   * 無ければ、止める理由を返す。
+   */
+  private async ticketTriageTarget(
+    task: Task,
+    config: SactyConfig,
+  ): Promise<
+    { platform: Platform; candidates: string[]; fixed: string | undefined } | { failed: DaemonText }
+  > {
+    const ticket = task.ticket;
+    if (!ticket) return { failed: message("ticket.triageFailed", { detail: "" }) };
+    // 接続先は、ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
+    let platform: Platform | undefined;
+    const usedSecrets: string[] = [];
+    try {
+      platform = await this.findPlatform(task, config, ticket.platform, usedSecrets);
+    } catch (error) {
+      return {
+        failed: message("ticket.triageFailed", {
+          detail: redactText(errorText(error), usedSecrets),
+        }),
+      };
+    }
+    if (!platform) {
+      return {
+        failed: message("ticket.triageFailed", {
+          detail: message("ticket.platformMissing", { platform: ticket.platform }),
+        }),
+      };
+    }
+    const fixed = task.repo && task.ticketTriage?.by === "person" ? task.repo : undefined;
+    const candidates = fixed
+      ? [fixed]
+      : ((await this.projectRepositories(task.projectId))?.repositories ?? []);
+    if (candidates.length === 0) {
+      return { failed: message("ticket.triageFailed", { detail: message("ticket.noCandidates") }) };
+    }
+    return { platform, candidates, fixed };
+  }
+
+  /**
    * チケットの取り込みの1段目（PBI-52）。オーケストレーターが、ゲートウェイ経由でチケット（サブタスクなら親とほかの
    * サブタスクも）を読み、プロジェクトの対象のリポジトリから作業するリポジトリを選び、題と概要を書く。決められなければ、
    * 理由を記録して止める（人がリポジトリを選んで再開できる。再開すると、もう一度読む）。
+   * ふつうは情報収集がトリアージを兼ねる（gatherInformation）。これは、情報収集の後にまだ決まっていないとき（情報収集で
+   * 決められずに止まった後の再開・人がリポジトリを選んだ後に題と概要を書き直すとき）だけ動く。
    */
   private async triageTicket(task: Task, config: SactyConfig): Promise<void> {
     const ticket = task.ticket;
@@ -3991,36 +4095,12 @@ export class TaskService {
       ]);
       return;
     }
-    // 接続先は、ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
-    let platform: Platform | undefined;
-    const usedSecrets: string[] = [];
-    try {
-      platform = await this.findPlatform(task, config, ticket.platform, usedSecrets);
-    } catch (error) {
-      pause(
-        "error",
-        message("ticket.triageFailed", { detail: redactText(errorText(error), usedSecrets) }),
-      );
+    const target = await this.ticketTriageTarget(task, config);
+    if ("failed" in target) {
+      pause("error", target.failed);
       return;
     }
-    if (!platform) {
-      pause(
-        "error",
-        message("ticket.triageFailed", {
-          detail: message("ticket.platformMissing", { platform: ticket.platform }),
-        }),
-      );
-      return;
-    }
-    // 人がリポジトリを選んでいれば、そのリポジトリに固定する（チケットの要件は読み直して書く）
-    const fixed = task.repo && task.ticketTriage?.by === "person" ? task.repo : undefined;
-    const candidates = fixed
-      ? [fixed]
-      : ((await this.projectRepositories(task.projectId))?.repositories ?? []);
-    if (candidates.length === 0) {
-      pause("error", message("ticket.triageFailed", { detail: message("ticket.noCandidates") }));
-      return;
-    }
+    const { platform, candidates, fixed } = target;
     const selected = agentFor(config, "orchestrator");
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で読む
     const agent = this.usableAgent(config, selected, task.id, "orchestrator");
