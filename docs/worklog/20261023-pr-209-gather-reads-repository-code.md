@@ -27,6 +27,16 @@
   仕様書（`docs/spec/tasks-and-steps`）に「コードを読む」の節、ユーザードキュメント（`docs/user/tasks`）に読み方と GitHub のアカウントの要件を書き、それぞれ英語の版も直した。
   工程の流れの図の情報収集のカードに「コード」を足して作り直した（`npm run docs:diagrams`）。
 
+### 版を 1.9.1 に上げる
+
+作者の指示で、この PR に版の更新を含めた（1.9.0 の後の変更は、この PR だけ）。
+
+- 4 つのパッケージとワークスペースの依存の版を `1.9.1` にし、`package-lock.json` の sacty のパッケージの版の行も同じにした（1.9.0 のときと同じく、版の行だけを直した）。
+  `apps/web/package.json` の `@base-ui/react`（`^1.9.0`）と、`package-lock.json` のほかのパッケージの `1.9.0` は、sacty の版ではないので変えていない。
+- 既定のイメージの名前（`DEFAULT_IMAGE`）を `sacty-agent:1.9.1` にし、仕様書（`agent-execution`・`configuration`）・ユーザードキュメント（`config`・`images`）の日英と、イメージの名前を書いているテスト・コメント、ゲートウェイの MCP クライアントの版の文字列を同じ版にした。
+- 版の比べ方の例（`update-check.test.ts`・`docs/spec/daemon-lifecycle` の「`1.10.0` は `1.9.0` より新しい」）は、版の例なので変えていない。
+- 更新の後にすること：既定のイメージの名前が `sacty-agent:1.9.1` に変わるので、`npx sacty image build` で作り直す。
+
 ## 確かめたこと
 
 - `npx tsc -b packages/core apps/daemon packages/cli`：エラー無し。
@@ -34,6 +44,8 @@
 - `npx vitest run apps/daemon`：1845 件が合格、8 件が失敗。
   失敗した 8 件（`host-mcp-processes.test.ts` の 6 件、`agent-sessions.test.ts`・`context-mcp.test.ts` の各 1 件）は、変更前のコードでも同じく失敗した（root で動かしたこの環境では、プロセスの後始末と読めないファイルの確かめが成り立たない）。
 - `npx vitest run tests/docs`：93 件が合格した。
+- 版の更新の後に、`npm ci`・`npm run lint`・`npm run typecheck` が通り、`npx vitest run` は 2591 件が合格、8 件が失敗した（上と同じく、変更前から落ちる環境の都合のもの）。
+  `rg 1.9.0` で、ADR・作業履歴・ほかのパッケージの版・版の比べ方の例のほかに残っていないことを確かめた。
 
 確かめられなかったこと：実際のエージェントで、`gh api` で候補のコードを読めること（テストは偽のエージェントで指示の中身だけを確かめた）。
 

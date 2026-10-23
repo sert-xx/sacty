@@ -18,7 +18,7 @@ const { loadDockerData } = await import("@/lib/docker-data");
  */
 
 const missing = message("image.missing", {
-  image: "sacty-agent:1.9.0",
+  image: "sacty-agent:1.9.1",
   command: "npx sacty image build",
 });
 const view = (problems: DaemonText[], locale: "ja" | "en" = "ja") => {
@@ -40,7 +40,7 @@ describe("Docker とエージェントのイメージの注意（PBI-148）", ()
     expect(text).toContain('role="alert"');
     expect(text).toContain("Docker を使える状態ではありません");
     expect(text).toContain("Docker に接続できません。");
-    expect(text).toContain("エージェント用のイメージ（sacty-agent:1.9.0）がありません。");
+    expect(text).toContain("エージェント用のイメージ（sacty-agent:1.9.1）がありません。");
     expect(text).toContain("1分ごとに確かめ直します");
   });
 
