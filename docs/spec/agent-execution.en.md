@@ -2,7 +2,7 @@
 
 # Agent execution
 
-sacty carries out steps, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The Goal Guardian (the final review) and the Reproduce step's agent run them inside their own containers.
+sacty carries out steps, information gathering, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The Goal Guardian (the final review) and the Reproduce step's agent run them inside their own containers.
 
 Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
 
@@ -95,12 +95,12 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - When a run fails for another reason (`auth`, `error`) and reaches `fallBack`, sacty remembers the agent as not to be used for the same time, for that task only. Other tasks run with the original agent.
 - sacty keeps both only in the daemon's memory. After a restart, it tries the original agent first.
 - sacty decides whether a run failed from the exit code and the agent's output (`is_error` of Claude Code's `result`; Codex's `turn.failed` and `error`). It does not decide from the text on standard error, which it uses only for the failure text and for classifying the reason. So a misclassified reason does not change whether the fallback is used. It changes only whether the agent is avoided for all tasks or for that task.
-- When sacty chooses an agent and the chosen agent is limited or not to be used for that task, sacty looks at its `fallback` from the top (following each `fallback`'s own fallbacks too) and uses the first usable one (`fallbackAgentFor`). If none is usable, the chosen agent is kept. This applies to steps, the integration review, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review, judging rework, exports, the post-merge watch, and audits.
-- When the run of a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback exists, sacty records `AgentFellBack` instead of a pause (`TaskPaused`).
+- When sacty chooses an agent and the chosen agent is limited or not to be used for that task, sacty looks at its `fallback` from the top (following each `fallback`'s own fallbacks too) and uses the first usable one (`fallbackAgentFor`). If none is usable, the chosen agent is kept. This applies to steps, the integration review, information gathering, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review, judging rework, exports, the post-merge watch, and audits.
+- When the run of a step, the integration review, information gathering, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback exists, sacty records `AgentFellBack` instead of a pause (`TaskPaused`).
   - The record holds the failed run, the role, the original and fallback agents, the failure reason, and the time limit.
   - The failure record has put the task back to queued, so the fallback agent runs it again in the next pass.
-  - sacty switches when the run ended normally but its answer could not be read only for the choice of steps and reading a ticket. An unreadable answer from the final review or the Goal Guardian's judgements is handled as before.
-- sacty remembers the agents tried while switching per task and per role of the process being retried, separately from the time limit (`fallbackTried`). The role is the step name, `orchestrator`, `final-review`, and so on: the role passed to `fallBack`.
+  - sacty switches when the run ended normally but its answer could not be read only for information gathering, the choice of steps, and reading a ticket. An unreadable answer from the final review or the Goal Guardian's judgements is handled as before.
+- sacty remembers the agents tried while switching per task and per role of the process being retried, separately from the time limit (`fallbackTried`). The role is the step name, `gather`, `orchestrator`, `final-review`, and so on: the role passed to `fallBack`.
   - sacty does not go back to an agent already tried, even after its time limit expires. When all have been tried, the task stops.
   - When the run after a switch ends without coming back to `fallBack` (the run succeeded and its answer could be read), sacty forgets them when it chooses the next run for that role (`usableAgent`).
   - sacty also forgets them when a person resumes the task. Success in another role (such as answering a question) does not forget them.

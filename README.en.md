@@ -2,7 +2,7 @@
 
 # sacty
 
-sacty is an AI software factory. The orchestrator and the goal guardian move the tasks that sacty takes in through the steps, and humans make decisions only at the approval gates.
+sacty is an AI software factory. After gathering the information related to the tasks that sacty takes in, the orchestrator and the goal guardian move them through the steps, and humans make decisions only at the approval gates.
 
 ## Quick start
 

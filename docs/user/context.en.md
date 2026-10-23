@@ -4,7 +4,7 @@
 
 # Context repository
 
-You can collect the rules, skills, MCP servers, external platforms, and agent settings that are passed to step agents and the Orchestrator in a context repository, and specify it in the project settings (optional). sacty layers the context repository on top of its default context.
+You can collect the rules, skills, MCP servers, external platforms, and agent settings that are passed to step agents, information gathering, and the Orchestrator in a context repository, and specify it in the project settings (optional). sacty layers the context repository on top of its default context.
 
 Before starting the reviewers, the default review skills run the formatting, lint, type check, tests, and other checks defined by the target repository in check mode, and share the results with the reviewers. If verification or CI has results, they also start a reviewer that analyzes the failures and warnings. The verification logs are saved outside the review's workspace, and the PR quotes only the parts needed for the comments.
 
