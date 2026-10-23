@@ -1,8 +1,8 @@
 # Node.js の版の管理ツール用のファイルを足し、Next.js（16.4.2）と ip-address（10.7.4）を脆弱性を直した版に上げる
 
-- 日付: 2026-10-22（UTC）
+- 日付: 2026-10-23（UTC）
 - タスク: なし
-- PR: なし
+- PR: #205
 - ブランチ: claude/charming-darwin-rkt2o7
 - 関係する ADR: [Node.js の版を、版の管理ツール用の `.node-version` と `mise.toml` にも書く](../adr/20261022-2347-node-version-files.md)
 
