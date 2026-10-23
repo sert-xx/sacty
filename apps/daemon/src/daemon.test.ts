@@ -27165,6 +27165,39 @@ describe("タスクの開始時の情報収集", () => {
     activity.close();
   });
 
+  it("リポジトリのあるタスクは、プロジェクトの共用の compose を候補にして、テストと動作確認に要るサービスを分けさせる（PBI-152）", async () => {
+    const activity = new SqliteActivityStore(join(dir, "gather-services.db"));
+    const projects = projectsWithAccount();
+    const project = projects.get("default");
+    if (!project) throw new Error("no project");
+    projects.put("default", {
+      ...project,
+      sharedComposes: [
+        {
+          name: "infra",
+          repo: "https://github.com/acme/test-infra",
+          ref: "main",
+          file: "compose/redis.yml",
+          description: "Redis。結合テストに要る",
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [gathered()], {
+      realGatherer: true,
+      projects,
+    });
+    const task = service.createTask({ projectId: "default", title: "動作確認" });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+    expect(executor.stdins[0]).toContain("--- 実行の環境とサービス ---");
+    expect(executor.stdins[0]).toContain(
+      "     - infra：compose ファイル compose/redis.yml。Redis。結合テストに要る",
+    );
+    // 取得の先（リポジトリ・ref）は出さない（オーケストレーターと同じく、名前・ファイル・説明だけ）
+    expect(executor.stdins[0]).not.toContain("acme/test-infra");
+    activity.close();
+  });
+
   it.each([
     ["一部の Org", true],
     ["すべての Org", false],

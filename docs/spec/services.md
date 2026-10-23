@@ -6,12 +6,17 @@
 エージェントには Docker の権限を渡さない。
 compose ファイルは、対象リポジトリのものか、プロジェクトに書いた共用の compose（別のリポジトリ）のどちらか一方を使う。
 
-関係する ADR: [サービスのビルドに共有のタグを付けさせず、エージェントのイメージを ID に確定させる](../adr/20261018-0430-compose-build-image-isolation.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)
+関係する ADR: [サービスのビルドに共有のタグを付けさせず、エージェントのイメージを ID に確定させる](../adr/20261018-0430-compose-build-image-isolation.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
 
 ## いつ起動するか
 
 - どの compose ファイルのどのサービスを、どの工程で使うかは、オーケストレーターが工程を選ぶときに決める（[タスクと工程](tasks-and-steps.md)）。
   使える工程は `investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
+  選ぶのは、別で管理されている依存アプリ（このリポジトリのコードを動かさないもの）と、DB・キャッシュ・モックなど。
+  このリポジトリのコードを動かすサービス（工程で変える・確かめるアプリ）は選ばせない。工程のエージェントが、コンテナの中で起動してサービスにつなぐ。
+  分け方は compose の `build` の有無ではなく、何を動かすかによる（指示。強制はしない）。
+  情報収集のまとめに分類があれば、それをもとにし、compose ファイルなどで確かめて確定させる（[タスクと工程](tasks-and-steps.md#実行の環境とサービス)）。
+- 工程（とテストを実行する最終レビュー）の指示には、サービスの接続先と一緒に、このリポジトリのアプリは docker を使わずにコンテナの中で起動して、サービスにつなぐよう添える（`servicePromptLines`）。
 - 工程のエージェントの実行の1回ごとに起動し、終わったら消す。
 - 実装の検証で、テスト（検証）のコマンドがある最終レビューでは、次のように動く。
   - ゴールガーディアンの実行の前に、実装の工程のサービスを起動する。
@@ -26,7 +31,7 @@ compose ファイルは、対象リポジトリのものか、プロジェクト
   オーケストレーターが名前で選んだときだけ、取得・起動する（対象リポジトリがあるタスクだけ）。
   設定に無い名前を選んだら止める（`services.sharedUnknown`）。
 
-コード: `apps/daemon/src/service.ts`（`serviceSpec`・`startServices`・`stopServices`・`verify`・`withSharedCompose`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`・`composeServicesOf`）
+コード: `apps/daemon/src/service.ts`（`serviceSpec`・`startServices`・`stopServices`・`verify`・`withSharedCompose`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`・`composeServicesOf`・`servicePromptLines`）
 
 ## 起動と停止
 
