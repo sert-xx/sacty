@@ -550,9 +550,10 @@ const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], su
     1.11,
     { ...sub, selfReview },
   );
+  // 費用を足した直後に 80% を超えたので、実行の完了の直後に通知を記録する
+  t.add(7.8, "sacty", "BudgetWarned", { usedUsd: 1.66, capUsd: 2 });
   t.submit(7.7, "requirements");
   t.approve(6, "requirements", "queued");
-  t.add(5.9, "sacty", "BudgetWarned", { usedUsd: 1.66, capUsd: 2 });
   t.run(5.8, "implement", implementation, 0.61, sub);
   t.add(5.4, "sacty", "TaskPaused", { reason: "budget" });
 }
