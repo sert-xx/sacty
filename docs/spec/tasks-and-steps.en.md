@@ -425,6 +425,8 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 
 ## Budget, pause, resume, and cancel
 
+![Budget cap and pausing](images/budget-flow.en.svg)
+
 - Budget cap: when a task is created, `budget.default_per_task_usd`. If the plan the orchestrator chose has a budget in `budget.per_plan_usd`, it is recorded as `budgetCapUsd` of `StepsChosen` and becomes the cap (the 80% notice is reset). If a person raised the cap before the steps were chosen (`BudgetCapRaised`; `budget.raised` in the projection), it is not recorded and the raised cap is kept.
 - Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps, before running a step (except opening the PR for a verified implementation), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
 - Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`, `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
@@ -456,6 +458,8 @@ Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `res
 Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
 
 ## Asking the Orchestrator
+
+![Asking the Orchestrator](images/question-flow.en.svg)
 
 - Questions are up to 2000 characters (`QUESTION_MAX`), and answers up to 20000 characters (`ANSWER_MAX`; truncated if longer). At most one question can be awaiting an answer. Questions cannot be asked on canceled tasks or tasks that reached the budget cap. IDs are `Q-<number>`.
 - The AI is the same as the Orchestrator; it reads a copy of the code at the base and answers by duplicating the saved Orchestrator session (the original session is not changed). The instructions include the task's title, status, steps, PR, cost and budget, body, approved results and latest outputs, verdicts, comments, recent questions and answers, and the Activity (as much as fits in 40000 characters in total).

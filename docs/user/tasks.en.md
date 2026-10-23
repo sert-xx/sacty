@@ -284,7 +284,9 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 
 ## Ask the Orchestrator
 
-Use "Ask the Orchestrator" in the task details to ask about the status of the task.
+Use "Ask the Orchestrator" (the AI icon at the bottom right of the screen) in the task details to ask about the status of the task. Questions and answers stay in the panel that opens on the right of the screen.
+
+![The Ask the Orchestrator panel (a question and its answer, and the question input)](images/task-chat.en.png)
 
 - The Orchestrator (`step_agents.orchestrator` or `default_agent`) answers by reading the task's ledger (the Activity, approved deliverables, step outputs, verdicts, and costs) and, if prepared, the code of the target repository at the starting commit (a disposable copy).
 - It also examines, read-only, the session logs of each run, such as the agents of each step and the Orchestrator itself, and answers what the agents actually did.
@@ -327,6 +329,10 @@ For example, you can rerun only a step that stopped on an error or was sent back
 - Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
 
 ## Pause, resume, and cancel
+
+The details of a task stopped by the budget limit show a field for the new cumulative limit and "Change cap and resume".
+
+![Details of a task paused at the budget limit (the cost, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
 
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see [config.yaml settings](config.en.md#budget)).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched). A cancelled task cannot be resumed.

@@ -114,7 +114,7 @@ function task(id, projectId) {
     },
     run(hoursAgo, step, output, cost, extra = {}) {
       const runId = `run-${id}-${++runSeq}`;
-      const agent = { agentId: "codex_standard", authMode: "api-key" };
+      const agent = { agentId: "codex_standard", authMode: extra.authMode ?? "api-key" };
       add(hoursAgo, "sacty", "AgentRunStarted", {
         runId,
         step,
@@ -246,6 +246,27 @@ const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], su
   t.review(3.2, ["REQ"]);
   t.pr(3.0, PAY_REPO, 128);
   t.submit(3.0, "implement");
+  // オーケストレーターへの質問と答え
+  t.add(1.2, "person", "QuestionAsked", {
+    questionId: "Q-1",
+    text: L(
+      "タイムアウトの既定値を 10 秒のままにした理由は？",
+      "Why did the default timeout stay at 10 seconds?",
+    ),
+  });
+  t.add(1.18, "orchestrator", "QuestionAnswered", {
+    questionId: "Q-1",
+    answer: L(
+      "調査の結果で、いまの 10 秒の固定値に合わせると決めたためです。\n\n- 既定値を変えると、設定を書いていない環境の振る舞いが変わります。\n- 変える場合は、設定 `payment.timeout_sec` を書いてください（実装の PR #128）。\n",
+      "The investigation decided to match the current fixed value of 10 seconds.\n\n- Changing the default would change the behavior of environments without the setting.\n- To change it, set `payment.timeout_sec` (implementation PR #128).\n",
+    ),
+    runResult: "completed",
+    agentId: "codex_lite",
+    authMode: "api-key",
+    model: "gpt-6-luna",
+    usage: usage(24000, 600),
+    costUsd: 0.04,
+  });
 }
 
 // 2. 利用上限で一時停止
@@ -484,6 +505,57 @@ const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], su
       "API Error: 401 Invalid authentication credentials",
     ),
   );
+}
+
+// 8. 予算の上限で一時停止（サブスクリプションの実行なので、費用は換算した概算）
+{
+  const t = task("b8d0f2a4-0008", PORTAL);
+  t.create(
+    9,
+    L("ポータルのログイン画面を多言語にする", "Localize the portal sign-in page"),
+    L(
+      "ログイン画面を日本語と英語で出し分けたい。",
+      "Show the sign-in page in Japanese or English.",
+    ),
+    { repo: PORTAL_REPO, budgetCapUsd: 2 },
+  );
+  t.repo(8.9, PORTAL_REPO);
+  t.plan(
+    8.8,
+    "skip-design",
+    ["investigate", "requirements", "implement", "deployment"],
+    L(
+      "受け入れ条件の整理が要る局所的な変更のため",
+      "A local change whose acceptance criteria need sorting out",
+    ),
+    {
+      authMode: "subscription",
+      estimated: true,
+      testCommand: "npm test",
+      deployment: {
+        skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+      },
+    },
+  );
+  const sub = { authMode: "subscription", estimated: true };
+  t.run(8.6, "investigate", investigation, 0.52, sub);
+  t.complete(8.2, "investigate");
+  t.run(
+    8.1,
+    "requirements",
+    L(
+      "## 要求要件\n\n- R-1 利用者のブラウザーの言語が英語のとき、システムはログイン画面を英語で表示しなければならない。\n",
+      "## Requirements\n\n- R-1 When the user's browser language is English, the system shall show the sign-in page in English.\n",
+    ),
+    1.11,
+    { ...sub, selfReview },
+  );
+  // 費用を足した直後に 80% を超えたので、実行の完了の直後に通知を記録する
+  t.add(7.8, "sacty", "BudgetWarned", { usedUsd: 1.66, capUsd: 2 });
+  t.submit(7.7, "requirements");
+  t.approve(6, "requirements", "queued");
+  t.run(5.8, "implement", implementation, 0.61, sub);
+  t.add(5.4, "sacty", "TaskPaused", { reason: "budget" });
 }
 
 // 作業履歴が投影できることを確かめる（デーモンの起動と同じ読み方）
