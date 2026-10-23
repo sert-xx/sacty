@@ -478,3 +478,25 @@ describe("レビューとプロジェクトの一覧：更新できない間・�
     expect(text()).toContain("Acme");
   });
 });
+
+describe("成果物のレビュー：開いている間に対象が無くなったとき（プロジェクトの削除。PR #204 レビュー指摘）", () => {
+  it("取り直しで対象が無ければ、描き直す（サーバーが 404 にする）", async () => {
+    refresh.mockClear();
+    const server = task();
+    let missing = false;
+    handler = (_url, headers) => {
+      if (missing) return { missing: true };
+      const version = liveVersion(server);
+      return headers["x-sacty-live-version"] === version
+        ? { unchanged: true }
+        : { data: server, version };
+    };
+    render(h(LiveReview, { id: "t1", initial: server, initialVersion: liveVersion(server) }));
+    await wait();
+    expect(refresh).not.toHaveBeenCalled();
+    missing = true;
+    await wait();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    refresh.mockClear();
+  });
+});

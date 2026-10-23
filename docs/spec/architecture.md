@@ -266,15 +266,17 @@ sacty は、npm workspaces の4つのパッケージでできている。
   | --- | --- |
   | `GET /live/dashboard` | ダッシュボードの欄のデータ（あなたの出番・止まっている理由・終わっていないタスク・費用と予算・待ち行列・取り込みの状況・流量・品質の信号・通知を送れなかった理由。`loadDashboard`） |
   | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
-  | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
+  | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`）。タスクが無ければ（消したプロジェクトのタスクを含む）`{ missing: true }` |
   | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |
-  | `GET /live/tasks/<ID>/review` | 成果物のレビューの画面のタスク |
+  | `GET /live/tasks/<ID>/review` | 成果物のレビューの画面のタスク。タスクが無ければ（消したプロジェクトのタスクを含む）`{ missing: true }` |
   | `GET /live/tasks/<ID>/runs/<実行の ID>?events=&stderr=` | 実行のログの、画面が持っている分に足された分（下を参照） |
   | `GET /live/projects` | プロジェクトの一覧と、取り込みの状況（`loadProjectList`） |
 
 - 間隔は3秒（`LIVE_INTERVAL_MS`）。
   タスクの状態によらず、タスクが無いとき・すべてが承認待ち・一時停止・完了のときも取り直す。
   前の取り直しが終わってから次の間隔を数えるので、問い合わせは重ならない。
+- `{ missing: true }` のとき、表示は最後のデータのまま残す。タスクの詳細と成果物のレビューは、画面を描き直す（`RefreshWhenMissing`。
+  サーバーがタスクを無いものとして 404 にするので、開いている間に消したプロジェクトのタスクを残さない）。
 - 画面が見えていない（タブが隠れている）間は問い合わせない。
   見えたら、すぐに一度取り直す。
 - タスクの一覧は URL のプロジェクトを、ヘッダーは画面を描いたときのプロジェクトのまま取り直す。
@@ -320,7 +322,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 コード: `apps/web/src/lib/live.ts`（`pollWhileVisible`・`fetchLive`・`LIVE_INTERVAL_MS`・`LIVE_TIMEOUT_MS`）、`apps/web/src/lib/use-live-data.ts`（`useLiveData`）、
 `apps/web/src/lib/live-server.ts`（`liveResponse`・`liveVersion`）、`apps/web/src/app/live/tasks/route.ts`、`apps/web/src/app/live/tasks/[id]/route.ts`、`apps/web/src/app/live/header/route.ts`、`apps/web/src/app/live/dashboard/route.ts`、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`）、
 `apps/web/src/lib/task-detail-data.ts`（`loadTaskDetail`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）、
-`apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）、`apps/web/src/components/review.tsx`（`LiveReview`）、
+`apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）、`apps/web/src/components/review.tsx`（`LiveReview`）、`apps/web/src/components/live-status.tsx`（`RefreshWhenMissing`）、
 `apps/web/src/components/run-log.tsx`（`LiveRunLog`・`applyChunk`）、`apps/web/src/lib/run-log-data.ts`（`loadAgentFiles`）、
 `apps/web/src/components/live-status.tsx`（`StaleNotice`・`FollowProjectAfterRecovery`）、`apps/daemon/src/session-logs.ts`（`completeUtf8Length`）、`apps/web/src/lib/daemon-signal.ts`（`withDaemonSignal`・`LIVE_SERVER_TIMEOUT_MS`）、
 `apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）
@@ -368,10 +370,14 @@ sacty は、npm workspaces の4つのパッケージでできている。
   消すものが無ければ書かない。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
   - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義だけを消す。タスクと作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
-    プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）があれば、
-    削除せずに 409（`project.hasActiveTasks`。件数を添える）を返す。消したら、そのプロジェクトの秘密情報の警告も消す。
+    プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）・
+    回答中の質問があれば、削除せずに 409（`project.hasActiveTasks`。件数を添える）を返す。消したら、そのプロジェクトの秘密情報の警告も消す。
+  - 消したプロジェクトのタスクは、デーモンの `GET /api/tasks/:id` と実行の記録（`…/runs/:runId/{log,files/:file,agent-files,agent-files/raw}`）で
+    404 を返す（`visibleTask`）。タスクの詳細・成果物のレビュー・実行のログの画面は、URL を直接開いても 404 になる。
+  - 監査の提案の採用は、プロジェクトが無ければ断る（秘密情報を伏せる間に消されたときも、記録の前に確かめ直す）。採用を記録した後に消したときは、
+    起動のときにも改修のタスクを作らない。
   - 画面では、プロジェクトの設定の最後の「危険な操作」から削除する。確認のダイアログでプロジェクトの名前を入力したときだけ削除でき（サーバーアクションでも一致を確かめる）、
     消したらプロジェクトの一覧へ移る。表示しているプロジェクト（cookie）が消えたら、最初のプロジェクトを表示する。
 
 コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`、
-`apps/daemon/src/service.ts`（`deleteProject`）、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`deleteProjectAction`）
+`apps/daemon/src/service.ts`（`deleteProject`・`visibleTask`・`adoptAuditProposal`・`createAuditFixTask`）、`apps/daemon/src/server.ts`、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`deleteProjectAction`）

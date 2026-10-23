@@ -10476,8 +10476,12 @@ describe("プロジェクトの削除", () => {
     expect(deleted.status).toBe(200);
     expect(service.getProject(pay.id)).toBeUndefined();
     expect(service.listProjects()).toHaveLength(0);
-    // タスクと作業履歴は残す
+    // タスクと作業履歴は残すが、画面の取得（タスクの詳細・実行の記録）では無いものとして返す
     expect(service.get(task.id)).toBeDefined();
+    expect((await app.request(`/api/tasks/${task.id}`, { headers: auth })).status).toBe(404);
+    expect((await app.request(`/api/tasks/${task.id}/runs/r1/log`, { headers: auth })).status).toBe(
+      404,
+    );
     activity.close();
   });
 
@@ -23968,6 +23972,95 @@ describe("完了したタスクの監査（PBI-125）", () => {
     await expect(service.rejectAuditProposal(repo.id, { reason: "理由" })).rejects.toThrow(
       "中止されたため",
     );
+  });
+
+  it("完了したタスクに実行待ち・実行中の監査があるあいだは、プロジェクトを削除できず、監査が終われば削除できる", async () => {
+    const { service, executor, id } = await completedTask((invocation) =>
+      isSurvey(invocation) ? survey([]) : undefined,
+    );
+    // 実行待ち
+    expect(service.queuedTaskIds()).toContain(id);
+    expect(() => service.deleteProject("default")).toThrow(/1件/);
+    // 実行中（監査の実行の中で削除する）。実行待ちの判定（設定を読めないと取れない）に頼らず、実行中だけで断る
+    let during: unknown;
+    const respond = executor.respond;
+    executor.respond = (invocation) => {
+      const queued = vi.spyOn(service, "queuedTaskIds").mockImplementation(() => {
+        throw new Error("config");
+      });
+      try {
+        service.deleteProject("default");
+      } catch (error) {
+        during = error;
+      } finally {
+        queued.mockRestore();
+      }
+      return respond?.(invocation);
+    };
+    await service.runNext(id);
+    expect(during).toBeInstanceOf(InvalidOperationError);
+    expect((during as InvalidOperationError).messages).toEqual([
+      { code: "project.hasActiveTasks", params: { count: 1 } },
+    ]);
+    expect(service.getProject("default")).toBeDefined();
+    // 監査が終われば削除できる
+    executor.respond = respond;
+    for (let i = 0; i < 5 && service.queuedTaskIds().includes(id); i++) await service.runNext(id);
+    expect(service.get(id)?.task.audit?.completedAt).toBeDefined();
+    service.deleteProject("default");
+    expect(service.getProject("default")).toBeUndefined();
+  });
+
+  it("完了したタスクへの質問に回答しているあいだは、プロジェクトを削除できず、回答の後は削除できる", async () => {
+    const { service, id } = await completedTask(() => undefined, { audit: false });
+    const { answered } = service.askQuestion(id, { text: "何をした？" });
+    expect(() => service.deleteProject("default")).toThrow(/1件/);
+    await answered;
+    service.deleteProject("default");
+    expect(service.getProject("default")).toBeUndefined();
+  });
+
+  it("採用の途中（秘密情報を伏せる間）にプロジェクトを削除したら、改修のタスクを作らずに断る", async () => {
+    const { service, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    // 監査は終わっているので、削除できる
+    expect(service.queuedTaskIds()).not.toContain(id);
+    const adopting = service.adoptAuditProposal(repo.id, {
+      target: repo.target,
+      note: { kind: "supplement", text: "補足" },
+    });
+    service.deleteProject("default");
+    const before = service.list().length;
+    await expect(adopting).rejects.toThrow(InvalidOperationError);
+    expect(service.list().length).toBe(before);
+    expect(service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision).toBeUndefined();
+  });
+
+  it("採用を記録した後にプロジェクトを消したら、起動のときに改修のタスクを作らない", async () => {
+    const { activity, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "AuditProposalAdopted",
+            payload: { proposalId: repo.id, target: repo.target, fixTaskId: "fix-1" },
+          },
+        },
+      ],
+    });
+    // プロジェクトの無い保存先で起動し直す（消したプロジェクト）
+    const restarted = makeService(activity, [], {
+      audit: true,
+      projects: new MemoryProjectStore(),
+    }).service;
+    restarted.resumeAuditFixTasks();
+    expect(restarted.get("fix-1")).toBeUndefined();
   });
 });
 

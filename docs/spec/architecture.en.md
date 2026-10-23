@@ -212,13 +212,15 @@ Because the elements on the screen stay as they are, text being typed, selection
   | --- | --- |
   | `GET /live/dashboard` | The data of the dashboard's sections (needs you, why tasks are paused, open tasks, cost and budget, step queue, intake, throughput, quality signals, and the reason notifications could not be sent. `loadDashboard`) |
   | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
-  | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
+  | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`). `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
-  | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen |
+  | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen. `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
   | `GET /live/tasks/<ID>/runs/<run ID>?events=&stderr=` | What was added to the run log after what the screen has (see below) |
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |
 
 - The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
+- On `{ missing: true }`, the screen keeps showing the last data. The task details and the deliverable review redraw the screen (`RefreshWhenMissing`;
+  the server treats the task as missing and returns 404, so a task of a project deleted while it is open does not stay on screen).
 - While the screen is not visible (the tab is hidden), the web UI does not poll. When it becomes visible, it refetches the data once right away.
 - The task list is refetched for the URL's project, and the header for the project shown when the screen was drawn. This keeps a project switch in another tab from changing only the contents of this screen. The project changes when the screen is opened again (`/switch` and so on).
 - The screen sends the version of the data it last received (a hash of the contents) in the header `x-sacty-live-version`. If it is the same, the web UI's server does not send the contents (`{ unchanged: true }`).
@@ -248,7 +250,7 @@ Because the elements on the screen stay as they are, text being typed, selection
 Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`, `LIVE_TIMEOUT_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
 `apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/app/live/dashboard/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
 `apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
-`apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`),
+`apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`), `apps/web/src/components/live-status.tsx` (`RefreshWhenMissing`),
 `apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`loadAgentFiles`),
 `apps/web/src/components/live-status.tsx` (`StaleNotice`, `FollowProjectAfterRecovery`), `apps/daemon/src/session-logs.ts` (`completeUtf8Length`), `apps/web/src/lib/daemon-signal.ts` (`withDaemonSignal`, `LIVE_SERVER_TIMEOUT_MS`),
 `apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`)
@@ -294,10 +296,14 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
   When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten. Nothing is written if there is nothing to remove.
 - Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).
   - Deleting (`DELETE /api/projects/:id`) removes only the project definition. Tasks and the activity log are not deleted (tasks of a deleted project are not shown or counted).
-    If the project does not exist, it returns 404. If the project has unfinished tasks, or completed tasks with work still running or queued (audits, deployment checks, and so on),
-    it does not delete the project and returns 409 (`project.hasActiveTasks`, with the count). After deleting, it also removes the secret warnings of that project.
+    If the project does not exist, it returns 404. If the project has unfinished tasks, or completed tasks with work still running or queued (audits, deployment checks, and so on)
+    or a question being answered, it does not delete the project and returns 409 (`project.hasActiveTasks`, with the count). After deleting, it also removes the secret warnings of that project.
+  - For tasks of a deleted project, the daemon's `GET /api/tasks/:id` and the run records (`…/runs/:runId/{log,files/:file,agent-files,agent-files/raw}`)
+    return 404 (`visibleTask`). The task details, deliverable review, and run log screens are 404 even when their URL is opened directly.
+  - Adopting an audit proposal is refused if the project does not exist (it checks again before recording, also when the project is deleted while secrets are being redacted). If the project is deleted after the adoption is recorded,
+    the fix task is not created at startup either.
   - In the web UI, you delete a project from the "Danger zone" at the end of the project settings. Deletion is allowed only after typing the project name in the confirmation dialog (the server action also checks the match),
     and then the web UI moves to the project list. If the displayed project (cookie) is deleted, the first project is displayed.
 
 Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`,
-`apps/daemon/src/service.ts` (`deleteProject`), `apps/web/src/components/delete-project.tsx` (`DeleteProjectSection`), `apps/web/src/app/actions.ts` (`deleteProjectAction`)
+`apps/daemon/src/service.ts` (`deleteProject`, `visibleTask`, `adoptAuditProposal`, `createAuditFixTask`), `apps/daemon/src/server.ts`, `apps/web/src/components/delete-project.tsx` (`DeleteProjectSection`), `apps/web/src/app/actions.ts` (`deleteProjectAction`)

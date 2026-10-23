@@ -48,11 +48,11 @@ const ja = {
     title: "危険な操作",
     delete: "プロジェクトを削除",
     deleteNote: "削除したプロジェクトは元に戻せません。",
-    deleteHint:
-      "消すのはプロジェクトの設定だけです。タスクと作業履歴は残りますが、画面には出ず、ダッシュボードでも数えません。終わっていないタスクがあるあいだは削除できません。",
     dialogTitle: (name: string) => `プロジェクト「${name}」を削除しますか？`,
     dialogDescription:
-      "この操作は元に戻せません。必要なら、先にエクスポートして定義を残してください。",
+      "この操作は元に戻せません。定義を残したいときは、先にエクスポートしてください。",
+    dialogImpact:
+      "タスクと作業履歴は残りますが、どの画面からも開けず、ダッシュボードでも数えません。",
     confirmLabel: (name: string) => `確認のため、プロジェクトの名前「${name}」を入力してください`,
     mismatch: "入力した名前が、プロジェクトの名前と一致しません。",
     cancel: "やめる",
@@ -266,11 +266,11 @@ const en: ProjectsMessages = {
     title: "Danger zone",
     delete: "Delete project",
     deleteNote: "A deleted project cannot be restored.",
-    deleteHint:
-      "Only the project settings are deleted. Its tasks and activity log are kept, but they no longer appear on any screen or count on the dashboard. A project with unfinished tasks cannot be deleted.",
     dialogTitle: (name) => `Delete the project "${name}"?`,
     dialogDescription:
       "This cannot be undone. Export the project first if you want to keep its definition.",
+    dialogImpact:
+      "Its tasks and activity log are kept, but they can no longer be opened from any screen or count on the dashboard.",
     confirmLabel: (name) => `To confirm, type the project name "${name}"`,
     mismatch: "The name you typed does not match the project name.",
     cancel: "Cancel",

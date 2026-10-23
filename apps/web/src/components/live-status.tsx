@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useTransition } from "react";
 import { followProjectAction } from "@/app/actions";
 import { useMessages } from "@/i18n/client";
@@ -34,5 +35,17 @@ export function FollowProjectAfterRecovery({ projectId }: { projectId: string | 
   useEffect(() => {
     if (projectId) startTransition(() => followProjectAction(projectId));
   }, [projectId]);
+  return null;
+}
+
+/**
+ * 取り直しで対象が無くなった（タスクを開いている間に、そのプロジェクトを削除したなど）ら、画面を描き直す。サーバーが
+ * 無いものとして描く（404）ので、消したプロジェクトのタスクを開いたまま残さない。
+ */
+export function RefreshWhenMissing({ missing }: { missing: boolean }) {
+  const router = useRouter();
+  useEffect(() => {
+    if (missing) router.refresh();
+  }, [missing, router]);
   return null;
 }

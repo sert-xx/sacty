@@ -15,7 +15,7 @@ export const LIVE_VERSION_HEADER = "x-sacty-live-version";
  * - `data`：最新のデータと、その版。
  * - `unchanged`：送った版から変わっていない。
  * - `unavailable`：デーモンに届かない・データを読めなかった（いまの画面をそのまま残す。エラーにはしない）。
- * - `missing`：対象が無い（消えたなど）。いまの画面をそのまま残す。
+ * - `missing`：対象が無い（消えた・プロジェクトを削除したなど）。表示はそのまま残す（描き直すかは画面が決める。useLiveData の missing）。
  */
 export type LiveReply<T> =
   | { data: T; version: string }
@@ -94,7 +94,12 @@ export const LIVE_TIMEOUT_MS = 10_000;
  * - `"signedOut"`：画面の認証が無い（401。`sacty up` を起動し直して、前の起動の cookie が使えなくなった。PBI-129）。
  *   画面は、端末に表示された新しい URL で入り直すよう出す。
  */
-export type LiveResult<T> = { data: T; version: string } | "current" | "failed" | "signedOut";
+export type LiveResult<T> =
+  | { data: T; version: string }
+  | "current"
+  | "missing"
+  | "failed"
+  | "signedOut";
 
 /** 取り直しで更新できない理由（更新できていれば false）。 */
 export type LiveStale = false | "failed" | "signedOut";
@@ -134,6 +139,7 @@ export async function fetchLive<T>(
     ]);
     if (reply === "signedOut") return reply;
     if (!reply || "unavailable" in reply) return "failed";
+    if ("missing" in reply) return "missing";
     return "data" in reply ? reply : "current";
   } catch {
     return "failed";

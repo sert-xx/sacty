@@ -13,7 +13,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
@@ -37,10 +36,7 @@ export function DeleteProjectSection({ id, name }: { id: string; name: string })
         {t.title}
       </h2>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="flex items-center gap-1 text-sm">
-          {t.deleteNote}
-          <Hint text={t.deleteHint} />
-        </span>
+        <span className="text-sm">{t.deleteNote}</span>
         <Dialog onOpenChange={(open) => open || setConfirm("")}>
           <DialogTrigger
             render={
@@ -56,6 +52,7 @@ export function DeleteProjectSection({ id, name }: { id: string; name: string })
               <DialogHeader>
                 <DialogTitle>{t.dialogTitle(name)}</DialogTitle>
                 <DialogDescription>{t.dialogDescription}</DialogDescription>
+                <p className="text-sm text-muted-foreground">{t.dialogImpact}</p>
               </DialogHeader>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="delete-project-confirm">{t.confirmLabel(name)}</Label>

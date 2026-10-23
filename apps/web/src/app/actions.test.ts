@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const createTask = vi.fn();
 const saveProject = vi.fn();
 const importProject = vi.fn();
+const deleteProject = vi.fn();
+const revalidatePath = vi.fn();
 const approveStep = vi.fn();
 const requestChanges = vi.fn();
 const saveSettings = vi.fn();
@@ -14,6 +16,7 @@ vi.mock("@/lib/daemon", () => ({
   createTask,
   saveProject,
   importProject,
+  deleteProject,
   approveStep,
   requestChanges,
   saveSettings,
@@ -39,11 +42,15 @@ vi.mock("next/cache", () => ({
     order.push("refresh");
     refresh();
   },
-  revalidatePath: () => {},
+  revalidatePath: (...args: unknown[]) => {
+    order.push("revalidatePath");
+    revalidatePath(...args);
+  },
 }));
 
 const {
   createTaskAction,
+  deleteProjectAction,
   gateAction,
   importProjectAction,
   reloadGitHubAccountsAction,
@@ -442,5 +449,47 @@ describe("gh のアカウントの読み直し（PR #194 レビュー指摘）",
     const accounts = [{ host: "github.com", login: "me", active: true, state: "success" }];
     getGitHubAccounts.mockResolvedValueOnce({ accounts });
     expect(await reloadGitHubAccountsAction()).toEqual({ accounts });
+  });
+});
+
+describe("プロジェクトの削除（deleteProjectAction）", () => {
+  beforeEach(() => {
+    deleteProject.mockReset();
+    revalidatePath.mockReset();
+    order.length = 0;
+  });
+
+  it("確認に入力した名前がプロジェクトの名前と違えば、デーモンを呼ばずに理由を返す", async () => {
+    for (const confirm of ["", "決済 ", "別の名前"]) {
+      expect(await deleteProjectAction({}, form({ id: "p1", name: "決済", confirm }))).toEqual({
+        message: "入力した名前が、プロジェクトの名前と一致しません。",
+      });
+    }
+    expect(await deleteProjectAction({}, form({ name: "決済", confirm: "決済" }))).toEqual({
+      message: "入力した名前が、プロジェクトの名前と一致しません。",
+    });
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("断られた理由（終わっていないタスク）と、デーモンに届かないことを、画面を移らずに返す", async () => {
+    deleteProject.mockResolvedValue({ ok: false, message: "終わっていないタスクが1件" });
+    expect(
+      await deleteProjectAction({}, form({ id: "p1", name: "決済", confirm: "決済" })),
+    ).toEqual({ message: "終わっていないタスクが1件" });
+    deleteProject.mockRejectedValue(new Error("down"));
+    expect(
+      await deleteProjectAction({}, form({ id: "p1", name: "決済", confirm: "決済" })),
+    ).toEqual({ message: "操作できませんでした。デーモンが動いているか確認してください。" });
+    expect(order).toEqual([]);
+  });
+
+  it("消したら、画面の枠を作り直してから、プロジェクトの一覧へ移る", async () => {
+    deleteProject.mockResolvedValue({ ok: true });
+    await expect(
+      deleteProjectAction({}, form({ id: "p1", name: "決済", confirm: "決済" })),
+    ).rejects.toThrow("redirect:/projects");
+    expect(deleteProject).toHaveBeenCalledWith("p1");
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+    expect(order).toEqual(["revalidatePath", "redirect"]);
   });
 });
