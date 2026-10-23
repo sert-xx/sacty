@@ -1,6 +1,7 @@
 // 図の一覧。足すときは、ここに並べる。
 import { auditFlow, deploymentState, memoryFlow, memoryPromotion } from "./after-merge.mjs";
 import architecture from "./architecture.mjs";
+import { budgetFlow, questionFlow } from "./budget-question.mjs";
 import { contextLayers, contextMcp, contextMerge } from "./context.mjs";
 import gateway from "./gateway.mjs";
 import gatewayPf from "./gateway-pf.mjs";
@@ -28,6 +29,8 @@ export const DIAGRAMS = [
   tasksFlow,
   verify,
   approvalBranches,
+  budgetFlow,
+  questionFlow,
   deploymentState,
   memoryFlow,
   memoryPromotion,

@@ -16,6 +16,25 @@ export const SHOTS = [
   },
   { name: "task-pull-request", path: "/tasks/a1c3e5f7-0001", height: 760 },
   { name: "task-paused", path: "/tasks/b2d4f6a8-0002", height: 520 },
+  { name: "task-budget-paused", path: "/tasks/b8d0f2a4-0008", height: 760 },
+  {
+    name: "task-costs",
+    path: "/tasks/b8d0f2a4-0008",
+    selector: 'section[aria-labelledby="step-costs"]',
+  },
+  {
+    name: "task-chat",
+    path: "/tasks/a1c3e5f7-0001",
+    prepare: async (page) => {
+      await page
+        .getByRole("button", { name: /^(オーケストレーターに質問|Ask the Orchestrator)$/ })
+        .click();
+      await page.getByRole("dialog").waitFor();
+      await page.waitForTimeout(800);
+    },
+    // サイドパネルは画面の右に重なるので、タスクの詳細ごと撮る
+    height: 1000,
+  },
   { name: "project-settings", path: "/projects/payments/settings", height: 900 },
   {
     name: "context-preview",

@@ -711,6 +711,8 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 
 ## 予算・一時停止・再開・中止
 
+![予算の上限と一時停止](images/budget-flow.svg)
+
 - 予算の上限：タスクを作ったときは `budget.default_per_task_usd`。
   オーケストレーターが選んだ組み合わせに `budget.per_plan_usd` の予算があれば、`StepsChosen` の `budgetCapUsd` に記録し、上限をその値にする（80% の通知はし直す）。
   工程を選ぶ前に人が上限を上げていたら（`BudgetCapRaised`。投影の `budget.raised`）、記録せずにその上限を残す。
@@ -764,6 +766,8 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
 
 ## オーケストレーターに質問
+
+![オーケストレーターへの質問](images/question-flow.svg)
 
 - 質問は 2000 文字まで（`QUESTION_MAX`）、答えは 20000 文字まで（`ANSWER_MAX`。超えたら切り詰める）。
   答えを待つ質問は1件まで。
