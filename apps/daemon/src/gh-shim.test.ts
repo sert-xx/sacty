@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { AiGateway } from "./gateway.js";
+import { GATHER_GH_EXAMPLES } from "./prompts.js";
 
 /** イメージに入れる gh（gh api だけをゲートウェイの GitHub の中継に送るもの）。 */
 const SHIM = fileURLToPath(new URL("../../../packages/cli/docker/gh-shim.cjs", import.meta.url));
@@ -12,14 +13,21 @@ afterEach(async () => {
   gateway = undefined;
 });
 
-async function setup(responses: Response[]) {
-  const calls: { url: string; method: string; auth: string | null; body: string }[] = [];
+async function setup(responses: Response[], options?: { readOnly?: boolean }) {
+  const calls: {
+    url: string;
+    method: string;
+    auth: string | null;
+    accept: string | null;
+    body: string;
+  }[] = [];
   gateway = new AiGateway({
     fetchImpl: (async (url: string, init: RequestInit) => {
       calls.push({
         url,
         method: String(init.method),
         auth: new Headers(init.headers).get("authorization"),
+        accept: new Headers(init.headers).get("accept"),
         body: init.body ? Buffer.from(init.body as Uint8Array).toString() : "",
       });
       const next = responses.shift();
@@ -29,7 +37,14 @@ async function setup(responses: Response[]) {
     githubToken: async (_host, account) => `ghp_${account}`,
   });
   const port = await gateway.listen();
-  const run = gateway.register(undefined, undefined, undefined, undefined, { "github.com": "me" });
+  const run = gateway.register(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { "github.com": "me" },
+    options,
+  );
   const env = {
     PATH: process.env.PATH ?? "",
     SACTY_GITHUB_URL: `http://127.0.0.1:${port}/r/${run.token}/github`,
@@ -50,6 +65,15 @@ async function setup(responses: Response[]) {
       child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
     });
   return { gh, calls };
+}
+
+/** シェルの語に分ける（指示に書いた例のコマンドを、そのまま動かすため。'…' と "…" だけを扱う）。 */
+function shellWords(command: string): string[] {
+  const words: string[] = [];
+  for (const m of command.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)) {
+    words.push(m[1] ?? m[2] ?? m[3] ?? "");
+  }
+  return words;
 }
 
 const json = (body: unknown, headers: Record<string, string> = {}) =>
@@ -141,5 +165,58 @@ describe("イメージの gh（gh api だけを中継に送る）", () => {
     const res = await gh("api", "repos/acme/none");
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("Not Found (HTTP 404)");
+  });
+
+  it("情報収集に示すコードの読み方は、読み取りだけの実行でも shim と中継を通って読める", async () => {
+    const source = "export const pay = () => 1;\n";
+    const { gh, calls } = await setup(
+      [
+        json({ full_name: "acme/api", default_branch: "main" }),
+        json({ tree: [{ path: "README.md" }, { path: "src/pay.ts" }] }),
+        new Response(source, { status: 200, headers: { "content-type": "text/plain" } }),
+        json({ total_count: 1, items: [{ path: "src/pay.ts" }] }),
+      ],
+      { readOnly: true },
+    );
+    const filled = GATHER_GH_EXAMPLES.map(({ command }) =>
+      command
+        .replaceAll("<owner>/<repo>", "acme/api")
+        .replaceAll("<ブランチ>", "main")
+        .replaceAll("<パス>", "src/pay.ts")
+        .replaceAll("<語>", "pay"),
+    );
+    const results = [];
+    for (const command of filled) {
+      const [name, ...args] = shellWords(command);
+      expect(name).toBe("gh");
+      results.push(await gh(...args));
+    }
+    expect(results.map((r) => r.code)).toEqual([0, 0, 0, 0]);
+    expect(JSON.parse(results[0]?.stdout ?? "")).toMatchObject({ default_branch: "main" });
+    // --jq でパスだけを出す
+    expect(results[1]?.stdout).toBe("README.md\nsrc/pay.ts\n");
+    // raw の Accept は上流まで届き、ファイルの中身がそのまま出る
+    expect(results[2]?.stdout).toBe(source);
+    expect(JSON.parse(results[3]?.stdout ?? "")).toMatchObject({ total_count: 1 });
+    expect(calls.map((c) => [c.method, c.url, c.accept])).toEqual([
+      ["GET", "https://api.github.com/repos/acme/api", "application/vnd.github+json"],
+      [
+        "GET",
+        "https://api.github.com/repos/acme/api/git/trees/main?recursive=1",
+        "application/vnd.github+json",
+      ],
+      [
+        "GET",
+        "https://api.github.com/repos/acme/api/contents/src/pay.ts",
+        "application/vnd.github.raw",
+      ],
+      [
+        "GET",
+        "https://api.github.com/search/code?q=pay+repo%3Aacme%2Fapi",
+        "application/vnd.github+json",
+      ],
+    ]);
+    expect(new URL(calls[3]?.url ?? "").searchParams.get("q")).toBe("pay repo:acme/api");
+    expect(calls.every((c) => c.auth === "Bearer ghp_me")).toBe(true);
   });
 });

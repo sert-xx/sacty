@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #206
 - ブランチ: claude/nice-faraday-e1n1ip
-- 関係する ADR: [オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-gather-information-before-orchestrator.md)
+- 関係する ADR: [オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)
 
 ## 目的
 

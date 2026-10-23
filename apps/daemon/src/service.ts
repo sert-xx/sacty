@@ -3924,7 +3924,8 @@ export class TaskService {
 
   /**
    * タスクの開始時の情報収集。情報収集のエージェントが、取り込み元のチケットの親（ストーリー・エピック）・リンク・本文の
-   * URL・MCP サーバー・外部 PF などから、タスクに関係する情報を集めて絞り込み、まとめる（InformationGathered）。
+   * URL・対象リポジトリのコード・MCP サーバー・外部 PF などから、タスクに関係する情報を集めて絞り込み、まとめる
+   * （InformationGathered）。リポジトリを用意したタスクは作業領域の写しを、まだ決まっていないタスクはリポジトリの候補を読む。
    * まとめは、チケットのトリアージ・オーケストレーター・すべての工程・ゴールガーディアンの指示に添える。
    * 集められなければ、工程の選択と同じく OrchestratorFailed（actor は gatherer）を記録し、代わりのエージェントで集め直すか
    * 一時停止する（再開すると集め直す）。記録した・止めたら true（次の実行で続ける）。集めずに進めるなら false。
@@ -3970,13 +3971,22 @@ export class TaskService {
       candidates: triaging.candidates,
       fixed: triaging.fixed !== undefined,
     };
+    // 作業するリポジトリがまだ決まっていないタスクは、プロジェクトの対象から関係しそうなリポジトリを洗い出させ、そのコードを
+    // GitHub の読み取りの中継で読ませる（トリアージなら、トリアージの候補。用意したタスクは、作業領域の写しを読む）
+    // 一覧を読めなかった Org（認証切れ・権限不足など）は、調べられなかった情報源として指示に伝える（候補に入らないので）
+    const listed =
+      !task.repository && !triage && isRepoless(task)
+        ? await this.projectRepositories(task.projectId)
+        : undefined;
+    const candidates = listed?.repositories ?? [];
+    const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
     const ran = await this.runOrchestrator(
       task,
       config,
       // 書き込みの API は、指示にも出さない（ゲートウェイが拒否する）
       (platforms) =>
         [
-          buildGatherPrompt(task, triage),
+          buildGatherPrompt(task, triage, { candidates, unreadable }),
           ...platformPromptLines(readOnlyPlatforms(platforms)),
         ].join("\n"),
       "gather",
@@ -4076,13 +4086,19 @@ export class TaskService {
   /**
    * チケットのトリアージ（作業するリポジトリ・題・概要を決める。PBI-52）に使う、チケットの接続先と作業するリポジトリの候補。
    * 人がリポジトリを選んでいれば、そのリポジトリに固定する（fixed。チケットの要件は読み直して書く）。接続先が無い・候補が
-   * 無ければ、止める理由を返す。
+   * 無ければ、止める理由を返す。一覧を読めなかった Org（unreadable。理由は秘密を伏せたもの）も返す（情報収集に伝える）。
    */
   private async ticketTriageTarget(
     task: Task,
     config: SactyConfig,
   ): Promise<
-    { platform: Platform; candidates: string[]; fixed: string | undefined } | { failed: DaemonText }
+    | {
+        platform: Platform;
+        candidates: string[];
+        fixed: string | undefined;
+        unreadable: { org: string; message: DaemonText }[];
+      }
+    | { failed: DaemonText }
   > {
     const ticket = task.ticket;
     if (!ticket) return { failed: message("ticket.triageFailed", { detail: "" }) };
@@ -4106,13 +4122,12 @@ export class TaskService {
       };
     }
     const fixed = task.repo && task.ticketTriage?.by === "person" ? task.repo : undefined;
-    const candidates = fixed
-      ? [fixed]
-      : ((await this.projectRepositories(task.projectId))?.repositories ?? []);
+    const listed = fixed ? undefined : await this.projectRepositories(task.projectId);
+    const candidates = fixed ? [fixed] : (listed?.repositories ?? []);
     if (candidates.length === 0) {
       return { failed: message("ticket.triageFailed", { detail: message("ticket.noCandidates") }) };
     }
-    return { platform, candidates, fixed };
+    return { platform, candidates, fixed, unreadable: listed?.errors ?? [] };
   }
 
   /**
@@ -5156,22 +5171,13 @@ export class TaskService {
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
 
-    // タスクの開始時に、まず情報収集のエージェントがタスクに関係する情報を集めて絞り込む。まとめは、チケットのトリアージ・
-    // オーケストレーター・すべての工程・ゴールガーディアンに渡す（分割の子タスクは親のまとめを内容に持つので集めない）
-    if (awaitingGathering(initial) && (await this.gatherInformation(initial, config.config))) {
-      return;
-    }
-
-    // チケットから取り込んだタスクは、まずオーケストレーターがチケットを読んで、作業するリポジトリ・題・概要を決める
-    // （PBI-52。1段目）。リポジトリを用意した後に、いつもどおり工程を選ぶ（2段目）
-    // 人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度チケットを読む
-    if (awaitingTicketTriage(initial)) return this.triageTicket(initial, config.config);
-
-    // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
+    // 対象リポジトリは、タスクの開始時（最初の実行。情報収集の前）に、ベースブランチの最新を用意する（PBI-15）。
     // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。
+    // 情報収集は、用意したコードも読む。
     // 用意できなければ、エージェントを実行する（費用をかける）前に、理由を記録して止める
-    // 対象リポジトリの無いタスク（PBI-73）は、用意しない（工程を選んでリポジトリを決めたら、次の実行で用意する）
-    if (!initial.repository && !isRepoless(initial)) {
+    // 対象リポジトリの無いタスク（PBI-73）と、チケットのトリアージを待つタスク（PBI-52）は、用意しない（リポジトリを
+    // 決めたら、次の実行で用意する。それまでの情報収集は、リポジトリの候補のコードを GitHub の読み取りの中継で読む）
+    if (!initial.repository && !isRepoless(initial) && !awaitingTicketTriage(initial)) {
       const ready = await this.prepareRepository(initial, config.config);
       if (!ready.ok) {
         this.append(initial, [
@@ -5183,6 +5189,20 @@ export class TaskService {
         return;
       }
     }
+
+    // タスクの開始時に、まず情報収集のエージェントがタスクに関係する情報を集めて絞り込む。まとめは、チケットのトリアージ・
+    // オーケストレーター・すべての工程・ゴールガーディアンに渡す（分割の子タスクは親のまとめを内容に持つので集めない）
+    if (
+      awaitingGathering(initial) &&
+      (await this.gatherInformation(this.mustGet(taskId), config.config))
+    ) {
+      return;
+    }
+
+    // チケットから取り込んだタスクは、まずオーケストレーターがチケットを読んで、作業するリポジトリ・題・概要を決める
+    // （PBI-52。1段目）。リポジトリを用意した後に、いつもどおり工程を選ぶ（2段目）
+    // 人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度チケットを読む
+    if (awaitingTicketTriage(initial)) return this.triageTicket(initial, config.config);
 
     // 工程がまだ決まっていなければ、オーケストレーターがタスクの内容とリポジトリを読んで選ぶ（PBI-17）
     if (this.mustGet(taskId).steps.length === 0) {

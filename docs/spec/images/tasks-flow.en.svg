@@ -61,8 +61,8 @@
   <rect x="260" y="130" width="320" height="96" rx="10" class="card" style=""/>
   <svg x="276" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
   <text x="312" y="162" class="title">Information gathering</text>
-  <text x="276" y="190" class="sub">From ticket parents, URLs, MCP</text>
-  <text x="276" y="210" class="sub">and so on, then narrowed down</text>
+  <text x="276" y="190" class="sub">From ticket parents, URLs, code,</text>
+  <text x="276" y="210" class="sub">MCP, etc., then narrowed down</text>
   <rect x="260" y="260" width="320" height="96" rx="10" class="card" style=""/>
   <svg x="276" y="274" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
   <text x="312" y="292" class="title">Orchestrator</text>
