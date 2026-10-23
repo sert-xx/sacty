@@ -3748,7 +3748,11 @@ const GATHER_HEADING = "sacty-gathered";
 export function buildGatherPrompt(
   task: Task,
   triage?: { candidates: readonly string[]; fixed: boolean },
-  code: { candidates?: readonly string[] } = {},
+  code: {
+    candidates?: readonly string[];
+    /** プロジェクトの対象のうち、リポジトリの一覧を読めなかった Org と理由（秘密は伏せたもの）。 */
+    unreadable?: readonly { org: string; message: DaemonText }[];
+  } = {},
 ): string {
   const ticket = task.ticket;
   const origin = ticket
@@ -3764,30 +3768,32 @@ export function buildGatherPrompt(
           `取り込み元：GitHub の${task.source.kind === "github_pull_request" ? " PR" : " Issue"}（${task.source.url}）。下の「GitHub（読み取り）」の gh api で読めます`,
         ]
       : [];
-  const codeSource = gatherCodeLines(task, triage, code.candidates ?? []);
+  const codeSection = gatherCodeLines(task, triage, code.candidates ?? [], code.unreadable ?? []);
+  // 読めるコード（用意したリポジトリか、候補）があるときだけ、コードを読む手順とまとめの見出しを足す
+  const readsCode = codeSection.reads;
   return [
     "あなたは情報収集エージェントです。このタスクの進め方を決める前に、タスクに関係する情報をできるだけ集め、関係するものだけに絞り込んでまとめてください。",
     "まとめは、このあと進め方（工程）を選ぶオーケストレーター、各工程のエージェント、成果を判定するゴールガーディアンが、タスクの内容と一緒に読みます。人間なら暗黙のうちに知っている背景・目的・制約を、後の判断に使える形で残すことが目的です。",
     "",
     ...origin,
     ...(origin.length > 0 ? [""] : []),
-    ...(codeSource.length > 0 ? [...codeSource, ""] : []),
+    ...(codeSection.lines.length > 0 ? [...codeSection.lines, ""] : []),
     "手順：",
     "1. タスクの題と内容を読み、何を求めているか、判断に足りない情報は何かを洗い出す",
     "2. 取り込み元を辿る。チケットなら、説明・コメント・ラベル・コンポーネント・リンクしたチケットを読み、親（サブタスクならストーリー、ストーリーならエピック）とその説明・ほかの子を上まで辿る。GitHub の Issue・PR なら、本文・コメント・リンクした Issue・PR を読む",
     "3. タスクの内容・チケット・コメントにある URL を開いて、中身を確かめる（組織内の文書は、使える外部 PF・MCP サーバーで読む）。開けなかったものは、開けなかったと書く",
     "4. 使える MCP サーバー・外部 PF（文書・チャット・チケットなど）・プロジェクトのコンテキストの規約で、タスクの語（機能名・画面名・エラーの文言・チケットのキーなど）を探し、関係する仕様・設計・決定・過去の障害や議論を見つける",
-    ...(codeSource.length > 0
+    ...(readsCode
       ? [
           "5. 上の「コード」のリポジトリで、タスクの語（機能名・画面名・エラーの文言・API の名前など）を探し、関係するコードの場所（ファイル・関数）と、いまの振る舞い・データの流れ・既存の規約や似た実装を確かめる。README・docs・設定も読む。チケット・文書に書かれたこととコードが食い違えば、両方を書く",
         ]
       : []),
-    `${codeSource.length > 0 ? 6 : 5}. 集めた情報を、タスクとの関係で絞り込む。関係の薄いもの・後の決定で置き換わった古いものは落とす。情報源の間で食い違うことは、両方を書く`,
+    `${readsCode ? 6 : 5}. 集めた情報を、タスクとの関係で絞り込む。関係の薄いもの・後の決定で置き換わった古いものは落とす。情報源の間で食い違うことは、両方を書く`,
     ...(triage
       ? [
           triage.fixed
-            ? `${codeSource.length > 0 ? 7 : 6}. 作業するリポジトリは、人が次のリポジトリに決めました（選び直さない）。このリポジトリで行う作業として、タスクの題と概要を書く`
-            : `${codeSource.length > 0 ? 7 : 6}. 集めた情報から、作業するリポジトリを次の候補から1つ選ぶ（候補に無いリポジトリは選べない）。そのリポジトリで行う作業として、タスクの題と概要を書く`,
+            ? `${readsCode ? 7 : 6}. 作業するリポジトリは、人が次のリポジトリに決めました（選び直さない）。このリポジトリで行う作業として、タスクの題と概要を書く`
+            : `${readsCode ? 7 : 6}. 集めた情報から、作業するリポジトリを次の候補から1つ選ぶ（候補に無いリポジトリは選べない）。そのリポジトリで行う作業として、タスクの題と概要を書く`,
           ...triage.candidates.map((repo) => `   - ${repo}`),
           "   - 題は、チケットのキーを先頭に付ける（例 PAY-123 決済の再送で二重に請求される）",
           "   - 概要（summary）は、チケットの目的・やること・受け入れの条件を書く。サブタスクなら、親の目的の中で受け持つ範囲と、ほかのサブタスクとの境目も書く。この概要がタスクの内容になり、後の工程のエージェントが読む",
@@ -3800,7 +3806,7 @@ export function buildGatherPrompt(
     "- やること・受け入れの条件",
     "- 範囲外・制約・前提（決まっていること、変えてはいけないもの）",
     "- 関係する仕様・決定・経緯（それぞれに情報源を添える）",
-    ...(codeSource.length > 0
+    ...(readsCode
       ? [
           "- 関係するコード（リポジトリ・ファイルの場所・いまの振る舞い。リポジトリの候補を読んだなら、それぞれのタスクとの関係）",
         ]
@@ -3809,7 +3815,7 @@ export function buildGatherPrompt(
     "- 読めなかった情報源",
     "",
     "- 事実と推測を区別する。情報源に無いことを作らない",
-    ...(codeSource.length > 0
+    ...(readsCode
       ? [
           "- コードは、進め方を決め、後の工程が背景を知るのに要る範囲で読む（関係する場所といまの振る舞い）。修正の方針や原因の詳しい調査は、後の工程で行う",
         ]
@@ -3833,27 +3839,71 @@ export function buildGatherPrompt(
   ].join("\n");
 }
 
+/**
+ * 情報収集に示す、候補のリポジトリのコードの読み方（gh api。イメージの gh の shim とゲートウェイの読み取りの中継を
+ * 通ることを、gh-shim.test.ts で確かめる）。
+ */
+export const GATHER_GH_EXAMPLES: readonly { command: string; purpose: string }[] = [
+  { command: "gh api repos/<owner>/<repo>", purpose: "説明・既定のブランチ" },
+  {
+    command: `gh api "repos/<owner>/<repo>/git/trees/<ブランチ>?recursive=1" --jq '.tree[].path'`,
+    purpose: "ファイルの一覧",
+  },
+  {
+    command: `gh api -H "Accept: application/vnd.github.raw" "repos/<owner>/<repo>/contents/<パス>"`,
+    purpose: "ファイルの中身",
+  },
+  {
+    command: `gh api "search/code?q=<語>+repo:<owner>/<repo>"`,
+    purpose: "コードの検索。既定のブランチだけ",
+  },
+];
+
 /** 情報収集が読むリポジトリの候補の数の目安。 */
 const GATHER_CANDIDATES_TO_READ = 3;
 
 /**
  * 情報収集の指示の「コード」の節。リポジトリを用意したタスクは作業領域の写しを、まだ決まっていないタスクは候補から
- * 洗い出したものを GitHub の読み取りの中継（gh api）で読ませる。候補が無ければ何も足さない。
+ * 洗い出したものを GitHub の読み取りの中継（gh api）で読ませる。リポジトリの一覧を読めなかった Org（unreadable）は、
+ * 調べられなかった情報源としてまとめに書かせる。候補も読めなかった Org も無ければ何も足さない。
  */
 function gatherCodeLines(
   task: Task,
   triage: { candidates: readonly string[]; fixed: boolean } | undefined,
   candidates: readonly string[],
-): string[] {
+  unreadable: readonly { org: string; message: DaemonText }[],
+): { lines: string[]; reads: boolean } {
   if (task.repository) {
-    return [
-      "--- コード ---",
-      `作業領域（カレントディレクトリ）に、対象リポジトリ ${task.repository.url} のベースブランチ（${task.repository.baseBranch}）の最新のコードがあります（使い捨ての写しで、変更は残りません）。`,
-    ];
+    return {
+      reads: true,
+      lines: [
+        "--- コード ---",
+        `作業領域（カレントディレクトリ）に、対象リポジトリ ${task.repository.url} のベースブランチ（${task.repository.baseBranch}）の最新のコードがあります（使い捨ての写しで、変更は残りません）。`,
+      ],
+    };
   }
   const repos = triage?.candidates ?? candidates;
-  if (repos.length === 0) return [];
-  return [
+  const unreadableLines =
+    unreadable.length > 0
+      ? [
+          "プロジェクトの対象のうち、次の Org はリポジトリの一覧を読めなかったので、候補に入っていません。これらの Org のリポジトリを調べられなかったことを、まとめの「読めなかった情報源」に理由と一緒に書いてください。",
+          ...unreadable.map((u) => `- ${u.org}：${ja(u.message)}`),
+        ]
+      : [];
+  if (repos.length === 0) {
+    return {
+      reads: false,
+      lines:
+        unreadableLines.length > 0
+          ? [
+              "--- コード ---",
+              "作業するリポジトリはまだ決まっておらず、作業領域にコードはありません。リポジトリの候補を読めませんでした。",
+              ...unreadableLines,
+            ]
+          : [],
+    };
+  }
+  const lines = [
     "--- コード ---",
     triage?.fixed
       ? `作業するリポジトリは ${repos[0]} です。作業領域にコードはまだ無いので、GitHub の読み取りの中継（下の「GitHub（読み取り）」の gh api）でコードを読んでください。`
@@ -3861,12 +3911,11 @@ function gatherCodeLines(
     ...(triage ? [] : repos.map((repo) => `- ${repo}`)),
     ...(triage && !triage.fixed ? ["（候補は、下の手順 7 に並べたもの）"] : []),
     "読み方の例（<owner>/<repo> は候補の URL から。GitHub Enterprise のリポジトリは --hostname <ホスト> を付ける）：",
-    "- gh api repos/<owner>/<repo>（説明・既定のブランチ）",
-    `- gh api "repos/<owner>/<repo>/git/trees/<ブランチ>?recursive=1" --jq '.tree[].path'（ファイルの一覧）`,
-    `- gh api -H "Accept: application/vnd.github.raw" "repos/<owner>/<repo>/contents/<パス>"（ファイルの中身）`,
-    `- gh api "search/code?q=<語>+repo:<owner>/<repo>"（コードの検索。既定のブランチだけ）`,
+    ...GATHER_GH_EXAMPLES.map(({ command, purpose }) => `- ${command}（${purpose}）`),
     "読めなかったリポジトリ（GitHub の読み取りの中継が無い・権限が無いなど）は、読めなかった情報源に書く",
+    ...unreadableLines,
   ];
+  return { reads: true, lines };
 }
 
 /**

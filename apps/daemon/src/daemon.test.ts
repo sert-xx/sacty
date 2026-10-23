@@ -27165,6 +27165,51 @@ describe("タスクの開始時の情報収集", () => {
     activity.close();
   });
 
+  it.each([
+    ["一部の Org", true],
+    ["すべての Org", false],
+  ] as const)(
+    "候補の一覧を%sで読めなければ、秘密を伏せた理由を情報収集に伝える",
+    async (_, withRepo) => {
+      const activity = new SqliteActivityStore(join(dir, `gather-org-${withRepo}.db`));
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [
+          ...(withRepo ? [{ scope: "repo" as const, target: "https://github.com/acme/app" }] : []),
+          { scope: "org", target: "https://github.com/tools" },
+        ],
+        githubAccounts: { "github.com": "me" },
+      });
+      const pulls = new FakePulls();
+      pulls.repositoriesFail = "401 Bad credentials ghp_secret";
+      const { service, executor } = makeService(activity, [gathered()], {
+        realGatherer: true,
+        projects,
+        pulls,
+        gateway: fakeGateway(),
+      });
+      const task = service.createTask({ projectId: "default", title: "決済の再送", repo: null });
+      await service.runNext(task.id);
+      const prompt = executor.stdins[0] ?? "";
+      expect(prompt).toContain(
+        "次の Org はリポジトリの一覧を読めなかったので、候補に入っていません",
+      );
+      expect(prompt).toContain("- https://github.com/tools：");
+      expect(prompt).toContain("401 Bad credentials");
+      expect(prompt).not.toContain("ghp_secret");
+      if (withRepo) {
+        expect(prompt).toContain("- https://github.com/acme/app");
+        expect(prompt).toContain("上の「コード」のリポジトリで");
+      } else {
+        expect(prompt).toContain("リポジトリの候補を読めませんでした");
+        expect(prompt).not.toContain("上の「コード」のリポジトリで");
+      }
+      expect(service.get(task.id)?.task.gathered?.brief).toBe(BRIEF);
+      activity.close();
+    },
+  );
+
   it("集められない・読めないときは理由を記録して止め、再開すると集め直す", async () => {
     const activity = new SqliteActivityStore(join(dir, "gather-fail.db"));
     const unreadable: AgentOutcome = {

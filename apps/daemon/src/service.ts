@@ -3973,17 +3973,20 @@ export class TaskService {
     };
     // 作業するリポジトリがまだ決まっていないタスクは、プロジェクトの対象から関係しそうなリポジトリを洗い出させ、そのコードを
     // GitHub の読み取りの中継で読ませる（トリアージなら、トリアージの候補。用意したタスクは、作業領域の写しを読む）
-    const candidates =
+    // 一覧を読めなかった Org（認証切れ・権限不足など）は、調べられなかった情報源として指示に伝える（候補に入らないので）
+    const listed =
       !task.repository && !triage && isRepoless(task)
-        ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
-        : [];
+        ? await this.projectRepositories(task.projectId)
+        : undefined;
+    const candidates = listed?.repositories ?? [];
+    const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
     const ran = await this.runOrchestrator(
       task,
       config,
       // 書き込みの API は、指示にも出さない（ゲートウェイが拒否する）
       (platforms) =>
         [
-          buildGatherPrompt(task, triage, { candidates }),
+          buildGatherPrompt(task, triage, { candidates, unreadable }),
           ...platformPromptLines(readOnlyPlatforms(platforms)),
         ].join("\n"),
       "gather",
@@ -4083,13 +4086,19 @@ export class TaskService {
   /**
    * チケットのトリアージ（作業するリポジトリ・題・概要を決める。PBI-52）に使う、チケットの接続先と作業するリポジトリの候補。
    * 人がリポジトリを選んでいれば、そのリポジトリに固定する（fixed。チケットの要件は読み直して書く）。接続先が無い・候補が
-   * 無ければ、止める理由を返す。
+   * 無ければ、止める理由を返す。一覧を読めなかった Org（unreadable。理由は秘密を伏せたもの）も返す（情報収集に伝える）。
    */
   private async ticketTriageTarget(
     task: Task,
     config: SactyConfig,
   ): Promise<
-    { platform: Platform; candidates: string[]; fixed: string | undefined } | { failed: DaemonText }
+    | {
+        platform: Platform;
+        candidates: string[];
+        fixed: string | undefined;
+        unreadable: { org: string; message: DaemonText }[];
+      }
+    | { failed: DaemonText }
   > {
     const ticket = task.ticket;
     if (!ticket) return { failed: message("ticket.triageFailed", { detail: "" }) };
@@ -4113,13 +4122,12 @@ export class TaskService {
       };
     }
     const fixed = task.repo && task.ticketTriage?.by === "person" ? task.repo : undefined;
-    const candidates = fixed
-      ? [fixed]
-      : ((await this.projectRepositories(task.projectId))?.repositories ?? []);
+    const listed = fixed ? undefined : await this.projectRepositories(task.projectId);
+    const candidates = fixed ? [fixed] : (listed?.repositories ?? []);
     if (candidates.length === 0) {
       return { failed: message("ticket.triageFailed", { detail: message("ticket.noCandidates") }) };
     }
-    return { platform, candidates, fixed };
+    return { platform, candidates, fixed, unreadable: listed?.errors ?? [] };
   }
 
   /**

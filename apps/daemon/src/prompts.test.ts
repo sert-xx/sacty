@@ -2918,6 +2918,34 @@ describe("タスクの開始時に集めた情報", () => {
     expect(none).toContain("5. 集めた情報を、タスクとの関係で絞り込む");
   });
 
+  it("リポジトリの一覧を読めなかった Org は、調べられなかった情報源として書かせる（全部読めなければ、コードを読む手順を出さない）", () => {
+    const task = { ...taskOf(false), repository: undefined };
+    const unreadable = [{ org: "https://github.com/tools", message: "401 Bad credentials" }];
+    const partial = buildGatherPrompt(task, undefined, {
+      candidates: ["https://github.com/acme/app"],
+      unreadable,
+    });
+    expect(partial).toContain(
+      "次の Org はリポジトリの一覧を読めなかったので、候補に入っていません",
+    );
+    expect(partial).toContain("- https://github.com/tools：401 Bad credentials");
+    expect(partial).toContain("5. 上の「コード」のリポジトリで");
+    // トリアージの候補でも同じく伝える
+    expect(
+      buildGatherPrompt(
+        task,
+        { candidates: ["https://github.com/acme/app"], fixed: false },
+        { unreadable },
+      ),
+    ).toContain("- https://github.com/tools：401 Bad credentials");
+    const none = buildGatherPrompt(task, undefined, { candidates: [], unreadable });
+    expect(none).toContain("リポジトリの候補を読めませんでした");
+    expect(none).toContain("- https://github.com/tools：401 Bad credentials");
+    expect(none).not.toContain("上の「コード」のリポジトリで");
+    expect(none).not.toContain("- 関係するコード（");
+    expect(none).not.toContain("gh api");
+  });
+
   it("情報収集の出力から、まとめと情報源を読む。まとめが無ければ読めない", () => {
     const json = (v: unknown) => `集めました\n\n\`\`\`json\n${JSON.stringify(v)}\n\`\`\``;
     expect(
