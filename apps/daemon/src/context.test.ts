@@ -992,8 +992,8 @@ describe("MCP サーバーの時間切れ（PBI-75）", () => {
       "utf8",
     );
     // 既定の上限（config.yaml の run_timeout で変えられる。PBI-150）
-    expect(readme).toContain(`既定は開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分の上限`);
-    expect(readme).toContain(`既定ではどちらかを${AGENT_RUN_TIMEOUT_MS / 60_000}分以上にしたとき`);
+    expect(readme).toContain(`既定は開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分で`);
+    expect(readme).toContain(`既定ではどちらかを${AGENT_RUN_TIMEOUT_MS / 60_000}分以上`);
     expect(readme).toContain("`run_timeout`");
   });
 
