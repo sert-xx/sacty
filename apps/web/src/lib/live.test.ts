@@ -115,10 +115,13 @@ describe("取り直しの返事（fetchLive・liveResponse。PBI-108）", () => 
     );
   });
 
-  it("変わっていない・対象が無いときは今のまま（current）。届かない・失敗の応答・通信の失敗は failed（更新が止まっていると出す）", async () => {
-    for (const body of [{ unchanged: true }, { missing: true }]) {
-      expect(await fetchLive("/x", "v", reply(body) as unknown as typeof fetch)).toBe("current");
-    }
+  it("変わっていないときは今のまま（current）、対象が無いときは missing。届かない・失敗の応答・通信の失敗は failed（更新が止まっていると出す）", async () => {
+    expect(await fetchLive("/x", "v", reply({ unchanged: true }) as unknown as typeof fetch)).toBe(
+      "current",
+    );
+    expect(await fetchLive("/x", "v", reply({ missing: true }) as unknown as typeof fetch)).toBe(
+      "missing",
+    );
     expect(
       await fetchLive("/x", "v", reply({ unavailable: true }) as unknown as typeof fetch),
     ).toBe("failed");

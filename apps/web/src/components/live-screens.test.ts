@@ -885,3 +885,26 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(item?.textContent).toContain("↗");
   });
 });
+
+describe("開いている間に対象が無くなったとき（プロジェクトの削除。PR #204 レビュー指摘）", () => {
+  it("タスクの詳細は、取り直しで対象が無ければ描き直し（サーバーが 404 にする）、あるあいだは描き直さない", async () => {
+    refresh.mockClear();
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    await wait();
+    expect(refresh).not.toHaveBeenCalled();
+    server = "missing";
+    await wait();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // 対象が無いままでも、描き直しを繰り返さない
+    await wait();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    refresh.mockClear();
+  });
+});

@@ -10,16 +10,19 @@ import { fetchLive, LIVE_INTERVAL_MS, type LiveStale, pollWhileVisible } from "@
  * url は、取り直すたびに、いまのデータから決める。
  * stale は、直近の取り直しで更新できなかった（表示は最後に取れたデータのまま）ことと、その理由（画面の認証が無いか。
  * PBI-129）。更新できたら false に戻る。
+ * missing は、直近の取り直しで対象が無かった（消えた・プロジェクトを削除した）こと。表示は最後のデータのまま残す。
  */
 export function useLiveData<T>(
   url: (current: T) => string,
   initial: T,
   initialVersion?: string,
   intervalMs: number = LIVE_INTERVAL_MS,
-): { data: T; stale: LiveStale } {
+): { data: T; stale: LiveStale; missing: boolean } {
   const [polled, setPolled] = useState<{ base: T; data: T; version: string }>();
   // 更新できなかったときの元のデータ（サーバーが描き直して initial が変われば、更新できない表示も消える）
   const [staleFor, setStaleFor] = useState<{ base: T; reason: "failed" | "signedOut" }>();
+  const [missingFor, setMissingFor] = useState<T>();
+  const missing = missingFor !== undefined && missingFor === initial;
   const stale: LiveStale =
     staleFor !== undefined && staleFor.base === initial ? staleFor.reason : false;
   const current = polled && polled.base === initial ? polled : undefined;
@@ -40,10 +43,11 @@ export function useLiveData<T>(
           setStaleFor(
             next === "failed" || next === "signedOut" ? { base, reason: next } : undefined,
           );
+          setMissingFor(next === "missing" ? base : undefined);
           if (typeof next === "object") setPolled({ base, data: next.data, version: next.version });
         },
       }),
     [intervalMs],
   );
-  return { data, stale };
+  return { data, stale, missing };
 }

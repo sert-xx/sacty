@@ -10445,6 +10445,54 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
+describe("プロジェクトの削除", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+
+  it("終わっていないタスクがあれば拒否し、中止した後は削除できる（タスクは残す）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    const { service } = makeService(activity, [], { projects });
+    const pay = service.saveProject(undefined, {
+      name: "決済",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+    });
+    const app = createApp(service, token);
+    const remove = (id: string) =>
+      app.request(`/api/projects/${id}`, { method: "DELETE", headers: auth });
+
+    expect((await remove("no-such")).status).toBe(404);
+
+    const task = service.createTask({ projectId: pay.id, title: "A" });
+    const refused = await remove(pay.id);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { messages: unknown[] }).messages).toEqual([
+      { code: "project.hasActiveTasks", params: { count: 1 } },
+    ]);
+    expect(service.getProject(pay.id)).toBeDefined();
+
+    await service.cancel(task.id);
+    const deleted = await remove(pay.id);
+    expect(deleted.status).toBe(200);
+    expect(service.getProject(pay.id)).toBeUndefined();
+    expect(service.listProjects()).toHaveLength(0);
+    // タスクと作業履歴は残すが、画面の取得（タスクの詳細・実行の記録）では無いものとして返す
+    expect(service.get(task.id)).toBeDefined();
+    expect((await app.request(`/api/tasks/${task.id}`, { headers: auth })).status).toBe(404);
+    // 実行の記録の API も 404 になること（実在する記録で）は、「エージェントの元のセッションのファイル」のテストで確かめる
+    activity.close();
+  });
+
+  it("SQLite の保存先から消える", () => {
+    const store = new SqliteProjectStore(join(dir, "projects.db"));
+    store.put("p1", { name: "決済", targets: [] });
+    expect(store.delete("p1")).toBe(true);
+    expect(store.get("p1")).toBeUndefined();
+    expect(store.delete("p1")).toBe(false);
+    store.close();
+  });
+});
+
 describe("Slack の通知先は sacty の設定（PBI-115）", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };
@@ -17604,6 +17652,36 @@ describe("エージェントの元のセッションのファイル（PBI-66）"
     expect((await app.request(base)).status).toBe(401);
     activity.close();
   });
+
+  it("API：プロジェクトを消したら、実在する実行の記録（ログ・生のファイル・元のファイルの一覧と中身）とタスクを 404 にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const app = createApp(service, token);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    const mainPath = "projects/-workspace/main-session.jsonl";
+    const paths = [
+      `/api/tasks/${task.id}`,
+      `/api/tasks/${task.id}/runs/${runId}/log`,
+      `/api/tasks/${task.id}/runs/${runId}/files/events`,
+      `/api/tasks/${task.id}/runs/${runId}/files/stderr`,
+      `/api/tasks/${task.id}/runs/${runId}/agent-files`,
+      `/api/tasks/${task.id}/runs/${runId}/agent-files/raw?path=${encodeURIComponent(mainPath)}`,
+    ];
+    const statuses = async () =>
+      Promise.all(paths.map(async (path) => (await app.request(path, { headers: auth })).status));
+    // 消す前は、どれも読める
+    expect(await statuses()).toEqual(paths.map(() => 200));
+    await service.cancel(task.id);
+    service.deleteProject("default");
+    expect(await statuses()).toEqual(paths.map(() => 404));
+    // 記録そのものは残す
+    expect(sessionLogs.read(task.id, runId)).toBeTruthy();
+    activity.close();
+  });
 });
 
 describe("オーケストレーターのセッションの使い回し（PBI-67）", () => {
@@ -23922,6 +24000,95 @@ describe("完了したタスクの監査（PBI-125）", () => {
     await expect(service.rejectAuditProposal(repo.id, { reason: "理由" })).rejects.toThrow(
       "中止されたため",
     );
+  });
+
+  it("完了したタスクに実行待ち・実行中の監査があるあいだは、プロジェクトを削除できず、監査が終われば削除できる", async () => {
+    const { service, executor, id } = await completedTask((invocation) =>
+      isSurvey(invocation) ? survey([]) : undefined,
+    );
+    // 実行待ち
+    expect(service.queuedTaskIds()).toContain(id);
+    expect(() => service.deleteProject("default")).toThrow(/1件/);
+    // 実行中（監査の実行の中で削除する）。実行待ちの判定（設定を読めないと取れない）に頼らず、実行中だけで断る
+    let during: unknown;
+    const respond = executor.respond;
+    executor.respond = (invocation) => {
+      const queued = vi.spyOn(service, "queuedTaskIds").mockImplementation(() => {
+        throw new Error("config");
+      });
+      try {
+        service.deleteProject("default");
+      } catch (error) {
+        during = error;
+      } finally {
+        queued.mockRestore();
+      }
+      return respond?.(invocation);
+    };
+    await service.runNext(id);
+    expect(during).toBeInstanceOf(InvalidOperationError);
+    expect((during as InvalidOperationError).messages).toEqual([
+      { code: "project.hasActiveTasks", params: { count: 1 } },
+    ]);
+    expect(service.getProject("default")).toBeDefined();
+    // 監査が終われば削除できる
+    executor.respond = respond;
+    for (let i = 0; i < 5 && service.queuedTaskIds().includes(id); i++) await service.runNext(id);
+    expect(service.get(id)?.task.audit?.completedAt).toBeDefined();
+    service.deleteProject("default");
+    expect(service.getProject("default")).toBeUndefined();
+  });
+
+  it("完了したタスクへの質問に回答しているあいだは、プロジェクトを削除できず、回答の後は削除できる", async () => {
+    const { service, id } = await completedTask(() => undefined, { audit: false });
+    const { answered } = service.askQuestion(id, { text: "何をした？" });
+    expect(() => service.deleteProject("default")).toThrow(/1件/);
+    await answered;
+    service.deleteProject("default");
+    expect(service.getProject("default")).toBeUndefined();
+  });
+
+  it("採用の途中（秘密情報を伏せる間）にプロジェクトを削除したら、改修のタスクを作らずに断る", async () => {
+    const { service, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    // 監査は終わっているので、削除できる
+    expect(service.queuedTaskIds()).not.toContain(id);
+    const adopting = service.adoptAuditProposal(repo.id, {
+      target: repo.target,
+      note: { kind: "supplement", text: "補足" },
+    });
+    service.deleteProject("default");
+    const before = service.list().length;
+    await expect(adopting).rejects.toThrow(InvalidOperationError);
+    expect(service.list().length).toBe(before);
+    expect(service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision).toBeUndefined();
+  });
+
+  it("採用を記録した後にプロジェクトを消したら、起動のときに改修のタスクを作らない", async () => {
+    const { activity, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "AuditProposalAdopted",
+            payload: { proposalId: repo.id, target: repo.target, fixTaskId: "fix-1" },
+          },
+        },
+      ],
+    });
+    // プロジェクトの無い保存先で起動し直す（消したプロジェクト）
+    const restarted = makeService(activity, [], {
+      audit: true,
+      projects: new MemoryProjectStore(),
+    }).service;
+    restarted.resumeAuditFixTasks();
+    expect(restarted.get("fix-1")).toBeUndefined();
   });
 });
 

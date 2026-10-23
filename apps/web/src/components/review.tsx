@@ -17,7 +17,11 @@ import { DaemonError } from "@/components/daemon-error";
 import { GateForm } from "@/components/gate-form";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
-import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
+import {
+  FollowProjectAfterRecovery,
+  RefreshWhenMissing,
+  StaleNotice,
+} from "@/components/live-status";
 import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
@@ -50,11 +54,12 @@ export function LiveReview({
   error?: string;
 }) {
   const url = reviewLiveUrl(id);
-  const { data: task, stale } = useLiveData(() => url, initial, initialVersion);
+  const { data: task, stale, missing } = useLiveData(() => url, initial, initialVersion);
   if (!task) return <DaemonError message={error ?? ""} />;
   return (
     <>
       <StaleNotice stale={stale} />
+      <RefreshWhenMissing missing={missing} />
       {initial === null && <FollowProjectAfterRecovery projectId={task.projectId} />}
       <ReviewView task={task} />
     </>

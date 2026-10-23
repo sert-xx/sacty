@@ -28,7 +28,11 @@ import { DeploymentWatchCard } from "@/components/deployment";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
-import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
+import {
+  FollowProjectAfterRecovery,
+  RefreshWhenMissing,
+  StaleNotice,
+} from "@/components/live-status";
 import { Markdown } from "@/components/markdown";
 import { OrchestratorSession } from "@/components/orchestrator-session";
 import { Proposals } from "@/components/proposals";
@@ -99,7 +103,7 @@ export function LiveTaskDetail({
   const repositories = useRef(initial?.ticketRepositories);
   // 候補を最後に求めた時刻（取れなかったときは、間を空けて求め直す。gh で GitHub に問い合わせ続けない）
   const askedAt = useRef(initial?.ticketRepositoriesFailed ? Date.now() : Number.NEGATIVE_INFINITY);
-  const { data, stale } = useLiveData(
+  const { data, stale, missing } = useLiveData(
     (current) => {
       const ask =
         current !== null &&
@@ -117,6 +121,7 @@ export function LiveTaskDetail({
   return (
     <>
       <StaleNotice stale={stale} />
+      <RefreshWhenMissing missing={missing} />
       {initial === null && <FollowProjectAfterRecovery projectId={data.task.projectId} />}
       <TaskDetailView data={{ ...data, ticketRepositories: repositories.current }} />
     </>

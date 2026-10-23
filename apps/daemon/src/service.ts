@@ -58,6 +58,7 @@ import {
   investigationIsGoal,
   isAuditTarget,
   isCompleted,
+  isFinished,
   isRepoless,
   latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
@@ -3205,6 +3206,12 @@ export class TaskService {
     return this.deps.projects.all();
   }
 
+  /** 画面に出すタスクか（消したプロジェクトのタスクは出さない。タスクと作業履歴は残す）。 */
+  visibleTask(id: string): boolean {
+    const task = this.tasks.get(id);
+    return task !== undefined && this.deps.projects.get(task.projectId) !== undefined;
+  }
+
   /** sacty 全体の設定（PBI-26）。 */
   getSettings(): SactySettings {
     return this.deps.settings.get();
@@ -3424,6 +3431,34 @@ export class TaskService {
   importProject(raw: unknown): Project {
     const { project } = ProjectExport.parse(raw);
     return this.saveProject(undefined, project);
+  }
+
+  /**
+   * プロジェクトを削除する（プロジェクトの設定の「危険な操作」）。消すのはプロジェクトの定義だけで、タスクと作業履歴は
+   * 残す（消したプロジェクトのタスクは、画面に出さず、数えない）。終わっていないタスクや、完了したタスクでも実行中・実行待ちの
+   * 処理（監査・デプロイの確認など）・回答中の質問があれば拒否する（消した後に、プロジェクトの設定の無いまま進めないため）。
+   */
+  deleteProject(id: string): void {
+    if (!this.deps.projects.get(id)) throw new InvalidOperationError(message("project.notFound"));
+    let queued = new Set<string>();
+    try {
+      queued = new Set(this.queuedTaskIds());
+    } catch {
+      // 設定を読めないときは、ワーカーも実行対象を取れない（終わっていないタスクと実行中だけで判断する）
+    }
+    const active = [...this.tasks.values()].filter(
+      (t) =>
+        t.projectId === id &&
+        (!isFinished(t) || this.inflight.has(t.id) || queued.has(t.id) || this.chats.has(t.id)),
+    ).length;
+    if (active > 0)
+      throw new InvalidOperationError(message("project.hasActiveTasks", { count: active }));
+    this.deps.projects.delete(id);
+    // 消したプロジェクトの秘密情報の警告を、画面に残さない
+    this.secretProblems = this.secretProblems.filter((p) => p.projectId !== id);
+    this.projectSecretRounds.delete(id);
+    // プロジェクトが減ると、数える実行待ちも変わる（PBI-118）
+    this.trackQueue();
   }
 
   /**
@@ -9618,6 +9653,10 @@ export class TaskService {
     const check = () => {
       const found = this.findAuditProposal(proposalId);
       if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
+      // 消したプロジェクトに改修のタスクを作らない（秘密情報を取り出す間に消されたときも、確かめ直しで断る）
+      if (!this.deps.projects.get(found.task.projectId)) {
+        throw new InvalidOperationError(message("project.notFound"));
+      }
       if (found.task.status === "cancelled") {
         throw new InvalidOperationError(message("audit.notAdoptable"));
       }
@@ -9656,8 +9695,9 @@ export class TaskService {
     return this.mustGet(task.id);
   }
 
-  /** 採用した提案の改修のタスクを作る（作ってあれば何もしない）。 */
+  /** 採用した提案の改修のタスクを作る（作ってあれば・プロジェクトを消していれば何もしない）。 */
   private createAuditFixTask(task: Task, proposalId: string): void {
+    if (!this.deps.projects.get(task.projectId)) return;
     const finding = task.audit?.findings.find((f) => f.proposals.some((p) => p.id === proposalId));
     const proposal = finding?.proposals.find((p) => p.id === proposalId);
     const decision = proposal?.decision;

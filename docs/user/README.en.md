@@ -15,7 +15,7 @@ Here is an overview of sacty.
 2. [Dashboard](dashboard.en.md): what each section shows, how periods are counted, empty states
 3. [config.yaml settings](config.en.md): list of settings, connections and prices, auth modes, default agents and overrides, models per step, budgets
 4. [Secrets](secrets.en.md): Keychain, 1Password, what is fetched at startup
-5. [Project settings](project-settings.en.md): targets, GitHub accounts, specifying the context repository, export
+5. [Project settings](project-settings.en.md): targets, GitHub accounts, specifying the context repository, export, deletion
 6. [Intake of issues, PRs, and tickets](intake.en.md): Sacty settings, PR reviews, JIRA, running tasks in parallel
 7. [Working with tasks](tasks.en.md): creating tasks, approving in PRs, asking the orchestrator, pausing and canceling
 8. [Context repository](context.en.md): template, files to place, sacty-context.yaml, mcp.yaml, platforms.yaml, preview

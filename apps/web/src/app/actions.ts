@@ -32,6 +32,7 @@ import {
   createTask,
   decideChange,
   deleteAuditMemory,
+  deleteProject,
   type GitHubAccounts,
   getGitHubAccounts,
   importProject,
@@ -368,6 +369,35 @@ export async function saveProjectAction(
       : undefined;
   refresh();
   return { saved: true, ...(contextError ? { contextError } : {}) };
+}
+
+export type DeleteProjectState = { message?: string };
+
+/**
+ * プロジェクトを削除する（プロジェクトの設定の「危険な操作」）。打ち間違いで消さないよう、確認に入力したプロジェクトの名前が
+ * 一致したときだけ消す。消したらプロジェクトの一覧へ移る（表示しているプロジェクトは、cookie のプロジェクトが無ければ
+ * 最初のプロジェクトになる）。
+ */
+export async function deleteProjectAction(
+  _prev: DeleteProjectState,
+  formData: FormData,
+): Promise<DeleteProjectState> {
+  const messages = await getMessages();
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "");
+  if (!id || String(formData.get("confirm") ?? "") !== name) {
+    return { message: messages.projects.danger.mismatch };
+  }
+  let result: Awaited<ReturnType<typeof deleteProject>>;
+  try {
+    result = await deleteProject(id);
+  } catch {
+    return { message: messages.common.action.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  // ヘッダー・サイドメニューのプロジェクトも作り直す。redirect は例外で画面を移すので、try の外で呼ぶ
+  revalidatePath("/", "layout");
+  redirect("/projects");
 }
 
 /**

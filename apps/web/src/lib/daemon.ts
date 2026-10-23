@@ -392,6 +392,21 @@ export async function importProject(
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
 }
 
+/** プロジェクトを削除する。無ければ not_found、終わっていないタスクがあれば理由（画面の言語の文）を返す。 */
+export async function deleteProject(
+  id: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (res.status === 404) {
+    return { ok: false, message: (await getMessages()).projects.exportNotFound };
+  }
+  if (res.status === 409) {
+    return { ok: false, message: await operationMessage(res) };
+  }
+  await ensureOk(res);
+  return { ok: true };
+}
+
 export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 
 /** 中止したときに片付けるもの（確認の画面に並べる）。 */

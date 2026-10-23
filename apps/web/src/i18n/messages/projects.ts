@@ -44,6 +44,21 @@ const ja = {
   export: "エクスポート",
   exportHint: "アカウント・トークン・Slack の通知は含みません。",
   exportNotFound: "プロジェクトが見つかりません。",
+  danger: {
+    title: "危険な操作",
+    delete: "プロジェクトを削除",
+    deleteNote: "削除したプロジェクトは元に戻せません。",
+    dialogTitle: (name: string) => `プロジェクト「${name}」を削除しますか？`,
+    dialogDescription:
+      "この操作は元に戻せません。定義を残したいときは、先にエクスポートしてください。",
+    dialogImpact:
+      "タスクと作業履歴は残りますが、どの画面からも開けず、ダッシュボードでも数えません。",
+    confirmLabel: (name: string) => `確認のため、プロジェクトの名前「${name}」を入力してください`,
+    mismatch: "入力した名前が、プロジェクトの名前と一致しません。",
+    cancel: "やめる",
+    submit: "削除する",
+    submitting: "削除しています…",
+  },
   preview: {
     title: "コンテキストのプレビュー",
     hint: "実行のときと同じ処理で、Sacty の既定のコンテキストとコンテキストリポジトリを合成し、Claude Code・Codex の設定のディレクトリに置くファイルを出します。ファイルは置かず、取得したリポジトリは消します。",
@@ -247,6 +262,21 @@ const en: ProjectsMessages = {
   export: "Export",
   exportHint: "Accounts, tokens, and Slack notifications are not included.",
   exportNotFound: "Project not found.",
+  danger: {
+    title: "Danger zone",
+    delete: "Delete project",
+    deleteNote: "A deleted project cannot be restored.",
+    dialogTitle: (name) => `Delete the project "${name}"?`,
+    dialogDescription:
+      "This cannot be undone. Export the project first if you want to keep its definition.",
+    dialogImpact:
+      "Its tasks and activity log are kept, but they can no longer be opened from any screen or count on the dashboard.",
+    confirmLabel: (name) => `To confirm, type the project name "${name}"`,
+    mismatch: "The name you typed does not match the project name.",
+    cancel: "Cancel",
+    submit: "Delete",
+    submitting: "Deleting…",
+  },
   preview: {
     title: "Context preview",
     hint: "Composes the Sacty default context and the context repository with the same process as a run, and shows the files placed in the Claude Code or Codex config directory. Nothing is placed, and the fetched repositories are deleted.",

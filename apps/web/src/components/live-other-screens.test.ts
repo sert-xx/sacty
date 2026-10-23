@@ -33,6 +33,8 @@ const daemon = vi.hoisted(() => ({
   finishedAt: undefined as string | undefined,
   filesFail: false,
   down: false,
+  /** タスクが無い（プロジェクトを削除した）。 */
+  gone: false,
   /** 応答しない（中断されるまで終わらない）。中断されたら aborted に数える。 */
   hang: false,
   aborted: 0,
@@ -42,6 +44,7 @@ const daemon = vi.hoisted(() => ({
 vi.mock("@/lib/daemon", () => ({
   getTask: async () => {
     if (daemon.down) throw new Error("unreachable");
+    if (daemon.gone) return null;
     return { task: { id: "t1", title: "認証の設計", projectId: "p1" }, activity: [] };
   },
   getRunLog: async (_id: string, _run: string, from: { events?: number } = {}) => {
@@ -198,6 +201,7 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     daemon.finishedAt = undefined;
     daemon.filesFail = false;
     daemon.down = false;
+    daemon.gone = false;
     daemon.hang = false;
     daemon.aborted = 0;
     daemon.reads.length = 0;
@@ -245,7 +249,7 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     expect(scrollTo).toHaveBeenCalledTimes(1);
   });
 
-  it("実行が終わったら（閉じるときに書き直されうるので全体を受け取り）、取り直しを止める", async () => {
+  it("実行が終わったら（閉じるときに書き直されうるので全体を受け取り）、ログの取り直しを止め、タスクがあるかだけを確かめる", async () => {
     render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
     daemon.events = say("書き直した全体") + say("完了しました");
     daemon.finishedAt = "2026-10-15T00:01:00.000Z";
@@ -253,8 +257,25 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     expect(text()).toContain("完了しました");
     expect(text()).not.toContain("始めます");
     const count = requests.length;
+    const reads = daemon.reads.length;
     await wait(15_000);
-    expect(requests).toHaveLength(count);
+    expect(requests.length).toBeGreaterThan(count);
+    expect(requests.slice(count).every((u) => u.endsWith("?check=1"))).toBe(true);
+    // ログは読み直さない
+    expect(daemon.reads).toHaveLength(reads);
+  });
+
+  it("開いている間にタスクが無くなったら（プロジェクトの削除。PR #204 レビュー指摘）、実行が終わった後でも描き直す", async () => {
+    refresh.mockClear();
+    render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
+    daemon.finishedAt = "2026-10-15T00:01:00.000Z";
+    await wait();
+    await wait();
+    expect(refresh).not.toHaveBeenCalled();
+    daemon.gone = true;
+    await wait();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    refresh.mockClear();
   });
 
   it("終わった直後にファイルの一覧だけが読めなくても、ログと終わったことは出し、一覧だけを取り直す", async () => {
@@ -272,7 +293,7 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     expect(container.querySelector("#run-agent-files")).not.toBeNull();
     const count = requests.length;
     await wait(15_000);
-    expect(requests).toHaveLength(count);
+    expect(requests.slice(count).every((u) => u.endsWith("?check=1"))).toBe(true);
   });
 
   it("更新できない間は、表示を残したまま更新が止まっていることを出し、つながったら消す", async () => {
@@ -476,5 +497,27 @@ describe("レビューとプロジェクトの一覧：更新できない間・�
     await wait();
     expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();
     expect(text()).toContain("Acme");
+  });
+});
+
+describe("成果物のレビュー：開いている間に対象が無くなったとき（プロジェクトの削除。PR #204 レビュー指摘）", () => {
+  it("取り直しで対象が無ければ、描き直す（サーバーが 404 にする）", async () => {
+    refresh.mockClear();
+    const server = task();
+    let missing = false;
+    handler = (_url, headers) => {
+      if (missing) return { missing: true };
+      const version = liveVersion(server);
+      return headers["x-sacty-live-version"] === version
+        ? { unchanged: true }
+        : { data: server, version };
+    };
+    render(h(LiveReview, { id: "t1", initial: server, initialVersion: liveVersion(server) }));
+    await wait();
+    expect(refresh).not.toHaveBeenCalled();
+    missing = true;
+    await wait();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    refresh.mockClear();
   });
 });

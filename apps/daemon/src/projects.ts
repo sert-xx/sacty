@@ -7,6 +7,8 @@ export interface ProjectStore {
   get(id: string): Project | undefined;
   /** 作るか、置き換える。 */
   put(id: string, definition: ProjectDefinition): Project;
+  /** 消す。無ければ false。 */
+  delete(id: string): boolean;
   close(): void;
 }
 
@@ -66,6 +68,10 @@ export class SqliteProjectStore implements ProjectStore {
     return saved;
   }
 
+  delete(id: string): boolean {
+    return this.db.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -94,6 +100,10 @@ export class MemoryProjectStore implements ProjectStore {
     };
     this.items.set(id, project);
     return project;
+  }
+
+  delete(id: string): boolean {
+    return this.items.delete(id);
   }
 
   close(): void {}

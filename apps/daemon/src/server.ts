@@ -119,8 +119,10 @@ export function createApp(
     });
   });
 
+  // 消したプロジェクトのタスクは、無いものとして返す（タスクと作業履歴は残すが、画面には出さない）
   app.get("/api/tasks/:id", (c) => {
-    const found = service.get(c.req.param("id"));
+    const id = c.req.param("id");
+    const found = service.visibleTask(id) ? service.get(id) : undefined;
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
   });
 
@@ -128,6 +130,7 @@ export function createApp(
   app.get("/api/tasks/:id/runs/:runId/log", (c) => {
     const { id, runId } = c.req.param();
     if (!validLogId(id) || !validLogId(runId)) return c.json({ error: "invalid_id" }, 400);
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
     // ?eventsFrom=&stderrFrom=（バイト）で、実行中は足された分だけを返す（PR #119 レビュー指摘）
     const offset = (name: string) => {
       const value = Number(c.req.query(name));
@@ -148,6 +151,7 @@ export function createApp(
     if (!validLogId(id) || !validLogId(runId) || (file !== "events" && file !== "stderr")) {
       return c.json({ error: "invalid_id" }, 400);
     }
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
     const path = service.sessionLogFile(id, runId, file);
     if (!path) return c.json({ error: "not_found" }, 404);
     const stream = Readable.toWeb(createReadStream(path)) as ReadableStream;
@@ -163,6 +167,7 @@ export function createApp(
   app.get("/api/tasks/:id/runs/:runId/agent-files", async (c) => {
     const { id, runId } = c.req.param();
     if (!validLogId(id) || !validLogId(runId)) return c.json({ error: "invalid_id" }, 400);
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
     const files = await service.agentSessionFiles(id, runId);
     return files ? c.json(files) : c.json({ error: "not_found" }, 404);
   });
@@ -174,6 +179,7 @@ export function createApp(
     if (!validLogId(id) || !validLogId(runId) || !safeRelativePath(path)) {
       return c.json({ error: "invalid_id" }, 400);
     }
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
     const file = service.agentSessionFile(id, runId, path);
     if (!file) return c.json({ error: "not_found" }, 404);
     const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
@@ -298,6 +304,18 @@ export function createApp(
       // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
       const contextError = await service.checkProjectContext(project.id);
       return c.json({ project, ...(contextError ? { contextError } : {}) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // プロジェクトの削除（プロジェクトの設定の「危険な操作」）。終わっていないタスクがあれば 409 で理由を返す
+  app.delete("/api/projects/:id", (c) => {
+    const id = c.req.param("id");
+    if (!service.getProject(id)) return c.json({ error: "not_found" }, 404);
+    try {
+      service.deleteProject(id);
+      return c.json({ ok: true });
     } catch (error) {
       return handleError(c, error);
     }
