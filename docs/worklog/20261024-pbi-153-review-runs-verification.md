@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-24（UTC）
 - タスク: PBI-153
-- PR: （作成後に書く）
+- PR: #212
 - ブランチ: feat/issue-153-review-runs-verification
 - 関係する ADR: [PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)
 
@@ -27,4 +27,5 @@ sacty のレビューの指示に、検証を実行してよいことと手順�
 - `npx vitest run apps/daemon/src/prompts.test.ts -t "PBI-111|PBI-153"`：通った。
   `prompts.ts` を main に戻すと、足したテストと、検査を足した再レビューのテストの2件が失敗することを確かめた。
 - `npm run lint`：初回はテストの整形で1件落ちた。`biome format --write` で直して通った（449 ファイル）。`npm run typecheck`：通った。
-- `npx vitest run`：2603 件すべて通った。`npx vitest run tests/docs`：93 件通った（利用者向けの文書を足した後）。
+- `npx vitest run`：2603 件すべて通った。
+- `npx vitest run tests/docs`：作業履歴の PR の欄を仮の文字のままにして1件落ちた（コミットの後に気付いた）。PR の番号を書いて 93 件通った。
