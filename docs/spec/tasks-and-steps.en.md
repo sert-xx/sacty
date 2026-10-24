@@ -474,6 +474,9 @@ Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepositor
 
 ![Asking the Orchestrator](images/question-flow.en.svg)
 
+- In the question field, Ctrl + Enter or ⌘ + Enter runs the same form validation and submission as the button. Only Ctrl or Meta alone is accepted; composition events do not submit. Enter and Shift + Enter remain line breaks, and blocked or pending forms cannot submit.
+  Code: `apps/web/src/components/question-form.tsx`.
+
 - Questions are up to 2000 characters (`QUESTION_MAX`), and answers up to 20000 characters (`ANSWER_MAX`; truncated if longer). At most one question can be awaiting an answer. Questions cannot be asked on canceled tasks or tasks that reached the budget cap. IDs are `Q-<number>`.
 - The AI is the same as the Orchestrator; it reads a copy of the code at the base and answers by duplicating the saved Orchestrator session (the original session is not changed). The instructions include the task's title, status, steps, PR, cost and budget, body, approved results and latest outputs, verdicts, comments, recent questions and answers, and the Activity (as much as fits in 40000 characters in total).
 - Session logs of each run: before the answering run, this task's per-run session logs (`SACTY_HOME/runs/<task ID>/` in [Agent execution](agent-execution.en.md)) are laid out in a per-answer-run location (`<workspaces>/_question-logs/<run ID>/`) and mounted read-only at the container's `/sacty-logs` (Claude Code is also given `--add-dir /sacty-logs`). They are deleted when the answering run finishes.

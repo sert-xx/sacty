@@ -785,6 +785,11 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 
 ![オーケストレーターへの質問](images/question-flow.svg)
 
+- 質問欄では Ctrl + Enter または ⌘ + Enter で、ボタンと同じフォーム検証・送信処理を実行する。
+  修飾キーは Ctrl か Meta のどちらかだけを受け付け、変換中は送らない。
+  Enter と Shift + Enter は改行のままにし、ブロック中・送信中は送れない。
+  実装：`apps/web/src/components/question-form.tsx`。
+
 - 質問は 2000 文字まで（`QUESTION_MAX`）、答えは 20000 文字まで（`ANSWER_MAX`。超えたら切り詰める）。
   答えを待つ質問は1件まで。
   中止したタスク・予算の上限に達したタスクでは質問できない。

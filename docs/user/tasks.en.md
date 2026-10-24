@@ -286,6 +286,8 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 
 Use "Ask the Orchestrator" (the AI icon at the bottom right of the screen) in the task details to ask about the status of the task. Questions and answers stay in the panel that opens on the right of the screen.
 
+Type in the Question field and send with the Ask button, Ctrl + Enter, or ⌘ + Enter. Enter and Shift + Enter insert a line break.
+
 ![The Ask the Orchestrator panel (a question and its answer, and the question input)](images/task-chat.en.png)
 
 - The Orchestrator (`step_agents.orchestrator` or `default_agent`) answers by reading the task's ledger (the Activity, approved deliverables, step outputs, verdicts, and costs) and, if prepared, the code of the target repository at the starting commit (a disposable copy).

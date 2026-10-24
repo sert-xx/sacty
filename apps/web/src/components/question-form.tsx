@@ -1,7 +1,7 @@
 "use client";
 
 import { QUESTION_MAX } from "@sacty/core";
-import { useActionState } from "react";
+import { useActionState, useRef } from "react";
 import { askQuestionAction, type QuestionState } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -16,9 +16,27 @@ const initial: QuestionState = {};
  */
 export function QuestionForm({ taskId, blocked }: { taskId: string; blocked?: string }) {
   const m = useMessages().task.chat;
-  const [state, action, pending] = useActionState(askQuestionAction, initial);
+  const submitting = useRef(false);
+  const [state, action, pending] = useActionState(async (prev: QuestionState, data: FormData) => {
+    try {
+      return await askQuestionAction(prev, data);
+    } finally {
+      submitting.current = false;
+    }
+  }, initial);
   return (
-    <form action={action} className="flex flex-col gap-2">
+    <form
+      action={action}
+      onSubmit={(event) => {
+        if (blocked !== undefined || pending || submitting.current) {
+          event.preventDefault();
+          return;
+        }
+        // pending が描画される前に届く連続入力も、1件の送信にする。
+        submitting.current = true;
+      }}
+      className="flex flex-col gap-2"
+    >
       <input type="hidden" name="taskId" value={taskId} />
       <Label htmlFor="question">{m.label}</Label>
       <Textarea
@@ -32,6 +50,21 @@ export function QuestionForm({ taskId, blocked }: { taskId: string; blocked?: st
         defaultValue={state.text ?? ""}
         disabled={blocked !== undefined || pending}
         aria-describedby="question-help"
+        onKeyDown={(event) => {
+          if (
+            event.key !== "Enter" ||
+            event.ctrlKey === event.metaKey ||
+            event.shiftKey ||
+            event.altKey ||
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          )
+            return;
+          event.preventDefault();
+          if (blocked === undefined && !pending && !submitting.current) {
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
         // 長い質問（ログの貼り付けなど）でも、送信のボタンがパネルからはみ出さないよう、高さに上限を付けて中をスクロールする
         className="max-h-[min(12rem,25vh)] overflow-y-auto"
       />
