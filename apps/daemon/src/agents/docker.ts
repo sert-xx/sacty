@@ -286,6 +286,9 @@ export function dockerRunArgs(input: {
     "no-new-privileges",
     "--cap-drop",
     "ALL",
+    // PID 1 を init にして、終わった子プロセスを回収させる。エージェントの CLI が PID 1 だと、テストなどで
+    // 止めたプロセスがゾンビとして残り、プロセスの後始末を確かめるテストが環境によって失敗する（PBI-155）
+    "--init",
     "-v",
     `${input.workspaceDir}:${CONTAINER_WORKSPACE}`,
     ...input.mounts.flatMap((m) => [

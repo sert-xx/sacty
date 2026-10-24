@@ -52,6 +52,14 @@ const ja = {
     recurrence: "過去の指摘の再発",
     notRecurred: "再発なし",
     recurred: "再発している",
+    /** 人が最終承認で確かめること（PBI-155）。 */
+    humanChecks: "人が確かめること",
+    humanChecksHint:
+      "ゴールガーディアンが作業領域では確かめられなかったことです。実装の PR をマージする前に確かめてください。",
+    environmentFailure: (detail: string) => `環境によると判断したテストの失敗：${detail}`,
+    environmentOnly: "環境による失敗だけ",
+    environmentOnlyHint:
+      "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
     /** テストの仕組みが無いタスク（PBI-94）。 */
     noTestsTitle: "テストで検証していません",
     noTestsAddedTitle: "実装で用意したテストで検証しました",
@@ -264,6 +272,14 @@ const en: PartsMessages = {
     recurrence: "Recurrence of past comments",
     notRecurred: "Not recurring",
     recurred: "Recurring",
+    humanChecks: "For a person to check",
+    humanChecksHint:
+      "The Goal Guardian could not check these in the workspace. Check them before merging the implementation PR.",
+    environmentFailure: (detail) =>
+      `Test failure judged to be caused by the environment: ${detail}`,
+    environmentOnly: "Environment failures only",
+    environmentOnlyHint:
+      "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment, so the tests count as passed.",
     noTestsTitle: "Not verified by tests",
     noTestsAddedTitle: "Verified by the tests added in the implementation",
     noTestsAddedFailedTitle: "The tests added in the implementation failed",

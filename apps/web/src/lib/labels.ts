@@ -8,6 +8,7 @@ import {
   formatUsd,
   GATED_STEPS,
   gatePullRequest,
+  guardianTestsPassed,
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
@@ -120,6 +121,8 @@ export type TestRunView = {
   durationMs?: number;
   note?: NonNullable<Task["lastTests"]>["note"];
   byGuardian?: true;
+  /** 環境によるとゴールガーディアンが判断したテストの失敗（PBI-155）。 */
+  environmentFailures?: string[];
 };
 
 /**
@@ -142,8 +145,11 @@ export function verificationResults(task: Task): {
     ? {
         command: review.tests.command,
         ...(review.tests.exitCode !== undefined ? { exitCode: review.tests.exitCode } : {}),
-        passed: review.tests.exitCode === 0,
+        passed: guardianTestsPassed(review.tests),
         output: review.tests.output,
+        ...(review.tests.environmentFailures
+          ? { environmentFailures: review.tests.environmentFailures }
+          : {}),
         at: review.at,
         byGuardian: true,
       }

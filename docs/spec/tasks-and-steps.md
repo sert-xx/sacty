@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -556,13 +556,17 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   そのイメージが `images` から消えていれば、実行せずに一時停止する（`verify.testsUnavailable`）。
   実装の工程がサービスを使うなら、テストの前に起動してつなぐ（[サービス](services.md#いつ起動するか)）。
 - テスト（検証）のコマンド（オーケストレーターの `testCommand`。テストの仕組みが無いタスクでは実装が申告したコマンド）があれば、指示（`testRunLines`）で、判定の前にそのコマンドを作業領域で実行させる。
-  セットアップ（依存関係の取得など）はしてよいこと、出力は末尾だけでなく全体（コマンドが実行するすべての種類のテスト）を確かめること、終了コードが 0 で失敗・エラーのテストが無いときだけ通ったものとすること、テストやコマンドを変えて通さないことを指示する。
+  セットアップ（依存関係の取得など）はしてよいこと、出力は末尾だけでなく全体（コマンドが実行するすべての種類のテスト）を確かめること、終了コードが 0 で失敗・エラーのテストが無いときだけ通ったものとすること（失敗がすべて環境によるときは下の「人が確かめること」）、テストやコマンドを変えて通さないことを指示する。
   観点に対応するテストが実行されて通っているか（スキップ・除外されていないか）も確かめさせ、判断の根拠は、差分と、作業領域の実装後のコード・ゴールガーディアンが実行したテストの結果にする。
-- 実行したテストは、判定と同じ `sacty-final-review` の中の `tests`（`command`・`exitCode`・`output`（結果の抜粋）・`missingCommands`）で申告させる。
-  sacty は `FinalReviewed` の `tests` に記録する（`command` は sacty が渡したコマンド。`output` は 8,000 文字まで）。
+- 実行したテストは、判定と同じ `sacty-final-review` の中の `tests`（`command`・`exitCode`・`output`（結果の抜粋）・`missingCommands`・`environmentFailures`）で申告させる。
+  sacty は `FinalReviewed` の `tests` に記録する（`command` は sacty が渡したコマンド。`output` は 8,000 文字まで。`environmentFailures` は終了コードが 0 でないときだけ）。
+- 指示（`humanCheckLines`）で、作業領域では確かめられないことと、環境によるテストの失敗を、不合格の理由にせずに人の確認に回させる（PBI-155）。
+  - 承認済みの受け入れの確かめ方のうち、作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）は、確かめられる範囲（合成の入力・イベントなど）をテストが検証しているかで判定させ、残りを `humanChecks` に書かせる。テストやコードで確かめられるのに確かめていないことは、`humanChecks` に回さずに不合格の理由にさせる。
+  - テストのコマンドがあるときは、失敗がすべて環境によるもの（変更を外した起点の状態でも同じように失敗する、または差分と関係の無い環境の要因で失敗すると確かめられる）なら、失敗したテストごとに名前と根拠を `tests.environmentFailures` に書かせ、テストの失敗を理由に不合格にさせない。1件でも変更によるもの・環境によると確かめられないものがあれば、空にさせる。
+  - sacty は `humanChecks`（文字列の項目だけ）を `FinalReviewed` に記録する。
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
-  - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したときだけ合格にする（申告が無い・0 以外なら、観点の判定にかかわらず不合格）。
+  - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
   - 実装がテストを対応させていない観点は、ゴールガーディアンの判定にかかわらず不合格にし、理由を `review.viewpointUnmapped` にする（指示にも、その観点を不合格にするよう書く）。
     テストの仕組みが無いタスクには当てない。
   - 観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`（要求要件も無ければ、タスクの目的。上の「工程の見直し」）。
@@ -574,9 +578,10 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
   合格なら、実装の工程のまま、sacty が実装の PR を作り、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
-  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`extractFinalReview`）
+  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
   やり直しの指示には、最終レビューの所見・ゴールガーディアンが実行したテスト（コマンド・終了コード・結果の抜粋）・検証できなかった観点を渡す（`feedbackLines`）。
+  環境によると判断した失敗は、実装で直す対象ではないと添えて渡す。
   続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
@@ -606,7 +611,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   今の提出ではまだ実行・判定していないことは、見出しの横の補足（ツールチップ）に出す。
   テストの仕組みが無いタスクのテストの無い観点も、今の提出の最終レビューがあるときだけ「目的から判定」にし、検証待ちの間（目的からの判定がまだ）は「未実行」にする（`judgedByGoalForCurrent`）。
 - PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`）。
-  チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コードを出す（`chatJudgementLines`）。
+  環境による失敗だけで合格にしたときは、終了コードの後ろに「環境による失敗だけ。下の「人が確かめること」」を添える。
+  チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
+- 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155）。
+  - PR の本文：最終レビューの下に「人が確かめること」のチェックリスト（`- [ ]`）にする。改行は空白にして1項目1行にする（`humanCheckBodyLines`）。
+  - 実装の成果物：最終レビューの欄に「人が確かめること」として出し、ゴールガーディアンが実行したテストには「環境による失敗だけ」を添える（`HumanChecks`）。どちらも無ければ出さない。
+  - 環境による失敗だけで通ったテストは、対応表の実行結果を「テスト合格」にする（`verificationResults` の `passed`）。
 
 ### 検証に通った実装の PR
 

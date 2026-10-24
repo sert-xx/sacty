@@ -493,6 +493,9 @@ describe("dockerの引数", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--rm", "--cap-drop", "ALL", "/ws/t1:/workspace"]),
     );
+    // PID 1 を init にして、ゾンビのプロセスを回収させる（PBI-155）。イメージより前（docker の引数）に置く
+    expect(args.indexOf("--init")).toBeGreaterThan(-1);
+    expect(args.indexOf("--init")).toBeLessThan(args.indexOf("sacty-agent:test"));
     // 作業領域は書き込める形でマウントする。要求要件・設計などの工程には使い捨ての写しを渡すので、
     // リポジトリの手順のセットアップなども実行でき、変更は残らない（PBI-40）
     expect(args.join(" ")).not.toContain(":/workspace:ro");

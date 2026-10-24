@@ -5,6 +5,7 @@ import {
   ExportVia,
   type FinalReview,
   GATHERED_BRIEF_MAX,
+  guardianTestsPassed,
   type IntegrationReview,
   InvestigationKind,
   investigationIsGoal,
@@ -403,6 +404,13 @@ function feedbackLines(task: Task): string[] {
     ...(r.tests
       ? [
           `テスト：${r.tests.command}（終了コード ${r.tests.exitCode ?? "申告なし"}）`,
+          // 環境によると判断した失敗は、実装を直しても直らないので、直す対象から外す（PBI-155）
+          ...(r.tests.environmentFailures
+            ? [
+                "環境によるとゴールガーディアンが判断したテストの失敗（実装で直す対象ではありません）：",
+                ...r.tests.environmentFailures.map((f) => `- ${f}`),
+              ]
+            : []),
           ...(r.tests.output
             ? ["テストの結果の抜粋：", r.tests.output.slice(-OUTPUT_IN_PROMPT)]
             : []),
@@ -502,6 +510,18 @@ function earsLines(): string[] {
     `- 受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ${EARS_SKILL} があれば、それに従う`,
     "  - 1つの要求を1文にし、次のどれかの文型で書く：常時「<システム>は、<応答>しなければならない。」、イベント駆動「<きっかけ>とき、…」、状態駆動「<状態>の間、…」、望まない振る舞い「<望まない事象>場合、…」、オプション「<機能>を含む場合、…」（状態ときっかけの両方が要れば組み合わせる）",
     "  - 要求に ID（R-1、R-2…）を付け、応答は第三者が合否を決められる形（数・時間・状態など）で書く。正常系に対応する異常系も、望まない振る舞いの文型で書く",
+  ];
+}
+
+/**
+ * 要求要件の工程への、受け入れの確かめ方の書き方（PBI-155）。最終レビューは作業領域（コンテナ）でテストを実行して
+ * 確かめるので、そこで確かめられないもの（実機など）は、人が最終承認で確かめる項目として分けて書かせる。
+ */
+function acceptanceCheckLines(): string[] {
+  return [
+    "- 受け入れの確かめ方を書くときは、次の2つに分けて書く",
+    "  - 自動のテストで確かめること：エージェントが作業領域（コンテナ）でテストを実行して確かめる。実機や特定の環境の振る舞いは、合成の入力・イベントで模擬して確かめる形にする",
+    "  - 人が確かめること：作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）。最終承認で人が確かめる項目になる。無ければ書かない",
   ];
 }
 
@@ -997,6 +1017,7 @@ export function buildPrompt(
         "- 何を実現するかを1〜3文で書く",
         ...earsLines(),
         "- 実装方法には踏み込まない",
+        ...acceptanceCheckLines(),
         "- タスクの内容から判断できないことは「確認したいこと」として最後に列挙する",
         ...codeLines(task),
         "",
@@ -1345,6 +1366,12 @@ export type ExtractedProposal = Pick<
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
+/** 改行をまたがない1行にする（Markdown のリストの1項目に入れるため。PBI-155）。 */
+const oneLine = (v: string) => v.replace(/\s*\n\s*/g, " ");
+
+/** 文字列の配列として読む（文字列でないもの・空のものは除く。PBI-155）。 */
+const texts = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) : []);
+
 /**
  * エージェントの出力から、指摘への対応とテスト観点（JSONのブロック）を取り出す。
  * 読んだブロックは表示用の本文から取り除く。同じ種類のブロックが複数あれば最後のものを使う。
@@ -1638,7 +1665,7 @@ export function buildFinalReviewPrompt(
           "- 実装の説明は工程エージェントの申告なので、コードと差分で裏付けられることだけを根拠にする",
           ...(testCommand
             ? [
-                "- 実行したテストの結果も根拠にする（テストが通らなければ、すべての観点を不合格にする）",
+                "- 実行したテストの結果も根拠にする（テストが通らなければ、すべての観点を不合格にする。失敗がすべて環境によるものなら、下の「環境によるテストの失敗」のとおりにする）",
               ]
             : []),
           "- 人間の過去の指摘ごとに、指摘された問題が今回の実装で再発していないかを判定する",
@@ -1656,7 +1683,7 @@ export function buildFinalReviewPrompt(
           "- テスト観点ごとに、対応するテストがその観点を本当に検証しているか（入力を与え、期待結果を確かめているか）を判定する",
           "- 対応するテストが、あなたが実行したテストの中で実行され、通っているか（スキップ・除外されていないか）を確かめる",
           "- テストが通っていても、観点を検証していない（形だけ・期待結果を確かめていない・対応が違う）なら不合格にする",
-          "- テストが通らなければ、通らなかったテストに関わる観点を不合格にし、失敗したテストと理由を書く",
+          "- テストが通らなければ、通らなかったテストに関わる観点を不合格にし、失敗したテストと理由を書く（失敗がすべて環境によるものなら、下の「環境によるテストの失敗」のとおりにする）",
           ...(unmapped.length > 0
             ? [
                 `- 観点 ${unmapped.join("・")} には、実装がテストを対応させていません。その観点は不合格にする`,
@@ -1666,6 +1693,7 @@ export function buildFinalReviewPrompt(
           "- 判断の根拠は、下の差分と、作業領域の実装後のコード・あなたが実行したテストの結果だけにする",
           "",
         ]),
+    ...humanCheckLines(Boolean(testCommand)),
     ...(basis === "reproduce"
       ? [
           "--- タスク（不具合） ---",
@@ -1736,17 +1764,43 @@ export function buildFinalReviewPrompt(
               exitCode: 0,
               output: "結果の抜粋（実行した件数・失敗したテストとその理由）",
               missingCommands: [],
+              environmentFailures: [],
             },
+            humanChecks: [],
           }
-        : {},
+        : { humanChecks: [] },
     ),
     ...(testCommand
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
           "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。",
+          "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。それ以外は空にしてください。",
         ]
       : []),
+    "humanChecks には、人が最終承認で確かめることを1件ずつ書いてください（無ければ空）。",
   ].join("\n");
+}
+
+/**
+ * 最終レビューで、人が最終承認で確かめることに回すもの（PBI-155）。作業領域（コンテナ）では確かめられない確かめ方と、
+ * 環境によるテストの失敗は、それを理由に不合格にせず、人が確かめる項目として記録する（何度やり直しても直らないため）。
+ */
+function humanCheckLines(withTests: boolean): string[] {
+  return [
+    "--- 人が確かめること ---",
+    "- 承認済みの受け入れの確かめ方のうち、作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）は、それを理由に不合格にしない。確かめられる範囲（合成の入力・イベントなど）をテストが検証しているかで判定し、残りを humanChecks に書く",
+    "- humanChecks には、作業領域では確かめられず、人が確かめるしかないことだけを書く。テストやコードで確かめられるのに確かめていないことは、humanChecks に回さずに不合格の理由にする",
+    ...(withTests
+      ? [
+          "",
+          "--- 環境によるテストの失敗 ---",
+          "- テストのコマンドの失敗が、すべて環境によるものなら、テストの失敗を理由に不合格にしない。環境によるものとは、変更を外した起点の状態でも同じように失敗する（起点のコミットを別の場所に取り出して同じテストを実行するなど）、または差分と関係の無い環境の要因（プロセス・権限・ネットワーク・OS など）で失敗すると確かめられるもの",
+          "- そのときは、失敗したテストごとに、名前と環境によると判断した根拠を tests.environmentFailures に書く。観点に対応するテストは、通っていることを確かめる",
+          "- 失敗のうち1件でも、変更によるもの・環境によると確かめられないものがあれば、environmentFailures を空にして、テストが通らなかったものとして判定する",
+        ]
+      : []),
+    "",
+  ];
 }
 
 /** ゴールガーディアンが、最終レビューの中でテスト（検証）のコマンドを実行する手順。 */
@@ -1759,7 +1813,7 @@ function testRunLines(command: string, byPerson = false): string[] {
     "```",
     "- 必要なら、先にリポジトリの手順にあるセットアップ（依存関係の取得など）をしてから実行する",
     "- 出力は、末尾だけでなく全体を確かめる。コマンドが複数の種類のテスト（単体・結合・E2E など）を実行するなら、すべての種類の結果を確かめる",
-    "- コマンドの終了コードが 0 で、失敗・エラーのテストが無いときだけ、テストが通ったものとする",
+    "- コマンドの終了コードが 0 で、失敗・エラーのテストが無いときだけ、テストが通ったものとする（失敗がすべて環境によるときの扱いは、下の「環境によるテストの失敗」）",
     "- テストのコマンドやテストのコードを変えて通さない（作業領域の変更は残りませんが、判定はコマンドのとおりの結果でする）",
     "",
   ];
@@ -1779,7 +1833,7 @@ export function extractFinalReview(
     /** 実装がテストを対応させていない観点。ゴールガーディアンの判定にかかわらず、不合格にする。 */
     unmappedViewpoints?: readonly string[];
   } = {},
-): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary" | "tests"> & {
+): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary" | "tests" | "humanChecks"> & {
   /** テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。 */
   missingCommands: string[];
 } {
@@ -1791,11 +1845,15 @@ export function extractFinalReview(
       ? { ...v, verified: false, reason: message("review.viewpointUnmapped") }
       : v,
   );
+  // 人が最終承認で確かめること（PBI-155）
+  const humanChecks = texts(found?.raw.humanChecks);
+  const checks = humanChecks.length > 0 ? { humanChecks } : {};
   const command = options.testCommand;
   if (!command) {
     return {
       ...verdicts,
       viewpoints,
+      ...checks,
       passed: verdicts.passed && viewpoints.every((v) => v.verified),
       missingCommands: [],
     };
@@ -1804,10 +1862,14 @@ export function extractFinalReview(
   const raw = reported && typeof reported === "object" ? (reported as Record<string, unknown>) : {};
   const exitCode =
     typeof raw.exitCode === "number" && Number.isInteger(raw.exitCode) ? raw.exitCode : undefined;
+  // 環境による失敗（PBI-155）は、テストのコマンドが失敗したときだけ読む（成功したのに書いてあっても使わない）
+  const environmentFailures =
+    exitCode !== undefined && exitCode !== 0 ? texts(raw.environmentFailures) : [];
   const tests = {
     command,
     ...(exitCode !== undefined ? { exitCode } : {}),
     output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
+    ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
   };
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
@@ -1823,8 +1885,9 @@ export function extractFinalReview(
   return {
     ...verdicts,
     viewpoints,
-    // テストが通った（終了コード 0）と申告していなければ、観点の判定にかかわらず不合格
-    passed: verdicts.passed && viewpoints.every((v) => v.verified) && exitCode === 0,
+    ...checks,
+    // テストが通った（終了コード 0、または環境による失敗だけ。PBI-155）と申告していなければ、観点の判定にかかわらず不合格
+    passed: verdicts.passed && viewpoints.every((v) => v.verified) && guardianTestsPassed(tests),
     tests,
     missingCommands,
   };
@@ -2075,7 +2138,7 @@ function resultTableLines(task: Task): string[] {
     }),
     "",
     guardianTests
-      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.exitCode === 0 ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
+      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
       : tests
         ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
         : task.noTestsReason
@@ -2107,6 +2170,24 @@ function finalReviewLines(task: Task): string[] {
           ),
         ]
       : []),
+    ...humanCheckBodyLines(review),
+  ];
+}
+
+/**
+ * PR の本文の、人が最終承認で確かめること（PBI-155）。ゴールガーディアンが作業領域では確かめられないとしたことと、
+ * 環境によると判断したテストの失敗。
+ */
+function humanCheckBodyLines(review: FinalReview | undefined): string[] {
+  const checks = review?.humanChecks ?? [];
+  const failures = review?.tests?.environmentFailures ?? [];
+  if (checks.length === 0 && failures.length === 0) return [];
+  return [
+    "",
+    "**人が確かめること**（作業領域では確かめられなかったこと。マージの前に確かめてください）",
+    "",
+    ...checks.map((c) => `- [ ] ${oneLine(c)}`),
+    ...failures.map((f) => `- [ ] 環境によると判断したテストの失敗：${oneLine(f)}`),
   ];
 }
 
@@ -2744,8 +2825,12 @@ export function chatJudgementLines(task: Task): string[] {
       ...(r.tests
         ? [
             `  - ゴールガーディアンが実行したテスト：${r.tests.command}・終了コード ${r.tests.exitCode ?? "申告なし"}`,
+            ...(r.tests.environmentFailures ?? []).map(
+              (f) => `  - 環境によると判断したテストの失敗：${f}`,
+            ),
           ]
         : []),
+      ...(r.humanChecks ?? []).map((c) => `  - 人が確かめること：${c}`),
       ...r.viewpoints.map(
         (v) =>
           `  - [${v.viewpointId}] ${v.verified ? "検証している" : "検証していない"}：${ja(v.reason)}`,
