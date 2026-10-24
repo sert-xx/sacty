@@ -27,6 +27,35 @@ function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
 }
 
 /**
+ * 最終レビューで、人が最終承認で確かめること（PBI-155）。作業領域では確かめられなかったことと、環境によると判断した
+ * テストの失敗。無ければ出さない。
+ */
+function HumanChecks({ review }: { review: NonNullable<Task["lastReview"]> }) {
+  const m = useMessages().parts.implementation;
+  const items = [
+    ...(review.humanChecks ?? []),
+    ...(review.tests?.environmentFailures ?? []).map((f) => m.environmentFailure(f)),
+  ];
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-warn-line bg-warn-soft p-3">
+      <p className="flex items-center gap-1 font-semibold text-warn">
+        {m.humanChecks} <Hint text={m.humanChecksHint} />
+      </p>
+      <ul className="flex list-disc flex-col gap-1 pl-5">
+        {items.map((item, i) => (
+          // 同じ文の項目が重なることがあるので、順番を key にする（並びは記録のとおりで変わらない）
+          // biome-ignore lint/suspicious/noArrayIndexKey: 記録の順のまま変わらない一覧
+          <li key={i} className="break-words">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * 実装の成果物。実装の説明と、「観点 → テスト → 実行結果」の対応、
  * ゴールガーディアンが最終レビューの中で実行したテストの結果（それより前の版では sacty が実行したもの）、最終レビューを出す。
  */
@@ -153,7 +182,7 @@ export function Implementation({ task }: { task: Task }) {
                           <Pill tone={NONE}>{m.judgedByGoal}</Pill>
                         ) : !tests || !testsCurrent || (noTests && list.length === 0) ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
-                        ) : tests.exitCode === 0 && list.length > 0 ? (
+                        ) : tests.passed && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>
                         ) : (
                           <Pill tone={NG}>{m.testsFailed}</Pill>
@@ -191,6 +220,13 @@ export function Implementation({ task }: { task: Task }) {
             {tests.byGuardian && <Hint text={m.guardianTestRunHint} />}
             {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
+            {/* 環境による失敗だけで、テストは通ったものとした（PBI-155） */}
+            {tests.environmentFailures && (
+              <>
+                <Pill tone={NG}>{m.environmentOnly}</Pill>
+                <Hint text={m.environmentOnlyHint} />{" "}
+              </>
+            )}
             <span className="text-xs text-muted-foreground">
               {m.runMeta(
                 tests.exitCode,
@@ -230,6 +266,7 @@ export function Implementation({ task }: { task: Task }) {
             </span>
           </p>
           {review.summary && <p className="break-words">{messages.labels.text(review.summary)}</p>}
+          <HumanChecks review={review} />
           {review.remarks.length > 0 && (
             <>
               <p className="text-xs text-muted-foreground">{m.recurrence}</p>

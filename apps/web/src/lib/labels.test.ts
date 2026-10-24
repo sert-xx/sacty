@@ -1475,6 +1475,22 @@ describe("ゴールガーディアンが最終レビューの中で実行した�
       reviewCurrent: true,
     });
     expect(verificationResults(task({ lastReview: review(undefined) })).tests?.passed).toBe(false);
+    // 環境による失敗だけなら、終了コードが 0 でなくても通ったものとする（PBI-155）
+    const environment = review(1);
+    const failures = ["processes.test.ts：起点でも失敗する"];
+    expect(
+      verificationResults(
+        task({
+          lastReview: {
+            ...environment,
+            tests: { ...environment.tests, environmentFailures: failures },
+          },
+        }),
+      ).tests,
+    ).toMatchObject({ exitCode: 1, passed: true, environmentFailures: failures });
+    expect(verificationResults(task({ lastReview: review(1) })).tests).not.toHaveProperty(
+      "environmentFailures",
+    );
     // 実装で用意したテスト（PBI-94）の結果も、ゴールガーディアンが実行したものから決める
     const m = taskMessages.ja;
     const noTests = { noTestsReason: "無い", addedTestCommand: "make test" };

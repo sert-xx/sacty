@@ -10,7 +10,8 @@
 
 ## コンテナ
 
-- `docker run --rm --name sacty-run-<実行 ID> --security-opt no-new-privileges --cap-drop ALL -v <作業領域>:/workspace -w /workspace` で起動する。
+- `docker run --rm --name sacty-run-<実行 ID> --security-opt no-new-privileges --cap-drop ALL --init -v <作業領域>:/workspace -w /workspace` で起動する。
+  `--init` で PID 1 を init にし、終わった子プロセス（ゾンビ）を回収させる（エージェントの CLI が PID 1 だと回収されず、プロセスの後始末を確かめるテストが環境によって失敗する。PBI-155）。
   必要なら次を足す。
   - `--network <ネットワーク>`：docker compose のサービスを起動した実行（[サービス](services.md)）。
   - `--add-host host.docker.internal:<ホストのアドレス>`：ゲートウェイを使う実行。

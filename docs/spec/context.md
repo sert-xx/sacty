@@ -136,11 +136,12 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 要求要件の工程の指示は、受け入れ条件を EARS の形式で書き、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
 プロジェクトのコンテキストでスキルを消していても形式がわかるよう、文型・ID・異常系の書き方は指示にも書く。
+受け入れの確かめ方を書くときは、自動のテストで確かめること（実機や特定の環境の振る舞いは、合成の入力・イベントで模擬する）と、人が確かめること（作業領域では確かめられない実機・特定の OS・入力方式・外部のサービス・目視など。最終承認で人が確かめる項目になる）に分けて書くよう指示する（`acceptanceCheckLines`。PBI-155）。
 既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
 
 関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)
 
-コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`）
+コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`・`acceptanceCheckLines`）
 
 ## 既定のメモリー用スキル
 

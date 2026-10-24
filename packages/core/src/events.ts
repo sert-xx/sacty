@@ -1043,7 +1043,18 @@ export const GuardianTests = z.object({
   exitCode: z.number().int().optional(),
   /** ゴールガーディアンが写した、テストの結果の抜粋。 */
   output: z.string().default(""),
+  /**
+   * 失敗がすべて環境によるもの（変更を外しても同じように失敗する・差分と関係の無い環境の要因）とゴールガーディアンが判断したときの、
+   * 失敗したテストごとの名前と根拠（PBI-155）。あれば、終了コードが 0 でなくてもテストは通ったものとし、人が最終承認で確かめる。
+   */
+  environmentFailures: z.array(z.string()).optional(),
 });
+
+/** ゴールガーディアンが実行したテストが通ったか。終了コード 0、または環境による失敗だけのとき（PBI-155）。 */
+export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boolean {
+  if (tests.exitCode === undefined) return false;
+  return tests.exitCode === 0 || (tests.environmentFailures?.length ?? 0) > 0;
+}
 
 const FinalReviewed = z.object({
   type: z.literal("FinalReviewed"),
@@ -1055,6 +1066,11 @@ const FinalReviewed = z.object({
     summary: DaemonText,
     /** ゴールガーディアンが実行したテスト（テストのコマンドがあるとき。それより前の版の記録には無い）。 */
     tests: GuardianTests.optional(),
+    /**
+     * 人が最終承認で確かめること（PBI-155）。承認済みの確かめ方のうち、作業領域（コンテナ）では確かめられないもの
+     * （実機・特定の OS・入力方式など）。それより前の版の記録には無い。
+     */
+    humanChecks: z.array(z.string()).optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,

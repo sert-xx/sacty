@@ -8,7 +8,7 @@ Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty n
 
 ## Container
 
-- The container starts with `docker run --rm --name sacty-run-<run ID> --security-opt no-new-privileges --cap-drop ALL -v <workspace>:/workspace -w /workspace`. sacty adds the following when needed.
+- The container starts with `docker run --rm --name sacty-run-<run ID> --security-opt no-new-privileges --cap-drop ALL --init -v <workspace>:/workspace -w /workspace`. `--init` makes PID 1 an init that reaps finished child processes (zombies); when the agent's CLI is PID 1 they are not reaped, and tests that check process cleanup fail because of the environment (PBI-155). sacty adds the following when needed.
   - `--network <network>`: runs that started docker compose services ([Services](services.en.md)).
   - `--add-host host.docker.internal:<host address>`: runs that use the gateway. The address is `gateway.host_address` (default `host-gateway`).
   - Extra mounts: only locations sacty prepares. These include the config location, the review diff `/sacty-review` read-only, the session logs of each run for answers to questions `/sacty-logs` read-only, and memories `/sacty-memory/project` and `/sacty-memory/repository` read-only ([Memory](memory.en.md)).
