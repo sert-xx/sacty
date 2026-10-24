@@ -113,11 +113,29 @@
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
+### 要求要件・設計の構成と分量
+
+- 要求要件・設計の工程の指示に、人間が承認で読む量を抑える決まりを書く（`readerLoadLines`）。
+- 成果物の最初（要約を書くなら、その直後）に、次の2つの節を置かせ、詳細はそのあとに書かせる。
+  - 「確認したいこと」：人間が決めないと確定できないこと。重要な順に最大 5 件（`QUESTIONS_MAX`）で、1件ごとに問い・推奨の答え・その理由を書く。無ければ「なし」。
+  - 「既定で決めたこと」：依頼に無いが、エージェントが既存のコード・規約・慣習から決めたこと。確認したいことが上限を超えたら、重要度の低いものを推奨の答えで決めて、ここに回す。
+- 詳細には、依頼と今回の変更に要ることだけを書かせる。
+  既存の仕組みが保証していて今回の変更で変わらない振る舞い、今回の変更で起こりえない異常系・境界・非機能、当てはまらない観点のための「対象外」の節、依頼に無い機能、同じことの繰り返しは書かせない。
+  分量は変更の規模に合わせさせる。
+- 設計の節は、構成・データ・処理の流れ・エラー時の振る舞い・影響範囲のうち、今回の変更で書くことがあるものだけにさせる。
+  テスト観点は受け入れ条件をすべて網羅させ、異常系と境界値は今回の変更で新しく起こりうるものを含めさせる。
+- sacty は、この2つの節を読み取らない（成果物の本文のまま、承認の画面・PR に出る）。
+
+関係する ADR: [要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-reader-load-of-requirements-and-design.md)
+
+コード: `apps/daemon/src/prompts.ts`（`readerLoadLines`・`QUESTIONS_MAX`・`earsLines`）
+
 ### 提出の前のセルフレビュー
 
 - 要求要件・設計・実装の工程（`SELF_REVIEW_STEPS`。実装は、不具合の修正・テストの仕組みが無いタスクも含む）の指示に、提出の前に既定のスキル `review-dispatch` の `self-review` の流れでセルフレビューし、`must` の指摘が無くなる（パスする）まで修正と再レビューを繰り返すことを書く（`selfReviewLines`）。
   主対象の種類は、要求要件・設計が `design-doc`（下書きを作業領域の外の一時ファイルに書いて対象にする）、実装が `code`。
   回数の上限はスキルの規則（初回を含めて最大 5 回）で、上限に達しても `must` が残れば残った指摘を報告して提出させる。
+  `design-doc` では、記述を足す `should` は作者の判断で直し、書きすぎを指摘する観点 D-10 の `should` は直す（スキルの規則。[コンテキスト](context.md)）。
   差し戻し・PR の指摘によるやり直しも、同じ指示で実行する。
 - 結果は、見出し `sacty-self-review` の JSON（`rounds`・`passed`・`remaining`・`notReviewed`・`summary`）で報告させる。
   sacty は最後のものだけを読み（`extractBlocks`）、報告はすべて成果物の本文から取り除く。
