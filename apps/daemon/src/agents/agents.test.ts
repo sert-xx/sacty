@@ -10,7 +10,12 @@ import { MemorySecretStore } from "../secrets.js";
 import { waitFor } from "../testing/wait.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation, type Invocation } from "./invocation.js";
-import { classifyFailure, parseClaudeResult, parseCodexEvents } from "./parse.js";
+import {
+  ClaudeOutcomeReader,
+  classifyFailure,
+  parseClaudeResult,
+  parseCodexEvents,
+} from "./parse.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -106,6 +111,8 @@ describe("認証方式ごとの環境変数", () => {
       "--output-format",
       "stream-json",
       "--verbose",
+      "--disallowedTools",
+      "ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger",
       "--add-dir",
       "/sacty-logs",
     ]);
@@ -161,7 +168,7 @@ describe("認証方式ごとの環境変数", () => {
     expect(claude.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
     // 出力から取り除けるように、取り出した値を知らせる
     expect(used).toContain("ghp-value");
-    expect(claude.command.slice(5)).toEqual([
+    expect(claude.command.slice(7)).toEqual([
       "--mcp-config",
       "/tmp/sacty-claude-config/mcp.json",
       "--strict-mcp-config",
@@ -248,6 +255,11 @@ describe("認証方式ごとの環境変数", () => {
     expect(inv.command.slice(0, 2)).toEqual(["claude", "-p"]);
     // 途中の出来事も出させる（セッションログ。PBI-62）。-p で stream-json を使うには --verbose が要る
     expect(inv.command.slice(2, 5)).toEqual(["--output-format", "stream-json", "--verbose"]);
+    // 一度きりの実行なので、後で起こす予約・定期の実行は使わせない（PBI-154）
+    expect(inv.command.slice(5, 7)).toEqual([
+      "--disallowedTools",
+      "ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger",
+    ]);
   });
 
   it("APIキーではANTHROPIC_API_KEYだけを渡し、モデルは引数で指定する", async () => {
@@ -533,6 +545,79 @@ describe("出力の読み取り", () => {
       kind: "completed",
       output: "# 要求要件",
       usage: { input: 120, cacheRead: 3000, cacheWrite: 400, output: 50 },
+    });
+  });
+
+  it("result が何回も出たら、使用量は実行の全体から読み、本文は目印を含む最後の result から読む（PBI-154）", () => {
+    const turn = (result: string, usage: number, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        type: "result",
+        is_error: false,
+        result,
+        usage: {
+          input_tokens: usage,
+          cache_read_input_tokens: usage * 10,
+          cache_creation_input_tokens: usage * 2,
+          output_tokens: usage * 3,
+        },
+        ...extra,
+      });
+    const modelUsage = {
+      "claude-opus-5-5": {
+        inputTokens: 300,
+        cacheReadInputTokens: 9000,
+        cacheCreationInputTokens: 700,
+        outputTokens: 800,
+      },
+      "claude-sonnet-5-5": {
+        inputTokens: 30,
+        cacheReadInputTokens: 900,
+        cacheCreationInputTokens: 70,
+        outputTokens: 80,
+      },
+    };
+    const verdict = '```json\n{"sacty-review-verdict": {"verdict": "suggestions"}}\n```';
+    const lines = [
+      turn("待っています。", 1),
+      turn(`**総評**\n\n本文\n\n${verdict}`, 2),
+      // 最終の答えの後の通知への返答（判定の塊の名前に触れるだけの文は、目印に当たらない）
+      turn(
+        "レビューは終わっています。判定の sacty-review-verdict は前のメッセージにあります。",
+        4,
+        {
+          modelUsage,
+        },
+      ),
+    ].join("\n");
+    const total = { input: 330, cacheRead: 9900, cacheWrite: 770, output: 880 };
+    // 目印が無ければ、これまでどおり最後の result。使用量は modelUsage の合計
+    expect(parseClaudeResult(lines, 0)).toEqual({
+      kind: "completed",
+      output: "レビューは終わっています。判定の sacty-review-verdict は前のメッセージにあります。",
+      usage: total,
+    });
+    const reader = new ClaudeOutcomeReader(undefined, { prefer: '"sacty-review-verdict"' });
+    reader.push(lines);
+    expect(reader.finish(0)).toEqual({
+      kind: "completed",
+      output: `**総評**\n\n本文\n\n${verdict}`,
+      usage: total,
+    });
+    // セッションを再開・複製した実行は、modelUsage に前の実行の分も入るので、各 result の usage を合計する
+    const resumed = new ClaudeOutcomeReader(undefined, { resumed: true });
+    resumed.push(lines);
+    expect(resumed.finish(0)).toMatchObject({
+      kind: "completed",
+      usage: { input: 7, cacheRead: 70, cacheWrite: 14, output: 21 },
+    });
+    // 目印を含む result が無ければ、最後の result
+    const none = new ClaudeOutcomeReader(undefined, { prefer: '"sacty-review-verdict"' });
+    none.push([turn("待っています。", 1), turn("終わりました。", 2)].join("\n"));
+    // modelUsage が無ければ、各 result の usage（その番の分）を合計する
+    expect(none.finish(0)).toEqual({
+      kind: "completed",
+      output: "終わりました。",
+      usage: { input: 3, cacheRead: 30, cacheWrite: 6, output: 9 },
     });
   });
 
@@ -1846,6 +1931,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
   it("Claude Code：--resume で再開し、複製なら --fork-session を足す。戻すファイルの場所を渡す", async () => {
     const plain = await buildInvocation(claude, "prompt", secrets, () => {}, "orchestrator");
     expect(plain.command).not.toContain("--resume");
+    expect(plain.resumed).toBeUndefined();
     expect(plain.stage?.sessionDir).toBeUndefined();
 
     const resumed = await buildInvocation(
@@ -1861,6 +1947,8 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     const i = resumed.command.indexOf("--resume");
     expect(resumed.command[i + 1]).toBe("abc-123");
     expect(resumed.command).not.toContain("--fork-session");
+    // 再開した実行の modelUsage には前の実行の分も入るので、使用量は各 result の usage から数える（PBI-154）
+    expect(resumed.resumed).toBe(true);
     // 指示は、これまでどおり -p の指示として、標準入力で渡す（PBI-149）
     expect(resumed.command.slice(0, 3)).toEqual(["claude", "-p", "--output-format"]);
     expect(resumed.stdin).toBe("prompt");
@@ -1881,6 +1969,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
       { ...session, fork: true },
     );
     expect(forked.command).toContain("--fork-session");
+    expect(forked.resumed).toBe(true);
     expect(forked.command[forked.command.indexOf("--resume") + 1]).toBe("abc-123");
   });
 

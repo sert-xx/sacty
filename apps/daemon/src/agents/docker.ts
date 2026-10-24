@@ -447,7 +447,12 @@ export class DockerExecutor implements AgentExecutor {
     let outcome: AgentOutcome;
     // 標準出力は全体を持たず、行ごとに読んで最後の答えに要るものだけを持つ（PBI-62）
     const reader =
-      invocation.parser === "codex-jsonl" ? new CodexOutcomeReader() : new ClaudeOutcomeReader();
+      invocation.parser === "codex-jsonl"
+        ? new CodexOutcomeReader()
+        : new ClaudeOutcomeReader(undefined, {
+            ...(invocation.preferResult ? { prefer: invocation.preferResult } : {}),
+            ...(invocation.resumed ? { resumed: true } : {}),
+          });
     try {
       const { exitCode, stderr } = await new Promise<{
         exitCode: number;

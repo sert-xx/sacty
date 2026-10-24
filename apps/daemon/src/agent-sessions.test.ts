@@ -697,6 +697,23 @@ echo '{"type":"result","is_error":false,"result":"done","session_id":"sid-1"}'
     expect(existsSync(join(agent, ".credentials.json"))).toBe(false);
   });
 
+  it("Claude Code：本文にする result の目印と、再開した実行の印を、出力の読み取りに渡す（PBI-154）", async () => {
+    fakeDocker(`echo '{"type":"result","is_error":false,"result":"本文 \\"mark\\"","usage":{"output_tokens":2}}'
+echo '{"type":"result","is_error":false,"result":"後の返答","usage":{"output_tokens":3},"modelUsage":{"m":{"outputTokens":50}}}'
+`);
+    const invocation = await buildInvocation(
+      { ...base, id: "c", runtime: "claude-code", auth: { mode: "subscription", secret: "t" } },
+      "prompt",
+      new MemorySecretStore({ t: "token" }),
+    );
+    const run = () =>
+      new DockerExecutor().run({ runId: "run-1", image: "img", workspaceDir: dir, invocation });
+    expect(await run()).toMatchObject({ output: "後の返答", usage: { output: 50 } });
+    invocation.preferResult = '"mark"';
+    invocation.resumed = true;
+    expect(await run()).toMatchObject({ output: '本文 "mark"', usage: { output: 5 } });
+  });
+
   it("Codex：コンテナで更新された auth.json は写さず、その値も伏せる。失敗した実行も写す", async () => {
     const hostAuth = join(dir, "host-auth.json");
     writeFileSync(hostAuth, '{"tokens":{"access_token":"old-access-token-0000"}}');

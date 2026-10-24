@@ -217,8 +217,8 @@ const TEST_MAP_HEADING = "sacty-test-map";
 export const TEST_COMMAND_FENCE = "sacty-test-command";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 
-/** レビューの判定のブロックの見出し（PBI-88・PBI-111）。 */
-const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
+/** レビューの判定のブロックの見出し（PBI-88・PBI-111）。本文にする result の目印にも使う（PBI-154）。 */
+export const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
 
 /** レビューの指摘の頭（PBI-111）。言語に関わらず、この形で付ける（既定のスキル review・git と同じ）。 */
 export const MUST_TAG = "[要修正]";

@@ -40,7 +40,7 @@
 
 | runtime | コマンド | 設定の場所 |
 | --- | --- | --- |
-| `claude-code` | `claude -p --output-format stream-json --verbose`（指示は標準入力。作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `claude-code` | `claude -p --output-format stream-json --verbose --disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger`（指示は標準入力。一度きりの実行なので、後で起こす予約・定期の実行のツールは使わせない（予約が残ると、最終の答えの後も終わらずに待つ）。作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に `--` と `-`（指示は標準入力）） | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'`（設定の `stub` の出力を返す。AI は呼ばない） | なし |
 
@@ -83,12 +83,15 @@
   - 段階のサブエージェントの定義を置いた実行（`estimateCost`）。
     担当が親と違うモデルで動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないためである（[コンテキストの合成](context.md#実行のときに置くファイル)）。
 
-コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`）、`apps/daemon/src/agents/docker.ts`（`syncBackIfChanged`）、`apps/daemon/src/service.ts`（`executeLogged`・`bedrockOrigin`）
+コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`・`CLAUDE_DISALLOWED_TOOLS`）、`apps/daemon/src/agents/docker.ts`（`syncBackIfChanged`）、`apps/daemon/src/service.ts`（`executeLogged`・`bedrockOrigin`）
 
 ## 出力の扱い
 
 - Claude Code の出力（stream-json）は、最後の `type: "result"` を答えにする。
-  `usage` の `input_tokens`・`cache_read_input_tokens`・`cache_creation_input_tokens`・`output_tokens` をトークン数にする。
+  バックグラウンドの処理（サブエージェント・バックグラウンドのコマンド）の通知が来るたびに番が進み、`result` は何回も出る。
+  レビューの工程は、判定の塊のキー（引用符で囲んだ `"sacty-review-verdict"`）を含む最後の `result` を答えにする（含むものが無ければ最後の `result`）。最終の答えの後の通知への返答を、投稿の本文にしないためである（`preferResult`）。
+  トークン数は、最後の `result` の `modelUsage`（実行の全体。サブエージェントの分も含む）の、モデルごとの `inputTokens`・`cacheReadInputTokens`・`cacheCreationInputTokens`・`outputTokens` の合計にする。
+  `modelUsage` が無いか、保存したセッションを再開・複製した実行（`modelUsage` に前の実行の分も入る）なら、各 `result` の `usage`（その番の分）の `input_tokens`・`cache_read_input_tokens`・`cache_creation_input_tokens`・`output_tokens` の合計にする（`resumed`）。
   `is_error` か終了コードが 0 でなければ失敗。
 - Codex の出力（JSONL）は、`turn.completed` の `usage` を足し合わせ、最後の `agent_message` を答えにする。
   `cached_input_tokens` は `input` から引いてキャッシュの読み出しにする。

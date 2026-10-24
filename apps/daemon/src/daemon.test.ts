@@ -1670,6 +1670,8 @@ describe("工程の実行と費用", () => {
     for (const call of executor.calls) {
       expect(JSON.stringify(call.env)).not.toContain("tool-secret-value");
       expect(call.hostGateway).toBe(true);
+      // 本文にする result の目印は、レビューの工程だけ（PBI-154）
+      expect(call.preferResult).toBeUndefined();
     }
     const servers = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers;
     expect(servers.tool.url).toBe("http://host.docker.internal:5001/ctx-mcp/tool");
@@ -5466,6 +5468,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(executor.reviewDiffFiles[0]).toContain("+export const retry = 3;");
       const mount = executor.calls[0]?.mounts?.[0];
       expect(mount).toMatchObject({ containerPath: "/sacty-review", readOnly: true });
+      // 判定の塊を含む最後の result を本文にする（最終の答えの後の通知への返答を投稿しない。PBI-154）
+      expect(executor.calls[0]?.preferResult).toBe('"sacty-review-verdict"');
       expect(mount?.hostPath).toMatch(/[\\/]_review[\\/]/);
       expect(executor.workspaceFiles[0]).not.toContain(".sacty");
       // 実行の後は消す
