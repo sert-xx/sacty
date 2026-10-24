@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-24（UTC）
 - タスク: PBI-154
-- PR: （作成後に書く）
+- PR: #213
 - ブランチ: feat/issue-154-one-shot-run-results
 - 関係する ADR: [Claude Code の実行で後で起こす予約を使わせず、結果が何回も出ても本文と使用量を正しく取る](../adr/20261024-0700-one-shot-run-results.md)
 
@@ -34,3 +34,4 @@ PR のレビューのタスクの4回目の再レビューで、レビューの�
   このままではオーケストレーターの再開・質問への答えの費用を二重に数えるので、`resumed` の実行では各 `result` の `usage` の合計にした。
 - 目印が、返答の文で名前に触れただけで当たる：目印を引用符で囲んだキー（`"sacty-review-verdict"`）にし、名前に触れるだけの返答で当たらないことをテストで確かめた。
 - `DockerExecutor` の受け渡しにテストが無い：`agent-sessions.test.ts` に足し、受け渡しを戻すと失敗することを確かめた。
+- `npm run lint`・`npm run typecheck`：通った。`npx vitest run`：PR の番号を書いてから 2605 件すべて通った（`tests/docs` を含む）。
