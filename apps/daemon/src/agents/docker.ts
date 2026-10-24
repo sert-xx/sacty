@@ -447,7 +447,12 @@ export class DockerExecutor implements AgentExecutor {
     let outcome: AgentOutcome;
     // 標準出力は全体を持たず、行ごとに読んで最後の答えに要るものだけを持つ（PBI-62）
     const reader =
-      invocation.parser === "codex-jsonl" ? new CodexOutcomeReader() : new ClaudeOutcomeReader();
+      invocation.parser === "codex-jsonl"
+        ? new CodexOutcomeReader()
+        : new ClaudeOutcomeReader(undefined, {
+            ...(invocation.preferResult ? { prefer: invocation.preferResult } : {}),
+            ...(invocation.resumed ? { resumed: true } : {}),
+          });
     try {
       const { exitCode, stderr } = await new Promise<{
         exitCode: number;
@@ -515,6 +520,12 @@ export class DockerExecutor implements AgentExecutor {
         };
       } else {
         outcome = reader.finish(exitCode, stderr);
+        // 答えを目印で選べず、最後の result に戻ったら残す（後の番の返答が答えになっていないかを調べられるように。PR #213 レビュー指摘）
+        const notice = reader instanceof ClaudeOutcomeReader ? reader.notice : undefined;
+        if (notice) {
+          console.warn(`[daemon] ${containerName}：${notice}`);
+          log?.stderr(`[sacty] ${notice}\n`);
+        }
       }
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない

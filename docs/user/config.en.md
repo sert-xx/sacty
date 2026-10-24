@@ -211,6 +211,7 @@ To change a tier's model, write `model` under the same name with [Overriding age
 - If no tier can be used, subagents run with the same model as the step agent.
 - A tier agent is an ordinary agent too, so you can write it in `step_agents` to use it for a step.
 - Costs are calculated from the step agent's usage and unit prices, not from each reviewer's model.
+  - For Claude Code, the usage includes the reviewers' (subagents') usage.
   - The cost of a run that placed tiers is recorded as an estimate and marked "Estimate" on the screen.
   - The price of a tier's model in `available_models` is used when that tier runs a step through `step_agents`.
 - Definitions of the same name in the context repository (`agents/claude/agents/<tier>.md`, `agents/codex/agents/<tier>.toml`, and `[agents.<tier>]` in Codex's `config.toml`) are not used (a warning is left).

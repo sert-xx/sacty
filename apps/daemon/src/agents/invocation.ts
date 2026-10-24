@@ -64,6 +64,16 @@ export type Invocation = {
   mounts?: { hostPath: string; containerPath: string; readOnly: boolean }[];
   parser: "claude-json" | "codex-jsonl";
   /**
+   * claude-json で、本文にする result の目印（レビューの工程の判定の塊の、引用符で囲んだ見出し。名前に触れただけの文で当たらないように。PBI-154）。result が何回も出たら、この文字列を
+   * 含む最後の result を本文にする（含むものが無ければ、最後の result）。
+   */
+  preferResult?: string;
+  /**
+   * 保存したセッションを再開・複製する実行（PBI-67）。Claude Code の modelUsage には前の実行の分も入るので、使用量は各 result の
+   * usage から数える（PBI-154）。
+   */
+  resumed?: boolean;
+  /**
    * 実行の後に、stage の場所（エージェントの設定の場所）から元のセッションのファイルを写す（PBI-66）。どのエージェントの
    * 形で選ぶか。無ければ写さない（スタブ）。
    */
@@ -76,6 +86,15 @@ export type Invocation = {
    */
   hostAddress?: string;
 };
+
+/** Claude Code の実行で使わせないツール（後で起こす予約・定期の実行。PBI-154）。 */
+export const CLAUDE_DISALLOWED_TOOLS = [
+  "ScheduleWakeup",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "RemoteTrigger",
+];
 
 /** 再開するセッション（PBI-67）。 */
 export type OrchestratorSessionResume = { resume: string; fork?: boolean; filesDir: string };
@@ -153,6 +172,9 @@ export async function buildInvocation(
       // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
       // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む。指示は引数に入れず、標準入力で渡す（PBI-149）
       const command = ["claude", "-p", "--output-format", "stream-json", "--verbose"];
+      // 一度きりの実行なので、後で起こす予約・定期の実行は使わせない。予約が残ると、最終の答えの後も終わらずに待ち、
+      // 起きた後の返答が最後の result になる（PBI-154）
+      command.push("--disallowedTools", CLAUDE_DISALLOWED_TOOLS.join(","));
       for (const dir of readDirs) command.push("--add-dir", dir);
       // 保存したセッションを再開する（PBI-67）。質問への答えは複製して、元のセッションに書き足さない
       if (session) {
@@ -201,6 +223,7 @@ export async function buildInvocation(
           ...(session ? { sessionDir: session.filesDir } : {}),
         },
         parser: "claude-json",
+        ...(session ? { resumed: true } : {}),
         sessionFiles: "claude-code",
       };
     }

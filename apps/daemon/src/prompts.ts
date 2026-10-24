@@ -4499,3 +4499,20 @@ export function operationSucceeded(output: string): boolean {
       result.evidence.trim(),
   );
 }
+
+/**
+ * 答えに必ず決まった見出しの塊を含める役割の、その見出し（引用符で囲んだキーの形。名前に触れただけの文で当たらないように）。
+ * Claude Code の result が何回も出たら、これを含む最後の result を答えにする（最終の答えの後の通知への返答を、答えにしない。
+ * PBI-154）。塊の形の決まっていない役割は undefined（最後の result を答えにする）。
+ */
+export function answerMarker(role: string): string | undefined {
+  const heading: Record<string, string> = {
+    review: REVIEW_VERDICT_HEADING,
+    "final-review": FINAL_REVIEW_HEADING,
+    reproduce: REPRODUCTION_HEADING,
+    split: SPLIT_HEADING,
+    integrate: INTEGRATION_HEADING,
+    gather: GATHER_HEADING,
+  };
+  return Object.hasOwn(heading, role) ? `"${heading[role]}"` : undefined;
+}

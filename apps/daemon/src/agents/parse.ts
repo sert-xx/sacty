@@ -136,9 +136,32 @@ export abstract class OutcomeReader {
  * `claude -p --output-format stream-json --verbose`（PBI-62）か `--output-format json` の結果を読む。
  * 最後の result の出来事を読む。json の形（type の無い1つのオブジェクト・整形された複数行）も読む（前に警告などが
  * 出ていても読めるように）。途中の出来事だけで result が無ければ（途中で落ちた）、失敗にする。
+ * バックグラウンドの処理の通知が来るたびに番が進み、result は何回も出る（PBI-154）。本文は、prefer があればそれを含む最後の
+ * result から読む（最終の答えの後の通知への返答で、本文が置き換わらないように）。使用量は、最後の result の modelUsage
+ * （実行の全体。サブエージェントの分も含む）から読み、無ければ各 result の usage（その番の分）を合計する。
+ * セッションを再開・複製した実行（resumed）は、modelUsage に前の実行の分も入るので、各 result の usage を合計する。
+ * modelUsage は、項目ごとに各 result の usage の合計と大きいほうを取る（実行の全体が各番の合計より小さいことはない。
+ * キーの名前が変わって読めなくても、0 にしない。PR #213 レビュー指摘）。
  */
 export class ClaudeOutcomeReader extends OutcomeReader {
   private result: Record<string, unknown> | undefined;
+  /** prefer を含む最後の result の文。 */
+  private preferred: string | undefined;
+  /** 各 result の usage の合計。 */
+  private summed: TokenUsage = { ...ZERO };
+  /** result の数。 */
+  private results = 0;
+  /** 答えの読み方の知らせ（prefer に当たらず最後の result に戻ったとき。PR #213 レビュー指摘）。 */
+  private noticeText: string | undefined;
+
+  private readonly prefer: string | undefined;
+  private readonly resumed: boolean;
+
+  constructor(maxLine = MAX_LINE, options: { prefer?: string; resumed?: boolean } = {}) {
+    super(maxLine);
+    this.prefer = options.prefer;
+    this.resumed = options.resumed === true;
+  }
   /** 最後の行の JSON が type の無いオブジェクトなら、それ（json の形）。 */
   private untyped: Record<string, unknown> | undefined;
   /** 最後のエージェントの発言（result が無いときの理由。認証の失敗の文など）。 */
@@ -151,6 +174,17 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     }
     if (event.type === "result") {
       this.result = event;
+      this.results++;
+      const u = claudeUsage(event.usage);
+      this.summed = {
+        input: this.summed.input + u.input,
+        cacheRead: this.summed.cacheRead + u.cacheRead,
+        cacheWrite: this.summed.cacheWrite + u.cacheWrite,
+        output: this.summed.output + u.output,
+      };
+      if (this.prefer && typeof event.result === "string" && event.result.includes(this.prefer)) {
+        this.preferred = event.result;
+      }
     } else if (event.type === "assistant") {
       const content = (event.message as { content?: unknown } | undefined)?.content;
       if (!Array.isArray(content)) return;
@@ -160,6 +194,11 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .trim();
       if (text) this.assistantText = text;
     }
+  }
+
+  /** 答えの読み方の知らせ（finish の後。デーモンのログとセッションログに残す）。 */
+  get notice(): string | undefined {
+    return this.noticeText;
   }
 
   private final(): Record<string, unknown> | undefined {
@@ -180,13 +219,12 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .slice(0, 2000);
       return { kind: "failed", reason: classifyFailure(message), message };
     }
-    const u = (json.usage ?? {}) as Record<string, unknown>;
-    const usage: TokenUsage = {
-      input: nonNegInt(u.input_tokens),
-      cacheRead: nonNegInt(u.cache_read_input_tokens),
-      cacheWrite: nonNegInt(u.cache_creation_input_tokens),
-      output: nonNegInt(u.output_tokens),
-    };
+    const turns = json === this.result ? this.summed : claudeUsage(json.usage);
+    const total = this.resumed ? undefined : modelUsageTotal(json.modelUsage);
+    const usage = total ? larger(total, turns) : turns;
+    if (this.prefer && this.preferred === undefined && this.results >= 2) {
+      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
+    }
     const result = typeof json.result === "string" ? json.result : "";
     if (json.is_error === true || exitCode !== 0) {
       // stream-json の失敗の result には、result の文が無く、種類（error_max_turns など）と errors だけのことがある
@@ -200,8 +238,61 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .slice(0, 2000);
       return { kind: "failed", reason: classifyFailure(message), message, usage };
     }
-    return { kind: "completed", output: result, usage };
+    return { kind: "completed", output: this.preferred ?? result, usage };
   }
+}
+
+/** Claude Code の result の usage（その番の分）。 */
+function claudeUsage(value: unknown): TokenUsage {
+  const u = (value ?? {}) as Record<string, unknown>;
+  return {
+    input: nonNegInt(u.input_tokens),
+    cacheRead: nonNegInt(u.cache_read_input_tokens),
+    cacheWrite: nonNegInt(u.cache_creation_input_tokens),
+    output: nonNegInt(u.output_tokens),
+  };
+}
+
+/** 項目ごとに大きいほう。 */
+function larger(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    input: Math.max(a.input, b.input),
+    cacheRead: Math.max(a.cacheRead, b.cacheRead),
+    cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
+    output: Math.max(a.output, b.output),
+  };
+}
+
+const MODEL_USAGE_KEYS = [
+  "inputTokens",
+  "cacheReadInputTokens",
+  "cacheCreationInputTokens",
+  "outputTokens",
+];
+
+/**
+ * Claude Code の result の modelUsage（実行の全体の、モデルごとの使用量）の合計。読める項目を持つモデルが無ければ undefined
+ * （キーの名前が変わったときに、全部 0 の合計を返さない）。
+ */
+function modelUsageTotal(value: unknown): TokenUsage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const models = Object.values(value).filter(
+    (m): m is Record<string, unknown> =>
+      Boolean(m) &&
+      typeof m === "object" &&
+      !Array.isArray(m) &&
+      MODEL_USAGE_KEYS.some((k) => typeof (m as Record<string, unknown>)[k] === "number"),
+  );
+  if (models.length === 0) return undefined;
+  return models.reduce<TokenUsage>(
+    (sum, m) => ({
+      input: sum.input + nonNegInt(m.inputTokens),
+      cacheRead: sum.cacheRead + nonNegInt(m.cacheReadInputTokens),
+      cacheWrite: sum.cacheWrite + nonNegInt(m.cacheCreationInputTokens),
+      output: sum.output + nonNegInt(m.outputTokens),
+    }),
+    { ...ZERO },
+  );
 }
 
 /**
