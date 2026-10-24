@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-24（UTC）
 - タスク: なし
-- PR: なし
+- PR: #217
 - ブランチ: claude/pensive-johnson-bnbhk4
 - 関係する ADR: [要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-reader-load-of-requirements-and-design.md)
 
