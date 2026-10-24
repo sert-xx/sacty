@@ -262,6 +262,7 @@ import {
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
+  answerMarker,
   type BodyParts,
   type BodyText,
   buildChatPrompt,
@@ -317,7 +318,6 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
-  REVIEW_VERDICT_HEADING,
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
@@ -8352,8 +8352,10 @@ export class TaskService {
         invocation.hostGateway = true;
       }
       if (run.mounts && run.mounts.length > 0) invocation.mounts = [...run.mounts];
-      // レビューの工程は、判定の塊を含む最後の result を本文にする（最終の答えの後の通知への返答を投稿しない。PBI-154）
-      if (run.role === "review") invocation.preferResult = `"${REVIEW_VERDICT_HEADING}"`;
+      // 決まった見出しの塊を答えに含める役割は、その塊を含む最後の result を答えにする（最終の答えの後の通知への返答を、
+      // 答えや投稿の本文にしない。PBI-154・PR #213 レビュー指摘）
+      const marker = answerMarker(run.role);
+      if (marker) invocation.preferResult = marker;
       // コンテナから見たホストのアドレス（Rancher Desktop など。PBI-40）
       const config = this.deps.config();
       if (invocation.hostGateway && config.ok) invocation.hostAddress = config.config.hostAddress;

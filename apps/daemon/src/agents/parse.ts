@@ -140,6 +140,8 @@ export abstract class OutcomeReader {
  * result から読む（最終の答えの後の通知への返答で、本文が置き換わらないように）。使用量は、最後の result の modelUsage
  * （実行の全体。サブエージェントの分も含む）から読み、無ければ各 result の usage（その番の分）を合計する。
  * セッションを再開・複製した実行（resumed）は、modelUsage に前の実行の分も入るので、各 result の usage を合計する。
+ * modelUsage は、項目ごとに各 result の usage の合計と大きいほうを取る（実行の全体が各番の合計より小さいことはない。
+ * キーの名前が変わって読めなくても、0 にしない。PR #213 レビュー指摘）。
  */
 export class ClaudeOutcomeReader extends OutcomeReader {
   private result: Record<string, unknown> | undefined;
@@ -147,6 +149,10 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   private preferred: string | undefined;
   /** 各 result の usage の合計。 */
   private summed: TokenUsage = { ...ZERO };
+  /** result の数。 */
+  private results = 0;
+  /** 答えの読み方の知らせ（prefer に当たらず最後の result に戻ったとき。PR #213 レビュー指摘）。 */
+  private noticeText: string | undefined;
 
   private readonly prefer: string | undefined;
   private readonly resumed: boolean;
@@ -168,6 +174,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     }
     if (event.type === "result") {
       this.result = event;
+      this.results++;
       const u = claudeUsage(event.usage);
       this.summed = {
         input: this.summed.input + u.input,
@@ -189,6 +196,11 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     }
   }
 
+  /** 答えの読み方の知らせ（finish の後。デーモンのログとセッションログに残す）。 */
+  get notice(): string | undefined {
+    return this.noticeText;
+  }
+
   private final(): Record<string, unknown> | undefined {
     if (this.result) return this.result;
     if (this.untyped) return this.untyped;
@@ -207,9 +219,12 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .slice(0, 2000);
       return { kind: "failed", reason: classifyFailure(message), message };
     }
-    const usage =
-      (this.resumed ? undefined : modelUsageTotal(json.modelUsage)) ??
-      (json === this.result ? this.summed : claudeUsage(json.usage));
+    const turns = json === this.result ? this.summed : claudeUsage(json.usage);
+    const total = this.resumed ? undefined : modelUsageTotal(json.modelUsage);
+    const usage = total ? larger(total, turns) : turns;
+    if (this.prefer && this.preferred === undefined && this.results >= 2) {
+      this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
+    }
     const result = typeof json.result === "string" ? json.result : "";
     if (json.is_error === true || exitCode !== 0) {
       // stream-json の失敗の result には、result の文が無く、種類（error_max_turns など）と errors だけのことがある
@@ -238,11 +253,35 @@ function claudeUsage(value: unknown): TokenUsage {
   };
 }
 
-/** Claude Code の result の modelUsage（実行の全体の、モデルごとの使用量）の合計。読めるモデルが無ければ undefined。 */
+/** 項目ごとに大きいほう。 */
+function larger(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    input: Math.max(a.input, b.input),
+    cacheRead: Math.max(a.cacheRead, b.cacheRead),
+    cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
+    output: Math.max(a.output, b.output),
+  };
+}
+
+const MODEL_USAGE_KEYS = [
+  "inputTokens",
+  "cacheReadInputTokens",
+  "cacheCreationInputTokens",
+  "outputTokens",
+];
+
+/**
+ * Claude Code の result の modelUsage（実行の全体の、モデルごとの使用量）の合計。読める項目を持つモデルが無ければ undefined
+ * （キーの名前が変わったときに、全部 0 の合計を返さない）。
+ */
 function modelUsageTotal(value: unknown): TokenUsage | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const models = Object.values(value).filter(
-    (m): m is Record<string, unknown> => Boolean(m) && typeof m === "object" && !Array.isArray(m),
+    (m): m is Record<string, unknown> =>
+      Boolean(m) &&
+      typeof m === "object" &&
+      !Array.isArray(m) &&
+      MODEL_USAGE_KEYS.some((k) => typeof (m as Record<string, unknown>)[k] === "number"),
   );
   if (models.length === 0) return undefined;
   return models.reduce<TokenUsage>(

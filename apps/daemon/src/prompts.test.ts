@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { buildDeploymentPrompt } from "./deployment.js";
 import {
   allowedPlans,
+  answerMarker,
   buildChatPrompt,
   buildChildBody,
   buildExportDocument,
@@ -3130,5 +3131,19 @@ describe("タスクの開始時に集めた情報", () => {
         new Map(),
       ),
     ).not.toContain("集めた情報");
+  });
+});
+
+describe("答えにする result の目印（PBI-154・PR #213 レビュー指摘）", () => {
+  it("決まった見出しの塊を答えに含める役割は、その見出しを引用符で囲んだキーの形で返し、ほかは返さない", () => {
+    expect(answerMarker("review")).toBe('"sacty-review-verdict"');
+    expect(answerMarker("final-review")).toBe('"sacty-final-review"');
+    expect(answerMarker("reproduce")).toBe('"sacty-reproduction"');
+    expect(answerMarker("split")).toBe('"sacty-split"');
+    expect(answerMarker("integrate")).toBe('"sacty-integration-review"');
+    expect(answerMarker("gather")).toBe('"sacty-gathered"');
+    for (const role of ["implement", "investigate", "orchestrator", "chat", "toString"]) {
+      expect(answerMarker(role)).toBeUndefined();
+    }
   });
 });

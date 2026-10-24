@@ -4,7 +4,7 @@
 - タスク: PBI-62
 - PR: #71
 - ブランチ: feat/issue-62-session-logs
-- 関係する ADR: [エージェントの実行ごとに、秘密情報を伏せたセッションログを先頭と末尾を残して SACTY_HOME に残し、画面から見られるようにする](../adr/20261013-1533-session-logs-per-run.md)、[Claude Code を stream-json で動かし、最後の答えは標準出力を溜めずに行ごとに読んで取り出す](../adr/20261013-1533-claude-stream-json-output.md)
+- 関係する ADR: [エージェントの実行ごとに、秘密情報を伏せたセッションログを先頭と末尾を残して SACTY_HOME に残し、画面から見られるようにする](../adr/20261013-1533-session-logs-per-run.md)、[Claude Code を stream-json で動かし、最後の答えは標準出力を溜めずに行ごとに読んで取り出す](../adr/20261013-1533-superseded-claude-stream-json-output.md)
 
 ## 目的
 

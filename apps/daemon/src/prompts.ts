@@ -217,8 +217,8 @@ const TEST_MAP_HEADING = "sacty-test-map";
 export const TEST_COMMAND_FENCE = "sacty-test-command";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 
-/** レビューの判定のブロックの見出し（PBI-88・PBI-111）。本文にする result の目印にも使う（PBI-154）。 */
-export const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
+/** レビューの判定のブロックの見出し（PBI-88・PBI-111）。 */
+const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
 
 /** レビューの指摘の頭（PBI-111）。言語に関わらず、この形で付ける（既定のスキル review・git と同じ）。 */
 export const MUST_TAG = "[要修正]";
@@ -4498,4 +4498,21 @@ export function operationSucceeded(output: string): boolean {
       typeof result.evidence === "string" &&
       result.evidence.trim(),
   );
+}
+
+/**
+ * 答えに必ず決まった見出しの塊を含める役割の、その見出し（引用符で囲んだキーの形。名前に触れただけの文で当たらないように）。
+ * Claude Code の result が何回も出たら、これを含む最後の result を答えにする（最終の答えの後の通知への返答を、答えにしない。
+ * PBI-154）。塊の形の決まっていない役割は undefined（最後の result を答えにする）。
+ */
+export function answerMarker(role: string): string | undefined {
+  const heading: Record<string, string> = {
+    review: REVIEW_VERDICT_HEADING,
+    "final-review": FINAL_REVIEW_HEADING,
+    reproduce: REPRODUCTION_HEADING,
+    split: SPLIT_HEADING,
+    integrate: INTEGRATION_HEADING,
+    gather: GATHER_HEADING,
+  };
+  return Object.hasOwn(heading, role) ? `"${heading[role]}"` : undefined;
 }

@@ -89,8 +89,11 @@
 
 - Claude Code の出力（stream-json）は、最後の `type: "result"` を答えにする。
   バックグラウンドの処理（サブエージェント・バックグラウンドのコマンド）の通知が来るたびに番が進み、`result` は何回も出る。
-  レビューの工程は、判定の塊のキー（引用符で囲んだ `"sacty-review-verdict"`）を含む最後の `result` を答えにする（含むものが無ければ最後の `result`）。最終の答えの後の通知への返答を、投稿の本文にしないためである（`preferResult`）。
+  答えに決まった見出しの塊を必ず含める役割は、その塊のキー（引用符で囲んだ見出し）を含む最後の `result` を答えにする（含むものが無ければ最後の `result`）。最終の答えの後の通知への返答を、答えや投稿の本文にしないためである（`preferResult`）。
+  対象は、レビュー（`"sacty-review-verdict"`）・最終レビュー（`"sacty-final-review"`）・再現（`"sacty-reproduction"`）・分割（`"sacty-split"`）・統合レビュー（`"sacty-integration-review"`）・情報収集（`"sacty-gathered"`）（`answerMarker`）。
+  目印に当たらず、`result` が2つ以上あったときは、`result` の数と使用量の出どころを、デーモンのログとセッションログ（標準エラー）に1行残す。
   トークン数は、最後の `result` の `modelUsage`（実行の全体。サブエージェントの分も含む）の、モデルごとの `inputTokens`・`cacheReadInputTokens`・`cacheCreationInputTokens`・`outputTokens` の合計にする。
+  項目ごとに、各 `result` の `usage` の合計と大きいほうを取る。読める項目を持つモデルが無い `modelUsage` は使わない。
   `modelUsage` が無いか、保存したセッションを再開・複製した実行（`modelUsage` に前の実行の分も入る）なら、各 `result` の `usage`（その番の分）の `input_tokens`・`cache_read_input_tokens`・`cache_creation_input_tokens`・`output_tokens` の合計にする（`resumed`）。
   `is_error` か終了コードが 0 でなければ失敗。
 - Codex の出力（JSONL）は、`turn.completed` の `usage` を足し合わせ、最後の `agent_message` を答えにする。
@@ -111,7 +114,7 @@
   sacty は出力の中の JSON のオブジェクトを後ろから順に試し、読めた最初のものを使う。
 - 実行の結果の文と出力は、その実行で使った秘密情報（取り出した値・ゲートウェイのトークン・認証ファイルの中の値など）を `[REDACTED]` に置き換えてから記録する。
 
-コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
+コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/prompts.ts`（`answerMarker`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
 
 ## 失敗したときの代わりのエージェント
 

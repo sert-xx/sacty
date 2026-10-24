@@ -619,6 +619,88 @@ describe("出力の読み取り", () => {
       output: "終わりました。",
       usage: { input: 3, cacheRead: 30, cacheWrite: 6, output: 9 },
     });
+    // 目印に当たらず最後の result に戻ったことを知らせる（PR #213 レビュー指摘）。当たったとき・目印が無いときは知らせない
+    expect(none.notice).toBe(
+      'result が 2 回出ましたが、"sacty-review-verdict" を含むものが無いので、最後の result を答えにしました（使用量：各 result の usage の合計）',
+    );
+    expect(reader.notice).toBeUndefined();
+    // result が1つなら、後の番の返答はありえないので知らせない
+    const single = new ClaudeOutcomeReader(undefined, { prefer: '"sacty-review-verdict"' });
+    single.push(turn("答え", 1));
+    single.finish(0);
+    expect(single.notice).toBeUndefined();
+    const plain = new ClaudeOutcomeReader();
+    plain.push(lines);
+    plain.finish(0);
+    expect(plain.notice).toBeUndefined();
+  });
+
+  it("modelUsage が読めない・各番の合計より小さいときは、各 result の usage の合計を下回らない（PR #213 レビュー指摘）", () => {
+    const turn = (usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ type: "result", is_error: false, result: "答え", usage, ...extra });
+    const read = (modelUsage: unknown) =>
+      parseClaudeResult(
+        [
+          turn({ input_tokens: 100, output_tokens: 50 }),
+          turn({ input_tokens: 10, output_tokens: 5 }, { modelUsage }),
+        ].join("\n"),
+        0,
+      );
+    const summed = { input: 110, cacheRead: 0, cacheWrite: 0, output: 55 };
+    // キーの名前の形が違う（読める項目を持つモデルが無い）なら、各 result の usage の合計
+    expect(read({ m: { input_tokens: 999 } })).toMatchObject({ usage: summed });
+    expect(read({ m: null, n: "x" })).toMatchObject({ usage: summed });
+    // 読めない modelUsage は、使用量の出どころとして扱わない（知らせには各 result の usage の合計と書く）
+    const malformed = new ClaudeOutcomeReader(undefined, { prefer: '"none"' });
+    malformed.push(
+      [
+        turn({ input_tokens: 100 }),
+        turn({ input_tokens: 10 }, { modelUsage: { m: { input_tokens: 999 } } }),
+      ].join("\n"),
+    );
+    malformed.finish(0);
+    expect(malformed.notice).toContain("使用量：各 result の usage の合計");
+    // 読める項目の一部だけが小さいときは、項目ごとに大きいほう
+    expect(read({ m: { inputTokens: 50, outputTokens: 500 } })).toMatchObject({
+      usage: { input: 110, cacheRead: 0, cacheWrite: 0, output: 500 },
+    });
+  });
+
+  it("result が何回も出て最後が失敗なら、失敗にし、使用量は実行の全体から読む（PR #213 レビュー指摘）", () => {
+    const lines = [
+      JSON.stringify({
+        type: "result",
+        is_error: false,
+        result: "途中",
+        usage: { output_tokens: 7 },
+      }),
+      JSON.stringify({
+        type: "result",
+        is_error: false,
+        result: '```json\n{"sacty-review-verdict": {"verdict": "suggestions"}}\n```',
+        usage: { output_tokens: 8 },
+      }),
+      JSON.stringify({
+        type: "result",
+        is_error: true,
+        result: "API Error: 500",
+        usage: { output_tokens: 9 },
+        modelUsage: { m: { outputTokens: 100 } },
+      }),
+    ].join("\n");
+    const reader = new ClaudeOutcomeReader(undefined, { prefer: '"sacty-review-verdict"' });
+    reader.push(lines);
+    expect(reader.finish(1)).toEqual({
+      kind: "failed",
+      reason: "error",
+      message: "API Error: 500",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    });
+    // modelUsage が無ければ、各 result の usage の合計
+    expect(parseClaudeResult(lines.replace(/,"modelUsage":\{[^}]*\}\}/, ""), 1)).toMatchObject({
+      kind: "failed",
+      usage: { output: 24 },
+    });
   });
 
   it("Claudeの失敗を、利用上限・認証・その他に分類する", () => {

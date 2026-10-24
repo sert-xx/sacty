@@ -520,6 +520,12 @@ export class DockerExecutor implements AgentExecutor {
         };
       } else {
         outcome = reader.finish(exitCode, stderr);
+        // 答えを目印で選べず、最後の result に戻ったら残す（後の番の返答が答えになっていないかを調べられるように。PR #213 レビュー指摘）
+        const notice = reader instanceof ClaudeOutcomeReader ? reader.notice : undefined;
+        if (notice) {
+          console.warn(`[daemon] ${containerName}：${notice}`);
+          log?.stderr(`[sacty] ${notice}\n`);
+        }
       }
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
