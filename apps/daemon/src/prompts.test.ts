@@ -310,6 +310,52 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).not.toContain("--- 再レビュー ---");
   });
 
+  it("依存関係を取得して検証を実行させ、オーケストレーターのテストのコマンドがあれば候補として示す（PBI-153）", () => {
+    const withCommand = buildPrompt(reviewTask({ testCommand: "make ci" }), "review", { diff });
+    expect(withCommand).toContain(
+      "作業領域では、依存関係の取得（ロックファイルどおり）や、フォーマッター・リンター・型チェック・テスト・ビルドなどの検証のコマンドを実行してかまわない（変更は残らない）。",
+    );
+    expect(withCommand).toContain(
+      "検証は、スキルの手順（references/verification-run.md）で、観点の担当を起動する前に実行する",
+    );
+    expect(withCommand).toContain(
+      "それを理由に検証を見送らず、先に依存関係を取得してから実行する。CI の結果や PR の作者の報告は、自分で実行した結果の代わりにしない",
+    );
+    expect(withCommand).toContain(
+      "このリポジトリのテスト（検証）のコマンドとして、オーケストレーターが次を決めています。リポジトリの手順・CI の設定と照らして、検証のコマンドの候補にする：make ci",
+    );
+    expect(withCommand).toContain(
+      "実行できなかった検証（依存関係が入らない・要るツールやサービスが無い・秘密情報が要るなど）は、確かめられなかったこととして本文に、コマンドと止まった理由",
+    );
+    // 「コードは変更しない」の直後に置く（変更しないことと、検証を実行してよいことを続けて読ませる）
+    const lines = withCommand.split("\n");
+    const keep = lines.indexOf(
+      "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
+    );
+    expect(lines[keep + 1]).toMatch(/^- 作業領域では、依存関係の取得/);
+    // 対象のファイルは書き換えない（書き換えるモードのフォーマッターで、担当が書き換わった後のコードを見ないように）
+    expect(withCommand).toContain(
+      "対象のファイルは書き換えない（フォーマッターなどは確かめるだけのモードで実行する）",
+    );
+    // 検証の行（「コードは変更しない」の次から、実行できなかった検証の行まで）に、特定の言語・パッケージマネージャの名前を出さない。
+    // オーケストレーターが決めたコマンドの値は除く
+    const last = lines.findIndex((l) => l.startsWith("- 実行できなかった検証"));
+    const verification = lines
+      .slice(keep + 1, last + 1)
+      .filter((l) => !l.includes("オーケストレーターが次を決めています"));
+    expect(verification).toHaveLength(3);
+    expect(verification.join("\n")).not.toMatch(
+      /npm|pnpm|yarn|node_modules|pip|poetry|uv |cargo|gradle|maven|bundle|composer|go mod/i,
+    );
+
+    // テストのコマンドが無ければ、候補の行を出さない（ほかの行は出す）
+    const without = buildPrompt(reviewTask(), "review", { diff });
+    expect(without).not.toContain("オーケストレーターが次を決めています");
+    expect(without).toContain("それを理由に検証を見送らず");
+    // 初回には、再レビューの検証の行を出さない
+    expect(without).not.toContain("再レビューでも、スキル review-dispatch");
+  });
+
   it("再レビューでは、前回の指摘と作者の返答をデータとして渡し、前回の指摘ごとに対応を確かめさせる", () => {
     const task = reviewTask({
       reviewRound: 2,
@@ -342,6 +388,11 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
       "本文に「前回の指摘」の節を作り、前回の指摘ごとに、対応を確かめた（直っている）か、未対応かを1行ずつ書く",
     );
     expect(prompt).toContain("未対応の前回の [要修正] があれば、判定は changes_required にする");
+    // 再レビューでもスキルの手順で、今回のコードで検証を実行し直す（PBI-153）
+    expect(prompt).toContain(
+      "再レビューでも、スキル review-dispatch（流れは pr-review）でレビューし、検証は今回のコードで実行し直す（前回の結果や CI の結果だけで済ませない）",
+    );
+    expect(prompt).toContain("それを理由に検証を見送らず");
     // 前回の指摘と返答は、1行の JSON のデータ（返答の中のコードブロックで、指示の文に出られない）
     const json = prompt.split("\n").find((l) => l.startsWith('{"previousReview"')) ?? "";
     expect(JSON.parse(json)).toEqual({

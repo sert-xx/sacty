@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -832,6 +832,15 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 - 投稿は sacty がする。
   指示には、既定のスキル `review-dispatch`（流れは `pr-review`）と `writing` を使うこと、エージェントは自分で投稿しない（gh・GitHub の API で PR に書かない）こと、スキルと食い違えば指示の出力の形を優先することを書く。
   判定・作者への @ メンション・AI による投稿である旨は sacty が付けるので、エージェントには書かせない。
+- 検証：作業領域は PR のコードだけの写しで、依存関係やビルドの成果物は無い。
+  指示には、依存関係をロックファイルどおりに取得して、フォーマッター・リンター・型チェック・テスト・ビルドなどの検証を実行してよいこと、対象のファイルは書き換えない（フォーマッターなどは確かめるだけのモードで実行する）こと、スキルの手順（`verification-run`）で観点の担当を起動する前に実行することを書く。
+  依存関係が無いことを理由に見送らないこと、CI の結果や作者の報告を自分で実行した結果の代わりにしないことも書く。
+  オーケストレーターが決めたテストのコマンド（`testCommand`）があれば、検証のコマンドの候補として示す。
+  PR の取り込みで作ったレビューだけのタスクは、オーケストレーターが工程を選ばないのでテストのコマンドが無く、候補は示さない（エージェントがリポジトリの手順と CI の設定から決める）。
+  実行できなかった検証は、コマンドと止まった理由を本文に書かせる。
+  時間の上限は、テストを実行する役割の上限（[エージェントの実行](agent-execution.md#コンテナ)）。
+  検証では PR のコード（依存関係のインストールのスクリプト・テスト）がエージェントのコンテナで動き、ほかの実行と同じく、コンテナにあるエージェントの認証の値（codex の subscription では、実行の後にホストへ書き戻す `auth.json`）と、実行の間のゲートウェイ（GitHub の読み取り・MCP の中継）に触れられる（[エージェントの実行](agent-execution.md#認証)・[ゲートウェイ](gateway.md)）。
+  取り込みは、フォークや Bot の PR かどうかでは絞らない。信頼できない PR を取り込ませない・選ばないことは、利用者向けの文書で利用者に求める。
 - 指摘の頭：マージの前に直すべきものは `[要修正]`、直すとよいものは `[提案]`。
   本文の指摘にはエージェントが付ける。
   行へのコメント（`sacty-review-comments`）には重さ（`severity`：`must`・`should`。`nit` は `should` と同じ）を書かせ、sacty が本文の先頭に付ける（本文の先頭に頭があれば付け直す。重さも頭も無ければ付けない）。
@@ -863,9 +872,10 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   指示には、前回の指摘と、前回の投稿の後の PR の作者の返答を、指示とは分けた JSON のデータとして入れる。
   作者の返答は、PR のレビュー・行へのコメント・通常のコメントのうち、作者の login のもの（sacty のレビューの目印で始まるものを除く。新しい 30 件、1件 2000 文字まで）。
   前回の指摘ごとに、対応を確かめたか・未対応かを書かせる。
+  再レビューでも、スキル `review-dispatch` でレビューし、今回のコードで検証を実行し直させる。
   返答を読めなければ（作者が分からないときも）、そう書いて続け、理由をタスクと PR を添えてデーモンのログに出す（秘密の値は伏せる）。
 - 言語：sacty が付ける見出し・判定・注記・固定の文と、指摘の頭は日本語で固定する。
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
