@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ActivityEvent } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QUESTION_LOG_INDEX, stageQuestionLogs } from "./question-logs.js";
 import { SessionLogStore } from "./session-logs.js";
 
@@ -29,6 +29,7 @@ beforeEach(() => {
   dest = join(dir, "staged");
 });
 afterEach(() => {
+  vi.useRealTimers();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -102,10 +103,14 @@ function agentFile(taskId: string, runId: string, path: string, content: string)
 
 describe("質問への答えに読ませるセッションログ（PBI-91）", () => {
   it("このタスクの終わった実行のログと、記録したエージェントのファイルだけを並べ、ほかのタスク・ログ以外のファイルは並べない", () => {
+    // 同じミリ秒に作成されても、実行順を検証できるよう時刻を明示する。
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-14T00:00:00.000Z"));
     run("t1", "r-req", "requirements", {
       stdout: '{"type":"tool","command":"grep TOKEN=s3cr3t"}\n',
       secrets: ["s3cr3t"],
     });
+    vi.setSystemTime(new Date("2026-10-14T00:00:01.000Z"));
     run("t1", "r-design", "design", { stdout: '{"type":"text"}\n' });
     const archived = agentFile("t1", "r-design", "projects/w/s.jsonl", '{"m":"設計の元"}\n');
     // 記録の無いファイル（認証の写しなど）は並べない

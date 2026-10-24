@@ -41,8 +41,13 @@ mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合
 
    ```sh
    npm ci
+   npx playwright install chromium
    npm run build
    ```
+
+質問フォームのブラウザーテストには Chromium を使います。
+上のインストールコマンドでブラウザーを用意してください。
+CI でテストを実行するときも、`npm ci` の後に `npx playwright install --with-deps chromium` を実行し、Chromium と OS の依存を用意してください。
 
 ### 初めてコミットする前に：作者の名前とメールアドレスを確かめる
 
