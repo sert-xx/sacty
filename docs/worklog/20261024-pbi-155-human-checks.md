@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-24（UTC）
 - タスク: PBI-155
-- PR: なし
+- PR: #215
 - ブランチ: feat/issue-155-human-checks
 - 関係する ADR: [環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)
 
