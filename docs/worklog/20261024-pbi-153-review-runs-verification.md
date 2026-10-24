@@ -49,3 +49,17 @@ sacty のレビューの工程が、この PR の変更どおり手元で `npm c
 - `npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/run-timeouts.test.ts`：120 件通った。
   `run-timeouts.ts` を main に戻すと時間の上限のテストが、フォーマッターの一文を除くと検証の行のテストが失敗することを確かめた。
 - `npm run lint`・`npm run typecheck`：通った。`npx vitest run`：2603 件すべて通った。`npx vitest run tests/docs`：93 件通った。
+
+## 2回目のレビューの指摘と対応（PR #212、sacty のレビュー。判定：提案あり）
+
+前回の7件は、すべて対応を確かめたとされた。
+
+- [提案] 設定を読めないときの上限の記述と、`run-timeouts.ts` の先頭のコメントに `review` が入っていない：`spec/agent-execution`（日英）の設定を読めないときの行と、先頭のコメントに PR のレビューを足した。
+- [提案] 注意書きの、PR のコードが触れられるものと、取り込まれる経路が、実際より狭い：`spec/gateway`（GitHub の読み取りの中継は、プロジェクトの gh のアカウントを実行に結びつける）と `agents/docker.ts` の書き戻しで確かめて、次を足した。
+  - `user/intake`（日英）：codex の `auth.json` の書き換えがホストに残ること、実行の間はゲートウェイで GitHub の読み取りと MCP を使えること、Bot の依存関係の更新の PR でもインストールのスクリプトが動くこと、取り込みはフォーク・Bot で絞らず、ラベルの自動の付与や CODEOWNERS などの自動の依頼では人が判断しないまま取り込まれうること、「レビューだけ」でも同じこと。
+  - `user/tasks`（日英）の「レビューだけ」に、注意と `user/intake` の節へのリンク。
+  - 仕様書（日英）の「検証」と ADR の「影響」を同じ範囲にそろえた。
+
+確かめたこと：
+
+- `npm run lint`・`npm run typecheck`：通った。`npx vitest run`：2603 件すべて通った（`tests/docs` の 93 件を含む）。

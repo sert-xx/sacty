@@ -26,7 +26,7 @@
   - 役割（工程・`guardian`・`orchestrator` など）の `roles` の上書きがあればそれを使う。
   - 上書きが無ければ `agent_minutes`（既定 30 分。`AGENT_RUN_TIMEOUT_MS`）。
   - テストを実行する役割（`final-review`・`reproduce`・`review`）は、上書きが無ければ `agent_minutes` に `test_minutes`（既定 20 分）を足した分。
-  - 設定を読めなければ、ふつうの役割は 30 分、最終レビュー・再現は 50 分（30 分に 20 分を足す）。
+  - 設定を読めなければ、ふつうの役割は 30 分、最終レビュー・再現・PR のレビューは 50 分（30 分に 20 分を足す）。
   - 実行ごとに読むので、次の実行から効く。
   - 過ぎたらコンテナを止め、時間切れ（`run.timeout`。その実行の上限の分を添える）にする。
 - 止めるときは `docker kill` し、`docker ps -aq --filter name=^/<名前>$` が空になるまで、1秒おきに最大11回確かめる。

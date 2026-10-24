@@ -21,7 +21,7 @@ Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty n
   - If `roles` has an override for the role (a step, `guardian`, `orchestrator`, and so on), sacty uses it.
   - Without an override, the limit is `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`).
   - For the roles that run tests (`final-review`, `reproduce`, `review`), without an override the limit is `agent_minutes` plus `test_minutes` (default 20 minutes).
-  - If sacty cannot read the config, the limit is 30 minutes for ordinary roles and 50 minutes (30 plus 20) for the final review and reproduction.
+  - If sacty cannot read the config, the limit is 30 minutes for ordinary roles and 50 minutes (30 plus 20) for the final review, reproduction, and PR review.
   - sacty reads the setting for every run, so changes apply from the next run.
   - When the limit passes, sacty stops the container and the run times out (`run.timeout`, with that run's limit in minutes).
 - To stop a container, sacty runs `docker kill` and checks up to 11 times, once per second, until `docker ps -aq --filter name=^/<name>$` is empty. If it cannot confirm the container stopped, the result is `run.containerNotConfirmed`, and sacty neither writes back the auth file nor saves the session files.
