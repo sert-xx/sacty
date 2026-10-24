@@ -2170,24 +2170,52 @@ function finalReviewLines(task: Task): string[] {
           ),
         ]
       : []),
-    ...humanCheckBodyLines(review),
   ];
 }
 
+/** PR の本文に出す、人が確かめることの1項目の上限（文字。PBI-155）。 */
+export const HUMAN_CHECK_ITEM_MAX = 1_000;
+/** PR の本文に出す、人が確かめることの一覧全体の上限（文字。PBI-155）。 */
+export const HUMAN_CHECKS_BODY_MAX = 6_000;
+
 /**
  * PR の本文の、人が最終承認で確かめること（PBI-155）。ゴールガーディアンが作業領域では確かめられないとしたことと、
- * 環境によると判断したテストの失敗。
+ * 環境によると判断したテストの失敗。本文の長さの上限でも省かれないよう、footer の、承認の案内の前に置く。
+ * footer を長くしすぎないよう、1項目と一覧全体に上限を設け、入りきらない項目は件数と確かめる場所を書く。
  */
-function humanCheckBodyLines(review: FinalReview | undefined): string[] {
-  const checks = review?.humanChecks ?? [];
-  const failures = review?.tests?.environmentFailures ?? [];
-  if (checks.length === 0 && failures.length === 0) return [];
+function humanCheckBodyLines(task: Task): string[] {
+  const review = task.lastReview;
+  const items = [
+    ...(review?.humanChecks ?? []),
+    ...(review?.tests?.environmentFailures ?? []).map(
+      (f) => `環境によると判断したテストの失敗：${f}`,
+    ),
+  ].map((item) => {
+    const line = oneLine(item);
+    return line.length > HUMAN_CHECK_ITEM_MAX
+      ? `${headOf(line, HUMAN_CHECK_ITEM_MAX)}…（続きは sacty のタスクの画面で）`
+      : line;
+  });
+  if (items.length === 0) return [];
+  const shown: string[] = [];
+  let used = 0;
+  for (const item of items) {
+    const line = `- [ ] ${item}`;
+    if (used + line.length + 1 > HUMAN_CHECKS_BODY_MAX) break;
+    shown.push(line);
+    used += line.length + 1;
+  }
+  const rest = items.length - shown.length;
   return [
-    "",
     "**人が確かめること**（作業領域では確かめられなかったこと。マージの前に確かめてください）",
     "",
-    ...checks.map((c) => `- [ ] ${oneLine(c)}`),
-    ...failures.map((f) => `- [ ] 環境によると判断したテストの失敗：${oneLine(f)}`),
+    ...shown,
+    ...(rest > 0
+      ? [
+          `- [ ] ほかに ${rest} 件あります。sacty のタスクの画面の最終レビュー（人が確かめること）で確かめてください。`,
+        ]
+      : []),
+    "",
   ];
 }
 
@@ -2268,9 +2296,13 @@ export function buildPullRequestBodyText(task: Task): BodyText {
   ].join("\n");
   return {
     main,
-    footer: ["---\nこの PR は sacty が作成しました。", "", ...implementApprovalLines(task)].join(
-      "\n",
-    ),
+    // 人が確かめること（PBI-155）は、長さの上限で省かれないよう footer に置く
+    footer: [
+      ...humanCheckBodyLines(task),
+      "---\nこの PR は sacty が作成しました。",
+      "",
+      ...implementApprovalLines(task),
+    ].join("\n"),
     // タスクの ID と、マージで Issue を閉じる行は、省いても残す
     keep: [intro, ...closesLines(task)],
   };
@@ -2302,7 +2334,12 @@ export function buildPullRequestBodyParts(task: Task): BodyParts {
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
-    footer: [sactyFooter(task, "成果物"), "", ...implementApprovalLines(task)].join("\n"),
+    footer: [
+      ...humanCheckBodyLines(task),
+      sactyFooter(task, "成果物"),
+      "",
+      ...implementApprovalLines(task),
+    ].join("\n"),
   };
 }
 

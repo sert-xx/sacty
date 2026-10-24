@@ -1,12 +1,16 @@
 import type { FinalReview, Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { fillTemplate, limitBody, PR_BODY_MAX } from "./pr-template.js";
 import {
   buildFinalReviewPrompt,
   buildPrompt,
   buildPullRequestBody,
   buildPullRequestBodyParts,
+  buildPullRequestBodyText,
   chatJudgementLines,
   extractFinalReview,
+  HUMAN_CHECK_ITEM_MAX,
+  HUMAN_CHECKS_BODY_MAX,
 } from "./prompts.js";
 
 // 環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人が最終承認で確かめる項目に回す（PBI-155）
@@ -192,7 +196,14 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(body).toContain(
       "→ 合格（ゴールガーディアンが実行。終了コード 1。環境による失敗だけ。下の「人が確かめること」）",
     );
-    expect(buildPullRequestBodyParts(reviewed).record).toContain(checklist);
+    // 長さの上限で省かれない footer の、承認の案内の前に置く（PR #215 レビュー指摘）
+    const parts = buildPullRequestBodyParts(reviewed);
+    expect(parts.footer).toContain(checklist);
+    expect(parts.record).not.toContain("人が確かめること");
+    expect(parts.footer.indexOf("人が確かめること")).toBeLessThan(
+      parts.footer.indexOf("この PR をマージすると"),
+    );
+    expect(buildPullRequestBodyText(reviewed).footer).toContain(checklist);
     // 無ければ出さない
     const plain = buildPullRequestBody(
       task({
@@ -224,5 +235,55 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     const lines = chatJudgementLines(task({ lastReview: review() } as Partial<Task>));
     expect(lines).toContain(`  - 環境によると判断したテストの失敗：${FAILURE}`);
     expect(lines).toContain("  - 人が確かめること：macOS の日本語入力で、\n変換中の確定で送らない");
+  });
+});
+
+describe("PR の本文の長さの上限と、人が確かめること（PR #215 レビュー指摘）", () => {
+  const long = (lastReview: FinalReview) =>
+    task({
+      lastReview,
+      approved: { requirements: { output: "あ".repeat(66_000), submission: 1 } },
+    } as Partial<Task>);
+  const TEMPLATE = "## 概要\n\n## テスト\n";
+
+  it("要求要件が長くて本文を省いても、通常の本文・テンプレートの本文の両方で、人が確かめることを残す", () => {
+    const t = long(review());
+    const text = buildPullRequestBodyText(t);
+    const filled = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
+    for (const b of [text, filled]) {
+      const { body, truncated } = limitBody(b.main, b.footer, PR_BODY_MAX, b.keep);
+      expect(truncated).toBe(true);
+      expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+      expect(body).toContain("- [ ] macOS の日本語入力で、 変換中の確定で送らない");
+      expect(body).toContain(`- [ ] 環境によると判断したテストの失敗：${FAILURE}`);
+      expect(body).toContain("この PR をマージすると");
+    }
+  });
+
+  it("一覧が上限を超えるときは、入る項目を出し、残りの件数と確かめる場所を書く", () => {
+    const many = Array.from({ length: 30 }, (_, i) => `確認 ${i} ${"x".repeat(400)}`);
+    const t = long(review({ humanChecks: many }));
+    const { footer } = buildPullRequestBodyText(t);
+    const shown = footer.split("\n").filter((l) => l.startsWith("- [ ] 確認 "));
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.join("\n").length).toBeLessThanOrEqual(HUMAN_CHECKS_BODY_MAX);
+    // 環境による失敗の1件も入らなかった分に数える
+    expect(footer).toContain(
+      `- [ ] ほかに ${31 - shown.length} 件あります。sacty のタスクの画面の最終レビュー（人が確かめること）で確かめてください。`,
+    );
+    const { body } = limitBody("あ".repeat(70_000), footer, PR_BODY_MAX);
+    expect(body).toContain("件あります。sacty のタスクの画面の最終レビュー");
+    expect(body).toContain("この PR をマージすると");
+  });
+
+  it("長すぎる1項目は、上限で切って、続きの場所を書く（サロゲートペアの途中で切らない）", () => {
+    const item = `${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}😀tail`;
+    const { footer } = buildPullRequestBodyText(
+      task({ lastReview: review({ humanChecks: [item], tests: undefined }) } as Partial<Task>),
+    );
+    expect(footer).toContain(
+      `- [ ] ${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}…（続きは sacty のタスクの画面で）`,
+    );
+    expect(footer).not.toContain("tail");
   });
 });
