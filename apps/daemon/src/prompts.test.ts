@@ -2164,7 +2164,9 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
       expect(prompt).toContain(pattern);
     }
     expect(prompt).toContain("ID（R-1、R-2…）");
-    expect(prompt).toContain("正常系に対応する異常系も、望まない振る舞いの文型で書く");
+    expect(prompt).toContain(
+      "異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く",
+    );
     expect(prompt).not.toContain("検証できる形の箇条書きで書く");
   });
 
@@ -2186,6 +2188,60 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
     const t = task(["investigate", "requirements", "design", "implement"]);
     for (const step of ["investigate", "design", "implement"] as const) {
       expect(buildPrompt(t, step), step).not.toContain("EARS");
+    }
+  });
+});
+
+describe("要求要件・設計の構成と分量（人間が承認で読む量を抑える）", () => {
+  const task = (steps: Task["steps"][number]["key"][]): Task =>
+    ({
+      id: "t-1",
+      title: "ログイン",
+      body: "ログインできる",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: { requirements: { output: "# 要求要件", submission: 1 } },
+      testViewpoints: [],
+      reproductionTests: [],
+      testMap: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+    }) as unknown as Task;
+
+  it("要求要件と設計の指示に、冒頭の2つの節・確認したいことの上限と推奨の答え・書かないことを書く", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const [step, name] of [
+      ["requirements", "要求要件"],
+      ["design", "設計"],
+    ] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).toContain(`--- ${name}の構成と分量（人間が承認で読む量を抑える） ---`);
+      expect(prompt, step).toContain(
+        "「確認したいこと」：人間が決めないと確定できないこと。重要な順に最大 5 件",
+      );
+      expect(prompt, step).toContain("問い・推奨の答え・その理由");
+      expect(prompt, step).toContain("「既定で決めたこと」");
+      expect(prompt, step).toContain("今回の変更で変わらない振る舞い");
+      expect(prompt, step).toContain("「対象外」の節や行を作らない");
+      expect(prompt, step).toContain("依頼に無い機能・要求・将来の拡張");
+    }
+  });
+
+  it("設計は、書くことがある節だけを作り、テスト観点の異常系・境界値を今回の変更で起こりうるものにする", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
+    expect(prompt).toContain("今回の変更で書くことがあるものだけにする");
+    expect(prompt).toContain("異常系と境界値は、今回の変更で新しく起こりうるものを含める");
+    expect(prompt).not.toContain("受け入れ条件をすべて網羅し、異常系と境界値を含める");
+  });
+
+  it("ほかの工程の指示には出さない", () => {
+    const t = task(["investigate", "requirements", "design", "implement"]);
+    for (const step of ["investigate", "implement"] as const) {
+      expect(buildPrompt(t, step), step).not.toContain("人間が承認で読む量を抑える");
     }
   });
 });

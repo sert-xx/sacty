@@ -312,6 +312,17 @@ Type in the Question field and send with the Ask button, Ctrl + Enter, or ⌘ + 
 - Asking does not change the steps or approved contents. It does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
 
+## Reading requirements and designs
+
+Requirements and designs start (right after the summary, if there is one) with the following two sections. They are written so that you can decide whether to approve by reading these two sections.
+
+| Section | Contents | What to do |
+| --- | --- | --- |
+| 確認したいこと (questions) | What you must decide before it can be settled (up to 5, in order of importance). Each has a recommended answer and its reason | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
+| 既定で決めたこと (decided by default) | What the request does not say but the agent decided from the existing code and rules | Write a remark and request changes only for the ones you disagree with |
+
+The details hold only what the request and this change need. They do not restate behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For a small change, the details are a few items. If a viewpoint you want covered is missing, write it in a remark and request changes.
+
 ## Self-review before submitting
 
 In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
