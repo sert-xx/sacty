@@ -28,7 +28,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
 | `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
-| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review` and the reproduction `reproduce`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `guardian: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
+| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review`, the reproduction `reproduce`, and the PR review `review`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `guardian: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
 | `update_check` | Checks daily for a newer sacty release and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
 You set the following two in "Sacty settings" in the web UI, not in config.yaml.

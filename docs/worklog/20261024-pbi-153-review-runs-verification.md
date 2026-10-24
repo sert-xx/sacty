@@ -29,3 +29,23 @@ sacty のレビューの指示に、検証を実行してよいことと手順�
 - `npm run lint`：初回はテストの整形で1件落ちた。`biome format --write` で直して通った（449 ファイル）。`npm run typecheck`：通った。
 - `npx vitest run`：2603 件すべて通った。
 - `npx vitest run tests/docs`：作業履歴の PR の欄を仮の文字のままにして1件落ちた（コミットの後に気付いた）。PR の番号を書いて 93 件通った。
+
+## レビューの指摘と対応（PR #212、sacty のレビュー）
+
+sacty のレビューの工程が、この PR の変更どおり手元で `npm ci`・lint・typecheck・`npx vitest run` を実行してレビューした（実プロセスのテスト 16 件が、Node の版の違う環境で落ちたと報告。この PR とは関係しない）。
+
+- [要修正] 取り込んだ PR のコードを、エージェントの認証情報のあるコンテナで必ず実行させることになる：ステークホルダーの判断で、検証は絞らず、文書に書いて受け入れる。
+  `user/intake`（日英）に、PR のコードがコンテナの認証情報を読めることと、フォークや作者を信頼できない PR を取り込ませないことを書いた。
+  仕様書の PR のレビューの「検証」と ADR の「決定」「理由」「影響」にも書いた。
+- [提案] 取り込みのレビューのタスクでは、テストのコマンドの候補の行が出ない：コードで確かめたとおり（`chooseReviewSteps` は `testCommand` を持たない）。候補は示さないことを、JSDoc・仕様書（日英）・ADR に書いた。
+- [提案] レビューの工程の時間の上限が延びていない：`TEST_RUNNING_ROLES` に `review` を足した。`run-timeouts.test.ts` と、`spec/agent-execution`・`spec/configuration`・`user/config`（日英）を直した。
+- [提案] 「スキルの再レビューの手順で」は、前回以降の差分を渡さないのでスキルと食い違う：再レビューの行を「スキル review-dispatch（流れは pr-review）でレビューし、検証は今回のコードで実行し直す」に絞った。
+- [提案] `existingReviewLines` の JSDoc がずれた：`reviewVerificationLines` を、その JSDoc の前に移した。
+- [提案] 言語の名前を出さない検査がプロンプト全体に掛かっている：検査を検証の行（オーケストレーターのコマンドの値を除く）に絞り、`yarn`・`pip` なども見るようにした。
+- [提案] フォーマッターは確かめるだけのモードで実行するよう書く：指示に「対象のファイルは書き換えない（フォーマッターなどは確かめるだけのモードで実行する）」を足し、テストで確かめた。
+
+確かめたこと：
+
+- `npx vitest run apps/daemon/src/prompts.test.ts apps/daemon/src/run-timeouts.test.ts`：120 件通った。
+  `run-timeouts.ts` を main に戻すと時間の上限のテストが、フォーマッターの一文を除くと検証の行のテストが失敗することを確かめた。
+- `npm run lint`・`npm run typecheck`：通った。`npx vitest run`：2603 件すべて通った。`npx vitest run tests/docs`：93 件通った。

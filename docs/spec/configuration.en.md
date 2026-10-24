@@ -39,7 +39,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 | `run_timeout.agent_minutes` | `30` | Limit of one agent run (minutes; an integer from 1 to 720; PBI-150). When it passes, the container is stopped and the run times out (`run.timeout`) ([Agent execution](agent-execution.en.md#container)) |
-| `run_timeout.test_minutes` | `20` | The amount added to the limit of the roles that run tests (`final-review`, `reproduce`) (minutes; an integer from 1 to 720). Without a `roles` override for that role, the limit is `agent_minutes` + `test_minutes` ([Agent execution](agent-execution.en.md#container)) |
+| `run_timeout.test_minutes` | `20` | The amount added to the limit of the roles that run tests (`final-review`, `reproduce`, `review`) (minutes; an integer from 1 to 720). Without a `roles` override for that role, the limit is `agent_minutes` + `test_minutes` ([Agent execution](agent-execution.en.md#container)) |
 | `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `gather`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors |
 | `update_check` | `true` | Check for a newer sacty (the latest GitHub release) and tell the web UI. `false` does not contact GitHub (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-for-a-newer-version)) |
 
