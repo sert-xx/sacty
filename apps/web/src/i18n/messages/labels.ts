@@ -56,6 +56,7 @@ const ja = {
     jira: "JIRA",
     deployment: "マージの後の監視",
     audit: "監査の改修の提案",
+    schedule: "スケジュールタスク",
   } satisfies Record<Task["start"], string>,
   /** タスクのテンプレート（PBI-90）。 */
   template: { "sacty-setup": "Sacty セットアップ" } satisfies Record<
@@ -524,6 +525,7 @@ const en: LabelMessages = {
     jira: "JIRA",
     deployment: "After-merge watch",
     audit: "Audit proposal",
+    schedule: "Scheduled task",
   },
   template: { "sacty-setup": "Sacty setup" },
   status: {

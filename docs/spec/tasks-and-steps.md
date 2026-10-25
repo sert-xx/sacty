@@ -27,6 +27,7 @@
 | `jira` | JIRA のチケットの取り込み |
 | `deployment` | マージの後の監視で見つけた失敗の修正のタスク（`fix` に元のタスク・種類・目印・段数を持つ。[マージの後の監視](deployment-watch.md)） |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
+| `schedule` | スケジュールタスクが作った（`schedule` にスケジュールタスクの ID と予定の時刻を持つ。[スケジュールタスク](scheduled-tasks.md)） |
 
 - PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作りレビュー用のラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、リポジトリの無いタスク（`noRepo`）にする。
@@ -76,7 +77,7 @@
 - ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが `investigate` を選べば、調査の結果を画面で承認して完了する）。
   工程を進めた後に変更が要らないとわかったときは、ファイルを変えずに検査の結果と理由を実装の説明に書くよう求める（PR を作らず、人間が確かめて変更なしで完了する。[承認と差し戻し](approval.md#実装に変更が無いとき)）。
 
-コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING`）
+コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`prepareTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING`）
 
 ## 工程
 

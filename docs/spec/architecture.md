@@ -40,6 +40,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
+| スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
@@ -54,7 +55,8 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `/projects/<ID>` | `/projects/<ID>/tasks` へ移す |
 | `/projects/<ID>/tasks` | そのプロジェクトのタスクの一覧（人間の判断が必要なタスクのカード・「タスクを作成」） |
 | `/projects/<ID>/settings` | そのプロジェクトの設定 |
-| `/projects/current`・`/projects/current/tasks` | 表示しているプロジェクト（cookie）の設定・タスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
+| `/projects/<ID>/schedules`・`/projects/<ID>/schedules/<スケジュールタスクの ID>` | そのプロジェクトのスケジュールタスクの一覧・詳細（[スケジュールタスク](scheduled-tasks.md)） |
+| `/projects/current`・`/projects/current/tasks`・`/projects/current/schedules` | 表示しているプロジェクト（cookie）の設定・タスクの一覧・スケジュールタスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
 | `/tasks/<ID>`・`/tasks/<ID>/review`・`/tasks/<ID>/runs/<実行の ID>` | タスクの詳細・成果物のレビュー・実行のログ |
 | `/settings` | sacty の設定 |
 
@@ -204,7 +206,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 ## 画面のヘッダーとサイドメニュー（表示しているプロジェクト・お知らせ）
 
 - 開いている画面が、どのプロジェクトの画面かを URL で決める（`pageScope`）。
-  - プロジェクトの画面：`/projects/<ID>/tasks`・`/projects/<ID>/settings`（URL のプロジェクト）と `/tasks/…`（タスクの詳細・レビュー・実行のログ。表示しているプロジェクト）。
+  - プロジェクトの画面：`/projects/<ID>/tasks`・`/projects/<ID>/schedules`・`/projects/<ID>/audit`・`/projects/<ID>/settings`（URL のプロジェクト）と `/tasks/…`（タスクの詳細・レビュー・実行のログ。表示しているプロジェクト）。
   - 「すべてのプロジェクト」の画面：ほか（ダッシュボード・プロジェクトの一覧・sacty の設定など）。
 - ヘッダーのプロジェクトの切り替えは、先頭に「すべてのプロジェクト」（`/dashboard` へ移る）、続けて個別のプロジェクトを出す。
   個別のプロジェクトを選ぶと、`/switch` で cookie を変えてから `/projects/<ID>/tasks` へ移る。
@@ -213,14 +215,14 @@ sacty は、npm workspaces の4つのパッケージでできている。
   - 「すべてのプロジェクト」の画面では、選んだ表示は「すべてのプロジェクト」。
     件数はすべてのプロジェクトの対応待ちの合計。
 - 表示しているプロジェクトは cookie `sacty-project` に持つ（httpOnly・`SameSite=Lax`・1年）。
-  - タスクの詳細などのヘッダーの選んだ表示と、サイドメニューの「タスク」（`/projects/current/tasks`）・「設定」（`/projects/current`）は、cookie のプロジェクトを使う。
+  - タスクの詳細などのヘッダーの選んだ表示と、サイドメニューの「タスク」（`/projects/current/tasks`）・「スケジュール」（`/projects/current/schedules`）・「監査」（`/projects/current/audit`）・「設定」（`/projects/current`）は、cookie のプロジェクトを使う。
   - cookie のプロジェクトが無い・無くなっていれば、最初のプロジェクトを使う。
   - cookie に入れる ID は `^[\w-]{1,100}$` の形のものだけ。
 - cookie を変えるのは次のとき。
   - ヘッダーの切り替えとお知らせ（`/switch`）。
     移動先が無ければ、切り替えたプロジェクトのタスクの一覧へ移る。
   - プロジェクトの作成・インポート（作ったプロジェクトにする）。
-  - プロジェクトの画面（タスクの一覧・プロジェクトの設定・タスクの詳細・レビュー・実行のログ）を開いたとき。
+  - プロジェクトの画面（タスクの一覧・スケジュールタスクの一覧と詳細・監査・プロジェクトの設定・タスクの詳細・レビュー・実行のログ）を開いたとき。
     - cookie と画面のプロジェクトが違うときだけ、表示の後にサーバーアクションで変える（画面とヘッダーが描き直される）。
     - デーモンのプロジェクトの一覧にそのプロジェクトが無ければ（削除したプロジェクトのタスク）変えない。
     - 一覧を取れなければ、無いとは扱わずに変える。
@@ -229,7 +231,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
   | 画面 | サイドメニュー | お知らせ |
   | --- | --- | --- |
   | 「すべてのプロジェクト」 | 「設定」だけ。「設定」はプロジェクトの一覧（`/projects`）へ移る（どのプロジェクトにも飛ばない） | プロジェクトで分けずに新しい順。開くと、そのタスクのプロジェクトに切り替えてタスクを開く |
-  | プロジェクト | 「タスク」「監査」「設定」 | 「ほかのプロジェクト」「このプロジェクト」に分ける |
+  | プロジェクト | 「タスク」「スケジュール」「監査」「設定」 | 「ほかのプロジェクト」「このプロジェクト」に分ける |
 
   サイドメニューに「ダッシュボード」は出さない。
   使わないためで、ダッシュボードはロゴとプロジェクトの切り替えの「すべてのプロジェクト」から開ける。
@@ -335,7 +337,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | パス | 中身 |
 | --- | --- |
 | `config.yaml` | sacty の設定（AI・認証・イメージ・ゲートウェイなど）。デーモンは使うたびに読み直す |
-| `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・sacty の設定（画面の「sacty の設定」） |
+| `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・スケジュールタスク・sacty の設定（画面の「sacty の設定」） |
 | `daemon.lock`・`daemon-owner.json` | 二重の起動の判定と表示（[デーモンの起動と終了](daemon-lifecycle.md)） |
 | `daemon.json` | `sacty context preview` が問い合わせる、起動中のデーモンの接続先とトークン |
 | `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_guardian/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_export/<実行 ID>`・`_shared-compose/<実行 ID>`（起動のときに `_shared-compose` ごと消す） |

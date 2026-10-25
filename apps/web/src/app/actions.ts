@@ -8,6 +8,7 @@ import {
   type ProjectDefinitionInput,
   renderMessage,
   type SactySettingsInput,
+  ScheduleInput,
   StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
@@ -33,6 +34,7 @@ import {
   decideChange,
   deleteAuditMemory,
   deleteProject,
+  deleteSchedule,
   type GitHubAccounts,
   getGitHubAccounts,
   importProject,
@@ -50,12 +52,14 @@ import {
   retryExport,
   runIntake,
   saveProject,
+  saveSchedule,
   saveSettings,
   testNotification,
   voidRemark,
 } from "@/lib/daemon";
-import { projectSettingsPath } from "@/lib/paths";
+import { projectSchedulesPath, projectSettingsPath, schedulePath } from "@/lib/paths";
 import { needsProjectSelect } from "@/lib/project-select";
+import { readScheduleForm, type ScheduleFormValues, toScheduleInput } from "@/lib/schedule-form";
 
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -141,6 +145,69 @@ async function createTemplateTask(
   if (!result.ok) return { message: result.message, values: shown };
   refresh();
   redirect(`/tasks/${result.task.id}`);
+}
+
+export type ScheduleFormState = {
+  message?: string;
+  /** 項目ごとの誤り（name・time・days・day・title・body）。 */
+  fieldErrors?: Partial<Record<string, string>>;
+  values?: ScheduleFormValues;
+};
+
+/**
+ * スケジュールタスクを作る（scheduleId が無いとき）か、変える。保存したら、スケジュールタスクの詳細へ移る。入力の誤りは
+ * 項目ごとに、作れない内容（対象リポジトリなど）は理由を返す。
+ */
+export async function saveScheduleAction(
+  _prev: ScheduleFormState,
+  formData: FormData,
+): Promise<ScheduleFormState> {
+  const { locale, common } = await getMessages();
+  const values = readScheduleForm(formData);
+  const input = toScheduleInput(values);
+  const parsed = ScheduleInput.safeParse(input);
+  if (!parsed.success) {
+    const fieldErrors: NonNullable<ScheduleFormState["fieldErrors"]> = {};
+    for (const issue of parsed.error.issues) {
+      // rule.time・task.title などの、最後の項目の名前で返す
+      const key = String(issue.path.at(-1) ?? "");
+      fieldErrors[key] ??= renderMessage(issue.message, locale);
+    }
+    return { fieldErrors, values };
+  }
+  const projectId = String(formData.get("projectId") ?? "");
+  const scheduleId = String(formData.get("scheduleId") ?? "");
+  if (!projectId) return { message: common.action.createNoProject, values };
+  let result: Awaited<ReturnType<typeof saveSchedule>>;
+  try {
+    result = await saveSchedule(scheduleId ? { id: scheduleId } : { projectId }, input);
+  } catch {
+    return { message: common.action.daemonDown, values };
+  }
+  if (!result.ok) return { message: result.message, values };
+  revalidatePath(projectSchedulesPath(projectId), "layout");
+  redirect(schedulePath(projectId, result.schedule.id));
+}
+
+export type DeleteScheduleState = { message?: string };
+
+/** スケジュールタスクを消し、スケジュールタスクの一覧へ戻る（作ったタスクは残る）。 */
+export async function deleteScheduleAction(
+  _prev: DeleteScheduleState,
+  formData: FormData,
+): Promise<DeleteScheduleState> {
+  const { common } = await getMessages();
+  const projectId = String(formData.get("projectId") ?? "");
+  const scheduleId = String(formData.get("scheduleId") ?? "");
+  let result: Awaited<ReturnType<typeof deleteSchedule>>;
+  try {
+    result = await deleteSchedule(scheduleId);
+  } catch {
+    return { message: common.action.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  revalidatePath(projectSchedulesPath(projectId), "layout");
+  redirect(projectSchedulesPath(projectId));
 }
 
 export type ResumeState = {

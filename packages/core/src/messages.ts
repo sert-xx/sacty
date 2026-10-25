@@ -9,6 +9,7 @@ import {
 } from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
+import { SCHEDULE_NAME_MAX } from "./schedules.js";
 
 /** 英語の分の数（1 なら単数。PBI-150 で 1 分を設定できるようになったため。PR #169 レビュー提案）。 */
 const minutesEn = (n: number) => `${n} ${n === 1 ? "minute" : "minutes"}`;
@@ -79,6 +80,14 @@ const PARAMS = {
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
   // 入力の検査（zod の検査の文言に、このコードを入れる）
+  // スケジュールタスク
+  "schedule.notFound": null,
+  "schedule.nameRequired": null,
+  "schedule.nameTooLong": null,
+  "schedule.timeInvalid": null,
+  "schedule.daysRequired": null,
+  "schedule.dayInvalid": null,
+  "schedule.projectMissing": null,
   "input.titleRequired": null,
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
@@ -687,6 +696,13 @@ const ja: MessageDictionary = {
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
+  "schedule.notFound": "スケジュールタスクが見つかりません。",
+  "schedule.nameRequired": "名前を入力してください。",
+  "schedule.nameTooLong": `名前は${SCHEDULE_NAME_MAX}文字以内で入力してください。`,
+  "schedule.timeInvalid": "時刻を HH:MM（24時間制）で入力してください。",
+  "schedule.daysRequired": "曜日を1つ以上選んでください。",
+  "schedule.dayInvalid": "日は1から31の間で入力してください。",
+  "schedule.projectMissing": "スケジュールタスクのプロジェクトが見つかりません。",
   "input.titleRequired": "タイトルを入力してください。",
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
@@ -1284,6 +1300,13 @@ const en: MessageDictionary = {
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",
+  "schedule.notFound": "Scheduled task not found.",
+  "schedule.nameRequired": "Enter a name.",
+  "schedule.nameTooLong": `Keep the name within ${SCHEDULE_NAME_MAX} characters.`,
+  "schedule.timeInvalid": "Enter the time as HH:MM (24-hour clock).",
+  "schedule.daysRequired": "Choose at least one day of the week.",
+  "schedule.dayInvalid": "Enter a day between 1 and 31.",
+  "schedule.projectMissing": "The project of this scheduled task was not found.",
   "input.titleRequired": "Enter a title.",
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,

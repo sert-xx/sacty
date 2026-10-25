@@ -100,6 +100,7 @@ import {
   responsibleTicketProject,
   reworkTargets,
   SactySettings,
+  type ScheduledTaskSettings,
   SELF_REVIEW_STEPS,
   type SharedCompose,
   STEP_PLANS,
@@ -379,6 +380,24 @@ const SHARED_FETCH_DETAIL_MAX = 2000;
 export const INTAKE_SCOPES_PER_QUERY = 30;
 
 /** 並びを size ずつに分ける。 */
+/** スケジュールタスクの内容を、画面の作成と同じ入力にする（リポジトリが無ければ、リポジトリを指定しない）。 */
+function scheduledTaskInput(projectId: string, settings: ScheduledTaskSettings): unknown {
+  if (settings.template) {
+    return {
+      template: settings.template,
+      projectId,
+      ...(settings.repo ? { repo: settings.repo } : {}),
+    };
+  }
+  return {
+    title: settings.title,
+    body: settings.body,
+    projectId,
+    repo: settings.repo ?? null,
+    ...(settings.plan ? { plan: settings.plan } : {}),
+  };
+}
+
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const parts: T[][] = [];
   for (let i = 0; i < items.length; i += size) parts.push(items.slice(i, i + size));
@@ -4397,7 +4416,55 @@ export class TaskService {
    * template があれば、テンプレートから作る（題と説明は sacty が決める。PBI-90）。
    */
   createTask(raw: unknown): Task {
-    if (raw && typeof raw === "object" && "template" in raw) return this.createTemplateTask(raw);
+    const { projectId, payload } = this.prepareTask(raw);
+    return this.append({ id: randomUUID(), projectId }, [
+      { actor: "person", event: { type: "TaskCreated", payload } },
+    ]);
+  }
+
+  /**
+   * スケジュールタスクの内容で、タスクを作れるかを確かめる（作らない）。作れなければ、画面の作成と同じ理由
+   * （InvalidOperationError）で断る。
+   */
+  checkScheduledTask(projectId: string, settings: ScheduledTaskSettings): void {
+    this.prepareTask(scheduledTaskInput(projectId, settings));
+  }
+
+  /**
+   * スケジュールタスクの予定の回のタスクを作る（start: schedule）。内容の扱いは、画面の作成と同じ（テンプレートなら題と
+   * 説明は sacty が決め、リポジトリが無ければリポジトリを指定せずに作る）。
+   */
+  createScheduledTask(
+    projectId: string,
+    settings: ScheduledTaskSettings,
+    schedule: { id: string; slot: string },
+  ): Task {
+    const prepared = this.prepareTask(scheduledTaskInput(projectId, settings));
+    return this.append({ id: randomUUID(), projectId: prepared.projectId }, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskCreated",
+          payload: { ...prepared.payload, start: "schedule", schedule },
+        },
+      },
+    ]);
+  }
+
+  /** スケジュールタスクのその回で作ったタスク（二重に作らないために確かめる）。 */
+  scheduledTask(scheduleId: string, slot: string): Task | undefined {
+    for (const task of this.tasks.values()) {
+      if (task.schedule?.id === scheduleId && task.schedule.slot === slot) return task;
+    }
+    return undefined;
+  }
+
+  /** 画面の作成の入力を確かめ、作るタスクの TaskCreated の内容にする（記録はしない）。 */
+  private prepareTask(raw: unknown): {
+    projectId: string;
+    payload: Extract<EventInput, { type: "TaskCreated" }>["payload"];
+  } {
+    if (raw && typeof raw === "object" && "template" in raw) return this.prepareTemplateTask(raw);
     const input = CreateTaskInput.parse(raw);
     const { projectId } = input;
     const project = this.deps.projects.get(projectId);
@@ -4430,23 +4497,18 @@ export class TaskService {
     ) {
       throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
-    return this.append({ id: randomUUID(), projectId }, [
-      {
-        actor: "person",
-        event: {
-          type: "TaskCreated",
-          payload: {
-            title,
-            body,
-            start: "sacty",
-            // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
-            ...(repo ? { repo } : { noRepo: true as const }),
-            budgetCapUsd,
-            ...(plan ? { plan } : {}),
-          },
-        },
+    return {
+      projectId,
+      payload: {
+        title,
+        body,
+        start: "sacty",
+        // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
+        ...(repo ? { repo } : { noRepo: true as const }),
+        budgetCapUsd,
+        ...(plan ? { plan } : {}),
       },
-    ]);
+    };
   }
 
   /**
@@ -4464,10 +4526,10 @@ export class TaskService {
   }
 
   /**
-   * テンプレートからタスクを作る（PBI-90）。題と説明はテンプレートから決め、対象リポジトリは必須（省略すると、
+   * テンプレートから作るタスクの入力を確かめる（PBI-90）。題と説明はテンプレートから決め、対象リポジトリは必須（省略すると、
    * プロジェクトの対象がリポジトリ1つだけならそれにする）。作った後は、通常のタスクと同じく進む。
    */
-  private createTemplateTask(raw: unknown): Task {
+  private prepareTemplateTask(raw: unknown): ReturnType<TaskService["prepareTask"]> {
     const input = CreateTemplateTaskInput.parse(raw);
     const project = this.deps.projects.get(input.projectId);
     if (!project) throw new InvalidOperationError(message("project.notFound"));
@@ -4482,15 +4544,10 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = templateTask(input.template, repo);
-    return this.append({ id: randomUUID(), projectId: project.id }, [
-      {
-        actor: "person",
-        event: {
-          type: "TaskCreated",
-          payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
-        },
-      },
-    ]);
+    return {
+      projectId: project.id,
+      payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
+    };
   }
 
   /**

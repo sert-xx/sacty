@@ -100,149 +100,23 @@ export function NewTaskDialog({
             </DialogDescription>
           </DialogHeader>
           {target.hasTargets && <CandidatesProblems candidates={candidates} />}
-          <fieldset className="flex flex-col gap-2">
-            <legend className="mb-2 text-sm font-medium">{t.template}</legend>
-            <div className="flex flex-wrap items-center gap-1 self-start rounded-md border border-input p-0.5">
-              {(
-                [
-                  ["", t.templateNone],
-                  ["sacty-setup", t.templateSetup],
-                ] as const
-              ).map(([value, label]) => (
-                <label
-                  key={value || "none"}
-                  className={`cursor-pointer rounded px-3 py-1 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
-                    template === value ? "bg-muted font-semibold" : "text-muted-foreground"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="template"
-                    value={value}
-                    checked={template === value}
-                    className="sr-only"
-                    onChange={() => setTemplate(value)}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-            {template === "sacty-setup" && (
-              <p
-                data-testid="template-setup-hint"
-                className="flex flex-wrap items-center gap-1 text-xs leading-5 text-muted-foreground"
-              >
-                {t.templateSetupNote}
-                <Hint text={t.templateSetupHint} className="size-4" />
-              </p>
-            )}
-          </fieldset>
-          {!target.hasTargets ? (
-            <p role="alert" className="text-sm text-warn">
-              {t.noRepository}{" "}
-              <Link href={projectSettingsPath(target.id)} className="underline">
-                {t.projectSettings}
-              </Link>
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <span className="flex items-center gap-1">
-                <Label htmlFor="task-repo">{template ? t.repositoryRequired : t.repository}</Label>
-                <Hint text={template ? t.templateRepositoryHint : t.repositoryHint} />
-              </span>
-              {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
-              {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
-              <Input
-                id="task-repo"
-                name="repo"
-                list="task-repo-options"
-                autoComplete="off"
-                required={template !== ""}
-                // 候補が1つなら入れておく。候補が届く前に入力していれば、入力を残す（React は、入力していない
-                // ときだけ defaultValue の変化を表示に反映する）
-                defaultValue={
-                  state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")
-                }
-                placeholder={t.repositoryPlaceholder}
-                className="font-mono"
-              />
-              <datalist id="task-repo-options">
-                {repositories.map((repo) => (
-                  <option key={repo} value={repo} />
-                ))}
-              </datalist>
-              <CandidatesStatus candidates={candidates} />
-            </div>
-          )}
-          {/* テンプレートでは、題と説明を入力させない（PBI-90） */}
-          {!template && (
-            <>
-              <div className="flex flex-col gap-2">
-                <span className="flex items-center gap-1">
-                  <Label htmlFor="task-plan">{t.plan}</Label>
-                  <Hint text={t.planHint} />
-                </span>
-                <select
-                  id="task-plan"
-                  name="plan"
-                  className={`${SELECT} self-start`}
-                  value={plan}
-                  onChange={(e) => setPlan(e.target.value as StepPlan | "")}
-                  aria-describedby="task-plan-note"
-                >
-                  <option value="">{t.planAuto}</option>
-                  {PLAN_ORDER.map((key) => (
-                    <option key={key} value={key}>
-                      {messages.labels.plan[key]}
-                    </option>
-                  ))}
-                </select>
-                <p
-                  id="task-plan-note"
-                  data-testid="task-plan-note"
-                  className="text-xs leading-5 text-muted-foreground"
-                >
-                  {plan
-                    ? STEP_PLANS[plan].map((step) => messages.labels.step[step]).join(" → ")
-                    : t.planAutoNote}
-                </p>
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="task-title">{t.title}</Label>
-                <Input
-                  id="task-title"
-                  name="title"
-                  defaultValue={state.values?.title}
-                  aria-invalid={Boolean(state.fieldErrors?.title)}
-                  aria-describedby={state.fieldErrors?.title ? "task-title-error" : undefined}
-                  autoFocus
-                />
-                {state.fieldErrors?.title && (
-                  <p id="task-title-error" className="text-sm text-warn">
-                    {state.fieldErrors.title[0]}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="task-body">{t.body}</Label>
-                <Textarea
-                  id="task-body"
-                  name="body"
-                  rows={6}
-                  className="max-h-72 overflow-y-auto"
-                  defaultValue={state.values?.body}
-                  placeholder={t.bodyPlaceholder}
-                  aria-invalid={Boolean(state.fieldErrors?.body)}
-                  aria-describedby={state.fieldErrors?.body ? "task-body-error" : undefined}
-                />
-                {state.fieldErrors?.body && (
-                  <p id="task-body-error" className="text-sm text-warn">
-                    {state.fieldErrors.body[0]}
-                  </p>
-                )}
-              </div>
-            </>
-          )}
+          <TaskFields
+            idPrefix="task"
+            projectId={target.id}
+            hasTargets={target.hasTargets}
+            candidates={candidates}
+            template={template}
+            onTemplate={setTemplate}
+            plan={plan}
+            onPlan={setPlan}
+            // 候補が1つなら入れておく
+            repoDefault={state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
+            titleDefault={state.values?.title}
+            bodyDefault={state.values?.body}
+            titleError={state.fieldErrors?.title?.[0]}
+            bodyError={state.fieldErrors?.body?.[0]}
+            autoFocus
+          />
           {state.message && (
             <p role="alert" className="text-sm text-warn">
               {state.message}
@@ -257,6 +131,193 @@ export function NewTaskDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * タスクの内容の項目（テンプレート・対象リポジトリ・進め方・題・内容）。タスクの作成のダイアログと、スケジュールタスクの
+ * 作成・編集で使う（同じ項目を同じ規則で選ぶ）。idPrefix は、同じ画面に2つ置いても項目の ID を重ねないため。
+ */
+export function TaskFields({
+  idPrefix,
+  projectId,
+  hasTargets,
+  candidates,
+  template,
+  onTemplate,
+  plan,
+  onPlan,
+  repoDefault,
+  titleDefault,
+  bodyDefault,
+  titleError,
+  bodyError,
+  autoFocus,
+}: {
+  idPrefix: string;
+  projectId: string;
+  hasTargets: boolean;
+  candidates: RepositoryCandidates;
+  template: TaskTemplate | "";
+  onTemplate: (template: TaskTemplate | "") => void;
+  plan: StepPlan | "";
+  onPlan: (plan: StepPlan | "") => void;
+  repoDefault?: string;
+  titleDefault?: string;
+  bodyDefault?: string;
+  titleError?: string;
+  bodyError?: string;
+  autoFocus?: boolean;
+}) {
+  const messages = useMessages();
+  const t = messages.forms.task;
+  const repositories = candidates.status === "loaded" ? candidates.repositories : [];
+  return (
+    <>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-2 text-sm font-medium">{t.template}</legend>
+        <div className="flex flex-wrap items-center gap-1 self-start rounded-md border border-input p-0.5">
+          {(
+            [
+              ["", t.templateNone],
+              ["sacty-setup", t.templateSetup],
+            ] as const
+          ).map(([value, label]) => (
+            <label
+              key={value || "none"}
+              className={`cursor-pointer rounded px-3 py-1 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
+                template === value ? "bg-muted font-semibold" : "text-muted-foreground"
+              }`}
+            >
+              <input
+                type="radio"
+                name="template"
+                value={value}
+                checked={template === value}
+                className="sr-only"
+                onChange={() => onTemplate(value)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        {template === "sacty-setup" && (
+          <p
+            data-testid="template-setup-hint"
+            className="flex flex-wrap items-center gap-1 text-xs leading-5 text-muted-foreground"
+          >
+            {t.templateSetupNote}
+            <Hint text={t.templateSetupHint} className="size-4" />
+          </p>
+        )}
+      </fieldset>
+      {!hasTargets ? (
+        <p role="alert" className="text-sm text-warn">
+          {t.noRepository}{" "}
+          <Link href={projectSettingsPath(projectId)} className="underline">
+            {t.projectSettings}
+          </Link>
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <span className="flex items-center gap-1">
+            <Label htmlFor={`${idPrefix}-repo`}>
+              {template ? t.repositoryRequired : t.repository}
+            </Label>
+            <Hint text={template ? t.templateRepositoryHint : t.repositoryHint} />
+          </span>
+          {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
+          {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
+          <Input
+            id={`${idPrefix}-repo`}
+            name="repo"
+            list={`${idPrefix}-repo-options`}
+            autoComplete="off"
+            required={template !== ""}
+            // 候補が届く前に入力していれば、入力を残す（React は、入力していないときだけ defaultValue の変化を
+            // 表示に反映する）
+            defaultValue={repoDefault}
+            placeholder={t.repositoryPlaceholder}
+            className="font-mono"
+          />
+          <datalist id={`${idPrefix}-repo-options`}>
+            {repositories.map((repo) => (
+              <option key={repo} value={repo} />
+            ))}
+          </datalist>
+          <CandidatesStatus candidates={candidates} />
+        </div>
+      )}
+      {/* テンプレートでは、題と説明を入力させない（PBI-90） */}
+      {!template && (
+        <>
+          <div className="flex flex-col gap-2">
+            <span className="flex items-center gap-1">
+              <Label htmlFor={`${idPrefix}-plan`}>{t.plan}</Label>
+              <Hint text={t.planHint} />
+            </span>
+            <select
+              id={`${idPrefix}-plan`}
+              name="plan"
+              className={`${SELECT} self-start`}
+              value={plan}
+              onChange={(e) => onPlan(e.target.value as StepPlan | "")}
+              aria-describedby={`${idPrefix}-plan-note`}
+            >
+              <option value="">{t.planAuto}</option>
+              {PLAN_ORDER.map((key) => (
+                <option key={key} value={key}>
+                  {messages.labels.plan[key]}
+                </option>
+              ))}
+            </select>
+            <p
+              id={`${idPrefix}-plan-note`}
+              data-testid={`${idPrefix}-plan-note`}
+              className="text-xs leading-5 text-muted-foreground"
+            >
+              {plan
+                ? STEP_PLANS[plan].map((step) => messages.labels.step[step]).join(" → ")
+                : t.planAutoNote}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={`${idPrefix}-title`}>{t.title}</Label>
+            <Input
+              id={`${idPrefix}-title`}
+              name="title"
+              defaultValue={titleDefault}
+              aria-invalid={Boolean(titleError)}
+              aria-describedby={titleError ? `${idPrefix}-title-error` : undefined}
+              autoFocus={autoFocus}
+            />
+            {titleError && (
+              <p id={`${idPrefix}-title-error`} className="text-sm text-warn">
+                {titleError}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={`${idPrefix}-body`}>{t.body}</Label>
+            <Textarea
+              id={`${idPrefix}-body`}
+              name="body"
+              rows={6}
+              className="max-h-72 overflow-y-auto"
+              defaultValue={bodyDefault}
+              placeholder={t.bodyPlaceholder}
+              aria-invalid={Boolean(bodyError)}
+              aria-describedby={bodyError ? `${idPrefix}-body-error` : undefined}
+            />
+            {bodyError && (
+              <p id={`${idPrefix}-body-error`} className="text-sm text-warn">
+                {bodyError}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

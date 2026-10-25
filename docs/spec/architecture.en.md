@@ -35,6 +35,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
+| Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
@@ -49,7 +50,8 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/projects/<ID>` | Moves to `/projects/<ID>/tasks` |
 | `/projects/<ID>/tasks` | The project's task list (cards for tasks that need a human decision, "Create task") |
 | `/projects/<ID>/settings` | The project's settings |
-| `/projects/current`, `/projects/current/tasks` | Moves (303) to the settings or the task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
+| `/projects/<ID>/schedules`, `/projects/<ID>/schedules/<scheduled task ID>` | The project's scheduled task list and details ([Scheduled tasks](scheduled-tasks.en.md)) |
+| `/projects/current`, `/projects/current/tasks`, `/projects/current/schedules` | Moves (303) to the settings, the task list, or the scheduled task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
 | `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
 | `/settings` | The sacty settings |
 
@@ -159,19 +161,19 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 ## Web UI header and side menu (the displayed project and notices)
 
 - The URL decides which project the open screen belongs to (`pageScope`).
-  - Project screens: `/projects/<ID>/tasks` and `/projects/<ID>/settings` (the URL's project), and `/tasks/…` (task details, review, run log; the displayed project).
+  - Project screens: `/projects/<ID>/tasks`, `/projects/<ID>/schedules`, `/projects/<ID>/audit`, and `/projects/<ID>/settings` (the URL's project), and `/tasks/…` (task details, review, run log; the displayed project).
   - "All projects" screens: everything else (the dashboard, the project list, the sacty settings, and so on).
 - The header's project switcher shows "All projects" first (moves to `/dashboard`), followed by each project. Choosing a project changes the cookie with `/switch`, then moves to `/projects/<ID>/tasks`.
   - On a project screen, the switcher shows that project as selected. If the URL's ID is not in the project list, it shows "All projects".
   - On an "All projects" screen, it shows "All projects". The count is the total of tasks that need you in all projects.
 - The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year).
-  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`) and "Settings" (`/projects/current`) in the side menu, use the cookie's project.
+  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`), "Schedules" (`/projects/current/schedules`), "Audit" (`/projects/current/audit`), and "Settings" (`/projects/current`) in the side menu, use the cookie's project.
   - If the cookie has no project or the project no longer exists, the first project is used.
   - Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
 - The cookie changes in these cases.
   - Switching in the header and notices (`/switch`). Without a destination, it moves to the switched project's task list.
   - Creating or importing a project (it becomes the created project).
-  - Opening a project's screen (task list, project settings, task details, review, run log).
+  - Opening a project's screen (task list, scheduled task list and details, audit, project settings, task details, review, run log).
     - The cookie is changed only if it differs from the screen's project, by a server action after rendering (the screen and the header are redrawn).
     - If the project is not in the daemon's project list (a task of a deleted project), the cookie is not changed.
     - If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
@@ -180,7 +182,7 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
   | Screen | Side menu | Notices |
   | --- | --- | --- |
   | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | Not split by project, newest first. Opening one switches to the task's project and opens the task |
-  | Project | "Tasks", "Audit", and "Settings" | Split into "Other projects" and "This project" |
+  | Project | "Tasks", "Schedules", "Audit", and "Settings" | Split into "Other projects" and "This project" |
 
   The side menu does not show "Dashboard". It is not used, and the dashboard opens from the logo and from "All projects" in the project switcher.
 - The header is in the root layout, so navigation (links) within the web UI does not redraw it (the selection is decided in the browser from the screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too. They call it before moving with `redirect` as well.
@@ -263,7 +265,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | Path | Contents |
 | --- | --- |
 | `config.yaml` | sacty configuration (AI, authentication, images, gateway, and so on). The daemon rereads it every time it uses it |
-| `sacty.db` | SQLite. Activity log (events), projects, sacty settings ("sacty settings" on the web UI) |
+| `sacty.db` | SQLite. Activity log (events), projects, scheduled tasks, sacty settings ("sacty settings" on the web UI) |
 | `daemon.lock`, `daemon-owner.json` | Detecting and reporting a second start ([Daemon startup and shutdown](daemon-lifecycle.en.md)) |
 | `daemon.json` | The running daemon's address and token, queried by `sacty context preview` |
 | `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), and per-run `_guardian/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_export/<run-id>`, `_shared-compose/<run-id>` (all of `_shared-compose` is removed at startup) |

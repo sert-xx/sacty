@@ -6,6 +6,7 @@ const ja = {
   nav: {
     main: "メイン",
     tasks: "タスク",
+    schedules: "スケジュール",
     audit: "監査",
     settings: "設定",
   },
@@ -57,6 +58,7 @@ const en: ShellMessages = {
   nav: {
     main: "Main",
     tasks: "Tasks",
+    schedules: "Schedules",
     audit: "Audit",
     settings: "Settings",
   },
