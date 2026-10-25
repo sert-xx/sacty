@@ -16067,6 +16067,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       db?: string;
       settings?: MemorySettingsStore;
       github?: FakeGitHub;
+      /** 工程の選び方（無ければ、どのタスクも steps の工程にする）。 */
+      planner?: ServiceDeps["planner"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -16082,15 +16084,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.projects ? { projects: options.projects } : {}),
       ...(options.config ? { config: options.config } : {}),
       ...(options.gateway ? { gateway: options.gateway } : {}),
-      planner: async () => ({
-        steps: [...(options.steps ?? MVP_STEPS)],
-        fallback: false,
-        testCommand: "npm test",
-        costUsd: 0,
-        estimated: false,
-        ...(options.documentsDir ? { documentsDir: options.documentsDir } : {}),
-        ...(options.exports ? { exports: options.exports } : {}),
-      }),
+      planner:
+        options.planner ??
+        (async () => ({
+          steps: [...(options.steps ?? MVP_STEPS)],
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+          ...(options.documentsDir ? { documentsDir: options.documentsDir } : {}),
+          ...(options.exports ? { exports: options.exports } : {}),
+        })),
     });
     const { id } = made.service.createTask({
       projectId: "default",
@@ -17594,6 +17598,225 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
         activity.close();
       }
+    });
+
+    describe("手動で作ったレビューのタスク（本文に PR の URL。source 無し）", () => {
+      const MANUAL = "PR 7 のレビュー";
+      const INVESTIGATE = "PR 7 の調査";
+      /** 手動のタスクにはレビューの工程だけを選び、元のタスクには MVP の工程を選ぶ。 */
+      const planner: ServiceDeps["planner"] = async (task) => ({
+        ...(task.title === MANUAL
+          ? { steps: ["review"], plan: "review" as const }
+          : task.title === INVESTIGATE
+            ? { steps: ["investigate"], plan: "investigate" as const }
+            : { steps: [...MVP_STEPS] }),
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      });
+      const verdictOf = (verdict: string) =>
+        `# 評価\n\n受け入れ条件が足りない\n\n${block({ "sacty-review-verdict": { verdict } })}`;
+
+      it("判定に指摘のある回（修正が必要・提案あり・読めない）は元のタスクの PR の指摘として取り込み、指摘なしの回は取り込まない", async () => {
+        const cases: { name: string; review: string; imported: boolean }[] = [
+          { name: "修正が必要", review: verdictOf("changes_required"), imported: true },
+          { name: "提案あり", review: verdictOf("suggestions"), imported: true },
+          { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
+          { name: "指摘なし", review: verdictOf("no_findings"), imported: false },
+        ];
+        for (const c of cases) {
+          rmSync(dbPath, { force: true });
+          const pulls = new FakePulls();
+          pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+          const made = await start(
+            [
+              out("# 要求要件 v1"),
+              out(c.review),
+              rework("requirements", "要求要件で直せる"),
+              out("# 要求要件 v2"),
+            ],
+            { pulls, planner },
+          );
+          const { activity, service, executor, id } = made;
+          const manual = service.createTask({
+            projectId: "default",
+            title: MANUAL,
+            body: "https://github.com/acme/app/pull/7 をレビューする",
+          });
+          expect(taskOf(service, manual.id).source, c.name).toBeUndefined();
+          await service.runNext(manual.id);
+          await service.runNext(manual.id);
+          expect(
+            pulls.reviews.map((r) => r.number),
+            c.name,
+          ).toEqual([7]);
+          expect(pulls.reviews[0]?.body, c.name).toContain(`<!-- sacty-review:${manual.id} -->`);
+          pulls.feedbackBy[7] = [
+            item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
+          ];
+          const before = executor.calls.length;
+          await service.checkPullRequests();
+          const task = taskOf(service, id);
+          if (c.imported) {
+            expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([manual.id]);
+            expect(task.importedFeedback, c.name).toEqual(["review:50"]);
+            expect(task.remarks.at(-1)?.text, c.name).toContain(
+              c.name === "評価なし" ? "直す点がある" : "受け入れ条件が足りない",
+            );
+            // ゴールガーディアンが戻し先を判断し、差し戻す
+            expect(types(service, id), c.name).toContain("ReworkJudged");
+            expect(task.status, c.name).toBe("queued");
+            // 二重に取り込まない
+            await service.checkPullRequests();
+            expect(
+              types(service, id).filter((t) => t === "PullRequestReviewImported"),
+              c.name,
+            ).toHaveLength(1);
+          } else {
+            expect(pulls.feedbackSactyReviews.at(-1), c.name).toBeUndefined();
+            expect(task.importedFeedback, c.name).toEqual([]);
+            expect(executor.calls.length, c.name).toBe(before);
+            expect(task.status, c.name).toBe("awaiting_approval");
+          }
+          activity.close();
+        }
+      });
+
+      it("判定の記録が無い回（PR を参照するだけで、レビューの工程を持たないタスク）は取り込まない", async () => {
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const made = await start([out("# 要求要件 v1"), out("# 調査")], { pulls, planner });
+        const { activity, service, id } = made;
+        // レビューの工程を持たないタスクが、PR を参照する（工程を実行した）
+        const other = service.createTask({
+          projectId: "default",
+          title: INVESTIGATE,
+          body: "https://github.com/acme/app/pull/7 と同じ直し方をする",
+        });
+        await service.runNext(other.id);
+        expect(taskOf(service, other.id).steps.map((s) => s.key)).toEqual(["investigate"]);
+        pulls.feedbackBy[7] = [
+          item("review:50", {
+            kind: "review",
+            author: "me",
+            body: `<!-- sacty-review:${other.id} -->\n## sacty のレビュー\n\n直す点がある`,
+          }),
+        ];
+        await service.checkPullRequests();
+        expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+          { key: other.id, account: "me", allowed: false },
+        ]);
+        expect(taskOf(service, id).importedFeedback).toEqual([]);
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        activity.close();
+      });
+
+      it("再レビューも回ごとに判定する（指摘なしの1回目は取り込まず、修正が必要の2回目は取り込む）", async () => {
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            out(verdictOf("no_findings")),
+            out(verdictOf("changes_required")),
+            rework("requirements", "要求要件で直せる"),
+          ],
+          { pulls, planner },
+        );
+        const { activity, service, id } = made;
+        const manual = service.createTask({
+          projectId: "default",
+          title: MANUAL,
+          body: "https://github.com/acme/app/pull/7 をレビューする",
+        });
+        await service.runNext(manual.id);
+        await service.runNext(manual.id);
+        const posted = (n: number) =>
+          item(`review:${50 + n}`, {
+            kind: "review",
+            author: "me",
+            body: pulls.reviews[n]?.body ?? "",
+          });
+        pulls.feedbackBy[7] = [posted(0)];
+        await service.checkPullRequests();
+        expect(taskOf(service, id).importedFeedback).toEqual([]);
+        service.rereview(manual.id);
+        await service.runNext(manual.id);
+        await service.runNext(manual.id);
+        expect(pulls.reviews).toHaveLength(2);
+        pulls.feedbackBy[7] = [posted(0), posted(1)];
+        await service.checkPullRequests();
+        expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+          { key: manual.id, account: "me", allowed: false },
+          { key: `${manual.id}:2`, account: "me", allowed: true },
+        ]);
+        expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
+        activity.close();
+      });
+
+      it("投稿したアカウントが、そのタスクのアカウントと違えば、目印があっても取り込まない", async () => {
+        // 元のタスクのプロジェクト（parent）。PR を作った後に Org の担当に変え、リポジトリを担当するプロジェクト（reviewer）を足す
+        const projects = new MemoryProjectStore();
+        projects.put("default", {
+          name: "元",
+          targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+          githubAccounts: { "github.com": "parent" },
+        });
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const made = await start([out("# 要求要件 v1"), out(verdictOf("changes_required"))], {
+          pulls,
+          projects,
+          planner,
+          github: new FakeGitHub({ parent: "ghp_parent", reviewer: "ghp_reviewer" }),
+        });
+        const { activity, service, id } = made;
+        projects.put("default", {
+          name: "元",
+          targets: [{ scope: "org", target: "https://github.com/acme" }],
+          githubAccounts: { "github.com": "parent" },
+        });
+        projects.put("app", {
+          name: "リポジトリ",
+          targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+          githubAccounts: { "github.com": "reviewer" },
+        });
+        const manual = service.createTask({
+          projectId: "app",
+          title: MANUAL,
+          body: "https://github.com/acme/app/pull/7 をレビューする",
+        });
+        await service.runNext(manual.id);
+        await service.runNext(manual.id);
+        expect(pulls.reviews[0]?.token).toBe("ghp_reviewer");
+        // 同じ目印の本文を、そのタスクのアカウント（reviewer）ではなく、元のタスクのアカウント（parent）が投稿した
+        pulls.feedbackBy[7] = [
+          item("review:50", {
+            kind: "review",
+            author: "parent",
+            body: pulls.reviews[0]?.body ?? "",
+          }),
+        ];
+        await service.checkPullRequests();
+        expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+          { key: manual.id, account: "reviewer", allowed: true },
+        ]);
+        expect(taskOf(service, id).importedFeedback).toEqual([]);
+        expect(types(service, id)).not.toContain("PullRequestReviewImported");
+        // そのタスクのアカウントが投稿したものは取り込む
+        pulls.feedbackBy[7] = [
+          ...(pulls.feedbackBy[7] ?? []),
+          item("review:51", {
+            kind: "review",
+            author: "reviewer",
+            body: pulls.reviews[0]?.body ?? "",
+          }),
+        ];
+        await service.checkPullRequests();
+        expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
+        activity.close();
+      });
     });
 
     it("再レビューは回ごとに判定し、直すべき指摘のある回のレビューだけを取り込む（PO の指摘）", async () => {
