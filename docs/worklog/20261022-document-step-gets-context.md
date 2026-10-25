@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: なし
 - ブランチ: claude/practical-cray-e9gjh7
-- 関係する ADR: [文書作成の工程にも、ほかの工程と同じくプロジェクトのコンテキスト・外部 PF・MCP・GitHub の読み取りを渡す](../adr/20261022-1505-document-step-gets-context.md)
+- 関係する ADR: [文書作成の工程にも、ほかの工程と同じくプロジェクトのコンテキスト・外部 PF・MCP・GitHub の読み取りを渡す](../adr/20261022-1505-superseded-document-step-gets-context.md)
 
 ## 目的
 

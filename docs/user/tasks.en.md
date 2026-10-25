@@ -108,9 +108,18 @@ To create a user guide, a procedure document, meeting notes, or a translated dra
 - An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
 - To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
-Like the other steps, the Document step can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads. To have it use external material, write which destination to read and what to read in the task body or in a Request changes comment. The draft itself is not written to external services directly; it is exported after approval.
+Like the other steps, the Document step can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads. To have it use external material, write which destination to read and what to read in the task body or in a Request changes comment. Normally the deliverable is one draft, and you approve the draft shown in the sacty web UI. The draft is not written to external services directly; it is exported after approval.
 
-You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes that use one configured destination. Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
+When you want external documents created or edited directly, write so in the task body. The agent writes those documents directly, and the documents it wrote become the deliverable. The deliverable can be more than one document (for example, "Find the pages containing … and fix them together").
+
+- Document shows the content of each document after the fix. The documents written externally are listed under "Pages written externally".
+- When you request changes, the agent edits those documents (it does not create another document with the same content). You can also request changes to add target documents.
+- Documents written externally are changed when the agent writes them, without waiting for approval. Instruct direct editing only when the external documents may change before approval.
+- Because the documents written externally are the deliverable, nothing is exported after approval.
+
+A work report (that something was created, the agent ID, and so on) is written neither in the draft nor externally.
+
+You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes to a unique target that use one configured destination (they cannot be redone through Request changes; for external documents you want to revise as you go, or several documents fixed together, request them as a Document task above). Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 
 1. Write the specific target ID/URL, the change and its preconditions, and the desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. If target or connection details are missing, the task stops before execution starts.
 2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval. Confirm that the request is correct before starting the task.

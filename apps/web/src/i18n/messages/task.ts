@@ -86,6 +86,11 @@ const ja = {
     retry: "書き出し直す",
     retrying: "依頼しています…",
   },
+  /** 文書作成で、エージェントが外部に直接書いたページ。 */
+  documentPages: {
+    title: "外部に直接書いたページ",
+    hint: "タスクの説明の指示に従って、エージェントが外部に直接作った・直したページです。これが成果物で、承認の後に書き出しはしません。差し戻すと、これらのページを直します。",
+  },
   /** 工程のイメージ（PBI-41）と、人が変える操作（PBI-106）。 */
   images: {
     title: "工程のイメージ",
@@ -430,6 +435,10 @@ const en: TaskMessages = {
     previous: "Previously exported to: ",
     retry: "Export again",
     retrying: "Requesting…",
+  },
+  documentPages: {
+    title: "Pages written externally",
+    hint: "Pages the agent created or edited directly in external services, as the task description instructed. They are the deliverable, and nothing is exported after approval. When you request changes, the agent edits these pages.",
   },
   images: {
     title: "Step images",

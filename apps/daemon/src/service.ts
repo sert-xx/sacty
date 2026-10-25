@@ -297,6 +297,7 @@ import {
   EXPORT_FILE,
   type ExportDestination,
   extractBlocks,
+  extractDocumentPages,
   extractExport,
   extractFinalReview,
   extractGathered,
@@ -5801,7 +5802,18 @@ export class TaskService {
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
     const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
-    const output = review?.output ?? reproduction?.output ?? extracted.output;
+    // 文書作成の工程は、外部に直接作った・直したページ（成果物）の申告を取り出す（差し戻し・書き出しで同じページを使う）。
+    // 申告は元の出力から読む（指摘への対応と同じ JSON に入っていると、extractBlocks がそのオブジェクトごと除くため。
+    // PR #220 レビュー指摘）。原稿からは、残った申告の JSON だけを除く
+    const documentPages =
+      step === "document"
+        ? {
+            pages: extractDocumentPages(outcome.output).pages,
+            output: extractDocumentPages(extracted.output).output,
+          }
+        : undefined;
+    const output =
+      review?.output ?? reproduction?.output ?? documentPages?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
@@ -5828,6 +5840,9 @@ export class TaskService {
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
+            ...(documentPages && documentPages.pages.length > 0
+              ? { documentPages: documentPages.pages }
+              : {}),
           },
         },
       },

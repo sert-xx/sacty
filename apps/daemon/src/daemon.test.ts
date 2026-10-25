@@ -22010,6 +22010,9 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
   });
   const block = (value: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const promptOf = (executor: { calls: Invocation[] }, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const taskOf = (service: TaskService, id: string) => service.get(id)?.task as Task;
   const planner =
     (plan: "document" | "operation"): ServiceDeps["planner"] =>
     async () => ({
@@ -22284,6 +22287,75 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     await service.runNext(id);
     expect(service.get(id)?.task.exports.document?.url).toBe("https://calendar.example.com/help");
     expect(executor.calls).toHaveLength(2);
+    activity.close();
+  });
+
+  it("タスクの説明に従って外部に直接書いた複数のページを成果物として記録し、差し戻しで同じページを直させ、書き出さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const PAGE1 = "https://calendar.example.com/help/1";
+    const PAGE2 = "https://calendar.example.com/help/2";
+    const PAGE3 = "https://calendar.example.com/help/3";
+    // 差し戻しの回の出力。指摘の ID が決まってから中身を入れる
+    const second = out("");
+    const selected: ServiceDeps["planner"] = async () => ({
+      steps: [...STEP_PLANS.document],
+      plan: "document",
+      reason: "利用者向け手順",
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+      exports: {
+        document: {
+          to: { via: "platform", name: "calendar", location: "説明ページ" },
+          reason: "依頼された保存先",
+        },
+      },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(
+          `## 手順1\n\n直した内容\n\n${block({ "sacty-document-pages": { pages: [PAGE1, PAGE2] } })}`,
+        ),
+        second,
+      ],
+      { planner: selected, config: configOf(agent(), 1, [calendar()]), gateway: fakeGateway() },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "古い手順を含む説明ページをまとめて直す",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(taskOf(service, id).documentPages).toEqual([PAGE1, PAGE2]);
+    // 申告は出力に残さない
+    expect(taskOf(service, id).outputs.document).toBe("## 手順1\n\n直した内容");
+    service.requestChanges(id, {
+      step: "document",
+      submission: 1,
+      comments: ["説明ページの手順を直して。3ページ目も対象に"],
+    });
+    // 差し戻しでは、直したページだけを申告しても、前の回のページは成果物のまま。指摘への対応と同じ JSON に入れても、
+    // 申告を読む（PR #220 レビュー指摘）
+    const remarkId = taskOf(service, id).remarks[0]?.id ?? "";
+    Object.assign(second, {
+      output: `## 手順2\n\n直した内容\n\n${block({
+        "sacty-responses": [{ remarkId, text: "3ページ目も直した" }],
+        "sacty-document-pages": { pages: [PAGE2, PAGE3] },
+      })}`,
+    });
+    await service.runNext(id);
+    expect(promptOf(executor, 1)).toContain(`  - ${PAGE1}`);
+    expect(promptOf(executor, 1)).toContain(`  - ${PAGE2}`);
+    expect(taskOf(service, id).documentPages).toEqual([PAGE1, PAGE2, PAGE3]);
+    expect(taskOf(service, id).remarks[0]?.response).toBe("3ページ目も直した");
+    expect(taskOf(service, id).outputs.document).toBe("## 手順2\n\n直した内容");
+    service.approve(id, { step: "document", submission: 2 });
+    // 外部に直接書いたページが成果物なので、書き出さない（原稿を別のページとして出さない）
+    expect(exportDue(taskOf(service, id))).toBeUndefined();
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(2);
+    expect(isCompleted(taskOf(service, id))).toBe(true);
     activity.close();
   });
 
