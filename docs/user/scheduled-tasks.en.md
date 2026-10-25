@@ -39,6 +39,21 @@ In that case it works as follows.
 - It never creates the task for the same scheduled time twice.
 - Scheduled times before you created the scheduled task, or while it was paused, are not made up.
 
+### How the connection is checked
+
+Sacty checks whether it is online by resolving the name `github.com`.
+While the name does not resolve, it waits without creating tasks.
+While waiting, the list shows "Waiting for network" in the state, and the details show "Offline. Waiting to create the task."
+The terminal running `sacty up` also shows a line once when waiting starts and once when the connection returns.
+
+If tasks are never created, check on the computer running Sacty that the name resolves, with the command below.
+
+```sh
+nslookup github.com
+```
+
+In an environment where the name does not resolve (for example, a company network that cannot resolve outside names), scheduled tasks do not create tasks.
+
 ## Edit, pause, and delete
 
 Click a name in the list to open the details.

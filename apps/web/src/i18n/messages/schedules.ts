@@ -27,6 +27,7 @@ const ja = {
   weekdays: ["日", "月", "火", "水", "木", "金", "土"] as readonly string[],
   daySeparator: "・",
   lastFailed: "作成できませんでした",
+  waitingForNetwork: "ネット待ち",
   detail: {
     settings: "設定",
     content: "作るタスク",
@@ -41,6 +42,9 @@ const ja = {
     taskTitle: "タイトル",
     body: "内容",
     lastError: "前回の予定で、タスクを作れませんでした。",
+    waitingForNetwork: "ネットにつながらないため、タスクの作成を待っています。",
+    waitingForNetworkHint:
+      "github.com の名前を引けるかで、つながるかを確かめています。つながると、1分以内に直前の予定の分を作ります。",
     createdAt: "作成日時",
   },
   form: {
@@ -102,6 +106,7 @@ const en: SchedulesMessages = {
   weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
   daySeparator: ", ",
   lastFailed: "Could not create",
+  waitingForNetwork: "Waiting for network",
   detail: {
     settings: "Settings",
     content: "Task to create",
@@ -116,6 +121,9 @@ const en: SchedulesMessages = {
     taskTitle: "Title",
     body: "Description",
     lastError: "The task for the last scheduled time could not be created.",
+    waitingForNetwork: "Offline. Waiting to create the task.",
+    waitingForNetworkHint:
+      "Sacty checks the connection by resolving github.com. Once it resolves, the task for the latest scheduled time is created within a minute.",
     createdAt: "Created",
   },
   form: {

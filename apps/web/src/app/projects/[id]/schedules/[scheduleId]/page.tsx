@@ -7,6 +7,7 @@ import { DaemonError } from "@/components/daemon-error";
 import { DeleteScheduleButton, ScheduleDialog } from "@/components/schedule-dialog";
 import { FollowProject } from "@/components/shell/follow-project";
 import { StatusLabelView, StepChipsView } from "@/components/task-bits";
+import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getSchedule, listProjects } from "@/lib/daemon";
 import { formatStamp, statusText, statusTone } from "@/lib/labels";
@@ -84,6 +85,15 @@ async function Schedule({ params }: { params: Promise<{ id: string; scheduleId: 
           <DeleteScheduleButton projectId={project.id} schedule={schedule} />
         </div>
       </div>
+      {schedule.waitingForNetwork && (
+        <div
+          role="status"
+          className="flex items-center gap-1 rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
+        >
+          {m.detail.waitingForNetwork}
+          <Hint text={m.detail.waitingForNetworkHint} />
+        </div>
+      )}
       {schedule.lastRun?.error && (
         <div
           role="alert"

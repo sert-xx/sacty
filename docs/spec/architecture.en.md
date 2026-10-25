@@ -161,19 +161,19 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
 ## Web UI header and side menu (the displayed project and notices)
 
 - The URL decides which project the open screen belongs to (`pageScope`).
-  - Project screens: `/projects/<ID>/tasks` and `/projects/<ID>/settings` (the URL's project), and `/tasks/…` (task details, review, run log; the displayed project).
+  - Project screens: `/projects/<ID>/tasks`, `/projects/<ID>/schedules`, `/projects/<ID>/audit`, and `/projects/<ID>/settings` (the URL's project), and `/tasks/…` (task details, review, run log; the displayed project).
   - "All projects" screens: everything else (the dashboard, the project list, the sacty settings, and so on).
 - The header's project switcher shows "All projects" first (moves to `/dashboard`), followed by each project. Choosing a project changes the cookie with `/switch`, then moves to `/projects/<ID>/tasks`.
   - On a project screen, the switcher shows that project as selected. If the URL's ID is not in the project list, it shows "All projects".
   - On an "All projects" screen, it shows "All projects". The count is the total of tasks that need you in all projects.
 - The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year).
-  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`) and "Settings" (`/projects/current`) in the side menu, use the cookie's project.
+  - The header's selection on screens such as the task details, and "Tasks" (`/projects/current/tasks`), "Schedules" (`/projects/current/schedules`), "Audit" (`/projects/current/audit`), and "Settings" (`/projects/current`) in the side menu, use the cookie's project.
   - If the cookie has no project or the project no longer exists, the first project is used.
   - Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
 - The cookie changes in these cases.
   - Switching in the header and notices (`/switch`). Without a destination, it moves to the switched project's task list.
   - Creating or importing a project (it becomes the created project).
-  - Opening a project's screen (task list, project settings, task details, review, run log).
+  - Opening a project's screen (task list, scheduled task list and details, audit, project settings, task details, review, run log).
     - The cookie is changed only if it differs from the screen's project, by a server action after rendering (the screen and the header are redrawn).
     - If the project is not in the daemon's project list (a task of a deleted project), the cookie is not changed.
     - If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
@@ -182,7 +182,7 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
   | Screen | Side menu | Notices |
   | --- | --- | --- |
   | "All projects" | Only "Settings". "Settings" moves to the project list (`/projects`), so it never jumps to a project | Not split by project, newest first. Opening one switches to the task's project and opens the task |
-  | Project | "Tasks", "Audit", and "Settings" | Split into "Other projects" and "This project" |
+  | Project | "Tasks", "Schedules", "Audit", and "Settings" | Split into "Other projects" and "This project" |
 
   The side menu does not show "Dashboard". It is not used, and the dashboard opens from the logo and from "All projects" in the project switcher.
 - The header is in the root layout, so navigation (links) within the web UI does not redraw it (the selection is decided in the browser from the screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too. They call it before moving with `redirect` as well.

@@ -62,6 +62,8 @@ In a check, for each enabled scheduled task whose project exists, sacty decides 
 3. If any task is due, it checks whether the network is reachable (whether `github.com` resolves, waiting up to 5 seconds).
    If not, it creates none and checks again on the next check.
    If nothing is due, it does not check the network.
+   It writes one line to the daemon log when waiting starts and one when the connection returns.
+   While waiting, the API response of each scheduled task with a due time has `waitingForNetwork: true`, and the web UI shows "Waiting for network" in the list's state and that it is waiting in the details.
 4. Before creating, it checks whether the activity log already has the task for that time.
    If so, it does not create one and records that task in `lastRun` (when the daemon stopped after creating the task but before saving `lastRun`).
 5. It creates the task and saves the time and the task in `lastRun`.

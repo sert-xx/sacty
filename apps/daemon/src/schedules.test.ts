@@ -2,12 +2,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
 import { MemoryProjectStore } from "./projects.js";
-import { MemoryScheduleStore, ScheduledTasks, SqliteScheduleStore } from "./schedules.js";
+import {
+  MemoryScheduleStore,
+  ScheduledTasks,
+  ScheduleRunner,
+  SqliteScheduleStore,
+} from "./schedules.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { InvalidOperationError, TaskService } from "./service.js";
@@ -59,16 +64,18 @@ function setup(store = new MemoryScheduleStore()) {
   });
   const clock = { now: at(2026, 10, 20, 8) };
   const network = { online: true, checks: 0 };
+  const logs: string[] = [];
   const schedules = new ScheduledTasks({
     store,
     tasks: service,
+    log: (line) => logs.push(line),
     now: () => clock.now,
     reachable: async () => {
       network.checks++;
       return network.online;
     },
   });
-  return { activity, service, project, schedules, clock, network, store };
+  return { activity, service, project, schedules, clock, network, store, logs };
 }
 
 const daily = (task: Record<string, unknown> = { title: "依存の更新", repo: REPO }) => ({
@@ -136,6 +143,23 @@ describe("スケジュールタスク", () => {
     expect(service.list().map((t) => t.schedule?.slot)).toEqual([
       at(2026, 10, 21, 9).toISOString(),
     ]);
+    activity.close();
+  });
+
+  it("ネット待ちは、始まりと戻ったときに1回だけログに出し、待っている間は画面に返す", async () => {
+    const { activity, project, schedules, clock, network, logs } = setup();
+    const created = schedules.create(project.id, daily());
+    network.online = false;
+    clock.now = at(2026, 10, 20, 9, 5);
+    await schedules.tick();
+    await schedules.tick();
+    expect(logs.filter((l) => l.includes("github.com"))).toHaveLength(1);
+    expect(schedules.get(created.id)?.schedule.waitingForNetwork).toBe(true);
+    expect(schedules.list(project.id)?.[0]?.waitingForNetwork).toBe(true);
+    network.online = true;
+    await schedules.tick();
+    expect(logs.filter((l) => l.includes("ネットにつながったので"))).toHaveLength(1);
+    expect(schedules.get(created.id)?.schedule.waitingForNetwork).toBeUndefined();
     activity.close();
   });
 
@@ -276,5 +300,92 @@ describe("スケジュールタスク", () => {
       404,
     );
     activity.close();
+  });
+});
+
+describe("スケジュールタスクの確認の繰り返し（ScheduleRunner）", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 終わりを外から決められる確認。 */
+  function controlled() {
+    const calls: (() => void)[] = [];
+    const schedules = {
+      tick: () =>
+        new Promise<void>((resolve) => {
+          calls.push(resolve);
+        }),
+    };
+    return { schedules, calls };
+  }
+
+  it("始めたときにすぐ確かめ、その後は間隔ごとに確かめる", async () => {
+    vi.useFakeTimers();
+    const { schedules, calls } = controlled();
+    const runner = new ScheduleRunner(schedules, 1_000);
+    runner.start();
+    expect(calls).toHaveLength(1);
+    calls[0]?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls).toHaveLength(2);
+    calls[1]?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls).toHaveLength(3);
+    calls[2]?.();
+    await runner.stop();
+  });
+
+  it("前の確認が終わるまで、次の確認を始めない", async () => {
+    vi.useFakeTimers();
+    const { schedules, calls } = controlled();
+    const runner = new ScheduleRunner(schedules, 1_000);
+    runner.start();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(calls).toHaveLength(1);
+    calls[0]?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls).toHaveLength(2);
+    calls[1]?.();
+    await runner.stop();
+  });
+
+  it("止めると、実行中の確認の終わりを待ち、その後は確かめない", async () => {
+    vi.useFakeTimers();
+    const { schedules, calls } = controlled();
+    const runner = new ScheduleRunner(schedules, 1_000);
+    runner.start();
+    let stopped = false;
+    const stopping = runner.stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped).toBe(false);
+    calls[0]?.();
+    await stopping;
+    expect(stopped).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("確認が失敗しても、次の間隔で確かめ直す", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let count = 0;
+    const runner = new ScheduleRunner(
+      {
+        tick: async () => {
+          count++;
+          if (count === 1) throw new Error("boom");
+        },
+      },
+      1_000,
+    );
+    runner.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(count).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    await runner.stop();
   });
 });

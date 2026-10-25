@@ -122,8 +122,11 @@ export const Schedule = ScheduleInput.extend({
 });
 export type Schedule = z.infer<typeof Schedule>;
 
-/** 画面に返すスケジュールタスク（次の予定の時刻を添える。止めていれば無い）。 */
-export type ScheduleView = Schedule & { nextRunAt?: string };
+/**
+ * 画面に返すスケジュールタスク。次の予定の時刻（止めていれば無い）と、作るべき回があるのにネットにつながらず作成を
+ * 待っているか（waitingForNetwork）を添える。
+ */
+export type ScheduleView = Schedule & { nextRunAt?: string; waitingForNetwork?: true };
 
 /** その月の日数。 */
 function daysInMonth(year: number, month: number): number {

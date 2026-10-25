@@ -31,3 +31,19 @@ sacty はローカルで動くので、予定の時刻に PC が使えない・�
 - `npm run typecheck`・`npm run lint`：通過。
 - `npx vitest run`：スケジュールタスクに関係するものは通過。次の失敗は、変更の前（main）でも同じく失敗する環境によるもの（コンテナを root で動かしている・プロセスの扱い）：
   `agent-sessions.test.ts`（読めないファイル）、`context-mcp.test.ts`（層の写しの失敗）、`host-mcp-processes.test.ts`（実際のプロセスの後始末 6 件）、`question-form.browser.test.ts`。
+
+## レビューの指摘と対応
+
+PR #221 の sacty のレビュー（提案4件）に対応した。
+
+- ネットの確認に失敗すると、理由を残さずに延期していた：待ち始めたときと戻ったときにデーモンのログへ1回ずつ出し、
+  待っている間は API に `waitingForNetwork` を添えて、一覧（「ネット待ち」）と詳細に出すようにした。
+  ユーザードキュメントに、`github.com` の名前を引ける必要があることと、確かめ方（`nslookup github.com`）を書いた。
+- 曜日の未選択の誤りを、曜日のチェックボックスの fieldset の `aria-describedby` で結び付けた。
+- `ScheduleRunner` のテスト（fake timers）を足した：始めたときの即時の確認と間隔ごとの確認、前の確認が終わるまで次を
+  始めない、止めると実行中の確認を待ちその後は確かめない、失敗しても次の間隔で確かめ直す。
+- `docs/spec/architecture.md`（英語の版も）の「画面のヘッダーとサイドメニュー」に、スケジュールタスクの画面とサイドメニューの
+  「スケジュール」を書いた（監査の画面も書けていなかったので足した）。
+
+確かめたこと：`npx vitest run apps/daemon/src/schedules.test.ts packages/core/src/schedules.test.ts apps/web tests`、
+`npm run typecheck`、`npm run lint`：通過（`question-form.browser.test.ts` は main でも同じく失敗する環境によるもの）。

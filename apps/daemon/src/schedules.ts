@@ -137,6 +137,9 @@ type Tasks = Pick<
  * （作ったタスクに回を記録し、回の処理を保存する）。ネットにつながらない間は作らず、つながってから作る。
  */
 export class ScheduledTasks {
+  /** 直近の確認で、作るべき回があるのにネットにつながらなかったか（始まりと戻ったときに、1回だけログに出す）。 */
+  private waitingForNetwork = false;
+
   constructor(
     private readonly deps: {
       store: ScheduleStore;
@@ -152,8 +155,14 @@ export class ScheduledTasks {
   }
 
   private view(schedule: Schedule): ScheduleView {
-    const next = schedule.enabled ? nextScheduleSlot(schedule.rule, this.now()) : undefined;
-    return { ...schedule, ...(next ? { nextRunAt: next.toISOString() } : {}) };
+    const now = this.now();
+    const next = schedule.enabled ? nextScheduleSlot(schedule.rule, now) : undefined;
+    const waiting = this.waitingForNetwork && dueScheduleSlot(schedule, now) !== undefined;
+    return {
+      ...schedule,
+      ...(next ? { nextRunAt: next.toISOString() } : {}),
+      ...(waiting ? { waitingForNetwork: true as const } : {}),
+    };
   }
 
   private project(projectId: string) {
@@ -247,8 +256,25 @@ export class ScheduledTasks {
         const slot = dueScheduleSlot(s, now);
         return slot ? [{ schedule: s, slot: slot.toISOString() }] : [];
       });
-    if (due.length === 0) return;
-    if (!(await (this.deps.reachable ?? networkReachable)())) return;
+    if (due.length === 0) {
+      this.waitingForNetwork = false;
+      return;
+    }
+    if (!(await (this.deps.reachable ?? networkReachable)())) {
+      if (!this.waitingForNetwork) {
+        this.deps.log?.(
+          `[daemon] ネットにつながらない（github.com の名前を引けない）ため、スケジュールタスク ${due.length} 件のタスクの作成を待ちます。つながったら作ります。`,
+        );
+      }
+      this.waitingForNetwork = true;
+      return;
+    }
+    if (this.waitingForNetwork) {
+      this.deps.log?.(
+        "[daemon] ネットにつながったので、待っていたスケジュールタスクのタスクを作ります。",
+      );
+      this.waitingForNetwork = false;
+    }
     for (const { schedule, slot } of due) {
       // 確かめている間に、編集・削除されていれば、今の内容で決め直す
       const current = this.deps.store.get(schedule.id);

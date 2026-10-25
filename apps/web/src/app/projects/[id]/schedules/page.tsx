@@ -124,6 +124,9 @@ async function Schedules({ params }: { params: Promise<{ id: string }> }) {
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
                       {s.enabled ? m.enabled : m.disabled}
+                      {s.waitingForNetwork && (
+                        <span className="block text-xs text-warn">{m.waitingForNetwork}</span>
+                      )}
                     </td>
                   </tr>
                 ))}

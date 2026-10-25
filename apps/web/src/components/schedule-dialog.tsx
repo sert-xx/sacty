@@ -171,7 +171,10 @@ export function ScheduleDialog({
               </div>
             </div>
             {kind === "weekly" && (
-              <fieldset className="flex flex-col gap-2">
+              <fieldset
+                className="flex flex-col gap-2"
+                aria-describedby={errors.days ? "schedule-days-error" : undefined}
+              >
                 <legend className="mb-2 text-sm font-medium">{t.days}</legend>
                 <div className="flex flex-wrap gap-3">
                   {messages.schedules.weekdays.map((label, day) => (
