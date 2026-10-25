@@ -39,7 +39,9 @@
   申告の無い差し戻しの回でも残し、差し戻しの指示と書き出しで同じページを使う）。
 - `npx vitest run tests/docs`：93 件が通る。
 - `npm run lint`・`npm run typecheck`：通る。
-- `npx vitest run`（全体）の結果は下に書く。
+- `npx vitest run`（全体）：2654 件が通り、8 件と1ファイルが落ちる。落ちるのは `agent-sessions`・`context-mcp`・`host-mcp-processes` の
+  8 件と `question-form.browser.test.ts`（この環境に Playwright の Chromium の版が無い）。変更を外した状態でも同じく落ちるので、
+  この変更とは関係ない（8 件は、この環境が root で動いていることによると思われるが、未確認）。
 
 ## レビューの指摘と対応
 
