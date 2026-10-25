@@ -6,7 +6,7 @@ GitHub の Issue・PR と JIRA のチケットを、定期的に探してタス�
 取り込み元と使う GitHub のアカウントはプロジェクトに書き、取り込むラベルは sacty の設定（すべてのプロジェクトに共通）に書く。
 GitHub には、ホストの `gh` にログイン済みのアカウントでアクセスする。
 
-関係する ADR: [取り込むラベルとレビュー用のラベルに同じ名前を許す](../adr/20261015-0850-allow-same-intake-and-review-label.md)、[取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](../adr/20261015-0310-intake-intervals-per-kind.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[GitHub のレビュー再依頼は完了タスクを戻さず別タスクにする](../adr/20261019-0503-review-rerequest-new-task.md)
+関係する ADR: [取り込むラベルとレビュー用のラベルに同じ名前を許す](../adr/20261015-0850-allow-same-intake-and-review-label.md)、[取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](../adr/20261015-0310-intake-intervals-per-kind.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[GitHub のレビュー再依頼は完了タスクを戻さず別タスクにする](../adr/20261019-0503-review-rerequest-new-task.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)
 
 ## 間隔
 
@@ -139,10 +139,11 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
   - レビューの依頼にも当たっても `sacty` にする（そのレビューを作ったタスクに届けるため）。
   - レビュー用のラベルのトリアージを Off にしていれば、ラベルでは取り込まない（`sacty` にもしない）。
   - レビューの依頼からの取り込みは、別に動く。
-    `reviewRequested` が On で、担当のプロジェクトで選んだアカウント本人への依頼があれば、sacty の PR でも `requested` として取り込む（元のタスクには届かない）。
+    `reviewRequested` が On で、担当のプロジェクトで選んだアカウント本人への依頼があれば、sacty の PR でも `requested` として取り込む（その指摘のある回も、元のタスクに届く）。
   - 作ったタスクの取り込み元（Issue など）とは番号が違うので、作ったタスクがあることで取り込まれずに終わることはない。
     同じ PR は二度取り込まないので、1つの PR のレビューのタスクは1つ（PR を更新しても、新しいレビューのタスクは作らない）。
   - レビューのタスクが PR に投稿したレビューのうち、指摘のある回（修正が必要・提案あり。判定を読めなかった回も）のものは、作ったタスクの PR の指摘として取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+    依頼で取り込んだタスクや、本文に PR の URL を書いて手動で作ったレビューのタスクの投稿も同じ。
     指摘の無い回は取り込まない。
     レビューのタスクは PR を作らないので、それ自体はラベルの付く PR を増やさない。
 - 担当のプロジェクトは、リポジトリの指定が Org の指定より優先（`responsibleProject`）。

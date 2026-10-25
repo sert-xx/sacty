@@ -4,7 +4,7 @@
 - タスク: PBI-145
 - PR: #160
 - ブランチ: feat/pbi-145-sacty-review-import
-- 関係する ADR: [sacty のレビューのタスクの投稿は、提案だけの回も元のタスクの PR の指摘として取り込む](../adr/20261019-1239-import-sacty-review-suggestions.md)
+- 関係する ADR: [sacty のレビューのタスクの投稿は、提案だけの回も元のタスクの PR の指摘として取り込む](../adr/20261019-1239-superseded-import-sacty-review-suggestions.md)
 
 ## 目的
 
