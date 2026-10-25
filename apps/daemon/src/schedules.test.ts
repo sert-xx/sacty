@@ -153,7 +153,7 @@ describe("スケジュールタスク", () => {
     clock.now = at(2026, 10, 20, 9, 5);
     await schedules.tick();
     await schedules.tick();
-    expect(logs.filter((l) => l.includes("github.com"))).toHaveLength(1);
+    expect(logs.filter((l) => l.includes("名前を引けない"))).toHaveLength(1);
     expect(schedules.get(created.id)?.schedule.waitingForNetwork).toBe(true);
     expect(schedules.list(project.id)?.[0]?.waitingForNetwork).toBe(true);
     network.online = true;
