@@ -22295,6 +22295,8 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     const PAGE1 = "https://calendar.example.com/help/1";
     const PAGE2 = "https://calendar.example.com/help/2";
     const PAGE3 = "https://calendar.example.com/help/3";
+    // 差し戻しの回の出力。指摘の ID が決まってから中身を入れる
+    const second = out("");
     const selected: ServiceDeps["planner"] = async () => ({
       steps: [...STEP_PLANS.document],
       plan: "document",
@@ -22315,10 +22317,7 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
         out(
           `## 手順1\n\n直した内容\n\n${block({ "sacty-document-pages": { pages: [PAGE1, PAGE2] } })}`,
         ),
-        // 差し戻しでは、直したページだけを申告しても、前の回のページは成果物のまま
-        out(
-          `## 手順2\n\n直した内容\n\n${block({ "sacty-document-pages": { pages: [PAGE2, PAGE3] } })}`,
-        ),
+        second,
       ],
       { planner: selected, config: configOf(agent(), 1, [calendar()]), gateway: fakeGateway() },
     );
@@ -22336,10 +22335,21 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
       submission: 1,
       comments: ["説明ページの手順を直して。3ページ目も対象に"],
     });
+    // 差し戻しでは、直したページだけを申告しても、前の回のページは成果物のまま。指摘への対応と同じ JSON に入れても、
+    // 申告を読む（PR #220 レビュー指摘）
+    const remarkId = taskOf(service, id).remarks[0]?.id ?? "";
+    Object.assign(second, {
+      output: `## 手順2\n\n直した内容\n\n${block({
+        "sacty-responses": [{ remarkId, text: "3ページ目も直した" }],
+        "sacty-document-pages": { pages: [PAGE2, PAGE3] },
+      })}`,
+    });
     await service.runNext(id);
     expect(promptOf(executor, 1)).toContain(`  - ${PAGE1}`);
     expect(promptOf(executor, 1)).toContain(`  - ${PAGE2}`);
     expect(taskOf(service, id).documentPages).toEqual([PAGE1, PAGE2, PAGE3]);
+    expect(taskOf(service, id).remarks[0]?.response).toBe("3ページ目も直した");
+    expect(taskOf(service, id).outputs.document).toBe("## 手順2\n\n直した内容");
     service.approve(id, { step: "document", submission: 2 });
     // 外部に直接書いたページが成果物なので、書き出さない（原稿を別のページとして出さない）
     expect(exportDue(taskOf(service, id))).toBeUndefined();

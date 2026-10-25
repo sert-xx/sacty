@@ -51,4 +51,7 @@
 
 ## レビューの指摘と対応
 
-なし
+- `sacty-document-pages` と `sacty-responses` を同じ JSON のオブジェクトに入れると、先に動く `extractBlocks` がオブジェクトごと除き、
+  ページの申告が失われる（[要修正]）。→ `apps/daemon/src/service.ts` で、申告を `extractBlocks` の前の元の出力から読み、原稿からは
+  残った申告の JSON だけを除くようにした。`apps/daemon/src/daemon.test.ts` の複数のページのテストで、差し戻しの回の申告を指摘への
+  対応と同じオブジェクトに入れ、ページと対応の両方を読むことを確かめた（修正を外すと、このテストが落ちることも確かめた）。
