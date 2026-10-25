@@ -199,7 +199,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
   - Up to 50 (`REMARKS_MAX`) are imported, oldest first, at up to 2000 characters each (`REMARK_MAX`).
   - The same item is not imported twice.
-  - For a taken-over existing PR, comments passed to the prompt of the Implement step are not imported (the implementation addressed them; [Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
+  - For a taken-over existing PR, comments passed to the prompt of the Implement step are not imported (the implementation addressed them). sacty's reviews imported by a request or a label are also imported for rounds with findings ( [Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
 - Posts by a sacty task that reviewed this PR (a task pointing to the PR: the PR it took in, or the PR URL in its body) are identified by two things. They are that task's project account (which may differ from the original task's account) and the round in the marker (`<!-- sacty-review:<task ID>[:<round>] -->`). This is checked before the bot check, so the same applies even if that account is a bot (such as a GitHub App).
   - For a review-only task of a PR sacty opened, taken in by the review label (`source.review: sacty`), rounds with findings are imported as comments. Rounds with findings are those where `verdict` in `reviewVerdicts` is `changes_required` or `suggestions`; rounds whose verdict could not be read are also included so as not to drop comments.
 

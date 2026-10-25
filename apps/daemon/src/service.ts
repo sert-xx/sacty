@@ -1646,7 +1646,12 @@ export class TaskService {
           token,
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
-          ...this.sactyReviewsOf(pr.repo, pr.number),
+          ...this.sactyReviewsOf(
+            pr.repo,
+            pr.number,
+            current.continuedPullRequest?.number === pr.number &&
+              sameRepo(current.continuedPullRequest.repo, pr.repo),
+          ),
         })
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
@@ -1706,7 +1711,15 @@ export class TaskService {
    * レビューだけのタスク（`source.review: sacty`）の、指摘のある回（修正が必要・提案あり。判定を読めなかった回も）は、元のタスクへの
    * PR の指摘として取り込む（allowed。PBI-145）。指摘の無い回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
    */
-  private sactyReviewsOf(repo: string, number: number): { sactyReviews?: SactyReviewRound[] } {
+  private sactyReviewsOf(
+    repo: string,
+    number: number,
+    /**
+     * 引き継いだ既存の PR（人の PR）の指摘として読むか。人の PR への sacty のレビュー（依頼・ラベルで取り込んだもの）も、指摘の
+     * ある回は人のレビューと同じく取り込む（引き継いだタスクが対応する）。
+     */
+    continued = false,
+  ): { sactyReviews?: SactyReviewRound[] } {
     const rounds = [...this.tasks.values()].flatMap((t) => {
       const ref = referencedPullRequest(t);
       if (!ref || ref.number !== number || !sameRepo(ref.repo, repo)) return [];
@@ -1723,7 +1736,7 @@ export class TaskService {
           // 指摘のある回（修正が必要・提案あり）は、元のタスクに対応させるために取り込む。提案だけの回も取り込む（繰り返しの
           // 費用は予算で止める。PBI-145）。指摘の無い回は取り込まない。判定を読めなければ、指摘を落とさないように取り込む（PBI-111）
           allowed:
-            t.source?.review === "sacty" &&
+            (t.source?.review === "sacty" || (continued && t.source?.review !== undefined)) &&
             verdict !== undefined &&
             verdict.verdict !== "no_findings",
         };
@@ -5734,21 +5747,12 @@ export class TaskService {
       continued && step !== "review" && step !== "deployment"
         ? await this.continuedFeedback(this.mustGet(task.id), continued)
         : undefined;
-    // 実装に渡した指摘を記録する（PR の指摘として取り込み直さない。渡せなかった指摘は、あとで取り込む）
-    if (step === "implement" && Array.isArray(continuedFeedback) && continuedFeedback.length > 0) {
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: {
-            type: "ContinuedFeedbackPassed",
-            payload: {
-              runId,
-              keys: passedContinuedFeedback(continuedFeedback).map((item) => item.key),
-            },
-          },
-        },
-      ]);
-    }
+    // 実装の指示に渡す指摘。実装の実行が終わったときに、その完了と一緒に記録する（PR の指摘として取り込み直さない）。実行を
+    // 始められなかった・失敗したときは記録しないので、渡せなかった指摘は、あとで取り込む
+    const handedOverKeys =
+      step === "implement" && Array.isArray(continuedFeedback)
+        ? passedContinuedFeedback(continuedFeedback).map((item) => item.key)
+        : [];
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
     const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
@@ -6059,6 +6063,17 @@ export class TaskService {
     const output =
       review?.output ?? reproduction?.output ?? documentPages?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
+      ...(handedOverKeys.length > 0
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "ContinuedFeedbackPassed" as const,
+                payload: { runId, keys: handedOverKeys },
+              },
+            },
+          ]
+        : []),
       {
         actor: "agent",
         event: {
