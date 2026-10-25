@@ -77,3 +77,61 @@ describe("Implementation の人が確かめること（PBI-155）", () => {
     expect(html).not.toContain("環境による失敗だけ");
   });
 });
+
+describe("Implementation のテストを書かずに差分で確かめる観点", () => {
+  const designed = (lastReview?: FinalReview) =>
+    ({
+      ...task(lastReview ?? review()),
+      verification: undefined,
+      approved: {
+        design: {
+          output: "# 設計",
+          testViewpoints: [
+            {
+              id: "TV-1",
+              title: "手順の文言",
+              input: "README",
+              expected: "新しい手順が書かれている",
+            },
+          ],
+        },
+      },
+      testMap: [{ viewpointId: "TV-1", tests: [], untested: "README の文言だけを直したため" }],
+    }) as unknown as Task;
+
+  it("テストが無いことを警告にせず、申告の理由と、ゴールガーディアンが差分で判定したことを出す", () => {
+    const html = render(
+      designed(
+        review({
+          viewpoints: [{ viewpointId: "TV-1", verified: true, reason: "差分で確かめた" }],
+          tests: { command: "npm test", exitCode: 0, output: "" },
+          humanChecks: undefined,
+        }),
+      ),
+    );
+    expect(html).toContain("テストなし・差分で確認（README の文言だけを直したため）");
+    expect(html).toContain("差分で判定");
+    expect(html).not.toContain("対応するテストがありません");
+    expect(html).not.toContain("テスト合格");
+    expect(render(designed(), "en")).toContain("No test; checked in the diff");
+  });
+});
+
+describe("Implementation の設計の無いタスクの観点 REQ", () => {
+  it("設計が無くても、実装が REQ を差分で確かめると申告したら、REQ と理由を出す", () => {
+    const t = {
+      ...task(
+        review({
+          viewpoints: [{ viewpointId: "REQ", verified: true, reason: "差分で確かめた" }],
+          tests: { command: "npm test", exitCode: 0, output: "" },
+          humanChecks: undefined,
+        }),
+      ),
+      testMap: [{ viewpointId: "REQ", tests: [], untested: "README の文言だけを直したため" }],
+    } as unknown as Task;
+    const html = render(t);
+    expect(html).toContain("受け入れ条件・タスクの目的");
+    expect(html).toContain("テストなし・差分で確認（README の文言だけを直したため）");
+    expect(html).toContain("差分で判定");
+  });
+});

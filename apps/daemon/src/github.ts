@@ -123,6 +123,14 @@ export type PullRequestInfo = {
    * GitHub が外す。検索の結果と違い、読んだ時点の依頼先。
    */
   requestedReviewers: string[];
+  /** PR の状態（既存の PR を引き継ぐタスクで確かめる）。読めなければ無い。 */
+  state?: "open" | "closed" | "merged";
+  /** PR の元のブランチ（head）の名前。読めなければ無い。 */
+  headRef?: string;
+  /** PR の元のブランチのあるリポジトリの URL（フォークの PR なら、フォーク）。消されたフォークなど、読めなければ無い。 */
+  headRepo?: string;
+  /** PR の向き先のブランチ（base）の名前。読めなければ無い。 */
+  baseRef?: string;
 };
 
 /** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
@@ -425,7 +433,26 @@ export class GitHubPullRequests implements PullRequests {
       const value = (json[key] as { sha?: unknown } | null)?.sha;
       return typeof value === "string" ? value : "";
     };
+    const ref = (key: "head" | "base") => {
+      const value = (json[key] as { ref?: unknown } | null)?.ref;
+      return typeof value === "string" && value ? value : undefined;
+    };
+    const headRef = ref("head");
+    const baseRef = ref("base");
+    const headRepo = (
+      (json.head as { repo?: unknown } | null)?.repo as { html_url?: unknown } | null | undefined
+    )?.html_url;
+    const state =
+      json.merged === true || typeof json.merged_at === "string"
+        ? "merged"
+        : json.state === "open" || json.state === "closed"
+          ? json.state
+          : undefined;
     return {
+      ...(headRef ? { headRef } : {}),
+      ...(baseRef ? { baseRef } : {}),
+      ...(typeof headRepo === "string" && headRepo ? { headRepo } : {}),
+      ...(state ? { state } : {}),
       number: Number(json.number ?? input.number),
       url: String(json.html_url ?? ""),
       title: typeof json.title === "string" ? json.title : "",

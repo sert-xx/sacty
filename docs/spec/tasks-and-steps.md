@@ -133,6 +133,7 @@
   - 全体の行数の目安は、小さな変更で 20 行、大きな変更でも 60 行ほど（`DRAFT_LINES`。決まった形の JSON のブロックは数えない）。
 - 設計の節は、構成・データ・処理の流れ・エラー時の振る舞い・影響範囲のうち、今回の変更で書くことがあるものだけにさせる。
   テスト観点は受け入れ条件をすべて網羅させ、異常系と境界値は今回の変更で新しく起こりうるものを含めさせる。
+  文書・コメント・文言だけの変更の観点は、何が書かれているべきかを期待する結果にさせ、実装は差分で確かめさせる（ファイルがある・読めることを確かめる観点にしない。sacty が置く要求要件・設計のファイルは観点にしない）。
   観点の数は受け入れ条件を確かめるのに要る分だけにさせ、観点ごとに1文で書かせる。
 - sacty は、冒頭の2つの節を読み取らない（成果物の本文のまま、承認の画面・PR に出る）。
 
@@ -224,6 +225,7 @@
 | 文書を含むリポジトリのファイル変更で、局所的なもの | `direct` か `skip-design` |
 | 文書を含むリポジトリのファイル変更で、広い設計判断が必要なもの | `standard` |
 | 文書を含むリポジトリのファイル変更で、複数 PR に分けるもの | `split` |
+| 既存 PR そのものの修正（PR のレビューの指摘への対応など。下の「既存の PR の引き継ぎ」） | `direct`（`continuePullRequest`） |
 | 再現できる不具合 | `bugfix` |
 | 設計判断が必要な不具合 | `standard` |
 
@@ -305,6 +307,51 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 取り込み元の Issue に返す調査の結果（`buildInvestigationComment`）からは、頼みの JSON を取り除く。
 
 コード: `apps/daemon/src/github-comments.ts`（`requestedGitHubComments`・`commentTarget`・`commentAllowed`・`buildGitHubComment`・`githubCommentMarker`・`withoutGitHubComments`）、`apps/daemon/src/github-relay.ts`（`GITHUB_COMMENTS_MAX`・`GITHUB_COMMENT_BODY_MAX`）、`apps/daemon/src/service.ts`（`postGitHubComments`・`awaitingGitHubComments`）、`packages/core/src/events.ts`（`GitHubCommentsPosted`・`OperationVia`）、`packages/core/src/projection.ts`
+
+## 既存の PR の引き継ぎ
+
+タスクの題か内容に対象リポジトリの PR のリンクがあり、タスクがその PR そのものを直すよう求めている（人が作った PR のレビューの指摘への対応など）ときは、sacty はその PR を引き継ぐ。
+新しいブランチ・PR を作らず、PR の元のブランチに実装を積む。
+
+関係する ADR: [既存の PR を直すタスクは、PR を引き継いで同じブランチに積み、文書だけの観点はテストを書かずに差分で確かめる](../adr/20261025-1337-continue-existing-pull-request.md)
+
+- 引き継ぐかは、オーケストレーターが工程の選択の答えの `continuePullRequest` で決める。
+  指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-design`・`direct`・`bugfix`）を選べるタスクだけ（`continuablePullRequest`）。
+  PR から取り込んだタスク・分割の子タスクには出さない。
+  指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を選ぶこと、`baseBranch` を書かないことを求める。
+  実装しない組み合わせの答えの `continuePullRequest` は読まない。
+- sacty は、工程を記録する前に PR を確かめる（`resolveContinuedPullRequest`）。
+  引き継ぐのは、開いていて、元のブランチが対象リポジトリにあり（フォークの PR でない）、sacty のほかのタスク（中止したものを除く）が作った（実装の PR・要求要件・設計の PR）・引き継いだ PR でないものだけ（`continuedPullRequestOwner`）。
+  ほかのタスクが並行して同じ PR を確かめたときのために、工程を記録する直前（その後は await しない）にも、ほかのタスクが扱っていないことを確かめ直す。
+  引き継げなければ、新しい PR を作らないように、工程を記録せずに `OrchestratorFailed`（判断の費用を含む）と `TaskPaused`（`continue.unavailable`）を記録して止める。
+  再開すると、工程の選択からやり直す。
+- 引き継げたら、作業領域を PR の元のブランチの最新で用意し直し（`RepositoryPrepared`。ベースブランチはそのブランチ、起点はその先頭）、`StepsChosen` の `continuedPullRequest`（リポジトリ・番号・URL・元のブランチ・向き先のブランチ）に記録する。
+  投影の `Task.continuedPullRequest` になる。
+  用意し直せなければ、引き継げないときと同じく止める。
+- 工程（レビュー・マージの後の監視を除く）の指示に、引き継ぐ PR のことと、PR にあるレビュー・行へのコメント・通常のコメント（本文のある承認と、sacty のタスクが投稿したレビューも含む。新しい 30 件まで）を JSON のデータとして渡す（`continuedPullRequestLines`・`passedContinuedFeedback`）。
+  PR の目的と既存の変更を保ち、タスクが求めることだけを変えること、対応しない指摘は理由を説明に書くことを指示する。
+  読めなければ読めなかったことを渡し、理由をデーモンのログに残す（工程は止めない）。
+- 要求要件・設計は PR にせず、画面で承認する（`stepPullRequestsOn`）。
+  引き継いだ PR に成果のファイルを混ぜないため。
+- 検証に通った実装は、PR の元のブランチに積む（`publishContinued`）。
+  - 起点（PR の先頭）か前にプッシュしたコミットに積み、強制プッシュはしない。
+    プッシュに失敗し、ブランチの先頭が起点とも前にプッシュしたコミットとも違えば、もう一度プッシュする（プッシュはできて応答だけを受け取れなかったなら、先頭はこの提出のコミットなので、何も変わらずに通る）。
+    それも通らなければ、人が積んだとして止める（`pr.continuedBranchMoved`）。
+  - プッシュの直前（認証を待った後と、もう一度プッシュする前）に一時停止・中止を求められていれば、プッシュしない（一時停止なら、PR の作成の待ちのまま止める）。
+  - プッシュの後に PR が開いていなければ止める（`pr.continuedNotOpen`）。
+  - PR の題・本文は変えず、レビュー用のラベルも付けない。
+  - 開いていれば、その PR を `PullRequestPublished`（テンプレート・ラベルの予定は無い）に記録し、実装の承認待ち（PR のマージ）にする。
+  - 変更が無いときは、ほかのタスクと同じ（[承認と差し戻し](approval.md#実装に変更が無いとき)）。
+- 実装の工程の実行の指示に渡した指摘は、その実行が終わったときに、完了（`AgentRunCompleted`）と同じ追記で `ContinuedFeedbackPassed`（実行と、渡した指摘のキー）に記録する（投影の `Task.handedOverFeedback`）。
+  実行を始められなかった・失敗したときは記録しない。
+  PR の指摘の取り込みでは、渡した指摘を取り込まない（実装に対応させたため。`handedOverFeedback`）。
+  渡していない指摘（読めなかった・件数を超えた・後から付いた）は、ほかの PR と同じく取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+  人の PR への sacty のレビュー（依頼・ラベルで取り込んだレビューだけのタスクの投稿）も、指摘のある回は取り込む（`sactyReviewsOf` の `continued`）。
+- マージの後の監視は、作業領域のベースブランチ（PR の元のブランチ）ではなく、PR の向き先のブランチをマージ先として記録する（`deploymentWatchEvents`）。
+- 中止しても、引き継いだ PR は閉じず、元のブランチも消さない（`sactyBranches` から除く）。
+- 画面は、タスクの詳細の工程の欄に、引き継いで直す PR（番号と元のブランチ）を出す。
+
+コード: `apps/daemon/src/prompts.ts`（`continuablePullRequest`・`CONTINUABLE_PLANS`・`continuePullRequestLines`・`continuedPullRequestLines`・`extractStepPlan`）、`apps/daemon/src/service.ts`（`resolveContinuedPullRequest`・`continuedPullRequestOwner`・`continuedFeedback`・`publishContinued`・`stepPullRequestsOn`・`importFeedback`・`handedOverFeedback`・`sactyBranches`・`deploymentWatchEvents`）、`apps/daemon/src/github.ts`（`PullRequestInfo`）、`packages/core/src/events.ts`（`ContinuedPullRequest`・`StepsChosen`）、`packages/core/src/events.ts`（`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`（`continuedPullRequest`・`handedOverFeedback`）、`apps/web/src/components/task-detail.tsx`
 
 ## 情報収集
 
@@ -611,6 +658,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
   - 実装がテストを対応させていない観点は、ゴールガーディアンの判定にかかわらず不合格にし、理由を `review.viewpointUnmapped` にする（指示にも、その観点を不合格にするよう書く）。
     テストの仕組みが無いタスクには当てない。
+  - 実装は、実行される振る舞いの無い変更（文書・コメント・文言など）だけの観点を、テストを書かずに差分で確かめると申告できる（テストの対応で `tests` を空にし、`untested` に理由を書く。`TestMapping`）。
+    申告した観点は対応させたものとし（`mappedViewpointIds`）、ゴールガーディアンへの指示で、その観点の変更が振る舞いを変えないことを差分で確かめさせ、振る舞いを変えるのにテストが無ければ不合格にさせる。
+    `tests` があれば `untested` は捨て、理由の無い空の対応は、対応させていないものとする。
+    実装の指示には、ファイルがある・読める・特定の文字列を含むことだけを確かめるテストを書かないこと、sacty が置く要求要件・設計のファイルをテストの対象にしないことを書く（`UNTESTED_LINES`）。
+    PR の本文の対応表と実装の成果物には、テストなし・差分で確認と、その理由を出す。
+    実装の成果物は、設計の無いタスクでも、実装が観点 `REQ` を対応させていれば `REQ` を出す。
   - 観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`（要求要件も無ければ、タスクの目的。上の「工程の見直し」）。
     テストの対応と同じもの（`finalReviewViewpointIds`）。
     指示の最後の出力の形式の例には、判定する観点の ID をすべてそのまま並べ（設計を省いたタスクは `REQ`、不具合の修正は `REPRO`）、その ID のまま答えるよう指示する（固定の例 `TV-1` だと、`REQ` のタスクで例の ID で答え、判定が無いことになっていた。PBI-137）。
@@ -657,6 +710,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
 - 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155）。
   - PR の本文：「人が確かめること」のチェックリスト（`- [ ]`）にする。改行は空白にして1項目1行にする（`humanCheckBodyLines`）。
+    既存の PR を引き継いだタスクは PR の本文を変えないので、本文には出ない（タスクの画面の最終レビューで確かめる）。
     本文の長さの上限で省かれないよう、テンプレートを使う本文・使わない本文のどちらでも footer の、承認の案内の前に置く。
     footer を長くしすぎないよう、1項目は `HUMAN_CHECK_ITEM_MAX`（1,000 文字）、一覧は `HUMAN_CHECKS_BODY_MAX`（6,000 文字）までにし、入りきらない項目は残りの件数と、sacty のタスクの画面で確かめることを書く。
   - 実装の成果物：最終レビューの欄に「人が確かめること」として出し、ゴールガーディアンが実行したテストには「環境による失敗だけ」を添える（`HumanChecks`）。どちらも無ければ出さない。

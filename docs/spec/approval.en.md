@@ -34,6 +34,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
 
 - Whether a task is approved through PRs (`stepPullRequestsOn`)
   - If it has a task branch, it is always approved through PRs.
+  - A task that takes over an existing PR (`Task.continuedPullRequest`) does not open Requirements and Design as PRs ([Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
   - Without a task branch, it is approved through PRs when all of the following hold.
     - There is a target repository
     - The requirements and design have not yet been submitted in the web UI
@@ -53,6 +54,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
   - If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (the implementation PR).
   - If there is no task branch, it is opened as a PR from a sacty branch (`sacty/task-<first 8 characters of the task ID>`) to the base branch.
   - If changes other than the requirements and design files have been stacked on the task branch, publishing stops (`pr.taskBranchChanged`).
+  - A task that takes over an existing PR opens no PR; it pushes to the source branch of the taken-over PR and uses that PR as the implementation PR.
 - Each child task of Task split has its own task branch.
 - The "review" link in the web UI (`personAction`)
   - The link appears in the task details, the task list, "Needs you" on the dashboard, and the header notifications.
@@ -197,6 +199,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
   - Up to 50 (`REMARKS_MAX`) are imported, oldest first, at up to 2000 characters each (`REMARK_MAX`).
   - The same item is not imported twice.
+  - For a taken-over existing PR, comments passed to the prompt of the Implement step are not imported (the implementation addressed them). sacty's reviews imported by a request or a label are also imported for rounds with findings ( [Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
 - Posts by a sacty task that reviewed this PR (a task pointing to the PR: the PR it took in, or the PR URL in its body) are identified by two things. They are that task's project account (which may differ from the original task's account) and the round in the marker (`<!-- sacty-review:<task ID>[:<round>] -->`). This is checked before the bot check, so the same applies even if that account is a bot (such as a GitHub App).
   - For a review-only task of a PR sacty opened, taken in by the review label (`source.review: sacty`), rounds with findings are imported as comments. Rounds with findings are those where `verdict` in `reviewVerdicts` is `changes_required` or `suggestions`; rounds whose verdict could not be read are also included so as not to drop comments.
 

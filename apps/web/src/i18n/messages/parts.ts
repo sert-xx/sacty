@@ -77,6 +77,10 @@ const ja = {
       `リポジトリにテストの仕組みが無いため、実装で用意したテスト（${command}）で検証しました。`,
     noTestsReason: (reason: string) => `根拠：${reason}`,
     judgedByGoal: "目的から判定",
+    /** テストを書かずに差分で確かめる観点（実行される振る舞いの無い変更）。 */
+    untested: (reason: string) => `テストなし・差分で確認（${reason}）`,
+    judgedByDiff: "差分で判定",
+    requirementsViewpoint: "受け入れ条件・タスクの目的",
   },
   proposals: {
     title: "変更の申し出と判定",
@@ -296,6 +300,9 @@ const en: PartsMessages = {
       `The repository had no tests, so the tests added by the implementation (${command}) were run.`,
     noTestsReason: (reason) => `Why: ${reason}`,
     judgedByGoal: "Judged by the goal",
+    untested: (reason) => `No test; checked in the diff (${reason})`,
+    judgedByDiff: "Judged by the diff",
+    requirementsViewpoint: "Acceptance criteria or the task's purpose",
   },
   proposals: {
     title: "Change requests and verdicts",
