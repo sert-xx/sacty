@@ -2230,8 +2230,15 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       expect(prompt, step).toContain(EXPAND);
       expect(prompt, step).toContain("このプロジェクトの前提（暗黙知）を持っている");
       expect(prompt, step).toContain(
-        "「確認したいこと」：人間が決めないと確定できないこと。重要な順に最大 3 件",
+        "「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け",
       );
+      expect(prompt, step).toContain(
+        "must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無い",
+      );
+      expect(prompt, step).toContain(
+        "should：後で答えが違うと分かったら、追加の作業が要ること。最大 5 件",
+      );
+      expect(prompt, step).toContain("確認したいことの should が 5 件を超えるときは");
       expect(prompt, step).toContain("問い・推奨の答え・その理由");
       expect(prompt, step).toContain("人間が異論を持ちうるもの。最大 5 件、1件1行");
       expect(prompt, step).toContain("小さな変更なら 20 行、大きな変更でも 60 行ほどまで");

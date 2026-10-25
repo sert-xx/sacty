@@ -91,8 +91,10 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
 - Requirements and designs are also written as follows (`readerLoadLines`).
   - The agent does not write explanations of existing code or mechanisms, behavior that existing mechanisms already guarantee and this change does not alter, unwanted behavior, boundaries, or non-functional concerns that this change cannot newly cause, or "out of scope" sections for viewpoints that do not apply.
   - The agent puts two sections at the start of the deliverable (right after the summary, if it writes one) and writes the details after them.
-    - "確認したいこと" (questions): what a person must decide before it can be settled. Up to 3 (`QUESTIONS_MAX`), in order of importance; each states the question, a recommended answer, and its reason. "なし" if there are none.
-    - "既定で決めたこと" (decided by default): among what the request does not say but the agent decided from the existing code, rules, and conventions, only what a person may disagree with. Up to 5 (`DECISIONS_MAX`). Simply following the existing way is not listed. When the questions exceed the limit, the less important ones are decided with the recommended answer and moved here.
+    - "確認したいこと" (questions): what a person must decide before it can be settled. Split into must and should, each in order of importance; each states the question, a recommended answer, and its reason. "なし" if there are none.
+      - must: if the answer later turns out different, the work done until then is wasted. No limit on the number.
+      - should: if the answer later turns out different, extra work is needed. Up to 5 (`SHOULD_QUESTIONS_MAX`).
+    - "既定で決めたこと" (decided by default): among what the request does not say but the agent decided from the existing code, rules, and conventions, only what a person may disagree with. Up to 5 (`DECISIONS_MAX`). Simply following the existing way is not listed. When the should questions exceed the limit, the less important ones are decided with the recommended answer and moved here.
   - The target length of the whole deliverable is 20 lines for a small change and about 60 lines even for a large change (`DRAFT_LINES`; JSON blocks with a fixed format are not counted).
 - The design has only the sections, among structure, data, flow, behavior on errors, and impact, that this change has something to say about. The test viewpoints cover all acceptance criteria and include the unwanted behavior and boundary values that this change can newly cause.
   The number of viewpoints is only what is needed to check the acceptance criteria, and each viewpoint is written in one sentence.
@@ -100,7 +102,7 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
 
 Related ADRs: [Put what a person decides at the top of requirements and designs, keep their length in proportion to the change, and add an over-writing viewpoint to self-review](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md), [Keep the first draft of deliverables that people read minimal, and add detail when a person sends it back](../adr/20261025-0222-minimal-first-drafts.md)
 
-Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `QUESTIONS_MAX`, `DECISIONS_MAX`, `DRAFT_LINES`, `earsLines`)
+Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `SHOULD_QUESTIONS_MAX`, `DECISIONS_MAX`, `DRAFT_LINES`, `earsLines`)
 
 ### Self-review before submitting
 

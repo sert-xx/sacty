@@ -134,10 +134,12 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 情報を絞ることを、決まりの最初に置く。
 読む人は前提（暗黙知）を持っているとして、判断と作業に要ることだけを書き、最初は最小限にして、読む人が求めた所だけを足す。
 要求要件・設計・文書・調査の結果の工程の指示も、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
+既定の規則（`rules.md`。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡る）でも、人が読む文章は必ずこのスキルを使って書くよう求める。
+依頼した人の指示と対象のリポジトリの文章の決まりは、このスキルより優先する。
 
 関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
 
-コード: `apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
+コード: `apps/daemon/default-context/rules.md`、`apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
 
 ## 既定の要求要件用スキル
 

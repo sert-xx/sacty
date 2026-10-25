@@ -318,7 +318,7 @@ Requirements and designs start (right after the summary, if there is one) with t
 
 | Section | Contents | What to do |
 | --- | --- | --- |
-| 確認したいこと (questions) | What you must decide before it can be settled (up to 3, in order of importance). Each has a recommended answer and its reason | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
+| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
 | 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5) | Write a remark and request changes only for the ones you disagree with |
 
 Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 20 lines for a small change and about 60 lines even for a large change.
