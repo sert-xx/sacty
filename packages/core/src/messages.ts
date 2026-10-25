@@ -295,6 +295,11 @@ const PARAMS = {
   "implement.testCommandInvalid": null,
   "orchestrator.failed": z.object({ detail: TextParam }),
   "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  // 既存の PR の引き継ぎ：オーケストレーターが引き継ぐと判断した PR を、引き継げなかった
+  "continue.unavailable": z.object({ number: z.number(), detail: TextParam }),
+  "continue.notOpen": z.object({ state: z.enum(["merged", "closed"]) }),
+  "continue.notSameRepository": null,
+  "continue.inUse": z.object({ task: z.string() }),
   // 工程の見直し：オーケストレーターを実行できなかった・答えを読めなかったので、飛ばさずに進める
   "orchestrator.stepReviewFailed": z.object({ detail: TextParam }),
   // タスク分割（PBI-27）
@@ -345,6 +350,8 @@ const PARAMS = {
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
   "pr.taskBranchChanged": z.object({ branch: TextParam, paths: TextParam, count: z.number() }),
+  "pr.continuedBranchMoved": z.object({ branch: TextParam, number: z.number() }),
+  "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
   // PR テンプレート（PBI-87）。status が 0 なら、HTTP の応答が無かった（通信の失敗・時間切れ）
   "pr.templateFailed": z.object({ path: z.string(), status: z.number(), detail: TextParam }),
@@ -998,6 +1005,14 @@ const ja: MessageDictionary = {
     "実装の工程が申告したテストのコマンド（sacty-test-command）の形が正しくありません（JSON として読めない、または command が空・文字列でない・1000 文字を超える）。用意したテストを飛ばさないように止めます。再開すると、実装をやり直します。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
+  "continue.unavailable": ({ number, detail }, text) =>
+    `オーケストレーターは、タスクにある PR #${number} を引き継いで直すと判断しましたが、引き継げません（${text(detail).replace(/[。.]\s*$/, "")}）。新しい PR を作らないように、工程を決めずに止めました。PR を確かめてから再開すると、工程の選択からやり直します。PR を引き継がずに進めるなら、そのことをタスクの内容に書いて、新しいタスクにしてください。`,
+  "continue.notOpen": ({ state }) =>
+    state === "merged" ? "PR はマージ済みです" : "PR はマージされずに閉じられています",
+  "continue.notSameRepository":
+    "PR の元のブランチが、対象リポジトリにありません（フォークからの PR か、元のブランチが消されています）。sacty はそのブランチにプッシュできません",
+  "continue.inUse": ({ task }) =>
+    `sacty のタスク ${task} が、この PR を扱っています（sacty が作った PR の指摘は、そのタスクが PR の指摘として取り込んで直します）`,
   "orchestrator.stepReviewFailed": ({ detail }, text) =>
     `オーケストレーターが残りの工程を見直せなかったため、工程を飛ばさずに進めます（${text(detail).replace(/[。.]\s*$/, "")}）。`,
   "review.pullRequestMissing": ({ repo }) =>
@@ -1054,6 +1069,10 @@ const ja: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `タスクブランチ ${text(branch)} に、Sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、Sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "pr.continuedBranchMoved": ({ branch, number }, text) =>
+    `引き継いだ PR #${number} のブランチ（${text(branch)}）が、sacty が作業を始めた後に進んだため、実装を積めませんでした（強制プッシュはしません）。PR の新しいコミットを含めて直すには、このタスクを中止し、PR の指摘への対応を新しいタスクにしてください。`,
+  "pr.continuedNotOpen": ({ number }) =>
+    `引き継いだ PR #${number} が開いていない（マージ済みか、閉じられた）ため、実装の承認を待てません。実装のコミットはブランチにプッシュ済みです。PR を開き直してから再開するか、タスクを中止してください。`,
   "pr.templateFailed": ({ path, status, detail }, text) =>
     `PR テンプレート${path ? `（${path}）` : ""}を確かめられませんでした${status ? `（HTTP ${status}）` : ""}${text(detail) ? `：${text(detail)}` : ""}`,
   "pr.templateTooLarge": ({ path, size, limit }) =>
@@ -1604,6 +1623,14 @@ const en: MessageDictionary = {
     "The test command the implementation reported (sacty-test-command) is malformed (not readable as JSON, or command is empty, not a string, or longer than 1000 characters). Stopping so that the added tests are not skipped. Resume to run the implementation again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
+  "continue.unavailable": ({ number, detail }, text) =>
+    `The Orchestrator decided to take over and fix PR #${number} in the task, but it cannot be taken over (${text(detail).replace(/[。.]\s*$/, "")}). To avoid opening a new PR, Sacty stopped without choosing the steps. Check the PR, then resume to choose the steps again. To proceed without taking over the PR, write that in a new task.`,
+  "continue.notOpen": ({ state }) =>
+    state === "merged" ? "the PR is already merged" : "the PR was closed without merging",
+  "continue.notSameRepository":
+    "the source branch of the PR is not in the target repository (a PR from a fork, or the branch was deleted), so Sacty cannot push to it",
+  "continue.inUse": ({ task }) =>
+    `Sacty task ${task} handles this PR (feedback on a PR Sacty opened is imported and fixed by that task)`,
   "orchestrator.stepReviewFailed": ({ detail }, text) =>
     `The Orchestrator could not review the remaining steps, so no step is skipped (${text(detail).replace(/[。.]\s*$/, "")}).`,
   "review.pullRequestMissing": ({ repo }) =>
@@ -1659,6 +1686,10 @@ const en: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `The task branch ${text(branch)} has changes that Sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and Sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "pr.continuedBranchMoved": ({ branch, number }, text) =>
+    `The branch of the taken-over PR #${number} (${text(branch)}) moved after Sacty started working, so the implementation could not be pushed (Sacty does not force-push). To fix it including the new commits, cancel this task and create a new task for the PR feedback.`,
+  "pr.continuedNotOpen": ({ number }) =>
+    `The taken-over PR #${number} is not open (merged or closed), so the implementation cannot wait for approval. The implementation commit has been pushed to the branch. Reopen the PR and resume, or cancel the task.`,
   "pr.templateFailed": ({ path, status, detail }, text) =>
     `Could not check the PR template${path ? ` (${path})` : ""}${status ? ` (HTTP ${status})` : ""}${text(detail) ? `: ${text(detail)}` : ""}`,
   "pr.templateTooLarge": ({ path, size, limit }) =>

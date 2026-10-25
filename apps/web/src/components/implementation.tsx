@@ -66,7 +66,7 @@ export function Implementation({ task }: { task: Task }) {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
   // 今の提出の検証のものだけを対応表に出し、前の提出のものは「前の提出の」と区別して出す（PR #105 再レビュー指摘）
   const { tests, testsCurrent, review, reviewCurrent: reviewIsCurrent } = verificationResults(task);
-  const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry.tests]));
+  const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry]));
   const running = task.status === "running" && step?.state === "active";
   // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
   const noTests = task.noTestsReason;
@@ -148,7 +148,9 @@ export function Implementation({ task }: { task: Task }) {
           </h3>
           <ol className="flex flex-col gap-2.5">
             {viewpoints.map((v) => {
-              const list = mapped.get(v.id) ?? [];
+              const list = mapped.get(v.id)?.tests ?? [];
+              // テストを書かずに差分で確かめると申告した観点（実行される振る舞いの無い変更）
+              const untested = list.length === 0 ? mapped.get(v.id)?.untested : undefined;
               const judged = reviewIsCurrent
                 ? review?.viewpoints.find((r) => r.viewpointId === v.id)
                 : undefined;
@@ -171,6 +173,8 @@ export function Implementation({ task }: { task: Task }) {
                         </ul>
                       ) : noTests ? (
                         <span className="text-muted-foreground">{m.judgedByGoal}</span>
+                      ) : untested ? (
+                        <span className="text-muted-foreground">{m.untested(untested)}</span>
                       ) : (
                         <span className="text-warn">{m.noTests}</span>
                       )}
@@ -180,7 +184,12 @@ export function Implementation({ task }: { task: Task }) {
                       <span className="flex flex-wrap gap-1.5">
                         {noTests && list.length === 0 && judgedByGoalForCurrent(task) ? (
                           <Pill tone={NONE}>{m.judgedByGoal}</Pill>
-                        ) : !tests || !testsCurrent || (noTests && list.length === 0) ? (
+                        ) : untested && judged ? (
+                          <Pill tone={NONE}>{m.judgedByDiff}</Pill>
+                        ) : !tests ||
+                          !testsCurrent ||
+                          (noTests && list.length === 0) ||
+                          untested ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.passed && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>

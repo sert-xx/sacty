@@ -4,6 +4,7 @@ import type {
   AuditAdoptNote,
   AuditMemoryRecord,
   AuditTarget,
+  ContinuedPullRequest,
   ExportPlan,
   InvestigationKind,
   MemoryDeleteReason,
@@ -511,6 +512,15 @@ export type Task = {
   pullRequestLabels?: PullRequestLabel[];
   /** 要求要件・設計の成果のファイルを置くディレクトリ（オーケストレーターが決めた。無ければ既定。PBI-57）。 */
   documentsDir?: string;
+  /**
+   * 引き継いで直す既存の PR（StepsChosen の continuedPullRequest）。実装はこの PR のブランチに積み、新しい PR を作らない。
+   */
+  continuedPullRequest?: ContinuedPullRequest;
+  /**
+   * 実装の工程の最後の実行を始めた日時。引き継いだ PR の指摘の取り込みで、この時より前の指摘（実装の指示に渡したもの）を
+   * 取り込み直さないために使う。
+   */
+  implementStartedAt?: string;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -873,6 +883,9 @@ export function applyEvent(
       if (event.payload.servicesReason) task.servicesReason = event.payload.servicesReason;
       if (event.payload.exports) task.exportPlans = event.payload.exports;
       if (event.payload.documentsDir) task.documentsDir = event.payload.documentsDir;
+      if (event.payload.continuedPullRequest) {
+        task.continuedPullRequest = event.payload.continuedPullRequest;
+      }
       // 工程の組み合わせの予算（budget.per_plan_usd）。上限が変わるので、80% の通知をし直す
       if (event.payload.budgetCapUsd !== undefined) {
         task.budget = { ...task.budget, capUsd: event.payload.budgetCapUsd, warned: false };
@@ -898,6 +911,7 @@ export function applyEvent(
       }
       task.status = "running";
       task.currentRunId = event.payload.runId;
+      if (event.payload.step === "implement") task.implementStartedAt = event.at;
       // 見直さずに工程を始めた（工程の見直しより前の作業履歴）なら、見直しは待たない
       task.stepReview = undefined;
       break;
@@ -2617,6 +2631,7 @@ function clearChosenSteps(task: Task): void {
   task.servicesReason = undefined;
   task.exportPlans = undefined;
   task.documentsDir = undefined;
+  task.continuedPullRequest = undefined;
 }
 
 /**

@@ -74,6 +74,7 @@ import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import {
   type PullRequestFeedback,
+  type PullRequestInfo,
   type PullRequestStatus,
   type PullRequests,
   type SactyReviewRound,
@@ -619,7 +620,7 @@ class FakePulls implements PullRequests {
     return this.ownerRepos[input.org] ?? [];
   }
   /** レビューの対象の PR と、投稿したレビュー（PBI-19）。 */
-  prInfo = {
+  prInfo: PullRequestInfo = {
     number: 12,
     url: "https://github.com/acme/app/pull/12",
     title: "再試行の回数を設定できるようにする",
@@ -3687,7 +3688,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   );
   const implement = (
     text: string,
-    map: { viewpointId: string; tests: string[] }[] = [
+    map: { viewpointId: string; tests: string[]; untested?: string }[] = [
       { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
       { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
     ],
@@ -6319,6 +6320,396 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ],
       });
       expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("文書だけの観点は、テストを書かずに差分で確かめると申告でき、ゴールガーディアンが差分で判定する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor, pulls } = makeService(
+        activity,
+        [
+          out("# 要求要件"),
+          implement("# 実装の説明", [
+            { viewpointId: "REQ", tests: [], untested: "README の手順の文言だけを直したため" },
+          ]),
+          review([["REQ", true]], []),
+        ],
+        {
+          planner: async () => ({
+            steps: ["requirements", "implement"],
+            plan: "skip-design",
+            reason: "小さな変更",
+            fallback: false,
+            testCommand: "npm test",
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "README の手順を直す" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id); // 実装
+      // 文書だけの観点に、ファイルを読むだけの形のテストを書かせない
+      const implementPrompt = promptOf(executor, 1);
+      expect(implementPrompt).toContain(
+        "ファイルがある・読める・特定の文字列を含むことだけを確かめるテストは書かない",
+      );
+      expect(implementPrompt).toContain('"tests": [], "untested":');
+      expect(service.get(id)?.task.testMap).toEqual([
+        { viewpointId: "REQ", tests: [], untested: "README の手順の文言だけを直したため" },
+      ]);
+      await service.runNext(id); // 最終レビュー
+      const finalPrompt = promptOf(executor, 2);
+      expect(finalPrompt).not.toContain("実装がテストを対応させていません");
+      expect(finalPrompt).toContain(
+        "観点 REQ は、実装が「実行される振る舞いの無い変更なので、テストを書かずに差分で確かめる」と申告しています",
+      );
+      expect(finalPrompt).toContain("振る舞いを変える変更があるのにテストが無いなら、不合格にする");
+      expect(finalPrompt).toContain(
+        '- [REQ] テストなし・差分で確かめる（理由の申告："README の手順の文言だけを直したため"）',
+      );
+      await service.runNext(id); // PR の作成
+      const task = service.get(id)?.task;
+      expect(task?.lastReview?.passed).toBe(true);
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(pulls.calls[0]?.body).toContain(
+        "（テストなし。差分で確認：README の手順の文言だけを直したため）",
+      );
+      activity.close();
+    });
+
+    it("テストの対応にテストがあれば、差分で確かめる申告は使わず、理由の無い空の対応は対応させていないものとする", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          out("# 要求要件"),
+          implement("# 実装の説明", [
+            { viewpointId: "REQ", tests: ["a.test.ts › 動く"], untested: "使わない理由" },
+            { viewpointId: "REQ2", tests: [], untested: "" },
+          ]),
+        ],
+        {
+          planner: async () => ({
+            steps: ["requirements", "implement"],
+            plan: "skip-design",
+            reason: "小さな変更",
+            fallback: false,
+            testCommand: "npm test",
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(2);
+      expect(service.get(id)?.task.testMap).toEqual([
+        { viewpointId: "REQ", tests: ["a.test.ts › 動く"] },
+      ]);
+      activity.close();
+    });
+  });
+
+  describe("既存の PR を引き継いで直す", () => {
+    const head = "f".repeat(40);
+    const steps = (extra: Record<string, unknown> = {}) =>
+      out(
+        block({
+          "sacty-steps": {
+            plan: "direct",
+            reason: "指摘への対応",
+            testCommand: "npm test",
+            continuePullRequest: true,
+            ...extra,
+          },
+        }),
+        200,
+      );
+    /** 人が作った PR #12（同じリポジトリの feature/retry から main へ）。 */
+    const humanPullRequest = (pulls: FakePulls, patch: Partial<PullRequestInfo> = {}) => {
+      pulls.prInfo = {
+        ...pulls.prInfo,
+        state: "open",
+        headRef: "feature/retry",
+        headRepo: "https://github.com/acme/app",
+        baseRef: "main",
+        ...patch,
+      };
+    };
+    const old: PullRequestFeedback = {
+      key: "review_comment:1",
+      kind: "review_comment",
+      author: "bob",
+      at: "2026-01-01T00:00:00Z",
+      path: "src/retry.ts",
+      line: 3,
+      body: "回数は定数にしてください",
+    };
+    const body = "https://github.com/acme/app/pull/12 のレビューの指摘に対応する";
+
+    it("オーケストレーターが引き継ぐと判断したら、PR のブランチで実装し、同じブランチに積んで、新しい PR を作らない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      pulls.feedbackBy[12] = [old];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          out("# 前段の調査"),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos, now: () => Date.now() + 10 * 60_000 },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      // オーケストレーターに、タスクにある PR を引き継ぐかを決めさせる
+      expect(promptOf(executor, 0)).toContain(
+        "continuePullRequest：タスクが、タスクにある PR（https://github.com/acme/app/pull/12）そのものを直すよう求めている",
+      );
+      const task = service.get(id)?.task;
+      expect(task?.continuedPullRequest).toEqual({
+        repo: "https://github.com/acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        branch: "feature/retry",
+        baseBranch: "main",
+      });
+      // 作業領域は PR のブランチの先頭で用意し直す
+      expect(repos.prepared.at(-1)?.baseBranch).toBe("feature/retry");
+      expect(task?.repository).toMatchObject({ baseBranch: "feature/retry", baseCommit: head });
+      // 工程の指示に、引き継ぐ PR と、その PR の指摘を渡す（本文のある承認も含めて読む）
+      const implementPrompt = promptOf(executor, 2);
+      expect(implementPrompt).toContain("--- 引き継いで直す PR ---");
+      expect(implementPrompt).toContain("回数は定数にしてください");
+      expect(promptOf(executor, 1)).toContain("--- 引き継いで直す PR ---");
+      expect(pulls.feedbackIncludeApprovals).toContain(true);
+      // PR のブランチの先頭に積んでプッシュし、新しい PR は作らない（題・本文を変えない・ラベルを付けない）
+      expect(repos.published).toEqual([
+        expect.objectContaining({ parent: head, branch: "feature/retry" }),
+      ]);
+      expect(pulls.calls).toEqual([]);
+      expect(pulls.labels).toEqual([]);
+      expect(task?.pullRequest).toMatchObject({ number: 12, branch: "feature/retry" });
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+
+      // 実装の前からある指摘は、実装に渡して対応させたので、PR の指摘として取り込み直さない
+      await service.checkPullRequests();
+      const imported = () =>
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported") ?? [];
+      expect(imported()).toEqual([]);
+      // 実装を始めた後の指摘は、取り込む
+      pulls.feedbackBy[12] = [
+        old,
+        {
+          ...old,
+          key: "comment:2",
+          kind: "comment",
+          at: new Date(Date.now() + 60_000).toISOString(),
+          body: "テストも足して",
+        },
+      ];
+      await service.checkPullRequests().catch(() => undefined);
+      const after = imported();
+      expect(after).toHaveLength(1);
+      expect(after[0]?.type === "PullRequestReviewImported" && after[0].payload.items).toEqual([
+        expect.objectContaining({ key: "comment:2" }),
+      ]);
+      activity.close();
+    });
+
+    it("引き継ぐタスクの要求要件は、PR にせず画面で承認する（引き継いだ PR に成果のファイルを混ぜない）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      humanPullRequest(pulls);
+      const { service } = makeService(
+        activity,
+        [steps({ plan: "skip-design" }), out("# 前段の調査"), stepReview(), out("# 要求要件")],
+        { realPlanner: true, pulls, repos, stepPullRequests: true },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 4 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.gate).toEqual({ step: "requirements", submission: 1 });
+      expect(task?.taskBranch).toBeUndefined();
+      expect(task?.stepPullRequests).toEqual([]);
+      expect(repos.committedFiles).toEqual([]);
+      expect(pulls.calls).toEqual([]);
+      activity.close();
+    });
+
+    it("中止しても、引き継いだ PR は閉じず、PR のブランチも消さない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const { service } = makeService(
+        activity,
+        [
+          steps(),
+          out("# 前段の調査"),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      await service.cancel(id);
+      expect(pulls.closed).toEqual([]);
+      expect(repos.deleted).toEqual([]);
+      expect(service.get(id)?.task.status).toBe("cancelled");
+      activity.close();
+    });
+
+    it("引き継いだ PR のブランチが作業の間に進んでいたら、強制プッシュせずに理由を示して止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const { service } = makeService(
+        activity,
+        [
+          steps(),
+          out("# 前段の調査"),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      // 人が PR のブランチに積んだので、プッシュが拒まれる
+      repos.publishFail = "! [rejected] feature/retry (fetch first)";
+      repos.remote["feature/retry"] = "9".repeat(40);
+      for (let i = 0; i < 6 && service.get(id)?.task.status !== "paused"; i++) {
+        await service.runNext(id);
+      }
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(ja(task?.pausedMessage)).toContain(
+        "引き継いだ PR #12 のブランチ（feature/retry）が、sacty が作業を始めた後に進んだため",
+      );
+      expect(pulls.calls).toEqual([]);
+      activity.close();
+    });
+
+    it("引き継げない PR（フォークの PR・マージ済み・ほかのタスクの PR）なら、新しい PR を作らないように、工程を決めずに止める", async () => {
+      const cases: [Partial<PullRequestInfo>, string][] = [
+        [
+          { headRepo: "https://github.com/someone/app" },
+          "PR の元のブランチが、対象リポジトリにありません",
+        ],
+        [{ state: "merged" }, "PR はマージ済みです"],
+      ];
+      for (const [patch, expected] of cases) {
+        const activity = new SqliteActivityStore(join(dir, `${randomUUID()}.db`));
+        const pulls = new FakePulls();
+        humanPullRequest(pulls, patch);
+        const { service } = makeService(activity, [steps()], { realPlanner: true, pulls });
+        const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+        await service.runNext(id);
+        const task = service.get(id)?.task;
+        expect(task?.steps).toEqual([]);
+        expect(task?.status).toBe("paused");
+        expect(ja(task?.pausedMessage)).toContain(
+          "タスクにある PR #12 を引き継いで直すと判断しましたが、引き継げません",
+        );
+        expect(ja(task?.pausedMessage)).toContain(expected);
+        // 判断の費用は記録する
+        expect(service.get(id)?.activity.map((e) => e.type)).toContain("OrchestratorFailed");
+        expect(task?.budget.usedUsd).toBeGreaterThan(0);
+        activity.close();
+      }
+    });
+
+    it("sacty のほかのタスクが作った PR は引き継がない（その PR の指摘は、作ったタスクが取り込む）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      humanPullRequest(pulls);
+      pulls.nextNumber = 12;
+      const { service } = makeService(
+        activity,
+        [
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["a.test.ts › 動く"] }]),
+          review([["REQ", true]], []),
+          steps(),
+        ],
+        {
+          pulls,
+          repos,
+          planner: async (task) =>
+            task.title === "先のタスク"
+              ? {
+                  steps: ["implement"],
+                  plan: "direct",
+                  reason: "小さい",
+                  fallback: false,
+                  testCommand: "npm test",
+                  costUsd: 0,
+                  estimated: false,
+                }
+              : {
+                  steps: ["investigate", "implement"],
+                  plan: "direct",
+                  reason: "指摘への対応",
+                  fallback: false,
+                  testCommand: "npm test",
+                  continuePullRequest: true,
+                  costUsd: 0,
+                  estimated: false,
+                },
+        },
+      );
+      const first = service.createTask({ projectId: "default", title: "先のタスク" });
+      for (let i = 0; i < 4 && !service.get(first.id)?.task.gate; i++)
+        await service.runNext(first.id);
+      expect(service.get(first.id)?.task.pullRequest?.number).toBe(12);
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      await service.runNext(id);
+      expect(service.get(id)?.task.steps).toEqual([]);
+      expect(ja(service.get(id)?.task.pausedMessage)).toContain(
+        `sacty のタスク ${first.id.slice(0, 8)} が、この PR を扱っています`,
+      );
+      activity.close();
+    });
+
+    it("PR を参照するだけのタスク（引き継がないと判断した）は、今までどおり新しい PR を作る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      humanPullRequest(pulls);
+      const { service } = makeService(
+        activity,
+        [
+          steps({ continuePullRequest: false }),
+          out("# 前段の調査"),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["a.test.ts › 動く"] }]),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "同じ直し方をほかの所にも",
+        body: "https://github.com/acme/app/pull/12 と同じ直し方を、ほかのモジュールにもする",
+      });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.continuedPullRequest).toBeUndefined();
+      expect(pulls.prInfoRequests).toEqual([]);
+      expect(pulls.calls).toHaveLength(1);
+      expect(task?.pullRequest?.branch).toBe(`sacty/task-${id.slice(0, 8)}`);
       activity.close();
     });
   });

@@ -25,6 +25,7 @@ import {
   ChangeStepImageInput,
   type CiFailure,
   type CleanupTarget,
+  type ContinuedPullRequest,
   CreateTaskInput,
   CreateTemplateTaskInput,
   canDecideTests,
@@ -294,6 +295,7 @@ import {
   buildTicketTriagePrompt,
   type ChatLogs,
   changeableSteps,
+  continuablePullRequest,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
   type ExportDestination,
@@ -315,6 +317,7 @@ import {
   finalReviewViewpointIds,
   integrationViewpointIds,
   investigationMarker,
+  mappedViewpointIds,
   operationSucceeded,
   postedLatestCommit,
   pullRequestInText,
@@ -1644,7 +1647,9 @@ export class TaskService {
           ...this.githubAccountOf(current, pr.repo),
           ...this.sactyReviewsOf(pr.repo, pr.number),
         })
-      ).filter((item) => !current.importedFeedback.includes(item.key));
+      )
+        .filter((item) => !current.importedFeedback.includes(item.key))
+        .filter((item) => !handedOverFeedback(current, pr, item));
       if (fresh.length === 0) return;
       // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
       const newest = Math.max(...fresh.map((item) => Date.parse(item.at) || 0));
@@ -2007,6 +2012,91 @@ export class TaskService {
       };
     } catch (error) {
       return { ok: false, message: redactText(errorText(error), usedSecrets) };
+    }
+  }
+
+  /**
+   * オーケストレーターが引き継いで直すと判断した、タスクにある既存の PR を確かめる。開いていて、元のブランチが対象リポジトリに
+   * あり（フォークの PR でない）、ほかの sacty のタスクが扱っていない PR だけを引き継ぐ。確かめられなければ理由を返す
+   * （トークンは含めない）。
+   */
+  private async resolveContinuedPullRequest(
+    task: Task,
+  ): Promise<{ ok: true; pr: ContinuedPullRequest } | { ok: false; message: DaemonText }> {
+    const ref = continuablePullRequest(task);
+    if (!ref) {
+      const repo = (task.repository && githubRepoOf(task.repository.url)) ?? "";
+      return { ok: false, message: message("review.pullRequestMissing", { repo }) };
+    }
+    const unavailable = (detail: DaemonText) => ({
+      ok: false as const,
+      message: message("continue.unavailable", { number: ref.number, detail }),
+    });
+    // sacty のタスクが作った・引き継いだ PR は、そのタスクが PR の指摘を取り込んで直す（同じブランチに2つのタスクが積まない）
+    const owner = [...this.tasks.values()].find(
+      (t) =>
+        t.id !== task.id &&
+        t.status !== "cancelled" &&
+        [t.pullRequest, t.continuedPullRequest].some(
+          (pr) => pr?.number === ref.number && pr.repo !== undefined && sameRepo(pr.repo, ref.repo),
+        ),
+    );
+    if (owner) return unavailable(message("continue.inUse", { task: owner.id.slice(0, 8) }));
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, ref.repo, usedSecrets);
+      const pr = await this.deps.pulls.pullRequest({ ...ref, token });
+      if (pr.state === "merged" || pr.state === "closed") {
+        return unavailable(message("continue.notOpen", { state: pr.state }));
+      }
+      if (
+        pr.state !== "open" ||
+        !pr.headRef ||
+        !pr.baseRef ||
+        !pr.headRepo ||
+        !sameRepo(pr.headRepo, ref.repo)
+      ) {
+        return unavailable(message("continue.notSameRepository"));
+      }
+      return {
+        ok: true,
+        pr: {
+          repo: ref.repo,
+          number: ref.number,
+          url: pr.url,
+          branch: pr.headRef,
+          baseBranch: pr.baseRef,
+        },
+      };
+    } catch (error) {
+      return unavailable(redactText(errorText(error), usedSecrets));
+    }
+  }
+
+  /**
+   * 引き継いで直す既存の PR にある、レビュー・行へのコメント・通常のコメント（本文のある承認も含む）。工程の指示に渡す。
+   * 読めなくても工程は止めず、読めなかったこと（"unreadable"）を渡し、理由はデーモンのログに残す（秘密の値は伏せる）。
+   */
+  private async continuedFeedback(
+    task: Task,
+    continued: ContinuedPullRequest,
+  ): Promise<PullRequestFeedback[] | "unreadable"> {
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, continued.repo, usedSecrets);
+      return await this.deps.pulls.feedback({
+        repo: continued.repo,
+        token,
+        number: continued.number,
+        ...this.githubAccountOf(task, continued.repo),
+        ...this.sactyReviewsOf(continued.repo, continued.number),
+        includeApprovals: true,
+      });
+    } catch (error) {
+      console.warn(
+        `[daemon] タスク ${task.id} で、引き継いだ PR #${continued.number}（${continued.repo}）のレビュー・コメントを読めませんでした。それらなしで進めます：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return "unreadable";
     }
   }
 
@@ -3099,6 +3189,7 @@ export class TaskService {
         ...(chosen.documentsDir ? { documentsDir: chosen.documentsDir } : {}),
         ...(chosen.repo ? { repo: chosen.repo } : {}),
         ...(chosen.repoReason ? { repoReason: chosen.repoReason } : {}),
+        ...(chosen.continuePullRequest ? { continuePullRequest: true as const } : {}),
         ...cost,
       };
     }
@@ -5337,16 +5428,64 @@ export class TaskService {
         this.warnIfNeeded(this.mustGet(taskId));
         return;
       }
-      const { baseBranch, ...chosen } = choice;
+      const { baseBranch, continuePullRequest, ...chosen } = choice;
+      // タスクにある既存の PR を引き継いで直す（オーケストレーターの判断）なら、PR を確かめ、PR の元のブランチの先頭で
+      // 用意し直す（ベースブランチの選択は使わない）。引き継げなければ、新しい PR を作らないように、工程を決めずに止める
+      const continuing =
+        continuePullRequest && continuablePullRequest(this.mustGet(taskId))
+          ? await this.resolveContinuedPullRequest(this.mustGet(taskId))
+          : undefined;
       // 既定のブランチと違うベースブランチを選んだなら、そのブランチの最新で用意し直す（PBI-25）。
       // 用意できなければ、既定のブランチのまま進め、そのことを理由に添える
       const prepared = this.mustGet(taskId).repository;
+      const rebaseTo = continuing?.ok ? continuing.pr.branch : baseBranch;
       const rebased =
-        baseBranch && prepared && baseBranch !== prepared.baseBranch
+        rebaseTo && prepared && (continuing?.ok || rebaseTo !== prepared.baseBranch)
           ? await this.prepareRepository(this.mustGet(taskId), config.config, {
-              branch: baseBranch,
+              branch: rebaseTo,
             })
           : undefined;
+      const continueProblem =
+        continuing && !continuing.ok
+          ? continuing.message
+          : continuing?.ok && rebased && !rebased.ok
+            ? message("continue.unavailable", {
+                number: continuing.pr.number,
+                detail: rebased.message,
+              })
+            : undefined;
+      if (continueProblem) {
+        const latest = this.mustGet(taskId);
+        if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return;
+        if (latest.status !== "queued" || latest.steps.length > 0) return;
+        this.append(latest, [
+          {
+            actor: "orchestrator",
+            event: {
+              type: "OrchestratorFailed",
+              payload: {
+                reason: "error",
+                message: continueProblem,
+                agentId: chosen.agentId ?? "unknown",
+                ...(chosen.authMode ? { authMode: chosen.authMode } : {}),
+                ...(chosen.model ? { model: chosen.model } : {}),
+                ...(chosen.reasoningEffort ? { reasoningEffort: chosen.reasoningEffort } : {}),
+                ...(chosen.runId ? { runId: chosen.runId } : {}),
+                ...(chosen.usage ? { usage: chosen.usage } : {}),
+                costUsd: chosen.costUsd,
+                estimated: chosen.estimated,
+              },
+            },
+          },
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "error", message: continueProblem } },
+          },
+        ]);
+        this.warnIfNeeded(this.mustGet(taskId));
+        return;
+      }
+      if (continuing?.ok) chosen.continuedPullRequest = continuing.pr;
       // マージの後の監視の工程をするかを、起点のコミットのデプロイの確認のスキルで決める（PBI-116）
       if (chosen.steps.includes("deployment")) {
         const commit =
@@ -5563,6 +5702,12 @@ export class TaskService {
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
     // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
     let reviewExisting: PullRequestFeedback[] | "unreadable" | undefined;
+    // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
+    const continued = this.mustGet(task.id).continuedPullRequest;
+    const continuedFeedback =
+      continued && step !== "review" && step !== "deployment"
+        ? await this.continuedFeedback(this.mustGet(task.id), continued)
+        : undefined;
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
     const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
@@ -5678,6 +5823,7 @@ export class TaskService {
             ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
+            ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
@@ -6573,7 +6719,8 @@ export class TaskService {
     // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
     const viewpointIds = finalReviewViewpointIds(task);
     // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
-    const mapped = new Set(task.testMap.map((m) => m.viewpointId));
+    // テストを書かずに差分で確かめると申告した観点も、対応させたものにする（判定はゴールガーディアンが差分で行う）
+    const mapped = mappedViewpointIds(task);
     const unmappedViewpoints = task.noTestsReason
       ? []
       : viewpointIds.filter((id) => !mapped.has(id));
@@ -6802,6 +6949,8 @@ export class TaskService {
    */
   private stepPullRequestsOn(task: Task): boolean {
     if (task.taskBranch) return true;
+    // 既存の PR を引き継ぐタスクは、要求要件・設計を PR にしない（引き継いだ PR に成果のファイルを混ぜない。画面で承認する）
+    if (task.continuedPullRequest) return false;
     if (this.deps.stepPullRequests === false || !task.repository) return false;
     if (task.submissions.requirements || task.submissions.design) return false;
     const repo = this.taskRepo(task);
@@ -7106,6 +7255,9 @@ export class TaskService {
       return;
     }
     const repo = target.repo;
+    // 既存の PR を引き継ぐタスクは、その PR の元のブランチに実装を積み、新しい PR を作らない
+    const continued = task.continuedPullRequest;
+    if (continued) return this.publishContinued(task, continued, fail, usedSecrets);
     // タスクブランチのあるタスク（PBI-57）は、タスクブランチに実装を積み、タスクブランチからベースブランチへの PR にする
     const taskBranch = task.taskBranch;
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
@@ -7220,6 +7372,105 @@ export class TaskService {
       // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
       // 今までどおり止める（開いている PR をどうするかは人が決める）
+      if (error instanceof NothingToCommitError && !task.pullRequest) {
+        const submitted = this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "NoChangesFound",
+              payload: { submission: (task.submissions.implement ?? 0) + 1 },
+            },
+          },
+          this.implementSubmitted(task),
+        ]);
+        this.checkBudget(submitted);
+        return;
+      }
+      fail(message("pr.failed", { detail: errorText(error) }));
+    }
+  }
+
+  /**
+   * 既存の PR を引き継ぐタスクの、検証に通った実装を PR の元のブランチに積む。起点（PR の先頭）か前にプッシュしたコミットに
+   * 積み、強制プッシュはしない（人が PR のブランチを進めていたら、止めて人が判断する）。PR の題・本文は変えず、レビュー用の
+   * ラベルも付けない（人が作った PR なので）。PR が開いていれば、その PR を実装の PR として記録し、実装の承認待ち（PR の
+   * マージ）にする。
+   */
+  private async publishContinued(
+    task: Task,
+    continued: ContinuedPullRequest,
+    fail: (text: DaemonText) => void,
+    usedSecrets: string[],
+  ): Promise<void> {
+    if (!task.repository) return;
+    const dir = this.repoDir(task);
+    const gitDir = this.trustedGitDir(task);
+    const branch = continued.branch;
+    const parent = task.pullRequest?.commit ?? task.repository.baseCommit;
+    // 一時停止・中止を求められていれば、プッシュしない（一時停止は、PR の作成の待ちのまま止める。再開すると積む）
+    if (this.stopRequested(task.id)) return;
+    try {
+      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      let commit: string;
+      try {
+        ({ commit } = await this.deps.repos.publish({
+          dir,
+          gitDir,
+          baseCommit: task.repository.baseCommit,
+          parent,
+          branch,
+          message: `${task.title}\n\nsacty task ${task.id}`,
+          // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
+          date: task.lastReview?.at ?? task.createdAt,
+          authEnv,
+        }));
+      } catch (error) {
+        if (error instanceof NothingToCommitError) throw error;
+        // プッシュを拒まれたのが、PR のブランチが進んだため（人が積んだ）なら、そうはっきり示す
+        const head = await this.deps.repos
+          .fetchBranch(gitDir, branch, authEnv)
+          .catch(() => undefined);
+        if (head && head !== parent && head !== task.pushedBranch?.commit) {
+          fail(message("pr.continuedBranchMoved", { branch, number: continued.number }));
+          return;
+        }
+        throw error;
+      }
+      if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
+        this.append(task, [
+          { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
+        ]);
+      }
+      const token = await this.githubToken(task, continued.repo, usedSecrets);
+      const now = await this.deps.pulls.status({
+        repo: continued.repo,
+        token,
+        number: continued.number,
+      });
+      if (now.state !== "open") {
+        fail(message("pr.continuedNotOpen", { number: continued.number }));
+        return;
+      }
+      if (this.stopRequested(task.id)) return;
+      const submitted = this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestPublished",
+            payload: {
+              branch,
+              commit,
+              url: continued.url,
+              number: continued.number,
+              repo: continued.repo,
+            },
+          },
+        },
+        this.implementSubmitted(task),
+      ]);
+      this.checkBudget(submitted);
+    } catch (error) {
+      // 実装が起点（PR の先頭）から何も変えていなかった（PBI-90）。まだ積んでいなければ、実装の承認で人間に確かめてもらう
       if (error instanceof NothingToCommitError && !task.pullRequest) {
         const submitted = this.append(task, [
           {
@@ -7563,7 +7814,8 @@ export class TaskService {
       // PR：sacty が作ったものだけを閉じる（マージはしない）。番号はリポジトリの中でしか一意でないので、
       // 作ったときに記録したリポジトリに対してだけ閉じる（いまの設定のリポジトリは使わない）
       // マージした実装の PR（マージの後の監視の工程の間に中止した。PBI-116）は、閉じられないので触れない
-      if (pr?.number && latest.pullRequestState !== "merged") {
+      // 引き継いだ既存の PR（人が作った PR）は閉じない。sacty が積んだコミットも PR に残る
+      if (pr?.number && latest.pullRequestState !== "merged" && !latest.continuedPullRequest) {
         const usedSecrets: string[] = [];
         try {
           if (!pr.repo) {
@@ -10606,6 +10858,11 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
  */
 type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
   baseBranch?: string;
+  /**
+   * タスクにある既存の PR を引き継いで直す（オーケストレーターの判断）。sacty が PR を確かめて、StepsChosen の
+   * continuedPullRequest にする。
+   */
+  continuePullRequest?: true;
 };
 
 /**
@@ -10750,13 +11007,32 @@ function taskBranchName(task: Pick<Task, "id">): string {
  * sacty がプッシュしたブランチ（中止で消す）。実装の PR のブランチ（PR の作成に失敗しても記録してある）と、タスク
  * ブランチ・要求要件と設計のブランチ（PBI-57）。
  */
+/**
+ * 引き継いだ既存の PR で、実装の工程の最後の実行を始める前からある指摘か。実装の指示に渡して対応させたので、PR の指摘として
+ * 取り込み直さない（取り込むと、対応した指摘で差し戻しを繰り返す）。それより後の指摘は、ほかの PR と同じく取り込む。
+ */
+function handedOverFeedback(
+  task: Task,
+  pr: { repo?: string; number?: number },
+  item: { at: string },
+): boolean {
+  const continued = task.continuedPullRequest;
+  if (!continued || !task.implementStartedAt) return false;
+  if (pr.number !== continued.number || !pr.repo || !sameRepo(pr.repo, continued.repo))
+    return false;
+  const at = Date.parse(item.at);
+  return Number.isNaN(at) || at <= Date.parse(task.implementStartedAt);
+}
+
 function sactyBranches(task: Task): string[] {
   const branches = [
     (task.pushedBranch ?? task.pullRequest)?.branch,
     task.taskBranch?.branch,
     ...task.stepBranches,
   ];
-  return [...new Set(branches.filter((b): b is string => Boolean(b)))];
+  // 引き継いだ既存の PR のブランチは、人のブランチなので消さない
+  const continued = task.continuedPullRequest?.branch;
+  return [...new Set(branches.filter((b): b is string => Boolean(b) && b !== continued))];
 }
 
 /** promise を待つ。その間に stopped が true になったら、待たずに whenStopped を返す（PBI-77）。 */

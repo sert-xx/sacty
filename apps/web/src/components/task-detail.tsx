@@ -467,6 +467,26 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 )}
               </p>
             )}
+            {/* 引き継いで直す既存の PR。新しい PR を作らず、その PR のブランチにコミットを積む */}
+            {task.continuedPullRequest && (
+              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                {m.continuedPullRequest}
+                {task.continuedPullRequest.url.startsWith("https://") ? (
+                  <a
+                    href={task.continuedPullRequest.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-accent-foreground underline"
+                  >
+                    #{task.continuedPullRequest.number}
+                  </a>
+                ) : (
+                  `#${task.continuedPullRequest.number}`
+                )}
+                {m.continuedPullRequestBranch(task.continuedPullRequest.branch)}{" "}
+                <Hint text={m.continuedPullRequestHint} />
+              </p>
+            )}
             {/* 人がタスクの作成時に指定した進め方 */}
             {task.requestedPlan && (
               <p className="text-sm leading-6 text-muted-foreground">

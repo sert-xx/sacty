@@ -69,6 +69,10 @@ const ja = {
   stepsNoteReview: "レビューだけ",
   stepsReason: (reason: string) => `選んだ理由：${reason}`,
   stepsRequested: (plan: string) => `作成時に指定した進め方：${plan}`,
+  continuedPullRequest: "引き継いで直す PR：",
+  continuedPullRequestBranch: (branch: string) => `（ブランチ ${branch}）`,
+  continuedPullRequestHint:
+    "タスクにある既存の PR を、オーケストレーターの判断で引き継いでいます。新しい PR は作らず、実装をこの PR のブランチにコミットとして積みます（PR の題・本文は変えません）。PR のマージで実装を承認します。",
   exports: {
     title: "書き出し先",
     hint: "承認した成果を書き出す先です。オーケストレーターが工程ごとに決めます。",
@@ -419,6 +423,10 @@ const en: TaskMessages = {
   stepsNoteReview: "Review only",
   stepsReason: (reason) => `Why: ${reason}`,
   stepsRequested: (plan) => `Plan chosen at creation: ${plan}`,
+  continuedPullRequest: "Taking over PR: ",
+  continuedPullRequestBranch: (branch) => ` (branch ${branch})`,
+  continuedPullRequestHint:
+    "The Orchestrator decided to take over the existing PR in the task. Sacty does not open a new PR; it pushes the implementation as commits to this PR's branch (the PR title and description are not changed). Merging the PR approves the implementation.",
   exports: {
     title: "Export destinations",
     hint: "Where approved deliverables are exported. The Orchestrator decides per step.",

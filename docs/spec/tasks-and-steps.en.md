@@ -98,6 +98,7 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
     - "既定で決めたこと" (decided by default): among what the request does not say but the agent decided from the existing code, rules, and conventions, only what a person may disagree with. Up to 5 (`DECISIONS_MAX`). Simply following the existing way is not listed. When the should questions exceed the limit, the less important ones are decided with the recommended answer and moved here.
   - The target length of the whole deliverable is 20 lines for a small change and about 60 lines even for a large change (`DRAFT_LINES`; JSON blocks with a fixed format are not counted).
 - The design has only the sections, among structure, data, flow, behavior on errors, and impact, that this change has something to say about. The test viewpoints cover all acceptance criteria and include the unwanted behavior and boundary values that this change can newly cause.
+  A viewpoint for a change only to documents, comments or wording has what should be written as its expected result, and the implementation is checked in the diff (it is not a viewpoint that checks that a file exists or can be read; the requirements and design files sacty places are not viewpoints).
   The number of viewpoints is only what is needed to check the acceptance criteria, and each viewpoint is written in one sentence.
 - sacty does not parse the two sections at the start (they stay in the deliverable's body and appear on the approval screen and in the PR).
 
@@ -164,6 +165,7 @@ The Orchestrator does not recommend `standard` unconditionally. It is told to ch
 | A file change in a repository, including documentation, that is local | `direct` or `skip-design` |
 | A file change in a repository, including documentation, that needs broad design decisions | `standard` |
 | A file change in a repository, including documentation, split into several PRs | `split` |
+| Fixing an existing PR itself (addressing review comments on the PR, and so on; "Taking over an existing PR" below) | `direct` (`continuePullRequest`) |
 | A reproducible bug | `bugfix` |
 | A bug that needs design decisions | `standard` |
 
@@ -195,6 +197,29 @@ A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#rel
 - The JSON request is removed from the investigation result returned to the source issue (`buildInvestigationComment`).
 
 Code: `apps/daemon/src/github-comments.ts` (`requestedGitHubComments`, `commentTarget`, `commentAllowed`, `buildGitHubComment`, `githubCommentMarker`, `withoutGitHubComments`), `apps/daemon/src/github-relay.ts` (`GITHUB_COMMENTS_MAX`, `GITHUB_COMMENT_BODY_MAX`), `apps/daemon/src/service.ts` (`postGitHubComments`, `awaitingGitHubComments`), `packages/core/src/events.ts` (`GitHubCommentsPosted`, `OperationVia`), `packages/core/src/projection.ts`
+
+## Taking over an existing PR
+
+When the title or description of a task has a link to a PR of the target repository and the task asks to fix that PR itself (addressing review comments on a PR a person opened, and so on), sacty takes over the PR. It opens no new branch or PR and pushes the implementation to the PR's source branch.
+
+Related ADR: [A task that fixes an existing PR takes over the PR and pushes to the same branch, and a documentation-only viewpoint is checked in the diff without a test](../adr/20261025-1337-continue-existing-pull-request.md)
+
+- Whether to take it over is decided by the Orchestrator with `continuePullRequest` in its answer for choosing the steps. The prompt shows this item only for a task that has a PR link and can choose a plan that implements (`CONTINUABLE_PLANS`: `standard`, `skip-design`, `direct`, `bugfix`) (`continuablePullRequest`). It is not shown for a task imported from a PR or a child task of a split. The prompt asks not to write it when the task only refers to the PR for a different change or only reviews the PR, to choose `direct` when the review comments make the fix concrete, and not to write `baseBranch`. `continuePullRequest` in an answer with a plan that does not implement is not read.
+- sacty checks the PR before recording the steps (`resolveContinuedPullRequest`). It takes over only a PR that is open, whose source branch is in the target repository (not a PR from a fork), and that no other sacty task (except cancelled ones) opened or took over. If it cannot be taken over, to avoid opening a new PR, sacty records no steps; it records `OrchestratorFailed` (with the cost of the decision) and `TaskPaused` (`continue.unavailable`) and stops. Resuming chooses the steps again.
+- When it can be taken over, the workspace is prepared again at the latest of the PR's source branch (`RepositoryPrepared`; the base branch is that branch and the base is its head), and it is recorded in `continuedPullRequest` of `StepsChosen` (the repository, number, URL, source branch, and target branch). It becomes `Task.continuedPullRequest` in the projection. If the workspace cannot be prepared again, the task stops as when it cannot be taken over.
+- The prompts of the steps (except review and the post-merge watch) get the PR being taken over and the reviews, line comments, and regular comments on it (including approvals with a body; up to the newest 30) as JSON data (`continuedPullRequestLines`). They tell the agent to keep the PR's purpose and existing changes, change only what the task asks, and write the reason for comments it does not address in its description. If they cannot be read, the prompt says so and the reason goes to the daemon's log (the step does not stop).
+- Requirements and Design are not opened as PRs; they are approved in the web UI (`stepPullRequestsOn`). This keeps their files out of the taken-over PR.
+- An implementation that passes verification is pushed to the PR's source branch (`publishContinued`).
+  - It is stacked on the base (the PR's head) or the previously pushed commit, without force-pushing. If the push is rejected and the branch's head differs from both the base and the previously pushed commit, sacty treats it as pushed by a person and stops (`pr.continuedBranchMoved`).
+  - If the PR is not open after the push, it stops (`pr.continuedNotOpen`).
+  - It does not change the PR's title or description, and adds no review label.
+  - If the PR is open, it is recorded in `PullRequestPublished` (with no template and no planned label), and the task waits for the implementation's approval (merging the PR).
+  - When there are no changes, it is the same as other tasks ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
+- Importing PR feedback skips comments from before the last run of the Implement step started (`Task.implementStartedAt`), because they were passed to the implementation to address. Later comments are imported as for other PRs ([Importing PR comments](approval.en.md#importing-pr-comments)).
+- Cancelling neither closes the taken-over PR nor deletes its source branch (it is excluded from `sactyBranches`).
+- The web UI shows the PR being taken over (its number and source branch) in the Steps section of the task details.
+
+Code: `apps/daemon/src/prompts.ts` (`continuablePullRequest`, `CONTINUABLE_PLANS`, `continuePullRequestLines`, `continuedPullRequestLines`, `extractStepPlan`), `apps/daemon/src/service.ts` (`resolveContinuedPullRequest`, `continuedFeedback`, `publishContinued`, `stepPullRequestsOn`, `importFeedback`, `handedOverFeedback`, `sactyBranches`), `apps/daemon/src/github.ts` (`PullRequestInfo`), `packages/core/src/events.ts` (`ContinuedPullRequest`, `StepsChosen`), `packages/core/src/projection.ts` (`continuedPullRequest`, `implementStartedAt`), `apps/web/src/components/task-detail.tsx`
 
 ## Information gathering
 
@@ -369,6 +394,7 @@ The flow from the end of the Implementation step to awaiting approval is as foll
 - The final review judges each viewpoint and each comment, and passes only when all are met. On top of that, sacty applies the following (`extractFinalReview`).
   - When there is a test command, it passes only when the Goal Guardian reported exit code 0, or a code other than 0 together with `environmentFailures` (`guardianTestsPassed`; no report, or a code other than 0 without environment failures, fails regardless of the viewpoint verdicts).
   - A viewpoint the implementation did not map to a test fails regardless of the Goal Guardian's verdict, with the reason `review.viewpointUnmapped` (the prompt also says to fail that viewpoint). This does not apply to a task without tests.
+  - The implementation can report a viewpoint that only has changes without behavior that runs (documents, comments, wording, and so on) as checked in the diff without a test (in the test mapping, `tests` is empty and `untested` has the reason; `TestMapping`). Such a viewpoint counts as mapped (`mappedViewpointIds`), and the Goal Guardian's prompt tells it to check in the diff that the change for the viewpoint does not change behavior, and to fail it if it changes behavior but has no test. If there are `tests`, `untested` is dropped, and an empty mapping without a reason counts as not mapped. The implementation's prompt says not to write tests that only check that a file exists, can be read, or contains a string, and not to test the requirements and design files sacty places (`UNTESTED_LINES`). The mapping table of the PR body and the implementation deliverable show that there is no test and it is checked in the diff, with the reason.
   - The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above), the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every viewpoint ID under review as is (`REQ` for a task without a design, `REPRO` for a bug fix), and the instructions say to answer with those IDs (with the fixed example `TV-1`, a `REQ` task was answered with the example's ID and treated as having no verdict; PBI-137).
   - A viewpoint without a verdict fails. When the answer uses only IDs that are not under review, it is not reinterpreted: it fails with the reason `review.verdictIdMismatch` (the viewpoint and the answered ID differ). If there is no other ID either, the reason is `review.verdictMissing` (no verdict).
 

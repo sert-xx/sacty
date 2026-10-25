@@ -331,6 +331,11 @@ export const TestMapping = z.object({
   viewpointId: z.string().min(1),
   /** テストの場所と名前（例：src/pay.test.ts › 同じキーの再送）。 */
   tests: z.array(z.string().min(1)),
+  /**
+   * テストを書かずに差分で確かめる観点の理由（文書・コメント・文言だけなど、実行される振る舞いの無い変更）。tests が空のときだけ
+   * 持つ。ゴールガーディアンが、その観点の変更に実行される振る舞いが無いことを差分で確かめ、そうでなければ不合格にする。
+   */
+  untested: z.string().min(1).max(1000).optional(),
 });
 export type TestMapping = z.infer<typeof TestMapping>;
 
@@ -616,6 +621,22 @@ export type OperationSettings = z.infer<typeof OperationSettings>;
  * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ、この記録の代わりに
  * OrchestratorFailed を記録して一時停止する（PBI-40）。PBI-17 より前の作業履歴は、固定の工程（steps だけ）。
  */
+/**
+ * タスクが引き継いで直す、既存の PR（人が作った PR のレビューの指摘への対応など）。オーケストレーターが、タスクがその PR そのものを
+ * 直すよう求めていると判断し、sacty が PR を確かめて記録する。実装は PR の元のブランチ（branch）の先頭から始め、同じブランチに
+ * 積む（新しいブランチ・PR を作らない。PR の題・本文は変えない）。repo はリポジトリの URL。
+ */
+export const ContinuedPullRequest = z.object({
+  repo: z.string().min(1),
+  number: z.number().int().positive(),
+  url: z.string(),
+  /** PR の元のブランチ（head）。作業領域はこのブランチの先頭で用意し、実装を積んでプッシュする。 */
+  branch: z.string().min(1),
+  /** PR の向き先のブランチ（base）。 */
+  baseBranch: z.string().min(1),
+});
+export type ContinuedPullRequest = z.infer<typeof ContinuedPullRequest>;
+
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
   payload: z.object({
@@ -699,6 +720,11 @@ const StepsChosen = z.object({
      * （DEFAULT_DOCUMENTS_DIR）。ファイルは、この下のタスクの短い ID のディレクトリに置く。
      */
     documentsDir: z.string().min(1).max(300).optional(),
+    /**
+     * 引き継いで直す既存の PR（ContinuedPullRequest）。オーケストレーターが引き継ぐと判断し、sacty が確かめられたときだけ持つ。
+     * 持つタスクは、要求要件・設計を PR にせず（画面で承認する）、実装の PR を作らずにこの PR のブランチに積む。
+     */
+    continuedPullRequest: ContinuedPullRequest.optional(),
     /**
      * マージの後の監視の工程（deployment）をするか（PBI-116）。工程を選んだときに、sacty が起点のコミットでデプロイの確認の
      * スキル（deployment-observer）を探して決める。skill はそのパス（リポジトリの根から）、skipped は飛ばした理由

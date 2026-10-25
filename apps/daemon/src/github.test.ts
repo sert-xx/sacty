@@ -674,6 +674,44 @@ describe("PR のレビュー（PBI-19）", () => {
     expect(await client.pullRequest(target)).toMatchObject({ author: "", requestedReviewers: [] });
   });
 
+  it("引き継ぐ PR の状態・元のブランチとそのリポジトリ・向き先のブランチを読み、読めなければ持たない", async () => {
+    const pr = (patch: Record<string, unknown>) => ({
+      status: 200,
+      json: {
+        number: 12,
+        html_url: "https://github.com/acme/app/pull/12",
+        state: "open",
+        merged: false,
+        head: {
+          sha: "h".repeat(40),
+          ref: "feature/retry",
+          repo: { html_url: "https://github.com/acme/app" },
+        },
+        base: { sha: "b".repeat(40), ref: "main" },
+        ...patch,
+      },
+    });
+    const { impl } = fakeFetch([
+      pr({}),
+      pr({ state: "closed", merged: true }),
+      pr({ state: "closed", merged: false, merged_at: null }),
+      // フォークが消された PR は、元のブランチのリポジトリが null
+      pr({ head: { sha: "h".repeat(40), ref: "x", repo: null }, base: {}, state: undefined }),
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.pullRequest(target)).toMatchObject({
+      state: "open",
+      headRef: "feature/retry",
+      headRepo: "https://github.com/acme/app",
+      baseRef: "main",
+    });
+    expect((await client.pullRequest(target)).state).toBe("merged");
+    expect((await client.pullRequest(target)).state).toBe("closed");
+    const unknown = await client.pullRequest(target);
+    expect(unknown.headRef).toBe("x");
+    expect("headRepo" in unknown || "baseRef" in unknown || "state" in unknown).toBe(false);
+  });
+
   it("PR で、その人に最後にレビューを依頼した日時を、できごとのすべてのページから読む（PBI-143）", async () => {
     const page2 = `${api}/issues/12/events?per_page=100&page=2`;
     const { impl, calls } = fakeFetch([

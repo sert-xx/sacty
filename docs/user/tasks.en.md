@@ -135,9 +135,28 @@ sacty instructs the agent to write once and check the result after the change. H
 
 You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12"). The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its output.
 
-When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push code. To fix a PR's code, create a task with the repository selected.
+When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push code. To fix a PR's code, create a task with the repository selected ([Fixing an existing PR](#fixing-an-existing-pr)).
 
 Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
+
+## Fixing an existing PR
+
+To fix an existing PR itself, for example to address review comments on a PR a person opened, select the target repository and write the PR's link in the title or description (for example "Address the review comments on https://github.com/acme/app/pull/12"). When the Orchestrator judges that the task asks to fix that PR, sacty takes over the PR.
+
+- The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
+- The reviews and comments on the PR are passed to the agents of the steps.
+- Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
+- Merging the PR approves the implementation. Feedback added after the implementation started is imported and fixed, as with other PRs.
+- "Taking over PR" appears in the Steps section of the task details.
+- Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
+
+The following PRs cannot be taken over. To avoid opening a new PR, the task stops without choosing the steps. Check the PR, then resume to choose the steps again.
+
+- A merged or closed PR
+- A PR from a fork (sacty cannot push to a fork's branch)
+- A PR another sacty task opened or took over (feedback on a PR sacty opened is imported and fixed by that task)
+
+If a person pushes commits to the PR's branch while sacty works, sacty stops without force-pushing. Cancel the task and create a new one. A task that only refers to a PR (for example "Apply the same fix as PR 12 to the other modules") opens a new PR as before.
 
 ## Comments on PRs and issues
 
@@ -168,6 +187,7 @@ Even a repository without test code uses a check that mechanically validates its
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
+- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)".
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### For a person to check
