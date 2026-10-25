@@ -211,6 +211,7 @@ Related ADR: [A task that fixes an existing PR takes over the PR and pushes to t
 - Requirements and Design are not opened as PRs; they are approved in the web UI (`stepPullRequestsOn`). This keeps their files out of the taken-over PR.
 - An implementation that passes verification is pushed to the PR's source branch (`publishContinued`).
   - It is stacked on the base (the PR's head) or the previously pushed commit, without force-pushing. If the push fails and the branch's head differs from both the base and the previously pushed commit, it pushes again (if the push went through and only the response was lost, the head is this submission's commit, so it passes without changing anything). If that also fails, sacty treats it as pushed by a person and stops (`pr.continuedBranchMoved`).
+  - If a pause or cancel has been requested right before a push (after waiting for authentication, and before pushing again), it does not push (on a pause, it stays waiting to open the PR).
   - If the PR is not open after the push, it stops (`pr.continuedNotOpen`).
   - It does not change the PR's title or description, and adds no review label.
   - If the PR is open, it is recorded in `PullRequestPublished` (with no template and no planned label), and the task waits for the implementation's approval (merging the PR).

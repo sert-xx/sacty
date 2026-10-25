@@ -7481,6 +7481,8 @@ export class TaskService {
           authEnv,
         });
       let commit: string;
+      // 認証を待つ間に一時停止・中止を求められていれば、人のブランチにプッシュしない（一時停止は、PR の作成の待ちのまま）
+      if (this.stopRequested(task.id)) return;
       try {
         ({ commit } = await push());
       } catch (error) {
@@ -7489,6 +7491,7 @@ export class TaskService {
           .fetchBranch(gitDir, branch, authEnv)
           .catch(() => undefined);
         if (!head || head === parent || head === task.pushedBranch?.commit) throw error;
+        if (this.stopRequested(task.id)) return;
         // ブランチの先頭が、起点とも前にプッシュしたコミットとも違う。プッシュはできていて応答だけを受け取れなかったなら、
         // 先頭はこの提出のコミット（同じ内容・日時で作り直すと同じコミットになる）なので、もう一度プッシュすると何も変わらずに
         // 通る。通らなければ、人が PR のブランチを進めたとして、そうはっきり示す

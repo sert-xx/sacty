@@ -6828,6 +6828,62 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("プッシュの認証を待つ間に一時停止を求めたら、引き継いだ PR のブランチにプッシュしない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      const github = new FakeGitHub();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const { service } = makeService(
+        activity,
+        [
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          review([["REQ", true]], []),
+        ],
+        {
+          pulls,
+          repos,
+          github,
+          planner: async () => ({
+            steps: ["implement"],
+            plan: "direct",
+            reason: "指摘への対応",
+            fallback: false,
+            testCommand: "npm test",
+            continuePullRequest: true,
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 4 && !service.get(id)?.task.publishPending; i++)
+        await service.runNext(id);
+      expect(service.get(id)?.task.publishPending).toBe(true);
+      // プッシュの認証（gh のトークン）を、一時停止を求めるまで返さない
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const token = github.token.bind(github);
+      vi.spyOn(github, "token").mockImplementation(async (host, account) => {
+        entered.resolve();
+        await release.promise;
+        return token(host, account);
+      });
+      const publishing = service.runNext(id);
+      await entered.promise;
+      const pausing = service.pause(id).catch((e: unknown) => e);
+      release.resolve();
+      await publishing;
+      await pausing;
+      expect(repos.published).toEqual([]);
+      expect(service.get(id)?.activity.some((e) => e.type === "BranchPushed")).toBe(false);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.publishPending).toBe(true);
+      activity.close();
+    });
+
     it("中止しても、引き継いだ PR は閉じず、PR のブランチも消さない", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
