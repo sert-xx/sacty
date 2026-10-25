@@ -537,6 +537,11 @@ export type Task = {
   reviewComments: ReviewComment[];
   /** 再現の工程が申告した、再現のテスト（PBI-29）。 */
   reproductionTests: string[];
+  /**
+   * 文書作成の工程で、エージェントがタスクの説明の指示に従って外部に直接作った・直したページ（成果物）の URL。差し戻しでは
+   * このページを直させ、書き出しでもこのページを更新させる（別のページを作らせない）。
+   */
+  documentPage?: string;
   /** 再現の工程の後、sacty がテストで再現を確かめる前（PBI-29）。 */
   reproductionPending?: boolean;
   /** 最新の、再現の確かめの結果（PBI-29）。 */
@@ -918,6 +923,10 @@ export function applyEvent(
               ...(event.payload.reviewVerdict ? { verdict: event.payload.reviewVerdict } : {}),
             },
           ];
+        }
+        // 直接書かなかった回では、前の回のページを残す（差し戻しでも、同じページを成果物として直させる）
+        if (event.payload.step === "document" && event.payload.documentPage) {
+          task.documentPage = event.payload.documentPage;
         }
         if (event.payload.step === "reproduce") {
           task.reproductionTests = event.payload.reproductionTests;

@@ -297,6 +297,7 @@ import {
   EXPORT_FILE,
   type ExportDestination,
   extractBlocks,
+  extractDocumentPage,
   extractExport,
   extractFinalReview,
   extractGathered,
@@ -5801,7 +5802,10 @@ export class TaskService {
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
     // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
     const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
-    const output = review?.output ?? reproduction?.output ?? extracted.output;
+    // 文書作成の工程は、外部に直接作った・直したページ（成果物）の申告を取り出す（差し戻し・書き出しで同じページを使う）
+    const documentPage = step === "document" ? extractDocumentPage(extracted.output) : undefined;
+    const output =
+      review?.output ?? reproduction?.output ?? documentPage?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
@@ -5828,6 +5832,7 @@ export class TaskService {
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
+            ...(documentPage?.page ? { documentPage: documentPage.page } : {}),
           },
         },
       },
@@ -6263,6 +6268,8 @@ export class TaskService {
     );
     const runId = randomUUID();
     const previous = task.exports[step];
+    // 文書作成で、エージェントが外部に直接書いたページ（成果物）があれば、別のページを作らずにそのページを更新させる
+    const previousUrl = previous?.url ?? (step === "document" ? task.documentPage : undefined);
     const base = {
       step,
       runId,
@@ -6358,7 +6365,7 @@ export class TaskService {
               config.hostMcp.find((m) => m.name === to.name)?.description ??
               "",
             location: to.location,
-            ...(previous?.url ? { previousUrl: previous.url } : {}),
+            ...(previousUrl ? { previousUrl } : {}),
             interrupted: previous?.started !== undefined,
           }),
           // 使わせるのは、決めた接続先の API だけ（PBI-35）

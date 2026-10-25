@@ -22010,6 +22010,9 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
   });
   const block = (value: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const promptOf = (executor: { calls: Invocation[] }, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const taskOf = (service: TaskService, id: string) => service.get(id)?.task as Task;
   const planner =
     (plan: "document" | "operation"): ServiceDeps["planner"] =>
     async () => ({
@@ -22284,6 +22287,62 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     await service.runNext(id);
     expect(service.get(id)?.task.exports.document?.url).toBe("https://calendar.example.com/help");
     expect(executor.calls).toHaveLength(2);
+    activity.close();
+  });
+
+  it("タスクの説明に従って外部に直接書いたページを成果物として記録し、差し戻し・書き出しで同じページを直させる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const PAGE = "https://calendar.example.com/help/1";
+    const selected: ServiceDeps["planner"] = async () => ({
+      steps: [...STEP_PLANS.document],
+      plan: "document",
+      reason: "利用者向け手順",
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+      exports: {
+        document: {
+          to: { via: "platform", name: "calendar", location: "説明ページ" },
+          reason: "依頼された保存先",
+        },
+      },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(`# 利用手順 v1\n\n${block({ "sacty-document-page": { url: PAGE } })}`),
+        // 差し戻しの回では申告しなくても、前の回のページを成果物として残す
+        out("# 利用手順 v2"),
+        out(block({ "sacty-export": { url: PAGE } })),
+      ],
+      { planner: selected, config: configOf(agent(), 1, [calendar()]), gateway: fakeGateway() },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "説明ページに利用手順を直接書く",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(taskOf(service, id).documentPage).toBe(PAGE);
+    // 申告は原稿に残さない
+    expect(taskOf(service, id).outputs.document).toBe("# 利用手順 v1");
+    service.requestChanges(id, {
+      step: "document",
+      submission: 1,
+      comments: ["説明ページの手順を直して"],
+    });
+    await service.runNext(id);
+    expect(promptOf(executor, 1)).toContain(
+      `成果物のページ：${PAGE}。外部に書くときは、このページを直す（新しいページを作らない）`,
+    );
+    expect(taskOf(service, id).documentPage).toBe(PAGE);
+    service.approve(id, { step: "document", submission: 2 });
+    await service.runNext(id);
+    // 書き出しも、別のページを作らずに成果物のページを更新させる
+    expect(promptOf(executor, 2)).toContain(
+      `前にこの成果を書き出したページ（${PAGE}）を、この内容で更新する`,
+    );
+    expect(taskOf(service, id).exports.document?.url).toBe(PAGE);
     activity.close();
   });
 

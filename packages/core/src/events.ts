@@ -805,6 +805,11 @@ const AgentRunCompleted = z.object({
      * 読めなかった。セルフレビューをさせない工程と、それより前の記録には無い。
      */
     selfReview: SelfReview.nullable().optional(),
+    /**
+     * 文書作成の工程で、タスクの説明の指示に従ってエージェントが外部に直接作った・直したページ（成果物）の URL。直接書かなかった
+     * 実行と、それより前の記録には無い。
+     */
+    documentPage: z.string().max(2000).optional(),
   }),
 });
 

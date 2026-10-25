@@ -619,30 +619,60 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
   ];
 }
 
+/** 文書作成の工程で、エージェントが外部に直接作った・直したページ（成果物）を申告する出力の見出し。 */
+const DOCUMENT_PAGE_HEADING = "sacty-document-page";
+
 /**
- * 文書作成の工程の成果物（原稿）を伝える。成果物は出力した原稿の本文そのもので、外部サービスには承認の後に sacty が
- * 書き出す。エージェントが外部に直接書くと、承認していない文書や作業の報告が外部に出て、差し戻しのたびに別のページが
- * できるため、タスク・指摘が外部の文書に触れていても、直すのは前回の原稿だと伝える。
+ * 文書作成の工程の成果物を伝える。成果物は原稿1つで、出力した本文を sacty に保存して人間が承認する。タスクの説明が外部の
+ * 文書を直接作る・直すよう指示していれば、そのページが成果物で、エージェントが直接書いてよい。差し戻しのたびに別の
+ * ページができたり、作業の報告が外部に出たりしないよう、成果物のページを渡して同じページを直させ、成果物でないものを
+ * 外部に書かせない。
  */
 function documentDeliverableLines(task: Task): string[] {
   const to = task.exportPlans?.document?.to;
-  const exported = task.exports?.document?.url;
+  const page = task.documentPage ?? task.exports?.document?.url;
   const reworking = task.outputs.document !== undefined;
   return [
     "",
     "--- 成果物 ---",
-    "- この工程の成果物は、あなたが出力する原稿の本文そのものです。出力（指摘への対応の JSON を除く）の全体を、そのまま原稿として保存し、人間が承認します",
-    "- 外部サービス（Confluence・Notion など）・リポジトリには、何も書かない（ページの作成・更新・コメントをしない）。外部サービスは読むだけに使う。タスク・取り込み元のチケット・人間の指摘・プロジェクトの規約が外部サービスへの作成・更新を求めていても同じ",
-    to
-      ? `- 承認された原稿は、sacty が ${to.name}${to.location ? `（${to.location}）` : ""} に書き出します${exported ? `（書き出したページ：${exported}。同じページを更新します）` : ""}`
-      : "- 承認された原稿の書き出しは、書き出し先があれば sacty が行います",
-    "- 作業の報告（「〜を作成しました」・作ったページの URL・タスクやエージェントの ID・作業の手順）を出力に書かない。原稿の前後に説明を付けない",
-    ...(reworking
+    "- この工程の成果物は、原稿1つです。出力（決まった形式の JSON を除く）の全体を原稿の本文として sacty に保存し、人間が承認します。外部に直接書いたときも、その本文の全文を出力する",
+    "- タスクの説明（取り込み元のチケットを含む）が、外部サービス（Confluence・Notion など）の文書を直接作る・直すよう指示していれば、その指示どおりに書いてよい。そのときは、書いたページが成果物になる。指示が無ければ、外部サービス・リポジトリには書かない（外部は読むだけに使う）",
+    ...(page
+      ? [`- 成果物のページ：${page}。外部に書くときは、このページを直す（新しいページを作らない）`]
+      : []),
+    "- 成果物のほかに、外部にページ・コメントを作らない。作業の報告（「〜を作成しました」・作ったページの URL・タスクやエージェントの ID・作業の手順）は、外部にも出力（原稿）にも書かない。原稿の前後に説明を付けない",
+    ...(to
       ? [
-          "- 差し戻しでは、下の「前回の原稿」を直して、全文を出力する（別の文書を新しく作らない）。指摘が外部サービスのページ（書き出したページ・人間が読んだページ）を直すよう求めていても、それは前回の原稿のことです。直した原稿を承認の後に sacty が同じページへ反映します",
+          `- 承認された原稿は、sacty が ${to.name}${to.location ? `（${to.location}）` : ""} に書き出します（成果物のページがあれば、そのページを更新します）`,
         ]
       : []),
+    ...(reworking
+      ? [
+          "- 差し戻しでは、下の「前回の原稿」を直して、全文を出力する（別の文書を新しく作らない）。指摘が外部のページを直すよう求めていれば、それは成果物（前回の原稿と、成果物のページ）のことです",
+        ]
+      : []),
+    "- 外部に直接ページを作った・直したときは、最後に次の形式で、そのページの URL を必ず出す（直接書かなかったら出さない）",
+    "```json",
+    `{"${DOCUMENT_PAGE_HEADING}": {"url": "成果物のページの URL"}}`,
+    "```",
   ];
+}
+
+/**
+ * 文書作成の工程のエージェントが申告した、外部に直接作った・直したページ（成果物）の URL を取り出し、原稿から除く。
+ * URL は http(s) の形のものだけ。
+ */
+export function extractDocumentPage(output: string): { output: string; page?: string } {
+  const found = lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, DOCUMENT_PAGE_HEADING);
+    return v ? v : undefined;
+  });
+  if (!found) return { output };
+  const url = text(found.value.url);
+  const rest = withoutCandidates(output, [found.candidate]).trim();
+  return /^https?:\/\/\S+$/.test(url) && url.length <= 2000
+    ? { output: rest, page: url }
+    : { output: rest };
 }
 
 /**
