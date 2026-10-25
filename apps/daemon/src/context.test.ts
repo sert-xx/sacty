@@ -1332,6 +1332,8 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
     const composed = composeContext([layer]);
     expect(composed.rules).toContain("秘密情報");
     expect(composed.rules).toContain("サブエージェント");
+    // 人が読む文章は writing スキルで書かせる
+    expect(composed.rules).toContain("必ず既定のスキル `writing` を使って書いてください");
     // README は渡さない
     expect(composed.rules).not.toContain("sacty に同梱するコンテキストです");
     // 既定の Codex のルールは sacty.rules（層のファイルと名前がぶつかりにくいように）

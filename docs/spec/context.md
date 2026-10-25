@@ -84,10 +84,11 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 再レビューでは新しい対象に対して検証し直す。
 
 設計書・要求要件（`design-doc`）の必須の観点には、書きすぎを探す D-10（簡潔さ・範囲）がある。
-依頼に無い要求、既存の仕組みが保証する振る舞いの書き直し、今回の変更で起こりえない異常系、当てはまらない観点の「対象外」、重複、人間が判断することが冒頭で分かるかを見る。
+依頼に無い要求、読む人がすでに知っていること（依頼の言い直し・背景・一般論・既存のコードの説明）、既存の仕組みが保証する振る舞いの書き直し、今回の変更で起こりえない異常系、当てはまらない観点の「対象外」、採らなかった案、重複、人間が判断することが冒頭で分かるか、分量が最小限かを見る。
+人間が差し戻しで求めて足した記述は、削る指摘にしない。
 欠落を探す観点だけでは、自己レビューを回すほど文書が長くなるため。
 D-3（完全性）は、今回の変更で起こりうる欠落だけを見て、関係しない観点に「対象外」の記載を求めない。
-自己レビューでは、`design-doc` の記述を足す `should` は作者の判断で直し、D-10 の `should` は直す。
+自己レビューでは、`design-doc` の記述を足す指摘は `must` だけを直し、`should` は直さない（足りない所は、読む人が求めたときに足す）。D-10 は `should` も直す。
 
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
@@ -130,8 +131,15 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 日本語では「。」の後で改行し、英語ではピリオドの後で改行しない。
 コードブロック・表のセル・コミットメッセージの1行目など、改行で表示が崩れる所では改行しない。
 既定の `git`・`review-dispatch`・`review-execution` は、文章を書く所でこのスキルを参照する。
+情報を絞ることを、決まりの最初に置く。
+読む人は前提（暗黙知）を持っているとして、判断と作業に要ることだけを書き、最初は最小限にして、読む人が求めた所だけを足す。
+要求要件・設計・文書・調査の結果の工程の指示も、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
+既定の規則（`rules.md`。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡る）でも、人が読む文章は必ずこのスキルを使って書くよう求める。
+依頼した人の指示と対象のリポジトリの文章の決まりは、このスキルより優先する。
 
-コード: `apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
+関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
+
+コード: `apps/daemon/default-context/rules.md`、`apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
 
 ## 既定の要求要件用スキル
 
@@ -144,10 +152,11 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 プロジェクトのコンテキストでスキルを消していても形式がわかるよう、文型・ID・異常系の書き方は指示にも書く。
 異常系は、今回の変更で新しく起こりうるものだけを書かせる。
 依頼に無い要求と、既存の仕組みが保証していて今回の変更で変わらない振る舞いは、要求にしない。
+要求の数は最小限にし、足りない要求は読む人が求めたときに足す。
 受け入れの確かめ方を書くときは、自動のテストで確かめること（実機や特定の環境の振る舞いは、合成の入力・イベントで模擬する）と、人が確かめること（作業領域では確かめられない実機・特定の OS・入力方式・外部のサービス・目視など。最終承認で人が確かめる項目になる）に分けて書くよう指示する（`acceptanceCheckLines`。PBI-155）。
 既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
 
-関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-reader-load-of-requirements-and-design.md)
+関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
 
 コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`・`acceptanceCheckLines`）
 
