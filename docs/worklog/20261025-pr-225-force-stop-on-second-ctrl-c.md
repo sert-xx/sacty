@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #225
 - ブランチ: claude/sharp-davinci-cqr8tu
 - 関係する ADR: [sacty up は、止めている途中でもう一度 Ctrl+C を押されたら、後片付けを待たずに止める](../adr/20261025-2351-force-stop-on-second-ctrl-c.md)
 
