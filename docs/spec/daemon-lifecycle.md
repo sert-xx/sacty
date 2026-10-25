@@ -24,12 +24,15 @@
 - 次に、画面を `next start -H 127.0.0.1 -p <画面のポート>` で起動する。
   環境変数は `SACTY_DAEMON_URL`・`SACTY_DAEMON_TOKEN`・`SACTY_WEB_TOKEN`（画面の入り口の秘密）・`SACTY_WEB_PORT`（画面のポート）を付ける。
 - 端末に、画面の入り口の URL（`http://127.0.0.1:<画面のポート>/auth?token=<画面の入り口の秘密>`）を表示する（下の「画面の認証」）。
-- SIGINT・SIGTERM を受けると、子プロセスに SIGTERM を送り、すべて終わってから終了する。
+- SIGINT・SIGTERM を受けると、止めていることと、もう一度 Ctrl+C を押せば待たずに止めることを表示し、子プロセスに SIGTERM を送り、すべて終わってから終了する。
   30秒たっても残っている子には SIGKILL を送る（デーモンの後片付けの上限 20 秒より長く待つ）。
+- 止めている途中で、もう一度 SIGINT・SIGTERM を受けると、後片付けを待たずに止める。
+  デーモンには `FORCE_STOP_SIGNAL`（SIGUSR2）を、画面には SIGKILL を送り、5秒たっても残っている子には SIGKILL を送る。
+  Ctrl+C では、端末からの SIGINT がデーモンにも直接届き、CLI からの SIGTERM と重なるので、デーモンは届いた SIGINT を数えずに、別のシグナルで見分ける。
 - 子プロセスが想定外に終わったときは、もう片方も止め、失敗の終了コードで終わる（子の終了コードが 0 でも 1 にする）。
   デーモンが終了コード `3`（`ALREADY_RUNNING_EXIT_CODE`）で終わったときは、ほかの sacty が動いているため起動しなかったと表示する。
 
-コード: `packages/cli/src/index.ts`（`up`・`waitForDaemon`・`parsePort`）、`packages/cli/src/up-env.ts`（`daemonEnv`・`webEnv`・`signInUrl`）、`packages/cli/src/context-preview.ts`（`claimDaemonFile`・`removeDaemonFile`・`DAEMON_FILE`）
+コード: `packages/cli/src/index.ts`（`up`・`waitForDaemon`・`parsePort`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`packages/cli/src/up-env.ts`（`daemonEnv`・`webEnv`・`signInUrl`）、`packages/cli/src/context-preview.ts`（`claimDaemonFile`・`removeDaemonFile`・`DAEMON_FILE`）
 
 ## 画面の認証
 
@@ -222,10 +225,15 @@ SIGINT・SIGTERM を受けると、デーモンは1回だけ次を行う。
    コンテキストのものは層の写しも消す。
 4. 実行中のエージェントのコンテナを止める。
 5. 2 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。
-   過ぎたら警告を出して進む。
+   3秒（`DRAIN_REPORT_MS`）たっても終わっていなければ、まだ終わっていないもの（実行中のタスク・取り込み・PR の確認・スケジュールタスクの確認）を表示する。
+   20秒を過ぎたら警告を出して進む。
 6. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じる。
+   ホストの MCP サーバーも、3秒たっても止まっていなければ、待っていることを表示する。
    それから DB を閉じ、ロックを外し（自分の書いた `daemon-owner.json` も消す）、終了コード 0 で終わる。
 
-デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git のプロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
+止めている途中で `FORCE_STOP_SIGNAL`（SIGUSR2。`sacty up` が、もう一度 Ctrl+C を押されたときに送る）を受けると、後片付けを待たずに、終了コード 1 で終わる。
+後片付けの途中だった実行は、次の起動で中断として回復する（上の「デーモンの起動の順序」の 7）。
 
-コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）
+デーモンが例外などで終わるとき（`exit`。`FORCE_STOP_SIGNAL` で終わるときも含む）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git のプロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
+
+コード: `apps/daemon/src/main.ts`（`shutdown`・`waitNamed`・`DRAIN_TIMEOUT_MS`・`DRAIN_REPORT_MS`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）

@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { initContextRepo } from "@sacty/daemon/context-template";
-import { ALREADY_RUNNING_EXIT_CODE } from "@sacty/daemon/exit-codes";
+import { ALREADY_RUNNING_EXIT_CODE, FORCE_STOP_SIGNAL } from "@sacty/daemon/exit-codes";
 import { buildImage, imageBuildSettings, imageBuildTargets } from "@sacty/daemon/image";
 import {
   isOnePasswordRef,
@@ -212,6 +212,9 @@ async function up(webPort: number, daemonPort: number) {
   const daemonUrl = `http://127.0.0.1:${daemonPort}`;
   const children: ChildProcess[] = [];
   let stopping = false;
+  let forcing = false;
+  let killTimer: NodeJS.Timeout | undefined;
+  let daemon: ChildProcess | undefined;
 
   const running = () => children.filter((c) => c.exitCode === null && c.signalCode === null);
 
@@ -230,10 +233,37 @@ async function up(webPort: number, daemonPort: number) {
     }
     // 子が応答しない場合の保険。unref しない（先にイベントループが終わると終了コードが失われるため）。
     // デーモンは実行中の処理の後片付け（認証ファイルの書き戻しなど）に最大20秒かけるので、それより長く待つ。
-    setTimeout(() => {
+    killTimer = setTimeout(() => {
       for (const child of running()) child.kill("SIGKILL");
       process.exit(code);
     }, 30_000);
+  };
+
+  /**
+   * 止めている途中で、もう一度 Ctrl+C を押されたら、後片付けを待たずに止める。デーモンには SIGKILL でなく
+   * FORCE_STOP_SIGNAL を送る（exit の後処理で、別のプロセスグループのホストの MCP サーバーなどを止めさせるため）。
+   */
+  const forceStop = () => {
+    if (forcing) return;
+    forcing = true;
+    console.error("[sacty] 後片付けを待たずに止めます。");
+    clearTimeout(killTimer);
+    for (const child of running()) child.kill(child === daemon ? FORCE_STOP_SIGNAL : "SIGKILL");
+    setTimeout(() => {
+      for (const child of running()) child.kill("SIGKILL");
+      process.exit();
+    }, 5_000);
+  };
+
+  const onSignal = () => {
+    if (stopping) {
+      forceStop();
+      return;
+    }
+    console.error(
+      "[sacty] 止めています。実行中の処理の後片付けを待ちます（最大30秒）。待たずに止めるには、もう一度 Ctrl+C を押してください。",
+    );
+    stop(0);
   };
 
   const watch = (name: string, child: ChildProcess) => {
@@ -257,17 +287,15 @@ async function up(webPort: number, daemonPort: number) {
     });
   };
 
-  process.on("SIGINT", () => stop(0));
-  process.on("SIGTERM", () => stop(0));
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
 
   const daemonMain = require.resolve("@sacty/daemon");
-  watch(
-    "daemon",
-    spawn(process.execPath, ["--disable-warning=ExperimentalWarning", daemonMain], {
-      stdio: "inherit",
-      env: daemonEnv(process.env, { daemonPort, daemonToken: token, webPort }),
-    }),
-  );
+  daemon = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", daemonMain], {
+    stdio: "inherit",
+    env: daemonEnv(process.env, { daemonPort, daemonToken: token, webPort }),
+  });
+  watch("daemon", daemon);
 
   try {
     await waitForDaemon(daemonUrl, token, 15_000);

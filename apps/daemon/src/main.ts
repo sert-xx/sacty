@@ -9,7 +9,7 @@ import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
-import { ALREADY_RUNNING_EXIT_CODE } from "./exit-codes.js";
+import { ALREADY_RUNNING_EXIT_CODE, FORCE_STOP_SIGNAL } from "./exit-codes.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
 import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
@@ -292,6 +292,24 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
 const DRAIN_TIMEOUT_MS = 20_000;
+/** 後処理が長引いたとき、まだ終わっていない処理を表示するまでの時間。 */
+const DRAIN_REPORT_MS = 3_000;
+
+/**
+ * 名前の付いた後処理がすべて終わるのを待つ。reportMs たっても終わっていなければ、まだ終わっていないものを表示する
+ * （止まらない理由が端末でわかるように）。
+ */
+const waitNamed = async (tasks: Record<string, Promise<unknown>>, reportMs: number) => {
+  const pending = new Set(Object.keys(tasks));
+  const report = setTimeout(() => {
+    if (pending.size > 0)
+      console.log(`[daemon] 後片付けを待っています：${[...pending].join("、")}`);
+  }, reportMs).unref();
+  await Promise.all(
+    Object.entries(tasks).map(([name, task]) => task.finally(() => pending.delete(name))),
+  );
+  clearTimeout(report);
+};
 
 let shuttingDown = false;
 const shutdown = async () => {
@@ -306,12 +324,15 @@ const shutdown = async () => {
   stopImageCheck();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
-  const draining = Promise.all([
-    worker.drain(),
-    intake.stop(),
-    prWatcher.stop(),
-    scheduleRunner.stop(),
-  ]);
+  const draining = waitNamed(
+    {
+      実行中のタスク: worker.drain(),
+      取り込み: intake.stop(),
+      "PR の確認": prWatcher.stop(),
+      スケジュールタスクの確認: scheduleRunner.stop(),
+    },
+    DRAIN_REPORT_MS,
+  );
   // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
   // CLI に強制終了されても残らないように。PBI-78）
   const stoppingHostMcp = Promise.all([hostMcp.stop(), contextMcp.stop()]);
@@ -326,7 +347,7 @@ const shutdown = async () => {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
   await gateway.close();
-  await stoppingHostMcp;
+  await waitNamed({ "ホストの MCP サーバー": stoppingHostMcp }, DRAIN_REPORT_MS);
   server.close(() => {
     activity.close();
     projects.close();
@@ -338,3 +359,10 @@ const shutdown = async () => {
 };
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+// 止めている途中で、もう一度 Ctrl+C を押されたとき、CLI が送る（後片付けを待たずに終わる。exit の後処理で、ホストの
+// MCP サーバーとコンテキストの取得の git は止める。中断した実行は、次の起動で回復する）。Ctrl+C では端末からの SIGINT と
+// CLI からの SIGTERM が両方届くので、SIGINT を数えずに、別のシグナルにする
+process.on(FORCE_STOP_SIGNAL, () => {
+  console.warn("[daemon] 後片付けを待たずに止めます。");
+  process.exit(1);
+});
