@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #220
 - ブランチ: claude/compassionate-brahmagupta-bsjocq
 - 関係する ADR: [文書作成の成果物を指示で明確にし、外部に直接書いたページ（複数可）を記録して、差し戻しで同じページを直させ、書き出さない](../adr/20261025-0410-document-deliverable-pages.md)
 
