@@ -114,6 +114,7 @@ When you want external documents created or edited directly, write so in the tas
 
 - Document shows the content of each document after the fix. The documents written externally are listed under "Pages written externally".
 - When you request changes, the agent edits those documents (it does not create another document with the same content). You can also request changes to add target documents.
+- Documents written externally are changed when the agent writes them, without waiting for approval. Instruct direct editing only when the external documents may change before approval.
 - Because the documents written externally are the deliverable, nothing is exported after approval.
 
 A work report (that something was created, the agent ID, and so on) is written neither in the draft nor externally.
