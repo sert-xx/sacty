@@ -34,6 +34,7 @@ import { GitHubPullRequestTemplates } from "./pr-template.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
+import { ScheduledTasks, ScheduleRunner, SqliteScheduleStore } from "./schedules.js";
 import { KeychainSecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
@@ -83,6 +84,7 @@ if (legacy.purged.length > 0) {
 }
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const settings = new SqliteSettingsStore(join(home, "sacty.db"));
+const scheduleStore = new SqliteScheduleStore(join(home, "sacty.db"));
 const config = () => loadConfig(home);
 // 秘密情報は、キーチェーンの名前か 1Password の参照（op://…。PBI-34）
 const secrets = new ResolvingSecretStore(
@@ -245,7 +247,14 @@ const audits = auditMock
     })
   : new LedgerAuditService(service);
 if (auditMock) console.warn("[daemon] 監査はモックのデータを返します（SACTY_AUDIT_MOCK=1）。");
-const app = createApp(service, token, { intake, audits });
+// スケジュールタスク（決めた内容のタスクを、決めた予定で作る）。起動したときと1分ごとに、直前の予定の回を確かめる
+const schedules = new ScheduledTasks({
+  store: scheduleStore,
+  tasks: service,
+  log: (line) => console.warn(line),
+});
+const scheduleRunner = new ScheduleRunner(schedules);
+const app = createApp(service, token, { intake, audits, schedules });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
@@ -277,6 +286,7 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
       worker.start();
       intake.start();
       prWatcher.start();
+      scheduleRunner.start();
     });
 });
 
@@ -296,7 +306,12 @@ const shutdown = async () => {
   stopImageCheck();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
-  const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);
+  const draining = Promise.all([
+    worker.drain(),
+    intake.stop(),
+    prWatcher.stop(),
+    scheduleRunner.stop(),
+  ]);
   // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
   // CLI に強制終了されても残らないように。PBI-78）
   const stoppingHostMcp = Promise.all([hostMcp.stop(), contextMcp.stop()]);
@@ -316,6 +331,7 @@ const shutdown = async () => {
     activity.close();
     projects.close();
     settings.close();
+    scheduleStore.close();
     instanceLock.release();
     process.exit(0);
   });

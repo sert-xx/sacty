@@ -65,6 +65,16 @@ describe("画面の URL のリダイレクト（PBI-114）", () => {
     expect((await currentAt(["audit", "report"], "p1")).status).toBe(404);
   });
 
+  it("サイドメニューの「スケジュール」（/projects/current/schedules）は、表示しているプロジェクトのスケジュールタスクの一覧へ移す", async () => {
+    expect((await currentAt(["schedules"], "p%202")).headers.get("location")).toBe(
+      "/projects/p%202/schedules",
+    );
+    expect((await currentAt(["schedules"], "gone")).headers.get("location")).toBe(
+      "/projects/p1/schedules",
+    );
+    expect((await currentAt(["schedules", "s1"], "p1")).status).toBe(404);
+  });
+
   it("デーモンにつながらなければプロジェクトの一覧へ。知らない画面は 404", async () => {
     listProjects.mockRejectedValue(new Error("unreachable"));
     expect((await currentAt(["tasks"], "p1")).headers.get("location")).toBe("/projects");

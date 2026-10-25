@@ -312,7 +312,10 @@ export type Task = {
     | "split"
     | "jira"
     | "deployment"
-    | "audit";
+    | "audit"
+    | "schedule";
+  /** スケジュールタスクが作ったタスクの、スケジュールタスクと予定の時刻。 */
+  schedule?: PayloadOf<"TaskCreated">["schedule"];
   /** マージの後の監視で見つけた失敗の、修正のタスク（PBI-89）。元のタスクと、何段目か。 */
   fix?: PayloadOf<"TaskCreated">["fix"];
   /** 監査の改修の提案を採用して作ったタスクの、元の提案（PBI-125）。 */
@@ -789,6 +792,7 @@ export function applyEvent(
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
       ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),
+      ...(event.payload.schedule ? { schedule: event.payload.schedule } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],

@@ -55,12 +55,15 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
       "/projects/p1/tasks",
       "/projects/p1/settings",
       "/projects/p1/audit",
+      "/projects/p1/schedules",
+      "/projects/p1/schedules/s1",
       "/tasks/t1",
       "/tasks/t1/runs/r1",
     ]) {
       render(h(RailNav, { pathname: p }));
       expect(hrefs(), p).toEqual([
         ["タスク", "/projects/current/tasks"],
+        ["スケジュール", "/projects/current/schedules"],
         ["監査", "/projects/current/audit"],
         ["設定", "/projects/current"],
       ]);
@@ -88,6 +91,8 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     ["/projects/p1/settings", "設定"],
     ["/projects", "設定"],
     ["/projects/p1/audit", "監査"],
+    ["/projects/p1/schedules", "スケジュール"],
+    ["/projects/p1/schedules/s1", "スケジュール"],
   ])("%s では「%s」を強調する", (pathname, label) => {
     render(h(RailNav, { pathname }));
     expect(current()).toEqual([label]);
@@ -106,6 +111,8 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     render(h(RailNav, { pathname: "/projects/tasks/settings" }));
     expect(current()).toEqual(["設定"]);
     render(h(RailNav, { pathname: "/projects/audit/settings" }));
+    expect(current()).toEqual(["設定"]);
+    render(h(RailNav, { pathname: "/projects/schedules/settings" }));
     expect(current()).toEqual(["設定"]);
   });
 });

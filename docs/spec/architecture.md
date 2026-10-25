@@ -40,6 +40,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
+| スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
@@ -54,7 +55,8 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `/projects/<ID>` | `/projects/<ID>/tasks` へ移す |
 | `/projects/<ID>/tasks` | そのプロジェクトのタスクの一覧（人間の判断が必要なタスクのカード・「タスクを作成」） |
 | `/projects/<ID>/settings` | そのプロジェクトの設定 |
-| `/projects/current`・`/projects/current/tasks` | 表示しているプロジェクト（cookie）の設定・タスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
+| `/projects/<ID>/schedules`・`/projects/<ID>/schedules/<スケジュールタスクの ID>` | そのプロジェクトのスケジュールタスクの一覧・詳細（[スケジュールタスク](scheduled-tasks.md)） |
+| `/projects/current`・`/projects/current/tasks`・`/projects/current/schedules` | 表示しているプロジェクト（cookie）の設定・タスクの一覧・スケジュールタスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
 | `/tasks/<ID>`・`/tasks/<ID>/review`・`/tasks/<ID>/runs/<実行の ID>` | タスクの詳細・成果物のレビュー・実行のログ |
 | `/settings` | sacty の設定 |
 
@@ -335,7 +337,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | パス | 中身 |
 | --- | --- |
 | `config.yaml` | sacty の設定（AI・認証・イメージ・ゲートウェイなど）。デーモンは使うたびに読み直す |
-| `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・sacty の設定（画面の「sacty の設定」） |
+| `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・スケジュールタスク・sacty の設定（画面の「sacty の設定」） |
 | `daemon.lock`・`daemon-owner.json` | 二重の起動の判定と表示（[デーモンの起動と終了](daemon-lifecycle.md)） |
 | `daemon.json` | `sacty context preview` が問い合わせる、起動中のデーモンの接続先とトークン |
 | `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_guardian/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_export/<実行 ID>`・`_shared-compose/<実行 ID>`（起動のときに `_shared-compose` ごと消す） |

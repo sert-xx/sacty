@@ -16,6 +16,8 @@ import {
   renderMessage,
   type SactySettings,
   type SactySettingsInput,
+  type ScheduleInputValue,
+  type ScheduleView,
   type StepKey,
   type Task,
   type TaskAudit,
@@ -106,6 +108,55 @@ export async function createTask(
   }
   await ensureOk(res);
   return { ok: true, task: ((await res.json()) as { task: Task }).task };
+}
+
+/** プロジェクトのスケジュールタスク。プロジェクトが無ければ null。 */
+export async function listSchedules(projectId: string): Promise<ScheduleView[] | null> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(projectId)}/schedules`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return ((await res.json()) as { schedules: ScheduleView[] }).schedules;
+}
+
+/** スケジュールタスクと、それが作ったタスク（新しい順）。無ければ null。 */
+export async function getSchedule(
+  id: string,
+): Promise<{ schedule: ScheduleView; tasks: Task[] } | null> {
+  const res = await daemonFetch(`/api/schedules/${encodeURIComponent(id)}`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return (await res.json()) as { schedule: ScheduleView; tasks: Task[] };
+}
+
+/**
+ * スケジュールタスクを作る（id が無いとき）か、変える。入力の誤り（400）と、作れない内容（409）は、画面の言語の理由を返す。
+ */
+export async function saveSchedule(
+  target: { projectId: string } | { id: string },
+  input: ScheduleInputValue,
+): Promise<{ ok: true; schedule: ScheduleView } | { ok: false; message: string }> {
+  const res = await daemonFetch(
+    "id" in target
+      ? `/api/schedules/${encodeURIComponent(target.id)}`
+      : `/api/projects/${encodeURIComponent(target.projectId)}/schedules`,
+    {
+      method: "id" in target ? "PUT" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  await ensureOk(res);
+  return { ok: true, schedule: ((await res.json()) as { schedule: ScheduleView }).schedule };
+}
+
+/** スケジュールタスクを消す（作ったタスクは残る）。 */
+export async function deleteSchedule(id: string): Promise<OpResult> {
+  const res = await daemonFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  await ensureOk(res);
+  return { ok: true };
 }
 
 export type IntakeStatus = {

@@ -28,3 +28,4 @@ Here is an overview of sacty.
 15. [CLI](cli.en.md): the sacty command and its options
 16. [Troubleshooting](troubleshooting.en.md): common ways things stop and what to check
 17. [Audits](audit.en.md): audits of completed tasks, adopting and rejecting proposals, the audit page, reports
+18. [Scheduled tasks](scheduled-tasks.en.md): creating tasks on a schedule, what happens when the computer was off, editing and deleting, the tasks it created

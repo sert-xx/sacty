@@ -6,6 +6,7 @@ import { type Context, Hono } from "hono";
 import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
 import { type AuditService, NoAuditService } from "./audits.js";
+import { MemoryScheduleStore, ScheduledTasks } from "./schedules.js";
 import { InvalidOperationError, type TaskService } from "./service.js";
 import { validLogId } from "./session-logs.js";
 
@@ -55,7 +56,11 @@ function handleError(c: Context, error: unknown) {
 export function createApp(
   service: TaskService,
   token: string,
-  options: { intake?: { tick(force: boolean): Promise<void> }; audits?: AuditService } = {},
+  options: {
+    intake?: { tick(force: boolean): Promise<void> };
+    audits?: AuditService;
+    schedules?: ScheduledTasks;
+  } = {},
 ) {
   const app = new Hono();
   // 完了したタスクの監査（PBI-124）。渡されなければ監査の無い実装（モックは main.ts が切り替える）
@@ -67,6 +72,10 @@ export function createApp(
       projects: () => service.listProjects(),
       defaultCapUsd: () => service.auditBudgetUsd(),
     });
+
+  // スケジュールタスク。渡されなければ、メモリーに持つ（テスト用。main.ts は SQLite に保存する）
+  const schedules =
+    options.schedules ?? new ScheduledTasks({ store: new MemoryScheduleStore(), tasks: service });
 
   /**
    * 保存したプロジェクトの秘密情報（コンテキスト）を、まとめて取り出す（PBI-107）。保存は止めないので待たない
@@ -315,6 +324,49 @@ export function createApp(
     if (!service.getProject(id)) return c.json({ error: "not_found" }, 404);
     try {
       service.deleteProject(id);
+      // プロジェクトのスケジュールタスクも消す（作ったタスクは、ほかのタスクと同じく残す）
+      schedules.deleteForProject(id);
+      return c.json({ ok: true });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // スケジュールタスク（プロジェクトごと）。プロジェクトが無ければ 404
+  app.get("/api/projects/:id/schedules", (c) => {
+    const found = schedules.list(c.req.param("id"));
+    return found ? c.json({ schedules: found }) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.post("/api/projects/:id/schedules", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ schedule: schedules.create(c.req.param("id"), json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // スケジュールタスクと、それが作ったタスク
+  app.get("/api/schedules/:id", (c) => {
+    const found = schedules.get(c.req.param("id"));
+    return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.put("/api/schedules/:id", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ schedule: schedules.update(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.delete("/api/schedules/:id", (c) => {
+    try {
+      schedules.delete(c.req.param("id"));
       return c.json({ ok: true });
     } catch (error) {
       return handleError(c, error);

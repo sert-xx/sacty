@@ -62,4 +62,5 @@ Code: `<path>` (`<function name>`)
 - [Ticket intake and GitHub](intake.en.md): GitHub issues and PRs, JIRA, comments on the source, GitHub accounts
 - [Export](export.en.md): exporting results, exporting and importing projects
 - [Screen wording and hints](ui-wording.en.md): how body text and hints (tooltips) are split, the hint component, checks on the dictionaries
+- [Scheduled tasks](scheduled-tasks.en.md): how schedules are defined, missed times (only the latest one), when offline, the contents of the task, API, web UI
 - [After-merge watch (CI/CD and deployment)](deployment-watch.en.md): whether the step is included (the skill), monitoring CI/CD, the check by the skill and its answer format, registering fix tasks and the limit, pause, cancel, and restart

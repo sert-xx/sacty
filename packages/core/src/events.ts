@@ -434,7 +434,8 @@ const TaskCreated = z.object({
     body: z.string(),
     /**
      * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ、
-     * github_pull_request：GitHub の PR から取り込んだ（PBI-26）、split：親タスクの分割で作った（PBI-27）。
+     * github_pull_request：GitHub の PR から取り込んだ（PBI-26）、split：親タスクの分割で作った（PBI-27）、
+     * schedule：スケジュールタスクが作った。
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
@@ -447,6 +448,7 @@ const TaskCreated = z.object({
         "jira",
         "deployment",
         "audit",
+        "schedule",
       ])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     /**
@@ -521,6 +523,11 @@ const TaskCreated = z.object({
      * オーケストレーターが選ぶ。
      */
     plan: StepPlan.optional(),
+    /**
+     * スケジュールタスクが作った（start: schedule）。スケジュールタスクと、その予定の時刻（ISO 8601）。同じ回のタスクを
+     * 二重に作らないための目印にもする。
+     */
+    schedule: z.object({ id: z.string().min(1), slot: z.string().min(1) }).optional(),
   }),
 });
 

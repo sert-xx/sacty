@@ -35,6 +35,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
+| Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
@@ -49,7 +50,8 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/projects/<ID>` | Moves to `/projects/<ID>/tasks` |
 | `/projects/<ID>/tasks` | The project's task list (cards for tasks that need a human decision, "Create task") |
 | `/projects/<ID>/settings` | The project's settings |
-| `/projects/current`, `/projects/current/tasks` | Moves (303) to the settings or the task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
+| `/projects/<ID>/schedules`, `/projects/<ID>/schedules/<scheduled task ID>` | The project's scheduled task list and details ([Scheduled tasks](scheduled-tasks.en.md)) |
+| `/projects/current`, `/projects/current/tasks`, `/projects/current/schedules` | Moves (303) to the settings, the task list, or the scheduled task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
 | `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
 | `/settings` | The sacty settings |
 
@@ -263,7 +265,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | Path | Contents |
 | --- | --- |
 | `config.yaml` | sacty configuration (AI, authentication, images, gateway, and so on). The daemon rereads it every time it uses it |
-| `sacty.db` | SQLite. Activity log (events), projects, sacty settings ("sacty settings" on the web UI) |
+| `sacty.db` | SQLite. Activity log (events), projects, scheduled tasks, sacty settings ("sacty settings" on the web UI) |
 | `daemon.lock`, `daemon-owner.json` | Detecting and reporting a second start ([Daemon startup and shutdown](daemon-lifecycle.en.md)) |
 | `daemon.json` | The running daemon's address and token, queried by `sacty context preview` |
 | `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), and per-run `_guardian/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_export/<run-id>`, `_shared-compose/<run-id>` (all of `_shared-compose` is removed at startup) |

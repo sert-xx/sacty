@@ -8,6 +8,7 @@ import { parts } from "./messages/parts";
 import { projects } from "./messages/projects";
 import { review } from "./messages/review";
 import { runLog } from "./messages/run-log";
+import { schedules } from "./messages/schedules";
 import { settings } from "./messages/settings";
 import { shell } from "./messages/shell";
 import { task } from "./messages/task";
@@ -30,6 +31,7 @@ export function messagesFor(locale: Locale) {
     projects: projects[locale],
     settings: settings[locale],
     audit: audit[locale],
+    schedules: schedules[locale],
   };
 }
 
