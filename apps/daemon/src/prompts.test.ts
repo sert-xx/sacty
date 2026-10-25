@@ -2239,6 +2239,10 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
     }
     expect(prompt).toContain("ID（R-1、R-2…）");
     expect(prompt).toContain(
+      "文型ごとに見出し（常時・イベント駆動など）を分け、文型ごとの列の表にする",
+    );
+    expect(prompt).toContain("イベント駆動と望まない振る舞いは ID・トリガー・システム・応答");
+    expect(prompt).toContain(
       "異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く",
     );
     expect(prompt).not.toContain("検証できる形の箇条書きで書く");

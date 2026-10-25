@@ -146,17 +146,18 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 既定のコンテキストには、要求要件の受け入れ条件を EARS（Easy Approach to Requirements Syntax）の文型で書く `ears-requirements` がある（PBI-122）。
 文型は、常時・イベント駆動・状態駆動・望まない振る舞い・オプションと、その組み合わせ（日本語と英語）。
 1文に1つの要求を書き、ID（`R-1` など）を付け、応答は第三者が合否を決められる形にする。
+書き出すときは、文型ごとに見出しを分け、文型ごとの列（常時は ID・システム・応答、イベント駆動は ID・トリガー・システム・応答など）の表に、1行に1つの要求を書く。
 従う順は、依頼した人の指示、対象のリポジトリの要求要件の決まり、このスキルの順。
 
 要求要件の工程の指示は、受け入れ条件を EARS の形式で書き、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
-プロジェクトのコンテキストでスキルを消していても形式がわかるよう、文型・ID・異常系の書き方は指示にも書く。
+プロジェクトのコンテキストでスキルを消していても形式がわかるよう、文型・表の列・ID・異常系の書き方は指示にも書く。
 異常系は、今回の変更で新しく起こりうるものだけを書かせる。
 依頼に無い要求と、既存の仕組みが保証していて今回の変更で変わらない振る舞いは、要求にしない。
 要求の数は最小限にし、足りない要求は読む人が求めたときに足す。
 受け入れの確かめ方を書くときは、自動のテストで確かめること（実機や特定の環境の振る舞いは、合成の入力・イベントで模擬する）と、人が確かめること（作業領域では確かめられない実機・特定の OS・入力方式・外部のサービス・目視など。最終承認で人が確かめる項目になる）に分けて書くよう指示する（`acceptanceCheckLines`。PBI-155）。
 既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
 
-関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
+関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)、[要求要件の受け入れ条件を文型ごとの見出しと表で書き出させる](../adr/20261025-0630-ears-tables-by-pattern.md)
 
 コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`・`acceptanceCheckLines`）
 
