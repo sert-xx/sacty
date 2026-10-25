@@ -4,7 +4,7 @@
 
 # Exporting results (Confluence, Notion, and so on)
 
-You can export results that a human has approved, namely Investigation results (for Investigation-only tasks), Requirements, Design (including Test viewpoints), and document drafts, to Confluence, Notion, and similar services.
+You can export results that a human has approved, namely Investigation results (for Investigation-only tasks), Requirements, Design (including Test viewpoints), and document drafts, to Confluence, Notion, and similar services. In a Document task, when the agent wrote external documents directly as the task body instructed, those documents are the deliverable and nothing is exported ([Working with tasks](tasks.en.md#documents-and-one-off-external-work)).
 
 ## Configure the destinations
 

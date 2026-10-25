@@ -2,6 +2,7 @@ import {
   type ActivityEvent,
   type DaemonText,
   DEFAULT_DOCUMENTS_DIR,
+  DOCUMENT_PAGES_MAX,
   ExportVia,
   type FinalReview,
   GATHERED_BRIEF_MAX,
@@ -620,59 +621,65 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
 }
 
 /** 文書作成の工程で、エージェントが外部に直接作った・直したページ（成果物）を申告する出力の見出し。 */
-const DOCUMENT_PAGE_HEADING = "sacty-document-page";
+const DOCUMENT_PAGES_HEADING = "sacty-document-pages";
 
 /**
- * 文書作成の工程の成果物を伝える。成果物は原稿1つで、出力した本文を sacty に保存して人間が承認する。タスクの説明が外部の
- * 文書を直接作る・直すよう指示していれば、そのページが成果物で、エージェントが直接書いてよい。差し戻しのたびに別の
- * ページができたり、作業の報告が外部に出たりしないよう、成果物のページを渡して同じページを直させ、成果物でないものを
- * 外部に書かせない。
+ * 文書作成の工程の成果物を伝える。ふつうは、出力した原稿を sacty に保存して人間が承認し、承認の後に sacty が書き出す。
+ * タスクの説明が外部の文書を直接作る・直すよう指示していれば（条件で探した複数のページをまとめて直すものを含む）、
+ * エージェントが直接書いたページが成果物になる。差し戻しのたびに別のページができたり、作業の報告が外部に出たりしないよう、
+ * これまでに書いたページを渡して同じページを直させ、成果物でないものを外部に書かせない。
  */
 function documentDeliverableLines(task: Task): string[] {
   const to = task.exportPlans?.document?.to;
-  const page = task.documentPage ?? task.exports?.document?.url;
+  const pages = task.documentPages ?? [];
   const reworking = task.outputs.document !== undefined;
   return [
     "",
     "--- 成果物 ---",
-    "- この工程の成果物は、原稿1つです。出力（決まった形式の JSON を除く）の全体を原稿の本文として sacty に保存し、人間が承認します。外部に直接書いたときも、その本文の全文を出力する",
-    "- タスクの説明（取り込み元のチケットを含む）が、外部サービス（Confluence・Notion など）の文書を直接作る・直すよう指示していれば、その指示どおりに書いてよい。そのときは、書いたページが成果物になる。指示が無ければ、外部サービス・リポジトリには書かない（外部は読むだけに使う）",
-    ...(page
-      ? [`- 成果物のページ：${page}。外部に書くときは、このページを直す（新しいページを作らない）`]
-      : []),
-    "- 成果物のほかに、外部にページ・コメントを作らない。作業の報告（「〜を作成しました」・作ったページの URL・タスクやエージェントの ID・作業の手順）は、外部にも出力（原稿）にも書かない。原稿の前後に説明を付けない",
-    ...(to
+    "- 出力（決まった形式の JSON を除く全体）を、この工程の成果として sacty に保存し、人間が承認します",
+    "- ふつうは、成果物は原稿1つです。原稿の本文の全文を出力し、外部サービス（Confluence・Notion など）・リポジトリには書かない（外部は読むだけに使う）",
+    to
+      ? `- そのとき、承認された原稿は sacty が ${to.name}${to.location ? `（${to.location}）` : ""} に書き出します`
+      : "- そのとき、承認された原稿の書き出しは、書き出し先があれば sacty が行います",
+    "- タスクの説明（取り込み元のチケットを含む）が、外部の文書を直接作る・直すよう指示していれば、その指示どおりに外部に書いてよい。そのときは、書いたページ（1つでも複数でもよい）が成果物になり、sacty は書き出さない。「〜を含むページを探して直す」のような指示なら、条件に合うページを探して、それぞれを直す",
+    "- 外部に直接書いたときの出力には、成果物のページごとに、見出し（ページの題と URL）と、直した後の内容（長いページなら、直した箇所とその前後）を書く。人間はこれを読んで承認する",
+    ...(pages.length > 0
       ? [
-          `- 承認された原稿は、sacty が ${to.name}${to.location ? `（${to.location}）` : ""} に書き出します（成果物のページがあれば、そのページを更新します）`,
+          "- これまでにこのタスクで外部に直接書いた、成果物のページ：",
+          ...pages.map((url) => `  - ${url}`),
+          "- これらのページを直すときは、同じページを直す（同じ内容の別のページを作らない）",
         ]
       : []),
+    "- 成果物のほかに、外部にページ・コメントを作らない。作業の報告（「〜を作成しました」・タスクやエージェントの ID・作業の手順）は、外部にも出力にも書かない",
     ...(reworking
       ? [
-          "- 差し戻しでは、下の「前回の原稿」を直して、全文を出力する（別の文書を新しく作らない）。指摘が外部のページを直すよう求めていれば、それは成果物（前回の原稿と、成果物のページ）のことです",
+          "- 差し戻しでは、下の「前回の原稿」（外部に直接書いたなら、成果物のページ）を直して、成果の全体を出力し直す（別の文書を新しく作らない）。指摘が外部のページを直すよう求めていれば、それは成果物のことです。指摘が対象のページを足すよう求めていれば、足してよい",
         ]
       : []),
-    "- 外部に直接ページを作った・直したときは、最後に次の形式で、そのページの URL を必ず出す（直接書かなかったら出さない）",
+    "- 外部に直接ページを作った・直したときは、最後に次の形式で、この回に作った・直したページの URL をすべて出す（直接書かなかったら出さない）",
     "```json",
-    `{"${DOCUMENT_PAGE_HEADING}": {"url": "成果物のページの URL"}}`,
+    `{"${DOCUMENT_PAGES_HEADING}": {"pages": ["成果物のページの URL"]}}`,
     "```",
   ];
 }
 
 /**
- * 文書作成の工程のエージェントが申告した、外部に直接作った・直したページ（成果物）の URL を取り出し、原稿から除く。
- * URL は http(s) の形のものだけ。
+ * 文書作成の工程のエージェントが申告した、外部に直接作った・直したページ（成果物）の URL を取り出し、出力から除く。
+ * URL は http(s) の形のものだけ（重複は除き、DOCUMENT_PAGES_MAX 件まで）。
  */
-export function extractDocumentPage(output: string): { output: string; page?: string } {
+export function extractDocumentPages(output: string): { output: string; pages: string[] } {
   const found = lastJsonAnswer(output, (value) => {
-    const v = headedObject(value, DOCUMENT_PAGE_HEADING);
+    const v = headedObject(value, DOCUMENT_PAGES_HEADING);
     return v ? v : undefined;
   });
-  if (!found) return { output };
-  const url = text(found.value.url);
-  const rest = withoutCandidates(output, [found.candidate]).trim();
-  return /^https?:\/\/\S+$/.test(url) && url.length <= 2000
-    ? { output: rest, page: url }
-    : { output: rest };
+  if (!found) return { output, pages: [] };
+  const listed = Array.isArray(found.value.pages) ? found.value.pages : [];
+  const pages = [
+    ...new Set(
+      listed.map(text).filter((url) => /^https?:\/\/\S+$/.test(url) && url.length <= 2000),
+    ),
+  ].slice(0, DOCUMENT_PAGES_MAX);
+  return { output: withoutCandidates(output, [found.candidate]).trim(), pages };
 }
 
 /**
@@ -3183,9 +3190,9 @@ const NO_CHANGE_LINE =
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {
   document:
-    "文書作成。ユーザーガイド・手順書・報告書・説明資料などの原稿そのものを作り、sacty の画面で承認する（書き出し先があれば、承認の後に書き出す）。対象リポジトリがあれば、そのコードを根拠として読んで書ける（リポジトリは変えない）。成果物がリポジトリの外で読まれる原稿のときに選ぶ。リポジトリのファイルとして文書を足す・直す（PR でレビューする）なら direct・skip-design・standard、既存の外部文書の直接更新なら operation",
+    "文書作成。ユーザーガイド・手順書・報告書・説明資料などの原稿そのものを作り、sacty の画面で承認する（書き出し先があれば、承認の後に書き出す）。対象リポジトリがあれば、そのコードを根拠として読んで書ける（リポジトリは変えない）。成果物がリポジトリの外で読まれる原稿のときに選ぶ。外部の文書を直接作る・直す依頼で、内容を人間が確かめて差し戻しで直し続けるもの（複数のページや、条件で探したページをまとめて直すものを含む）も document。リポジトリのファイルとして文書を足す・直す（PR でレビューする）なら direct・skip-design・standard、一意な対象1つへの決まった変更を1回するだけなら operation",
   operation:
-    "作業のみ。予定表の更新・既存の外部文書の直接編集・Issue へのコメントなど、外部サービスへの単発の変更。タスクの依頼に従って実行し、確認した結果を人間が承認する。リポジトリのコードは変えない",
+    "作業のみ。予定表の更新・一意な外部文書1つの決まった直接編集・Issue へのコメントなど、外部サービスへの単発の変更（差し戻しでやり直さない）。タスクの依頼に従って実行し、確認した結果を人間が承認する。リポジトリのコードは変えない",
   standard:
     "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
   "skip-design":

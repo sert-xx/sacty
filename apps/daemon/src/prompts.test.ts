@@ -34,7 +34,7 @@ import {
   clip,
   commentableLines,
   extractBlocks,
-  extractDocumentPage,
+  extractDocumentPages,
   extractExport,
   extractFinalReview,
   extractGathered,
@@ -1951,25 +1951,26 @@ describe("non-code workflow boundaries", () => {
     const prompt = buildPrompt({ ...task, outputs: { document: "旧版" } }, "document");
     expect(prompt).toContain("完成原稿");
     expect(prompt).toContain("旧版");
-    expect(prompt).toContain("この工程の成果物は、原稿1つです");
+    expect(prompt).toContain("ふつうは、成果物は原稿1つです");
     expect(prompt).toContain("ほかの工程と同じく渡しています");
     expect(prompt).not.toContain("渡していません");
   });
-  it("外部への直接の書き込みはタスクの説明の指示があるときだけにし、成果物でないものを外部にも原稿にも書かせない", () => {
+  it("外部への直接の書き込みはタスクの説明の指示があるときだけにし、複数のページも成果物にでき、成果物でないものを外部にも出力にも書かせない", () => {
     const first = buildPrompt(task, "document");
     expect(first).toContain(
-      "外部サービス（Confluence・Notion など）の文書を直接作る・直すよう指示していれば、その指示どおりに書いてよい",
+      "外部の文書を直接作る・直すよう指示していれば、その指示どおりに外部に書いてよい。そのときは、書いたページ（1つでも複数でもよい）が成果物になり、sacty は書き出さない",
     );
-    expect(first).toContain("指示が無ければ、外部サービス・リポジトリには書かない");
+    expect(first).toContain("条件に合うページを探して、それぞれを直す");
+    expect(first).toContain("外部サービス（Confluence・Notion など）・リポジトリには書かない");
     expect(first).toContain(
-      "作業の報告（「〜を作成しました」・作ったページの URL・タスクやエージェントの ID・作業の手順）は、外部にも出力（原稿）にも書かない",
+      "作業の報告（「〜を作成しました」・タスクやエージェントの ID・作業の手順）は、外部にも出力にも書かない",
     );
-    expect(first).toContain('{"sacty-document-page": {"url": "成果物のページの URL"}}');
-    expect(first).not.toContain("成果物のページ：");
+    expect(first).toContain('{"sacty-document-pages": {"pages": ["成果物のページの URL"]}}');
+    expect(first).not.toContain("これまでにこのタスクで外部に直接書いた");
     expect(first).not.toContain("--- 前回の原稿 ---");
-    expect(first).not.toContain("差し戻しでは、下の「前回の原稿」を直して");
+    expect(first).not.toContain("差し戻しでは、下の「前回の原稿」");
   });
-  it("差し戻しでは、前回の原稿と成果物のページを直させる（別のページを作らせない）", () => {
+  it("差し戻しでは、前回の原稿と、これまでに書いた成果物のページを直させる（別のページを作らせない）", () => {
     const reworked = buildPrompt(
       {
         ...task,
@@ -1981,39 +1982,47 @@ describe("non-code workflow boundaries", () => {
             reason: "規約",
           },
         },
-        documentPage: "https://notion.example.com/page-1",
+        documentPages: ["https://notion.example.com/page-1", "https://notion.example.com/page-2"],
       } as unknown as Task,
       "document",
     );
     expect(reworked).toContain(
-      "成果物のページ：https://notion.example.com/page-1。外部に書くときは、このページを直す（新しいページを作らない）",
+      "これまでにこのタスクで外部に直接書いた、成果物のページ：\n  - https://notion.example.com/page-1\n  - https://notion.example.com/page-2",
     );
+    expect(reworked).toContain("同じページを直す（同じ内容の別のページを作らない）");
     expect(reworked).toContain(
-      "差し戻しでは、下の「前回の原稿」を直して、全文を出力する（別の文書を新しく作らない）",
+      "差し戻しでは、下の「前回の原稿」（外部に直接書いたなら、成果物のページ）を直して",
     );
-    expect(reworked).toContain("それは成果物（前回の原稿と、成果物のページ）のことです");
+    expect(reworked).toContain("指摘が外部のページを直すよう求めていれば、それは成果物のことです");
     expect(reworked).toContain("sacty が notion（親のページ：手順書） に書き出します");
     expect(reworked).toContain("Notion のページの手順を直して");
-    // 書き出したページも、成果物のページとして渡す
-    const exported = buildPrompt(
-      {
-        ...task,
-        outputs: { document: "旧版" },
-        exports: { document: { url: "https://notion.example.com/page-2" } },
-      } as unknown as Task,
-      "document",
-    );
-    expect(exported).toContain("成果物のページ：https://notion.example.com/page-2。");
   });
-  it("外部に直接書いたページの申告を取り出し、原稿から除く", () => {
-    const page = json({ "sacty-document-page": { url: "https://notion.example.com/page-1" } });
-    expect(extractDocumentPage(`# 手順書\n\n本文\n\n${page}`)).toEqual({
-      output: "# 手順書\n\n本文",
-      page: "https://notion.example.com/page-1",
+  it("外部に直接書いたページの申告を取り出し、出力から除く（http(s) の形だけ・重複なし）", () => {
+    const pages = json({
+      "sacty-document-pages": {
+        pages: [
+          "https://notion.example.com/page-1",
+          "notion のページ",
+          "https://notion.example.com/page-2",
+          "https://notion.example.com/page-1",
+        ],
+      },
     });
-    expect(extractDocumentPage("# 手順書\n\n本文")).toEqual({ output: "# 手順書\n\n本文" });
-    const invalid = json({ "sacty-document-page": { url: "notion のページ" } });
-    expect(extractDocumentPage(`本文\n${invalid}`)).toEqual({ output: "本文" });
+    expect(extractDocumentPages(`## page-1\n\n本文\n\n${pages}`)).toEqual({
+      output: "## page-1\n\n本文",
+      pages: ["https://notion.example.com/page-1", "https://notion.example.com/page-2"],
+    });
+    expect(extractDocumentPages("# 手順書\n\n本文")).toEqual({
+      output: "# 手順書\n\n本文",
+      pages: [],
+    });
+  });
+  it("外部の文書を直接直す依頼は、複数のページでも文書作成にさせ、一意な対象1つの単発の変更だけを作業にさせる", () => {
+    const prompt = buildOrchestratorPrompt(task, { repoless: { repositories: [] } });
+    expect(prompt).toContain(
+      "複数のページや、条件で探したページをまとめて直すものを含む）も document",
+    );
+    expect(prompt).toContain("一意な対象1つへの決まった変更を1回するだけなら operation");
   });
   it("無条件standard推奨を外し成果と変更対象から比較させる（実モデル分類の評価ではない）", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {

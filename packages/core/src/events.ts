@@ -768,6 +768,9 @@ const AgentRunStarted = z.object({
   }),
 });
 
+/** 文書作成の1回の実行で申告できる、外部に直接書いたページの数の上限。 */
+export const DOCUMENT_PAGES_MAX = 200;
+
 const AgentRunCompleted = z.object({
   type: z.literal("AgentRunCompleted"),
   payload: z.object({
@@ -807,9 +810,9 @@ const AgentRunCompleted = z.object({
     selfReview: SelfReview.nullable().optional(),
     /**
      * 文書作成の工程で、タスクの説明の指示に従ってエージェントが外部に直接作った・直したページ（成果物）の URL。直接書かなかった
-     * 実行と、それより前の記録には無い。
+     * 実行と、それより前の記録では空。
      */
-    documentPage: z.string().max(2000).optional(),
+    documentPages: z.array(z.string().max(2000)).max(DOCUMENT_PAGES_MAX).default([]),
   }),
 });
 

@@ -22290,9 +22290,11 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
-  it("タスクの説明に従って外部に直接書いたページを成果物として記録し、差し戻し・書き出しで同じページを直させる", async () => {
+  it("タスクの説明に従って外部に直接書いた複数のページを成果物として記録し、差し戻しで同じページを直させ、書き出さない", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const PAGE = "https://calendar.example.com/help/1";
+    const PAGE1 = "https://calendar.example.com/help/1";
+    const PAGE2 = "https://calendar.example.com/help/2";
+    const PAGE3 = "https://calendar.example.com/help/3";
     const selected: ServiceDeps["planner"] = async () => ({
       steps: [...STEP_PLANS.document],
       plan: "document",
@@ -22310,39 +22312,40 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     const { service, executor } = makeService(
       activity,
       [
-        out(`# 利用手順 v1\n\n${block({ "sacty-document-page": { url: PAGE } })}`),
-        // 差し戻しの回では申告しなくても、前の回のページを成果物として残す
-        out("# 利用手順 v2"),
-        out(block({ "sacty-export": { url: PAGE } })),
+        out(
+          `## 手順1\n\n直した内容\n\n${block({ "sacty-document-pages": { pages: [PAGE1, PAGE2] } })}`,
+        ),
+        // 差し戻しでは、直したページだけを申告しても、前の回のページは成果物のまま
+        out(
+          `## 手順2\n\n直した内容\n\n${block({ "sacty-document-pages": { pages: [PAGE2, PAGE3] } })}`,
+        ),
       ],
       { planner: selected, config: configOf(agent(), 1, [calendar()]), gateway: fakeGateway() },
     );
     const { id } = service.createTask({
       projectId: "default",
-      title: "説明ページに利用手順を直接書く",
+      title: "古い手順を含む説明ページをまとめて直す",
       repo: null,
     });
     await service.runNext(id);
-    expect(taskOf(service, id).documentPage).toBe(PAGE);
-    // 申告は原稿に残さない
-    expect(taskOf(service, id).outputs.document).toBe("# 利用手順 v1");
+    expect(taskOf(service, id).documentPages).toEqual([PAGE1, PAGE2]);
+    // 申告は出力に残さない
+    expect(taskOf(service, id).outputs.document).toBe("## 手順1\n\n直した内容");
     service.requestChanges(id, {
       step: "document",
       submission: 1,
-      comments: ["説明ページの手順を直して"],
+      comments: ["説明ページの手順を直して。3ページ目も対象に"],
     });
     await service.runNext(id);
-    expect(promptOf(executor, 1)).toContain(
-      `成果物のページ：${PAGE}。外部に書くときは、このページを直す（新しいページを作らない）`,
-    );
-    expect(taskOf(service, id).documentPage).toBe(PAGE);
+    expect(promptOf(executor, 1)).toContain(`  - ${PAGE1}`);
+    expect(promptOf(executor, 1)).toContain(`  - ${PAGE2}`);
+    expect(taskOf(service, id).documentPages).toEqual([PAGE1, PAGE2, PAGE3]);
     service.approve(id, { step: "document", submission: 2 });
+    // 外部に直接書いたページが成果物なので、書き出さない（原稿を別のページとして出さない）
+    expect(exportDue(taskOf(service, id))).toBeUndefined();
     await service.runNext(id);
-    // 書き出しも、別のページを作らずに成果物のページを更新させる
-    expect(promptOf(executor, 2)).toContain(
-      `前にこの成果を書き出したページ（${PAGE}）を、この内容で更新する`,
-    );
-    expect(taskOf(service, id).exports.document?.url).toBe(PAGE);
+    expect(executor.calls).toHaveLength(2);
+    expect(isCompleted(taskOf(service, id))).toBe(true);
     activity.close();
   });
 

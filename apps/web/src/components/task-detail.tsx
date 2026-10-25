@@ -982,8 +982,14 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       hint={hint}
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
-      // 承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
-      footer={task.exportPlans?.[step]?.to ? <ExportResult task={task} step={step} /> : undefined}
+      // 外部に直接書いたページ（文書作成）か、承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
+      footer={
+        step === "document" && (task.documentPages?.length ?? 0) > 0 ? (
+          <DocumentPages pages={task.documentPages ?? []} />
+        ) : task.exportPlans?.[step]?.to ? (
+          <ExportResult task={task} step={step} />
+        ) : undefined
+      }
     >
       {/* 提出の前のセルフレビュー（PBI-120）。承認済みの成果物では、凍結した版のものではないので出さない */}
       {!approved && output && <SelfReviewNote task={task} step={step} />}
@@ -1064,6 +1070,34 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         </>
       )}
     </CardSection>
+  );
+}
+
+/**
+ * 文書作成で、タスクの説明の指示に従ってエージェントが外部に直接作った・直したページ（成果物）。ページがあれば書き出さない。
+ */
+function DocumentPages({ pages }: { pages: readonly string[] }) {
+  const m = useMessages().task.documentPages;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border p-3 text-sm">
+      <h3 className="font-semibold">
+        {m.title} <Hint text={m.hint} />
+      </h3>
+      <ul className="flex list-disc flex-col gap-1 pl-5">
+        {pages.map((url) => (
+          <li key={url} className="[overflow-wrap:anywhere]">
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent-foreground underline"
+            >
+              {url}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

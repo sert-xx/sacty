@@ -538,10 +538,10 @@ export type Task = {
   /** 再現の工程が申告した、再現のテスト（PBI-29）。 */
   reproductionTests: string[];
   /**
-   * 文書作成の工程で、エージェントがタスクの説明の指示に従って外部に直接作った・直したページ（成果物）の URL。差し戻しでは
-   * このページを直させ、書き出しでもこのページを更新させる（別のページを作らせない）。
+   * 文書作成の工程で、エージェントがタスクの説明の指示に従って外部に直接作った・直したページ（成果物）の URL（申告された順。
+   * 重複なし）。差し戻しでは、これらのページを直させる（同じ内容の別のページを作らせない）。ページがあれば書き出さない。
    */
-  documentPage?: string;
+  documentPages?: string[];
   /** 再現の工程の後、sacty がテストで再現を確かめる前（PBI-29）。 */
   reproductionPending?: boolean;
   /** 最新の、再現の確かめの結果（PBI-29）。 */
@@ -924,9 +924,11 @@ export function applyEvent(
             },
           ];
         }
-        // 直接書かなかった回では、前の回のページを残す（差し戻しでも、同じページを成果物として直させる）
-        if (event.payload.step === "document" && event.payload.documentPage) {
-          task.documentPage = event.payload.documentPage;
+        // 前の回までのページに足す（今回に直さなかったページも成果物のまま。差し戻しでも同じページを直させる）
+        if (event.payload.step === "document" && event.payload.documentPages.length > 0) {
+          task.documentPages = [
+            ...new Set([...(task.documentPages ?? []), ...event.payload.documentPages]),
+          ];
         }
         if (event.payload.step === "reproduce") {
           task.reproductionTests = event.payload.reproductionTests;
@@ -2366,6 +2368,8 @@ export function exportDue(task: Task): StepKey | undefined {
   return exportSteps(task.steps.map((s) => s.key)).find((step) => {
     const approved = task.approved[step];
     if (!task.exportPlans?.[step]?.to || !approved) return false;
+    // 文書作成で、エージェントが外部に直接書いたページが成果物なら、書き出さない（sacty の原稿を別のページとして出さない）
+    if (step === "document" && (task.documentPages?.length ?? 0) > 0) return false;
     const exported = task.exports[step];
     return exported?.retry === true || exported?.last?.approvedAt !== approved.at;
   });
