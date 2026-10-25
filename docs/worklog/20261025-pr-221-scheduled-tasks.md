@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #221
 - ブランチ: claude/scheduled-task-feature-2om9q6
 - 関係する ADR: [スケジュールタスクは、逃した予定のうち直前の1回だけを、使えるようになったときに作る](../adr/20261025-1130-scheduled-task-catch-up.md)
 
