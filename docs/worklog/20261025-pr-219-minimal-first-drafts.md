@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #219
 - ブランチ: claude/keen-rubin-3ppdyj
 - 関係する ADR: [人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
 
