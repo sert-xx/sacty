@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #222
 - ブランチ: claude/peaceful-dirac-gtng7k
 - 関係する ADR: [要求要件の受け入れ条件を文型ごとの見出しと表で書き出させる](../adr/20261025-0630-ears-tables-by-pattern.md)
 
