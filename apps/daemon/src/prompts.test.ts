@@ -2192,7 +2192,7 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
   });
 });
 
-describe("要求要件・設計の構成と分量（人間が承認で読む量を抑える）", () => {
+describe("人間が読む成果物の分量（初版は最小限にし、詳しさは差し戻しで足す）", () => {
   const task = (steps: Task["steps"][number]["key"][]): Task =>
     ({
       id: "t-1",
@@ -2211,37 +2211,63 @@ describe("要求要件・設計の構成と分量（人間が承認で読む量�
         baseCommit: "abcdef1234",
       },
     }) as unknown as Task;
+  const MINIMAL =
+    "- 初版は最小限にする。書くか迷ったら書かない。足りなければ、人間が差し戻しの指摘で求める";
+  const EXPAND =
+    "人間が差し戻しで詳しくするよう求めたら、求められた所だけを詳しくし、ほかの所は短いまま保つ";
 
-  it("要求要件と設計の指示に、冒頭の2つの節・確認したいことの上限と推奨の答え・書かないことを書く", () => {
+  it("要求要件と設計の指示に、最小限の初版・冒頭の2つの節と件数の上限・行数の目安・書かないことを書く", () => {
     const t = task(["requirements", "design", "implement"]);
     for (const [step, name] of [
       ["requirements", "要求要件"],
       ["design", "設計"],
     ] as const) {
       const prompt = buildPrompt(t, step);
-      expect(prompt, step).toContain(`--- ${name}の構成と分量（人間が承認で読む量を抑える） ---`);
       expect(prompt, step).toContain(
-        "「確認したいこと」：人間が決めないと確定できないこと。重要な順に最大 5 件",
+        `--- ${name}の分量（初版は最小限にし、詳しさは人間の差し戻しで足す） ---`,
+      );
+      expect(prompt, step).toContain(MINIMAL);
+      expect(prompt, step).toContain(EXPAND);
+      expect(prompt, step).toContain("このプロジェクトの前提（暗黙知）を持っている");
+      expect(prompt, step).toContain(
+        "「確認したいこと」：人間が決めないと確定できないこと。重要な順に最大 3 件",
       );
       expect(prompt, step).toContain("問い・推奨の答え・その理由");
-      expect(prompt, step).toContain("「既定で決めたこと」");
+      expect(prompt, step).toContain("人間が異論を持ちうるもの。最大 5 件、1件1行");
+      expect(prompt, step).toContain("小さな変更なら 20 行、大きな変更でも 60 行ほどまで");
       expect(prompt, step).toContain("今回の変更で変わらない振る舞い");
-      expect(prompt, step).toContain("「対象外」の節や行を作らない");
-      expect(prompt, step).toContain("依頼に無い機能・要求・将来の拡張");
+      expect(prompt, step).toContain("当てはまらない観点のための「対象外」の節や行");
+      expect(prompt, step).toContain("検討して採らなかった案");
     }
   });
 
-  it("設計は、書くことがある節だけを作り、テスト観点の異常系・境界値を今回の変更で起こりうるものにする", () => {
+  it("設計は、書くことがある節だけを作り、テスト観点を要る分だけにし、異常系・境界値を今回の変更で起こりうるものにする", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
     expect(prompt).toContain("今回の変更で書くことがあるものだけにする");
     expect(prompt).toContain("異常系と境界値は、今回の変更で新しく起こりうるものを含める");
+    expect(prompt).toContain("テスト観点の数は、受け入れ条件を確かめるのに要る分だけにする");
     expect(prompt).not.toContain("受け入れ条件をすべて網羅し、異常系と境界値を含める");
   });
 
-  it("ほかの工程の指示には出さない", () => {
+  it("文書と、調査が目的のタスクの調査の結果にも、最小限の初版と差し戻しで詳しくすることを書く（冒頭の2つの節は求めない）", () => {
+    for (const [steps, step, name] of [
+      [["document"], "document", "原稿"],
+      [["investigate"], "investigate", "調査の結果"],
+    ] as const) {
+      const prompt = buildPrompt(task([...steps]), step);
+      expect(prompt, step).toContain(
+        `--- ${name}の分量（初版は最小限にし、詳しさは人間の差し戻しで足す） ---`,
+      );
+      expect(prompt, step).toContain(MINIMAL);
+      expect(prompt, step).toContain(EXPAND);
+      expect(prompt, step).not.toContain("「既定で決めたこと」");
+    }
+  });
+
+  it("人間が読まない工程（前段の調査・実装）の指示には出さない", () => {
     const t = task(["investigate", "requirements", "design", "implement"]);
     for (const step of ["investigate", "implement"] as const) {
-      expect(buildPrompt(t, step), step).not.toContain("人間が承認で読む量を抑える");
+      expect(buildPrompt(t, step), step).not.toContain("初版は最小限");
     }
   });
 });
@@ -2315,6 +2341,11 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
         "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
       );
       expect(prompt, target).toContain(HEADING);
+      // 記述を足す指摘は must だけを直させる（初版を最小限に保つ）のは、文書（design-doc）だけ
+      expect(
+        prompt.includes("記述を足す指摘（D-3 などの「書かれていない」）は must だけを直し"),
+        target,
+      ).toBe(kind === "design-doc");
     }
   });
 
