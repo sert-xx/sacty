@@ -1153,7 +1153,8 @@ export class TaskService {
           payload: {
             number,
             repo,
-            branch: task.repository.baseBranch,
+            // マージ先のブランチ。引き継いだ既存の PR は、作業領域のベースブランチ（PR の元のブランチ）ではなく、PR の向き先
+            branch: task.continuedPullRequest?.baseBranch ?? task.repository.baseBranch,
             ...(mergeCommit ? { commit: mergeCommit } : {}),
           },
         },

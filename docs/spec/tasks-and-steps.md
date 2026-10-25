@@ -346,10 +346,11 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   PR の指摘の取り込みでは、渡した指摘を取り込まない（実装に対応させたため。`handedOverFeedback`）。
   渡していない指摘（読めなかった・件数を超えた・後から付いた）は、ほかの PR と同じく取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
   人の PR への sacty のレビュー（依頼・ラベルで取り込んだレビューだけのタスクの投稿）も、指摘のある回は取り込む（`sactyReviewsOf` の `continued`）。
+- マージの後の監視は、作業領域のベースブランチ（PR の元のブランチ）ではなく、PR の向き先のブランチをマージ先として記録する（`deploymentWatchEvents`）。
 - 中止しても、引き継いだ PR は閉じず、元のブランチも消さない（`sactyBranches` から除く）。
 - 画面は、タスクの詳細の工程の欄に、引き継いで直す PR（番号と元のブランチ）を出す。
 
-コード: `apps/daemon/src/prompts.ts`（`continuablePullRequest`・`CONTINUABLE_PLANS`・`continuePullRequestLines`・`continuedPullRequestLines`・`extractStepPlan`）、`apps/daemon/src/service.ts`（`resolveContinuedPullRequest`・`continuedPullRequestOwner`・`continuedFeedback`・`publishContinued`・`stepPullRequestsOn`・`importFeedback`・`handedOverFeedback`・`sactyBranches`）、`apps/daemon/src/github.ts`（`PullRequestInfo`）、`packages/core/src/events.ts`（`ContinuedPullRequest`・`StepsChosen`）、`packages/core/src/events.ts`（`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`（`continuedPullRequest`・`handedOverFeedback`）、`apps/web/src/components/task-detail.tsx`
+コード: `apps/daemon/src/prompts.ts`（`continuablePullRequest`・`CONTINUABLE_PLANS`・`continuePullRequestLines`・`continuedPullRequestLines`・`extractStepPlan`）、`apps/daemon/src/service.ts`（`resolveContinuedPullRequest`・`continuedPullRequestOwner`・`continuedFeedback`・`publishContinued`・`stepPullRequestsOn`・`importFeedback`・`handedOverFeedback`・`sactyBranches`・`deploymentWatchEvents`）、`apps/daemon/src/github.ts`（`PullRequestInfo`）、`packages/core/src/events.ts`（`ContinuedPullRequest`・`StepsChosen`）、`packages/core/src/events.ts`（`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`（`continuedPullRequest`・`handedOverFeedback`）、`apps/web/src/components/task-detail.tsx`
 
 ## 情報収集
 

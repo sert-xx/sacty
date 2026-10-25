@@ -6772,6 +6772,62 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("引き継いだ PR のマージの後の監視は、PR の向き先のブランチを、マージ先として記録する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      // 起点（PR の元のブランチの先頭）に、デプロイの確認のスキルがある
+      repos.files[head] = {
+        ".agents/skills/deployment-observer/SKILL.md": "# deployment-observer",
+      };
+      humanPullRequest(pulls);
+      const ci: CiStatusReader = {
+        snapshot: async () => ({
+          checks: [{ kind: "workflow", name: "CI", status: "pending" }],
+          failedRuns: [],
+        }),
+        failures: async () => [],
+      };
+      const { service } = makeService(
+        activity,
+        [
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
+          review([["REQ", true]], []),
+        ],
+        {
+          pulls,
+          repos,
+          ci,
+          planner: async () => ({
+            steps: ["implement", "deployment"],
+            plan: "direct",
+            reason: "指摘への対応",
+            fallback: false,
+            testCommand: "npm test",
+            continuePullRequest: true,
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 5 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.repository?.baseBranch).toBe("feature/retry");
+      expect(task?.steps.find((st) => st.key === "deployment")?.state).toBe("todo");
+      pulls.states[12] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        ...(task?.pullRequest?.commit ? { headSha: task.pullRequest.commit } : {}),
+        mergeCommit: "a".repeat(40),
+      };
+      await service.checkPullRequests();
+      const started = service.get(id)?.activity.find((e) => e.type === "DeploymentWatchStarted");
+      expect(started?.payload).toMatchObject({ number: 12, branch: "main" });
+      activity.close();
+    });
+
     it("中止しても、引き継いだ PR は閉じず、PR のブランチも消さない", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
