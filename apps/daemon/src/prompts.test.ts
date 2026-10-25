@@ -1301,6 +1301,10 @@ describe("成果の書き出し（PBI-56）", () => {
       "目印「sacty-export:t1:requirements」を含むページを探し、あればそのページを更新する（新しく作らない）。無ければ、新しいページを作る",
     );
     expect(fresh).toContain("ページの題：決済の再送：要求要件");
+    // 成果のほかに、書き出しの報告を外部に書かせない
+    expect(fresh).toContain(
+      "書き出し先に書くのは、sacty-export.md の内容の1ページだけ。書き出しの報告（書き出した旨・タスクやエージェントの ID など）を、別のページやコメントとして書かない",
+    );
     const update = buildExportPrompt(base, "requirements", {
       ...input,
       previousUrl: "https://wiki/1",
@@ -1946,9 +1950,42 @@ describe("non-code workflow boundaries", () => {
     const prompt = buildPrompt({ ...task, outputs: { document: "旧版" } }, "document");
     expect(prompt).toContain("完成原稿");
     expect(prompt).toContain("旧版");
-    expect(prompt).toContain("原稿そのものは外部サービスやリポジトリに直接書かず");
+    expect(prompt).toContain("この工程の成果物は、あなたが出力する原稿の本文そのもの");
+    expect(prompt).toContain(
+      "外部サービス（Confluence・Notion など）・リポジトリには、何も書かない",
+    );
     expect(prompt).toContain("ほかの工程と同じく渡しています");
     expect(prompt).not.toContain("渡していません");
+  });
+  it("作業の報告を原稿に書かせず、差し戻しでは前回の原稿を直させる（外部のページを新しく作らせない）", () => {
+    const first = buildPrompt(task, "document");
+    expect(first).toContain(
+      "作業の報告（「〜を作成しました」・作ったページの URL・タスクやエージェントの ID",
+    );
+    expect(first).not.toContain("--- 前回の原稿 ---");
+    expect(first).not.toContain("差し戻しでは、下の「前回の原稿」を直して");
+    const reworked = buildPrompt(
+      {
+        ...task,
+        outputs: { document: "旧版" },
+        remarks: [{ id: "r1", step: "document", text: "Notion のページの手順を直して" }],
+        exportPlans: {
+          document: {
+            to: { via: "mcp", name: "notion", location: "親のページ：手順書" },
+            reason: "規約",
+          },
+        },
+        exports: { document: { url: "https://notion.example.com/page-1" } },
+      } as unknown as Task,
+      "document",
+    );
+    expect(reworked).toContain(
+      "差し戻しでは、下の「前回の原稿」を直して、全文を出力する（別の文書を新しく作らない）",
+    );
+    expect(reworked).toContain("それは前回の原稿のことです");
+    expect(reworked).toContain("sacty が notion（親のページ：手順書） に書き出します");
+    expect(reworked).toContain("https://notion.example.com/page-1");
+    expect(reworked).toContain("Notion のページの手順を直して");
   });
   it("無条件standard推奨を外し成果と変更対象から比較させる（実モデル分類の評価ではない）", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {

@@ -26,6 +26,7 @@ Code: `packages/core/src/events.ts` (`EXPORT_STEPS`, `exportSteps`), `apps/daemo
   - With the run's token, the agent can use only the chosen PF or MCP server through the gateway. Calls to other host PFs and MCP servers get 403.
   - sacty places the content to export in `sacty-export.md` in the workspace `workspaces/_export/<run ID>` and deletes it afterward.
   - The answer is JSON under the heading `sacty-export` (`url` or `error`).
+  - The instructions tell the agent to write only one page with the content of that file, and not to write a report of the export as another page or comment.
 - If there is a previously exported URL, the agent updates that page instead of creating a new one. If a previous export stopped before it was recorded (only `ExportStarted` exists), the agent finds the same page by its marker and updates it.
 - If the export fails (budget limit, no connection, unreadable answer, or agent failure), sacty records the reason in `OutputExported` and continues the task without stopping. If a person stops or cancels it, sacty records only the cost.
 - Retrying an export: `POST /api/tasks/:id/exports/:step/retry` (only when the last export failed and is for the current approved version). Approving again exports again.
