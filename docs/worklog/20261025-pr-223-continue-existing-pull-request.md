@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-25（UTC）
 - タスク: なし
-- PR: なし
+- PR: #223
 - ブランチ: claude/sweet-volta-jlznx0
 - 関係する ADR: [既存の PR を直すタスクは、PR を引き継いで同じブランチに積み、文書だけの観点はテストを書かずに差分で確かめる](../adr/20261025-1337-continue-existing-pull-request.md)
 
