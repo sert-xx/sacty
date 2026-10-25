@@ -333,6 +333,13 @@ function reviewVerificationLines(task: Task): string[] {
   ];
 }
 
+/** 引き継いだ既存の PR の指摘のうち、工程の指示に渡すもの（新しいものから決まった件数）。 */
+export function passedContinuedFeedback(
+  feedback: readonly PullRequestFeedback[],
+): PullRequestFeedback[] {
+  return feedback.slice(-EXISTING_IN_PROMPT);
+}
+
 /**
  * 既存の PR を引き継いで直すタスク（Task.continuedPullRequest）の工程に渡す、その PR のことと、PR にあるレビュー・行へのコメント・
  * 通常のコメント（指示とは分けた JSON のデータ）。読めなかったときは "unreadable"。引き継がないタスクでは何も足さない。
@@ -360,7 +367,7 @@ export function continuedPullRequestLines(
   }
   if (feedback.length === 0) return [...lines, "PR には、まだレビュー・コメントがありません。"];
   const data = {
-    pullRequestFeedback: feedback.slice(-EXISTING_IN_PROMPT).map((r) => ({
+    pullRequestFeedback: passedContinuedFeedback(feedback).map((r) => ({
       kind: r.kind,
       author: r.author,
       at: r.at,

@@ -283,6 +283,7 @@ const ja = {
     branchPushed: (branch: string, commit: string) =>
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
+    ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     BranchPushed: (branch: string, commit: string) =>
       `Sacty のブランチにプッシュ（${branch}・${commit}）`,
     TaskBranchCreated: (branch: string, commit: string) =>
@@ -712,6 +713,8 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
+    ContinuedFeedbackPassed: (count) =>
+      `Passed the feedback on the taken-over PR to the implementation (${count})`,
     BranchPushed: (branch, commit) => `Pushed to Sacty branch (${branch} · ${commit})`,
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>

@@ -144,9 +144,9 @@ Recurring updates, monitoring, and automation of long-running work across severa
 To fix an existing PR itself, for example to address review comments on a PR a person opened, select the target repository and write the PR's link in the title or description (for example "Address the review comments on https://github.com/acme/app/pull/12"). When the Orchestrator judges that the task asks to fix that PR, sacty takes over the PR.
 
 - The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
-- The reviews and comments on the PR are passed to the agents of the steps.
+- The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
-- Merging the PR approves the implementation. Feedback added after the implementation started is imported and fixed, as with other PRs.
+- Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
 - "Taking over PR" appears in the Steps section of the task details.
 - Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
 
@@ -199,7 +199,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
   The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks".
 
-These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details.
+These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
 The tests run by the Goal Guardian show "Environment failures only".
 Check them before merging the PR.
 

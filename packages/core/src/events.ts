@@ -1553,6 +1553,15 @@ const NoChangesFound = z.object({
 });
 
 /**
+ * 引き継いだ既存の PR（StepsChosen の continuedPullRequest）の指摘を、実装の工程の実行の指示に渡した。keys は渡した指摘
+ * （PullRequestFeedback の key）。実装に対応させたので、PR の指摘として取り込み直さない（渡さなかった指摘は取り込む）。
+ */
+const ContinuedFeedbackPassed = z.object({
+  type: z.literal("ContinuedFeedbackPassed"),
+  payload: z.object({ runId: z.string(), keys: z.array(z.string().min(1)) }),
+});
+
+/**
  * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
  * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
  * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
@@ -2395,6 +2404,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IntegrationReviewed,
   PullRequestPublished,
   NoChangesFound,
+  ContinuedFeedbackPassed,
   PullRequestLabeled,
   PullRequestLabelFailed,
   TaskBranchCreated,

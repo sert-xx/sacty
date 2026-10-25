@@ -531,6 +531,8 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "NoChangesFound":
       return e.NoChangesFound;
+    case "ContinuedFeedbackPassed":
+      return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "PullRequestLabeled":
       return e.PullRequestLabeled(event.payload.number, event.payload.label, event.payload.created);
     case "PullRequestLabelFailed":

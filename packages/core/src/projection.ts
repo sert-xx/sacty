@@ -517,10 +517,9 @@ export type Task = {
    */
   continuedPullRequest?: ContinuedPullRequest;
   /**
-   * 実装の工程の最後の実行を始めた日時。引き継いだ PR の指摘の取り込みで、この時より前の指摘（実装の指示に渡したもの）を
-   * 取り込み直さないために使う。
+   * 引き継いだ PR の指摘のうち、実装の工程の指示に渡したもの（ContinuedFeedbackPassed の keys）。PR の指摘として取り込み直さない。
    */
-  implementStartedAt?: string;
+  handedOverFeedback?: string[];
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -911,7 +910,6 @@ export function applyEvent(
       }
       task.status = "running";
       task.currentRunId = event.payload.runId;
-      if (event.payload.step === "implement") task.implementStartedAt = event.at;
       // 見直さずに工程を始めた（工程の見直しより前の作業履歴）なら、見直しは待たない
       task.stepReview = undefined;
       break;
@@ -1319,6 +1317,15 @@ export function applyEvent(
       task.pullRequestState = event.payload.number ? "open" : undefined;
       task.pullRequestMerge = undefined;
       task.status = "idle";
+      break;
+
+    case "ContinuedFeedbackPassed":
+      if (task.currentRunId !== event.payload.runId) {
+        throw new ActivityIntegrityError(event, "run id does not match the running run");
+      }
+      task.handedOverFeedback = [
+        ...new Set([...(task.handedOverFeedback ?? []), ...event.payload.keys]),
+      ];
       break;
 
     case "NoChangesFound":

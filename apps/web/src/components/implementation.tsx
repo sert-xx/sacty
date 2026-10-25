@@ -63,7 +63,12 @@ export function Implementation({ task }: { task: Task }) {
   const messages = useMessages();
   const m = messages.parts.implementation;
   const step = task.steps.find((s) => s.key === "implement");
-  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  // 設計の無いタスク（direct・skip-design）は、実装が観点 REQ にテストか差分での確認を対応させていれば、REQ を出す
+  const designViewpoints = task.approved.design?.testViewpoints ?? [];
+  const viewpoints =
+    designViewpoints.length === 0 && task.testMap.some((entry) => entry.viewpointId === "REQ")
+      ? [{ id: "REQ", title: m.requirementsViewpoint }]
+      : designViewpoints;
   // 今の提出の検証のものだけを対応表に出し、前の提出のものは「前の提出の」と区別して出す（PR #105 再レビュー指摘）
   const { tests, testsCurrent, review, reviewCurrent: reviewIsCurrent } = verificationResults(task);
   const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry]));

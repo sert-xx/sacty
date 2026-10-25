@@ -116,3 +116,22 @@ describe("Implementation のテストを書かずに差分で確かめる観点"
     expect(render(designed(), "en")).toContain("No test; checked in the diff");
   });
 });
+
+describe("Implementation の設計の無いタスクの観点 REQ", () => {
+  it("設計が無くても、実装が REQ を差分で確かめると申告したら、REQ と理由を出す", () => {
+    const t = {
+      ...task(
+        review({
+          viewpoints: [{ viewpointId: "REQ", verified: true, reason: "差分で確かめた" }],
+          tests: { command: "npm test", exitCode: 0, output: "" },
+          humanChecks: undefined,
+        }),
+      ),
+      testMap: [{ viewpointId: "REQ", tests: [], untested: "README の文言だけを直したため" }],
+    } as unknown as Task;
+    const html = render(t);
+    expect(html).toContain("受け入れ条件・タスクの目的");
+    expect(html).toContain("テストなし・差分で確認（README の文言だけを直したため）");
+    expect(html).toContain("差分で判定");
+  });
+});
