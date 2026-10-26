@@ -286,8 +286,9 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 - 前の工程に戻すと、その工程から後の承認を取り消し、検証の結果と失敗の回数を戻す。
   PR で承認したタスクでは、マージ済みの PR は戻さない。
 - 最終レビュー・統合レビューに通ったものを人が差し戻すと、見逃し（`GuardianMissed`）を記録する。
+- 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`voidRemark`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`voidRemark`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）
 
 ## エスカレーション
 

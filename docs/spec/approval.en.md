@@ -222,8 +222,9 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbac
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.
 - When a person requests changes to something that passed the final review or Integration review, a miss (`GuardianMissed`) is recorded.
+- The text of the comments in a request for changes can be read with "Details" on the request-for-changes line of the Activity in the task details, even when the task is not awaiting approval ([Screen wording and hints](ui-wording.en.md)).
 
-Code: `apps/daemon/src/service.ts` (`requestChanges`, `voidRemark`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`)
+Code: `apps/daemon/src/service.ts` (`requestChanges`, `voidRemark`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`), `apps/web/src/lib/labels.ts` (`describeEventParts`)
 
 ## Escalation
 

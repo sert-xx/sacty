@@ -697,6 +697,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
 
 /**
  * 作業履歴の1行の文。長い行（コンテキストの用意の外部 PF の一覧）は、1行目だけを出し、詳細は開いて読む（PR #127 レビュー指摘）。
+ * 差し戻しの行は、指摘の本文を詳細に出す。詳細の改行は、そのまま改行として出す。
  */
 export function EventText({ event }: { event: ActivityEvent }) {
   const { labels } = useMessages();
@@ -707,7 +708,7 @@ export function EventText({ event }: { event: ActivityEvent }) {
       <summary className="inline cursor-pointer list-none [&::-webkit-details-marker]:hidden">
         {text} <span className="text-xs text-accent-foreground underline">{labels.event.more}</span>
       </summary>
-      <span className="block pt-1 text-xs text-muted-foreground">{detail}</span>
+      <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground">{detail}</span>
     </details>
   );
 }

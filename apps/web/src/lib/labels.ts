@@ -303,7 +303,7 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
 
 /**
  * 作業履歴の1行を、常に出す文（text）と、展開して読む詳細（detail）に分ける（PR #127 レビュー指摘）。
- * 長くなる行（コンテキストの用意の外部 PF の一覧）だけ detail を持つ。
+ * 長くなる行（コンテキストの用意の外部 PF の一覧）と、差し戻しの行（人が書いた指摘の本文）だけ detail を持つ。
  */
 export function describeEventParts(
   event: ActivityEvent,
@@ -324,6 +324,13 @@ export function describeEventParts(
         event.payload.warnings.map(l.text),
       ),
       ...(detail ? { detail } : {}),
+    };
+  }
+  if (event.type === "ChangesRequested") {
+    // 差し戻しの指摘の本文。承認の画面は承認待ちの間しか読めないので、後から作業履歴で読み返せるようにする
+    return {
+      text: describeEventText(event, l),
+      detail: event.payload.remarks.map((r) => l.event.changesRemark(r.id, r.text)).join("\n"),
     };
   }
   return { text: describeEventText(event, l) };
