@@ -24,10 +24,20 @@ export function SecurityFixesCard({
   findings,
 }: {
   task: Task;
-  findings: readonly SecurityFinding[];
+  /** null は、指摘を読めなかった（指摘が無いことと分ける）。 */
+  findings: readonly SecurityFinding[] | null;
 }) {
   const { task: messages, labels } = useMessages();
   const m = messages.security;
+  if (findings === null) {
+    return (
+      <CardSection id="security-fixes" title={m.title} hint={m.hint}>
+        <p role="alert" className="text-sm text-warn">
+          {m.unreadable}
+        </p>
+      </CardSection>
+    );
+  }
   const categories = SecurityCategory.options.filter((c) => findings.some((f) => f.category === c));
   return (
     <CardSection id="security-fixes" title={m.title} hint={m.hint}>

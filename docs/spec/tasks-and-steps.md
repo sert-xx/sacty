@@ -325,9 +325,9 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 関係する ADR: [既存の PR を直すタスクは、PR を引き継いで同じブランチに積み、文書だけの観点はテストを書かずに差分で確かめる](../adr/20261025-1337-continue-existing-pull-request.md)
 
 - 引き継ぐかは、オーケストレーターが工程の選択の答えの `continuePullRequest` で決める。
-  指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-design`・`direct`・`bugfix`）を選べるタスクだけ（`continuablePullRequest`）。
+  指示にこの項目を出すのは、タスクに PR のリンクがあり、実装する組み合わせ（`CONTINUABLE_PLANS`：`standard`・`skip-design`・`direct`・`bugfix`・`security-fix`）を選べるタスクだけ（`continuablePullRequest`）。
   PR から取り込んだタスク・分割の子タスクには出さない。
-  指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を選ぶこと、`baseBranch` を書かないことを求める。
+  指示では、PR を参考にして別の変更をする・PR をレビューするだけなら書かないこと、指摘で直すことが具体的に決まっているなら `direct` を、セキュリティ上の問題を直すなら `security-fix` を選ぶこと、`baseBranch` を書かないことを求める。
   実装しない組み合わせの答えの `continuePullRequest` は読まない。
 - sacty は、工程を記録する前に PR を確かめる（`resolveContinuedPullRequest`）。
   引き継ぐのは、開いていて、元のブランチが対象リポジトリにあり（フォークの PR でない）、sacty のほかのタスク（中止したものを除く）が作った（実装の PR・要求要件・設計の PR）・引き継いだ PR でないものだけ（`continuedPullRequestOwner`）。
@@ -381,7 +381,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 ### セキュリティチェック
 
 - 調査（調査が目的のタスク）の指示に、区分ごとの点検を書く（`securityCheckLines`）。
-  区分は `dependency`（依存の脆弱性）・`supply-chain`（サプライチェーン：CI のワークフロー・依存の取得元とロックファイル・インストールのスクリプト・イメージのタグの固定）・`code`（コードの脆弱性）・`secret`（秘密情報の混入）・`config`（設定・IaC）（`SecurityCategory`）。
+  区分は `dependency`（依存の脆弱性）・`supply-chain`（サプライチェーン：CI のワークフロー・依存の取得元とロックファイル・インストールのスクリプト・イメージのタグの固定）・`code`（コードの脆弱性）・`secret`（秘密情報の混入。作業領域は .git の無い写しなので、ファイルだけを検査させ、履歴は確かめていない範囲として書かせる）・`config`（設定・IaC）（`SecurityCategory`）。
 - 道具の結果は、到達するか・悪用できるか・誤検知かを振り分けてから指摘にさせる。
   指摘ごとに、区分・重さ（`critical`・`high`・`medium`・`low`）・題・識別子・場所・根拠・最小限の直し方の案を書かせる。
 - レポートの本文の後に、見出し `sacty-security-findings` の JSON（`findings`：`id`・`category`・`severity`・`title`・`refs`・`location`・`fix`）を出させる。
@@ -391,6 +391,8 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 ### レポートから対応のタスクを作る
 
 - 承認して完了した（中止していない）セキュリティチェックのタスク（`canRequestSecurityFix`）では、タスクの詳細に、区分ごとの指摘と「対応のタスクを作る」を出す（`GET /api/tasks/:id/security-findings`）。
+  指摘を取れなかったときは、指摘が無いこととは分けて、読めなかったことと再読み込みを案内する。
+- 対応のタスクの詳細の先頭には、元のレポートのタスクへのリンクと区分を出す。
 - `POST /api/tasks/:id/security-fixes`（入力は `RequestSecurityFixInput` の `category`）で、その区分の対応のタスクを作る。
   区分ごとに1回だけ（`security.alreadyRequested`）。
   承認したレポートでない（`security.notReport`）・その区分の指摘が無い（`security.noFindings`）ときは作らない（どれも 409）。
@@ -411,17 +413,23 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   範囲の外を変えないこと（回帰のテストのファイルは足してよい）、リファクタリング・整形などを混ぜないこと、依存はパッケージマネージャーで上げること、変えた行の数の上限を伝える。
   観点 `REQ` は「問題が解消している」で、依存・設定の更新でテストが書けないときは、`untested` に検査のコマンドで確かめる理由を書かせる。
 - 検証では、最終レビューの前に、sacty が差分を範囲と照らす（`scopeViolation`）。
+  照合には、エージェントに渡す差分（`DIFF_LIMIT` で切り詰める）ではなく、切り詰めないファイルごとの追加と削除の行の数を使う（`diffStats`。`git diff --numstat --no-renames`）。
+  名前の変更は、変更元の削除と変更先の追加に分ける（範囲の外のファイルを範囲の中へ移して隠さないため）。
+  取れなければ、差分と同じく最終レビューをせずに一時停止する（`verify.diffUnavailable`）。
   - 範囲の外のファイル：`paths` のどれにも当たらない（そのもの・末尾が `/` ならその下・`*` は `/` を除く任意の文字。`pathInScope`）、テストのファイルでもない（テストのディレクトリの中か、名前がテストの慣習に当たる）ファイル。
-  - 変えた行の数：ロックファイル（`package-lock.json`・`yarn.lock`・`go.sum` など）を除く、差分の追加と削除の行の合計が `SECURITY_FIX_MAX_CHANGED_LINES`（300）を超える。
+  - 変えた行の数：ロックファイル（`package-lock.json`・`yarn.lock`・`go.sum` など）を除く（テストのファイルは数える）、追加と削除の行の合計が `SECURITY_FIX_MAX_CHANGED_LINES`（300）を超える。
   - 範囲の宣言を読めなければ、行の数だけを確かめる。
 - 最終レビューで判定する観点は、`REQ` に `SEC-MIN`（差分が最小限か。テストは対応させない）を足したもの（`finalReviewVerdictIds`）。
   指示（`securityFinalReviewLines`）では、`REQ` を範囲の `verification` のコマンドの実行で確かめさせ、`SEC-MIN` を差分の変更ごとに要否で判定させる。
   sacty が違反を見つけていれば、指示に違反を書き、ゴールガーディアンの判定にかかわらず `SEC-MIN` を不合格にする（理由は `review.scopeViolated`。`extractFinalReview`）。
   不合格のときのやり直しと一時停止は、ほかの実装と同じ（`MAX_VERIFY_ATTEMPTS`）。
+- 範囲を広げるには、タスクを中止して再実行する（前段の調査には差し戻せない。`reworkTargets`）。
+  実装の指示では、範囲の外を変えないと直せないときは、理由と広げるべき範囲を説明に書かせる。
+  再実行のタスクは、セキュリティの組み合わせを引き継ぐ（下の「中止したタスクの再実行」）。
 - 実装の PR の本文の目的の節は、要求要件の代わりに「修正の範囲（セキュリティ対応）」（変えてよいファイル・上げる依存・解消の確かめ方・範囲の理由）にする（`securityScopeBodyLines`）。
 - 公開リポジトリへの PR も、ほかの実装と同じく作る。
 
-コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`diffStats`・`SECURITY_FIX_MAX_CHANGED_LINES`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/service.ts`（`verify`）、`apps/daemon/src/prompts.ts`（`extractFinalReview`・`approvedBasisLines`）
+コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`SECURITY_FIX_MAX_CHANGED_LINES`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/repository.ts`（`diffStats`・`parseNumstat`）、`apps/daemon/src/service.ts`（`verify`・`rerunTask`）、`apps/daemon/src/prompts.ts`（`extractFinalReview`・`approvedBasisLines`）
 
 ## 情報収集
 
@@ -1003,6 +1011,8 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   リポジトリ無しなら、リポジトリを指定せずに作ったタスクと同じく、オーケストレーターがリポジトリを選び、選べなければ人が選ぶ（`isRepoless`・`awaitingRepository`・`chooseRepository`）。
   GitHub の Issue から取り込んだタスクの再実行は、取り込み元を引き継がない（`start` は `sacty`。記録に Issue の URL を書く）。
 - 予算の上限は、再実行のタスクを作った時点の `budget.default_per_task_usd`（元のタスクの上限・使った額は引き継がない）。
+- 元のタスクがセキュリティの組み合わせ（`security-check`・`security-fix`）なら、その組み合わせを `TaskCreated` の `plan` にする（最小限の変更の決まりと公開しない扱いを外さないため）。
+  ほかの組み合わせは引き継がず、オーケストレーターが選ぶ。
 
 コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
 

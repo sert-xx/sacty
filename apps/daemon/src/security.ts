@@ -9,6 +9,7 @@ import {
   taskPlan,
 } from "@sacty/core";
 import { headedObject, lastJsonAnswer } from "./agent-json.js";
+import type { FileChange } from "./repository.js";
 import { looksLikeTestFile } from "./test-files.js";
 
 /** セキュリティチェックの指摘の一覧の見出し（レポートの本文の後に出させる JSON）。 */
@@ -144,23 +145,6 @@ export function securityFindings(task: Task): SecurityFinding[] | undefined {
   return output ? extractSecurityFindings(output) : undefined;
 }
 
-/** 差分（git diff の出力）のファイルごとの、追加と削除の行の数。 */
-export function diffStats(diff: string): { path: string; changed: number }[] {
-  const files: { path: string; changed: number }[] = [];
-  let current: { path: string; changed: number } | undefined;
-  for (const line of diff.split("\n")) {
-    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (header) {
-      current = { path: header[2] ?? "", changed: 0 };
-      files.push(current);
-      continue;
-    }
-    if (!current || line.startsWith("+++ ") || line.startsWith("--- ")) continue;
-    if (line.startsWith("+") || line.startsWith("-")) current.changed++;
-  }
-  return files;
-}
-
 /** パスが、範囲の宣言のパス（末尾が / ならその下、* は / を除く任意の文字）のどれかに当たるか。 */
 export function pathInScope(path: string, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => {
@@ -183,21 +167,22 @@ export type ScopeViolation = { outside: string[]; lines?: number; max: number };
 
 /**
  * セキュリティ対応の差分を、修正の範囲と照らす。範囲の外のファイル（テストのファイルは除く。回帰のテストを足すため）と、
- * 変えた行の数の上限を超えたことを返す（守っていれば undefined）。範囲の宣言が無ければ、行の数だけを確かめる。
+ * 変えた行の数の上限を超えたことを返す（守っていれば undefined）。行の数は、テストのファイルを含め、ロックファイルだけを
+ * 除いて数える。範囲の宣言が無ければ、行の数だけを確かめる。changes は、切り詰めていない、名前の変更を削除と追加に分けた
+ * ファイルごとの変更（RepositoryWorkspace.diffStats）。
  */
 export function scopeViolation(
   scope: SecurityScope | undefined,
-  diff: string,
+  changes: readonly FileChange[],
 ): ScopeViolation | undefined {
-  const stats = diffStats(diff);
   const outside = scope
-    ? stats
-        .map((s) => s.path)
+    ? changes
+        .map((c) => c.path)
         .filter((path) => !pathInScope(path, scope.paths) && !isTestPath(path))
     : [];
-  const changed = stats
-    .filter((s) => !LOCKFILES.has(basename(s.path)))
-    .reduce((sum, s) => sum + s.changed, 0);
+  const changed = changes
+    .filter((c) => !LOCKFILES.has(basename(c.path)))
+    .reduce((sum, c) => sum + c.added + c.removed, 0);
   const over = changed > SECURITY_FIX_MAX_CHANGED_LINES;
   if (outside.length === 0 && !over) return undefined;
   return { outside, ...(over ? { lines: changed } : {}), max: SECURITY_FIX_MAX_CHANGED_LINES };

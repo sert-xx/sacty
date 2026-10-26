@@ -9,6 +9,22 @@ import { MessageError } from "./errors.js";
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
 
+/** 起点からの変更の、ファイルごとの追加と削除の行の数（バイナリは 0）。 */
+export type FileChange = { path: string; added: number; removed: number };
+
+/** git diff --numstat -z の出力（名前の変更を分けたもの）を読む。 */
+export function parseNumstat(output: string): FileChange[] {
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const match = /^(-|\d+)\t(-|\d+)\t(.+)$/s.exec(entry);
+      if (!match) return [];
+      const count = (n: string | undefined) => (n === undefined || n === "-" ? 0 : Number(n));
+      return [{ path: match[3] ?? "", added: count(match[1]), removed: count(match[2]) }];
+    });
+}
+
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
 export interface RepositoryWorkspace {
   /**
@@ -31,6 +47,11 @@ export interface RepositoryWorkspace {
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * 起点からの変更を、ファイルごとの追加と削除の行の数で返す（切り詰めない）。名前の変更は、変更元の削除と変更先の追加に
+   * 分ける。バイナリのファイルは、行の数を 0 にする。
+   */
+  diffStats(dir: string, gitDir: string, baseCommit: string): Promise<FileChange[]>;
   /**
    * 起点のコミットのファイルを、退避したメタデータから outDir に書き出す（.git は含めない）。
    * 要求要件・設計の工程で、実装の作業領域とは別に、起点のコードを読ませるため（PBI-15）。
@@ -379,6 +400,24 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
     });
+  }
+
+  async diffStats(dir: string, gitDir: string, baseCommit: string) {
+    return this.stage(dir, gitDir, baseCommit, async (run) =>
+      parseNumstat(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--numstat",
+          "-z",
+          // 名前の変更を、変更元の削除と変更先の追加に分ける（範囲の外のファイルを移して隠さないため）
+          "--no-renames",
+          "--no-ext-diff",
+          "--no-textconv",
+          baseCommit,
+        ]),
+      ),
+    );
   }
 
   async publish(input: Parameters<RepositoryWorkspace["publish"]>[0]) {

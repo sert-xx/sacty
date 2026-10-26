@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -316,6 +317,24 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(diff).toContain("同じキーの再送"); // 日本語のファイル内容もそのまま
     // コミットはしない
     expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
+  });
+
+  it("ファイルごとの変更は、差分の上限で切り詰めず、名前の変更を変更元の削除と変更先の追加に分ける", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    // 差分の上限を超える大きなファイルの後に、名前の変更がある
+    writeFileSync(join(clone, "a-large.lock"), "x\n".repeat(DIFF_LIMIT));
+    renameSync(join(clone, "pay.ts"), join(clone, "z-moved.ts"));
+    expect(await workspace.diff(clone, gitDir, baseCommit)).not.toContain("z-moved.ts");
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: "a-large.lock", added: DIFF_LIMIT, removed: 0 },
+      { path: "pay.ts", added: 0, removed: 1 },
+      { path: "z-moved.ts", added: 1, removed: 0 },
+    ]);
   });
 
   it("用意し直すときは、記録したブランチが消えていても、記録済みの起点のコミットにする（PBI-157 レビュー指摘）", async () => {

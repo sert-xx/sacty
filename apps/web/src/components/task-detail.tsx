@@ -243,6 +243,20 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               {m.deployment.fixDepth(task.fix.depth)}
             </>
           )}
+          {/* レポートの区分から作った対応のタスクは、元のレポートと区分を出す */}
+          {task.securityFix && (
+            <>
+              {m.security.reportOf}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.securityFix.taskId)}`}
+                className="text-accent-foreground underline"
+                data-testid="security-report"
+              >
+                {data.securityReport?.title ?? task.securityFix.taskId}
+              </Link>
+              {m.security.reportCategory(labels.securityCategory[task.securityFix.category])}
+            </>
+          )}
           {task.rerun && (
             <>
               {m.rerunOf}
@@ -643,7 +657,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           )}
           <PullRequestCard task={task} />
           {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
-          {data.securityFindings && (
+          {data.securityFindings !== undefined && (
             <SecurityFixesCard task={task} findings={data.securityFindings} />
           )}
           {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}

@@ -124,6 +124,7 @@ import {
   type TriageKind,
   targetHost,
   targetImageOf,
+  taskPlan,
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -4767,6 +4768,9 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
+            // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
+            // 組み合わせは引き継がず、オーケストレーターが選ぶ
+            ...(isSecurityTask(previous) ? { plan: taskPlan(previous) } : {}),
           },
         },
       },
@@ -7043,10 +7047,33 @@ export class TaskService {
       return;
     }
     // セキュリティ対応は、差分を前段の調査が宣言した修正の範囲と照らす。守っていなければ、観点 SEC-MIN を不合格にする
-    // （ゴールガーディアンにも伝え、やり直しの指示に理由が渡る）
-    const scopeViolated = isSecurityFix(task)
-      ? scopeViolation(securityScope(task), diff)
-      : undefined;
+    // （ゴールガーディアンにも伝え、やり直しの指示に理由が渡る）。エージェントに渡す差分は切り詰めるので、照合には
+    // 切り詰めていないファイルごとの変更を使う。取れなければ、差分と同じく最終レビューをせずに止める
+    let scopeViolated: ReturnType<typeof scopeViolation>;
+    if (isSecurityFix(task)) {
+      try {
+        const changes = await this.deps.repos.diffStats(
+          dir,
+          this.trustedGitDir(task),
+          task.repository.baseCommit,
+        );
+        scopeViolated = scopeViolation(securityScope(task), changes);
+      } catch (error) {
+        this.append(current, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("verify.diffUnavailable", { detail: errorText(error) }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+    }
     // 人間が止めたなら、最終レビューを始めない（再開すると最終レビューからやり直す）
     if (this.pauseRequested.has(task.id)) return;
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする

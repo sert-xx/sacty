@@ -56,8 +56,11 @@ else
   if fetch "$OSV_SCANNER_URL/osv-scanner_SHA256SUMS" "$dir/osv-scanner.sums" \
     && fetch "$OSV_SCANNER_URL/$file" "$dir/$file"; then
     if verify "$file" "$dir/osv-scanner.sums"; then
-      install -m 0755 "$dir/$file" /usr/local/bin/osv-scanner
-      echo "sacty: osv-scanner $OSV_SCANNER_VERSION を入れました。"
+      if install -m 0755 "$dir/$file" /usr/local/bin/osv-scanner; then
+        echo "sacty: osv-scanner $OSV_SCANNER_VERSION を入れました。"
+      else
+        warn "osv-scanner" "/usr/local/bin に置けない"
+      fi
     else
       warn "osv-scanner" "ハッシュのファイルに $file の行が無い"
     fi
@@ -74,8 +77,11 @@ else
     && fetch "$GITLEAKS_URL/$file" "$dir/$file"; then
     if verify "$file" "$dir/gitleaks.sums"; then
       if tar -xzf "$dir/$file" -C "$dir" gitleaks; then
-        install -m 0755 "$dir/gitleaks" /usr/local/bin/gitleaks
-        echo "sacty: gitleaks $GITLEAKS_VERSION を入れました。"
+        if install -m 0755 "$dir/gitleaks" /usr/local/bin/gitleaks; then
+          echo "sacty: gitleaks $GITLEAKS_VERSION を入れました。"
+        else
+          warn "gitleaks" "/usr/local/bin に置けない"
+        fi
       else
         warn "gitleaks" "$file を展開できない"
       fi

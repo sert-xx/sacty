@@ -1,8 +1,8 @@
 import { renderMessage, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { buildPullRequestBody, extractFinalReview } from "./prompts.js";
+import { buildPullRequestBody, extractFinalReview, extractStepPlan } from "./prompts.js";
+import { parseNumstat } from "./repository.js";
 import {
-  diffStats,
   extractSecurityFindings,
   extractSecurityScope,
   pathInScope,
@@ -86,19 +86,28 @@ describe("修正の範囲の宣言", () => {
 
 describe("差分と範囲の照合", () => {
   const diff = (files: Record<string, number>) =>
-    Object.entries(files)
-      .map(([path, n]) =>
-        [
-          `diff --git a/${path} b/${path}`,
-          `--- a/${path}`,
-          `+++ b/${path}`,
-          ...Array(n).fill("+x"),
-        ].join("\n"),
-      )
-      .join("\n");
+    Object.entries(files).map(([path, added]) => ({ path, added, removed: 0 }));
 
-  it("ファイルごとに、見出しの行を除いた追加と削除の行を数える", () => {
-    expect(diffStats(`${diff({ "a.ts": 2 })}\n-y`)).toEqual([{ path: "a.ts", changed: 3 }]);
+  it("numstat の出力を読む。名前の変更は変更元の削除と変更先の追加として数え、バイナリは 0 行", () => {
+    expect(
+      parseNumstat(
+        "2\t1\ta.ts\0" + "0\t10\tsrc/unrelated.ts\0" + "10\t0\tsrc/fix.ts\0-\t-\timg.png\0",
+      ),
+    ).toEqual([
+      { path: "a.ts", added: 2, removed: 1 },
+      { path: "src/unrelated.ts", added: 0, removed: 10 },
+      { path: "src/fix.ts", added: 10, removed: 0 },
+      { path: "img.png", added: 0, removed: 0 },
+    ]);
+  });
+
+  it("範囲の外のファイルを範囲の中へ移したら、変更元を範囲の外として返す", () => {
+    expect(
+      scopeViolation({ paths: ["src/fix.ts"], packages: [], verification: "", reason: "" }, [
+        { path: "src/unrelated.ts", added: 0, removed: 10 },
+        { path: "src/fix.ts", added: 10, removed: 0 },
+      ])?.outside,
+    ).toEqual(["src/unrelated.ts"]);
   });
 
   it("パスは、そのもの・末尾の / の下・* の当たり（/ をまたがない）で範囲に入る", () => {
@@ -234,5 +243,19 @@ describe("区分の対応のタスクと PR の本文", () => {
     expect(body).toContain("- 変えてよいファイル：`package.json`");
     expect(body).toContain("- 上げる依存：lib 1.0.0 → 1.0.1");
     expect(body).toContain("- 解消の確かめ方：`osv-scanner scan source -r .`");
+  });
+});
+
+describe("セキュリティ対応で既存の PR を引き継ぐ", () => {
+  it("security-fix の答えの continuePullRequest を読む（実装しない組み合わせでは読まない）", () => {
+    const answer = (plan: string) =>
+      json({
+        "sacty-steps": { plan, reason: "PR のセキュリティの指摘", continuePullRequest: true },
+      });
+    expect(extractStepPlan(answer("security-fix"))).toMatchObject({
+      plan: "security-fix",
+      continuePullRequest: true,
+    });
+    expect(extractStepPlan(answer("security-check"))?.continuePullRequest).toBeUndefined();
   });
 });

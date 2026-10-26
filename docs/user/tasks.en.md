@@ -186,6 +186,7 @@ The task details of an approved security check show a "Security fixes" section. 
 
 - One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
 - A category with a task shows a link to it. You cannot create another one for the same category.
+- The top of a fix task's details shows a link to the original report and the category.
 
 ### Security fix
 
@@ -193,10 +194,10 @@ Besides creating it from a report, you can create one in "Create task" by choosi
 
 1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope is not approved.
 2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
-3. sacty checks the diff against the scope, and the Goal Guardian checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, it fails and the implementation is redone.
+3. sacty checks the diff against the scope, and the Goal Guardian checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, it fails and the implementation is redone. Regression test files may be added outside the scope (their lines are counted).
 4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging.
 
-- When it cannot be fixed without changing something outside the scope, the agent writes the reason in the implementation's description. If it keeps failing and pauses, request changes on Investigate to widen the scope.
+- When it cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation's description. You cannot request changes on the preliminary Investigate, so cancel the task and rerun it, writing the scope to widen in the rerun's note. The rerun task also proceeds as "Security fix".
 - The results of security check and security fix tasks are not commented on the source issue or ticket. Comment requests in a step's output (`sacty-github-comments`) are not posted either.
 - A PR is created for a public repository too, as for other implementations. Decide whether it may be public before creating the task.
 
