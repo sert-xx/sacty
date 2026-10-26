@@ -5,6 +5,7 @@ import { task as taskMessages } from "@/i18n/messages/task";
 import {
   addedTestsResult,
   canControl,
+  describeEventParts,
   describeEvent as describeIn,
   judgedByGoalForCurrent,
   needsPerson,
@@ -108,7 +109,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
 
   it("実装へ戻すときは承認の取り消しを書かず、設計へ戻すときは書く", () => {
     const back = (target: "implement" | "design") =>
-      describeEvent(
+      describeEventParts(
         event({
           type: "ChangesRequested",
           payload: {
@@ -119,7 +120,8 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
             overLimit: false,
           },
         }),
-      );
+        ja,
+      ).text;
     expect(back("implement")).toBe("実装を差し戻し：指摘1件（人間）");
     expect(back("design")).toBe(
       "実装を差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
@@ -132,6 +134,28 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(
       describeEvent(event({ type: "StepApproved", payload: { step: "implement", next: "idle" } })),
     ).toBe("実装を承認・凍結（人間）");
+  });
+
+  it("差し戻しの行は、人が書いた指摘の本文を、1件ずつ詳細に出す", () => {
+    const requested = event({
+      type: "ChangesRequested",
+      payload: {
+        step: "requirements",
+        round: 2,
+        remarks: [
+          { id: "requirements-2-1", text: "異常系を詳しく" },
+          { id: "requirements-2-2", text: "移行の手順を書いて" },
+        ],
+        overLimit: false,
+      },
+    });
+    expect(describeEventParts(requested, ja)).toEqual({
+      text: "要求要件を差し戻し：指摘2件（人間）",
+      detail: "requirements-2-1：異常系を詳しく\nrequirements-2-2：移行の手順を書いて",
+    });
+    expect(describeEventParts(requested, labels.en).detail).toBe(
+      "requirements-2-1: 異常系を詳しく\nrequirements-2-2: 移行の手順を書いて",
+    );
   });
 
   it("人がテストの扱いを決めた記録と、工程の選択からやり直す再開を、日英で作業履歴に出す", () => {
@@ -194,7 +218,7 @@ describe("英語の表示（PBI-4b）", () => {
     ).toBe("Requirements awaiting approval");
     expect(personActionIn(task({ status: "awaiting_approval" }), en).label).toBe("Review");
     expect(
-      describeIn(
+      describeEventParts(
         event({
           type: "ChangesRequested",
           payload: {
@@ -206,7 +230,7 @@ describe("英語の表示（PBI-4b）", () => {
           },
         }),
         en,
-      ),
+      ).text,
     ).toBe(
       "Changes requested on Implement; redo from Design (Design approval revoked): 1 comment (person)",
     );

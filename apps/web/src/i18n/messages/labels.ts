@@ -368,6 +368,8 @@ const ja = {
       `${where}、${target}からやり直し${revoke ? `（${target}の承認を取り消し）` : ""}`,
     changesTail: (count: number, overLimit: boolean, actor: string) =>
       `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
+    /** 差し戻しの詳細（展開）に出す、指摘の1件。 */
+    changesRemark: (id: string, text: string) => `${id}：${text}`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
     /** 長い行を展開する印（PR #127 レビュー指摘）。 */
     more: "詳細",
@@ -782,6 +784,7 @@ const en: LabelMessages = {
       `${where}; redo from ${target}${revoke ? ` (${target} approval revoked)` : ""}`,
     changesTail: (count, overLimit, actor) =>
       `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
+    changesRemark: (id, text) => `${id}: ${text}`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
     more: "Details",
     ContextResolved: (layers, warnings) =>

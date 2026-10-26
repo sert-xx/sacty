@@ -432,6 +432,8 @@ The text on the screen says only the current state and what to do next, briefly.
 
 With the keyboard, it opens when you stop on the mark with Tab; on a phone, it opens on tap. Esc or a tap outside closes it. Items without a hint have no mark.
 
+In the Activity of the task details, press "Details" on a request-for-changes line to see the comments written when changes were requested. You can read past comments again even after approval, completion, or cancellation.
+
 ## Automatic updates on the screen
 
 While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
