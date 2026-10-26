@@ -27,6 +27,7 @@ import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
 import { startMemoryCleanup } from "./memory.js";
+import { NotificationFeed } from "./notification-feed.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
@@ -218,6 +219,8 @@ const service = new TaskService({
     webUrl: process.env.SACTY_WEB_URL ?? "http://127.0.0.1:4700",
     log: (line) => console.warn(line),
   }),
+  // 画面のデスクトップ通知のための、最近の通知（メモリーに持つ）
+  feed: new NotificationFeed(),
 });
 service.recoverInterrupted();
 // 前回、片付ける前にデーモンが終わって残った実行ごとの一時領域と、もう使わない完了したタスク・どのタスクのものでもない

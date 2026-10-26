@@ -285,7 +285,8 @@ export class SlackNotifier {
     let key: string | undefined;
     try {
       const destination = this.deps.notification();
-      if (!destination) return Promise.resolve();
+      // 止めている（設定は残している）ときは送らない
+      if (!destination || destination.off) return Promise.resolve();
       key = keyOf(destination);
       const projectName = this.deps.project(task.projectId)?.name;
       const text = withMention(
@@ -304,7 +305,10 @@ export class SlackNotifier {
     }
   }
 
-  /** テストの通知を送る（sacty の設定の画面から）。送れなければ、理由の例外にする。 */
+  /**
+   * テストの通知を送る（sacty の設定の画面から）。止めているときも送る（On に戻す前に確かめられるように）。送れなければ、
+   * 理由の例外にする。
+   */
   async test(): Promise<void> {
     const destination = this.deps.notification();
     if (!destination) throw new Error(renderMessage(message("notify.notConfigured"), "ja"));
@@ -321,7 +325,7 @@ export class SlackNotifier {
     let current: string | undefined;
     try {
       const destination = this.deps.notification();
-      if (!destination) return [];
+      if (!destination || destination.off) return [];
       current = keyOf(destination);
     } catch {
       // 設定を読めないときは、持っている理由を出す

@@ -76,6 +76,20 @@ const ja = {
   notifyTest: "テストの通知を送る",
   notifySaveFirst: "保存してから送れます",
   notifySent: "送りました。Slack を確かめてください。",
+  notifyOn: "Slack に通知する",
+  notifyOnHint:
+    "Off にすると、送り先の設定を残したまま送りません（保存すると反映します）。テストの通知は Off の間も送れます。",
+  desktopTitle: "デスクトップ通知（このブラウザー）",
+  desktopHint:
+    "承認待ち・エスカレーション・一時停止・完了を、このブラウザーのデスクトップ通知で知らせます。Slack の通知とは別に、ブラウザーごとに On/Off を切り替えます（保存は要りません）。Sacty の画面をどれかのタブで開いている間だけ届きます。",
+  desktopOn: "このブラウザーでデスクトップ通知を出す",
+  desktopUnsupported:
+    "このブラウザーでは使えません。https か localhost（127.0.0.1）で開いた画面でだけ使えます。",
+  desktopDenied:
+    "ブラウザーが通知を拒否しています。サイトの設定で通知を許可してから、もう一度 On にしてください。",
+  desktopTest: "テストの通知を出す",
+  desktopTestTitle: "Sacty のテストの通知",
+  desktopTestBody: "人間の出番になると、ここに通知します。",
   mentionTitle: "メンション（任意）",
   mentionTargets: "メンションする相手",
   mentionHint:
@@ -183,6 +197,20 @@ const en: SettingsMessages = {
   notifyTest: "Send a test notification",
   notifySaveFirst: "Save first to send",
   notifySent: "Sent. Check Slack.",
+  notifyOn: "Notify Slack",
+  notifyOnHint:
+    "When off, nothing is sent but the destination settings are kept (takes effect when you save). You can still send a test notification while it is off.",
+  desktopTitle: "Desktop notifications (this browser)",
+  desktopHint:
+    "Shows approvals, escalations, pauses, and completions as desktop notifications in this browser. Separate from Slack, you turn it on or off per browser (no need to save). They arrive only while a Sacty page is open in some tab.",
+  desktopOn: "Show desktop notifications in this browser",
+  desktopUnsupported:
+    "Not available in this browser. It works only on pages opened over https or localhost (127.0.0.1).",
+  desktopDenied:
+    "The browser is blocking notifications. Allow notifications in the site settings, then turn this on again.",
+  desktopTest: "Show a test notification",
+  desktopTestTitle: "Test notification from Sacty",
+  desktopTestBody: "Sacty will notify you here when it needs you.",
   mentionTitle: "Mentions (optional)",
   mentionTargets: "Who to mention",
   mentionHint:

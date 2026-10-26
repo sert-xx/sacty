@@ -58,7 +58,7 @@ Code: `<path>` (`<function name>`)
 - [Gateway](gateway.en.md): relaying AI calls, relaying organization platform (PF) calls, relaying MCP, host MCP servers
 - [Secrets](secrets.en.md): reference format, fetching all at startup, handling that keeps values out of output
 - [Services (docker compose)](services.en.md): starting and stopping, safety checks, localhost forwarding, shared compose
-- [Notifications](notifications.en.md): conditions, destinations, and message text for Slack notifications
+- [Notifications](notifications.en.md): conditions, destinations, and message text for Slack notifications, and browser desktop notifications
 - [Ticket intake and GitHub](intake.en.md): GitHub issues and PRs, JIRA, comments on the source, GitHub accounts
 - [Export](export.en.md): exporting results, exporting and importing projects
 - [Screen wording and hints](ui-wording.en.md): how body text and hints (tooltips) are split, the hint component, checks on the dictionaries

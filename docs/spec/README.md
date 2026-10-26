@@ -69,7 +69,7 @@
 - [ゲートウェイ](gateway.md)：AI の呼び出しの中継、組織内 PF の中継、MCP の中継、ホストの MCP サーバー
 - [秘密情報](secrets.md)：参照の形、起動のときのまとめての取り出し、値を出さないための扱い
 - [サービス（docker compose）](services.md)：起動と停止、安全の検査、localhost の転送、共用の compose
-- [通知](notifications.md)：Slack への通知の条件・送り先・本文
+- [通知](notifications.md)：Slack への通知の条件・送り先・本文と、ブラウザのデスクトップ通知
 - [チケットの取り込みと GitHub](intake.md)：GitHub の Issue・PR、JIRA、取り込み元へのコメント、GitHub のアカウント
 - [書き出し](export.md)：成果の書き出し、プロジェクトのエクスポート・インポート
 - [画面の文言と補足](ui-wording.md)：本文と補足（ツールチップ）の分け方、補足の部品、辞書の規則の検査

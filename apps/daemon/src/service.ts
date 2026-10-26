@@ -243,6 +243,7 @@ import {
   taskMemoryLayers,
   usefulCounts,
 } from "./memory.js";
+import type { FeedReply, NotificationFeed } from "./notification-feed.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import { CONTAINER_HANDOFF_DIR, stageHandoff } from "./orchestrator-handoff.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -585,6 +586,8 @@ export type ServiceDeps = {
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
   notifier?: Pick<SlackNotifier, "notify" | "test" | "problems"> &
     Partial<Pick<SlackNotifier, "settingsChanged">>;
+  /** 画面のデスクトップ通知のための、最近の通知の一覧。無ければ持たない。 */
+  feed?: Pick<NotificationFeed, "add" | "since">;
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -4549,6 +4552,8 @@ export class TaskService {
       } catch {
         // 通知の側で理由を持つ
       }
+      // 画面のデスクトップ通知（画面が取り直す）。Slack の On/Off によらず持つ
+      this.deps.feed?.add(updated.id, kind);
     }
     return updated;
   }
@@ -9335,6 +9340,11 @@ export class TaskService {
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
     }
+  }
+
+  /** 画面のデスクトップ通知のための、after より後の通知（PBI-38 の通知と同じもの）。 */
+  notificationFeed(after: number | undefined): FeedReply {
+    return this.deps.feed?.since(after) ?? { boot: "", latest: 0, items: [] };
   }
 
   /** sacty の設定の通知先に、テストの通知を送る（PBI-38・PBI-115）。送れなければ、理由の例外にする。 */

@@ -41,6 +41,16 @@ const ja = {
     title: "Docker を使える状態ではありません",
     recheck: "Sacty は1分ごとに確かめ直します。直すと、この表示は消えます。",
   },
+  /** ブラウザのデスクトップ通知。 */
+  desktop: {
+    kind: {
+      approval: "承認を待っています",
+      escalation: "エスカレーションしました",
+      paused: "一時停止しました",
+      completed: "完了しました",
+    },
+    body: (project: string, what: string) => `[${project}] ${what}`,
+  },
   user: {
     label: "ユーザー設定",
     settings: "Sacty の設定",
@@ -90,6 +100,15 @@ const en: ShellMessages = {
   docker: {
     title: "Docker is not ready",
     recheck: "Sacty checks again every minute. This notice goes away once it is fixed.",
+  },
+  desktop: {
+    kind: {
+      approval: "Waiting for your approval",
+      escalation: "Escalated",
+      paused: "Paused",
+      completed: "Done",
+    },
+    body: (project, what) => `[${project}] ${what}`,
   },
   user: {
     label: "Preferences",

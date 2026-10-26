@@ -768,3 +768,27 @@ describe("通知先を変えたら、変える前の失敗を出さない（PBI-
     expect(notifier.problems()).toEqual([]);
   });
 });
+
+describe("Slack の通知の On/Off", () => {
+  const destination: SlackNotification = {
+    kind: "slack-webhook",
+    webhook: "slack-webhook",
+    language: "ja",
+    off: true,
+  };
+
+  it("Off なら送らず、送れなかった理由も出さない。テストの通知は送る", async () => {
+    const api = slack(() => new Response("down", { status: 503 }));
+    const notifier = new SlackNotifier({
+      ...dest(destination),
+      secrets: new MemorySecretStore({ "slack-webhook": "https://hooks.example.com/x" }),
+      webUrl: "http://x",
+      fetchImpl: api.fetchImpl,
+    });
+    await notifier.notify(task(), "completed");
+    expect(api.calls).toHaveLength(0);
+    await expect(notifier.test()).rejects.toThrow("HTTP 503");
+    expect(api.calls).toHaveLength(1);
+    expect(notifier.problems()).toEqual([]);
+  });
+});

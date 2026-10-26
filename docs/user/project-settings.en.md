@@ -19,7 +19,7 @@ You switch the displayed project in the header of the web UI (choosing one moves
 | GitHub account | The `gh` account to use for each host | [GitHub account](#github-account) |
 | Shared compose (optional) | A team-shared docker compose used for tests | [docker compose services](compose.en.md#shared-compose) |
 
-Slack notifications are not in project settings: set one destination shared by all projects in the "Sacty settings" ([Slack notifications](notifications.en.md)).
+Slack notifications are not in project settings: set one destination shared by all projects in the "Sacty settings" ([Notifications](notifications.en.md)).
 
 The after-merge watch is not turned on or off in project settings. If the target repository has the skill, it is added to the task's steps ([After-merge watch](deployment-watch.en.md)).
 

@@ -9,6 +9,7 @@ import {
   type DaemonText,
   type DashboardSummary,
   type IntakeKind,
+  type NotificationKind,
   type Project,
   type ProjectAudits,
   type ProjectDefinitionInput,
@@ -498,6 +499,16 @@ export function askQuestion(id: string, text: string): Promise<OpResult> {
 
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
 /** sacty の設定の通知先に、テストの通知を送る（PBI-38・PBI-115）。 */
+/** 画面のデスクトップ通知のための、最近の通知（after より後。省けば最後の番号だけ）。 */
+export async function getNotificationFeed(after?: number): Promise<{
+  boot: string;
+  latest: number;
+  items: { seq: number; at: string; taskId: string; kind: NotificationKind }[];
+}> {
+  const query = after === undefined ? "" : `?after=${after}`;
+  return (await ensureOk(await daemonFetch(`/api/notifications${query}`))).json();
+}
+
 export async function testNotification(): Promise<OpResult> {
   return postOp("/api/settings/notification-test", {});
 }

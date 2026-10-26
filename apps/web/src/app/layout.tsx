@@ -8,6 +8,7 @@ import "@fontsource/ibm-plex-sans-jp/700.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import { Suspense } from "react";
+import { DesktopNotifications } from "@/components/shell/desktop-notifications";
 import { DockerNotice } from "@/components/shell/docker-notice";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
@@ -31,6 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
+        {/* ブラウザのデスクトップ通知（このブラウザで On にしたときだけ。画面には何も描かない） */}
+        <DesktopNotifications />
         {/* 画面の言語は cookie とリクエストから決まるので、どこも Suspense の中で決める */}
         <Suspense fallback={<HeaderFallback />}>
           <Localized>

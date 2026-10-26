@@ -40,6 +40,8 @@ export function NotificationSettings({
   const [notifyWebhook, setNotifyWebhook] = useState(
     saved?.kind === "slack-webhook" ? saved.webhook : "",
   );
+  // 止める（送り先の設定は残す）
+  const [notifyOff, setNotifyOff] = useState(saved?.off ?? false);
   const [notifyLanguage, setNotifyLanguage] = useState<"ja" | "en">(saved?.language ?? "ja");
   // メンション（PBI-69）。相手は編集しやすいよう、カンマか空白で区切った文字列で持つ
   const [mentionTargets, setMentionTargets] = useState(saved?.mention?.targets.join(", ") ?? "");
@@ -63,6 +65,7 @@ export function NotificationSettings({
           },
         }
       : {};
+  const off = notifyOff ? { off: true as const } : {};
   const notification =
     notifyKind === "slack-api"
       ? {
@@ -72,9 +75,16 @@ export function NotificationSettings({
           ...(notifyToken.trim() ? { token: notifyToken.trim() } : {}),
           language: notifyLanguage,
           ...mention,
+          ...off,
         }
       : notifyKind === "slack-webhook"
-        ? { kind: notifyKind, webhook: notifyWebhook.trim(), language: notifyLanguage, ...mention }
+        ? {
+            kind: notifyKind,
+            webhook: notifyWebhook.trim(),
+            language: notifyLanguage,
+            ...mention,
+            ...off,
+          }
         : undefined;
   const [testState, testAction, testing] = useActionState<TestNotificationState, FormData>(
     testNotificationAction,
@@ -115,6 +125,21 @@ export function NotificationSettings({
             <p key={p}>{p}</p>
           ))}
         </div>
+      )}
+      {notifyKind && (
+        <span className="flex items-center gap-1">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              data-testid="notification-on"
+              checked={!notifyOff}
+              onChange={(e) => setNotifyOff(!e.target.checked)}
+              className="size-4"
+            />
+            {t.notifyOn}
+          </label>
+          <Hint text={t.notifyOnHint} className="size-4" />
+        </span>
       )}
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex min-w-0 max-w-full flex-col gap-1 text-xs text-muted-foreground">
