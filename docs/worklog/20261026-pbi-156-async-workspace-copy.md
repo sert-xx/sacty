@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-26（UTC）
 - タスク: PBI-156
-- PR: なし
+- PR: #226
 - ブランチ: claude/sweet-ride-tpbj7w
 - 関係する ADR: [対象リポジトリの大きさに比例する作業領域の写し・削除は、デーモンのイベントループを止めない非同期のファイル操作で行う](../adr/20261025-2359-async-workspace-copy-and-removal.md)
 
