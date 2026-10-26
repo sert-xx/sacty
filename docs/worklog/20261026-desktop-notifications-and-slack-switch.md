@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-26（UTC）
 - タスク: なし
-- PR: なし
+- PR: #230
 - ブランチ: ccr-6f352c3c-q0e1f4
 - 関係する ADR: [ブラウザのデスクトップ通知を足し、Slack の通知は設定を残したまま止められるようにする](../adr/20261026-1315-desktop-notifications-and-notification-switches.md)
 
