@@ -313,6 +313,8 @@ describe("既定の review スキルの、コードの簡潔さと UX の観点"
     expect(capture).toContain("**撮れる環境のときだけ撮る。**");
     expect(capture).toContain("`playwright install` を実行しない");
     expect(capture).toContain("担当の起動を止めない");
+    // 途中で失敗しても、撮れた分は担当に渡す
+    expect(capture).toContain("撮れた分がある（`partial`）ときは、`screens.json` の場所を渡す");
     expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
       "- 画面の記録（C-13・C-16 のとき）：<screens.json の場所。撮っていなければ「画面は撮っていない（理由）」>",
     );

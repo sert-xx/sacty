@@ -36,6 +36,13 @@
 - `npm run lint`：問題なし。
 - `npx vitest run apps/daemon`：8 件が失敗した（`agent-sessions.test.ts`・`context-mcp.test.ts`・`host-mcp-processes.test.ts`）。変更前のコードでも同じ 8 件が失敗するので、この変更とは関係ない（root で実行したコンテナの環境によるもの）。
 
+## レビューの指摘と対応
+
+- 途中で失敗したときも一律に「画面は撮っていない」と渡すので、`partial` で残した画像が使われない（`screen-capture.md`）。
+  - 1 枚も撮れなかったときだけ「画面は撮っていない」と渡し、`partial` なら `screens.json` の場所を渡すようにした。担当の手順（`review-execution/SKILL.md`）と仕様書も合わせた。
+- C-15 の例1の「2 行を消す」に従うと、`label` が値を返さなくなる。
+  - null の確認の行を消し、戻り値を `return task.title;` にする、と直した。
+
 ## 残したこと
 
 - 利用者向け文書（`user-doc`）にも、書きすぎを探す観点（D-10 に当たるもの）が無い。今回は足していない。
