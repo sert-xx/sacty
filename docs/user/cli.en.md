@@ -14,6 +14,9 @@ npx sacty up [--port <web-ui-port>] [--daemon-port <daemon-port>]
 
 This command starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal (it does not open a browser). Ctrl+C stops both.
 
+- When stopping, it waits up to 30 seconds for in-progress work to clean up (such as recording to the activity log). If the cleanup takes long, it shows what it is waiting for (running tasks, PR checks, and so on).
+- To stop without waiting, press Ctrl+C again while it is stopping. Runs whose cleanup was not finished are treated as interrupted at the next start, and tasks that were running are paused.
+
 | Option | Default | Description |
 | --- | --- | --- |
 | `--port` | `4700` | Port of the web UI |
