@@ -233,6 +233,13 @@ export function createApp(
     }
   });
 
+  // 画面のデスクトップ通知のための、最近の通知（?after=<番号> より後。省けば最後の番号だけ）
+  app.get("/api/notifications", (c) => {
+    const raw = c.req.query("after");
+    const after = raw !== undefined && /^\d{1,15}$/.test(raw) ? Number(raw) : undefined;
+    return c.json(service.notificationFeed(after));
+  });
+
   // タスクの対象リポジトリの候補（プロジェクトの対象から。PBI-25）
   app.get("/api/projects/:id/repositories", async (c) => {
     const result = await service.projectRepositories(c.req.param("id"));

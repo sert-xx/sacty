@@ -11,6 +11,7 @@ import {
 } from "@sacty/core";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
+import { DesktopNotificationSettings } from "@/components/desktop-notification-settings";
 import { NotificationSettings } from "@/components/notification-settings";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
@@ -323,6 +324,7 @@ export function SettingsForm({
         </p>
       </section>
       <NotificationSettings saved={notification} problems={notificationProblems} />
+      <DesktopNotificationSettings />
       {state.message && (
         <p role="alert" className="text-sm text-warn">
           {state.message}

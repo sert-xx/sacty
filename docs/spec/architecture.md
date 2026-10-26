@@ -41,7 +41,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
 | スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
-| sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
+| sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`GET /api/notifications`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
 

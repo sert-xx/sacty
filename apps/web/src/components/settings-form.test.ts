@@ -117,8 +117,8 @@ describe("sacty の設定の Slack の通知（PBI-115）", () => {
     language: "en" as const,
     mention: { targets: ["U0123ABCD", "@here"], kinds: ["approval" as const, "paused" as const] },
   };
-  /** 通知の区画（最後の section）。 */
-  const notificationSection = (html: string) => html.split("<section").at(-1) ?? "";
+  /** Slack の通知の区画（最後から2つ目の section。最後はデスクトップ通知）。 */
+  const notificationSection = (html: string) => html.split("<section").at(-2) ?? "";
 
   it("通知の区画に、送り方・言語・URL・チャンネル・トークン・メンション・テストの通知を、日英の文言で出す", () => {
     for (const lang of ["ja", "en"] as const) {
@@ -159,6 +159,29 @@ describe("sacty の設定の Slack の通知（PBI-115）", () => {
     expect(section).not.toContain(t.notifyTest);
   });
 
+  it("送り先があれば「Slack に通知する」を出し、Off にしても送り先の設定を残したまま保存する", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const value = (html: string) =>
+        JSON.parse(
+          (html.match(/name="notification" value="([^"]*)"/)?.[1] ?? "").replaceAll("&quot;", '"'),
+        );
+      const on = notificationSection(render({ notification: destination }));
+      expect(on, lang).toContain(t.notifyOn);
+      const box = (html: string) => html.match(/<input[^>]*notification-on[^>]*>/)?.[0] ?? "";
+      expect(box(on), lang).toContain('checked=""');
+      const off = notificationSection(render({ notification: { ...destination, off: true } }));
+      expect(box(off), lang).not.toContain("checked");
+      expect(value(off), lang).toEqual({ ...destination, off: true });
+      // Off の間もテストの通知は送れる
+      expect(off, lang).toContain(t.notifyTest);
+    }
+    locale = "ja";
+    // 送り先が無ければ出さない
+    expect(notificationSection(render())).not.toContain("notification-on");
+  });
+
   it("Webhook の通知先は、Webhook の URL の欄を出す", () => {
     locale = "ja";
     const t = messagesFor("ja").settings;
@@ -175,7 +198,7 @@ describe("sacty の設定の、通知を送れなかった理由（PBI-115）", 
   it("通知の区画に、送れなかった理由を出す。無ければ出さない", () => {
     locale = "ja";
     const problem = "Slack の通知を送れませんでした：HTTP 500（タスクは止めていません）";
-    const section = (html: string) => html.split("<section").at(-1) ?? "";
+    const section = (html: string) => html.split("<section").at(-2) ?? "";
     const shown = section(render({ notificationProblems: [problem] }));
     expect(shown).toContain('data-testid="notification-problems"');
     expect(shown).toContain(problem);
@@ -184,7 +207,7 @@ describe("sacty の設定の、通知を送れなかった理由（PBI-115）", 
 });
 
 describe("sacty の設定の Slack の通知の区画の見え方（PBI-115 レビュー指摘）", () => {
-  const section = (html: string) => html.split("<section").at(-1) ?? "";
+  const section = (html: string) => html.split("<section").at(-2) ?? "";
   const destination = {
     kind: "slack-api" as const,
     url: "https://slack.example.com/api/chat.postMessage",
@@ -239,6 +262,24 @@ describe("レビューのメンションの相手", () => {
       expect(render({ reviewMentionSelf: true }), lang).toContain(
         'name="reviewMentionSelf" checked=""',
       );
+    }
+    locale = "ja";
+  });
+});
+
+describe("sacty の設定のデスクトップ通知", () => {
+  it("Slack の通知の後に、このブラウザーで切り替えるデスクトップ通知の区画を、日英の文言で出す", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const section = render().split("<section").at(-1) ?? "";
+      expect(headings(section)[0], lang).toBe(t.desktopTitle);
+      expect(section, lang).toContain(t.desktopOn);
+      // ブラウザーの状態は描いた後に読むので、サーバーの描画では切り替えられない（保存するフォームの値も持たない）
+      expect(section.match(/<input[^>]*desktop-notification-on[^>]*>/)?.[0], lang).toContain(
+        'disabled=""',
+      );
+      expect(section, lang).not.toContain("name=");
     }
     locale = "ja";
   });

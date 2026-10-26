@@ -83,6 +83,7 @@ import {
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
+import { NotificationFeed } from "./notification-feed.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
@@ -1006,6 +1007,7 @@ function makeService(
     hostMcpReady?: ServiceDeps["hostMcpReady"];
     contextMcp?: ServiceDeps["contextMcp"];
     notifier?: ServiceDeps["notifier"];
+    feed?: ServiceDeps["feed"];
     /** sacty の新しい版の知らせ（PBI-135）。 */
     update?: ServiceDeps["update"];
     services?: ServiceRunner;
@@ -1078,6 +1080,7 @@ function makeService(
     ...(options.hostMcpReady ? { hostMcpReady: options.hostMcpReady } : {}),
     ...(options.contextMcp ? { contextMcp: options.contextMcp } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
+    ...(options.feed ? { feed: options.feed } : {}),
     ...(options.update ? { update: options.update } : {}),
     ...(options.services ? { services: options.services } : {}),
     ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
@@ -11442,6 +11445,62 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
       headers: auth,
     });
     expect(old.status).toBe(404);
+    activity.close();
+  });
+
+  it("Slack の通知を Off にしても送り先の設定は残し、送らない。デスクトップ通知の一覧には Off の間も入れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({});
+    const slack = fakeSlack();
+    const projects = projectsWithAccount();
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => projects.get(id),
+      secrets: new MemorySecretStore({ "slack-bot": "xoxb-very-secret" }),
+      webUrl: "http://127.0.0.1:4700",
+      fetchImpl: slack.fetchImpl,
+    });
+    const feed = new NotificationFeed();
+    const { service } = makeService(activity, [completed(10)], {
+      settings,
+      projects,
+      notifier,
+      feed,
+    });
+    const app = createApp(service, token);
+    const saved = await app.request("/api/settings", {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({ intakeLabel: "sacty", notification: { ...destination, off: "on" } }),
+    });
+    expect(saved.status).toBe(200);
+    expect(settings.get().notification).toEqual({ ...destination, off: true });
+    const reply = async (query = "") =>
+      (await (await app.request(`/api/notifications${query}`, { headers: auth })).json()) as {
+        boot: string;
+        latest: number;
+        items: { seq: number; taskId: string; kind: string }[];
+      };
+    // 最初の問い合わせ（after 無し）は、最後の番号だけを返す
+    expect(await reply()).toEqual({ boot: feed.boot, latest: 0, items: [] });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(slack.calls).toHaveLength(0);
+    expect(await reply("?after=0")).toMatchObject({
+      latest: 1,
+      items: [
+        { seq: 1, taskId: task.id, projectId: "default", title: "決済API", kind: "approval" },
+      ],
+    });
+    expect(await reply("?after=1")).toMatchObject({ latest: 1, items: [] });
+    expect(await reply()).toMatchObject({ latest: 1, items: [] });
+    // Off の間も、テストの通知は送れる
+    expect(
+      (await app.request("/api/settings/notification-test", { method: "POST", headers: auth }))
+        .status,
+    ).toBe(200);
+    expect(slack.calls).toHaveLength(1);
     activity.close();
   });
 

@@ -147,6 +147,14 @@ export const SlackMention = z.object({
 export type SlackMention = z.infer<typeof SlackMention>;
 
 /**
+ * 通知を止めているか（送り先の設定は残したまま止める）。画面のチェックボックス（on）も受け付ける。送るとき（既定）は持たない。
+ */
+const NotificationOff = z.preprocess(
+  (v) => (v === true || v === "on" || v === "true" ? true : undefined),
+  z.literal(true).optional(),
+);
+
+/**
  * Slack の通知先（PBI-38）。Slack API の形（chat.postMessage。Slack Proxy でも使える）か、Incoming Webhook。
  * 秘密情報（トークン・Webhook の URL）は名前か 1Password の参照で書き、値は書かない。sacty の設定に1つだけ持ち、
  * すべてのプロジェクトのタスクの通知をここに送る（PBI-115。以前はプロジェクトごと）。
@@ -162,6 +170,8 @@ export const SlackNotification = z.discriminatedUnion("kind", [
     language: z.enum(["ja", "en"]).default("ja"),
     /** メンション（PBI-69）。無ければメンションしない。 */
     mention: SlackMention.optional(),
+    /** true なら送らない（設定は残す）。 */
+    off: NotificationOff,
   }),
   z.object({
     kind: z.literal("slack-webhook"),
@@ -169,6 +179,7 @@ export const SlackNotification = z.discriminatedUnion("kind", [
     webhook: SecretRefInput,
     language: z.enum(["ja", "en"]).default("ja"),
     mention: SlackMention.optional(),
+    off: NotificationOff,
   }),
 ]);
 export type SlackNotification = z.infer<typeof SlackNotification>;

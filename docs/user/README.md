@@ -24,7 +24,7 @@ sacty の全体像は次のとおりです。
 10. [コンテナイメージ](images.md)：プライベートのレジストリ・言語ごとのイメージ
 11. [docker compose のサービス](compose.md)：DB・モック API・共用の compose
 12. [成果の書き出し](result-export.md)：Confluence・Notion などへの書き出し
-13. [Slack の通知](notifications.md)：Sacty の設定の送り先・メンション
+13. [通知（Slack・デスクトップ）](notifications.md)：Sacty の設定の送り先・メンション・On/Off、ブラウザーのデスクトップ通知
 14. [マージの後の監視](deployment-watch.md)：実装の後の工程。
     CI/CD とデプロイ後のアプリの確認・スキルの置き方・修正のタスクの自動の登録
 15. [CLI](cli.md)：sacty コマンドとオプション

@@ -21,7 +21,7 @@
 | GitHub アカウント | ホストごとに使う `gh` のアカウント | [GitHub アカウント](#github-アカウント) |
 | 共用の compose（任意） | テストに使う、チームで共用する docker compose | [docker compose のサービス](compose.md#共用の-compose) |
 
-Slack の通知は、プロジェクトの設定ではなく「Sacty の設定」で、すべてのプロジェクトに共通の通知先を設定します（[Slack の通知](notifications.md)）。
+Slack の通知は、プロジェクトの設定ではなく「Sacty の設定」で、すべてのプロジェクトに共通の通知先を設定します（[通知](notifications.md)）。
 
 マージの後の監視は、プロジェクトの設定で On・Off しません。
 対象のリポジトリにスキルがあれば、タスクの工程に入ります（[マージの後の監視](deployment-watch.md)）。

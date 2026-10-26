@@ -36,7 +36,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
 | Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
-| sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
+| sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `GET /api/notifications`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
 
