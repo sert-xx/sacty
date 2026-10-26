@@ -1658,6 +1658,26 @@ while true; do sleep 0.05; done
     const staging = readFileSync(join(bin, "staging.path"), "utf8").trim();
     expect(existsSync(staging)).toBe(false);
   });
+
+  it("止め始めた後に始めた実行は、コンテナを起動しない（作業領域を写す間に止めたとき。PBI-156）", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const spawned: string[][] = [];
+    const spawnImpl = ((_command: string, args: string[]) => {
+      spawned.push(args);
+      throw new Error("起動してはいけない");
+    }) as unknown as typeof import("node:child_process").spawn;
+    const executor = new DockerExecutor(undefined, spawnImpl);
+    executor.abortAll();
+    const outcome = await executor.run({
+      runId: "r1",
+      image: "img",
+      workspaceDir: dir,
+      invocation: { command: ["claude"], env: {}, parser: "claude-json" },
+    });
+    expect(outcome).toMatchObject({ kind: "failed", message: { code: "run.daemonStopped" } });
+    expect(spawned).toEqual([]);
+  });
 });
 
 describe("認証ファイルの書き戻しでコンテナの中を信じない（偽のdockerコマンド。PBI-71）", () => {

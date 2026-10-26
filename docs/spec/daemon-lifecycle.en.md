@@ -157,10 +157,10 @@ On SIGINT or SIGTERM, the daemon does the following, only once.
 1. It stops the git processes fetching contexts for retrieving secrets, together with their process groups (`stopFetchProcessesSync`). These git processes run in their own process groups.
 2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up.
 3. It starts stopping the host MCP servers and the context's command MCP servers. It does not wait for cleanup. For the context's servers, it also removes the layer copies.
-4. It stops the running agent containers.
+4. It stops the running agent containers. After this, it starts no new containers (a run that was copying its workspace ends with `run.daemonStopped` without starting, even after the copy finishes).
 5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. After that, it shows a warning and continues.
 6. It closes the gateway, waits for the host MCP servers to stop, and closes the API listener. Then it closes the DB, releases the lock (also removing the `daemon-owner.json` it wrote), and exits with exit code 0.
 
 When the daemon ends because of an exception or similar (`exit`), it also sends SIGTERM to the process groups of the host MCP servers, and SIGKILL to the process groups of the git processes fetching contexts ([Secrets](secrets.en.md)).
 
-Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)
+Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`), `apps/daemon/src/agents/docker.ts` (`DockerExecutor.abortAll`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)

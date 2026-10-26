@@ -3168,6 +3168,81 @@ describe("設計の工程（PBI-8）", () => {
   });
 });
 
+describe("作業領域の写し・削除の間も、デーモンのイベントループを止めない（PBI-156）", () => {
+  /** 多数のファイルを書き出す写し（数万ファイルの作業ツリーの代わり）。 */
+  class ManyFilesRepos extends FakeRepos {
+    override async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+      await super.snapshot(gitDir, baseCommit, outDir);
+      if (!outDir.includes("_guardian")) return;
+      for (let d = 0; d < 20; d++) {
+        mkdirSync(join(outDir, "node_modules", `pkg${d}`), { recursive: true });
+        for (let f = 0; f < 100; f++) {
+          writeFileSync(join(outDir, "node_modules", `pkg${d}`, `f${f}.js`), "x");
+        }
+      }
+    }
+  }
+
+  it("ゴールガーディアンの作業領域を消す間も、ほかのタイマーが進み、消し終わってから工程を終える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const out = (text: string): AgentOutcome => ({
+      kind: "completed",
+      output: text,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        out(
+          [
+            "# 設計 v1",
+            block({
+              "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+            }),
+            block({
+              "sacty-change-proposal": {
+                target: "requirements",
+                reason: "外部APIが冪等性キーに対応していない",
+                facts: ["決済代行のAPI仕様書 v3 に Idempotency-Key が無い"],
+                proposed: "# 要求要件 v2",
+              },
+            }),
+          ].join("\n\n"),
+        ),
+        out(block({ "sacty-verdict": { verdict: "rejected", reason: "代替手段がある" } })),
+      ],
+      { repos: new ManyFilesRepos() },
+    );
+    // ゴールガーディアンの実行が終わってから、作業領域が消えるまでに進んだタイマーの数
+    let ticks = 0;
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      const outcome = await run(input);
+      if (input.workspaceDir.includes("_guardian")) {
+        expect(existsSync(join(input.workspaceDir, "node_modules", "pkg19", "f99.js"))).toBe(true);
+        const tick = () => {
+          if (!existsSync(input.workspaceDir)) return;
+          ticks++;
+          setImmediate(tick);
+        };
+        setImmediate(tick);
+      }
+      return outcome;
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.dirs[2]).toContain("_guardian");
+    // 同期で消すと、消し終わるまでタイマーが1つも進まない
+    expect(ticks).toBeGreaterThan(0);
+    expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
+    activity.close();
+  });
+});
+
 describe("ゴールガーディアン：変更の申し出の判定（PBI-9）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -278,9 +279,10 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     if (recorded !== undefined && !COMMIT_RE.test(recorded)) {
       throw new MessageError(message("git.invalidBaseCommit"));
     }
-    // 前回の clone が途中で止まっていれば、作り直す
+    // 前回の clone が途中で止まっていれば、作り直す。リポジトリの大きさに比例する写し・削除は、デーモンの
+    // イベントループを止めないよう非同期で行う（画面や API に応答し続ける。PBI-156）
     for (const path of [dir, gitDir]) {
-      if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+      if (existsSync(path)) await rm(path, { recursive: true, force: true });
     }
     const env = cloneEnv(authEnv);
     // ブランチの指定が無ければ、リポジトリの既定のブランチを clone する（PBI-25）
@@ -318,21 +320,22 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       (await git("symbolic-ref", ["symbolic-ref", "--short", "HEAD"], env, dir)).trim();
     // エージェントが触る前のメタデータを、どのコンテナにもマウントしない場所に退避する
     mkdirSync(dirname(gitDir), { recursive: true });
-    cpSync(join(dir, ".git"), gitDir, { recursive: true });
+    await cp(join(dir, ".git"), gitDir, { recursive: true });
     return { baseCommit, baseBranch: branch };
   }
 
   async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (!existsSync(dir)) throw new MessageError(message("verify.workspaceMissing"));
     mkdirSync(dirname(outDir), { recursive: true });
-    cpSync(dir, outDir, {
+    // 数 GB・数万ファイルになりうるので、非同期で写す（写す間もデーモンが応答し続ける。PBI-156）
+    await cp(dir, outDir, {
       recursive: true,
       // リンクの先は写さない（ホストのファイルを取り込まない）。作業領域の .git は渡さない
       verbatimSymlinks: true,
       filter: (src) => relative(dir, src).split(sep)[0] !== ".git",
     });
     // 退避したメタデータ（エージェントが触る前のもの）の写しを .git にする。写しなので、退避したものは書き換えられない
-    if (gitDir) cpSync(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
+    if (gitDir) await cp(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
   }
 
   async snapshot(gitDir: string, baseCommit: string, outDir: string) {

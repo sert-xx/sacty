@@ -357,6 +357,9 @@ export class DockerExecutor implements AgentExecutor {
     log,
     timeoutMs = this.timeoutMs,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
+    // デーモンを止め始めた後は、新しく起動しない（作業領域を非同期で写している間に止められたとき。PBI-156）
+    if (this.aborting)
+      return { kind: "failed", reason: "error", message: message("run.daemonStopped") };
     const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
     // ディレクトリごとマウントする（ファイル単体だと親ディレクトリがroot所有になり書き込めないため）
