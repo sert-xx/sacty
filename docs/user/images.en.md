@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/install-security-tools.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -23,6 +23,7 @@ The image includes the following commands that agents use in their work. Command
 | `sqlite3`, `python3` | Inspect SQLite databases, and write scripts to check things |
 | `shellcheck` | Check shell scripts |
 | `drawio` | Convert and export draw.io diagrams ([The draw.io CLI](#the-drawio-cli) below) |
+| `osv-scanner`, `gitleaks` | Check for dependency vulnerabilities and leaked secrets (used by security checks and security fixes; [Working with tasks](tasks.en.md#security-checks-and-fixes)) |
 
 - All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). You get the versions that were current when the image was built.
 - `npx sacty image build` uses Docker's build cache, so a rebuild alone may not fetch the packages again. To pick up OS security updates, do one of the following and then rebuild.
@@ -30,6 +31,7 @@ The image includes the following commands that agents use in their work. Command
   - Clear the build cache with `docker builder prune`
 
   Commands that the base image already has are not reinstalled, so their updates come from the base image.
+- `osv-scanner` and `gitleaks` are not OS packages: sacty fetches a pinned version from the official GitHub releases and checks it against the hash file of the same release before installing it. If the GitHub releases cannot be reached, sacty reports a warning in the build log and builds the image without them (the steps report those categories as unchecked scope). If a hash does not match, the build stops.
 - If a command cannot be installed, for example because the package mirror is unreachable, sacty reports a warning in the build log and builds the image anyway (agents use other means instead).
 - On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available. Because `packages` are installed before `run`, do not list EPEL packages in `packages`. Install them in the same `run`, after the command that enables EPEL.
 

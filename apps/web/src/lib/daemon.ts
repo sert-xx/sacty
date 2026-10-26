@@ -18,6 +18,8 @@ import {
   type SactySettingsInput,
   type ScheduleInputValue,
   type ScheduleView,
+  type SecurityCategory,
+  type SecurityFinding,
   type StepKey,
   type Task,
   type TaskAudit,
@@ -481,6 +483,20 @@ export function cancelTask(id: string): Promise<OpResult> {
 /** レビューを投稿して完了したタスクを、PR の最新のコミットでもう一度レビューする（PBI-44）。 */
 export function rereviewTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/rereview`, {});
+}
+
+/** 承認したセキュリティチェックのレポートの指摘。レポートでなければ空。 */
+export async function getSecurityFindings(id: string): Promise<SecurityFinding[]> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/security-findings`);
+  // 指摘の API の無い古いデーモン・消えたタスク
+  if (res.status === 404) return [];
+  await ensureOk(res);
+  return ((await res.json()) as { findings: SecurityFinding[] }).findings;
+}
+
+/** 承認したセキュリティチェックのレポートの区分から、セキュリティ対応のタスクを作る。 */
+export function requestSecurityFix(id: string, category: SecurityCategory): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/security-fixes`, { category });
 }
 
 /** 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。書き出しは待たない。 */

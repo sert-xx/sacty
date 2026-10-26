@@ -15,7 +15,7 @@ sacty のタスクの実装の PR がマージされたら、sacty はマージ�
 
 ## 工程に入れるか
 
-- 実装を含む組み合わせ（`standard`・`skip-design`・`bugfix`）の最後（実装の後）に `deployment` がある（`STEP_PLANS`）。
+- 実装を含む組み合わせ（`standard`・`skip-design`・`direct`・`bugfix`・`security-fix`）の最後（実装の後）に `deployment` がある（`STEP_PLANS`）。
   タスク分割の親には無い（子タスクが、それぞれの組み合わせで持つ）。
 - 組み合わせを選んだ後、`StepsChosen` を記録する前に、sacty は起点のコミット（ベースブランチを選び直したら、そのコミット）でスキルを探す（下の「スキルの探し方」）。
   - あれば、`StepsChosen` の `deployment` に `skill`（パス）を持つ。

@@ -309,7 +309,7 @@ agent_fallback:
       split: 10
   ```
 
-  組み合わせの名前は `standard`・`skip-design`・`direct`・`bugfix`・`investigate`・`design-only`・`review`・`split`・`document`・`operation` です。
+  組み合わせの名前は `standard`・`skip-design`・`direct`・`bugfix`・`investigate`・`design-only`・`review`・`split`・`document`・`operation`・`security-check`・`security-fix` です。
   ほかの名前を書くと、設定の誤りになります。
 - 予算の 80% で作業履歴に通知を記録し、上限に達したら一時停止します（作業は残します）。
   再開するときは、累計の新しい上限を画面で入力します（[一時停止・再開・中止](tasks.md#一時停止再開中止)）。

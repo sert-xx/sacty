@@ -336,6 +336,14 @@ const PARAMS = {
   "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
   "review.viewpointUnmapped": null,
+  "review.scopeViolated": z.object({
+    outside: z.array(z.string()),
+    lines: z.number().int().nonnegative().optional(),
+    max: z.number().int().positive(),
+  }),
+  "security.notReport": null,
+  "security.alreadyRequested": null,
+  "security.noFindings": null,
   "run.guardianFailed": z.object({ detail: TextParam }),
   "verify.testsUnavailable": z.object({ detail: TextParam }),
   "verify.workspaceMissing": null,
@@ -1047,6 +1055,18 @@ const ja: MessageDictionary = {
     `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
+  "review.scopeViolated": ({ outside, lines, max }) =>
+    [
+      "差分が修正の範囲を守っていません（sacty の検査）。",
+      ...(outside.length > 0 ? [`範囲の外のファイルを変えています：${outside.join("・")}。`] : []),
+      ...(lines !== undefined
+        ? [`変えた行の数（ロックファイルを除く）が ${lines} 行で、上限の ${max} 行を超えています。`]
+        : []),
+    ].join(""),
+  "security.notReport":
+    "承認して完了したセキュリティチェックのタスクではないので、対応のタスクを作れません。",
+  "security.alreadyRequested": "この区分の対応のタスクは、すでに作っています。",
+  "security.noFindings": "レポートに、この区分の指摘がありません。",
   "run.guardianFailed": ({ detail }, text) =>
     `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
@@ -1664,6 +1684,20 @@ const en: MessageDictionary = {
     `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
+  "review.scopeViolated": ({ outside, lines, max }) =>
+    [
+      "The diff does not stay within the fix scope (sacty's check).",
+      ...(outside.length > 0
+        ? [` It changes files outside the scope: ${outside.join(", ")}.`]
+        : []),
+      ...(lines !== undefined
+        ? [` It changes ${lines} lines (excluding lockfiles), over the limit of ${max}.`]
+        : []),
+    ].join(""),
+  "security.notReport":
+    "This is not a security check task whose report was approved and completed, so no fix task can be created.",
+  "security.alreadyRequested": "A fix task for this category has already been created.",
+  "security.noFindings": "The report has no findings in this category.",
   "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
   "verify.workspaceMissing":

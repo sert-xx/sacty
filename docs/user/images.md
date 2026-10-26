@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/install-security-tools.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
 
 **日本語** | [English](images.en.md)
 
@@ -28,6 +28,7 @@ sacty を更新したら、イメージを作り直してください。
 | `sqlite3`・`python3` | SQLite のデータベースを見る・スクリプトを書いて確かめる |
 | `shellcheck` | シェルスクリプトを検査する |
 | `drawio` | draw.io の図を変換・書き出す（下の [draw.io の CLI](#drawio-の-cli)） |
+| `osv-scanner`・`gitleaks` | 依存の脆弱性・秘密情報の混入を検査する（セキュリティチェック・セキュリティ対応で使います。[タスクを進める](tasks.md#セキュリティチェックと対応)） |
 
 - どれもオープンソースのソフトウェアで、OS の配布元のパッケージ（元のイメージに設定してあるミラー）から入れます。
   入るのは、イメージを作った時点の版です。
@@ -38,6 +39,9 @@ sacty を更新したら、イメージを作り直してください。
   - `docker builder prune` でビルドのキャッシュを消す
 
   元のイメージにすでにあるコマンドは入れ直さないので、その更新は元のイメージの側で入れます。
+- `osv-scanner`・`gitleaks` は、OS のパッケージではなく、GitHub の公式のリリースから版を固定して取り、同じリリースのハッシュのファイルで確かめてから入れます。
+  GitHub のリリースに届かないときは、ビルドのログに警告を出して、入れずに作ります（工程は、その区分を確かめていない範囲として報告します）。
+  ハッシュが合わないときは、作るのを止めます。
 - パッケージのミラーに届かないなどで入れられなかったコマンドがあっても、sacty はビルドのログに警告を出して、そのまま作ります（エージェントは別の方法で代えます）。
 - RHEL 系の元のイメージでは、`rg`・`fd`・`shellcheck` は EPEL にしか無いので、EPEL を使えなければ入りません。
   `packages` は `run` より先に入れるので、EPEL のパッケージは `packages` に書かないでください。

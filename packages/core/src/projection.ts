@@ -14,6 +14,7 @@ import type {
   Remark,
   ReviewComment,
   ReviewVerdict,
+  SecurityCategory,
   SelfReview,
   StepKey,
   StepPlan,
@@ -314,13 +315,20 @@ export type Task = {
     | "jira"
     | "deployment"
     | "audit"
-    | "schedule";
+    | "schedule"
+    | "security";
   /** スケジュールタスクが作ったタスクの、スケジュールタスクと予定の時刻。 */
   schedule?: PayloadOf<"TaskCreated">["schedule"];
   /** マージの後の監視で見つけた失敗の、修正のタスク（PBI-89）。元のタスクと、何段目か。 */
   fix?: PayloadOf<"TaskCreated">["fix"];
   /** 監査の改修の提案を採用して作ったタスクの、元の提案（PBI-125）。 */
   auditFix?: PayloadOf<"TaskCreated">["auditFix"];
+  /** セキュリティチェックのレポートの区分から作った対応のタスクの、元のタスクと区分。 */
+  securityFix?: PayloadOf<"TaskCreated">["securityFix"];
+  /** セキュリティチェックのタスクで、区分ごとに頼んだ対応のタスク（SecurityFixRequested）。 */
+  securityFixes?: Partial<
+    Record<SecurityCategory, PayloadOf<"SecurityFixRequested"> & { at: string }>
+  >;
   /** 中止したタスクを、人が最初からやり直すために作ったタスクの、元のタスクと指定したイメージ（再実行）。 */
   rerun?: PayloadOf<"TaskCreated">["rerun"];
   /** 中止したタスクを再実行して作ったタスク（再実行は1度だけ）。 */
@@ -800,6 +808,7 @@ export function applyEvent(
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
+      ...(event.payload.securityFix ? { securityFix: event.payload.securityFix } : {}),
       ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),
       ...(event.payload.schedule ? { schedule: event.payload.schedule } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
@@ -2070,6 +2079,20 @@ export function applyEvent(
       break;
     }
 
+    case "SecurityFixRequested": {
+      if (!canRequestSecurityFix(task)) {
+        throw new ActivityIntegrityError(event, "the task is not a completed security check");
+      }
+      if (task.securityFixes?.[event.payload.category]) {
+        throw new ActivityIntegrityError(event, "the category already has a fix task");
+      }
+      task.securityFixes = {
+        ...task.securityFixes,
+        [event.payload.category]: { ...event.payload, at: event.at },
+      };
+      break;
+    }
+
     case "TestsDecided":
       if (!canDecideTests(task)) {
         throw new ActivityIntegrityError(event, "the tests are not undecided");
@@ -2538,6 +2561,30 @@ export function stepRunning(task: Task, step: StepKey): boolean {
     (step === "deployment" && deploymentCheckRunning(task)) ||
     (task.status === "idle" &&
       (task.verification !== undefined || task.reproductionPending === true))
+  );
+}
+
+/** タスクの工程の組み合わせ（工程を選んだ後は選んだもの、選ぶ前は人が指定したもの）。 */
+export function taskPlan(task: Task): StepPlan | undefined {
+  return task.stepsChoice?.plan ?? task.requestedPlan;
+}
+
+/** セキュリティの組み合わせ（チェック・対応）のタスクか。レポート・対応の範囲を公開の場所に出さない。 */
+export function isSecurityTask(task: Task): boolean {
+  const plan = taskPlan(task);
+  return plan === "security-check" || plan === "security-fix";
+}
+
+/**
+ * セキュリティチェックのレポートの区分から、対応のタスクを頼めるか。レポートを人間が承認して完了した、中止していない
+ * セキュリティチェックのタスクだけ。
+ */
+export function canRequestSecurityFix(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    taskPlan(task) === "security-check" &&
+    investigationIsGoal(task) &&
+    isCompleted(task)
   );
 }
 

@@ -6,6 +6,7 @@ import {
   type OrchestratorSessionReason,
   type PauseReason,
   renderMessage,
+  type SecurityCategory,
   type StepKey,
   type StepPlan,
   type Task,
@@ -47,6 +48,8 @@ const ja = {
     document: "文書作成",
     operation: "作業のみ",
     "design-only": "設計だけ",
+    "security-check": "セキュリティチェック",
+    "security-fix": "セキュリティ対応",
   } satisfies Record<StepPlan, string>,
   start: {
     sacty: "Sacty",
@@ -57,12 +60,21 @@ const ja = {
     deployment: "マージの後の監視",
     audit: "監査の改修の提案",
     schedule: "スケジュールタスク",
+    security: "セキュリティチェックのレポート",
   } satisfies Record<Task["start"], string>,
   /** タスクのテンプレート（PBI-90）。 */
-  template: { "sacty-setup": "Sacty セットアップ" } satisfies Record<
-    NonNullable<Task["template"]>,
-    string
-  >,
+  template: {
+    "sacty-setup": "Sacty セットアップ",
+    "security-check": "セキュリティチェック",
+  } satisfies Record<NonNullable<Task["template"]>, string>,
+  /** セキュリティチェックの指摘の区分。 */
+  securityCategory: {
+    dependency: "依存の脆弱性",
+    "supply-chain": "サプライチェーン",
+    code: "コードの脆弱性",
+    secret: "秘密情報の混入",
+    config: "設定・IaC",
+  } satisfies Record<SecurityCategory, string>,
   status: {
     blocked: "依存待ち",
     waiting_children: "子タスクの完了待ち",
@@ -462,6 +474,8 @@ const ja = {
       reason === "duplicate"
         ? "同じ失敗の修正のタスクが終わっていないため、修正のタスクを作らなかった"
         : `修正の連鎖が上限（${max}段）に達したため、修正のタスクを作らなかった`,
+    SecurityFixRequested: (category: string, title: string) =>
+      `セキュリティ対応のタスクを作った（${category}）：${title}`,
     ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
       `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
     // 完了したタスクの監査（PBI-125）
@@ -519,6 +533,8 @@ const en: LabelMessages = {
     document: "Document",
     operation: "Operation only",
     "design-only": "Design only",
+    "security-check": "Security check",
+    "security-fix": "Security fix",
   },
   start: {
     sacty: "Sacty",
@@ -529,8 +545,16 @@ const en: LabelMessages = {
     deployment: "After-merge watch",
     audit: "Audit proposal",
     schedule: "Scheduled task",
+    security: "Security check report",
   },
-  template: { "sacty-setup": "Sacty setup" },
+  template: { "sacty-setup": "Sacty setup", "security-check": "Security check" },
+  securityCategory: {
+    dependency: "Dependency vulnerabilities",
+    "supply-chain": "Supply chain",
+    code: "Code vulnerabilities",
+    secret: "Leaked secrets",
+    config: "Configuration and IaC",
+  },
   status: {
     blocked: "Blocked",
     waiting_children: "Waiting for subtasks",
@@ -856,6 +880,8 @@ const en: LabelMessages = {
       reason === "duplicate"
         ? "Did not create a fix task because one for the same failure is still open"
         : `Did not create a fix task because the chain reached the limit (${max})`,
+    SecurityFixRequested: (category, title) =>
+      `Created a security fix task (${category}): ${title}`,
     ReworkJudged: (target, reason, tail) =>
       `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,

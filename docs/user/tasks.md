@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -66,6 +66,8 @@
 | 文書作成 | 文書作成 | 手順書・ユーザーガイド・報告書などの原稿 |
 | 作業のみ | 作業 | 外部サービスへの単発の変更 |
 | 設計だけ | 要求要件 → 設計 | コードを変えない全体の設計 |
+| セキュリティチェック | 調査 | 脆弱性・サプライチェーンの点検（下の「セキュリティチェックと対応」） |
+| セキュリティ対応 | 調査 → 実装 → マージの後の監視 | 特定のセキュリティ上の問題を、最小限の変更で直す |
 
 - 指定すると、オーケストレーターは組み合わせを選び直さず、工程が終わるごとの見直しでも工程を飛ばしません。
   ベースブランチ・テストのコマンド・イメージなどは、いつもどおりオーケストレーターが決めます。
@@ -229,6 +231,59 @@ PR を確かめてから再開すると、工程の選択からやり直しま�
 作業の間に人が PR のブランチにコミットを積むと、sacty は強制プッシュせずに止まります。
 タスクを中止し、新しいタスクにしてください。
 PR を参考にするだけのタスク（例「12 番の PR と同じ直し方を、ほかのモジュールにもする」）は、今までどおり新しい PR を作ります。
+
+## セキュリティチェックと対応
+
+脆弱性やサプライチェーンの問題を、レポートで点検し、PR で直せます。
+
+| 進め方 | 成果物 | 使いどき |
+| --- | --- | --- |
+| セキュリティチェック | レポート（画面で承認） | どこに問題があるかを点検したいとき |
+| セキュリティ対応 | PR（マージで承認） | 特定の問題（CVE・GHSA・アラート・チェックの指摘）を直したいとき |
+
+### セキュリティチェック
+
+1. 「タスクを作成」で、テンプレートの「セキュリティチェック」を選び、対象リポジトリを選んで作成します。
+   スケジュールタスクでこのテンプレートを選ぶと、定期的に点検できます（[スケジュールタスク](scheduled-tasks.md)）。
+2. エージェントが、次の区分ごとに点検し、指摘のレポートを書きます。
+   既定のイメージにある `osv-scanner`（依存の脆弱性）と `gitleaks`（秘密情報）を使います。
+   - 依存の脆弱性
+   - サプライチェーン（CI のワークフロー・依存の取得元とロックファイル・インストールのスクリプト・イメージのタグの固定）
+   - コードの脆弱性
+   - 秘密情報の混入（値は書かず、場所と種類だけを書きます）
+   - 設定・IaC
+3. レポートを読み、承認します（差し戻して直させることもできます）。
+   道具が無くて確かめられなかった区分は、レポートに「確かめていない範囲」として出ます。
+
+### レポートから対応のタスクを作る
+
+承認したセキュリティチェックのタスクの詳細に「セキュリティ対応」の欄が出ます。
+区分ごとに指摘が並ぶので、直したい区分の「対応のタスクを作る」を押します。
+
+- 区分ごとに1つ、進め方「セキュリティ対応」のタスクを作ります。
+  内容には、その区分の指摘だけが入ります。
+- 作った区分には、作ったタスクへのリンクが出ます。
+  同じ区分では、もう作れません。
+
+### セキュリティ対応
+
+レポートから作るほか、「タスクを作成」で進め方「セキュリティ対応」を選び、内容に直したい問題（CVE の番号・アラートの URL など）を書いても作れます。
+
+1. 調査で、エージェントが問題を確かめ、修正の範囲（変えてよいファイル・上げる依存・解消を確かめるコマンド）を決めます。
+   範囲は承認しません。
+2. 実装で、エージェントが範囲の中だけを、問題を解消する最小限の変更で直します。
+   リファクタリング・整形・関係の無い修正は混ぜません。
+3. sacty が差分を範囲と照らし、ゴールガーディアンが最小限の変更かを確かめます（観点 `SEC-MIN`）。
+   範囲の外のファイルを変えた、またはロックファイルを除いて 300 行を超えて変えたときは不合格になり、実装をやり直します。
+4. PR の本文に「修正の範囲（セキュリティ対応）」が出ます。
+   差分が範囲に収まっているかを確かめて、マージで承認してください。
+
+- 範囲の外を変えないと直せないときは、エージェントが理由を実装の説明に書きます。
+  やり直しても通らずに一時停止したら、調査に差し戻して範囲を広げてください。
+- セキュリティチェック・セキュリティ対応のタスクの成果は、取り込み元の Issue・チケットにコメントしません。
+  工程の出力にあるコメントの頼み（`sacty-github-comments`）も投稿しません。
+- 公開リポジトリでも、ほかの実装と同じく PR を作ります。
+  公開してよいかは、タスクを作る前に判断してください。
 
 ## PR と Issue へのコメント
 

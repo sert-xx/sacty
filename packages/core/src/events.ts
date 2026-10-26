@@ -72,6 +72,16 @@ export const STEP_PLANS = {
    * 不具合の修正：再現 → 実装。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
   bugfix: ["investigate", "reproduce", "implement", "deployment"],
+  /**
+   * セキュリティチェック：依存の脆弱性・サプライチェーン・コード・秘密情報・設定を点検し、レポートを人間が承認する。
+   * 指摘は、見出し sacty-security-findings の JSON で区分ごとに出させる（区分ごとに対応のタスクを作れる）
+   */
+  "security-check": ["investigate"],
+  /**
+   * セキュリティ対応：前段の調査で問題を確かめて修正の範囲を宣言し、その範囲だけを直して PR にする。要求要件・設計を
+   * 置かない。sacty が差分を範囲と照らし、ゴールガーディアンが最小限の変更か（観点 SEC-MIN）を判定する
+   */
+  "security-fix": ["investigate", "implement", "deployment"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -354,9 +364,10 @@ export type PauseReason = z.infer<typeof PauseReason>;
 
 /**
  * タスクのテンプレート（PBI-90）。sacty-setup：対象のリポジトリを sacty で扱うためのエージェントの設定を検査し、
- * 足りないものを整える（題と説明は sacty が決める）。
+ * 足りないものを整える（題と説明は sacty が決める）。security-check：対象のリポジトリのセキュリティチェック
+ * （進め方 security-check に決める。スケジュールタスクから定期的に作る）。
  */
-export const TaskTemplate = z.enum(["sacty-setup"]);
+export const TaskTemplate = z.enum(["sacty-setup", "security-check"]);
 export type TaskTemplate = z.infer<typeof TaskTemplate>;
 
 /**
@@ -414,6 +425,33 @@ export type AuditAdoptNote = z.infer<typeof AuditAdoptNote>;
 /** 監査の改修の提案から作ったタスクの、元の提案（PBI-125）。 */
 const AuditFixLink = z.object({ taskId: z.string().min(1), proposalId: z.string().min(1) });
 
+/**
+ * セキュリティチェックの指摘の区分。dependency：依存の脆弱性、supply-chain：サプライチェーン（CI・取得元・固定の仕方）、
+ * code：コードの脆弱性、secret：秘密情報の混入、config：設定・IaC。対応のタスクは区分ごとに1つ作る。
+ */
+export const SecurityCategory = z.enum(["dependency", "supply-chain", "code", "secret", "config"]);
+export type SecurityCategory = z.infer<typeof SecurityCategory>;
+
+/** セキュリティチェックの指摘の重さ。 */
+export const SECURITY_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+export type SecuritySeverity = (typeof SECURITY_SEVERITIES)[number];
+
+/** セキュリティチェックの指摘（レポートの見出し sacty-security-findings の JSON から sacty が読んだもの）。 */
+export type SecurityFinding = {
+  id: string;
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  /** CVE・GHSA などの識別子。 */
+  refs: string[];
+  location: string;
+  /** 直し方の案（最小限のもの）。 */
+  fix: string;
+};
+
+/** セキュリティチェックのレポートから作った対応のタスクの、元のタスクと区分。 */
+const SecurityFixLink = z.object({ taskId: z.string().min(1), category: SecurityCategory });
+
 /** 修正のタスクを作るときに付ける、元のタスクとのつながり（PBI-89）。 */
 const DeploymentFix = z.object({
   taskId: z.string().min(1),
@@ -440,7 +478,7 @@ const TaskCreated = z.object({
     /**
      * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ、
      * github_pull_request：GitHub の PR から取り込んだ（PBI-26）、split：親タスクの分割で作った（PBI-27）、
-     * schedule：スケジュールタスクが作った。
+     * schedule：スケジュールタスクが作った、security：セキュリティチェックのレポートから対応のタスクを作った。
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
@@ -454,6 +492,7 @@ const TaskCreated = z.object({
         "deployment",
         "audit",
         "schedule",
+        "security",
       ])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     /**
@@ -514,6 +553,8 @@ const TaskCreated = z.object({
     fix: DeploymentFix.optional(),
     /** 監査の改修の提案を採用して作ったタスクの、元の提案（start: audit。PBI-125）。 */
     auditFix: AuditFixLink.optional(),
+    /** セキュリティチェックのレポートの区分から作った、対応のタスクの元（start: security）。 */
+    securityFix: SecurityFixLink.optional(),
     /**
      * 中止したタスクを、人が最初からやり直すために作った（再実行）。元の（中止した）タスクと、人が指定したイメージ
      * （config.yaml の images の名前か default。すべての工程で使う。無ければいつもどおり決める）。チケットから取り込んだ
@@ -2118,6 +2159,20 @@ const DeploymentFixRegistered = z.object({
 });
 
 /**
+ * セキュリティチェックのレポート（承認済み）の区分から、人が対応のタスクを頼んだ。続けて、この ID・題・本文で
+ * 進め方 security-fix のタスクを作る（作る前にデーモンが止まっても、起動のときに作る）。区分ごとに1回だけ。
+ */
+const SecurityFixRequested = z.object({
+  type: z.literal("SecurityFixRequested"),
+  payload: z.object({
+    category: SecurityCategory,
+    taskId: z.string().min(1),
+    title: z.string().min(1),
+    body: z.string(),
+  }),
+});
+
+/**
  * 修正のタスクを作らなかった（PBI-89）。duplicate：同じ失敗の修正のタスクが終わっていない（existing）、chain_limit：
  * 修正のタスクの連鎖が上限（MAX_FIX_CHAIN）に達した。
  */
@@ -2435,6 +2490,7 @@ export const EventInput = z.discriminatedUnion("type", [
   DeploymentWatchSkipped,
   DeploymentFixRegistered,
   DeploymentFixSuppressed,
+  SecurityFixRequested,
   AuditQueued,
   AuditSurveyed,
   AuditDeepDived,
@@ -2522,6 +2578,10 @@ export const RerunTaskInput = z
   })
   .strict();
 export type RerunTaskInput = z.input<typeof RerunTaskInput>;
+
+/** セキュリティチェックのレポートの区分から、対応のタスクを作る入力。 */
+export const RequestSecurityFixInput = z.object({ category: SecurityCategory }).strict();
+export type RequestSecurityFixInput = z.input<typeof RequestSecurityFixInput>;
 
 /** 再実行のタスクの説明で、sacty が足した前の試行の記録の見出し（ここから後は sacty が書いたもの）。 */
 export const RERUN_RECORD_HEADING = "## 前の試行の記録（中止したタスク）";

@@ -43,6 +43,7 @@ const ja = {
     noTestsReasonInvalid: "テストなしで進める理由を 2000 文字以内で入力してください。",
     invalidStep: "工程が不正です。",
     invalidTarget: "宛先が不正です。",
+    invalidCategory: "区分が不正です。画面を更新してください。",
     invalidAdoptNote: "手入れの種類（補足・差し替え）を選んでください。",
     adoptNoteRequired:
       "手入れの中身を入力してください。手を入れないなら、種類を選ばないでください。",
@@ -92,6 +93,7 @@ const en: CommonMessages = {
     noTestsReasonInvalid: "Enter why to proceed without tests in up to 2000 characters.",
     invalidStep: "Invalid step.",
     invalidTarget: "Invalid target.",
+    invalidCategory: "The category is not valid. Reload the page.",
     invalidAdoptNote: "Choose the kind of note (supplement or replacement).",
     adoptNoteRequired: "Enter the note. To adopt the proposal as it is, choose no kind.",
     invalidSubmission: "Invalid submission. Reload the page.",

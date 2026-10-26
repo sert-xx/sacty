@@ -1,7 +1,9 @@
 import {
   type ActivityEvent,
+  canRequestSecurityFix,
   canRerun,
   isFinished,
+  type SecurityFinding,
   type StepKey,
   type Task,
   type TaskAudit,
@@ -10,6 +12,7 @@ import {
   type CleanupItem,
   getCleanupPlan,
   getProject,
+  getSecurityFindings,
   getStatus,
   getTask,
   getTaskAudit,
@@ -57,6 +60,8 @@ export type TaskDetailData = {
    * 監査を取れなかったときも null（タスクの詳細は出す）。
    */
   audit?: TaskAudit | null;
+  /** 承認したセキュリティチェックのレポートの指摘（区分ごとに対応のタスクを作る）。レポートでなければ無い。 */
+  securityFindings?: SecurityFinding[];
 };
 
 /**
@@ -83,6 +88,7 @@ export async function loadTaskDetail(
     audit,
     rerunOf,
     rerunBy,
+    securityFindings,
   ] = await Promise.all([
     getProject(task.projectId),
     task.parent ? getTask(task.parent.taskId) : undefined,
@@ -98,6 +104,7 @@ export async function loadTaskDetail(
     completed ? getTaskAudit(task.id).catch(() => null) : undefined,
     task.rerun ? getTask(task.rerun.taskId).catch(() => undefined) : undefined,
     task.rerunBy ? getTask(task.rerunBy).catch(() => undefined) : undefined,
+    canRequestSecurityFix(task) ? getSecurityFindings(task.id).catch(() => []) : undefined,
   ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -111,6 +118,7 @@ export async function loadTaskDetail(
     ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
     ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
     ...(completed ? { audit: audit ?? null } : {}),
+    ...(securityFindings ? { securityFindings } : {}),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
     ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),
     ...(status

@@ -41,6 +41,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm } from "@/components/resume-form";
+import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
@@ -641,6 +642,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             <Implementation task={task} />
           )}
           <PullRequestCard task={task} />
+          {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
+          {data.securityFindings && (
+            <SecurityFixesCard task={task} findings={data.securityFindings} />
+          )}
           {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}
           <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
