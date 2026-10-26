@@ -48,6 +48,7 @@ import {
   reworkTargets,
   STEP_PLANS,
   stepRunning,
+  TASK_BODY_MAX,
 } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -90,7 +91,7 @@ import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
-import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { type FileChange, NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
   MemorySecretStore,
   OnePasswordSecretStore,
@@ -372,6 +373,12 @@ class FakeRepos implements RepositoryWorkspace {
   async diff() {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
+  }
+  /** ファイルごとの変更（セキュリティ対応の範囲の照合）。 */
+  changes: FileChange[] = [{ path: "src/pay.ts", added: 1, removed: 0 }];
+  async diffStats() {
+    if (this.diffFail) throw new Error(this.diffFail);
+    return this.changes;
   }
   /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
   workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
@@ -29000,5 +29007,351 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("セキュリティチェックとセキュリティ対応", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const report = out(
+    [
+      "# セキュリティチェックの結果",
+      block({
+        "sacty-security-findings": {
+          findings: [
+            {
+              id: "SF-1",
+              category: "dependency",
+              severity: "high",
+              title: "example-lib の既知の脆弱性",
+              refs: ["GHSA-0000-0000-0000"],
+              location: "package-lock.json の example-lib@1.2.3",
+              fix: "example-lib を 1.2.4 に上げる",
+            },
+            {
+              id: "SF-2",
+              category: "supply-chain",
+              severity: "medium",
+              title: "外部の Actions をタグで参照している",
+              refs: [],
+              location: ".github/workflows/ci.yml:12",
+              fix: "コミットの SHA で固定する",
+            },
+          ],
+        },
+      }),
+    ].join("\n\n"),
+  );
+  const checkPlanner = async () => ({
+    steps: ["investigate" as const],
+    plan: "security-check" as const,
+    reason: "点検",
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+
+  it("テンプレートで作ると進め方をセキュリティチェックに決め、点検の区分と指摘の一覧の形を指示する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [report], { planner: checkPlanner });
+    const task = service.createTask({ template: "security-check", projectId: "default" });
+    expect(task).toMatchObject({ template: "security-check", requestedPlan: "security-check" });
+    expect(task.title).toContain("セキュリティチェック");
+    await service.runNext(task.id);
+    const prompt = promptOf(executor, 0);
+    expect(prompt).toContain("--- セキュリティチェック ---");
+    expect(prompt).toContain("sacty-security-findings");
+    expect(prompt).toContain("osv-scanner");
+    expect(prompt).toContain("値を書かない");
+    activity.close();
+  });
+
+  it("Issue から取り込んだセキュリティチェックは、承認しても結果を Issue に返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(activity, [report], { pulls, planner: checkPlanner });
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 7,
+        title: "脆弱性を点検して",
+        body: "",
+        url: "https://github.com/acme/app/issues/7",
+        labels: ["sacty"],
+      },
+    ]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    const done = service.approve(id, { step: "investigate", submission: 1 });
+    expect(isCompleted(done)).toBe(true);
+    expect(service.queuedTaskIds()).toEqual([]);
+    expect(pulls.issueComments).toEqual([]);
+    activity.close();
+  });
+
+  it("承認したレポートの区分ごとに、その区分の指摘だけで対応のタスクを1回だけ作る（再起動しても重ねない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [report], { planner: checkPlanner });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    // 承認する前は作れない
+    expect(() => service.requestSecurityFix(id, { category: "dependency" })).toThrow(
+      InvalidOperationError,
+    );
+    service.approve(id, { step: "investigate", submission: 1 });
+    expect(service.securityFindings(id).map((f) => f.id)).toEqual(["SF-1", "SF-2"]);
+
+    const updated = service.requestSecurityFix(id, { category: "dependency" });
+    const requested = updated.securityFixes?.dependency;
+    expect(requested).toBeDefined();
+    const fix = service.get(requested?.taskId ?? "")?.task;
+    expect(fix).toMatchObject({
+      start: "security",
+      requestedPlan: "security-fix",
+      securityFix: { taskId: id, category: "dependency" },
+      status: "queued",
+    });
+    expect(fix?.body).toContain("SF-1");
+    expect(fix?.body).toContain("GHSA-0000-0000-0000");
+    expect(fix?.body).not.toContain("SF-2");
+    expect(fix?.body).toContain("最小限の変更");
+    // 同じ区分は二度作らない。指摘の無い区分は作らない
+    expect(() => service.requestSecurityFix(id, { category: "dependency" })).toThrow(
+      InvalidOperationError,
+    );
+    expect(() => service.requestSecurityFix(id, { category: "secret" })).toThrow(
+      InvalidOperationError,
+    );
+    const count = () => service.list().filter((t) => t.start === "security").length;
+    expect(count()).toBe(1);
+    const { service: restarted } = makeService(activity, [], { planner: checkPlanner });
+    restarted.resumeSecurityFixTasks();
+    expect(restarted.list().filter((t) => t.start === "security")).toHaveLength(1);
+    activity.close();
+  });
+
+  it("説明に入りきらない指摘も、件数を書き、全件を対応のタスクに持たせて工程に渡す", async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({
+      id: `SF-${i + 1}`,
+      category: "dependency",
+      severity: "high",
+      title: `example-lib-${i + 1} の既知の脆弱性`,
+      refs: [`GHSA-0000-0000-${String(i + 1).padStart(4, "0")}`],
+      location: `package-lock.json の example-lib-${i + 1}@1.0.0（${"とても長い場所の説明".repeat(5)}）`,
+      fix: `example-lib-${i + 1} を 1.0.1 に上げる`,
+    }));
+    const bigReport = out(
+      ["# レポート", block({ "sacty-security-findings": { findings: many } })].join("\n\n"),
+    );
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [bigReport, out("# 調査")], {
+      planner: async (task) =>
+        task.requestedPlan === "security-fix"
+          ? {
+              steps: ["investigate", "implement"],
+              plan: "security-fix",
+              reason: "対応",
+              fallback: false,
+              testCommand: "npm test",
+              costUsd: 0,
+              estimated: false,
+            }
+          : checkPlanner(),
+    });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const requested = service.requestSecurityFix(id, { category: "dependency" }).securityFixes
+      ?.dependency;
+    const fix = service.get(requested?.taskId ?? "")?.task;
+    expect(fix?.body.length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    expect(fix?.body).toMatch(/ほか \d+ 件/);
+    expect(fix?.body).not.toContain("SF-80");
+    expect(fix?.securityFix?.findings).toHaveLength(80);
+    // 前段の調査の指示に、全件を省かずに渡す
+    await service.runNext(fix?.id ?? "");
+    const prompt = promptOf(executor, 1);
+    expect(prompt).toContain("対応する指摘の全件（80件");
+    expect(prompt).toContain("GHSA-0000-0000-0080");
+    // 範囲を広げるために中止して再実行しても、元のレポート・区分・指摘の全件を引き継ぐ
+    await service.cancel(fix?.id ?? "");
+    const rerun = service.rerunTask(fix?.id ?? "", {
+      title: fix?.title ?? "",
+      body: fix?.body ?? "",
+      note: "範囲に package.json を含める",
+      repo: "https://github.com/acme/app",
+    });
+    expect(rerun.securityFix).toEqual(fix?.securityFix);
+    const before = executor.calls.length;
+    await service.runNext(rerun.id);
+    expect(executor.calls.length).toBe(before + 1);
+    expect(promptOf(executor, before)).toContain("GHSA-0000-0000-0080");
+    activity.close();
+  });
+
+  it("頼んだ記録だけがあり対応のタスクが無ければ、起動のときに記録した ID で1件だけ作る", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [report], { planner: checkPlanner });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    // 頼んだことを記録した後、作る前にデーモンが止まった
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "SecurityFixRequested",
+            payload: { category: "supply-chain", taskId: "fix-1", title: "対応", body: "SF-2" },
+          },
+        },
+      ],
+    });
+    const { service: restarted } = makeService(activity, [], { planner: checkPlanner });
+    expect(restarted.get("fix-1")).toBeUndefined();
+    restarted.resumeSecurityFixTasks();
+    restarted.resumeSecurityFixTasks();
+    expect(restarted.get("fix-1")?.task).toMatchObject({
+      start: "security",
+      requestedPlan: "security-fix",
+      securityFix: { taskId: id, category: "supply-chain" },
+    });
+    expect(restarted.list().filter((t) => t.start === "security")).toHaveLength(1);
+    activity.close();
+  });
+
+  it("中止したセキュリティ対応を再実行すると、進め方を引き継ぐ（範囲を補足してやり直す）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { planner: checkPlanner });
+    const task = service.createTask({
+      projectId: "default",
+      title: "GHSA を直す",
+      plan: "security-fix",
+    });
+    await service.cancel(task.id);
+    const rerun = service.rerunTask(task.id, {
+      title: "GHSA を直す",
+      note: "範囲に src/http.ts を含める",
+      repo: null,
+    });
+    expect(rerun.requestedPlan).toBe("security-fix");
+    expect(rerun.body).toContain("範囲に src/http.ts を含める");
+    // ほかの組み合わせは引き継がない
+    const other = service.createTask({ projectId: "default", title: "A", plan: "direct" });
+    await service.cancel(other.id);
+    expect(service.rerunTask(other.id, { title: "A", repo: null }).requestedPlan).toBeUndefined();
+    activity.close();
+  });
+
+  describe("セキュリティ対応の最終レビュー", () => {
+    const fixPlanner = async () => ({
+      steps: ["investigate" as const, "implement" as const],
+      plan: "security-fix" as const,
+      reason: "脆弱性の修正",
+      fallback: false,
+      testCommand: "npm test",
+      costUsd: 0,
+      estimated: false,
+    });
+    const scoped = out(
+      [
+        "# 調査",
+        block({
+          "sacty-security-scope": {
+            paths: ["package.json", "package-lock.json"],
+            packages: [{ name: "example-lib", from: "1.2.3", to: "1.2.4" }],
+            verification: "osv-scanner scan source -r .",
+            reason: "依存を上げるだけで足りる",
+          },
+        }),
+      ].join("\n\n"),
+    );
+    const implemented = out(
+      [
+        "# 実装",
+        block({
+          "sacty-test-map": [
+            {
+              viewpointId: "REQ",
+              tests: [],
+              untested: "修正の範囲の verification のコマンドで確かめる",
+            },
+          ],
+        }),
+      ].join("\n\n"),
+    );
+    const review = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "REQ", verified: true, reason: "検査で消えた" },
+            { id: "SEC-MIN", verified: true, reason: "最小限" },
+          ],
+          remarks: [],
+          tests: { command: "npm test", exitCode: 0, output: "passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const run = async (changes: FileChange[]) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const repos = new FakeRepos();
+      repos.changes = changes;
+      const made = makeService(activity, [scoped, implemented, review], {
+        planner: fixPlanner,
+        repos,
+      });
+      const { id } = made.service.createTask({
+        projectId: "default",
+        title: "GHSA-0000-0000-0000 を直す",
+        plan: "security-fix",
+      });
+      for (let i = 0; i < 4; i++) await made.service.runNext(id);
+      const reviewed = made.service.get(id)?.activity.find((e) => e.type === "FinalReviewed");
+      return { ...made, activity, id, reviewed };
+    };
+
+    it("範囲の中の差分なら、ゴールガーディアンの判定どおり SEC-MIN を合格にし、実装と最終レビューに範囲を渡す", async () => {
+      const { activity, executor, reviewed } = await run([
+        { path: "package.json", added: 1, removed: 1 },
+        { path: "package-lock.json", added: 40, removed: 40 },
+      ]);
+      expect(reviewed?.type === "FinalReviewed" && reviewed.payload.passed).toBe(true);
+      const prompts = executor.calls.map((c) => c.command.join(" "));
+      expect(prompts[0]).toContain("sacty-security-scope");
+      expect(prompts[1]).toContain("--- セキュリティ対応（最小限の変更） ---");
+      expect(prompts[1]).toContain('"paths":["package.json","package-lock.json"]');
+      expect(prompts[2]).toContain("SEC-MIN");
+      expect(prompts[2]).not.toContain("違反を見つけました");
+      activity.close();
+    });
+
+    it("範囲の外のファイルを変えたら、ゴールガーディアンの判定にかかわらず SEC-MIN を不合格にする", async () => {
+      const { activity, executor, reviewed } = await run([
+        { path: "package.json", added: 1, removed: 0 },
+        { path: "src/util.ts", added: 1, removed: 0 },
+      ]);
+      expect(reviewed?.type).toBe("FinalReviewed");
+      if (reviewed?.type !== "FinalReviewed") return;
+      expect(reviewed.payload.passed).toBe(false);
+      const min = reviewed.payload.viewpoints.find((v) => v.viewpointId === "SEC-MIN");
+      expect(min?.verified).toBe(false);
+      expect(ja(min?.reason)).toContain("src/util.ts");
+      expect(executor.calls[2]?.command.join(" ")).toContain("違反を見つけました");
+      activity.close();
+    });
   });
 });

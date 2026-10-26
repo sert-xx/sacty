@@ -164,13 +164,16 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     - It checks the package against a SHA-256 pinned per version and installs it together with `Xvfb` (`xvfb`, `xorg-x11-server-Xvfb`) and `libasound2` (`libasound2t64` from Ubuntu 24.04) or `alsa-lib`. If CJK fonts (`fonts-noto-cjk`, `google-noto-sans-cjk-ttc-fonts`) cannot be installed, it warns and continues.
     - A hash mismatch stops the build. For other reasons (cannot fetch, no package manager or `curl`, an unsupported architecture, cannot install), it warns and continues.
     - After installing, it removes the setuid bit of `/opt/drawio/chrome-sandbox` (`0755`), creates `/tmp/.X11-unix` with `1777`, and makes `/opt/sacty/bin/drawio` a link to `packages/cli/docker/drawio-shim.cjs`.
+  - The security check tools (`packages/cli/docker/install-security-tools.sh`) are `osv-scanner` (`v2.7.0` of `google/osv-scanner`) and `gitleaks` (`v8.30.1` of `gitleaks/gitleaks`).
+    - Only the ones the base image lacks are installed: the build fetches the official release assets (`osv-scanner_linux_<amd64|arm64>`, `gitleaks_<version>_linux_<x64|arm64>.tar.gz`) with `curl` and puts them in `/usr/local/bin` (the fetch limits are the same as for draw.io).
+    - It checks them against the SHA-256 in the hash file of the same release (`osv-scanner_SHA256SUMS`, `gitleaks_<version>_checksums.txt`), and a mismatch stops the build. For other reasons (cannot fetch, no `curl`, an unsupported architecture, no line in the hash file, cannot extract, cannot place it in `/usr/local/bin`), it warns and continues (without reporting it as installed).
   - `drawio` (`drawio-shim.cjs`) starts `/opt/drawio/drawio` with `--no-sandbox --disable-gpu` and the arguments it received.
     - Without `DISPLAY`, it starts a virtual display on a free number with `Xvfb -displayfd`, and stops it and waits for it to end when done (`SIGKILL` if it has not ended in 3 seconds). If the virtual display cannot be started, it prints the reason and exits with code 1.
     - It decodes standard error as UTF-8, splits it into lines, and removes the `ERROR:dbus/` and `ERROR:bus.cc` lines. It returns the exit code unchanged.
     - On SIGINT or SIGTERM, it sends the same signal to draw.io while draw.io is running. If draw.io has not started yet (such as while waiting for Xvfb to start), it stops Xvfb and waits for it to end. It then exits with 128 plus the signal number.
 - The image's `env` is passed to the agent containers that run on that image (including the final review that runs the tests).
 
-Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`, `packages/cli/docker/install-tools.sh`, `packages/cli/docker/install-drawio.sh`, `packages/cli/docker/drawio-shim.cjs`
+Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`, `packages/cli/docker/install-tools.sh`, `packages/cli/docker/install-drawio.sh`, `packages/cli/docker/install-security-tools.sh`, `packages/cli/docker/drawio-shim.cjs`
 
 ## Running tests
 

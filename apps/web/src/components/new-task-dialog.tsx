@@ -40,6 +40,8 @@ const PLAN_ORDER: readonly StepPlan[] = [
   "document",
   "operation",
   "design-only",
+  "security-check",
+  "security-fix",
 ];
 
 /**
@@ -181,6 +183,7 @@ export function TaskFields({
             [
               ["", t.templateNone],
               ["sacty-setup", t.templateSetup],
+              ["security-check", t.templateSecurityCheck],
             ] as const
           ).map(([value, label]) => (
             <label
@@ -208,6 +211,15 @@ export function TaskFields({
           >
             {t.templateSetupNote}
             <Hint text={t.templateSetupHint} className="size-4" />
+          </p>
+        )}
+        {template === "security-check" && (
+          <p
+            data-testid="template-security-hint"
+            className="flex flex-wrap items-center gap-1 text-xs leading-5 text-muted-foreground"
+          >
+            {t.templateSecurityCheckNote}
+            <Hint text={t.templateSecurityCheckHint} className="size-4" />
           </p>
         )}
       </fieldset>

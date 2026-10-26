@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -316,6 +318,73 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(diff).toContain("同じキーの再送"); // 日本語のファイル内容もそのまま
     // コミットはしない
     expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
+  });
+
+  it("ファイルごとの変更は、差分の上限で切り詰めず、名前の変更を変更元の削除と変更先の追加に分ける", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    // 差分の上限を超える大きなファイルの後に、名前の変更がある
+    writeFileSync(join(clone, "a-large.lock"), "x\n".repeat(DIFF_LIMIT));
+    renameSync(join(clone, "pay.ts"), join(clone, "z-moved.ts"));
+    expect(await workspace.diff(clone, gitDir, baseCommit)).not.toContain("z-moved.ts");
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: "a-large.lock", added: DIFF_LIMIT, removed: 0 },
+      { path: "pay.ts", added: 0, removed: 1 },
+      { path: "z-moved.ts", added: 1, removed: 0 },
+    ]);
+  });
+
+  it("作業領域の .gitattributes で差分を隠したファイル・バイナリも、中身の行の数で数える", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    writeFileSync(join(clone, ".gitattributes"), "pay.ts -diff\n");
+    writeFileSync(join(clone, "pay.ts"), Array.from({ length: 301 }, (_, i) => `${i}\n`).join(""));
+    writeFileSync(join(clone, "logo.bin"), Buffer.from([0, 1, 2, 10, 0, 3]));
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: ".gitattributes", added: 1, removed: 0 },
+      { path: "logo.bin", added: 2, removed: 0 },
+      { path: "pay.ts", added: 301, removed: 1 },
+    ]);
+  });
+
+  it("中身から数えるとき、消したファイルは変更後を 0 行にし、ある中身を読めなければ 0 行にせずに失敗にする", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    writeFileSync(join(clone, ".gitattributes"), "pay.ts -diff\n");
+    rmSync(join(clone, "pay.ts"));
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: ".gitattributes", added: 1, removed: 0 },
+      { path: "pay.ts", added: 0, removed: 1 },
+    ]);
+
+    // cat-file だけが失敗する git（読み取りの失敗）
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\nfor a in "$@"; do [ "$a" = cat-file ] && { echo "fatal: read error" >&2; exit 128; }; done\nexec "${realGit}" "$@"\n`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow(/read error/);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 
   it("用意し直すときは、記録したブランチが消えていても、記録済みの起点のコミットにする（PBI-157 レビュー指摘）", async () => {

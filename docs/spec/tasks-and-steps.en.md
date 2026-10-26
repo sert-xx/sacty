@@ -26,6 +26,7 @@ The overall flow of a task is as follows.
 | `deployment` | A task to fix a failure found by the after-merge watch (`fix` holds the original task, the kind, the marker, and the level. [After-merge watch](deployment-watch.en.md)) |
 | `split` | A child task of Task split (`parent` holds the parent's ID and the child tasks that must finish first, `dependsOn`) |
 | `schedule` | Created by a scheduled task (`schedule` holds the scheduled task's ID and the scheduled time. [Scheduled tasks](scheduled-tasks.en.md)) |
+| `security` | A fix task created from a category of an approved security check report (`securityFix` holds the original task and the category. "Security check and security fix" below) |
 
 - A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that sacty created and gave the review label).
 - When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository, the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
@@ -37,12 +38,13 @@ Code: `packages/core/src/events.ts` (`TaskCreated`, `TaskSource`), `packages/cor
 
 ### Task templates
 
-If the body of `POST /api/tasks` has `template`, the task is created from a template (`CreateTemplateTaskInput`). The only template is `sacty-setup` (Sacty setup).
+If the body of `POST /api/tasks` has `template`, the task is created from a template (`CreateTemplateTaskInput`). The templates are `sacty-setup` (Sacty setup) and `security-check` (Security check).
 
 - Only `template`, `projectId`, and `repo` are accepted. Passing `title`, `body`, or any other item gives 400 (sacty decides the title and description). An unknown template, an empty `repo`, or `repo: null` also gives 400.
 - The target repository is required. If omitted and the project's targets are exactly one repository, that one is used. Otherwise the task is not created (`task.templateRepositoryRequired`, 409). A repository outside the targets is not accepted, as with ordinary tasks (`task.repositoryUnknown`).
 - `template` is recorded in `TaskCreated` (`start` is `sacty`, and `repo` is normalized to the registered name, as with ordinary tasks). It remains in the projection's `Task.template`.
-- The title is `Sacty セットアップ（<owner>/<name>）`, and the description (goal) is the text decided by `templateTask`. After creation, as with an ordinary task, the Orchestrator chooses the plan (the template does not decide the steps).
+- The title of `sacty-setup` is `Sacty セットアップ（<owner>/<name>）`, and the description (goal) is the text decided by `templateTask`. After creation, as with an ordinary task, the Orchestrator chooses the plan (the template does not decide the steps).
+- The title of `security-check` is `セキュリティチェック（<owner>/<name>）`, and the description states the categories to check and that a fix task can be created for each category of the approved report. The `plan` of `TaskCreated` is `security-check` (as with a plan specified at creation, the Orchestrator does not choose the plan again). How to check and the answer format are given in the step's prompt ("Security check and security fix" below).
 - The goal of `sacty-setup` is to check the agent configuration needed to handle the target repository with sacty, and to open a PR that fills in what is missing. The text does not assume any particular language or tool. It checks and fills in the following four items.
   1. Instructions for agents (AGENTS.md, CLAUDE.md, and so on; not maintained in two places)
   2. How to run tests (the command and prerequisites; whether they match the current configuration). If the repository has no tests yet, the agent writes that there are none and how to check changes, and does not add a new language or test framework (that is a separate task)
@@ -130,6 +132,8 @@ Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `e
 | `bugfix` | `investigate` → `reproduce` → `implement` → `deployment` |
 | `document` | `document` |
 | `operation` | `operation` |
+| `security-check` | `investigate` (security check) |
+| `security-fix` | `investigate` → `implement` → `deployment` (security fix; skips Requirements and Design) |
 
 The plans that can be chosen are restricted as follows (`allowedPlans`).
 
@@ -168,6 +172,8 @@ The Orchestrator does not recommend `standard` unconditionally. It is told to ch
 | Fixing an existing PR itself (addressing review comments on the PR, and so on; "Taking over an existing PR" below) | `direct` (`continuePullRequest`) |
 | A reproducible bug | `bugfix` |
 | A bug that needs design decisions | `standard` |
+| Checking for vulnerabilities and supply chain risks | `security-check` |
+| Fixing a specific security problem (a CVE, a GHSA, an alert, a finding of a check), whatever its size | `security-fix` |
 
 The Orchestrator does not add steps by guessing at mechanisms the request does not mention (new roles, admin screens, and so on).
 
@@ -188,7 +194,7 @@ A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#rel
 {"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/12", "body": "Markdown body"}]}}
 ```
 
-- Every step except review can request comments (for `review`, sacty posts the written review). Posting uses the request in the approved output (`approved`). When the output is approved again (the approval time changes), the request of that version is posted. Nothing is posted for a cancelled, paused, or running task. It is posted before the next step (`awaitingGitHubComments`).
+- Every step except review can request comments (for `review`, sacty posts the written review). For a task with a security plan (`security-check`, `security-fix`), nothing is posted even if requested (`isSecurityTask`; the report and the fix scope can give attackers a lead). Posting uses the request in the approved output (`approved`). When the output is approved again (the approval time changes), the request of that version is posted. Nothing is posted for a cancelled, paused, or running task. It is posted before the next step (`awaitingGitHubComments`).
 - If the request cannot be read (two or more, not JSON, a wrong shape, an empty body), there are more than 10 comments (`GITHUB_COMMENTS_MAX`), or a body is longer than 60000 characters (`GITHUB_COMMENT_BODY_MAX`), nothing is posted and the reason is recorded.
 - The target must be the URL of a PR (`/pull/<number>`) or an issue (`/issues/<number>`) in the project's targets (a repository or its organization), or in the task's source or working repository. Otherwise only that comment is not posted, and the reason is recorded.
 - Right before posting each comment, it checks that no pause or cancel has been requested and that the step's approval has not changed. If it has, no new comment is posted and nothing is recorded (on resume, the already posted ones are found by their markers and it continues).
@@ -204,7 +210,7 @@ When the title or description of a task has a link to a PR of the target reposit
 
 Related ADR: [A task that fixes an existing PR takes over the PR and pushes to the same branch, and a documentation-only viewpoint is checked in the diff without a test](../adr/20261025-1337-continue-existing-pull-request.md)
 
-- Whether to take it over is decided by the Orchestrator with `continuePullRequest` in its answer for choosing the steps. The prompt shows this item only for a task that has a PR link and can choose a plan that implements (`CONTINUABLE_PLANS`: `standard`, `skip-design`, `direct`, `bugfix`) (`continuablePullRequest`). It is not shown for a task imported from a PR or a child task of a split. The prompt asks not to write it when the task only refers to the PR for a different change or only reviews the PR, to choose `direct` when the review comments make the fix concrete, and not to write `baseBranch`. `continuePullRequest` in an answer with a plan that does not implement is not read.
+- Whether to take it over is decided by the Orchestrator with `continuePullRequest` in its answer for choosing the steps. The prompt shows this item only for a task that has a PR link and can choose a plan that implements (`CONTINUABLE_PLANS`: `standard`, `skip-design`, `direct`, `bugfix`, `security-fix`) (`continuablePullRequest`). It is not shown for a task imported from a PR or a child task of a split. The prompt asks not to write it when the task only refers to the PR for a different change or only reviews the PR, to choose `direct` when the review comments make the fix concrete and `security-fix` when it fixes a security problem, and not to write `baseBranch`. `continuePullRequest` in an answer with a plan that does not implement is not read.
 - sacty checks the PR before recording the steps (`resolveContinuedPullRequest`). It takes over only a PR that is open, whose source branch is in the target repository (not a PR from a fork), and that no other sacty task (except cancelled ones) opened (as an implementation PR or a Requirements or Design PR) or took over (`continuedPullRequestOwner`). In case another task checks the same PR at the same time, it checks again right before recording the steps (with no await after that) that no other task handles it. If it cannot be taken over, to avoid opening a new PR, sacty records no steps; it records `OrchestratorFailed` (with the cost of the decision) and `TaskPaused` (`continue.unavailable`) and stops. Resuming chooses the steps again.
 - When it can be taken over, the workspace is prepared again at the latest of the PR's source branch (`RepositoryPrepared`; the base branch is that branch and the base is its head), and it is recorded in `continuedPullRequest` of `StepsChosen` (the repository, number, URL, source branch, and target branch). It becomes `Task.continuedPullRequest` in the projection. If the workspace cannot be prepared again, the task stops as when it cannot be taken over.
 - The prompts of the steps (except review and the post-merge watch) get the PR being taken over and the reviews, line comments, and regular comments on it (including approvals with a body and reviews posted by sacty tasks; up to the newest 30) as JSON data (`continuedPullRequestLines`, `passedContinuedFeedback`). They tell the agent to keep the PR's purpose and existing changes, change only what the task asks, and write the reason for comments it does not address in its description. If they cannot be read, the prompt says so and the reason goes to the daemon's log (the step does not stop).
@@ -222,6 +228,51 @@ Related ADR: [A task that fixes an existing PR takes over the PR and pushes to t
 - The web UI shows the PR being taken over (its number and source branch) in the Steps section of the task details.
 
 Code: `apps/daemon/src/prompts.ts` (`continuablePullRequest`, `CONTINUABLE_PLANS`, `continuePullRequestLines`, `continuedPullRequestLines`, `extractStepPlan`), `apps/daemon/src/service.ts` (`resolveContinuedPullRequest`, `continuedPullRequestOwner`, `continuedFeedback`, `publishContinued`, `stepPullRequestsOn`, `importFeedback`, `handedOverFeedback`, `sactyBranches`, `deploymentWatchEvents`), `apps/daemon/src/github.ts` (`PullRequestInfo`), `packages/core/src/events.ts` (`ContinuedPullRequest`, `StepsChosen`), `packages/core/src/events.ts` (`ContinuedFeedbackPassed`), `packages/core/src/projection.ts` (`continuedPullRequest`, `handedOverFeedback`), `apps/web/src/components/task-detail.tsx`
+
+## Security check and security fix
+
+Security checks (the deliverable is a report) and fixes (the deliverable is a PR) use the plans `security-check` and `security-fix`. They use the Investigate, Implement, and After-merge watch steps as they are, and add rules to the prompts and the verification.
+
+Related ADR: [セキュリティチェックとセキュリティ対応を、既存の工程の組み合わせとして足し、対応の差分を修正の範囲と照らして最小限に保つ](../adr/20261026-1520-security-check-and-fix-plans.md)
+
+- Whether a task is a security task is decided by the chosen plan (before choosing, the plan specified at creation) (`taskPlan`, `isSecurityTask`). Both are plans that need a target repository (`REPO_PLANS`); for a task without a repository, the Orchestrator chooses one from the project's targets.
+- The investigation prompt (`SECURITY_TOOL_LINES`): the agent does not set up for development, but runs the check tools in the workspace (osv-scanner, gitleaks, and so on), including network access to vulnerability databases, and uses the results as evidence. What it has no tool for or could not run is written as unchecked scope, and it does not write the values of secrets it finds or how to exploit a problem.
+- Keeping it off public places: the result is not commented on the source issue or ticket (`awaitingIssueComment`). Requests for comments on PRs and issues are not posted either ("Requesting comments on PRs and issues" above). The export destination is decided as for other tasks.
+
+Code: `apps/daemon/src/security.ts`, `apps/daemon/src/prompts.ts` (`SECURITY_TOOL_LINES`, `securityCheckLines`, `securityScopeLines`, `securityFixImplementLines`, `securityFinalReviewLines`, `finalReviewVerdictIds`, `securityScopeBodyLines`), `packages/core/src/projection.ts` (`taskPlan`, `isSecurityTask`, `canRequestSecurityFix`), `apps/daemon/src/service.ts` (`awaitingIssueComment`, `awaitingGitHubComments`)
+
+### Security check
+
+- The prompt of the investigation (a task whose goal is the investigation) asks for a check per category (`securityCheckLines`). The categories are `dependency` (dependency vulnerabilities), `supply-chain` (supply chain: CI workflows, where dependencies come from and lockfiles, install scripts, pinning image tags), `code` (code vulnerabilities), `secret` (leaked secrets; the workspace is a copy without .git, so only the files are checked and the history is written as unchecked scope), and `config` (configuration and IaC) (`SecurityCategory`).
+- Tool results are sorted out (reachable, exploitable, false positive) before they become findings. For each finding, the agent writes the category, the severity (`critical`, `high`, `medium`, `low`), the title, the identifiers, the location, the evidence, and a proposal for the smallest fix.
+- After the body of the report, the agent outputs JSON under the heading `sacty-security-findings` (`findings`: `id`, `category`, `severity`, `title`, `refs`, `location`, `fix`). The JSON stays in the body, and sacty reads the last one from the approved body (`extractSecurityFindings`; findings without a category or a title are dropped, a missing severity becomes `medium`, and a missing ID becomes `SF-<number>`).
+- The task completes when a person approves it in the web UI (as with other tasks whose goal is the investigation).
+
+### Creating fix tasks from the report
+
+- For a security check task that was approved and completed (and is not cancelled) (`canRequestSecurityFix`), the task details show the findings per category and "Create fix task" (`GET /api/tasks/:id/security-findings`). If the findings cannot be loaded, this is shown separately from having no findings, with a hint to reload.
+- The top of a fix task's details shows a link to the report task and the category.
+- `POST /api/tasks/:id/security-fixes` (the input is `category` of `RequestSecurityFixInput`) creates the fix task for that category. Only once per category (`security.alreadyRequested`). It is not created if the report is not approved (`security.notReport`) or the category has no findings (`security.noFindings`) (all 409).
+- First, `SecurityFixRequested` (the category, the ID of the task to create, the title, the body, all the findings of that category; the actor is `person`) is recorded on the original task, then `TaskCreated` is recorded with that ID. If the daemon stops before creating it, it is created at startup (`resumeSecurityFixTasks`).
+- The task created has `start: security`, `plan: security-fix`, and `securityFix` (the original task, the category, and all the findings), and the repository of the original task. The title is `セキュリティ対応：<区分>（<元のタスクの題>）`, and the description has only the findings of that category and a request to fix them with the smallest change (`securityFixTask`). The description lists only the findings that fit in `TASK_BODY_MAX` and gives just the count of the rest (no finding is cut in the middle).
+- The prompts of the fix task's steps (investigation, implementation) and of the final review get all the findings in `securityFix` as JSON data without omission, and the agent is told to solve all of them (`securityFindingLines`). If a finding is left unsolved without a reason, the final review fails the viewpoint `REQ`.
+
+Code: `apps/daemon/src/service.ts` (`requestSecurityFix`, `createSecurityFixTask`, `resumeSecurityFixTasks`, `securityFindings`), `apps/daemon/src/security.ts` (`securityFixTask`), `apps/daemon/src/prompts.ts` (`securityFindingLines`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`SecurityFixRequested`, `RequestSecurityFixInput`, `SecurityCategory`), `apps/web/src/components/security-fixes.tsx` (`SecurityFixesCard`)
+
+### Security fix
+
+- The prompt of the preliminary investigation (`securityScopeLines`) has the agent confirm the problem and declare the fix scope as JSON under the heading `sacty-security-scope` (`paths`, `packages`, `verification`, `reason`). Dependencies are raised to the smallest version that solves the problem, and a breaking change, if needed, is stated. The scope is not approved (the preliminary investigation is not approved). sacty reads the last declaration from the body of the preliminary investigation handed over as approved (`securityScope`, `extractSecurityScope`; a declaration with empty `paths` is unreadable).
+- The implementation runs with the prompt for an implementation without Requirements or Design ("Step review" above), with the rules for the smallest change (`securityFixImplementLines`) and the scope (as JSON data) added. It tells the agent not to change anything outside the scope (it may add files for regression tests), not to mix in refactoring or reformatting, to raise dependencies with the package manager, and the limit on changed lines. The viewpoint `REQ` is "the problem is solved"; for a dependency or configuration update that cannot be tested, the agent writes in `untested` that it is checked with the check command.
+- In the verification, before the final review, sacty checks the diff against the scope (`scopeViolation`). The check uses not the diff given to agents (truncated at `DIFF_LIMIT`) but the untruncated added and removed lines per file (`diffStats`; `git diff --numstat --no-renames`). A rename is split into a deletion of the source and an addition of the destination (so a file outside the scope cannot be hidden by moving it into the scope). For a file without line counts (a binary, or one whose diff is hidden by `-diff` and the like in the workspace's `.gitattributes`), the lines of the old and new contents are counted as all removed and all added (so repository attributes cannot hide the count). An added file has 0 old lines and a deleted file 0 new lines (told apart with `git diff --name-status`); if existing contents cannot be read, the stats count as unobtainable and the task stops. The contents are read one at a time (not starting many processes at once). If they cannot be obtained, the task pauses without the final review, as with the diff (`verify.diffUnavailable`).
+  - Files outside the scope: files that match none of `paths` (the path itself, below it if it ends with `/`, and `*` for any characters except `/`; `pathInScope`) and are not test files (in a test directory, or with a name following the test naming conventions).
+  - Changed lines: the total of added and removed lines, excluding lockfiles (`package-lock.json`, `yarn.lock`, `go.sum`, and so on; test files are counted), exceeds `SECURITY_FIX_MAX_CHANGED_LINES` (300).
+  - If the scope cannot be read, only the number of lines is checked.
+- The viewpoints judged in the final review are `REQ` plus `SEC-MIN` (whether the diff is minimal; no tests are mapped to it) (`finalReviewVerdictIds`). The prompt (`securityFinalReviewLines`) has the Goal Guardian check `REQ` by running the scope's `verification` command, and judge `SEC-MIN` change by change by whether each is needed. If sacty found a violation, the prompt states it, and `SEC-MIN` fails whatever the Goal Guardian judged (the reason is `review.scopeViolated`; `extractFinalReview`). Redoing and pausing on failure are the same as for other implementations (`MAX_VERIFY_ATTEMPTS`).
+- To widen the scope, cancel the task and rerun it (changes cannot be requested on the preliminary investigation; `reworkTargets`). The implementation prompt asks the agent, when it cannot fix the problem without changing something outside the scope, to write the reason and the scope to widen in its description. The rerun task keeps the security plan ("Rerunning a cancelled task" below).
+- In the body of the implementation PR, the purpose section is "修正の範囲（セキュリティ対応）" (the files that may change, the dependencies to raise, how to confirm the fix, the reason for the scope) instead of the requirements (`securityScopeBodyLines`). When an existing PR is taken over, its title and body are not changed ("Taking over an existing PR" above), so the scope is checked in the preliminary investigation's result in the task details.
+- A PR to a public repository is created as for other implementations.
+
+Code: `apps/daemon/src/security.ts` (`extractSecurityScope`, `securityScope`, `scopeViolation`, `pathInScope`, `SECURITY_FIX_MAX_CHANGED_LINES`, `MINIMAL_CHANGE_VIEWPOINT`), `apps/daemon/src/repository.ts` (`diffStats`, `parseNumstat`), `apps/daemon/src/service.ts` (`verify`, `rerunTask`), `apps/daemon/src/prompts.ts` (`extractFinalReview`, `approvedBasisLines`)
 
 ## Information gathering
 
@@ -574,6 +625,7 @@ Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStart
 - The chosen image takes priority over the project target's setting and is used for every step (`imageSource` in `StepsChosen` is `rerun`).
 - A task imported from a ticket keeps the ticket (`start` is `jira`; the PR URL is posted to the ticket, and the same ticket is not imported twice). The ticket is not read again (`awaitingTicketTriage` does not apply), and the task proceeds with the repository the person chose. With no repository, like a task created without one, the Orchestrator chooses a repository, and a person chooses it if the Orchestrator can't (`isRepoless`, `awaitingRepository`, `chooseRepository`). A rerun of a task imported from a GitHub issue doesn't keep the source (`start` is `sacty`; the record has the issue URL).
 - The budget cap is `budget.default_per_task_usd` at the time the rerun task is created (the original task's cap and the amount used are not carried over).
+- If the original task has a security plan (`security-check`, `security-fix`), that plan becomes the `plan` of `TaskCreated` (so the rules for the smallest change and keeping results off public places stay). For a fix task created from a category of a report, `securityFix` (the report, the category, and all the findings) is also carried over (so findings that did not fit in the description are not lost). Other plans are not carried over; the Orchestrator chooses.
 
 Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
 

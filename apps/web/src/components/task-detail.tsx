@@ -41,6 +41,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm } from "@/components/resume-form";
+import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
@@ -240,6 +241,20 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 {origin?.title ?? task.fix.taskId}
               </Link>
               {m.deployment.fixDepth(task.fix.depth)}
+            </>
+          )}
+          {/* レポートの区分から作った対応のタスクは、元のレポートと区分を出す */}
+          {task.securityFix && (
+            <>
+              {m.security.reportOf}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.securityFix.taskId)}`}
+                className="text-accent-foreground underline"
+                data-testid="security-report"
+              >
+                {data.securityReport?.title ?? task.securityFix.taskId}
+              </Link>
+              {m.security.reportCategory(labels.securityCategory[task.securityFix.category])}
             </>
           )}
           {task.rerun && (
@@ -641,6 +656,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             <Implementation task={task} />
           )}
           <PullRequestCard task={task} />
+          {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
+          {data.securityFindings !== undefined && (
+            <SecurityFixesCard task={task} findings={data.securityFindings} />
+          )}
           {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}
           <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}

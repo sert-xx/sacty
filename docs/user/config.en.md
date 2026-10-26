@@ -280,7 +280,7 @@ What happens when an agent's run fails depends on the kind of run.
       split: 10
   ```
 
-  The plan names are `standard`, `skip-design`, `direct`, `bugfix`, `investigate`, `design-only`, `review`, `split`, `document`, and `operation`. Any other name is a configuration error.
+  The plan names are `standard`, `skip-design`, `direct`, `bugfix`, `investigate`, `design-only`, `review`, `split`, `document`, `operation`, `security-check`, and `security-fix`. Any other name is a configuration error.
 - At 80% of the budget, a notice is recorded in the activity log, and when the limit is reached the task is paused (the work is kept). To resume, enter a new cumulative limit in the web UI ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).
 - The amount used and the limit appear under "Cost" in the task details. When it includes costs converted with the unit prices, such as subscription runs, it is marked "Estimate" (not an actual charge). The breakdown per step appears in "Cost per step" in the task details.
 

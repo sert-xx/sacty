@@ -89,6 +89,12 @@ ARG SACTY_DRAWIO=1
 COPY --chmod=755 install-drawio.sh drawio-shim.cjs /opt/sacty/lib/
 RUN /opt/sacty/lib/install-drawio.sh
 
+# セキュリティの検査の道具（osv-scanner・gitleaks。進め方 security-check・security-fix が使う）。公式のリリースの単体の
+# バイナリを、版を固定して取り、同じリリースのハッシュのファイルで確かめて入れる。取得できないときは警告して続け、ハッシュが
+# 合わないときは止める（中身は install-security-tools.sh）
+COPY --chmod=755 install-security-tools.sh /opt/sacty/lib/install-security-tools.sh
+RUN /opt/sacty/lib/install-security-tools.sh
+
 # エージェントのCLI。版を固定し、上げるときはこのファイルを変える。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
 # キャッシュは一時的な場所に置いて消す（HOME の下に root の持ち物を残すと、node ユーザーの npm が書けなくなるため）

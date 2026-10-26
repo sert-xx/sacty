@@ -1545,6 +1545,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       "design-only",
       "split",
       "bugfix",
+      "security-check",
+      "security-fix",
     ]);
     expect(allowedPlans(withRepo)).toEqual(
       expect.arrayContaining(["design-only", "document", "operation", "review"]),

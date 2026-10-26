@@ -227,6 +227,10 @@
     - ハッシュが合わなければ止める。
       ほかの理由（取得できない・パッケージの管理のコマンドや `curl` が無い・アーキテクチャが違う・入れられない）では警告して続ける。
     - 入れたら `/opt/drawio/chrome-sandbox` の setuid を外し（`0755`）、`/tmp/.X11-unix` を `1777` で作り、`/opt/sacty/bin/drawio` を `packages/cli/docker/drawio-shim.cjs` へのリンクにする。
+  - セキュリティの検査の道具（`packages/cli/docker/install-security-tools.sh`）は、`osv-scanner`（`google/osv-scanner` の `v2.7.0`）と `gitleaks`（`gitleaks/gitleaks` の `v8.30.1`）。
+    - 元のイメージに無いものだけを、公式のリリースの添付物（`osv-scanner_linux_<amd64|arm64>`・`gitleaks_<版>_linux_<x64|arm64>.tar.gz`）を `curl` で取り、`/usr/local/bin` に入れる（取り方の上限は draw.io と同じ）。
+    - 同じリリースのハッシュのファイル（`osv-scanner_SHA256SUMS`・`gitleaks_<版>_checksums.txt`）の SHA-256 で確かめ、合わなければ止める。
+      ほかの理由（取得できない・`curl` が無い・アーキテクチャが違う・ハッシュのファイルに行が無い・展開できない・`/usr/local/bin` に置けない）では警告して続ける（入れたとは出さない）。
   - `drawio`（`drawio-shim.cjs`）は、`/opt/drawio/drawio` を `--no-sandbox --disable-gpu` と受けた引数で起動する。
     - `DISPLAY` が無ければ `Xvfb -displayfd` で空いている番号の仮想の画面を起動し、終わったら止めて、終わるまで待つ（3 秒で終わらなければ `SIGKILL`）。
       仮想の画面を起動できなければ、理由を示して終了コード 1 で終わる。
@@ -237,7 +241,7 @@
       その後、128 にシグナルの番号を足した終了コードで終わる。
 - イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
-コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/drawio-shim.cjs`
+コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/install-security-tools.sh`、`packages/cli/docker/drawio-shim.cjs`
 
 ## テストの実行
 

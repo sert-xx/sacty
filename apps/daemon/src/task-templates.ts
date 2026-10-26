@@ -72,6 +72,24 @@ function setupBody(repo: string): string {
   ].join("\n");
 }
 
+/**
+ * 「セキュリティチェック」のゴール。進め方は security-check に決め（工程の指示で点検の区分と答えの形を伝える）、ここでは
+ * 対象と、レポートを区分ごとの対応に使うことだけを書く。
+ */
+function securityCheckBody(repo: string): string {
+  return [
+    "対象のリポジトリのセキュリティチェックをして、区分ごとの指摘のレポートを作ってください。",
+    "このタスクは、sacty のタスクのテンプレート「セキュリティチェック」で作ったものです。",
+    "",
+    // URL は行の末尾に置く（画面の Markdown で、後ろの文字までリンクにしないため）
+    `- 対象のリポジトリ：${repo}`,
+    "",
+    "- 点検する区分：依存の脆弱性・サプライチェーン・コードの脆弱性・秘密情報の混入・設定・IaC",
+    "- 承認したレポートの区分ごとに、対応のタスク（進め方 security-fix）を作ります。指摘には、問題を解消する最小限の直し方の案を書いてください。",
+    "- コードは変えないでください。",
+  ].join("\n");
+}
+
 /** テンプレートで作るタスクの題と説明（PBI-90）。 */
 export function templateTask(
   template: TaskTemplate,
@@ -82,6 +100,11 @@ export function templateTask(
       return {
         title: `Sacty セットアップ（${shortName(repo)}）`.slice(0, TASK_TITLE_MAX),
         body: setupBody(repo).slice(0, TASK_BODY_MAX),
+      };
+    case "security-check":
+      return {
+        title: `セキュリティチェック（${shortName(repo)}）`.slice(0, TASK_TITLE_MAX),
+        body: securityCheckBody(repo).slice(0, TASK_BODY_MAX),
       };
   }
 }

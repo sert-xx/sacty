@@ -118,7 +118,7 @@ Code: `apps/daemon/src/tickets.ts` (`JiraTickets`, `ticketJql`), `apps/daemon/sr
 
 ## Comments on the intake source
 
-- When a task whose goal is investigation is approved, sacty posts the result as a comment on the intake source.
+- When a task whose goal is investigation is approved, sacty posts the result as a comment on the intake source. Tasks with a security plan (`security-check`, `security-fix`) are not commented on (the report can give attackers a lead. [Tasks and steps](tasks-and-steps.en.md#security-check-and-security-fix)).
 - GitHub
   - sacty includes the marker `<!-- sacty-investigation:<task ID> -->`, and does not post twice if it posted a comment before.
   - The body is up to 60000 characters.

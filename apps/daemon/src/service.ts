@@ -62,6 +62,7 @@ import {
   isCompleted,
   isFinished,
   isRepoless,
+  isSecurityTask,
   latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
@@ -93,6 +94,7 @@ import {
   RejectAuditProposalInput,
   RepoUrl,
   RequestChangesInput,
+  RequestSecurityFixInput,
   RerunTaskInput,
   ResumeAuditInput,
   ResumeTaskInput,
@@ -103,6 +105,8 @@ import {
   SactySettings,
   type ScheduledTaskSettings,
   SELF_REVIEW_STEPS,
+  type SecurityCategory,
+  type SecurityFinding,
   type SharedCompose,
   STEP_PLANS,
   StepKey,
@@ -120,6 +124,7 @@ import {
   type TriageKind,
   targetHost,
   targetImageOf,
+  taskPlan,
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -315,6 +320,7 @@ import {
   extractStepReview,
   extractTicketTriage,
   extractVerdict,
+  finalReviewVerdictIds,
   finalReviewViewpointIds,
   integrationViewpointIds,
   investigationMarker,
@@ -344,6 +350,13 @@ import {
   uniqueUses,
 } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
+import {
+  isSecurityFix,
+  scopeViolation,
+  securityFindings,
+  securityFixTask,
+  securityScope,
+} from "./security.js";
 import {
   localForwards,
   type ServiceRunner,
@@ -2302,9 +2315,12 @@ export class TaskService {
     const { repo: chosenRepo, repoReason, ...rest } = planned;
     let choice: PlannedSteps = rest;
     if (repoless) {
-      // コードの変更が要る（分けない）なら、作業するリポジトリを対象から選ぶ。選べなければ、理由を示して止める
-      // （人がリポジトリを選んで再開できる）
-      if (choice.steps.some((step) => REPO_STEPS.includes(step))) {
+      // コードの変更が要る（分けない）・コードを点検する（セキュリティチェック）なら、作業するリポジトリを対象から選ぶ。
+      // 選べなければ、理由を示して止める（人がリポジトリを選んで再開できる）
+      if (
+        choice.steps.some((step) => REPO_STEPS.includes(step)) ||
+        choice.plan === "security-check"
+      ) {
         return this.repositoryFromPlan(choice, chosenRepo, repoReason, repoless.repositories);
       }
       // リポジトリの無いまま進めるので、リポジトリのコードに関わる決めごとは使わない
@@ -4693,7 +4709,16 @@ export class TaskService {
     const { title, body } = templateTask(input.template, repo);
     return {
       projectId: project.id,
-      payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
+      payload: {
+        title,
+        body,
+        start: "sacty",
+        repo,
+        budgetCapUsd,
+        template: input.template,
+        // セキュリティチェックは、進め方をテンプレートで決める（オーケストレーターに選び直させない）
+        ...(input.template === "security-check" ? { plan: "security-check" as const } : {}),
+      },
     };
   }
 
@@ -4748,6 +4773,12 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
+            // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
+            // 組み合わせは引き継がず、オーケストレーターが選ぶ
+            ...(isSecurityTask(previous) ? { plan: taskPlan(previous) } : {}),
+            // レポートの区分から作った対応のタスクは、元のレポート・区分・指摘の全件も引き継ぐ（説明に入りきらなかった
+            // 指摘を、再実行で落とさないため）
+            ...(previous.securityFix ? { securityFix: previous.securityFix } : {}),
           },
         },
       },
@@ -7023,6 +7054,34 @@ export class TaskService {
       ]);
       return;
     }
+    // セキュリティ対応は、差分を前段の調査が宣言した修正の範囲と照らす。守っていなければ、観点 SEC-MIN を不合格にする
+    // （ゴールガーディアンにも伝え、やり直しの指示に理由が渡る）。エージェントに渡す差分は切り詰めるので、照合には
+    // 切り詰めていないファイルごとの変更を使う。取れなければ、差分と同じく最終レビューをせずに止める
+    let scopeViolated: ReturnType<typeof scopeViolation>;
+    if (isSecurityFix(task)) {
+      try {
+        const changes = await this.deps.repos.diffStats(
+          dir,
+          this.trustedGitDir(task),
+          task.repository.baseCommit,
+        );
+        scopeViolated = scopeViolation(securityScope(task), changes);
+      } catch (error) {
+        this.append(current, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("verify.diffUnavailable", { detail: errorText(error) }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+    }
     // 人間が止めたなら、最終レビューを始めない（再開すると最終レビューからやり直す）
     if (this.pauseRequested.has(task.id)) return;
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする
@@ -7072,7 +7131,10 @@ export class TaskService {
           imageEnv: testImage.env,
           runId,
           prompt: [
-            buildFinalReviewPrompt(current, diff, testCommand ? { testCommand } : {}),
+            buildFinalReviewPrompt(current, diff, {
+              ...(testCommand ? { testCommand } : {}),
+              ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+            }),
             // 起動したサービスの接続先（PBI-47）
             ...servicePromptLines(started?.services ?? []),
           ].join("\n"),
@@ -7135,11 +7197,13 @@ export class TaskService {
     }
     const { missingCommands, ...review } = extractFinalReview(
       outcome.output,
-      viewpointIds,
+      // セキュリティ対応は、テストを対応させない観点 SEC-MIN（差分が最小限か）も判定させる
+      finalReviewVerdictIds(task),
       current.remarks.filter((r) => !r.voided).map((r) => r.id),
       {
         ...(testCommand ? { testCommand } : {}),
         unmappedViewpoints,
+        ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
       },
     );
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
@@ -10605,6 +10669,83 @@ export class TaskService {
     ]);
   }
 
+  /**
+   * 承認したセキュリティチェックのレポートの区分から、対応のタスク（進め方 security-fix）を作る。区分ごとに1回だけ。
+   * 先に頼んだこと（ID・題・本文）を記録してから作り、途中で止まっても起動のときに作る。説明には、その区分の指摘だけを
+   * 入れる（ほかの区分を混ぜると、PR が最小限でなくなるため）。
+   */
+  requestSecurityFix(id: string, raw: unknown): Task {
+    const { category } = RequestSecurityFixInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (!this.deps.projects.get(task.projectId)) {
+      throw new InvalidOperationError(message("project.notFound"));
+    }
+    const findings = securityFindings(task);
+    if (!findings) throw new InvalidOperationError(message("security.notReport"));
+    if (task.securityFixes?.[category]) {
+      throw new InvalidOperationError(message("security.alreadyRequested"));
+    }
+    if (!findings.some((f) => f.category === category)) {
+      throw new InvalidOperationError(message("security.noFindings"));
+    }
+    const { title, body } = securityFixTask(task, category, findings);
+    const listed = findings.filter((f) => f.category === category);
+    const updated = this.append(task, [
+      {
+        actor: "person",
+        event: {
+          type: "SecurityFixRequested",
+          payload: { category, taskId: randomUUID(), title, body, findings: listed },
+        },
+      },
+    ]);
+    this.createSecurityFixTask(updated, category);
+    return this.mustGet(task.id);
+  }
+
+  /** 承認したセキュリティチェックのレポートの指摘。レポートでない・一覧を読めなければ空。 */
+  securityFindings(id: string): SecurityFinding[] {
+    const task = this.tasks.get(id);
+    return (task && securityFindings(task)) ?? [];
+  }
+
+  /** 頼んだセキュリティ対応のタスクがまだ無ければ作る（作ってあれば・プロジェクトを消していれば何もしない）。 */
+  private createSecurityFixTask(task: Task, category: SecurityCategory): void {
+    const requested = task.securityFixes?.[category];
+    if (!requested || this.tasks.has(requested.taskId)) return;
+    if (!this.deps.projects.get(task.projectId)) return;
+    const repo = task.repo ?? task.repository?.url;
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    this.append({ id: requested.taskId, projectId: task.projectId }, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskCreated",
+          payload: {
+            title: requested.title,
+            body: requested.body,
+            start: "security",
+            ...(repo ? { repo } : { noRepo: true as const }),
+            budgetCapUsd,
+            plan: "security-fix",
+            securityFix: { taskId: task.id, category, findings: requested.findings },
+          },
+        },
+      },
+    ]);
+  }
+
+  /** 頼んだことを記録したが、作る前に止まったセキュリティ対応のタスクを作る（起動のとき）。 */
+  resumeSecurityFixTasks(): void {
+    for (const task of [...this.tasks.values()]) {
+      for (const category of Object.keys(task.securityFixes ?? {}) as SecurityCategory[]) {
+        this.createSecurityFixTask(this.mustGet(task.id), category);
+      }
+    }
+  }
+
   /** 採用を記録したが、作る前に止まった改修のタスクを作る（起動のとき）。 */
   resumeAuditFixTasks(): void {
     for (const task of [...this.tasks.values()]) {
@@ -11446,6 +11587,8 @@ export function awaitingGitHubComments(task: Task): StepKey | undefined {
   if (task.status === "cancelled" || task.status === "paused" || task.status === "running") {
     return undefined;
   }
+  // セキュリティのタスクの成果（レポート・修正の範囲）は、攻撃の手がかりになるので、PR・Issue に投稿しない
+  if (isSecurityTask(task)) return undefined;
   return task.steps
     .map((s) => s.key)
     .find((step) => {
@@ -11469,6 +11612,8 @@ export function awaitingIssueComment(task: Task): boolean {
     investigationIsGoal(task) &&
     // Issue・PR・チケットから取り込んだタスク（PBI-26・PBI-52）
     (task.source !== undefined || task.ticket !== undefined) &&
+    // セキュリティチェックのレポートは、攻撃の手がかりになるので、取り込み元に返さない
+    !isSecurityTask(task) &&
     !task.issueComment
   );
 }

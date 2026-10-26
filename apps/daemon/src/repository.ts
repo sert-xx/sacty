@@ -9,6 +9,45 @@ import { MessageError } from "./errors.js";
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
 
+/** 起点からの変更の、ファイルごとの追加と削除の行の数。 */
+export type FileChange = { path: string; added: number; removed: number };
+
+/**
+ * git diff --numstat -z の出力（名前の変更を分けたもの）を読む。行の数が `-` のもの（バイナリか、リポジトリの属性
+ * `-diff` などで差分を出さないもの）は unknown にし、呼び出し側が中身から数える。
+ */
+export function parseNumstat(output: string): (FileChange & { unknown?: true })[] {
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const match = /^(-|\d+)\t(-|\d+)\t(.+)$/s.exec(entry);
+      if (!match) return [];
+      const path = match[3] ?? "";
+      if (match[1] === "-" || match[2] === "-")
+        return [{ path, added: 0, removed: 0, unknown: true }];
+      return [{ path, added: Number(match[1]), removed: Number(match[2]) }];
+    });
+}
+
+/** git diff --name-status -z の出力（名前の変更を分けたもの）を、パスから状態（A・D・M など）への対応にする。 */
+function parseNameStatus(output: string): Map<string, string> {
+  const fields = output.split("\0");
+  const statuses = new Map<string, string>();
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i];
+    const path = fields[i + 1];
+    if (status && path !== undefined) statuses.set(path, status.charAt(0));
+  }
+  return statuses;
+}
+
+/** 中身の行の数（最後の行に改行が無くても1行に数える）。 */
+function lineCount(text: string): number {
+  if (text === "") return 0;
+  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+}
+
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
 export interface RepositoryWorkspace {
   /**
@@ -31,6 +70,11 @@ export interface RepositoryWorkspace {
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * 起点からの変更を、ファイルごとの追加と削除の行の数で返す（切り詰めない）。名前の変更は、変更元の削除と変更先の追加に
+   * 分ける。バイナリのファイルは、行の数を 0 にする。
+   */
+  diffStats(dir: string, gitDir: string, baseCommit: string): Promise<FileChange[]>;
   /**
    * 起点のコミットのファイルを、退避したメタデータから outDir に書き出す（.git は含めない）。
    * 要求要件・設計の工程で、実装の作業領域とは別に、起点のコードを読ませるため（PBI-15）。
@@ -378,6 +422,57 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       return diff.length > DIFF_LIMIT
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
+    });
+  }
+
+  async diffStats(dir: string, gitDir: string, baseCommit: string) {
+    return this.stage(dir, gitDir, baseCommit, async (run) => {
+      const listed = parseNumstat(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--numstat",
+          "-z",
+          // 名前の変更を、変更元の削除と変更先の追加に分ける（範囲の外のファイルを移して隠さないため）
+          "--no-renames",
+          "--no-ext-diff",
+          "--no-textconv",
+          baseCommit,
+        ]),
+      );
+      // 行の数を出さないファイル（バイナリと、作業領域の .gitattributes の -diff などで隠したもの）は、変更前と変更後の
+      // 中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）
+      if (!listed.some((c) => c.unknown)) return listed;
+      // 足した（A）ファイルには変更前が、消した（D）ファイルには変更後が無い。ある側の読み取りの失敗は、0 行にせずに
+      // 呼び出し元へ伝える（行の数を少なく数えないため）
+      const statuses = parseNameStatus(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--no-renames",
+          "--no-ext-diff",
+          baseCommit,
+        ]),
+      );
+      const lines = async (spec: string) =>
+        lineCount(await run("cat-file", ["cat-file", "blob", spec]));
+      // プロセスを一度に多く起動しないよう、1つずつ読む
+      const changes: FileChange[] = [];
+      for (const { unknown, ...change } of listed) {
+        if (!unknown) {
+          changes.push(change);
+          continue;
+        }
+        const status = statuses.get(change.path);
+        changes.push({
+          path: change.path,
+          added: status === "D" ? 0 : await lines(`:${change.path}`),
+          removed: status === "A" ? 0 : await lines(`${baseCommit}:${change.path}`),
+        });
+      }
+      return changes;
     });
   }
 

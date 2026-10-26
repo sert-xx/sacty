@@ -292,6 +292,21 @@ const ja = {
     nth: (n: number) => `${n}回目`,
     result: { completed: "完了", failed: "失敗", interrupted: "中断", running: "実行中" },
   },
+  /** セキュリティチェックのレポートの区分ごとの対応のタスク。 */
+  security: {
+    title: "セキュリティ対応",
+    hint: "承認したレポートの区分ごとに、セキュリティ対応のタスクを作ります。タスクは、その区分の指摘だけを、問題を解消する最小限の変更で直す PR にします。",
+    findings: (n: number) => `指摘 ${n}件`,
+    create: "対応のタスクを作る",
+    creating: "作成中…",
+    created: "対応のタスク：",
+    none: "レポートに、区分のわかる指摘がありません。",
+    unreadable: "指摘を読めませんでした。画面を再読み込みしてください。",
+    reportOf: " ・ 元のレポート：",
+    reportCategory: (category: string) => `（${category}）`,
+    severity: { critical: "致命的", high: "高", medium: "中", low: "低" },
+    refs: (refs: readonly string[]) => `（${refs.join("・")}）`,
+  },
   /** マージの後の監視（PBI-89）。 */
   deployment: {
     title: "マージの後の監視",
@@ -641,6 +656,20 @@ const en: TaskMessages = {
       interrupted: "Interrupted",
       running: "Running",
     },
+  },
+  security: {
+    title: "Security fixes",
+    hint: "Creates a security fix task for each category of the approved report. Each task fixes only that category's findings, in a PR with the smallest change that solves the problem.",
+    findings: (n: number) => `${n} ${n === 1 ? "finding" : "findings"}`,
+    create: "Create fix task",
+    creating: "Creating…",
+    created: "Fix task: ",
+    none: "The report has no findings with a category.",
+    unreadable: "Could not load the findings. Reload the page.",
+    reportOf: " · Report: ",
+    reportCategory: (category) => ` (${category})`,
+    severity: { critical: "Critical", high: "High", medium: "Medium", low: "Low" },
+    refs: (refs) => ` (${refs.join(", ")})`,
   },
   deployment: {
     title: "After-merge watch",

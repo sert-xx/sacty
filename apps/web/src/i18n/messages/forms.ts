@@ -18,6 +18,11 @@ const ja = {
       "リポジトリのエージェントの設定を検査し、足りないものを整える PR を作ります。題と内容は Sacty が決めます。",
     templateSetupHint:
       "検査するもの：エージェント向けの指示・テストの実行の仕方・テストに要るサービス・デプロイの確認のスキル。整っていて変更が要らなければ、PR を作らずに検査の結果だけを残します。",
+    templateSecurityCheck: "セキュリティチェック",
+    templateSecurityCheckNote:
+      "リポジトリを点検し、区分ごとの指摘のレポートを作ります。題と内容は Sacty が決めます。",
+    templateSecurityCheckHint:
+      "点検する区分：依存の脆弱性・サプライチェーン・コードの脆弱性・秘密情報の混入・設定。コードは変えません。承認したレポートの区分ごとに、対応のタスクを作れます。",
     plan: "進め方",
     planAuto: "自動",
     planAutoNote: "タスクの内容からオーケストレーターが選択",
@@ -25,7 +30,7 @@ const ja = {
       "指定すると、オーケストレーターは組み合わせを選び直さず、途中で工程を省きません。ベースブランチ・テストのコマンド・イメージは、オーケストレーターが決めます。",
     repository: "対象リポジトリ（任意）",
     repositoryRequired: "対象リポジトリ",
-    templateRepositoryHint: "検査して整えるリポジトリを、プロジェクトの対象から選びます。",
+    templateRepositoryHint: "テンプレートで扱うリポジトリを、プロジェクトの対象から選びます。",
     repositoryPlaceholder: "リポジトリの URL",
     repositoryHint:
       "空欄なら、リポジトリを指定せずに作ります。調べものや全体の設計はリポジトリ無しで進み、コードの変更が要るときはオーケストレーターがプロジェクトの対象から選びます。入力すると候補を絞り込めます。",
@@ -68,6 +73,11 @@ const en: FormsMessages = {
       "Checks the agent setup of the repository and opens a PR that fills in what is missing. Sacty writes the title and description.",
     templateSetupHint:
       "It checks the instructions for agents, how to run the tests, the services the tests need, and the deployment check skill. If nothing needs to change, it keeps the results of the check without a PR.",
+    templateSecurityCheck: "Security check",
+    templateSecurityCheckNote:
+      "Checks the repository and writes a report of findings by category. Sacty writes the title and description.",
+    templateSecurityCheckHint:
+      "Categories: dependency vulnerabilities, supply chain, code vulnerabilities, leaked secrets, and configuration. It does not change the code. From an approved report, you can create a fix task for each category.",
     plan: "Plan",
     planAuto: "Automatic",
     planAutoNote: "The Orchestrator chooses from the task",
@@ -75,7 +85,7 @@ const en: FormsMessages = {
       "When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch, the test command, and the images.",
     repository: "Target repository (optional)",
     repositoryRequired: "Target repository",
-    templateRepositoryHint: "The repository to check and set up, from the project's targets.",
+    templateRepositoryHint: "The repository the template works on, from the project's targets.",
     repositoryPlaceholder: "Repository URL",
     repositoryHint:
       "Leave it empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets. Type to filter the suggestions.",

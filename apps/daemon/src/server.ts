@@ -470,6 +470,24 @@ export function createApp(
     }
   });
 
+  // 承認したセキュリティチェックのレポートの指摘（区分ごとの対応のタスクを作る画面に出す）。レポートでなければ空
+  app.get("/api/tasks/:id/security-findings", (c) => {
+    const id = c.req.param("id");
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
+    return c.json({ findings: service.securityFindings(id) });
+  });
+
+  // 承認したセキュリティチェックのレポートの区分から、セキュリティ対応のタスクを作る（区分ごとに1回だけ）
+  app.post("/api/tasks/:id/security-fixes", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.requestSecurityFix(c.req.param("id"), json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // チケットから取り込んだタスク（PBI-52）・リポジトリを指定せずに作ったタスク（PBI-73）の、作業するリポジトリを人が選ぶ
   app.post("/api/tasks/:id/repository", async (c) => {
     const json = await readJson(c);

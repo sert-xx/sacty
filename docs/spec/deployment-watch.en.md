@@ -12,7 +12,7 @@ Related ADR: [Make the after-merge watch a step, decide per task by whether the 
 
 ## Whether the step is included
 
-- The combinations that include Implement (`standard`, `skip-design`, `bugfix`) have `deployment` at the end (after Implement) (`STEP_PLANS`). The parent of a task split does not have it (each subtask has it in its own combination).
+- The combinations that include Implement (`standard`, `skip-design`, `direct`, `bugfix`, `security-fix`) have `deployment` at the end (after Implement) (`STEP_PLANS`). The parent of a task split does not have it (each subtask has it in its own combination).
 - After the combination is chosen and before `StepsChosen` is recorded, sacty looks for the skill in the starting commit (the commit of the re-chosen base branch, if any) (see "Finding the skill" below).
   - If found, `deployment` in `StepsChosen` holds `skill` (the path).
   - If it is missing, unusable, or cannot be looked up, it holds `skipped` (`deploy.stepSkipped`), and this step is set to `skip`. The detailed reason is `deploy.noSkill`, `deploy.skillOutside`, `deploy.skillUnreadable`, or `deploy.skillLookupFailed`.

@@ -236,6 +236,7 @@ const workspaceCleanup = service
   });
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
+service.resumeSecurityFixTasks();
 // 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）
 service.syncMemories();
 // 残す日数を過ぎたメモリーを、定期的に消す（PBI-127）

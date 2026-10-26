@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -52,6 +52,8 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Document | Document | Drafts such as procedure documents, user guides, and reports |
 | Operation only | Operation | One-off changes to external services |
 | Design only | Requirements → Design | Overall design without code changes |
+| Security check | Investigate | Checking for vulnerabilities and supply chain problems ("Security checks and fixes" below) |
+| Security fix | Investigate → Implement → After-merge watch | Fixing a specific security problem with the smallest change |
 
 - When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual.
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
@@ -157,6 +159,47 @@ The following PRs cannot be taken over. To avoid opening a new PR, the task stop
 - A PR another sacty task opened or took over (feedback on a PR sacty opened is imported and fixed by that task)
 
 If a person pushes commits to the PR's branch while sacty works, sacty stops without force-pushing. Cancel the task and create a new one. A task that only refers to a PR (for example "Apply the same fix as PR 12 to the other modules") opens a new PR as before.
+
+## Security checks and fixes
+
+You can check for vulnerabilities and supply chain problems with a report, and fix them with a PR.
+
+| Plan | Deliverable | When to use |
+| --- | --- | --- |
+| Security check | A report (approved in the web UI) | When you want to find where the problems are |
+| Security fix | A PR (approved by merging) | When you want to fix a specific problem (a CVE, a GHSA, an alert, a finding of a check) |
+
+### Security check
+
+1. In "Create task", choose the template "Security check", choose the target repository, and create the task. Choosing this template in a scheduled task runs the check regularly ([Scheduled tasks](scheduled-tasks.en.md)).
+2. The agent checks each of the following categories and writes a report of findings. It uses `osv-scanner` (dependency vulnerabilities) and `gitleaks` (secrets) in the default image.
+   - Dependency vulnerabilities
+   - Supply chain (CI workflows, where dependencies come from and lockfiles, install scripts, pinning image tags)
+   - Code vulnerabilities
+   - Leaked secrets (it writes only the location and the kind, not the value)
+   - Configuration and IaC
+3. Read the report and approve it (you can also request changes). Categories that could not be checked for lack of a tool appear in the report as unchecked scope.
+
+### Creating fix tasks from the report
+
+The task details of an approved security check show a "Security fixes" section. The findings are listed by category; press "Create fix task" for the category you want to fix.
+
+- One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
+- A category with a task shows a link to it. You cannot create another one for the same category.
+- The top of a fix task's details shows a link to the original report and the category.
+
+### Security fix
+
+Besides creating it from a report, you can create one in "Create task" by choosing the plan "Security fix" and writing the problem to fix (a CVE number, an alert URL, and so on) in the description.
+
+1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope is not approved.
+2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
+3. sacty checks the diff against the scope, and the Goal Guardian checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, it fails and the implementation is redone. Regression test files may be added outside the scope (their lines are counted).
+4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
+
+- When it cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation's description. You cannot request changes on the preliminary Investigate, so cancel the task and rerun it, writing the scope to widen in the rerun's note. The rerun task also proceeds as "Security fix".
+- The results of security check and security fix tasks are not commented on the source issue or ticket. Comment requests in a step's output (`sacty-github-comments`) are not posted either.
+- A PR is created for a public repository too, as for other implementations. Decide whether it may be public before creating the task.
 
 ## Comments on PRs and issues
 

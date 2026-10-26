@@ -795,6 +795,11 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.DeploymentFixRegistered(event.payload.kind, event.payload.title);
     case "DeploymentFixSuppressed":
       return e.DeploymentFixSuppressed(event.payload.reason, MAX_FIX_CHAIN);
+    case "SecurityFixRequested":
+      return e.SecurityFixRequested(
+        l.securityCategory[event.payload.category],
+        event.payload.title,
+      );
     case "AuditQueued":
       return e.AuditQueued(usd(event.payload.capUsd));
     case "AuditSurveyed":

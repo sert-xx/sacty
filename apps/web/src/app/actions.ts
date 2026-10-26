@@ -9,6 +9,7 @@ import {
   renderMessage,
   type SactySettingsInput,
   ScheduleInput,
+  SecurityCategory,
   StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
@@ -45,6 +46,7 @@ import {
   previewProjectContext,
   rejectAuditProposal,
   requestChanges,
+  requestSecurityFix,
   rereviewTask,
   rerunTask,
   resumeAudit,
@@ -735,6 +737,25 @@ export async function rereviewTaskAction(
   let result: Awaited<ReturnType<typeof rereviewTask>>;
   try {
     result = await rereviewTask(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 承認したセキュリティチェックのレポートの区分から、セキュリティ対応のタスクを作る。 */
+export async function requestSecurityFixAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  const category = SecurityCategory.safeParse(formData.get("category"));
+  if (!category.success) return { message: a.invalidCategory };
+  let result: Awaited<ReturnType<typeof requestSecurityFix>>;
+  try {
+    result = await requestSecurityFix(String(formData.get("taskId") ?? ""), category.data);
   } catch {
     return { message: a.daemonDown };
   }

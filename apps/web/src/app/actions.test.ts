@@ -9,6 +9,7 @@ const approveStep = vi.fn();
 const requestChanges = vi.fn();
 const saveSettings = vi.fn();
 const getGitHubAccounts = vi.fn();
+const requestSecurityFix = vi.fn();
 const cookieSet = vi.fn();
 const refresh = vi.fn();
 const order: string[] = [];
@@ -21,6 +22,7 @@ vi.mock("@/lib/daemon", () => ({
   requestChanges,
   saveSettings,
   getGitHubAccounts,
+  requestSecurityFix,
   CONTEXT_CHECK_PARAM: "contextCheck",
 }));
 // 送信時の cookie は、別のタブで切り替えた「B」になっている
@@ -54,6 +56,7 @@ const {
   gateAction,
   importProjectAction,
   reloadGitHubAccountsAction,
+  requestSecurityFixAction,
   saveProjectAction,
   saveSettingsAction,
   selectProjectAction,
@@ -221,6 +224,33 @@ describe("タスクのテンプレート（PBI-90）", () => {
         projectId: "project-a",
       });
     }
+  });
+});
+
+describe("セキュリティチェックのレポートの区分から対応のタスクを作る", () => {
+  beforeEach(() => {
+    requestSecurityFix.mockReset();
+    refresh.mockReset();
+  });
+
+  it("区分を渡して作り、画面を取り直す。作れなければ理由を返す", async () => {
+    requestSecurityFix.mockResolvedValue({ ok: true });
+    expect(
+      await requestSecurityFixAction({}, form({ taskId: "t1", category: "supply-chain" })),
+    ).toEqual({});
+    expect(requestSecurityFix).toHaveBeenCalledWith("t1", "supply-chain");
+    expect(refresh).toHaveBeenCalled();
+    requestSecurityFix.mockResolvedValue({ ok: false, message: "すでに作っています" });
+    expect(
+      await requestSecurityFixAction({}, form({ taskId: "t1", category: "dependency" })),
+    ).toEqual({ message: "すでに作っています" });
+  });
+
+  it("知らない区分は、デーモンに渡さずに断る", async () => {
+    expect(
+      await requestSecurityFixAction({}, form({ taskId: "t1", category: "everything" })),
+    ).toMatchObject({ message: expect.stringMatching(/区分が不正です/) });
+    expect(requestSecurityFix).not.toHaveBeenCalled();
   });
 });
 
