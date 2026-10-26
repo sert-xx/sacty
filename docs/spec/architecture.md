@@ -348,7 +348,11 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `context-mcp/layers/` | ホストで起動するコンテキストのコマンド型の MCP サーバーの作業ディレクトリ（層のリポジトリの写し） |
 | `memory/` | 監査が登録したメモリー（`projects/<ID>/`・`repos/<ホスト>/<オーナー>/<名前>/`）。正本は作業履歴で、起動のときに書き直す（[メモリー](memory.md)） |
 
-コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/workspace-cleanup.ts`（`RUN_SCRATCH_DIRS`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
+作業領域の写し・削除（clone の後の `.git` の退避、`_guardian` への写し、実行ごとの作業領域・中止したタスクの作業領域の削除など、対象リポジトリの大きさに比例するもの）は、非同期のファイル操作で行う。
+数 GB・数万ファイルを写す間・消す間も、デーモンのイベントループを止めず、画面と API に応答し続ける。
+写し終わる・消し終わるまで、工程は次に進まない（写しの途中で一時停止・中止を求められたら、写し終わった後、コンテナを起動する前に止める）。
+
+コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/repository.ts`（`prepare`・`copyWorkingTree`）、`apps/daemon/src/workspace-cleanup.ts`（`RUN_SCRATCH_DIRS`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
 
 ## 設定の2つの置き場所
 

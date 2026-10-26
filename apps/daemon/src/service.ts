@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ActivityEvent,
@@ -1610,7 +1610,7 @@ export class TaskService {
       });
     } finally {
       context?.dispose();
-      rmSync(workspaceDir, { recursive: true, force: true });
+      await rm(workspaceDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
     const cost = {
@@ -1867,7 +1867,8 @@ export class TaskService {
               workspaceDir,
             );
           } else {
-            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする
+            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
+            // 応答し続けるよう、非同期で写す（写しの途中で止められたら、execute が起動の前に止める。PBI-156）
             await this.deps.repos.copyWorkingTree(
               this.repoDir(task),
               workspaceDir,
@@ -1886,7 +1887,8 @@ export class TaskService {
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
       return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
     } finally {
-      rmSync(workspaceDir, { recursive: true, force: true });
+      // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）
+      await rm(workspaceDir, { recursive: true, force: true });
     }
   }
 
@@ -2788,7 +2790,7 @@ export class TaskService {
           ...(authEnv ? { authEnv } : {}),
         }));
       } catch (error) {
-        rmSync(dir, { recursive: true, force: true });
+        await rm(dir, { recursive: true, force: true });
         if (this.stopRequested(task.id)) return stopped;
         // 認証の値を伏せてから、切り詰める
         const detail = redactText(errorText(error), usedSecrets);
@@ -2806,7 +2808,7 @@ export class TaskService {
     const image = agentImage ? await services.imageId?.(agentImage, runId) : undefined;
     // 取得（認証の用意・取得）・イメージの確定を待つ間に止められたら、取得したものを片付けて起動しない
     if (this.stopRequested(task.id)) {
-      if (compose) rmSync(dir, { recursive: true, force: true });
+      if (compose) await rm(dir, { recursive: true, force: true });
       return stopped;
     }
     const result = await services.start({
@@ -2818,10 +2820,10 @@ export class TaskService {
     // 起動を待つ間に止められたら、起動したものを止めて消し、使わない（打ち切って失敗したときも、止めたことにする）
     if (this.stopRequested(task.id)) {
       if (result.ok) await services.stop(runId).catch(() => undefined);
-      if (compose) rmSync(dir, { recursive: true, force: true });
+      if (compose) await rm(dir, { recursive: true, force: true });
       return stopped;
     }
-    if (!result.ok && compose) rmSync(dir, { recursive: true, force: true });
+    if (!result.ok && compose) await rm(dir, { recursive: true, force: true });
     if (result.ok) {
       // 複数のサービスが使うポートは、localhost に転送しない（PBI-60）
       const { shared } = localForwards(result.started.services);
@@ -2853,7 +2855,10 @@ export class TaskService {
     await this.deps.services.stop(runId).catch(() => undefined);
     // 共用の compose を取得したディレクトリも消す（PBI-70）
     if (spec.compose) {
-      rmSync(sharedComposeRunDir(this.deps.workspaceRoot, runId), { recursive: true, force: true });
+      await rm(sharedComposeRunDir(this.deps.workspaceRoot, runId), {
+        recursive: true,
+        force: true,
+      });
     }
   }
 
@@ -6052,8 +6057,8 @@ export class TaskService {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
       await this.stopServices(task, step, runId);
       context?.dispose();
-      if (snapshotDir) rmSync(snapshotDir, { recursive: true, force: true });
-      if (reviewDiffDir) rmSync(reviewDiffDir, { recursive: true, force: true });
+      if (snapshotDir) await rm(snapshotDir, { recursive: true, force: true });
+      if (reviewDiffDir) await rm(reviewDiffDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
 
@@ -6662,7 +6667,7 @@ export class TaskService {
       ]);
     } finally {
       context?.dispose();
-      if (!preserveWorkspace) rmSync(workspaceDir, { recursive: true, force: true });
+      if (!preserveWorkspace) await rm(workspaceDir, { recursive: true, force: true });
     }
   }
 
@@ -6801,7 +6806,7 @@ export class TaskService {
       });
     } finally {
       context?.dispose();
-      rmSync(workspaceDir, { recursive: true, force: true });
+      await rm(workspaceDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
     const cost = { ...(outcome.usage ? { usage: outcome.usage } : {}), costUsd, estimated };
@@ -8121,8 +8126,8 @@ export class TaskService {
         });
       } else {
         try {
-          rmSync(workspace, { recursive: true, force: true });
-          rmSync(gitDir, { recursive: true, force: true });
+          await rm(workspace, { recursive: true, force: true });
+          await rm(gitDir, { recursive: true, force: true });
           cleanup.push({ target: "workspace", result: existed ? "done" : "skipped" });
         } catch (error) {
           cleanup.push({
@@ -8258,7 +8263,7 @@ export class TaskService {
         workspaceDir,
       });
     } finally {
-      rmSync(workspaceDir, { recursive: true, force: true });
+      await rm(workspaceDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
     if (outcome.kind === "failed") {

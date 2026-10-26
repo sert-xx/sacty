@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
@@ -110,7 +111,7 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
     const cache = join(this.cacheDir, `${key}.git`);
     return this.serialized(key, async () => {
       if (!existsSync(join(cache, "HEAD"))) {
-        rmSync(cache, { recursive: true, force: true });
+        await rm(cache, { recursive: true, force: true });
         mkdirSync(cache, { recursive: true });
         await this.mustGit(["init", "--bare", "--quiet", cache]);
       }
@@ -134,8 +135,9 @@ export class GitSharedComposeFetcher implements SharedComposeFetcher {
       const commit = (
         await this.mustGit(["--git-dir", cache, "rev-parse", "--verify", "FETCH_HEAD^{commit}"])
       ).trim();
-      // そのコミットの中身を、実行ごとのディレクトリに書き出す（.git は含めない）
-      rmSync(dest, { recursive: true, force: true });
+      // そのコミットの中身を、実行ごとのディレクトリに書き出す（.git は含めない）。消す間もデーモンが応答し続けるよう、
+      // 非同期で消す（PBI-156）
+      await rm(dest, { recursive: true, force: true });
       mkdirSync(dest, { recursive: true });
       await this.extract(cache, commit, dest);
       return { commit };

@@ -224,6 +224,36 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(existsSync(join(gitDir, "GUARDIAN-MARK"))).toBe(false);
   });
 
+  it("多数のファイルを写す間も、イベントループを止めない（ほかのタイマーが進む。PBI-156）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // node_modules の代わりに、多数のファイルを置く
+    for (let d = 0; d < 20; d++) {
+      mkdirSync(join(clone, "node_modules", `pkg${d}`), { recursive: true });
+      for (let f = 0; f < 100; f++) {
+        writeFileSync(join(clone, "node_modules", `pkg${d}`, `f${f}.js`), "x");
+      }
+    }
+    let ticks = 0;
+    let copying = true;
+    const tick = () => {
+      if (!copying) return;
+      ticks++;
+      setImmediate(tick);
+    };
+    setImmediate(tick);
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir);
+    copying = false;
+    // 同期で写すと、写し終わるまでタイマーが1つも進まない
+    expect(ticks).toBeGreaterThan(0);
+    expect(readdirSync(join(out, "node_modules", "pkg19"))).toHaveLength(100);
+    expect(git(out, "rev-parse", "--is-inside-work-tree")).toBe("true");
+  });
+
   it("起点のコミットのファイルだけを、.git や作業領域の変更を含めずに書き出す（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

@@ -484,7 +484,7 @@ Code: `apps/daemon/src/service.ts` (`resume`), `packages/core/src/events.ts` (`T
 
 ## Goal Guardian
 
-The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes a copy of the code in `workspaces/_guardian/<run ID>` and deletes it when done.
+The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes a copy of the code in `workspaces/_guardian/<run ID>` and deletes it when done (even if the run fails or is interrupted). The copy and the deletion are asynchronous, and the daemon keeps responding to the web UI and the API meanwhile ([Data location](architecture.en.md#data-location-sacty_home)).
 
 | Role | What it reads | Verdict |
 | --- | --- | --- |

@@ -27,6 +27,7 @@ import {
   removeDaemonFile,
 } from "./context-preview.js";
 import { daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
+import { UpStopper } from "./up-stop.js";
 
 const require = createRequire(import.meta.url);
 
@@ -210,36 +211,16 @@ async function up(webPort: number, daemonPort: number) {
     ? randomBytes(32).toString("base64url")
     : undefined;
   const daemonUrl = `http://127.0.0.1:${daemonPort}`;
-  const children: ChildProcess[] = [];
-  let stopping = false;
-
-  const running = () => children.filter((c) => c.exitCode === null && c.signalCode === null);
-
-  /** 子プロセスをすべて止め、止まったのを確かめてから終了コードを返して終わる。 */
-  const stop = (code: number) => {
-    if (stopping) return;
-    stopping = true;
-    process.exitCode = code;
-    const alive = running();
-    if (alive.length === 0) process.exit(code);
-    for (const child of alive) {
-      child.once("exit", () => {
-        if (running().length === 0) process.exit(code);
-      });
-      child.kill("SIGTERM");
-    }
-    // 子が応答しない場合の保険。unref しない（先にイベントループが終わると終了コードが失われるため）。
-    // デーモンは実行中の処理の後片付け（認証ファイルの書き戻しなど）に最大20秒かけるので、それより長く待つ。
-    setTimeout(() => {
-      for (const child of running()) child.kill("SIGKILL");
-      process.exit(code);
-    }, 30_000);
-  };
+  const stopper = new UpStopper({
+    exit: (code) => process.exit(code),
+    log: (line) => console.error(line),
+  });
+  const stop = (code: number) => stopper.stop(code);
 
   const watch = (name: string, child: ChildProcess) => {
-    children.push(child);
+    stopper.add(name, child);
     child.on("exit", (code, signal) => {
-      if (!stopping) {
+      if (!stopper.stopping) {
         if (name === "daemon" && code === ALREADY_RUNNING_EXIT_CODE) {
           // 同じ SACTY_HOME で、ほかの sacty が動いている（デーモンが接続先と PID を表示した。PBI-79）
           console.error(
@@ -257,8 +238,8 @@ async function up(webPort: number, daemonPort: number) {
     });
   };
 
-  process.on("SIGINT", () => stop(0));
-  process.on("SIGTERM", () => stop(0));
+  process.on("SIGINT", () => stopper.signal());
+  process.on("SIGTERM", () => stopper.signal());
 
   const daemonMain = require.resolve("@sacty/daemon");
   watch(
@@ -276,7 +257,7 @@ async function up(webPort: number, daemonPort: number) {
     stop(1);
     return;
   }
-  if (stopping) return;
+  if (stopper.stopping) return;
 
   // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）。デーモンが
   // 応答してから書き（起動に失敗した sacty は書かない）、ほかの sacty が動いていれば上書きしない
@@ -289,7 +270,7 @@ async function up(webPort: number, daemonPort: number) {
       "[sacty] 同じ SACTY_HOME で、ほかの sacty が動いています。sacty context preview は、そちらに問い合わせます。",
     );
   }
-  if (stopping) return;
+  if (stopper.stopping) return;
 
   const webDir = dirname(require.resolve("@sacty/web/package.json"));
   const nextBin = require.resolve("next/dist/bin/next", { paths: [webDir] });

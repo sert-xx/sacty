@@ -276,7 +276,9 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | `context-mcp/layers/` | Working directories of the context's command MCP servers started on the host (copies of the layer repositories) |
 | `memory/` | Memories the audit registered (`projects/<ID>/`, `repos/<host>/<owner>/<name>/`). The activity log is the source of truth; rewritten at startup ([Memory](memory.en.md)) |
 
-Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`repoDir`, `trustedGitDir`), `apps/daemon/src/workspace-cleanup.ts` (`RUN_SCRATCH_DIRS`), `apps/daemon/src/instance-lock.ts`, `packages/cli/src/context-preview.ts` (`DAEMON_FILE`)
+Copying and removing workspaces (things proportional to the size of the target repository, such as setting `.git` aside after the clone, copying into `_guardian`, and removing per-run workspaces and the workspaces of cancelled tasks) use asynchronous file operations. While copying or removing several GB or tens of thousands of files, the daemon does not block its event loop and keeps responding to the web UI and the API. The step does not move on until the copy or removal finishes (if a pause or cancel is requested during a copy, the run stops after the copy finishes and before the container starts).
+
+Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`repoDir`, `trustedGitDir`), `apps/daemon/src/repository.ts` (`prepare`, `copyWorkingTree`), `apps/daemon/src/workspace-cleanup.ts` (`RUN_SCRATCH_DIRS`), `apps/daemon/src/instance-lock.ts`, `packages/cli/src/context-preview.ts` (`DAEMON_FILE`)
 
 ## Two places for settings
 

@@ -814,7 +814,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 ## ゴールガーディアン
 
 AI は `guardian_agent`（無ければ `default_agent`）。
-実行ごとに `workspaces/_guardian/<実行 ID>` にコードの写しを作り、終わったら消す。
+実行ごとに `workspaces/_guardian/<実行 ID>` にコードの写しを作り、終わったら（失敗・中断でも）消す。
+写し・削除は非同期で行い、その間もデーモンは画面と API に応答する（[データの置き場所](architecture.md#データの置き場所sacty_home)）。
 
 | 役割 | 読むもの | 判定 |
 | --- | --- | --- |

@@ -374,8 +374,16 @@ class FakeRepos implements RepositoryWorkspace {
   /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
   workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
   copyFail?: string;
+  /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
+  copyStarted = Promise.withResolvers<void>();
+  copyGate?: Promise<void>;
   async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (this.copyFail) throw new Error(this.copyFail);
+    this.copyStarted.resolve();
+    if (this.copyGate) {
+      mkdirSync(outDir, { recursive: true });
+      await this.copyGate;
+    }
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
     this.workingCopies.push({ dir, outDir, ...(gitDir ? { gitDir } : {}) });
@@ -3167,6 +3175,81 @@ describe("設計の工程（PBI-8）", () => {
     // 承認済みの工程は、差し戻して承認を取り消さない限り実行対象にならない
     expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
     expect(() => gate(service, id, "requirements")).toThrow(/承認待ちのタスクではありません/);
+    activity.close();
+  });
+});
+
+describe("作業領域の写し・削除の間も、デーモンのイベントループを止めない（PBI-156）", () => {
+  /** 多数のファイルを書き出す写し（数万ファイルの作業ツリーの代わり）。 */
+  class ManyFilesRepos extends FakeRepos {
+    override async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+      await super.snapshot(gitDir, baseCommit, outDir);
+      if (!outDir.includes("_guardian")) return;
+      for (let d = 0; d < 20; d++) {
+        mkdirSync(join(outDir, "node_modules", `pkg${d}`), { recursive: true });
+        for (let f = 0; f < 100; f++) {
+          writeFileSync(join(outDir, "node_modules", `pkg${d}`, `f${f}.js`), "x");
+        }
+      }
+    }
+  }
+
+  it("ゴールガーディアンの作業領域を消す間も、ほかのタイマーが進み、消し終わってから工程を終える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const out = (text: string): AgentOutcome => ({
+      kind: "completed",
+      output: text,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        out(
+          [
+            "# 設計 v1",
+            block({
+              "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+            }),
+            block({
+              "sacty-change-proposal": {
+                target: "requirements",
+                reason: "外部APIが冪等性キーに対応していない",
+                facts: ["決済代行のAPI仕様書 v3 に Idempotency-Key が無い"],
+                proposed: "# 要求要件 v2",
+              },
+            }),
+          ].join("\n\n"),
+        ),
+        out(block({ "sacty-verdict": { verdict: "rejected", reason: "代替手段がある" } })),
+      ],
+      { repos: new ManyFilesRepos() },
+    );
+    // ゴールガーディアンの実行が終わってから、作業領域が消えるまでに進んだタイマーの数
+    let ticks = 0;
+    const run = executor.run.bind(executor);
+    executor.run = async (input) => {
+      const outcome = await run(input);
+      if (input.workspaceDir.includes("_guardian")) {
+        expect(existsSync(join(input.workspaceDir, "node_modules", "pkg19", "f99.js"))).toBe(true);
+        const tick = () => {
+          if (!existsSync(input.workspaceDir)) return;
+          ticks++;
+          setImmediate(tick);
+        };
+        setImmediate(tick);
+      }
+      return outcome;
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.dirs[2]).toContain("_guardian");
+    // 同期で消すと、消し終わるまでタイマーが1つも進まない
+    expect(ticks).toBeGreaterThan(0);
+    expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
     activity.close();
   });
 });
@@ -7107,6 +7190,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.timeouts[4]).toBe(37 * 60_000);
     activity.close();
   });
+
+  it.each(["pause", "cancel"] as const)(
+    "最終レビューの作業領域を写す途中で止めたら（%s）、写し終わってもコンテナを起動せず、写しを消す（PBI-156）",
+    async (stop) => {
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      repos.copyGate = gate.promise;
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      const running = drain(service);
+      await repos.copyStarted.promise;
+      const calls = executor.calls.length;
+      const guardianDirs = () => readdirSync(join(dir, "workspaces", "_guardian"));
+      expect(guardianDirs()).toHaveLength(1);
+      const stopping = stop === "pause" ? service.pause(id) : service.cancel(id);
+      gate.resolve();
+      await Promise.all([running, stopping]);
+      // 最終レビューのコンテナは起動していない
+      expect(executor.calls.length).toBe(calls);
+      expect(service.get(id)?.task.status).toBe(stop === "pause" ? "paused" : "cancelled");
+      expect(guardianDirs()).toEqual([]);
+      activity.close();
+    },
+  );
 
   it("sacty はテストを別に実行せず、ゴールガーディアンが新しいセッションでテストを実行して最終レビューし、合格なら実装を完了にする", async () => {
     const { activity, service, executor, repos, id } = await toImplement([

@@ -18,10 +18,11 @@ Related ADRs: [The web UI is usable only from browsers that signed in with the p
   - When exiting, it removes the file only if it wrote it (the address and token are the same).
 - Next, it starts the web UI with `next start -H 127.0.0.1 -p <web-ui-port>`. The environment variables are `SACTY_DAEMON_URL`, `SACTY_DAEMON_TOKEN`, `SACTY_WEB_TOKEN` (the web UI sign-in secret), and `SACTY_WEB_PORT` (the web UI port).
 - It prints the web UI sign-in URL (`http://127.0.0.1:<web-ui-port>/auth?token=<sign-in secret>`) in the terminal (see "Web UI sign-in" below).
-- On SIGINT or SIGTERM, it sends SIGTERM to the child processes and exits after all of them have ended. Children still running after 30 seconds receive SIGKILL (it waits longer than the daemon's 20-second cleanup limit).
+- On SIGINT or SIGTERM, it shows that it is stopping and that pressing Ctrl+C again stops without waiting, sends SIGTERM to the child processes, and exits after all of them have ended. Children still running after 30 seconds receive SIGKILL (it waits longer than the daemon's 20-second cleanup limit).
+- On another SIGINT or SIGTERM while stopping, it stops without waiting for cleanup. It sends `FORCE_STOP_SIGNAL` (SIGUSR2) to the daemon and SIGKILL to the web UI, and sends SIGKILL to children still running after 5 seconds. With Ctrl+C, the SIGINT from the terminal also reaches the daemon directly and overlaps with the SIGTERM from the CLI, so the daemon does not count SIGINTs and tells the forced stop apart by a separate signal.
 - When a child process ends unexpectedly, it stops the other one too and exits with a failure exit code (1 even if the child's exit code was 0). When the daemon exits with exit code `3` (`ALREADY_RUNNING_EXIT_CODE`), it reports that the daemon did not start because another sacty is running.
 
-Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `packages/cli/src/up-env.ts` (`daemonEnv`, `webEnv`, `signInUrl`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
+Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `packages/cli/src/up-stop.ts` (`UpStopper`, `STOP_TIMEOUT_MS`, `FORCE_STOP_TIMEOUT_MS`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `packages/cli/src/up-env.ts` (`daemonEnv`, `webEnv`, `signInUrl`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
 
 ## Web UI sign-in
 
@@ -162,10 +163,12 @@ On SIGINT or SIGTERM, the daemon does the following, only once.
 1. It stops the git processes fetching contexts for retrieving secrets, together with their process groups (`stopFetchProcessesSync`). These git processes run in their own process groups.
 2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up.
 3. It starts stopping the host MCP servers and the context's command MCP servers. It does not wait for cleanup. For the context's servers, it also removes the layer copies.
-4. It stops the running agent containers.
-5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. After that, it shows a warning and continues.
-6. It closes the gateway, waits for the host MCP servers to stop, and closes the API listener. Then it closes the DB, releases the lock (also removing the `daemon-owner.json` it wrote), and exits with exit code 0.
+4. It stops the running agent containers. After this, it starts no new containers (a run that was copying its workspace ends with `run.daemonStopped` without starting, even after the copy finishes).
+5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. If it has not finished after 3 seconds (`DRAIN_REPORT_MS`), it shows what has not finished yet (running tasks, intake, PR checks, scheduled task checks). After 20 seconds, it shows a warning and continues.
+6. It closes the gateway, waits for the host MCP servers to stop, and closes the API listener. If the host MCP servers have not stopped after 3 seconds, it also shows that it is waiting for them. Then it closes the DB, releases the lock (also removing the `daemon-owner.json` it wrote), and exits with exit code 0.
 
-When the daemon ends because of an exception or similar (`exit`), it also sends SIGTERM to the process groups of the host MCP servers, and SIGKILL to the process groups of the git processes fetching contexts ([Secrets](secrets.en.md)).
+On `FORCE_STOP_SIGNAL` (SIGUSR2; `sacty up` sends it when Ctrl+C is pressed again) while stopping, it exits with exit code 1 without waiting for cleanup. Runs that were being cleaned up are recovered as interrupted at the next start (step 7 of "Daemon startup order" above).
 
-Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)
+When the daemon ends because of an exception or similar (`exit`, including when it ends on `FORCE_STOP_SIGNAL`), it also sends SIGTERM to the process groups of the host MCP servers, and SIGKILL to the process groups of the git processes fetching contexts ([Secrets](secrets.en.md)).
+
+Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`, `DRAIN_REPORT_MS`), `apps/daemon/src/shutdown-report.ts` (`waitNamed`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `apps/daemon/src/agents/docker.ts` (`DockerExecutor.abortAll`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)
