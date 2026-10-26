@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -352,6 +353,38 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       { path: "logo.bin", added: 2, removed: 0 },
       { path: "pay.ts", added: 301, removed: 1 },
     ]);
+  });
+
+  it("中身から数えるとき、消したファイルは変更後を 0 行にし、ある中身を読めなければ 0 行にせずに失敗にする", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    writeFileSync(join(clone, ".gitattributes"), "pay.ts -diff\n");
+    rmSync(join(clone, "pay.ts"));
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: ".gitattributes", added: 1, removed: 0 },
+      { path: "pay.ts", added: 0, removed: 1 },
+    ]);
+
+    // cat-file だけが失敗する git（読み取りの失敗）
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\nfor a in "$@"; do [ "$a" = cat-file ] && { echo "fatal: read error" >&2; exit 128; }; done\nexec "${realGit}" "$@"\n`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow(/read error/);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 
   it("用意し直すときは、記録したブランチが消えていても、記録済みの起点のコミットにする（PBI-157 レビュー指摘）", async () => {

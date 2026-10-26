@@ -30,6 +30,18 @@ export function parseNumstat(output: string): (FileChange & { unknown?: true })[
     });
 }
 
+/** git diff --name-status -z の出力（名前の変更を分けたもの）を、パスから状態（A・D・M など）への対応にする。 */
+function parseNameStatus(output: string): Map<string, string> {
+  const fields = output.split("\0");
+  const statuses = new Map<string, string>();
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i];
+    const path = fields[i + 1];
+    if (status && path !== undefined) statuses.set(path, status.charAt(0));
+  }
+  return statuses;
+}
+
 /** 中身の行の数（最後の行に改行が無くても1行に数える）。 */
 function lineCount(text: string): number {
   if (text === "") return 0;
@@ -430,24 +442,37 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       );
       // 行の数を出さないファイル（バイナリと、作業領域の .gitattributes の -diff などで隠したもの）は、変更前と変更後の
       // 中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）
-      const lines = async (spec: string) => {
-        try {
-          return lineCount(await run("cat-file", ["cat-file", "blob", spec]));
-        } catch {
-          return 0; // 無いファイル（足した・消した）
-        }
-      };
-      return Promise.all(
-        listed.map(async ({ unknown, ...change }) =>
-          unknown
-            ? {
-                path: change.path,
-                added: await lines(`:${change.path}`),
-                removed: await lines(`${baseCommit}:${change.path}`),
-              }
-            : change,
-        ),
+      if (!listed.some((c) => c.unknown)) return listed;
+      // 足した（A）ファイルには変更前が、消した（D）ファイルには変更後が無い。ある側の読み取りの失敗は、0 行にせずに
+      // 呼び出し元へ伝える（行の数を少なく数えないため）
+      const statuses = parseNameStatus(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--no-renames",
+          "--no-ext-diff",
+          baseCommit,
+        ]),
       );
+      const lines = async (spec: string) =>
+        lineCount(await run("cat-file", ["cat-file", "blob", spec]));
+      // プロセスを一度に多く起動しないよう、1つずつ読む
+      const changes: FileChange[] = [];
+      for (const { unknown, ...change } of listed) {
+        if (!unknown) {
+          changes.push(change);
+          continue;
+        }
+        const status = statuses.get(change.path);
+        changes.push({
+          path: change.path,
+          added: status === "D" ? 0 : await lines(`:${change.path}`),
+          removed: status === "A" ? 0 : await lines(`${baseCommit}:${change.path}`),
+        });
+      }
+      return changes;
     });
   }
 

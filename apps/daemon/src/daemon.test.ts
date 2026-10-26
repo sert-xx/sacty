@@ -29125,6 +29125,19 @@ describe("セキュリティチェックとセキュリティ対応", () => {
     const prompt = promptOf(executor, 1);
     expect(prompt).toContain("対応する指摘の全件（80件");
     expect(prompt).toContain("GHSA-0000-0000-0080");
+    // 範囲を広げるために中止して再実行しても、元のレポート・区分・指摘の全件を引き継ぐ
+    await service.cancel(fix?.id ?? "");
+    const rerun = service.rerunTask(fix?.id ?? "", {
+      title: fix?.title ?? "",
+      body: fix?.body ?? "",
+      note: "範囲に package.json を含める",
+      repo: "https://github.com/acme/app",
+    });
+    expect(rerun.securityFix).toEqual(fix?.securityFix);
+    const before = executor.calls.length;
+    await service.runNext(rerun.id);
+    expect(executor.calls.length).toBe(before + 1);
+    expect(promptOf(executor, before)).toContain("GHSA-0000-0000-0080");
     activity.close();
   });
 

@@ -419,6 +419,8 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   照合には、エージェントに渡す差分（`DIFF_LIMIT` で切り詰める）ではなく、切り詰めないファイルごとの追加と削除の行の数を使う（`diffStats`。`git diff --numstat --no-renames`）。
   名前の変更は、変更元の削除と変更先の追加に分ける（範囲の外のファイルを範囲の中へ移して隠さないため）。
   行の数を出さないファイル（バイナリと、作業領域の `.gitattributes` の `-diff` などで差分を隠したもの）は、変更前と変更後の中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）。
+  足したファイルは変更前を、消したファイルは変更後を 0 行にし（`git diff --name-status` で見分ける）、ある中身を読めなければ取れなかったものとして止める。
+  中身は1つずつ読む（プロセスを一度に多く起動しない）。
   取れなければ、差分と同じく最終レビューをせずに一時停止する（`verify.diffUnavailable`）。
   - 範囲の外のファイル：`paths` のどれにも当たらない（そのもの・末尾が `/` ならその下・`*` は `/` を除く任意の文字。`pathInScope`）、テストのファイルでもない（テストのディレクトリの中か、名前がテストの慣習に当たる）ファイル。
   - 変えた行の数：ロックファイル（`package-lock.json`・`yarn.lock`・`go.sum` など）を除く（テストのファイルは数える）、追加と削除の行の合計が `SECURITY_FIX_MAX_CHANGED_LINES`（300）を超える。
@@ -1017,6 +1019,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   GitHub の Issue から取り込んだタスクの再実行は、取り込み元を引き継がない（`start` は `sacty`。記録に Issue の URL を書く）。
 - 予算の上限は、再実行のタスクを作った時点の `budget.default_per_task_usd`（元のタスクの上限・使った額は引き継がない）。
 - 元のタスクがセキュリティの組み合わせ（`security-check`・`security-fix`）なら、その組み合わせを `TaskCreated` の `plan` にする（最小限の変更の決まりと公開しない扱いを外さないため）。
+  レポートの区分から作った対応のタスクなら、`securityFix`（元のレポート・区分・指摘の全件）も引き継ぐ（説明に入りきらなかった指摘を落とさないため）。
   ほかの組み合わせは引き継がず、オーケストレーターが選ぶ。
 
 コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`

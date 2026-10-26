@@ -4771,6 +4771,9 @@ export class TaskService {
             // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
             // 組み合わせは引き継がず、オーケストレーターが選ぶ
             ...(isSecurityTask(previous) ? { plan: taskPlan(previous) } : {}),
+            // レポートの区分から作った対応のタスクは、元のレポート・区分・指摘の全件も引き継ぐ（説明に入りきらなかった
+            // 指摘を、再実行で落とさないため）
+            ...(previous.securityFix ? { securityFix: previous.securityFix } : {}),
           },
         },
       },
