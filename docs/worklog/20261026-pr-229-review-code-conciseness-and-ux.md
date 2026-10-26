@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-26（UTC）
 - タスク: なし
-- PR: なし
+- PR: #229
 - ブランチ: claude/great-clarke-kf7o3d
 - 関係する ADR: [既定のレビューに、要らないコードを探す観点と、画面を撮って UX を見る観点を足す](../adr/20261026-1014-review-code-conciseness-and-ux.md)
 
