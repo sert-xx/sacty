@@ -22,7 +22,7 @@ Related ADRs: [The web UI is usable only from browsers that signed in with the p
 - On another SIGINT or SIGTERM while stopping, it stops without waiting for cleanup. It sends `FORCE_STOP_SIGNAL` (SIGUSR2) to the daemon and SIGKILL to the web UI, and sends SIGKILL to children still running after 5 seconds. With Ctrl+C, the SIGINT from the terminal also reaches the daemon directly and overlaps with the SIGTERM from the CLI, so the daemon does not count SIGINTs and tells the forced stop apart by a separate signal.
 - When a child process ends unexpectedly, it stops the other one too and exits with a failure exit code (1 even if the child's exit code was 0). When the daemon exits with exit code `3` (`ALREADY_RUNNING_EXIT_CODE`), it reports that the daemon did not start because another sacty is running.
 
-Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `packages/cli/src/up-env.ts` (`daemonEnv`, `webEnv`, `signInUrl`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
+Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `packages/cli/src/up-stop.ts` (`UpStopper`, `STOP_TIMEOUT_MS`, `FORCE_STOP_TIMEOUT_MS`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `packages/cli/src/up-env.ts` (`daemonEnv`, `webEnv`, `signInUrl`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
 
 ## Web UI sign-in
 
@@ -166,4 +166,4 @@ On `FORCE_STOP_SIGNAL` (SIGUSR2; `sacty up` sends it when Ctrl+C is pressed agai
 
 When the daemon ends because of an exception or similar (`exit`, including when it ends on `FORCE_STOP_SIGNAL`), it also sends SIGTERM to the process groups of the host MCP servers, and SIGKILL to the process groups of the git processes fetching contexts ([Secrets](secrets.en.md)).
 
-Code: `apps/daemon/src/main.ts` (`shutdown`, `waitNamed`, `DRAIN_TIMEOUT_MS`, `DRAIN_REPORT_MS`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)
+Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`, `DRAIN_REPORT_MS`), `apps/daemon/src/shutdown-report.ts` (`waitNamed`), `apps/daemon/src/exit-codes.ts` (`FORCE_STOP_SIGNAL`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/fetch-processes.ts` (`spawnStoppable`, `stopFetchProcessesSync`)

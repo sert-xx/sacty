@@ -32,7 +32,7 @@
 - 子プロセスが想定外に終わったときは、もう片方も止め、失敗の終了コードで終わる（子の終了コードが 0 でも 1 にする）。
   デーモンが終了コード `3`（`ALREADY_RUNNING_EXIT_CODE`）で終わったときは、ほかの sacty が動いているため起動しなかったと表示する。
 
-コード: `packages/cli/src/index.ts`（`up`・`waitForDaemon`・`parsePort`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`packages/cli/src/up-env.ts`（`daemonEnv`・`webEnv`・`signInUrl`）、`packages/cli/src/context-preview.ts`（`claimDaemonFile`・`removeDaemonFile`・`DAEMON_FILE`）
+コード: `packages/cli/src/index.ts`（`up`・`waitForDaemon`・`parsePort`）、`packages/cli/src/up-stop.ts`（`UpStopper`・`STOP_TIMEOUT_MS`・`FORCE_STOP_TIMEOUT_MS`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`packages/cli/src/up-env.ts`（`daemonEnv`・`webEnv`・`signInUrl`）、`packages/cli/src/context-preview.ts`（`claimDaemonFile`・`removeDaemonFile`・`DAEMON_FILE`）
 
 ## 画面の認証
 
@@ -236,4 +236,4 @@ SIGINT・SIGTERM を受けると、デーモンは1回だけ次を行う。
 
 デーモンが例外などで終わるとき（`exit`。`FORCE_STOP_SIGNAL` で終わるときも含む）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git のプロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
 
-コード: `apps/daemon/src/main.ts`（`shutdown`・`waitNamed`・`DRAIN_TIMEOUT_MS`・`DRAIN_REPORT_MS`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）
+コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`・`DRAIN_REPORT_MS`）、`apps/daemon/src/shutdown-report.ts`（`waitNamed`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）

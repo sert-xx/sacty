@@ -42,6 +42,7 @@ import { DockerComposeServices } from "./services.js";
 import { SessionLogStore } from "./session-logs.js";
 import { SqliteSettingsStore } from "./settings.js";
 import { cleanupSharedComposeRuns, GitSharedComposeFetcher } from "./shared-compose.js";
+import { waitNamed } from "./shutdown-report.js";
 import { JiraTickets } from "./tickets.js";
 import { packageVersion, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
@@ -295,22 +296,7 @@ const DRAIN_TIMEOUT_MS = 20_000;
 /** 後処理が長引いたとき、まだ終わっていない処理を表示するまでの時間。 */
 const DRAIN_REPORT_MS = 3_000;
 
-/**
- * 名前の付いた後処理がすべて終わるのを待つ。reportMs たっても終わっていなければ、まだ終わっていないものを表示する
- * （止まらない理由が端末でわかるように）。
- */
-const waitNamed = async (tasks: Record<string, Promise<unknown>>, reportMs: number) => {
-  const pending = new Set(Object.keys(tasks));
-  const report = setTimeout(() => {
-    if (pending.size > 0)
-      console.log(`[daemon] 後片付けを待っています：${[...pending].join("、")}`);
-  }, reportMs).unref();
-  await Promise.all(
-    Object.entries(tasks).map(([name, task]) => task.finally(() => pending.delete(name))),
-  );
-  clearTimeout(report);
-};
-
+const log = (line: string) => console.log(line);
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
@@ -332,6 +318,7 @@ const shutdown = async () => {
       スケジュールタスクの確認: scheduleRunner.stop(),
     },
     DRAIN_REPORT_MS,
+    log,
   );
   // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
   // CLI に強制終了されても残らないように。PBI-78）
@@ -347,7 +334,7 @@ const shutdown = async () => {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
   await gateway.close();
-  await waitNamed({ "ホストの MCP サーバー": stoppingHostMcp }, DRAIN_REPORT_MS);
+  await waitNamed({ "ホストの MCP サーバー": stoppingHostMcp }, DRAIN_REPORT_MS, log);
   server.close(() => {
     activity.close();
     projects.close();
