@@ -68,7 +68,7 @@ function configKey(target: ImageTarget): string {
 
 /**
  * 名前にレジストリのホストを含むか（`registry.example.com/x:1`・`localhost:5000/x` など）。最初の `/` の前に `.`・`:` があるか
- * `localhost` なら、レジストリ（docker の名前の規則と同じ）。それ以外（`sacty-agent:1.10.0`・`library/node`）は Docker Hub の名前で、
+ * `localhost` なら、レジストリ（docker の名前の規則と同じ）。それ以外（`sacty-agent:1.11.0`・`library/node`）は Docker Hub の名前で、
  * sacty が作るイメージは公開していないので、実行のときに取得できない。
  */
 export function isRegistryImage(image: string): boolean {
