@@ -45,6 +45,7 @@ import { cleanupSharedComposeRuns, GitSharedComposeFetcher } from "./shared-comp
 import { JiraTickets } from "./tickets.js";
 import { packageVersion, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
+import { runningContainerMounts } from "./workspace-cleanup.js";
 
 const home = resolveHome();
 const port = Number(process.env.SACTY_DAEMON_PORT ?? 4710);
@@ -191,6 +192,8 @@ const service = new TaskService({
   sharedComposes: new GitSharedComposeFetcher(join(home, "cache", "shared-compose")),
   tickets,
   workspaceRoot,
+  // 作業領域を消す前に、動いているコンテナがマウントしていないかを確かめる（PBI-157）
+  containerMounts: () => runningContainerMounts(),
   // エージェントの実行ごとのセッションログ（PBI-62）。中止の掃除では消さない（監査に使うため）
   sessionLogs: new SessionLogStore(join(home, "runs")),
   // タスクごとのオーケストレーターのセッション（PBI-67）。台帳が正本で、これは使い回すためのキャッシュ
@@ -216,6 +219,15 @@ const service = new TaskService({
   }),
 });
 service.recoverInterrupted();
+// 前回、片付ける前にデーモンが終わって残った実行ごとの一時領域と、もう使わない完了したタスク・どのタスクのものでもない
+// 作業領域を、実行を再開・始める前に消す（PBI-157）。消せなくても起動は続ける
+const removedWorkspaces = await service.cleanupWorkspacesAtStartup().catch((error: unknown) => {
+  console.warn("[daemon] 残っている作業領域を片付けられませんでした：", error);
+  return 0;
+});
+if (removedWorkspaces > 0) {
+  console.log(`[daemon] 残っていた作業領域を ${removedWorkspaces} 件消しました。`);
+}
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
 // 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）

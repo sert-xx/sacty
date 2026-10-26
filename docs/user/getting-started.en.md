@@ -89,6 +89,16 @@ npx sacty up
 ## Where data is stored
 
 - sacty stores the activity log, settings, and workspaces in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.
+- Workspaces (`~/.sacty/workspaces/`) are each task's clone of the target repository and per-run temporary copies of the code.
+  sacty removes the ones it no longer needs by itself.
+  - A completed task's workspace is removed once it is no longer used (for an audited task, after the audit ends).
+    A cancelled task's workspace is removed on cancel, as before.
+  - Temporary copies left when the daemon was stopped or restarted during a run are removed the next time the daemon starts.
+    Workspaces of tasks completed before this release are removed at the same time.
+  - The activity log (session logs in `~/.sacty/runs/`), Orchestrator sessions, memories, and `sacty.db` are not removed.
+  - When you re-review a completed task or ask the Orchestrator about it, the workspace is recreated from the same base commit (it clones again, so this takes a little longer).
+  - Places used by a running container are not removed, and nothing is removed when Docker cannot be queried.
+    If something cannot be removed, the reason appears in the daemon's terminal.
 - You cannot run two instances of sacty with the same `SACTY_HOME` (even on different ports).
   - A second `sacty up` shows the address and PID of the running daemon and fails before it touches any data.
   - sacty checks this with an OS file lock on `SACTY_HOME/daemon.lock`, so if the previous daemon dies suddenly (SIGKILL and so on), the next start is not blocked.

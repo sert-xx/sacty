@@ -517,6 +517,39 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 
 Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`)
 
+### Cleaning up the workspaces of finished tasks
+
+A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`workspaces/_git/<task-id>.git`) are removed not only on cancel, but also when a completed task no longer uses them.
+
+- A task that no longer uses them (`workspaceRetirable`): one that meets all of the following.
+  - It has finished all steps and stopped (`idle` and `isCompleted`).
+  - For an audited task, the audit has ended (completed or failed). An audit stopped by its budget is kept, because it can continue after the cap is raised.
+  - It is not an older task waiting for the after-merge watch outside a step.
+  - It has no container that could not be confirmed as stopped (`unstoppedRuns`).
+- When they are removed:
+  - On the append that makes the task so.
+  - When a run or the answer to a question ends (if a run is in progress, they are removed at its end).
+  - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).
+- At startup, the following are removed too.
+  - Workspaces that belong to no task.
+  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
+    They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
+- Limits on what is removed:
+  - Only names under the workspace root shaped like a task or run ID (UUID) are removed.
+  - A link is removed by itself; its target is not followed.
+  - Nothing that overlaps a place mounted by a running container (not only sacty's) is removed.
+    If Docker cannot be queried, nothing is removed (checked again at the next start).
+  - A task's workspace and its set-aside git metadata are removed together or kept together.
+- If they cannot be removed (permissions and so on), the reason is logged, and neither the daemon startup nor the task's progress is stopped.
+- Session logs (`runs/`), `sessions/`, `memory/`, and `sacty.db` are not removed.
+- Operations that use the workspace after it was removed prepare it again from the same base commit (`prepareRepository`).
+  - Operations that rerun a step (re-review and so on) prepare it while preparing the step's run.
+  - Runs given a copy of the code, such as answering a question (`runGuardian`), prepare it before copying.
+    Because the implementation workspace is gone too, they get the base code, not the implemented code.
+  - Canceling a completed task prepares the set-aside git metadata again to delete sacty's branches.
+
+Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStartup`, `workspaceMissing`, `prepareRepository`, `cancel`), `apps/daemon/src/workspace-cleanup.ts` (`workspaceRetirable`, `RUN_SCRATCH_DIRS`, `isSactyId`, `removeEntry`, `overlapsMounts`, `runningContainerMounts`), `apps/daemon/src/main.ts`
+
 ### Rerunning a cancelled task
 
 - A cancelled task can be started over from "Rerun" on its detail page (`POST /api/tasks/:id/rerun`). Nothing can be appended to the activity of a cancelled task, so a new task that takes over the original is created (`rerun` in `TaskCreated`: the original task's ID and the image a person chose). When the activity is replayed, the original task records the rerun task (`rerunBy`); a task can be rerun only once (a second rerun and a task that is not cancelled are refused). Subtasks created by a split and PR review tasks can't be rerun (`canRerun`).

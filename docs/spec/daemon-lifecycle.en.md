@@ -59,9 +59,14 @@ Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib
    - A deployment check that was in the middle of running is recorded as interrupted. For the after-merge watch step, the task is paused (`TaskPaused`, reason `error`) and checked again on resume. For tasks from before the step, it ends as not determined ([After-merge watch](deployment-watch.en.md)).
    - A Goal Guardian judgment that was in the middle of judging is recorded as not judged (`undecidable`).
    - Tasks that were running (`running`) are recorded as a run failure (`AgentRunFailed`) and paused (`TaskPaused`, reason `error`).
-8. It queues steps that were waiting because they could not run (`queueWaitingSteps`).
-9. It prints startup problems (such as configuration errors) to the terminal.
-10. It listens for the API on `127.0.0.1:<port>`. Once listening, it retrieves the secrets it uses all at once (including the secrets in project contexts; fetching the contexts waits at most 30 seconds; [Secrets](secrets.en.md)). After that, it starts the following.
+8. It removes workspaces left by the previous daemon (`cleanupWorkspacesAtStartup`; [Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)).
+   - Per-run scratch directories that do not belong to a running run.
+   - Workspaces and set-aside git metadata of completed tasks that no longer use them, and of no task.
+
+   If it cannot remove them, it prints the reason to the terminal and keeps starting.
+9. It queues steps that were waiting because they could not run (`queueWaitingSteps`).
+10. It prints startup problems (such as configuration errors) to the terminal.
+11. It listens for the API on `127.0.0.1:<port>`. Once listening, it retrieves the secrets it uses all at once (including the secrets in project contexts; fetching the contexts waits at most 30 seconds; [Secrets](secrets.en.md)). After that, it starts the following.
     - Starting the host MCP servers
     - Preparing the context's command MCP servers (removing the previous layer copies in `SACTY_HOME/context-mcp/layers` and starting the check that stops ones no longer used)
     - Preparing authentication for organization platforms (PF)
@@ -71,7 +76,7 @@ Every 2 seconds, the worker runs queued tasks in order of creation, oldest first
 
 PR watching checks every 60 seconds, after the previous check has finished. CI/CD watching after merges also runs at the end of each check.
 
-Code: `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`recoverInterrupted`, `queueWaitingSteps`, `maxParallelTasks`),
+Code: `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`recoverInterrupted`, `cleanupWorkspacesAtStartup`, `queueWaitingSteps`, `maxParallelTasks`),
 `apps/daemon/src/worker.ts` (`Worker`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`), `packages/core/src/projects.ts` (`DEFAULT_MAX_PARALLEL_TASKS`)
 
 ## Checking for a newer version

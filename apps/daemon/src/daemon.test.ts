@@ -1018,6 +1018,8 @@ function makeService(
     memory?: boolean;
     /** 階層ごとのメモリーの件数の上限（PBI-126）。 */
     memoryLimit?: number;
+    /** 動いているコンテナがマウントしている場所（PBI-157）。既定は、動いているコンテナが無い。 */
+    containerMounts?: ServiceDeps["containerMounts"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -1079,6 +1081,7 @@ function makeService(
     ...(options.audit ? { audit: true } : {}),
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
+    ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
   });
   return { service, executor, repos, pulls };
 }
@@ -28511,5 +28514,217 @@ describe("タスクの開始時の情報収集", () => {
       "gath",
     );
     expect(agentFor(base, "gather").id).toBe(base.defaultAgent.id);
+  });
+});
+
+describe("終わったタスクと、中断された実行の作業領域の片付け（PBI-157）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const isSurvey = (invocation: Invocation) =>
+    invocation.command.join(" ").includes("いまは大まかな監査です");
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const root = () => join(dir, "workspaces");
+  const workspaceOf = (id: string) => join(root(), id);
+  const gitDirOf = (id: string) => join(root(), "_git", `${id}.git`);
+
+  /** 要求要件だけのタスクを作り、要求要件の承認待ちにする（作業領域を用意済み）。 */
+  async function submittedTask(
+    options: { audit?: boolean; containerMounts?: ServiceDeps["containerMounts"] } = {},
+  ) {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [], {
+      planner: onlyRequirements,
+      ...(options.audit ? { audit: true } : {}),
+      ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
+    });
+    made.executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? out(
+            `\`\`\`json\n${JSON.stringify({ "sacty-audit-survey": { summary: "要約", concerns: [] } })}\n\`\`\``,
+          )
+        : out("# 要求要件");
+    const { id } = made.service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await made.service.runNext(id);
+    expect(existsSync(workspaceOf(id))).toBe(true);
+    expect(existsSync(gitDirOf(id))).toBe(true);
+    return { ...made, activity, id };
+  }
+
+  it("監査しないタスクは、完了したときに作業領域と退避した git のメタデータを消す", async () => {
+    const { service, id } = await submittedTask();
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.retireWorkspace(id);
+    expect(existsSync(workspaceOf(id))).toBe(false);
+    expect(existsSync(gitDirOf(id))).toBe(false);
+    // 作業履歴のセッションログは消さない
+    expect(service.get(id)?.task.status).toBe("idle");
+  });
+
+  it("監査するタスクは、監査が終わるまで残し、終わったら消す", async () => {
+    const { service, id } = await submittedTask({ audit: true });
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.retireWorkspace(id);
+    // 監査の大まかな監査は、実装の作業領域の写しを読む
+    expect(existsSync(workspaceOf(id))).toBe(true);
+    await service.runNext(id); // 大まかな監査
+    await service.retireWorkspace(id);
+    expect(existsSync(workspaceOf(id))).toBe(true);
+    await service.runNext(id); // 懸念が無いので完了
+    expect(service.get(id)?.task.audit?.completedAt).toBeDefined();
+    await service.retireWorkspace(id);
+    expect(existsSync(workspaceOf(id))).toBe(false);
+    expect(existsSync(gitDirOf(id))).toBe(false);
+  });
+
+  it("完了していないタスク・動いているコンテナがマウントしている作業領域は消さない", async () => {
+    const { service, id } = await submittedTask();
+    await service.retireWorkspace(id);
+    expect(existsSync(workspaceOf(id))).toBe(true);
+    // 完了しても、動いているコンテナがマウントしていれば残す。Docker に問い合わせられなくても残す
+    for (const reachable of [true, false]) {
+      let mounted = "";
+      const other = await submittedTask({
+        containerMounts: async () => (reachable ? [mounted] : undefined),
+      });
+      mounted = join(workspaceOf(other.id), "repo");
+      other.service.approve(other.id, { step: "requirements", submission: 1 });
+      await other.service.retireWorkspace(other.id);
+      // 作業領域と退避した git のメタデータは、まとめて残す
+      expect(existsSync(workspaceOf(other.id)), String(reachable)).toBe(true);
+      expect(existsSync(gitDirOf(other.id)), String(reachable)).toBe(true);
+      other.activity.close();
+    }
+  });
+
+  it("完了の後に消した作業領域は、質問に答えるときに同じ起点で用意し直し、答えた後にまた消す", async () => {
+    const { service, repos, executor, id } = await submittedTask();
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.retireWorkspace(id);
+    expect(existsSync(gitDirOf(id))).toBe(false);
+    executor.respond = () => out("完了しています。");
+    await service.askQuestion(id, { text: "どうなった？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("完了しています。");
+    expect(repos.prepared.at(-1)).toMatchObject({ recorded: "base123" });
+    await service.retireWorkspace(id);
+    expect(existsSync(workspaceOf(id))).toBe(false);
+    expect(existsSync(gitDirOf(id))).toBe(false);
+  });
+
+  it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
+    const { service, id: open } = await submittedTask();
+    const runIds = Object.fromEntries(
+      ["_guardian", "_snapshots", "_review", "_audit-logs", "_audit-ledger"].map((name) => [
+        name,
+        randomUUID(),
+      ]),
+    );
+    for (const [name, runId] of Object.entries(runIds)) {
+      mkdirSync(join(root(), name, runId, "src"), { recursive: true });
+      writeFileSync(join(root(), name, runId, "src", "a.ts"), "x");
+    }
+    // ID の形でない名前・キャッシュ・作業履歴は消さない
+    mkdirSync(join(root(), "_guardian", "not-a-run"), { recursive: true });
+    mkdirSync(join(root(), "_cache", "shared-compose"), { recursive: true });
+    mkdirSync(join(dir, "runs", randomUUID()), { recursive: true });
+    // リンクの先はたどらない（リンクだけを消す）
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "keep");
+    const linkRun = randomUUID();
+    symlinkSync(outside, join(root(), "_snapshots", linkRun));
+    // どのタスクのものでもない作業領域と、退避した git のメタデータ
+    const orphan = randomUUID();
+    mkdirSync(join(root(), orphan, "repo"), { recursive: true });
+    mkdirSync(join(root(), "_git", `${orphan}.git`), { recursive: true });
+
+    const removed = await service.cleanupWorkspacesAtStartup();
+    for (const [name, runId] of Object.entries(runIds)) {
+      expect(existsSync(join(root(), name, runId)), name).toBe(false);
+    }
+    expect(existsSync(join(root(), "_snapshots", linkRun))).toBe(false);
+    expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
+    expect(existsSync(join(root(), orphan))).toBe(false);
+    expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
+    expect(removed).toBe(5 + 1 + 2);
+    expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
+    expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
+    expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
+    // 完了していないタスクの作業領域は残す
+    expect(existsSync(workspaceOf(open))).toBe(true);
+    expect(existsSync(gitDirOf(open))).toBe(true);
+  });
+
+  it("起動時に、動いているコンテナがマウントしているもの・停止を確かめられなかった実行のものは消さない", async () => {
+    const mounted = randomUUID();
+    const unconfirmed = randomUUID();
+    const mounts = [join(root(), "_guardian", mounted)];
+    const { service, id } = await submittedTask({ containerMounts: async () => mounts });
+    for (const runId of [mounted, unconfirmed]) {
+      mkdirSync(join(root(), "_guardian", runId), { recursive: true });
+    }
+    // 停止を確かめられなかった実行（運用の工程の中断など）は、タスクの状態に残る
+    const task = service.get(id)?.task;
+    if (task) task.unstoppedRuns = [unconfirmed];
+    await service.cleanupWorkspacesAtStartup();
+    expect(existsSync(join(root(), "_guardian", mounted))).toBe(true);
+    expect(existsSync(join(root(), "_guardian", unconfirmed))).toBe(true);
+  });
+
+  it("起動時に、このリリースより前に完了したタスクの作業領域を、同じ基準で消す", async () => {
+    const done = await submittedTask({ audit: true });
+    done.service.approve(done.id, { step: "requirements", submission: 1 });
+    // 監査の途中は残す
+    expect(await done.service.cleanupWorkspacesAtStartup()).toBe(0);
+    expect(existsSync(workspaceOf(done.id))).toBe(true);
+    await done.service.runNext(done.id);
+    await done.service.runNext(done.id);
+    done.activity.close();
+    // 監査が終わった後、消す前に止まった（このリリースより前に完了した）ものとして、作業領域を作り直して起動し直す
+    await done.service.retireWorkspace(done.id);
+    mkdirSync(join(workspaceOf(done.id), "repo"), { recursive: true });
+    mkdirSync(gitDirOf(done.id), { recursive: true });
+    const restarted = makeService(new SqliteActivityStore(dbPath), [], { audit: true });
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(2);
+    expect(existsSync(workspaceOf(done.id))).toBe(false);
+    expect(existsSync(gitDirOf(done.id))).toBe(false);
+  });
+
+  it("消せなくても、理由をログに残して続ける", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { service } = await submittedTask();
+      const first = randomUUID();
+      const second = randomUUID();
+      mkdirSync(join(root(), "_guardian", first), { recursive: true });
+      mkdirSync(join(root(), "_guardian", second), { recursive: true });
+      // 問い合わせられないときは消さずに、理由を残す
+      const blind = makeService(new SqliteActivityStore(join(dir, "blind.db")), [], {
+        containerMounts: async () => {
+          throw new Error("docker: not found");
+        },
+      });
+      expect(await blind.service.cleanupWorkspacesAtStartup()).toBe(0);
+      expect(existsSync(join(root(), "_guardian", first))).toBe(true);
+      expect(warn.mock.calls.flat().join("\n")).toContain("確かめられない");
+      // 片方を消せなくても、もう片方は消す
+      chmodSync(join(root(), "_guardian"), 0o500);
+      const removed = await service
+        .cleanupWorkspacesAtStartup()
+        .finally(() => chmodSync(join(root(), "_guardian"), 0o700));
+      if (process.getuid?.() !== 0) {
+        expect(removed).toBe(0);
+        expect(warn.mock.calls.flat().join("\n")).toContain("作業領域を消せませんでした");
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

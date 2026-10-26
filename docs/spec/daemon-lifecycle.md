@@ -86,9 +86,14 @@
      工程の無い以前のタスクなら、確かめられなかったとして終える（[マージの後の監視](deployment-watch.md)）。
    - 判定の途中だったゴールガーディアンの判定を、判定できなかった（`undecidable`）として記録する。
    - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
-8. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
-9. 起動時の問題（設定の誤りなど）を端末に出す。
-10. API を `127.0.0.1:<ポート>` で待ち受ける。
+8. 前回のデーモンが残した作業領域を消す（`cleanupWorkspacesAtStartup`。[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)）。
+   - 実行ごとの一時領域のうち、動いている実行のものでないもの。
+   - もう使わない完了したタスクと、どのタスクのものでもない作業領域・退避した git のメタデータ。
+
+   消せなくても、理由を端末に出して起動を続ける。
+9. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
+10. 起動時の問題（設定の誤りなど）を端末に出す。
+11. API を `127.0.0.1:<ポート>` で待ち受ける。
     待ち受けを始めたら、使う秘密情報をまとめて取り出す（プロジェクトのコンテキストの秘密情報を含む。コンテキストの取得は最長 30 秒まで待つ。[秘密情報](secrets.md)）。
     その後で、次を始める。
     - ホストの MCP サーバーの起動
@@ -103,7 +108,7 @@
 PR の監視は60秒ごとに、前の確認が終わってから確かめる。
 マージの後の CI/CD の監視も、その終わりに行う。
 
-コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`queueWaitingSteps`・`maxParallelTasks`）、
+コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`cleanupWorkspacesAtStartup`・`queueWaitingSteps`・`maxParallelTasks`）、
 `apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）
 
 ## 最新版の確かめ
