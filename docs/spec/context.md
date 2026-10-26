@@ -90,6 +90,17 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 D-3（完全性）は、今回の変更で起こりうる欠落だけを見て、関係しない観点に「対象外」の記載を求めない。
 自己レビューでは、`design-doc` の記述を足す指摘は `must` だけを直し、`should` は直さない（足りない所は、読む人が求めたときに足す）。D-10 は `should` も直す。
 
+コードの必須の観点には、要らないコードを探す C-15（簡潔さ・範囲）がある。
+依頼のどれのためにもない変更、起こりえない状態への防御、使われないコード、今回の変更で使われなくなった既存のコードの消し忘れ、1 つしか実装の無い抽象化、言い直すだけのコメント、重複したテスト、残す理由の無い互換のための層を見る。
+消してよいと言う根拠（呼び出し元が無い・起こりえない）はコードで確かめさせ、外部に公開する I/F は消す指摘にしない。
+C-5（保守性・設計）は要らないコードを見ず、C-15 に任せる。
+
+画面・UI コンポーネント・スタイル・フォームを変えるときは、C-13（UI・アクセシビリティ）に加えて、利用者が目的を達せるか（入口・手数・フィードバック・情報の配置・既存の画面との一貫性・誤操作・見た目の崩れ）を見る C-16（UX・利用者の流れ）を起動する。
+C-13 か C-16 を起動するとき、親は担当を起動する前に、すでにある Playwright とブラウザが動き、アプリを起動する方法が見つかる場合だけ、アプリをローカルで起動して変更した画面を撮る（画面の幅・状態・操作の順。変更前も撮れれば撮る）。
+Playwright やブラウザを新たに入れない。
+画像と `screens.json` は検証の結果と同じく作業領域の外に保存し、C-13・C-16 の担当にだけ渡す。
+撮れないとき・途中で失敗したときは画面を諦めて理由を記録し、担当はコードを読んで確かめる（それだけで観点を `failed` にしない）。
+
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
 担当を起動するサブエージェントの段階（`lite`・`entry`・`standard`・`advanced`・`ultimate`）は、観点カタログの「観点ごとの段階」で観点ごとに決める。
@@ -122,7 +133,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
     主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`
 
 ## 既定の文章用スキル
 

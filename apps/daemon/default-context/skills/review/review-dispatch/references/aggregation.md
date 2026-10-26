@@ -56,6 +56,7 @@
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
   "linked_docs": [{ "source": "<URL かリポジトリ内のパス>", "role": "target | evidence", "reason": "本文が成果物の設計書として示している", "fetched": true, "copy": "<一時ディレクトリ>/review-linked/design.md", "version": "<版や更新日時。分からなければ空>", "not_fetched_reason": "" }],
   "verification": { "summary": "<一時ディレクトリ>/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
+  "screens": { "path": "<一時ディレクトリ>/review-verify/round-1/screens/screens.json", "status": "captured | partial | skipped | error | 対象外", "reason": "撮らなかった・失敗した理由" },
   "existing_reviews": { "count": 3, "readable": true, "overlapping": 1 },
   "adopted": [],
   "dismissed": [{ "viewpoint": "C-5", "title": "…", "reason": "範囲の外（既存の問題）" }],
