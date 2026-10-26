@@ -288,3 +288,38 @@ describe("既定のスキル drawio（draw.io の公式のスキル）", () => {
     );
   });
 });
+
+describe("既定の review スキルの、コードの簡潔さと UX の観点", () => {
+  const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
+
+  it("コードの必須観点に、要らないコードを探す C-15 があり、C-5 は要らないコードを C-15 に任せる", () => {
+    const required = catalog().split("### 条件付き")[0] ?? "";
+    expect(required).toMatch(/^\| C-15 \| 簡潔さ・範囲 \|/m);
+    expect(catalog()).toMatch(/^\| C-5 \| .*\| 表記の好み.*要らないコード（C-15） \|$/m);
+    const c15 = read("skills/review/review-execution/references/C-15.md");
+    expect(c15).toContain("今回の変更で使われなくなった既存のコードの消し忘れ");
+    expect(c15).toContain("公開 I/F");
+  });
+
+  it("UI を変えるとき起動する C-16 があり、C-13 と境界を分ける", () => {
+    expect(catalog()).toMatch(
+      /^\| C-16 \| UX・利用者の流れ \| 画面・UI コンポーネント・スタイル・フォームを変える \|/m,
+    );
+    expect(read("skills/review/review-execution/references/C-13.md")).toContain("C-16");
+  });
+
+  it("画面は撮れる環境のときだけ撮り、撮れなければ担当はコードで確かめる", () => {
+    const capture = read("skills/review/review-dispatch/references/screen-capture.md");
+    expect(capture).toContain("**撮れる環境のときだけ撮る。**");
+    expect(capture).toContain("`playwright install` を実行しない");
+    expect(capture).toContain("担当の起動を止めない");
+    // 途中で失敗しても、撮れた分は担当に渡す
+    expect(capture).toContain("撮れた分がある（`partial`）ときは、`screens.json` の場所を渡す");
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "- 画面の記録（C-13・C-16 のとき）：<screens.json の場所。撮っていなければ「画面は撮っていない（理由）」>",
+    );
+    expect(read("skills/review/review-execution/SKILL.md")).toContain(
+      "画像を前提にせず、コードを読んで確かめる",
+    );
+  });
+});
