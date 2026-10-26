@@ -374,8 +374,16 @@ class FakeRepos implements RepositoryWorkspace {
   /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
   workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
   copyFail?: string;
+  /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
+  copyStarted = Promise.withResolvers<void>();
+  copyGate?: Promise<void>;
   async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (this.copyFail) throw new Error(this.copyFail);
+    this.copyStarted.resolve();
+    if (this.copyGate) {
+      mkdirSync(outDir, { recursive: true });
+      await this.copyGate;
+    }
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
     this.workingCopies.push({ dir, outDir, ...(gitDir ? { gitDir } : {}) });
@@ -7179,6 +7187,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.timeouts[4]).toBe(37 * 60_000);
     activity.close();
   });
+
+  it.each(["pause", "cancel"] as const)(
+    "最終レビューの作業領域を写す途中で止めたら（%s）、写し終わってもコンテナを起動せず、写しを消す（PBI-156）",
+    async (stop) => {
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      repos.copyGate = gate.promise;
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      const running = drain(service);
+      await repos.copyStarted.promise;
+      const calls = executor.calls.length;
+      const guardianDirs = () => readdirSync(join(dir, "workspaces", "_guardian"));
+      expect(guardianDirs()).toHaveLength(1);
+      const stopping = stop === "pause" ? service.pause(id) : service.cancel(id);
+      gate.resolve();
+      await Promise.all([running, stopping]);
+      // 最終レビューのコンテナは起動していない
+      expect(executor.calls.length).toBe(calls);
+      expect(service.get(id)?.task.status).toBe(stop === "pause" ? "paused" : "cancelled");
+      expect(guardianDirs()).toEqual([]);
+      activity.close();
+    },
+  );
 
   it("sacty はテストを別に実行せず、ゴールガーディアンが新しいセッションでテストを実行して最終レビューし、合格なら実装を完了にする", async () => {
     const { activity, service, executor, repos, id } = await toImplement([
