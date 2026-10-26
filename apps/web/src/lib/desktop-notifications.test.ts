@@ -5,6 +5,7 @@ import {
   DESKTOP_FEED_URL,
   feedUrl,
   readDesktopPref,
+  withDesktopLock,
   writeDesktopPref,
 } from "./desktop-notifications";
 
@@ -51,5 +52,19 @@ describe("デスクトップ通知", () => {
     expect(claimDesktopItem("a", 2, store)).toBe(true);
     // 起動し直した後の番号は、前の起動の番号と比べない
     expect(claimDesktopItem("b", 1, store)).toBe(true);
+  });
+
+  it("Web Locks があれば、同じ名前の排他の中で実行する。無ければそのまま実行する", async () => {
+    const names: string[] = [];
+    const locks = {
+      request: async <T>(name: string, fn: () => Promise<T> | T) => {
+        names.push(name);
+        return fn();
+      },
+    };
+    expect(await withDesktopLock(() => 1, locks)).toBe(1);
+    expect(await withDesktopLock(() => 2, locks)).toBe(2);
+    expect(names).toEqual(["sacty-desktop-notifications", "sacty-desktop-notifications"]);
+    expect(await withDesktopLock(() => 3, undefined)).toBe(3);
   });
 });

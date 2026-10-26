@@ -1,5 +1,5 @@
 import { getMessages } from "@/i18n/server";
-import { getNotificationFeed, getTask, listProjects } from "@/lib/daemon";
+import { getNotificationFeed, listProjects, listTasks } from "@/lib/daemon";
 import type { DesktopFeed } from "@/lib/desktop-notifications";
 import { taskPath } from "@/lib/paths";
 
@@ -10,14 +10,12 @@ import { taskPath } from "@/lib/paths";
 export async function loadDesktopFeed(after: number | undefined): Promise<DesktopFeed> {
   const feed = await getNotificationFeed(after);
   if (feed.items.length === 0) return { boot: feed.boot, latest: feed.latest, items: [] };
-  const [m, projects, tasks] = await Promise.all([
-    getMessages(),
-    listProjects(),
-    Promise.all(feed.items.map((item) => getTask(item.taskId))),
-  ]);
+  // タスクは、作業履歴を含まない一覧から一度に取る（通知ごとに作業履歴まで取らない。完了したタスクも要るので、すべて）
+  const [m, projects, tasks] = await Promise.all([getMessages(), listProjects(), listTasks()]);
+  const byId = new Map(tasks.map((task) => [task.id, task]));
   const t = m.shell.desktop;
-  const items = feed.items.flatMap((item, i) => {
-    const task = tasks[i]?.task;
+  const items = feed.items.flatMap((item) => {
+    const task = byId.get(item.taskId);
     if (!task) return [];
     const project = projects.find((p) => p.id === task.projectId)?.name ?? task.projectId;
     return [

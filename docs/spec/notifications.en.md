@@ -88,7 +88,7 @@ The same notifications as Slack (the four kinds in [When to notify](#when-to-not
   - `seq` is a number counted from 1. Restarting the daemon empties the list and starts counting again.
   - `boot` is a value that changes on each start.
 - `GET /api/notifications?after=<number>` returns `{ boot, latest, items }`. `items` are the notifications numbered after `after` (oldest first). Without `after`, or with a malformed one, `items` is empty and only the last number (`latest`) is returned.
-- The web server's `GET /live/notifications?after=<number>` reads the task and project of each notification and returns `{ seq, title, body, href }` in the UI language.
+- The web server's `GET /live/notifications?after=<number>` reads the tasks (fetching the list without Activity only once) and projects, and returns `{ seq, title, body, href }` in the UI language for each notification. When there are no notifications, it does not fetch tasks.
   - `title` is the task title, `body` is the kind text such as `[project name] Waiting for your approval`, and `href` is the task detail (`/tasks/<ID>`).
   - Notifications for tasks that no longer exist are not returned.
   - When the daemon cannot be reached, it returns `{ unavailable: true }` with 200.
@@ -96,10 +96,12 @@ The same notifications as Slack (the four kinds in [When to notify](#when-to-not
   - It is on in this browser (`sacty-desktop-notifications` in `localStorage` is `on`; off by default).
   - The browser can show notifications (`Notification` exists and the page is on https or localhost).
   - Notifications are allowed (`Notification.permission` is `granted`).
+- Each poll (until the body is read) times out after 10 seconds, and the next interval polls again.
+- When the switch changes, any poll in progress is aborted and polling starts over from the first request (the result of the aborted poll is discarded, so notifications from while it was off are not shown).
 - It keeps polling while the tab is hidden. Browsers throttle timers in hidden tabs, so notifications may be delayed (unverified: throttling depends on the browser).
 - The first poll (without `after`) shows nothing and remembers the last number (notifications from before the page was opened or turned on are not shown). When `boot` changes, it polls again from `after=0`.
-- Across tabs in the same browser, `sacty-desktop-notifications-seen` (`<boot>:<seq>`) in `localStorage` makes each notification appear only once.
+- Across tabs in the same browser, `sacty-desktop-notifications-seen` (`<boot>:<seq>`) in `localStorage` makes each notification appear only once. Checking, recording, and showing run one tab at a time under Web Locks (`sacty-desktop-notifications`). In browsers without Web Locks there is no exclusion (tabs that receive it at the same moment may show the same notification).
 - Clicking a notification brings that tab to the front and opens the task detail.
-- It is turned on and off under "Desktop notifications (this browser)" on the sacty settings page. The switch takes effect immediately and is not saved in the sacty settings. Turning it on asks the browser for permission. If permission is denied, it stays off and shows how to allow it.
+- It is turned on and off under "Desktop notifications (this browser)" on the sacty settings page. The switch takes effect immediately and is not saved in the sacty settings. Turning it on asks the browser for permission. If permission is denied, it stays off and shows how to allow it. The permission state is read again when it changes (in browsers where `navigator.permissions` reports it) and when the page comes back into view (after allowing it in the site settings, it can be turned on without reloading the page).
 
-Code: `apps/daemon/src/notification-feed.ts` (`NotificationFeed`), `apps/daemon/src/service.ts` (`append`, `notificationFeed`), `apps/daemon/src/server.ts`, `apps/web/src/app/live/notifications/route.ts`, `apps/web/src/lib/desktop-notifications-data.ts` (`loadDesktopFeed`), `apps/web/src/lib/desktop-notifications.ts` (`advanceFeed`, `claimDesktopItem`, `DESKTOP_INTERVAL_MS`), `apps/web/src/components/shell/desktop-notifications.tsx` (`DesktopNotifications`), `apps/web/src/components/desktop-notification-settings.tsx`
+Code: `apps/daemon/src/notification-feed.ts` (`NotificationFeed`), `apps/daemon/src/service.ts` (`append`, `notificationFeed`), `apps/daemon/src/server.ts`, `apps/web/src/app/live/notifications/route.ts`, `apps/web/src/lib/desktop-notifications-data.ts` (`loadDesktopFeed`), `apps/web/src/lib/desktop-notifications.ts` (`advanceFeed`, `claimDesktopItem`, `withDesktopLock`, `DESKTOP_INTERVAL_MS`, `DESKTOP_TIMEOUT_MS`), `apps/web/src/components/shell/desktop-notifications.tsx` (`DesktopNotifications`), `apps/web/src/components/desktop-notification-settings.tsx`

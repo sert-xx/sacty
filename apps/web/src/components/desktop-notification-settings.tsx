@@ -18,7 +18,8 @@ const availability = (): Availability =>
 
 /**
  * sacty の設定の、ブラウザのデスクトップ通知。通知の許可はブラウザごとなので、On/Off もこのブラウザに持ち、切り替えたら
- * すぐに反映する（sacty の設定の保存は要らない）。On にするときに、ブラウザに通知の許可を求める。
+ * すぐに反映する（sacty の設定の保存は要らない）。On にするときに、ブラウザに通知の許可を求める。拒否した後にサイトの
+ * 設定で許可したら、画面を読み直さなくても切り替えられるようにする。
  */
 export function DesktopNotificationSettings() {
   const t = useMessages().settings;
@@ -31,11 +32,31 @@ export function DesktopNotificationSettings() {
       setOn(readDesktopPref());
     };
     sync();
+    // ブラウザのサイトの設定で許可を変えたら、読み直す（変わったことを知らせないブラウザでも、画面に戻ったときに読み直す）
+    let permission: PermissionStatus | undefined;
+    let disposed = false;
+    void navigator.permissions
+      ?.query({ name: "notifications" })
+      .then((status) => {
+        if (disposed) return;
+        permission = status;
+        status.addEventListener("change", sync);
+      })
+      .catch(() => {});
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
     window.addEventListener(DESKTOP_PREF_EVENT, sync);
     window.addEventListener("storage", sync);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
+      disposed = true;
+      permission?.removeEventListener("change", sync);
       window.removeEventListener(DESKTOP_PREF_EVENT, sync);
       window.removeEventListener("storage", sync);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
   const granted = state === "ready" && on && Notification.permission === "granted";

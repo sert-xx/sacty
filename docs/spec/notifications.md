@@ -112,7 +112,8 @@ Slack の送り先・`off` によらない。
 - `GET /api/notifications?after=<番号>` は、`{ boot, latest, items }` を返す。
   `items` は、番号が `after` より後の通知（古い順）。
   `after` が無い・形が違えば、`items` は空で、最後の番号（`latest`）だけを返す。
-- 画面のサーバーの `GET /live/notifications?after=<番号>` は、通知ごとにタスクとプロジェクトを読み、画面の言語の `{ seq, title, body, href }` にして返す。
+- 画面のサーバーの `GET /live/notifications?after=<番号>` は、タスク（作業履歴を含まない一覧を一度だけ取る）とプロジェクトを読み、通知ごとに画面の言語の `{ seq, title, body, href }` にして返す。
+  通知が無ければ、タスクは取らない。
   - `title` はタスクの題名、`body` は `[プロジェクトの名前] 承認を待っています` などの種類の文、`href` はタスクの詳細（`/tasks/<ID>`）。
   - 無くなったタスクの通知は返さない。
   - デーモンに届かなければ 200 で `{ unavailable: true }` を返す。
@@ -120,15 +121,20 @@ Slack の送り先・`off` によらない。
   - このブラウザで On にしている（`localStorage` の `sacty-desktop-notifications` が `on`。既定は Off）。
   - ブラウザが通知を出せる（`Notification` があり、https か localhost の画面）。
   - 通知が許可されている（`Notification.permission` が `granted`）。
+- 1回の取り直し（本文を読むまで）は10秒で打ち切り、次の間隔でまた取り直す。
+- On/Off を変えたら、取り直しの途中でも打ち切り、最初の問い合わせからやり直す（途中だった取り直しの結果は捨てる。Off の間の通知を出さない）。
 - タブが隠れている間も取り直す。
   ブラウザが隠れたタブのタイマーを間引くので、遅れることがある（未確認：間引き方はブラウザによる）。
 - 最初の取り直し（`after` 無し）では出さず、最後の番号を覚える（画面を開く前・On にする前の通知は出さない）。
   `boot` が変わったら、`after=0` から取り直す。
 - 同じブラウザの複数のタブでは、`localStorage` の `sacty-desktop-notifications-seen`（`<boot>:<seq>`）で、同じ通知を1回だけ出す。
+  確認・記録・通知を出すまでを、Web Locks（`sacty-desktop-notifications`）でタブの間で1つずつ行う。
+  Web Locks が無いブラウザでは排他しない（同時に受け取ったタブが、同じ通知を出すことがある）。
 - 通知を押すと、そのタブを前に出し、タスクの詳細を開く。
 - On/Off は sacty の設定の画面の「デスクトップ通知（このブラウザー）」で切り替える。
   切り替えはすぐに効き、sacty の設定には保存しない。
   On にするときに、ブラウザに通知の許可を求める。
   拒否されていれば On にせず、許可の仕方を出す。
+  許可の状態は、権限が変わったとき（`navigator.permissions` が知らせるブラウザ）と、画面に戻ったときに読み直す（サイトの設定で許可した後、画面を読み直さなくても On にできる）。
 
-コード: `apps/daemon/src/notification-feed.ts`（`NotificationFeed`）、`apps/daemon/src/service.ts`（`append`・`notificationFeed`）、`apps/daemon/src/server.ts`、`apps/web/src/app/live/notifications/route.ts`、`apps/web/src/lib/desktop-notifications-data.ts`（`loadDesktopFeed`）、`apps/web/src/lib/desktop-notifications.ts`（`advanceFeed`・`claimDesktopItem`・`DESKTOP_INTERVAL_MS`）、`apps/web/src/components/shell/desktop-notifications.tsx`（`DesktopNotifications`）、`apps/web/src/components/desktop-notification-settings.tsx`
+コード: `apps/daemon/src/notification-feed.ts`（`NotificationFeed`）、`apps/daemon/src/service.ts`（`append`・`notificationFeed`）、`apps/daemon/src/server.ts`、`apps/web/src/app/live/notifications/route.ts`、`apps/web/src/lib/desktop-notifications-data.ts`（`loadDesktopFeed`）、`apps/web/src/lib/desktop-notifications.ts`（`advanceFeed`・`claimDesktopItem`・`withDesktopLock`・`DESKTOP_INTERVAL_MS`・`DESKTOP_TIMEOUT_MS`）、`apps/web/src/components/shell/desktop-notifications.tsx`（`DesktopNotifications`）、`apps/web/src/components/desktop-notification-settings.tsx`

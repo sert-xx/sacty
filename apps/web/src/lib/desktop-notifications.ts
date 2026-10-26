@@ -76,6 +76,24 @@ export function claimDesktopItem(
   return true;
 }
 
+/** 1回の取り直し（本文を読むまで）の期限。過ぎたら打ち切り、次の間隔でまた取り直す。 */
+export const DESKTOP_TIMEOUT_MS = 10_000;
+
+const LOCK_NAME = "sacty-desktop-notifications";
+
+type Locks = { request<T>(name: string, fn: () => Promise<T> | T): Promise<T> };
+
+/**
+ * fn を、同じブラウザのタブの間で1つずつ実行する（Web Locks）。出したかの確認・記録・通知を出すまでを、ほかのタブと
+ * 重ねないため（重なると、両方のタブが同じ通知を出せる）。Web Locks が無いブラウザでは、そのまま実行する。
+ */
+export function withDesktopLock<T>(
+  fn: () => Promise<T> | T,
+  locks: Locks | undefined = (globalThis.navigator as { locks?: Locks } | undefined)?.locks,
+): Promise<T> {
+  return locks ? locks.request(LOCK_NAME, fn) : Promise.resolve().then(fn);
+}
+
 /** 取り直しの状態。after が無ければ、まだ最後の番号を知らない（最初の問い合わせ）。 */
 export type FeedCursor = { boot?: string; after?: number };
 
