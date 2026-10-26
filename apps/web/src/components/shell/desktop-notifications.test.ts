@@ -215,4 +215,66 @@ describe("ブラウザのデスクトップ通知", () => {
     await wait(DESKTOP_INTERVAL_MS);
     expect(requests.at(-1)).toBe("/live/notifications?after=2");
   });
+
+  it("取り始めた位置の違う2つのタブで応答の順が逆になっても、どの通知も1回ずつ出す", async () => {
+    writeDesktopPref(true);
+    // タブ A は通知 2 の後から見ている
+    act(() => root.render(h(DesktopNotifications)));
+    await wait(0);
+    server = {
+      boot: "a",
+      latest: 3,
+      items: [{ seq: 3, title: "通知3", body: "b", href: "/tasks/t3" }],
+    };
+    // A の after=2 の取り直しは、応答が遅れる
+    hold = true;
+    await wait(DESKTOP_INTERVAL_MS);
+    hold = false;
+    expect(requests.at(-1)).toBe("/live/notifications?after=2");
+    // 後から開いたタブ B は、通知 3 の後から見る
+    const second = createRoot(document.createElement("div"));
+    extraRoots.push(second);
+    act(() => second.render(h(DesktopNotifications)));
+    await wait(0);
+    server = {
+      boot: "a",
+      latest: 4,
+      items: [
+        { seq: 3, title: "通知3", body: "b", href: "/tasks/t3" },
+        { seq: 4, title: "通知4", body: "b", href: "/tasks/t4" },
+      ],
+    };
+    // B が先に通知 4 を出し、その後に A の応答（3 と 4）が届く
+    await wait(DESKTOP_INTERVAL_MS);
+    expect(FakeNotification.shown.map((n) => n.title)).toEqual(["通知4"]);
+    release();
+    await wait(0);
+    expect(FakeNotification.shown.map((n) => n.title)).toEqual(["通知4", "通知3"]);
+  });
+
+  it("通知の許可を取り消して止まった後に、また許可して画面に戻ったら、最初の問い合わせから始め直す", async () => {
+    writeDesktopPref(true);
+    act(() => root.render(h(DesktopNotifications)));
+    await wait(0);
+    FakeNotification.permission = "denied";
+    await wait(DESKTOP_INTERVAL_MS * 3);
+    const count = requests.length;
+    await wait(DESKTOP_INTERVAL_MS * 3);
+    expect(requests).toHaveLength(count);
+    FakeNotification.permission = "granted";
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await wait(0);
+    expect(requests).toHaveLength(count + 1);
+    expect(requests.at(-1)).toBe("/live/notifications");
+    // 動いている間は、画面に戻っても始め直さない（続きを取る）
+    await wait(DESKTOP_INTERVAL_MS);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await wait(0);
+    expect(requests.at(-1)).toBe("/live/notifications?after=2");
+    expect(requests).toHaveLength(count + 2);
+  });
 });

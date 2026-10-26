@@ -102,12 +102,34 @@ export function DesktopNotifications() {
     const onStorage = (event: StorageEvent) => {
       if (event.key === null || event.key === DESKTOP_PREF_KEY) restart();
     };
+    // 止まっている（通知の許可が無くなって止めた）ときだけ、始め直す。動いている取り直しは、そのまま続ける
+    const resume = () => {
+      if (timer === undefined && inflight === undefined) restart();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") resume();
+    };
     // On/Off を変えたら（ほかのタブで変えたときも）、すぐに取り直しを始める・止める
     window.addEventListener(DESKTOP_PREF_EVENT, restart);
     window.addEventListener("storage", onStorage);
+    // 通知の許可を取り消して止めた後に、また許可したら始め直す（変わったことを知らせないブラウザでも、画面に戻ったときに）
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", onVisible);
+    let permission: PermissionStatus | undefined;
+    void navigator.permissions
+      ?.query({ name: "notifications" })
+      .then((status) => {
+        if (stopped) return;
+        permission = status;
+        status.addEventListener("change", resume);
+      })
+      .catch(() => {});
     void poll();
     return () => {
       stopped = true;
+      permission?.removeEventListener("change", resume);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", onVisible);
       generation += 1;
       inflight?.abort();
       if (timer !== undefined) clearTimeout(timer);

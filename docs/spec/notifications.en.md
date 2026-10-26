@@ -84,13 +84,13 @@ Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.notify`, `test`, `problems`,
 
 The same notifications as Slack (the four kinds in [When to notify](#when-to-notify)) are also shown as browser desktop notifications, regardless of the Slack destination and `off`.
 
-- For each notification, the daemon keeps `{ seq, at, taskId, kind }` in memory (up to the latest 100).
+- For each notification, the daemon keeps `{ seq, at, taskId, projectId, title, kind }` in memory (up to the latest 100). `projectId` and `title` are those of the task when it was notified.
   - `seq` is a number counted from 1. Restarting the daemon empties the list and starts counting again.
   - `boot` is a value that changes on each start.
 - `GET /api/notifications?after=<number>` returns `{ boot, latest, items }`. `items` are the notifications numbered after `after` (oldest first). Without `after`, or with a malformed one, `items` is empty and only the last number (`latest`) is returned.
-- The web server's `GET /live/notifications?after=<number>` reads the tasks (fetching the list without Activity only once) and projects, and returns `{ seq, title, body, href }` in the UI language for each notification. When there are no notifications, it does not fetch tasks.
+- The web server's `GET /live/notifications?after=<number>` reads the project list and returns `{ seq, title, body, href }` in the UI language for each notification (it does not fetch tasks). When there are no notifications, it does not fetch projects either.
   - `title` is the task title, `body` is the kind text such as `[project name] Waiting for your approval`, and `href` is the task detail (`/tasks/<ID>`).
-  - Notifications for tasks that no longer exist are not returned.
+  - If the project is not found, the body has the project ID.
   - When the daemon cannot be reached, it returns `{ unavailable: true }` with 200.
 - The web UI (on any page) polls every 5 seconds only while all of the following hold.
   - It is on in this browser (`sacty-desktop-notifications` in `localStorage` is `on`; off by default).
@@ -98,9 +98,10 @@ The same notifications as Slack (the four kinds in [When to notify](#when-to-not
   - Notifications are allowed (`Notification.permission` is `granted`).
 - Each poll (until the body is read) times out after 10 seconds, and the next interval polls again.
 - When the switch changes, any poll in progress is aborted and polling starts over from the first request (the result of the aborted poll is discarded, so notifications from while it was off are not shown).
+- After polling stops because notification permission was lost, it starts over from the first request when the permission changes (in browsers where `navigator.permissions` reports it) and when the page comes back into view (focus, visibilitychange). Polling that is running just continues.
 - It keeps polling while the tab is hidden. Browsers throttle timers in hidden tabs, so notifications may be delayed (unverified: throttling depends on the browser).
 - The first poll (without `after`) shows nothing and remembers the last number (notifications from before the page was opened or turned on are not shown). When `boot` changes, it polls again from `after=0`.
-- Across tabs in the same browser, `sacty-desktop-notifications-seen` (`<boot>:<seq>`) in `localStorage` makes each notification appear only once. Checking, recording, and showing run one tab at a time under Web Locks (`sacty-desktop-notifications`). In browsers without Web Locks there is no exclusion (tabs that receive it at the same moment may show the same notification).
+- Across tabs in the same browser, `sacty-desktop-notifications-seen` in `localStorage` (an array of `<boot>:<seq>` of shown notifications, the newest 200) makes each notification appear only once. It does not compare by the largest number (when tabs start polling from different positions, that would drop notifications not yet shown). Checking, recording, and showing run one tab at a time under Web Locks (`sacty-desktop-notifications`). In browsers without Web Locks there is no exclusion (tabs that receive it at the same moment may show the same notification).
 - Clicking a notification brings that tab to the front and opens the task detail.
 - It is turned on and off under "Desktop notifications (this browser)" on the sacty settings page. The switch takes effect immediately and is not saved in the sacty settings. Turning it on asks the browser for permission. If permission is denied, it stays off and shows how to allow it. The permission state is read again when it changes (in browsers where `navigator.permissions` reports it) and when the page comes back into view (after allowing it in the site settings, it can be turned on without reloading the page).
 

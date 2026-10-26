@@ -54,22 +54,30 @@ export function desktopSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window && window.isSecureContext;
 }
 
+/** 出した通知を覚えておく件数の上限（古いものから忘れる。デーモンが持つ最近の通知の件数より多くする）。 */
+const SEEN_MAX = 200;
+
 /**
  * その通知をこのタブが出してよいか。ほかのタブがすでに出していれば false。出すなら、出したことを記録する（同じブラウザの
- * タブで共有）。デーモンを起動し直すと番号を数え直すので、boot が違えば出していないものとする。
+ * タブで共有）。出した通知は boot と番号の組で覚える（いちばん大きい番号だけで比べると、タブごとに取り始めた位置が違うとき、
+ * 先に後の番号を出したタブのせいで、まだ出していない前の番号を捨ててしまう）。
  */
 export function claimDesktopItem(
   boot: string,
   seq: number,
   store: Store | undefined = storage(),
 ): boolean {
+  const key = `${boot}:${seq}`;
   try {
-    const seen = store?.getItem(SEEN_KEY);
-    const [seenBoot, seenSeq] = seen
-      ? [seen.slice(0, seen.lastIndexOf(":")), Number(seen.slice(seen.lastIndexOf(":") + 1))]
-      : [];
-    if (seenBoot === boot && typeof seenSeq === "number" && seenSeq >= seq) return false;
-    store?.setItem(SEEN_KEY, `${boot}:${seq}`);
+    let seen: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(store?.getItem(SEEN_KEY) ?? "[]");
+      if (Array.isArray(parsed)) seen = parsed.filter((v): v is string => typeof v === "string");
+    } catch {
+      // 読めない記録（前の形など）は捨てる
+    }
+    if (seen.includes(key)) return false;
+    store?.setItem(SEEN_KEY, JSON.stringify([...seen, key].slice(-SEEN_MAX)));
   } catch {
     // 共有できなければ、このタブの判断で出す
   }

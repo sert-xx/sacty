@@ -54,6 +54,25 @@ describe("デスクトップ通知", () => {
     expect(claimDesktopItem("b", 1, store)).toBe(true);
   });
 
+  it("後の番号を先に出しても、まだ出していない前の番号は出す（取り始めた位置がタブごとに違うとき）", () => {
+    const store = memory();
+    expect(claimDesktopItem("a", 4, store)).toBe(true);
+    expect(claimDesktopItem("a", 3, store)).toBe(true);
+    expect(claimDesktopItem("a", 3, store)).toBe(false);
+    expect(claimDesktopItem("a", 4, store)).toBe(false);
+  });
+
+  it("出した通知は上限まで覚え、古いものから忘れる。読めない記録は捨てる", () => {
+    const store = memory();
+    for (let seq = 1; seq <= 201; seq += 1) claimDesktopItem("a", seq, store);
+    expect(claimDesktopItem("a", 201, store)).toBe(false);
+    expect(claimDesktopItem("a", 2, store)).toBe(false);
+    expect(claimDesktopItem("a", 1, store)).toBe(true);
+    const old = memory();
+    old.setItem("sacty-desktop-notifications-seen", "a:5");
+    expect(claimDesktopItem("a", 5, old)).toBe(true);
+  });
+
   it("Web Locks があれば、同じ名前の排他の中で実行する。無ければそのまま実行する", async () => {
     const names: string[] = [];
     const locks = {

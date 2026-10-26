@@ -503,7 +503,14 @@ export function askQuestion(id: string, text: string): Promise<OpResult> {
 export async function getNotificationFeed(after?: number): Promise<{
   boot: string;
   latest: number;
-  items: { seq: number; at: string; taskId: string; kind: NotificationKind }[];
+  items: {
+    seq: number;
+    at: string;
+    taskId: string;
+    projectId: string;
+    title: string;
+    kind: NotificationKind;
+  }[];
 }> {
   const query = after === undefined ? "" : `?after=${after}`;
   return (await ensureOk(await daemonFetch(`/api/notifications${query}`))).json();

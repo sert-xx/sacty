@@ -11489,7 +11489,9 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     expect(slack.calls).toHaveLength(0);
     expect(await reply("?after=0")).toMatchObject({
       latest: 1,
-      items: [{ seq: 1, taskId: task.id, kind: "approval" }],
+      items: [
+        { seq: 1, taskId: task.id, projectId: "default", title: "決済API", kind: "approval" },
+      ],
     });
     expect(await reply("?after=1")).toMatchObject({ latest: 1, items: [] });
     expect(await reply()).toMatchObject({ latest: 1, items: [] });

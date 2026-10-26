@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { NotificationKind } from "@sacty/core";
+import type { NotificationKind, Task } from "@sacty/core";
 
 /**
  * 画面（ブラウザ）のデスクトップ通知のための、最近の通知の一覧。Slack と同じ通知（承認待ち・エスカレーション・一時停止・
@@ -15,6 +15,9 @@ export type FeedItem = {
   /** 通知した日時（ISO 8601）。 */
   at: string;
   taskId: string;
+  /** 通知したときのタスクのプロジェクトと題名（画面がタスクを取り直さずに通知を出せるように）。 */
+  projectId: string;
+  title: string;
   kind: NotificationKind;
 };
 
@@ -34,9 +37,16 @@ export class NotificationFeed {
 
   constructor(private readonly now: () => Date = () => new Date()) {}
 
-  add(taskId: string, kind: NotificationKind): void {
+  add(task: Pick<Task, "id" | "projectId" | "title">, kind: NotificationKind): void {
     this.seq += 1;
-    this.items.push({ seq: this.seq, at: this.now().toISOString(), taskId, kind });
+    this.items.push({
+      seq: this.seq,
+      at: this.now().toISOString(),
+      taskId: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      kind,
+    });
     if (this.items.length > FEED_MAX) this.items.splice(0, this.items.length - FEED_MAX);
   }
 

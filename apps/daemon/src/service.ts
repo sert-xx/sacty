@@ -4553,7 +4553,7 @@ export class TaskService {
         // 通知の側で理由を持つ
       }
       // 画面のデスクトップ通知（画面が取り直す）。Slack の On/Off によらず持つ
-      this.deps.feed?.add(updated.id, kind);
+      this.deps.feed?.add(updated, kind);
     }
     return updated;
   }
