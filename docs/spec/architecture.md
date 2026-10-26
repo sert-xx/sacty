@@ -340,7 +340,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・スケジュールタスク・sacty の設定（画面の「sacty の設定」） |
 | `daemon.lock`・`daemon-owner.json` | 二重の起動の判定と表示（[デーモンの起動と終了](daemon-lifecycle.md)） |
 | `daemon.json` | `sacty context preview` が問い合わせる、起動中のデーモンの接続先とトークン |
-| `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_guardian/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_export/<実行 ID>`・`_shared-compose/<実行 ID>`（起動のときに `_shared-compose` ごと消す） |
+| `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_guardian/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_export/<実行 ID>`・`_deployment/<実行 ID>`・`_handoff/<実行 ID>`・`_question-logs/<実行 ID>`・`_audit-logs/<実行 ID>`・`_audit-ledger/<実行 ID>`・`_shared-compose/<実行 ID>`（実行の終わりに消す。中断で残ったものは起動のときに消す。`_shared-compose` は起動のときにまとめて消す）・`_cache/`。完了したタスクの `<タスク ID>` と `_git/<タスク ID>.git` は、もう使わなくなったら消す（[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)） |
 | `runs/` | エージェントの実行ごとのセッションログ |
 | `sessions/` | タスクごとのオーケストレーターのセッション（使い回しのためのキャッシュ） |
 | `cache/shared-compose/` | 共用の compose のリポジトリのキャッシュ |
@@ -352,7 +352,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 数 GB・数万ファイルを写す間・消す間も、デーモンのイベントループを止めず、画面と API に応答し続ける。
 写し終わる・消し終わるまで、工程は次に進まない（写しの途中で一時停止・中止を求められたら、写し終わった後、コンテナを起動する前に止める）。
 
-コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/repository.ts`（`prepare`・`copyWorkingTree`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
+コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/repository.ts`（`prepare`・`copyWorkingTree`）、`apps/daemon/src/workspace-cleanup.ts`（`RUN_SCRATCH_DIRS`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
 
 ## 設定の2つの置き場所
 

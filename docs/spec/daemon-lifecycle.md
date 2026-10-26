@@ -89,15 +89,21 @@
      工程の無い以前のタスクなら、確かめられなかったとして終える（[マージの後の監視](deployment-watch.md)）。
    - 判定の途中だったゴールガーディアンの判定を、判定できなかった（`undecidable`）として記録する。
    - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
-8. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
-9. 起動時の問題（設定の誤りなど）を端末に出す。
-10. API を `127.0.0.1:<ポート>` で待ち受ける。
+8. 前回のデーモンが残した作業領域を消し始める（`cleanupWorkspacesAtStartup`。[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)）。
+   - 実行ごとの一時領域のうち、動いている実行のものでないもの。
+   - もう使わない完了したタスクと、どのタスクのものでもない作業領域・退避した git のメタデータ。
+
+   消し終わるのを待たずに、次に進む（API の待ち受けを遅らせない。`sacty up` は起動を 15 秒まで待って確かめるため）。
+   消せなくても、理由を端末に出して起動を続ける。
+9. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
+10. 起動時の問題（設定の誤りなど）を端末に出す。
+11. API を `127.0.0.1:<ポート>` で待ち受ける。
     待ち受けを始めたら、使う秘密情報をまとめて取り出す（プロジェクトのコンテキストの秘密情報を含む。コンテキストの取得は最長 30 秒まで待つ。[秘密情報](secrets.md)）。
-    その後で、次を始める。
+    その後、8 の片付けが終わってから、次を始める（その間に止め始めていれば、始めない）。
     - ホストの MCP サーバーの起動
     - コンテキストのコマンド型の MCP サーバーの準備（前回の層の写し `SACTY_HOME/context-mcp/layers` を消し、使われなくなったものを止める確かめを始める）
     - 組織内 PF の認証の用意
-    - ワーカー・取り込み・PR の監視
+    - ワーカー・取り込み・PR の監視・スケジュールタスク
 
 ワーカーは2秒ごとに、実行待ちのタスクを作成の古い順に実行する。
 同時に実行する数の上限は、sacty の設定の `maxParallelTasks`（既定 `DEFAULT_MAX_PARALLEL_TASKS` = 3）。
@@ -106,7 +112,7 @@
 PR の監視は60秒ごとに、前の確認が終わってから確かめる。
 マージの後の CI/CD の監視も、その終わりに行う。
 
-コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`queueWaitingSteps`・`maxParallelTasks`）、
+コード: `apps/daemon/src/main.ts`、`apps/daemon/src/workspace-cleanup.ts`（`startAfterCleanup`）、`apps/daemon/src/service.ts`（`recoverInterrupted`・`cleanupWorkspacesAtStartup`・`queueWaitingSteps`・`maxParallelTasks`）、
 `apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）
 
 ## 最新版の確かめ

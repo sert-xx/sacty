@@ -864,6 +864,52 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 
 コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）
 
+### 終わったタスクの作業領域の片付け
+
+タスクの作業領域（`workspaces/<タスク ID>`）と退避した git のメタデータ（`workspaces/_git/<タスク ID>.git`）は、
+中止のほか、完了したタスクがもう使わなくなったときにも消す。
+
+- もう使わないタスク（`workspaceRetirable`）：次をすべて満たすもの。
+  - 工程をすべて終えて止まっている（`idle` で `isCompleted`）。
+  - 監査をするタスクは、監査が終わった（完了か失敗）。予算で止まった監査は、上限を上げて続けられるので残す。
+  - マージの後の監視を工程の外で待っている以前のタスクではない。
+  - 停止を確かめられなかったコンテナ（`unstoppedRuns`）が無い。
+- 消すとき：
+  - そうなった追記のとき。
+  - 実行・質問への答えが終わったとき（実行の途中なら、その終わりに消す）。
+  - デーモンの起動のとき（[デーモンの起動と終了](daemon-lifecycle.md#デーモンの起動の順序)）。
+- 起動のときには、次も消す。
+  - どのタスクのものでもない作業領域。
+  - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
+    動いている実行・停止を確かめられなかった実行のものでないもの。
+    実行の終わりに消すが、実行中にデーモンを止めると残り、再起動の後は新しい実行 ID でやり直すので二度と使わない。
+  - 消す候補は、片付けを始めたとき（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問・作ったタスクのものは消さない。
+- 消す対象の制限：
+  - 作業領域の根の下で、タスク・実行の ID（UUID）の形をした名前のものだけを消す。
+  - リンクはリンクだけを消し、先はたどらない。
+  - 動いているコンテナ（sacty のものに限らない）がマウントしている場所と重なれば消さない。
+    Docker に問い合わせられなければ、どれも消さない（次の起動で確かめ直す）。
+  - タスクの作業領域と退避した git のメタデータは、どちらかがマウントと重なれば、両方とも残す。
+  - 作業領域の根から消すものの親までの途中に、リンク・ディレクトリでないものがあれば消さない（`_git` がリンクでも、その先を消さない）。
+- 消せなければ（権限など）、理由をログに残して、残りは消す。デーモンの起動とタスクの進行は止めない。
+  そのため、作業領域と退避した git のメタデータの片方だけが残ることがある。
+  一覧を読めないディレクトリも、理由をログに残す。
+- セッションログ（`runs/`）・`sessions/`・`memory/`・`sacty.db` は消さない。
+- 作業領域を使う処理（実行・質問への答え・中止の片付け・用意の途中、ほかのタスクの統合レビューが読んでいる間）の間は消さず、終わったときに消す。
+- 消した後に作業領域を使う操作は、同じ起点のコミットで用意し直す（`prepareRepository`）。
+  - 同じタスクの用意は1つずつにする（後の用意は、先の用意が終わってから要るかを確かめる）。消している途中なら、消し終わってから用意する。
+  - 記録したベースブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを clone して起点のコミットを取得する。
+  - 工程を実行し直す操作（再レビューなど）は、工程の実行の準備で用意し直す。
+  - 質問への答えなど、コードの写しを渡す実行（`runGuardian`）は、作業領域と退避した git のメタデータが両方とも無ければ、写す前に用意し直す（再レビューで実行待ちに戻った後の質問を含む）。
+    片方が残っていれば、これまでどおり用意し直さない（作業中の変更を消さないため）。
+    実装の作業領域も消えているので、実装後のコードではなく起点のコードになる。
+  - 統合レビューは、完了した子タスクのものを用意し直して読み、読み終えたら（失敗しても）また消す。
+  - タスクを中止するときは、両方とも無ければ、sacty のブランチを消すために用意し直す。
+    用意できなければ、その理由をブランチの片付けの結果（`failed`）に残す。
+    用意し直したものは、作業領域の片付けの結果では無かったもの（`skipped`）とする。
+
+コード: `apps/daemon/src/service.ts`（`retireWorkspace`・`cleanupWorkspacesAtStartup`・`workspaceMissing`・`workspaceBusy`・`prepareRepository`・`childRepositories`・`cancel`）、`apps/daemon/src/repository.ts`（`prepare`）、`apps/daemon/src/workspace-cleanup.ts`（`workspaceRetirable`・`RUN_SCRATCH_DIRS`・`isSactyId`・`removeEntry`・`overlapsMounts`・`runningContainerMounts`）、`apps/daemon/src/main.ts`
+
 ### 中止したタスクの再実行
 
 - 中止したタスクは、詳細の「再実行」から最初からやり直せる（`POST /api/tasks/:id/rerun`）。

@@ -367,6 +367,14 @@ import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import type { UpdateStatus } from "./update-check.js";
+import {
+  idEntries,
+  overlapsMounts,
+  RUN_SCRATCH_DIRS,
+  removeEntry,
+  taskWorkspacePaths,
+  workspaceRetirable,
+} from "./workspace-cleanup.js";
 
 /**
  * レビューの工程で、PR の差分の全体を置くファイルの名前（PBI-65）。sacty が管理する `_review/<runId>/` に置き、
@@ -547,6 +555,13 @@ export type ServiceDeps = {
   contextSecretsTimeoutMs?: number;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
+  /**
+   * 動いているコンテナがマウントしているホストの場所（作業領域を消す前に確かめる。PBI-157）。Docker に問い合わせられなければ
+   * undefined を返す（消さない）。無ければ、動いているコンテナは無いものとする。
+   */
+  containerMounts?: () => Promise<string[] | undefined>;
+  /** 作業領域の根の下のものを消す口（PBI-157。テストで、消せないときを作るために差し替える）。無ければ removeEntry。 */
+  removeWorkspaceEntry?: (root: string, path: string) => Promise<boolean>;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
   gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl" | "githubUrl">;
   /** 認証情報を用意できない組織内 PF の理由（画面の状態に出す。PBI-35）。 */
@@ -785,6 +800,12 @@ export class TaskService {
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
   private readonly chats = new Map<string, { runId: string; done: Promise<void> }>();
+  /** 作業領域を消している途中のタスク（消し終わるまでの Promise。作り直す・読む前に待つ。PBI-157）。 */
+  private readonly retiring = new Map<string, Promise<void>>();
+  /** 作業領域を用意している途中のタスク（用意を1つずつにする。PBI-157 レビュー指摘）。 */
+  private readonly preparing = new Map<string, Promise<unknown>>();
+  /** ほかのタスク（統合レビューの親）が読んでいる子タスクの作業領域と、読んでいる数（その間は消さない）。 */
+  private readonly borrowed = new Map<string, number>();
   /**
    * マージの後の監視で、前の確認ですべて終わっていた CI/CD の実行・チェックの並び（PBI-89）。続けて同じなら結果を決める
    * （CI の後に別のワークフロー（workflow_run のデプロイなど）が現れるのを、1回の確認ぶん待つため）。メモリーだけに持ち、
@@ -1834,6 +1855,16 @@ export class TaskService {
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     try {
       if (task.repository) {
+        // 完了の後に作業領域を消したタスク（PBI-157）は、同じ起点で用意し直す（実装の変更は戻らない）
+        const missing = await this.workspaceMissing(task);
+        if (missing) {
+          return {
+            outcome: { kind: "failed", reason: "error", message: missing },
+            costUsd: 0,
+            estimated: false,
+            runId,
+          };
+        }
         try {
           if (code === "base") {
             await this.deps.repos.snapshot(
@@ -4505,6 +4536,10 @@ export class TaskService {
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");
     this.trackQueue();
+    // もう作業領域を使わなくなった（完了した・監査が終わった）なら消す。実行の途中なら、実行の終わりに消す（PBI-157）
+    if (workspaceRetirable(updated) && !(before && workspaceRetirable(before))) {
+      void this.retireWorkspace(updated.id);
+    }
     // 人間の出番（承認待ち・エスカレーション・一時停止）と完了を通知する（送るのは待たない。PBI-38）
     const kind = notificationFor(before, updated);
     // 通知の誤りは、書き終えたタスクの操作に伝えない（PBI-115 レビュー指摘）
@@ -5052,6 +5087,167 @@ export class TaskService {
     }
   }
 
+  // ─── 終わったタスクと、中断された実行の作業領域の片付け（PBI-157） ─────────────────────────────
+
+  /**
+   * 作業領域を使っている（実行・質問の答え・中止の片付け・用意の途中、ほかのタスクの統合レビューが読んでいる）か。
+   */
+  private workspaceBusy(taskId: string): boolean {
+    return (
+      this.inflight.has(taskId) ||
+      this.chats.has(taskId) ||
+      this.cancelling.has(taskId) ||
+      this.preparing.has(taskId) ||
+      (this.borrowed.get(taskId) ?? 0) > 0
+    );
+  }
+
+  /** タスクの作業領域を消している途中なら、消し終わるまで待つ（作り直す・読む前に）。 */
+  private async workspaceSettled(taskId: string): Promise<void> {
+    await this.retiring.get(taskId);
+  }
+
+  /** 消している途中の作業領域を、すべて消し終わるまで待つ（新しくは消し始めない。テストと終了の前に使う）。 */
+  async workspaceCleanupsSettled(): Promise<void> {
+    while (this.retiring.size > 0) await Promise.all([...this.retiring.values()]);
+  }
+
+  /** 動いているコンテナがマウントしている場所。問い合わせられなければ undefined。 */
+  private async containerMounts(): Promise<string[] | undefined> {
+    if (!this.deps.containerMounts) return [];
+    return this.deps.containerMounts().catch(() => undefined);
+  }
+
+  /**
+   * 消す。どれかが動いているコンテナがマウントしている場所と重なれば、どれも消さない。1つを消せなければ理由をログに残し、
+   * 残りは消す（デーモンの起動・タスクの進行を止めない）。消したものの数を返す。
+   */
+  private async removeWorkspacePaths(
+    paths: readonly string[],
+    mounts: readonly string[],
+  ): Promise<number> {
+    const mounted = paths.find((path) => overlapsMounts(path, mounts));
+    if (mounted) {
+      console.warn(
+        `[daemon] 動いているコンテナがマウントしているので、消しませんでした：${mounted}`,
+      );
+      return 0;
+    }
+    const remove = this.deps.removeWorkspaceEntry ?? removeEntry;
+    let removed = 0;
+    for (const path of paths) {
+      try {
+        if (await remove(this.deps.workspaceRoot, path)) removed++;
+      } catch (error) {
+        console.warn(`[daemon] 作業領域を消せませんでした：${path}：${errorText(error)}`);
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * 完了したタスクが、もう作業領域を使わなければ（監査をするタスクは監査が終わったら）、タスクの作業領域と退避した git の
+   * メタデータを消す。作業領域を使っている途中なら消さない（その終わりに、もう一度呼ぶ）。消し終わるまでの Promise を返す。
+   * mounts は、起動時の片付けが問い合わせ済みのもの（無ければ問い合わせる）。消したものの数で解決する。
+   */
+  private retireWorkspace(taskId: string, known?: readonly string[]): Promise<number> {
+    if (this.retiring.has(taskId)) return Promise.resolve(0);
+    const retirable = () => {
+      const task = this.tasks.get(taskId);
+      return task !== undefined && workspaceRetirable(task) && !this.workspaceBusy(taskId);
+    };
+    if (!retirable()) return Promise.resolve(0);
+    const paths = taskWorkspacePaths(this.deps.workspaceRoot, taskId);
+    if (!paths.some((path) => existsSync(path))) return Promise.resolve(0);
+    const done = (async () => {
+      const mounts = known ?? (await this.containerMounts());
+      if (mounts === undefined) {
+        console.warn(
+          `[daemon] コンテナが動いていないことを確かめられないので、タスク ${taskId} の作業領域を消しませんでした（次の起動のときに、もう一度確かめます）。`,
+        );
+        return 0;
+      }
+      // 問い合わせている間に、作業領域を使い始めたなら消さない（使い始めた処理は、消し終わるのを待ってから作り直す）
+      if (!retirable()) return 0;
+      return this.removeWorkspacePaths(paths, mounts);
+    })().finally(() => this.retiring.delete(taskId));
+    this.retiring.set(
+      taskId,
+      done.then(() => {}),
+    );
+    return done;
+  }
+
+  /**
+   * 作業領域を使う実行の前に、消えていれば同じ起点で用意し直す（完了の後に消したタスク。PBI-157）。作業領域と退避した git の
+   * メタデータが両方とも無いときだけ用意し直す（片方が残っていれば、これまでどおり用意し直さず、写すところで失敗する。
+   * 作業中の実装の変更を消さないため）。用意できなければ、その理由を返す。
+   */
+  private async workspaceMissing(task: Task): Promise<DaemonText | undefined> {
+    await this.workspaceSettled(task.id);
+    if (
+      existsSync(join(this.deps.workspaceRoot, task.id)) ||
+      existsSync(this.trustedGitDir(task))
+    ) {
+      return undefined;
+    }
+    const loaded = this.deps.config();
+    if (!loaded.ok) return loaded.problem;
+    const ready = await this.prepareRepository(task, loaded.config);
+    return ready.ok ? undefined : ready.message;
+  }
+
+  /**
+   * デーモンの起動時に、前回の残りを消す（ワーカーが実行を再開・始める前に終える）。実行ごとの一時領域のうち、動いている
+   * 実行のものでないものと、もう作業領域を使わない完了したタスク・どのタスクのものでもない作業領域と退避した git の
+   * メタデータ。消したものの数を返す。
+   */
+  async cleanupWorkspacesAtStartup(): Promise<number> {
+    const root = this.deps.workspaceRoot;
+    // 消す候補は、最初に待つ前（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問が作る
+    // 一時領域・作業領域は、候補に入らないので消さない（PBI-157 レビュー指摘）
+    const scratch = RUN_SCRATCH_DIRS.flatMap((name) =>
+      idEntries(join(root, name)).map((runId) => ({ runId, path: join(root, name, runId) })),
+    );
+    const taskIds = new Set([
+      ...idEntries(root),
+      ...idEntries(join(root, "_git"), ".git").map((name) => name.slice(0, -".git".length)),
+    ]);
+    const mounts = await this.containerMounts();
+    if (mounts === undefined) {
+      console.warn(
+        "[daemon] コンテナが動いていないことを確かめられないので、残っている作業領域を消しませんでした（次の起動のときに、もう一度確かめます）。",
+      );
+      return 0;
+    }
+    let removed = 0;
+    for (const { runId, path } of scratch) {
+      // 停止を確かめられなかったコンテナの実行のものは残す（消す直前の状態で確かめる）
+      if (this.activeRunIds().has(runId)) continue;
+      removed += await this.removeWorkspacePaths([path], mounts);
+    }
+    for (const taskId of taskIds) {
+      // 完了したタスクは、完了の後と同じく消す（その間に質問などが作業領域を使い始めても、消し終わるのを待つ）。
+      // 中止したタスクは、中止の片付けに任せる
+      if (this.tasks.has(taskId)) {
+        removed += await this.retireWorkspace(taskId, mounts);
+        continue;
+      }
+      // どのタスクのものでもないものは消す（新しいタスクは新しい ID なので、使い始めることは無い）
+      removed += await this.removeWorkspacePaths(taskWorkspacePaths(root, taskId), mounts);
+    }
+    return removed;
+  }
+
+  /** 動いている実行（工程・質問への答え）と、停止を確かめられなかったコンテナの実行。 */
+  private activeRunIds(): Set<string> {
+    const active = new Set<string>([...this.chats.values()].map((c) => c.runId));
+    for (const entry of this.inflight.values()) for (const runId of entry.runIds) active.add(runId);
+    for (const task of this.tasks.values())
+      for (const runId of task.unstoppedRuns ?? []) active.add(runId);
+    return active;
+  }
+
   /** 実装の対象リポジトリの、タスクごとの clone の場所。 */
   private repoDir(task: Task): string {
     return join(this.deps.workspaceRoot, task.id, "repo");
@@ -5105,10 +5301,37 @@ export class TaskService {
      * 最新で用意し直し、その記録（RepositoryPrepared）は呼び出し側が工程の選択と一緒に書く。
      */
     rebase?: { branch: string },
+  ): ReturnType<TaskService["prepareRepositoryNow"]> {
+    // 同じタスクの用意は1つずつにする（完了の後の質問と再レビューが、同時に clone し直して、互いの clone を消さないように。
+    // PBI-157 レビュー指摘）。待った後は、先の用意の記録を含む最新の状態で確かめる
+    const previous = this.preparing.get(task.id);
+    const current = (previous ?? Promise.resolve())
+      .catch(() => {})
+      .then(() =>
+        this.prepareRepositoryNow(
+          previous ? (this.tasks.get(task.id) ?? task) : task,
+          config,
+          rebase,
+        ),
+      );
+    this.preparing.set(task.id, current);
+    try {
+      return await current;
+    } finally {
+      if (this.preparing.get(task.id) === current) this.preparing.delete(task.id);
+    }
+  }
+
+  private async prepareRepositoryNow(
+    task: Task,
+    config: SactyConfig,
+    rebase?: { branch: string },
   ): Promise<
     | { ok: true; dir: string; prepared?: { url: string; baseBranch: string; baseCommit: string } }
     | { ok: false; message: DaemonText }
   > {
+    // 完了の後に作業領域を消している途中なら、消し終わってから用意し直す（PBI-157）
+    await this.workspaceSettled(task.id);
     const dir = this.repoDir(task);
     if (!rebase && task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
       return { ok: true, dir };
@@ -5260,6 +5483,8 @@ export class TaskService {
     } finally {
       this.inflight.delete(taskId);
       this.trackQueue();
+      // 完了・監査の終わりを記録した実行なら、作業領域を消す（PBI-157）
+      void this.retireWorkspace(taskId);
     }
   }
 
@@ -7915,7 +8140,24 @@ export class TaskService {
       const gitDir = this.trustedGitDir(latest);
       // PRの作成に失敗していても、プッシュ済みのブランチは記録してある
       const branches = sactyBranches(latest);
+      // 完了の後に作業領域を消したタスク（作業領域と退避した git のメタデータが両方とも無い。PBI-157）は、ブランチを
+      // 消すために、同じ起点で用意し直す。用意できなければ、その理由をブランチの片付けの結果に残す
+      await this.workspaceSettled(id);
+      const workspace = join(this.deps.workspaceRoot, latest.id);
+      const existed = existsSync(workspace) || existsSync(gitDir);
+      let unprepared: DaemonText | undefined;
+      if (branches.length > 0 && latest.repository && !existed) {
+        const loaded = this.deps.config();
+        const ready = loaded.ok
+          ? await this.prepareRepository(latest, loaded.config)
+          : { ok: false as const, message: loaded.problem };
+        if (!ready.ok) unprepared = ready.message;
+      }
       for (const branch of branches) {
+        if (unprepared !== undefined) {
+          cleanup.push({ target: "branch", result: "failed", detail: unprepared });
+          continue;
+        }
         const usedSecrets: string[] = [];
         try {
           if (!existsSync(gitDir)) throw new MessageError(message("cleanup.noWorkspace"));
@@ -7936,9 +8178,7 @@ export class TaskService {
         }
       }
       if (branches.length === 0) cleanup.push({ target: "branch", result: "skipped" });
-      // 作業領域：タスクの作業領域と、退避した git のメタデータ
-      const workspace = join(this.deps.workspaceRoot, latest.id);
-      const existed = existsSync(workspace) || existsSync(gitDir);
+      // 作業領域：タスクの作業領域と、退避した git のメタデータ（ブランチを消すために用意し直したものは、無かったものとする）
       if (!containerStopped) {
         cleanup.push({
           target: "workspace",
@@ -8204,21 +8444,31 @@ export class TaskService {
         ok: false as const,
         message: message("integrate.baseUnavailable", { branch: `${repo} ${branch}`, detail }),
       });
-      const ready = await this.prepareRepository(child, config);
-      if (!ready.ok) return unavailable(ready.message);
-      const usedSecrets: string[] = [];
+      // 読んでいる間は、子タスクの作業領域を消さない。完了の後に消した子タスクのものを用意し直したなら、読み終えたら
+      // （失敗しても）また消す（PBI-157 レビュー指摘）
+      this.borrowed.set(child.id, (this.borrowed.get(child.id) ?? 0) + 1);
       try {
-        const gitDir = this.trustedGitDir(child);
-        const commit = await this.deps.repos.fetchBranch(
-          gitDir,
-          branch,
-          await this.gitAuth(child, child.repository.url, usedSecrets),
-        );
-        const dir = repositoryDirName(repo, repositories.length);
-        await this.deps.repos.snapshot(gitDir, commit, join(workspaceDir, dir));
-        repositories.push({ repo, baseBranch: branch, commit, dir });
-      } catch (error) {
-        return unavailable(redactText(errorText(error), usedSecrets));
+        const ready = await this.prepareRepository(child, config);
+        if (!ready.ok) return unavailable(ready.message);
+        const usedSecrets: string[] = [];
+        try {
+          const gitDir = this.trustedGitDir(child);
+          const commit = await this.deps.repos.fetchBranch(
+            gitDir,
+            branch,
+            await this.gitAuth(child, child.repository.url, usedSecrets),
+          );
+          const dir = repositoryDirName(repo, repositories.length);
+          await this.deps.repos.snapshot(gitDir, commit, join(workspaceDir, dir));
+          repositories.push({ repo, baseBranch: branch, commit, dir });
+        } catch (error) {
+          return unavailable(redactText(errorText(error), usedSecrets));
+        }
+      } finally {
+        const left = (this.borrowed.get(child.id) ?? 1) - 1;
+        if (left > 0) this.borrowed.set(child.id, left);
+        else this.borrowed.delete(child.id);
+        void this.retireWorkspace(child.id);
       }
     }
     return { ok: true, repositories };
@@ -9147,6 +9397,8 @@ export class TaskService {
       .finally(() => {
         // 次の質問の実行を消さないよう、この実行の分だけを消す
         if (this.chats.get(id) === entry) this.chats.delete(id);
+        // 完了したタスクの作業領域を、答えるために用意し直したなら、また消す（PBI-157）
+        void this.retireWorkspace(id);
       });
     entry.done = answered;
     this.chats.set(id, entry);

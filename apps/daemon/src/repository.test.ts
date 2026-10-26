@@ -318,6 +318,36 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
   });
 
+  it("用意し直すときは、記録したブランチが消えていても、記録済みの起点のコミットにする（PBI-157 レビュー指摘）", async () => {
+    const origin = makeOrigin();
+    git(origin, "checkout", "-b", "feature");
+    writeFileSync(join(origin, "feature.ts"), "feature\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "feature");
+    const workspace = new GitRepositoryWorkspace();
+    const first = await workspace.prepare(
+      join(dir, "a"),
+      join(dir, "_git", "a.git"),
+      origin,
+      "feature",
+    );
+    // PR のマージの後に、ブランチが消された（コミットは既定のブランチに取り込まれている）
+    git(origin, "checkout", "main");
+    git(origin, "merge", "--ff-only", "feature");
+    git(origin, "branch", "-D", "feature");
+    const again = await workspace.prepare(
+      join(dir, "b"),
+      join(dir, "_git", "b.git"),
+      origin,
+      "feature",
+      undefined,
+      first.baseCommit,
+    );
+    expect(again).toEqual({ baseCommit: first.baseCommit, baseBranch: "feature" });
+    expect(existsSync(join(dir, "b", "feature.ts"))).toBe(true);
+    expect(existsSync(join(dir, "_git", "b.git"))).toBe(true);
+  });
+
   it("途中で止まった clone は作り直し、無いブランチは理由つきで失敗する", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

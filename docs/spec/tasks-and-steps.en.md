@@ -517,6 +517,50 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 
 Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`)
 
+### Cleaning up the workspaces of finished tasks
+
+A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`workspaces/_git/<task-id>.git`) are removed not only on cancel, but also when a completed task no longer uses them.
+
+- A task that no longer uses them (`workspaceRetirable`): one that meets all of the following.
+  - It has finished all steps and stopped (`idle` and `isCompleted`).
+  - For an audited task, the audit has ended (completed or failed). An audit stopped by its budget is kept, because it can continue after the cap is raised.
+  - It is not an older task waiting for the after-merge watch outside a step.
+  - It has no container that could not be confirmed as stopped (`unstoppedRuns`).
+- When they are removed:
+  - On the append that makes the task so.
+  - When a run or the answer to a question ends (if a run is in progress, they are removed at its end).
+  - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).
+- At startup, the following are removed too.
+  - Workspaces that belong to no task.
+  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
+    They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
+  - The candidates are fixed when the cleanup starts (before listening for the API and starting the worker). Ones of runs, questions, and tasks started during the cleanup are not removed.
+- Limits on what is removed:
+  - Only names under the workspace root shaped like a task or run ID (UUID) are removed.
+  - A link is removed by itself; its target is not followed.
+  - Nothing that overlaps a place mounted by a running container (not only sacty's) is removed.
+    If Docker cannot be queried, nothing is removed (checked again at the next start).
+  - If either a task's workspace or its set-aside git metadata overlaps a mount, both are kept.
+  - Nothing is removed if anything on the way from the workspace root to its parent is a link or not a directory (even if `_git` is a link, its target is not removed).
+- If something cannot be removed (permissions and so on), the reason is logged and the rest is removed. Neither the daemon startup nor the task's progress is stopped.
+  So only one of a workspace and its set-aside git metadata may be left.
+  A directory whose listing cannot be read is logged too.
+- Session logs (`runs/`), `sessions/`, `memory/`, and `sacty.db` are not removed.
+- They are not removed while something uses the workspace (a run, answering a question, cleaning up a cancel, preparing it, or another task's integration review reading it), but when that ends.
+- Operations that use the workspace after it was removed prepare it again from the same base commit (`prepareRepository`).
+  - Preparing one task's workspace happens one at a time (a later preparation checks whether it is needed after the earlier one ends). If it is being removed, it is prepared after the removal ends.
+  - Even if the recorded base branch is gone (for example, a continued PR's branch deleted after merging), it clones the default branch and fetches the base commit.
+  - Operations that rerun a step (re-review and so on) prepare it while preparing the step's run.
+  - Runs given a copy of the code, such as answering a question (`runGuardian`), prepare it before copying if both the workspace and the set-aside git metadata are missing (including a question after a re-review put the task back to waiting to run).
+    If one of them is left, they do not prepare it, as before (so changes in progress are not lost).
+    Because the implementation workspace is gone too, they get the base code, not the implemented code.
+  - The integration review prepares completed child tasks' workspaces to read them, and removes them again when done (even on failure).
+  - Canceling a task prepares them again to delete sacty's branches if both are missing.
+    If they cannot be prepared, the reason is recorded in the branch cleanup result (`failed`).
+    Ones prepared again are treated as absent (`skipped`) in the workspace cleanup result.
+
+Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStartup`, `workspaceMissing`, `workspaceBusy`, `prepareRepository`, `childRepositories`, `cancel`), `apps/daemon/src/repository.ts` (`prepare`), `apps/daemon/src/workspace-cleanup.ts` (`workspaceRetirable`, `RUN_SCRATCH_DIRS`, `isSactyId`, `removeEntry`, `overlapsMounts`, `runningContainerMounts`), `apps/daemon/src/main.ts`
+
 ### Rerunning a cancelled task
 
 - A cancelled task can be started over from "Rerun" on its detail page (`POST /api/tasks/:id/rerun`). Nothing can be appended to the activity of a cancelled task, so a new task that takes over the original is created (`rerun` in `TaskCreated`: the original task's ID and the image a person chose). When the activity is replayed, the original task records the rerun task (`rerunBy`); a task can be rerun only once (a second rerun and a task that is not cancelled are refused). Subtasks created by a split and PR review tasks can't be rerun (`canRerun`).

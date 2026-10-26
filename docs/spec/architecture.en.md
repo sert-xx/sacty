@@ -268,7 +268,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | `sacty.db` | SQLite. Activity log (events), projects, scheduled tasks, sacty settings ("sacty settings" on the web UI) |
 | `daemon.lock`, `daemon-owner.json` | Detecting and reporting a second start ([Daemon startup and shutdown](daemon-lifecycle.en.md)) |
 | `daemon.json` | The running daemon's address and token, queried by `sacty context preview` |
-| `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), and per-run `_guardian/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_export/<run-id>`, `_shared-compose/<run-id>` (all of `_shared-compose` is removed at startup) |
+| `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), per-run `_guardian/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_export/<run-id>`, `_deployment/<run-id>`, `_handoff/<run-id>`, `_question-logs/<run-id>`, `_audit-logs/<run-id>`, `_audit-ledger/<run-id>`, `_shared-compose/<run-id>` (removed at the end of the run; ones left by an interruption are removed at startup; all of `_shared-compose` is removed at startup), and `_cache/`. A completed task's `<task-id>` and `_git/<task-id>.git` are removed once they are no longer used ([Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)) |
 | `runs/` | Session logs for each agent run |
 | `sessions/` | The Orchestrator's session for each task (a cache for reuse) |
 | `cache/shared-compose/` | Cache of shared compose repositories |
@@ -278,7 +278,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 
 Copying and removing workspaces (things proportional to the size of the target repository, such as setting `.git` aside after the clone, copying into `_guardian`, and removing per-run workspaces and the workspaces of cancelled tasks) use asynchronous file operations. While copying or removing several GB or tens of thousands of files, the daemon does not block its event loop and keeps responding to the web UI and the API. The step does not move on until the copy or removal finishes (if a pause or cancel is requested during a copy, the run stops after the copy finishes and before the container starts).
 
-Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`repoDir`, `trustedGitDir`), `apps/daemon/src/repository.ts` (`prepare`, `copyWorkingTree`), `apps/daemon/src/instance-lock.ts`, `packages/cli/src/context-preview.ts` (`DAEMON_FILE`)
+Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`repoDir`, `trustedGitDir`), `apps/daemon/src/repository.ts` (`prepare`, `copyWorkingTree`), `apps/daemon/src/workspace-cleanup.ts` (`RUN_SCRATCH_DIRS`), `apps/daemon/src/instance-lock.ts`, `packages/cli/src/context-preview.ts` (`DAEMON_FILE`)
 
 ## Two places for settings
 

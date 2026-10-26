@@ -46,6 +46,7 @@ import { waitNamed } from "./shutdown-report.js";
 import { JiraTickets } from "./tickets.js";
 import { packageVersion, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
+import { runningContainerMounts, startAfterCleanup } from "./workspace-cleanup.js";
 
 const home = resolveHome();
 const port = Number(process.env.SACTY_DAEMON_PORT ?? 4710);
@@ -192,6 +193,8 @@ const service = new TaskService({
   sharedComposes: new GitSharedComposeFetcher(join(home, "cache", "shared-compose")),
   tickets,
   workspaceRoot,
+  // 作業領域を消す前に、動いているコンテナがマウントしていないかを確かめる（PBI-157）
+  containerMounts: () => runningContainerMounts(),
   // エージェントの実行ごとのセッションログ（PBI-62）。中止の掃除では消さない（監査に使うため）
   sessionLogs: new SessionLogStore(join(home, "runs")),
   // タスクごとのオーケストレーターのセッション（PBI-67）。台帳が正本で、これは使い回すためのキャッシュ
@@ -217,6 +220,17 @@ const service = new TaskService({
   }),
 });
 service.recoverInterrupted();
+// 前回、片付ける前にデーモンが終わって残った実行ごとの一時領域と、もう使わない完了したタスク・どのタスクのものでもない
+// 作業領域を消す（PBI-157）。API の待ち受けは待たせず（sacty up の起動の確かめが時間切れにならないように）、ワーカーなどは
+// 消し終えてから始める。消せなくても起動は続ける
+const workspaceCleanup = service
+  .cleanupWorkspacesAtStartup()
+  .then((removed) => {
+    if (removed > 0) console.log(`[daemon] 残っていた作業領域を ${removed} 件消しました。`);
+  })
+  .catch((error: unknown) => {
+    console.warn("[daemon] 残っている作業領域を片付けられませんでした：", error);
+  });
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
 // 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）
@@ -272,24 +286,30 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
     .catch((error: unknown) =>
       console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
     )
-    .finally(() => {
-      // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
-      // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
-      hostMcp.start();
-      contextMcp.start();
-      for (const platform of platforms()) {
-        credentials.header(platform).catch((error) => {
-          console.warn(
-            `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
-          );
-        });
-      }
-      worker.start();
-      intake.start();
-      prWatcher.start();
-      scheduleRunner.start();
-    });
+    .finally(() =>
+      // 残っていた作業領域を消し終えてから、タスクの実行を始める。その間に止め始めていたら、何も始めない（PBI-157）
+      startAfterCleanup(workspaceCleanup, () => shuttingDown, startServices),
+    );
 });
+
+/** 秘密情報をまとめて取り出し、残っていた作業領域を消し終えた後に始めるもの。 */
+function startServices(): void {
+  // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
+  // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
+  hostMcp.start();
+  contextMcp.start();
+  for (const platform of platforms()) {
+    credentials.header(platform).catch((error) => {
+      console.warn(
+        `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
+      );
+    });
+  }
+  worker.start();
+  intake.start();
+  prWatcher.start();
+  scheduleRunner.start();
+}
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
 const DRAIN_TIMEOUT_MS = 20_000;

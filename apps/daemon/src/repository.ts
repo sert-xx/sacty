@@ -292,11 +292,21 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     ) {
       throw new MessageError(message("git.invalidBranch"));
     }
-    await git(
-      "clone",
-      ["clone", ...(baseBranch !== undefined ? ["--branch", baseBranch] : []), "--", url, dir],
-      env,
-    );
+    const clone = (branch: string | undefined) =>
+      git(
+        "clone",
+        ["clone", ...(branch !== undefined ? ["--branch", branch] : []), "--", url, dir],
+        env,
+      );
+    try {
+      await clone(baseBranch);
+    } catch (error) {
+      // 用意し直すときは、ブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを
+      // clone して記録済みの起点のコミットを取得する（ブランチの存続を前提にしない。PBI-157 レビュー指摘）
+      if (!recorded || baseBranch === undefined) throw error;
+      if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
+      await clone(undefined);
+    }
     if (recorded) {
       // 用意し直すときは、記録済みの起点のコミットにする（ブランチが進んでいても変えない）。
       // ブランチの履歴に無ければ（強制プッシュなど）、コミットを直接取得してみる
