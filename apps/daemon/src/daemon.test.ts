@@ -110,6 +110,7 @@ import { type SessionLogSink, SessionLogStore } from "./session-logs.js";
 import { MemorySettingsStore, SqliteSettingsStore } from "./settings.js";
 import type { SharedComposeFetcher } from "./shared-compose.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
+import { removeEntry } from "./workspace-cleanup.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -20184,6 +20185,18 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
         expect.stringContaining(b?.id ?? "-"),
       ]);
       expect(executor.workspaceFiles.at(-1)).toEqual(["1-acme__api", "2-acme__web"]);
+      // 完了した子タスクの作業領域は消してあるので、統合レビューのために用意し直し、読み終えたらまた消す（PBI-157）
+      expect(repos.prepared.map((p) => p.url)).toEqual([
+        `${API}.git`,
+        `${WEB}.git`,
+        `${API}.git`,
+        `${WEB}.git`,
+      ]);
+      await service.workspaceCleanupsSettled();
+      for (const child of [a, b]) {
+        expect(existsSync(join(dir, "workspaces", child?.id ?? "-"))).toBe(false);
+        expect(existsSync(join(dir, "workspaces", "_git", `${child?.id}.git`))).toBe(false);
+      }
       const integrationPrompt = promptOf(executor, executor.calls.length - 1);
       expect(integrationPrompt).toContain(`- 1-acme__api/：${API} のベースブランチ（main）`);
       expect(integrationPrompt).toContain(`画面を作る（${WEB}）：完了`);
@@ -28646,9 +28659,13 @@ describe("終わったタスクと、中断された実行の作業領域の片�
 
   /** 要求要件だけのタスクを作り、要求要件の承認待ちにする（作業領域を用意済み）。 */
   async function submittedTask(
-    options: { audit?: boolean; containerMounts?: ServiceDeps["containerMounts"] } = {},
+    options: {
+      audit?: boolean;
+      containerMounts?: ServiceDeps["containerMounts"];
+      db?: string;
+    } = {},
   ) {
-    const activity = new SqliteActivityStore(dbPath);
+    const activity = new SqliteActivityStore(options.db ?? dbPath);
     const made = makeService(activity, [], {
       planner: onlyRequirements,
       ...(options.audit ? { audit: true } : {}),
@@ -28670,43 +28687,43 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("監査しないタスクは、完了したときに作業領域と退避した git のメタデータを消す", async () => {
     const { service, id } = await submittedTask();
     service.approve(id, { step: "requirements", submission: 1 });
-    await service.retireWorkspace(id);
+    // 完了の追記で消し始めたものを、消し終わるまで待つ（新しくは消し始めない）
+    await service.workspaceCleanupsSettled();
     expect(existsSync(workspaceOf(id))).toBe(false);
     expect(existsSync(gitDirOf(id))).toBe(false);
-    // 作業履歴のセッションログは消さない
-    expect(service.get(id)?.task.status).toBe("idle");
   });
 
-  it("監査するタスクは、監査が終わるまで残し、終わったら消す", async () => {
+  it("監査するタスクは、監査が終わるまで残し、監査を終えた実行の終わりに消す", async () => {
     const { service, id } = await submittedTask({ audit: true });
     service.approve(id, { step: "requirements", submission: 1 });
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     // 監査の大まかな監査は、実装の作業領域の写しを読む
     expect(existsSync(workspaceOf(id))).toBe(true);
     await service.runNext(id); // 大まかな監査
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     expect(existsSync(workspaceOf(id))).toBe(true);
     await service.runNext(id); // 懸念が無いので完了
     expect(service.get(id)?.task.audit?.completedAt).toBeDefined();
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     expect(existsSync(workspaceOf(id))).toBe(false);
     expect(existsSync(gitDirOf(id))).toBe(false);
   });
 
   it("完了していないタスク・動いているコンテナがマウントしている作業領域は消さない", async () => {
     const { service, id } = await submittedTask();
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     expect(existsSync(workspaceOf(id))).toBe(true);
     // 完了しても、動いているコンテナがマウントしていれば残す。Docker に問い合わせられなくても残す
     for (const reachable of [true, false]) {
       let mounted = "";
       const other = await submittedTask({
         containerMounts: async () => (reachable ? [mounted] : undefined),
+        db: join(dir, `other-${reachable}.db`),
       });
       mounted = join(workspaceOf(other.id), "repo");
       other.service.approve(other.id, { step: "requirements", submission: 1 });
-      await other.service.retireWorkspace(other.id);
-      // 作業領域と退避した git のメタデータは、まとめて残す
+      await other.service.workspaceCleanupsSettled();
+      // 作業領域と退避した git のメタデータは、片方がマウントと重なれば両方残す
       expect(existsSync(workspaceOf(other.id)), String(reachable)).toBe(true);
       expect(existsSync(gitDirOf(other.id)), String(reachable)).toBe(true);
       other.activity.close();
@@ -28716,15 +28733,57 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("完了の後に消した作業領域は、質問に答えるときに同じ起点で用意し直し、答えた後にまた消す", async () => {
     const { service, repos, executor, id } = await submittedTask();
     service.approve(id, { step: "requirements", submission: 1 });
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     expect(existsSync(gitDirOf(id))).toBe(false);
     executor.respond = () => out("完了しています。");
     await service.askQuestion(id, { text: "どうなった？" }).answered;
     expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("完了しています。");
     expect(repos.prepared.at(-1)).toMatchObject({ recorded: "base123" });
-    await service.retireWorkspace(id);
+    await service.workspaceCleanupsSettled();
     expect(existsSync(workspaceOf(id))).toBe(false);
     expect(existsSync(gitDirOf(id))).toBe(false);
+  });
+
+  it("作業領域と退避した git のメタデータが両方とも無ければ、完了していないタスクでも質問の前に用意し直す", async () => {
+    // 消した後に再レビューなどで実行待ちに戻り、工程の準備の前に質問したとき（PBI-157 レビュー指摘）
+    const { service, repos, executor, id } = await submittedTask();
+    rmSync(workspaceOf(id), { recursive: true, force: true });
+    rmSync(gitDirOf(id), { recursive: true, force: true });
+    const prepared = repos.prepared.length;
+    executor.respond = () => out("承認待ちです。");
+    await service.askQuestion(id, { text: "いまは？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("承認待ちです。");
+    expect(repos.prepared).toHaveLength(prepared + 1);
+    // 完了していないので、答えた後も消さない
+    await service.workspaceCleanupsSettled();
+    expect(existsSync(gitDirOf(id))).toBe(true);
+    // 片方だけ残っているときは、これまでどおり用意し直さない（作業中の変更を消さない）
+    rmSync(gitDirOf(id), { recursive: true, force: true });
+    await service.askQuestion(id, { text: "もう一度" }).answered;
+    expect(repos.prepared).toHaveLength(prepared + 1);
+  });
+
+  it("同じタスクの作業領域の用意は、1つずつにする", async () => {
+    const { service, repos, id } = await submittedTask();
+    rmSync(workspaceOf(id), { recursive: true, force: true });
+    rmSync(gitDirOf(id), { recursive: true, force: true });
+    const gate = Promise.withResolvers<void>();
+    repos.prepareGate = gate.promise;
+    const svc = service as unknown as {
+      prepareRepository: (task: Task, config: unknown) => Promise<{ ok: boolean }>;
+    };
+    const task = service.get(id)?.task as Task;
+    const loaded = configOf(agent())();
+    if (!loaded.ok) throw new Error("config");
+    const prepared = repos.prepared.length;
+    const first = svc.prepareRepository(task, loaded.config);
+    const second = svc.prepareRepository(task, loaded.config);
+    gate.resolve();
+    repos.prepareGate = undefined;
+    expect((await first).ok).toBe(true);
+    expect((await second).ok).toBe(true);
+    // 後の用意は、先の用意が終わってから確かめるので、clone し直さない
+    expect(repos.prepared).toHaveLength(prepared + 1);
   });
 
   it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
@@ -28771,6 +28830,26 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(existsSync(gitDirOf(open))).toBe(true);
   });
 
+  it("起動時に、_git がリンクでも、リンクの先は消さない", async () => {
+    const { service } = await submittedTask();
+    const outside = join(dir, "outside-git");
+    const orphan = randomUUID();
+    mkdirSync(join(outside, `${orphan}.git`), { recursive: true });
+    writeFileSync(join(outside, `${orphan}.git`, "HEAD"), "keep");
+    rmSync(join(root(), "_git"), { recursive: true, force: true });
+    symlinkSync(outside, join(root(), "_git"));
+    // 作業領域の根の直下の ID から、リンクの下の <ID>.git を消そうとしない
+    mkdirSync(join(root(), orphan, "repo"), { recursive: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await service.cleanupWorkspacesAtStartup();
+    } finally {
+      warn.mockRestore();
+    }
+    expect(readFileSync(join(outside, `${orphan}.git`, "HEAD"), "utf8")).toBe("keep");
+    expect(existsSync(join(root(), orphan))).toBe(false);
+  });
+
   it("起動時に、動いているコンテナがマウントしているもの・停止を確かめられなかった実行のものは消さない", async () => {
     const mounted = randomUUID();
     const unconfirmed = randomUUID();
@@ -28795,9 +28874,9 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(existsSync(workspaceOf(done.id))).toBe(true);
     await done.service.runNext(done.id);
     await done.service.runNext(done.id);
+    await done.service.workspaceCleanupsSettled();
     done.activity.close();
     // 監査が終わった後、消す前に止まった（このリリースより前に完了した）ものとして、作業領域を作り直して起動し直す
-    await done.service.retireWorkspace(done.id);
     mkdirSync(join(workspaceOf(done.id), "repo"), { recursive: true });
     mkdirSync(gitDirOf(done.id), { recursive: true });
     const restarted = makeService(new SqliteActivityStore(dbPath), [], { audit: true });
@@ -28806,14 +28885,13 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(existsSync(gitDirOf(done.id))).toBe(false);
   });
 
-  it("消せなくても、理由をログに残して続ける", async () => {
+  it("問い合わせられない・1つを消せないときも、理由をログに残して続ける", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const { service } = await submittedTask();
-      const first = randomUUID();
-      const second = randomUUID();
-      mkdirSync(join(root(), "_guardian", first), { recursive: true });
-      mkdirSync(join(root(), "_guardian", second), { recursive: true });
+      const failing = randomUUID();
+      const removable = randomUUID();
+      mkdirSync(join(root(), "_guardian", failing), { recursive: true });
+      mkdirSync(join(root(), "_guardian", removable), { recursive: true });
       // 問い合わせられないときは消さずに、理由を残す
       const blind = makeService(new SqliteActivityStore(join(dir, "blind.db")), [], {
         containerMounts: async () => {
@@ -28821,17 +28899,23 @@ describe("終わったタスクと、中断された実行の作業領域の片�
         },
       });
       expect(await blind.service.cleanupWorkspacesAtStartup()).toBe(0);
-      expect(existsSync(join(root(), "_guardian", first))).toBe(true);
+      expect(existsSync(join(root(), "_guardian", failing))).toBe(true);
       expect(warn.mock.calls.flat().join("\n")).toContain("確かめられない");
-      // 片方を消せなくても、もう片方は消す
-      chmodSync(join(root(), "_guardian"), 0o500);
-      const removed = await service
-        .cleanupWorkspacesAtStartup()
-        .finally(() => chmodSync(join(root(), "_guardian"), 0o700));
-      if (process.getuid?.() !== 0) {
-        expect(removed).toBe(0);
-        expect(warn.mock.calls.flat().join("\n")).toContain("作業領域を消せませんでした");
-      }
+      // 1つを消せなくても、もう1つは消す
+      const activity = new SqliteActivityStore(join(dir, "partial.db"));
+      const service = new TaskService({
+        ...(makeService(activity).service as unknown as { deps: ServiceDeps }).deps,
+        removeWorkspaceEntry: async (base, path) => {
+          if (path.endsWith(failing)) throw new Error("EACCES: permission denied");
+          return removeEntry(base, path);
+        },
+      });
+      expect(await service.cleanupWorkspacesAtStartup()).toBe(1);
+      expect(existsSync(join(root(), "_guardian", failing))).toBe(true);
+      expect(existsSync(join(root(), "_guardian", removable))).toBe(false);
+      expect(warn.mock.calls.flat().join("\n")).toContain(
+        `作業領域を消せませんでした：${join(root(), "_guardian", failing)}：EACCES`,
+      );
     } finally {
       warn.mockRestore();
     }

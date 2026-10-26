@@ -54,11 +54,36 @@ describe("作業領域の片付けの部品（PBI-157）", () => {
     mkdirSync(target);
     symlinkSync(outside, join(target, "inner"));
     symlinkSync(outside, join(dir, "top"));
-    expect(await removeEntry(join(dir, "top"))).toBe(true);
-    expect(await removeEntry(target)).toBe(true);
+    expect(await removeEntry(dir, join(dir, "top"))).toBe(true);
+    expect(await removeEntry(dir, target)).toBe(true);
     expect(existsSync(target)).toBe(false);
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
-    expect(await removeEntry(join(dir, "missing"))).toBe(false);
+    expect(await removeEntry(dir, join(dir, "missing"))).toBe(false);
+    expect(await removeEntry(dir, join(dir, "missing", "child"))).toBe(false);
+  });
+
+  it("途中のディレクトリがリンクなら、その先を消さない。根の外のものも消さない（PBI-157 レビュー指摘）", async () => {
+    const root = join(dir, "workspaces");
+    const outside = join(dir, "outside");
+    mkdirSync(join(outside, "t.git"), { recursive: true });
+    writeFileSync(join(outside, "t.git", "HEAD"), "keep");
+    mkdirSync(root);
+    symlinkSync(outside, join(root, "_git"));
+    await expect(removeEntry(root, join(root, "_git", "t.git"))).rejects.toThrow(/not a directory/);
+    expect(readFileSync(join(outside, "t.git", "HEAD"), "utf8")).toBe("keep");
+    await expect(removeEntry(root, outside)).rejects.toThrow(/not under/);
+    await expect(removeEntry(root, root)).rejects.toThrow(/not under/);
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  it("読めないディレクトリは、ENOENT のほかは理由を知らせる", () => {
+    const lines: string[] = [];
+    writeFileSync(join(dir, "file"), "x");
+    expect(idEntries(join(dir, "missing"), "", (line) => lines.push(line))).toEqual([]);
+    expect(lines).toEqual([]);
+    // ファイルの下を読もうとする（ENOTDIR）
+    expect(idEntries(join(dir, "file", "x"), "", (line) => lines.push(line))).toEqual([]);
+    expect(lines.join("\n")).toContain(join(dir, "file", "x"));
   });
 
   it("マウントされている場所と、同じか上下の関係なら重なる", () => {
@@ -68,6 +93,9 @@ describe("作業領域の片付けの部品（PBI-157）", () => {
     expect(overlapsMounts(ws, [ws])).toBe(true);
     expect(overlapsMounts(ws, [`${ws}2`])).toBe(false);
     expect(overlapsMounts(ws, [])).toBe(false);
+    // マウント元が / でも、配下と重なる（PBI-157 レビュー指摘）
+    expect(overlapsMounts(ws, ["/"])).toBe(true);
+    expect(overlapsMounts("/", [ws])).toBe(true);
   });
 
   it("工程を終えて止まり、監査が終わった（または監査しない）タスクだけ、作業領域を使わない", () => {

@@ -221,14 +221,16 @@ const service = new TaskService({
 });
 service.recoverInterrupted();
 // 前回、片付ける前にデーモンが終わって残った実行ごとの一時領域と、もう使わない完了したタスク・どのタスクのものでもない
-// 作業領域を、実行を再開・始める前に消す（PBI-157）。消せなくても起動は続ける
-const removedWorkspaces = await service.cleanupWorkspacesAtStartup().catch((error: unknown) => {
-  console.warn("[daemon] 残っている作業領域を片付けられませんでした：", error);
-  return 0;
-});
-if (removedWorkspaces > 0) {
-  console.log(`[daemon] 残っていた作業領域を ${removedWorkspaces} 件消しました。`);
-}
+// 作業領域を消す（PBI-157）。API の待ち受けは待たせず（sacty up の起動の確かめが時間切れにならないように）、ワーカーなどは
+// 消し終えてから始める。消せなくても起動は続ける
+const workspaceCleanup = service
+  .cleanupWorkspacesAtStartup()
+  .then((removed) => {
+    if (removed > 0) console.log(`[daemon] 残っていた作業領域を ${removed} 件消しました。`);
+  })
+  .catch((error: unknown) => {
+    console.warn("[daemon] 残っている作業領域を片付けられませんでした：", error);
+  });
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
 // 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）
@@ -284,7 +286,11 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
     .catch((error: unknown) =>
       console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
     )
-    .finally(() => {
+    .finally(async () => {
+      // 残っていた作業領域を消し終えてから、タスクの実行を始める（PBI-157）
+      await workspaceCleanup;
+      // 止め始めていたら、何も始めない
+      if (shuttingDown) return;
       // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
       // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
       hostMcp.start();

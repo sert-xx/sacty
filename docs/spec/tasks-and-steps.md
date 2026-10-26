@@ -888,16 +888,26 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - リンクはリンクだけを消し、先はたどらない。
   - 動いているコンテナ（sacty のものに限らない）がマウントしている場所と重なれば消さない。
     Docker に問い合わせられなければ、どれも消さない（次の起動で確かめ直す）。
-  - タスクの作業領域と退避した git のメタデータは、まとめて消すか、まとめて残す。
-- 消せなければ（権限など）、理由をログに残し、デーモンの起動とタスクの進行は止めない。
+  - タスクの作業領域と退避した git のメタデータは、どちらかがマウントと重なれば、両方とも残す。
+  - 作業領域の根から消すものの親までの途中に、リンク・ディレクトリでないものがあれば消さない（`_git` がリンクでも、その先を消さない）。
+- 消せなければ（権限など）、理由をログに残して、残りは消す。デーモンの起動とタスクの進行は止めない。
+  そのため、作業領域と退避した git のメタデータの片方だけが残ることがある。
+  一覧を読めないディレクトリも、理由をログに残す。
 - セッションログ（`runs/`）・`sessions/`・`memory/`・`sacty.db` は消さない。
+- 作業領域を使う処理（実行・質問への答え・中止の片付け・用意の途中、ほかのタスクの統合レビューが読んでいる間）の間は消さず、終わったときに消す。
 - 消した後に作業領域を使う操作は、同じ起点のコミットで用意し直す（`prepareRepository`）。
+  - 同じタスクの用意は1つずつにする（後の用意は、先の用意が終わってから要るかを確かめる）。消している途中なら、消し終わってから用意する。
+  - 記録したベースブランチが消えていても（引き継いだ PR のブランチがマージの後に消されたなど）、既定のブランチを clone して起点のコミットを取得する。
   - 工程を実行し直す操作（再レビューなど）は、工程の実行の準備で用意し直す。
-  - 質問への答えなど、コードの写しを渡す実行（`runGuardian`）は、写す前に用意し直す。
+  - 質問への答えなど、コードの写しを渡す実行（`runGuardian`）は、作業領域と退避した git のメタデータが両方とも無ければ、写す前に用意し直す（再レビューで実行待ちに戻った後の質問を含む）。
+    片方が残っていれば、これまでどおり用意し直さない（作業中の変更を消さないため）。
     実装の作業領域も消えているので、実装後のコードではなく起点のコードになる。
-  - 完了したタスクを中止するときは、sacty のブランチを消すために、退避した git のメタデータを用意し直す。
+  - 統合レビューは、完了した子タスクのものを用意し直して読み、読み終えたら（失敗しても）また消す。
+  - タスクを中止するときは、両方とも無ければ、sacty のブランチを消すために用意し直す。
+    用意できなければ、その理由をブランチの片付けの結果（`failed`）に残す。
+    用意し直したものは、作業領域の片付けの結果では無かったもの（`skipped`）とする。
 
-コード: `apps/daemon/src/service.ts`（`retireWorkspace`・`cleanupWorkspacesAtStartup`・`workspaceMissing`・`prepareRepository`・`cancel`）、`apps/daemon/src/workspace-cleanup.ts`（`workspaceRetirable`・`RUN_SCRATCH_DIRS`・`isSactyId`・`removeEntry`・`overlapsMounts`・`runningContainerMounts`）、`apps/daemon/src/main.ts`
+コード: `apps/daemon/src/service.ts`（`retireWorkspace`・`cleanupWorkspacesAtStartup`・`workspaceMissing`・`workspaceBusy`・`prepareRepository`・`childRepositories`・`cancel`）、`apps/daemon/src/repository.ts`（`prepare`）、`apps/daemon/src/workspace-cleanup.ts`（`workspaceRetirable`・`RUN_SCRATCH_DIRS`・`isSactyId`・`removeEntry`・`overlapsMounts`・`runningContainerMounts`）、`apps/daemon/src/main.ts`
 
 ### 中止したタスクの再実行
 

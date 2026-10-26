@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { rm, unlink } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { Task } from "@sacty/core";
 import { isCompleted } from "@sacty/core";
 import { dockerClientEnv } from "./agents/docker.js";
@@ -47,16 +47,32 @@ export function workspaceRetirable(task: Task): boolean {
   return !task.unstoppedRuns?.length;
 }
 
-/** 根の直下のディレクトリ（リンクでない）の、ID の形をした名前（suffix を除いたもの）の一覧。無ければ空。 */
-export function idEntries(dir: string, suffix = ""): string[] {
+/**
+ * ディレクトリ（リンクでない）の直下の、ID の形をした名前（suffix を付けたもの）の一覧。無ければ空。読めなければ（権限など）
+ * 理由を warn に渡して空にする。
+ */
+export function idEntries(
+  dir: string,
+  suffix = "",
+  warn: (line: string) => void = (line) => console.warn(line),
+): string[] {
   try {
     if (!lstatSync(dir).isDirectory()) return [];
     return readdirSync(dir).filter(
       (name) => name.endsWith(suffix) && isSactyId(name.slice(0, name.length - suffix.length)),
     );
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      warn(`[daemon] 作業領域の片付けで、${dir} を読めませんでした：${(error as Error).message}`);
+    }
     return [];
   }
+}
+
+/** child が parent と同じか、その下か（parent が / でも正しく判定する）。 */
+function within(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /** path が、マウントされている場所のどれかと重なるか（同じか、どちらかがもう片方の下）。 */
@@ -67,16 +83,32 @@ export function overlapsMounts(path: string, mounts: readonly string[]): boolean
   } catch {
     // 無ければ、そのまま比べる
   }
-  return mounts.some((mount) =>
-    paths.some((p) => mount === p || mount.startsWith(p + sep) || p.startsWith(mount + sep)),
-  );
+  return mounts.some((mount) => paths.some((p) => within(mount, p) || within(p, mount)));
 }
 
 /**
- * 消す。リンクならリンクだけを消す（先はたどらない。ディレクトリの中のリンクも、rm はたどらない）。無ければ何もしない。
- * 消せたら true。
+ * root の下の path を消す。リンクならリンクだけを消す（先はたどらない。ディレクトリの中のリンクも、rm はたどらない）。
+ * root から path の親までの途中にリンク・ディレクトリでないものがあれば、消さずに例外にする（`_git` がリンクでも、
+ * リンクの先を消さない）。無ければ何もしない。消せたら true。
  */
-export async function removeEntry(path: string): Promise<boolean> {
+export async function removeEntry(root: string, path: string): Promise<boolean> {
+  const rel = relative(root, path);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`${path} is not under ${root}`);
+  }
+  let dir = root;
+  for (const part of rel.split(/[\\/]/).slice(0, -1)) {
+    dir = join(dir, part);
+    let parent: ReturnType<typeof lstatSync>;
+    try {
+      parent = lstatSync(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!parent.isDirectory())
+      throw new Error(`${dir} is not a directory (a link is not followed)`);
+  }
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(path);

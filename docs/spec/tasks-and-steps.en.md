@@ -539,16 +539,26 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - A link is removed by itself; its target is not followed.
   - Nothing that overlaps a place mounted by a running container (not only sacty's) is removed.
     If Docker cannot be queried, nothing is removed (checked again at the next start).
-  - A task's workspace and its set-aside git metadata are removed together or kept together.
-- If they cannot be removed (permissions and so on), the reason is logged, and neither the daemon startup nor the task's progress is stopped.
+  - If either a task's workspace or its set-aside git metadata overlaps a mount, both are kept.
+  - Nothing is removed if anything on the way from the workspace root to its parent is a link or not a directory (even if `_git` is a link, its target is not removed).
+- If something cannot be removed (permissions and so on), the reason is logged and the rest is removed. Neither the daemon startup nor the task's progress is stopped.
+  So only one of a workspace and its set-aside git metadata may be left.
+  A directory whose listing cannot be read is logged too.
 - Session logs (`runs/`), `sessions/`, `memory/`, and `sacty.db` are not removed.
+- They are not removed while something uses the workspace (a run, answering a question, cleaning up a cancel, preparing it, or another task's integration review reading it), but when that ends.
 - Operations that use the workspace after it was removed prepare it again from the same base commit (`prepareRepository`).
+  - Preparing one task's workspace happens one at a time (a later preparation checks whether it is needed after the earlier one ends). If it is being removed, it is prepared after the removal ends.
+  - Even if the recorded base branch is gone (for example, a continued PR's branch deleted after merging), it clones the default branch and fetches the base commit.
   - Operations that rerun a step (re-review and so on) prepare it while preparing the step's run.
-  - Runs given a copy of the code, such as answering a question (`runGuardian`), prepare it before copying.
+  - Runs given a copy of the code, such as answering a question (`runGuardian`), prepare it before copying if both the workspace and the set-aside git metadata are missing (including a question after a re-review put the task back to waiting to run).
+    If one of them is left, they do not prepare it, as before (so changes in progress are not lost).
     Because the implementation workspace is gone too, they get the base code, not the implemented code.
-  - Canceling a completed task prepares the set-aside git metadata again to delete sacty's branches.
+  - The integration review prepares completed child tasks' workspaces to read them, and removes them again when done (even on failure).
+  - Canceling a task prepares them again to delete sacty's branches if both are missing.
+    If they cannot be prepared, the reason is recorded in the branch cleanup result (`failed`).
+    Ones prepared again are treated as absent (`skipped`) in the workspace cleanup result.
 
-Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStartup`, `workspaceMissing`, `prepareRepository`, `cancel`), `apps/daemon/src/workspace-cleanup.ts` (`workspaceRetirable`, `RUN_SCRATCH_DIRS`, `isSactyId`, `removeEntry`, `overlapsMounts`, `runningContainerMounts`), `apps/daemon/src/main.ts`
+Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStartup`, `workspaceMissing`, `workspaceBusy`, `prepareRepository`, `childRepositories`, `cancel`), `apps/daemon/src/repository.ts` (`prepare`), `apps/daemon/src/workspace-cleanup.ts` (`workspaceRetirable`, `RUN_SCRATCH_DIRS`, `isSactyId`, `removeEntry`, `overlapsMounts`, `runningContainerMounts`), `apps/daemon/src/main.ts`
 
 ### Rerunning a cancelled task
 
