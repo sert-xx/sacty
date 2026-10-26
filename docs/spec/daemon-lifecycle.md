@@ -224,6 +224,7 @@ SIGINT・SIGTERM を受けると、デーモンは1回だけ次を行う。
    後片付けは待たない。
    コンテキストのものは層の写しも消す。
 4. 実行中のエージェントのコンテナを止める。
+   これより後は、新しいコンテナを起動しない（作業領域を写している途中だった実行は、写し終わっても起動せずに `run.daemonStopped` で終わる）。
 5. 2 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。
    3秒（`DRAIN_REPORT_MS`）たっても終わっていなければ、まだ終わっていないもの（実行中のタスク・取り込み・PR の確認・スケジュールタスクの確認）を表示する。
    20秒を過ぎたら警告を出して進む。
@@ -236,4 +237,4 @@ SIGINT・SIGTERM を受けると、デーモンは1回だけ次を行う。
 
 デーモンが例外などで終わるとき（`exit`。`FORCE_STOP_SIGNAL` で終わるときも含む）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git のプロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
 
-コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`・`DRAIN_REPORT_MS`）、`apps/daemon/src/shutdown-report.ts`（`waitNamed`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）
+コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`・`DRAIN_REPORT_MS`）、`apps/daemon/src/shutdown-report.ts`（`waitNamed`）、`apps/daemon/src/exit-codes.ts`（`FORCE_STOP_SIGNAL`）、`apps/daemon/src/agents/docker.ts`（`DockerExecutor.abortAll`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）
