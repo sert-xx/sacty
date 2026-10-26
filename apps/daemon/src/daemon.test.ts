@@ -28830,6 +28830,28 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(existsSync(gitDirOf(open))).toBe(true);
   });
 
+  it("起動時の片付けの間も API は応答し、片付けの間に始まった実行・作ったタスクのものは消さない（PBI-157 レビュー指摘）", async () => {
+    const held = Promise.withResolvers<string[]>();
+    const { service, id } = await submittedTask({ containerMounts: () => held.promise });
+    const stale = randomUUID();
+    mkdirSync(join(root(), "_guardian", stale), { recursive: true });
+    const cleanup = service.cleanupWorkspacesAtStartup();
+    // 問い合わせを待っている間に、質問のログ・新しいタスクの作業領域ができた
+    const fresh = randomUUID();
+    mkdirSync(join(root(), "_question-logs", fresh), { recursive: true });
+    const newTask = randomUUID();
+    mkdirSync(join(root(), newTask, "repo"), { recursive: true });
+    const res = await createApp(service, "tok").request(`/api/tasks/${id}`, {
+      headers: { authorization: "Bearer tok" },
+    });
+    expect(res.status).toBe(200);
+    held.resolve([]);
+    expect(await cleanup).toBe(1);
+    expect(existsSync(join(root(), "_guardian", stale))).toBe(false);
+    expect(existsSync(join(root(), "_question-logs", fresh))).toBe(true);
+    expect(existsSync(join(root(), newTask))).toBe(true);
+  });
+
   it("起動時に、_git がリンクでも、リンクの先は消さない", async () => {
     const { service } = await submittedTask();
     const outside = join(dir, "outside-git");

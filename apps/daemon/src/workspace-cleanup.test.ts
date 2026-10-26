@@ -17,6 +17,7 @@ import {
   isSactyId,
   overlapsMounts,
   removeEntry,
+  startAfterCleanup,
   taskWorkspacePaths,
   workspaceRetirable,
 } from "./workspace-cleanup.js";
@@ -130,5 +131,30 @@ describe("作業領域の片付けの部品（PBI-157）", () => {
 
   it("タスクの作業領域と、退避した git のメタデータの場所", () => {
     expect(taskWorkspacePaths("/w", "t")).toEqual(["/w/t", "/w/_git/t.git"]);
+  });
+
+  it("起動時の片付けが終わるまで始めず、その間に止め始めていれば始めない", async () => {
+    let started = 0;
+    const start = () => {
+      started++;
+    };
+    const held = Promise.withResolvers<void>();
+    const running = startAfterCleanup(held.promise, () => false, start);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(started).toBe(0);
+    held.resolve();
+    expect(await running).toBe(true);
+    expect(started).toBe(1);
+    // 片付けの間に止め始めた
+    let stopping = false;
+    const again = Promise.withResolvers<void>();
+    const stopped = startAfterCleanup(again.promise, () => stopping, start);
+    stopping = true;
+    again.resolve();
+    expect(await stopped).toBe(false);
+    expect(started).toBe(1);
+    // 片付けが失敗しても始める
+    expect(await startAfterCleanup(Promise.reject(new Error("x")), () => false, start)).toBe(true);
+    expect(started).toBe(2);
   });
 });

@@ -227,10 +227,15 @@ describe("デーモンの起動の順序（PBI-79）", () => {
     }
     // 残った作業領域は、実行を再開・始める前に消し終える。API の待ち受けは待たせない（PBI-157）
     const cleanup = main.indexOf(".cleanupWorkspacesAtStartup()");
-    const awaited = main.indexOf("await workspaceCleanup;");
+    const awaited = main.indexOf(
+      "startAfterCleanup(workspaceCleanup, () => shuttingDown, startServices)",
+    );
     expect(cleanup).toBeGreaterThan(main.indexOf("service.recoverInterrupted()"));
     expect(main.slice(cleanup - 40, cleanup)).not.toContain("await");
+    // 待つのは API の待ち受けの後で、ワーカーなどは片付けの後に始める（振る舞いは workspace-cleanup.test.ts で確かめる）
     expect(awaited).toBeGreaterThan(main.indexOf("serve("));
-    expect(awaited).toBeLessThan(main.indexOf("worker.start()"));
+    const services = main.slice(main.indexOf("function startServices()"));
+    expect(services).toContain("worker.start()");
+    expect(main.slice(0, main.indexOf("function startServices()"))).not.toContain("worker.start()");
   });
 });

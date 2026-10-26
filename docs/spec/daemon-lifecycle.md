@@ -112,7 +112,7 @@
 PR の監視は60秒ごとに、前の確認が終わってから確かめる。
 マージの後の CI/CD の監視も、その終わりに行う。
 
-コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`cleanupWorkspacesAtStartup`・`queueWaitingSteps`・`maxParallelTasks`）、
+コード: `apps/daemon/src/main.ts`、`apps/daemon/src/workspace-cleanup.ts`（`startAfterCleanup`）、`apps/daemon/src/service.ts`（`recoverInterrupted`・`cleanupWorkspacesAtStartup`・`queueWaitingSteps`・`maxParallelTasks`）、
 `apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）
 
 ## 最新版の確かめ

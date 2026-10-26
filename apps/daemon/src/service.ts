@@ -5204,6 +5204,15 @@ export class TaskService {
    */
   async cleanupWorkspacesAtStartup(): Promise<number> {
     const root = this.deps.workspaceRoot;
+    // 消す候補は、最初に待つ前（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問が作る
+    // 一時領域・作業領域は、候補に入らないので消さない（PBI-157 レビュー指摘）
+    const scratch = RUN_SCRATCH_DIRS.flatMap((name) =>
+      idEntries(join(root, name)).map((runId) => ({ runId, path: join(root, name, runId) })),
+    );
+    const taskIds = new Set([
+      ...idEntries(root),
+      ...idEntries(join(root, "_git"), ".git").map((name) => name.slice(0, -".git".length)),
+    ]);
     const mounts = await this.containerMounts();
     if (mounts === undefined) {
       console.warn(
@@ -5211,22 +5220,12 @@ export class TaskService {
       );
       return 0;
     }
-    // 動いている実行と、停止を確かめられなかったコンテナの実行
-    const active = new Set<string>([...this.chats.values()].map((c) => c.runId));
-    for (const entry of this.inflight.values()) for (const runId of entry.runIds) active.add(runId);
-    for (const task of this.tasks.values())
-      for (const runId of task.unstoppedRuns ?? []) active.add(runId);
     let removed = 0;
-    for (const name of RUN_SCRATCH_DIRS) {
-      for (const runId of idEntries(join(root, name))) {
-        if (active.has(runId)) continue;
-        removed += await this.removeWorkspacePaths([join(root, name, runId)], mounts);
-      }
+    for (const { runId, path } of scratch) {
+      // 停止を確かめられなかったコンテナの実行のものは残す（消す直前の状態で確かめる）
+      if (this.activeRunIds().has(runId)) continue;
+      removed += await this.removeWorkspacePaths([path], mounts);
     }
-    const taskIds = new Set([
-      ...idEntries(root),
-      ...idEntries(join(root, "_git"), ".git").map((name) => name.slice(0, -".git".length)),
-    ]);
     for (const taskId of taskIds) {
       // 完了したタスクは、完了の後と同じく消す（その間に質問などが作業領域を使い始めても、消し終わるのを待つ）。
       // 中止したタスクは、中止の片付けに任せる
@@ -5238,6 +5237,15 @@ export class TaskService {
       removed += await this.removeWorkspacePaths(taskWorkspacePaths(root, taskId), mounts);
     }
     return removed;
+  }
+
+  /** 動いている実行（工程・質問への答え）と、停止を確かめられなかったコンテナの実行。 */
+  private activeRunIds(): Set<string> {
+    const active = new Set<string>([...this.chats.values()].map((c) => c.runId));
+    for (const entry of this.inflight.values()) for (const runId of entry.runIds) active.add(runId);
+    for (const task of this.tasks.values())
+      for (const runId of task.unstoppedRuns ?? []) active.add(runId);
+    return active;
   }
 
   /** 実装の対象リポジトリの、タスクごとの clone の場所。 */

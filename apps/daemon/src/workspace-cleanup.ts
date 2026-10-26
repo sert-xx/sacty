@@ -169,3 +169,18 @@ export async function runningContainerMounts(timeoutMs = 15_000): Promise<string
 export function taskWorkspacePaths(workspaceRoot: string, taskId: string): string[] {
   return [join(workspaceRoot, taskId), join(workspaceRoot, "_git", `${taskId}.git`)];
 }
+
+/**
+ * デーモンの起動時の片付けが終わってから、タスクの実行など（ワーカー・取り込み・PR の監視など）を始める（PBI-157）。
+ * 片付けが失敗しても始める。片付けの間に止め始めていれば始めない。始めたら true。
+ */
+export async function startAfterCleanup(
+  cleanup: Promise<unknown>,
+  stopping: () => boolean,
+  start: () => void,
+): Promise<boolean> {
+  await cleanup.catch(() => {});
+  if (stopping()) return false;
+  start();
+  return true;
+}

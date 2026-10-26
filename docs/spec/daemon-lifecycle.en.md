@@ -78,7 +78,7 @@ Every 2 seconds, the worker runs queued tasks in order of creation, oldest first
 
 PR watching checks every 60 seconds, after the previous check has finished. CI/CD watching after merges also runs at the end of each check.
 
-Code: `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`recoverInterrupted`, `cleanupWorkspacesAtStartup`, `queueWaitingSteps`, `maxParallelTasks`),
+Code: `apps/daemon/src/main.ts`, `apps/daemon/src/workspace-cleanup.ts` (`startAfterCleanup`), `apps/daemon/src/service.ts` (`recoverInterrupted`, `cleanupWorkspacesAtStartup`, `queueWaitingSteps`, `maxParallelTasks`),
 `apps/daemon/src/worker.ts` (`Worker`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`), `packages/core/src/projects.ts` (`DEFAULT_MAX_PARALLEL_TASKS`)
 
 ## Checking for a newer version

@@ -534,6 +534,7 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - Workspaces that belong to no task.
   - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
     They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
+  - The candidates are fixed when the cleanup starts (before listening for the API and starting the worker). Ones of runs, questions, and tasks started during the cleanup are not removed.
 - Limits on what is removed:
   - Only names under the workspace root shaped like a task or run ID (UUID) are removed.
   - A link is removed by itself; its target is not followed.

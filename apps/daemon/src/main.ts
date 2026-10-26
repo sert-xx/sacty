@@ -46,7 +46,7 @@ import { waitNamed } from "./shutdown-report.js";
 import { JiraTickets } from "./tickets.js";
 import { packageVersion, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
-import { runningContainerMounts } from "./workspace-cleanup.js";
+import { runningContainerMounts, startAfterCleanup } from "./workspace-cleanup.js";
 
 const home = resolveHome();
 const port = Number(process.env.SACTY_DAEMON_PORT ?? 4710);
@@ -286,28 +286,30 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
     .catch((error: unknown) =>
       console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
     )
-    .finally(async () => {
-      // 残っていた作業領域を消し終えてから、タスクの実行を始める（PBI-157）
-      await workspaceCleanup;
-      // 止め始めていたら、何も始めない
-      if (shuttingDown) return;
-      // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
-      // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
-      hostMcp.start();
-      contextMcp.start();
-      for (const platform of platforms()) {
-        credentials.header(platform).catch((error) => {
-          console.warn(
-            `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
-          );
-        });
-      }
-      worker.start();
-      intake.start();
-      prWatcher.start();
-      scheduleRunner.start();
-    });
+    .finally(() =>
+      // 残っていた作業領域を消し終えてから、タスクの実行を始める。その間に止め始めていたら、何も始めない（PBI-157）
+      startAfterCleanup(workspaceCleanup, () => shuttingDown, startServices),
+    );
 });
+
+/** 秘密情報をまとめて取り出し、残っていた作業領域を消し終えた後に始めるもの。 */
+function startServices(): void {
+  // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
+  // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
+  hostMcp.start();
+  contextMcp.start();
+  for (const platform of platforms()) {
+    credentials.header(platform).catch((error) => {
+      console.warn(
+        `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
+      );
+    });
+  }
+  worker.start();
+  intake.start();
+  prWatcher.start();
+  scheduleRunner.start();
+}
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
 const DRAIN_TIMEOUT_MS = 20_000;
