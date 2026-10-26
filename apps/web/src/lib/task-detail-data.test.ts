@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const candidates = vi.fn();
 const paused = {
@@ -65,8 +65,16 @@ describe("セキュリティチェックのレポートの指摘と、対応の�
     securityFix: { taskId: "r1", category: "dependency" },
   };
 
-  it("指摘を取れなければ null にし、指摘が無いこと（空）と分ける", async () => {
+  // テストごとに、レポートと対応のタスクを返す（ほかのテストの設定に頼らず、単独でも通るように）
+  beforeEach(() => {
     getTask.mockImplementation(async (id) => ({ task: id === "r1" ? report : fix, activity: [] }));
+    findings.mockReset();
+  });
+  afterEach(() => {
+    getTask.mockImplementation(async () => ({ task: paused, activity: [] }));
+  });
+
+  it("指摘を取れなければ null にし、指摘が無いこと（空）と分ける", async () => {
     findings.mockRejectedValueOnce(new Error("daemon 500"));
     expect((await loadTaskDetail("r1", { repositories: false }))?.securityFindings).toBeNull();
     findings.mockResolvedValueOnce([]);
@@ -74,12 +82,9 @@ describe("セキュリティチェックのレポートの指摘と、対応の�
   });
 
   it("対応のタスクには、元のレポートのタスクを添える（レポートでないタスクは指摘を取らない）", async () => {
-    findings.mockClear();
     const data = await loadTaskDetail("f1", { repositories: false });
     expect(data?.securityReport?.id).toBe("r1");
     expect(data?.securityFindings).toBeUndefined();
     expect(findings).not.toHaveBeenCalled();
-    getTask.mockReset();
-    getTask.mockImplementation(async () => ({ task: paused, activity: [] }));
   });
 });

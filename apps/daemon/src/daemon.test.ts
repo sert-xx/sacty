@@ -48,6 +48,7 @@ import {
   reworkTargets,
   STEP_PLANS,
   stepRunning,
+  TASK_BODY_MAX,
 } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -29078,6 +29079,52 @@ describe("セキュリティチェックとセキュリティ対応", () => {
     const { service: restarted } = makeService(activity, [], { planner: checkPlanner });
     restarted.resumeSecurityFixTasks();
     expect(restarted.list().filter((t) => t.start === "security")).toHaveLength(1);
+    activity.close();
+  });
+
+  it("説明に入りきらない指摘も、件数を書き、全件を対応のタスクに持たせて工程に渡す", async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({
+      id: `SF-${i + 1}`,
+      category: "dependency",
+      severity: "high",
+      title: `example-lib-${i + 1} の既知の脆弱性`,
+      refs: [`GHSA-0000-0000-${String(i + 1).padStart(4, "0")}`],
+      location: `package-lock.json の example-lib-${i + 1}@1.0.0（${"とても長い場所の説明".repeat(5)}）`,
+      fix: `example-lib-${i + 1} を 1.0.1 に上げる`,
+    }));
+    const bigReport = out(
+      ["# レポート", block({ "sacty-security-findings": { findings: many } })].join("\n\n"),
+    );
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [bigReport, out("# 調査")], {
+      planner: async (task) =>
+        task.requestedPlan === "security-fix"
+          ? {
+              steps: ["investigate", "implement"],
+              plan: "security-fix",
+              reason: "対応",
+              fallback: false,
+              testCommand: "npm test",
+              costUsd: 0,
+              estimated: false,
+            }
+          : checkPlanner(),
+    });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const requested = service.requestSecurityFix(id, { category: "dependency" }).securityFixes
+      ?.dependency;
+    const fix = service.get(requested?.taskId ?? "")?.task;
+    expect(fix?.body.length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    expect(fix?.body).toMatch(/ほか \d+ 件/);
+    expect(fix?.body).not.toContain("SF-80");
+    expect(fix?.securityFix?.findings).toHaveLength(80);
+    // 前段の調査の指示に、全件を省かずに渡す
+    await service.runNext(fix?.id ?? "");
+    const prompt = promptOf(executor, 1);
+    expect(prompt).toContain("対応する指摘の全件（80件");
+    expect(prompt).toContain("GHSA-0000-0000-0080");
     activity.close();
   });
 

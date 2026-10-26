@@ -199,7 +199,7 @@ function isTestPath(path: string): boolean {
 
 /**
  * レポートの区分から作る、対応のタスクの題と説明。その区分の指摘だけを渡し（ほかの区分を混ぜない）、最小限の変更に
- * するよう依頼する。
+ * するよう依頼する。説明に入りきらない指摘は件数だけを書く（全件は securityFix.findings に持ち、工程の指示に渡す）。
  */
 export function securityFixTask(
   report: Task,
@@ -209,24 +209,35 @@ export function securityFixTask(
   const name = SECURITY_CATEGORY_NAME[category];
   const listed = findings.filter((f) => f.category === category);
   const title = `セキュリティ対応：${name}（${report.title}）`;
-  const lines = [
-    `セキュリティチェックのレポート（タスク ${report.id}）の「${name}」の指摘を、問題を解消する最小限の変更で直してください。`,
+  const head = [
+    `セキュリティチェックのレポート（タスク ${report.id}）の「${name}」の指摘（${listed.length}件）を、問題を解消する最小限の変更で直してください。`,
     "リファクタリング・整形・名前の変更・関係の無い修正・指摘に無い依存の更新は混ぜないでください（レビューに時間がかかり、修正が遅れるため）。",
     "",
     "## 対応する指摘",
     "",
-    ...listed.map((f) =>
-      [
-        `- ${f.id}［${f.severity}］${f.title}`,
-        ...(f.refs.length > 0 ? [`  - 識別子：${f.refs.join("・")}`] : []),
-        ...(f.location ? [`  - 場所：${f.location}`] : []),
-        ...(f.fix ? [`  - 直し方の案：${f.fix}`] : []),
-      ].join("\n"),
-    ),
-  ];
-  const body = lines.join("\n");
+  ].join("\n");
+  const items = listed.map((f) =>
+    [
+      `- ${f.id}［${f.severity}］${f.title}`,
+      ...(f.refs.length > 0 ? [`  - 識別子：${f.refs.join("・")}`] : []),
+      ...(f.location ? [`  - 場所：${f.location}`] : []),
+      ...(f.fix ? [`  - 直し方の案：${f.fix}`] : []),
+    ].join("\n"),
+  );
+  // 入りきらない指摘は、途中で切らずに件数だけを書く（残りの件数の行の分を空けておく）
+  const rest = (n: number) =>
+    `\n- ほか ${n} 件（説明に入りきらないため、全件は sacty が工程に渡します）`;
+  let body = head;
+  let shown = 0;
+  for (const item of items) {
+    const next = `${body}${shown > 0 ? "\n" : ""}${item}`;
+    if (next.length + rest(items.length).length > TASK_BODY_MAX) break;
+    body = next;
+    shown++;
+  }
+  if (shown < items.length) body += rest(items.length - shown);
   return {
     title: title.length > TASK_TITLE_MAX ? `${title.slice(0, TASK_TITLE_MAX - 1)}…` : title,
-    body: body.length > TASK_BODY_MAX ? `${body.slice(0, TASK_BODY_MAX - 1)}…` : body,
+    body,
   };
 }

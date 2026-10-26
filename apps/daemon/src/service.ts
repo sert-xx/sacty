@@ -10677,12 +10677,13 @@ export class TaskService {
       throw new InvalidOperationError(message("security.noFindings"));
     }
     const { title, body } = securityFixTask(task, category, findings);
+    const listed = findings.filter((f) => f.category === category);
     const updated = this.append(task, [
       {
         actor: "person",
         event: {
           type: "SecurityFixRequested",
-          payload: { category, taskId: randomUUID(), title, body },
+          payload: { category, taskId: randomUUID(), title, body, findings: listed },
         },
       },
     ]);
@@ -10716,7 +10717,7 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             plan: "security-fix",
-            securityFix: { taskId: task.id, category },
+            securityFix: { taskId: task.id, category, findings: requested.findings },
           },
         },
       },

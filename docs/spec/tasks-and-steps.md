@@ -396,12 +396,15 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - `POST /api/tasks/:id/security-fixes`（入力は `RequestSecurityFixInput` の `category`）で、その区分の対応のタスクを作る。
   区分ごとに1回だけ（`security.alreadyRequested`）。
   承認したレポートでない（`security.notReport`）・その区分の指摘が無い（`security.noFindings`）ときは作らない（どれも 409）。
-- 先に、元のタスクに `SecurityFixRequested`（区分・作るタスクの ID・題・本文。actor は `person`）を記録してから、その ID で `TaskCreated` を記録する。
+- 先に、元のタスクに `SecurityFixRequested`（区分・作るタスクの ID・題・本文・その区分の指摘の全件。actor は `person`）を記録してから、その ID で `TaskCreated` を記録する。
   作る前にデーモンが止まったら、起動のときに作る（`resumeSecurityFixTasks`）。
-- 作るタスクは、`start: security`・`plan: security-fix`・`securityFix`（元のタスクと区分）で、リポジトリは元のタスクのもの。
+- 作るタスクは、`start: security`・`plan: security-fix`・`securityFix`（元のタスク・区分・指摘の全件）で、リポジトリは元のタスクのもの。
   題は `セキュリティ対応：<区分>（<元のタスクの題>）`、説明はその区分の指摘だけと、最小限の変更で直す依頼（`securityFixTask`）。
+  説明は `TASK_BODY_MAX` に収まる分の指摘だけを書き、入りきらない指摘は件数だけを書く（指摘の途中で切らない）。
+- 対応のタスクの工程（調査・実装）と最終レビューの指示には、`securityFix` の指摘の全件を JSON のデータとして省かずに渡し、すべてを解消させる（`securityFindingLines`）。
+  解消しない指摘に理由が無ければ、最終レビューで観点 `REQ` を不合格にさせる。
 
-コード: `apps/daemon/src/service.ts`（`requestSecurityFix`・`createSecurityFixTask`・`resumeSecurityFixTasks`・`securityFindings`）、`apps/daemon/src/security.ts`（`securityFixTask`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`SecurityFixRequested`・`RequestSecurityFixInput`・`SecurityCategory`）、`apps/web/src/components/security-fixes.tsx`（`SecurityFixesCard`）
+コード: `apps/daemon/src/service.ts`（`requestSecurityFix`・`createSecurityFixTask`・`resumeSecurityFixTasks`・`securityFindings`）、`apps/daemon/src/security.ts`（`securityFixTask`）、`apps/daemon/src/prompts.ts`（`securityFindingLines`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`SecurityFixRequested`・`RequestSecurityFixInput`・`SecurityCategory`）、`apps/web/src/components/security-fixes.tsx`（`SecurityFixesCard`）
 
 ### セキュリティ対応
 
@@ -415,6 +418,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 - 検証では、最終レビューの前に、sacty が差分を範囲と照らす（`scopeViolation`）。
   照合には、エージェントに渡す差分（`DIFF_LIMIT` で切り詰める）ではなく、切り詰めないファイルごとの追加と削除の行の数を使う（`diffStats`。`git diff --numstat --no-renames`）。
   名前の変更は、変更元の削除と変更先の追加に分ける（範囲の外のファイルを範囲の中へ移して隠さないため）。
+  行の数を出さないファイル（バイナリと、作業領域の `.gitattributes` の `-diff` などで差分を隠したもの）は、変更前と変更後の中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）。
   取れなければ、差分と同じく最終レビューをせずに一時停止する（`verify.diffUnavailable`）。
   - 範囲の外のファイル：`paths` のどれにも当たらない（そのもの・末尾が `/` ならその下・`*` は `/` を除く任意の文字。`pathInScope`）、テストのファイルでもない（テストのディレクトリの中か、名前がテストの慣習に当たる）ファイル。
   - 変えた行の数：ロックファイル（`package-lock.json`・`yarn.lock`・`go.sum` など）を除く（テストのファイルは数える）、追加と削除の行の合計が `SECURITY_FIX_MAX_CHANGED_LINES`（300）を超える。
@@ -427,6 +431,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   実装の指示では、範囲の外を変えないと直せないときは、理由と広げるべき範囲を説明に書かせる。
   再実行のタスクは、セキュリティの組み合わせを引き継ぐ（下の「中止したタスクの再実行」）。
 - 実装の PR の本文の目的の節は、要求要件の代わりに「修正の範囲（セキュリティ対応）」（変えてよいファイル・上げる依存・解消の確かめ方・範囲の理由）にする（`securityScopeBodyLines`）。
+  既存の PR を引き継いだときは、PR の題・本文を変えない（上の「既存の PR の引き継ぎ」）ので、範囲はタスクの詳細の前段の調査の結果で確かめる。
 - 公開リポジトリへの PR も、ほかの実装と同じく作る。
 
 コード: `apps/daemon/src/security.ts`（`extractSecurityScope`・`securityScope`・`scopeViolation`・`pathInScope`・`SECURITY_FIX_MAX_CHANGED_LINES`・`MINIMAL_CHANGE_VIEWPOINT`）、`apps/daemon/src/repository.ts`（`diffStats`・`parseNumstat`）、`apps/daemon/src/service.ts`（`verify`・`rerunTask`）、`apps/daemon/src/prompts.ts`（`extractFinalReview`・`approvedBasisLines`）

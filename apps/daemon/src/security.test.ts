@@ -88,7 +88,7 @@ describe("差分と範囲の照合", () => {
   const diff = (files: Record<string, number>) =>
     Object.entries(files).map(([path, added]) => ({ path, added, removed: 0 }));
 
-  it("numstat の出力を読む。名前の変更は変更元の削除と変更先の追加として数え、バイナリは 0 行", () => {
+  it("numstat の出力を読む。名前の変更は変更元の削除と変更先の追加として数え、行の数の無いものは unknown にする", () => {
     expect(
       parseNumstat(
         "2\t1\ta.ts\0" + "0\t10\tsrc/unrelated.ts\0" + "10\t0\tsrc/fix.ts\0-\t-\timg.png\0",
@@ -97,7 +97,7 @@ describe("差分と範囲の照合", () => {
       { path: "a.ts", added: 2, removed: 1 },
       { path: "src/unrelated.ts", added: 0, removed: 10 },
       { path: "src/fix.ts", added: 10, removed: 0 },
-      { path: "img.png", added: 0, removed: 0 },
+      { path: "img.png", added: 0, removed: 0, unknown: true },
     ]);
   });
 

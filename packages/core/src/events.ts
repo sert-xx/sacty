@@ -437,20 +437,28 @@ export const SECURITY_SEVERITIES = ["critical", "high", "medium", "low"] as cons
 export type SecuritySeverity = (typeof SECURITY_SEVERITIES)[number];
 
 /** セキュリティチェックの指摘（レポートの見出し sacty-security-findings の JSON から sacty が読んだもの）。 */
-export type SecurityFinding = {
-  id: string;
-  category: SecurityCategory;
-  severity: SecuritySeverity;
-  title: string;
+export const SecurityFinding = z.object({
+  id: z.string(),
+  category: SecurityCategory,
+  severity: z.enum(SECURITY_SEVERITIES),
+  title: z.string(),
   /** CVE・GHSA などの識別子。 */
-  refs: string[];
-  location: string;
+  refs: z.array(z.string()),
+  location: z.string(),
   /** 直し方の案（最小限のもの）。 */
-  fix: string;
-};
+  fix: z.string(),
+});
+export type SecurityFinding = z.infer<typeof SecurityFinding>;
 
 /** セキュリティチェックのレポートから作った対応のタスクの、元のタスクと区分。 */
-const SecurityFixLink = z.object({ taskId: z.string().min(1), category: SecurityCategory });
+const SecurityFixLink = z.object({
+  taskId: z.string().min(1),
+  category: SecurityCategory,
+  /**
+   * 対応する指摘の全件。説明（TASK_BODY_MAX まで）に入りきらなくても、工程の指示にはこれを省かずに渡す。
+   */
+  findings: z.array(SecurityFinding).default([]),
+});
 
 /** 修正のタスクを作るときに付ける、元のタスクとのつながり（PBI-89）。 */
 const DeploymentFix = z.object({
@@ -2169,6 +2177,8 @@ const SecurityFixRequested = z.object({
     taskId: z.string().min(1),
     title: z.string().min(1),
     body: z.string(),
+    /** その区分の指摘の全件（作るタスクの securityFix に写す）。 */
+    findings: z.array(SecurityFinding).default([]),
   }),
 });
 

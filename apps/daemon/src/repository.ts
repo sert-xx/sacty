@@ -9,20 +9,31 @@ import { MessageError } from "./errors.js";
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
 
-/** 起点からの変更の、ファイルごとの追加と削除の行の数（バイナリは 0）。 */
+/** 起点からの変更の、ファイルごとの追加と削除の行の数。 */
 export type FileChange = { path: string; added: number; removed: number };
 
-/** git diff --numstat -z の出力（名前の変更を分けたもの）を読む。 */
-export function parseNumstat(output: string): FileChange[] {
+/**
+ * git diff --numstat -z の出力（名前の変更を分けたもの）を読む。行の数が `-` のもの（バイナリか、リポジトリの属性
+ * `-diff` などで差分を出さないもの）は unknown にし、呼び出し側が中身から数える。
+ */
+export function parseNumstat(output: string): (FileChange & { unknown?: true })[] {
   return output
     .split("\0")
     .filter(Boolean)
     .flatMap((entry) => {
       const match = /^(-|\d+)\t(-|\d+)\t(.+)$/s.exec(entry);
       if (!match) return [];
-      const count = (n: string | undefined) => (n === undefined || n === "-" ? 0 : Number(n));
-      return [{ path: match[3] ?? "", added: count(match[1]), removed: count(match[2]) }];
+      const path = match[3] ?? "";
+      if (match[1] === "-" || match[2] === "-")
+        return [{ path, added: 0, removed: 0, unknown: true }];
+      return [{ path, added: Number(match[1]), removed: Number(match[2]) }];
     });
+}
+
+/** 中身の行の数（最後の行に改行が無くても1行に数える）。 */
+function lineCount(text: string): number {
+  if (text === "") return 0;
+  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
@@ -403,8 +414,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   async diffStats(dir: string, gitDir: string, baseCommit: string) {
-    return this.stage(dir, gitDir, baseCommit, async (run) =>
-      parseNumstat(
+    return this.stage(dir, gitDir, baseCommit, async (run) => {
+      const listed = parseNumstat(
         await run("diff", [
           "diff",
           "--cached",
@@ -416,8 +427,28 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           "--no-textconv",
           baseCommit,
         ]),
-      ),
-    );
+      );
+      // 行の数を出さないファイル（バイナリと、作業領域の .gitattributes の -diff などで隠したもの）は、変更前と変更後の
+      // 中身の行の数を、すべて削除してすべて追加したものとして数える（リポジトリの属性で行の数を隠させないため）
+      const lines = async (spec: string) => {
+        try {
+          return lineCount(await run("cat-file", ["cat-file", "blob", spec]));
+        } catch {
+          return 0; // 無いファイル（足した・消した）
+        }
+      };
+      return Promise.all(
+        listed.map(async ({ unknown, ...change }) =>
+          unknown
+            ? {
+                path: change.path,
+                added: await lines(`:${change.path}`),
+                removed: await lines(`${baseCommit}:${change.path}`),
+              }
+            : change,
+        ),
+      );
+    });
   }
 
   async publish(input: Parameters<RepositoryWorkspace["publish"]>[0]) {

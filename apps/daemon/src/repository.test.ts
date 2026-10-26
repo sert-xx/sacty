@@ -337,6 +337,23 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     ]);
   });
 
+  it("作業領域の .gitattributes で差分を隠したファイル・バイナリも、中身の行の数で数える", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+
+    writeFileSync(join(clone, ".gitattributes"), "pay.ts -diff\n");
+    writeFileSync(join(clone, "pay.ts"), Array.from({ length: 301 }, (_, i) => `${i}\n`).join(""));
+    writeFileSync(join(clone, "logo.bin"), Buffer.from([0, 1, 2, 10, 0, 3]));
+    expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([
+      { path: ".gitattributes", added: 1, removed: 0 },
+      { path: "logo.bin", added: 2, removed: 0 },
+      { path: "pay.ts", added: 301, removed: 1 },
+    ]);
+  });
+
   it("用意し直すときは、記録したブランチが消えていても、記録済みの起点のコミットにする（PBI-157 レビュー指摘）", async () => {
     const origin = makeOrigin();
     git(origin, "checkout", "-b", "feature");
