@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-26（UTC）
 - タスク: PBI-157
-- PR: なし
+- PR: #227
 - ブランチ: claude/zealous-ramanujan-8u53bn
 - 関係する ADR: [完了したタスクの作業領域は、もう使わなくなった時点で消し、中断で残った一時領域は起動時に消す](../adr/20261026-0022-retire-finished-task-workspaces.md)
 
