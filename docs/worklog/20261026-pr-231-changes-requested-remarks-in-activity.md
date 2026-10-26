@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-26（UTC）
 - タスク: なし
-- PR: なし
+- PR: #231
 - ブランチ: claude/epic-albattani-ufct3g
 - 関係する ADR: なし
 
@@ -29,7 +29,9 @@
 - `npx vitest run apps/web`：514 件が通った（2 件はスキップ）。
   `apps/web/src/lib/labels.test.ts` に、差し戻しの行の詳細を日英で確かめるテストを足した。
   差し戻しの行の1行目を確かめていた既存のテストは、`describeEventParts` の `text` を確かめるようにした。
-- `npm run lint`・`npm run typecheck`：通った。
+- `npm run lint`・`npm run typecheck`・`npm run build`：通った。
+- `npx vitest run`（全体）：8 件が失敗した（`agent-sessions`・`context-mcp`・`host-mcp-processes`・`question-form.browser`）。
+  変更前のコミットでも同じ 8 件が失敗するので、作業した環境（コンテナ）によるもので、この変更とは関係ない。
 - `npx vitest run tests/docs`：通った。
 - 画面：スクリーンショットの仕組み（`scripts/docs-screenshots/`）の架空のデータに、一時的に差し戻しを足して撮り、作業履歴の差し戻しの行に「詳細」が出て、開くと指摘が1件ずつ改行して出ることを日英で確かめた（足した変更は戻した。ユーザードキュメントのスクリーンショットには差し戻しの行が写っていないので、撮り直していない）。
 
