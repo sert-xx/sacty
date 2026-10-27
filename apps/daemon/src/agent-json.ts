@@ -263,6 +263,11 @@ export type HeadingSpan = {
   end: number;
   /** JSON として読めれば見出しの値。読めなければ undefined。 */
   value: unknown;
+  /**
+   * 報告が出てきた位置（どれが最後の報告かを決めるのに使う）。取り除く範囲が囲みの全体のとき、範囲の始まりとは違う。
+   * 無ければ start。
+   */
+  at?: number;
 };
 
 /**
@@ -339,10 +344,15 @@ export function headingMentions(
   for (const m of output.matchAll(key)) {
     const at = m.index;
     if (covered.some((c) => c.start <= at && at < c.end)) continue;
-    if (found.some((f) => f.start <= at && at < f.end)) continue;
+    // 同じ囲みの中の2つ目からは、出てきた位置だけを後ろに進める
+    const same = found.find((f) => f.start <= at && at < f.end);
+    if (same) {
+      same.at = at;
+      continue;
+    }
     const block = blocks.find((b) => b.start <= at && at < b.end);
     if (block) {
-      found.push({ ...block, value: undefined });
+      found.push({ ...block, value: undefined, at });
       continue;
     }
     const lineStart = output.lastIndexOf("\n", at - 1) + 1;
@@ -351,6 +361,7 @@ export function headingMentions(
       start: lineStart,
       end: lineEnd === -1 ? output.length : lineEnd + 1,
       value: undefined,
+      at,
     });
   }
   return found;

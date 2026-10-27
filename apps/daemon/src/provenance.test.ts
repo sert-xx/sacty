@@ -244,6 +244,20 @@ describe("出典の分類の読み取りと照合", () => {
       expect(extracted.output.replace(/\n+/g, "\n"), broken).toBe("# 要求要件\n後ろの本文");
       expect(checkProvenance(extracted.provenance, [], [])).toBeUndefined();
     }
+    // 同じ囲みの中で、正しい答えの後に壊れた答えがあっても、壊れた答えを最後の答えにする
+    const sameFence = extractBlocks(
+      [
+        "# 要求要件",
+        "```json",
+        JSON.stringify({ "sacty-provenance": { mode: "subagent", items: [] } }),
+        '{"sacty-responses": [], "sacty-provenance": {"mode": "subagent", "items": [],},}',
+        "```",
+        "後ろの本文",
+      ].join("\n"),
+      new Set(),
+    );
+    expect(sameFence.provenance).toBeUndefined();
+    expect(sameFence.output.replace(/\n+/g, "\n")).toBe("# 要求要件\n後ろの本文");
     // 読める答えが先頭以外のキーにあれば、それを使う
     const combined = extractBlocks(
       `# 要求要件\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": [], "sacty-provenance": { mode: "sequential", items: [] } })}\n\`\`\``,

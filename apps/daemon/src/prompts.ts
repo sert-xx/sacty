@@ -2050,7 +2050,7 @@ export function extractBlocks(
     SELF_REVIEW_HEADING,
   );
   // 出典の分類の答え。セルフレビューの報告と同じく、読めないものも見出しで見つけて本文から取り除く
-  const classified: { start: number; end: number; value: unknown }[] = headingSpans(
+  const classified: { start: number; end: number; value: unknown; at?: number }[] = headingSpans(
     body,
     PROVENANCE_HEADING,
   );
@@ -2121,8 +2121,11 @@ export function extractBlocks(
   // 先頭以外のキーにある壊れた答えも、読めない答えとして見つける（最後の答えが読めなければ、前の答えに戻らない）
   classified.push(...headingMentions(body, PROVENANCE_HEADING, classified));
   // 出典の分類も、最後の答えだけを使う
+  // 最後の答えは、取り除く範囲ではなく、答えが出てきた位置で選ぶ（壊れた答えの範囲は囲みの全体になり、同じ囲みの前の答えより
+  // 前から始まるため）
+  const position = (r: (typeof classified)[number]) => r.at ?? r.start;
   const lastClassified = classified.reduce<(typeof classified)[number] | undefined>(
-    (latest, r) => (latest === undefined || r.start >= latest.start ? r : latest),
+    (latest, r) => (latest === undefined || position(r) >= position(latest) ? r : latest),
     undefined,
   );
   const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
