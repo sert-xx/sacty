@@ -51,6 +51,10 @@ export function RerunDialog({
   const [loadCandidates] = useState(() => candidatesLoader());
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const values = state.values;
+  // 説明が長いと選択肢も長くなるので、選択肢は名前だけにして、選んだイメージの説明は下に折り返して出す。
+  // 選択肢は非制御のまま、説明だけ、選んだ名前を追って出す
+  const [image, setImage] = useState(values?.image ?? "");
+  const imageDescription = images?.find((o) => o.name === image)?.description;
   return (
     <Dialog
       onOpenChange={(open) => {
@@ -105,20 +109,28 @@ export function RerunDialog({
               <Hint text={t.imageHint} />
             </span>
             {images ? (
-              <select
-                id="rerun-image"
-                name="image"
-                defaultValue={values?.image ?? ""}
-                data-testid="rerun-image"
-                className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm"
-              >
-                <option value="">{t.imageAuto}</option>
-                {images.map((o) => (
-                  <option key={o.name} value={o.name}>
-                    {messages.task.images.option(o.name, o.description)}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  id="rerun-image"
+                  name="image"
+                  defaultValue={values?.image ?? ""}
+                  onChange={(e) => setImage(e.target.value)}
+                  data-testid="rerun-image"
+                  className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm"
+                >
+                  <option value="">{t.imageAuto}</option>
+                  {images.map((o) => (
+                    <option key={o.name} value={o.name} title={o.description}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+                {imageDescription && (
+                  <p className="text-xs leading-5 wrap-anywhere text-muted-foreground">
+                    {imageDescription}
+                  </p>
+                )}
+              </>
             ) : (
               <p role="status" className="text-xs leading-5 text-muted-foreground">
                 {t.imagesUnavailable}

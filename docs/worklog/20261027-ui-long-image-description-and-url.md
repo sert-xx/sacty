@@ -9,14 +9,17 @@
 ## 目的
 
 - プロジェクトの設定の対象の「イメージ」で、選択肢に `名前（説明）` を出していたため、説明が長いとプルダウンが広がり、行からはみ出していた。
+  タスクの詳細の「工程のイメージ」と再実行のダイアログも、選択肢に `名前 — 説明` を出していて、開いた一覧が長くなっていた。
 - タスクを作成するモーダルの「内容」に、途中で折り返せない長い URL を入れると、テキストエリアがモーダルの右端を突き抜けていた。
 
 ## したこと
 
 - `apps/web/src/components/project-editor.tsx`：イメージの選択肢は名前だけにし（説明は `title`）、選んだイメージの説明は対象の行の下に折り返して出す。
   イメージの欄は、行の残りの幅に収まるようにした（`flex-1`・`min-w-0`）。文言 `imageDescription` を `apps/web/src/i18n/messages/projects.ts` に足した。
+- `apps/web/src/components/step-image-form.tsx`・`apps/web/src/components/rerun-dialog.tsx`：同じく、選択肢は名前だけにし（説明は `title`）、選んだイメージの説明を選択肢の下に出す。
+  選択肢は非制御のまま（自動の更新で選んでいる途中の値を消さない）、説明だけ、変更のイベントで選んだ名前を追う。使わなくなった文言 `images.option` を `apps/web/src/i18n/messages/task.ts` から消した。
 - `apps/web/src/components/ui/textarea.tsx`：`min-w-0` と `wrap-anywhere` を足し、長い URL でもテキストエリアの幅が親を超えないようにした（すべてのテキストエリアに効く）。
-- ユーザードキュメント（`docs/user/project-settings.md` と英語の版）に、選択肢と説明の出し方を書いた。
+- ユーザードキュメント（`docs/user/project-settings.md`・`docs/user/images.md` と英語の版）と仕様書（`docs/spec/tasks-and-steps.md` と英語の版）に、選択肢と説明の出し方を書いた。
 
 ## 確かめたこと
 

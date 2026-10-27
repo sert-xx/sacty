@@ -421,7 +421,7 @@ Code: `packages/core/src/events.ts` (`SKIPPABLE_STEPS`, `StepsSkipped`), `packag
 ## Changing a step's image
 
 - On the task detail, a person can change the image of each step (`POST /api/tasks/:id/images`, input `step` and `image` of `ChangeStepImageInput`). The step's state does not matter (a step yet to run, running, failed or paused, awaiting approval, or done). A cancelled task cannot be changed.
-- The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). Every step can be changed. sacty refuses the change with the reason (409) in these cases.
+- The choices are the names in `images` and `default` (the default image). The screen lists only the names and shows the chosen image's description (`description` in `images`) below the list (so that a long description does not widen the list). Every step can be changed. sacty refuses the change with the reason (409) in these cases.
   - A name not in `images` (including a name removed from config.yaml; `image.notInImages`)
   - The current name (`image.unchanged`)
   - A step the task doesn't have (`image.stepMissing`)

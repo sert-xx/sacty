@@ -198,7 +198,7 @@ npx sacty image build java17     # build by name (default is the default image)
 
 If the orchestrator chooses an image that doesn't fit a step (for example, the default image for a repository that needs Playwright), you can choose again for each step. Make the change in "Step images" in the "Steps" section of the task detail.
 
-- You can choose a name in `images` or `default` (the default image). Each description is shown.
+- You can choose a name in `images` or `default` (the default image). The list shows only the names, and the description of the chosen image (`description` in `images`) appears below it.
 - When the change is not possible, the screen shows the following.
   - A name not in `images` (such as a name removed from config.yaml) is refused with the reason.
   - When config.yaml can't be read, the change is refused with the settings problem as the reason.
