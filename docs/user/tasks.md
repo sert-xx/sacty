@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -575,6 +575,30 @@ Enter と Shift + Enter は改行します。
 | セルフレビューの記録がありません | エージェントが結果を報告しませんでした。成果物を自分で確かめてください |
 
 セルフレビューの費用は、その工程の費用に入ります。
+
+## 確かめる項目（出典の分類）
+
+要求要件・設計の工程では、書いたエージェントとは別のエージェントが、項目（要求要件の `R-n`・テスト観点の `TV-n`）ごとの根拠を、次の3つに分けます。
+
+| 区分 | 意味 |
+| --- | --- |
+| 引用 | タスク・チケット・あなたの指摘・承認済みの前の工程に書かれたことを、そのまま項目にしたもの |
+| 導出 | 対になる異常系・調査の結果・既存のコードの規約から導いたもの |
+| 推論 | それ以外。エージェントが自分で考えて足したもの |
+
+成果物のカードと承認の画面に「確かめる項目：n件」が出ます。
+確かめる項目は、推論と、引用なのに原文が入力に見つからない項目と、分類の無い項目です。
+これらはあなたの意図に沿っていない可能性があるので、1件ずつ確かめてください。
+引用と導出は「そのほか」に折りたたまれます。ざっと見るだけで構いません。
+
+要求要件・設計を PR で承認するときは、PR の本文の「確かめる所」に同じ内容が出ます。
+
+次のときは、すべての項目を確かめてください。
+
+| 表示 | 意味 |
+| --- | --- |
+| サブエージェントを起動できず、書いたエージェントが自分で分類しました | 分類が甘くなっている可能性があります |
+| 出典の分類の記録がありません。すべての項目を確かめてください | エージェントが分類を報告しなかった・読めなかったので、確かめる項目を絞れません |
 
 ## 工程のイメージを変える
 

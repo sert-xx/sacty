@@ -130,7 +130,7 @@ import {
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
 import { archivedFilePath, type CheckedAgentFile, checkArchivedFiles } from "./agent-sessions.js";
-import { type AgentExecutor, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
+import { type AgentExecutor, CONTAINER_INPUT_DIR, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import {
   type AgentRole,
@@ -301,6 +301,7 @@ import {
   buildTicketTriagePrompt,
   type ChatLogs,
   changeableSteps,
+  checkProvenance,
   continuablePullRequest,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -328,6 +329,8 @@ import {
   operationSucceeded,
   passedContinuedFeedback,
   postedLatestCommit,
+  provenanceIds,
+  provenanceInputs,
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
@@ -338,6 +341,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  viewpointRename,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -6011,6 +6015,15 @@ export class TaskService {
     // PR の差分の全体を置く、sacty が管理するディレクトリ（写しの外。PBI-65）
     const reviewDiffDir =
       reviewTarget && snapshotDir ? join(this.deps.workspaceRoot, "_review", runId) : undefined;
+    // 要求要件・設計の工程は、出典の分類の担当に読ませる Input を、作業領域の外に置く。抜き出しの照合にも同じ中身を使う
+    const provenanceStep = step === "requirements" || step === "design" ? step : undefined;
+    const inputs =
+      provenanceStep && snapshotDir
+        ? provenanceInputs(this.mustGet(task.id), provenanceStep, {
+            ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
+          })
+        : undefined;
+    const inputDir = inputs ? join(this.deps.workspaceRoot, "_input", runId) : undefined;
     try {
       // 対象リポジトリの無いタスク（PBI-73）は、コードを書き出さない（空の作業領域）
       if (snapshotDir && !repoless) {
@@ -6071,6 +6084,18 @@ export class TaskService {
           };
         }
       }
+      if (inputs && inputDir && !executed) {
+        try {
+          mkdirSync(inputDir, { recursive: true });
+          for (const input of inputs) writeFileSync(join(inputDir, input.name), input.text);
+        } catch (error) {
+          executed = {
+            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
       // 工程のイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
       const stepImage = resolveImage(config.config, runImageName);
       if (!stepImage.ok) {
@@ -6121,6 +6146,7 @@ export class TaskService {
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
+            ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
@@ -6134,14 +6160,20 @@ export class TaskService {
         platforms: runPlatforms.platforms,
         role: step,
         workspaceDir,
-        // 差分の全体は、作業領域の外に読み取り専用でマウントする（PBI-65）
+        // 差分の全体（PBI-65）と出典の分類の Input は、作業領域の外に読み取り専用でマウントする
         ...(reviewDiff !== undefined && reviewDiffDir
           ? {
               mounts: [
                 { hostPath: reviewDiffDir, containerPath: CONTAINER_REVIEW_DIR, readOnly: true },
               ],
             }
-          : {}),
+          : inputDir
+            ? {
+                mounts: [
+                  { hostPath: inputDir, containerPath: CONTAINER_INPUT_DIR, readOnly: true },
+                ],
+              }
+            : {}),
         context: context && { dir: context.dir, ...context.placed },
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
         ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
@@ -6152,6 +6184,7 @@ export class TaskService {
       context?.dispose();
       if (snapshotDir) await rm(snapshotDir, { recursive: true, force: true });
       if (reviewDiffDir) await rm(reviewDiffDir, { recursive: true, force: true });
+      if (inputDir) await rm(inputDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
 
@@ -6345,6 +6378,20 @@ export class TaskService {
             // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）
             ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step)
               ? { selfReview: extracted.selfReview ?? null }
+              : {}),
+            // 出典の分類。分類させた工程で答えが無い・読めなければ null（記録なし）
+            ...(provenanceStep && inputs
+              ? {
+                  provenance:
+                    checkProvenance(
+                      extracted.provenance,
+                      inputs,
+                      provenanceIds(provenanceStep, extracted.output, testViewpoints),
+                      provenanceStep === "design"
+                        ? viewpointRename(extracted.viewpointPositions)
+                        : undefined,
+                    ) ?? null,
+                }
               : {}),
             // テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときだけ、そのコマンドを使う（PBI-94）
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),

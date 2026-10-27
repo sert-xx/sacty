@@ -36,6 +36,7 @@ import {
 import { Markdown } from "@/components/markdown";
 import { OrchestratorSession } from "@/components/orchestrator-session";
 import { Proposals } from "@/components/proposals";
+import { ProvenanceNote } from "@/components/provenance";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
@@ -1033,6 +1034,7 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
     >
       {/* 提出の前のセルフレビュー（PBI-120）。承認済みの成果物では、凍結した版のものではないので出さない */}
       {!approved && output && <SelfReviewNote task={task} step={step} />}
+      {!approved && output && <ProvenanceNote task={task} step={step} />}
       {output ? (
         <Markdown>{output}</Markdown>
       ) : // 行へのコメントだけのレビューは本文が空（書き終えている）

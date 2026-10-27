@@ -185,6 +185,41 @@
 
 コード: `apps/daemon/src/prompts.ts`（`selfReviewLines`・`SELF_REVIEW_HEADING`・`extractBlocks`）、`packages/core/src/events.ts`（`SelfReview`・`SELF_REVIEW_STEPS`）、`packages/core/src/projection.ts`、`apps/web/src/components/self-review.tsx`（`SelfReviewNote`）
 
+### 提出の前の出典の分類
+
+承認する人が見る所を絞るため、要求要件・設計の工程（`PROVENANCE_STEPS`）では、成果物の項目ごとの出典を、書いたエージェントとは別のサブエージェントに分類させる。
+
+- sacty は実行の前に、分類の担当に読ませる Input を、作業領域の外の `/sacty-input` に読み取り専用で置く（`provenanceInputs`）。実行の後に消す。
+  - `task.md`：タスクの内容（取り込み元のチケット・集めた情報・引き継ぐ PR の指摘を含む）
+  - `remarks.md`：その工程の有効な人間の指摘（ID 付き。あるときだけ）
+  - `investigation.md`：前段の調査の結果（あるときだけ）
+  - `requirements.md`：設計の工程の、承認済みの要求要件（要求要件の工程を省いたタスクには無い）
+- 指示（`provenanceLines`）は、セルフレビューを終えた最終版に対して、既定のスキル `classify-provenance` の「依頼の仕方」に従い、分類の担当のサブエージェントを1つ起動させる。
+  項目は、要求要件では本文の要求（`R-n`）、設計ではテスト観点（JSON の n 番目を `TV-n`）。
+  依頼文には、Input のディレクトリと最終版のファイルのパスを書かせ、Input の要約・言い換えと、書いた経緯・どの項目を足したかは書かせない。
+  担当の答えは、手を加えずに見出し `sacty-provenance` の JSON（`mode`・`items` の `id`・`kind`・`refs`・`excerpt`）で付けさせる。
+  サブエージェントを起動できなければ、スキルの逐次モードで自分で分類させ、`mode` を `sequential` にさせる。
+  人間の承認でどう使うかは、指示に書かない。
+- 区分（`kind`）は、引用（`input`。Input に書かれたことをそのまま項目にしたもの）・導出（`derived`。対になる異常系・調査の結果・既存コードの規約から導いたもの）・推論（`inference`。それ以外）。
+- sacty は最後の答えだけを読み（`extractBlocks`）、答えはすべて成果物の本文から取り除く。読めない答えも、セルフレビューの報告と同じく見出しで見つけて取り除く。
+  先頭以外のキーにある読めない答え（末尾のカンマなど）も、キーで見つける（`headingMentions`）。囲みの中なら囲みの全体、囲みの外ならキーのある行を取り除く。
+  最後の答えが読めなければ、前の答えに戻らない。
+- 答えは、次のように確かめて記録する（`checkProvenance`）。
+  - `mode` が `subagent`・`sequential` のどちらでもない答えは、誰が分類したかが分からないので読めないものとして扱う。
+  - 成果物にある項目の ID（要求要件は本文の `R-n`、設計はテスト観点の ID。`provenanceIds`）だけを使う。無い ID・2回目以降の同じ ID・知らない区分は捨てる。分類の無い項目は `unclassified` にする。
+  - 設計の答えの `TV-n`（テスト観点の JSON の n 番目）は、sacty が振った ID に直す（`viewpointRename`）。sacty は項目の欠けた観点を除いて ID を振り直すので、元の位置とずれることがある。欠けた観点の分類は捨てる。根拠の参照（`refs`）の `TV-n` も同じく直し、欠けた観点を指すものは「（取り込まなかった観点）」を添える。
+  - 抜き出し（`excerpt`）を Input の全体と照らし、見つかったかを `found` に残す。照らす前に、両方を NFKC にそろえ、空白と Markdown の記号（`*`・`_`・バッククォート・`>`・`#`・`|`）を除く。そろえた後で 4 文字に満たない抜き出しは、見つからない扱いにする。推論の抜き出しは捨てる。
+  - 読んだ結果を `AgentRunCompleted` の `provenance` に記録する。答えが無い・読めない・形が違うときは `null`（記録なし）にする。工程は止めない。
+  - 投影は、工程ごとに最新の提出の分類を `provenances` に持つ。工程の実行の外で本文を差し替えたときは、セルフレビューと同じく記録なしにする。
+- 人間が確かめる項目（`needsCheck`）は、推論と、原文が Input に見つからない引用と、分類の無い項目。書いたエージェントが自分で分類した（`sequential`）ときは、すべての項目。
+- 画面は、成果物のカード（承認済みの成果物では出さない）と承認の画面に、確かめる項目の数と区分ごとの数を出す（`ProvenanceNote`）。
+  確かめる項目があれば警告の色で開いたまま挙げ、引用・導出は「そのほか」として折りたたむ。記録が無ければ警告を出す。
+- 要求要件・設計の PR の本文には「確かめる所」として、同じ件数と確かめる項目を入れる（`provenanceGuideLines`。テンプレートに沿わせるときは目的・概要の所）。
+
+関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
+
+コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
+
 ## 進め方の組み合わせ
 
 | `plan` | 工程 |
@@ -1008,7 +1043,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - デーモンの起動のとき（[デーモンの起動と終了](daemon-lifecycle.md#デーモンの起動の順序)）。
 - 起動のときには、次も消す。
   - どのタスクのものでもない作業領域。
-  - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
+  - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_input`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
     動いている実行・停止を確かめられなかった実行のものでないもの。
     実行の終わりに消すが、実行中にデーモンを止めると残り、再起動の後は新しい実行 ID でやり直すので二度と使わない。
   - 消す候補は、片付けを始めたとき（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問・作ったタスクのものは消さない。

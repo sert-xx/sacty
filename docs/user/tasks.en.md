@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -412,6 +412,27 @@ The result appears on the deliverable cards, the Implementation card, and the ap
 | No self-review record | The agent did not report a result. Check the deliverable yourself |
 
 The cost of the self-review is included in the cost of that step.
+
+## Items to check (provenance)
+
+In the Requirements and Design steps, an agent other than the author sorts the basis of each item (`R-n` of the requirements, `TV-n` of the test viewpoints) into the following three.
+
+| Kind | Meaning |
+| --- | --- |
+| Quote | States as is what the task, the ticket, your remarks, or the approved earlier step says |
+| Derived | Derived from the paired unwanted behavior, the investigation result, or conventions of existing code |
+| Inference | Anything else; what the agent added on its own |
+
+The deliverable cards and the approval screen show "Items to check: n". The items to check are inferences, quotes whose original text is not found in the input, and items without a classification. They may not match your intent, so check them one by one. Quotes and derived items are collapsed under "Others"; a quick look is enough.
+
+When you approve the requirements or design on a PR, the same content appears under "Where to check" in the PR body.
+
+In the following cases, check every item.
+
+| Shown | Meaning |
+| --- | --- |
+| No subagent could be started, so the author sorted the items itself | The classification may be lenient |
+| No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
 ## Changing a step's image
 

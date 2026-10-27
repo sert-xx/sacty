@@ -283,6 +283,55 @@ export const SELF_REVIEW_STEPS = [
 export type RemarkResponse = z.infer<typeof RemarkResponse>;
 
 /**
+ * 成果物の項目の出典の区分。input は Input（タスク・人間の指摘・調査の結果・承認済みの前の工程）をそのまま根拠にしたもの、
+ * derived は Input から決まった仕方で導いたもの（対になる異常系・既存コードの規約・調査の結果）、inference はそれ以外
+ * （エージェントの推論・懸念・セルフレビューで足したもの）。
+ */
+export const PROVENANCE_KINDS = ["input", "derived", "inference"] as const;
+export type ProvenanceKind = (typeof PROVENANCE_KINDS)[number];
+/** 分類する項目の数の上限。 */
+export const PROVENANCE_ITEMS_MAX = 200;
+/** 抜き出しの長さの上限。 */
+export const PROVENANCE_EXCERPT_MAX = 1000;
+
+/**
+ * 成果物の1項目（要求要件の R-n・テスト観点の TV-n）の出典。refs は根拠の参照（指摘の ID・R-n・`パス:行`）、excerpt は
+ * Input の原文の抜き出し。found は、sacty が抜き出しを Input の中に見つけたか（抜き出しが無ければ無い）。
+ */
+export const ProvenanceItem = z.object({
+  id: z.string().min(1).max(40),
+  kind: z.enum(PROVENANCE_KINDS),
+  refs: z.array(z.string().max(200)).max(20).default([]),
+  excerpt: z.string().max(PROVENANCE_EXCERPT_MAX).default(""),
+  found: z.boolean().optional(),
+});
+export type ProvenanceItem = z.infer<typeof ProvenanceItem>;
+
+/**
+ * 提出した成果物の、項目ごとの出典の分類（既定のスキル classify-provenance）。成果物を書いたエージェントとは別の
+ * サブエージェントが分類する。sequential は、サブエージェントを起動できず、書いたエージェントが自分で分類した。
+ * unclassified は、成果物にあるのに分類されなかった項目の ID（sacty が数える）。
+ */
+export const Provenance = z.object({
+  sequential: z.boolean().default(false),
+  items: z.array(ProvenanceItem).max(PROVENANCE_ITEMS_MAX),
+  unclassified: z.array(z.string()).default([]),
+});
+export type Provenance = z.infer<typeof Provenance>;
+/** 出典を分類させる工程。 */
+export const PROVENANCE_STEPS = ["requirements", "design"] as const satisfies readonly StepKey[];
+
+/**
+ * 人間が確かめる項目か。推論と、原文が Input に見つからない引用。書いたエージェントが自分で分類した（sequential）ときは、
+ * どの項目も確かめる。
+ */
+export function needsCheck(provenance: Provenance, item: ProvenanceItem): boolean {
+  if (provenance.sequential) return true;
+  if (item.kind === "inference") return true;
+  return item.kind === "input" && item.found !== true;
+}
+
+/**
  * テスト観点。設計の工程で作り、設計の承認で凍結する。最終レビュー（PBI-10）の基準になる。
  * id は sacty が提出ごとに振る（TV-1, TV-2, …）。
  */
@@ -891,6 +940,11 @@ const AgentRunCompleted = z.object({
      * 読めなかった。セルフレビューをさせない工程と、それより前の記録には無い。
      */
     selfReview: SelfReview.nullable().optional(),
+    /**
+     * 項目ごとの出典の分類（要求要件・設計の工程）。null は、分類させたが結果が無い・読めなかった。分類させない工程と、
+     * それより前の記録には無い。
+     */
+    provenance: Provenance.nullable().optional(),
     /**
      * 文書作成の工程で、タスクの説明の指示に従ってエージェントが外部に直接作った・直したページ（成果物）の URL。直接書かなかった
      * 実行と、それより前の記録では空。

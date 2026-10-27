@@ -20,6 +20,7 @@ export const RUN_SCRATCH_DIRS = [
   "_guardian",
   "_snapshots",
   "_review",
+  "_input",
   "_audit-logs",
   "_audit-ledger",
   "_deployment",

@@ -23,6 +23,7 @@ import {
   StaleNotice,
 } from "@/components/live-status";
 import { Markdown } from "@/components/markdown";
+import { ProvenanceNote } from "@/components/provenance";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { SelfReviewNote } from "@/components/self-review";
@@ -194,6 +195,8 @@ export function ReviewView({ task }: { task: Task }) {
               </h2>
               {/* 提出の前のセルフレビュー（PBI-120） */}
               {task.outputs[step] && <SelfReviewNote task={task} step={step} />}
+              {/* 項目ごとの出典の分類。人間が確かめる項目を先に出す */}
+              {task.outputs[step] && <ProvenanceNote task={task} step={step} />}
               {task.outputs[step] ? (
                 <Markdown className="rounded-lg border border-border bg-muted px-5 py-4">
                   {task.outputs[step]}

@@ -821,6 +821,9 @@ class FakeExecutor implements AgentExecutor {
   forwards: (readonly LocalForward[] | undefined)[] = [];
   /** 実行ごとにマウントされた各実行のセッションログ（PBI-91）。無ければ undefined。 */
   logMounts: ({ readOnly: boolean; files: Record<string, string>; dir: string } | undefined)[] = [];
+  /** 実行ごとにマウントされた、出典の分類の Input（要求要件・設計。実行の後に消される）。無ければ undefined。 */
+  inputMounts: ({ readOnly: boolean; files: Record<string, string>; dir: string } | undefined)[] =
+    [];
   /** 渡された実行から結果を作る（エージェントがマウントされたファイルを読んで答える代わり）。undefined なら outcomes の順。 */
   respond?: (invocation: Invocation) => AgentOutcome | undefined;
   async run({
@@ -889,6 +892,16 @@ class FakeExecutor implements AgentExecutor {
             readOnly: logsMount.readOnly,
             files: readTree(logsMount.hostPath),
             dir: logsMount.hostPath,
+          }
+        : undefined,
+    );
+    const inputMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-input");
+    this.inputMounts.push(
+      inputMount
+        ? {
+            readOnly: inputMount.readOnly,
+            files: readTree(inputMount.hostPath),
+            dir: inputMount.hostPath,
           }
         : undefined,
     );
@@ -17208,8 +17221,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
-    it("人が直した版を承認済みにしたら、前のセルフレビューの「パス」を残さず記録なしにする。直していなければ残す（PR #130 レビュー指摘）", async () => {
-      const report = '```json\n{"sacty-self-review": {"rounds": 2, "passed": true}}\n```';
+    it("人が直した版を承認済みにしたら、前のセルフレビューの「パス」と出典の分類を残さず記録なしにする。直していなければ残す（PR #130 レビュー指摘）", async () => {
+      const report = [
+        '```json\n{"sacty-self-review": {"rounds": 2, "passed": true}}\n```',
+        '```json\n{"sacty-provenance": {"mode": "subagent", "items": []}}\n```',
+      ].join("\n\n");
       for (const edited of [true, false]) {
         const made = await start([out(`# 要求要件 v1\n\n${report}`)]);
         const { activity, service, id } = made;
@@ -17226,6 +17242,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         );
         if (edited) expect(task.selfReviews?.requirements).toBeNull();
         else expect(task.selfReviews?.requirements?.passed).toBe(true);
+        // 人が直した本文の項目は分類していない
+        if (edited) expect(task.provenances?.requirements).toBeNull();
+        else expect(task.provenances?.requirements?.sequential).toBe(false);
         activity.close();
         rmSync(dbPath, { force: true });
       }
@@ -24573,6 +24592,223 @@ describe("提出の前のセルフレビューの記録（PBI-120）", () => {
   });
 });
 
+describe("提出の前の出典の分類の記録", () => {
+  const withClassification = (body: string, classification?: unknown): AgentOutcome => ({
+    kind: "completed",
+    output:
+      classification === undefined
+        ? body
+        : `${body}\n\n\`\`\`json\n${JSON.stringify({ "sacty-provenance": classification })}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const requirements =
+    "# 要求要件\n\n| R-1 | 支払う |\n| R-2 | 失敗を知らせる |\n| R-3 | 記録する |";
+
+  it("Input を読み取り専用で置いて指示に書き、分類の抜き出しを Input と照らして記録し、本文からは取り除く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [
+      withClassification(requirements, {
+        mode: "subagent",
+        items: [
+          { id: "R-1", kind: "input", refs: [], excerpt: "カードで 支払える" },
+          { id: "R-2", kind: "input", refs: [], excerpt: "依頼に無い文" },
+          { id: "R-9", kind: "inference", refs: [], excerpt: "" },
+          { id: "R-3", kind: "inference", refs: ["R-1"], excerpt: "捨てる" },
+        ],
+      }),
+    ]);
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "決済",
+      body: "カードで**支払える**ようにする",
+    });
+    await service.runNext(id);
+    const mount = executor.inputMounts[0];
+    expect(mount?.readOnly).toBe(true);
+    expect(mount?.files["task.md"]).toContain("カードで**支払える**ようにする");
+    // 実行の後に消す
+    expect(existsSync(mount?.dir ?? "")).toBe(false);
+    expect(executor.calls[0]?.command.join("\n")).toContain("Input のディレクトリ（/sacty-input");
+    const done = service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted");
+    const expected = {
+      sequential: false,
+      items: [
+        // 空白と Markdown の記号をそろえて照らす
+        { id: "R-1", kind: "input", refs: [], excerpt: "カードで 支払える", found: true },
+        { id: "R-2", kind: "input", refs: [], excerpt: "依頼に無い文", found: false },
+        // 推論の抜き出しは捨てる。成果物に無い ID の分類は捨てる
+        { id: "R-3", kind: "inference", refs: ["R-1"], excerpt: "" },
+      ],
+      unclassified: [],
+    };
+    expect(done?.type === "AgentRunCompleted" && done.payload.provenance).toEqual(expected);
+    const task = service.get(id)?.task;
+    expect(task?.provenances?.requirements).toEqual(expected);
+    expect(task?.outputs.requirements).toBe(requirements);
+    activity.close();
+  });
+
+  it("答えが無い・形が違うときは「記録なし」（null）にして、工程は止めない", async () => {
+    for (const classification of [undefined, { items: "R-1" }]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [withClassification(requirements, classification)]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.provenances?.requirements).toBeNull();
+      expect(task?.status).toBe("awaiting_approval");
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  it("mode が無い・知らない値の答えは、誰が分類したか分からないので記録なしにする", async () => {
+    for (const mode of [undefined, "auto"]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [
+        withClassification(requirements, {
+          ...(mode === undefined ? {} : { mode }),
+          items: [{ id: "R-1", kind: "derived", refs: ["R-2"], excerpt: "" }],
+        }),
+      ]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.provenances?.requirements, String(mode)).toBeNull();
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  it("設計の答えの TV-n（JSON の n 番目）を、項目の欠けた観点を除いて振った ID に直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const json = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const design: AgentOutcome = {
+      kind: "completed",
+      output: [
+        "# 設計",
+        json({
+          "sacty-test-viewpoints": [
+            { title: "欠けた観点", input: "", expected: "x" },
+            { title: "B", input: "Bの入力", expected: "Bの期待結果" },
+          ],
+        }),
+        json({
+          "sacty-provenance": {
+            mode: "subagent",
+            items: [
+              { id: "TV-1", kind: "input", refs: [], excerpt: "決済の要求要件" },
+              { id: "TV-2", kind: "inference", refs: [], excerpt: "" },
+            ],
+          },
+        }),
+      ].join("\n\n"),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service, executor } = makeService(activity, [
+      withClassification("# 決済の要求要件", { mode: "subagent", items: [] }),
+      design,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(executor.inputMounts[1]?.files["requirements.md"]).toContain("# 決済の要求要件");
+    const task = service.get(id)?.task;
+    expect(task?.testViewpoints.map((v) => [v.id, v.title])).toEqual([["TV-1", "B"]]);
+    // 元の2番目（推論）が、振り直した TV-1 の分類になる。欠けた観点の分類は捨てる
+    expect(task?.provenances?.design).toEqual({
+      sequential: false,
+      items: [{ id: "TV-1", kind: "inference", refs: [], excerpt: "" }],
+      unclassified: [],
+    });
+    activity.close();
+  });
+
+  it("変更の申し出で本文を差し替えたら、前の分類を残さず「記録なし」にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const json = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const design: AgentOutcome = {
+      kind: "completed",
+      output: [
+        "# 設計 v1",
+        json({
+          "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+        }),
+        json({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "外部APIが冪等性キーに対応していない",
+            facts: ["API仕様書に Idempotency-Key が無い"],
+            proposed: "# 要求要件 v2",
+          },
+        }),
+      ].join("\n\n"),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const undecidable: AgentOutcome = {
+      kind: "completed",
+      output: json({ "sacty-verdict": { verdict: "undecidable", reason: "価値判断を含む" } }),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [
+      withClassification(requirements, { mode: "subagent", items: [] }),
+      design,
+      undecidable,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.provenances?.requirements?.unclassified).toEqual([
+      "R-1",
+      "R-2",
+      "R-3",
+    ]);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    const applied = service.decideChange(id, "CP-1", { accept: true });
+    expect(applied.outputs.requirements).toBe("# 要求要件 v2");
+    expect(applied.provenances?.requirements).toBeNull();
+    activity.close();
+  });
+
+  it("差し戻しの指摘を Input に入れ、分類の無い項目を数える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [
+      withClassification(requirements, { mode: "subagent", items: [] }),
+      withClassification(requirements, {
+        mode: "sequential",
+        items: [
+          { id: "R-2", kind: "input", refs: ["requirements-1-1"], excerpt: "失敗を通知する" },
+        ],
+      }),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.requestChanges(id, {
+      step: "requirements",
+      submission: 1,
+      comments: ["失敗を通知する"],
+    });
+    await service.runNext(id);
+    expect(executor.inputMounts[1]?.files["remarks.md"]).toContain(
+      "- [requirements-1-1] 失敗を通知する",
+    );
+    expect(service.get(id)?.task.provenances?.requirements).toEqual({
+      sequential: true,
+      items: [
+        {
+          id: "R-2",
+          kind: "input",
+          refs: ["requirements-1-1"],
+          excerpt: "失敗を通知する",
+          found: true,
+        },
+      ],
+      unclassified: ["R-1", "R-3"],
+    });
+    activity.close();
+  });
+});
+
 describe("エージェントの段階のサブエージェント（PBI-119）", () => {
   const tiered = (a: AgentConfig): (() => ConfigResult) => {
     const base = (configOf(a)() as { ok: true; config: SactyConfig }).config;
@@ -26401,7 +26637,8 @@ describe("監査のメモリー（PBI-126）", () => {
     const b = service.createTask({ projectId: "default", title: "B", body: "" });
     await service.runNext(b.id);
     const step = executor.calls.find(isStep);
-    expect(step?.mounts ?? []).toEqual([]);
+    // 要求要件の工程は、出典の分類の Input だけをマウントする
+    expect((step?.mounts ?? []).map((m) => m.containerPath)).toEqual(["/sacty-input"]);
     expect(prompt(step as Invocation)).not.toContain("--- メモリー ---");
   });
 
@@ -28788,10 +29025,9 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
     const { service, id: open } = await submittedTask();
     const runIds = Object.fromEntries(
-      ["_guardian", "_snapshots", "_review", "_audit-logs", "_audit-ledger"].map((name) => [
-        name,
-        randomUUID(),
-      ]),
+      ["_guardian", "_snapshots", "_review", "_input", "_audit-logs", "_audit-ledger"].map(
+        (name) => [name, randomUUID()],
+      ),
     );
     for (const [name, runId] of Object.entries(runIds)) {
       mkdirSync(join(root(), name, runId, "src"), { recursive: true });
@@ -28820,7 +29056,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(join(root(), orphan))).toBe(false);
     expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
-    expect(removed).toBe(5 + 1 + 2);
+    expect(removed).toBe(6 + 1 + 2);
     expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
     expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);

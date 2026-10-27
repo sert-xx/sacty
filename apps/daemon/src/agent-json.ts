@@ -263,6 +263,11 @@ export type HeadingSpan = {
   end: number;
   /** JSON として読めれば見出しの値。読めなければ undefined。 */
   value: unknown;
+  /**
+   * 報告が出てきた位置（どれが最後の報告かを決めるのに使う）。取り除く範囲が囲みの全体のとき、範囲の始まりとは違う。
+   * 無ければ start。
+   */
+  at?: number;
 };
 
 /**
@@ -308,6 +313,56 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
     while (end > open && /\s/.test(output[end - 1] ?? "")) end--;
     found.push({ ...withFence(output, fences, open, end), value });
     after = close;
+  }
+  return found;
+}
+
+/**
+ * 見出し heading のキー（"見出し":）のうち、covered の範囲（読めた JSON・headingSpans で見つけたもの）の外にあるものを、
+ * 読めない報告として返す（value は undefined）。先頭以外のキーにある壊れた報告（末尾のカンマなど）は headingSpans では
+ * 見つからないので、これで見つけ、最後の答えが読めないことに気づけるようにする。取り除く範囲は、囲みの中なら囲みの全体、
+ * 囲みの外ならキーのある行（後ろの本文は消さない）。同じ囲みの中の複数のキーは1つにまとめる。
+ */
+export function headingMentions(
+  output: string,
+  heading: string,
+  covered: readonly { start: number; end: number }[],
+): HeadingSpan[] {
+  const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
+  // 囲み（``` の行から、閉じる ``` の行まで。閉じなければ出力の終わりまで）
+  const blocks: { start: number; end: number }[] = [];
+  let open: number | undefined;
+  for (const m of output.matchAll(/^[ \t]*```[^\n]*(?:\n|$)/gm)) {
+    if (open === undefined) open = m.index;
+    else {
+      blocks.push({ start: open, end: m.index + m[0].length });
+      open = undefined;
+    }
+  }
+  if (open !== undefined) blocks.push({ start: open, end: output.length });
+  const found: HeadingSpan[] = [];
+  for (const m of output.matchAll(key)) {
+    const at = m.index;
+    if (covered.some((c) => c.start <= at && at < c.end)) continue;
+    // 同じ囲みの中の2つ目からは、出てきた位置だけを後ろに進める
+    const same = found.find((f) => f.start <= at && at < f.end);
+    if (same) {
+      same.at = at;
+      continue;
+    }
+    const block = blocks.find((b) => b.start <= at && at < b.end);
+    if (block) {
+      found.push({ ...block, value: undefined, at });
+      continue;
+    }
+    const lineStart = output.lastIndexOf("\n", at - 1) + 1;
+    const lineEnd = output.indexOf("\n", at);
+    found.push({
+      start: lineStart,
+      end: lineEnd === -1 ? output.length : lineEnd + 1,
+      value: undefined,
+      at,
+    });
   }
   return found;
 }

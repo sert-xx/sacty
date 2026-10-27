@@ -132,6 +132,33 @@ Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `SHO
 
 Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `extractBlocks`), `packages/core/src/events.ts` (`SelfReview`, `SELF_REVIEW_STEPS`), `packages/core/src/projection.ts`, `apps/web/src/components/self-review.tsx` (`SelfReviewNote`)
 
+### Classifying provenance before submitting
+
+To narrow down what the approver looks at, the Requirements and Design steps (`PROVENANCE_STEPS`) have a subagent other than the authoring agent classify the provenance of each item of the deliverable.
+
+- Before the run, sacty places the input for the classifier read-only at `/sacty-input`, outside the workspace (`provenanceInputs`). It is removed after the run.
+  - `task.md`: the task content (including the source ticket, gathered information, and the comments of a continued PR)
+  - `remarks.md`: the active remarks from people for that step (with IDs; only when there are some)
+  - `investigation.md`: the result of the preceding investigation (only when there is one)
+  - `requirements.md`: the approved requirements, in the Design step (absent for a task that skipped the Requirements step)
+- The instructions (`provenanceLines`) ask the agent, after the self-review, to start one classifier subagent on the final version, following "How to request" of the default skill `classify-provenance`. The items are the requirements in the text (`R-n`) for Requirements and the test viewpoints (the n-th in the JSON as `TV-n`) for Design. The request states the input directory and the path of the final version, and does not include a summary or paraphrase of the input, how the agent wrote it, or which items it added. The agent attaches the classifier's answer unchanged as JSON under the heading `sacty-provenance` (`mode`, and `id`, `kind`, `refs`, and `excerpt` of `items`). When no subagent can be started, the agent classifies the items itself in the skill's sequential mode and sets `mode` to `sequential`. The instructions do not say how the result is used in human approval.
+- The kinds (`kind`) are quote (`input`; an item that states what the input says as is), derived (`derived`; derived from the paired unwanted behavior, the investigation result, or conventions of existing code), and inference (`inference`; anything else).
+- sacty reads only the last answer (`extractBlocks`) and removes every answer from the deliverable. An unreadable answer is also found by its heading and removed, as with the self-review report. An unreadable answer under a key other than the first (a trailing comma and so on) is also found by the key (`headingMentions`). Inside a code fence, the whole fence is removed; outside one, the line with the key is removed. When the last answer cannot be read, sacty does not fall back to an earlier one.
+- The answer is checked and recorded as follows (`checkProvenance`).
+  - An answer whose `mode` is neither `subagent` nor `sequential` is treated as unreadable, because it is unknown who classified the items.
+  - Only IDs of items in the deliverable are used (`R-n` in the text for Requirements, the test viewpoint IDs for Design; `provenanceIds`). Unknown IDs, repeated IDs, and unknown kinds are dropped. Items without a classification go to `unclassified`.
+  - In Design, the answer's `TV-n` (the n-th in the test viewpoint JSON) is converted to the ID sacty gave (`viewpointRename`). sacty renumbers the viewpoints after dropping those with missing fields, so the position can differ. The classifications of dropped viewpoints are discarded. `TV-n` in the references (`refs`) is converted the same way, and one that points to a dropped viewpoint gets "（取り込まなかった観点）" (a viewpoint not taken in).
+  - The excerpt (`excerpt`) is matched against the whole input, and whether it was found is kept in `found`. Before matching, both are normalized to NFKC and whitespace and Markdown symbols (`*`, `_`, backquote, `>`, `#`, `|`) are removed. An excerpt shorter than 4 characters after this is treated as not found. The excerpt of an inference is dropped.
+  - The result is recorded in `provenance` of `AgentRunCompleted`. When there is no answer, or it cannot be read or its shape is wrong, it is `null` (no record). The step does not stop.
+  - The projection keeps the classification of the latest submission per step in `provenances`. When the text is replaced outside a step run, it becomes no record, as with the self-review.
+- The items a person checks (`needsCheck`) are inferences, quotes whose original text is not in the input, and items without a classification. When the authoring agent classified the items itself (`sequential`), every item.
+- The screen shows the number of items to check and the number per kind on the deliverable cards (not on approved deliverables) and the approval screen (`ProvenanceNote`). When there are items to check, they are listed open in the warning color, and quotes and derived items are collapsed under "Others". With no record, a warning is shown.
+- The body of a Requirements or Design PR has the same counts and items under "Where to check" (`provenanceGuideLines`; in the purpose or summary part when following a template).
+
+Related ADR: [Have a subagent other than the author classify the provenance of requirements and design items, to narrow down what the approver looks at](../adr/20261027-1427-classify-provenance-before-approval.md)
+
+Code: `apps/daemon/src/prompts.ts` (`provenanceLines`, `provenanceInputs`, `checkProvenance`, `provenanceIds`, `viewpointRename`, `provenanceGuideLines`, `PROVENANCE_HEADING`), `apps/daemon/src/service.ts`, `packages/core/src/events.ts` (`Provenance`, `PROVENANCE_STEPS`, `needsCheck`), `packages/core/src/projection.ts`, `apps/web/src/components/provenance.tsx` (`ProvenanceNote`)
+
 ## Plans
 
 | `plan` | Steps |
@@ -620,7 +647,7 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).
 - At startup, the following are removed too.
   - Workspaces that belong to no task.
-  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
+  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_input`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
     They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
   - The candidates are fixed when the cleanup starts (before listening for the API and starting the worker). Ones of runs, questions, and tasks started during the cleanup are not removed.
 - Limits on what is removed:
