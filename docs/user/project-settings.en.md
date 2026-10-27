@@ -42,7 +42,7 @@ sacty uses the targets as follows.
   - Issues that have the label to import are imported as tasks.
   - PRs that have the review label (or that request your review) are imported as review-only tasks.
 - The same org or repository cannot be registered in another project. If an org and a repository in it are in different projects, the repository takes precedence (it is excluded from the org's project).
-- If you choose an "Image" for a target (a name in `images` of `config.yaml`, or `default`), the Orchestrator does not choose one, and every step uses it. A repository's choice takes precedence over its org's ([Container images](images.en.md#which-image-a-step-runs-in)).
+- If you choose an "Image" for a target (a name in `images` of `config.yaml`, or `default`), the Orchestrator does not choose one, and every step uses it. A repository's choice takes precedence over its org's ([Container images](images.en.md#which-image-a-step-runs-in)). The list shows only the image names, and the description of the chosen image (`description` in `images`) appears below the target's row.
 
 Once you register a target, sacty may push branches to the target repositories and open PRs, depending on the task.
 

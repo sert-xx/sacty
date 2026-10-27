@@ -662,7 +662,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   工程の状態は問わない（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程のどれでも）。
   中止したタスクは変えられない。
 - 選べるのは `images` の名前と `default`（既定のイメージ）。
-  画面は、それぞれの説明（`images` の `description`）を出す。
+  画面の選択肢は名前だけにし、選んだイメージの説明（`images` の `description`）を下に出す（長い説明で選択肢が広がらないように）。
   工程はすべて変えられる。
   次のときは、理由を示して断る（409）。
   - `images` に無い名前（config.yaml から消した名前を含む。`image.notInImages`）
