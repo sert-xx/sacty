@@ -230,7 +230,7 @@ Even a repository without test code uses a check that mechanically validates its
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
-- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)".
+- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### For a person to check
@@ -240,7 +240,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Test failures caused by the environment: when the Goal Guardian judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
   If even one failure comes from the change or cannot be judged, the review fails as before.
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
-  The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks".
+  The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
 
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
 The tests run by the Goal Guardian show "Environment failures only".

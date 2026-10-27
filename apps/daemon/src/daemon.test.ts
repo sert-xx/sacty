@@ -6453,6 +6453,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "ファイルがある・読める・特定の文字列を含むことだけを確かめるテストは書かない",
       );
       expect(implementPrompt).toContain('"tests": [], "untested":');
+      // スキルなどエージェント向けの指示の文書も、エージェントを起動するテストを書かずに差分で確かめさせる
+      expect(implementPrompt).toContain(
+        "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）も、実行される振る舞いの無い変更として扱う（エージェントを起動して確かめるテストは書かない）",
+      );
       expect(service.get(id)?.task.testMap).toEqual([
         { viewpointId: "REQ", tests: [], untested: "README の手順の文言だけを直したため" },
       ]);
@@ -6463,6 +6467,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "観点 REQ は、実装が「実行される振る舞いの無い変更なので、テストを書かずに差分で確かめる」と申告しています",
       );
       expect(finalPrompt).toContain("振る舞いを変える変更があるのにテストが無いなら、不合格にする");
+      expect(finalPrompt).toContain(
+        "の変更は、実行される振る舞いを変えないものとして扱い、エージェントを起動して確かめることを求めない",
+      );
       expect(finalPrompt).toContain(
         '- [REQ] テストなし・差分で確かめる（理由の申告："README の手順の文言だけを直したため"）',
       );

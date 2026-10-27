@@ -704,6 +704,14 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).toContain('"investigation": "content または bug"');
   });
 
+  it("スキルなどエージェント向けの指示をリポジトリに足す・直すタスクは、ふつう direct か skip-design にさせる", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    expect(prompt).toContain(
+      "スキル（SKILL.md）・AGENTS.mdなど、エージェント向けの指示をリポジトリに足す・直すのは、リポジトリに置く文書の変更なので、ふつうはdirectかskip-designです",
+    );
+    expect(prompt).toContain("テストや観点を決めるために要求要件・設計の工程を足さないでください");
+  });
+
   it("工程の組み合わせの説明に「PR作成」の工程を書かない。実装の中で PR を作り、マージで承認すると書く（PBI-110）", () => {
     const prompt = buildOrchestratorPrompt(task([]));
     expect(prompt).not.toContain("PR作成");
@@ -1731,6 +1739,27 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(review).not.toContain("判断の根拠は、下の差分とテストの結果だけにする");
   });
 
+  it("要求要件・設計を経ないタスクでも、エージェント向けの指示の文書を差分で判定させ、エージェントの起動を求めさせない（PR #234 レビュー指摘）", () => {
+    const IMPLEMENT_LINE =
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）は、文書に何が書かれているかを差分で確かめられるよう、依頼を満たす記述の箇所を実装の説明に書く。エージェントを起動して確かめるテストの仕組みを足さない";
+    const REVIEW_LINE =
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）の変更は、文書に何が書かれているかを差分と実装後のファイルで確かめて判定し、エージェントを起動して確かめることを求めない（依頼がエージェントの振る舞いで書かれていても、その振る舞いを指示する記述が文書にあるかで判定する）";
+    for (const steps of [
+      ["investigate", "implement"],
+      ["requirements", "design", "implement"],
+    ] as const) {
+      const t = task({ noTestsReason: NO_TESTS }, [...steps]);
+      expect(buildPrompt(t, "implement"), steps.join()).toContain(IMPLEMENT_LINE);
+      expect(buildFinalReviewPrompt(t, "diff"), steps.join()).toContain(REVIEW_LINE);
+    }
+    // テストの仕組みがあるタスクは、差分で確かめる申告（UNTESTED_LINES）の側で扱う
+    const withTests = task({ testCommand: "npm test" }, ["investigate", "implement"]);
+    expect(buildPrompt(withTests, "implement")).not.toContain(IMPLEMENT_LINE);
+    expect(buildFinalReviewPrompt(withTests, "diff", { testCommand: "npm test" })).not.toContain(
+      REVIEW_LINE,
+    );
+  });
+
   it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {
     const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
     const implement = buildPrompt(t, "implement");
@@ -2334,6 +2363,23 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     expect(prompt).toContain("異常系と境界値は、今回の変更で新しく起こりうるものを含める");
     expect(prompt).toContain("テスト観点の数は、受け入れ条件を確かめるのに要る分だけにする");
     expect(prompt).not.toContain("受け入れ条件をすべて網羅し、異常系と境界値を含める");
+  });
+
+  it("要求要件は、エージェント向けの指示の文書の要求と受け入れの確かめ方を、文書に書かれるべきことと差分での確認で書かせる", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "requirements");
+    expect(prompt).toContain(
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）を書く・直すタスクの要求は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）で書く",
+    );
+    expect(prompt).toContain(
+      "受け入れの確かめ方は、自動のテストではなく差分で文書の中身を確かめることとして書く（エージェントを起動して確かめる形にしない）",
+    );
+  });
+
+  it("設計は、エージェント向けの指示の文書の観点を、エージェントの振る舞いではなく文書に書かれるべきことで書かせる", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
+    expect(prompt).toContain(
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）を書く・直す観点は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）を期待する結果にする（エージェントを起動して確かめる観点にしない）",
+    );
   });
 
   it("文書と、調査が目的のタスクの調査の結果にも、最小限の初版と差し戻しで詳しくすることを書く（冒頭の2つの節は求めない）", () => {
