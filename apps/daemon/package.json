@@ -1,6 +1,6 @@
 {
   "name": "@sacty/daemon",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.1",
     "@modelcontextprotocol/sdk": "1.32.0",
-    "@sacty/core": "1.11.0",
+    "@sacty/core": "1.11.1",
     "hono": "^4.9.6",
     "smol-toml": "^1.9.1",
     "undici": "^7.30.1",
