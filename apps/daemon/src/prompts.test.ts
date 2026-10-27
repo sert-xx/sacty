@@ -3,6 +3,7 @@ import {
   EventInput,
   project,
   renderMessage,
+  STEP_PLANS,
   type Task,
   type TaskQuestion,
 } from "@sacty/core";
@@ -712,6 +713,29 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).toContain("テストや観点を決めるために要求要件・設計の工程を足さないでください");
   });
 
+  it("調査だけのタスクは、結果の形を依頼の指定に合わせさせ、決まった形は指定が無いときの既定にする", () => {
+    const prompt = buildPrompt(task(["investigate"], "content"), "investigate");
+    expect(prompt).toContain(
+      "- 結果の形（見出し・章立て・表・項目の順・分量など）は、タスクに指定があればそれに従う。指定が無ければ、次の形で書く",
+    );
+    expect(prompt).toContain("  - 最初に、タスクへの答え（結論）を短く書く");
+    expect(prompt).toContain(
+      "- どの形でも、根拠にはファイルと行を添え、推測とコードで確かめた事実を区別し",
+    );
+    expect(prompt).toContain("本文の中の表やコードブロックで書く");
+    expect(prompt).toContain("形の指定にかかわらず付ける");
+    // 前段の調査（セキュリティ対応）は、人間が読まないので形を合わせさせない
+    const preliminary = buildPrompt(task(["investigate", "implement"], "content"), "investigate");
+    expect(preliminary).not.toContain("結果の形");
+  });
+
+  it("実装する組み合わせのうち、前段の調査を置くのはセキュリティ対応だけ", () => {
+    const withInvestigate = Object.entries(STEP_PLANS)
+      .filter(([, steps]) => (steps as readonly string[]).includes("investigate"))
+      .map(([plan]) => plan);
+    expect(withInvestigate.sort()).toEqual(["investigate", "security-check", "security-fix"]);
+  });
+
   it("工程の組み合わせの説明に「PR作成」の工程を書かない。実装の中で PR を作り、マージで承認すると書く（PBI-110）", () => {
     const prompt = buildOrchestratorPrompt(task([]));
     expect(prompt).not.toContain("PR作成");
@@ -721,12 +745,10 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     const watch =
       "→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。";
     expect(prompt).toContain(
-      `- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）${watch}`,
+      `- standard：要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）${watch}`,
     );
-    expect(prompt).toContain(
-      `- skip-design：調査 → 要求要件 → 実装（PR を作り、マージで承認）${watch}`,
-    );
-    expect(prompt).toContain(`- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）${watch}`);
+    expect(prompt).toContain(`- skip-design：要求要件 → 実装（PR を作り、マージで承認）${watch}`);
+    expect(prompt).toContain(`- bugfix：再現 → 実装（PR を作り、マージで承認）${watch}`);
   });
 
   it("内容の調査（調査だけ・前段の調査）のプロンプトに、セットアップをしないこと・優先することを書く", () => {
@@ -2232,10 +2254,13 @@ describe("工程選択での説明のまとまり", () => {
     expect(connections).not.toContain("- images：");
     expect(connections).not.toContain("- exports：");
   });
-  it("調査結果を後工程へ渡すことを両オーケストレーターへ説明する", () => {
+  it("実装する組み合わせに調査を置かず、集めた情報を後工程へ渡すことを両オーケストレーターへ説明する", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {
       const prompt = buildOrchestratorPrompt(candidate, { repoless: { repositories: [] } });
-      expect(prompt).toContain("先頭の調査（人間の承認なし）の結果を後の工程に渡します");
+      expect(prompt).toContain(
+        "実装する組み合わせに調査の工程は置かず（security-fix を除く。修正の範囲を宣言する調査を残します）、集めた情報を後の工程に渡します",
+      );
+      expect(prompt).not.toContain("先頭の調査");
       expect(prompt).not.toContain("迷う場合は standard");
     }
   });
@@ -2896,7 +2921,7 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
   it("要求要件だけを飛ばした設計は、タスクの内容を要求要件として扱う。設計だけを飛ばした実装は、今までどおり要求要件に従う", () => {
     const design = buildPrompt(taskOf(["requirements"]), "design");
     expect(design).toContain(
-      "タスクの内容と前段の調査の結果から、設計とテスト観点を作ってください",
+      "タスクの内容（依頼）と前段の調査の結果から、設計とテスト観点を作ってください",
     );
     expect(design).toContain("下のタスクの内容を要求要件として扱ってください");
 
@@ -2905,9 +2930,45 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
     expect(implement).toContain("[REQ] 承認済みの要求要件の受け入れ条件");
   });
 
+  it("前段の調査の無い組み合わせの要求要件を経ない工程は、タスクの内容と集めた情報に従わせる", () => {
+    seq = 0;
+    const events = [
+      ev(
+        { type: "TaskCreated", payload: { title: "管理者リンク", body: BODY, start: "sacty" } },
+        "person",
+      ),
+      ev(
+        {
+          type: "InformationGathered",
+          payload: { brief: "## 関係するコード\n\n- isAdmin()", sources: [], agentId: "a" },
+        },
+        "gatherer",
+      ),
+      ev({
+        type: "StepsChosen",
+        payload: { steps: [...STEP_PLANS.direct], plan: "direct", testCommand: "npm test" },
+      }),
+      ev({
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+      }),
+    ];
+    const direct = project(events).get("t1") as Task;
+    const implement = buildPrompt(direct, "implement");
+    expect(implement).toContain(
+      "下のタスクの内容（依頼）とタスクの開始時に集めた情報に従って実装してください",
+    );
+    expect(implement).not.toContain("前段の調査");
+    // 集めていない（分割の子タスクなど）なら、タスクの内容だけ
+    const child = { ...direct, gathered: undefined };
+    expect(buildPrompt(child, "implement")).toContain(
+      "下のタスクの内容（依頼）に従って実装してください",
+    );
+  });
+
   it("組み合わせ direct をオーケストレーターに示し、工程の見直しがあることを伝える", () => {
     const prompt = buildOrchestratorPrompt(taskOf());
-    expect(prompt).toContain("- direct：調査 → 実装");
+    expect(prompt).toContain("- direct：実装（PR を作り、マージで承認）");
     expect(prompt).toContain("工程が終わるごとに");
   });
 });
@@ -3229,6 +3290,46 @@ describe("タスクの開始時に集めた情報", () => {
       expect(prompt).not.toContain("--- 実行の環境とサービス ---");
       expect(prompt).not.toContain("テストと動作確認に要るサービス");
     }
+  });
+
+  it("作業するリポジトリが決まっているタスクだけ、テストの書き方をまとめさせる。テストの要否は書かせない", () => {
+    const prompt = buildGatherPrompt(taskOf(false));
+    expect(prompt).toContain(
+      "   - テストの書き方も確かめる：テストのフレームワーク・テストを実行するコマンド・テストの置き場所と名付け・関係する箇所の既存のテストの例",
+    );
+    expect(prompt).toContain("- テストの書き方（フレームワーク・実行のコマンド・置き場所と名付け");
+    expect(prompt).toContain(
+      "このタスクでテストを書くか・どのテストで確かめるかは書かない（オーケストレーターが決める）",
+    );
+    // 手順の番号は変えない
+    expect(prompt).toContain("6. 集めた情報を、タスクとの関係で絞り込む");
+    // リポジトリが決まっていない（トリアージを待つ・候補を読むだけ）タスクでは、まとめさせない
+    const undecided = { ...taskOf(false, true), repository: undefined };
+    const candidates = ["https://github.com/acme/app", "https://github.com/acme/api"];
+    for (const other of [
+      buildGatherPrompt(undecided, { candidates, fixed: false }),
+      buildGatherPrompt(undecided, undefined, { candidates }),
+    ]) {
+      expect(other).toContain("--- コード ---");
+      expect(other).not.toContain("テストの書き方");
+    }
+  });
+
+  it("まとめにテストの書き方があってもテストが要るとは限らないことを、リポジトリのあるタスクのオーケストレーターと工程に添える", () => {
+    const task = taskOf(true);
+    expect(buildOrchestratorPrompt(task)).toContain(
+      "このタスクのテストの扱い（testCommand・noTests）は、まとめに書かれているかではなく、上の決まりに従ってあなたが決めてください",
+    );
+    const implement = buildPrompt(task, "implement");
+    expect(implement).toContain(
+      "まとめにテストの書き方があっても、このタスクでテストが要るということではありません",
+    );
+    expect(implement).not.toContain("上の決まりに従ってあなたが決めてください");
+    // ゴールガーディアンには添えない（判定の基準は承認済みの成果物）
+    expect(buildFinalReviewPrompt(task, diff)).not.toContain("テストの書き方");
+    // リポジトリの無いタスクには添えない
+    const repoless = { ...task, repository: undefined };
+    expect(buildPrompt(repoless, "requirements")).not.toContain("テストの書き方");
   });
 
   it("リポジトリが決まっていないタスクの情報収集は、候補から洗い出したリポジトリのコードを gh api で読ませる", () => {

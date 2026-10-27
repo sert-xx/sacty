@@ -1976,10 +1976,12 @@ describe("中止したタスクの再実行", () => {
 });
 
 describe("工程の見直し", () => {
+  // 工程の見直しは、終わった工程の後に行う。ここでは、実装する組み合わせの先頭に前段の調査を置いていた版の作業履歴
+  // （工程は StepsChosen に記録したもの）で確かめる
   const chosen = (id: string, plan: keyof typeof STEP_PLANS) =>
     ev(id, {
       type: "StepsChosen",
-      payload: { steps: [...STEP_PLANS[plan]], plan, testCommand: "npm test" },
+      payload: { steps: ["investigate", ...STEP_PLANS[plan]], plan, testCommand: "npm test" },
     });
   const investigated = (id: string) => [
     ev(id, {

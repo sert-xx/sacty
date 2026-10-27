@@ -4,7 +4,7 @@
 - タスク: PBI-18
 - PR: #24
 - ブランチ: feat/issue-18-investigate
-- 関係する ADR: [「調査」の工程を足し、結果は人間が承認して完了にし、Issue から取り込んだタスクは結果を Issue にコメントで返す](../adr/20261011-0204-investigate-step.md)
+- 関係する ADR: [「調査」の工程を足し、結果は人間が承認して完了にし、Issue から取り込んだタスクは結果を Issue にコメントで返す](../adr/20261011-0204-superseded-investigate-step.md)
 
 ## 目的
 

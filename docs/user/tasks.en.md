@@ -27,8 +27,8 @@ Press "Create task" in the task list to open this dialog.
 - In "Plan", you can choose the combination of steps ("Specify the plan" below). With the default, "Automatic", the Orchestrator chooses from the task.
 - The Orchestrator decides the base branch and the test command at the start of the task by reading the repository. In a repository without tests, the task proceeds without using tests ("Repositories without tests" below).
 - The Orchestrator leaves out steps that are not needed.
-  - A small change whose request is clear and that uses existing mechanisms may proceed as "investigation → implementation", without requirements or design.
-  - Each time a step finishes (after the preliminary investigation, after the requirements are approved, and so on), it reviews whether the remaining requirements, design, and reproduction steps are needed and skips the ones that are not.
+  - A small change whose request is clear and that uses existing mechanisms may start from implementation, without requirements or design.
+  - Each time a step finishes (after the requirements are approved, and so on), it reviews whether the remaining design and reproduction steps are needed and skips the ones that are not.
   - Skipped steps are shown struck through in the list of steps. The reason appears in the activity log.
   - For what was skipped, the Goal Guardian reviews the implementation against the task's purpose (the request), and you approve it by merging the PR.
 - Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
@@ -42,11 +42,11 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Plan | Steps | When to use |
 | --- | --- | --- |
 | Automatic | The Orchestrator chooses | Default |
-| Standard | Investigate → Requirements → Design → Implement → After-merge watch | Changes with several behaviors or a wide impact |
-| Skip design | Investigate → Requirements → Implement → After-merge watch | Small, local changes |
-| Implement directly | Investigate → Implement → After-merge watch | Changes whose request is itself the acceptance criteria |
-| Bug fix | Investigate → Reproduce → Implement → After-merge watch | Bugs that tests can reproduce |
-| Split | Investigate → Requirements → Design → Task split → Integration review | Changes that do not fit in one PR |
+| Standard | Requirements → Design → Implement → After-merge watch | Changes with several behaviors or a wide impact |
+| Skip design | Requirements → Implement → After-merge watch | Small, local changes |
+| Implement directly | Implement → After-merge watch | Changes whose request is itself the acceptance criteria |
+| Bug fix | Reproduce → Implement → After-merge watch | Bugs that tests can reproduce |
+| Split | Requirements → Design → Task split → Integration review | Changes that do not fit in one PR |
 | Investigate only | Investigate | Questions, cause analysis, estimates |
 | Review only | Review | Reviewing the PR linked in the description |
 | Document | Document | Drafts such as procedure documents, user guides, and reports |
@@ -59,6 +59,8 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
 - The specified plan appears in the "Steps" section of the task details.
+- Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
+- For an "Investigate only" task, if you write the form of the result (a table, sections, items, and so on) in the description, it reports in that form. Otherwise, it reports the conclusion, the evidence, the related places, and the open questions, in that order.
 - When you choose a template, you cannot choose a plan.
 
 ### Template "Sacty setup"
@@ -90,7 +92,7 @@ From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "re
 
 When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary. If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on). It also reads the target repository's code and writes the places in the code related to the task and their current behavior in the summary.
 
-- For a task whose repository to work in is decided, the repository is prepared before information gathering, and it reads that code. If it cannot be prepared, the task stops before information gathering.
+- For a task whose repository to work in is decided, the repository is prepared before information gathering, and it reads that code. If it cannot be prepared, the task stops before information gathering. It also summarizes how tests are written (the framework, the command to run them, where they are placed, and examples of existing tests). Tests are not necessarily written just because the summary describes them. The Orchestrator decides how tests are handled.
 - For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), it picks out a few likely relevant repositories (at most 3) from the project's targets and reads their code through the GitHub read relay (`gh api`). To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)). Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
 
 - The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.

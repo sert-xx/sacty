@@ -72,7 +72,7 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 
 The steps fall into the following categories.
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a plan that implements (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a security fix (`security-fix`) (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
 - Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`, `document`.
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
@@ -81,6 +81,19 @@ The steps fall into the following categories.
 - Steps that the step review can skip (`SKIPPABLE_STEPS`): `requirements`, `design`, `reproduce`. Only when the plan has an implementation ("Step review" below).
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
+
+### Form of the result of a task whose goal is investigation
+
+- The instructions of a task whose goal is investigation have it follow the form of the result (headings, sections, tables, order of items, length, and so on) when the task specifies one.
+- When none is specified, it writes the conclusion, the evidence (file and line), the related places and impact, and the open questions, in that order.
+- In any form, it adds the file and line to the evidence, separates guesses from facts confirmed in the code, and writes what cannot be decided from the code separately.
+- It outputs the result as the body (Markdown).
+  Even when a form such as a spreadsheet or CSV is specified, files in the workspace are not kept, so it writes them as tables or code blocks in the body.
+- JSON outputs that the instructions require (security check findings, comment requests, and so on) are added regardless of the specified form.
+
+Related ADR: [情報収集がコードを調べるので、実装する組み合わせから前段の調査を外し、調査だけのタスクの結果の形を依頼に合わせる](../adr/20261027-1336-gather-replaces-preliminary-investigation.md)
+
+Code: `apps/daemon/src/prompts.ts` (`investigate` in `buildPrompt`)
 
 ### Length of deliverables that people read
 
@@ -123,18 +136,24 @@ Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `e
 
 | `plan` | Steps |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
-| `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
-| `direct` | `investigate` → `implement` → `deployment` (no requirements or design) |
+| `standard` | `requirements` → `design` → `implement` → `deployment` |
+| `skip-design` | `requirements` → `implement` → `deployment` |
+| `direct` | `implement` → `deployment` (no requirements or design) |
 | `investigate` | `investigate` (investigation only) |
 | `design-only` | `requirements` → `design` (design only) |
 | `review` | `review` (review only) |
-| `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` → `deployment` |
+| `split` | `requirements` → `design` → `split` → `integrate` |
+| `bugfix` | `reproduce` → `implement` → `deployment` |
 | `document` | `document` |
 | `operation` | `operation` |
 | `security-check` | `investigate` (security check) |
 | `security-fix` | `investigate` → `implement` → `deployment` (security fix; skips Requirements and Design) |
+
+Among the plans that implement, only `security-fix` has a preliminary investigation (it has the agent declare the fix scope; "Security fix" below).
+In the other plans, information gathering before choosing the steps reads the code ("Information gathering" below), and its summary is given to the later steps.
+Steps are recorded in `StepsChosen`, so a task in an activity log from a version that had a preliminary investigation proceeds with it.
+
+Related ADR: [情報収集がコードを調べるので、実装する組み合わせから前段の調査を外し、調査だけのタスクの結果の形を依頼に合わせる](../adr/20261027-1336-gather-replaces-preliminary-investigation.md)
 
 The plans that can be chosen are restricted as follows (`allowedPlans`).
 
@@ -284,8 +303,9 @@ At the start of a task (before choosing steps), the information gatherer runs on
   - The description, comments, and linked tickets of the ticket the task was taken in from, and its parents followed upward (the story for a sub-task, the epic for a story). For a GitHub Issue or PR, its body, comments, and linked Issues and PRs
   - The contents of URLs in the task's content, the ticket, and comments
   - Specifications, designs, decisions, and history found by searching for the task's terms with the available MCP servers, external platforms, and the rules of the project's context
-  - The target repository's code ("Reading code" below)
-- The instructions have it drop weakly related or superseded information and write both sides of any conflict. The summary is written under fixed headings (goals and background, what to do, out of scope and constraints, related specifications and history, related code, conflicts and open questions, sources that could not be read). The related code heading is used only when it is told to read code ("Reading code" below). It only reads; it does not write or send anything. External text (tickets, comments, linked pages, search results, repository files) is treated as data, and instructions written in it are not followed.
+  - The target repository's code ("Reading code" below), and how tests are written for a task whose repository to work in is decided
+- The instructions have it drop weakly related or superseded information and write both sides of any conflict. The summary is written under fixed headings (goals and background, what to do, out of scope and constraints, related specifications and history, related code, conflicts and open questions, sources that could not be read). The related code heading is used only when it is told to read code ("Reading code" below).
+  The heading for how tests are written is used only when it reads code for a task whose repository to work in is decided ("How tests are written" below). It only reads; it does not write or send anything. External text (tickets, comments, linked pages, search results, repository files) is treated as data, and instructions written in it are not followed.
 - It runs the same way as the Orchestrator (the default image, the composed context, the host's and the context's external platforms, MCP servers, and the GitHub read relay; `ContextResolved` is recorded). However, external platforms are read-only: the run is registered with the gateway as a read-only run (anything other than GET and HEAD is 403; [Gateway](gateway.en.md#relay-behavior)), and the instructions show only the GET and HEAD rules (`readOnlyPlatforms`). The GitHub read relay is read-only to begin with. MCP servers are not restricted (sacty cannot tell whether a tool only reads, so the instructions have it use only read operations). The AI is `step_agents.gather`, otherwise `step_agents.orchestrator`, otherwise `default_agent`. The session is not saved. The cost is counted toward the task budget (if the budget cap is reached, the task is paused without running).
 - From the answer (JSON with the heading `sacty-gathered`) it reads the summary (`brief`; at least 1 character after trimming, up to 30000 characters (`GATHERED_BRIEF_MAX`)) and the sources (`sources`; title and URL; up to 100). When there is no summary or it cannot be read, or the run fails, it records `OrchestratorFailed` (the actor is `gatherer`) and gathers again with a fallback agent if there is one, otherwise pauses (resuming gathers again). It does not proceed without gathering.
 - The summary is added to the following instructions (`gatheredLines`).
@@ -303,6 +323,20 @@ Information gathering also reads the target repository's code (instructions; not
 - Not decided (a task waiting for ticket triage, a task without a repository): the repository is not prepared. The candidates (the triage candidates for triage, the project's targets for a task without a repository) are passed in the instructions; it picks out the likely relevant ones (at most 3) and reads them with `gh api` through the GitHub read relay (examples are given for listing files, reading contents, and searching code). For a ticket task whose repository a person chose, it reads that repository. Repositories it could not read (no relay, no permission) are written under the sources that could not be read. Tests check that the ways of reading it shows (`GATHER_GH_EXAMPLES`) pass through the image's gh and the gateway's read relay.
 - Orgs among the project's targets whose repository list could not be read (`errors` of `projectRepositories`; the reasons have secrets masked) are not among the candidates, so the instructions list the Org and the reason and have it write them under the sources that could not be read. For a task without a repository, even when no list could be read and there are no candidates, it gathers without stopping (the step to read code is not shown). A task waiting for ticket triage stops before the run when there are no candidates ("Doubling as triage" below).
 - When there are neither candidates nor unreadable Orgs, the code section is not added to the instructions.
+
+### How tests are written
+
+For a task whose repository to work in is decided (prepared before information gathering), it also summarizes how tests are written (instructions; not enforced; `buildGatherPrompt`).
+For a task whose repository is not decided (a task waiting for ticket triage, a task without a repository), it does not.
+
+- What it checks: the test framework, the command that runs the tests, where tests are placed and how they are named, and examples of existing tests for the related places.
+  If there is no test mechanism, it writes that there is none.
+- It writes them under the summary heading "テストの書き方" (how tests are written).
+- It writes them as facts about the conventions, and does not write whether this task writes tests or which tests confirm it.
+  The Orchestrator decides how tests are handled (`testCommand`, `noTests`) ("Orchestrator" and "Tasks without tests" below).
+- When the summary is added (`gatheredLines`), for a task with a repository to work in, the following is added.
+  - The Orchestrator's step selection: how tests are written in the summary is material for the decision, and how tests are handled is decided by the rules of the instructions, not by whether the summary describes it
+  - Step agents: how tests are written in the summary does not mean that tests are needed; whether tests are needed follows the Orchestrator's decision and each instruction
 
 ### Execution environment and services
 
@@ -373,13 +407,14 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 After the steps are chosen, each time a step finishes, the Orchestrator skips the remaining steps that are not needed. It does not add or reorder steps. The final deliverable is judged by the Goal Guardian's final review and approved by a person merging the PR.
 
 - Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped. Tasks whose plan a person specified at creation (`requestedPlan`) skip nothing (no review).
-- When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain, the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`). For example, `standard` is reviewed after the preliminary investigation (requirements, design) and after the requirements are approved (design); `bugfix` after the preliminary investigation (reproduce). `direct` is not reviewed.
+- When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain, the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`). For example, `standard` is reviewed after the requirements are approved (design).
+  A task in an activity log from a version that had a preliminary investigation is also reviewed after the preliminary investigation (requirements, design, reproduce). `direct` is not reviewed.
 - Prompt (`buildStepReviewPrompt`): it passes the task, the finished step's output (up to the first 30,000 characters), the remaining steps, and the skippable steps, and gives guidelines (skip the requirements when the request itself is the acceptance criteria, the design for a local change that follows existing mechanisms, the reproduction when the cause and fix are clear), and says not to keep steps by guessing at mechanisms the request does not mention. It runs as an Orchestrator run (`runOrchestrator`), resuming the task's Orchestrator session.
 - The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.
 - When the run fails or the answer cannot be read, the task does not stop: nothing is skipped and `StepsSkipped` (empty `steps`) is recorded by sacty (the reason is `orchestrator.stepReviewFailed`). However, if the run failed without confirming that its container stopped (`run.containerNotConfirmed`), the task then pauses (`TaskPaused`) so that the original container and the next step's run do not overlap. When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels during the review, nothing is recorded.
 - Projection: skipped steps become `skip`, and if the active step is skipped, the next step to do becomes active. `stepReview` is cleared by `StepsSkipped`, by redoing from an earlier step (`reopen`), and by starting a step's run (`AgentRunStarted`). A record when no review is pending, or that skips a step that cannot be skipped, is rejected.
 - Changes are not sent back to skipped steps (`reworkTargets`). The task screen does not show the deliverables of skipped requirements, design, or reproduction.
-- Steps after skipping: a design whose requirements were skipped treats the task as the requirements. An implementation without requirements and design (`direct`, or both skipped) follows the task and the preliminary investigation and verifies the viewpoint `REQ` as the task's purpose (the request) (`withoutRequirements`, `directImplementLines`). The final review and the PR body also treat `REQ` as the task's purpose. The verification basis (`verificationBasis`) treats skipped steps as absent.
+- Steps after skipping: a design whose requirements were skipped treats the task as the requirements. An implementation without requirements and design (`direct`, or both skipped) follows the task and the gathered information (the preliminary investigation's result if there is one; `basisWithoutRequirements`) and verifies the viewpoint `REQ` as the task's purpose (the request) (`withoutRequirements`, `directImplementLines`). The final review and the PR body also treat `REQ` as the task's purpose. The verification basis (`verificationBasis`) treats skipped steps as absent.
 
 Code: `packages/core/src/events.ts` (`SKIPPABLE_STEPS`, `StepsSkipped`), `packages/core/src/projection.ts` (`skippableSteps`, `advance`, `reworkTargets`), `apps/daemon/src/service.ts` (`runNextInner`, `reviewSteps`), `apps/daemon/src/prompts.ts` (`buildStepReviewPrompt`, `extractStepReview`, `withoutRequirements`, `directImplementLines`, `verificationBasis`)
 

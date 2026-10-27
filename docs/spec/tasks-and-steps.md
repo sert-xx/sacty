@@ -102,7 +102,7 @@
 工程は、次のように分ける。
 
 - 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`・`document`・`operation`。
-  ただし、実装する組み合わせの先頭の調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。
+  ただし、セキュリティ対応（`security-fix`）の先頭の調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。
   調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
   実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR を作ってから承認待ちにする。
 - 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`・`document`。
@@ -117,6 +117,19 @@
   組み合わせに実装があるときだけ（下の「工程の見直し」）。
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
+
+### 調査が目的のタスクの結果の形
+
+- 調査が目的のタスクの指示は、結果の形（見出し・章立て・表・項目の順・分量など）を、タスクに指定があればそれに従わせる。
+- 指定が無ければ、結論・根拠（ファイルと行）・関係する箇所と影響範囲・確認したいことの順で書かせる。
+- どの形でも、根拠にファイルと行を添えること、推測とコードで確かめた事実を区別すること、コードから判断できないことを分けて書くことを守らせる。
+- 結果は本文（Markdown）で出させる。
+  表計算・CSV などの形の指定があっても、作業領域のファイルは残らないので、本文の中の表やコードブロックで書かせる。
+- 指示が決める JSON の出力（セキュリティチェックの指摘・コメントの頼みなど）は、形の指定にかかわらず付けさせる。
+
+関係する ADR: [情報収集がコードを調べるので、実装する組み合わせから前段の調査を外し、調査だけのタスクの結果の形を依頼に合わせる](../adr/20261027-1336-gather-replaces-preliminary-investigation.md)
+
+コード: `apps/daemon/src/prompts.ts`（`buildPrompt` の `investigate`）
 
 ### 人間が読む成果物の分量
 
@@ -176,18 +189,24 @@
 
 | `plan` | 工程 |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
-| `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
-| `direct` | `investigate` → `implement` → `deployment`（要求要件・設計を省く） |
+| `standard` | `requirements` → `design` → `implement` → `deployment` |
+| `skip-design` | `requirements` → `implement` → `deployment` |
+| `direct` | `implement` → `deployment`（要求要件・設計を省く） |
 | `investigate` | `investigate`（調査だけ） |
 | `design-only` | `requirements` → `design`（設計だけ） |
 | `review` | `review`（レビューだけ） |
-| `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` → `deployment` |
+| `split` | `requirements` → `design` → `split` → `integrate` |
+| `bugfix` | `reproduce` → `implement` → `deployment` |
 | `document` | `document` |
 | `operation` | `operation` |
 | `security-check` | `investigate`（セキュリティチェック） |
 | `security-fix` | `investigate` → `implement` → `deployment`（セキュリティ対応。要求要件・設計を省く） |
+
+実装する組み合わせに、前段の調査を置くのは `security-fix` だけ（修正の範囲を宣言させる。下の「セキュリティ対応」）。
+ほかの組み合わせでは、コードの調べは工程を選ぶ前の情報収集が行い（下の「情報収集」）、そのまとめを後の工程に渡す。
+工程は `StepsChosen` に記録するので、前段の調査を置いていた版の作業履歴のタスクは、前段の調査を含んだまま進む。
+
+関係する ADR: [情報収集がコードを調べるので、実装する組み合わせから前段の調査を外し、調査だけのタスクの結果の形を依頼に合わせる](../adr/20261027-1336-gather-replaces-preliminary-investigation.md)
 
 選べる組み合わせは、次のように制限する（`allowedPlans`）。
 
@@ -453,10 +472,11 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   - 取り込み元のチケットの説明・コメント・リンクしたチケットと、親（サブタスクならストーリー、ストーリーならエピック）を上まで辿ったもの。GitHub の Issue・PR なら本文・コメント・リンクした Issue・PR
   - タスクの内容・チケット・コメントにある URL の中身
   - 使える MCP サーバー・外部 PF・プロジェクトのコンテキストの規約で、タスクの語を探して見つけた仕様・設計・決定・経緯
-  - 対象リポジトリのコード（下の「コードを読む」）
+  - 対象リポジトリのコード（下の「コードを読む」）と、作業するリポジトリが決まっているタスクではテストの書き方
 - 指示では、関係の薄いもの・置き換わった古いものを落とし、食い違いは両方を書かせる。
   まとめは決まった見出し（目的と背景・やること・範囲外と制約・関係する仕様と経緯・関係するコード・食い違いと未確定のこと・読めなかった情報源）で書かせる。
   関係するコードの見出しは、コードを読ませるとき（下の「コードを読む」）だけ。
+  テストの書き方の見出しは、作業するリポジトリが決まっているタスクでコードを読ませるときだけ（下の「テストの書き方」）。
   読むだけで、書き込み・送信はさせない。
   外部の本文（チケット・コメント・リンク先・検索結果・リポジトリのファイル）はデータとして扱い、その中に書かれた指示には従わせない。
 - 実行は、オーケストレーターと同じ形（既定のイメージ・合成したコンテキスト・ホストとコンテキストの外部 PF・MCP サーバー・GitHub の読み取りの中継。`ContextResolved` を記録する）。
@@ -496,6 +516,20 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   リポジトリの無いタスクは、一覧をすべて読めず候補が無くても、止めずに集める（コードを読む手順は出さない）。
   チケットのトリアージを待つタスクは、候補が無ければ実行の前に止まる（下の「トリアージを兼ねる」）。
 - 候補も読めなかった Org も無いタスクでは、コードの節を指示に足さない。
+
+### テストの書き方
+
+作業するリポジトリが決まっている（情報収集の前に用意した）タスクでは、テストの書き方もまとめさせる（指示。強制はしない。`buildGatherPrompt`）。
+決まっていないタスク（チケットのトリアージを待つタスク・リポジトリの無いタスク）では、まとめさせない。
+
+- 確かめさせること：テストのフレームワーク・テストを実行するコマンド・テストの置き場所と名付け・関係する箇所の既存のテストの例。
+  テストの仕組みが無ければ、無いと書かせる。
+- まとめの見出し「テストの書き方」に書かせる。
+- 慣習の事実として書かせ、このタスクでテストを書くか・どのテストで確かめるかは書かせない。
+  テストの扱い（`testCommand`・`noTests`）はオーケストレーターが決める（下の「オーケストレーター」・「テストの仕組みが無いタスク」）。
+- まとめを添えるとき（`gatheredLines`）、作業するリポジトリのあるタスクでは、次を添える。
+  - オーケストレーターの工程の選択：まとめのテストの書き方は判断の材料で、テストの扱いは、まとめに書かれているかではなく、指示の決まりに従って決めること
+  - 工程のエージェント：まとめにテストの書き方があっても、テストが要るということではなく、テストの要否はオーケストレーターの判断とそれぞれの指示に従うこと
 
 ### 実行の環境とサービス
 
@@ -598,8 +632,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   人がタスクの作成時に組み合わせを指定したタスク（`requestedPlan`）は飛ばさない（見直さない）。
 - いつ見直すか：工程が終わり（前段の調査の完了 `StepCompleted`、承認 `StepApproved` など。`advance`）、飛ばせる工程が残っていれば、タスクは終わった工程を `stepReview` に持つ。
   次に実行するとき（`runNextInner`）、工程を実行する前に見直す（`reviewSteps`）。
-  例：`standard` では、前段の調査の後（要求要件・設計）と、要求要件の承認の後（設計）。
-  `bugfix` では、前段の調査の後（再現）。
+  例：`standard` では、要求要件の承認の後（設計）。
+  前段の調査を置いていた版の作業履歴のタスクでは、前段の調査の後にも見直す（要求要件・設計・再現）。
   `direct` は見直さない。
 - 指示（`buildStepReviewPrompt`）：タスクの内容・終わった工程の成果（先頭 30,000 文字まで）・残りの工程・飛ばせる工程を渡し、飛ばす判断の目安（依頼がそのまま受け入れ条件になるなら要求要件、既存の仕組みに沿った局所的な変更なら設計、原因と直し方が明らかなら再現）と、依頼に書かれていない仕組みを推測して工程を残さないことを書く。
   オーケストレーターの実行（`runOrchestrator`）で、タスクのオーケストレーターのセッションを再開して行う。
@@ -616,7 +650,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 飛ばした工程には差し戻さない（`reworkTargets`）。
   タスクの画面は、飛ばした要求要件・設計・再現の成果物を出さない。
 - 飛ばした後の工程：要求要件を飛ばした設計は、タスクの内容を要求要件として扱う。
-  要求要件・設計を経ない実装（`direct`・両方を飛ばした）は、タスクの内容と前段の調査の結果に従い、観点 `REQ` をタスクの目的（依頼の内容）として確かめる（`withoutRequirements`・`directImplementLines`）。
+  要求要件・設計を経ない実装（`direct`・両方を飛ばした）は、タスクの内容と集めた情報（前段の調査があればその結果。`basisWithoutRequirements`）に従い、観点 `REQ` をタスクの目的（依頼の内容）として確かめる（`withoutRequirements`・`directImplementLines`）。
   最終レビューと PR の本文も、`REQ` をタスクの目的として扱う。
   検証の基準（`verificationBasis`）は、飛ばした工程を無いものとして決める。
 
