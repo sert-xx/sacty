@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-27（UTC）
 - タスク: なし
-- PR: なし
+- PR: #234
 - ブランチ: ccr-53784160-fdng3i
 - 関係する ADR: [スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)
 
