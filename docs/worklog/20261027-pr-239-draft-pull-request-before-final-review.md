@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-27（UTC）
 - タスク: なし
-- PR: なし
+- PR: #239
 - ブランチ: claude/zen-einstein-h97u1u
 - 関係する ADR: [実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)
 
