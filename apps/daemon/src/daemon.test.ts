@@ -1282,10 +1282,10 @@ describe("工程の実行と費用", () => {
     const plan = {
       kind: "completed" as const,
       output:
-        '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+        '```json\n{"sacty-steps": {"plan": "standard", "reason": "広い", "testCommand": "npm test"}}\n```',
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
     };
-    // 前段の調査の後に、オーケストレーターが残りの工程を見直す（工程の見直し）
+    // 要求要件の承認の後に、オーケストレーターが残りの工程を見直す（工程の見直し）
     const { service } = makeService(
       activity,
       [plan, completed(20_000), stepReview(), completed(20_000)],
@@ -1302,6 +1302,7 @@ describe("工程の実行と費用", () => {
     );
     const task = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
     await service.runNext(task.id);
     const events = service.get(task.id)?.activity ?? [];
     const chosen = events.find((e) => e.type === "StepsChosen");
@@ -1309,11 +1310,11 @@ describe("工程の実行と費用", () => {
     // 工程の見直しも、オーケストレーターのエージェントで行う
     const reviewed = events.find((e) => e.type === "StepsSkipped");
     expect(reviewed?.type === "StepsSkipped" && reviewed.payload.agentId).toBe("orchestrator");
-    // 前段の調査は default_agent、要求要件は step_agents の sol-high
+    // 要求要件は step_agents の sol-high、設計は default_agent
     const started = events
       .filter((e) => e.type === "AgentRunStarted")
       .map((e) => (e.type === "AgentRunStarted" ? `${e.payload.step}:${e.payload.agentId}` : ""));
-    expect(started).toEqual(["investigate:luna-low", "requirements:sol-high"]);
+    expect(started).toEqual(["requirements:sol-high", "design:luna-low"]);
     // 要求要件の費用は sol-high の単価（出力 20,000 × $10/100万 = $0.2）
     const done = events.find(
       (e) => e.type === "AgentRunCompleted" && e.payload.step === "requirements",
@@ -1356,7 +1357,6 @@ describe("工程の実行と費用", () => {
     });
     const started = events.flatMap((e) => (e.type === "AgentRunStarted" ? [e.payload] : []));
     expect(started.map(({ runId: _, ...rest }) => rest)).toEqual([
-      { step: "investigate", agentId: "luna", authMode: plain.auth.mode },
       {
         step: "requirements",
         agentId: "sol-high",
@@ -4004,7 +4004,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           planOutput(
-            ', "images": {"investigate": "default", "design": "java", "implement": "java", "pr": "java", "bogus": "java", "reproduce": "java"}, "imageReason": "pom.xml が Java 17"',
+            ', "images": {"investigate": "java", "requirements": "default", "implement": "java", "pr": "java", "bogus": "java", "reproduce": "java"}, "imageReason": "pom.xml が Java 17"',
           ),
           completed(10),
         ],
@@ -4017,19 +4017,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 既定のイメージは候補に並べない（PBI-105）
       expect(prompt).not.toContain("- default：既定のイメージ");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
-      // 工程の名前でないもの（bogus・無くした工程 pr）と、選んだ工程に無いもの（reproduce）は捨てる
+      // 工程の名前でないもの（bogus・無くした工程 pr）と、選んだ工程に無いもの（reproduce・investigate）は捨てる
       expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
-        investigate: "default",
-        design: "java",
+        requirements: "default",
         implement: "java",
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
         imageSource: "orchestrator",
         imageReason: "pom.xml が Java 17",
-        // 調査は default と書いて理由が無い、要求要件は書かなかった（PBI-105）
-        imagesUnexplained: ["investigate", "requirements"],
+        // 要求要件は default と書いて理由が無い、設計は書かなかった（PBI-105）
+        imagesUnexplained: ["requirements", "design"],
       });
-      // オーケストレーターは既定のイメージ。調査は default を選んだので既定のイメージ（環境変数なし）
+      // オーケストレーターは既定のイメージ。要求要件は default を選んだので既定のイメージ（環境変数なし）
       expect(executor.images.slice(0, 2)).toEqual([
         { image: "sacty-agent:test" },
         { image: "sacty-agent:test" },
@@ -4043,7 +4042,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           planOutput(
-            ', "images": {"requirements": "default", "design": "java", "implement": "java"}, "imageReason": "pom.xml", "defaultReasons": {"requirements": "文書だけで、Java のツールは要らない", "design": "java を選んだ工程の理由は捨てる", "pr": "PR 作成は対象外", "reproduce": "選んでいない工程"}',
+            ', "images": {"requirements": "default", "implement": "java"}, "imageReason": "pom.xml", "defaultReasons": {"requirements": "文書だけで、Java のツールは要らない", "implement": "java を選んだ工程の理由は捨てる", "pr": "PR 作成は対象外", "reproduce": "選んでいない工程"}',
           ),
           completed(10),
         ],
@@ -4055,9 +4054,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(chosen?.type === "StepsChosen" && chosen.payload.defaultImageReasons).toEqual({
         requirements: "文書だけで、Java のツールは要らない",
       });
-      // 調査はイメージを書かなかった。PR 作成は対象にしない
+      // 設計はイメージを書かなかった。PR 作成は対象にしない
       expect(chosen?.type === "StepsChosen" && chosen.payload.imagesUnexplained).toEqual([
-        "investigate",
+        "design",
       ]);
       // 理由が無くても止めずに、既定のイメージで進める（作業履歴と画面に出す）
       expect(executor.images[1]).toEqual({ image: "sacty-agent:test" });
@@ -4074,7 +4073,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(task.id);
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
-        imagesUnexplained: ["investigate", "requirements", "design", "implement"],
+        imagesUnexplained: ["requirements", "design", "implement"],
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload.images).toBeUndefined();
       activity.close();
@@ -4190,7 +4189,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(executor.calls[0]?.command.join(" ") ?? "").not.toContain("- java：");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
-        investigate: "java",
         requirements: "java",
         design: "java",
         implement: "java",
@@ -6013,12 +6011,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
-        [
-          plan("skip-design"),
-          out("# 前段の調査\n\n- src/button.ts:3 に文言"),
-          stepReview([], "文言の候補が複数あり、要求要件で決める"),
-          out("# 要求要件"),
-        ],
+        [plan("skip-design"), out("# 要求要件")],
         {
           realPlanner: true,
         },
@@ -6042,7 +6035,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
       expect(chosen?.payload).toMatchObject({
-        steps: ["investigate", "requirements", "implement", "deployment"],
+        steps: ["requirements", "implement", "deployment"],
         plan: "skip-design",
         reason: "小さな変更",
         fallback: false,
@@ -6052,59 +6045,36 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
         },
       });
-      // 実装する組み合わせは、先頭の前段の調査を同じ実行で続けて行い、人間の承認なしに次の工程へ進む（PBI-29）
-      expect(promptOf(executor, 1)).toContain("このあと 要求要件 → 実装 の工程で進めます");
-      const investigated = service.get(id)?.task;
-      expect(investigated?.steps.map((st) => [st.key, st.state])).toEqual([
-        ["investigate", "done"],
+      // 実装する組み合わせの先頭に調査は置かない。最初の工程（要求要件）を同じ実行で続けて行う
+      expect(promptOf(executor, 1)).toContain("あなたはソフトウェア開発の工程エージェントです");
+      expect(executor.calls).toHaveLength(2);
+      const task = service.get(id)?.task;
+      expect(task?.steps.map((st) => [st.key, st.state])).toEqual([
         ["requirements", "active"],
         ["implement", "todo"],
         ["deployment", "skip"],
       ]);
-      expect(investigated?.status).toBe("queued");
-      expect(investigated?.gate).toBeUndefined();
-      // 前段の調査の後、次の工程の前に、オーケストレーターが調査の結果を読んで残りの工程を見直す（工程の見直し）
-      expect(investigated?.stepReview).toBe("investigate");
-      await service.runNext(id);
-      expect(promptOf(executor, 2)).toContain("このタスクの工程「調査」が終わりました");
-      expect(promptOf(executor, 2)).toContain("src/button.ts:3 に文言");
-      expect(promptOf(executor, 2)).toContain("飛ばせるのは 要求要件（requirements） だけ");
-      const reviewed = service.get(id)?.activity.find((e) => e.type === "StepsSkipped");
-      expect(reviewed?.actor).toBe("orchestrator");
-      expect(reviewed?.payload).toMatchObject({
-        after: "investigate",
-        steps: [],
-        reason: "文言の候補が複数あり、要求要件で決める",
-      });
-      // 前段の調査の結果は、後の工程（要求要件）に渡す
-      expect(promptOf(executor, 3)).toContain("--- 前段の調査の結果");
-      expect(promptOf(executor, 3)).toContain("src/button.ts:3 に文言");
-      const task = service.get(id)?.task;
-      expect(task?.steps.map((st) => st.key)).toEqual([
-        "investigate",
-        "requirements",
-        "implement",
-        "deployment",
-      ]);
+      // 終わった工程が無いので、工程の見直しは待たない
+      expect(task?.stepReview).toBeUndefined();
       expect(task?.stepsChoice).toEqual({
         plan: "skip-design",
         reason: "小さな変更",
         fallback: false,
       });
-      // 判断の費用も予算に入る。最初の工程（要求要件）は、同じ実行で続けて行う
+      // 判断の費用も予算に入る
       expect(task?.budget.usedUsd).toBeGreaterThan(0.0015);
       expect(task?.gate).toEqual({ step: "requirements", submission: 1 });
       activity.close();
     });
 
-    it("工程の見直し：調査で既存の仕組みが分かれば、要求要件・設計を飛ばして実装し、タスクの目的で最終レビューする", async () => {
+    it("工程の見直し：承認済みの要求要件で既存の仕組みに沿うと分かれば、設計を飛ばして実装し、要求要件で最終レビューする", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const { service, executor, pulls } = makeService(
+      const { service, executor } = makeService(
         activity,
         [
           plan("standard", "権限の扱いを確かめたい"),
-          out("# 前段の調査\n\n- 管理者の判定は isAdmin()（src/auth.ts:3）が既にある"),
-          stepReview(["requirements", "design"], "isAdmin で表示を切り替えるだけ"),
+          out("# 要求要件\n\n- 管理者の判定は既存の isAdmin()（src/auth.ts:3）を使う"),
+          stepReview(["design"], "isAdmin で表示を切り替えるだけ"),
           out(
             `# 実装の説明\n\n- isAdmin() のときだけリンクを出す\n\n${block({
               "sacty-test-map": [{ viewpointId: "REQ", tests: ["menu.test.ts › 管理者だけ"] }],
@@ -6113,10 +6083,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           out(
             block({
               "sacty-final-review": {
-                viewpoints: [{ id: "REQ", verified: true, reason: "依頼どおり" }],
+                viewpoints: [{ id: "REQ", verified: true, reason: "要求要件どおり" }],
                 remarks: [],
                 tests: { command: "npm test", exitCode: 0, output: "ok" },
-                summary: "依頼を満たす",
+                summary: "要求要件を満たす",
               },
             }),
           ),
@@ -6128,32 +6098,34 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         title: "管理者リンク",
         body: "/restricted へのリンクをサイドメニューに足す。管理者だけに出す",
       });
-      // 工程の選択と調査、見直しと実装、検証・最終レビュー・PR の作成まで進める
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      // 見直しと実装、検証・最終レビュー・PR の作成まで進める
       for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
       const reviewed = service.get(id)?.activity.find((e) => e.type === "StepsSkipped");
       expect(reviewed?.actor).toBe("orchestrator");
       expect(reviewed?.payload).toMatchObject({
-        after: "investigate",
-        steps: ["requirements", "design"],
+        after: "requirements",
+        steps: ["design"],
         reason: "isAdmin で表示を切り替えるだけ",
       });
-      // 飛ばした工程は実行せず、実装は依頼と調査の結果から行う
+      // 見直しには、終わった工程（要求要件）の成果を渡す
+      expect(promptOf(executor, 2)).toContain("このタスクの工程「要求要件」が終わりました");
+      expect(promptOf(executor, 2)).toContain("isAdmin()（src/auth.ts:3）");
+      // 飛ばした工程は実行せず、実装は承認済みの要求要件に従う
       const implement = promptOf(executor, 3);
-      expect(implement).toContain("要求要件・設計の工程を省いています");
-      expect(implement).toContain("/restricted へのリンクをサイドメニューに足す");
+      expect(implement).toContain("人間が承認した要求要件に従って実装し");
       expect(implement).toContain("isAdmin()（src/auth.ts:3）");
-      expect(promptOf(executor, 4)).toContain("- [REQ] タスクの目的（依頼の内容）");
+      expect(promptOf(executor, 4)).toContain("[REQ] 承認済みの要求要件の受け入れ条件");
       const task = service.get(id)?.task;
       expect(task?.steps.map((st) => [st.key, st.state])).toEqual([
-        ["investigate", "done"],
-        ["requirements", "skip"],
+        ["requirements", "done"],
         ["design", "skip"],
         ["implement", "active"],
         ["deployment", "skip"],
       ]);
       expect(task?.gate).toEqual({ step: "implement", submission: 1 });
       expect(task?.lastReview?.passed).toBe(true);
-      expect(pulls.calls[0]?.body).toContain("要求要件の工程を省きました");
       activity.close();
     });
 
@@ -6162,26 +6134,27 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const { service, executor } = makeService(
         activity,
         [
-          plan("skip-design"),
-          out("# 前段の調査"),
+          plan("standard"),
+          out("# 要求要件"),
           {
             kind: "failed",
             reason: "error",
             message: { code: "run.containerNotConfirmed", params: { name: "sacty-run" } },
           },
-          out("# 要求要件"),
+          out("# 設計"),
         ],
         { realPlanner: true },
       );
       const { id } = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id);
-      // 元のコンテナが動いたままかもしれないので、要求要件を実行しない
+      // 元のコンテナが動いたままかもしれないので、設計を実行しない
       expect(executor.calls).toHaveLength(3);
       const task = service.get(id)?.task;
       expect(task?.status).toBe("paused");
       expect(task?.pausedReason).toBe("error");
-      expect(activeStep(task as Task)).toBe("requirements");
+      expect(activeStep(task as Task)).toBe("design");
       const types = service.get(id)?.activity.map((e) => e.type) ?? [];
       expect(types.slice(-2)).toEqual(["StepsSkipped", "TaskPaused"]);
       activity.close();
@@ -6192,37 +6165,35 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const { service, executor } = makeService(
         activity,
         [
-          plan("skip-design"),
-          out("# 前段の調査"),
-          out("見直しの答えなし"),
+          plan("standard"),
           out("# 要求要件"),
+          out("見直しの答えなし"),
+          out("# 設計"),
           plan("direct", "isAdmin で切り替えるだけ"),
-          out("# 前段の調査"),
           out("# 実装の説明"),
         ],
         { realPlanner: true },
       );
       const a = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(a.id);
+      service.approve(a.id, { step: "requirements", submission: 1 });
       await service.runNext(a.id);
       const failed = service.get(a.id)?.activity.find((e) => e.type === "StepsSkipped");
       expect(failed?.actor).toBe("sacty");
-      expect(failed?.payload).toMatchObject({ after: "investigate", steps: [] });
+      expect(failed?.payload).toMatchObject({ after: "requirements", steps: [] });
       expect(failed?.type === "StepsSkipped" && ja(failed.payload.reason)).toContain(
         "工程を飛ばさずに進めます",
       );
-      expect(service.get(a.id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
+      expect(service.get(a.id)?.task.gate).toEqual({ step: "design", submission: 1 });
 
       const b = service.createTask({ projectId: "default", title: "B" });
       await service.runNext(b.id);
       expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([
-        "investigate",
         "implement",
         "deployment",
       ]);
-      await service.runNext(b.id);
       expect(service.get(b.id)?.activity.some((e) => e.type === "StepsSkipped")).toBe(false);
-      expect(promptOf(executor, 6)).toContain("要求要件・設計の工程を省いています");
+      expect(promptOf(executor, 5)).toContain("要求要件・設計の工程を省いています");
       activity.close();
     });
 
@@ -6566,7 +6537,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps(),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
           review([["REQ", true]], []),
         ],
@@ -6590,10 +6560,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(repos.prepared.at(-1)?.baseBranch).toBe("feature/retry");
       expect(task?.repository).toMatchObject({ baseBranch: "feature/retry", baseCommit: head });
       // 工程の指示に、引き継ぐ PR と、その PR の指摘を渡す（本文のある承認も含めて読む）
-      const implementPrompt = promptOf(executor, 2);
+      const implementPrompt = promptOf(executor, 1);
       expect(implementPrompt).toContain("--- 引き継いで直す PR ---");
       expect(implementPrompt).toContain("回数は定数にしてください");
-      expect(promptOf(executor, 1)).toContain("--- 引き継いで直す PR ---");
       expect(pulls.feedbackIncludeApprovals).toContain(true);
       // PR のブランチの先頭に積んでプッシュし、新しい PR は作らない（題・本文を変えない・ラベルを付けない）
       expect(repos.published).toEqual([
@@ -6636,7 +6605,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       humanPullRequest(pulls);
       const { service } = makeService(
         activity,
-        [steps({ plan: "skip-design" }), out("# 前段の調査"), stepReview(), out("# 要求要件")],
+        [steps({ plan: "skip-design" }), out("# 要求要件")],
         { realPlanner: true, pulls, repos, stepPullRequests: true },
       );
       const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
@@ -6667,7 +6636,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps(),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
           review([["REQ", true]], []),
         ],
@@ -6711,7 +6679,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps(),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
           review([["REQ", true]], []),
         ],
@@ -6797,7 +6764,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       pulls.feedbackBy[12] = [old];
       const { service } = makeService(
         activity,
-        [steps(), out("# 前段の調査"), { kind: "failed", reason: "error", message: "boom" }],
+        [steps(), { kind: "failed", reason: "error", message: "boom" }],
         { realPlanner: true, pulls, repos },
       );
       const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
@@ -6998,7 +6965,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps(),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
           review([["REQ", true]], []),
         ],
@@ -7024,7 +6990,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps(),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }]),
           review([["REQ", true]], []),
         ],
@@ -7135,7 +7100,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           steps({ continuePullRequest: false }),
-          out("# 前段の調査"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["a.test.ts › 動く"] }]),
           review([["REQ", true]], []),
         ],
@@ -9322,7 +9286,7 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     expect(service.get(a.id)?.activity.filter((e) => e.type === "RepositoryPrepared")).toHaveLength(
       2,
     );
-    // 先頭の前段の調査を終え、承認なしに要求要件へ進んでいる（PBI-29）
+    // 最初の工程（要求要件）を続けて実行している
     expect(task?.steps.find((st) => st.state === "active")?.key).toBe("requirements");
 
     const b = service.createTask({ projectId: "default", title: "B" });
@@ -11905,7 +11869,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(
       resolved[0]?.type === "ContextResolved" && resolved[0].payload.layers.map((l) => l.repo),
     ).toEqual(["sacty-default", "https://example.com/team.git"]);
-    // 工程の実行（skip-design の先頭の調査）にも、これまでどおり渡す（記録はそれぞれの実行に 1 つ）
+    // 工程の実行（skip-design の先頭の要求要件）にも、これまでどおり渡す（記録はそれぞれの実行に 1 つ）
     expect(executor.calls).toHaveLength(2);
     expect(executor.contexts[1]).toMatch(/チームの規約/);
     expect(resolved).toHaveLength(2);
@@ -11914,7 +11878,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
         .get(id)
         ?.task.steps.map((s) => s.key)
         .slice(0, 2),
-    ).toEqual(["investigate", "requirements"]);
+    ).toEqual(["requirements", "implement"]);
     activity.close();
   });
 
@@ -13839,7 +13803,7 @@ describe("再現の工程（PBI-29）", () => {
     });
     const { service, executor } = makeService(
       activity,
-      [out("# 前段の調査"), reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
+      [reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
       {
         config: () => ({
           ok: true,
@@ -13856,9 +13820,8 @@ describe("再現の工程（PBI-29）", () => {
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     await drain(service);
-    // 前段の調査・再現・実装・最終レビュー（テストのコンテナは起動しない）
+    // 再現・実装・最終レビュー（テストのコンテナは起動しない）
     expect(executor.images).toEqual([
-      { image: "sacty-agent:test" },
       { image: "sacty-agent-go:test", env: { TOOL: "go" } },
       { image: "sacty-agent-node:test", env: { TOOL: "node" } },
       { image: "sacty-agent-node:test", env: { TOOL: "node" } },
@@ -13872,33 +13835,15 @@ describe("再現の工程（PBI-29）", () => {
     const pulls = new FakePulls();
     const { service, executor } = makeService(
       activity,
-      [
-        out("# 前段の調査\n\n- src/pay.ts:40 で冪等キーを見ていない"),
-        reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]),
-        implement(),
-        review(),
-      ],
+      [reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]), implement(), review()],
       { planner, pulls },
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
-    // 前段の調査は、人間の承認なしに再現へ進む
-    await service.runNext(id);
-    // マージの後の監視は、スキルが無いので飛ばす（PBI-116）
-    expect(service.get(id)?.task.steps.map((s) => s.state)).toEqual([
-      "done",
-      "active",
-      "todo",
-      "skip",
-    ]);
-    expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
-    executor.calls.shift();
-    executor.scratch.shift();
+    // 不具合の修正は、再現から始める（前段の調査は置かない）
     await service.runNext(id);
     // 再現は clone（書き込める作業領域）で、不具合を直さずにテストを書かせる
     expect(executor.scratch[0]).toBe(false);
     expect(promptOf(executor, 0)).toContain("再現エージェント");
-    // 前段の調査の結果を、再現と実装に渡す
-    expect(promptOf(executor, 0)).toContain("src/pay.ts:40 で冪等キーを見ていない");
     expect(promptOf(executor, 0)).toContain("npm test");
     // テストは sacty が実行せず、再現のエージェントが自分で実行して、失敗したことを申告する
     expect(promptOf(executor, 0)).toContain("そのテストのコマンドを自分で実行し");
@@ -13914,8 +13859,10 @@ describe("再現の工程（PBI-29）", () => {
     expect(task?.reproduction?.note).toBeUndefined();
     // 申告の形式のブロックは、再現の説明から取り除く
     expect(task?.outputs.reproduce).toBe("# 再現の説明");
-    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "skip"]);
+    // マージの後の監視は、スキルが無いので飛ばす（PBI-116）
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "active", "skip"]);
     expect(task?.status).toBe("queued");
+    expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
 
     await drain(service);
     const fix = promptOf(executor, 1);
@@ -13923,7 +13870,6 @@ describe("再現の工程（PBI-29）", () => {
     expect(fix).toContain("# 再現の説明");
     expect(fix).toContain("- pay.test.ts › 二重送信");
     expect(fix).toContain("FAIL pay.test.ts › 二重送信");
-    expect(fix).toContain("src/pay.ts:40 で冪等キーを見ていない");
     expect(promptOf(executor, 2)).toContain("[REPRO] 再現のテストが");
     const done = service.get(id)?.task;
     expect(done?.lastReview).toMatchObject({
@@ -13937,12 +13883,11 @@ describe("再現の工程（PBI-29）", () => {
     expect(body).toContain("# 再現の説明");
     expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|.*✅/);
     expect(body).not.toContain("## 要求要件");
-    // 実装の承認待ちから差し戻すときに、再現・前段の調査には戻せない（実装した後のコードでは再現できない。
-    // 前段の調査は人間が承認しない工程）
+    // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
     expect(reworkTargets(done as Task, "implement")).toEqual(["implement"]);
-    // 実装の工程は、前段の調査・再現の変更を申し出られない（要求要件・設計だけ）
+    // 実装の工程は、再現の変更を申し出られない（要求要件・設計だけ）
     expect(changeableSteps(done as Task, "implement")).toEqual([]);
-    // 前段の調査の結果は、取り込み元の Issue に返さない（調査だけのタスクだけが返す）
+    // 実装するタスクの結果は、取り込み元の Issue に返さない（調査だけのタスクだけが返す）
     const finished = {
       ...done,
       steps: done?.steps.map((s) => ({ ...s, state: "done" })),
@@ -13960,7 +13905,6 @@ describe("再現の工程（PBI-29）", () => {
     const { service, executor } = makeService(
       activity,
       [
-        out("# 前段の調査"),
         reproduce("# 再現できた？", ["pay.test.ts › 二重送信"], {
           reproduced: false,
           command: "npm test",
@@ -13984,9 +13928,9 @@ describe("再現の工程（PBI-29）", () => {
 
     service.requestChanges(id, { step: "reproduce", submission: 1, comments: ["連打で起きる"] });
     await service.runNext(id);
-    expect(promptOf(executor, 2)).toContain("[reproduce-1-1] 連打で起きる");
-    expect(promptOf(executor, 2)).toContain("終了コード 0");
-    expect(promptOf(executor, 2)).toContain("all passed");
+    expect(promptOf(executor, 1)).toContain("[reproduce-1-1] 連打で起きる");
+    expect(promptOf(executor, 1)).toContain("終了コード 0");
+    expect(promptOf(executor, 1)).toContain("all passed");
     task = service.get(id)?.task;
     // 再現のテストが申告されなければ、再現できなかったとする
     expect(renderMessage(task?.reproduction?.note, "ja")).toMatch(/テストを申告しませんでした/);
@@ -14011,11 +13955,9 @@ describe("再現の工程（PBI-29）", () => {
       { reproduced: true, command: "npm test", exitCode: "1", output: "FAIL" },
     ]) {
       const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(
-        activity,
-        [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"], check)],
-        { planner },
-      );
+      const { service } = makeService(activity, [reproduce("# 再現", ["a.test.ts › x"], check)], {
+        planner,
+      });
       const { id } = service.createTask({ projectId: "default", title: "不具合" });
       await drain(service);
       const task = service.get(id)?.task;
@@ -14029,7 +13971,12 @@ describe("再現の工程（PBI-29）", () => {
 
   it("それより前の版で、sacty の再現の確かめを待っていたタスクは、再起動の後に再現できなかったと記録して人間の判断を待つ", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [out("# 前段の調査")], { planner });
+    // それより前の版の工程（先頭に前段の調査を置いていた）
+    const legacy = async () => ({
+      ...(await planner()),
+      steps: ["investigate", ...STEP_PLANS.bugfix] as StepKey[],
+    });
+    const { service } = makeService(activity, [out("# 前段の調査")], { planner: legacy });
     const { id } = service.createTask({ projectId: "default", title: "不具合" });
     await service.runNext(id); // 前段の調査（承認なしに再現へ進む）
     const investigated = service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted");
@@ -14068,7 +14015,7 @@ describe("再現の工程（PBI-29）", () => {
       ],
     });
     const restored = new SqliteActivityStore(dbPath);
-    const { service: restarted, executor } = makeService(restored, [], { planner });
+    const { service: restarted, executor } = makeService(restored, [], { planner: legacy });
     expect(restarted.get(id)?.task.reproductionPending).toBe(true);
     expect(restarted.queuedTaskIds()).toEqual([id]);
     await restarted.runNext(id);
@@ -14087,7 +14034,7 @@ describe("再現の工程（PBI-29）", () => {
 
   it("オーケストレーターは、不具合の修正に bugfix を選べる", () => {
     expect(buildOrchestratorPrompt({ title: "x", body: "" } as Task)).toContain(
-      "- bugfix：調査 → 再現 → 実装",
+      "- bugfix：再現 → 実装",
     );
   });
 });
@@ -15090,7 +15037,7 @@ describe("質問への答えで、各実行のセッションログを調べる�
         out(
           '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
         ),
-        out("# 調査"),
+        out("# 要求要件"),
         out("答え1"),
         out("答え2"),
       ],
@@ -15103,7 +15050,7 @@ describe("質問への答えで、各実行のセッションログを調べる�
         | { runId?: string }
         | undefined
     )?.runId;
-    const reqRun = runIdOf(service, id, "investigate")?.runId;
+    const reqRun = runIdOf(service, id, "requirements")?.runId;
     await service.askQuestion(id, { text: "1つ目" }).answered;
     const chatRun = (
       service.get(id)?.activity.findLast((e) => e.type === "QuestionAnswered")?.payload as
@@ -15113,7 +15060,7 @@ describe("質問への答えで、各実行のセッションログを調べる�
     await service.askQuestion(id, { text: "2つ目" }).answered;
     const prompt = executor.calls.at(-1)?.command[2] ?? "";
     expect(prompt).toContain(`- [オーケストレーター・1回目] 実行 ${orchestratorRun} `);
-    expect(prompt).toContain(`- [調査・1回目] 実行 ${reqRun} `);
+    expect(prompt).toContain(`- [要求要件・1回目] 実行 ${reqRun} `);
     expect(prompt).toContain(`- [質問への答え（オーケストレーター）・1回目] 実行 ${chatRun} `);
     // 一覧は始めた順
     expect(prompt.indexOf(orchestratorRun ?? "")).toBeLessThan(prompt.indexOf(reqRun ?? ""));
@@ -15371,13 +15318,7 @@ describe("成果の書き出し（PBI-56）", () => {
     );
     const { service, executor } = makeService(
       activity,
-      [
-        plan,
-        out("# 調査の結果"),
-        stepReview(),
-        out("# 要求要件"),
-        exportOut({ url: "https://notion.example.com/p/1" }),
-      ],
+      [plan, out("# 要求要件"), exportOut({ url: "https://notion.example.com/p/1" })],
       {
         config: configOf(agent(), 1, [confluence()], [notion]),
         gateway: recorded.gateway,
@@ -15393,8 +15334,7 @@ describe("成果の書き出し（PBI-56）", () => {
       context: { repo: "https://github.com/acme/ctx.git" },
     });
     const { id } = service.createTask({ projectId: "default", title: "A" });
-    // 工程を選んで、前段の調査（人間の承認なし）と要求要件を実行する
-    await service.runNext(id);
+    // 工程を選んで、最初の工程（要求要件）を続けて実行する
     await service.runNext(id);
     const orchestrator = promptOf(executor, 0);
     expect(orchestrator).toContain("confluence（via: platform・ゲートウェイの接続先）");
@@ -15411,15 +15351,14 @@ describe("成果の書き出し（PBI-56）", () => {
     });
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
-    // MCP サーバーは、ゲートウェイの HTTP の MCP として渡し、PF の URL は渡さない（実行は、工程の選択・調査・工程の見直し・
-    // 要求要件の後）
-    const call = executor.calls[4];
+    // MCP サーバーは、ゲートウェイの HTTP の MCP として渡し、PF の URL は渡さない（実行は、工程の選択・要求要件の後）
+    const call = executor.calls[2];
     expect(call?.env.SACTY_PF_URL).toBeUndefined();
-    expect(JSON.parse(executor.mcpConfigs[4] ?? "{}").mcpServers.notion).toMatchObject({
+    expect(JSON.parse(executor.mcpConfigs[2] ?? "{}").mcpServers.notion).toMatchObject({
       url: "http://host.docker.internal:5001/mcp/notion",
     });
-    expect(promptOf(executor, 4)).toContain("MCP サーバー。そのツールで書く");
-    expect(promptOf(executor, 4)).toContain("Notion（チームのワークスペース）");
+    expect(promptOf(executor, 2)).toContain("MCP サーバー。そのツールで書く");
+    expect(promptOf(executor, 2)).toContain("Notion（チームのワークスペース）");
     // 書き出しのトークンで使えるのは、選んだ MCP サーバーだけ（ホストの PF の confluence は使えない。PBI-131）
     expect(recorded.access.at(-1)).toEqual({ platforms: [], hostMcp: ["notion"] });
     expect(taskOf(service, id).exports.requirements?.url).toBe("https://notion.example.com/p/1");
@@ -22675,8 +22614,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         plan(),
-        out("# 前段の調査"),
-        stepReview(),
         out("# 要求要件\n\n- AGENTS.md を足す"),
         out("# 実装の説明\n\n- AGENTS.md を足した"),
         review(),
@@ -22704,11 +22641,11 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     expect(task.status).toBe("awaiting_approval");
     // 実装の指示は、テストを書かせず、目的から判定されることを伝える
-    const implementPrompt = promptOf(executor, 4);
+    const implementPrompt = promptOf(executor, 2);
     expect(implementPrompt).toContain("このリポジトリには、テストの仕組みがありません");
     expect(implementPrompt).toContain("sacty-test-command");
     // 最終レビューは、目的・実装の説明から判定させ、テストが無いことでは不合格にさせない
-    const guardian = promptOf(executor, 5);
+    const guardian = promptOf(executor, 3);
     expect(guardian).toContain("--- タスク（目的） ---");
     expect(guardian).toContain("Sacty セットアップ");
     expect(guardian).toContain("--- 実装の説明（工程エージェントの申告） ---");
@@ -22775,7 +22712,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       [
         out(block({ "sacty-steps": { plan: "skip-design", reason: "小さい" } })),
         plan(),
-        out("# 前段の調査"),
+        out("# 要求要件"),
       ],
       { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
     );
@@ -22785,7 +22722,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     service.resume(id, {});
     await service.runNext(id);
     const task = taskOf(service, id);
-    // 選び直した（2回目のオーケストレーター）うえで、調査の工程へ進む
+    // 選び直した（2回目のオーケストレーター）うえで、要求要件の工程へ進む
     expect(executor.calls).toHaveLength(3);
     expect(typesOf(service, id).filter((t) => t === "StepsChosen")).toHaveLength(2);
     expect(task.noTestsReason).toBe(NO_TESTS);
@@ -22802,8 +22739,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         plan(),
-        out("# 前段の調査"),
-        stepReview(),
         out("# 要求要件\n\n- スキルを足す"),
         out("# 実装の説明\n\n- スキルを足した"),
         review(),
@@ -22834,11 +22769,11 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(task.lastReview?.passed).toBe(true);
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     // 実装・最終レビューの指示と PR の本文で、人が決めた理由だとわかる
-    expect(promptOf(executor, 4)).toContain("人が再開のときにテストなしで進めると決めました");
-    expect(promptOf(executor, 5)).toContain(
+    expect(promptOf(executor, 2)).toContain("人が再開のときにテストなしで進めると決めました");
+    expect(promptOf(executor, 3)).toContain(
       "--- テストなしで進める理由（人が再開のときに書いたもの。",
     );
-    expect(promptOf(executor, 5)).toContain(JSON.stringify(REASON));
+    expect(promptOf(executor, 3)).toContain(JSON.stringify(REASON));
     expect(pulls.calls[0]?.body).toContain(`テストなしで進める理由（人が決めました）：${REASON}`);
     activity.close();
   });
@@ -22849,7 +22784,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         out(block({ "sacty-steps": { plan: "direct", reason: "小さい" } })),
-        out("# 前段の調査"),
         out(
           `# 実装の説明\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["check › a"] }] })}`,
         ),
@@ -22863,14 +22797,14 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     service.resume(id, { tests: { testCommand: "make test" } });
     expect(taskOf(service, id).testCommand).toBe("make test");
     await drain(service);
-    expect(executor.calls).toHaveLength(4);
-    expect(promptOf(executor, 3)).toContain("```sh\nmake test\n```");
+    expect(executor.calls).toHaveLength(3);
+    expect(promptOf(executor, 2)).toContain("```sh\nmake test\n```");
     expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
     // 実装・最終レビューの指示と PR の本文で、人が指定したコマンドだとわかる
-    expect(promptOf(executor, 2)).toContain(
+    expect(promptOf(executor, 1)).toContain(
       "人が再開のときに指定したテストのコマンド（make test）",
     );
-    expect(promptOf(executor, 3)).toContain(
+    expect(promptOf(executor, 2)).toContain(
       "テスト（検証）のコマンド（人が再開のときに指定したもの）",
     );
     expect(pulls.calls[0]?.body).toContain("（人が指定したテストのコマンド）");
@@ -22951,8 +22885,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         plan({}, "standard"),
-        out("# 前段の調査"),
-        stepReview(),
         out(`# 要求要件\n\n申告の例：\n\n${example}`),
         // 要求要件の承認の後にも、設計が要るかを見直す（工程の見直し）
         stepReview(),
@@ -23030,8 +22962,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         plan(),
-        out("# 前段の調査"),
-        stepReview(),
         out("# 要求要件\n\n- テストの仕組みを用意する"),
         implemented("make check"),
         // 観点は満たしていると判定しても、用意したテストが通らなければ不合格
@@ -23049,8 +22979,8 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     service.approve(id, { step: "requirements", submission: 1 });
     await drain(service);
     // 申告したコマンドを、最終レビューでゴールガーディアンに実行させる。1回目は通らずにやり直し、2回目のコマンドで通る
-    expect(promptOf(executor, 5)).toContain("```sh\nmake check\n```");
-    expect(promptOf(executor, 7)).toContain("```sh\nmake test\n```");
+    expect(promptOf(executor, 3)).toContain("```sh\nmake check\n```");
+    expect(promptOf(executor, 5)).toContain("```sh\nmake test\n```");
     const reviews = service
       .get(id)
       ?.activity.flatMap((e) => (e.type === "FinalReviewed" ? [e.payload] : []));
@@ -23060,13 +22990,13 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       [true, "make test", 0],
     ]);
     // やり直しの指示に、テストの結果を渡し、テストの対応が無い観点を挙げない
-    expect(promptOf(executor, 6)).toContain("テスト：make check（終了コード 1）");
-    expect(promptOf(executor, 6)).not.toContain("観点を検証できていない");
+    expect(promptOf(executor, 4)).toContain("テスト：make check（終了コード 1）");
+    expect(promptOf(executor, 4)).not.toContain("観点を検証できていない");
     const task = taskOf(service, id);
     expect(task.addedTestCommand).toBe("make test");
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     // 最終レビューと PR の本文で、実装で用意したテストを使ったことがわかる
-    expect(promptOf(executor, 7)).toContain(
+    expect(promptOf(executor, 5)).toContain(
       "実装がテストを用意したので、そのコマンドを実行して確かめてください",
     );
     expect(pulls.calls[0]?.body).toContain(
@@ -23079,8 +23009,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const outcomes = [
       plan(),
-      out("# 前段の調査"),
-      stepReview(),
       out("# 要求要件"),
       ...Array.from({ length: MAX_VERIFY_ATTEMPTS }, () => [
         out("# 実装の説明"),
@@ -23120,8 +23048,6 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       activity,
       [
         plan(),
-        out("# 前段の調査"),
-        stepReview(),
         out("# 要求要件"),
         out('# 実装の説明\n\n```sacty-test-command\n{"command": ""}\n```'),
         // JSON として読めない申告も、テストを飛ばさずに止める（PR #105 再レビュー指摘）
