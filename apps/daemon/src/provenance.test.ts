@@ -195,7 +195,7 @@ describe("出典の分類の読み取りと照合", () => {
         items: [
           { id: "TV-1", kind: "input", excerpt: "カードで支払える" },
           { id: "TV-2", kind: "inference" },
-          { id: "TV-3", kind: "derived", refs: ["R-1"] },
+          { id: "TV-3", kind: "derived", refs: ["R-1", "TV-2", "TV-1", "TV-9"] },
         ],
       },
       inputs,
@@ -204,7 +204,13 @@ describe("出典の分類の読み取りと照合", () => {
     );
     expect(provenance?.items).toEqual([
       { id: "TV-1", kind: "inference", refs: [], excerpt: "" },
-      { id: "TV-2", kind: "derived", refs: ["R-1"], excerpt: "" },
+      // 根拠の参照の TV-n も振った ID に直し、取り込まなかった観点はそれとわかる形にする。対応に無いものはそのまま
+      {
+        id: "TV-2",
+        kind: "derived",
+        refs: ["R-1", "TV-1", "TV-1（取り込まなかった観点）", "TV-9"],
+        excerpt: "",
+      },
     ]);
     expect(provenance?.unclassified).toEqual([]);
   });
@@ -219,6 +225,32 @@ describe("出典の分類の読み取りと照合", () => {
     expect(extracted.output).toBe("# 要求要件");
     expect(extracted.provenance).toEqual({ items: [{ id: "R-1" }] });
     expect(extractBlocks("# 要求要件", new Set()).provenance).toBeUndefined();
+  });
+
+  it("最後の答えが先頭以外のキーにあって壊れていれば、前の答えに戻らず読めないものにし、本文から取り除く", () => {
+    const valid = `\`\`\`json\n${JSON.stringify({ "sacty-provenance": { mode: "subagent", items: [] } })}\n\`\`\``;
+    for (const broken of [
+      // 囲みの中：囲みの全体を取り除く
+      '```json\n{"sacty-responses": [], "sacty-provenance": {"mode": "subagent", "items": [],},}\n```',
+      // 囲みの外：キーのある行だけを取り除く
+      '{"sacty-responses": [], "sacty-provenance": {"mode": "subagent", "items": [],},}',
+    ]) {
+      const extracted = extractBlocks(
+        ["# 要求要件", valid, broken, "後ろの本文"].join("\n\n"),
+        new Set(),
+      );
+      expect(extracted.provenance, broken).toBeUndefined();
+      // 前の答えも壊れた答えも取り除き、ほかの本文は残す（空行の数は問わない）
+      expect(extracted.output.replace(/\n+/g, "\n"), broken).toBe("# 要求要件\n後ろの本文");
+      expect(checkProvenance(extracted.provenance, [], [])).toBeUndefined();
+    }
+    // 読める答えが先頭以外のキーにあれば、それを使う
+    const combined = extractBlocks(
+      `# 要求要件\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": [], "sacty-provenance": { mode: "sequential", items: [] } })}\n\`\`\``,
+      new Set(),
+    );
+    expect(combined.provenance).toEqual({ mode: "sequential", items: [] });
+    expect(combined.output).toBe("# 要求要件");
   });
 });
 

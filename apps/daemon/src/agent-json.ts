@@ -313,6 +313,50 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
 }
 
 /**
+ * 見出し heading のキー（"見出し":）のうち、covered の範囲（読めた JSON・headingSpans で見つけたもの）の外にあるものを、
+ * 読めない報告として返す（value は undefined）。先頭以外のキーにある壊れた報告（末尾のカンマなど）は headingSpans では
+ * 見つからないので、これで見つけ、最後の答えが読めないことに気づけるようにする。取り除く範囲は、囲みの中なら囲みの全体、
+ * 囲みの外ならキーのある行（後ろの本文は消さない）。同じ囲みの中の複数のキーは1つにまとめる。
+ */
+export function headingMentions(
+  output: string,
+  heading: string,
+  covered: readonly { start: number; end: number }[],
+): HeadingSpan[] {
+  const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
+  // 囲み（``` の行から、閉じる ``` の行まで。閉じなければ出力の終わりまで）
+  const blocks: { start: number; end: number }[] = [];
+  let open: number | undefined;
+  for (const m of output.matchAll(/^[ \t]*```[^\n]*(?:\n|$)/gm)) {
+    if (open === undefined) open = m.index;
+    else {
+      blocks.push({ start: open, end: m.index + m[0].length });
+      open = undefined;
+    }
+  }
+  if (open !== undefined) blocks.push({ start: open, end: output.length });
+  const found: HeadingSpan[] = [];
+  for (const m of output.matchAll(key)) {
+    const at = m.index;
+    if (covered.some((c) => c.start <= at && at < c.end)) continue;
+    if (found.some((f) => f.start <= at && at < f.end)) continue;
+    const block = blocks.find((b) => b.start <= at && at < b.end);
+    if (block) {
+      found.push({ ...block, value: undefined });
+      continue;
+    }
+    const lineStart = output.lastIndexOf("\n", at - 1) + 1;
+    const lineEnd = output.indexOf("\n", at);
+    found.push({
+      start: lineStart,
+      end: lineEnd === -1 ? output.length : lineEnd + 1,
+      value: undefined,
+    });
+  }
+  return found;
+}
+
+/**
  * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。JSON の文字列は改行を含めないので、文字列の中で改行に来たら、
  * 閉じない文字列としてそこで終える（PR #130 再レビュー指摘）。括弧が閉じなければ、囲みの中（fenced）なら囲みの終わりの行
  * （行の頭が ```）の頭、囲みの外なら最初の空行か ``` の行の頭（どれも無ければ出力の終わり）。空行で区切るのは閉じない

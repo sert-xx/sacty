@@ -43,6 +43,7 @@ import {
 } from "@sacty/core";
 import {
   headedObject,
+  headingMentions,
   headingSpans,
   type JsonCandidate,
   jsonCandidates,
@@ -1255,7 +1256,7 @@ export function checkProvenance(
       kind,
       refs: texts(r.refs)
         .slice(0, 20)
-        .map((ref) => ref.slice(0, 200)),
+        .map((ref) => renameRef(ref, rename).slice(0, 200)),
       excerpt,
       ...(excerpt ? { found: needle.length >= EXCERPT_MIN && haystack.includes(needle) } : {}),
     });
@@ -1265,6 +1266,18 @@ export function checkProvenance(
     items,
     unclassified: ids.filter((id) => !seen.has(id)),
   };
+}
+
+/**
+ * 根拠の参照のうち、答えの ID（設計のテスト観点の TV-n）を指すものを、振った ID に直す。項目の欠けた（取り込まなかった）
+ * 観点を指すものは、それとわかる形にする。対応に無い参照（指摘の ID・R-n・パス:行など）はそのまま。
+ */
+function renameRef(
+  ref: string,
+  rename: ReadonlyMap<string, string | undefined> | undefined,
+): string {
+  if (!rename?.has(ref)) return ref;
+  return rename.get(ref) ?? `${ref}（取り込まなかった観点）`;
 }
 
 /**
@@ -2105,6 +2118,8 @@ export function extractBlocks(
   );
   const parsedReview = last ? SelfReview.safeParse(last.value) : undefined;
   const selfReview = parsedReview?.success ? parsedReview.data : undefined;
+  // 先頭以外のキーにある壊れた答えも、読めない答えとして見つける（最後の答えが読めなければ、前の答えに戻らない）
+  classified.push(...headingMentions(body, PROVENANCE_HEADING, classified));
   // 出典の分類も、最後の答えだけを使う
   const lastClassified = classified.reduce<(typeof classified)[number] | undefined>(
     (latest, r) => (latest === undefined || r.start >= latest.start ? r : latest),
