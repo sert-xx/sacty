@@ -190,7 +190,7 @@ describe("compose の設定の確かめ（PBI-47）", () => {
 });
 
 describe("サービスのビルドが、ホストで共有するタグを書き換えない（PBI-130）", () => {
-  const AGENT = "sacty-agent:1.11.0";
+  const AGENT = "sacty-agent:1.11.1";
 
   it("ビルドするサービスの image・build.tags を外し、毎回その実行の名前でビルドする（元の設定は変えない）", () => {
     const build = {
@@ -265,13 +265,13 @@ describe("エージェントのイメージを、イメージ ID に確定させ
 
   it("docker image inspect の ID を返す", async () => {
     const { calls, runner } = docker(`${ID}\n`, 0);
-    expect(await runner.imageId("sacty-agent:1.11.0", "r1")).toBe(ID);
-    expect(calls).toEqual([["image", "inspect", "--format", "{{.Id}}", "sacty-agent:1.11.0"]]);
+    expect(await runner.imageId("sacty-agent:1.11.1", "r1")).toBe(ID);
+    expect(calls).toEqual([["image", "inspect", "--format", "{{.Id}}", "sacty-agent:1.11.1"]]);
   });
 
   it("無いイメージ・ID の形でない出力は、確定させない", async () => {
     expect(await docker("", 1).runner.imageId("missing:1", "r1")).toBeUndefined();
-    expect(await docker("sacty-agent:1.11.0\n", 0).runner.imageId("x", "r1")).toBeUndefined();
+    expect(await docker("sacty-agent:1.11.1\n", 0).runner.imageId("x", "r1")).toBeUndefined();
     expect(await docker(`${ID}\n${ID}\n`, 0).runner.imageId("x", "r1")).toBeUndefined();
   });
 
