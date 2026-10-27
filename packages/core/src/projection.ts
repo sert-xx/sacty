@@ -11,6 +11,7 @@ import type {
   OrchestratorSessionReason,
   ParsedEventInput,
   PauseReason,
+  Provenance,
   Remark,
   ReviewComment,
   ReviewVerdict,
@@ -608,6 +609,11 @@ export type Task = {
    * 工程には無い。
    */
   selfReviews?: Partial<Record<StepKey, SelfReview | null>>;
+  /**
+   * 工程ごとの、最新の提出の項目ごとの出典の分類（要求要件・設計）。null は結果が無い・読めなかった。分類より前の記録の
+   * 工程には無い。
+   */
+  provenances?: Partial<Record<StepKey, Provenance | null>>;
   images?: Partial<Record<StepKey, string>>;
   /**
    * 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）、再実行で人が
@@ -740,11 +746,17 @@ function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback
 
 /**
  * 成果物の本文を、工程の実行の外で差し替えた（変更の申し出の適用・人が PR の中で直してからのマージ）。前のセルフレビューは
- * 新しい本文を見ていないので、「記録なし」にする（PR #130 レビュー指摘）。セルフレビューより前の記録（報告が無い）はそのまま。
+ * 新しい本文を見ていないので、「記録なし」にする（PR #130 レビュー指摘）。出典の分類も同じ。それより前の記録（報告が無い）は
+ * そのまま。
  */
-function voidSelfReview(task: Task, step: StepKey): void {
-  if (task.selfReviews?.[step] === undefined) return;
-  task.selfReviews = { ...task.selfReviews, [step]: null };
+function voidSubmissionChecks(task: Task, step: StepKey): void {
+  if (task.selfReviews?.[step] !== undefined) {
+    task.selfReviews = { ...task.selfReviews, [step]: null };
+  }
+  // 出典の分類も、新しい本文の項目を分類していないので「記録なし」にする
+  if (task.provenances?.[step] !== undefined) {
+    task.provenances = { ...task.provenances, [step]: null };
+  }
 }
 
 function findProposal(task: Task, event: ActivityEvent, id: string): TaskProposal {
@@ -978,6 +990,16 @@ export function applyEvent(
           const { [event.payload.step]: _dropped, ...rest } = task.selfReviews;
           task.selfReviews = rest;
         }
+        // 出典の分類も同じ。分類させない工程・それより前の記録では、前の分類を残さない
+        if (event.payload.provenance !== undefined) {
+          task.provenances = {
+            ...task.provenances,
+            [event.payload.step]: event.payload.provenance,
+          };
+        } else if (task.provenances?.[event.payload.step] !== undefined) {
+          const { [event.payload.step]: _dropped, ...rest } = task.provenances;
+          task.provenances = rest;
+        }
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
         const step = event.payload.step;
@@ -1032,7 +1054,7 @@ export function applyEvent(
       const output = final !== undefined ? documentOutput(final) : submitted;
       if (final !== undefined) {
         task.outputs = { ...task.outputs, [step]: output };
-        voidSelfReview(task, step);
+        voidSubmissionChecks(task, step);
       }
       task.approved = {
         ...task.approved,
@@ -1233,7 +1255,7 @@ export function applyEvent(
         };
       }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
-      voidSelfReview(task, proposal.target);
+      voidSubmissionChecks(task, proposal.target);
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }

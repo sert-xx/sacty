@@ -264,6 +264,27 @@ const ja = {
     notReviewed: "見られなかった観点",
     summary: "総評",
   },
+  /** 項目ごとの出典の分類（要求要件・設計）。 */
+  provenance: {
+    title: (check: number) => `確かめる項目：${check}件`,
+    counts: (input: number, derived: number, inference: number) =>
+      `（引用 ${input}・導出 ${derived}・推論 ${inference}）`,
+    hint: "書いたエージェントとは別のエージェントが、項目ごとの根拠を、タスク・指摘などの入力からの引用・決まった仕方での導出・推論に分けた結果です。推論と、原文が入力に見つからない引用を確かめてください。",
+    missing: "出典の分類の記録がありません",
+    missingHint: "エージェントが出典の分類を報告しませんでした。すべての項目を確かめてください。",
+    sequential:
+      "サブエージェントを起動できず、書いたエージェントが自分で分類しました。すべての項目を確かめてください。",
+    reason: {
+      inference: "推論",
+      notFound: "引用の原文が入力に見つからない",
+      unclassified: "分類なし",
+      input: "引用",
+      derived: "導出",
+    },
+    basis: (refs: readonly string[]) => `（根拠：${refs.join("、")}）`,
+    separator: "：",
+    others: "そのほか（引用・導出）",
+  },
   costs: {
     title: "工程ごとの費用",
     hint: "工程ごとのエージェント・設定・トークンの使用量と費用です。記録に無い項目は「—」。サブスクリプションなどの費用は換算した概算で、実際の請求ではありません。",
@@ -624,6 +645,26 @@ const en: TaskMessages = {
     remaining: "Findings left",
     notReviewed: "Viewpoints not reviewed",
     summary: "Summary",
+  },
+  provenance: {
+    title: (check) => `Items to check: ${check}`,
+    counts: (input, derived, inference) =>
+      ` (${input} quoted · ${derived} derived · ${inference} inferred)`,
+    hint: "An agent other than the author sorted the basis of each item into a quote from the input (the task, remarks and so on), a derivation in a fixed way, or an inference. Check the inferences and the quotes whose original text is not in the input.",
+    missing: "No provenance record",
+    missingHint: "The agent did not report the provenance. Check every item.",
+    sequential:
+      "No subagent could be started, so the author sorted the items itself. Check every item.",
+    reason: {
+      inference: "Inference",
+      notFound: "Quoted text not found in the input",
+      unclassified: "Not classified",
+      input: "Quote",
+      derived: "Derived",
+    },
+    basis: (refs) => ` (basis: ${refs.join(", ")})`,
+    separator: ": ",
+    others: "Others (quoted or derived)",
   },
   costs: {
     title: "Cost per step",

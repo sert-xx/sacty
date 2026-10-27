@@ -32,6 +32,8 @@ import { redact, redactEscaped, redactText, secretStringsInJson } from "./redact
 export const CONTAINER_WORKSPACE = "/workspace";
 /** レビューの工程で、PR の差分の全体を読み取り専用で置くディレクトリ（作業領域の外。PBI-65）。 */
 export const CONTAINER_REVIEW_DIR = "/sacty-review";
+/** 要求要件・設計の工程で、出典の分類の担当に読ませる Input を読み取り専用で置くディレクトリ（作業領域の外）。 */
+export const CONTAINER_INPUT_DIR = "/sacty-input";
 
 /**
  * 診断に使う出力（標準エラー出力）の、先頭と末尾だけを持つ（PBI-62）。長い実行でも、デーモンのメモリが出力の大きさに

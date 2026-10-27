@@ -174,6 +174,24 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`・`acceptanceCheckLines`）
 
+## 既定の出典の分類用スキル
+
+既定のコンテキストには、成果物の項目ごとの出典を分類する `classify-provenance` がある。
+成果物を書いた本人は、自分で足したものも依頼から当然に見えて分類を誤りやすいので、書いた本人ではない担当（サブエージェント）が、Input と最終版の成果物だけを読んで分類する。
+
+- 役割は、依頼文に「出典の分類の担当です」とあれば担当、それ以外は依頼する側。
+- 依頼する側は、最終版ができてから担当を1つ起動する。依頼文には、Input と最終版の置き場所・項目の ID の付き方・出力の形を書き、Input の要約・言い換え・引用と、書いた経緯・どの項目を足したかは書かない。答えは手を加えずに使う。サブエージェントを起動できなければ、逐次モードで自分で分類し、そのことを結果に書く。
+- 区分は、引用（`input`）・導出（`derived`。対になる異常系・調査の結果・既存コードの規約の3つだけ）・推論（`inference`）。迷ったら推論にする。
+- 引用には、Input の原文を整形せずに抜き出す。原文が見つからないのに引用にしない。
+- 担当はサブエージェントを起動せず、成果物の評価・修正の提案をしない。
+
+要求要件・設計の工程の指示は、このスキルで分類させる（[タスクと工程](tasks-and-steps.md#提出の前の出典の分類)）。
+既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
+
+関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
+
+コード: `apps/daemon/default-context/skills/classify-provenance/SKILL.md`、`apps/daemon/src/prompts.ts`（`provenanceLines`）
+
 ## 既定のメモリー用スキル
 
 既定のコンテキストには、監査が登録したメモリーを読むためのスキル `memory` がある（PBI-126）。

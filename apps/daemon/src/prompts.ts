@@ -16,7 +16,13 @@ import {
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
+  needsCheck,
   OperationSettings,
+  PROVENANCE_EXCERPT_MAX,
+  PROVENANCE_ITEMS_MAX,
+  PROVENANCE_KINDS,
+  type Provenance,
+  type ProvenanceItem,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
   type ReviewComment,
@@ -102,6 +108,8 @@ export const REPRODUCTION_VIEWPOINT = "REPRO";
 const REPRODUCTION_HEADING = "sacty-reproduction";
 /** 提出の前のセルフレビューの報告の見出し（PBI-120）。 */
 export const SELF_REVIEW_HEADING = "sacty-self-review";
+/** 項目ごとの出典の分類の見出し。 */
+export const PROVENANCE_HEADING = "sacty-provenance";
 
 /**
  * 実装のテストの対応と最終レビューで判定する観点の ID。設計があればテスト観点、不具合の修正は再現のテスト（REPRO。PBI-29）、
@@ -1140,6 +1148,163 @@ function selfReviewLines(kind: "design-doc" | "code", deliverable: string): stri
   ];
 }
 
+/** 既定のスキル（成果物の項目の出典を分類する）の名前。 */
+export const PROVENANCE_SKILL = "classify-provenance";
+
+/**
+ * 提出の前に、成果物の項目ごとの出典を、書いた本人ではないサブエージェントに分類させる。分類の担当には、sacty が置いた
+ * Input のファイルと最終版だけを読ませ、書いた側の要約・経緯を渡させない（書いた側の思い込みを分類に入れないため）。
+ * 担当の答えは、手を加えずに見出し sacty-provenance の JSON で付けさせる。sacty はそれを読み、抜き出しを Input と照らす。
+ */
+function provenanceLines(step: "requirements" | "design", inputDir: string): string[] {
+  const items =
+    step === "requirements"
+      ? "要求要件の要求（R-n）"
+      : `テスト観点（${VIEWPOINTS_HEADING} の JSON の n 番目を TV-n とする）`;
+  return [
+    "",
+    "--- 提出の前の出典の分類 ---",
+    `- セルフレビューを終えた最終版に対して、既定のスキル ${PROVENANCE_SKILL} の「依頼の仕方」に従い、${items}ごとの出典を分類させる`,
+    `- 最終版を一時ファイル（例：/tmp/sacty-provenance/draft.md）に書く（作業領域の外に置き、リポジトリには書かない）${step === "design" ? "。テスト観点の JSON も含める" : ""}`,
+    `- 分類の担当のサブエージェントを1つ起動する。依頼文には、担当であること・スキルの名前・Input のディレクトリ（${inputDir}。sacty が置いたファイルで、書き換えない）・最終版のファイルのパス・項目の ID の付き方・下の出力の形だけを書く`,
+    "- 依頼文に、Input の要約・言い換え・引用と、あなたが書いた経緯・考えたこと・どの項目を足したかを書かない（担当が自分で読む）",
+    "- 担当の答えを、手を加えずに次の形式で付ける。分類に合わせて成果物を直さない",
+    `- サブエージェントを起動できないときは、スキルの逐次モードで自分で分類し、mode を sequential にする`,
+    "```json",
+    `{"${PROVENANCE_HEADING}": {"mode": "subagent", "items": [{"id": "R-1", "kind": "${PROVENANCE_KINDS.join(" または ")}", "refs": ["根拠の参照（指摘の ID・R-n・パス:行。無ければ空）"], "excerpt": "Input の原文の抜き出し（input のとき。無ければ空）"}]}}`,
+    "```",
+  ];
+}
+
+/**
+ * 出典の分類の担当に読ませる Input（ファイルの名前と中身）。タスクの内容（取り込み元のチケット・集めた情報を含む）、
+ * その工程の有効な人間の指摘、前段の調査の結果、設計なら承認済みの要求要件。sacty が作業領域の外に読み取り専用で置き、
+ * 抜き出しの照合にも使う。
+ */
+export function provenanceInputs(
+  task: Task,
+  step: "requirements" | "design",
+  extra: { continuedFeedback?: readonly PullRequestFeedback[] | "unreadable" } = {},
+): { name: string; text: string }[] {
+  const remarks = task.remarks.filter((r) => r.step === step && !r.voided);
+  const investigation = investigationLines(task).slice(1).join("\n");
+  return [
+    { name: "task.md", text: taskContent(task, extra) },
+    ...(remarks.length > 0
+      ? [
+          {
+            name: "remarks.md",
+            text: ["# 人間の指摘", "", ...remarks.map((r) => `- [${r.id}] ${r.text}`)].join("\n"),
+          },
+        ]
+      : []),
+    ...(investigation ? [{ name: "investigation.md", text: investigation }] : []),
+    ...(step === "design" && !withoutRequirements(task) && task.approved.requirements
+      ? [
+          {
+            name: "requirements.md",
+            text: ["# 承認済みの要求要件", "", task.approved.requirements.output].join("\n"),
+          },
+        ]
+      : []),
+  ];
+}
+
+/** 照合のために、空白と Markdown の記号を除き、文字の形をそろえる。 */
+function normalizeForMatch(value: string): string {
+  return value.normalize("NFKC").replace(/[\s*_`>#|]/g, "");
+}
+/** 抜き出しとして短すぎる長さ（そろえた後の文字数）。数文字の語は、どこにでもあるので根拠にならない。 */
+const EXCERPT_MIN = 4;
+
+/**
+ * 分類の答え（見出し sacty-provenance の中身）を読み、抜き出しを Input と照らす。ids は成果物にある項目の ID で、
+ * そこに無い ID の分類は捨て、分類の無い ID は unclassified にする。答えが読めなければ undefined。
+ */
+export function checkProvenance(
+  value: unknown,
+  inputs: readonly { text: string }[],
+  ids: readonly string[],
+): Provenance | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.items)) return undefined;
+  const haystack = normalizeForMatch(inputs.map((i) => i.text).join("\n"));
+  const known = new Set(ids);
+  const seen = new Set<string>();
+  const items: ProvenanceItem[] = [];
+  for (const raw of record.items.slice(0, PROVENANCE_ITEMS_MAX)) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const id = text(r.id);
+    const kind = PROVENANCE_KINDS.find((k) => k === text(r.kind));
+    if (!id || !kind || !known.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    const excerpt = kind === "inference" ? "" : text(r.excerpt).slice(0, PROVENANCE_EXCERPT_MAX);
+    const needle = normalizeForMatch(excerpt);
+    items.push({
+      id,
+      kind,
+      refs: texts(r.refs)
+        .slice(0, 20)
+        .map((ref) => ref.slice(0, 200)),
+      excerpt,
+      ...(excerpt ? { found: needle.length >= EXCERPT_MIN && haystack.includes(needle) } : {}),
+    });
+  }
+  return {
+    sequential: text(record.mode) === "sequential",
+    items,
+    unclassified: ids.filter((id) => !seen.has(id)),
+  };
+}
+
+/** 成果物で分類させる項目の ID。要求要件は本文の R-n（出てくる順）、設計はテスト観点（TV-n）。 */
+export function provenanceIds(
+  step: "requirements" | "design",
+  output: string,
+  viewpoints: readonly TestViewpoint[],
+): string[] {
+  if (step === "design") return viewpoints.map((v) => v.id);
+  return [...new Set(output.match(/\bR-\d+\b/g) ?? [])];
+}
+
+/**
+ * 出典の分類から、人間が確かめる所の案内（PR の本文・画面）。確かめる項目（推論・原文の見つからない引用・分類の無い項目）
+ * を挙げ、ほかは件数だけにする。分類させていない・より前の記録なら何も出さない。
+ */
+export function provenanceGuideLines(provenance: Provenance | null | undefined): string[] {
+  if (provenance === undefined) return [];
+  if (provenance === null) {
+    return ["出典の分類の記録がありません。すべての項目を確かめてください。"];
+  }
+  const check = provenance.items.filter((item) => needsCheck(provenance, item));
+  const count = (kind: ProvenanceItem["kind"]) =>
+    provenance.items.filter((item) => item.kind === kind).length;
+  const reason = (item: ProvenanceItem) =>
+    item.kind === "inference"
+      ? "推論"
+      : item.kind === "input" && item.found !== true
+        ? "引用の原文が見つからない"
+        : item.kind === "input"
+          ? "引用"
+          : "導出";
+  return [
+    `確かめる項目：${check.length + provenance.unclassified.length}件（引用 ${count("input")}・導出 ${count("derived")}・推論 ${count("inference")}${provenance.unclassified.length > 0 ? `・分類なし ${provenance.unclassified.length}` : ""}）`,
+    ...(provenance.sequential
+      ? [
+          "",
+          "サブエージェントを起動できず、書いたエージェントが自分で分類しました。すべての項目を確かめてください。",
+        ]
+      : []),
+    ...(check.length + provenance.unclassified.length > 0 ? [""] : []),
+    ...check.map(
+      (item) =>
+        `- ${item.id}：${reason(item)}${item.refs.length > 0 ? `（根拠：${item.refs.map(oneLine).join("、")}）` : ""}`,
+    ),
+    ...provenance.unclassified.map((id) => `- ${id}：分類なし`),
+  ];
+}
+
 /**
  * 要求要件・設計の工程を経ない実装（組み合わせ direct・工程の見直しで飛ばした）の指示。承認済みの要求要件の代わりに、
  * タスクの内容（依頼）と前段の調査の結果に従わせ、タスクの目的を観点 REQ として確かめる。テストの仕組みが無いタスク
@@ -1216,6 +1381,22 @@ function directImplementLines(
   return lines;
 }
 
+/** タスクの内容。タスクの開始時に集めた情報と、引き継いで直す既存の PR のことと、その PR の指摘も含める。 */
+function taskContent(
+  task: Task,
+  extra: { continuedFeedback?: readonly PullRequestFeedback[] | "unreadable" },
+): string {
+  // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
+  return [
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    ...securityFindingLines(task),
+    ...gatheredLines(task),
+    ...continuedPullRequestLines(task, extra.continuedFeedback),
+  ].join("\n");
+}
+
 export function buildPrompt(
   task: Task,
   step: StepKey,
@@ -1240,19 +1421,16 @@ export function buildPrompt(
      * "unreadable"。引き継ぐタスクの工程で渡す。
      */
     continuedFeedback?: readonly PullRequestFeedback[] | "unreadable";
+    /**
+     * 出典の分類の担当に読ませる Input のディレクトリ（コンテナの中のパス）。要求要件・設計の工程で、sacty が置いたときに
+     * 渡す。渡さなければ、出典を分類させない。
+     */
+    inputDir?: string;
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
   const continued = continuedPullRequestLines(task, extra.continuedFeedback);
-  // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
-  const content = [
-    `# ${task.title}`,
-    "",
-    task.body || "（内容なし）",
-    ...securityFindingLines(task),
-    ...gatheredLines(task),
-    ...continued,
-  ].join("\n");
+  const content = taskContent(task, extra);
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 
@@ -1445,6 +1623,7 @@ export function buildPrompt(
       if (hasRemarks) lines.push("", "--- 前回の下書き ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "要求要件の本文"));
       lines.push(...selfReviewLines("design-doc", "要求要件"));
+      if (extra.inputDir) lines.push(...provenanceLines("requirements", extra.inputDir));
       return lines.join("\n");
     }
     case "design": {
@@ -1503,6 +1682,7 @@ export function buildPrompt(
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
       lines.push(...selfReviewLines("design-doc", "設計とテスト観点"));
+      if (extra.inputDir) lines.push(...provenanceLines("design", extra.inputDir));
       return lines.join("\n");
     }
     case "split": {
@@ -1766,6 +1946,11 @@ export type Extracted = {
   output: string;
   /** 提出の前のセルフレビューの報告（PBI-120）。無い・読めなければ undefined。 */
   selfReview?: SelfReview;
+  /**
+   * 出典の分類の答え（見出し sacty-provenance の値。最後のもの）。中身はまだ確かめていない（checkProvenance で読む）。
+   * 無い・JSON として読めなければ undefined。
+   */
+  provenance?: unknown;
   responses: RemarkResponse[];
   testViewpoints: TestViewpoint[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
@@ -1826,8 +2011,14 @@ export function extractBlocks(
     body,
     SELF_REVIEW_HEADING,
   );
+  // 出典の分類の答え。セルフレビューの報告と同じく、読めないものも見出しで見つけて本文から取り除く
+  const classified: { start: number; end: number; value: unknown }[] = headingSpans(
+    body,
+    PROVENANCE_HEADING,
+  );
   for (const candidate of jsonCandidates(body).reverse()) {
     const record = candidate.value;
+    const provenance = record[PROVENANCE_HEADING];
     const list = record[RESPONSES_HEADING];
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
@@ -1837,6 +2028,10 @@ export function extractBlocks(
     if (reviewed !== undefined) {
       read = true;
       reports.push({ start: candidate.start, end: candidate.end, value: reviewed });
+    }
+    if (provenance !== undefined) {
+      read = true;
+      classified.push({ start: candidate.start, end: candidate.end, value: provenance });
     }
     if (Array.isArray(map)) {
       read = true;
@@ -1881,15 +2076,21 @@ export function extractBlocks(
   );
   const parsedReview = last ? SelfReview.safeParse(last.value) : undefined;
   const selfReview = parsedReview?.success ? parsedReview.data : undefined;
+  // 出典の分類も、最後の答えだけを使う
+  const lastClassified = classified.reduce<(typeof classified)[number] | undefined>(
+    (latest, r) => (latest === undefined || r.start >= latest.start ? r : latest),
+    undefined,
+  );
   const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   return {
-    output: withoutCandidates(body, [...used, ...reports]).trim(),
+    output: withoutCandidates(body, [...used, ...reports, ...classified]).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
+    ...(lastClassified?.value !== undefined ? { provenance: lastClassified.value } : {}),
     ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),
   };
@@ -2882,6 +3083,7 @@ export function buildStepPullRequestBodyText(
   const earlier = earlierStepLines(task, step);
   const intro = `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`;
   const approval = stepApprovalLines(step).join("\n");
+  const guide = provenanceGuideLines(task.provenances?.[step]);
   return {
     main: [
       intro,
@@ -2889,6 +3091,7 @@ export function buildStepPullRequestBodyText(
       `成果のファイル：\`${path}\``,
       "",
       approval,
+      ...(guide.length > 0 ? ["", "## 確かめる所", "", ...guide] : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
       ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
     ].join("\n"),
@@ -2951,9 +3154,11 @@ export function buildStepPullRequestBodyParts(
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
+  const guide = provenanceGuideLines(task.provenances?.[step]);
   return {
     summary: [
       `sacty のタスク「${task.title}」の${name}です。マージすると${name}の承認になります。`,
+      ...(guide.length > 0 ? ["", "**確かめる所**", "", ...guide] : []),
       ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
     ].join("\n"),
     changes: [
