@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
+import { useSelectValue } from "@/lib/use-select-value";
 
 const initial: RerunTaskState = {};
 
@@ -52,8 +53,8 @@ export function RerunDialog({
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const values = state.values;
   // 説明が長いと選択肢も長くなるので、選択肢は名前だけにして、選んだイメージの説明は下に折り返して出す。
-  // 選択肢は非制御のまま、説明だけ、選んだ名前を追って出す
-  const [image, setImage] = useState(values?.image ?? "");
+  // 選択肢は非制御のまま、説明だけ、実際の選択を追って出す（閉じて開き直したときも）
+  const [image, imageRef] = useSelectValue(values?.image ?? "");
   const imageDescription = images?.find((o) => o.name === image)?.description;
   return (
     <Dialog
@@ -113,8 +114,9 @@ export function RerunDialog({
                 <select
                   id="rerun-image"
                   name="image"
+                  ref={imageRef}
                   defaultValue={values?.image ?? ""}
-                  onChange={(e) => setImage(e.target.value)}
+                  aria-describedby={imageDescription ? "rerun-image-description" : undefined}
                   data-testid="rerun-image"
                   className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm"
                 >
@@ -126,7 +128,10 @@ export function RerunDialog({
                   ))}
                 </select>
                 {imageDescription && (
-                  <p className="text-xs leading-5 wrap-anywhere text-muted-foreground">
+                  <p
+                    id="rerun-image-description"
+                    className="text-xs leading-5 wrap-anywhere text-muted-foreground"
+                  >
                     {imageDescription}
                   </p>
                 )}

@@ -1,10 +1,11 @@
 "use client";
 
 import type { StepKey } from "@sacty/core";
-import { useActionState, useState } from "react";
+import { useActionState } from "react";
 import { type ChangeStepImageState, changeStepImageAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { useMessages } from "@/i18n/client";
+import { useSelectValue } from "@/lib/use-select-value";
 
 const initial: ChangeStepImageState = {};
 
@@ -29,8 +30,8 @@ export function StepImageForm({
   const [state, formAction, pending] = useActionState(changeStepImageAction, initial);
   const id = `step-image-${step}`;
   const initialImage = options.some((o) => o.name === current) ? current : "";
-  // 選択肢は非制御のまま（自動の更新で、選んでいる途中の値を消さない。PBI-108）。説明だけ、選んだ名前を追って出す
-  const [selected, setSelected] = useState(initialImage);
+  // 選択肢は非制御のまま（自動の更新で、選んでいる途中の値を消さない。PBI-108）。説明だけ、実際の選択を追って出す
+  const [selected, selectRef] = useSelectValue(initialImage);
   const description = options.find((o) => o.name === selected)?.description;
   return (
     <form action={formAction} className="flex flex-wrap items-center gap-2">
@@ -42,8 +43,9 @@ export function StepImageForm({
       <select
         id={id}
         name="image"
+        ref={selectRef}
         defaultValue={initialImage}
-        onChange={(e) => setSelected(e.target.value)}
+        aria-describedby={description ? `${id}-description` : undefined}
         required
         data-testid={id}
         className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm"
@@ -63,7 +65,10 @@ export function StepImageForm({
         {pending ? m.changing : m.change}
       </Button>
       {description && (
-        <p className="w-full text-xs leading-5 wrap-anywhere text-muted-foreground">
+        <p
+          id={`${id}-description`}
+          className="w-full text-xs leading-5 wrap-anywhere text-muted-foreground"
+        >
           {description}
         </p>
       )}

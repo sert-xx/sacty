@@ -250,6 +250,9 @@ export function ProjectEditor({
                           {t.image}
                           <select
                             className={`${SELECT} w-full min-w-0`}
+                            aria-describedby={
+                              imageDescription ? `${uid}-target-${i}-image-description` : undefined
+                            }
                             value={target.image ?? ""}
                             onChange={(e) =>
                               updateTarget(i, { image: e.target.value || undefined })
@@ -282,7 +285,10 @@ export function ProjectEditor({
                       </Button>
                     </div>
                     {imageDescription && (
-                      <p className="text-xs leading-5 wrap-anywhere text-muted-foreground">
+                      <p
+                        id={`${uid}-target-${i}-image-description`}
+                        className="text-xs leading-5 wrap-anywhere text-muted-foreground"
+                      >
                         {t.imageDescription(imageDescription)}
                       </p>
                     )}

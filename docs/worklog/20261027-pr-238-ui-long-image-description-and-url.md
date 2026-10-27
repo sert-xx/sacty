@@ -30,4 +30,13 @@
 
 ## レビューの指摘と対応
 
-なし
+- [要修正] 説明の状態が変更のイベントでしか変わらず、工程のイメージの変更に失敗してフォームが初期値に戻ったときや、
+  再実行のダイアログを選んで送らずに閉じて開き直したときに、選択欄と説明が食い違う。
+  - `apps/web/src/lib/use-select-value.ts` を足し、非制御の select の値を select から読むようにした
+    （選び直し・フォームのリセットの後・付け直し・初期値の変更の後に読み直す）。工程のイメージと再実行で使う。
+  - 回帰テスト `apps/web/src/components/image-description.test.ts` を足した（失敗した変更の後に戻る・閉じて開き直すと戻る）。
+    変更前の実装では2件とも失敗し、変更後は通ることを確かめた。
+- [提案] 説明が select と関連付けられていない。
+  - 3か所とも、説明に id を付け、select の `aria-describedby` で関連付けた。
+    説明は自分で選び直したときにだけ変わるので、`aria-live` は付けていない（選び直すたびに二重に読み上げないため）。
+- `npm run typecheck`・`npx biome check .`・`npx vitest run apps/web tests/docs`：`question-form.browser`（上と同じ環境の理由）以外は通った。
