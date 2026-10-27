@@ -2258,7 +2258,7 @@ describe("工程選択での説明のまとまり", () => {
     for (const candidate of [task, { ...task, noRepo: false }]) {
       const prompt = buildOrchestratorPrompt(candidate, { repoless: { repositories: [] } });
       expect(prompt).toContain(
-        "実装する組み合わせに調査の工程は置かず、集めた情報を後の工程に渡します",
+        "実装する組み合わせに調査の工程は置かず（security-fix を除く。修正の範囲を宣言する調査を残します）、集めた情報を後の工程に渡します",
       );
       expect(prompt).not.toContain("先頭の調査");
       expect(prompt).not.toContain("迷う場合は standard");
