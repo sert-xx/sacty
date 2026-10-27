@@ -704,6 +704,14 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).toContain('"investigation": "content または bug"');
   });
 
+  it("スキルなどエージェント向けの指示をリポジトリに足す・直すタスクは、ふつう direct か skip-design にさせる", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    expect(prompt).toContain(
+      "スキル（SKILL.md）・AGENTS.mdなど、エージェント向けの指示をリポジトリに足す・直すのは、リポジトリに置く文書の変更なので、ふつうはdirectかskip-designです",
+    );
+    expect(prompt).toContain("テストや観点を決めるために要求要件・設計の工程を足さないでください");
+  });
+
   it("工程の組み合わせの説明に「PR作成」の工程を書かない。実装の中で PR を作り、マージで承認すると書く（PBI-110）", () => {
     const prompt = buildOrchestratorPrompt(task([]));
     expect(prompt).not.toContain("PR作成");
@@ -2334,6 +2342,13 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     expect(prompt).toContain("異常系と境界値は、今回の変更で新しく起こりうるものを含める");
     expect(prompt).toContain("テスト観点の数は、受け入れ条件を確かめるのに要る分だけにする");
     expect(prompt).not.toContain("受け入れ条件をすべて網羅し、異常系と境界値を含める");
+  });
+
+  it("設計は、エージェント向けの指示の文書の観点を、エージェントの振る舞いではなく文書に書かれるべきことで書かせる", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
+    expect(prompt).toContain(
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）を書く・直す観点は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）を期待する結果にする（エージェントを起動して確かめる観点にしない）",
+    );
   });
 
   it("文書と、調査が目的のタスクの調査の結果にも、最小限の初版と差し戻しで詳しくすることを書く（冒頭の2つの節は求めない）", () => {
