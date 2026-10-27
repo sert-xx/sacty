@@ -4,7 +4,7 @@
 - タスク: PBI-29
 - PR: #35
 - ブランチ: feat/issue-29-reproduce
-- 関係する ADR: [不具合の修正は「再現」の工程で失敗するテストを書かせ、sacty がテストの失敗を確かめてから承認なしに実装へ進める](../adr/20261012-0516-superseded-bugfix-reproduce-step.md)、[実装する工程の組み合わせの先頭に、人間の承認を挟まない前段の調査を置く](../adr/20261012-0516-preliminary-investigation-without-approval.md)
+- 関係する ADR: [不具合の修正は「再現」の工程で失敗するテストを書かせ、sacty がテストの失敗を確かめてから承認なしに実装へ進める](../adr/20261012-0516-superseded-bugfix-reproduce-step.md)、[実装する工程の組み合わせの先頭に、人間の承認を挟まない前段の調査を置く](../adr/20261012-0516-superseded-preliminary-investigation-without-approval.md)
 
 ## 目的
 

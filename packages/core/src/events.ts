@@ -41,18 +41,18 @@ export const STEP_PLANS = {
   /** 依頼された単発の外部操作を実行し、結果を承認する。 */
   operation: ["operation"],
   /**
-   * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装。実装する組み合わせは、先頭に前段の調査を置き、
-   * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）。実装は、検証に通ったら PR を作り、そのマージで
-   * 承認する（PBI-110）。マージの後は、マージの後の監視（PBI-116。スキルが無ければ飛ばす）
+   * 標準：要求要件 → 設計（テスト観点）→ 実装。コードの調べは、工程を選ぶ前の情報収集が行い、そのまとめを後の工程に
+   * 渡す（前段の調査は置かない）。実装は、検証に通ったら PR を作り、そのマージで承認する（PBI-110）。マージの後は、
+   * マージの後の監視（PBI-116。スキルが無ければ飛ばす）
    */
-  standard: ["investigate", "requirements", "design", "implement", "deployment"],
+  standard: ["requirements", "design", "implement", "deployment"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
-  "skip-design": ["investigate", "requirements", "implement", "deployment"],
+  "skip-design": ["requirements", "implement", "deployment"],
   /**
-   * 依頼がそのまま要求要件になる変更：要求要件・設計を省き、調査の結果とタスクの内容から実装する。
+   * 依頼がそのまま要求要件になる変更：要求要件・設計を省き、タスクの内容と集めた情報から実装する。
    * 受け入れは、タスクの目的（依頼の内容）をテストで確かめ、ゴールガーディアンが最終レビューで判定する
    */
-  direct: ["investigate", "implement", "deployment"],
+  direct: ["implement", "deployment"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /**
@@ -67,11 +67,11 @@ export const STEP_PLANS = {
    * それぞれ実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）。子がすべて片付いたら、
    * 統合レビューを通して人間が承認すると完了する（PBI-31）
    */
-  split: ["investigate", "requirements", "design", "split", "integrate"],
+  split: ["requirements", "design", "split", "integrate"],
   /**
    * 不具合の修正：再現 → 実装。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
-  bugfix: ["investigate", "reproduce", "implement", "deployment"],
+  bugfix: ["reproduce", "implement", "deployment"],
   /**
    * セキュリティチェック：依存の脆弱性・サプライチェーン・コード・秘密情報・設定を点検し、レポートを人間が承認する。
    * 指摘は、見出し sacty-security-findings の JSON で区分ごとに出させる（区分ごとに対応のタスクを作れる）
@@ -79,7 +79,8 @@ export const STEP_PLANS = {
   "security-check": ["investigate"],
   /**
    * セキュリティ対応：前段の調査で問題を確かめて修正の範囲を宣言し、その範囲だけを直して PR にする。要求要件・設計を
-   * 置かない。sacty が差分を範囲と照らし、ゴールガーディアンが最小限の変更か（観点 SEC-MIN）を判定する
+   * 置かない。sacty が差分を範囲と照らし、ゴールガーディアンが最小限の変更か（観点 SEC-MIN）を判定する。
+   * 前段の調査を置くのはこの組み合わせだけ（範囲は実装のエージェントではなく、実装の前の工程に宣言させる）
    */
   "security-fix": ["investigate", "implement", "deployment"],
 } as const satisfies Record<string, readonly StepKey[]>;
