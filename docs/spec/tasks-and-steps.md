@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -795,7 +795,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 ![実装の検証から承認待ちまで](images/verify.svg)
 
-- 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、sacty は差分を取って、ゴールガーディアンの最終レビューに進む。
+- 実装の工程が終わると検証の待ち（`verification = "pending"`）になる。
+  sacty は、実装の PR をドラフトで作って CI を待ち（下の「最終レビューの前の実装の PR と CI」）、差分を取って、ゴールガーディアンの最終レビューに進む。
   sacty はテストを別のコンテナで実行しない（テストは、ゴールガーディアンが最終レビューの中で実行する）。
   差分を取れなければ、最終レビューをせずに一時停止する（`verify.diffUnavailable`。再開すると差分の取得からやり直す）。
 - 最終レビューは、実装後の作業領域の使い捨ての写しで、実装の工程のイメージ（無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して動かす。
@@ -831,7 +832,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     判定する観点に無い ID だけで答えたときは、読み替えずに不合格にし、理由を `review.verdictIdMismatch`（観点と答えた ID が違う）にする。
     ほかの ID も無ければ `review.verdictMissing`（判定がありません）。
 
-  合格なら、実装の工程のまま、sacty が実装の PR を作り、実装の承認待ちにする（下の「検証に通った実装の PR」）。
+  合格なら、実装の工程のまま、sacty が実装の PR のドラフトを外し、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
   コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
@@ -839,6 +840,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   環境によると判断した失敗は、実装で直す対象ではないと添えて渡す。
   続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
+  人の判断で、不合格のままレビューへ進めることもできる（下の「人がレビューへ進める」）。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
   ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、判定を記録せずに、使った分の費用を `FinalReviewFailed` に記録して一時停止する（`verify.commandMissing`）。
   このとき、ツールの名前・イメージの名前・工程（実装）を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直すか、ほかのイメージに変えるよう案内する。
@@ -876,14 +878,53 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 実装の成果物：最終レビューの欄に「人が確かめること」として出し、ゴールガーディアンが実行したテストには「環境による失敗だけ」を添える（`HumanChecks`）。どちらも無ければ出さない。
   - 環境による失敗だけで通ったテストは、対応表の実行結果を「テスト合格」にする（`verificationResults` の `passed`）。
 
+### 最終レビューの前の実装の PR と CI
+
+- 実装の工程が終わって検証の待ちになったら、最終レビューの前に、sacty が実装の作業領域をコミットしてプッシュし、実装の PR をドラフトで作る（`draft`）。
+  エージェントは使わない。
+  コミットの日時は、実装の工程が終わった時刻にする（再開しても同じコミットになる。検証に通った後も内容が同じなので、同じコミットのままドラフトを外す）。
+- 作ったら `PullRequestPublished`（`verifying`。ドラフトにしたら `draft`）を記録する。
+  承認待ちにはしない。
+  レビュー用のラベルは付けない（付けるのは、レビューへ進めるとき）。
+  - リポジトリがドラフトの PR を使えない（GitHub の 422）なら、ドラフトでない PR にする。
+  - 最終レビューに通らずにやり直した実装は、同じ PR を更新する。
+    承認待ちの後に差し戻してやり直した実装は、PR をドラフトに戻す（GraphQL の `convertPullRequestToDraft`）。
+    戻せなくても、PR の作成は失敗にしない。
+  - 実装に変更が無く、まだ PR が無ければ、PR を作らずに最終レビューに進む（通ったら `NoChangesFound`。[承認と差し戻し](approval.md#実装に変更が無いとき)）。
+  - PR を作れなければ、理由を記録して止める（`pr.failed` など）。
+    再開すると、PR の作成からやり直す。
+  - 既存の PR を引き継ぐタスク（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）は、最終レビューの前には積まない（検証に通った後に積む）。
+- 作った PR の先頭のコミットの CI を、sacty が待つ（`Task.pullRequestCi`）。
+  待つ間は最終レビューに進まず、費用もかからない。
+  画面の状態は「PR の CI を待っている」。
+  - PR の確認（60秒ごと）のたびに読む（`checkVerificationCi`）。
+    読み方と判定は、マージの後の監視と同じ（`readCi`。[マージの後の監視](deployment-watch.md#cicd-の監視)）。
+  - CI が1つも現れないまま `PULL_REQUEST_CI_GRACE_MS`（5分）たったら `none`、終わらない・読めないまま `PULL_REQUEST_CI_TIMEOUT_MS`（60分）たったら `timed_out`。
+    時間は PR を作った・更新した時刻から数える。
+  - 一時停止したタスクは読まない（再開すると待ち続ける）。
+  - 結果（`passed`・`failed`・`none`・`timed_out`）を `PullRequestCiFinished` に記録して、最終レビューに進む。
+    失敗なら、失敗したジョブとログの抜粋も持つ。
+- 最終レビューの指示（`pullRequestCiLines`）に、PR の URL と CI の結果を、指示ではない JSON のデータとして渡す。
+  gh で GitHub を読める実行（GitHub の読み取りの中継がある）なら、ゴールガーディアンは PR と CI のログも読める（読むだけ）。
+  - CI の失敗が変更によるものなら、関わる観点を不合格にさせる。
+  - 変更と関係の無い失敗と確かめられたら、不合格の理由にせず、`humanChecks` に書かせる。
+    確かめられない失敗は、変更によるものとして扱わせる。
+  - 時間切れなら、CI の結果を理由に不合格にさせず、`humanChecks` に PR の CI を確かめることを書かせる。
+  - sacty は、CI の結果だけでは不合格にしない。
+- PR の本文は、検証中であること（最終レビューの前のドラフト）を書く（`PullRequestBodyStage`）。
+  検証に通ったら、最終レビューの結果で書き直す。
+
+コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`readCi`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）
+
 ### 検証に通った実装の PR
 
 - 最終レビューに通ると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。
-  続けて sacty が、実装の作業領域をコミットしてプッシュし、PR を作る（[承認と差し戻し](approval.md#pr-での承認)）。
+  続けて sacty が、実装の作業領域をコミットしてプッシュし（最終レビューの前に作った PR と同じ内容なら、同じコミットのまま）、PR を更新してドラフトを外す（GraphQL の `markPullRequestReadyForReview`。[承認と差し戻し](approval.md#pr-での承認)）。
+  最終レビューの前に PR を作っていなければ、ここで作る。
   エージェントは使わない。
 - PR を作ったら、同じ追記で `PullRequestPublished` と、実装の提出（`StepSubmitted`。`step` は `implement`）を記録し、実装の承認待ちにする。
   実装に変更が無ければ、PR を作らずに `NoChangesFound` と実装の提出を記録する（[承認と差し戻し](approval.md#実装に変更が無いとき)）。
-- PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。
+- PR の作成・ドラフトを外すことに失敗したら、理由を記録して止める（`pr.failed`・`pr.readyFailed` など）。
   再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、一時停止・再起動の後も残る）。
 - 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。
 - 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。再開すると作る）。
@@ -897,6 +938,21 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`・`pause`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 
 コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`・`judgedByGoalForCurrent`）
+
+### 人がレビューへ進める
+
+実装の検証が続けて通らずに止まった（`verification`）タスクは、人の判断で、ゴールガーディアンの不合格のままレビューへ進められる（`submitForReview`）。
+
+- 進められるのは、実装の工程で `verification` の一時停止をしていて、PR の作成の待ちでないとき（`canOverrideVerification`）。
+  それ以外は受け付けない（`override.notAllowed`。409）。
+  停止を確かめられなかったコンテナが残っていれば、再開と同じく確かめ直してから進める。
+- 進めると `VerificationOverridden`（actor `person`）を記録し、最終レビューに通ったときと同じく PR の作成の待ち（`publishPending`）にする。
+  最終レビューはやり直さない。
+- 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする。
+- PR の本文には、人が最終レビューの不合格のままレビューへ進めたことを書き、不合格の判定と理由を残す。
+- 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。
+
+コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）
 
 ### テストの仕組みが無いタスク
 

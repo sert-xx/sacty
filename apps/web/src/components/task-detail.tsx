@@ -4,6 +4,7 @@ import {
   type ActivityEvent,
   appliedProposalFor,
   canDecideTests,
+  canOverrideVerification,
   canRechooseSteps,
   canRereview,
   canRerun,
@@ -418,6 +419,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               }
             : {})}
           reason={task.pausedReason}
+          toReview={canOverrideVerification(task)}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
           lastFailure={(() => {

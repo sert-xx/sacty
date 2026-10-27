@@ -1,6 +1,7 @@
 import {
   type ActivityEvent,
   activeStep,
+  awaitingPullRequestCi,
   awaitingRepository,
   awaitingTicketTriage,
   contextLabel,
@@ -30,6 +31,10 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "idle" && isCompleted(task)) {
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）
     return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
+  }
+  // 最終レビューの前に作った実装の PR の CI を待っている（sacty が待つ。人の出番ではない）
+  if (task.status === "idle" && task.verification === "pending" && awaitingPullRequestCi(task)) {
+    return l.state.waitingPullRequestCi;
   }
   if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
   if (task.status === "idle" && task.reproductionPending) return l.state.testsRunning;
@@ -529,6 +534,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       );
     }
     case "PullRequestPublished":
+      if (event.payload.verifying) {
+        return e.prDrafted(
+          event.payload.number,
+          event.payload.draft === true,
+          event.payload.commit.slice(0, 7),
+        );
+      }
       return event.payload.url
         ? e.prPublished(
             event.payload.number,
@@ -538,6 +550,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "NoChangesFound":
       return e.NoChangesFound;
+    case "PullRequestCiFinished":
+      return e.PullRequestCiFinished(
+        event.payload.result,
+        event.payload.failures.map((f) => (f.job ? `${f.workflow} / ${f.job}` : f.workflow)),
+      );
+    case "VerificationOverridden":
+      return e.VerificationOverridden;
     case "ContinuedFeedbackPassed":
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "PullRequestLabeled":

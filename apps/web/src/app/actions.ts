@@ -56,6 +56,7 @@ import {
   saveProject,
   saveSchedule,
   saveSettings,
+  submitTaskForReview,
   testNotification,
   voidRemark,
 } from "@/lib/daemon";
@@ -271,6 +272,23 @@ export async function resumeTaskAction(
     if (!result.ok) return { ...kept, message: result.message };
   } catch {
     return { ...kept, message: a.resumeFailed };
+  }
+  refresh();
+  return {};
+}
+
+/** 実装の検証が続けて通らずに止まったタスクを、人の判断でレビュー（実装の承認）へ進める。 */
+export async function submitForReviewAction(
+  _prev: { message?: string },
+  formData: FormData,
+): Promise<{ message?: string }> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  try {
+    const result = await submitTaskForReview(taskId);
+    if (!result.ok) return { message: result.message };
+  } catch {
+    return { message: a.toReviewFailed };
   }
   refresh();
   return {};

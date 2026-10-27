@@ -6,7 +6,7 @@ At a step with an approval gate, the task moves to the next step when a person a
 
 Requesting changes redoes the work from the chosen step. When requests for changes to the same step exceed the limit, the task goes to Escalation (waiting for a person's decision).
 
-Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md), [Open the implementation PR as a draft before the final review, let the Goal Guardian judge after waiting for CI, and on a pass mark it ready for review](../adr/20261027-2330-draft-pull-request-before-final-review.md)
 
 ## Approval in the web UI
 
@@ -26,7 +26,7 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 
 ## Approval through PRs
 
-Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened inside the Implementation step after it passes verification ([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
+Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened as a draft inside the Implementation step before the final review ([Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)), and is marked ready for review once it passes verification ([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
 When Requirements, Design, and Implementation are all approved through PRs, the branches look like this (an example where the task ID starts with 1a2b3c4d).
 
@@ -88,7 +88,9 @@ Code: `apps/daemon/src/service.ts` (`publish`), `packages/core/src/events.ts` (`
 
 ## The review label on PRs
 
-sacty adds the review label (sacty's setting `reviewLabel`) to every PR it opens (the implementation PR and the requirements and design PRs) right after opening it. This is so that the PR is taken in as a separate task (a PR-review-only task) and reviewed in a context separate from the task that opened it ([Ticket intake and GitHub](intake.en.md)). The intake label (`intakeLabel`) is not attached.
+sacty adds the review label (sacty's setting `reviewLabel`) to every PR it opens (the implementation PR and the requirements and design PRs).
+Requirements and design PRs get it right after being opened, and the implementation PR when it moves to review (when it is marked ready).
+While it is a draft before the final review, the label is not added (the record has no `label` either). This is so that the PR is taken in as a separate task (a PR-review-only task) and reviewed in a context separate from the task that opened it ([Ticket intake and GitHub](intake.en.md)). The intake label (`intakeLabel`) is not attached.
 
 - If no review label is configured, the label is not attached. Nothing is recorded.
 - It is attached even if its triage is Off (`reviewLabel` in `triageOff`). This is so that PRs opened while it was temporarily Off are taken in once it is back On, if they are still open then. Nothing is taken in while it is Off. Intake searches with `is:open is:pr`, so PRs merged or closed while it was Off are not taken in.

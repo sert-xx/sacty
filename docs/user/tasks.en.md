@@ -235,6 +235,31 @@ Even a repository without test code uses a check that mechanically validates its
 - A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
+### The implementation PR and CI
+
+When the Implementation step finishes, sacty opens the implementation PR as a draft before the final review.
+Behavior that only CI can check (fixing a workflow, for example) is part of the Goal Guardian's judgment too.
+
+1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The review label is not added yet. While it is a draft, please wait before reviewing or merging.
+2. sacty waits for the PR's CI. The task's status is "Waiting for the PR's CI". In a repository without CI it moves on after 5 minutes, and if CI does not finish, after up to 60 minutes.
+3. The Goal Guardian does the final review from the tests it ran in the workspace together with the PR's CI result.
+   - If a CI failure is caused by the change, the review fails and the implementation is redone.
+   - If a failure is unrelated to the change (the CI environment, an external service, a missing secret, and so on), the review does not fail for it, and it goes into "For a person to check".
+4. On a pass, sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval.
+
+- If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
+- If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
+- A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
+- Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR. If marking it ready fails, the task stops with the reason. Fix the cause and press "Resume" to start again from marking it ready.
+
+### When verification keeps failing
+
+If the implementation fails the tests or the final review three times in a row, the task pauses.
+In the task details, you can choose one of the following.
+
+- "Resume": redoes the implementation.
+- "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
+
 ### For a person to check
 
 What cannot be checked in the workspace (container) does not fail the final review; it is left as items a person checks before merging.
@@ -342,7 +367,7 @@ Approval in PRs proceeds in this order.
 2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
 3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
 4. When the Design PR is merged, the task moves to the Implementation step.
-   - When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). The implementation PR also contains the Requirements and Design files.
+   - When the Implementation step finishes, before the final review the implementation is committed to the task branch and opened as a draft PR from the task branch to the base branch (CI runs). When the implementation passes the tests and the Goal Guardian's final review, the PR is marked ready ([The implementation PR and CI](#the-implementation-pr-and-ci)). The implementation PR also contains the Requirements and Design files.
    - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no skill and the step was skipped, the task is completed.
    - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 

@@ -45,7 +45,7 @@ describe("GitHub の PR（PBI-10b）", () => {
       { status: 201, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
     ]);
     const pr = await new GitHubPullRequests(impl).upsert(input);
-    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/7", number: 7 });
+    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/7", number: 7, draft: false });
     expect(calls).toEqual([
       {
         url: "https://api.github.com/repos/acme/app/pulls",
@@ -54,6 +54,79 @@ describe("GitHub の PR（PBI-10b）", () => {
         auth: "Bearer ghp_secret",
       },
     ]);
+  });
+
+  it("draft なら PR をドラフトで作る", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 201,
+        json: { html_url: "https://github.com/acme/app/pull/7", number: 7, draft: true },
+      },
+    ]);
+    const pr = await new GitHubPullRequests(impl).upsert({ ...input, draft: true });
+    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/7", number: 7, draft: true });
+    expect(calls[0]?.body).toMatchObject({ draft: true });
+  });
+
+  it("リポジトリがドラフトの PR を使えなければ（422）、ドラフトでない PR にする", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 422,
+        json: { message: "Draft pull requests are not supported in this repository." },
+      },
+      { status: 201, json: { html_url: "https://github.com/acme/app/pull/8", number: 8 } },
+    ]);
+    const pr = await new GitHubPullRequests(impl).upsert({ ...input, draft: true });
+    expect(pr).toEqual({ url: "https://github.com/acme/app/pull/8", number: 8, draft: false });
+    expect(calls.map((c) => (c.body as { draft?: boolean }).draft)).toEqual([true, undefined]);
+  });
+
+  it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+      { status: 200, json: { data: { markPullRequestReadyForReview: {} } } },
+    ]);
+    const result = await new GitHubPullRequests(impl).setDraft({
+      repo: input.repo,
+      token: input.token,
+      number: 7,
+      draft: false,
+    });
+    expect(result).toEqual({ draft: false });
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ["GET", "https://api.github.com/repos/acme/app/pulls/7"],
+      ["POST", "https://api.github.com/graphql"],
+    ]);
+    const body = calls[1]?.body as { query: string; variables: unknown };
+    expect(body.query).toContain("markPullRequestReadyForReview");
+    expect(body.variables).toEqual({ id: "PR_node" });
+    expect(calls[1]?.auth).toBe("Bearer ghp_secret");
+  });
+
+  it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { number: 7, draft: false, node_id: "PR_node" } },
+      { status: 200, json: { data: { convertPullRequestToDraft: {} } } },
+      { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const args = { repo: input.repo, token: input.token, number: 7, draft: true };
+    await client.setDraft(args);
+    await client.setDraft(args);
+    expect(JSON.stringify(calls[1]?.body)).toContain("convertPullRequestToDraft");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("GraphQL の答えにエラーがあれば、ドラフトの切り替えの失敗にする", async () => {
+    const { impl } = fakeFetch([
+      { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+      { status: 200, json: { errors: [{ message: "Resource not accessible by integration" }] } },
+    ]);
+    const error = await new GitHubPullRequests(impl)
+      .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+      .catch((e: unknown) => e);
+    expect(ja(errorText(error))).toContain("PR のドラフトを切り替えられませんでした");
+    expect(ja(errorText(error))).toContain("Resource not accessible by integration");
   });
 
   it("GitHub Enterprise Server のリポジトリは、そのホストの /api/v3 で PR を作る（PBI-40）", async () => {

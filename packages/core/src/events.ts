@@ -1643,7 +1643,23 @@ const PullRequestPublished = z.object({
      * 付けられなかった記録が無ければ、再開で付ける（付けるのは、そのときの設定のラベル）。
      */
     label: z.string().min(1).optional(),
+    /**
+     * ゴールガーディアンの最終レビューの前に、実装の PR を作った（更新した）。CI の結果を待ってから最終レビューに進む
+     * （実装の承認待ちにはしない）。それより前の記録には無い（検証に通った後に作った PR）。
+     */
+    verifying: z.literal(true).optional(),
+    /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
+    draft: z.literal(true).optional(),
   }),
+});
+
+/**
+ * 実装の検証が続けて通らずに止まった（TaskPaused の verification）タスクを、人がゴールガーディアンの不合格のまま、実装の
+ * 承認（PR のレビュー）へ進めた。sacty が実装の PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする。
+ */
+const VerificationOverridden = z.object({
+  type: z.literal("VerificationOverridden"),
+  payload: z.object({}),
 });
 
 /**
@@ -2081,6 +2097,10 @@ export const MAX_FIX_CHAIN = 3;
 export const DEPLOYMENT_CI_GRACE_MS = 5 * 60_000;
 /** CI/CD が終わるのを待つ上限（監視を始めた時刻から。PBI-89）。 */
 export const DEPLOYMENT_CI_TIMEOUT_MS = 60 * 60_000;
+/** 最終レビューの前に作った実装の PR で、CI が1つも現れないまま、これだけたったら CI が無いとみなす。 */
+export const PULL_REQUEST_CI_GRACE_MS = 5 * 60_000;
+/** 最終レビューの前に作った実装の PR の CI が終わるのを待つ上限（PR を作った・更新した時刻から）。 */
+export const PULL_REQUEST_CI_TIMEOUT_MS = 60 * 60_000;
 
 /** CI/CD の実行・チェック・コミットの状態の1件（PBI-89）。conclusion は終わったものだけ。 */
 export const CiCheck = z.object({
@@ -2119,6 +2139,21 @@ export const CiFailure = z.object({
   excerpt: z.string().optional(),
 });
 export type CiFailure = z.infer<typeof CiFailure>;
+
+/**
+ * 最終レビューの前に作った実装の PR（PullRequestPublished の verifying）の、先頭のコミットの CI の結果。passed：すべて
+ * 通った、failed：失敗があった、none：CI が無い、timed_out：時間内に終わらない・読めない。最終レビューで、ゴールガーディアンに
+ * 判断の材料として渡す（sacty は CI の結果だけでは不合格にしない）。
+ */
+const PullRequestCiFinished = z.object({
+  type: z.literal("PullRequestCiFinished"),
+  payload: z.object({
+    commit: z.string().min(1),
+    result: z.enum(["passed", "failed", "none", "timed_out"]),
+    checks: z.array(CiCheck).default([]),
+    failures: z.array(CiFailure).default([]),
+  }),
+});
 
 /**
  * 実装の PR のマージで、マージのコミットの監視を始めた（PBI-89。PullRequestMerged と同じ追記で記録する）。PBI-116 からは、
@@ -2523,6 +2558,8 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  PullRequestCiFinished,
+  VerificationOverridden,
   NoChangesFound,
   ContinuedFeedbackPassed,
   PullRequestLabeled,

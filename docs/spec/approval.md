@@ -7,7 +7,7 @@
 差し戻すと、選んだ工程からやり直す。
 同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)
 
 ## 画面での承認
 
@@ -30,7 +30,7 @@
 ## PR での承認
 
 要求要件・設計（`StepPullRequestKey`）と実装は、PR で承認する。
-実装の PR は、検証に通った後に、実装の工程の中で作る（[タスクと工程](tasks-and-steps.md#検証に通った実装の-pr)）。
+実装の PR は、実装の工程の中で、最終レビューの前にドラフトで作り（[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）、検証に通ったらドラフトを外す（[タスクと工程](tasks-and-steps.md#検証に通った実装の-pr)）。
 承認・差し戻し・PR のマージでの承認・PR の指摘の取り込みの扱いは、3つの工程で同じ。
 
 要求要件・設計・実装をすべて PR で承認するときのブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
@@ -104,7 +104,9 @@
 
 ## PR のレビュー用のラベル
 
-sacty は、作る PR すべて（実装の PR と、要求要件・設計の PR）に、作った直後にレビュー用のラベル（sacty の設定 `reviewLabel`）を付ける。
+sacty は、作る PR すべて（実装の PR と、要求要件・設計の PR）に、レビュー用のラベル（sacty の設定 `reviewLabel`）を付ける。
+要求要件・設計の PR は作った直後に、実装の PR はレビューへ進めるとき（ドラフトを外したとき）に付ける。
+最終レビューの前のドラフトの間は付けない（記録の `label` も持たない）。
 PR を別のタスク（PR のレビューだけのタスク）として取り込ませ、作ったタスクとは別のコンテキストでレビューさせるためである（[チケットの取り込みと GitHub](intake.md)）。
 取り込むラベル（`intakeLabel`）は付けない。
 

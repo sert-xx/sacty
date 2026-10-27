@@ -17,18 +17,21 @@ import {
   awaitingDeploymentCheck,
   awaitingDeploymentCi,
   awaitingGathering,
+  awaitingPullRequestCi,
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
   ChangeStepAgentInput,
   ChangeStepImageInput,
+  type CiCheck,
   type CiFailure,
   type CleanupTarget,
   type ContinuedPullRequest,
   CreateTaskInput,
   CreateTemplateTaskInput,
   canDecideTests,
+  canOverrideVerification,
   canRechooseSteps,
   canRereview,
   canRerun,
@@ -81,6 +84,8 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  PULL_REQUEST_CI_GRACE_MS,
+  PULL_REQUEST_CI_TIMEOUT_MS,
   type PullRequestMerge,
   type PullRequestTemplateUse,
   parseOrgUrl,
@@ -484,7 +489,13 @@ function serviceConnection(started: StartedServices): {
 }
 
 function awaitingVerification(task: Task): boolean {
-  return task.status === "idle" && task.verification !== undefined && !openProposal(task);
+  return (
+    task.status === "idle" &&
+    task.verification !== undefined &&
+    !openProposal(task) &&
+    // 最終レビューの前に作った実装の PR の CI を待つ間は、最終レビューに進まない（PR の確認が CI を読む）
+    !awaitingPullRequestCi(task)
+  );
 }
 
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
@@ -610,6 +621,11 @@ export type ServiceDeps = {
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
    */
   stepPullRequests?: boolean;
+  /**
+   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI を待ってから最終レビューに進むか。既定は作る。
+   * false なら、検証に通った後に PR を作る（PR の CI を待たない流れを確かめるテストで切る）。
+   */
+  draftPullRequests?: boolean;
   /** エージェントの実行ごとのセッションログの置き場所（PBI-62）。無ければ、残さない。 */
   sessionLogs?: SessionLogStore;
   /**
@@ -1055,8 +1071,60 @@ export class TaskService {
     await this.checkReviewPullRequests();
     // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
     await this.resumePullRequestLabels();
+    // 最終レビューの前に作った実装の PR の CI
+    await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+  }
+
+  /**
+   * 最終レビューの前に作った（更新した）実装の PR の CI を待っているタスクの CI を読み、終わっていれば結果を記録する。
+   * PR の確認（60秒ごと）から呼ぶ。一時停止したタスクは読まない（再開すると続ける。待つ時間は PR を作った時刻から数える）。
+   * 記録すると、最終レビューに進む。1つのタスクの失敗は、ほかのタスクを止めない。
+   */
+  async checkVerificationCi(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      const ci = task.pullRequestCi;
+      const repo = task.pullRequest?.repo;
+      if (!ci || !repo || !awaitingPullRequestCi(task) || task.status !== "idle") continue;
+      if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) continue;
+      const pauses = this.pauseCounts.get(task.id) ?? 0;
+      const usedSecrets: string[] = [];
+      try {
+        const result = await this.readCi(task, {
+          repo,
+          commit: ci.commit,
+          elapsed: this.now() - Date.parse(ci.startedAt),
+          key: `${task.id} pr`,
+          graceMs: PULL_REQUEST_CI_GRACE_MS,
+          timeoutMs: PULL_REQUEST_CI_TIMEOUT_MS,
+          usedSecrets,
+        });
+        if (!result) continue;
+        // 読んでいる間に一時停止・中止した、実装をやり直したなら記録しない（再開した後の確認で取り直す）
+        const latest = this.tasks.get(task.id);
+        if (
+          latest?.status !== "idle" ||
+          !awaitingPullRequestCi(latest) ||
+          latest.pullRequestCi?.commit !== ci.commit ||
+          this.cancelling.has(task.id) ||
+          this.pauseRequested.has(task.id) ||
+          (this.pauseCounts.get(task.id) ?? 0) !== pauses
+        ) {
+          continue;
+        }
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: { type: "PullRequestCiFinished", payload: { commit: ci.commit, ...result } },
+          },
+        ]);
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の PR の CI を確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
   }
 
   /**
@@ -1228,6 +1296,98 @@ export class TaskService {
   }
 
   /**
+   * コミットの CI/CD の状態を読み、終わっていれば結果を返す（PBI-89。マージの後の監視と、最終レビューの前に作った実装の PR）。
+   * 待つなら undefined。読めない（認証・ネットワーク）なら待ち、時間の上限（timeoutMs）を過ぎていれば時間切れ。1つも無ければ
+   * graceMs を過ぎるまで待ってから none。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。
+   * 失敗があれば、失敗したジョブとログの抜粋を読む。
+   */
+  private async readCi(
+    task: Task,
+    input: {
+      repo: string;
+      commit: string;
+      elapsed: number;
+      key: string;
+      graceMs: number;
+      timeoutMs: number;
+      usedSecrets: string[];
+    },
+  ): Promise<
+    | {
+        result: "passed" | "failed" | "none" | "timed_out";
+        checks: CiCheck[];
+        failures: CiFailure[];
+      }
+    | undefined
+  > {
+    const { repo, commit, elapsed, key, usedSecrets } = input;
+    let token: string;
+    let snapshot: Awaited<ReturnType<CiStatusReader["snapshot"]>>;
+    try {
+      if (!this.deps.ci) throw new Error("CI/CD の状態を読む口がありません");
+      token = await this.githubToken(task, repo, usedSecrets);
+      snapshot = await this.deps.ci.snapshot({ repo, token, commit });
+    } catch (error) {
+      console.warn(
+        `[daemon] ${repo} のコミット ${commit} の CI/CD の状態を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return elapsed >= input.timeoutMs
+        ? { result: "timed_out", checks: [], failures: [] }
+        : undefined;
+    }
+    // 記録するのは、失敗・終わっていないものを先に 50 件まで（作業履歴を膨らませない）
+    const checks = [...snapshot.checks]
+      .sort(
+        (a, b) =>
+          Number(isFailedConclusion(b)) - Number(isFailedConclusion(a)) ||
+          Number(b.status === "pending") - Number(a.status === "pending"),
+      )
+      .slice(0, 50);
+    if (snapshot.checks.length === 0) {
+      // ワークフローの作成には少し時間がかかるので、しばらく待ってから CI/CD が無いと決める
+      return elapsed >= input.graceMs ? { result: "none", checks: [], failures: [] } : undefined;
+    }
+    if (snapshot.checks.some((c) => c.status === "pending")) {
+      this.ciSettled.delete(key);
+      return elapsed >= input.timeoutMs ? { result: "timed_out", checks, failures: [] } : undefined;
+    }
+    // すべて終わっていても、前の確認と同じになるまで（後から別のワークフローが現れないか）1回待つ
+    const signature = JSON.stringify(
+      snapshot.checks.map((c) => [c.kind, c.name, c.url ?? "", c.conclusion ?? ""]).sort(),
+    );
+    if (this.ciSettled.get(key) !== signature && elapsed < input.timeoutMs) {
+      this.ciSettled.set(key, signature);
+      return undefined;
+    }
+    this.ciSettled.delete(key);
+    const failedChecks = snapshot.checks.filter(isFailedConclusion);
+    if (failedChecks.length === 0) return { result: "passed", checks, failures: [] };
+    let failures: CiFailure[] = [];
+    try {
+      failures = await this.deps.ci.failures({
+        repo,
+        token,
+        runs: snapshot.failedRuns,
+        secrets: usedSecrets,
+      });
+    } catch (error) {
+      console.warn(
+        `[daemon] ${repo} の失敗したジョブを読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+    // ワークフローの実行の外のもの（ほかのアプリのチェック・コミットの状態）も、失敗として書く
+    for (const c of failedChecks) {
+      if (c.kind === "workflow" && failures.some((f) => f.workflow === c.name)) continue;
+      failures.push({
+        workflow: c.name,
+        conclusion: c.conclusion ?? "",
+        ...(c.url ? { url: c.url } : {}),
+      });
+    }
+    return { result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) };
+  }
+
+  /**
    * マージのコミットの CI/CD の状態を読み、終わっていれば結果を記録する（PBI-89）。読めない（認証・ネットワーク）なら
    * 記録せず、次の確認でやり直す（時間の上限を過ぎていれば時間切れ）。通ったら、デプロイの確認のスキルを探す。
    */
@@ -1253,75 +1413,21 @@ export class TaskService {
       }
       this.append(latest, [{ actor: "sacty", event: { type: "DeploymentCiFinished", payload } }]);
     };
-    let token: string;
-    let snapshot: Awaited<ReturnType<CiStatusReader["snapshot"]>>;
-    try {
-      if (!this.deps.ci) throw new Error("CI/CD の状態を読む口がありません");
-      token = await this.githubToken(task, watch.repo, usedSecrets);
-      snapshot = await this.deps.ci.snapshot({ repo: watch.repo, token, commit });
-    } catch (error) {
-      console.warn(
-        `[daemon] ${watch.repo} のコミット ${commit} の CI/CD の状態を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-      );
-      if (elapsed >= DEPLOYMENT_CI_TIMEOUT_MS)
-        record({ result: "timed_out", checks: [], failures: [] });
+    const ci = await this.readCi(task, {
+      repo: watch.repo,
+      commit,
+      elapsed,
+      key: task.id,
+      graceMs: DEPLOYMENT_CI_GRACE_MS,
+      timeoutMs: DEPLOYMENT_CI_TIMEOUT_MS,
+      usedSecrets,
+    });
+    if (!ci) return;
+    if (ci.result !== "passed") {
+      record(ci);
       return;
     }
-    // 記録するのは、失敗・終わっていないものを先に 50 件まで（作業履歴を膨らませない）
-    const checks = [...snapshot.checks]
-      .sort(
-        (a, b) =>
-          Number(isFailedConclusion(b)) - Number(isFailedConclusion(a)) ||
-          Number(b.status === "pending") - Number(a.status === "pending"),
-      )
-      .slice(0, 50);
-    if (snapshot.checks.length === 0) {
-      // ワークフローの作成には少し時間がかかるので、しばらく待ってから CI/CD が無いと決める
-      if (elapsed >= DEPLOYMENT_CI_GRACE_MS) record({ result: "none", checks: [], failures: [] });
-      return;
-    }
-    if (snapshot.checks.some((c) => c.status === "pending")) {
-      this.ciSettled.delete(task.id);
-      if (elapsed >= DEPLOYMENT_CI_TIMEOUT_MS)
-        record({ result: "timed_out", checks, failures: [] });
-      return;
-    }
-    // すべて終わっていても、前の確認と同じになるまで（後から別のワークフローが現れないか）1回待つ
-    const signature = JSON.stringify(
-      snapshot.checks.map((c) => [c.kind, c.name, c.url ?? "", c.conclusion ?? ""]).sort(),
-    );
-    if (this.ciSettled.get(task.id) !== signature && elapsed < DEPLOYMENT_CI_TIMEOUT_MS) {
-      this.ciSettled.set(task.id, signature);
-      return;
-    }
-    this.ciSettled.delete(task.id);
-    const failedChecks = snapshot.checks.filter(isFailedConclusion);
-    if (failedChecks.length > 0) {
-      let failures: CiFailure[] = [];
-      try {
-        failures = await this.deps.ci.failures({
-          repo: watch.repo,
-          token,
-          runs: snapshot.failedRuns,
-          secrets: usedSecrets,
-        });
-      } catch (error) {
-        console.warn(
-          `[daemon] ${watch.repo} の失敗したジョブを読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-        );
-      }
-      // ワークフローの実行の外のもの（ほかのアプリのチェック・コミットの状態）も、失敗として書く
-      for (const c of failedChecks) {
-        if (c.kind === "workflow" && failures.some((f) => f.workflow === c.name)) continue;
-        failures.push({
-          workflow: c.name,
-          conclusion: c.conclusion ?? "",
-          ...(c.url ? { url: c.url } : {}),
-        });
-      }
-      record({ result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) });
-      return;
-    }
+    const { checks } = ci;
     // 通った。マージのコミットに、デプロイの確認のスキルがあるかを見る（読めなければ、次の確認でやり直す）
     const skill = await this.deploymentSkill(task, commit, usedSecrets);
     if (skill === "retry") {
@@ -5859,7 +5965,8 @@ export class TaskService {
     // 検証に通った実装の PR は、実装の工程の中で、エージェントではなく sacty が作る（PBI-110。予算の上限に達していても作る。
     // 費用はかからず、人の承認を待つだけなので）
     if (step === "implement" && task.publishPending) {
-      return this.publish(this.mustGet(task.id), config.config);
+      await this.publish(this.mustGet(task.id), config.config);
+      return;
     }
 
     if (budgetState(task.budget) === "exceeded") {
@@ -7070,6 +7177,13 @@ export class TaskService {
       ]);
       return;
     }
+    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI を待つ（PR の確認が CI を読み、終わったら最終レビューに
+    // 進む）。CI の結果は、最終レビューでゴールガーディアンの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
+    if (!task.pullRequestCi && this.draftsPullRequest(task)) {
+      const drafted = await this.publish(task, config.config, { verifying: true });
+      if (drafted !== "no_changes") return;
+    }
+    const prCi = this.mustGet(task.id).pullRequestCi;
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
     // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
     const viewpointIds = finalReviewViewpointIds(task);
@@ -7181,6 +7295,14 @@ export class TaskService {
             buildFinalReviewPrompt(current, diff, {
               ...(testCommand ? { testCommand } : {}),
               ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+              ...(prCi?.result
+                ? {
+                    pullRequest: {
+                      ...(current.pullRequest?.url ? { url: current.pullRequest.url } : {}),
+                      ci: prCi,
+                    },
+                  }
+                : {}),
             }),
             // 起動したサービスの接続先（PBI-47）
             ...servicePromptLines(started?.services ?? []),
@@ -7615,16 +7737,33 @@ export class TaskService {
   }
 
   /**
-   * 検証に通った実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作って、
-   * 実装の承認待ちで止める（PBI-110）。コミットは、エージェントが触れない退避した git の
-   * メタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
+   * 最終レビューの前に、実装の PR（ドラフト）を作るタスクか。既存の PR を引き継ぐタスクは、人の PR なので作らない（検証に
+   * 通ってから積む）。
    */
-  private async publish(task: Task, config: SactyConfig): Promise<void> {
+  private draftsPullRequest(task: Task): boolean {
+    return this.deps.draftPullRequests !== false && !task.continuedPullRequest && !!task.repository;
+  }
+
+  /**
+   * 実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作る（PBI-110）。コミットは、エージェントが
+   * 触れない退避した git のメタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
+   * - verifying（最終レビューの前）：PR をドラフトで作り（更新したなら、ドラフトに戻し）、承認待ちにせずに CI を待つ。
+   *   実装に変更が無く、まだ PR が無ければ、何も記録せずに no_changes を返す（最終レビューに進み、通った後にここで
+   *   変更なしを記録する）
+   * - そうでなければ（検証に通った・人がレビューへ進めた）：PR のドラフトを外し、実装の承認待ちで止め、レビュー用の
+   *   ラベルを付ける
+   */
+  private async publish(
+    task: Task,
+    config: SactyConfig,
+    options: { verifying?: boolean } = {},
+  ): Promise<"published" | "no_changes" | "stopped"> {
+    const verifying = options.verifying === true;
     const target = this.targetRepository(task, config);
     const dir = this.repoDir(task);
     const gitDir = this.trustedGitDir(task);
     const usedSecrets: string[] = [];
-    const fail = (text: DaemonText) =>
+    const fail = (text: DaemonText): "stopped" => {
       this.append(task, [
         {
           actor: "sacty",
@@ -7634,23 +7773,24 @@ export class TaskService {
           },
         },
       ]);
-    if (!target.ok) {
-      fail(message("pr.unavailable", { detail: target.message }));
-      return;
-    }
+      return "stopped";
+    };
+    if (!target.ok) return fail(message("pr.unavailable", { detail: target.message }));
     if (!task.repository || !existsSync(dir) || !existsSync(gitDir)) {
-      fail(message("pr.workspaceMissing"));
-      return;
+      return fail(message("pr.workspaceMissing"));
     }
     const repo = target.repo;
     // 既存の PR を引き継ぐタスクは、その PR の元のブランチに実装を積み、新しい PR を作らない
     const continued = task.continuedPullRequest;
-    if (continued) return this.publishContinued(task, continued, fail, usedSecrets);
+    if (continued) {
+      await this.publishContinued(task, continued, fail, usedSecrets);
+      return "published";
+    }
     // タスクブランチのあるタスク（PBI-57）は、タスクブランチに実装を積み、タスクブランチからベースブランチへの PR にする
     const taskBranch = task.taskBranch;
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
     // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
-    if (this.stopRequested(task.id)) return;
+    if (this.stopRequested(task.id)) return "stopped";
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
@@ -7673,14 +7813,13 @@ export class TaskService {
             (p) => !paths.includes(p),
           );
           if (unexpected.length > 0) {
-            fail(
+            return fail(
               message("pr.taskBranchChanged", {
                 branch: taskBranch.branch,
                 paths: unexpected.slice(0, 10).join(", "),
                 count: unexpected.length,
               }),
             );
-            return;
           }
         }
       }
@@ -7691,9 +7830,12 @@ export class TaskService {
         parent,
         branch,
         message: `${task.title}\n\nsacty task ${task.id}`,
-        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-        // （PR は最終レビューに通った後に作るので、通常は最終レビューの日時になる）
-        date: task.lastReview?.at ?? task.createdAt,
+        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
+        // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
+        // 内容が同じなので、そのコミットのままになる
+        date: verifying
+          ? this.outputAt(task, "implement")
+          : (task.lastReview?.at ?? task.createdAt),
         authEnv,
         ...(keep ? { keep } : {}),
       });
@@ -7717,13 +7859,13 @@ export class TaskService {
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task),
-        buildPullRequestBodyParts(task),
+        buildPullRequestBodyText(task, { verifying }),
+        buildPullRequestBodyParts(task, { verifying }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
-      // 実装の承認待ちにする（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。そのときの一時停止は、
-      // 承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
-      if (this.stopRequested(task.id)) return;
+      // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
+      // 一時停止は、承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
+      if (this.stopRequested(task.id)) return "stopped";
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
@@ -7732,7 +7874,52 @@ export class TaskService {
         title: task.title,
         body,
         number,
+        ...(verifying ? { draft: true } : {}),
       });
+      let draft = pr.draft;
+      if (verifying) {
+        // 前の提出でレビューへ進めた PR を更新した（PR の指摘で実装をやり直した）なら、検証の間はドラフトに戻す。戻せなく
+        // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない
+        if (number && !draft) {
+          draft = await this.deps.pulls
+            .setDraft({ repo: prRepo, token, number: pr.number, draft: true })
+            .then((r) => r.draft)
+            .catch((error: unknown) => {
+              console.warn(
+                `[daemon] PR #${pr.number}（${prRepo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+              );
+              return false;
+            });
+        }
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestPublished",
+              payload: {
+                branch,
+                commit,
+                template,
+                url: pr.url,
+                number: pr.number,
+                repo: prRepo,
+                verifying: true,
+                ...(draft ? { draft: true as const } : {}),
+              },
+            },
+          },
+        ]);
+        return "published";
+      }
+      // レビューへ進める（検証に通った・人がレビューへ進めた）ので、ドラフトを外す。外せなければ、承認待ちにせずに止める
+      // （再開すると、ここからやり直す）。人が先に外していれば何もしない
+      if (task.pullRequest?.draft && task.pullRequest.number === pr.number) {
+        try {
+          await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
+        } catch (error) {
+          return fail(message("pr.readyFailed", { detail: errorText(error) }));
+        }
+      }
       const submitted = this.append(task, [
         {
           actor: "sacty",
@@ -7755,12 +7942,15 @@ export class TaskService {
       this.checkBudget(submitted);
       // レビュー用のラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88・PBI-99）
       await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
+      return "published";
     } catch (error) {
       // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
       // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
       // 今までどおり止める（開いている PR をどうするかは人が決める）
       if (error instanceof NothingToCommitError && !task.pullRequest) {
+        // 最終レビューの前なら、PR を作らずに最終レビューに進む（通った後に、変更なしを記録する）
+        if (verifying) return "no_changes";
         const submitted = this.append(task, [
           {
             actor: "sacty",
@@ -7772,9 +7962,9 @@ export class TaskService {
           this.implementSubmitted(task),
         ]);
         this.checkBudget(submitted);
-        return;
+        return "published";
       }
-      fail(message("pr.failed", { detail: errorText(error) }));
+      return fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
 
@@ -11182,6 +11372,26 @@ export class TaskService {
     // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
     this.fallbackTried.delete(id);
     return this.append(task, events);
+  }
+
+  /**
+   * 実装の検証が続けて通らずに止まったタスクを、人の判断で、ゴールガーディアンの不合格のまま実装の承認（PR のレビュー）へ
+   * 進める。sacty が実装の PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする（検証に通ったときと同じ）。
+   * 最終レビューはやり直さない。
+   */
+  submitForReview(id: string, options: { containersConfirmed?: boolean } = {}): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (!canOverrideVerification(task)) {
+      throw new InvalidOperationError(message("override.notAllowed"));
+    }
+    // 止めたコンテナがまだ残っているかもしれないうちは、進めない（作業領域を取り合うため）
+    if (task.unstoppedRuns?.length && !options.containersConfirmed) {
+      throw new InvalidOperationError(this.notStopped(task.unstoppedRuns));
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "VerificationOverridden", payload: {} } },
+    ]);
   }
 
   private gateTask(id: string, step: StepKey, submission: number): Task {

@@ -69,7 +69,7 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 
 ## Reviewing PRs that sacty created
 
-If the "Label for PR reviews" is set, sacty adds that label to every PR it creates (implementation PRs, and Requirements and Design PRs). It does not add the label to import.
+If the "Label for PR reviews" is set, sacty adds that label to every PR it creates (implementation PRs, and Requirements and Design PRs). It does not add the label to import. The implementation PR is opened as a draft before the final review and gets the label when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
 
 - If the repository does not have the label, sacty creates it first. If sacty cannot add the label (permissions and so on), the PR is left as it is, and the reason appears in the task's Activity.
 - A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR.

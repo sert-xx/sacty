@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #7、PBI-10
 - 置き換え元: なし
-- 置き換え先: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](20261010-2314-superseded-github-access-via-gh-accounts.md)（PR を token_secret の設定で作る部分）、[PR のあるタスクの成果物チェックは、最新の提出の PR がマージされたことを承認とみなし、画面では承認しない](20261011-0010-superseded-deliverable-check-by-pr-merge.md)（成果物チェックを画面で承認して完了にする部分）、[「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](20261015-1430-implement-step-opens-pull-request.md)（最終レビューの後の別の工程で PR を作り、成果物チェックのゲートで止める部分）
+- 置き換え先: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](20261010-2314-superseded-github-access-via-gh-accounts.md)（PR を token_secret の設定で作る部分）、[PR のあるタスクの成果物チェックは、最新の提出の PR がマージされたことを承認とみなし、画面では承認しない](20261011-0010-superseded-deliverable-check-by-pr-merge.md)（成果物チェックを画面で承認して完了にする部分）、[「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](20261015-1430-superseded-implement-step-opens-pull-request.md)（最終レビューの後の別の工程で PR を作り、成果物チェックのゲートで止める部分）
 
 ## 背景
 

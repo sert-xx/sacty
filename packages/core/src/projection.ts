@@ -51,6 +51,31 @@ export type PreviousReview = NonNullable<
 >["previousReview"];
 
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
+/**
+ * 最終レビューの前に作った実装の PR の CI（PullRequestPublished の verifying と PullRequestCiFinished）。startedAt は PR を
+ * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。
+ */
+export type PullRequestCi = { commit: string; startedAt: string } & Partial<
+  Omit<PayloadOf<"PullRequestCiFinished">, "commit">
+> & { finishedAt?: string };
+
+/**
+ * 人が、ゴールガーディアンの不合格のまま実装の承認へ進められるか（VerificationOverridden）。実装の検証が続けて通らずに
+ * 止まった（TaskPaused の verification）実装の工程。
+ */
+export function canOverrideVerification(task: Task): boolean {
+  return (
+    task.status === "paused" &&
+    task.pausedReason === "verification" &&
+    activeStep(task) === "implement" &&
+    !task.publishPending
+  );
+}
+
+/** 最終レビューの前に作った実装の PR の CI を待っているか（待つ間は、最終レビューに進まない）。 */
+export function awaitingPullRequestCi(task: Task): boolean {
+  return Boolean(task.pullRequestCi && task.pullRequestCi.result === undefined);
+}
 export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
 /**
@@ -481,6 +506,13 @@ export type Task = {
    * 中で PR を作り、実装の承認待ちにする。PR を作る（変更が無いと分かる）か、前の工程からやり直すと無くなる。
    */
   publishPending?: true;
+  /**
+   * 最終レビューの前に作った（更新した）実装の PR の CI（PullRequestPublished の verifying）。result が無い間は CI を待っていて、
+   * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
+   */
+  pullRequestCi?: PullRequestCi;
+  /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
+  verificationOverride?: { at: string; submission: number };
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
@@ -674,6 +706,7 @@ function reopen(task: Task, target: StepKey) {
   task.verifyFeedback = undefined;
   task.verifyFailures = 0;
   task.publishPending = undefined;
+  task.pullRequestCi = undefined;
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
   task.approved = Object.fromEntries(
     Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
@@ -975,6 +1008,8 @@ export function applyEvent(
           task.testMap = event.payload.testMap;
           task.addedTestCommand = event.payload.testCommand;
           task.verification = "pending";
+          // やり直した実装は、PR を更新して CI を待ち直す
+          task.pullRequestCi = undefined;
           // 前の回のテストの結果を、今回の検証の結果に見せない（今の版は、テストを最終レビューの中で実行する）
           task.lastTests = undefined;
           task.testsSkippedAt = undefined;
@@ -1327,6 +1362,7 @@ export function applyEvent(
       task.escalation = undefined;
       task.verification = undefined;
       task.publishPending = undefined;
+      task.pullRequestCi = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
       task.unstoppedRuns = undefined;
@@ -1335,6 +1371,26 @@ export function applyEvent(
       break;
 
     case "PullRequestPublished":
+      // 最終レビューの前に、実装の PR を作った（更新した）。CI を待ってから最終レビューに進む（承認待ちにはしない）
+      if (event.payload.verifying) {
+        if (
+          task.status !== "idle" ||
+          activeStep(task) !== "implement" ||
+          task.verification === undefined ||
+          task.publishPending ||
+          task.pullRequestCi
+        ) {
+          throw new ActivityIntegrityError(
+            event,
+            "the implementation is not waiting for a pull request before the final review",
+          );
+        }
+        task.pullRequest = event.payload;
+        task.pullRequestState = event.payload.number ? "open" : undefined;
+        task.pullRequestMerge = undefined;
+        task.pullRequestCi = { commit: event.payload.commit, startedAt: event.at };
+        break;
+      }
       // 実装の工程の中で、検証に通った実装の PR を作った（PBI-110）
       if (task.status !== "queued" || activeStep(task) !== "implement" || !task.publishPending) {
         throw new ActivityIntegrityError(
@@ -1348,6 +1404,38 @@ export function applyEvent(
       task.pullRequestState = event.payload.number ? "open" : undefined;
       task.pullRequestMerge = undefined;
       task.status = "idle";
+      break;
+
+    case "PullRequestCiFinished": {
+      const ci = task.pullRequestCi;
+      if (!ci || ci.result !== undefined || task.verification === undefined) {
+        throw new ActivityIntegrityError(event, "the pull request CI is not awaited");
+      }
+      if (ci.commit !== event.payload.commit) {
+        throw new ActivityIntegrityError(event, "not the commit of the pull request");
+      }
+      task.pullRequestCi = { ...ci, ...event.payload, finishedAt: event.at };
+      break;
+    }
+
+    case "VerificationOverridden":
+      // 検証が続けて通らずに止まった実装を、人がゴールガーディアンの不合格のまま実装の承認へ進めた。sacty が PR のドラフトを
+      // 外して承認待ちにする（検証に通ったときと同じく、PR の作成の待ちにする）
+      if (!canOverrideVerification(task) || task.unstoppedRuns?.length) {
+        throw new ActivityIntegrityError(event, "the verification cannot be overridden");
+      }
+      task.verification = undefined;
+      task.verifyFailures = 0;
+      task.verifyFeedback = undefined;
+      task.publishPending = true;
+      task.verificationOverride = {
+        at: event.at,
+        submission: (task.submissions.implement ?? 0) + 1,
+      };
+      task.status = "queued";
+      task.pausedReason = undefined;
+      task.pausedMessage = undefined;
+      task.resumeTo = undefined;
       break;
 
     case "ContinuedFeedbackPassed":
@@ -1604,7 +1692,11 @@ export function applyEvent(
     }
 
     case "BranchPushed":
-      if (activeStep(task) !== "implement" || !task.publishPending) {
+      // 検証に通った後と、最終レビューの前（CI を待つための PR を作る。検証の待ちで、まだ PR の CI を待っていない）
+      if (
+        activeStep(task) !== "implement" ||
+        !(task.publishPending || (task.verification !== undefined && !task.pullRequestCi))
+      ) {
         throw new ActivityIntegrityError(
           event,
           "the implementation is not waiting for a pull request",

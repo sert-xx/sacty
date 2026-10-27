@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #23、PBI-17
 - 置き換え元: なし
-- 置き換え先: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](20261015-1430-implement-step-opens-pull-request.md)（候補の組み合わせの最後に PR作成の工程を置く部分）
+- 置き換え先: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](20261015-1430-superseded-implement-step-opens-pull-request.md)（候補の組み合わせの最後に PR作成の工程を置く部分）
 
 ## 背景
 
