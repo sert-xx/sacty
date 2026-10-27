@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-27（UTC）
 - タスク: なし
-- PR: なし
+- PR: #238
 - ブランチ: claude/fervent-hypatia-b1p8de
 - 関係する ADR: なし
 
