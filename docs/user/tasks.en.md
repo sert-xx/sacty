@@ -430,7 +430,7 @@ In the following cases, check every item.
 | Shown | Meaning |
 | --- | --- |
 | No subagent could be started, so the author sorted the items itself | The classification may be lenient |
-| No provenance record | The agent did not report the classification |
+| No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
 ## Changing a step's image
 

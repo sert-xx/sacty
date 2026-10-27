@@ -258,6 +258,72 @@ describe("project", () => {
     );
   });
 
+  it("出典の分類は工程ごとに最新の提出のものを持ち、分類の無い再提出ではその工程の分類だけを消す", () => {
+    seq = 0;
+    const classified = (id: string) => ({
+      sequential: false,
+      items: [{ id, kind: "input" as const, refs: [], excerpt: "原文の抜き出し", found: true }],
+      unclassified: [],
+    });
+    const run = (runId: string, step: "requirements" | "design", provenance?: unknown) => [
+      ev("t1", {
+        type: "AgentRunStarted",
+        payload: { runId, step, agentId: "a", authMode: "subscription" },
+      }),
+      ev("t1", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId,
+          step,
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: `# ${step}`,
+          ...(provenance === undefined ? {} : { provenance }),
+        },
+      } as EventInput),
+    ];
+    const base = [
+      created("t1"),
+      steps("t1"),
+      ...run("r1", "requirements", classified("R-1")),
+      ev("t1", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "t1",
+        { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+        "person",
+      ),
+      ...run("r2", "design", classified("TV-1")),
+      ev("t1", { type: "StepSubmitted", payload: { step: "design", submission: 1 } }),
+      ev(
+        "t1",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "design",
+            target: "design",
+            round: 1,
+            remarks: [{ id: "design-1-1", text: "x" }],
+          },
+        },
+        "person",
+      ),
+    ];
+    const task = project(base).get("t1");
+    expect(task?.provenances).toEqual({
+      requirements: classified("R-1"),
+      design: classified("TV-1"),
+    });
+    // 分類の無い記録（分類より前の形）で出し直したら、設計の古い分類は残さず、要求要件の分類は残す
+    const rerun = project([...base, ...run("r3", "design")]).get("t1");
+    expect(rerun?.provenances).toEqual({ requirements: classified("R-1") });
+    // 記録なし（null）で出し直したら、記録なしにする
+    const missing = project([...base, ...run("r3", "design", null)]).get("t1");
+    expect(missing?.provenances?.design).toBeNull();
+  });
+
   it("PBI-7の作業履歴（差し戻し先なし）は、承認ゲートの工程への差し戻しとして読む", () => {
     seq = 0;
     const task = project([

@@ -132,7 +132,9 @@ To narrow down what the approver looks at, the Requirements and Design steps (`P
 - The kinds (`kind`) are quote (`input`; an item that states what the input says as is), derived (`derived`; derived from the paired unwanted behavior, the investigation result, or conventions of existing code), and inference (`inference`; anything else).
 - sacty reads only the last answer (`extractBlocks`) and removes every answer from the deliverable. An unreadable answer is also found by its heading and removed, as with the self-review report.
 - The answer is checked and recorded as follows (`checkProvenance`).
+  - An answer whose `mode` is neither `subagent` nor `sequential` is treated as unreadable, because it is unknown who classified the items.
   - Only IDs of items in the deliverable are used (`R-n` in the text for Requirements, the test viewpoint IDs for Design; `provenanceIds`). Unknown IDs, repeated IDs, and unknown kinds are dropped. Items without a classification go to `unclassified`.
+  - In Design, the answer's `TV-n` (the n-th in the test viewpoint JSON) is converted to the ID sacty gave (`viewpointRename`). sacty renumbers the viewpoints after dropping those with missing fields, so the position can differ. The classifications of dropped viewpoints are discarded.
   - The excerpt (`excerpt`) is matched against the whole input, and whether it was found is kept in `found`. Before matching, both are normalized to NFKC and whitespace and Markdown symbols (`*`, `_`, backquote, `>`, `#`, `|`) are removed. An excerpt shorter than 4 characters after this is treated as not found. The excerpt of an inference is dropped.
   - The result is recorded in `provenance` of `AgentRunCompleted`. When there is no answer, or it cannot be read or its shape is wrong, it is `null` (no record). The step does not stop.
   - The projection keeps the classification of the latest submission per step in `provenances`. When the text is replaced outside a step run, it becomes no record, as with the self-review.
@@ -142,7 +144,7 @@ To narrow down what the approver looks at, the Requirements and Design steps (`P
 
 Related ADR: [Have a subagent other than the author classify the provenance of requirements and design items, to narrow down what the approver looks at](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-Code: `apps/daemon/src/prompts.ts` (`provenanceLines`, `provenanceInputs`, `checkProvenance`, `provenanceIds`, `provenanceGuideLines`, `PROVENANCE_HEADING`), `apps/daemon/src/service.ts`, `packages/core/src/events.ts` (`Provenance`, `PROVENANCE_STEPS`, `needsCheck`), `packages/core/src/projection.ts`, `apps/web/src/components/provenance.tsx` (`ProvenanceNote`)
+Code: `apps/daemon/src/prompts.ts` (`provenanceLines`, `provenanceInputs`, `checkProvenance`, `provenanceIds`, `viewpointRename`, `provenanceGuideLines`, `PROVENANCE_HEADING`), `apps/daemon/src/service.ts`, `packages/core/src/events.ts` (`Provenance`, `PROVENANCE_STEPS`, `needsCheck`), `packages/core/src/projection.ts`, `apps/web/src/components/provenance.tsx` (`ProvenanceNote`)
 
 ## Plans
 
@@ -610,7 +612,7 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).
 - At startup, the following are removed too.
   - Workspaces that belong to no task.
-  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
+  - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_input`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
     They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
   - The candidates are fixed when the cleanup starts (before listening for the API and starting the worker). Ones of runs, questions, and tasks started during the cleanup are not removed.
 - Limits on what is removed:

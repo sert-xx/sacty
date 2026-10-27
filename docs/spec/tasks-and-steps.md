@@ -190,7 +190,9 @@
 - 区分（`kind`）は、引用（`input`。Input に書かれたことをそのまま項目にしたもの）・導出（`derived`。対になる異常系・調査の結果・既存コードの規約から導いたもの）・推論（`inference`。それ以外）。
 - sacty は最後の答えだけを読み（`extractBlocks`）、答えはすべて成果物の本文から取り除く。読めない答えも、セルフレビューの報告と同じく見出しで見つけて取り除く。
 - 答えは、次のように確かめて記録する（`checkProvenance`）。
+  - `mode` が `subagent`・`sequential` のどちらでもない答えは、誰が分類したかが分からないので読めないものとして扱う。
   - 成果物にある項目の ID（要求要件は本文の `R-n`、設計はテスト観点の ID。`provenanceIds`）だけを使う。無い ID・2回目以降の同じ ID・知らない区分は捨てる。分類の無い項目は `unclassified` にする。
+  - 設計の答えの `TV-n`（テスト観点の JSON の n 番目）は、sacty が振った ID に直す（`viewpointRename`）。sacty は項目の欠けた観点を除いて ID を振り直すので、元の位置とずれることがある。欠けた観点の分類は捨てる。
   - 抜き出し（`excerpt`）を Input の全体と照らし、見つかったかを `found` に残す。照らす前に、両方を NFKC にそろえ、空白と Markdown の記号（`*`・`_`・バッククォート・`>`・`#`・`|`）を除く。そろえた後で 4 文字に満たない抜き出しは、見つからない扱いにする。推論の抜き出しは捨てる。
   - 読んだ結果を `AgentRunCompleted` の `provenance` に記録する。答えが無い・読めない・形が違うときは `null`（記録なし）にする。工程は止めない。
   - 投影は、工程ごとに最新の提出の分類を `provenances` に持つ。工程の実行の外で本文を差し替えたときは、セルフレビューと同じく記録なしにする。
@@ -201,7 +203,7 @@
 
 関係する ADR: [承認する人が見る所を絞るため、要求要件・設計の項目の出典を、書いたエージェントとは別のサブエージェントに分類させる](../adr/20261027-1427-classify-provenance-before-approval.md)
 
-コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
+コード: `apps/daemon/src/prompts.ts`（`provenanceLines`・`provenanceInputs`・`checkProvenance`・`provenanceIds`・`viewpointRename`・`provenanceGuideLines`・`PROVENANCE_HEADING`）、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`（`Provenance`・`PROVENANCE_STEPS`・`needsCheck`）、`packages/core/src/projection.ts`、`apps/web/src/components/provenance.tsx`（`ProvenanceNote`）
 
 ## 進め方の組み合わせ
 
@@ -1005,7 +1007,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - デーモンの起動のとき（[デーモンの起動と終了](daemon-lifecycle.md#デーモンの起動の順序)）。
 - 起動のときには、次も消す。
   - どのタスクのものでもない作業領域。
-  - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
+  - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_input`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
     動いている実行・停止を確かめられなかった実行のものでないもの。
     実行の終わりに消すが、実行中にデーモンを止めると残り、再起動の後は新しい実行 ID でやり直すので二度と使わない。
   - 消す候補は、片付けを始めたとき（API の待ち受け・ワーカーを始める前）に決める。片付けの間に始まった実行・質問・作ったタスクのものは消さない。

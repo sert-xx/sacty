@@ -1225,17 +1225,26 @@ export function checkProvenance(
   value: unknown,
   inputs: readonly { text: string }[],
   ids: readonly string[],
+  /**
+   * 答えの ID を成果物の ID に直す対応（設計のテスト観点。元の配列の n 番目の TV-n → 振った ID。項目の欠けた観点は
+   * undefined）。渡せば、対応に無い ID・対応先の無い ID の分類は捨てる。
+   */
+  rename?: ReadonlyMap<string, string | undefined>,
 ): Provenance | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.items)) return undefined;
+  // 誰が分類したかが分からない答えは、確かめる所を絞る根拠にしない（記録なし）
+  const mode = text(record.mode);
+  if (mode !== "subagent" && mode !== "sequential") return undefined;
   const haystack = normalizeForMatch(inputs.map((i) => i.text).join("\n"));
   const known = new Set(ids);
   const seen = new Set<string>();
   const items: ProvenanceItem[] = [];
   for (const raw of record.items.slice(0, PROVENANCE_ITEMS_MAX)) {
     const r = (raw ?? {}) as Record<string, unknown>;
-    const id = text(r.id);
+    const answered = text(r.id);
+    const id = rename ? rename.get(answered) : answered;
     const kind = PROVENANCE_KINDS.find((k) => k === text(r.kind));
     if (!id || !kind || !known.has(id) || seen.has(id)) continue;
     seen.add(id);
@@ -1252,10 +1261,20 @@ export function checkProvenance(
     });
   }
   return {
-    sequential: text(record.mode) === "sequential",
+    sequential: mode === "sequential",
     items,
     unclassified: ids.filter((id) => !seen.has(id)),
   };
+}
+
+/**
+ * 設計の分類の答えの ID（テスト観点の JSON の n 番目を TV-n）を、sacty が振った ID に直す対応。項目の欠けた観点を除いて
+ * 振り直すので、ずれることがある。
+ */
+export function viewpointRename(
+  positions: readonly (string | undefined)[],
+): Map<string, string | undefined> {
+  return new Map(positions.map((id, i) => [`TV-${i + 1}`, id]));
 }
 
 /** 成果物で分類させる項目の ID。要求要件は本文の R-n（出てくる順）、設計はテスト観点（TV-n）。 */
@@ -1953,6 +1972,11 @@ export type Extracted = {
   provenance?: unknown;
   responses: RemarkResponse[];
   testViewpoints: TestViewpoint[];
+  /**
+   * テスト観点の JSON の元の位置（0 から）ごとの、振った ID。項目の欠けた観点は undefined。テスト観点が無ければ空。
+   * 出典の分類（元の位置の n 番目を TV-n と数える）を、振った ID に直すのに使う。
+   */
+  viewpointPositions: (string | undefined)[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
   proposal?: ExtractedProposal;
   /** 実装の工程が申告した、観点とテストの対応。 */
@@ -1999,6 +2023,7 @@ export function extractBlocks(
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
+  let viewpointPositions: (string | undefined)[] | undefined;
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
@@ -2064,7 +2089,11 @@ export function extractBlocks(
     }
     if (Array.isArray(viewpoints)) {
       read = true;
-      testViewpoints ??= toViewpoints(viewpoints);
+      if (!testViewpoints) {
+        const read = viewpointsWithPositions(viewpoints);
+        testViewpoints = read.viewpoints;
+        viewpointPositions = read.positions;
+      }
     }
     // 読んだ JSON は、表示用の本文から取り除く
     if (read) used.push(candidate);
@@ -2087,6 +2116,7 @@ export function extractBlocks(
     output: withoutCandidates(body, [...used, ...reports, ...classified]).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
+    viewpointPositions: viewpointPositions ?? [],
     proposal,
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
@@ -2164,13 +2194,27 @@ export function extractTestCommandFences(output: string): {
 }
 
 function toViewpoints(list: unknown[]): TestViewpoint[] {
-  return list
-    .map((v) => {
-      const r = (v ?? {}) as Record<string, unknown>;
-      return { title: text(r.title), input: text(r.input), expected: text(r.expected) };
-    })
-    .filter((v) => v.title && v.input && v.expected)
-    .map((v, i) => ({ id: `TV-${i + 1}`, ...v }));
+  return viewpointsWithPositions(list).viewpoints;
+}
+
+/**
+ * テスト観点を読み、元の配列の位置ごとに、振った ID（項目の欠けた観点は undefined）も返す。項目の欠けた観点を除いて
+ * ID を振り直すので、元の配列の n 番目と TV-n はずれることがある（出典の分類は、元の配列の位置で観点を指す）。
+ */
+function viewpointsWithPositions(list: unknown[]): {
+  viewpoints: TestViewpoint[];
+  positions: (string | undefined)[];
+} {
+  const viewpoints: TestViewpoint[] = [];
+  const positions = list.map((v) => {
+    const r = (v ?? {}) as Record<string, unknown>;
+    const viewpoint = { title: text(r.title), input: text(r.input), expected: text(r.expected) };
+    if (!viewpoint.title || !viewpoint.input || !viewpoint.expected) return undefined;
+    const id = `TV-${viewpoints.length + 1}`;
+    viewpoints.push({ id, ...viewpoint });
+    return id;
+  });
+  return { viewpoints, positions };
 }
 
 function toProposal(

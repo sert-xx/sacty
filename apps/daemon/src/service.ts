@@ -341,6 +341,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  viewpointRename,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -6386,6 +6387,9 @@ export class TaskService {
                       extracted.provenance,
                       inputs,
                       provenanceIds(provenanceStep, extracted.output, testViewpoints),
+                      provenanceStep === "design"
+                        ? viewpointRename(extracted.viewpointPositions)
+                        : undefined,
                     ) ?? null,
                 }
               : {}),

@@ -9,6 +9,7 @@ import {
   provenanceGuideLines,
   provenanceIds,
   provenanceInputs,
+  viewpointRename,
 } from "./prompts.js";
 
 const task = (extra: Partial<Task> = {}): Task =>
@@ -117,6 +118,7 @@ describe("出典の分類の読み取りと照合", () => {
   it("短すぎる抜き出しは見つからない扱いにし、推論の抜き出しは捨てる", () => {
     const provenance = checkProvenance(
       {
+        mode: "subagent",
         items: [
           { id: "R-1", kind: "input", excerpt: "カード" },
           { id: "R-2", kind: "inference", excerpt: "カードで支払える" },
@@ -152,6 +154,13 @@ describe("出典の分類の読み取りと照合", () => {
       unclassified: ["R-1", "R-3"],
     });
     expect(checkProvenance(undefined, inputs, ids)).toBeUndefined();
+    // 誰が分類したか分からない答え（mode が無い・知らない値）は読めない
+    for (const mode of [undefined, "", "auto"]) {
+      expect(
+        checkProvenance({ mode, items: [{ id: "R-1", kind: "derived" }] }, inputs, ids),
+        String(mode),
+      ).toBeUndefined();
+    }
     expect(checkProvenance({ items: "R-1" }, inputs, ids)).toBeUndefined();
     expect(checkProvenance([], inputs, ids)).toBeUndefined();
   });
@@ -164,6 +173,40 @@ describe("出典の分類の読み取りと照合", () => {
     expect(
       provenanceIds("design", "R-1", [{ id: "TV-1", title: "a", input: "b", expected: "c" }]),
     ).toEqual(["TV-1"]);
+  });
+
+  it("設計の答えの TV-n を、元の位置から振った ID に直し、欠けた観点の分類は捨てる", () => {
+    const extracted = extractBlocks(
+      `# 設計\n\n\`\`\`json\n${JSON.stringify({
+        "sacty-test-viewpoints": [
+          { title: "欠け", input: "", expected: "x" },
+          { title: "B", input: "i", expected: "e" },
+          { title: "C", input: "i", expected: "e" },
+        ],
+      })}\n\`\`\``,
+      new Set(),
+    );
+    expect(extracted.testViewpoints.map((v) => v.id)).toEqual(["TV-1", "TV-2"]);
+    expect(extracted.viewpointPositions).toEqual([undefined, "TV-1", "TV-2"]);
+    const rename = viewpointRename(extracted.viewpointPositions);
+    const provenance = checkProvenance(
+      {
+        mode: "subagent",
+        items: [
+          { id: "TV-1", kind: "input", excerpt: "カードで支払える" },
+          { id: "TV-2", kind: "inference" },
+          { id: "TV-3", kind: "derived", refs: ["R-1"] },
+        ],
+      },
+      inputs,
+      ["TV-1", "TV-2"],
+      rename,
+    );
+    expect(provenance?.items).toEqual([
+      { id: "TV-1", kind: "inference", refs: [], excerpt: "" },
+      { id: "TV-2", kind: "derived", refs: ["R-1"], excerpt: "" },
+    ]);
+    expect(provenance?.unclassified).toEqual([]);
   });
 
   it("答えを本文から取り除き、最後のものを使う", () => {

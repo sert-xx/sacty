@@ -270,8 +270,9 @@ const ja = {
     counts: (input: number, derived: number, inference: number) =>
       `（引用 ${input}・導出 ${derived}・推論 ${inference}）`,
     hint: "書いたエージェントとは別のエージェントが、項目ごとの根拠を、タスク・指摘などの入力からの引用・決まった仕方での導出・推論に分けた結果です。推論と、原文が入力に見つからない引用を確かめてください。",
-    missing: "出典の分類の記録がありません",
-    missingHint: "エージェントが出典の分類を報告しませんでした。すべての項目を確かめてください。",
+    missing: "出典の分類の記録がありません。すべての項目を確かめてください",
+    missingHint:
+      "エージェントが出典の分類を報告しなかった・読めなかったので、確かめる項目を絞れません。",
     sequential:
       "サブエージェントを起動できず、書いたエージェントが自分で分類しました。すべての項目を確かめてください。",
     reason: {
@@ -651,8 +652,9 @@ const en: TaskMessages = {
     counts: (input, derived, inference) =>
       ` (${input} quoted · ${derived} derived · ${inference} inferred)`,
     hint: "An agent other than the author sorted the basis of each item into a quote from the input (the task, remarks and so on), a derivation in a fixed way, or an inference. Check the inferences and the quotes whose original text is not in the input.",
-    missing: "No provenance record",
-    missingHint: "The agent did not report the provenance. Check every item.",
+    missing: "No provenance record. Check every item",
+    missingHint:
+      "The agent did not report the provenance, or it could not be read, so the items to check cannot be narrowed down.",
     sequential:
       "No subagent could be started, so the author sorted the items itself. Check every item.",
     reason: {

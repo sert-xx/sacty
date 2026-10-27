@@ -17282,8 +17282,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
-    it("人が直した版を承認済みにしたら、前のセルフレビューの「パス」を残さず記録なしにする。直していなければ残す（PR #130 レビュー指摘）", async () => {
-      const report = '```json\n{"sacty-self-review": {"rounds": 2, "passed": true}}\n```';
+    it("人が直した版を承認済みにしたら、前のセルフレビューの「パス」と出典の分類を残さず記録なしにする。直していなければ残す（PR #130 レビュー指摘）", async () => {
+      const report = [
+        '```json\n{"sacty-self-review": {"rounds": 2, "passed": true}}\n```',
+        '```json\n{"sacty-provenance": {"mode": "subagent", "items": []}}\n```',
+      ].join("\n\n");
       for (const edited of [true, false]) {
         const made = await start([out(`# 要求要件 v1\n\n${report}`)]);
         const { activity, service, id } = made;
@@ -17300,6 +17303,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         );
         if (edited) expect(task.selfReviews?.requirements).toBeNull();
         else expect(task.selfReviews?.requirements?.passed).toBe(true);
+        // 人が直した本文の項目は分類していない
+        if (edited) expect(task.provenances?.requirements).toBeNull();
+        else expect(task.provenances?.requirements?.sequential).toBe(false);
         activity.close();
         rmSync(dbPath, { force: true });
       }
@@ -24728,6 +24734,114 @@ describe("提出の前の出典の分類の記録", () => {
       activity.close();
       rmSync(dbPath, { force: true });
     }
+  });
+
+  it("mode が無い・知らない値の答えは、誰が分類したか分からないので記録なしにする", async () => {
+    for (const mode of [undefined, "auto"]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [
+        withClassification(requirements, {
+          ...(mode === undefined ? {} : { mode }),
+          items: [{ id: "R-1", kind: "derived", refs: ["R-2"], excerpt: "" }],
+        }),
+      ]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.provenances?.requirements, String(mode)).toBeNull();
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  it("設計の答えの TV-n（JSON の n 番目）を、項目の欠けた観点を除いて振った ID に直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const json = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const design: AgentOutcome = {
+      kind: "completed",
+      output: [
+        "# 設計",
+        json({
+          "sacty-test-viewpoints": [
+            { title: "欠けた観点", input: "", expected: "x" },
+            { title: "B", input: "Bの入力", expected: "Bの期待結果" },
+          ],
+        }),
+        json({
+          "sacty-provenance": {
+            mode: "subagent",
+            items: [
+              { id: "TV-1", kind: "input", refs: [], excerpt: "決済の要求要件" },
+              { id: "TV-2", kind: "inference", refs: [], excerpt: "" },
+            ],
+          },
+        }),
+      ].join("\n\n"),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service, executor } = makeService(activity, [
+      withClassification("# 決済の要求要件", { mode: "subagent", items: [] }),
+      design,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(executor.inputMounts[1]?.files["requirements.md"]).toContain("# 決済の要求要件");
+    const task = service.get(id)?.task;
+    expect(task?.testViewpoints.map((v) => [v.id, v.title])).toEqual([["TV-1", "B"]]);
+    // 元の2番目（推論）が、振り直した TV-1 の分類になる。欠けた観点の分類は捨てる
+    expect(task?.provenances?.design).toEqual({
+      sequential: false,
+      items: [{ id: "TV-1", kind: "inference", refs: [], excerpt: "" }],
+      unclassified: [],
+    });
+    activity.close();
+  });
+
+  it("変更の申し出で本文を差し替えたら、前の分類を残さず「記録なし」にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const json = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const design: AgentOutcome = {
+      kind: "completed",
+      output: [
+        "# 設計 v1",
+        json({
+          "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+        }),
+        json({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "外部APIが冪等性キーに対応していない",
+            facts: ["API仕様書に Idempotency-Key が無い"],
+            proposed: "# 要求要件 v2",
+          },
+        }),
+      ].join("\n\n"),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const undecidable: AgentOutcome = {
+      kind: "completed",
+      output: json({ "sacty-verdict": { verdict: "undecidable", reason: "価値判断を含む" } }),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [
+      withClassification(requirements, { mode: "subagent", items: [] }),
+      design,
+      undecidable,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.provenances?.requirements?.unclassified).toEqual([
+      "R-1",
+      "R-2",
+      "R-3",
+    ]);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    const applied = service.decideChange(id, "CP-1", { accept: true });
+    expect(applied.outputs.requirements).toBe("# 要求要件 v2");
+    expect(applied.provenances?.requirements).toBeNull();
+    activity.close();
   });
 
   it("差し戻しの指摘を Input に入れ、分類の無い項目を数える", async () => {
