@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 940" width="1040" height="940" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">From implementation to awaiting approval</title>
-  <desc id="desc">After the implementation step, sacty opens the implementation PR as a draft and waits for its CI; the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
+  <desc id="desc">After the implementation step, sacty opens the implementation PR as a draft and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -45,6 +45,7 @@
   </defs>
   <path d="M410 96 L410 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 240 L410 270" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M260 185 L225 185 Q215 185 215 195 L215 423 Q215 433 225 433 L260 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 374 L410 405" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M560 433 L640 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 461 L410 505" class="flow" style="" marker-end="url(#ah-arrow)"/>
@@ -118,6 +119,10 @@
   <svg x="56" y="854" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
   <text x="92" y="872" class="title">Implementation awaits approval</text>
   <text x="56" y="900" class="sub">Approved by merging the PR</text>
+  <rect x="415" y="245" width="45.9" height="18" rx="4" class="label-bg"/>
+  <text x="420" y="258" class="label" text-anchor="start">opened</text>
+  <rect x="137.7" y="307" width="67.3" height="18" rx="4" class="label-bg"/>
+  <text x="205" y="320" class="label" text-anchor="end">no changes</text>
   <rect x="589" y="412" width="22" height="18" rx="4" class="label-bg"/>
   <text x="600" y="425" class="label" text-anchor="middle">no</text>
   <rect x="415" y="475" width="27.9" height="18" rx="4" class="label-bg"/>

@@ -94,7 +94,7 @@
 | `split` | タスク分割 | 子タスクを作り、終わるのを待つ |
 | `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
 | `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
-| `implement` | 実装 | 実装する。検証に通ったら、sacty が実装の PR を作り、人の承認（PR のマージ）を待つ |
+| `implement` | 実装 | 実装する。最終レビューの前に sacty が実装の PR をドラフトで作り、検証に通ったらドラフトを外して、人の承認（PR のマージ）を待つ |
 | `deployment` | マージの後の監視 | 実装の PR のマージの後に、CI/CD を待ち、スキルに従って確かめ、失敗したら修正のタスクを登録する（人の承認は無い。[マージの後の監視](deployment-watch.md)） |
 | `document` | 文書作成 | Markdown の原稿を作成・編集し、画面で承認を待つ |
 | `operation` | 作業 | 依頼された外部変更を1回実行し、根拠を提出して結果の承認を待つ |
@@ -104,7 +104,7 @@
 - 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`・`document`・`operation`。
   ただし、セキュリティ対応（`security-fix`）の先頭の調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。
   調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
-  実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR を作ってから承認待ちにする。
+  実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR のドラフトを外してから承認待ちにする。
 - 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`・`document`。
 - リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
 - docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
@@ -920,6 +920,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 - 最終レビューに通ると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。
   続けて sacty が、実装の作業領域をコミットしてプッシュし（最終レビューの前に作った PR と同じ内容なら、同じコミットのまま）、PR を更新してドラフトを外す（GraphQL の `markPullRequestReadyForReview`。[承認と差し戻し](approval.md#pr-での承認)）。
+  ドラフトかは、台帳ではなく、PR を更新したときの GitHub の答えで決める（ドラフトに戻した答えを受け取れなかったときも外すため）。
   最終レビューの前に PR を作っていなければ、ここで作る。
   エージェントは使わない。
 - PR を作ったら、同じ追記で `PullRequestPublished` と、実装の提出（`StepSubmitted`。`step` は `implement`）を記録し、実装の承認待ちにする。
@@ -944,15 +945,17 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 実装の検証が続けて通らずに止まった（`verification`）タスクは、人の判断で、ゴールガーディアンの不合格のままレビューへ進められる（`submitForReview`）。
 
 - 進められるのは、実装の工程で `verification` の一時停止をしていて、PR の作成の待ちでないとき（`canOverrideVerification`）。
+  既存の PR を引き継ぐタスクは進められない（不合格の実装を人の PR に積むことになり、PR の本文も変えないので覆した記録も残らないため）。
   それ以外は受け付けない（`override.notAllowed`。409）。
   停止を確かめられなかったコンテナが残っていれば、再開と同じく確かめ直してから進める。
 - 進めると `VerificationOverridden`（actor `person`）を記録し、最終レビューに通ったときと同じく PR の作成の待ち（`publishPending`）にする。
   最終レビューはやり直さない。
 - 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする。
-- PR の本文には、人が最終レビューの不合格のままレビューへ進めたことを書き、不合格の判定と理由を残す。
+- PR の本文には、人が最終レビューの不合格のままレビューへ進めたことと、不合格の観点・最終レビューの所見（1行にし、`HUMAN_CHECK_ITEM_MAX` 文字まで）を書く（`overrideBodyLines`）。
+  本文の長さの上限で省かれないよう、footer に置く。
 - 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。
 
-コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）
+コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）
 
 ### テストの仕組みが無いタスク
 

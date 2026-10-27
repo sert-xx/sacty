@@ -7912,8 +7912,9 @@ export class TaskService {
         return "published";
       }
       // レビューへ進める（検証に通った・人がレビューへ進めた）ので、ドラフトを外す。外せなければ、承認待ちにせずに止める
-      // （再開すると、ここからやり直す）。人が先に外していれば何もしない
-      if (task.pullRequest?.draft && task.pullRequest.number === pr.number) {
+      // （再開すると、ここからやり直す）。ドラフトかは、台帳ではなく GitHub の今の PR で決める（ドラフトに戻した応答を
+      // 受け取れなかったときも外すため）。人が先に外していれば何もしない
+      if (pr.draft) {
         try {
           await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
         } catch (error) {

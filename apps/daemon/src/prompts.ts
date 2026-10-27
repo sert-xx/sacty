@@ -2976,12 +2976,6 @@ function finalReviewLines(task: Task, stage: PullRequestBodyStage = {}): string[
   }
   const review = task.lastReview;
   return [
-    ...(overriddenNow(task)
-      ? [
-          "**人が、ゴールガーディアンの不合格のまま、レビューへ進めました。** 下の不合格の理由を確かめてからマージしてください。",
-          "",
-        ]
-      : []),
     review ? `${review.passed ? "合格" : "不合格"}。${ja(review.summary)}` : "（なし）",
     ...(review && review.remarks.length > 0
       ? [
@@ -2992,6 +2986,28 @@ function finalReviewLines(task: Task, stage: PullRequestBodyStage = {}): string[
           ),
         ]
       : []),
+  ];
+}
+
+/**
+ * PR の本文の、人がゴールガーディアンの不合格のままレビューへ進めた記録と、不合格の要点（不合格の観点・所見）。本文の長さの
+ * 上限でも省かれないよう、footer に置く。所見は1行にし、HUMAN_CHECK_ITEM_MAX 文字までにする。
+ */
+function overrideBodyLines(task: Task): string[] {
+  if (!overriddenNow(task)) return [];
+  const review = task.lastReview;
+  const failed = (review?.viewpoints ?? []).filter((v) => !v.verified).map((v) => v.viewpointId);
+  const summary = review ? oneLine(ja(review.summary)) : "";
+  return [
+    "**人が、ゴールガーディアンの不合格のまま、レビューへ進めました。** 不合格の理由を確かめてからマージしてください。",
+    "",
+    ...(failed.length > 0 ? [`- 不合格の観点：${failed.join("・")}`] : []),
+    ...(summary
+      ? [
+          `- 最終レビューの所見：${summary.length > HUMAN_CHECK_ITEM_MAX ? `${headOf(summary, HUMAN_CHECK_ITEM_MAX)}…（続きは sacty のタスクの画面で）` : summary}`,
+        ]
+      : []),
+    "",
   ];
 }
 
@@ -3147,6 +3163,7 @@ export function buildPullRequestBodyText(task: Task, stage: PullRequestBodyStage
     main,
     // 人が確かめること（PBI-155）は、長さの上限で省かれないよう footer に置く
     footer: [
+      ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
       "---\nこの PR は sacty が作成しました。",
       "",
@@ -3184,6 +3201,7 @@ export function buildPullRequestBodyParts(task: Task, stage: PullRequestBodyStag
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
     footer: [
+      ...overrideBodyLines(task),
       ...humanCheckBodyLines(task),
       sactyFooter(task, "成果物"),
       "",

@@ -223,8 +223,8 @@ export const verify = {
   height: 940,
   title: t("実装の検証から承認待ちまで", "From implementation to awaiting approval"),
   desc: t(
-    "実装の工程の後、sacty が実装の PR をドラフトで作って CI を待ち、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
-    "After the implementation step, sacty opens the implementation PR as a draft and waits for its CI; the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.",
+    "実装の工程の後、sacty が実装の PR をドラフトで作って CI を待ち（変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
+    "After the implementation step, sacty opens the implementation PR as a draft and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.",
   ),
   items: [
     {
@@ -390,7 +390,31 @@ export const verify = {
       lines: [t("PR のマージで承認する", "Approved by merging the PR")],
     },
     { kind: "edge", from: "impl", to: "draft", fromSide: "b", toSide: "t", straight: true },
-    { kind: "edge", from: "draft", to: "ci", fromSide: "b", toSide: "t", straight: true },
+    {
+      kind: "edge",
+      from: "draft",
+      to: "ci",
+      fromSide: "b",
+      toSide: "t",
+      straight: true,
+      label: t("作った", "opened"),
+      labelAt: [420, 258],
+      labelAnchor: "start",
+    },
+    {
+      kind: "edge",
+      from: "draft",
+      to: "diff",
+      fromSide: "l",
+      toSide: "l",
+      via: [
+        [215, 185],
+        [215, 433],
+      ],
+      label: t("変更なし", "no changes"),
+      labelAt: [205, 320],
+      labelAnchor: "end",
+    },
     { kind: "edge", from: "ci", to: "diff", fromSide: "b", toSide: "t", straight: true },
     {
       kind: "edge",

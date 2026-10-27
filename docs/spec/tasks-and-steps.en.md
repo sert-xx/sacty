@@ -65,14 +65,14 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `split` | Task split | Creates child tasks and waits for them to finish |
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
-| `implement` | Implementation | Implements. After it passes verification, sacty opens the implementation PR and waits for a person's approval (merging the PR) |
+| `implement` | Implementation | Implements. Before the final review sacty opens the implementation PR as a draft; after it passes verification, sacty marks it ready and waits for a person's approval (merging the PR) |
 | `deployment` | After-merge watch | After the implementation PR is merged, waits for CI/CD, checks as the skill says, and registers a fix task on failure (no human approval. [After-merge watch](deployment-watch.en.md)) |
 | `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
 | `operation` | Operation | Performs the requested external change once and submits evidence for result approval |
 
 The steps fall into the following categories.
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a security fix (`security-fix`) (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a security fix (`security-fix`) (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is marked ready for review.
 - Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`, `document`.
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
@@ -559,7 +559,7 @@ Code: `apps/daemon/src/service.ts` (`verify`, `publish`, `draftsPullRequest`, `c
 
 ### The PR for a verified implementation
 
-- When the final review passes, the Implementation step is not finished; the task waits to open the PR (`Task.publishPending`; the status is queued). sacty then commits and pushes the implementation workspace (the same commit when the content is the same as the PR opened before the final review), updates the PR, and marks it ready for review (GraphQL `markPullRequestReadyForReview`; [Approval and request changes](approval.en.md#approval-through-prs)). If no PR was opened before the final review, it is opened here. No agent is used.
+- When the final review passes, the Implementation step is not finished; the task waits to open the PR (`Task.publishPending`; the status is queued). sacty then commits and pushes the implementation workspace (the same commit when the content is the same as the PR opened before the final review), updates the PR, and marks it ready for review (GraphQL `markPullRequestReadyForReview`; [Approval and request changes](approval.en.md#approval-through-prs)). Whether it is a draft is decided by GitHub's answer when updating the PR, not by the ledger (so that it is marked ready even when the answer to converting it back to a draft was lost). If no PR was opened before the final review, it is opened here. No agent is used.
 - After opening the PR, sacty records `PullRequestPublished` and the implementation submission (`StepSubmitted`, with `step` set to `implement`) in the same append, and the task waits for the Implement approval. If the implementation changed nothing, sacty records `NoChangesFound` and the implementation submission without opening a PR ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
 - If opening the PR or marking it ready fails, the reason is recorded and the task stops (`pr.failed`, `pr.readyFailed`, and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR survives a pause and a restart).
 - The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below).
@@ -576,13 +576,13 @@ Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerif
 
 A task paused because verification keeps failing (`verification`) can be moved to review by a person's decision, despite the Goal Guardian's failed verdict (`submitForReview`).
 
-- It can be moved only when the task is paused for `verification` in the Implementation step and is not waiting to open the PR (`canOverrideVerification`). Otherwise it is refused (`override.notAllowed`; 409). If containers whose stop could not be confirmed remain, they are confirmed again first, the same as resuming.
+- It can be moved only when the task is paused for `verification` in the Implementation step and is not waiting to open the PR (`canOverrideVerification`). A task that takes over an existing PR cannot be moved (it would push the failed implementation to a person's PR, and since the PR body is not changed, the override would leave no record there). Otherwise it is refused (`override.notAllowed`; 409). If containers whose stop could not be confirmed remain, they are confirmed again first, the same as resuming.
 - Moving records `VerificationOverridden` (actor `person`) and makes the task wait to open the PR (`publishPending`), the same as passing the final review. The final review is not run again.
 - Then, the same as a verified implementation, sacty marks the PR ready for review, adds the review label, and the task waits for the Implement approval.
-- The PR body says that a person moved it to review despite the failed final review, and keeps the failed verdict and its reasons.
+- The PR body says that a person moved it to review despite the failed final review, with the failed viewpoints and the final review's summary (one line, up to `HUMAN_CHECK_ITEM_MAX` characters; `overrideBodyLines`). It is put in the footer so that the length limit of the body does not drop it.
 - The screen shows "Move to review" in the pause section of the task details, with a hint on what happens.
 
-Code: `apps/daemon/src/service.ts` (`submitForReview`), `apps/daemon/src/server.ts` (`/api/tasks/:id/submit-for-review`), `packages/core/src/projection.ts` (`canOverrideVerification`, `verificationOverride`), `packages/core/src/events.ts` (`VerificationOverridden`), `apps/web/src/components/resume-form.tsx` (`ToReviewForm`)
+Code: `apps/daemon/src/service.ts` (`submitForReview`), `apps/daemon/src/server.ts` (`/api/tasks/:id/submit-for-review`), `packages/core/src/projection.ts` (`canOverrideVerification`, `verificationOverride`), `packages/core/src/events.ts` (`VerificationOverridden`), `apps/web/src/components/resume-form.tsx` (`ToReviewForm`), `apps/daemon/src/prompts.ts` (`overrideBodyLines`)
 
 ### Tasks without tests
 

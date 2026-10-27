@@ -530,17 +530,24 @@ class FakeRepos implements RepositoryWorkspace {
   /** あれば、プッシュを、これが解決するまで終わらせない（PR の作成の前の一時停止のテスト。PBI-110）。 */
   publishGate?: Promise<void>;
   publishStarted = Promise.withResolvers<void>();
+  /**
+   * true なら、作業領域が前にプッシュした内容から変わっていない（実際の git と同じく、起点でない親のコミットをそのまま使い、
+   * 新しいコミットを作らない）。
+   */
+  sameAsParent = false;
   async publish(input: {
     parent: string;
     branch: string;
     message: string;
     date: string;
+    baseCommit?: string;
     keep?: { commit: string; paths: string[] };
   }) {
     this.publishStarted.resolve();
     if (this.publishGate) await this.publishGate;
     if (this.publishFail) throw new Error(this.publishFail);
     if (this.unchanged) throw new NothingToCommitError(message("git.nothingToCommit"));
+    if (this.sameAsParent && input.parent !== input.baseCommit) return { commit: input.parent };
     this.published.push({
       parent: input.parent,
       branch: input.branch,
@@ -602,12 +609,15 @@ class FakePulls implements PullRequests {
   /** ドラフトの切り替え（順に）。 */
   draftChanges: { number: number; draft: boolean }[] = [];
   setDraftFail?: string;
+  /** あれば、切り替えは GitHub で済むが、答えを受け取れずに失敗する。 */
+  setDraftAnswerLost?: string;
   async setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
     if (this.setDraftFail) throw new Error(this.setDraftFail);
     if ((this.drafts[input.number] ?? false) !== input.draft) {
       this.draftChanges.push({ number: input.number, draft: input.draft });
     }
     this.drafts[input.number] = input.draft;
+    if (this.setDraftAnswerLost) throw new Error(this.setDraftAnswerLost);
     return { draft: input.draft };
   }
   closed: { repo: string; token: string; number: number }[] = [];
@@ -8001,7 +8011,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       await service.checkPullRequests();
     }
-    async function drafted(outcomes: AgentOutcome[], options: { pulls?: FakePulls } = {}) {
+    async function drafted(
+      outcomes: AgentOutcome[],
+      options: { pulls?: FakePulls; repos?: FakeRepos } = {},
+    ) {
       const ci = new FakeCi();
       // 記録の時刻は実際の時計なので、待つ時間はいまから進める
       let clock = Date.now();
@@ -8015,12 +8028,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     }
 
     it("実装の後、最終レビューの前に PR をドラフトで作って CI を待ち、合格したらドラフトを外してラベルを付け、承認待ちにする", async () => {
-      const { activity, service, pulls, executor, ci, id } = await drafted([
-        implement("# 実装の説明"),
-        review(),
-      ]);
+      const repos = new FakeRepos();
+      const { activity, service, pulls, executor, ci, id } = await drafted(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
       await service.runNext(id); // 実装
       await service.runNext(id); // 最終レビューの前に、PR をドラフトで作る
+      // 検証に通った後は、作業領域が変わらない（同じ内容なら、同じコミットのままドラフトを外す）
+      repos.sameAsParent = true;
       const waiting = service.get(id)?.task;
       expect(waiting?.status).toBe("idle");
       expect(waiting?.pullRequest).toMatchObject({ number: 7, verifying: true, draft: true });
@@ -8058,12 +8074,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.calls[1]).toMatchObject({ number: 7 });
       expect(pulls.calls[1]?.draft).toBeUndefined();
       expect(types(service, id).slice(-4)).toEqual([
-        "BranchPushed",
+        "FinalReviewed",
         "PullRequestPublished",
         "StepSubmitted",
         "PullRequestLabeled",
       ]);
       expect(gated?.pullRequest?.verifying).toBeUndefined();
+      // CI を確かめたコミットのまま、レビューへ進める（新しいコミットを作らず、CI を二重に動かさない）
+      expect(gated?.pullRequest?.commit).toBe(waiting?.pullRequest?.commit);
+      expect(repos.published).toHaveLength(1);
+      expect(repos.published[0]?.parent).toBe(waiting?.repository?.baseCommit);
       activity.close();
     });
 
@@ -8136,6 +8156,41 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.pullRequest).toMatchObject({ number: 7, verifying: true, draft: true });
       expect(task?.status).toBe("idle");
       expect(task?.pullRequestCi?.result).toBeUndefined();
+      activity.close();
+    });
+
+    it("ドラフトに戻した答えを受け取れなかった PR も、検証に通ったら GitHub の今の状態でドラフトを外す", async () => {
+      const { activity, service, pulls, id } = await drafted([
+        implement("# 実装の説明"),
+        review(),
+        implement("# 実装の説明 v2"),
+        // 差し戻しの指摘も、再発していないと判定する
+        review(undefined, [
+          ["requirements-1-1", true],
+          ["implement-1-1", true],
+        ]),
+      ]);
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["エラーの文言を直す"],
+      });
+      await service.runNext(id); // 実装のやり直し
+      pulls.setDraftAnswerLost = "socket hang up";
+      await service.runNext(id); // ドラフトに戻す（GitHub では戻ったが、答えを受け取れない）
+      expect(pulls.drafts[7]).toBe(true);
+      expect(service.get(id)?.task.pullRequest?.draft).toBeUndefined();
+      pulls.setDraftAnswerLost = undefined;
+      await settleCi(service);
+      await service.runNext(id); // 最終レビュー
+      await service.runNext(id); // ドラフトを外して承認待ち
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      expect(pulls.drafts[7]).toBe(false);
       activity.close();
     });
 

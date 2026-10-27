@@ -61,10 +61,12 @@ export type PullRequestCi = { commit: string; startedAt: string } & Partial<
 
 /**
  * 人が、ゴールガーディアンの不合格のまま実装の承認へ進められるか（VerificationOverridden）。実装の検証が続けて通らずに
- * 止まった（TaskPaused の verification）実装の工程。
+ * 止まった（TaskPaused の verification）実装の工程。既存の PR を引き継ぐタスクは、不合格の実装を人の PR に積むことになり、
+ * PR の本文にも覆した記録を残せないので、進められない（検証に通ってから積む）。
  */
 export function canOverrideVerification(task: Task): boolean {
   return (
+    !task.continuedPullRequest &&
     task.status === "paused" &&
     task.pausedReason === "verification" &&
     activeStep(task) === "implement" &&

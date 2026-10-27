@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 940" width="1040" height="940" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">実装の検証から承認待ちまで</title>
-  <desc id="desc">実装の工程の後、sacty が実装の PR をドラフトで作って CI を待ち、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
+  <desc id="desc">実装の工程の後、sacty が実装の PR をドラフトで作って CI を待ち（変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -45,6 +45,7 @@
   </defs>
   <path d="M410 96 L410 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 240 L410 270" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M260 185 L225 185 Q215 185 215 195 L215 423 Q215 433 225 433 L260 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 374 L410 405" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M560 433 L640 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 461 L410 505" class="flow" style="" marker-end="url(#ah-arrow)"/>
@@ -118,6 +119,10 @@
   <svg x="56" y="854" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
   <text x="92" y="872" class="title">実装の承認待ち</text>
   <text x="56" y="900" class="sub">PR のマージで承認する</text>
+  <rect x="415" y="245" width="44.5" height="18" rx="4" class="label-bg"/>
+  <text x="420" y="258" class="label" text-anchor="start">作った</text>
+  <rect x="149" y="307" width="56" height="18" rx="4" class="label-bg"/>
+  <text x="205" y="320" class="label" text-anchor="end">変更なし</text>
   <rect x="577.8" y="412" width="44.5" height="18" rx="4" class="label-bg"/>
   <text x="600" y="425" class="label" text-anchor="middle">いいえ</text>
   <rect x="415" y="475" width="33" height="18" rx="4" class="label-bg"/>
