@@ -240,7 +240,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Test failures caused by the environment: when the Goal Guardian judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
   If even one failure comes from the change or cannot be judged, the review fails as before.
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
-  The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks".
+  The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
 
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
 The tests run by the Goal Guardian show "Environment failures only".

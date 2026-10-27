@@ -2344,6 +2344,16 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     expect(prompt).not.toContain("受け入れ条件をすべて網羅し、異常系と境界値を含める");
   });
 
+  it("要求要件は、エージェント向けの指示の文書の要求と受け入れの確かめ方を、文書に書かれるべきことと差分での確認で書かせる", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "requirements");
+    expect(prompt).toContain(
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）を書く・直すタスクの要求は、エージェントがどう振る舞うかではなく、文書に何が書かれているべきか（手順・条件・決まり）で書く",
+    );
+    expect(prompt).toContain(
+      "受け入れの確かめ方は、自動のテストではなく差分で文書の中身を確かめることとして書く（エージェントを起動して確かめる形にしない）",
+    );
+  });
+
   it("設計は、エージェント向けの指示の文書の観点を、エージェントの振る舞いではなく文書に書かれるべきことで書かせる", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
     expect(prompt).toContain(
