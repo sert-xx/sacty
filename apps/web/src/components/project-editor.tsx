@@ -203,6 +203,9 @@ export function ProjectEditor({
                     : undefined;
                 // 読めない URL は、対象のホストにならず、アカウントの欄にも出ない。どこが違うのかをその場で示す
                 const urlProblem = targetUrlProblem(target.scope, target.target);
+                const imageDescription = images.find(
+                  (image) => image.name === target.image,
+                )?.description;
                 return (
                   <li
                     // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
@@ -240,12 +243,13 @@ export function ProjectEditor({
                           onChange={(e) => updateTarget(i, { target: e.target.value })}
                         />
                       </label>
-                      {/* イメージ（PBI-41）。images を書いていて、選べるときだけ出す */}
+                      {/* イメージ（PBI-41）。images を書いていて、選べるときだけ出す。説明が長いと選択肢も
+                          長くなって崩れるので、選択肢は名前だけにして、選んだイメージの説明は行の下に折り返して出す */}
                       {(images.length > 0 || target.image) && (
-                        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
                           {t.image}
                           <select
-                            className={SELECT}
+                            className={`${SELECT} w-full min-w-0`}
                             value={target.image ?? ""}
                             onChange={(e) =>
                               updateTarget(i, { image: e.target.value || undefined })
@@ -254,8 +258,8 @@ export function ProjectEditor({
                             <option value="">{t.imageAuto}</option>
                             <option value="default">{t.imageDefault}</option>
                             {images.map((image) => (
-                              <option key={image.name} value={image.name}>
-                                {image.name}（{image.description}）
+                              <option key={image.name} value={image.name} title={image.description}>
+                                {image.name}
                               </option>
                             ))}
                             {target.image &&
@@ -277,6 +281,11 @@ export function ProjectEditor({
                         <XIcon aria-hidden="true" />
                       </Button>
                     </div>
+                    {imageDescription && (
+                      <p className="text-xs leading-5 wrap-anywhere text-muted-foreground">
+                        {t.imageDescription(imageDescription)}
+                      </p>
+                    )}
                     {urlProblem && (
                       <p role="alert" className="text-xs text-warn">
                         {messages.labels.text({ code: urlProblem })}
