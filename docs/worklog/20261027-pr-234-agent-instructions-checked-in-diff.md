@@ -29,3 +29,9 @@
 - `npm run lint`・`npm run typecheck`・`npm run build`・`npx vitest run tests/docs`：通った。
 - `npx vitest run`（全体）：8 件が失敗した（`agent-sessions`・`context-mcp`・`host-mcp-processes`・`question-form.browser`）。
   変更前のコミットでも同じ 8 件が失敗するので、作業した環境（コンテナ）によるもので、この変更とは関係ない。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| 新しい規則が、テストの仕組みが無いタスク（`noTestsReason`）の経路に渡らない。`direct` で進めると、要求要件・設計も通らず、実装でも `UNTESTED_LINES` を展開しないので、どの工程にも届かない（[要修正]） | テストの仕組みが無いタスクの実装の指示（要求要件・設計を経ないタスクと設計のあるタスクの両方）と最終レビューの指示に、指示の文書を差分で判定し、エージェントの起動を求めない行を足した。`prompts.test.ts` にテストを足し、仕様書（英語の版も）と ADR に書いた |

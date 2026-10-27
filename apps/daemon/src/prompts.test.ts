@@ -1739,6 +1739,27 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(review).not.toContain("判断の根拠は、下の差分とテストの結果だけにする");
   });
 
+  it("要求要件・設計を経ないタスクでも、エージェント向けの指示の文書を差分で判定させ、エージェントの起動を求めさせない（PR #234 レビュー指摘）", () => {
+    const IMPLEMENT_LINE =
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）は、文書に何が書かれているかを差分で確かめられるよう、依頼を満たす記述の箇所を実装の説明に書く。エージェントを起動して確かめるテストの仕組みを足さない";
+    const REVIEW_LINE =
+      "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）の変更は、文書に何が書かれているかを差分と実装後のファイルで確かめて判定し、エージェントを起動して確かめることを求めない（依頼がエージェントの振る舞いで書かれていても、その振る舞いを指示する記述が文書にあるかで判定する）";
+    for (const steps of [
+      ["investigate", "implement"],
+      ["requirements", "design", "implement"],
+    ] as const) {
+      const t = task({ noTestsReason: NO_TESTS }, [...steps]);
+      expect(buildPrompt(t, "implement"), steps.join()).toContain(IMPLEMENT_LINE);
+      expect(buildFinalReviewPrompt(t, "diff"), steps.join()).toContain(REVIEW_LINE);
+    }
+    // テストの仕組みがあるタスクは、差分で確かめる申告（UNTESTED_LINES）の側で扱う
+    const withTests = task({ testCommand: "npm test" }, ["investigate", "implement"]);
+    expect(buildPrompt(withTests, "implement")).not.toContain(IMPLEMENT_LINE);
+    expect(buildFinalReviewPrompt(withTests, "diff", { testCommand: "npm test" })).not.toContain(
+      REVIEW_LINE,
+    );
+  });
+
   it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {
     const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
     const implement = buildPrompt(t, "implement");
