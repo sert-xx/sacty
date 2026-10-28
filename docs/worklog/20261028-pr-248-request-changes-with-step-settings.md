@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-28（UTC）
 - タスク: なし
-- PR: なし
+- PR: #248
 - ブランチ: claude/busy-meitner-okr4dx
 - 関係する ADR: [承認ゲートで差し戻すときに、工程のイメージ・エージェントを一緒に変えられる](../adr/20261028-1417-request-changes-with-step-settings.md)
 
