@@ -105,7 +105,7 @@ const en: FormsMessages = {
     planAuto: "Automatic",
     planAutoNote: "The Orchestrator chooses from the task",
     planHint:
-      "When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch and the test command. You can set the images and agents in \"Set per step\"; anything unset is decided as usual.",
+      'When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch and the test command. You can set the images and agents in "Set per step"; anything unset is decided as usual.',
     steps: "Set per step",
     stepsSummaryDefault: "Images and agents are decided as usual",
     stepsSummaryCustomized: (count) =>
