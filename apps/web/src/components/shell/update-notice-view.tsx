@@ -7,7 +7,7 @@ import type { DaemonStatus } from "@/lib/daemon";
  * イメージも作り直す（PBI-147）。
  */
 export const UPDATE_COMMANDS =
-  "git pull origin main\nnpm install\nnpm run build\nnpx sacty image build\nnpx sacty up";
+  "git pull origin main\nnpm ci\nnpm run build\nnpx sacty image build\nnpx sacty up";
 
 /** GitHub のページだけをリンクにする（デーモンの応答をそのまま href にしない）。 */
 export function safeGitHubUrl(url: string): string | undefined {

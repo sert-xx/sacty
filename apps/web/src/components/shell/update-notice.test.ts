@@ -38,7 +38,7 @@ describe("sacty の新しい版の知らせ（PBI-135・PBI-147）", () => {
     expect(text).toContain("Ctrl+C で止めてから");
     expect(UPDATE_COMMANDS.split("\n")).toEqual([
       "git pull origin main",
-      "npm install",
+      "npm ci",
       "npm run build",
       "npx sacty image build",
       "npx sacty up",

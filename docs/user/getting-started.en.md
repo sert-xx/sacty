@@ -68,11 +68,13 @@ First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run
 
 ```sh
 git pull origin main
-npm install
+npm ci
 npm run build
 npx sacty image build
 npx sacty up
 ```
+
+`npm ci` reinstalls the dependencies exactly as written in `package-lock.json`. It does not rewrite `package-lock.json`, so even if you changed the npm registry in your settings, no changes are left in the working tree and the next `git pull` does not conflict.
 
 `npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI, so always stop it first.
 

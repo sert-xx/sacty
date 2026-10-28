@@ -85,11 +85,14 @@ sacty は、1日ごとに GitHub の sacty の最新のリリースを確かめ�
 
 ```sh
 git pull origin main
-npm install
+npm ci
 npm run build
 npx sacty image build
 npx sacty up
 ```
+
+`npm ci` は、`package-lock.json` のとおりに依存を入れ直します。`package-lock.json` を書き換えないので、
+npm のレジストリを設定で変えていても作業ツリーに差分が残らず、次の `git pull` がぶつかりません。
 
 `npm run build` は、画面のビルドの結果（`apps/web/.next`）を消して作り直します。
 `sacty up` を動かしたまま実行すると、画面が壊れることがあるので、必ず止めてから実行してください。

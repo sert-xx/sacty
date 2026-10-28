@@ -102,7 +102,7 @@ The daemon compares the version of the running sacty (`version` in `apps/daemon/
 - The notice is `update` (`latest`, `current`, `releaseUrl`) of `GET /api/status`. It is included even when the config has an error.
   - The web UI shows it above the content on every screen: the latest and running versions, a link to the release page (only one starting with `https://github.com/`), and the update commands.
   - The shared frame is not redrawn when moving between screens. So the web UI fetches `/live/update` every 30 seconds (`UPDATE_LIVE_INTERVAL_MS`), and the notice appears and disappears without reloading.
-- The update commands are shown in the order of stopping the running `sacty up` first (`npm run build` deletes and recreates `.next` of the web UI). Because the default image name follows the version, `npx sacty image build` is included.
+- The update commands are shown in the order of stopping the running `sacty up` first (`npm run build` deletes and recreates `.next` of the web UI). Because the default image name follows the version, `npx sacty image build` is included. Dependencies are reinstalled with `npm ci` (it does not rewrite `package-lock.json`, so even with a changed registry setting no changes are left in the working tree and the next `git pull` does not conflict).
 
 Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `packageVersion`, `parseVersion`, `compareVersions`, `startUpdateCheck`, `SACTY_REPOSITORY`, `UPDATE_CHECK_INTERVAL_MS`),
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`),
