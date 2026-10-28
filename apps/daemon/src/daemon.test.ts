@@ -4631,6 +4631,58 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("差し戻しが上限でエスカレーションになるときも、工程の設定をその前に記録する（誤っていれば何も記録しない）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const outputs = Array.from({ length: MAX_CHANGE_REQUESTS + 1 }, (_, i) =>
+        out(`# 要求要件 v${i + 1}`),
+      );
+      const { service } = makeService(activity, outputs, {
+        config: withImages(),
+        planner: plan(),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      for (let i = 1; i <= MAX_CHANGE_REQUESTS; i++) {
+        service.requestChanges(id, { step: "requirements", submission: i, comments: [`指摘${i}`] });
+        await service.runNext(id);
+      }
+      const request = {
+        step: "requirements",
+        submission: MAX_CHANGE_REQUESTS + 1,
+        comments: ["まだ"],
+      };
+      // 誤った設定なら、設定の変更もエスカレーションも記録しない
+      const before = service.get(id);
+      expect(() =>
+        service.requestChanges(id, {
+          ...request,
+          images: { requirements: "playwright" },
+          agents: { requirements: "missing" },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          messages: [expect.objectContaining({ code: "agent.notInAgents" })],
+        }),
+      );
+      expect(service.get(id)?.activity.length).toBe(before?.activity.length);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+
+      service.requestChanges(id, { ...request, images: { requirements: "playwright" } });
+      const after = service.get(id);
+      expect(after?.task.status).toBe("escalated");
+      expect(after?.task.escalation).toMatchObject({ reason: "too_many_changes" });
+      expect(
+        after?.activity
+          .slice(before?.activity.length)
+          .map((e) => ({ type: e.type, actor: e.actor })),
+      ).toEqual([
+        { type: "StepImageChanged", actor: "person" },
+        { type: "TaskEscalated", actor: "sacty" },
+      ]);
+      expect(after?.task.images).toMatchObject({ requirements: "playwright" });
+      activity.close();
+    });
+
     it("補足を足した説明が、再実行で直す説明の上限を超えるなら断る", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
