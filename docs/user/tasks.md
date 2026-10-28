@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -70,7 +70,7 @@
 | セキュリティ対応 | 調査 → 実装 → マージの後の監視 | 特定のセキュリティ上の問題を、最小限の変更で直す |
 
 - 指定すると、オーケストレーターは組み合わせを選び直さず、工程が終わるごとの見直しでも工程を飛ばしません。
-  ベースブランチ・テストのコマンド・イメージなどは、いつもどおりオーケストレーターが決めます。
+  ベースブランチ・テストのコマンド・イメージなどは、いつもどおりオーケストレーターが決めます（イメージとエージェントは、下の「工程ごとのイメージとエージェントを指定する」で指定もできます）。
 - 「レビューだけ」は、対象リポジトリを選び、そのリポジトリの PR のリンクを題か内容に書いたときだけ選べます。
   そうでなければ、作成のときに理由が出ます。
   レビューでは PR のコードがエージェントのコンテナで動くので、信頼できない PR は選ばないでください（[PR のレビュー](intake.md#pr-のレビュー)）。
@@ -83,6 +83,29 @@
 - 「調査だけ」のタスクは、結果の形（表・章立て・項目など）を内容に書くと、その形で報告します。
   書かなければ、結論・根拠・関係する箇所・確認したいことの順で報告します。
 - テンプレートを選んだときは、進め方を選べません。
+
+#### 工程ごとのイメージとエージェントを指定する
+
+進め方を選ぶと、工程の並びの下に「工程ごとに設定」が出ます。
+押すと、ダイアログの中が工程ごとの設定に切り替わり、工程ごとにイメージとエージェントを選べます。
+
+![「工程ごとの設定」の画面](images/new-task-steps.png)
+
+- イメージは、`images` の名前か `default`（既定のイメージ）を選びます（[イメージ](images.md)）。
+  「自動」のままなら、いつもどおりプロジェクトの対象の指定かオーケストレーターが選びます。
+- エージェントは、使えるエージェントの名前を選びます（[設定](config.md)）。
+  「既定」のままなら、`step_agents`（無ければ `default_agent`）で決まるエージェントを使います。
+  統合レビューは、ゴールガーディアンが行うので選べません。
+- 選んだ工程には印が付き、「既定に戻す」で戻せます。
+  「完了」か左上の戻るボタンで基本の入力に戻ります。
+  基本の入力の工程の並びにも、指定した工程に印が付きます。
+- 画面を切り替えても、入力中のタイトル・内容と選んだものは残ります。
+  進め方を選び直しても、同じ工程の指定は残ります（今の進め方にある工程の分だけを使います）。
+- 指定したイメージ・エージェントは、オーケストレーターの選択や `step_agents` より優先します。
+  作成の後も、タスクの詳細の「工程のイメージ」「工程のエージェント」で変えられます（選んだ元に「作成時に人が指定」と出ます）。
+- 進め方が「自動」のときと、テンプレートを選んだときは指定できません（工程が決まっていないため）。
+- 候補を読めないとき（`config.yaml` を読めないなど）は、理由が出ます。
+  そのときも、指定せずにタスクを作れます。
 
 ### テンプレート「Sacty セットアップ」
 

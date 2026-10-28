@@ -780,13 +780,15 @@ function StepImages({
                     ? m.byProject
                     : row.source.by === "rerun"
                       ? m.byRerun
-                      : row.source.by === "orchestrator"
-                        ? row.source.default
-                          ? m.byOrchestratorDefault(row.source.default)
-                          : row.source.unexplained
-                            ? m.byOrchestratorUnexplained
-                            : m.byOrchestrator
-                        : m.none}
+                      : row.source.by === "request"
+                        ? m.byRequest
+                        : row.source.by === "orchestrator"
+                          ? row.source.default
+                            ? m.byOrchestratorDefault(row.source.default)
+                            : row.source.unexplained
+                              ? m.byOrchestratorUnexplained
+                              : m.byOrchestrator
+                          : m.none}
               </span>
             </span>
             <span className="text-xs text-muted-foreground">
@@ -864,7 +866,9 @@ function StepAgents({
                   {" ・ "}
                   {row.source.by === "person"
                     ? m.byPerson(formatStamp(row.source.at, locale), row.source.from)
-                    : m.byConfig}
+                    : row.source.by === "request"
+                      ? m.byRequest
+                      : m.byConfig}
                 </span>
               </span>
               <span className="text-xs text-muted-foreground">

@@ -29919,3 +29919,168 @@ describe("セキュリティチェックとセキュリティ対応", () => {
     });
   });
 });
+
+describe("タスクの作成時に、進め方の工程ごとのイメージ・エージェントを指定する", () => {
+  const base = agent();
+  const strong = agent({ id: "strong", model: "claude-opus-5-5", reasoning_effort: "high" });
+  const java = { name: "java", image: "sacty-agent-java:test", description: "Java 17" };
+  const playwright = { name: "playwright", image: "sacty-agent-pw:test", description: "PW" };
+  const configured = (): ConfigResult => {
+    const config = (configOf(base)() as { ok: true; config: SactyConfig }).config;
+    return {
+      ok: true,
+      config: { ...config, agents: { [base.id]: base, strong }, images: { java, playwright } },
+    };
+  };
+  const designOnly: ServiceDeps["planner"] = async () => ({
+    steps: ["requirements", "design"],
+    plan: "design-only",
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+    // オーケストレーターは、どちらの工程にも playwright を選ぶ
+    images: { requirements: "playwright", design: "playwright" },
+    imageReason: "画面のテストがある",
+  });
+  const reject = (service: TaskService, raw: Record<string, unknown>) => {
+    try {
+      service.createTask({ projectId: "default", title: "A", ...raw });
+    } catch (error) {
+      return error instanceof InvalidOperationError ? error.messages[0] : error;
+    }
+    return undefined;
+  };
+
+  it("指定した工程は、オーケストレーターの選択と step_agents より優先し、作業履歴の作成に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [completed(100)], {
+      config: configured,
+      planner: designOnly,
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "画面の設計",
+      plan: "design-only",
+      images: { design: "java" },
+      agents: { requirements: "strong" },
+    });
+    expect(task).toMatchObject({
+      requestedImages: { design: "java" },
+      requestedAgents: { requirements: "strong" },
+      agents: { requirements: "strong" },
+    });
+    const created = activity.forTask(task.id).find((e) => e.type === "TaskCreated");
+    expect(created?.payload).toMatchObject({
+      plan: "design-only",
+      images: { design: "java" },
+      agents: { requirements: "strong" },
+    });
+    await service.runNext(task.id);
+    // 工程を決めた記録には、オーケストレーターが決めた工程（指定の無い工程）だけを入れる
+    const chosen = activity.forTask(task.id).find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
+      requirements: "playwright",
+    });
+    const latest = service.get(task.id)?.task;
+    expect(latest?.images).toEqual({ requirements: "playwright", design: "java" });
+    expect(executor.images[0]).toEqual({ image: "sacty-agent-pw:test" });
+    const started = activity.forTask(task.id).find((e) => e.type === "AgentRunStarted");
+    expect(started?.type === "AgentRunStarted" && started.payload.agentId).toBe("strong");
+    activity.close();
+  });
+
+  it("進め方のすべての工程のイメージを指定したら、オーケストレーターにイメージの候補を見せない（一部だけなら見せる）", async () => {
+    const planOutput = {
+      kind: "completed" as const,
+      output: `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "design-only", reason: "r" } })}\n\`\`\``,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+    };
+    const promptFor = async (images: Record<string, string>) => {
+      rmSync(dbPath, { force: true });
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [planOutput, completed(100)], {
+        config: configured,
+        realPlanner: true,
+      });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "画面の設計",
+        plan: "design-only",
+        images,
+      });
+      await service.runNext(id);
+      const prompt = executor.calls[0]?.command.join(" ") ?? "";
+      const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+      const task = service.get(id)?.task;
+      activity.close();
+      return { prompt, chosen, task };
+    };
+    const all = await promptFor({ requirements: "default", design: "java" });
+    expect(all.prompt).not.toContain("- java：Java 17");
+    // 既定のイメージにした理由を求めない（人が指定したため）
+    expect(all.chosen?.type === "StepsChosen" && all.chosen.payload).not.toHaveProperty(
+      "imagesUnexplained",
+    );
+    expect(all.task?.images).toEqual({ requirements: "default", design: "java" });
+    const some = await promptFor({ design: "java" });
+    expect(some.prompt).toContain("- java：Java 17");
+    expect(some.task?.images).toEqual({ design: "java" });
+  });
+
+  it("エージェントの名前は、タスクの詳細で変えるときと同じく長さを限らない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const long = agent({ id: "a".repeat(101) });
+    const config = (configured() as { ok: true; config: SactyConfig }).config;
+    const { service } = makeService(activity, [], {
+      config: () => ({
+        ok: true,
+        config: { ...config, agents: { ...config.agents, [long.id]: long } },
+      }),
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "A",
+      plan: "direct",
+      agents: { implement: long.id },
+    });
+    expect(task.requestedAgents).toEqual({ implement: long.id });
+    activity.close();
+  });
+
+  it("進め方が無い・進め方に無い工程・統合レビューのエージェント・無い名前・設定を読めないときは、理由を示して断る", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let ok = true;
+    const { service } = makeService(activity, [], {
+      config: () =>
+        ok ? configured() : { ok: false, problem: message("config.missing", { path: "x" }) },
+    });
+    expect(reject(service, { images: { design: "java" } })).toEqual(
+      message("task.stepSettingsNeedPlan"),
+    );
+    expect(reject(service, { plan: "direct", agents: { design: "strong" } })).toEqual(
+      message("task.stepSettingOutsidePlan"),
+    );
+    expect(reject(service, { plan: "split", agents: { integrate: "strong" } })).toEqual(
+      message("agent.stepNotChangeable"),
+    );
+    expect(reject(service, { plan: "direct", images: { implement: "ruby" } })).toEqual(
+      message("image.notInImages", { name: "ruby" }),
+    );
+    expect(reject(service, { plan: "direct", agents: { implement: "toString" } })).toEqual(
+      message("agent.notInAgents", { name: "toString" }),
+    );
+    ok = false;
+    expect(reject(service, { plan: "direct", images: { implement: "java" } })).toMatchObject({
+      code: "image.configUnavailable",
+    });
+    expect(reject(service, { plan: "direct", agents: { implement: "strong" } })).toMatchObject({
+      code: "agent.configUnavailable",
+    });
+    // 何も指定しなければ、設定を読めなくても今と同じく作る（空の指定も同じ）
+    const task = service.createTask({ projectId: "default", title: "A", images: {}, agents: {} });
+    expect(task.requestedImages).toBeUndefined();
+    expect(activity.forTask(task.id)[0]?.payload).not.toHaveProperty("images");
+    expect(service.list().filter((t) => t.title === "A")).toHaveLength(1);
+    activity.close();
+  });
+});
