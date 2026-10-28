@@ -146,7 +146,7 @@ const RECENT_EVENTS = 5;
 /**
  * いまの工程。作業中の工程・承認を待っている工程・最後に終えた工程の順に選ぶ（成果物の表示の最初の選択に使う）。
  */
-function currentStep(task: Task): StepKey | undefined {
+export function currentStep(task: Task): StepKey | undefined {
   return (
     task.steps.find((s) => s.state === "active")?.key ??
     task.gate?.step ??

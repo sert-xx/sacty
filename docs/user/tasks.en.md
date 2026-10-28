@@ -58,7 +58,7 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 - When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual (you can also set the images and agents in "Set the image and agent for each step" below).
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
-- The specified plan appears in the "Steps" section of the task details.
+- The specified plan appears on the "Step settings" tab of the task details.
 - Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
 - For an "Investigate only" task, if you write the form of the result (a table, sections, items, and so on) in the description, it reports in that form. Otherwise, it reports the conclusion, the evidence, the related places, and the open questions, in that order.
 - When you choose a template, you cannot choose a plan.
@@ -102,6 +102,29 @@ For tasks created from a template, the template name appears in "Started from" i
 
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks` (do not pass `title` or `body`). The CLI has no command to create tasks.
 
+## Reading the task details
+
+The task details look like this.
+
+![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person, deliverables on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
+
+- The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen and stay visible when you scroll.
+- When the task is waiting for an approval or a decision, or is paused, the notice appears below the tabs whichever tab is open.
+- Switch the view with the tabs.
+
+| Tab | What it shows |
+| --- | --- |
+| Overview | Results related to the task, such as the cleanup after cancelling, the description, deliverables, the PR, and follow-up tasks |
+| Activity | The whole Activity (newest first; open the run log from an agent run line) |
+| Costs | The amount used and the cap, the cost per step, and the Orchestrator session |
+| Step settings | The steps and why they were chosen, the base branch, the test command, export destinations, step images, and step agents |
+| Audit | The audit result (only for audited tasks; [Audit](audit.en.md)) |
+
+- The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
+- Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
+- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the test command, the ticket, related tasks, and when the task was created and last updated.
+  Below it, the recent Activity (5 entries) is shown.
+
 ## Information gathering at the start of a task
 
 When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary. If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on). It also reads the target repository's code and writes the places in the code related to the task and their current behavior in the summary.
@@ -122,7 +145,7 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
 To create a user guide, a procedure document, meeting notes, or a translated draft, write the audience, purpose, and source contents in the task. To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed). If the Orchestrator chooses a different plan, choose "Document" in "Plan".
 
 - Review the Markdown draft in Document, request changes, and approve it.
-- The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason in the task's steps section ([Exporting results](result-export.en.md)).
+- The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason on the "Step settings" tab of the task details ([Exporting results](result-export.en.md)).
 - An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
 - To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
@@ -165,7 +188,7 @@ To fix an existing PR itself, for example to address review comments on a PR a p
 - The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
 - Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
-- "Taking over PR" appears in the Steps section of the task details.
+- "Taking over PR" appears on the "Step settings" tab of the task details.
 - Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
 
 The following PRs cannot be taken over. To avoid opening a new PR, the task stops without choosing the steps. Check the PR, then resume to choose the steps again.
@@ -242,7 +265,7 @@ Even a repository without test code uses a check that mechanically validates its
   - For a repository of Kubernetes manifests, `kustomize build`, `helm lint` or `kubeconform`
   - For Terraform, `terraform validate`
   - For YAML, `yamllint`, and so on
-- The chosen command appears as "Test command" in the Steps section of the task details.
+- The chosen command appears as "Test command" on the "Step settings" tab of the task details, and as "Tests" in the properties in the right column.
 - The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）".
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
@@ -315,7 +338,7 @@ If a tool not written directly in the test command (such as a tool used by a scr
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
 
-- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests. A repository that collects agent skills or only holds documents also falls under this. The step field of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
+- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests. A repository that collects agent skills or only holds documents also falls under this. The "Step settings" tab of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
 - Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description. If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
 - The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests, check the content of the changes yourself before you approve.
 - When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, those tests are run before the judgment by the goal.
@@ -476,13 +499,13 @@ In the following cases, check every item.
 
 ## Changing a step's image
 
-The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
+The "Step settings" tab of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
 
 If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Changing a step's agent
 
-In "Step agents" in the "Steps" section of the task details, you can choose again the agent each step uses. You can choose from the usable agents (sacty's defaults and `agents` in config.yaml that have a connection and a price). It is usually left as is, so only its heading is shown, collapsed (it is shown open when something needs checking, such as a name removed from the settings).
+In "Step agents" on the "Step settings" tab of the task details, you can choose again the agent each step uses. You can choose from the usable agents (sacty's defaults and `agents` in config.yaml that have a connection and a price). It is usually left as is, so only its heading is shown, collapsed (it is shown open when something needs checking, such as a name removed from the settings).
 
 For example, you can rerun only a step that stopped on an error or was sent back with a stronger agent (one with a stronger model or reasoning effort, written as in [Models per step](config.en.md#models-per-step)).
 

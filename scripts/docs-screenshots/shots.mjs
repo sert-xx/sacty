@@ -34,12 +34,15 @@ export const SHOTS = [
     },
     selector: '[role="dialog"]',
   },
+  // タスクの詳細の並び（上に固定した見出し・タブ・右の列のプロパティ）
+  { name: "task-detail", path: "/tasks/a1c3e5f7-0001", height: 900 },
   { name: "task-pull-request", path: "/tasks/a1c3e5f7-0001", height: 760 },
   { name: "task-paused", path: "/tasks/b2d4f6a8-0002", height: 520 },
   { name: "task-budget-paused", path: "/tasks/b8d0f2a4-0008", height: 760 },
   {
     name: "task-costs",
-    path: "/tasks/b8d0f2a4-0008",
+    // 工程ごとの費用は、費用のタブにある
+    path: "/tasks/b8d0f2a4-0008?tab=costs",
     selector: 'section[aria-labelledby="step-costs"]',
   },
   {

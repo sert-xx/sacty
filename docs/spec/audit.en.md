@@ -154,7 +154,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
 ## Screens
 
 - Task details
-  - Completed tasks have an "Audit" card (state, cost, survey, steps of concern, causes and proposals, registered memories, resume form).
+  - Audited tasks have an "Audit" tab (state, cost, survey, steps of concern, causes and proposals, registered memories, resume form).
   - Evidence links to the activity row (`#event-<ID>`) and the run log.
   - Activity rows of audit runs also open their logs.
 - Audit page (`/projects/<ID>/audit`; "Audit" in the side menu)

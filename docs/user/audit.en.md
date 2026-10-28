@@ -30,9 +30,9 @@ To check only the screens, start sacty with `SACTY_AUDIT_MOCK=1`. sacty runs no 
 SACTY_AUDIT_MOCK=1 npx sacty up
 ```
 
-## The audit card in task details
+## The Audit tab in task details
 
-Completed tasks have an "Audit" card in their details.
+Audited tasks have an "Audit" tab in their details.
 
 | Item | What it shows |
 | --- | --- |
@@ -106,16 +106,16 @@ When a deep dive finds knowledge that will help later tasks (how to run the test
 - Memories rank below your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when they conflict, those win.
 - The last useful date is the last day the memory helped.
   - When a task opens a memory and that task's audit judges it helpful, sacty updates the date from that task's completion date (a newer date stays as it is).
-  - The audit card's "Memories that helped" lists the ones that helped in that task.
+  - The Audit tab's "Memories that helped" lists the ones that helped in that task.
 - Whether a memory was opened is counted from the session logs of the task's runs. Runs whose logs are missing or unreadable are not counted. If a memory that should be helping never gets a newer date, check the daemon log for "メモリーを開いたかを数えるログを読めませんでした" and the `runs/` folder in the data directory.
 - Memories whose last useful date is older than "Days to keep memories" in the Sacty settings (1 to 3650; 90 if empty) are deleted automatically. Those that expire while sacty is stopped are deleted at the next startup.
 - Each layer holds up to 30 memories. Beyond that, the ones with the oldest last useful date are deleted.
-- The audit moves memories that are in the wrong layer between project and repository. They show under "Moved memories" on the audit card.
+- The audit moves memories that are in the wrong layer between project and repository. They show under "Moved memories" on the Audit tab.
 - For memories that helped many times, the audit proposes a fix that writes them into the context (skills, conventions) or the target repository (AGENTS.md and so on); the cause title starts with "Make memory context:".
   - As with other proposals, adopting creates a fix task, and merging its PR puts it into the context.
   - Once merged, the original memory is deleted as "Made context".
   - If you reject it, the memory stays and the reason is passed to the next audit.
-- The audit card in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted memory cannot be restored. You cannot add memories by hand.
+- The Audit tab in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted memory cannot be restored. You cannot add memories by hand.
 - sacty rewrites the files under `memory/` from the activity log. Hand edits are reverted at the next startup.
 
 ## Budget

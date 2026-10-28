@@ -107,7 +107,7 @@
 - 有効な最終利用日は、役に立ったと判断されたタスクの完了日（`AuditQueued` の時刻）の最新と、登録した時刻の遅い方。
   古いタスクの監査が後から終わっても、前に戻らない。
   開いていない・役に立たなかったメモリーの日付は変えない。
-- 監査の欄に、役に立ったメモリー（題・階層）と、登録したメモリーの有効な最終利用日を出す。
+- 監査のタブに、役に立ったメモリー（題・階層）と、登録したメモリーの有効な最終利用日を出す。
 
 コード: `apps/daemon/src/memory.ts`（`countOpenedMemories`・`usefulDates`・`lastUsefulAt`）、`apps/daemon/src/service.ts`（`openedMemories`）、`apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）
 
@@ -175,7 +175,7 @@
 採用した提案の改修のタスクの PR がマージされたら、元のメモリーを `AuditMemoryDeleted`（`reason: "promoted"`）で消す。
 PR を見守る確認のたび・掃除のたび・起動のときに確かめる。
 
-監査の欄に、移したメモリー（題・移した先）と、コンテキストにして消した印を出す。
+監査のタブに、移したメモリー（題・移した先）と、コンテキストにして消した印を出す。
 
 コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`・`AUDIT_MAX_MEMORY_MOVES`・`AUDIT_MAX_MEMORY_PROMOTIONS`）、`apps/daemon/src/service.ts`（`promotionInput`・`surveyPromotionRecord`・`retirePromotedMemories`・`knownAuditCauses`）、`apps/daemon/src/memory.ts`（`memoryPlacements`・`usefulCounts`・`promotedMemories`）、`packages/core/src/events.ts`（`MemoryMove`・`AuditProposalRecord`）
 
@@ -227,7 +227,7 @@ PR を見守る確認のたび・掃除のたび・起動のときに確かめ�
 
 ## 人が消す
 
-- 監査の欄に、その監査が登録したメモリー（題・階層・リポジトリ・概要・中身）を出す。
+- 監査のタブに、その監査が登録したメモリー（題・階層・リポジトリ・概要・中身）を出す。
   消していないものには「消す」が出て、確定のボタンを押すと消す（`POST /api/audits/memories/:id/delete`）。
 - 人は登録できない。
 - 消したものは印（人が消した・上限で消した・期限で消した・コンテキストにした）だけを出し、中身と「消す」は出さない。
