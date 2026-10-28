@@ -121,19 +121,25 @@ describe("タスクの再開の補足と工程の設定", () => {
     });
   });
 
-  it("補足が長すぎれば送らず、理由と入力（選んだ工程の設定も）を返す", async () => {
+  it("補足が長すぎれば送らず、理由と入力（人が変えた工程の設定だけ）を返す", async () => {
     const note = "あ".repeat(10_001);
-    expect(
-      await resumeTaskAction(
-        {},
-        form({ taskId: "t1", note, "image:implement": "java", "agent:implement": "strong" }),
-      ),
-    ).toMatchObject({
-      message: a.resumeNoteTooLong(10_000),
-      note,
-      images: { implement: "java" },
-      agents: { implement: "strong" },
-    });
+    const state = await resumeTaskAction(
+      {},
+      form({
+        taskId: "t1",
+        note,
+        "image-from:implement": "default",
+        "image:implement": "java",
+        "agent-from:implement": "claude",
+        "agent:implement": "strong",
+        // 触っていない工程は返さない（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
+        "image-from:requirements": "default",
+        "image:requirements": "default",
+      }),
+    );
+    expect(state).toMatchObject({ message: a.resumeNoteTooLong(10_000), note });
+    expect(state.images).toEqual({ implement: "java" });
+    expect(state.agents).toEqual({ implement: "strong" });
     expect(resumeTask).not.toHaveBeenCalled();
   });
 });

@@ -3,15 +3,19 @@ import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
 import {
   bodyWithResumeNote,
+  DERIVE_RECORD_HEADING,
   EventInput as EventSchema,
   exportSteps,
   MVP_STEPS,
   RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   RESUME_NOTE_HEADING,
+  RESUME_NOTE_MAX,
   rerunEditableBody,
+  resumeNoteRoom,
   resumeNotes,
   STEP_PLANS,
+  TASK_BODY_MAX,
 } from "./events.js";
 import {
   applyEvent,
@@ -2547,12 +2551,51 @@ describe("再開の補足と、再実行・取り込みの説明", () => {
       `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足`,
     );
     // 説明から取り出す補足には、前の試行の記録を含めない
-    expect(resumeNotes(body)).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
+    expect(resumeNotes({ ...task, body })).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
+  });
+
+  it("派生で作ったタスクは、元のタスクの記録の前に入れる（記録に再実行の記録と同じ見出しの行があっても、境目を誤らない）", () => {
+    const derivedRecord = `${DERIVE_RECORD_HEADING}\n\n成果\n${RERUN_RECORD_HEADING}\n成果の続き`;
+    for (const rerun of [undefined, "t0"]) {
+      const rerunPart = rerun ? `\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${record}` : "";
+      const task = {
+        body: `依頼\n\n${derivedRecord}${rerunPart}`,
+        rerun,
+        derivedFrom: { record: derivedRecord },
+      };
+      const body = bodyWithResumeNote(task, "再開の補足");
+      expect(body).toBe(
+        `依頼\n\n${RESUME_NOTE_HEADING}\n\n再開の補足\n\n${derivedRecord}${rerunPart}`,
+      );
+      // 再実行の画面の説明は、記録を除いて補足を残す
+      expect(rerunEditableBody({ ...task, body })).toBe(
+        `依頼\n\n${RESUME_NOTE_HEADING}\n\n再開の補足${rerun ? `\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足` : ""}`,
+      );
+      expect(resumeNotes({ ...task, body })).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
+    }
+  });
+
+  it("足せる補足の長さは、ちょうどその長さを足すと、再実行で直す説明が上限に収まる", () => {
+    for (const task of [
+      { body: "あ".repeat(9_000) },
+      { body: `依頼\n\n${record}`, rerun: "t0" },
+      { body: "" },
+    ]) {
+      const room = resumeNoteRoom(task);
+      const editable = (note: string) =>
+        rerunEditableBody({ ...task, body: bodyWithResumeNote(task, note) }).length;
+      if (room < RESUME_NOTE_MAX) {
+        expect(editable("い".repeat(room))).toBe(TASK_BODY_MAX);
+      } else {
+        expect(editable("い".repeat(room))).toBeLessThanOrEqual(TASK_BODY_MAX);
+      }
+    }
+    expect(resumeNoteRoom({ body: "あ".repeat(TASK_BODY_MAX) })).toBeLessThanOrEqual(0);
   });
 
   it("ふつうのタスクは説明の後に足し、再実行の画面の説明にも残す", () => {
     const body = bodyWithResumeNote({ body: "説明" }, "補足");
     expect(rerunEditableBody({ body })).toBe(body);
-    expect(resumeNotes("説明")).toBe("");
+    expect(resumeNotes({ body: "説明" })).toBe("");
   });
 });

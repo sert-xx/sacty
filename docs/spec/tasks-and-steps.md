@@ -1126,15 +1126,19 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - 補足（10000 文字まで。`RESUME_NOTE_MAX`）は `TaskResumed` の `note` に記録し、投影がタスクの説明の後に `## 補足（再開で人が足したもの）`（`RESUME_NOTE_HEADING`）の見出しを付けて足す（`bodyWithResumeNote`）。
     オーケストレーターとすべての工程は説明を読むので、これから実行する工程にそのまま届く。
     再開のたびに、別の見出しで足す。
-    再実行で作ったタスクは、前の試行の記録（`RERUN_RECORD_HEADING`）の前に入れる（再実行の画面の説明にも残る）。
-  - 補足を足した説明のうち再実行の画面で直す部分（`rerunEditableBody`）が `TASK_BODY_MAX` を超えるなら、何も記録せずに断る（`resume.bodyTooLong`）。
-  - チケットのトリアージを待って止まったタスクでは、補足をトリアージ（`buildTicketTriagePrompt`）に渡し、`TicketTriaged` で説明を概要に書き換えるときも、補足（`resumeNotes`）を概要の後ろに残す。
+    派生・再実行で作ったタスクは、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）の前に入れる（再実行の画面の説明にも残る）。
+    派生の記録は作成のときに記録した本文の位置で求め、再実行の記録の見出しはその後ろで探す。
+  - 補足を足した説明のうち再実行の画面で直す部分（`rerunEditableBody`）が `TASK_BODY_MAX` を超えるなら、何も記録せずに断る（`resume.bodyTooLong`。足せる長さを示す。`resumeNoteRoom`）。
+    確かめるのは再開の時点の説明で、チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある。
+  - チケットのトリアージを待って止まったタスクでは、補足をトリアージ（`buildTicketTriagePrompt`）に判断の材料として渡し（概要には写させない）、`TicketTriaged` で説明を概要に書き換えるときに、補足（`resumeNotes`）を概要の後ろに残す。
   - 工程ごとのイメージ・エージェントは、タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を `TaskResumed` の前に記録する。
     今と同じ名前の工程は記録しない。
     選んでいない工程・設定に無い名前・統合レビューのエージェント・設定（config.yaml）を読めないときは、1つでもあれば何も記録せずに断る。
   - テストを決めずに再開して工程の選択からやり直すとき（`rechooseSteps`）は、選んだ工程に結びつく変更が消えるので、工程の設定は断る（`resume.stepSettingsRechoose`）。
   - 画面の再開の欄には、補足の入力欄と、まだ終わっていない工程のイメージ・エージェントの選択（折りたたみ。今の名前を初めに選ぶ）を出す。
     描いたときの今の名前も一緒に送り、Server Action は人が変えた工程だけをデーモンへ渡す（`changedStepChoices`。触っていない工程の古い名前で、その間に変えた名前を戻さない）。
+    再開が断られたときに戻す選択も、人が変えた工程だけにする。
+    説明が長く、足せる補足が `RESUME_NOTE_MAX` より短いときは、補足の欄の上限をその長さにして残りを出し、足せなければ欄を使えなくして、補足なしで再開するか中止して再実行で内容を直すよう案内する。
     作業履歴の再開の行には、補足を足したことを出し、補足の本文を詳細に出す。
 - 中止：ゴールガーディアンの判定中は中止できない。
   セッションログ（`runs/`）は消さない。
@@ -1146,7 +1150,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNotes`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteRoom`・`resumeNotes`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
 
 ### 終わったタスクの作業領域の片付け
 

@@ -51,6 +51,7 @@ export function ResumeForm({
   tests,
   toReview = false,
   steps = [],
+  noteRoom = RESUME_NOTE_MAX,
 }: {
   taskId: string;
   reason: PauseReason;
@@ -77,6 +78,11 @@ export function ResumeForm({
   toReview?: boolean;
   /** 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。 */
   steps?: ResumeStepSetting[];
+  /**
+   * 足せる補足の長さ（resumeNoteRoom）。説明が長いと、再実行の画面で直せる長さに収まるよう短くなる。0 以下なら、補足を
+   * 足せない（補足なしで再開するか、中止して再実行で内容を直す）。
+   */
+  noteRoom?: number;
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
@@ -216,13 +222,21 @@ export function ResumeForm({
           <Textarea
             id="resume-note"
             name="note"
-            maxLength={RESUME_NOTE_MAX}
+            maxLength={Math.max(noteRoom, 0)}
+            disabled={noteRoom <= 0}
             rows={3}
             defaultValue={state.note ?? ""}
             placeholder={r.notePlaceholder}
+            aria-describedby={noteRoom < RESUME_NOTE_MAX ? "resume-note-room" : undefined}
             className="bg-card"
             data-testid="resume-note"
           />
+          {/* 説明が長く、補足の上限より短くしか足せないときは、残りを出す（足せなければ、取れる手を出す） */}
+          {noteRoom < RESUME_NOTE_MAX && (
+            <p id="resume-note-room" className="text-xs leading-5 text-muted-foreground">
+              {noteRoom > 0 ? r.noteRoom(noteRoom) : r.noteNoRoom}
+            </p>
+          )}
         </div>
         {steps.length > 0 && (
           <ResumeStepSettings
@@ -322,14 +336,7 @@ function ResumeStepSettings({
                 const image = chosen.images?.[s.step];
                 const agent = chosen.agents?.[s.step];
                 return (
-                  // 今の名前（タスクの詳細で変えた後）か、エラーで戻した選択が変わったら作り直す（非制御の選択は、
-                  // 初めの値が変わっても選択を変えないため）
-                  <ResumeStepRow
-                    key={`${s.step}:${s.image}:${s.agent?.current ?? ""}:${image ?? ""}:${agent ?? ""}`}
-                    setting={s}
-                    chosenImage={image}
-                    chosenAgent={agent}
-                  />
+                  <ResumeStepRow key={s.step} setting={s} chosenImage={image} chosenAgent={agent} />
                 );
               })}
             </ul>
@@ -381,7 +388,10 @@ function ResumeStepRow({
         {s.imageOptions ? (
           <>
             <input type="hidden" name={imageFromField(s.step)} value={s.image} />
+            {/* 今の名前（タスクの詳細で変えた後）か、エラーで戻した選択が変わったら作り直す（非制御の選択は、初めの値が
+                変わっても選択を変えないため）。イメージとエージェントで分け、変わった方だけを作り直す */}
             <select
+              key={`${s.image}:${chosenImage ?? ""}`}
               id={imageId}
               name={imageField(s.step)}
               ref={imageRef}
@@ -425,6 +435,7 @@ function ResumeStepRow({
               <input type="hidden" name={agentFromField(s.step)} value={agentCurrent} />
             )}
             <select
+              key={`${agentCurrent ?? ""}:${chosenAgent ?? ""}`}
               id={agentId}
               name={agentField(s.step)}
               defaultValue={initialAgent}

@@ -18,6 +18,7 @@ import {
   isSecurityTask,
   openProposal,
   rerunEditableBody,
+  resumeNoteRoom,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -436,6 +437,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           reason={task.pausedReason}
           toReview={canOverrideVerification(task)}
           steps={resumeStepSettings(task, data, m.images.defaultDescription)}
+          noteRoom={resumeNoteRoom(task)}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
           lastFailure={(() => {

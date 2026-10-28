@@ -46,8 +46,10 @@ import {
   PULL_REQUEST_CI_TIMEOUT_MS,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
+  RESUME_NOTE_HEADING,
   renderMessage,
   rerunEditableBody,
+  resumeNoteRoom,
   reworkTargets,
   STEP_PLANS,
   stepRunning,
@@ -4557,11 +4559,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         body: "あ".repeat(9_000),
       });
       await service.runNext(id);
-      expect(() => service.resume(id, { note: "い".repeat(5_000) })).toThrow(
-        expect.objectContaining({ messages: [message("resume.bodyTooLong")] }),
+      const room = resumeNoteRoom(service.get(id)?.task as Task);
+      expect(room).toBe(TASK_BODY_MAX - 9_000 - `\n\n${RESUME_NOTE_HEADING}\n\n`.length);
+      expect(() => service.resume(id, { note: "い".repeat(room + 1) })).toThrow(
+        expect.objectContaining({ messages: [message("resume.bodyTooLong", { room })] }),
       );
       expect(service.get(id)?.task.status).toBe("paused");
-      service.resume(id, { note: "い".repeat(900) });
+      service.resume(id, { note: "い".repeat(room) });
       expect(service.get(id)?.task.status).toBe("queued");
       activity.close();
     });
@@ -28870,6 +28874,55 @@ describe("中止したタスクの再実行", () => {
     });
     return { activity, ...made };
   };
+
+  it("再実行で作ったタスクの再開の補足は、前の試行の記録の前に入れ、上限は記録を数えずに確かめる", async () => {
+    const taskOf = (id: string) => service.get(id)?.task as Task;
+    const { activity, service } = setup([
+      {
+        kind: "completed",
+        output: `# 要求要件\n\n${"あ".repeat(6_000)}`,
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+      },
+      { kind: "failed", reason: "error", message: "失敗" },
+    ]);
+    const task = service.createTask({
+      projectId: "default",
+      title: "決済の再送",
+      body: "二重に請求される",
+      repo: "https://github.com/acme/app",
+    });
+    await service.runNext(task.id); // 要求要件（長い成果）
+    await service.cancel(task.id);
+    const rerun = service.rerunTask(task.id, {
+      title: "決済の再送",
+      body: "二重に請求される",
+      repo: "https://github.com/acme/app",
+    });
+    await service.runNext(rerun.id);
+    expect(service.get(rerun.id)?.task.status).toBe("paused");
+    const record = service.get(rerun.id)?.task.body ?? "";
+    expect(record.length).toBeGreaterThan(3_000);
+    // 直せる部分（説明と補足）は上限を超えないが、記録を合わせると超える補足は受け付ける
+    const room = resumeNoteRoom(taskOf(rerun.id));
+    // 前の試行の記録は数えない（数えると、残りは記録の分だけ短くなる）
+    expect(room).toBe(
+      TASK_BODY_MAX - `${rerunEditableBody(taskOf(rerun.id))}\n\n${RESUME_NOTE_HEADING}\n\n`.length,
+    );
+    expect(room).toBeGreaterThan(TASK_BODY_MAX - record.length);
+    expect(() => service.resume(rerun.id, { note: "あ".repeat(room + 1) })).toThrow(
+      expect.objectContaining({ messages: [message("resume.bodyTooLong", { room })] }),
+    );
+    service.resume(rerun.id, { note: "い".repeat(9_000) });
+    const resumed = taskOf(rerun.id);
+    expect(resumed.body.length).toBeGreaterThan(TASK_BODY_MAX);
+    // 補足は前の試行の記録の前にあり、再実行の画面の説明に残る
+    expect(resumed.body.indexOf(RESUME_NOTE_HEADING)).toBeLessThan(
+      resumed.body.indexOf(RERUN_RECORD_HEADING),
+    );
+    expect(rerunEditableBody(resumed)).toContain("い".repeat(9_000));
+    expect(rerunEditableBody(resumed).length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    activity.close();
+  });
 
   it("中止したタスクを引き継いだ新しいタスクを作り、補足と前の試行の記録を説明に足す。再実行は1度だけ", async () => {
     const { activity, service } = setup([completed(10)]);

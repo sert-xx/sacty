@@ -162,6 +162,65 @@ describe("再開の欄の補足と工程の設定", () => {
     expect(select("image:implement")?.value).toBe("java");
   });
 
+  it("再開に失敗した後にタスクの詳細で変えた工程は、触らずに送り直しても古い名前に戻さない", async () => {
+    // 人は何も変えずに送り、断られた（触っていない工程は、戻す選択に入らない）
+    resumeTaskAction.mockResolvedValueOnce({
+      message: "断られた",
+      images: {},
+      agents: {},
+    } as never);
+    renderForm(false, steps);
+    act(() => radio("command")?.click());
+    const command = container.querySelector<HTMLInputElement>("#test-command");
+    if (command) act(() => typeInto(command, "npm test"));
+    await submit();
+    // 断られた理由を見て、タスクの詳細で implement のイメージを java に変えた
+    renderForm(false, [
+      { ...steps[0], image: "java" } as ResumeStepSetting,
+      steps[1] as ResumeStepSetting,
+    ]);
+    expect(select("image:implement")?.value).toBe("java");
+    // 触らずに送り直すと、今の名前のまま（Server Action は、描いたときの名前と同じ工程を渡さない）
+    const again = container.querySelector<HTMLInputElement>("#test-command");
+    if (again) act(() => typeInto(again, "npm test"));
+    const sent = await submit();
+    expect(resumeTaskAction).toHaveBeenCalledTimes(2);
+    expect(sent?.["image:implement"]).toBe("java");
+    expect(sent?.["image-from:implement"]).toBe("java");
+  });
+
+  it("同じ工程のイメージが別の所で変わっても、選んでいる途中のエージェントは消さない", () => {
+    renderForm(false, steps);
+    act(() => radio("command")?.click());
+    const agent = select("agent:implement");
+    if (agent) agent.value = "strong";
+    renderForm(false, [
+      { ...steps[0], image: "java" } as ResumeStepSetting,
+      steps[1] as ResumeStepSetting,
+    ]);
+    expect(select("image:implement")?.value).toBe("java");
+    expect(select("agent:implement")?.value).toBe("strong");
+  });
+
+  it("説明が長いときは足せる補足の長さを出し、足せなければ欄を使えなくして取れる手を出す", () => {
+    const r = messagesFor("ja").parts.resume;
+    act(() =>
+      root.render(
+        h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 120 }),
+      ),
+    );
+    const note = container.querySelector<HTMLTextAreaElement>("#resume-note");
+    expect(note?.maxLength).toBe(120);
+    expect(container.textContent).toContain(r.noteRoom(120));
+    act(() =>
+      root.render(
+        h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: -5 }),
+      ),
+    );
+    expect(container.querySelector<HTMLTextAreaElement>("#resume-note")?.disabled).toBe(true);
+    expect(container.textContent).toContain(r.noteNoRoom);
+  });
+
   it("再開に失敗したら、選んでいた工程の設定を戻す", async () => {
     resumeTaskAction.mockResolvedValueOnce({
       message: "断られた",

@@ -264,22 +264,21 @@ export async function resumeTaskAction(
   const testCommand = String(formData.get("testCommand") ?? "").trim();
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim();
-  // 選び直した工程の設定も、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に戻す）
-  const choices = stepChoicesFrom(formData);
+  // 人が変えた工程の設定だけを、デーモンへ渡し、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に
+  // 戻す）。触っていない工程は戻さず、今の名前から始める（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
+  const { images, agents } = changedStepChoices(formData);
   const kept: ResumeState = {
     capUsd: capText,
     ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
     testCommand,
     noTestsReason,
     note,
-    images: choices.images,
-    agents: choices.agents,
+    images,
+    agents,
   };
   if (note.length > RESUME_NOTE_MAX) {
     return { ...kept, message: a.resumeNoteTooLong(RESUME_NOTE_MAX) };
   }
-  // 再開と一緒に変える工程のイメージ・エージェント（人が変えた工程だけ。今と同じ名前はデーモンも変えない）
-  const { images, agents } = changedStepChoices(formData);
   let tests: { testCommand: string } | { noTestsReason: string } | undefined;
   if (choice === "command") {
     if (!testCommand || testCommand.length > 1000)

@@ -606,7 +606,6 @@ export async function submitTaskForReview(
   return { ok: true };
 }
 
-/** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */
 /** 再開と一緒に渡す補足と、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */
 export type ResumeOptions = {
   note: string;
@@ -614,6 +613,7 @@ export type ResumeOptions = {
   agents: Partial<Record<StepKey, string>>;
 };
 
+/** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */
 export async function resumeTask(
   id: string,
   capUsd: number | undefined,

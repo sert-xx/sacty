@@ -1815,7 +1815,7 @@ export function applyEvent(
       if (event.payload.title) task.title = event.payload.title;
       if (event.payload.body !== undefined) {
         // 再開のときに人が足した補足は、トリアージで書いた概要に置き換えず、後ろに残す（後の工程に届くように）
-        const notes = resumeNotes(task.body);
+        const notes = resumeNotes(task);
         task.body = [event.payload.body.trimEnd(), notes].filter(Boolean).join("\n\n");
       }
       task.ticketTriage = {

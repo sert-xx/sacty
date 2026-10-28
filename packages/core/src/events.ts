@@ -2802,13 +2802,30 @@ export function rerunEditableBody(task: {
   return body.slice(0, at).trimEnd();
 }
 
+/** 再開の補足を足す・取り出すときに見るタスクの項目。 */
+type ResumeNoteTask = { body: string; rerun?: unknown; derivedFrom?: { record?: string } };
+
 /**
- * 再開の補足を足した後の説明。見出しを付けて説明の後に足す。再実行で作ったタスクは、sacty が足した前の試行の記録の前に
- * 入れる（記録は参考で、人の補足が優先する。再実行の画面の説明にも残す）。
+ * 説明の中で、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）が始まる位置（無ければ -1）。
+ * 派生の記録は作成のときに記録した本文そのものの位置を求め、再実行の記録の見出しは派生の記録の後ろで探す（派生の記録に入る
+ * 成果の本文に同じ見出しの行があっても、境目を誤らない。rerunEditableBody と同じ考え方）。
  */
-export function bodyWithResumeNote(task: { body: string; rerun?: unknown }, note: string): string {
+function recordAt(task: ResumeNoteTask): number {
+  const record = derivedRecord(task);
+  if (record) {
+    const at = task.body.startsWith(record) ? 0 : task.body.indexOf(`\n\n${record}`);
+    if (at >= 0) return at;
+  }
+  return task.rerun ? headingAt(task.body, RERUN_RECORD_HEADING) : -1;
+}
+
+/**
+ * 再開の補足を足した後の説明。見出しを付けて説明の後に足す。派生・再実行で作ったタスクは、sacty が足した記録の前に
+ * 入れる（記録は参考で、人の依頼と補足が優先する。再実行の画面の説明にも残す）。
+ */
+export function bodyWithResumeNote(task: ResumeNoteTask, note: string): string {
   const section = `${RESUME_NOTE_HEADING}\n\n${note}`;
-  const at = task.rerun ? headingAt(task.body, RERUN_RECORD_HEADING) : -1;
+  const at = recordAt(task);
   if (at < 0) return [task.body.trimEnd(), section].filter(Boolean).join("\n\n");
   const before = task.body.slice(0, at).trimEnd();
   const after = task.body.slice(at).replace(/^\n+/, "");
@@ -2816,15 +2833,24 @@ export function bodyWithResumeNote(task: { body: string; rerun?: unknown }, note
 }
 
 /**
- * 説明の中の、再開で人が足した補足（最初の見出しから後ろ。再実行の前の試行の記録は含めない）。無ければ空。
+ * 再開で足せる補足の長さ（文字数）。補足を足した後に再実行の画面で直す説明（rerunEditableBody）が TASK_BODY_MAX を
+ * 超えない長さで、RESUME_NOTE_MAX まで。0 以下なら、補足を足せない。
+ */
+export function resumeNoteRoom(task: ResumeNoteTask): number {
+  // 1文字の補足を足して測り、その分を引く（空の補足で測ると、記録の前の区切りが切り詰められて長さがずれる）
+  const editable = rerunEditableBody({ ...task, body: bodyWithResumeNote(task, "x") }).length - 1;
+  return Math.min(RESUME_NOTE_MAX, TASK_BODY_MAX - editable);
+}
+
+/**
+ * 説明の中の、再開で人が足した補足（最初の見出しから、sacty が足した記録の前まで）。無ければ空。
  * 説明を書き換える取り込み（チケットのトリアージ）で、人の補足を失わないために使う。
  */
-export function resumeNotes(body: string): string {
+export function resumeNotes(task: ResumeNoteTask): string {
+  const end = recordAt(task);
+  const body = end < 0 ? task.body : task.body.slice(0, end);
   const at = headingAt(body, RESUME_NOTE_HEADING);
-  if (at < 0) return "";
-  const notes = body.slice(at);
-  const record = headingAt(notes, RERUN_RECORD_HEADING);
-  return (record < 0 ? notes : notes.slice(0, record)).trim();
+  return at < 0 ? "" : body.slice(at).trim();
 }
 
 /** 派生で作ったタスクの、sacty が説明の後に足した元のタスクの記録の本文。派生でないタスクなら undefined。 */

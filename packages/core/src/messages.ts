@@ -66,7 +66,7 @@ const PARAMS = {
   "override.notAllowed": null,
   "resume.bugfixNeedsTestCommand": null,
   "resume.stepSettingsRechoose": null,
-  "resume.bodyTooLong": null,
+  "resume.bodyTooLong": z.object({ room: z.number().int().nonnegative() }),
   "operation.incomplete": null,
   "operation.attempted": null,
   "operation.unconfirmed": null,
@@ -710,7 +710,10 @@ const ja: MessageDictionary = {
   "operation.connectionMissing":
     "外部作業は開始していません。選択された接続先が利用できません。設定を確認してから再開してください。",
   "resume.capRequired": "予算で止まったタスクを再開するには、新しい上限が必要です。",
-  "resume.bodyTooLong": `補足を足すと、タスクの内容が${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます（再実行で直せなくなります）。補足を短くしてください。`,
+  "resume.bodyTooLong": ({ room }) =>
+    room > 0
+      ? `補足を足すと、タスクの内容が${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます（再実行で直せなくなります）。補足は${room.toLocaleString("ja-JP")}文字以内にしてください。`
+      : `タスクの内容が長いため、補足を足せません（再実行で直せる${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます）。補足なしで再開するか、中止して再実行で内容を直してください。`,
   "resume.stepSettingsRechoose":
     "テストを決めずに再開すると工程の選択からやり直すため、工程のイメージ・エージェントは一緒に変えられません。テストの扱いを決めるか、工程を選び直した後に変えてください。",
   "resume.capTooLow": ({ usedUsd }) =>
@@ -1354,7 +1357,10 @@ const en: MessageDictionary = {
   "operation.connectionMissing":
     "The operation has not started. The selected connection is unavailable. Check its configuration before resuming.",
   "resume.capRequired": "To resume a task stopped by its budget, set a new cap.",
-  "resume.bodyTooLong": `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be rerun). Shorten the notes.`,
+  "resume.bodyTooLong": ({ room }) =>
+    room > 0
+      ? `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be edited when rerunning). Keep the notes within ${room.toLocaleString("en-US")} characters.`
+      : `The task description is too long to add notes (it would exceed the ${TASK_BODY_MAX.toLocaleString("en-US")} characters that can be edited when rerunning). Resume without notes, or cancel and fix the description in a rerun.`,
   "resume.stepSettingsRechoose":
     "Resuming without deciding the tests chooses the steps again, so the step images and agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",
   "resume.capTooLow": ({ usedUsd }) =>
