@@ -32,7 +32,7 @@ gateway:
 
 - The Orchestrator decides, for each step, whether to export and where when it chooses the steps.
   - It decides based on the available destinations and their descriptions, the task's content, the intake source, and the conventions in the project's context. It may also decide not to export.
-  - The chosen destination and the reason appear in the Activity and in the step's field on the task page.
+  - The chosen destination and the reason appear in the Activity and on the "Step settings" tab of the task details.
   - If no destination is available, it decides nothing.
 - After a step is approved, that step's agent exports using only the chosen destination.
   - The gateway adds the authentication. The container receives only a per-run token.

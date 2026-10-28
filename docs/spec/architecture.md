@@ -64,6 +64,17 @@ sacty は、npm workspaces の4つのパッケージでできている。
   - プロジェクトの作成・インポートの後は、そのプロジェクトの設定（`/projects/<ID>/settings`）へ移る。
   - タスクの詳細の「タスク」（パンくず）は、そのタスクのプロジェクトのタスクの一覧へ戻る。
     タスクを読む前と、デーモンに届かないときは `/projects/current/tasks` へ戻る。
+- タスクの詳細の並び（`TaskDetailView`）
+  - 題・状態・工程の並び・操作（一時停止・中止・再レビュー）・タブを、画面の上に固定する（スクロールしても見える）。
+  - 承認・判断を待っているときの案内（`GateNotice`）と再開の欄は、どのタブでもタブの下に出す。
+  - タブは、概要・作業履歴・費用・工程の設定・監査（完了したタスクだけ）。開いたタブは `?tab=` に残す（概要なら付けない。出していないタブの指定は概要にする）。
+    隠したタブの中身も描いておき、入力の途中の文字や開いた欄はタブを切り替えても消えない。
+  - URL のハッシュ（`#event-<ID>`・`#audit`・`#proposals` など）の要素が隠したタブの中にあれば、そのタブを開いてから要素へ移る（開いたとき・同じ画面の中でハッシュが変わったとき・同じ画面へのハッシュ付きのリンクを押したとき。画面の中のリンクは `hashchange` を起こさないので、押したリンクのハッシュで開く）。不正なパーセント表記のハッシュは無視する。
+  - タブ（表示のタブ・成果物の工程）は、左右の矢印キー・Home・End で移れる（選んだタブだけがフォーカスの順に入る）。
+  - 概要の成果物は、工程を選んで1つずつ出す（`Deliverables`）。最初は、作業中・承認待ち・最後に終えた工程の順に選ぶ（`currentStep`）。
+    1つずつ出すので、承認済みのカードも折りたたまない（`ExpandCards`）。まだ始まっていないマージの後の監視は選べない（工程が無くても監視の記録がある古いタスクは選べる）。
+  - 右の列に、プロパティ（いまの工程・PR・費用・プロジェクト・リポジトリ・ブランチ・テスト・元のチケット・関係するタスク・作成と最終更新）と、最近の作業履歴（5件）を出す。
+  - 変更の申し出と判定の欄は、申し出があるときだけ出す。
 - プロジェクトの画面のプロジェクトは、URL の ID で決める。
   デーモンのプロジェクトの一覧に無い ID なら 404。
 - タスクの一覧の「すべてのタスク」は、画面の中で絞り込める（`TaskFilterBar`・`matchesFilter`）。タスクが1件も無いときは出さない。
@@ -170,7 +181,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
 `apps/web/src/components/task-list.tsx`（`TaskFilterBar`）、`apps/web/src/lib/task-filter.ts`（`matchesFilter`・`filterOptions`・`localDay`）、
-`apps/web/src/app/projects/current/[[...view]]/route.ts`、`apps/web/src/app/tasks/[id]/page.tsx`（`Breadcrumb`）、
+`apps/web/src/app/projects/current/[[...view]]/route.ts`、`apps/web/src/app/tasks/[id]/page.tsx`（`Breadcrumb`）、`apps/web/src/components/task-detail.tsx`（`TaskDetailView`・`GateNotice`・`Deliverables`・`currentStep`・`Properties`）、`apps/web/src/components/card-section.tsx`（`ExpandCards`）、
 `packages/core/src/projection.ts`（`isFinished`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`・`attentionRows`・`pausedGroups`・`nearBudgetRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`AttentionCard`・`PausedCard`・`OpenTasksCard`・`CostsCard`・`QueueCard`・`IntakeCard`・`FlowCard`・`QualityCard`・`durationText`）、`apps/web/src/components/intake-status.tsx`（`IntakeStatusView`・`IntakeRunNow`）、`apps/web/src/lib/dashboard-rules.ts`（`PAUSE_REASON_ORDER`・`FIX_ONCE_REASONS`・`REWORK_STEPS`）、`apps/web/src/lib/labels.ts`（`statusTone`・`personAction`）
 
 ## ダッシュボードの集計

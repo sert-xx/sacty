@@ -246,7 +246,7 @@ Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/daemon/src/service
     - The failed workflows and jobs (links and log excerpts)
     - The check by the skill (skill, overall result, the results and reasons of the CI/CD check and the deployment check, summary, evidence)
     - The fix task (link) or the reason none was created
-- The top of a fix task's details shows a link to the original task and the depth.
+- "Fix of" in the properties of a fix task's details shows a link to the original task and the depth.
 - The Activity shows the seven events as sentences. The record of choosing steps shows whether to watch (the skill) or the reason for skipping, and a stopped check shows that it will be checked again.
 - The cost-per-step table shows the runs of the check (including running and stopped ones) in this step's row (in step order). For tasks from before the step, they are shown as a row for a step not in the task's list of steps.
 - Notifications ([Slack notifications](notifications.en.md))

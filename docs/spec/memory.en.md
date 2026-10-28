@@ -78,7 +78,7 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditD
 - The survey prompt includes the opened memories (ID, title, summary, times opened) and the judging rules, and asks for the IDs of the helpful ones in `usefulMemories`. A helpful memory is one where the work followed that knowledge and avoided a detour or a change request. IDs that were not opened are dropped.
 - `AuditSurveyed` records the opened memories (`openedMemories`) and the helpful ones (`usefulMemories`). After recording, sacty rewrites the helpful memories' layers.
 - The last useful date is the later of the registration time and the latest completion time (the time of `AuditQueued`) of a task that judged it helpful. A late audit of an older task never moves it back. Memories that were not opened or did not help keep their dates.
-- The audit card shows the memories that helped (title, layer) and the last useful date of registered memories.
+- The Audit tab shows the memories that helped (title, layer) and the last useful date of registered memories.
 
 Code: `apps/daemon/src/memory.ts` (`countOpenedMemories`, `usefulDates`, `lastUsefulAt`), `apps/daemon/src/service.ts` (`openedMemories`), `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`)
 
@@ -133,7 +133,7 @@ For memories that helped repeatedly (about 2 times or more) and became rules wor
 
 When the PR of the fix task from an adopted proposal is merged, sacty deletes the original memory with `AuditMemoryDeleted` (`reason: "promoted"`). It checks this on each PR watch pass, each cleanup, and at startup.
 
-The audit card shows the moved memories (title, destination) and a mark on memories deleted after becoming context.
+The Audit tab shows the moved memories (title, destination) and a mark on memories deleted after becoming context.
 
 Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`, `AUDIT_MAX_MEMORY_MOVES`, `AUDIT_MAX_MEMORY_PROMOTIONS`), `apps/daemon/src/service.ts` (`promotionInput`, `surveyPromotionRecord`, `retirePromotedMemories`, `knownAuditCauses`), `apps/daemon/src/memory.ts` (`memoryPlacements`, `usefulCounts`, `promotedMemories`), `packages/core/src/events.ts` (`MemoryMove`, `AuditProposalRecord`)
 
@@ -178,7 +178,7 @@ Code: `apps/daemon/default-context/skills/memory/SKILL.md`
 
 ## Deletion by people
 
-- The audit card shows the memories that audit registered (title, layer, repository, summary, contents). Memories not yet deleted have a Delete button; confirming deletes it (`POST /api/audits/memories/:id/delete`).
+- The Audit tab shows the memories that audit registered (title, layer, repository, summary, contents). Memories not yet deleted have a Delete button; confirming deletes it (`POST /api/audits/memories/:id/delete`).
 - People cannot register memories.
 - Deleted memories show only a mark (deleted by a person, by the limit, by expiry, or after becoming context), without contents or the Delete button. A deleted memory cannot be deleted again (409).
 - After deleting, sacty rewrites the layer where the memory currently lives (the destination, if the audit moved it).

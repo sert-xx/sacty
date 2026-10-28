@@ -264,7 +264,7 @@
   答えの `plan` が指定と違えば、読めない答えとして扱う。
   指定がタスクの形で選べなくなっていれば（ふつうは起きない）、指定を使わずにいつもどおり選ばせる。
 - 指定した組み合わせは、工程の見直しで工程を飛ばさない（下の「工程の見直し」）。
-- タスクの詳細の「工程」の欄に、指定した進め方を出す。
+- タスクの詳細の「工程の設定」タブに、指定した進め方を出す。
 
 コード: `packages/core/src/events.ts`（`CreateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`pinnedPlanLines`・`pullRequestInText`）、`apps/web/src/components/new-task-dialog.tsx`
 
@@ -461,7 +461,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   渡していない指摘（読めなかった・件数を超えた・後から付いた）は、ほかの PR と同じく取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
 - マージの後の監視は、作業領域のベースブランチ（PR の元のブランチ）ではなく、PR の向き先のブランチをマージ先として記録する（`deploymentWatchEvents`）。
 - 中止しても、引き継いだ PR は閉じず、元のブランチも消さない（`sactyBranches` から除く）。
-- 画面は、タスクの詳細の工程の欄に、引き継いで直す PR（番号と元のブランチ）を出す。
+- 画面は、タスクの詳細の「工程の設定」タブに、引き継いで直す PR（番号と元のブランチ）を出す。
 
 コード: `apps/daemon/src/prompts.ts`（`continuablePullRequest`・`CONTINUABLE_PLANS`・`continuePullRequestLines`・`continuedPullRequestLines`・`extractStepPlan`）、`apps/daemon/src/service.ts`（`resolveContinuedPullRequest`・`continuedPullRequestOwner`・`continuedFeedback`・`publishContinued`・`stepPullRequestsOn`・`importFeedback`・`handedOverFeedback`・`sactyBranches`・`deploymentWatchEvents`）、`apps/daemon/src/github.ts`（`PullRequestInfo`）、`packages/core/src/events.ts`（`ContinuedPullRequest`・`StepsChosen`）、`packages/core/src/events.ts`（`ContinuedFeedbackPassed`）、`packages/core/src/projection.ts`（`continuedPullRequest`・`handedOverFeedback`）、`apps/web/src/components/task-detail.tsx`
 
@@ -496,7 +496,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
 
 - 承認して完了した（中止していない）セキュリティチェックのタスク（`canRequestSecurityFix`）では、タスクの詳細に、区分ごとの指摘と「対応のタスクを作る」を出す（`GET /api/tasks/:id/security-findings`）。
   指摘を取れなかったときは、指摘が無いこととは分けて、読めなかったことと再読み込みを案内する。
-- 対応のタスクの詳細の先頭には、元のレポートのタスクへのリンクと区分を出す。
+- 対応のタスクの詳細のプロパティの「元のレポート」に、元のレポートのタスクへのリンクと区分を出す。
 - `POST /api/tasks/:id/security-fixes`（入力は `RequestSecurityFixInput` の `category`）で、その区分の対応のタスクを作る。
   区分ごとに1回だけ（`security.alreadyRequested`）。
   承認したレポートでない（`security.notReport`）・その区分の指摘が無い（`security.noFindings`）ときは作らない（どれも 409）。
@@ -1047,7 +1047,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     エージェント向けの指示の文書の変更は、依頼がエージェントの振る舞いで書かれていても、その振る舞いを指示する記述が文書にあるかを差分と実装後のファイルで判定させ、エージェントを起動して確かめることを求めさせない（`NO_TESTS_AGENT_INSTRUCTIONS_REVIEW_LINE`）。
     観点（設計のテスト観点か `REQ`）、合格・不合格、`MAX_VERIFY_ATTEMPTS` のやり直しの上限は、テストのあるタスクと同じ。
 - 示し方
-  - タスクの画面の工程の欄（`testCommandOfNoTests`）：テストのコマンドを「なし・目的から判定」と出し、根拠は補足（ツールチップ）に出す。
+  - タスクの詳細の「工程の設定」タブとプロパティの「テスト」（`testCommandOfNoTests`）：テストのコマンドを「なし・目的から判定」と出し、根拠は補足（ツールチップ）に出す。
     実装で用意したテストの状態は、合格なら「実装で用意したテスト：コマンド」、不合格なら「通らず、やり直し中」、実行待ちなら「実行待ち」。
   - 実装の成果物（タスクの画面と実装の承認の画面）の注記（`addedTestsResult`）
     - テストを実行していない（申告したテストのコマンドが無い）：「テストで検証していません」
@@ -1072,7 +1072,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - どちらか1つだけを渡せる。
   テストが決まらずに止まったのではないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
-  画面の工程の欄・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
+  画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
 - 決めずに再開したとき、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
   同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないようにするため。
   工程を始めた後なら、今までどおり止まった所から再開する（検証でまた止まる）。
@@ -1261,7 +1261,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   記録に入るレポート・修正の範囲を、公開の場所に出さないため（上の「セキュリティチェックとセキュリティ対応」の公開しない扱い）。
   `securityFix`（元のレポート・区分・指摘の全件）は引き継がない（直す指摘は、人が内容に書く）。
 - 続きのタスクを中止して再実行するときは、元のタスクの記録を除いた説明を人が直し、記録は sacty が付け直す（上の「中止したタスクの再実行」）。
-- 画面では、完了したタスクの詳細に「続きのタスク」の欄（作ったタスクの一覧と、作るダイアログ）を出し、続きのタスクの詳細の先頭には元のタスクへのリンクを出す。
+- 画面では、完了したタスクの詳細に「続きのタスク」の欄（作ったタスクの一覧と、作るダイアログ）を出し、続きのタスクの詳細のプロパティの「続きの元」に元のタスクへのリンクを出す。
   作ったタスクの題は、タスクの一覧（`GET /api/tasks`）を1度だけ取って引く（1件ずつ取らない）。
   一覧を取れなければ、ID で出す（詳細は出す）。
   セキュリティの組み合わせのタスクでは、進め方の選択肢をセキュリティの組み合わせだけにする。

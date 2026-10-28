@@ -22,11 +22,13 @@ import {
   type StepKey,
   type Task,
 } from "@sacty/core";
+import { cn } from "cn";
+import { Check } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useRef } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ActionLink } from "@/components/action-link";
 import { TaskAuditCard } from "@/components/audit";
-import { CardSection } from "@/components/card-section";
+import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeploymentWatchCard } from "@/components/deployment";
 import { DerivedTasksCard } from "@/components/derive-dialog";
@@ -135,290 +137,142 @@ export function LiveTaskDetail({
   );
 }
 
-/** タスクの詳細の中身（取り直したデータから描く）。 */
+/** タスクの詳細の表示の切り替え（タブ）。監査はタスクを監査したときだけ出す。 */
+type TabKey = "overview" | "activity" | "costs" | "settings" | "audit";
+
+/** 最近の作業履歴に出す行の数。 */
+const RECENT_EVENTS = 5;
+
+/**
+ * いまの工程。作業中の工程・承認を待っている工程・最後に終えた工程の順に選ぶ（成果物の表示の最初の選択に使う）。
+ */
+export function currentStep(task: Task): StepKey | undefined {
+  return (
+    task.steps.find((s) => s.state === "active")?.key ??
+    task.gate?.step ??
+    [...task.steps].reverse().find((s) => s.state === "done")?.key ??
+    task.steps.find((s) => s.state !== "skip")?.key
+  );
+}
+
+/**
+ * タスクの詳細の中身（取り直したデータから描く）。
+ * 上に固定した見出し（題・状態・工程・操作・タブ）と、人の対応が要るときの案内を常に出し、その下をタブで切り替える。
+ * 右の列には、よく確かめる事実（プロパティ）と最近の作業履歴を出す。隠したタブの中身も描いておく（入力の途中の文字・
+ * 開いた欄を、タブを切り替えても消さないため）。
+ */
 export function TaskDetailView({ data }: { data: TaskDetailData }) {
-  const { task, activity, projectName, parent, origin } = data;
+  const { task, activity } = data;
   const messages = useMessages();
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
-  // 承認ゲートで見守っている、sacty が作った PR（実装・要求要件・設計。PBI-57・PBI-110）
-  const watched = gatePullRequest(task);
-  const { task: m, labels, parts, locale } = messages;
-  const action = personAction(task, labels);
-  // PR の指摘の戻し先の確認（PBI-14b。PBI-58 より前の作業履歴だけ）
-  const rework =
-    task.status === "escalated" && task.escalation?.reason === "rework_confirmation"
-      ? task.escalation
-      : undefined;
-  // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
-  // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
+  const { task: m, parts } = messages;
+  const l = m.layout;
   // チケットのタスクで、チケットを読む段階で止まったら、人がリポジトリを選ぶ（選び直せる。PBI-52）
   // リポジトリを指定せずに作ったタスクで、オーケストレーターが選べずに止まったときも、人が選ぶ（PBI-73）
   const ticketRepositories = needsTicketRepositories(task)
     ? (data.ticketRepositories ?? [])
     : undefined;
+  // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
+  // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
   const canPause =
     (task.status === "queued" ||
       task.status === "running" ||
       (task.status === "idle" && task.verification !== undefined)) &&
     !(proposal && !proposal.judgement);
 
+  const [tab, setTab] = useState<TabKey>("overview");
+  const tabs: { key: TabKey; label: string; count?: number }[] = [
+    { key: "overview", label: l.overview },
+    { key: "activity", label: l.activity, count: activity.length },
+    { key: "costs", label: l.costs },
+    { key: "settings", label: l.settings },
+    ...(data.audit !== undefined ? [{ key: "audit" as const, label: l.audit }] : []),
+  ];
+  const keys = tabs.map((t) => t.key);
+  // 出していないタブ（監査の無いタスクの監査など）は、概要にする
+  const shown = keys.includes(tab) ? tab : "overview";
+  const available = useRef(keys);
+  available.current = keys;
+  // 開いたタブは URL に残す（リロード・共有しても同じタブを開く）。ハッシュ（監査の根拠の #event-…・監査の一覧の
+  // #audit・判断の #proposals）の要素が隠したタブにあれば、そのタブを開いてから移る
+  useRevealHash(
+    (key) => setTab(key as TabKey),
+    "tab",
+    () => {
+      const asked = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
+      setTab(asked && available.current.includes(asked) ? asked : "overview");
+    },
+  );
+  const choose = (key: TabKey) => {
+    setTab(key);
+    const url = new URL(window.location.href);
+    if (key === "overview") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", key);
+    url.hash = "";
+    window.history.replaceState(window.history.state, "", url);
+  };
+
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
-          <StatusLabel task={task} />
+      {/* 題・状態・工程・操作・タブは、スクロールしても見えるよう上に固定する */}
+      <div className="sticky top-16 z-20 -mx-4 flex flex-col gap-3 border-b border-border bg-background/95 px-4 pt-4 backdrop-blur sm:-mx-8 sm:px-8">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="text-xl font-bold text-balance">{task.title}</h1>
+              <StatusLabel task={task} />
+            </div>
+            <StepChips task={task} />
+          </div>
+          <div className="flex flex-wrap items-start gap-2">
+            {canRereview(task) && <RereviewButton taskId={task.id} />}
+            {canControl(task) && (
+              <TaskControls
+                taskId={task.id}
+                title={task.title}
+                canPause={canPause}
+                plan={data.cleanupPlan ?? []}
+              />
+            )}
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground">
-          {m.start}
-          {labels.start[task.start]}
-          {/* テンプレートで作ったタスク（PBI-90） */}
-          {task.template && (
-            <>
-              {m.template}
-              <span data-testid="task-template">{labels.template[task.template]}</span>
-            </>
-          )}
-          {task.source && (
-            <>
-              {m.sourceOpen}
-              <a
-                href={task.source.url}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-accent-foreground underline"
-              >
-                {task.source.repo}#{task.source.number}
-              </a>
-              {m.sourceClose}
-            </>
-          )}
-          {task.ticket && (
-            <>
-              {m.sourceOpen}
-              <a
-                href={task.ticket.url}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-accent-foreground underline"
-              >
-                {task.ticket.key}
-              </a>
-              {m.sourceClose}
-            </>
-          )}
-          {m.project}
-          <Link
-            href={projectSettingsPath(task.projectId)}
-            className="text-accent-foreground underline"
-          >
-            {projectName}
-          </Link>
-          {/* 対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは、用意したリポジトリの URL を出す */}
-          {(task.source?.repo ?? task.repo ?? task.repository?.url) ? (
-            <>
-              {m.repository}
-              <span className="font-mono [overflow-wrap:anywhere]">
-                {task.source?.repo ?? task.repo ?? task.repository?.url}
-              </span>
-              {/* オーケストレーター・人が選んだリポジトリ（子タスクに付けたものを含む）は、選んだ理由を出す（PBI-73） */}
-              {task.repoChoice && (
-                <>
-                  {m.repoChoiceBy(task.repoChoice.by === "person")}
-                  {task.repoChoice.by !== "person" && (
-                    <Hint text={m.repoChoiceHint(labels.text(task.repoChoice.reason))} />
-                  )}
-                </>
+        <div
+          role="tablist"
+          aria-label={l.tabs}
+          className="-mb-px flex gap-1 overflow-x-auto"
+          onKeyDown={(e) => moveTab(e, keys, shown, choose, (k) => `tab-${k}`)}
+        >
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              id={`tab-${t.key}`}
+              aria-selected={shown === t.key}
+              aria-controls={`panel-${t.key}`}
+              tabIndex={shown === t.key ? 0 : -1}
+              onClick={() => choose(t.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap",
+                shown === t.key
+                  ? "border-primary font-semibold text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
               )}
-            </>
-          ) : (
-            // リポジトリを指定せずに作ったタスク（PBI-73）
-            isRepoless(task) && <span data-testid="no-repository">{m.noRepository}</span>
-          )}
-          {task.fix && (
-            <>
-              {m.deployment.origin}
-              <Link
-                href={`/tasks/${encodeURIComponent(task.fix.taskId)}`}
-                className="text-accent-foreground underline"
-                data-testid="fix-origin"
-              >
-                {origin?.title ?? task.fix.taskId}
-              </Link>
-              {m.deployment.fixDepth(task.fix.depth)}
-            </>
-          )}
-          {/* レポートの区分から作った対応のタスクは、元のレポートと区分を出す */}
-          {task.securityFix && (
-            <>
-              {m.security.reportOf}
-              <Link
-                href={`/tasks/${encodeURIComponent(task.securityFix.taskId)}`}
-                className="text-accent-foreground underline"
-                data-testid="security-report"
-              >
-                {data.securityReport?.title ?? task.securityFix.taskId}
-              </Link>
-              {m.security.reportCategory(labels.securityCategory[task.securityFix.category])}
-            </>
-          )}
-          {task.rerun && (
-            <>
-              {m.rerunOf}
-              <Link
-                href={`/tasks/${encodeURIComponent(task.rerun.taskId)}`}
-                className="text-accent-foreground underline"
-                data-testid="rerun-of"
-              >
-                {data.rerunOf?.title ?? task.rerun.taskId}
-              </Link>
-            </>
-          )}
-          {task.derivedFrom && (
-            <>
-              {m.derivedFrom}
-              <Link
-                href={`/tasks/${encodeURIComponent(task.derivedFrom.taskId)}`}
-                className="text-accent-foreground underline"
-                data-testid="derived-from"
-              >
-                {data.derivedFrom?.title ?? task.derivedFrom.taskId}
-              </Link>
-            </>
-          )}
-          {task.parent && (
-            <>
-              {m.parent}
-              <Link
-                href={`/tasks/${task.parent.taskId}`}
-                className="text-accent-foreground underline"
-              >
-                {parent?.title ?? task.parent.taskId}
-              </Link>
-            </>
-          )}
-        </p>
-        <CostMeter task={task} />
-        {canRereview(task) && <RereviewButton taskId={task.id} />}
-        {canControl(task) && (
-          <TaskControls
-            taskId={task.id}
-            title={task.title}
-            canPause={canPause}
-            plan={data.cleanupPlan ?? []}
-          />
-        )}
+            >
+              {t.label}
+              {t.count !== undefined && (
+                <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                  {t.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {(task.status === "awaiting_approval" || task.status === "escalated") && (
-        <section
-          aria-labelledby="gate"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn-line bg-warn-soft p-5"
-        >
-          <div className="flex flex-col gap-1">
-            <h2 id="gate" className="text-[15px] font-semibold text-warn">
-              {proposal
-                ? m.gate.undecidable
-                : rework
-                  ? m.gate.rework
-                  : task.status === "escalated"
-                    ? m.gate.tooMany
-                    : statusText(task, labels)}
-            </h2>
-            <p className="text-sm">
-              {proposal
-                ? m.gate.undecidableHelp
-                : rework
-                  ? m.gate.reworkHelp(labels.step[rework.target], labels.text(rework.note ?? ""))
-                  : task.status === "escalated"
-                    ? m.gate.tooManyHelp
-                    : task.gate?.step === "reproduce"
-                      ? m.gate.notReproducedHelp
-                      : task.gate?.step === "integrate"
-                        ? task.integration?.passed === false
-                          ? m.gate.integrateFailedHelp(task.integrationFailures)
-                          : m.gate.integrateHelp
-                        : // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
-                          watched?.state === "closed"
-                          ? m.gate.prClosedHelp
-                          : watched?.state === "merged_outdated"
-                            ? m.gate.prMergedOutdatedHelp
-                            : watched?.step === "implement"
-                              ? m.gate.prHelp
-                              : task.gate?.step === "implement" && deliveredWithoutChanges(task)
-                                ? m.gate.noChangesHelp
-                                : watched
-                                  ? m.gate.stepPrHelp(labels.step[watched.step])
-                                  : m.gate.reviewHelp}
-            </p>
-          </div>
-          <ActionLink
-            href={action.href}
-            external={action.external}
-            className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
-          >
-            {action.label}
-          </ActionLink>
-        </section>
-      )}
-
-      {task.status === "cancelled" && task.cancelled && (
-        <section
-          aria-labelledby="cancelled"
-          className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5 text-sm"
-        >
-          <h2 id="cancelled" className="text-[15px] font-semibold">
-            {parts.control.cancelledTitle}
-          </h2>
-          <p className="text-muted-foreground">
-            {parts.control.cancelledAt(formatStamp(task.cancelled.at, locale))}
-          </p>
-          <ul className="flex flex-col gap-1.5">
-            {task.cancelled.cleanup.map((c) => (
-              // 要求要件・設計の PR とブランチ（PBI-57）は、対象ごとに複数ある（片付けた先で区別する）
-              <li
-                key={`${c.target}:${c.result}:${labels.text(c.detail ?? "")}`}
-                className="flex flex-wrap items-baseline gap-2"
-              >
-                <span className="font-medium">{labels.cleanupTarget[c.target]}</span>
-                <span className={c.result === "failed" ? "text-warn" : "text-muted-foreground"}>
-                  {labels.cleanupResult[c.result]}
-                </span>
-                {c.detail && (
-                  <span className="font-mono text-xs break-all text-muted-foreground">
-                    {labels.text(c.detail)}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-          {/* 中止したタスクを、最初からやり直す（再実行）。再実行は1度だけ（作ったタスクへ案内する） */}
-          {task.rerunBy ? (
-            <p data-testid="rerun-by">
-              {parts.rerun.rerunBy}
-              <Link
-                href={`/tasks/${encodeURIComponent(task.rerunBy)}`}
-                className="text-accent-foreground underline"
-              >
-                {data.rerunBy?.title ?? task.rerunBy}
-              </Link>
-            </p>
-          ) : (
-            canRerun(task) && (
-              <RerunDialog
-                taskId={task.id}
-                projectId={task.projectId}
-                title={task.title}
-                body={rerunEditableBody(task)}
-                repo={task.source?.repo ?? task.repo ?? task.repository?.url ?? ""}
-                images={stepImageOptions(data.imageStatus, m.images.defaultDescription)}
-              />
-            )
-          )}
-        </section>
-      )}
-
+      {/* 人の対応が要るとき（承認・判断・再開）は、どのタブでも見えるよう、タブの上に出す */}
+      <GateNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm
           taskId={task.id}
@@ -446,300 +300,990 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               (task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
                 ? lastFailure.payload.message
                 : undefined);
-            return failure === undefined ? undefined : labels.text(failure);
+            return failure === undefined ? undefined : messages.labels.text(failure);
           })()}
         />
       )}
 
-      <div className="flex flex-wrap items-start gap-6">
-        <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
-          {/* どこまで進んだかを先に見られるよう、工程はタスクの内容より上に置く */}
-          <section
-            aria-labelledby="steps"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="steps" className="text-[15px] font-semibold">
-              {m.steps}{" "}
-              {/* PR のレビューの取り込みのタスクは、sacty がレビューだけにする（PBI-44） */}
-              {task.source?.review ? (
-                <span className="text-[13px] font-normal text-muted-foreground">
-                  {m.stepsNoteReview}
-                </span>
-              ) : (
-                <Hint text={m.stepsHint} />
-              )}
-            </h2>
-            <StepChips task={task} />
-            {/* オーケストレーターが決めたベースブランチとテストのコマンド（PBI-25） */}
-            {task.repository && task.stepsChoice && (
-              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-                {m.baseBranch}
-                <span className="font-mono">{task.repository.baseBranch}</span>
-                {/* テストのコマンドは、実装を検証するときだけ使う（PBI-28） */}
-                {usesTestCommand(task) && (
-                  <>
-                    {m.testCommand}
-                    {task.testCommand ? (
-                      <>
-                        <span className="font-mono">{task.testCommand}</span>
-                        {task.testsDecidedBy === "person" && m.testCommandByPerson}
-                      </>
-                    ) : task.noTestsReason ? (
-                      // テストの仕組みが無いと判断したタスク（PBI-94）。根拠は補足に出す。人が再開のときに決めたら、その理由
-                      <>
-                        {testCommandOfNoTests(task, m)}{" "}
-                        <Hint
-                          text={
-                            task.testsDecidedBy === "person"
-                              ? m.noTestsReasonByPerson(task.noTestsReason)
-                              : m.noTestsReason(task.noTestsReason)
-                          }
-                        />
-                      </>
-                    ) : (
-                      m.testCommandUnknown
-                    )}
-                  </>
-                )}
-              </p>
-            )}
-            {/* 引き継いで直す既存の PR。新しい PR を作らず、その PR のブランチにコミットを積む */}
-            {task.continuedPullRequest && (
-              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-                {m.continuedPullRequest}
-                {task.continuedPullRequest.url.startsWith("https://") ? (
-                  <a
-                    href={task.continuedPullRequest.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-accent-foreground underline"
-                  >
-                    #{task.continuedPullRequest.number}
-                  </a>
-                ) : (
-                  `#${task.continuedPullRequest.number}`
-                )}
-                {m.continuedPullRequestBranch(task.continuedPullRequest.branch)}{" "}
-                <Hint text={m.continuedPullRequestHint} />
-              </p>
-            )}
-            {/* 人がタスクの作成時に指定した進め方 */}
-            {task.requestedPlan && (
-              <p className="text-sm leading-6 text-muted-foreground">
-                {m.stepsRequested(labels.plan[task.requestedPlan])}
-              </p>
-            )}
-            {task.stepsChoice && (
-              <p className="text-sm leading-6 text-muted-foreground">
-                {task.stepsChoice.fallback
-                  ? labels.text(task.stepsChoice.reason)
-                  : m.stepsReason(labels.text(task.stepsChoice.reason))}
-              </p>
-            )}
-            {/* オーケストレーターが工程ごとに決めた書き出し先と理由（PBI-56） */}
-            {task.exportPlans && Object.keys(task.exportPlans).length > 0 && (
-              <div className="flex flex-col gap-1 text-sm leading-6">
-                <h3 className="font-semibold">
-                  {m.exports.title} <Hint text={m.exports.hint} />
-                </h3>
-                <ul className="flex flex-col gap-1 text-muted-foreground">
-                  {task.steps
-                    .filter((s) => task.exportPlans?.[s.key])
-                    .map((s) => {
-                      const plan = task.exportPlans?.[s.key];
-                      return (
-                        <li key={s.key} className="[overflow-wrap:anywhere]">
-                          <span className="font-medium text-foreground">{labels.step[s.key]}</span>
-                          {m.exports.sep}
-                          {plan?.to ? (
-                            <span className="font-mono">
-                              {m.exports.to(plan.to.name, plan.to.location)}
-                            </span>
-                          ) : (
-                            m.exports.none
-                          )}
-                          {plan && labels.text(plan.reason) && (
-                            <> ・ {m.exports.reason(labels.text(plan.reason))}</>
-                          )}
-                        </li>
-                      );
-                    })}
-                </ul>
-              </div>
-            )}
-            {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
-            {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
-            {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
-            {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
-          </section>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="flex min-w-0 flex-col gap-6">
+          <TabPanel tab="overview" open={shown}>
+            <Overview data={data} />
+          </TabPanel>
+          <TabPanel tab="activity" open={shown}>
+            <section
+              aria-labelledby="activity"
+              className="flex flex-col gap-1 rounded-xl border border-border bg-card p-5"
+            >
+              <h2 id="activity" className="pb-2 text-[15px] font-semibold">
+                {m.activity}
+              </h2>
+              <ActivityList task={task} events={[...activity].reverse()} anchors />
+            </section>
+          </TabPanel>
+          <TabPanel tab="costs" open={shown}>
+            <section className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5">
+              <CostMeter task={task} />
+            </section>
+            {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
+            <StepCosts task={task} activity={activity} subtasks={data.children} />
+            {/* オーケストレーターのセッション（PBI-67） */}
+            <OrchestratorSession task={task} />
+          </TabPanel>
+          <TabPanel tab="settings" open={shown}>
+            <StepsChoice task={task} data={data} />
+          </TabPanel>
           {/* 完了したタスクの監査（PBI-124） */}
-          {data.audit !== undefined && <TaskAuditCard audit={data.audit} />}
-          {task.operation && (
-            <CardSection
-              id="operation-settings"
-              title={m.operationSettings.title}
-              hint={m.operationSettings.hint}
-            >
-              <p className="text-sm text-muted-foreground">{m.operationSettings.description}</p>
-              <dl className="grid gap-3 text-sm leading-6">
-                {(
-                  [
-                    [m.operationSettings.connection, task.operation.name],
-                    [m.operationSettings.via, m.operationSettings[task.operation.via]],
-                    [m.operationSettings.target, task.operation.target],
-                    [m.operationSettings.change, task.operation.change],
-                    [m.operationSettings.verification, task.operation.verification],
-                  ] as const
-                ).map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="font-semibold">{label}</dt>
-                    <dd className="whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </CardSection>
+          {data.audit !== undefined && (
+            <TabPanel tab="audit" open={shown}>
+              <TaskAuditCard audit={data.audit} />
+            </TabPanel>
           )}
-          <section
-            aria-labelledby="content"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="content" className="text-[15px] font-semibold">
-              {m.content}
-            </h2>
-            {task.body ? (
-              <Markdown>{task.body}</Markdown>
-            ) : (
-              <p className="text-sm text-muted-foreground">{m.contentEmpty}</p>
-            )}
-          </section>
-          {/* タスクの開始時に集めた情報。工程が始まったら折りたたむ */}
-          {task.gathered && (
-            <CardSection
-              id="gathered"
-              title={m.gathered.title}
-              note={m.gathered.sources(task.gathered.sources.length)}
-              hint={m.gathered.hint}
-              collapsed={task.steps.some((s) => s.state !== "todo")}
-            >
-              <Markdown>{task.gathered.brief}</Markdown>
-              {task.gathered.sources.length > 0 && (
-                <ul className="list-disc pl-5 text-sm text-muted-foreground">
-                  {task.gathered.sources.map((source, index) => (
-                    // 同じ題の情報源もあるので、順番も鍵にする
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 並びは変わらない
-                    <li key={`${index}-${source.title}`} className="[overflow-wrap:anywhere]">
-                      {source.url && /^https?:\/\//.test(source.url) ? (
-                        <a href={source.url} target="_blank" rel="noreferrer" className="underline">
-                          {source.title}
-                        </a>
-                      ) : (
-                        source.title
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardSection>
-          )}
-          {/* 調査の結果（PBI-18）。要求要件は、その工程があるタスクだけ */}
-          {task.steps.some((s) => s.key === "investigate") && (
-            <Deliverable task={task} step="investigate" />
-          )}
-          {/* レビューの結果（PBI-19）。人間の承認は無く、そのまま PR に投稿する */}
-          {task.steps.some((s) => s.key === "review") && <Deliverable task={task} step="review" />}
-          {/* 再現の説明と、sacty が確かめた結果（PBI-29） */}
-          {task.steps.some((s) => s.key === "reproduce" && s.state !== "skip") && (
-            <>
-              <Deliverable task={task} step="reproduce" />
-              <ReproductionResult task={task} />
-            </>
-          )}
-          {/* 工程の見直しで飛ばした工程は、成果が無いので出さない */}
-          {task.steps.some((s) => s.key === "requirements" && s.state !== "skip") && (
-            <Deliverable task={task} step="requirements" />
-          )}
-          {(task.outputs.design ||
-            task.steps.some(
-              (s) => s.key === "design" && s.state !== "todo" && s.state !== "skip",
-            )) && <Deliverable task={task} step="design" />}
-          {(["document", "operation"] as const).map((step) =>
-            task.steps.some((s) => s.key === step) ? (
-              <Deliverable key={step} task={task} step={step} />
-            ) : null,
-          )}
-          {task.split && <Subtasks task={task} subtasks={data.children} />}
-          {/* 統合レビューの結果（PBI-31） */}
-          <IntegrationResult task={task} />
-          {(task.outputs.implement ||
-            task.steps.some((s) => s.key === "implement" && s.state !== "todo")) && (
-            <Implementation task={task} />
-          )}
-          <PullRequestCard task={task} />
-          {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
-          {data.securityFindings !== undefined && (
-            <SecurityFixesCard task={task} findings={data.securityFindings} />
-          )}
-          {/* 完了したタスクの続きの作業のタスク（派生） */}
-          {canDerive(task) && (
-            <DerivedTasksCard
-              task={task}
-              derived={data.derivedTasks ?? []}
-              security={isSecurityTask(task)}
-            />
-          )}
-          {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}
-          <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />
-          {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
-          {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
-          <StepCosts task={task} activity={activity} subtasks={data.children} />
-          {/* オーケストレーターのセッション（PBI-67） */}
-          <OrchestratorSession task={task} />
         </div>
-
-        <section
-          aria-labelledby="activity"
-          className="flex min-w-0 flex-[1_1_320px] flex-col gap-1 rounded-xl border border-border bg-card p-5"
-        >
-          <h2 id="activity" className="pb-2 text-[15px] font-semibold">
-            {m.activity}
-          </h2>
-          <ol className="flex flex-col">
-            {[...activity].reverse().map((event) => (
-              <li
-                key={event.id}
-                // 監査の根拠から、作業履歴の行へたどれるようにする（PBI-124）
-                id={`event-${event.id}`}
-                className="scroll-mt-20 grid grid-cols-[96px_minmax(0,1fr)] gap-3 border-t border-border py-2.5 text-[13px] target:bg-accent"
-              >
-                <time
-                  dateTime={event.at}
-                  className="font-mono text-xs text-muted-foreground tabular-nums"
+        <aside className="flex min-w-0 flex-col gap-6">
+          <Properties data={data} />
+          {shown !== "activity" && activity.length > 0 && (
+            <section
+              aria-labelledby="recent"
+              className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
+            >
+              <h2 id="recent" className="pb-1 text-sm font-semibold">
+                {l.recent}
+              </h2>
+              <ActivityList
+                task={task}
+                events={[...activity].reverse().slice(0, RECENT_EVENTS)}
+                compact
+              />
+              {activity.length > RECENT_EVENTS && (
+                <button
+                  type="button"
+                  onClick={() => choose("activity")}
+                  className="self-start pt-1 text-xs text-accent-foreground underline"
                 >
-                  {formatStamp(event.at, messages.locale)}
-                </time>
-                {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
-                <span className="[overflow-wrap:anywhere]">
-                  <EventText event={event} />
-                  {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
-                  {runLogId(event) && (
-                    <Link
-                      href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(runLogId(event) ?? "")}`}
-                      className="ml-2 text-xs whitespace-nowrap text-accent-foreground underline"
-                    >
-                      {messages.runLog.open}
-                    </Link>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
+                  {l.showAll(activity.length)}
+                </button>
+              )}
+            </section>
+          )}
+        </aside>
       </div>
       {/* オーケストレーターへの質問と答え（PBI-54）。画面の右の AI のアイコンから開くサイドパネル（PBI-61） */}
       <TaskChat task={task} />
     </>
+  );
+}
+
+/**
+ * URL のハッシュの要素が、隠したタブ・成果物の工程の中にあれば、その中身を開いてから要素へ移る。
+ * 開いた先（data-tab・data-step の値）を select に渡す。移ったら true。
+ */
+export function revealHash(
+  select: (key: string) => void,
+  attribute = "tab",
+  hash = window.location.hash,
+): boolean {
+  let id: string;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    // 不正なパーセント表記（#100% など）は、ハッシュが無いものとして扱う
+    return false;
+  }
+  const target = id ? document.getElementById(id) : null;
+  const key = target?.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[attribute];
+  if (!target || key === undefined) return false;
+  select(key);
+  // 開いたタブを描いてから移る
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => target.scrollIntoView({ block: "center" })),
+  );
+  return true;
+}
+
+/**
+ * ハッシュの要素を開いて移る（revealHash）のを、画面を開いたとき・ハッシュが変わったとき・同じ画面へのハッシュ付きの
+ * リンクを押したときに行う。画面の中のリンク（next/link）は history.pushState で移るので hashchange が起きない。
+ * 押したリンクの URL のハッシュで、移った後に開く。fallback は、ハッシュで開けなかったときの初めの表示。
+ */
+function useRevealHash(select: (key: string) => void, attribute: string, fallback?: () => void) {
+  const latest = useRef({ select, fallback });
+  latest.current = { select, fallback };
+  useEffect(() => {
+    const open = (hash?: string) => {
+      if (!revealHash((key) => latest.current.select(key), attribute, hash)) {
+        latest.current.fallback?.();
+      }
+    };
+    const onHashChange = () => open();
+    const onClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const link = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(link instanceof HTMLAnchorElement) || link.target === "_blank") return;
+      const url = new URL(link.href, window.location.href);
+      if (
+        url.origin !== window.location.origin ||
+        url.pathname !== window.location.pathname ||
+        !url.hash
+      )
+        return;
+      // 移った後（URL を書き換えた後）に開く
+      setTimeout(() => open(url.hash), 0);
+    };
+    open();
+    window.addEventListener("hashchange", onHashChange);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [attribute]);
+}
+
+/** タブの並びの中を、左右の矢印キー・Home・End で移る（選んだタブにフォーカスを移す）。 */
+function moveTab<K extends string>(
+  event: KeyboardEvent<HTMLElement>,
+  keys: K[],
+  current: K,
+  select: (key: K) => void,
+  idOf: (key: K) => string,
+) {
+  const index = keys.indexOf(current);
+  const next =
+    event.key === "ArrowRight"
+      ? keys[(index + 1) % keys.length]
+      : event.key === "ArrowLeft"
+        ? keys[(index - 1 + keys.length) % keys.length]
+        : event.key === "Home"
+          ? keys[0]
+          : event.key === "End"
+            ? keys.at(-1)
+            : undefined;
+  if (next === undefined) return;
+  event.preventDefault();
+  select(next);
+  document.getElementById(idOf(next))?.focus();
+}
+
+/** タブの中身。隠したタブも描いておく（入力の途中の文字・開いた欄を消さない）。 */
+function TabPanel({ tab, open, children }: { tab: TabKey; open: TabKey; children: ReactNode }) {
+  return (
+    <div
+      role="tabpanel"
+      id={`panel-${tab}`}
+      aria-labelledby={`tab-${tab}`}
+      data-tab={tab}
+      hidden={tab !== open}
+      className="flex flex-col gap-6"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 人の承認・判断を待っているときの案内と、判断する場所への操作。 */
+function GateNotice({ task }: { task: Task }) {
+  const { task: m, labels } = useMessages();
+  if (task.status !== "awaiting_approval" && task.status !== "escalated") return null;
+  const proposal = openProposal(task);
+  // 承認ゲートで見守っている、sacty が作った PR（実装・要求要件・設計。PBI-57・PBI-110）
+  const watched = gatePullRequest(task);
+  const action = personAction(task, labels);
+  // PR の指摘の戻し先の確認（PBI-14b。PBI-58 より前の作業履歴だけ）
+  const rework =
+    task.status === "escalated" && task.escalation?.reason === "rework_confirmation"
+      ? task.escalation
+      : undefined;
+  return (
+    <section
+      aria-labelledby="gate"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn-line bg-warn-soft px-5 py-4"
+    >
+      <div className="flex flex-col gap-1">
+        <h2 id="gate" className="text-[15px] font-semibold text-warn">
+          {proposal
+            ? m.gate.undecidable
+            : rework
+              ? m.gate.rework
+              : task.status === "escalated"
+                ? m.gate.tooMany
+                : statusText(task, labels)}
+        </h2>
+        <p className="text-sm">
+          {proposal
+            ? m.gate.undecidableHelp
+            : rework
+              ? m.gate.reworkHelp(labels.step[rework.target], labels.text(rework.note ?? ""))
+              : task.status === "escalated"
+                ? m.gate.tooManyHelp
+                : task.gate?.step === "reproduce"
+                  ? m.gate.notReproducedHelp
+                  : task.gate?.step === "integrate"
+                    ? task.integration?.passed === false
+                      ? m.gate.integrateFailedHelp(task.integrationFailures)
+                      : m.gate.integrateHelp
+                    : // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
+                      watched?.state === "closed"
+                      ? m.gate.prClosedHelp
+                      : watched?.state === "merged_outdated"
+                        ? m.gate.prMergedOutdatedHelp
+                        : watched?.step === "implement"
+                          ? m.gate.prHelp
+                          : task.gate?.step === "implement" && deliveredWithoutChanges(task)
+                            ? m.gate.noChangesHelp
+                            : watched
+                              ? m.gate.stepPrHelp(labels.step[watched.step])
+                              : m.gate.reviewHelp}
+        </p>
+      </div>
+      <ActionLink
+        href={action.href}
+        external={action.external}
+        className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
+      >
+        {action.label}
+      </ActionLink>
+    </section>
+  );
+}
+
+/**
+ * 概要のタブ。中止したときの片付け、依頼の内容、工程ごとの成果物（いまの工程を先に表示）、PR と、そのタスクに関わる
+ * ときだけ出る結果（分割・統合レビュー・セキュリティ・続きのタスク・変更の申し出）。
+ */
+function Overview({ data }: { data: TaskDetailData }) {
+  const { task } = data;
+  const { task: m } = useMessages();
+  return (
+    <>
+      {task.status === "cancelled" && task.cancelled && <CancelledCard data={data} />}
+      <TaskContent task={task} />
+      <Deliverables data={data} />
+      <PullRequestCard task={task} />
+      {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
+      {data.securityFindings !== undefined && (
+        <SecurityFixesCard task={task} findings={data.securityFindings} />
+      )}
+      {/* 完了したタスクの続きの作業のタスク（派生） */}
+      {canDerive(task) && (
+        <DerivedTasksCard
+          task={task}
+          derived={data.derivedTasks ?? []}
+          security={isSecurityTask(task)}
+        />
+      )}
+      {/* 申し出が無いときは出さない（無いことは作業履歴で確かめられる） */}
+      {task.proposals.length > 0 && <Proposals task={task} />}
+      {task.operation && (
+        <CardSection
+          id="operation-settings"
+          title={m.operationSettings.title}
+          hint={m.operationSettings.hint}
+        >
+          <p className="text-sm text-muted-foreground">{m.operationSettings.description}</p>
+          <dl className="grid gap-3 text-sm leading-6">
+            {(
+              [
+                [m.operationSettings.connection, task.operation.name],
+                [m.operationSettings.via, m.operationSettings[task.operation.via]],
+                [m.operationSettings.target, task.operation.target],
+                [m.operationSettings.change, task.operation.change],
+                [m.operationSettings.verification, task.operation.verification],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label}>
+                <dt className="font-semibold">{label}</dt>
+                <dd className="whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </CardSection>
+      )}
+      {/* タスクの開始時に集めた情報。工程が始まったら折りたたむ */}
+      {task.gathered && (
+        <CardSection
+          id="gathered"
+          title={m.gathered.title}
+          note={m.gathered.sources(task.gathered.sources.length)}
+          hint={m.gathered.hint}
+          collapsed={task.steps.some((s) => s.state !== "todo")}
+        >
+          <Markdown>{task.gathered.brief}</Markdown>
+          {task.gathered.sources.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-muted-foreground">
+              {task.gathered.sources.map((source, index) => (
+                // 同じ題の情報源もあるので、順番も鍵にする
+                // biome-ignore lint/suspicious/noArrayIndexKey: 並びは変わらない
+                <li key={`${index}-${source.title}`} className="[overflow-wrap:anywhere]">
+                  {source.url && /^https?:\/\//.test(source.url) ? (
+                    <a href={source.url} target="_blank" rel="noreferrer" className="underline">
+                      {source.title}
+                    </a>
+                  ) : (
+                    source.title
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardSection>
+      )}
+    </>
+  );
+}
+
+/** 依頼の内容。長いときは途中まで出し、開いて読む（成果物が下に押しやられないように）。 */
+function TaskContent({ task }: { task: Task }) {
+  const { task: m } = useMessages();
+  const [open, setOpen] = useState(false);
+  const long = (task.body?.length ?? 0) > 400 || (task.body?.split("\n").length ?? 0) > 8;
+  return (
+    <section
+      aria-labelledby="content"
+      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+    >
+      <h2 id="content" className="text-[15px] font-semibold">
+        {m.content}
+      </h2>
+      {task.body ? (
+        <div
+          className={cn(
+            long &&
+              !open &&
+              "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]",
+          )}
+        >
+          <Markdown>{task.body}</Markdown>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">{m.contentEmpty}</p>
+      )}
+      {long && (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="self-start text-xs text-accent-foreground underline"
+        >
+          {open ? m.layout.readLess : m.layout.readMore}
+        </button>
+      )}
+    </section>
+  );
+}
+
+/**
+ * 工程ごとの成果物。工程を選んで1つずつ表示する（最初は、いまの工程）。成果物の無い工程（飛ばした・まだの工程）は
+ * 選べない。
+ */
+function Deliverables({ data }: { data: TaskDetailData }) {
+  const { task } = data;
+  const messages = useMessages();
+  const l = messages.task.layout;
+  const has = (key: StepKey, ok: (s: Task["steps"][number]) => boolean = () => true) =>
+    task.steps.some((s) => s.key === key && ok(s));
+  const panels: { key: StepKey; node: ReactNode }[] = [];
+  // 調査の結果（PBI-18）
+  if (has("investigate")) {
+    panels.push({ key: "investigate", node: <Deliverable task={task} step="investigate" /> });
+  }
+  // レビューの結果（PBI-19）。人間の承認は無く、そのまま PR に投稿する
+  if (has("review"))
+    panels.push({ key: "review", node: <Deliverable task={task} step="review" /> });
+  // 再現の説明と、sacty が確かめた結果（PBI-29）
+  if (has("reproduce", (s) => s.state !== "skip")) {
+    panels.push({
+      key: "reproduce",
+      node: (
+        <>
+          <Deliverable task={task} step="reproduce" />
+          <ReproductionResult task={task} />
+        </>
+      ),
+    });
+  }
+  // 工程の見直しで飛ばした工程は、成果が無いので出さない
+  if (has("requirements", (s) => s.state !== "skip")) {
+    panels.push({ key: "requirements", node: <Deliverable task={task} step="requirements" /> });
+  }
+  if (task.outputs.design || has("design", (s) => s.state !== "todo" && s.state !== "skip")) {
+    panels.push({ key: "design", node: <Deliverable task={task} step="design" /> });
+  }
+  for (const step of ["document", "operation"] as const) {
+    if (has(step)) panels.push({ key: step, node: <Deliverable task={task} step={step} /> });
+  }
+  if (task.split) {
+    panels.push({ key: "split", node: <Subtasks task={task} subtasks={data.children} /> });
+  }
+  // 統合レビューの結果（PBI-31）
+  if (has("integrate")) panels.push({ key: "integrate", node: <IntegrationResult task={task} /> });
+  if (task.outputs.implement || has("implement", (s) => s.state !== "todo")) {
+    panels.push({ key: "implement", node: <Implementation task={task} /> });
+  }
+  // マージの後の CI/CD とデプロイの監視（PBI-89）
+  // まだ始まっていない監視は、成果が無いので選べない。工程の無い古いタスクでも、監視の記録があれば出す
+  if (has("deployment", (s) => s.state !== "todo") || task.deployment) {
+    panels.push({
+      key: "deployment",
+      node: <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />,
+    });
+  }
+  const current = currentStep(task);
+  const fallback = panels.find((p) => p.key === current)?.key ?? panels.at(-1)?.key;
+  const [chosen, setChosen] = useState<StepKey | undefined>(undefined);
+  const selected = panels.some((p) => p.key === chosen) ? chosen : fallback;
+  // ハッシュの要素（#deliverable-design など）が隠した工程にあれば、その工程を開く
+  useRevealHash((key) => setChosen(key as StepKey), "step");
+  const state = new Map(task.steps.map((s) => [s.key, s.state]));
+  return (
+    <>
+      {panels.length === 0 ? (
+        <section className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
+          {l.deliverablesNone}
+        </section>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-[15px] font-semibold">
+              {l.deliverables} <Hint text={l.deliverablesHint} />
+            </h2>
+            <div
+              role="tablist"
+              aria-label={l.deliverables}
+              className="flex flex-wrap gap-1"
+              onKeyDown={(e) =>
+                selected &&
+                moveTab(
+                  e,
+                  panels.map((p) => p.key),
+                  selected,
+                  setChosen,
+                  (k) => `deliverable-tab-${k}`,
+                )
+              }
+            >
+              {panels.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  role="tab"
+                  id={`deliverable-tab-${p.key}`}
+                  aria-selected={p.key === selected}
+                  aria-controls={`deliverable-panel-${p.key}`}
+                  tabIndex={p.key === selected ? 0 : -1}
+                  onClick={() => setChosen(p.key)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
+                    p.key === selected
+                      ? "border-primary bg-primary text-primary-foreground font-semibold"
+                      : "border-input bg-card text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {state.get(p.key) === "done" && <Check aria-hidden="true" className="size-3" />}
+                  {state.get(p.key) === "active" && (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "size-1.5 rounded-full",
+                        p.key === selected ? "bg-primary-foreground" : "bg-primary",
+                      )}
+                    />
+                  )}
+                  {messages.labels.step[p.key]}
+                </button>
+              ))}
+            </div>
+          </div>
+          {panels.map((p) => (
+            <div
+              key={p.key}
+              role="tabpanel"
+              id={`deliverable-panel-${p.key}`}
+              aria-labelledby={`deliverable-tab-${p.key}`}
+              data-step={p.key}
+              hidden={p.key !== selected}
+              className="flex flex-col gap-6"
+            >
+              <ExpandCards value={true}>{p.node}</ExpandCards>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 統合レビューの工程の無いタスクでも、結果があれば出す（PBI-31） */}
+      {!has("integrate") && <IntegrationResult task={task} />}
+    </>
+  );
+}
+
+/** 中止したときの片付けの結果と、最初からやり直す操作。 */
+function CancelledCard({ data }: { data: TaskDetailData }) {
+  const { task } = data;
+  const { task: m, parts, labels, locale } = useMessages();
+  if (!task.cancelled) return null;
+  return (
+    <section
+      aria-labelledby="cancelled"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5 text-sm"
+    >
+      <h2 id="cancelled" className="text-[15px] font-semibold">
+        {parts.control.cancelledTitle}
+      </h2>
+      <p className="text-muted-foreground">
+        {parts.control.cancelledAt(formatStamp(task.cancelled.at, locale))}
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {task.cancelled.cleanup.map((c) => (
+          // 要求要件・設計の PR とブランチ（PBI-57）は、対象ごとに複数ある（片付けた先で区別する）
+          <li
+            key={`${c.target}:${c.result}:${labels.text(c.detail ?? "")}`}
+            className="flex flex-wrap items-baseline gap-2"
+          >
+            <span className="font-medium">{labels.cleanupTarget[c.target]}</span>
+            <span className={c.result === "failed" ? "text-warn" : "text-muted-foreground"}>
+              {labels.cleanupResult[c.result]}
+            </span>
+            {c.detail && (
+              <span className="font-mono text-xs break-all text-muted-foreground">
+                {labels.text(c.detail)}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {/* 中止したタスクを、最初からやり直す（再実行）。再実行は1度だけ（作ったタスクへ案内する） */}
+      {task.rerunBy ? (
+        <p data-testid="rerun-by">
+          {parts.rerun.rerunBy}
+          <Link
+            href={`/tasks/${encodeURIComponent(task.rerunBy)}`}
+            className="text-accent-foreground underline"
+          >
+            {data.rerunBy?.title ?? task.rerunBy}
+          </Link>
+        </p>
+      ) : (
+        canRerun(task) && (
+          <RerunDialog
+            taskId={task.id}
+            projectId={task.projectId}
+            title={task.title}
+            body={rerunEditableBody(task)}
+            repo={task.source?.repo ?? task.repo ?? task.repository?.url ?? ""}
+            images={stepImageOptions(data.imageStatus, m.images.defaultDescription)}
+          />
+        )
+      )}
+    </section>
+  );
+}
+
+/** プロパティの1行。 */
+function Prop({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2 py-1">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="[overflow-wrap:anywhere]">{children}</dd>
+    </div>
+  );
+}
+
+/** タスクへのリンク。 */
+function TaskLink({ id, title, testId }: { id: string; title?: string; testId?: string }) {
+  return (
+    <Link
+      href={`/tasks/${encodeURIComponent(id)}`}
+      className="text-accent-foreground underline"
+      data-testid={testId}
+    >
+      {title ?? id}
+    </Link>
+  );
+}
+
+/**
+ * よく確かめる事実（プロパティ）。プロジェクト・リポジトリ・ブランチ・テスト・元のチケット・PR・費用・関係するタスク・
+ * 作成と最終更新。どのタブでも右の列に出す。
+ */
+function Properties({ data }: { data: TaskDetailData }) {
+  const { task, activity, projectName, parent, origin } = data;
+  const { task: m, labels, locale } = useMessages();
+  const l = m.layout;
+  const repo = task.source?.repo ?? task.repo ?? task.repository?.url;
+  const step = task.steps.find((s) => s.state === "active")?.key ?? task.gate?.step;
+  const created = activity[0]?.at;
+  const updated = activity.at(-1)?.at;
+  const related: [string, ReactNode][] = [
+    ...(task.parent
+      ? [
+          [l.parent, <TaskLink key="p" id={task.parent.taskId} title={parent?.title} />] as [
+            string,
+            ReactNode,
+          ],
+        ]
+      : []),
+    ...(task.rerun
+      ? [
+          [
+            l.rerunOf,
+            <TaskLink
+              key="r"
+              id={task.rerun.taskId}
+              title={data.rerunOf?.title}
+              testId="rerun-of"
+            />,
+          ] as [string, ReactNode],
+        ]
+      : []),
+    ...(task.derivedFrom
+      ? [
+          [
+            l.derivedFrom,
+            <TaskLink
+              key="d"
+              id={task.derivedFrom.taskId}
+              title={data.derivedFrom?.title}
+              testId="derived-from"
+            />,
+          ] as [string, ReactNode],
+        ]
+      : []),
+    ...(task.fix
+      ? [
+          [
+            l.fixOrigin,
+            <span key="f">
+              <TaskLink id={task.fix.taskId} title={origin?.title} testId="fix-origin" />
+              {m.deployment.fixDepth(task.fix.depth)}
+            </span>,
+          ] as [string, ReactNode],
+        ]
+      : []),
+    ...(task.securityFix
+      ? [
+          [
+            l.securityReport,
+            <span key="s">
+              <TaskLink
+                id={task.securityFix.taskId}
+                title={data.securityReport?.title}
+                testId="security-report"
+              />
+              {m.security.reportCategory(labels.securityCategory[task.securityFix.category])}
+            </span>,
+          ] as [string, ReactNode],
+        ]
+      : []),
+  ];
+  return (
+    <section
+      aria-labelledby="properties"
+      className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4 text-[13px]"
+    >
+      <h2 id="properties" className="pb-1 text-sm font-semibold">
+        {l.properties}
+      </h2>
+      <dl className="flex flex-col">
+        {step && <Prop label={l.currentStep}>{labels.step[step]}</Prop>}
+        {task.pullRequest?.url && (
+          <Prop label={l.pullRequest}>
+            <a
+              href={task.pullRequest.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent-foreground underline"
+            >
+              #{task.pullRequest.number}
+            </a>
+          </Prop>
+        )}
+        <Prop label={l.cost}>
+          <span className="font-mono tabular-nums">
+            {usd(task.budget.usedUsd)} / {usd(task.budget.capUsd)}
+          </span>
+          <span
+            aria-hidden="true"
+            className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-border"
+          >
+            <span
+              className={cn(
+                "block h-full",
+                task.budget.usedUsd >= task.budget.capUsd ? "bg-warn" : "bg-primary",
+              )}
+              style={{ width: `${Math.min(1, task.budget.usedUsd / task.budget.capUsd) * 100}%` }}
+            />
+          </span>
+        </Prop>
+        <Prop label={l.project}>
+          <Link
+            href={projectSettingsPath(task.projectId)}
+            className="text-accent-foreground underline"
+          >
+            {projectName}
+          </Link>
+        </Prop>
+        <Prop label={l.repository}>
+          {repo ? (
+            <span className="font-mono text-xs">
+              {repo.replace(/^https:\/\/github\.com\//, "")}
+              {/* オーケストレーター・人が選んだリポジトリは、選んだ理由を出す（PBI-73） */}
+              {task.repoChoice && task.repoChoice.by !== "person" && (
+                <>
+                  {" "}
+                  <Hint text={m.repoChoiceHint(labels.text(task.repoChoice.reason))} />
+                </>
+              )}
+            </span>
+          ) : isRepoless(task) ? (
+            <span data-testid="no-repository">{l.none}</span>
+          ) : (
+            "—"
+          )}
+        </Prop>
+        {task.repository && (
+          <Prop label={l.baseBranch}>
+            <span className="font-mono text-xs">{task.repository.baseBranch}</span>
+          </Prop>
+        )}
+        {task.repository && task.stepsChoice && usesTestCommand(task) && (
+          <Prop label={l.testCommand}>
+            {task.testCommand ? (
+              <span className="font-mono text-xs">{task.testCommand}</span>
+            ) : task.noTestsReason ? (
+              testCommandOfNoTests(task, m)
+            ) : (
+              m.testCommandUnknown
+            )}
+          </Prop>
+        )}
+        {(task.source || task.ticket) && (
+          <Prop label={l.source}>
+            {task.source && (
+              <a
+                href={task.source.url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-accent-foreground underline"
+              >
+                {task.source.repo}#{task.source.number}
+              </a>
+            )}
+            {task.ticket && (
+              <a
+                href={task.ticket.url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-accent-foreground underline"
+              >
+                {task.ticket.key}
+              </a>
+            )}
+          </Prop>
+        )}
+        <Prop label={l.start}>
+          {labels.start[task.start]}
+          {/* テンプレートで作ったタスク（PBI-90） */}
+          {task.template && (
+            <>
+              {" ・ "}
+              <span data-testid="task-template">{labels.template[task.template]}</span>
+            </>
+          )}
+        </Prop>
+        {related.map(([label, node]) => (
+          <Prop key={label} label={label}>
+            {node}
+          </Prop>
+        ))}
+        {task.rerunBy && (
+          <Prop label={l.rerunBy}>
+            <TaskLink id={task.rerunBy} title={data.rerunBy?.title} />
+          </Prop>
+        )}
+        {created && <Prop label={l.created}>{formatStamp(created, locale)}</Prop>}
+        {updated && <Prop label={l.updated}>{formatStamp(updated, locale)}</Prop>}
+      </dl>
+    </section>
+  );
+}
+
+/**
+ * 作業履歴の行の並び（新しい順に渡す）。anchors なら、監査の根拠からたどれるよう行に ID を付ける（PBI-124）。
+ * compact は右の列の最近の作業履歴（時刻を短く、行を詰める）。
+ */
+function ActivityList({
+  task,
+  events,
+  anchors = false,
+  compact = false,
+}: {
+  task: Task;
+  events: ActivityEvent[];
+  anchors?: boolean;
+  compact?: boolean;
+}) {
+  const messages = useMessages();
+  return (
+    <ol className="flex flex-col">
+      {events.map((event) => (
+        <li
+          key={event.id}
+          id={anchors ? `event-${event.id}` : undefined}
+          className={cn(
+            "grid gap-3 border-t border-border text-[13px] target:bg-accent",
+            compact
+              ? "grid-cols-[76px_minmax(0,1fr)] py-2"
+              : "scroll-mt-60 grid-cols-[96px_minmax(0,1fr)] py-2.5",
+          )}
+        >
+          <time
+            dateTime={event.at}
+            className="font-mono text-xs text-muted-foreground tabular-nums"
+          >
+            {formatStamp(event.at, messages.locale)}
+          </time>
+          {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
+          <span className={cn("[overflow-wrap:anywhere]", compact && "line-clamp-2")}>
+            <EventText event={event} />
+            {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
+            {!compact && runLogId(event) && (
+              <Link
+                href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(runLogId(event) ?? "")}`}
+                className="ml-2 text-xs whitespace-nowrap text-accent-foreground underline"
+              >
+                {messages.runLog.open}
+              </Link>
+            )}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * 工程の設定のタブ。オーケストレーターが選んだ工程と理由、ベースブランチ・テストのコマンド、引き継いだ PR、
+ * 書き出し先、工程のイメージとエージェント。
+ */
+function StepsChoice({ task, data }: { task: Task; data: TaskDetailData }) {
+  const { task: m, labels } = useMessages();
+  return (
+    <section
+      aria-labelledby="steps"
+      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+    >
+      <h2 id="steps" className="text-[15px] font-semibold">
+        {m.steps} {/* PR のレビューの取り込みのタスクは、sacty がレビューだけにする（PBI-44） */}
+        {task.source?.review ? (
+          <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNoteReview}</span>
+        ) : (
+          <Hint text={m.stepsHint} />
+        )}
+      </h2>
+      <StepChips task={task} />
+      {/* オーケストレーターが決めたベースブランチとテストのコマンド（PBI-25） */}
+      {task.repository && task.stepsChoice && (
+        <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+          {m.baseBranch}
+          <span className="font-mono">{task.repository.baseBranch}</span>
+          {/* テストのコマンドは、実装を検証するときだけ使う（PBI-28） */}
+          {usesTestCommand(task) && (
+            <>
+              {m.testCommand}
+              {task.testCommand ? (
+                <>
+                  <span className="font-mono">{task.testCommand}</span>
+                  {task.testsDecidedBy === "person" && m.testCommandByPerson}
+                </>
+              ) : task.noTestsReason ? (
+                // テストの仕組みが無いと判断したタスク（PBI-94）。根拠は補足に出す。人が再開のときに決めたら、その理由
+                <>
+                  {testCommandOfNoTests(task, m)}{" "}
+                  <Hint
+                    text={
+                      task.testsDecidedBy === "person"
+                        ? m.noTestsReasonByPerson(task.noTestsReason)
+                        : m.noTestsReason(task.noTestsReason)
+                    }
+                  />
+                </>
+              ) : (
+                m.testCommandUnknown
+              )}
+            </>
+          )}
+        </p>
+      )}
+      {/* 引き継いで直す既存の PR。新しい PR を作らず、その PR のブランチにコミットを積む */}
+      {task.continuedPullRequest && (
+        <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+          {m.continuedPullRequest}
+          {task.continuedPullRequest.url.startsWith("https://") ? (
+            <a
+              href={task.continuedPullRequest.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent-foreground underline"
+            >
+              #{task.continuedPullRequest.number}
+            </a>
+          ) : (
+            `#${task.continuedPullRequest.number}`
+          )}
+          {m.continuedPullRequestBranch(task.continuedPullRequest.branch)}{" "}
+          <Hint text={m.continuedPullRequestHint} />
+        </p>
+      )}
+      {/* 人がタスクの作成時に指定した進め方 */}
+      {task.requestedPlan && (
+        <p className="text-sm leading-6 text-muted-foreground">
+          {m.stepsRequested(labels.plan[task.requestedPlan])}
+        </p>
+      )}
+      {task.stepsChoice && (
+        <p className="text-sm leading-6 text-muted-foreground">
+          {task.stepsChoice.fallback
+            ? labels.text(task.stepsChoice.reason)
+            : m.stepsReason(labels.text(task.stepsChoice.reason))}
+        </p>
+      )}
+      {/* オーケストレーターが工程ごとに決めた書き出し先と理由（PBI-56） */}
+      {task.exportPlans && Object.keys(task.exportPlans).length > 0 && (
+        <div className="flex flex-col gap-1 text-sm leading-6">
+          <h3 className="font-semibold">
+            {m.exports.title} <Hint text={m.exports.hint} />
+          </h3>
+          <ul className="flex flex-col gap-1 text-muted-foreground">
+            {task.steps
+              .filter((s) => task.exportPlans?.[s.key])
+              .map((s) => {
+                const plan = task.exportPlans?.[s.key];
+                return (
+                  <li key={s.key} className="[overflow-wrap:anywhere]">
+                    <span className="font-medium text-foreground">{labels.step[s.key]}</span>
+                    {m.exports.sep}
+                    {plan?.to ? (
+                      <span className="font-mono">
+                        {m.exports.to(plan.to.name, plan.to.location)}
+                      </span>
+                    ) : (
+                      m.exports.none
+                    )}
+                    {plan && labels.text(plan.reason) && (
+                      <> ・ {m.exports.reason(labels.text(plan.reason))}</>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
+        </div>
+      )}
+      {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
+      {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
+      {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
+      {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
+    </section>
   );
 }
 
