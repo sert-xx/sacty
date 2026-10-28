@@ -168,6 +168,47 @@ describe("タスクの詳細のタブ", () => {
     }
   });
 
+  it("ほかのタブから、隠れた成果物の工程へのリンクを押すと、概要と工程の両方を開いて移る", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const task = newTask();
+      task.status = "running";
+      task.steps = [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "active" },
+      ];
+      task.outputs.requirements = "Requirements draft";
+      task.outputs.design = "Design draft";
+      window.history.replaceState(null, "", "/tasks/t1?tab=costs");
+      render(task);
+      const requirements = () =>
+        document.getElementById("deliverable-panel-requirements") as HTMLElement;
+      // 概要も、要求要件の工程も隠れている（二重に隠れたパネル）
+      expect(panel("overview").hidden).toBe(true);
+      expect(requirements().hidden).toBe(true);
+      const link = document.createElement("a");
+      link.href = "/tasks/t1#deliverable-requirements";
+      document.body.append(link);
+      const navigate = (event: Event) => {
+        event.preventDefault();
+        window.history.pushState(null, "", "/tasks/t1#deliverable-requirements");
+      };
+      document.addEventListener("click", navigate);
+      act(() => link.click());
+      document.removeEventListener("click", navigate);
+      act(() => vi.runAllTimers());
+      flushFrames();
+      expect(panel("overview").hidden).toBe(false);
+      expect(requirements().hidden).toBe(false);
+      expect(document.getElementById("deliverable-panel-design")?.hidden).toBe(true);
+      // 移ったときに、要素を含むパネル（概要・工程）がすべて見えている
+      expect(scrolled.length).toBeGreaterThan(0);
+      expect(scrolled.every((s) => s.id === "deliverable-requirements" && s.visible)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("同じ画面でハッシュが変わったら（#proposals・#event-…）、そのタブへ切り替える", () => {
     const task = newTask();
     task.proposals = [{} as Task["proposals"][number]];

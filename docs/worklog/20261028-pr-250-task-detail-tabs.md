@@ -35,7 +35,7 @@
 - `npx vitest run tests/docs`：93 件通過。
 - `npx vitest run apps/web`：582 件通過（`task-detail-layout.test.ts` の 6 件を含む）。
   レビューの対応の後は、`npx vitest run apps/web tests/docs` で 687 件通過（`task-detail-tabs.test.ts` の 6 件を含む）。
-  2回目のレビューの対応の後は 689 件通過（`task-detail-tabs.test.ts` は 8 件）。
+  2回目のレビューの対応の後は 689 件通過（`task-detail-tabs.test.ts` は 8 件）。3回目の後は 690 件通過（同 9 件）。
   `question-form.browser.test.ts` は、この環境に必要な版の Playwright のブラウザーが無いため起動できない（変更前も同じ）。
 - `npx vitest run`：daemon の 8 件（`agent-sessions`・`context-mcp`・`host-mcp-processes`）が落ちる。変更前のコードでも同じ 8 件が落ちる（この環境によるもの）。
 - 架空のデータ（`scripts/docs-screenshots/seed.mjs`）で `sacty up` を起動し、8 つのタスクを各タブ・スクロールの後・スマホ幅（390px）で撮って確かめた。
@@ -55,6 +55,7 @@
 | [要修正]（2回目）`#100%` のような不正なハッシュで開くと、`decodeURIComponent` が例外を投げて読み込みに失敗する | 復号できないハッシュは無いものとして扱い、ふつうに表示する。テストを足し、実ブラウザーでも確かめた |
 | （2回目）前回の `#proposals` が一部未対応：費用のタブから「判断する」を押しても、概要が隠れたまま | 「判断する」は `next/link` で、同じ画面の中の移動は `history.pushState` なので `hashchange` が起きなかった。同じ画面へのハッシュ付きのリンクのクリックも拾い、押したリンクのハッシュで開く（`useRevealHash`）。テストを足し、実ブラウザーで、費用のタブから同じ画面へのリンクを押すとそのタブを開いて要素が画面に入ることを確かめた |
 | [提案]（2回目）パネルを開いてから移る順序もテストで確かめる | テストの `requestAnimationFrame` をためて描き直しの後に動かし、`scrollIntoView` を呼んだときに要素を含むパネルが見えていることを確かめる。移る処理を同期にすると落ちることを確かめた |
+| [提案]（3回目）隠れた成果物の工程へのリンクもテストで確かめる | 費用のタブから、選んでいない工程（`#deliverable-requirements`）へのリンクを押し、概要と工程の両方が開いて、移るときに要素を含むパネルがすべて見えていることを確かめるテストを足した。成果物の側の `useRevealHash` を外すと落ちることを確かめた |
 
 ## 残したこと
 
