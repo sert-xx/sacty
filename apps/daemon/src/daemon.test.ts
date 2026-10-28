@@ -29989,31 +29989,61 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
     activity.close();
   });
 
-  it("進め方のすべての工程のイメージを指定したら、オーケストレーターにイメージを選ばせない", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [completed(100)], {
-      config: configured,
-      planner: async () => ({
-        steps: ["requirements", "design"],
+  it("進め方のすべての工程のイメージを指定したら、オーケストレーターにイメージの候補を見せない（一部だけなら見せる）", async () => {
+    const planOutput = {
+      kind: "completed" as const,
+      output: `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "design-only", reason: "r" } })}\n\`\`\``,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+    };
+    const promptFor = async (images: Record<string, string>) => {
+      rmSync(dbPath, { force: true });
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [planOutput, completed(100)], {
+        config: configured,
+        realPlanner: true,
+      });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "画面の設計",
         plan: "design-only",
-        fallback: false,
-        costUsd: 0,
-        estimated: false,
-      }),
-    });
-    const { id } = service.createTask({
-      projectId: "default",
-      title: "画面の設計",
-      plan: "design-only",
-      images: { requirements: "default", design: "java" },
-    });
-    await service.runNext(id);
-    const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+        images,
+      });
+      await service.runNext(id);
+      const prompt = executor.calls[0]?.command.join(" ") ?? "";
+      const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+      const task = service.get(id)?.task;
+      activity.close();
+      return { prompt, chosen, task };
+    };
+    const all = await promptFor({ requirements: "default", design: "java" });
+    expect(all.prompt).not.toContain("- java：Java 17");
     // 既定のイメージにした理由を求めない（人が指定したため）
-    expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+    expect(all.chosen?.type === "StepsChosen" && all.chosen.payload).not.toHaveProperty(
       "imagesUnexplained",
     );
-    expect(service.get(id)?.task.images).toEqual({ requirements: "default", design: "java" });
+    expect(all.task?.images).toEqual({ requirements: "default", design: "java" });
+    const some = await promptFor({ design: "java" });
+    expect(some.prompt).toContain("- java：Java 17");
+    expect(some.task?.images).toEqual({ design: "java" });
+  });
+
+  it("エージェントの名前は、タスクの詳細で変えるときと同じく長さを限らない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const long = agent({ id: "a".repeat(101) });
+    const config = (configured() as { ok: true; config: SactyConfig }).config;
+    const { service } = makeService(activity, [], {
+      config: () => ({
+        ok: true,
+        config: { ...config, agents: { ...config.agents, [long.id]: long } },
+      }),
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "A",
+      plan: "direct",
+      agents: { implement: long.id },
+    });
+    expect(task.requestedAgents).toEqual({ implement: long.id });
     activity.close();
   });
 

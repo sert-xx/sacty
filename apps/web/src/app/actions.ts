@@ -109,7 +109,15 @@ export async function createTaskAction(
       }
       if (issue.path[0] === "body") fieldErrors.body = [a.bodyTooLong(TASK_BODY_MAX)];
     }
-    return { fieldErrors, values: shown };
+    // 工程ごとの指定は、ダイアログの別の画面で選ぶので、項目ではなく理由として出す
+    const stepSettings = parsed.error.issues.some(
+      (issue) => issue.path[0] === "images" || issue.path[0] === "agents",
+    );
+    return {
+      fieldErrors,
+      ...(stepSettings ? { message: a.stepSettingsInvalid } : {}),
+      values: shown,
+    };
   }
 
   // 作成先は、フォームを表示したときのプロジェクト（送信時の cookie ではない）。存在はデーモンが検査する

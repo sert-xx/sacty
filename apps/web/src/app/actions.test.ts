@@ -137,6 +137,22 @@ describe("タスクの作成で、進め方の工程ごとのイメージ・エ�
       projectId: "project-a",
     });
   });
+
+  it("工程ごとの指定が正しくなければ、作らずに理由を出す（項目の誤りとしては出せないため）", async () => {
+    const state = await createTaskAction(
+      {},
+      form({
+        title: "決済",
+        projectId: "project-a",
+        plan: "standard",
+        "image:design": "x".repeat(101),
+      }),
+    );
+    expect(state.message).toBe(
+      "工程ごとのイメージ・エージェントの指定が正しくありません。選び直してください。",
+    );
+    expect(createTask).not.toHaveBeenCalled();
+  });
 });
 
 describe("タスクの対象リポジトリ（PBI-21）", () => {

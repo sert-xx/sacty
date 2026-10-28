@@ -368,7 +368,8 @@ export function TaskFields({
           <div className="flex flex-col gap-2">
             <span className="flex items-center gap-1">
               <Label htmlFor={`${idPrefix}-plan`}>{t.plan}</Label>
-              <Hint text={t.planHint} />
+              {/* 工程ごとの設定が無い画面（スケジュールタスク）では、その案内を出さない */}
+              <Hint text={steps ? t.planStepsHint : t.planHint} />
             </span>
             <select
               id={`${idPrefix}-plan`}
