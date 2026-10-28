@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-28（UTC）
 - タスク: なし
-- PR: なし
+- PR: #242
 - ブランチ: ccr-9499358d-6sfr1y
 - 関係する ADR: [完了したタスクから、元のタスクを指す続きのタスクを何度でも作れるようにする（派生）](../adr/20261028-0054-derive-follow-up-task.md)
 
@@ -26,6 +26,7 @@
 
 - `npx biome check .`：指摘なし
 - `npm run typecheck`：エラーなし
+- `npm run build`：成功
 - `npx vitest run apps/daemon/src/daemon.test.ts -t 派生`・`packages/core/src/projection.test.ts -t 派生`・`apps/web/src/components/derive-dialog.test.ts`：すべて合格
 - `npx vitest run`（`tests/docs` を含む）：2862 件合格・8 件不合格。不合格は `host-mcp-processes.test.ts`・`agent-sessions.test.ts`・
   `context-mcp.test.ts`・`question-form.browser.test.ts` で、変更を退避した状態でも同じく不合格になる（作業した環境が root で
