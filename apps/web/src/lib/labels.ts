@@ -345,6 +345,13 @@ export function describeEventParts(
       detail: event.payload.remarks.map((r) => l.event.changesRemark(r.id, r.text)).join("\n"),
     };
   }
+  if (event.type === "TaskResumed" && event.payload.note) {
+    // 再開のときに人が足した補足（説明の後にも足すが、どの再開で足したかを作業履歴で読み返せるようにする）
+    return {
+      text: l.event.TaskResumedWithNote(describeEventText(event, l)),
+      detail: event.payload.note,
+    };
+  }
   return { text: describeEventText(event, l) };
 }
 

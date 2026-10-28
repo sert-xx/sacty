@@ -21,6 +21,8 @@ vi.mock("next/cache", () => ({ refresh, revalidatePath: () => {} }));
 const { resumeTaskAction } = await import("./actions");
 const { messagesFor } = await import("@/i18n");
 const a = messagesFor("ja").common.action;
+/** 補足も工程の設定も無いときに、デーモンへ渡す値。 */
+const NONE = { note: "", images: {}, agents: {} };
 
 const form = (values: Record<string, string>) => {
   const data = new FormData();
@@ -43,7 +45,7 @@ describe("タスクの再開のテストの扱い", () => {
         form({ taskId: "t1", tests: "command", testCommand: "  make check ", noTestsReason: "x" }),
       ),
     ).toEqual({});
-    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, { testCommand: "make check" });
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, { testCommand: "make check" }, NONE);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
@@ -52,14 +54,14 @@ describe("タスクの再開のテストの扱い", () => {
       {},
       form({ taskId: "t1", tests: "none", testCommand: "", noTestsReason: " スキル集 " }),
     );
-    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, { noTestsReason: "スキル集" });
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, { noTestsReason: "スキル集" }, NONE);
   });
 
   it("決めずに再開したら、テストの扱いを渡さない", async () => {
     await resumeTaskAction({}, form({ taskId: "t1", tests: "" }));
-    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined);
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, NONE);
     await resumeTaskAction({}, form({ taskId: "t2" }));
-    expect(resumeTask).toHaveBeenLastCalledWith("t2", undefined, undefined);
+    expect(resumeTask).toHaveBeenLastCalledWith("t2", undefined, undefined, NONE);
   });
 
   it("コマンド・理由が空か長すぎれば送らず、理由と入力を返す", async () => {
@@ -89,5 +91,35 @@ describe("タスクの再開のテストの扱い", () => {
       noTestsReason: "なし",
     });
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("タスクの再開の補足と工程の設定", () => {
+  it("補足（前後の空白を除く）と、工程ごとのイメージ・エージェントを渡す（空の選択と不正な工程は渡さない）", async () => {
+    await resumeTaskAction(
+      {},
+      form({
+        taskId: "t1",
+        note: "  ACME_TOKEN を使う ",
+        "image:implement": "java",
+        "image:design": "",
+        "image:nope": "java",
+        "agent:implement": "strong",
+      }),
+    );
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
+      note: "ACME_TOKEN を使う",
+      images: { implement: "java" },
+      agents: { implement: "strong" },
+    });
+  });
+
+  it("補足が長すぎれば送らず、理由と入力を返す", async () => {
+    const note = "あ".repeat(10_001);
+    expect(await resumeTaskAction({}, form({ taskId: "t1", note }))).toMatchObject({
+      message: a.resumeNoteTooLong(10_000),
+      note,
+    });
+    expect(resumeTask).not.toHaveBeenCalled();
   });
 });

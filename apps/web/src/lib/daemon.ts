@@ -611,6 +611,11 @@ export async function resumeTask(
   id: string,
   capUsd: number | undefined,
   tests?: { testCommand: string } | { noTestsReason: string },
+  extra: {
+    note?: string;
+    images?: Partial<Record<StepKey, string>>;
+    agents?: Partial<Record<StepKey, string>>;
+  } = {},
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
     method: "POST",
@@ -618,6 +623,9 @@ export async function resumeTask(
     body: JSON.stringify({
       ...(capUsd === undefined ? {} : { capUsd }),
       ...(tests ? { tests } : {}),
+      ...(extra.note ? { note: extra.note } : {}),
+      ...(extra.images && Object.keys(extra.images).length > 0 ? { images: extra.images } : {}),
+      ...(extra.agents && Object.keys(extra.agents).length > 0 ? { agents: extra.agents } : {}),
     }),
   });
   if (res.status === 409) {

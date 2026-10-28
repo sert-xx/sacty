@@ -64,6 +64,7 @@ const PARAMS = {
   "resume.testsNotUndecided": null,
   "override.notAllowed": null,
   "resume.bugfixNeedsTestCommand": null,
+  "resume.stepSettingsRechoose": null,
   "operation.incomplete": null,
   "operation.attempted": null,
   "operation.unconfirmed": null,
@@ -706,6 +707,8 @@ const ja: MessageDictionary = {
   "operation.connectionMissing":
     "外部作業は開始していません。選択された接続先が利用できません。設定を確認してから再開してください。",
   "resume.capRequired": "予算で止まったタスクを再開するには、新しい上限が必要です。",
+  "resume.stepSettingsRechoose":
+    "テストを決めずに再開すると工程の選択からやり直すため、工程のイメージ・エージェントは一緒に変えられません。テストの扱いを決めるか、工程を選び直した後に変えてください。",
   "resume.capTooLow": ({ usedUsd }) =>
     `新しい上限は、使用済み（${formatUsd(usedUsd)}）より大きい金額にしてください。`,
   "containers.notStopped": ({ names }) =>
@@ -1346,6 +1349,8 @@ const en: MessageDictionary = {
   "operation.connectionMissing":
     "The operation has not started. The selected connection is unavailable. Check its configuration before resuming.",
   "resume.capRequired": "To resume a task stopped by its budget, set a new cap.",
+  "resume.stepSettingsRechoose":
+    "Resuming without deciding the tests chooses the steps again, so the step images and agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",
   "resume.capTooLow": ({ usedUsd }) =>
     `Set a new cap greater than the amount used (${formatUsd(usedUsd)}).`,
   "containers.notStopped": ({ names }) =>

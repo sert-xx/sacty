@@ -6,6 +6,7 @@ import {
   AuditTarget,
   CreateTaskInput,
   type ProjectDefinitionInput,
+  RESUME_NOTE_MAX,
   renderMessage,
   type SactySettingsInput,
   ScheduleInput,
@@ -235,6 +236,8 @@ export type ResumeState = {
   tests?: "command" | "none";
   testCommand?: string;
   noTestsReason?: string;
+  /** 再開のときに足す補足（エラーのときに戻す）。 */
+  note?: string;
 };
 
 /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限を受け取る。 */
@@ -258,12 +261,27 @@ export async function resumeTaskAction(
   const choice = String(formData.get("tests") ?? "");
   const testCommand = String(formData.get("testCommand") ?? "").trim();
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
   const kept: ResumeState = {
     capUsd: capText,
     ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
     testCommand,
     noTestsReason,
+    note,
   };
+  if (note.length > RESUME_NOTE_MAX) {
+    return { ...kept, message: a.resumeNoteTooLong(RESUME_NOTE_MAX) };
+  }
+  // 再開と一緒に変える工程のイメージ・エージェント（image:<工程>・agent:<工程>。今と同じ名前はデーモンが変えない）
+  const images: Partial<Record<StepKey, string>> = {};
+  const agents: Partial<Record<StepKey, string>> = {};
+  for (const [name, value] of formData.entries()) {
+    const [kind, rawStep] = name.split(":");
+    const step = StepKey.safeParse(rawStep);
+    if (!step.success || typeof value !== "string" || !value) continue;
+    if (kind === "image") images[step.data] = value;
+    else if (kind === "agent") agents[step.data] = value;
+  }
   let tests: { testCommand: string } | { noTestsReason: string } | undefined;
   if (choice === "command") {
     if (!testCommand || testCommand.length > 1000)
@@ -283,7 +301,7 @@ export async function resumeTaskAction(
       const chosen = await chooseTicketRepository(taskId, repo);
       if (!chosen.ok) return { ...kept, message: chosen.message };
     }
-    const result = await resumeTask(taskId, capUsd, tests);
+    const result = await resumeTask(taskId, capUsd, tests, { note, images, agents });
     if (!result.ok) return { ...kept, message: result.message };
   } catch {
     return { ...kept, message: a.resumeFailed };

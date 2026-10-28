@@ -1031,6 +1031,11 @@ const TaskResumed = z.object({
      * 人がテストを決めずに再開したとき（同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないように）。
      */
     rechooseSteps: z.literal(true).optional(),
+    /**
+     * 人が再開のときに足した補足。投影が、タスクの説明の後に見出しを付けて足す（オーケストレーターとすべての工程は説明を
+     * 読むので、工程ごとに指示を変えずに届く。人も画面の説明で確かめられる）。
+     */
+    note: z.string().trim().min(1).max(10_000).optional(),
   }),
 });
 
@@ -2695,6 +2700,12 @@ export const CreateTemplateTaskInput = z
   .strict();
 export type CreateTemplateTaskInput = z.infer<typeof CreateTemplateTaskInput>;
 
+/** 再開の補足の長さの上限。 */
+export const RESUME_NOTE_MAX = 10_000;
+
+/** 再開で人が足した補足の、タスクの説明の中の見出し。 */
+export const RESUME_NOTE_HEADING = "## 補足（再開で人が足したもの）";
+
 /** 再実行の補足の長さの上限。 */
 export const RERUN_NOTE_MAX = 10_000;
 
@@ -2800,6 +2811,14 @@ export function derivedRecord(task: { derivedFrom?: { record?: string } }): stri
 export const ResumeTaskInput = z.object({
   capUsd: z.number().positive().max(10_000).optional(),
   tests: TestsDecided.shape.payload.optional(),
+  /** 再開のときに足す補足（タスクの説明の後に足す。TaskResumed の note）。空なら足さない。 */
+  note: z.string().trim().max(RESUME_NOTE_MAX, code("input.noteTooLong")).optional(),
+  /**
+   * 再開と一緒に変える工程のイメージ・エージェント（タスクの詳細で変えるのと同じ。StepImageChanged・StepAgentChanged）。
+   * 選んだ工程だけを指定でき、今と同じ名前は変えない。
+   */
+  images: StepImageMap.optional(),
+  agents: StepAgentMap.optional(),
 });
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 

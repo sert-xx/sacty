@@ -498,6 +498,9 @@ The details of a task stopped by the budget limit show a field for the new cumul
 ![Details of a task paused at the budget limit (the cost, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
 
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see [config.yaml settings](config.en.md#budget)).
+- In the resume section, you can change the following along with the resume.
+  - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the orchestrator and the steps still to run read them.
+  - **Change step images and agents** (open it to use): for each step not finished yet, you can choose the image and the agent again. The current settings are selected first, only the changed steps are recorded, and each change is used from the next run of that step. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched). A cancelled task cannot be resumed.
 - A cancelled task can be started over from "Rerun" on its detail page.
   - In the dialog, you can change the repository to work in (empty means no repository), the image, the title, and the description, and add notes.

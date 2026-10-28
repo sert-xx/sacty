@@ -686,6 +686,11 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 - Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`, `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
 - Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
 - Resume: if the status before the pause was waiting to run, the stopped step is run again. Resume is rejected for an Operation that has started, keeping the task paused.
+- Notes and step settings on resume: a person can pass the following with the resume (`note`, `images`, and `agents` of `ResumeTaskInput`).
+  - Notes (up to 10000 characters) are recorded as `note` of `TaskResumed`, and the projection adds them after the task description under the heading `## 補足（再開で人が足したもの）` (`RESUME_NOTE_HEADING`). The orchestrator and every step read the description, so the notes reach the steps still to run as they are. Each resume adds them under a separate heading.
+  - Images and agents per step get the same checks as changing them in the task details (`changeStepImage`, `changeStepAgent`), and `StepImageChanged` and `StepAgentChanged` are recorded before `TaskResumed`. A step whose name is unchanged is not recorded. A step that was not chosen, a name not in the settings, or the agent of the integration review is refused without recording anything.
+  - When resuming without deciding the tests chooses the steps again (`rechooseSteps`), the changes tied to the chosen steps would be lost, so step settings are refused (`resume.stepSettingsRechoose`).
+  - The resume section of the web UI shows a field for the notes and the image and agent choices for the steps not finished yet (collapsed; the current names are selected first). The resume line in the activity shows that notes were added, with the notes in its details.
 - Cancel: a task cannot be canceled while the Goal Guardian is judging. Session logs (`runs/`) are not deleted. Canceling a parent also cancels its unfinished child tasks. sacty cleans up in the following order and records the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`, `pull_request`) in `TaskCancelled`.
   1. Stop runs answering questions and running containers.
   2. Delete the Orchestrator session.
@@ -693,7 +698,7 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
   4. Delete sacty's branches (the implementation PR's branch, the task branch, and step branches).
   5. Delete the workspace (not deleted if the containers cannot be confirmed as stopped).
 
-Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`)
+Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`, `RESUME_NOTE_HEADING`), `packages/core/src/projection.ts` (`project`), `packages/core/src/cost.ts` (`budgetState`), `apps/web/src/components/resume-form.tsx` (`ResumeForm`)
 
 ### Cleaning up the workspaces of finished tasks
 

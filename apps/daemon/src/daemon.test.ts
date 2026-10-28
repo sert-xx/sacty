@@ -4441,6 +4441,91 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("再開と一緒にイメージ・エージェントを変え、補足を説明に足して、やり直しから使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const strong = agent({ id: "strong", model: "claude-opus-5-5" });
+      const config = (): ConfigResult => {
+        const loaded = withImages()() as { ok: true; config: SactyConfig };
+        return {
+          ok: true,
+          config: {
+            ...loaded.config,
+            agents: Object.fromEntries([agent(), strong].map((a) => [a.id, a])),
+          },
+        };
+      };
+      const { service, executor } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "Playwright が無い" }, out("# 要求要件")],
+        { config, planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "決済を作る",
+      });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      service.resume(id, {
+        note: "Playwright のイメージを使ってください。",
+        // 今と同じ名前（設計の java）は変えない
+        images: { requirements: "playwright", design: "java" },
+        agents: { requirements: "strong" },
+      });
+      const after = service.get(id);
+      // 工程の設定の変更を、再開より前に記録する
+      expect(
+        after?.activity
+          .filter((e) => ["StepImageChanged", "StepAgentChanged", "TaskResumed"].includes(e.type))
+          .map((e) => ({ type: e.type, actor: e.actor, payload: e.payload })),
+      ).toEqual([
+        {
+          type: "StepImageChanged",
+          actor: "person",
+          payload: { step: "requirements", from: "default", to: "playwright" },
+        },
+        {
+          type: "StepAgentChanged",
+          actor: "person",
+          payload: { step: "requirements", from: "claude-subscription", to: "strong" },
+        },
+        {
+          type: "TaskResumed",
+          actor: "person",
+          payload: { retry: true, note: "Playwright のイメージを使ってください。" },
+        },
+      ]);
+      expect(after?.task.body).toBe(
+        "決済を作る\n\n## 補足（再開で人が足したもの）\n\nPlaywright のイメージを使ってください。",
+      );
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, used(playwright)]);
+      expect(promptOf(executor, 1)).toContain("Playwright のイメージを使ってください。");
+      expect(promptOf(executor, 1)).toContain("claude-opus-5-5");
+      activity.close();
+    });
+
+    it("再開の工程の設定が誤っていれば、何も記録せずに断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      const before = service.get(id)?.activity.length;
+      expect(() =>
+        service.resume(id, { note: "補足", images: { requirements: "missing" } }),
+      ).toThrow(InvalidOperationError);
+      expect(() => service.resume(id, { agents: { requirements: "missing" } })).toThrow(
+        InvalidOperationError,
+      );
+      expect(service.get(id)?.activity.length).toBe(before);
+      expect(service.get(id)?.task.status).toBe("paused");
+      activity.close();
+    });
+
     it("実装の工程を変えたら、実装と、そのテストを実行する最終レビューを変えたイメージで実行する", async () => {
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
@@ -23140,6 +23225,11 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBeUndefined();
     expect(executor.calls).toHaveLength(1);
+    // 工程の選択からやり直すので、工程のイメージ・エージェントは一緒に変えられない（人の指定を黙って失わない）
+    const step = task.steps[0]?.key ?? "investigate";
+    expect(() => service.resume(id, { images: { [step]: "default" } })).toThrow(
+      expect.objectContaining({ messages: [message("resume.stepSettingsRechoose")] }),
+    );
     // テストを決めずに再開すると、同じ工程のまま進めず（費用をかけた後の検証で止まらないように）、工程の選択からやり直す
     service.resume(id, {});
     const resumed = service.get(id)?.activity.find((e) => e.type === "TaskResumed");

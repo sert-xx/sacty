@@ -1122,6 +1122,16 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   止まったことを確かめられないコンテナがあれば、そのことを確かめるまで再開しない。
 - 再開：止まる前の状態が実行待ちなら、止まった工程を実行し直す。
   ただし、開始済みの作業は再開を拒否し、停止を維持する。
+- 再開のときの補足と工程の設定：人は再開と一緒に、次のものを渡せる（`ResumeTaskInput` の `note`・`images`・`agents`）。
+  - 補足（10000 文字まで）は `TaskResumed` の `note` に記録し、投影がタスクの説明の後に `## 補足（再開で人が足したもの）`（`RESUME_NOTE_HEADING`）の見出しを付けて足す。
+    オーケストレーターとすべての工程は説明を読むので、これから実行する工程にそのまま届く。
+    再開のたびに、別の見出しで足す。
+  - 工程ごとのイメージ・エージェントは、タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を `TaskResumed` の前に記録する。
+    今と同じ名前の工程は記録しない。
+    選んでいない工程・設定に無い名前・統合レビューのエージェントは、何も記録せずに断る。
+  - テストを決めずに再開して工程の選択からやり直すとき（`rechooseSteps`）は、選んだ工程に結びつく変更が消えるので、工程の設定は断る（`resume.stepSettingsRechoose`）。
+  - 画面の再開の欄には、補足の入力欄と、まだ終わっていない工程のイメージ・エージェントの選択（折りたたみ。今の名前を初めに選ぶ）を出す。
+    作業履歴の再開の行には、補足を足したことを出し、補足の本文を詳細に出す。
 - 中止：ゴールガーディアンの判定中は中止できない。
   セッションログ（`runs/`）は消さない。
   親を中止すると、終わっていない子タスクも中止する。
@@ -1132,7 +1142,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）
 
 ### 終わったタスクの作業領域の片付け
 

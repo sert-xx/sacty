@@ -44,6 +44,8 @@ const ja = {
     toReviewFailed: "レビューへ進められませんでした。デーモンが動いているか確認してください。",
     testCommandInvalid: "テストのコマンドを 1000 文字以内で入力してください。",
     noTestsReasonInvalid: "テストなしで進める理由を 2000 文字以内で入力してください。",
+    resumeNoteTooLong: (max: number) =>
+      `補足は${max.toLocaleString("ja-JP")}文字以内で入力してください。`,
     invalidStep: "工程が不正です。",
     invalidTarget: "宛先が不正です。",
     invalidCategory: "区分が不正です。画面を更新してください。",
@@ -96,6 +98,8 @@ const en: CommonMessages = {
     toReviewFailed: "Could not move to review. Check that the daemon is running.",
     testCommandInvalid: "Enter a test command of up to 1000 characters.",
     noTestsReasonInvalid: "Enter why to proceed without tests in up to 2000 characters.",
+    resumeNoteTooLong: (max) =>
+      `Keep the additional notes within ${max.toLocaleString("en-US")} characters.`,
     invalidStep: "Invalid step.",
     invalidTarget: "Invalid target.",
     invalidCategory: "The category is not valid. Reload the page.",

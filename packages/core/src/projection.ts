@@ -33,6 +33,7 @@ import {
   exportSteps,
   isDocumentsDir,
   MAX_INTEGRATION_ATTEMPTS,
+  RESUME_NOTE_HEADING,
   REWORK_STEPS,
   SKIPPABLE_STEPS,
 } from "./events.js";
@@ -2298,6 +2299,12 @@ export function applyEvent(
       task.pausedCancelledChildren = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
+      if (event.payload.note) {
+        task.body = [task.body.trimEnd(), `${RESUME_NOTE_HEADING}\n\n${event.payload.note}`]
+          .filter(Boolean)
+          .join("\n\n");
+      }
       task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
       break;

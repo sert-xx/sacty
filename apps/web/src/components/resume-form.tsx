@@ -1,6 +1,6 @@
 "use client";
 
-import type { PauseReason } from "@sacty/core";
+import { type PauseReason, RESUME_NOTE_MAX, type StepKey } from "@sacty/core";
 import { useActionState, useState } from "react";
 import { type ResumeState, resumeTaskAction, submitForReviewAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,20 @@ import { useMessages } from "@/i18n/client";
 import { usd } from "@/lib/labels";
 
 const initial: ResumeState = {};
+
+const SELECT =
+  "h-9 w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60";
+
+/**
+ * 再開と一緒に変えられる工程の設定の1行（まだ終わっていない工程）。options が undefined なら、候補を確かめられない
+ * （設定を読めない）ので選ばせない。agent が undefined の工程（統合レビュー）は、エージェントを変えられない。
+ */
+export type ResumeStepSetting = {
+  step: StepKey;
+  image: string;
+  imageOptions?: { name: string; description: string }[];
+  agent?: { current?: string; options?: { id: string }[] };
+};
 
 export function ResumeForm({
   taskId,
@@ -25,6 +39,7 @@ export function ResumeForm({
   chosenRepo,
   tests,
   toReview = false,
+  steps = [],
 }: {
   taskId: string;
   reason: PauseReason;
@@ -49,12 +64,15 @@ export function ResumeForm({
   tests?: { bugfix: boolean; rechoose: boolean };
   /** 実装の検証が続けて通らずに止まったタスク。人の判断で、レビュー（実装の承認）へ進められる。 */
   toReview?: boolean;
+  /** 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。 */
+  steps?: ResumeStepSetting[];
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
   const needsCap = reason === "budget";
   const suggested = Math.max(capUsd * 2, Math.ceil(usedUsd) + 1);
-  const t = m.parts.resume.tests;
+  const r = m.parts.resume;
+  const t = r.tests;
   const [testsChoice, setTestsChoice] = useState<"" | "command" | "none">(state.tests ?? "");
 
   return (
@@ -179,6 +197,28 @@ export function ResumeForm({
             )}
           </fieldset>
         )}
+        <div className="flex w-full flex-col gap-1.5">
+          <span className="flex items-center gap-1">
+            <Label htmlFor="resume-note">{r.noteLabel}</Label>
+            <Hint text={r.noteHint} />
+          </span>
+          <Textarea
+            id="resume-note"
+            name="note"
+            maxLength={RESUME_NOTE_MAX}
+            rows={3}
+            defaultValue={state.note ?? ""}
+            placeholder={r.notePlaceholder}
+            className="bg-card"
+            data-testid="resume-note"
+          />
+        </div>
+        {steps.length > 0 && (
+          <ResumeStepSettings
+            steps={steps}
+            rechoose={Boolean(tests?.rechoose) && testsChoice === ""}
+          />
+        )}
         {needsCap && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cap-usd">{m.parts.resume.newCap(usd(usedUsd))}</Label>
@@ -215,6 +255,121 @@ export function ResumeForm({
       {needsCap && <p className="text-xs text-muted-foreground">{m.parts.resume.capNote}</p>}
       {toReview && <ToReviewForm taskId={taskId} />}
     </section>
+  );
+}
+
+/**
+ * 再開と一緒に変える工程のイメージ・エージェント。普段は変えないので、折りたたんで出す。選択は非制御のまま（自動の更新で、
+ * 選んでいる途中の値を消さない）、今の名前を初めに選んでおく（今と同じ名前はデーモンが変えない）。今の名前が候補から
+ * 消えていたら、空の選択にして送らない（選び直してもらう）。工程の選択からやり直すときは、変えられないことだけを出す。
+ */
+function ResumeStepSettings({
+  steps,
+  rechoose,
+}: {
+  steps: ResumeStepSetting[];
+  rechoose: boolean;
+}) {
+  const m = useMessages();
+  const r = m.parts.resume;
+  const unavailable = steps.some(
+    (s) => !s.imageOptions || (s.agent !== undefined && !s.agent.options),
+  );
+  return (
+    <details
+      className="w-full rounded-md border border-warn-line bg-card"
+      data-testid="resume-steps"
+    >
+      <summary className="flex min-h-9 cursor-pointer items-center gap-1 px-3 text-sm font-medium">
+        {r.stepsTitle} <Hint text={r.stepsHint} />
+      </summary>
+      <div className="flex flex-col gap-2 border-t border-warn-line p-3">
+        {rechoose ? (
+          <p className="text-sm text-muted-foreground" data-testid="resume-steps-rechoose">
+            {r.stepsRechoose}
+          </p>
+        ) : (
+          <>
+            {unavailable && (
+              <p role="status" className="text-xs text-warn">
+                {r.stepsUnavailable}
+              </p>
+            )}
+            <div
+              aria-hidden="true"
+              className="hidden grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)] gap-x-2 text-xs font-medium text-muted-foreground sm:grid"
+            >
+              <span />
+              <span>{r.stepImage}</span>
+              <span>{r.stepAgent}</span>
+            </div>
+            <ul className="flex flex-col gap-2">
+              {steps.map((s) => {
+                const label = m.labels.step[s.step];
+                const imageKnown = s.imageOptions?.some((o) => o.name === s.image);
+                const agentCurrent = s.agent?.current;
+                const agentKnown = s.agent?.options?.some((o) => o.id === agentCurrent);
+                return (
+                  <li
+                    key={s.step}
+                    className="grid grid-cols-2 items-center gap-x-2 gap-y-1 sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)]"
+                    data-testid={`resume-step-${s.step}`}
+                  >
+                    <span className="col-span-2 text-sm font-medium sm:col-span-1">{label}</span>
+                    {s.imageOptions ? (
+                      <select
+                        name={`image:${s.step}`}
+                        defaultValue={imageKnown ? s.image : ""}
+                        aria-label={m.task.images.label(label)}
+                        data-testid={`resume-step-image-${s.step}`}
+                        className={SELECT}
+                      >
+                        {!imageKnown && (
+                          <option value="" disabled>
+                            {s.image}
+                          </option>
+                        )}
+                        {s.imageOptions.map((o) => (
+                          <option key={o.name} value={o.name} title={o.description}>
+                            {o.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="font-mono text-sm">{s.image}</span>
+                    )}
+                    {s.agent?.options ? (
+                      <select
+                        name={`agent:${s.step}`}
+                        defaultValue={agentKnown ? agentCurrent : ""}
+                        aria-label={m.task.agents.label(label)}
+                        data-testid={`resume-step-agent-${s.step}`}
+                        className={SELECT}
+                      >
+                        {!agentKnown && (
+                          <option value="" disabled>
+                            {agentCurrent ?? m.task.agents.unknown}
+                          </option>
+                        )}
+                        {s.agent.options.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.id}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="font-mono text-sm text-muted-foreground">
+                        {s.agent ? (agentCurrent ?? m.task.agents.unknown) : "—"}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </div>
+    </details>
   );
 }
 
