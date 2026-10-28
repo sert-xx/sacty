@@ -20,6 +20,7 @@ import type {
   StepKey,
   StepPlan,
   StepPullRequestKey,
+  StepSettingMap,
   TaskSource,
   TaskTemplate,
   TestMapping,
@@ -421,6 +422,16 @@ export type Task = {
   template?: TaskTemplate;
   /** 人がタスクの作成時に指定した工程の組み合わせ（進め方）。無ければオーケストレーターが選ぶ。 */
   requestedPlan?: StepPlan;
+  /**
+   * 人がタスクの作成時に、進め方の工程ごとに指定したイメージ。工程を選んだ（選び直した）ときに、プロジェクトの対象の指定・
+   * オーケストレーターの選択より優先して images に入れる。
+   */
+  requestedImages?: StepSettingMap;
+  /**
+   * 人がタスクの作成時に、進め方の工程ごとに指定したエージェント。作成のときから agents に入れ、工程を選び直しても
+   * agents に戻す（タスクの詳細で変えたら、その変更が優先する）。
+   */
+  requestedAgents?: StepSettingMap;
   /**
    * 実装の検証に通った後、実装に変更が無かったので PR を作らなかった、実装の提出回（PBI-90・PBI-110）。その提出回が承認待ち・
    * 承認済みなら、変更なしの実装の承認（変更なしで完了）。
@@ -873,6 +884,10 @@ export function applyEvent(
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
+      ...(event.payload.images ? { requestedImages: event.payload.images } : {}),
+      ...(event.payload.agents
+        ? { requestedAgents: event.payload.agents, agents: event.payload.agents }
+        : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
       ...(event.payload.securityFix ? { securityFix: event.payload.securityFix } : {}),
@@ -947,7 +962,15 @@ export function applyEvent(
       }
       if (event.payload.steps.includes("operation")) task.operation = event.payload.operation;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
-      if (event.payload.images) task.images = event.payload.images;
+      {
+        // 人が作成時に指定したイメージは、選んだ工程の分だけ、プロジェクトの対象の指定・オーケストレーターの選択より優先する
+        const requested = Object.entries(task.requestedImages ?? {}).filter(([step]) =>
+          event.payload.steps.includes(step as StepKey),
+        );
+        if (event.payload.images || requested.length > 0) {
+          task.images = { ...event.payload.images, ...Object.fromEntries(requested) };
+        }
+      }
       if (event.payload.images && event.payload.imageSource) {
         task.imageSource = event.payload.imageSource;
       }
@@ -2813,7 +2836,8 @@ function clearChosenSteps(task: Task): void {
   task.images = undefined;
   // 人が工程ごとに変えたイメージ・エージェントも、選んだ工程に結びつくので消す
   task.imageChanges = undefined;
-  task.agents = undefined;
+  // 作成時に指定したエージェントは、選び直した工程でも使う（イメージは、工程を選んだときに入れ直す）
+  task.agents = task.requestedAgents;
   task.agentChanges = undefined;
   task.imageSource = undefined;
   task.defaultImageReasons = undefined;

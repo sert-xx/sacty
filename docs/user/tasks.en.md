@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -55,13 +55,27 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Security check | Investigate | Checking for vulnerabilities and supply chain problems ("Security checks and fixes" below) |
 | Security fix | Investigate → Implement → After-merge watch | Fixing a specific security problem with the smallest change |
 
-- When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual.
+- When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual (you can also set the images and agents in "Set the image and agent for each step" below).
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
 - The specified plan appears in the "Steps" section of the task details.
 - Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
 - For an "Investigate only" task, if you write the form of the result (a table, sections, items, and so on) in the description, it reports in that form. Otherwise, it reports the conclusion, the evidence, the related places, and the open questions, in that order.
 - When you choose a template, you cannot choose a plan.
+
+#### Set the image and agent for each step
+
+When you pick a plan, "Set per step" appears below the sequence of steps. Press it to switch the dialog to the step settings, where you can choose the image and the agent for each step.
+
+![The "Step settings" view](images/new-task-steps.en.png)
+
+- For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
+- For the agent, choose the name of an available agent (see [Settings](config.en.md)). If you leave it as "Default", the agent decided by `step_agents` (or `default_agent`) is used. Integration review can't be chosen, because the Goal Guardian runs it.
+- A step you set is marked, and "Reset to default" undoes it. "Done" or the back button at the top left returns to the main form. The sequence of steps in the main form also marks the steps you set.
+- Switching views keeps the title and description you are typing and your choices. Choosing another plan keeps the choices for the same steps (only those for the steps of the current plan are used).
+- The images and agents you set take precedence over the Orchestrator's choice and `step_agents`. After creating the task, you can still change them in "Step images" and "Step agents" on the task page (they show "set by a person at creation").
+- You can't set them with the "Automatic" plan or when you choose a template (the steps are not decided yet).
+- When the choices can't be loaded (for example, `config.yaml` can't be read), the reason is shown. You can still create the task without setting them.
 
 ### Template "Sacty setup"
 

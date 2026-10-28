@@ -186,6 +186,9 @@ const ja = {
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
     TaskCreated: (actor: string, template?: string, rerun?: boolean, derived?: boolean) =>
       `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}${rerun ? "・中止したタスクの再実行" : ""}${derived ? "・完了したタスクの続き" : ""}）`,
+    /** 作成時に、進め方の工程ごとに人が指定したイメージ・エージェント。 */
+    createdImages: (images: string) => ` / イメージの指定：${images}`,
+    createdAgents: (agents: string) => ` / エージェントの指定：${agents}`,
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
@@ -678,6 +681,8 @@ const en: LabelMessages = {
     withCost: (actor, cost) => `${actor} · ${cost}`,
     TaskCreated: (actor, template, rerun, derived) =>
       `Task created (${actor}${template ? ` · template: ${template}` : ""}${rerun ? " · rerun of a cancelled task" : ""}${derived ? " · follow-up of a completed task" : ""})`,
+    createdImages: (images) => ` / images set: ${images}`,
+    createdAgents: (agents) => ` / agents set: ${agents}`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsImages: (images, source, reason) =>
       ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,

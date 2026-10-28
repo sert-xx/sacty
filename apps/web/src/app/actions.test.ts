@@ -98,6 +98,63 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
   });
 });
 
+describe("タスクの作成で、進め方の工程ごとのイメージ・エージェント", () => {
+  beforeEach(() => createTask.mockReset());
+
+  it("進め方を選んだときだけ、指定した工程の分を渡す（空欄は指定しない）", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction(
+        {},
+        form({
+          title: "決済",
+          projectId: "project-a",
+          plan: "standard",
+          "image:design": "java",
+          "image:implement": "",
+          "agent:implement": "strong",
+        }),
+      ),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "決済",
+      body: "",
+      repo: null,
+      plan: "standard",
+      images: { design: "java" },
+      agents: { implement: "strong" },
+      projectId: "project-a",
+    });
+    createTask.mockClear();
+    // 進め方が自動なら送らない（工程が決まっていないため）
+    await expect(
+      createTaskAction({}, form({ title: "決済", projectId: "project-a", "image:design": "java" })),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "決済",
+      body: "",
+      repo: null,
+      projectId: "project-a",
+    });
+  });
+
+  it("工程ごとの指定が正しくなければ、作らずに理由を出す（項目の誤りとしては出せないため）", async () => {
+    const state = await createTaskAction(
+      {},
+      form({
+        title: "決済",
+        projectId: "project-a",
+        plan: "standard",
+        "image:design": "x".repeat(101),
+      }),
+    );
+    expect(state.message).toBe(
+      "工程ごとのイメージ・エージェントの指定が正しくありません。選び直してください。",
+    );
+    expect(createTask).not.toHaveBeenCalled();
+  });
+});
+
 describe("タスクの対象リポジトリ（PBI-21）", () => {
   beforeEach(() => createTask.mockReset());
 

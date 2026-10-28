@@ -31,6 +31,23 @@ describe("工程のエージェントの欄（PBI-121）", () => {
     });
   });
 
+  it("人が作成時に指定したエージェントは、そのことを出し、後で人が変えたら人の変更を出す", () => {
+    const requested = { requestedAgents: { implement: "strong" }, agents: { implement: "strong" } };
+    expect(stepAgentRows(task(requested), { implement: "claude" })[1]).toMatchObject({
+      agent: "strong",
+      source: { by: "request" },
+    });
+    const changed = stepAgentRows(
+      task({
+        ...requested,
+        agents: { implement: "weak" },
+        agentChanges: { implement: { from: "strong", to: "weak", at: "2026-10-17T00:00:00Z" } },
+      }),
+      { implement: "claude" },
+    );
+    expect(changed[1]).toMatchObject({ agent: "weak", source: { by: "person", from: "strong" } });
+  });
+
   it("状態を取れなければ、人が選んでいない工程の名前は不明にする", () => {
     const rows = stepAgentRows(task(), undefined);
     expect(rows[0]).not.toHaveProperty("agent");

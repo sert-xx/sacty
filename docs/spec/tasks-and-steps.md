@@ -268,6 +268,52 @@
 
 コード: `packages/core/src/events.ts`（`CreateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`pinnedPlanLines`・`pullRequestInText`）、`apps/web/src/components/new-task-dialog.tsx`
 
+### 作成時に指定した工程のイメージ・エージェント
+
+人は、進め方を指定したときだけ、その工程ごとのイメージとエージェントも指定できる（`CreateTaskInput` の `images`・`agents`。工程から名前への対応）。
+指定は `TaskCreated` の `images`・`agents` に記録し、タスクの `requestedImages`・`requestedAgents` になる。
+
+- 作成の時に確かめ、次のときは理由を示して断る（`requestedStepSettings`）。
+  何も指定しなければ（空の指定を含む）、今までどおり作り、設定は読まない。
+  - 進め方を指定していない（`task.stepSettingsNeedPlan`）
+  - 指定した進め方に無い工程（`task.stepSettingOutsidePlan`）
+  - 統合レビューのエージェント（`agent.stepNotChangeable`）
+  - `images` に無いイメージの名前（`image.notInImages`）、使えるエージェントに無い名前（`agent.notInAgents`）
+  - config.yaml を読めない（`image.configUnavailable`・`agent.configUnavailable`）
+- イメージ：工程を選ぶとき、指定した工程は、プロジェクトの対象の指定とオーケストレーターの選択から除く（`withImages`）。
+  `StepsChosen` の `images`・`defaultImageReasons`・`imagesUnexplained` には入れない。
+  投影は、`StepsChosen` で選んだ工程の分だけ、指定をタスクの `images` に入れる。
+  進め方のすべての工程を指定したときは、オーケストレーターに `images` の候補を見せない（`chooseSteps`）。
+- エージェント：投影は、作成のときから指定をタスクの `agents` に入れる。
+  タスクの詳細で人が選んだときと同じく、config.yaml の `step_agents` より優先する（`stepAgentFor`）。
+- 工程の選択からやり直すとき（`clearChosenSteps`）は、人がタスクの詳細で変えた分を消し、作成時の指定に戻す。
+  イメージは、工程を選び直したときに入れ直す。
+- 作成の後も、タスクの詳細で変えられる（下の「工程のイメージを人が変える」「工程のエージェントを人が変える」）。
+  そのときの `StepImageChanged`・`StepAgentChanged` の `from` は、作成時の指定になる。
+  作業履歴の「タスクを作成」の行に、指定した工程と名前を出す。
+- 指定した名前が実行の時に設定から消えていれば、タスクの詳細で選んだ名前と同じく、理由を示して一時停止する。
+- 分割で作った子タスクには引き継がない。
+
+作成のダイアログは、基本の入力と「工程ごとの設定」の2つの画面を切り替える（工程ごとの選択肢で基本の入力を長くしないため）。
+
+- 基本の入力では、進め方を選ぶと、工程の並びと指定の要約を出し、指定した工程に印を付ける（`StepFlowSummary`）。
+  進め方が自動のとき・テンプレートを選んだときは出さない。
+- 「工程ごとに設定」で別の画面に移り、工程を行、イメージとエージェントを列にした表で選ぶ（`TaskStepSettings`）。
+  イメージは「自動」か、`default` と `images` の名前。
+  エージェントは「既定」（config.yaml で決まる名前を添える）か、使えるエージェントの名前。
+  統合レビューのエージェントは選ばせない。
+  選んだ項目には、イメージの説明・エージェントのモデルとリーズニングエフォートを下に出す。
+  指定した工程は、印と「既定に戻す」を出す。
+- 画面を切り替えても、選んだものと入力中の題・内容は残す（どちらの画面も消さずに隠す）。
+  切り替えたら、移った先の見出し（戻ったときは開いたボタン）にフォーカスを移す。
+- 候補は、工程ごとの設定を開いたときに読む（`GET /step-options`。デーモンの状態から、タスクの詳細と同じ選択肢を作る。`stepImageOptions`・`stepAgentOptions`）。
+  読めた後は読み直さず、読めなければ理由を出し、開き直すと読み直す（`stepOptionsLoader`）。
+  ダイアログを開き直したら、指定を消して候補も読み直す。
+- 進め方を選び直しても工程ごとの指定は残し、今の進め方の工程の分だけを送る（`chosenForPlan`）。
+- スケジュールタスクの作成・編集には、工程ごとの設定は無い。
+
+コード: `packages/core/src/events.ts`（`CreateTaskInput`・`TaskCreated`・`StepSettingMap`）、`packages/core/src/projection.ts`（`clearChosenSteps`）、`apps/daemon/src/service.ts`（`requestedStepSettings`・`withImages`・`chooseSteps`）、`apps/web/src/components/new-task-dialog.tsx`、`apps/web/src/components/task-step-settings.tsx`（`StepFlowSummary`・`TaskStepSettings`）、`apps/web/src/lib/step-options.ts`（`chosenForPlan`・`stepOptionsLoader`）、`apps/web/src/app/step-options/route.ts`
+
 ## 非開発作業と工程の選択
 
 オーケストレーターは `standard` を無条件に推奨しない。
@@ -719,7 +765,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - プロジェクトの対象でイメージを指定しているタスクも変えられる。
   人の変更を、その工程だけ優先する（ほかの工程は対象の指定のまま）。
   対象の指定を変えても、工程を決めたタスクのイメージは変わらない。
-- 画面は、工程ごとにイメージ・選んだ元（人が変えた時刻と変える前の名前、プロジェクトの対象の指定、オーケストレーター、指定なし）・変えたらいつから使うか（実行中なら次の実行から、終わった工程ならやり直し・手戻りから）を出す（`stepImageRows`）。
+- 画面は、工程ごとにイメージ・選んだ元（人が変えた時刻と変える前の名前、作成時の人の指定、プロジェクトの対象の指定、オーケストレーター、指定なし）・変えたらいつから使うか（実行中なら次の実行から、終わった工程ならやり直し・手戻りから）を出す（`stepImageRows`）。
   実行中は、エージェントの実行中・実装の検証の間・再現の確かめの間（`stepRunning`）。
   作業履歴は、誰が・いつ・どの工程を・何から何に変えたかを出す。
 - オーケストレーターが既定のイメージにした工程は、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReasons`）か、理由の記載が無いこと（`imagesUnexplained`）を出す。
@@ -758,7 +804,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   選んだ名前が使えるエージェントから消えていたら（設定から消した・接続先や単価が無いなど）、既定に戻さず、`agent.chosenMissing` で一時停止する（書き出しは、書き出せなかった理由にする）。
   段階のサブエージェントは、選んだエージェントを親として置く。
 - 状態（`GET /api/status`）は、選べるエージェント（名前・runtime・モデル・リーズニングエフォート。秘密の値・接続先の URL は出さない）と、config.yaml で決まる工程ごとの名前（`stepAgents`）を返す。
-  画面は、工程ごとにエージェント・決めた元（config.yaml か、人が変えた時刻と前の名前）・いつから使うかを出す（`stepAgentRows`）。
+  画面は、工程ごとにエージェント・決めた元（config.yaml か、作成時の人の指定か、人が変えた時刻と前の名前）・いつから使うかを出す（`stepAgentRows`）。
   選択肢は、状態を取れない・設定を読めないときは出さず、stub は今のエージェントが stub のときだけ出す（`stepAgentOptions`）。
   選んだ名前が使えるエージェントに無ければ警告を出す。
 - 画面の「工程のエージェント」は、普段は変えないので見出しだけを出して閉じる。

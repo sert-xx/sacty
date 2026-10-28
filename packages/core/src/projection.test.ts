@@ -1411,6 +1411,62 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
     expect(again?.steps.map((s) => s.state)[0]).toBe("active");
   });
 
+  it("作成時に工程ごとに指定したイメージ・エージェントは、工程を選び直しても使い、人の後の変更は消す", () => {
+    seq = 0;
+    const requested = ev(
+      "t1",
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "t",
+          body: "",
+          start: "sacty",
+          plan: "direct",
+          images: { implement: "java", design: "ruby" },
+          agents: { implement: "strong" },
+        },
+      },
+      "person",
+    );
+    const first = project([requested]).get("t1");
+    expect(first?.agents).toEqual({ implement: "strong" });
+    expect(first?.images).toBeUndefined();
+    const events = [
+      requested,
+      ev("t1", chosen(STEP_PLANS.direct)),
+      ev(
+        "t1",
+        { type: "StepAgentChanged", payload: { step: "implement", from: "strong", to: "weak" } },
+        "person",
+      ),
+    ];
+    const chosenTask = project(events).get("t1");
+    // 選んだ工程の分だけ、オーケストレーターの選択（node）より優先する（工程に無い design は入れない）
+    expect(chosenTask?.images).toEqual({ implement: "java" });
+    expect(chosenTask?.agents).toEqual({ implement: "weak" });
+    const again = project([
+      ...events,
+      ev("t1", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: { code: "orchestrator.testCommandUnknown" } },
+      }),
+      resumed("t1", true),
+    ]).get("t1");
+    expect(again?.images).toBeUndefined();
+    expect(again?.agents).toEqual({ implement: "strong" });
+    expect(again?.agentChanges).toBeUndefined();
+    const rechosen = project([
+      ...events,
+      ev("t1", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: { code: "orchestrator.testCommandUnknown" } },
+      }),
+      resumed("t1", true),
+      ev("t1", { type: "StepsChosen", payload: { steps: [...STEP_PLANS.direct] } }),
+    ]).get("t1");
+    expect(rechosen?.images).toEqual({ implement: "java" });
+  });
+
   it("工程を始めて成果ができた後は、工程の選択からやり直せない", () => {
     seq = 0;
     const events = [

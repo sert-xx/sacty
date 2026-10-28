@@ -37,6 +37,8 @@ const ja = {
     titleTooLong: (max: number) => `タイトルは${max}文字以内で入力してください。`,
     bodyTooLong: (max: number) =>
       `内容は${max.toLocaleString("ja-JP")}文字以内で入力してください。`,
+    stepSettingsInvalid:
+      "工程ごとのイメージ・エージェントの指定が正しくありません。選び直してください。",
     capPositive: "新しい上限は、0 より大きい金額にしてください。",
     resumeFailed: "再開できませんでした。デーモンが動いているか確認してください。",
     toReviewFailed: "レビューへ進められませんでした。デーモンが動いているか確認してください。",
@@ -88,6 +90,7 @@ const en: CommonMessages = {
     titleRequired: "Enter a title.",
     titleTooLong: (max) => `Keep the title within ${max} characters.`,
     bodyTooLong: (max) => `Keep the details within ${max.toLocaleString("en-US")} characters.`,
+    stepSettingsInvalid: "The image or agent set for a step is not valid. Choose it again.",
     capPositive: "Enter a new cap greater than 0.",
     resumeFailed: "Could not resume. Check that the daemon is running.",
     toReviewFailed: "Could not move to review. Check that the daemon is running.",
