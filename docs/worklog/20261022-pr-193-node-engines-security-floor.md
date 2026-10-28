@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #193
 - ブランチ: claude/nodejs-vulnerability-check-s4ya8n
-- 関係する ADR: [Node.js の下限（engines）を、脆弱性を直した版の 22.23.4 に上げる](../adr/20261022-0351-node-engines-security-floor.md)
+- 関係する ADR: [Node.js の下限（engines）を、脆弱性を直した版の 22.23.4 に上げる](../adr/20261022-0351-superseded-node-engines-security-floor.md)
 
 ## 目的
 

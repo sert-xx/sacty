@@ -8,7 +8,7 @@
 
 ## 背景
 
-[Node.js の下限（engines）を、脆弱性を直した版の 22.23.4 に上げる](20261022-0351-node-engines-security-floor.md) で、`package.json` の `engines.node` を `>=22.23.4` にした。
+[Node.js の下限（engines）を、脆弱性を直した版の 22.23.4 に上げる](20261022-0351-superseded-node-engines-security-floor.md) で、`package.json` の `engines.node` を `>=22.23.4` にした。
 `engines` は条件を満たさない版で `npm ci` を実行しても警告（`EBADENGINE`）を出すだけで、使う版を切り替えはしない。
 リポジトリには、mise・nodenv・fnm などの版の管理ツールが読むファイルが無く、開発する人がどの版を入れればよいかは、文書を読まないとわからなかった。
 

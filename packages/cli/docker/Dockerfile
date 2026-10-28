@@ -3,8 +3,8 @@
 #   Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
 # 言語ごとのイメージ（config.yaml の images。PBI-41）：BASE_KIND=lang。元のイメージ（Debian・Ubuntu 系か、Rocky Linux
 #   などの RHEL 系。glibc のもの）に Node.js 18 以上と npm があればそれを使い、無ければ NODE_IMAGE から写して作る。
-ARG BASE_IMAGE=node:22-bookworm-slim
-ARG NODE_IMAGE=node:22-bookworm-slim
+ARG BASE_IMAGE=node:26-bookworm-slim
+ARG NODE_IMAGE=node:26-bookworm-slim
 # node：元のイメージをそのまま使う。lang：Node.js を写し、node ユーザーを作る
 ARG BASE_KIND=node
 

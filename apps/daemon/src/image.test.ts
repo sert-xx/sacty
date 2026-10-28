@@ -44,7 +44,7 @@ describe("イメージの作成（PBI-33）", () => {
       imageBuildArgs({
         image: "registry.example.com/sacty-agent:1.12.0",
         dockerDir: "/pkg/docker",
-        baseImage: "registry.example.com/library/node:22",
+        baseImage: "registry.example.com/library/node:26",
         npmrcPath: "/tmp/x/npmrc",
         npmVersion: "11",
         npmConfigPath: "/tmp/x/npmconfig",
@@ -56,7 +56,7 @@ describe("イメージの作成（PBI-33）", () => {
       "-t",
       "registry.example.com/sacty-agent:1.12.0",
       "--build-arg",
-      "BASE_IMAGE=registry.example.com/library/node:22",
+      "BASE_IMAGE=registry.example.com/library/node:26",
       "--build-arg",
       "NPM_VERSION=11",
       // secret の中身はキャッシュの判定に入らないので、中身のハッシュで作り直させる
@@ -203,7 +203,7 @@ describe("イメージの作成（PBI-33）", () => {
     let path = "";
     const failure = await buildImage({
       image: "sacty-agent:1.12.0",
-      build: { baseImage: "registry.example.com/library/node:22" },
+      build: { baseImage: "registry.example.com/library/node:26" },
       dockerDir: "/d",
       secrets: new MemorySecretStore({}),
       run: async (args) => {
@@ -211,7 +211,7 @@ describe("イメージの作成（PBI-33）", () => {
         return 1;
       },
     });
-    expect(failure).toContain("元のイメージ（registry.example.com/library/node:22）を取得できるか");
+    expect(failure).toContain("元のイメージ（registry.example.com/library/node:26）を取得できるか");
     expect(failure).toContain("npm のレジストリ（https://registry.npmjs.org/）に届くか");
     expect(existsSync(path)).toBe(false);
 
@@ -244,7 +244,7 @@ describe("イメージの作成（PBI-33）", () => {
     const failure = await buildImage({
       image: "sacty-agent:1.12.0",
       // Node.js を写す元は、指定が無ければ既定のイメージの元（プライベートのレジストリの node）
-      build: { baseImage: "registry.example.com/library/node:22" },
+      build: { baseImage: "registry.example.com/library/node:26" },
       dockerDir: "/d",
       secrets: new MemorySecretStore({}),
       language: java,
@@ -263,14 +263,14 @@ describe("イメージの作成（PBI-33）", () => {
       "--build-arg",
       "BASE_KIND=lang",
       "--build-arg",
-      "NODE_IMAGE=registry.example.com/library/node:22",
+      "NODE_IMAGE=registry.example.com/library/node:26",
       "--build-arg",
       "MAVEN_MIRROR=https://maven.example.com/repository/maven-public/",
     ]);
     // 環境変数はイメージに焼き込まない（実行のときに渡す）
     expect(args.join(" ")).not.toContain("GOPROXY");
 
-    // node_image を書けばそちら。既定のイメージの元も無ければ、Dockerfile の既定（node:22-bookworm-slim）
+    // node_image を書けばそちら。既定のイメージの元も無ければ、Dockerfile の既定（node:26-bookworm-slim）
     await buildImage({
       image: "x",
       build: {},
@@ -282,23 +282,23 @@ describe("イメージの作成（PBI-33）", () => {
         return 1;
       },
     }).then((message) => {
-      expect(message).toContain("Node.js を写すイメージ（Docker Hub の node:22-bookworm-slim）");
+      expect(message).toContain("Node.js を写すイメージ（Docker Hub の node:26-bookworm-slim）");
       expect(message).toContain("registry.example.com/ci/java:17");
     });
     expect(args.some((a) => a.startsWith("NODE_IMAGE="))).toBe(false);
     expect(args.some((a) => a.startsWith("MAVEN_MIRROR="))).toBe(false);
     await buildImage({
       image: "x",
-      build: { baseImage: "registry.example.com/library/node:22" },
+      build: { baseImage: "registry.example.com/library/node:26" },
       dockerDir: "/d",
       secrets: new MemorySecretStore({}),
-      language: { ...java, nodeImage: "registry.example.com/node:22-slim" },
+      language: { ...java, nodeImage: "registry.example.com/node:26-slim" },
       run: async (a) => {
         args = a;
         return 0;
       },
     });
-    expect(args).toContain("NODE_IMAGE=registry.example.com/node:22-slim");
+    expect(args).toContain("NODE_IMAGE=registry.example.com/node:26-slim");
     // 既定のイメージは BASE_KIND を渡さない（元のイメージをそのまま使う）
     await buildImage({
       image: "sacty-agent:1.12.0",

@@ -938,7 +938,7 @@ ${extra}`,
     write("");
     expect(loadConfig(dir)).toMatchObject({ ok: true, config: { imageBuild: {} } });
     write(`image_build:
-  base_image: registry.example.com/library/node:22-bookworm-slim
+  base_image: registry.example.com/library/node:26-bookworm-slim
   npm_registry: https://npm.example.com/repository/npm/
   npm_token: npm-token
 `);
@@ -946,7 +946,7 @@ ${extra}`,
       ok: true,
       config: {
         imageBuild: {
-          baseImage: "registry.example.com/library/node:22-bookworm-slim",
+          baseImage: "registry.example.com/library/node:26-bookworm-slim",
           npmRegistry: "https://npm.example.com/repository/npm/",
           npmToken: "npm-token",
         },
@@ -1035,7 +1035,7 @@ ${extra}`,
     description: Python 3.12
     base_image: python:3.12-slim
     image: registry.example.com/sacty/py:1
-    node_image: registry.example.com/library/node:22
+    node_image: registry.example.com/library/node:26
 `);
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
@@ -1055,7 +1055,7 @@ ${extra}`,
           },
           py: {
             image: "registry.example.com/sacty/py:1",
-            nodeImage: "registry.example.com/library/node:22",
+            nodeImage: "registry.example.com/library/node:26",
             env: {},
           },
         },

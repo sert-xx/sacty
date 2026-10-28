@@ -83,12 +83,12 @@ image_build:
 ## プライベートのレジストリからイメージを作る
 
 Docker Hub や npm の公開レジストリを使えない環境では、`config.yaml` の `image_build` に元のイメージと npm のレジストリを書いてから、`sacty image build` を実行してください。
-書かなければ、Docker Hub の `node:22-bookworm-slim` と npm の公開レジストリから作ります。
+書かなければ、Docker Hub の `node:26-bookworm-slim` と npm の公開レジストリから作ります。
 
 ```yaml
 image: registry.example.com/sacty-agent:1.12.0
 image_build:
-  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 18 以上で node ユーザーがあること
+  base_image: registry.example.com/library/node:26-bookworm-slim   # Node.js 18 以上で node ユーザーがあること
   npm_registry: https://npm.example.com/repository/npm/
   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
   npm_version: 11        # イメージに入れる npm の版（書かなければ元のイメージの npm）
@@ -100,7 +100,7 @@ image_build:
 
 | 項目 | 意味 | 既定値 |
 | --- | --- | --- |
-| `base_image` | 元のイメージ（Node.js 18 以上で、`node` ユーザーがあること） | `node:22-bookworm-slim` |
+| `base_image` | 元のイメージ（Node.js 18 以上で、`node` ユーザーがあること） | `node:26-bookworm-slim` |
 | `npm_registry` | npm のレジストリ（`http`・`https` の URL） | npm の公開レジストリ |
 | `npm_token` | npm のレジストリの認証トークン（秘密情報の名前か 1Password の参照） | なし |
 | `npm_version` | イメージに入れる npm の版（`latest` か、`11`・`11.4`・`11.4.2` の形） | 元のイメージの npm |
@@ -149,7 +149,7 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 | `description` | オーケストレーターが選ぶときに見る説明（200文字まで）。必須 | なし |
 | `base_image` | 元のイメージ。必須 | なし |
 | `image` | 作るイメージの名前 | `sacty-agent-<名前>:1.12.0` |
-| `node_image` | Node.js を写す元のイメージ（元のイメージに Node.js 18 以上と npm が無いとき） | `image_build.base_image`、無ければ `node:22-bookworm-slim` |
+| `node_image` | Node.js を写す元のイメージ（元のイメージに Node.js 18 以上と npm が無いとき） | `image_build.base_image`、無ければ `node:26-bookworm-slim` |
 | `env` | エージェントのコンテナ（テストを実行する最終レビューを含む）の環境変数 | なし |
 | `maven_mirror` | Maven・Gradle の取得先 | なし |
 | `packages` | イメージを作るときに入れる OS のパッケージ | なし |
@@ -179,8 +179,8 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
   ```yaml
   images:
     node-pw:
-      description: Node.js 22・Playwright
-      base_image: registry.example.com/ci/node:22
+      description: Node.js 26・Playwright
+      base_image: registry.example.com/ci/node:26
       packages: [nss, nspr, atk, at-spi2-atk, cups-libs, libdrm, libxkbcommon, mesa-libgbm, pango, alsa-lib]   # RHEL 系
       run:
         # 取得とインストールを分ける（取得に失敗したら、そこで止まる）

@@ -9,7 +9,7 @@ This page walks you through installing sacty, starting it, and running your firs
 ## Requirements
 
 - macOS
-- Node.js 22.23.4 or later
+- Node.js 26.12.1 or later
   - The version is written in `.node-version` and `mise.toml` at the repository root. If your version manager (mise, nodenv, fnm, and so on) is set up to switch versions by directory (such as `mise activate` for mise or `--use-on-cd` for fnm), it uses that version. If not, switch with a command such as `fnm use` before `npm ci`
 - Docker (Docker Desktop, OrbStack, Colima, and so on. Steps run inside containers)
 - GitHub CLI (`gh`)

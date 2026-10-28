@@ -67,12 +67,12 @@ image_build:
 
 ## Building images from a private registry
 
-In environments where Docker Hub or the public npm registry cannot be used, write the base image and the npm registry in `image_build` in `config.yaml`, and then run `sacty image build`. If you omit them, the image is built from `node:22-bookworm-slim` on Docker Hub and the public npm registry.
+In environments where Docker Hub or the public npm registry cannot be used, write the base image and the npm registry in `image_build` in `config.yaml`, and then run `sacty image build`. If you omit them, the image is built from `node:26-bookworm-slim` on Docker Hub and the public npm registry.
 
 ```yaml
 image: registry.example.com/sacty-agent:1.12.0
 image_build:
-  base_image: registry.example.com/library/node:22-bookworm-slim   # must have Node.js 18 or later and a node user
+  base_image: registry.example.com/library/node:26-bookworm-slim   # must have Node.js 18 or later and a node user
   npm_registry: https://npm.example.com/repository/npm/
   npm_token: npm-token   # when authentication is needed. Save the value with sacty secret set npm-token
   npm_version: 11        # npm version installed in the image (if omitted, the base image's npm)
@@ -84,7 +84,7 @@ image_build:
 
 | Item | Meaning | Default |
 | --- | --- | --- |
-| `base_image` | The base image (must have Node.js 18 or later and a `node` user) | `node:22-bookworm-slim` |
+| `base_image` | The base image (must have Node.js 18 or later and a `node` user) | `node:26-bookworm-slim` |
 | `npm_registry` | The npm registry (an `http` or `https` URL) | The public npm registry |
 | `npm_token` | The authentication token for the npm registry (a secret name or a 1Password reference) | None |
 | `npm_version` | The npm version installed in the image (`latest`, or a form like `11`, `11.4`, `11.4.2`) | The base image's npm |
@@ -129,7 +129,7 @@ npx sacty image build java17     # build by name (default is the default image)
 | `description` | The description the orchestrator reads when choosing (up to 200 characters). Required | None |
 | `base_image` | The base image. Required | None |
 | `image` | The name of the image to build | `sacty-agent-<name>:1.12.0` |
-| `node_image` | The image to copy Node.js from (when the base image does not have Node.js 18 or later and npm) | `image_build.base_image`, or `node:22-bookworm-slim` if absent |
+| `node_image` | The image to copy Node.js from (when the base image does not have Node.js 18 or later and npm) | `image_build.base_image`, or `node:26-bookworm-slim` if absent |
 | `env` | Environment variables for the agent containers (including the final review that runs the tests) | None |
 | `maven_mirror` | Where Maven and Gradle fetch from | None |
 | `packages` | OS packages to install when building the image | None |
@@ -152,8 +152,8 @@ npx sacty image build java17     # build by name (default is the default image)
   ```yaml
   images:
     node-pw:
-      description: Node.js 22, Playwright
-      base_image: registry.example.com/ci/node:22
+      description: Node.js 26, Playwright
+      base_image: registry.example.com/ci/node:26
       packages: [nss, nspr, atk, at-spi2-atk, cups-libs, libdrm, libxkbcommon, mesa-libgbm, pango, alsa-lib]   # RHEL-based
       run:
         # separate the download from the installation (so the build stops if the download fails)
