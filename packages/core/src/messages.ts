@@ -58,6 +58,7 @@ const PARAMS = {
   "rerun.alreadyRerun": null,
   "resume.notPaused": null,
   "resume.testsNotUndecided": null,
+  "override.notAllowed": null,
   "resume.bugfixNeedsTestCommand": null,
   "operation.incomplete": null,
   "operation.attempted": null,
@@ -361,6 +362,7 @@ const PARAMS = {
   "pr.continuedBranchMoved": z.object({ branch: TextParam, number: z.number() }),
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
+  "pr.readyFailed": z.object({ detail: TextParam }),
   // PR テンプレート（PBI-87）。status が 0 なら、HTTP の応答が無かった（通信の失敗・時間切れ）
   "pr.templateFailed": z.object({ path: z.string(), status: z.number(), detail: TextParam }),
   "pr.templateTooLarge": z.object({ path: z.string(), size: Count, limit: Count }),
@@ -400,6 +402,7 @@ const PARAMS = {
       "getLabel",
       "createLabel",
       "addLabel",
+      "draftPr",
       "readChecks",
       "listEvents",
     ]),
@@ -590,6 +593,7 @@ const githubActionJa = {
   getLabel: "リポジトリのラベルを確かめられませんでした",
   createLabel: "リポジトリにラベルを作れませんでした",
   addLabel: "PR にラベルを付けられませんでした",
+  draftPr: "PR のドラフトを切り替えられませんでした",
   readChecks: "CI/CD の状態を読めませんでした",
   listEvents: "PR のできごと（レビューの依頼など）を読めませんでした",
 } as const;
@@ -607,6 +611,7 @@ const githubActionEn = {
   getLabel: "Could not check the label of the repository",
   createLabel: "Could not create the label in the repository",
   addLabel: "Could not add the label to the PR",
+  draftPr: "Could not switch the draft state of the PR",
   readChecks: "Could not read the CI/CD status",
   listEvents: "Could not read the PR events (such as review requests)",
 } as const;
@@ -674,6 +679,8 @@ const ja: MessageDictionary = {
     "このタスクは再実行できません（分割で作った子タスクは親から、PR のレビューは PR から依頼し直してください）。",
   "rerun.alreadyRerun": "このタスクは再実行済みです。再実行で作ったタスクを確かめてください。",
   "resume.notPaused": "一時停止中のタスクではありません。",
+  "override.notAllowed":
+    "実装の検証が続けて通らずに止まったタスクではないため、レビューへ進められません。",
   "resume.testsNotUndecided":
     "このタスクは、テストのコマンドが決まらずに止まったタスクではありません。テストの扱いを指定せずに再開してください。",
   "resume.bugfixNeedsTestCommand":
@@ -1083,12 +1090,14 @@ const ja: MessageDictionary = {
   "verify.finalReviewFailed": ({ detail }, text) =>
     `ゴールガーディアンの最終レビューを実行できませんでした：${text(detail)}`,
   "verify.tooManyAttempts": ({ count }) =>
-    `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。`,
+    `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
   "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `タスクブランチ ${text(branch)} に、Sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、Sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "pr.readyFailed": ({ detail }, text) =>
+    `PR のドラフトを外せませんでした（レビューへ進められません）：${text(detail)}`,
   "pr.continuedBranchMoved": ({ branch, number }, text) =>
     `引き継いだ PR #${number} のブランチ（${text(branch)}）が、sacty が作業を始めた後に進んだため、実装を積めませんでした（強制プッシュはしません）。PR の新しいコミットを含めて直すには、このタスクを中止し、PR の指摘への対応を新しいタスクにしてください。`,
   "pr.continuedNotOpen": ({ number }) =>
@@ -1302,6 +1311,8 @@ const en: MessageDictionary = {
     "This task can't be rerun (rerun a subtask from its parent, and request a PR review again on the PR).",
   "rerun.alreadyRerun": "This task has already been rerun. Check the task created by the rerun.",
   "resume.notPaused": "The task is not paused.",
+  "override.notAllowed":
+    "The task did not stop because verification of the implementation kept failing, so it cannot be moved to review.",
   "resume.testsNotUndecided":
     "This task did not stop because its test command was undetermined. Resume without specifying how to handle tests.",
   "resume.bugfixNeedsTestCommand":
@@ -1714,12 +1725,14 @@ const en: MessageDictionary = {
   "verify.finalReviewFailed": ({ detail }, text) =>
     `Could not run the Goal Guardian's final review: ${text(detail)}`,
   "verify.tooManyAttempts": ({ count }) =>
-    `Verification of the implementation (tests and final review) failed ${count} times in a row.`,
+    `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,
   "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `The task branch ${text(branch)} has changes that Sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and Sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "pr.readyFailed": ({ detail }, text) =>
+    `Could not mark the PR as ready for review (the task cannot move to review): ${text(detail)}`,
   "pr.continuedBranchMoved": ({ branch, number }, text) =>
     `The branch of the taken-over PR #${number} (${text(branch)}) moved after Sacty started working, so the implementation could not be pushed (Sacty does not force-push). To fix it including the new commits, cancel this task and create a new task for the PR feedback.`,
   "pr.continuedNotOpen": ({ number }) =>

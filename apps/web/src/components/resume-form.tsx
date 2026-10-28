@@ -2,7 +2,7 @@
 
 import type { PauseReason } from "@sacty/core";
 import { useActionState, useState } from "react";
-import { type ResumeState, resumeTaskAction } from "@/app/actions";
+import { type ResumeState, resumeTaskAction, submitForReviewAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ export function ResumeForm({
   repoOptional = false,
   chosenRepo,
   tests,
+  toReview = false,
 }: {
   taskId: string;
   reason: PauseReason;
@@ -46,6 +47,8 @@ export function ResumeForm({
    * bugfix：不具合の修正（テストなしにできない）。rechoose：決めずに再開すると、工程の選択からやり直す。
    */
   tests?: { bugfix: boolean; rechoose: boolean };
+  /** 実装の検証が続けて通らずに止まったタスク。人の判断で、レビュー（実装の承認）へ進められる。 */
+  toReview?: boolean;
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
@@ -210,6 +213,32 @@ export function ResumeForm({
         </p>
       )}
       {needsCap && <p className="text-xs text-muted-foreground">{m.parts.resume.capNote}</p>}
+      {toReview && <ToReviewForm taskId={taskId} />}
     </section>
+  );
+}
+
+/** 実装の検証が続けて通らずに止まったタスクを、人の判断でレビューへ進める。 */
+function ToReviewForm({ taskId }: { taskId: string }) {
+  const m = useMessages();
+  const [state, formAction, pending] = useActionState(submitForReviewAction, {});
+  const r = m.parts.resume;
+  return (
+    <form action={formAction} className="flex flex-col gap-2 border-t border-warn-line pt-3">
+      <input type="hidden" name="taskId" value={taskId} />
+      <p className="flex items-center gap-1 text-sm leading-6">
+        {r.toReviewHelp} <Hint text={r.toReviewHint} />
+      </p>
+      <div>
+        <Button type="submit" variant="outline" disabled={pending}>
+          {pending ? r.toReviewing : r.toReview}
+        </Button>
+      </div>
+      {state.message && (
+        <p role="alert" className="text-sm text-warn">
+          {state.message}
+        </p>
+      )}
+    </form>
   );
 }

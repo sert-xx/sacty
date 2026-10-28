@@ -41,6 +41,8 @@ import {
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
+  PULL_REQUEST_CI_GRACE_MS,
+  PULL_REQUEST_CI_TIMEOUT_MS,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
   renderMessage,
@@ -528,17 +530,24 @@ class FakeRepos implements RepositoryWorkspace {
   /** あれば、プッシュを、これが解決するまで終わらせない（PR の作成の前の一時停止のテスト。PBI-110）。 */
   publishGate?: Promise<void>;
   publishStarted = Promise.withResolvers<void>();
+  /**
+   * true なら、作業領域が前にプッシュした内容から変わっていない（実際の git と同じく、起点でない親のコミットをそのまま使い、
+   * 新しいコミットを作らない）。
+   */
+  sameAsParent = false;
   async publish(input: {
     parent: string;
     branch: string;
     message: string;
     date: string;
+    baseCommit?: string;
     keep?: { commit: string; paths: string[] };
   }) {
     this.publishStarted.resolve();
     if (this.publishGate) await this.publishGate;
     if (this.publishFail) throw new Error(this.publishFail);
     if (this.unchanged) throw new NothingToCommitError(message("git.nothingToCommit"));
+    if (this.sameAsParent && input.parent !== input.baseCommit) return { commit: input.parent };
     this.published.push({
       parent: input.parent,
       branch: input.branch,
@@ -587,7 +596,29 @@ class FakePulls implements PullRequests {
     if (this.fail) throw new Error(this.fail);
     this.calls.push(input);
     const number = input.number ?? this.nextNumber++;
-    return { url: `https://github.com/acme/app/pull/${number}`, number };
+    // ドラフトを使えないリポジトリ（draftUnsupported）なら、ドラフトでない PR にする
+    const draft = input.number
+      ? (this.drafts[number] ?? false)
+      : input.draft === true && !this.draftUnsupported;
+    this.drafts[number] = draft;
+    return { url: `https://github.com/acme/app/pull/${number}`, number, draft };
+  }
+  /** PR ごとの、ドラフトか。 */
+  drafts: Record<number, boolean> = {};
+  draftUnsupported = false;
+  /** ドラフトの切り替え（順に）。 */
+  draftChanges: { number: number; draft: boolean }[] = [];
+  setDraftFail?: string;
+  /** あれば、切り替えは GitHub で済むが、答えを受け取れずに失敗する。 */
+  setDraftAnswerLost?: string;
+  async setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
+    if (this.setDraftFail) throw new Error(this.setDraftFail);
+    if ((this.drafts[input.number] ?? false) !== input.draft) {
+      this.draftChanges.push({ number: input.number, draft: input.draft });
+    }
+    this.drafts[input.number] = input.draft;
+    if (this.setDraftAnswerLost) throw new Error(this.setDraftAnswerLost);
+    return { draft: input.draft };
   }
   closed: { repo: string; token: string; number: number }[] = [];
   closeFail?: string;
@@ -1035,6 +1066,7 @@ function makeService(
     tickets?: ServiceDeps["tickets"];
     /** 要求要件・設計を PR のマージで承認する（PBI-57）。既定は、画面で承認する流れを確かめるので切る。 */
     stepPullRequests?: boolean;
+    draftPullRequests?: boolean;
     /** セッションログの置き場所（PBI-62）。 */
     sessionLogs?: SessionLogStore;
     /** オーケストレーターのセッションの置き場所（PBI-67）。 */
@@ -1106,6 +1138,8 @@ function makeService(
     ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
     ...(options.tickets ? { tickets: options.tickets } : {}),
     stepPullRequests: options.stepPullRequests ?? false,
+    // 最終レビューの前のドラフトの PR と CI の待ちは、既定では切る（そのテストでは入れる）
+    draftPullRequests: options.draftPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
     ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
     ...(options.templates ? { templates: options.templates } : {}),
@@ -3854,6 +3888,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       projects?: MemoryProjectStore;
       /** メモリーを書き出す・渡す（PBI-126）。 */
       memory?: boolean;
+      /** 最終レビューの前に PR をドラフトで作り、CI を待つ。 */
+      draftPullRequests?: boolean;
+      ci?: CiStatusReader;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -7945,6 +7982,364 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await service.checkPullRequests();
     expect(service.get(id)?.task.steps.at(-1)?.state).not.toBe("done");
     activity.close();
+  });
+
+  describe("最終レビューの前のドラフトの PR と CI", () => {
+    /** CI の状態の偽物。snap が Error なら読めない。 */
+    class FakeCi implements CiStatusReader {
+      snap: CiSnapshot | Error = {
+        checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
+        failedRuns: [],
+      };
+      failuresList: CiFailure[] = [];
+      calls: { repo: string; commit: string }[] = [];
+      async snapshot(input: { repo: string; token: string; commit: string }) {
+        this.calls.push({ repo: input.repo, commit: input.commit });
+        if (this.snap instanceof Error) throw this.snap;
+        return this.snap;
+      }
+      async failures() {
+        return this.failuresList;
+      }
+    }
+    const failing = (): CiSnapshot => ({
+      checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "failure" }],
+      failedRuns: [{ id: 1, name: "CI", conclusion: "failure" }],
+    });
+    /** CI が終わったと決める（すべて終わっていても、同じ並びをもう1回見るまで決めない）。 */
+    async function settleCi(service: TaskService) {
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+    }
+    async function drafted(
+      outcomes: AgentOutcome[],
+      options: { pulls?: FakePulls; repos?: FakeRepos } = {},
+    ) {
+      const ci = new FakeCi();
+      // 記録の時刻は実際の時計なので、待つ時間はいまから進める
+      let clock = Date.now();
+      const made = await toImplement(outcomes, {
+        ...options,
+        draftPullRequests: true,
+        ci,
+        now: () => clock,
+      });
+      return { ...made, ci, advance: (ms: number) => (clock += ms) };
+    }
+
+    it("実装の後、最終レビューの前に PR をドラフトで作って CI を待ち、合格したらドラフトを外してラベルを付け、承認待ちにする", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, pulls, executor, ci, id } = await drafted(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      await service.runNext(id); // 実装
+      await service.runNext(id); // 最終レビューの前に、PR をドラフトで作る
+      // 検証に通った後は、作業領域が変わらない（同じ内容なら、同じコミットのままドラフトを外す）
+      repos.sameAsParent = true;
+      const waiting = service.get(id)?.task;
+      expect(waiting?.status).toBe("idle");
+      expect(waiting?.pullRequest).toMatchObject({ number: 7, verifying: true, draft: true });
+      expect(waiting?.pullRequestCi?.result).toBeUndefined();
+      expect(pulls.calls[0]?.draft).toBe(true);
+      expect(pulls.calls[0]?.body).toContain("検証中です");
+      // ラベルは、レビューへ進めるときに付ける。CI を待つ間は、最終レビューに進まない
+      expect(types(service, id).slice(-3)).toEqual([
+        "AgentRunCompleted",
+        "BranchPushed",
+        "PullRequestPublished",
+      ]);
+      expect(service.queuedTaskIds()).not.toContain(id);
+      const runs = executor.calls.length;
+      await service.runNext(id);
+      expect(executor.calls.length).toBe(runs);
+
+      await settleCi(service);
+      expect(ci.calls.at(-1)).toEqual({
+        repo: "https://github.com/acme/app",
+        commit: waiting?.pullRequest?.commit,
+      });
+      expect(service.get(id)?.task.pullRequestCi?.result).toBe("passed");
+      expect(service.queuedTaskIds()).toContain(id);
+      await service.runNext(id); // 最終レビュー（CI の結果を渡す）
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("## 実装の PR の CI");
+      expect(prompt).toContain("https://github.com/acme/app/pull/7");
+      expect(prompt).toContain("結果：すべて通った");
+      await service.runNext(id); // ドラフトを外して、承認待ちにする
+      const gated = service.get(id)?.task;
+      expect(gated?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+      expect(pulls.calls).toHaveLength(2);
+      expect(pulls.calls[1]).toMatchObject({ number: 7 });
+      expect(pulls.calls[1]?.draft).toBeUndefined();
+      expect(types(service, id).slice(-4)).toEqual([
+        "FinalReviewed",
+        "PullRequestPublished",
+        "StepSubmitted",
+        "PullRequestLabeled",
+      ]);
+      expect(gated?.pullRequest?.verifying).toBeUndefined();
+      // CI を確かめたコミットのまま、レビューへ進める（新しいコミットを作らず、CI を二重に動かさない）
+      expect(gated?.pullRequest?.commit).toBe(waiting?.pullRequest?.commit);
+      expect(repos.published).toHaveLength(1);
+      expect(repos.published[0]?.parent).toBe(waiting?.repository?.baseCommit);
+      activity.close();
+    });
+
+    it("CI の失敗はゴールガーディアンに渡し、不合格ならやり直した実装で同じ PR を更新して CI を待ち直す", async () => {
+      const { activity, service, pulls, executor, ci, id } = await drafted([
+        implement("# 実装の説明"),
+        review([
+          ["TV-1", false],
+          ["TV-2", true],
+        ]),
+        implement("# 実装の説明 v2"),
+        review(),
+      ]);
+      ci.snap = failing();
+      ci.failuresList = [
+        { workflow: "CI", job: "lint", conclusion: "failure", excerpt: "lint error in pay.ts" },
+      ];
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      expect(service.get(id)?.task.pullRequestCi).toMatchObject({
+        result: "failed",
+        failures: [{ workflow: "CI", job: "lint" }],
+      });
+      await service.runNext(id); // 最終レビュー（不合格）
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("結果：失敗がある");
+      expect(prompt).toContain("lint error in pay.ts");
+      expect(service.get(id)?.task.status).toBe("queued");
+      ci.snap = {
+        checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
+        failedRuns: [],
+      };
+      await service.runNext(id); // 実装のやり直し
+      expect(service.get(id)?.task.pullRequestCi).toBeUndefined();
+      await service.runNext(id); // 同じ PR を更新して、CI を待ち直す
+      expect(pulls.calls[1]).toMatchObject({ number: 7, draft: true });
+      expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("承認待ちの後に差し戻してやり直した実装は、PR をドラフトに戻して CI を待ち直す", async () => {
+      const { activity, service, pulls, id } = await drafted([
+        implement("# 実装の説明"),
+        review(),
+        implement("# 実装の説明 v2"),
+      ]);
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(pulls.drafts[7]).toBe(false);
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["エラーの文言を直す"],
+      });
+      await service.runNext(id); // 実装のやり直し
+      await service.runNext(id); // PR を更新して、ドラフトに戻す
+      expect(pulls.draftChanges).toEqual([
+        { number: 7, draft: false },
+        { number: 7, draft: true },
+      ]);
+      const task = service.get(id)?.task;
+      expect(task?.pullRequest).toMatchObject({ number: 7, verifying: true, draft: true });
+      expect(task?.status).toBe("idle");
+      expect(task?.pullRequestCi?.result).toBeUndefined();
+      activity.close();
+    });
+
+    it("ドラフトに戻した答えを受け取れなかった PR も、検証に通ったら GitHub の今の状態でドラフトを外す", async () => {
+      const { activity, service, pulls, id } = await drafted([
+        implement("# 実装の説明"),
+        review(),
+        implement("# 実装の説明 v2"),
+        // 差し戻しの指摘も、再発していないと判定する
+        review(undefined, [
+          ["requirements-1-1", true],
+          ["implement-1-1", true],
+        ]),
+      ]);
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["エラーの文言を直す"],
+      });
+      await service.runNext(id); // 実装のやり直し
+      pulls.setDraftAnswerLost = "socket hang up";
+      await service.runNext(id); // ドラフトに戻す（GitHub では戻ったが、答えを受け取れない）
+      expect(pulls.drafts[7]).toBe(true);
+      expect(service.get(id)?.task.pullRequest?.draft).toBeUndefined();
+      pulls.setDraftAnswerLost = undefined;
+      await settleCi(service);
+      await service.runNext(id); // 最終レビュー
+      await service.runNext(id); // ドラフトを外して承認待ち
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      expect(pulls.drafts[7]).toBe(false);
+      activity.close();
+    });
+
+    it("CI が現れなければ、しばらく待ってから CI が無いとして最終レビューに進む", async () => {
+      const { activity, service, ci, advance, id } = await drafted([
+        implement("# 実装の説明"),
+        review(),
+      ]);
+      ci.snap = { checks: [], failedRuns: [] };
+      await service.runNext(id);
+      await service.runNext(id);
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+      advance(PULL_REQUEST_CI_GRACE_MS + 60_000);
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestCi?.result).toBe("none");
+      activity.close();
+    });
+
+    it("CI が終わらない・読めないまま上限を過ぎたら、時間切れとして最終レビューに進む", async () => {
+      const { activity, service, ci, advance, id } = await drafted([
+        implement("# 実装の説明"),
+        review(),
+      ]);
+      ci.snap = new Error("network down");
+      await service.runNext(id);
+      await service.runNext(id);
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+      advance(PULL_REQUEST_CI_TIMEOUT_MS + 60_000);
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestCi?.result).toBe("timed_out");
+      activity.close();
+    });
+
+    it("一時停止したタスクの CI は読まず、再開すると待ち続ける", async () => {
+      const { activity, service, ci, id } = await drafted([implement("# 実装の説明"), review()]);
+      await service.runNext(id);
+      await service.runNext(id);
+      await service.pause(id);
+      const reads = ci.calls.length;
+      await settleCi(service);
+      expect(ci.calls.length).toBe(reads);
+      service.resume(id, {});
+      await settleCi(service);
+      expect(service.get(id)?.task.pullRequestCi?.result).toBe("passed");
+      activity.close();
+    });
+
+    it("リポジトリがドラフトの PR を使えなければ、ドラフトでない PR で CI を待ち、合格してもドラフトの切り替えはしない", async () => {
+      const pulls = new FakePulls();
+      pulls.draftUnsupported = true;
+      const { activity, service, id } = await drafted([implement("# 実装の説明"), review()], {
+        pulls,
+      });
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(service.get(id)?.task.pullRequest?.draft).toBeUndefined();
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      expect(pulls.draftChanges).toEqual([]);
+      activity.close();
+    });
+
+    it("ドラフトを外せなければ、承認待ちにせずに止め、再開すると外してから承認待ちにする", async () => {
+      const { activity, service, pulls, id } = await drafted([implement("# 実装の説明"), review()]);
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      await service.runNext(id);
+      pulls.setDraftFail = "GraphQL down";
+      await service.runNext(id);
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.publishPending).toBe(true);
+      expect(ja(paused?.pausedMessage)).toContain("PR のドラフトを外せませんでした");
+      expect(types(service, id)).not.toContain("PullRequestLabeled");
+      pulls.setDraftFail = undefined;
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+      activity.close();
+    });
+
+    it("検証が続けて通らずに止まったら、人がレビューへ進められる（ドラフトを外し、ラベルを付けて承認待ち）", async () => {
+      const failed = () =>
+        review([
+          ["TV-1", false],
+          ["TV-2", true],
+        ]);
+      const { activity, service, pulls, executor, id } = await drafted([
+        implement("# 実装 1"),
+        failed(),
+        implement("# 実装 2"),
+        failed(),
+        implement("# 実装 3"),
+        failed(),
+      ]);
+      for (let i = 0; i < MAX_VERIFY_ATTEMPTS; i++) {
+        await service.runNext(id); // 実装
+        await service.runNext(id); // PR の作成・更新
+        await settleCi(service);
+        await service.runNext(id); // 最終レビュー（不合格）
+      }
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("verification");
+      expect(pulls.drafts[7]).toBe(true);
+      const runs = executor.calls.length;
+      const moved = service.submitForReview(id);
+      expect(moved.status).toBe("queued");
+      expect(moved.publishPending).toBe(true);
+      await service.runNext(id);
+      const gated = service.get(id)?.task;
+      expect(gated?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(gated?.lastReview?.passed).toBe(false);
+      // 最終レビューはやり直さない
+      expect(executor.calls.length).toBe(runs);
+      expect(pulls.drafts[7]).toBe(false);
+      expect(pulls.calls.at(-1)?.body).toContain(
+        "人が、ゴールガーディアンの不合格のまま、レビューへ進めました",
+      );
+      const log = service.get(id)?.activity ?? [];
+      expect(log.find((e) => e.type === "VerificationOverridden")?.actor).toBe("person");
+      expect(types(service, id).slice(-4)).toEqual([
+        "BranchPushed",
+        "PullRequestPublished",
+        "StepSubmitted",
+        "PullRequestLabeled",
+      ]);
+      activity.close();
+    });
+
+    it("検証が続けて通らずに止まったのではないタスクは、レビューへ進められない", async () => {
+      const { activity, service, id } = await drafted([implement("# 実装の説明"), review()]);
+      expect(() => service.submitForReview(id)).toThrow(
+        "実装の検証が続けて通らずに止まったタスクではないため",
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      await service.pause(id);
+      expect(() => service.submitForReview(id)).toThrow(
+        "実装の検証が続けて通らずに止まったタスクではないため",
+      );
+      activity.close();
+    });
   });
 
   describe("PR へのフィードバックの取り込み（PBI-14b）", () => {

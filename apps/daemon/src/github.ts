@@ -1,5 +1,6 @@
 import { type DaemonText, githubApiBase, message, parseOrgUrl, parseRepoUrl } from "@sacty/core";
 import { errorText, MessageError } from "./errors.js";
+import { githubGraphqlUrl } from "./github-relay.js";
 
 /** PRを作る口。テストでは偽物に差し替える。repo はリポジトリの URL（https://<ホスト>/<owner>/<name>。PBI-40）。 */
 export interface PullRequests {
@@ -12,7 +13,23 @@ export interface PullRequests {
     title: string;
     body: string;
     number?: number;
-  }): Promise<{ url: string; number: number }>;
+    /**
+     * 新しく作る PR をドラフトにする。リポジトリがドラフトを使えなければ（422）、ドラフトでない PR にする（答えの draft が
+     * false）。更新（number）では、ドラフトの状態は変えない（setDraft で変える）。
+     */
+    draft?: boolean;
+  }): Promise<{ url: string; number: number; draft: boolean }>;
+  /**
+   * PR をドラフトにする・ドラフトを外す（レビューへ進める）。すでにその状態なら何もしない。GitHub の REST API では
+   * 変えられないので、GraphQL の convertPullRequestToDraft・markPullRequestReadyForReview を使う。答えは変えた後の状態
+   * （ドラフトか）。
+   */
+  setDraft(input: {
+    repo: string;
+    token: string;
+    number: number;
+    draft: boolean;
+  }): Promise<{ draft: boolean }>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（承認待ちの間に見守る。PBI-14a）。 */
@@ -214,6 +231,10 @@ export function repoApi(repoUrl: string): { api: string; base: string } {
 /** GitHub の REST API で PR を作る・更新する。 */
 export class GitHubPullRequests implements PullRequests {
   constructor(private readonly fetchImpl: Fetch = fetch) {}
+
+  setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
+    return setPullRequestDraft(this.fetchImpl, input);
+  }
 
   close(input: Parameters<PullRequests["close"]>[0]) {
     return closePullRequest(this.fetchImpl, input);
@@ -624,6 +645,7 @@ export class GitHubPullRequests implements PullRequests {
     const result = (json: Record<string, unknown>) => ({
       url: String(json.html_url),
       number: Number(json.number),
+      draft: json.draft === true,
     });
 
     if (input.number) {
@@ -635,15 +657,22 @@ export class GitHubPullRequests implements PullRequests {
       throw apiError("updatePr", res.status, json);
     }
 
-    const { res, json } = await call(base, {
-      method: "POST",
-      body: JSON.stringify({
-        title: input.title,
-        head: input.branch,
-        base: input.baseBranch,
-        body: input.body,
-      }),
-    });
+    const create = (draft: boolean) =>
+      call(base, {
+        method: "POST",
+        body: JSON.stringify({
+          title: input.title,
+          head: input.branch,
+          base: input.baseBranch,
+          body: input.body,
+          ...(draft ? { draft: true } : {}),
+        }),
+      });
+    let { res, json } = await create(input.draft === true);
+    // リポジトリがドラフトの PR を使えない（GitHub のプランなど）なら、ドラフトでない PR にする
+    if (input.draft && res.status === 422 && draftUnsupported(json)) {
+      ({ res, json } = await create(false));
+    }
     if (res.ok) return result(json);
     // すでに同じブランチのPRがある（前回、作成後の記録の前に止まったなど）なら、それを使う
     if (res.status === 422) {
@@ -659,6 +688,61 @@ export class GitHubPullRequests implements PullRequests {
     }
     throw apiError("createPr", res.status, json);
   }
+}
+
+/** PR の作成の 422 が、リポジトリがドラフトの PR を使えないためか（GitHub の文で見分ける）。 */
+function draftUnsupported(json: Record<string, unknown>): boolean {
+  const texts = [
+    json.message,
+    ...(Array.isArray(json.errors)
+      ? json.errors.map((e) => (e as Record<string, unknown> | null)?.message)
+      : []),
+  ];
+  return texts.some((t) => typeof t === "string" && /draft/i.test(t));
+}
+
+/** PR のドラフトを切り替える。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
+async function setPullRequestDraft(
+  fetchImpl: Fetch,
+  input: { repo: string; token: string; number: number; draft: boolean },
+): Promise<{ draft: boolean }> {
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${input.token}`,
+    "x-github-api-version": "2022-11-28",
+    "content-type": "application/json",
+  };
+  const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, { headers });
+  // 答えを読めない・ドラフトかが書かれていないときは、今の状態を決められないので失敗にする（ドラフトのまま承認待ちにしない）
+  const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+  if (!res.ok) throw apiError("getPr", res.status, json ?? {});
+  if (typeof json?.draft !== "boolean") throw apiError("draftPr", res.status, {});
+  if (json.draft === input.draft) return { draft: input.draft };
+  const id = json.node_id;
+  if (typeof id !== "string" || !id) throw apiError("draftPr", res.status, {});
+  const mutation = input.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
+  const host = parseRepoUrl(input.repo)?.host ?? "github.com";
+  const done = await fetchImpl(githubGraphqlUrl(host), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      query: `mutation($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+      variables: { id },
+    }),
+  });
+  const answer = ((await done.json().catch(() => undefined)) ?? {}) as Record<string, unknown>;
+  const errors = Array.isArray(answer.errors) ? answer.errors : [];
+  // 変えた後の状態が答えにあり、求めた状態になっているときだけ成功にする（答えを読めないときも失敗）
+  const changed = (
+    answer.data as Record<string, { pullRequest?: { isDraft?: unknown } }> | undefined
+  )?.[mutation]?.pullRequest?.isDraft;
+  if (!done.ok || errors.length > 0 || changed !== input.draft) {
+    const first = errors[0] as Record<string, unknown> | undefined;
+    throw apiError("draftPr", done.status, {
+      message: typeof first?.message === "string" ? first.message : answer.message,
+    });
+  }
+  return { draft: input.draft };
 }
 
 /** PRを閉じる。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
@@ -698,7 +782,8 @@ export function apiError(
     | "listEvents"
     | "getLabel"
     | "createLabel"
-    | "addLabel",
+    | "addLabel"
+    | "draftPr",
   status: number,
   json: Record<string, unknown>,
 ): Error {

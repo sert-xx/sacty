@@ -287,3 +287,46 @@ describe("PR の本文の長さの上限と、人が確かめること（PR #215
     expect(footer).not.toContain("tail");
   });
 });
+
+describe("人がゴールガーディアンの不合格のままレビューへ進めた PR の本文", () => {
+  const failedReview = (summary: string) =>
+    review({
+      passed: false,
+      viewpoints: [{ viewpointId: "REQ", verified: false, reason: "未検証" }],
+      summary,
+      humanChecks: [],
+      tests: undefined,
+    });
+  const overridden = (summary = "エラーの文言が要求要件と違う") =>
+    task({
+      lastReview: failedReview(summary),
+      submissions: {},
+      verificationOverride: { at: "2026-10-27T00:00:00Z", submission: 1 },
+      approved: { requirements: { output: "あ".repeat(66_000), submission: 1 } },
+    } as Partial<Task>);
+  const TEMPLATE = "## 概要\n\n## テスト\n";
+
+  it("要求要件が長くて本文を省いても、通常の本文・テンプレートの本文の両方で、覆した記録と不合格の要点を残す", () => {
+    const t = overridden();
+    const text = buildPullRequestBodyText(t);
+    const filled = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
+    for (const b of [text, filled]) {
+      const { body, truncated } = limitBody(b.main, b.footer, PR_BODY_MAX, b.keep);
+      expect(truncated).toBe(true);
+      expect(body).toContain("人が、ゴールガーディアンの不合格のまま、レビューへ進めました。");
+      expect(body).toContain("- 不合格の観点：REQ");
+      expect(body).toContain("- 最終レビューの所見：エラーの文言が要求要件と違う");
+    }
+  });
+
+  it("長い所見は1行にして上限で切り、前の提出を覆した記録は出さない", () => {
+    const { footer } = buildPullRequestBodyText(
+      overridden(`a\n${"b".repeat(HUMAN_CHECK_ITEM_MAX)}`),
+    );
+    expect(footer).toContain(
+      `- 最終レビューの所見：a ${"b".repeat(HUMAN_CHECK_ITEM_MAX - 2)}…（続きは sacty のタスクの画面で）`,
+    );
+    const later = { ...overridden(), submissions: { implement: 1 } } as Task;
+    expect(buildPullRequestBodyText(later).footer).not.toContain("不合格のまま");
+  });
+});

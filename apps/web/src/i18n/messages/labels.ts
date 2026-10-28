@@ -102,7 +102,7 @@ const ja = {
     auth: "認証に失敗しました。トークンや API キーを確かめてから再開してください。",
     error: "エラーで止まりました。原因を確かめてから再開すると、止まった工程を実行し直します。",
     verification:
-      "実装がテストか最終レビューに続けて通りません。結果を確かめ、必要なら設計を見直してから再開すると、実装をやり直します。",
+      "実装がテストか最終レビューに続けて通りません。再開すると実装をやり直し、PR を確かめて人が判断するならレビューへ進められます。",
     manual: "人が一時停止しました。再開すると、止めたところから続けます。",
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
@@ -133,6 +133,7 @@ const ja = {
     completed: "完了",
     completedNoChanges: "完了（変更なし）",
     testsRunning: "テストを実行中",
+    waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
     watchingCheck: "マージの後の監視・確認中",
     finalReviewing: "ゴールガーディアンが最終レビュー中",
@@ -295,6 +296,20 @@ const ja = {
     branchPushed: (branch: string, commit: string) =>
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
+    prDrafted: (number: number | undefined, draft: boolean, commit: string) =>
+      `最終レビューの前に PR を${draft ? "ドラフトで" : ""}作成・更新（#${number}・${commit}）。CI を待つ`,
+    PullRequestCiFinished: (
+      result: "passed" | "failed" | "none" | "timed_out",
+      failed: string[],
+    ) =>
+      result === "passed"
+        ? "PR の CI が通った。最終レビューへ"
+        : result === "failed"
+          ? `PR の CI が失敗した：${failed.join("、")}。最終レビューで判断する`
+          : result === "none"
+            ? "PR の CI が無い。最終レビューへ"
+            : "PR の CI が時間内に終わらなかった。最終レビューへ",
+    VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     BranchPushed: (branch: string, commit: string) =>
       `Sacty のブランチにプッシュ（${branch}・${commit}）`,
@@ -581,7 +596,7 @@ const en: LabelMessages = {
     auth: "Authentication failed. Check the token or API key, then resume.",
     error: "Stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
-      "The implementation keeps failing the tests or the final review. Check the results, revisit the design if needed, then resume to implement again.",
+      "The implementation keeps failing the tests or the final review. Resume to implement again, or check the PR and move it to review yourself.",
     manual: "A person paused this task. Resume to continue from where it stopped.",
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
@@ -612,6 +627,7 @@ const en: LabelMessages = {
     completed: "Done",
     completedNoChanges: "Done (no changes)",
     testsRunning: "Running tests",
+    waitingPullRequestCi: "Waiting for the PR's CI",
     watchingCi: "After-merge watch · waiting for CI/CD",
     watchingCheck: "After-merge watch · checking",
     finalReviewing: "Goal Guardian is doing the final review",
@@ -739,6 +755,17 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
+    prDrafted: (number, draft, commit) =>
+      `Opened or updated the PR${draft ? " as a draft" : ""} before the final review (#${number} · ${commit}); waiting for CI`,
+    PullRequestCiFinished: (result, failed) =>
+      result === "passed"
+        ? "The PR's CI passed; on to the final review"
+        : result === "failed"
+          ? `The PR's CI failed: ${failed.join(", ")}; the final review decides`
+          : result === "none"
+            ? "The PR has no CI; on to the final review"
+            : "The PR's CI did not finish in time; on to the final review",
+    VerificationOverridden: "A person moved the task to review despite the failed final review",
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     BranchPushed: (branch, commit) => `Pushed to Sacty branch (${branch} · ${commit})`,

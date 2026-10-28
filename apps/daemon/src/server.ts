@@ -573,6 +573,17 @@ export function createApp(
     }
   });
 
+  // 実装の検証が続けて通らずに止まったタスクを、人の判断でレビュー（実装の承認）へ進める
+  app.post("/api/tasks/:id/submit-for-review", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const containersConfirmed = await service.confirmPausedContainers(id);
+      return c.json({ task: service.submitForReview(id, { containersConfirmed }) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 完了したタスクの監査（PBI-124）。監査が無ければ audit は null
   app.get("/api/tasks/:id/audit", async (c) =>
     c.json({ audit: await audits.taskAudit(c.req.param("id")) }),

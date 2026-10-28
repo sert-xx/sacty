@@ -593,6 +593,18 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   return (await res.json()) as DashboardSummary;
 }
 
+/** 実装の検証が続けて通らずに止まったタスクを、人の判断でレビュー（実装の承認）へ進める。 */
+export async function submitTaskForReview(
+  id: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/submit-for-review`, {
+    method: "POST",
+  });
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  await ensureOk(res);
+  return { ok: true };
+}
+
 /** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */
 export async function resumeTask(
   id: string,

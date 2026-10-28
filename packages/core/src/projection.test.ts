@@ -7,6 +7,7 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   canDecideTests,
+  canOverrideVerification,
   canRechooseSteps,
   canRerun,
   canRetryExport,
@@ -2337,5 +2338,33 @@ describe("タスクの開始時の情報収集", () => {
       ),
     ]).get("c1");
     expect(child && awaitingGathering(child)).toBe(false);
+  });
+});
+
+describe("人がゴールガーディアンの不合格のままレビューへ進められるか", () => {
+  const paused = (extra: Partial<Task> = {}) =>
+    ({
+      status: "paused",
+      pausedReason: "verification",
+      steps: [{ key: "implement", state: "active" }],
+      ...extra,
+    }) as Task;
+
+  it("実装の検証が続けて通らずに止まった実装の工程だけ進められる", () => {
+    expect(canOverrideVerification(paused())).toBe(true);
+    expect(canOverrideVerification(paused({ pausedReason: "error" }))).toBe(false);
+    expect(canOverrideVerification(paused({ status: "idle" }))).toBe(false);
+    expect(canOverrideVerification(paused({ publishPending: true }))).toBe(false);
+  });
+
+  it("既存の PR を引き継ぐタスクは、不合格の実装を人の PR に積むことになるので進められない", () => {
+    const continuedPullRequest = {
+      repo: "https://github.com/acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      branch: "feature",
+      baseBranch: "main",
+    } as Task["continuedPullRequest"];
+    expect(canOverrideVerification(paused({ continuedPullRequest }))).toBe(false);
   });
 });

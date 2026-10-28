@@ -151,6 +151,11 @@ const ja = {
       "プロジェクトの対象に、選べるリポジトリがありません。プロジェクトの設定を見直してください。",
     resume: "再開する",
     capNote: "上限に達したら、もう一度ここで決めます。",
+    toReview: "レビューへ進める",
+    toReviewing: "進めています…",
+    toReviewHelp: "PR を確かめて問題が無ければ、人の判断でレビューへ進められます。",
+    toReviewHint:
+      "最終レビューの不合格のまま、PR のドラフトを外してレビュー用のラベルを付け、実装の承認待ちにします。最終レビューはやり直しません。",
     /** テストのコマンドが決まらずに止まったタスクの、再開のときのテストの扱い。 */
     tests: {
       legend: "テストの扱い",
@@ -371,6 +376,11 @@ const en: PartsMessages = {
     ticketNoRepo: "The project has no repositories to choose from. Check the project settings.",
     resume: "Resume",
     capNote: "When the cap is reached, you decide here again.",
+    toReview: "Move to review",
+    toReviewing: "Moving…",
+    toReviewHelp: "If the PR looks right, a person can move it to review.",
+    toReviewHint:
+      "Keeps the failed final review, marks the PR ready for review, adds the review label, and waits for implementation approval. The final review is not run again.",
     tests: {
       legend: "Tests",
       keep: "Resume without deciding",
