@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
-import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from "./events.js";
+import {
+  bodyWithResumeNote,
+  DERIVE_RECORD_HEADING,
+  EventInput as EventSchema,
+  exportSteps,
+  MVP_STEPS,
+  RERUN_NOTE_HEADING,
+  RERUN_RECORD_HEADING,
+  RESUME_NOTE_HEADING,
+  RESUME_NOTE_MAX,
+  rerunEditableBody,
+  STEP_PLANS,
+  TASK_BODY_MAX,
+} from "./events.js";
 import {
   applyEvent,
   awaitingGathering,
@@ -23,6 +36,7 @@ import {
   pendingQuestion,
   project,
   questionBlocked,
+  resumeNoteRoom,
   reworkTargets,
   skippableSteps,
   stepRunning,
@@ -2490,5 +2504,158 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
       baseBranch: "main",
     } as Task["continuedPullRequest"];
     expect(canOverrideVerification(paused({ continuedPullRequest }))).toBe(false);
+  });
+});
+
+describe("再開の補足を説明に足す", () => {
+  const H = RESUME_NOTE_HEADING;
+  const paused = (taskId: string, body: string) => [
+    ev(taskId, { type: "TaskCreated", payload: { title: "t", body, start: "sacty" } }, "person"),
+    ev(taskId, { type: "TaskPaused", payload: { reason: "error" } }),
+  ];
+  const resumed = (taskId: string, note: string) =>
+    ev(taskId, { type: "TaskResumed", payload: { retry: false, note } }, "person");
+
+  it("再開のたびに、見出しを付けて順に足す", () => {
+    seq = 0;
+    const task = project([
+      ...paused("t1", "説明"),
+      resumed("t1", "補足1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      resumed("t1", "補足2"),
+    ]).get("t1");
+    expect(task?.body).toBe(`説明\n\n${H}\n\n補足1\n\n${H}\n\n補足2`);
+    // 説明を書き換える取り込みのために、補足を作業履歴から別に貯める（説明の見出しから読み直さない）
+    expect(task?.resumeNotes).toEqual(["補足1", "補足2"]);
+  });
+
+  it("説明が空なら、見出しから始める", () => {
+    seq = 0;
+    const task = project([...paused("t1", ""), resumed("t1", "補足")]).get("t1");
+    expect(task?.body).toBe(`${H}\n\n補足`);
+  });
+});
+
+describe("再開の補足と、再実行・取り込みの説明", () => {
+  const record = `${RERUN_RECORD_HEADING}\n\n以下は前の試行の参考の記録です。`;
+
+  it("再実行で作ったタスクは、前の試行の記録の前に入れ、再実行の画面の説明に残す", () => {
+    const task = {
+      body: `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${record}`,
+      rerun: "t0",
+    };
+    const body = bodyWithResumeNote(task, "再開の補足");
+    expect(body).toBe(
+      `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足\n\n${record}`,
+    );
+    expect(rerunEditableBody({ ...task, body })).toBe(
+      `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足`,
+    );
+  });
+
+  it("派生で作ったタスクは、元のタスクの記録の前に入れる（記録に再実行の記録と同じ見出しの行があっても、境目を誤らない）", () => {
+    const derivedRecord = `${DERIVE_RECORD_HEADING}\n\n成果\n${RERUN_RECORD_HEADING}\n成果の続き`;
+    for (const rerun of [undefined, "t0"]) {
+      const rerunPart = rerun ? `\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${record}` : "";
+      const task = {
+        body: `依頼\n\n${derivedRecord}${rerunPart}`,
+        rerun,
+        derivedFrom: { record: derivedRecord },
+      };
+      const body = bodyWithResumeNote(task, "再開の補足");
+      expect(body).toBe(
+        `依頼\n\n${RESUME_NOTE_HEADING}\n\n再開の補足\n\n${derivedRecord}${rerunPart}`,
+      );
+      // 再実行の画面の説明は、記録を除いて補足を残す
+      expect(rerunEditableBody({ ...task, body })).toBe(
+        `依頼\n\n${RESUME_NOTE_HEADING}\n\n再開の補足${rerun ? `\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足` : ""}`,
+      );
+    }
+  });
+
+  it("足せる補足の長さは、補足のせいで再実行で直す説明が上限を新たに超えない長さ（ちょうど足すと上限に収まる）", () => {
+    const H = RESUME_NOTE_HEADING.length;
+    const task = (t: Partial<Task>) => ({ start: "sacty", ...t }) as Task;
+    const cases: [Task, number][] = [
+      [task({ body: "" }), TASK_BODY_MAX - H - 2],
+      [task({ body: "あ".repeat(9_000) }), TASK_BODY_MAX - 9_000 - H - 4],
+      [task({ body: `依頼\n\n${record}`, rerun: "t0" }), TASK_BODY_MAX - H - 6],
+      // 上限ちょうどの説明は、補足を足すと超えるので足せない
+      [task({ body: "あ".repeat(TASK_BODY_MAX) }), -H - 4],
+    ];
+    for (const [t, room] of cases) {
+      expect(resumeNoteRoom(t)).toBe(room);
+      if (room > 0) {
+        expect(
+          rerunEditableBody({ ...t, body: bodyWithResumeNote(t, "い".repeat(room)) }).length,
+        ).toBe(TASK_BODY_MAX);
+      }
+    }
+  });
+
+  it("補足を足す前から上限を超える説明・再実行できない種類のタスクは、補足の上限だけで確かめる", () => {
+    const long = "あ".repeat(TASK_BODY_MAX + 1);
+    // 取り込んだ長い Issue（補足が無くても、再実行では説明を直す必要がある）
+    expect(resumeNoteRoom({ start: "github_issue", body: long } as Task)).toBe(RESUME_NOTE_MAX);
+    // PR のタスク・子タスクは再実行できない
+    const full = "あ".repeat(TASK_BODY_MAX);
+    expect(resumeNoteRoom({ start: "github_pull_request", body: full } as Task)).toBe(
+      RESUME_NOTE_MAX,
+    );
+    expect(resumeNoteRoom({ start: "sacty", body: full, parent: "p" } as Task)).toBe(
+      RESUME_NOTE_MAX,
+    );
+  });
+
+  it("ふつうのタスクは説明の後に足し、再実行の画面の説明にも残す", () => {
+    const body = bodyWithResumeNote({ body: "説明" }, "補足");
+    expect(rerunEditableBody({ body })).toBe(body);
+  });
+});
+
+describe("チケットのトリアージと再開の補足", () => {
+  const H = RESUME_NOTE_HEADING;
+  const ticketTask = (body: string) =>
+    ev(
+      "t1",
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "PAY-1",
+          body,
+          start: "jira",
+          ticket: {
+            platform: "jira",
+            service: "jira-server",
+            key: "PAY-1",
+            url: "https://jira.example.com/browse/PAY-1",
+          },
+        },
+      },
+      "person",
+    );
+
+  it("人の補足は作業履歴から取り、説明にある補足の見出し（チケットの文）は補足として残さない", () => {
+    seq = 0;
+    const task = project([
+      // チケットの本文に、補足の見出しの行がある
+      ticketTask(`チケットの本文\n\n${H}\n\nチケットの文`),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      ev("t1", { type: "TaskResumed", payload: { retry: true, note: "人の補足" } }, "person"),
+      ev(
+        "t1",
+        {
+          type: "TicketTriaged",
+          payload: {
+            repo: "https://github.com/acme/app",
+            body: `概要\n${H}\n概要に写された見出し`,
+            reason: "理由",
+          },
+        },
+        "orchestrator",
+      ),
+    ]).get("t1");
+    expect(task?.resumeNotes).toEqual(["人の補足"]);
+    expect(task?.body).toBe(`概要\n概要に写された見出し\n\n${H}\n\n人の補足`);
   });
 });

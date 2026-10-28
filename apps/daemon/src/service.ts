@@ -109,6 +109,7 @@ import {
   renderMessage,
   responsibleProject,
   responsibleTicketProject,
+  resumeNoteRoom,
   reworkTargets,
   SactySettings,
   type ScheduledTaskSettings,
@@ -9656,6 +9657,16 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    const event = this.stepImageChange(task, step, image);
+    if (!event) throw new InvalidOperationError(message("image.unchanged", { name: image }));
+    return this.append(task, [{ actor: "person", event }]);
+  }
+
+  /**
+   * 工程のイメージを変えるイベント（タスクの詳細で変えるときと、再開と一緒に変えるときで共通）。今と同じ名前なら undefined。
+   * 選んでいない工程・images に無い名前・設定を読めないときは、理由を示して断る。
+   */
+  private stepImageChange(task: Task, step: StepKey, image: string): EventInput | undefined {
     if (!task.steps.some((s) => s.key === step)) {
       throw new InvalidOperationError(message("image.stepMissing"));
     }
@@ -9670,14 +9681,8 @@ export class TaskService {
       throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
     const from = task.images?.[step] ?? DEFAULT_IMAGE_NAME;
-    if (from === image)
-      throw new InvalidOperationError(message("image.unchanged", { name: image }));
-    return this.append(task, [
-      {
-        actor: "person",
-        event: { type: "StepImageChanged", payload: { step, from, to: image } },
-      },
-    ]);
+    if (from === image) return undefined;
+    return { type: "StepImageChanged", payload: { step, from, to: image } };
   }
 
   /**
@@ -9689,6 +9694,16 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    const event = this.stepAgentChange(task, step, agent);
+    if (!event) throw new InvalidOperationError(message("agent.unchanged", { name: agent }));
+    return this.append(task, [{ actor: "person", event }]);
+  }
+
+  /**
+   * 工程のエージェントを変えるイベント（タスクの詳細で変えるときと、再開と一緒に変えるときで共通）。今と同じ名前なら
+   * undefined。選んでいない工程・統合レビュー・agents に無い名前・設定を読めないときは、理由を示して断る。
+   */
+  private stepAgentChange(task: Task, step: StepKey, agent: string): EventInput | undefined {
     if (!task.steps.some((s) => s.key === step)) {
       throw new InvalidOperationError(message("agent.stepMissing"));
     }
@@ -9706,11 +9721,8 @@ export class TaskService {
       throw new InvalidOperationError(message("agent.notInAgents", { name: agent }));
     }
     const from = task.agents?.[step] ?? agentFor(config.config, step).id;
-    if (from === agent)
-      throw new InvalidOperationError(message("agent.unchanged", { name: agent }));
-    return this.append(task, [
-      { actor: "person", event: { type: "StepAgentChanged", payload: { step, from, to: agent } } },
-    ]);
+    if (from === agent) return undefined;
+    return { type: "StepAgentChanged", payload: { step, from, to: agent } };
   }
 
   /** 人が選んだ工程のエージェントが config.yaml から消えていたら、理由を示して一時停止する（PBI-121）。 */
@@ -11491,6 +11503,29 @@ export class TaskService {
       events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
     }
     const rechooseSteps = !input.tests && canRechooseSteps(task);
+    // 再開と一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
+    // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
+    const imageSteps = Object.entries(input.images ?? {}) as [StepKey, string][];
+    const agentSteps = Object.entries(input.agents ?? {}) as [StepKey, string][];
+    if (rechooseSteps && imageSteps.length + agentSteps.length > 0) {
+      throw new InvalidOperationError(message("resume.stepSettingsRechoose"));
+    }
+    for (const [step, image] of imageSteps) {
+      const event = this.stepImageChange(task, step, image);
+      if (event) events.push({ actor: "person", event });
+    }
+    for (const [step, agent] of agentSteps) {
+      const event = this.stepAgentChange(task, step, agent);
+      if (event) events.push({ actor: "person", event });
+    }
+    // 補足を足した説明が、再実行の画面で直す説明の上限を超えるなら断る（人が自分の補足を削らないと再実行できなくなる）。
+    // 確かめるのは再開の時点の説明（チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある）
+    if (input.note) {
+      const room = resumeNoteRoom(task);
+      if (input.note.length > room) {
+        throw new InvalidOperationError(message("resume.bodyTooLong", { room: Math.max(room, 0) }));
+      }
+    }
     events.push({
       actor: "person",
       event: {
@@ -11498,6 +11533,7 @@ export class TaskService {
         payload: {
           retry: task.resumeTo === "queued",
           ...(rechooseSteps ? { rechooseSteps: true as const } : {}),
+          ...(input.note ? { note: input.note } : {}),
         },
       },
     });

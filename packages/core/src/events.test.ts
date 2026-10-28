@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CreateTaskInput, EventInput, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
+import {
+  CreateTaskInput,
+  EventInput,
+  RESUME_NOTE_MAX,
+  ResumeTaskInput,
+  TASK_BODY_MAX,
+  TASK_TITLE_MAX,
+} from "./events.js";
 import { renderMessage } from "./messages.js";
 
 describe("CreateTaskInput", () => {
@@ -96,5 +103,20 @@ describe("PR に付けるラベルの予定（PBI-88・PBI-99）", () => {
         payload: { ...base, intakeLabel: "sacty" },
       }).payload,
     ).toEqual(base);
+  });
+});
+
+describe("ResumeTaskInput の補足", () => {
+  it("改行を LF にそろえてから数える（デーモンの API を直接呼んでも、画面の欄と同じ数え方）", () => {
+    const note = `${"あ".repeat(4_999)}\r\n${"い".repeat(5_000)}`;
+    expect(ResumeTaskInput.parse({ note }).note).toBe(
+      `${"あ".repeat(4_999)}\n${"い".repeat(5_000)}`,
+    );
+  });
+
+  it("LF にそろえても上限を超える補足は、再開用の誤りで断る", () => {
+    const result = ResumeTaskInput.safeParse({ note: `${"あ".repeat(RESUME_NOTE_MAX)}\r\nい` });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain("input.resumeNoteTooLong");
   });
 });

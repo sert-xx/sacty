@@ -5,6 +5,7 @@ import {
   renderMessage,
   STEP_PLANS,
   type Task,
+  type TaskProposal,
   type TaskQuestion,
 } from "@sacty/core";
 import { describe, expect, it } from "vitest";
@@ -18,6 +19,7 @@ import {
   buildExportPrompt,
   buildFinalReviewPrompt,
   buildGatherPrompt,
+  buildGuardianPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
@@ -30,6 +32,7 @@ import {
   buildStepPullRequestTitle,
   buildStepReviewPrompt,
   buildTicketPullRequestComment,
+  buildTicketTriagePrompt,
   CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
   clip,
@@ -1782,6 +1785,80 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(buildPrompt(withTests, "implement")).not.toContain(IMPLEMENT_LINE);
     expect(buildFinalReviewPrompt(withTests, "diff", { testCommand: "npm test" })).not.toContain(
       REVIEW_LINE,
+    );
+  });
+
+  it("タスクの内容を入れない実装・最終レビューにも、人が再開のときに足した補足を渡す（設計あり・なし・テストあり・なし）", () => {
+    const NOTE = "認証は環境変数 ACME_TOKEN を使う";
+    const HEADING = "--- 人が再開のときに足した補足";
+    for (const steps of [
+      ["requirements", "design", "implement"],
+      ["requirements", "implement"],
+    ] as const) {
+      for (const extra of [{ testCommand: "npm test" }, { noTestsReason: NO_TESTS }]) {
+        const label = `${steps.join()} ${Object.keys(extra).join()}`;
+        // 補足は説明の後ろにもあるが、ここの経路は説明を読まないので、別に渡す
+        const t = task({ ...extra, resumeNotes: [NOTE] }, [...steps]);
+        const implement = buildPrompt(t, "implement");
+        expect(implement, label).toContain(HEADING);
+        expect(implement, label).toContain(NOTE);
+        const testCommand = "testCommand" in extra ? { testCommand: extra.testCommand } : {};
+        const review = buildFinalReviewPrompt(t, "diff", testCommand);
+        expect(review, label).toContain(NOTE);
+        // 補足が無ければ、節を出さない
+        const none = task(extra, [...steps]);
+        expect(buildPrompt(none, "implement"), label).not.toContain(HEADING);
+        expect(buildFinalReviewPrompt(none, "diff", testCommand), label).not.toContain(HEADING);
+      }
+    }
+  });
+
+  it("承認済みの文書と食い違う補足は、実装に優先して従わせ、変更の申し出・差し戻しの判定にも人の新しい意図として渡す", () => {
+    // 承認済みの要求要件は「再送は3回まで」、人が再開のときに「5回まで」に変えた
+    const NOTE = "再送の上限は5回にする";
+    const t = task(
+      {
+        testCommand: "npm test",
+        testViewpoints: [],
+        resumeNotes: [NOTE],
+        approved: {
+          requirements: { output: "# 要求要件\n\n再送は3回まで", submission: 1 },
+          design: {
+            output: "# 設計",
+            submission: 1,
+            testViewpoints: [{ id: "TV-1", title: "再送", input: "失敗", expected: "3回" }],
+          },
+        },
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const implement = buildPrompt(t, "implement");
+    expect(implement).toContain(NOTE);
+    // 申し出の指示も、補足と食い違う箇所は補足に従わせる（承認済みの成果物に従えという指示と食い違わせない）
+    expect(implement).toContain(
+      "人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください",
+    );
+    const proposal = {
+      target: "requirements",
+      reason: "人が上限を5回にした",
+      facts: ["補足"],
+      proposed: "# 要求要件\n\n再送は5回まで",
+    } as unknown as TaskProposal;
+    const judges = [
+      buildGuardianPrompt(t, proposal),
+      buildReworkPrompt(t, ["上限が違う"], ["implement", "design", "requirements"]),
+      buildReworkPrompt(t, ["上限が違う"], ["design", "requirements"], "design"),
+    ];
+    for (const judge of judges) {
+      expect(judge).toContain(NOTE);
+      expect(judge).toContain("こちらが人間の新しい意図です");
+    }
+    // 補足が無ければ、判定にも申し出の指示にも足さない
+    const none = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
+    expect(buildPrompt(none, "implement")).not.toContain("補足に従って作ってください");
+    expect(buildGuardianPrompt(none, proposal)).not.toContain("人が再開のときに足した補足");
+    expect(buildReworkPrompt(none, ["x"], ["implement", "requirements"])).not.toContain(
+      "人が再開のときに足した補足",
     );
   });
 
@@ -3567,5 +3644,58 @@ describe("派生のタスクの説明（deriveRecord・deriveBody）", () => {
     expect(body).toContain("…（長いため、先頭だけ）");
     expect(body).not.toContain("あ".repeat(6001));
     expect(body).toContain("- 質問：冪等キーは何？\n  答え：注文 ID\n  2行目");
+  });
+});
+
+describe("チケットのトリアージに渡す再開の補足", () => {
+  const ticketTask = (events: Record<string, unknown>[]) => {
+    const created = {
+      type: "TaskCreated",
+      payload: {
+        title: "PAY-1",
+        body: "チケットの本文\n\n## 補足（再開で人が足したもの）\n\nチケットの文",
+        start: "jira",
+        ticket: {
+          platform: "jira",
+          service: "jira-server",
+          key: "PAY-1",
+          url: "https://jira.example.com/browse/PAY-1",
+        },
+      },
+    };
+    const activity = [created, ...events].map(
+      (e, i) =>
+        ({
+          ...EventInput.parse(e),
+          seq: i + 1,
+          id: `e${i + 1}`,
+          taskId: "t1",
+          projectId: "default",
+          actor: "person",
+          at: "2026-10-28T00:00:00.000Z",
+        }) as ActivityEvent,
+    );
+    return project(activity).get("t1") as Task;
+  };
+
+  it("説明に補足の見出しがあっても、人が再開で足していなければ補足の節を出さない", () => {
+    const prompt = buildTicketTriagePrompt(ticketTask([]), ["https://github.com/acme/app"], "jira");
+    expect(prompt).not.toContain("人が再開のときに足した補足");
+    expect(prompt).not.toContain("チケットの文");
+  });
+
+  it("人が再開で足した補足だけを、判断の材料として渡す（概要には写させない）", () => {
+    const prompt = buildTicketTriagePrompt(
+      ticketTask([
+        { type: "TaskPaused", payload: { reason: "error" } },
+        { type: "TaskResumed", payload: { retry: true, note: "人の補足" } },
+      ]),
+      ["https://github.com/acme/app"],
+      "jira",
+    );
+    expect(prompt).toContain("人が再開のときに足した補足");
+    expect(prompt).toContain("概要には写さないでください");
+    expect(prompt).toContain("人の補足");
+    expect(prompt).not.toContain("チケットの文");
   });
 });

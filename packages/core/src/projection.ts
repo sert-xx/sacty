@@ -28,13 +28,19 @@ import type {
   Verdict,
 } from "./events.js";
 import {
+  bodyWithResumeNote,
   DEFAULT_DOCUMENTS_DIR,
   EXPORT_STEPS,
   exportSteps,
   isDocumentsDir,
   MAX_INTEGRATION_ATTEMPTS,
+  RESUME_NOTE_MAX,
   REWORK_STEPS,
+  rerunEditableBody,
+  resumeNoteSections,
   SKIPPABLE_STEPS,
+  TASK_BODY_MAX,
+  withoutResumeNoteHeadings,
 } from "./events.js";
 import { type DaemonText, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
@@ -336,6 +342,11 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
+  /**
+   * 人が再開のときに足した補足（TaskResumed の note。足した順）。説明の後にも見出しを付けて足すが、説明を書き換える
+   * 取り込み（チケットのトリアージ）では、説明の見出しから読み直さずにこれを使う（チケットの文を人の補足と取り違えない）。
+   */
+  resumeNotes?: string[];
   start:
     | "sacty"
     | "github_issue"
@@ -1811,7 +1822,15 @@ export function applyEvent(
       }
       task.repo = event.payload.repo;
       if (event.payload.title) task.title = event.payload.title;
-      if (event.payload.body !== undefined) task.body = event.payload.body;
+      if (event.payload.body !== undefined) {
+        // 再開のときに人が足した補足は、トリアージで書いた概要に置き換えず、後ろに残す（後の工程に届くように）。補足は
+        // 作業履歴の TaskResumed から貯めたものを使い、説明の見出しからは読み直さない。概要（チケットから書いたもの）に
+        // 補足の見出しの行があれば除く（チケットの文を、人の補足に見せかけないため）
+        const summary = withoutResumeNoteHeadings(event.payload.body);
+        task.body = [summary.trimEnd(), resumeNoteSections(task.resumeNotes ?? [])]
+          .filter(Boolean)
+          .join("\n\n");
+      }
       task.ticketTriage = {
         reason: event.payload.reason,
         by: event.actor === "person" ? "person" : "orchestrator",
@@ -2298,6 +2317,11 @@ export function applyEvent(
       task.pausedCancelledChildren = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
+      if (event.payload.note) {
+        task.body = bodyWithResumeNote(task, event.payload.note);
+        task.resumeNotes = [...(task.resumeNotes ?? []), event.payload.note];
+      }
       task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
       break;
@@ -2850,16 +2874,33 @@ function clearChosenSteps(task: Task): void {
 }
 
 /**
+ * 再開で足せる補足の長さ（文字数。RESUME_NOTE_MAX まで）。補足のせいで、再実行の画面で直す説明（rerunEditableBody）が
+ * TASK_BODY_MAX を新たに超えないようにする。再実行できない種類のタスク（子タスク・PR のタスク）と、補足を足す前から
+ * 上限を超える説明（取り込んだ長い Issue など）は、補足が原因で直すことにはならないので、補足の上限だけにする。
+ * 0 以下なら、補足を足せない。
+ */
+export function resumeNoteRoom(task: Task): number {
+  if (!rerunnableKind(task)) return RESUME_NOTE_MAX;
+  if (rerunEditableBody(task).length > TASK_BODY_MAX) return RESUME_NOTE_MAX;
+  // 1文字の補足を足して測り、その分を引く（空の補足で測ると、記録の前の区切りが切り詰められて長さがずれる）
+  const editable = rerunEditableBody({ ...task, body: bodyWithResumeNote(task, "x") }).length - 1;
+  return Math.min(RESUME_NOTE_MAX, TASK_BODY_MAX - editable);
+}
+
+/**
  * 中止したタスクを再実行できるか。中止して、まだ再実行していないタスクだけ。分割で作った子タスク（親が進め方を決める）・
  * PR のレビューのタスク（PR で依頼し直す。PBI-44）は除く。
  */
 export function canRerun(task: Task): boolean {
-  return (
-    task.status === "cancelled" &&
-    task.rerunBy === undefined &&
-    task.parent === undefined &&
-    task.start !== "github_pull_request"
-  );
+  return task.status === "cancelled" && task.rerunBy === undefined && rerunnableKind(task);
+}
+
+/**
+ * 再実行できる種類のタスクか（状態は見ない）。分割で作った子タスク（親が進め方を決める）・PR のレビューのタスク（PR で
+ * 依頼し直す。PBI-44）は再実行できない。canRerun と、再開の補足の長さ（resumeNoteRoom）で同じ判定を使う。
+ */
+export function rerunnableKind(task: Pick<Task, "parent" | "start">): boolean {
+  return task.parent === undefined && task.start !== "github_pull_request";
 }
 
 /**

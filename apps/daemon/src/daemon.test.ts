@@ -46,8 +46,10 @@ import {
   PULL_REQUEST_CI_TIMEOUT_MS,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
+  RESUME_NOTE_HEADING,
   renderMessage,
   rerunEditableBody,
+  resumeNoteRoom,
   reworkTargets,
   STEP_PLANS,
   stepRunning,
@@ -4438,6 +4440,164 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(executor.images).toEqual([DEFAULT, used(playwright)]);
       expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("再開と一緒にイメージ・エージェントを変え、補足を説明に足して、やり直しから使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const strong = agent({ id: "strong", model: "claude-opus-5-5" });
+      const config = (): ConfigResult => {
+        const loaded = withImages()() as { ok: true; config: SactyConfig };
+        return {
+          ok: true,
+          config: {
+            ...loaded.config,
+            agents: Object.fromEntries([agent(), strong].map((a) => [a.id, a])),
+          },
+        };
+      };
+      const { service, executor } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "Playwright が無い" }, out("# 要求要件")],
+        { config, planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "決済を作る",
+      });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      service.resume(id, {
+        note: "Playwright のイメージを使ってください。",
+        // 今と同じ名前（設計の java）は変えない
+        images: { requirements: "playwright", design: "java" },
+        agents: { requirements: "strong" },
+      });
+      const after = service.get(id);
+      // 工程の設定の変更を、再開より前に記録する
+      expect(
+        after?.activity
+          .filter((e) => ["StepImageChanged", "StepAgentChanged", "TaskResumed"].includes(e.type))
+          .map((e) => ({ type: e.type, actor: e.actor, payload: e.payload })),
+      ).toEqual([
+        {
+          type: "StepImageChanged",
+          actor: "person",
+          payload: { step: "requirements", from: "default", to: "playwright" },
+        },
+        {
+          type: "StepAgentChanged",
+          actor: "person",
+          payload: { step: "requirements", from: "claude-subscription", to: "strong" },
+        },
+        {
+          type: "TaskResumed",
+          actor: "person",
+          payload: { retry: true, note: "Playwright のイメージを使ってください。" },
+        },
+      ]);
+      expect(after?.task.body).toBe(
+        "決済を作る\n\n## 補足（再開で人が足したもの）\n\nPlaywright のイメージを使ってください。",
+      );
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, used(playwright)]);
+      expect(promptOf(executor, 1)).toContain("Playwright のイメージを使ってください。");
+      expect(promptOf(executor, 1)).toContain("claude-opus-5-5");
+      activity.close();
+    });
+
+    it("再開の工程の設定・補足が1つでも誤っていれば、正しいものも含めて何も記録せずに断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "説明" });
+      await service.runNext(id);
+      const before = service.get(id);
+      const rejects = (input: unknown, code: string) =>
+        expect(() => service.resume(id, input)).toThrow(
+          expect.objectContaining({ messages: [expect.objectContaining({ code })] }),
+        );
+      // 正しいイメージの変更と、誤ったエージェント
+      rejects(
+        {
+          note: "補足",
+          images: { requirements: "playwright" },
+          agents: { requirements: "missing" },
+        },
+        "agent.notInAgents",
+      );
+      rejects({ images: { requirements: "missing" } }, "image.notInImages");
+      // 選んでいない工程（統合レビューのエージェントは、選んだ工程でも stepAgentChange が断る）
+      rejects({ images: { integrate: "playwright" } }, "image.stepMissing");
+      rejects({ agents: { integrate: "claude-subscription" } }, "agent.stepMissing");
+      // 補足の長さ（入力の上限と、説明に足した後の上限）
+      expect(() => service.resume(id, { note: "あ".repeat(10_001) })).toThrow(
+        expect.objectContaining({ name: "ZodError" }),
+      );
+      const after = service.get(id);
+      expect(after?.activity.length).toBe(before?.activity.length);
+      expect(after?.task).toMatchObject({ status: "paused", body: "説明" });
+      expect(after?.task.images).toEqual(before?.task.images);
+      expect(after?.task.agents).toEqual(before?.task.agents);
+      activity.close();
+    });
+
+    it("補足を足した説明が、再実行で直す説明の上限を超えるなら断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "あ".repeat(9_000),
+      });
+      await service.runNext(id);
+      const room = resumeNoteRoom(service.get(id)?.task as Task);
+      expect(room).toBe(TASK_BODY_MAX - 9_000 - `\n\n${RESUME_NOTE_HEADING}\n\n`.length);
+      expect(() => service.resume(id, { note: "い".repeat(room + 1) })).toThrow(
+        expect.objectContaining({ messages: [message("resume.bodyTooLong", { room })] }),
+      );
+      expect(service.get(id)?.task.status).toBe("paused");
+      service.resume(id, { note: "い".repeat(room) });
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("説明が上限ちょうどで補足を足せないときは、足せないことと取れる手を示して断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "あ".repeat(TASK_BODY_MAX),
+      });
+      await service.runNext(id);
+      expect(resumeNoteRoom(service.get(id)?.task as Task)).toBeLessThan(0);
+      let thrown: unknown;
+      try {
+        service.resume(id, { note: "い" });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ messages: [message("resume.bodyTooLong", { room: 0 })] });
+      expect(renderMessage(message("resume.bodyTooLong", { room: 0 }), "ja")).toContain(
+        "補足なしで再開するか",
+      );
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 補足なしなら再開できる
+      service.resume(id, {});
+      expect(service.get(id)?.task.status).toBe("queued");
       activity.close();
     });
 
@@ -23140,6 +23300,11 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBeUndefined();
     expect(executor.calls).toHaveLength(1);
+    // 工程の選択からやり直すので、工程のイメージ・エージェントは一緒に変えられない（人の指定を黙って失わない）
+    const step = task.steps[0]?.key ?? "investigate";
+    expect(() => service.resume(id, { images: { [step]: "default" } })).toThrow(
+      expect.objectContaining({ messages: [message("resume.stepSettingsRechoose")] }),
+    );
     // テストを決めずに再開すると、同じ工程のまま進めず（費用をかけた後の検証で止まらないように）、工程の選択からやり直す
     service.resume(id, {});
     const resumed = service.get(id)?.activity.find((e) => e.type === "TaskResumed");
@@ -28741,6 +28906,55 @@ describe("中止したタスクの再実行", () => {
     return { activity, ...made };
   };
 
+  it("再実行で作ったタスクの再開の補足は、前の試行の記録の前に入れ、上限は記録を数えずに確かめる", async () => {
+    const taskOf = (id: string) => service.get(id)?.task as Task;
+    const { activity, service } = setup([
+      {
+        kind: "completed",
+        output: `# 要求要件\n\n${"あ".repeat(6_000)}`,
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+      },
+      { kind: "failed", reason: "error", message: "失敗" },
+    ]);
+    const task = service.createTask({
+      projectId: "default",
+      title: "決済の再送",
+      body: "二重に請求される",
+      repo: "https://github.com/acme/app",
+    });
+    await service.runNext(task.id); // 要求要件（長い成果）
+    await service.cancel(task.id);
+    const rerun = service.rerunTask(task.id, {
+      title: "決済の再送",
+      body: "二重に請求される",
+      repo: "https://github.com/acme/app",
+    });
+    await service.runNext(rerun.id);
+    expect(service.get(rerun.id)?.task.status).toBe("paused");
+    const record = service.get(rerun.id)?.task.body ?? "";
+    expect(record.length).toBeGreaterThan(3_000);
+    // 直せる部分（説明と補足）は上限を超えないが、記録を合わせると超える補足は受け付ける
+    const room = resumeNoteRoom(taskOf(rerun.id));
+    // 前の試行の記録は数えない（数えると、残りは記録の分だけ短くなる）
+    expect(room).toBe(
+      TASK_BODY_MAX - `${rerunEditableBody(taskOf(rerun.id))}\n\n${RESUME_NOTE_HEADING}\n\n`.length,
+    );
+    expect(room).toBeGreaterThan(TASK_BODY_MAX - record.length);
+    expect(() => service.resume(rerun.id, { note: "あ".repeat(room + 1) })).toThrow(
+      expect.objectContaining({ messages: [message("resume.bodyTooLong", { room })] }),
+    );
+    service.resume(rerun.id, { note: "い".repeat(9_000) });
+    const resumed = taskOf(rerun.id);
+    expect(resumed.body.length).toBeGreaterThan(TASK_BODY_MAX);
+    // 補足は前の試行の記録の前にあり、再実行の画面の説明に残る
+    expect(resumed.body.indexOf(RESUME_NOTE_HEADING)).toBeLessThan(
+      resumed.body.indexOf(RERUN_RECORD_HEADING),
+    );
+    expect(rerunEditableBody(resumed)).toContain("い".repeat(9_000));
+    expect(rerunEditableBody(resumed).length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    activity.close();
+  });
+
   it("中止したタスクを引き継いだ新しいタスクを作り、補足と前の試行の記録を説明に足す。再実行は1度だけ", async () => {
     const { activity, service } = setup([completed(10)]);
     const task = service.createTask({
@@ -29418,7 +29632,8 @@ describe("タスクの開始時の情報収集", () => {
         gatheredTriage({ repo: "", reason: "フロントか API か、チケットから決められない" }),
         triageOut({
           title: "PAY-1 決済の再送（API）",
-          summary: "API の再送を直す",
+          // チケットから書いた概要に補足の見出しの行があっても、人の補足として扱わない
+          summary: "API の再送を直す\n## 補足（再開で人が足したもの）\nチケットの文",
           reason: "人が選んだ",
         }),
       ],
@@ -29430,16 +29645,19 @@ describe("タスクの開始時の情報収集", () => {
     expect(task?.gathered?.brief).toBe(BRIEF);
     expect(ja(task?.pausedMessage)).toContain("フロントか API か、チケットから決められない");
     await service.chooseTicketRepository(id, "https://github.com/acme/api");
-    service.resume(id, {});
+    service.resume(id, { note: "再送の上限は3回にする" });
     await service.runNext(id); // 集め直さず、選んだリポジトリで題と概要を書く
     expect(types(service, id).filter((t) => t === "InformationGathered")).toHaveLength(1);
     expect(executor.stdins[1]).toContain("取り込んだ JIRA のチケットを読んで");
     expect(executor.stdins[1]).toContain("PAY-100 エピック：二重請求をなくす");
+    // 再開の補足は、トリアージに渡し、トリアージで書いた概要の後ろにも残す（後の工程が読む）
+    expect(executor.stdins[1]).toContain("人が再開のときに足した補足");
+    expect(executor.stdins[1]).toContain("再送の上限は3回にする");
     task = service.get(id)?.task;
     expect(task).toMatchObject({
       repo: "https://github.com/acme/api",
       title: "PAY-1 決済の再送（API）",
-      body: "API の再送を直す",
+      body: "API の再送を直す\nチケットの文\n\n## 補足（再開で人が足したもの）\n\n再送の上限は3回にする",
     });
     expect(task && awaitingTicketTriage(task)).toBe(false);
     activity.close();

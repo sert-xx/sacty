@@ -5,7 +5,9 @@ import {
   type AuditAdoptNoteKind,
   AuditTarget,
   CreateTaskInput,
+  normalizeNewlines,
   type ProjectDefinitionInput,
+  RESUME_NOTE_MAX,
   renderMessage,
   type SactySettingsInput,
   ScheduleInput,
@@ -65,7 +67,7 @@ import {
 import { projectSchedulesPath, projectSettingsPath, schedulePath } from "@/lib/paths";
 import { needsProjectSelect } from "@/lib/project-select";
 import { readScheduleForm, type ScheduleFormValues, toScheduleInput } from "@/lib/schedule-form";
-import { stepChoicesFrom } from "@/lib/step-options";
+import { changedStepChoices, type StepChoices, stepChoicesFrom } from "@/lib/step-options";
 
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -235,6 +237,10 @@ export type ResumeState = {
   tests?: "command" | "none";
   testCommand?: string;
   noTestsReason?: string;
+  /** 再開のときに足す補足と、選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
+  note?: string;
+  images?: StepChoices;
+  agents?: StepChoices;
 };
 
 /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限を受け取る。 */
@@ -258,12 +264,23 @@ export async function resumeTaskAction(
   const choice = String(formData.get("tests") ?? "");
   const testCommand = String(formData.get("testCommand") ?? "").trim();
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
+  // 改行は LF にそろえてから数える（フォームの送信は改行を CRLF にし、画面の欄の上限は LF で数えるため）
+  const note = normalizeNewlines(String(formData.get("note") ?? "")).trim();
+  // 人が変えた工程の設定だけを、デーモンへ渡し、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に
+  // 戻す）。触っていない工程は戻さず、今の名前から始める（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
+  const { images, agents } = changedStepChoices(formData);
   const kept: ResumeState = {
     capUsd: capText,
     ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
     testCommand,
     noTestsReason,
+    note,
+    images,
+    agents,
   };
+  if (note.length > RESUME_NOTE_MAX) {
+    return { ...kept, message: a.resumeNoteTooLong(RESUME_NOTE_MAX) };
+  }
   let tests: { testCommand: string } | { noTestsReason: string } | undefined;
   if (choice === "command") {
     if (!testCommand || testCommand.length > 1000)
@@ -283,7 +300,7 @@ export async function resumeTaskAction(
       const chosen = await chooseTicketRepository(taskId, repo);
       if (!chosen.ok) return { ...kept, message: chosen.message };
     }
-    const result = await resumeTask(taskId, capUsd, tests);
+    const result = await resumeTask(taskId, capUsd, tests, { note, images, agents });
     if (!result.ok) return { ...kept, message: result.message };
   } catch {
     return { ...kept, message: a.resumeFailed };

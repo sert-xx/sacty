@@ -18,6 +18,7 @@ import {
   isSecurityTask,
   openProposal,
   rerunEditableBody,
+  resumeNoteRoom,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -45,7 +46,7 @@ import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { RerunDialog } from "@/components/rerun-dialog";
-import { ResumeForm } from "@/components/resume-form";
+import { ResumeForm, type ResumeStepSetting } from "@/components/resume-form";
 import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
@@ -435,6 +436,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             : {})}
           reason={task.pausedReason}
           toReview={canOverrideVerification(task)}
+          steps={resumeStepSettings(task, data, m.images.defaultDescription)}
+          noteRoom={resumeNoteRoom(task)}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
           lastFailure={(() => {
@@ -756,6 +759,36 @@ export function EventText({ event }: { event: ActivityEvent }) {
       <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground">{detail}</span>
     </details>
   );
+}
+
+/**
+ * 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。候補は、タスクの詳細の工程の設定と同じ
+ * ものを使う（取得できない・設定を読めなければ undefined）。
+ */
+function resumeStepSettings(
+  task: Task,
+  data: Pick<TaskDetailData, "imageStatus" | "agentStatus">,
+  defaultDescription: string,
+): ResumeStepSetting[] {
+  const imageOptions = stepImageOptions(data.imageStatus, defaultDescription);
+  const agents = new Map(
+    stepAgentRows(task, data.agentStatus?.stepAgents).map((row) => [row.step, row.agent]),
+  );
+  return stepImageRows(task)
+    .filter((row) => row.when !== "done")
+    .map((row) => {
+      const agentChangeable = agents.has(row.step);
+      const current = agents.get(row.step);
+      const options = stepAgentOptions(data.agentStatus, current);
+      return {
+        step: row.step,
+        image: row.image,
+        ...(imageOptions ? { imageOptions } : {}),
+        ...(agentChangeable
+          ? { agent: { ...(current ? { current } : {}), ...(options ? { options } : {}) } }
+          : {}),
+      };
+    });
 }
 
 /** 工程のイメージ（PBI-41）と、選んだ元・いつから使うか。中止していなければ、どの工程も変えられる（PBI-106）。 */

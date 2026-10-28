@@ -1021,6 +1021,12 @@ const BudgetCapRaised = z.object({
   payload: z.object({ capUsd: z.number().positive() }),
 });
 
+/**
+ * 再開の補足の長さの上限（入力と TaskResumed で共通）。作業履歴は読むたびにイベントを確かめるので、下げると保存済みの
+ * 補足が読めなくなる。下げない。
+ */
+export const RESUME_NOTE_MAX = 10_000;
+
 const TaskResumed = z.object({
   type: z.literal("TaskResumed"),
   payload: z.object({
@@ -1031,6 +1037,11 @@ const TaskResumed = z.object({
      * 人がテストを決めずに再開したとき（同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないように）。
      */
     rechooseSteps: z.literal(true).optional(),
+    /**
+     * 人が再開のときに足した補足。投影が、タスクの説明の後に見出しを付けて足す（オーケストレーターとすべての工程は説明を
+     * 読むので、工程ごとに指示を変えずに届く。人も画面の説明で確かめられる）。
+     */
+    note: z.string().trim().min(1).max(RESUME_NOTE_MAX).optional(),
   }),
 });
 
@@ -2695,6 +2706,9 @@ export const CreateTemplateTaskInput = z
   .strict();
 export type CreateTemplateTaskInput = z.infer<typeof CreateTemplateTaskInput>;
 
+/** 再開で人が足した補足の、タスクの説明の中の見出し。 */
+export const RESUME_NOTE_HEADING = "## 補足（再開で人が足したもの）";
+
 /** 再実行の補足の長さの上限。 */
 export const RERUN_NOTE_MAX = 10_000;
 
@@ -2788,6 +2802,55 @@ export function rerunEditableBody(task: {
   return body.slice(0, at).trimEnd();
 }
 
+/** 再開の補足を足す・取り出すときに見るタスクの項目。 */
+type ResumeNoteTask = { body: string; rerun?: unknown; derivedFrom?: { record?: string } };
+
+/**
+ * 説明の中で、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）が始まる位置（無ければ -1）。
+ * 派生の記録があれば、作成のときに記録した本文そのものの位置を返す（再実行の記録はその後ろにあるので探さない。派生の記録に
+ * 入る成果の本文に再実行の記録と同じ見出しの行があっても、境目を誤らない。rerunEditableBody と同じ考え方）。無ければ、
+ * 再実行で作ったタスクの前の試行の記録の見出しを探す。
+ */
+function recordAt(task: ResumeNoteTask): number {
+  const record = derivedRecord(task);
+  if (record) {
+    const at = task.body.startsWith(record) ? 0 : task.body.indexOf(`\n\n${record}`);
+    if (at >= 0) return at;
+  }
+  return task.rerun ? headingAt(task.body, RERUN_RECORD_HEADING) : -1;
+}
+
+/** 再開の補足の節（見出しと本文）。補足ごとに見出しを付けて並べる。 */
+export function resumeNoteSections(notes: readonly string[]): string {
+  return notes.map((note) => `${RESUME_NOTE_HEADING}\n\n${note}`).join("\n\n");
+}
+
+/**
+ * 再開の補足を足した後の説明。見出しを付けて説明の後に足す。派生・再実行で作ったタスクは、sacty が足した記録の前に
+ * 入れる（記録は参考で、人の依頼と補足が優先する。再実行の画面の説明にも残す）。
+ */
+export function bodyWithResumeNote(task: ResumeNoteTask, note: string): string {
+  const section = resumeNoteSections([note]);
+  const at = recordAt(task);
+  if (at < 0) return [task.body.trimEnd(), section].filter(Boolean).join("\n\n");
+  const before = task.body.slice(0, at).trimEnd();
+  const after = task.body.slice(at).replace(/^\n+/, "");
+  return [before, section, after].filter(Boolean).join("\n\n");
+}
+
+/** 補足の見出しの行を除く（人の補足ではない文を、人の補足に見せかけないため。チケットのトリアージの概要など）。 */
+export function withoutResumeNoteHeadings(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== RESUME_NOTE_HEADING)
+    .join("\n");
+}
+
+/** 改行を LF にそろえる（フォームの送信は改行を CRLF にするので、画面の欄の数え方と長さをそろえる）。 */
+export function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 /** 派生で作ったタスクの、sacty が説明の後に足した元のタスクの記録の本文。派生でないタスクなら undefined。 */
 export function derivedRecord(task: { derivedFrom?: { record?: string } }): string | undefined {
   return task.derivedFrom?.record || undefined;
@@ -2800,6 +2863,18 @@ export function derivedRecord(task: { derivedFrom?: { record?: string } }): stri
 export const ResumeTaskInput = z.object({
   capUsd: z.number().positive().max(10_000).optional(),
   tests: TestsDecided.shape.payload.optional(),
+  /** 再開のときに足す補足（タスクの説明の後に足す。TaskResumed の note）。空なら足さない。 */
+  note: z
+    .string()
+    .transform(normalizeNewlines)
+    .pipe(z.string().trim().max(RESUME_NOTE_MAX, code("input.resumeNoteTooLong")))
+    .optional(),
+  /**
+   * 再開と一緒に変える工程のイメージ・エージェント（タスクの詳細で変えるのと同じ。StepImageChanged・StepAgentChanged）。
+   * 選んだ工程だけを指定でき、今と同じ名前は変えない。
+   */
+  images: StepImageMap.optional(),
+  agents: StepAgentMap.optional(),
 });
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 
