@@ -2725,7 +2725,8 @@ export const RERUN_NOTE_HEADING = "## 補足（再実行で人が足したもの
 
 /** 説明の中の、sacty が足した記録の見出しの位置（無ければ -1）。 */
 function headingAt(body: string, heading: string): number {
-  return body.indexOf(`\n${heading}`);
+  // 人の説明が空なら、見出しは説明の先頭にある
+  return body.startsWith(heading) ? 0 : body.indexOf(`\n${heading}`);
 }
 
 /**
@@ -2741,10 +2742,15 @@ export function rerunEditableBody(task: {
   let body = task.body;
   // 元のタスクの記録は、人の説明の後・再実行の補足の前にある。作成のときに記録した本文そのものを除く（成果の本文に
   // 見出しと同じ行があっても、境目を誤らない）
+  // （人の説明が空なら、記録は説明の先頭にある）
   const record = derivedRecord(task);
-  const recordAt = record ? body.indexOf(`\n\n${record}`) : -1;
-  if (record && recordAt >= 0) {
-    body = `${body.slice(0, recordAt)}${body.slice(recordAt + 2 + record.length)}`;
+  if (record && body.startsWith(record)) {
+    body = body.slice(record.length).replace(/^\n+/, "");
+  } else if (record) {
+    const recordAt = body.indexOf(`\n\n${record}`);
+    if (recordAt >= 0) {
+      body = `${body.slice(0, recordAt)}${body.slice(recordAt + 2 + record.length)}`;
+    }
   }
   const at = task.rerun ? headingAt(body, RERUN_RECORD_HEADING) : -1;
   if (at < 0) return record ? body.trimEnd() : body;

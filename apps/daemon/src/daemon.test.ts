@@ -11245,6 +11245,44 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     activity.close();
   });
 
+  it("派生で作ったタスクの再実行は、元のタスクを再レビューで完了でなくした後も、説明を空にして重ねても、元のタスクと記録を保つ（PR #242 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+    const { service } = makeService(activity, [out(`# レビュー\n${"あ".repeat(6000)}`)], {
+      pulls,
+      settings,
+    });
+    const [task] = service.importIssues([pr(9, ["sacty-review"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    await service.runNext(id);
+    const derived = service.deriveTask(id, { title: "指摘を直す", body: "直す", repo: null });
+    const record = derived.derivedFrom?.record ?? "";
+    expect(record).toContain(DERIVE_RECORD_HEADING);
+    await service.cancel(derived.id);
+    // 元のタスクを再レビューで完了でなくする（派生はできなくなる）
+    service.rereview(id);
+    expect(service.get(id)?.task.status).toBe("queued");
+    // 説明を空にして再実行する（記録が説明の先頭に来る）
+    const first = service.rerunTask(derived.id, { title: "指摘を直す", body: "", repo: null });
+    expect(first.derivedFrom).toEqual({ taskId: id, record });
+    expect(first.body.startsWith(record)).toBe(true);
+    expect(rerunEditableBody(first)).toBe("");
+    await service.cancel(first.id);
+    // 画面の初期値（空）のまま、もう一度再実行できる
+    const second = service.rerunTask(first.id, {
+      title: "指摘を直す",
+      body: rerunEditableBody(service.get(first.id)?.task as Task),
+      repo: null,
+    });
+    expect(second.derivedFrom).toEqual({ taskId: id, record });
+    expect(rerunEditableBody(second)).toBe("");
+    expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, first.id, second.id]);
+    activity.close();
+  });
+
   it("再レビューでは、前回の指摘と、前回の投稿の後の PR の作者の返答だけをプロンプトに渡す（PBI-111）。既存のレビューは初回から渡す（PBI-144）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
