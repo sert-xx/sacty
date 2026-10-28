@@ -275,6 +275,13 @@ function servicesChoice(
   return e.stepsNoServices(shared.join(e.imagesJoin), payload.servicesReason);
 }
 
+/** 工程ごとの名前（イメージ・エージェント）を「工程＝名前」で並べる。 */
+function stepNames(names: Partial<Record<StepKey, string>>, l: LabelMessages): string {
+  return Object.entries(names)
+    .map(([step, name]) => l.event.stepImage(l.step[step as StepKey], name ?? ""))
+    .join(l.event.imagesJoin);
+}
+
 /**
  * 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。理由が無いまま既定のイメージで動かす工程も、
  * そのことを出す（黙って既定のイメージにしない）。
@@ -350,10 +357,15 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     costUsd > 0 ? e.withCost(actor, cost(costUsd, estimated)) : actor;
   switch (event.type) {
     case "TaskCreated":
-      return e.TaskCreated(
-        actor,
-        event.payload.template ? l.template[event.payload.template] : undefined,
-        event.payload.rerun !== undefined,
+      return (
+        e.TaskCreated(
+          actor,
+          event.payload.template ? l.template[event.payload.template] : undefined,
+          event.payload.rerun !== undefined,
+        ) +
+        // 作成時に、進め方の工程ごとに指定したイメージ・エージェント
+        (event.payload.images ? e.createdImages(stepNames(event.payload.images, l)) : "") +
+        (event.payload.agents ? e.createdAgents(stepNames(event.payload.agents, l)) : "")
       );
     case "StepsChosen": {
       const chosen = e.StepsChosen(
@@ -903,6 +915,8 @@ export type StepImageRow = {
     | { by: "project" }
     /** 再実行で人が指定した（すべての工程で同じイメージ）。 */
     | { by: "rerun" }
+    /** 作成時に、人が工程ごとに指定した。 */
+    | { by: "request" }
     /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
     | { by: "orchestrator"; default?: string; unexplained?: true }
     | { by: "none" };
@@ -922,13 +936,15 @@ export function stepImageRows(task: Task): StepImageRow[] {
     const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
     const source: StepImageRow["source"] = change
       ? { by: "person", at: change.at, from: change.from }
-      : defaultReason
-        ? { by: "orchestrator", default: defaultReason }
-        : unexplained
-          ? { by: "orchestrator", unexplained: true }
-          : task.images?.[s.key]
-            ? { by: task.imageSource ?? "orchestrator" }
-            : { by: "none" };
+      : task.requestedImages?.[s.key]
+        ? { by: "request" }
+        : defaultReason
+          ? { by: "orchestrator", default: defaultReason }
+          : unexplained
+            ? { by: "orchestrator", unexplained: true }
+            : task.images?.[s.key]
+              ? { by: task.imageSource ?? "orchestrator" }
+              : { by: "none" };
     const when: StepImageRow["when"] = stepRunning(task, s.key)
       ? "running"
       : s.state === "done" || s.state === "skip"
@@ -964,7 +980,7 @@ export type StepAgentRow = {
   /** 使うエージェントの名前。config.yaml を読めず、人も選んでいなければ undefined。 */
   agent?: string;
   /** 決めた元。人が変えたら、いつ・何から変えたか。 */
-  source: { by: "person"; at: string; from: string } | { by: "config" };
+  source: { by: "person"; at: string; from: string } | { by: "request" } | { by: "config" };
   /** 変えたエージェントをいつから使うか（工程のイメージと同じ）。 */
   when: StepImageRow["when"];
 };
@@ -992,7 +1008,11 @@ export function stepAgentRows(
         step: s.key,
         ...(agent ? { agent } : {}),
         source:
-          chosen && change ? { by: "person", at: change.at, from: change.from } : { by: "config" },
+          chosen && change
+            ? { by: "person", at: change.at, from: change.from }
+            : chosen && task.requestedAgents?.[s.key] === chosen
+              ? { by: "request" }
+              : { by: "config" },
         when,
       };
     });

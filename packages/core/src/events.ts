@@ -88,6 +88,13 @@ export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
 /**
+ * 工程ごとの名前（イメージ・エージェント）の指定。名前は config.yaml のキーのまま持つ（空白を除いたり長さで切ったり
+ * しない。別の名前を選んだことにしないため）。
+ */
+export const StepSettingMap = z.partialRecord(StepKey, z.string().min(1).max(100));
+export type StepSettingMap = z.infer<typeof StepSettingMap>;
+
+/**
  * 工程の完了の後に、オーケストレーターが飛ばせる工程（工程の見直し）。実装の前に置く、文書やテストを作る工程だけ。
  * 飛ばせるのは、組み合わせに実装の工程があるときだけ（実装が成果物で、ゴールガーディアンが最終レビューで判定するため）。
  * タスク分割の前の設計は、子タスクを作る根拠なので飛ばせない（組み合わせに実装が無い）。
@@ -627,6 +634,18 @@ const TaskCreated = z.object({
      * オーケストレーターが選ぶ。
      */
     plan: StepPlan.optional(),
+    /**
+     * 人がタスクの作成時に、進め方（plan）の工程ごとに指定したイメージ（config.yaml の images の名前か default）。
+     * 指定した工程は、プロジェクトの対象の指定・オーケストレーターの選択より優先する（工程を選び直しても使う）。
+     * plan があるときだけ持ち、plan の工程だけを書く。
+     */
+    images: StepSettingMap.optional(),
+    /**
+     * 人がタスクの作成時に、進め方（plan）の工程ごとに指定したエージェント（config.yaml の agents の名前）。
+     * タスクの詳細で変えたときと同じく、config.yaml の step_agents より優先する（工程を選び直しても使う）。
+     * plan があるときだけ持ち、plan の工程（統合レビューを除く）だけを書く。
+     */
+    agents: StepSettingMap.optional(),
     /**
      * スケジュールタスクが作った（start: schedule）。スケジュールタスクと、その予定の時刻（ISO 8601）。同じ回のタスクを
      * 二重に作らないための目印にもする。
@@ -2642,6 +2661,16 @@ export const CreateTaskInput = z.object({
    * デーモンが理由を示して断る。
    */
   plan: StepPlan.optional(),
+  /**
+   * 進め方の工程ごとのイメージ（config.yaml の images の名前か default）。plan を選んだときだけ、その工程だけを指定できる。
+   * 書いていない工程は、いつもどおり決める（プロジェクトの対象の指定かオーケストレーター）。
+   */
+  images: StepSettingMap.optional(),
+  /**
+   * 進め方の工程ごとのエージェント（config.yaml の agents の名前）。plan を選んだときだけ、その工程（統合レビューを除く）
+   * だけを指定できる。書いていない工程は config.yaml で決まる。
+   */
+  agents: StepSettingMap.optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 

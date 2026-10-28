@@ -14,6 +14,26 @@ export const SHOTS = [
     },
     selector: '[role="dialog"]',
   },
+  {
+    // 進め方を選び、工程ごとの設定で設計のイメージと実装のエージェントを指定したところ
+    name: "new-task-steps",
+    path: "/projects/payments/tasks",
+    prepare: async (page) => {
+      await page.getByRole("button", { name: /^(タスクを作成|Create task)$/ }).click();
+      const dialog = page.getByRole("dialog");
+      await dialog.waitFor();
+      await dialog.locator("select[name=plan]").selectOption("standard");
+      await dialog.getByTestId("step-settings-open").click();
+      await dialog
+        .getByTestId("task-step-image-design")
+        .locator("option", { hasText: "java17" })
+        .waitFor({ state: "attached" });
+      await dialog.getByTestId("task-step-image-implement").selectOption("java17");
+      await dialog.getByTestId("task-step-agent-implement").selectOption("codex_advanced");
+      await page.waitForTimeout(500);
+    },
+    selector: '[role="dialog"]',
+  },
   { name: "task-pull-request", path: "/tasks/a1c3e5f7-0001", height: 760 },
   { name: "task-paused", path: "/tasks/b2d4f6a8-0002", height: 520 },
   { name: "task-budget-paused", path: "/tasks/b8d0f2a4-0008", height: 760 },

@@ -52,3 +52,98 @@ describe("タスクの作成のダイアログの、リポジトリの候補（P
     expect(html).not.toContain(t.repositoriesEmpty);
   });
 });
+
+const { StepFlowSummary, TaskStepSettings } = await import("./task-step-settings");
+
+describe("タスクの作成の、進め方の工程ごとの設定", () => {
+  const loaded = {
+    status: "loaded" as const,
+    images: [
+      { name: "default", description: "既定のイメージ" },
+      { name: "java17", description: "Java 17・Maven" },
+    ],
+    agents: [
+      { id: "codex_standard" },
+      { id: "codex_advanced", model: "gpt-6.1-sol", reasoningEffort: "medium" },
+    ],
+    stepAgents: { requirements: "codex_standard" as const, design: "codex_standard" as const },
+  };
+  const settings = (props: Partial<Parameters<typeof TaskStepSettings>[0]> = {}) =>
+    renderToStaticMarkup(
+      createElement(TaskStepSettings, {
+        plan: "split",
+        options: loaded,
+        images: {},
+        agents: {},
+        onImage: () => {},
+        onAgent: () => {},
+        onResetAll: () => {},
+        onBack: () => {},
+        ...props,
+      }),
+    );
+
+  it("基本の入力には工程の並びと要約だけを出し、指定した工程に印を付ける", () => {
+    const t = messagesFor("ja").forms.task;
+    const none = renderToStaticMarkup(
+      createElement(StepFlowSummary, {
+        id: "n",
+        plan: "standard",
+        customized: [],
+        onOpen: () => {},
+      }),
+    );
+    expect(none).toContain(t.stepsSummaryDefault);
+    expect(none).toContain(t.steps);
+    expect(none).not.toContain("data-customized");
+    const some = renderToStaticMarkup(
+      createElement(StepFlowSummary, {
+        id: "n",
+        plan: "standard",
+        customized: ["implement"],
+        onOpen: () => {},
+      }),
+    );
+    expect(some).toContain(t.stepsSummaryCustomized(1));
+    expect(some.match(/data-customized/g)).toHaveLength(1);
+  });
+
+  it("工程ごとに、自動・既定（config.yaml で決まる名前）と候補を出し、統合レビューのエージェントは選ばせない", () => {
+    const t = messagesFor("ja").forms.task;
+    const html = settings();
+    expect(html).toContain(t.stepsTitle);
+    expect(html).toContain(t.stepImageAuto);
+    expect(html).toContain(t.stepAgentDefault("codex_standard"));
+    expect(html).toContain('value="java17"');
+    expect(html).toContain('value="codex_advanced"');
+    expect(html).toContain(t.stepAgentGuardian);
+    expect(html).not.toContain('data-testid="task-step-agent-integrate"><option');
+    // 何も指定していなければ、戻す操作は出さない（すべてを戻すボタンは押せない）
+    expect(html).not.toContain(`：${t.stepReset}"`);
+    expect(html).toMatch(new RegExp(`disabled=""[^>]*>${t.stepsResetAll}<`));
+  });
+
+  it("指定した工程には、印・戻す操作・選んだものの説明を出す", () => {
+    const t = messagesFor("ja").forms.task;
+    const html = settings({ images: { design: "java17" }, agents: { design: "codex_advanced" } });
+    expect(html.match(/data-customized="true"/g)).toHaveLength(1);
+    expect(html).toContain(`aria-label="設計：${t.stepReset}"`);
+    expect(html).not.toMatch(new RegExp(`disabled=""[^>]*>${t.stepsResetAll}<`));
+    expect(html).toContain("Java 17・Maven");
+    expect(html).toContain("gpt-6.1-sol・medium");
+  });
+
+  it("候補の読み込み中は選べず、読めなければ理由と、既定のまま作成できることを出す", () => {
+    const t = messagesFor("ja").forms.task;
+    const loading = settings({ options: { status: "loading" } });
+    expect(loading).toContain(t.stepOptionsLoading);
+    expect(loading).toMatch(/<select[^>]*disabled=""/);
+    const failed = settings({ options: { status: "failed", message: "読めません" } });
+    expect(failed).toContain(t.stepOptionsFailed("読めません"));
+    expect(failed).toContain(t.stepOptionsFailedNote);
+    // 前に選んだ値は、候補を読めなくても見せる
+    expect(settings({ options: { status: "loading" }, images: { split: "java17" } })).toContain(
+      'value="java17"',
+    );
+  });
+});

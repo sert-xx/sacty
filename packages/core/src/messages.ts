@@ -32,6 +32,8 @@ const PARAMS = {
   "task.repositoryUnknown": z.object({ project: z.string() }),
   "task.templateRepositoryRequired": null,
   "task.reviewPlanNeedsPullRequest": null,
+  "task.stepSettingsNeedPlan": null,
+  "task.stepSettingOutsidePlan": null,
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
@@ -648,6 +650,10 @@ const ja: MessageDictionary = {
     "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
   "task.reviewPlanNeedsPullRequest":
     "進め方「レビューだけ」は、対象リポジトリを選び、そのリポジトリの PR のリンクを題か内容に書いたときだけ選べます。",
+  "task.stepSettingsNeedPlan":
+    "工程ごとのイメージ・エージェントは、進め方を選んだときだけ指定できます（自動では、工程が決まっていないため）。",
+  "task.stepSettingOutsidePlan":
+    "選んだ進め方に無い工程の、イメージ・エージェントは指定できません。進め方を選び直してから、もう一度指定してください。",
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
@@ -1279,6 +1285,10 @@ const en: MessageDictionary = {
     "Choose a target repository for this template (it cannot be created without one).",
   "task.reviewPlanNeedsPullRequest":
     'The plan "Review only" needs a target repository and a link to a pull request of that repository in the title or description.',
+  "task.stepSettingsNeedPlan":
+    "Step images and agents can be set only when you choose a plan (with the automatic plan, the steps are not decided yet).",
+  "task.stepSettingOutsidePlan":
+    "Images and agents can't be set for steps that are not in the chosen plan. Choose the plan again, then set them again.",
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",

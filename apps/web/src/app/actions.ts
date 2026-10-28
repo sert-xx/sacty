@@ -63,6 +63,7 @@ import {
 import { projectSchedulesPath, projectSettingsPath, schedulePath } from "@/lib/paths";
 import { needsProjectSelect } from "@/lib/project-select";
 import { readScheduleForm, type ScheduleFormValues, toScheduleInput } from "@/lib/schedule-form";
+import { stepChoicesFrom } from "@/lib/step-options";
 
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -80,6 +81,8 @@ export async function createTaskAction(
   const template = TaskTemplate.safeParse(formData.get("template"));
   // テンプレートで作る（PBI-90）。題と説明は sacty が決めるので、リポジトリだけを渡す
   if (template.success) return createTemplateTask(template.data, repo, formData);
+  // 進め方の工程ごとのイメージ・エージェント。進め方を選んだときだけ送る（名前と工程は、デーモンが検査する）
+  const { images, agents } = stepChoicesFrom(formData);
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
@@ -87,6 +90,8 @@ export async function createTaskAction(
     ...(repo ? { repo } : {}),
     // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。タスクの形で選べるかは、デーモンが検査する
     ...(plan ? { plan } : {}),
+    ...(plan && Object.keys(images).length > 0 ? { images } : {}),
+    ...(plan && Object.keys(agents).length > 0 ? { agents } : {}),
   };
   const a = (await getMessages()).common.action;
   // 作成先のプロジェクトは、下で別に確かめる（無ければ、入力の誤りではなく理由を返す）

@@ -1,8 +1,8 @@
 "use client";
 
-import { STEP_PLANS, type StepPlan, type TaskTemplate } from "@sacty/core";
+import { STEP_PLANS, type StepKey, type StepPlan, type TaskTemplate } from "@sacty/core";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { type Ref, useActionState, useEffect, useRef, useState } from "react";
 import { type CreateTaskState, createTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { projectSettingsPath } from "@/lib/paths";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
+import {
+  agentField,
+  chosenForPlan,
+  customizedSteps,
+  imageField,
+  type StepChoices,
+  type StepOptions,
+  stepOptionsLoader,
+} from "@/lib/step-options";
+import { StepFlowSummary, TaskStepSettings } from "./task-step-settings";
 
 const initial: CreateTaskState = {};
 
@@ -78,6 +88,36 @@ export function NewTaskDialog({
   const [template, setTemplate] = useState<TaskTemplate | "">("");
   // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。送信の後も選んだままにする
   const [plan, setPlan] = useState<StepPlan | "">("");
+  // 進め方の工程ごとのイメージ・エージェント。基本の入力とは別の画面（工程ごとの設定）で選ぶ。進め方を選び直しても
+  // 工程ごとに残し、今の進め方の工程の分だけを送る。送信の後も選んだままにする
+  const [view, setView] = useState<"main" | "steps">("main");
+  const [stepImages, setStepImages] = useState<StepChoices>({});
+  const [stepAgents, setStepAgents] = useState<StepChoices>({});
+  // 選べるイメージ・エージェント。工程ごとの設定を開いたときに読む（既定のまま作るときは読まない）
+  const [stepOptions, setStepOptions] = useState<StepOptions>({ status: "idle" });
+  const [loadStepOptions] = useState(() => stepOptionsLoader());
+  // 画面を切り替えたら、移った先の見出し（戻ったときは、開いたボタン）にフォーカスを移す
+  const stepsHeading = useRef<HTMLHeadingElement>(null);
+  const stepsOpener = useRef<HTMLButtonElement>(null);
+  const switched = useRef(false);
+  useEffect(() => {
+    if (!switched.current) return;
+    switched.current = false;
+    (view === "steps" ? stepsHeading.current : stepsOpener.current)?.focus();
+  }, [view]);
+  const show = (next: "main" | "steps") => {
+    switched.current = true;
+    setView(next);
+    if (next === "steps") loadStepOptions(t.repositoriesNoAnswer, setStepOptions);
+  };
+  const choose =
+    (set: (update: (prev: StepChoices) => StepChoices) => void) => (step: StepKey, name: string) =>
+      set((prev) => {
+        const { [step]: _removed, ...rest } = prev;
+        return name ? { ...rest, [step]: name } : rest;
+      });
+  const customizable = !template && plan !== "";
+  const chosen = plan ? chosenForPlan(plan, stepImages, stepAgents) : { images: {}, agents: {} };
 
   return (
     <Dialog
@@ -86,50 +126,102 @@ export function NewTaskDialog({
         setTarget({ id: projectId, name: projectName, hasTargets });
         setTemplate("");
         setPlan("");
+        setView("main");
+        setStepImages({});
+        setStepAgents({});
+        // 候補は、開き直すたびに読み直す（config.yaml を直した後に、古い候補を見せない）
+        setStepOptions({ status: "idle" });
+        loadStepOptions.cancel();
         // 対象が無ければ読まない（候補は無く、プロジェクトの設定を案内する）
         loadCandidates(projectId, hasTargets, t.repositoriesNoAnswer, setCandidates);
       }}
     >
       <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-xl">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
-          <DialogHeader>
-            <DialogTitle>{t.create}</DialogTitle>
-            <DialogDescription className="flex items-center gap-1">
-              {t.description(target.name)}
-              <Hint text={t.descriptionHint} className="size-4" />
-            </DialogDescription>
-          </DialogHeader>
-          {target.hasTargets && <CandidatesProblems candidates={candidates} />}
-          <TaskFields
-            idPrefix="task"
-            projectId={target.id}
-            hasTargets={target.hasTargets}
-            candidates={candidates}
-            template={template}
-            onTemplate={setTemplate}
-            plan={plan}
-            onPlan={setPlan}
-            // 候補が1つなら入れておく
-            repoDefault={state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
-            titleDefault={state.values?.title}
-            bodyDefault={state.values?.body}
-            titleError={state.fieldErrors?.title?.[0]}
-            bodyError={state.fieldErrors?.body?.[0]}
-            autoFocus
-          />
-          {state.message && (
-            <p role="alert" className="text-sm text-warn">
-              {state.message}
-            </p>
+          {/* 工程ごとの指定は、別の画面で選び、ここから送る（画面を切り替えても、入力中の題・内容を残すため、どちらの画面も消さずに隠す） */}
+          {customizable &&
+            Object.entries(chosen.images).map(([step, name]) => (
+              <input
+                key={`image:${step}`}
+                type="hidden"
+                name={imageField(step as StepKey)}
+                value={name}
+              />
+            ))}
+          {customizable &&
+            Object.entries(chosen.agents).map(([step, name]) => (
+              <input
+                key={`agent:${step}`}
+                type="hidden"
+                name={agentField(step as StepKey)}
+                value={name}
+              />
+            ))}
+          <div hidden={customizable && view === "steps"} className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>{t.create}</DialogTitle>
+              <DialogDescription className="flex items-center gap-1">
+                {t.description(target.name)}
+                <Hint text={t.descriptionHint} className="size-4" />
+              </DialogDescription>
+            </DialogHeader>
+            {target.hasTargets && <CandidatesProblems candidates={candidates} />}
+            <TaskFields
+              idPrefix="task"
+              projectId={target.id}
+              hasTargets={target.hasTargets}
+              candidates={candidates}
+              template={template}
+              onTemplate={setTemplate}
+              plan={plan}
+              onPlan={setPlan}
+              steps={{
+                customized: plan ? customizedSteps(plan, stepImages, stepAgents) : [],
+                onOpen: () => show("steps"),
+                openRef: stepsOpener,
+              }}
+              // 候補が1つなら入れておく
+              repoDefault={state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
+              titleDefault={state.values?.title}
+              bodyDefault={state.values?.body}
+              titleError={state.fieldErrors?.title?.[0]}
+              bodyError={state.fieldErrors?.body?.[0]}
+              autoFocus
+            />
+            {state.message && (
+              <p role="alert" className="text-sm text-warn">
+                {state.message}
+              </p>
+            )}
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline" type="button" />}>
+                {t.close}
+              </DialogClose>
+              <Button type="submit" disabled={pending || !target.hasTargets}>
+                {pending ? t.creating : t.submit}
+              </Button>
+            </DialogFooter>
+          </div>
+          {customizable && (
+            <div hidden={view !== "steps"}>
+              <TaskStepSettings
+                plan={plan}
+                options={stepOptions}
+                images={stepImages}
+                agents={stepAgents}
+                onImage={choose(setStepImages)}
+                onAgent={choose(setStepAgents)}
+                onResetAll={() => {
+                  setStepImages({});
+                  setStepAgents({});
+                }}
+                onBack={() => show("main")}
+                headingRef={stepsHeading}
+              />
+            </div>
           )}
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" type="button" />}>{t.close}</DialogClose>
-            <Button type="submit" disabled={pending || !target.hasTargets}>
-              {pending ? t.creating : t.submit}
-            </Button>
-          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -149,6 +241,7 @@ export function TaskFields({
   onTemplate,
   plan,
   onPlan,
+  steps,
   repoDefault,
   titleDefault,
   bodyDefault,
@@ -164,6 +257,15 @@ export function TaskFields({
   onTemplate: (template: TaskTemplate | "") => void;
   plan: StepPlan | "";
   onPlan: (plan: StepPlan | "") => void;
+  /**
+   * 進め方の工程ごとの設定（タスクの作成のダイアログだけ）。指定した工程と、工程ごとの設定を開く操作。無ければ、工程の
+   * 並びだけを出す（スケジュールタスク）。
+   */
+  steps?: {
+    customized: readonly StepKey[];
+    onOpen: () => void;
+    openRef?: Ref<HTMLButtonElement>;
+  };
   repoDefault?: string;
   titleDefault?: string;
   bodyDefault?: string;
@@ -283,15 +385,25 @@ export function TaskFields({
                 </option>
               ))}
             </select>
-            <p
-              id={`${idPrefix}-plan-note`}
-              data-testid={`${idPrefix}-plan-note`}
-              className="text-xs leading-5 text-muted-foreground"
-            >
-              {plan
-                ? STEP_PLANS[plan].map((step) => messages.labels.step[step]).join(" → ")
-                : t.planAutoNote}
-            </p>
+            {plan && steps ? (
+              <StepFlowSummary
+                id={`${idPrefix}-plan-note`}
+                plan={plan}
+                customized={steps.customized}
+                onOpen={steps.onOpen}
+                openRef={steps.openRef}
+              />
+            ) : (
+              <p
+                id={`${idPrefix}-plan-note`}
+                data-testid={`${idPrefix}-plan-note`}
+                className="text-xs leading-5 text-muted-foreground"
+              >
+                {plan
+                  ? STEP_PLANS[plan].map((step) => messages.labels.step[step]).join(" → ")
+                  : t.planAutoNote}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor={`${idPrefix}-title`}>{t.title}</Label>

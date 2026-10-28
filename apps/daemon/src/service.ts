@@ -115,7 +115,9 @@ import {
   type SharedCompose,
   STEP_PLANS,
   StepKey,
+  type StepPlan,
   StepPullRequestKey,
+  type StepSettingMap,
   sameAuditTarget,
   sameGitHubUrl,
   skippableSteps,
@@ -2393,11 +2395,19 @@ export class TaskService {
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
   > {
-    // プロジェクトの対象でイメージを指定していれば、オーケストレーターに選ばせない（PBI-41）
+    // プロジェクトの対象でイメージを指定していれば、オーケストレーターに選ばせない（PBI-41）。人が作成時に、進め方の
+    // すべての工程のイメージを指定したときも選ばせない
     const pinned = this.pinnedImage(task);
-    const candidates = pinned
-      ? []
-      : Object.values(config.images ?? {}).map(({ name, description }) => ({ name, description }));
+    const allRequested =
+      task.requestedPlan !== undefined &&
+      STEP_PLANS[task.requestedPlan].every((step) => task.requestedImages?.[step]);
+    const candidates =
+      pinned || allRequested
+        ? []
+        : Object.values(config.images ?? {}).map(({ name, description }) => ({
+            name,
+            description,
+          }));
     // 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（PBI-56）
     const exports = await this.exportDestinations(task, config);
     // プロジェクトの共用の compose（PBI-70）。要るかはオーケストレーターが決める（ここでは取得しない）
@@ -2461,6 +2471,7 @@ export class TaskService {
       pinned,
       // images の候補を見せたら、既定のイメージで動かす工程の理由を確かめる（PBI-105）
       candidates.length > 0 && !repoless,
+      task.requestedImages,
     );
   }
 
@@ -3017,12 +3028,15 @@ export class TaskService {
    * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かす工程ごとに、
    * images のどれも合わない理由を記録し、理由が無い工程（書かなかった・default と書いて理由が無い）も記録する（PBI-105。
    * 既定のイメージに黙って倒さない）。
+   * requested（人が作成時に工程ごとに指定したイメージ）の工程は、ここでは決めない（記録にも入れない）。投影が、選んだ工程の
+   * 分だけ requested を優先して入れる。名前は作成時に確かめ、実行のときにも確かめる。
    */
   private withImages(
     choice: ChosenSteps,
     config: SactyConfig,
     pinned: PinnedImage | undefined,
     offered = false,
+    requested?: StepSettingMap,
   ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
     const {
       images: picked,
@@ -3031,10 +3045,11 @@ export class TaskService {
       imagesUnexplained: _unexplained,
       ...rest
     } = choice;
+    const steps = choice.steps.filter((step) => !requested?.[step]);
     const images = pinned
-      ? Object.fromEntries(choice.steps.map((step) => [step, pinned.name]))
+      ? Object.fromEntries(steps.map((step) => [step, pinned.name]))
       : Object.fromEntries(
-          Object.entries(picked ?? {}).filter(([step]) => choice.steps.includes(step as StepKey)),
+          Object.entries(picked ?? {}).filter(([step]) => steps.includes(step as StepKey)),
         );
     const unknown = Object.values(images).find((name) => !resolveImage(config, name).ok);
     if (unknown) {
@@ -3058,7 +3073,7 @@ export class TaskService {
         },
       };
     }
-    const defaults = offered && !pinned ? defaultImagesOf(choice.steps, images, reasons) : {};
+    const defaults = offered && !pinned ? defaultImagesOf(steps, images, reasons) : {};
     if (Object.keys(images).length === 0) return { ...rest, ...defaults };
     return {
       ...rest,
@@ -4770,6 +4785,7 @@ export class TaskService {
     ) {
       throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
+    const stepSettings = this.requestedStepSettings(plan, input.images, input.agents);
     return {
       projectId,
       payload: {
@@ -4780,7 +4796,55 @@ export class TaskService {
         ...(repo ? { repo } : { noRepo: true as const }),
         budgetCapUsd,
         ...(plan ? { plan } : {}),
+        ...stepSettings,
       },
+    };
+  }
+
+  /**
+   * 作成時に指定した、工程ごとのイメージ・エージェントを確かめる。進め方を選んだときだけ、その工程だけを指定できる
+   * （エージェントは、統合レビューを除く）。名前は config.yaml の images（か default）・agents にあるものだけ。
+   * 何も指定していなければ、何も返さない。
+   */
+  private requestedStepSettings(
+    plan: StepPlan | undefined,
+    images: StepSettingMap | undefined,
+    agents: StepSettingMap | undefined,
+  ): { images?: StepSettingMap; agents?: StepSettingMap } {
+    const imageSteps = Object.keys(images ?? {}) as StepKey[];
+    const agentSteps = Object.keys(agents ?? {}) as StepKey[];
+    if (imageSteps.length === 0 && agentSteps.length === 0) return {};
+    if (!plan) throw new InvalidOperationError(message("task.stepSettingsNeedPlan"));
+    const steps: readonly StepKey[] = STEP_PLANS[plan];
+    if ([...imageSteps, ...agentSteps].some((step) => !steps.includes(step))) {
+      throw new InvalidOperationError(message("task.stepSettingOutsidePlan"));
+    }
+    // 統合レビューは、ゴールガーディアンが実行する（タスクの詳細で変えるときと同じく断る）
+    if (!agentSteps.every(stepAgentChangeable)) {
+      throw new InvalidOperationError(message("agent.stepNotChangeable"));
+    }
+    // 設定を読めなければ、名前を確かめられないので、その理由を示して断る（名前の誤りと取り違えないため）
+    const config = this.deps.config();
+    if (!config.ok) {
+      throw new InvalidOperationError(
+        imageSteps.length > 0
+          ? message("image.configUnavailable", { detail: config.problem })
+          : message("agent.configUnavailable", { detail: config.problem }),
+      );
+    }
+    for (const name of Object.values(images ?? {})) {
+      if (!resolveImage(config.config, name).ok) {
+        throw new InvalidOperationError(message("image.notInImages", { name }));
+      }
+    }
+    for (const name of Object.values(agents ?? {})) {
+      if (!definedAgent(config.config, name)) {
+        throw new InvalidOperationError(message("agent.notInAgents", { name }));
+      }
+    }
+    return {
+      ...(imageSteps.length > 0 ? { images } : {}),
+      ...(agentSteps.length > 0 ? { agents } : {}),
     };
   }
 

@@ -52,6 +52,13 @@ const CONFIG = `providers:
     available_models:
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+images:
+  java17:
+    description: Java 17・Maven・Gradle
+    base_image: registry.example.com/ci/java:17
+  playwright:
+    description: Node.js・Playwright（ブラウザーのテスト）
+    base_image: registry.example.com/ci/playwright:1
 web:
   auth: false
 budget:

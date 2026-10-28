@@ -136,6 +136,26 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     ).toBe("実装を承認・凍結（人間）");
   });
 
+  it("作成の行に、進め方の工程ごとに人が指定したイメージ・エージェントを出す", () => {
+    const created = (payload: Record<string, unknown>) =>
+      describeEvent(
+        event({
+          type: "TaskCreated",
+          payload: { title: "t", body: "", start: "sacty", budgetCapUsd: 1, ...payload },
+        } as unknown as Pick<ActivityEvent, "type" | "payload">),
+      );
+    expect(created({ plan: "standard" })).toBe("タスクを作成（人間）");
+    expect(
+      created({
+        plan: "standard",
+        images: { design: "java17", implement: "java17" },
+        agents: { implement: "codex_advanced" },
+      }),
+    ).toBe(
+      "タスクを作成（人間） / イメージの指定：設計＝java17、実装＝java17 / エージェントの指定：実装＝codex_advanced",
+    );
+  });
+
   it("差し戻しの行は、人が書いた指摘の本文を、1件ずつ詳細に出す", () => {
     const requested = event({
       type: "ChangesRequested",
@@ -1635,6 +1655,36 @@ describe("工程のイメージの表示（PBI-106）", () => {
     expect(stepImageRows(paused)[0]).toMatchObject({ when: "next", source: { by: "project" } });
   });
 });
+
+describe("作成時に指定した工程のイメージの表示", () => {
+  it("人が作成時に指定した工程は、そのことを出し、後で人が変えたら人の変更を出す", () => {
+    const steps = [
+      { key: "requirements" as const, state: "active" as const },
+      { key: "implement" as const, state: "todo" as const },
+    ];
+    const requested = {
+      status: "awaiting_approval" as const,
+      steps,
+      requestedImages: { implement: "java" },
+      images: { requirements: "playwright", implement: "java" },
+      imageSource: "orchestrator" as const,
+    };
+    expect(stepImageRows(task(requested)).map((r) => r.source)).toEqual([
+      { by: "orchestrator" },
+      { by: "request" },
+    ]);
+    const changed = stepImageRows(
+      task({
+        ...requested,
+        images: { requirements: "playwright", implement: "default" },
+        imageChanges: { implement: { from: "java", to: "default", at: T_CHANGED } },
+      }),
+    );
+    expect(changed[1]?.source).toEqual({ by: "person", at: T_CHANGED, from: "java" });
+  });
+});
+
+const T_CHANGED = "2026-10-15T01:00:00.000Z";
 
 describe("工程のイメージの選択肢（PBI-106・PR #116 レビュー指摘）", () => {
   const java = { name: "java", description: "Java 17" };
