@@ -9,6 +9,7 @@ import {
   canDecideTests,
   canOverrideVerification,
   canRechooseSteps,
+  canDerive,
   canRerun,
   canRetryExport,
   deliveredWithoutChanges,
@@ -2039,6 +2040,35 @@ describe("中止したタスクの再実行", () => {
     expect(canRerun({ ...cancelled, status: "paused" })).toBe(false);
     expect(canRerun({ ...cancelled, parent: { taskId: "p", dependsOn: [] } })).toBe(false);
     expect(canRerun({ ...cancelled, start: "github_pull_request" })).toBe(false);
+  });
+});
+
+describe("完了したタスクから続きのタスクを作る（派生）", () => {
+  const derived = (taskId: string, of: string) =>
+    ev(
+      taskId,
+      {
+        type: "TaskCreated",
+        payload: { title: "next", body: "body", start: "sacty", derivedFrom: { taskId: of } },
+      },
+      "person",
+    );
+  const done = { steps: [{ key: "investigate", state: "done" }] } as unknown as Task;
+
+  it("工程をすべて終えて止まった（中止していない）タスクからだけ作れる", () => {
+    expect(canDerive({ ...done, status: "idle" })).toBe(true);
+    expect(canDerive({ ...done, status: "cancelled" })).toBe(false);
+    expect(canDerive({ ...done, status: "awaiting_approval" })).toBe(false);
+    expect(canDerive({ ...done, status: "idle", steps: [] })).toBe(false);
+  });
+
+  it("完了していないタスクからの派生は、作業履歴に受け付けない", () => {
+    expect(() => project([created("t1"), derived("t2", "t1")])).toThrow(/not from a completed/);
+  });
+
+  it("元のタスクが作業履歴に無ければ、元のタスクへの記録だけを省く", () => {
+    const tasks = project([derived("t2", "missing")]);
+    expect(tasks.get("t2")?.derivedFrom).toEqual({ taskId: "missing" });
   });
 });
 

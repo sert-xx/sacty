@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  canDerive,
   canRequestSecurityFix,
   canRerun,
   isFinished,
@@ -38,6 +39,10 @@ export type TaskDetailData = {
   rerunOf?: Task;
   /** 中止したタスクを再実行して作ったタスク。 */
   rerunBy?: Task;
+  /** 完了したタスクから派生して作ったタスクの、元のタスク。 */
+  derivedFrom?: Task;
+  /** このタスクから派生して作ったタスク（作った順。読めなかったものは ID だけ）。 */
+  derivedTasks?: { id: string; title?: string }[];
   /** 中止したときに片付けるもの（操作できるときだけ）。 */
   cleanupPlan?: CleanupItem[];
   /** 工程のイメージの候補の元（取得できなければ無い。PBI-106）。 */
@@ -95,6 +100,8 @@ export async function loadTaskDetail(
     rerunBy,
     securityFindings,
     securityReport,
+    derivedFrom,
+    derivedTasks,
   ] = await Promise.all([
     getProject(task.projectId),
     task.parent ? getTask(task.parent.taskId) : undefined,
@@ -112,6 +119,14 @@ export async function loadTaskDetail(
     task.rerunBy ? getTask(task.rerunBy).catch(() => undefined) : undefined,
     canRequestSecurityFix(task) ? getSecurityFindings(task.id).catch(() => null) : undefined,
     task.securityFix ? getTask(task.securityFix.taskId).catch(() => undefined) : undefined,
+    task.derivedFrom ? getTask(task.derivedFrom.taskId).catch(() => undefined) : undefined,
+    Promise.all(
+      (canDerive(task) ? (task.derivedTasks ?? []) : []).map((id) =>
+        getTask(id)
+          .then((found) => ({ id, ...(found ? { title: found.task.title } : {}) }))
+          .catch(() => ({ id })),
+      ),
+    ),
   ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -124,6 +139,8 @@ export async function loadTaskDetail(
     children: (all ?? []).filter((t) => childIds.has(t.id)),
     ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
     ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
+    ...(derivedFrom ? { derivedFrom: derivedFrom.task } : {}),
+    derivedTasks,
     ...(completed ? { audit: audit ?? null } : {}),
     ...(securityFindings !== undefined ? { securityFindings } : {}),
     ...(securityReport ? { securityReport: securityReport.task } : {}),

@@ -8,6 +8,7 @@ import {
   type CreateTemplateTaskInput,
   type DaemonText,
   type DashboardSummary,
+  type DeriveTaskInput,
   type IntakeKind,
   type NotificationKind,
   type Project,
@@ -636,6 +637,22 @@ export async function rerunTask(
   input: RerunTaskInput,
 ): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
   const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/rerun`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  await ensureOk(res);
+  return { ok: true, task: ((await res.json()) as { task: Task }).task };
+}
+
+/** 完了したタスクから、続きの作業のタスクを作る（派生）。元のタスクを指す新しいタスクを返す。 */
+export async function deriveTask(
+  id: string,
+  input: DeriveTaskInput,
+): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/derive`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),

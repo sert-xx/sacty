@@ -31,6 +31,7 @@ import {
   budgetState,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
+  DERIVE_RECORD_HEADING,
   deliveredWithoutChanges,
   exportDue,
   isCompleted,
@@ -28853,6 +28854,131 @@ describe("中止したタスクの再実行", () => {
     expect(service.get(rerun.id)?.task.repo).toBe("https://github.com/acme/api");
     // 同じチケットは、取り込み直さない
     expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
+    activity.close();
+  });
+});
+
+describe("完了したタスクから続きのタスクを作る（派生）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const planner = (plan: "investigate" | "security-check") => async () => ({
+    steps: ["investigate" as const],
+    plan,
+    reason: "調べる",
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  /** 調査だけのタスクを、成果を承認して完了させる。 */
+  const completedTask = async (service: TaskService) => {
+    const task = service.createTask({ projectId: "default", title: "決済の調査", body: "遅い" });
+    await service.runNext(task.id);
+    const done = service.approve(task.id, { step: "investigate", submission: 1 });
+    expect(isCompleted(done)).toBe(true);
+    return task.id;
+  };
+
+  it("元のタスクを指す新しいタスクを作り、依頼の後に元のタスクの記録を足す。いくつでも作れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("N+1 のクエリが2か所ある")], {
+      planner: planner("investigate"),
+    });
+    const id = await completedTask(service);
+    const derived = service.deriveTask(id, {
+      title: "N+1 を直す",
+      body: "調査で見つかった N+1 を直す",
+      repo: "https://github.com/acme/app",
+    });
+    expect(derived).toMatchObject({
+      title: "N+1 を直す",
+      start: "sacty",
+      status: "queued",
+      repo: "https://github.com/acme/app",
+      derivedFrom: { taskId: id },
+    });
+    expect(derived.requestedPlan).toBeUndefined();
+    expect(derived.body).toMatch(/^調査で見つかった N\+1 を直す\n\n/);
+    expect(derived.body).toContain(DERIVE_RECORD_HEADING);
+    expect(derived.body).toContain(`- 元のタスク：決済の調査（${id}）`);
+    expect(derived.body).toContain("### 調査の成果（承認済み）");
+    expect(derived.body).toContain("N+1 のクエリが2か所ある");
+    // 2つ目も作れる（リポジトリ無し・進め方の指定あり）
+    const second = service.deriveTask(id, {
+      title: "文書にする",
+      body: "調査の結果を文書にまとめる",
+      repo: null,
+      plan: "document",
+    });
+    expect(second).toMatchObject({ noRepo: true, requestedPlan: "document" });
+    // 元のタスクは完了のまま、作ったタスクを作った順に記録する（再起動の後も作業履歴から同じに戻る）
+    expect(service.get(id)?.task).toMatchObject({ derivedTasks: [derived.id, second.id] });
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    const { service: restarted } = makeService(activity, []);
+    expect(restarted.get(id)?.task.derivedTasks).toEqual([derived.id, second.id]);
+    expect(restarted.get(derived.id)?.task.derivedFrom).toEqual({ taskId: id });
+    activity.close();
+  });
+
+  it("完了していないタスク・対象に無いリポジトリからは作らない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("結果")], { planner: planner("investigate") });
+    const task = service.createTask({ projectId: "default", title: "A", body: "a" });
+    const input = { title: "B", body: "b", repo: null };
+    expect(() => service.deriveTask(task.id, input)).toThrowError(InvalidOperationError);
+    await service.runNext(task.id); // 承認待ち
+    expect(() => service.deriveTask(task.id, input)).toThrowError(InvalidOperationError);
+    service.approve(task.id, { step: "investigate", submission: 1 });
+    expect(() =>
+      service.deriveTask(task.id, { ...input, repo: "https://github.com/other/x" }),
+    ).toThrowError(InvalidOperationError);
+    expect(service.get(task.id)?.task.derivedTasks).toBeUndefined();
+    activity.close();
+  });
+
+  it("セキュリティのタスクの続きは、セキュリティの組み合わせだけ（指定しなければセキュリティ対応）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# セキュリティチェックの結果")], {
+      planner: planner("security-check"),
+    });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const input = { title: "SF-1 と SF-2 を直す", body: "まとめて直す", repo: null };
+    expect(() => service.deriveTask(id, { ...input, plan: "standard" })).toThrowError(
+      new InvalidOperationError(message("derive.securityPlanRequired")),
+    );
+    expect(service.deriveTask(id, input)).toMatchObject({ requestedPlan: "security-fix" });
+    expect(service.deriveTask(id, { ...input, plan: "security-check" })).toMatchObject({
+      requestedPlan: "security-check",
+    });
+    activity.close();
+  });
+
+  it("API で作り、作ったタスクを 201 で返す。完了していなければ 409、入力の誤りは 400", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("結果")], { planner: planner("investigate") });
+    const pending = service.createTask({ projectId: "default", title: "A", body: "a" });
+    const app = createApp(service, "tok");
+    const post = (taskId: string, body: unknown) =>
+      app.request(`/api/tasks/${taskId}/derive`, {
+        method: "POST",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const ng = await post(pending.id, { title: "B", body: "b", repo: null });
+    expect(ng.status).toBe(409);
+    expect(await ng.json()).toEqual({
+      error: "invalid_operation",
+      messages: [message("derive.notCompleted")],
+    });
+    const id = await completedTask(service);
+    expect((await post(id, { title: "B", body: " ", repo: null })).status).toBe(400);
+    const ok = await post(id, { title: "B", body: "b", repo: null });
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.derivedFrom).toEqual({ taskId: id });
     activity.close();
   });
 });

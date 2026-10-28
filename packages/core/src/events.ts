@@ -622,6 +622,11 @@ const TaskCreated = z.object({
       .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
       .optional(),
     /**
+     * 完了したタスクから、人がその続きの作業のために作った（派生）。元の（完了した）タスク。元のタスクの成果の記録は、
+     * 説明の後に sacty が足したもの（DERIVE_RECORD_HEADING から後）。1つのタスクから、いくつでも作れる。
+     */
+    derivedFrom: z.object({ taskId: z.string().min(1) }).optional(),
+    /**
      * 人がタスクの作成時に指定した工程の組み合わせ（進め方）。オーケストレーターは、組み合わせを選ばずにこれを使い、
      * ベースブランチ・テストのコマンド・イメージなどだけを決める。工程の見直しでも工程を飛ばさない。無ければ
      * オーケストレーターが選ぶ。
@@ -2680,6 +2685,32 @@ export const RerunTaskInput = z
   })
   .strict();
 export type RerunTaskInput = z.input<typeof RerunTaskInput>;
+
+/**
+ * 完了したタスクから、続きの作業のタスクを作る入力（派生）。題と説明（続きで何をするか）は人が書き、元のタスクの成果の
+ * 記録は sacty が説明の後に足す。repo は作業するリポジトリ（プロジェクトの対象から選ぶ。null はリポジトリを指定しない）。
+ * plan は進め方（省略すると、オーケストレーターが選ぶ）。
+ */
+export const DeriveTaskInput = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, code("input.titleRequired"))
+      .max(TASK_TITLE_MAX, code("input.titleTooLong")),
+    body: z
+      .string()
+      .trim()
+      .min(1, code("input.bodyRequired"))
+      .max(TASK_BODY_MAX, code("input.bodyTooLong")),
+    repo: z.string().trim().min(1).nullable(),
+    plan: StepPlan.optional(),
+  })
+  .strict();
+export type DeriveTaskInput = z.input<typeof DeriveTaskInput>;
+
+/** 派生のタスクの説明で、sacty が足した元のタスクの記録の見出し（ここから後は sacty が書いたもの）。 */
+export const DERIVE_RECORD_HEADING = "## 元のタスクの記録（完了したタスク）";
 
 /** セキュリティチェックのレポートの区分から、対応のタスクを作る入力。 */
 export const RequestSecurityFixInput = z.object({ category: SecurityCategory }).strict();

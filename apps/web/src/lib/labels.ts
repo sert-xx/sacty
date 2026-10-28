@@ -354,6 +354,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         actor,
         event.payload.template ? l.template[event.payload.template] : undefined,
         event.payload.rerun !== undefined,
+        event.payload.derivedFrom !== undefined,
       );
     case "StepsChosen": {
       const chosen = e.StepsChosen(

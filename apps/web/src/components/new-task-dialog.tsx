@@ -25,11 +25,11 @@ import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-ca
 
 const initial: CreateTaskState = {};
 
-const SELECT =
+export const SELECT =
   "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 /** 選択肢に並べる進め方の順（実装する組み合わせ → 実装しない組み合わせ）。 */
-const PLAN_ORDER: readonly StepPlan[] = [
+export const PLAN_ORDER: readonly StepPlan[] = [
   "standard",
   "skip-design",
   "direct",

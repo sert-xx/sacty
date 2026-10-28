@@ -31,6 +31,7 @@ import {
   CreateTaskInput,
   CreateTemplateTaskInput,
   canDecideTests,
+  canDerive,
   canOverrideVerification,
   canRechooseSteps,
   canRereview,
@@ -49,6 +50,7 @@ import {
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   DecideChangeInput,
+  DeriveTaskInput,
   deploymentCheckRunning,
   EventInput,
   type ExportPlan,
@@ -280,6 +282,7 @@ import {
   type BodyText,
   buildChatPrompt,
   buildChildBody,
+  buildDeriveBody,
   buildExportDocument,
   buildExportPrompt,
   buildFinalReviewPrompt,
@@ -4889,6 +4892,61 @@ export class TaskService {
             // レポートの区分から作った対応のタスクは、元のレポート・区分・指摘の全件も引き継ぐ（説明に入りきらなかった
             // 指摘を、再実行で落とさないため）
             ...(previous.securityFix ? { securityFix: previous.securityFix } : {}),
+          },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * 完了したタスクから、続きの作業のタスクを作る（派生）。元のタスクは変えず、元のタスクを指す新しいタスクを作る（元の
+   * タスクには、派生で作ったタスクを記録する。いくつでも作れる）。題・依頼（続きで何をするか）・作業するリポジトリ（null は
+   * リポジトリを指定しない）・進め方は人が決め、説明には元のタスクの記録を足す。チケット・取り込み元は引き継がない
+   * （元のタスクの依頼は終わっていて、続きは新しい依頼のため）。セキュリティの組み合わせのタスクからは、セキュリティの
+   * 組み合わせの続きだけを作る（記録に入るレポート・範囲を、公開の場所に出さないため）。
+   */
+  deriveTask(id: string, raw: unknown): Task {
+    const input = DeriveTaskInput.parse(raw);
+    const original = this.tasks.get(id);
+    if (!original) throw new InvalidOperationError(message("task.notFound"));
+    if (!canDerive(original)) throw new InvalidOperationError(message("derive.notCompleted"));
+    const project = this.deps.projects.get(original.projectId);
+    if (!project) throw new InvalidOperationError(message("project.notFound"));
+    if (project.targets.length === 0) {
+      throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
+    }
+    const repo = input.repo === null ? undefined : this.projectRepository(project, input.repo);
+    // セキュリティの組み合わせのタスクの続きは、進め方を指定しなければセキュリティ対応にする
+    const plan = isSecurityTask(original) ? (input.plan ?? "security-fix") : input.plan;
+    if (isSecurityTask(original) && plan !== "security-fix" && plan !== "security-check") {
+      throw new InvalidOperationError(message("derive.securityPlanRequired"));
+    }
+    if (
+      plan &&
+      !selectablePlans({
+        pullRequest:
+          repo !== undefined &&
+          pullRequestInText(repo, `${input.title}\n${input.body}`) !== undefined,
+        child: false,
+      }).includes(plan)
+    ) {
+      throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
+    }
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    return this.append({ id: randomUUID(), projectId: original.projectId }, [
+      {
+        actor: "person",
+        event: {
+          type: "TaskCreated",
+          payload: {
+            title: input.title,
+            body: buildDeriveBody(original, input.body),
+            start: "sacty",
+            ...(repo ? { repo } : { noRepo: true as const }),
+            budgetCapUsd,
+            derivedFrom: { taskId: original.id },
+            ...(plan ? { plan } : {}),
           },
         },
       },

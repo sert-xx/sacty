@@ -470,6 +470,17 @@ export function createApp(
     }
   });
 
+  // 完了したタスクから、続きの作業のタスクを作る（派生）。元のタスクを指す新しいタスクを作る
+  app.post("/api/tasks/:id/derive", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.deriveTask(c.req.param("id"), json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 承認したセキュリティチェックのレポートの指摘（区分ごとの対応のタスクを作る画面に出す）。レポートでなければ空
   app.get("/api/tasks/:id/security-findings", (c) => {
     const id = c.req.param("id");

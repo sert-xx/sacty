@@ -728,6 +728,24 @@ Code: `apps/daemon/src/service.ts` (`retireWorkspace`, `cleanupWorkspacesAtStart
 
 Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
 
+### Creating a follow-up task from a completed task (derive)
+
+Related ADR: [完了したタスクから、元のタスクを指す続きのタスクを何度でも作れるようにする（派生）](../adr/20261028-0054-derive-follow-up-task.md)
+
+- A completed task (one that finished all its steps and stopped, not cancelled; `canDerive`) can create a task for follow-up work from "Follow-up tasks" on its detail page (`POST /api/tasks/:id/derive`). The original task is not changed; a new task that points to it is created (`derivedFrom` in `TaskCreated`: the original task's ID). When the activity is replayed, the original task records the created tasks in creation order (`derivedTasks`). Any number can be created from one task. A task that is not completed is refused (`derive.notCompleted`, 409). Replaying the activity also refuses a derived task from a task that is not completed or from another project (if the original task is not in the activity, only the record on the original is skipped).
+- A person decides the following (`DeriveTaskInput`). sacty refuses a repository outside the targets.
+  - The title
+  - The description (what to do next; required; up to `TASK_BODY_MAX`)
+  - The repository to work in (from the project's targets; `null` means no repository, and the task proceeds like a task created without one)
+  - The plan (without it, the Orchestrator chooses; the choices are the same as when creating a task on the screen. `selectablePlans`)
+- The description is the person's description followed by the original task's record (`## 元のタスクの記録（完了したタスク）`, `DERIVE_RECORD_HEADING`) (`buildDeriveBody`). The record holds the original task, the repository it worked in, the ticket and the source, the steps and their states, the implementation PR and its state, the Requirements and Design PRs, the subtasks created by a split, the final review result and what people check, the step outputs (the approved one if approved; up to 6000 characters each), and questions with answers. It says that the original task's changes remain, that the request takes priority over the record, and not to do what the request doesn't ask.
+- `start` is `sacty`. The ticket and the source are not carried over (no results are returned to the ticket or issue).
+- The budget cap is `budget.default_per_task_usd` at the time the task is created.
+- If the original task has a security plan (`isSecurityTask`), the plan can only be `security-fix` or `security-check` (`security-fix` if not given; anything else is `derive.securityPlanRequired`, 409). This keeps the report and the fix scope in the record off public places (the non-disclosure in "Security check and security fix" above). `securityFix` (the report, the category, and all the findings) is not carried over (a person writes the findings to fix in the description).
+- On the screen, a completed task's details show a "Follow-up tasks" section (the created tasks and the dialog to create one), and the top of a follow-up task's details shows a link to the original task. For a task with a security plan, the plan choices are only the security plans.
+
+Code: `apps/daemon/src/service.ts` (`deriveTask`), `apps/daemon/src/prompts.ts` (`buildDeriveBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/derive`), `packages/core/src/events.ts` (`DeriveTaskInput`, `DERIVE_RECORD_HEADING`), `packages/core/src/projection.ts` (`canDerive`, `applyEvent`), `apps/web/src/components/derive-dialog.tsx` (`DerivedTasksCard`), `apps/web/src/lib/task-detail-data.ts`
+
 ## Asking the Orchestrator
 
 ![Asking the Orchestrator](images/question-flow.en.svg)
