@@ -5,6 +5,7 @@ import {
   renderMessage,
   STEP_PLANS,
   type Task,
+  type TaskProposal,
   type TaskQuestion,
 } from "@sacty/core";
 import { describe, expect, it } from "vitest";
@@ -18,6 +19,7 @@ import {
   buildExportPrompt,
   buildFinalReviewPrompt,
   buildGatherPrompt,
+  buildGuardianPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
@@ -1809,6 +1811,55 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
         expect(buildFinalReviewPrompt(none, "diff", testCommand), label).not.toContain(HEADING);
       }
     }
+  });
+
+  it("承認済みの文書と食い違う補足は、実装に優先して従わせ、変更の申し出・差し戻しの判定にも人の新しい意図として渡す", () => {
+    // 承認済みの要求要件は「再送は3回まで」、人が再開のときに「5回まで」に変えた
+    const NOTE = "再送の上限は5回にする";
+    const t = task(
+      {
+        testCommand: "npm test",
+        testViewpoints: [],
+        resumeNotes: [NOTE],
+        approved: {
+          requirements: { output: "# 要求要件\n\n再送は3回まで", submission: 1 },
+          design: {
+            output: "# 設計",
+            submission: 1,
+            testViewpoints: [{ id: "TV-1", title: "再送", input: "失敗", expected: "3回" }],
+          },
+        },
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const implement = buildPrompt(t, "implement");
+    expect(implement).toContain(NOTE);
+    // 申し出の指示も、補足と食い違う箇所は補足に従わせる（承認済みの成果物に従えという指示と食い違わせない）
+    expect(implement).toContain(
+      "人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください",
+    );
+    const proposal = {
+      target: "requirements",
+      reason: "人が上限を5回にした",
+      facts: ["補足"],
+      proposed: "# 要求要件\n\n再送は5回まで",
+    } as unknown as TaskProposal;
+    const judges = [
+      buildGuardianPrompt(t, proposal),
+      buildReworkPrompt(t, ["上限が違う"], ["implement", "design", "requirements"]),
+      buildReworkPrompt(t, ["上限が違う"], ["design", "requirements"], "design"),
+    ];
+    for (const judge of judges) {
+      expect(judge).toContain(NOTE);
+      expect(judge).toContain("こちらが人間の新しい意図です");
+    }
+    // 補足が無ければ、判定にも申し出の指示にも足さない
+    const none = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
+    expect(buildPrompt(none, "implement")).not.toContain("補足に従って作ってください");
+    expect(buildGuardianPrompt(none, proposal)).not.toContain("人が再開のときに足した補足");
+    expect(buildReworkPrompt(none, ["x"], ["implement", "requirements"])).not.toContain(
+      "人が再開のときに足した補足",
+    );
   });
 
   it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {

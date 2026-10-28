@@ -738,6 +738,12 @@ function proposalLines(task: Task, step: StepKey): string[] {
     `{"${PROPOSAL_HEADING}": {"target": "${targets.join('" または "')}", "reason": "変更したい理由", "facts": ["根拠となる事実（仕様、コード、実行結果など）"], "proposed": "変更後の成果物の全文"}}`,
     "```",
     "申し出をしても、この工程の成果物は、いまの承認済みの成果物に従って作ってください。",
+    // 人が再開のときに足した補足は、承認済みの成果物より優先させる（resumeNotePromptLines と同じ順位）
+    ...(task.resumeNotes?.length
+      ? [
+          "ただし、人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください。承認済みの成果物を補足に合わせる必要があれば、その変更を申し出てください。",
+        ]
+      : []),
   ];
 }
 
@@ -1440,6 +1446,23 @@ function resumeNotePromptLines(task: Task): string[] {
     "",
     "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
     notes,
+  ];
+}
+
+/**
+ * ゴールガーディアンの判定（変更の申し出・差し戻しの戻し先）に渡す、人が再開のときに足した補足。判定はタスクの内容を
+ * 渡さないので、承認の後に人が足した新しい意図として別に渡す（実装は補足を承認済みの成果物より優先して作るため、
+ * 判定がそれを知らないと、補足に沿った変更を却下したり、不要に差し戻したりしうる）。補足が無ければ何も足さない。
+ */
+function resumeNoteJudgeLines(task: Task): string[] {
+  const notes = resumeNoteSections(task.resumeNotes ?? []);
+  if (!notes) return [];
+  return [
+    "",
+    "--- 人が再開のときに足した補足（承認の後に人間が足した指示。承認済みの成果物と食い違うときは、こちらが人間の新しい意図です） ---",
+    notes,
+    "",
+    "補足に沿うための変更・実装は、作業を楽にするためのものとして扱わず、人間の意図に沿うものとして判断してください。",
   ];
 }
 
@@ -2296,8 +2319,8 @@ function toProposal(
 
 /**
  * ゴールガーディアンへの指示。判定ごとに新しいセッションで実行し、承認済みの要求要件・設計、
- * 変更理由、根拠となる事実（と変更後の全文）と、タスクの開始時に集めた情報を渡す。タスクの内容や工程の経緯、過去の判定は
- * 渡さない。
+ * 変更理由、根拠となる事実（と変更後の全文）と、タスクの開始時に集めた情報と、人が再開のときに足した補足を渡す。タスクの
+ * 内容や工程の経緯、過去の判定は渡さない。
  */
 export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string {
   const approved = (["requirements", "design"] as const)
@@ -2318,6 +2341,7 @@ export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string 
     "- 判定できない：事実が足りない、または人間の判断が必要な価値判断を含む",
     "",
     ...approved,
+    ...resumeNoteJudgeLines(task),
     "",
     `--- 変更の申し出（${STEP_NAME[proposal.target]}への変更） ---`,
     `理由：${proposal.reason}`,
@@ -3379,8 +3403,8 @@ export function buildStepPullRequestBodyParts(
 
 /**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
- * セッションで実行し、承認済みの要求要件・設計と、指摘と、タスクの開始時に集めた情報を渡す（タスクの内容や工程の経緯は
- * 渡さない）。
+ * セッションで実行し、承認済みの要求要件・設計と、指摘と、タスクの開始時に集めた情報と、人が再開のときに足した補足を渡す
+ * （タスクの内容や工程の経緯は渡さない）。
  */
 export function buildReworkPrompt(
   task: Task,
@@ -3411,6 +3435,7 @@ export function buildReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認します。",
     "できるだけ後ろの工程（実装）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。",
     ...approved,
+    ...resumeNoteJudgeLines(task),
     ...(viewpoints.length > 0
       ? [
           "",
@@ -3468,6 +3493,7 @@ function buildStepReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認します。",
     `できるだけこの工程（${name}）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。`,
     ...approved,
+    ...resumeNoteJudgeLines(task),
     "",
     `--- この PR の${name}（指摘の対象） ---`,
     task.outputs[gateStep] ?? "",
