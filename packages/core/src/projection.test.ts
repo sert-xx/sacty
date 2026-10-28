@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
-import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from "./events.js";
+import {
+  bodyWithResumeNote,
+  EventInput as EventSchema,
+  exportSteps,
+  MVP_STEPS,
+  RERUN_NOTE_HEADING,
+  RERUN_RECORD_HEADING,
+  RESUME_NOTE_HEADING,
+  rerunEditableBody,
+  resumeNotes,
+  STEP_PLANS,
+} from "./events.js";
 import {
   applyEvent,
   awaitingGathering,
@@ -2490,5 +2501,58 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
       baseBranch: "main",
     } as Task["continuedPullRequest"];
     expect(canOverrideVerification(paused({ continuedPullRequest }))).toBe(false);
+  });
+});
+
+describe("再開の補足を説明に足す", () => {
+  const H = RESUME_NOTE_HEADING;
+  const paused = (taskId: string, body: string) => [
+    ev(taskId, { type: "TaskCreated", payload: { title: "t", body, start: "sacty" } }, "person"),
+    ev(taskId, { type: "TaskPaused", payload: { reason: "error" } }),
+  ];
+  const resumed = (taskId: string, note: string) =>
+    ev(taskId, { type: "TaskResumed", payload: { retry: false, note } }, "person");
+
+  it("再開のたびに、見出しを付けて順に足す", () => {
+    seq = 0;
+    const task = project([
+      ...paused("t1", "説明"),
+      resumed("t1", "補足1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      resumed("t1", "補足2"),
+    ]).get("t1");
+    expect(task?.body).toBe(`説明\n\n${H}\n\n補足1\n\n${H}\n\n補足2`);
+  });
+
+  it("説明が空なら、見出しから始める", () => {
+    seq = 0;
+    const task = project([...paused("t1", ""), resumed("t1", "補足")]).get("t1");
+    expect(task?.body).toBe(`${H}\n\n補足`);
+  });
+});
+
+describe("再開の補足と、再実行・取り込みの説明", () => {
+  const record = `${RERUN_RECORD_HEADING}\n\n以下は前の試行の参考の記録です。`;
+
+  it("再実行で作ったタスクは、前の試行の記録の前に入れ、再実行の画面の説明に残す", () => {
+    const task = {
+      body: `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${record}`,
+      rerun: "t0",
+    };
+    const body = bodyWithResumeNote(task, "再開の補足");
+    expect(body).toBe(
+      `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足\n\n${record}`,
+    );
+    expect(rerunEditableBody({ ...task, body })).toBe(
+      `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足`,
+    );
+    // 説明から取り出す補足には、前の試行の記録を含めない
+    expect(resumeNotes(body)).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
+  });
+
+  it("ふつうのタスクは説明の後に足し、再実行の画面の説明にも残す", () => {
+    const body = bodyWithResumeNote({ body: "説明" }, "補足");
+    expect(rerunEditableBody({ body })).toBe(body);
+    expect(resumeNotes("説明")).toBe("");
   });
 });

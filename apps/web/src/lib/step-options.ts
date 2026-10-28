@@ -136,3 +136,25 @@ export function stepChoicesFrom(formData: FormData): {
     ) as StepChoices;
   return { images: read(imageField), agents: read(agentField) };
 }
+
+/** 再開の欄で、描いたときの今の名前を送る項目の名前（工程ごと）。 */
+export const imageFromField = (step: StepKey) => `image-from:${step}`;
+export const agentFromField = (step: StepKey) => `agent-from:${step}`;
+
+/**
+ * 再開の欄の工程ごとの選択から、人が変えた工程だけを返す（描いたときの今の名前と同じ工程は除く）。触っていない工程の
+ * 古い名前を送り、その間にタスクの詳細で変えた名前を黙って戻さないため。
+ */
+export function changedStepChoices(formData: FormData): {
+  images: StepChoices;
+  agents: StepChoices;
+} {
+  const { images, agents } = stepChoicesFrom(formData);
+  const changed = (choices: StepChoices, from: (step: StepKey) => string) =>
+    Object.fromEntries(
+      Object.entries(choices).filter(
+        ([step, name]) => formData.get(from(step as StepKey)) !== name,
+      ),
+    ) as StepChoices;
+  return { images: changed(images, imageFromField), agents: changed(agents, agentFromField) };
+}

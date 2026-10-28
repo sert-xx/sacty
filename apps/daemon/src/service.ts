@@ -21,6 +21,7 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
+  bodyWithResumeNote,
   budgetState,
   ChangeStepAgentInput,
   ChangeStepImageInput,
@@ -107,6 +108,7 @@ import {
   ResumeAuditInput,
   ResumeTaskInput,
   renderMessage,
+  rerunEditableBody,
   responsibleProject,
   responsibleTicketProject,
   reworkTargets,
@@ -11516,6 +11518,14 @@ export class TaskService {
     for (const [step, agent] of agentSteps) {
       const event = this.stepAgentChange(task, step, agent);
       if (event) events.push({ actor: "person", event });
+    }
+    // 補足を足した説明が、再実行の画面で直す説明の上限を超えるなら断る（人が自分の補足を削らないと再実行できなくなる）
+    if (
+      input.note &&
+      rerunEditableBody({ ...task, body: bodyWithResumeNote(task, input.note) }).length >
+        TASK_BODY_MAX
+    ) {
+      throw new InvalidOperationError(message("resume.bodyTooLong"));
     }
     events.push({
       actor: "person",

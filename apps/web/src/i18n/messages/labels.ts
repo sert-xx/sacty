@@ -270,7 +270,7 @@ const ja = {
     StepImageChanged: (step: string, from: string, to: string, actor: string) =>
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
-    TaskResumedWithNote: (text: string) => `${text}：補足を足しました`,
+    TaskResumedWithNote: (text: string) => `${text}・補足あり`,
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
     TaskResumedRechoose: (actor: string) => `再開（${actor}）：工程の選択からやり直します`,
     /** テストのコマンドが決まらずに止まったタスクで、人がテストの扱いを決めた。 */
@@ -737,7 +737,7 @@ const en: LabelMessages = {
     StepImageChanged: (step, from, to, actor) =>
       `${step} image changed from ${from} to ${to} (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
-    TaskResumedWithNote: (text) => `${text}: added notes`,
+    TaskResumedWithNote: (text) => `${text}, with notes`,
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,
     TestsDecidedCommand: (command, actor) => `Set the test command to ${command} (${actor})`,
     TestsDecidedNone: (reason, actor) => `Decided to proceed without tests (${actor}): ${reason}`,

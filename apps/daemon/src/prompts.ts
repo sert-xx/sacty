@@ -32,6 +32,7 @@ import {
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
   renderMessage,
+  resumeNotes,
   SelfReview,
   StepKey,
   StepPlan,
@@ -5168,6 +5169,20 @@ const TICKET_HEADING = "sacty-ticket";
  * チケットの取り込みの1段目（PBI-52）。オーケストレーターが、ゲートウェイ経由でチケットを読み、サブタスクならスコープを
  * 判定し、作業するリポジトリを候補から選び、タスクの題と概要を書く。工程は、リポジトリを用意した後に選ぶ（2段目）。
  */
+/**
+ * 人が再開のときに足した補足（チケットのトリアージに渡す）。トリアージは説明を読まずにチケットを読むので、補足は別に渡す。
+ * 補足は、トリアージで書いた概要の後ろにも残る（後の工程が読む）。
+ */
+function resumeNoteLines(task: Task): string[] {
+  const notes = resumeNotes(task.body);
+  if (!notes) return [];
+  return [
+    "--- 人が再開のときに足した補足（チケットの内容より優先し、概要に反映してください） ---",
+    notes,
+    "",
+  ];
+}
+
 export function buildTicketTriagePrompt(
   task: Task,
   candidates: readonly string[],
@@ -5201,6 +5216,7 @@ export function buildTicketTriagePrompt(
     "",
     "コードの変更や、チケットへの書き込みはしないでください（読むだけ）。決められなければ、repo を空にして、理由を reason に書いてください。",
     "",
+    ...resumeNoteLines(task),
     ...gatheredLines(task),
     "",
     "最後に、次の形式で必ず出してください。",

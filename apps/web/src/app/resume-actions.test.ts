@@ -95,16 +95,23 @@ describe("タスクの再開のテストの扱い", () => {
 });
 
 describe("タスクの再開の補足と工程の設定", () => {
-  it("補足（前後の空白を除く）と、工程ごとのイメージ・エージェントを渡す（空の選択と不正な工程は渡さない）", async () => {
+  it("補足（前後の空白を除く）と、人が変えた工程のイメージ・エージェントだけを渡す（今と同じ・空の選択・不正な工程は渡さない）", async () => {
     await resumeTaskAction(
       {},
       form({
         taskId: "t1",
         note: "  ACME_TOKEN を使う ",
+        "image-from:implement": "default",
         "image:implement": "java",
+        // 触っていない工程（描いたときの今の名前のまま）は渡さない（その間にタスクの詳細で変えた名前を戻さない）
+        "image-from:requirements": "default",
+        "image:requirements": "default",
         "image:design": "",
         "image:nope": "java",
+        "agent-from:implement": "claude",
         "agent:implement": "strong",
+        "agent-from:requirements": "claude",
+        "agent:requirements": "claude",
       }),
     );
     expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
@@ -114,11 +121,18 @@ describe("タスクの再開の補足と工程の設定", () => {
     });
   });
 
-  it("補足が長すぎれば送らず、理由と入力を返す", async () => {
+  it("補足が長すぎれば送らず、理由と入力（選んだ工程の設定も）を返す", async () => {
     const note = "あ".repeat(10_001);
-    expect(await resumeTaskAction({}, form({ taskId: "t1", note }))).toMatchObject({
+    expect(
+      await resumeTaskAction(
+        {},
+        form({ taskId: "t1", note, "image:implement": "java", "agent:implement": "strong" }),
+      ),
+    ).toMatchObject({
       message: a.resumeNoteTooLong(10_000),
       note,
+      images: { implement: "java" },
+      agents: { implement: "strong" },
     });
     expect(resumeTask).not.toHaveBeenCalled();
   });

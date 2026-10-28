@@ -140,12 +140,42 @@ describe("再開の欄の補足と工程の設定", () => {
     if (image) image.value = "java";
     const agent = select("agent:implement");
     if (agent) agent.value = "strong";
+    // 描いたときの今の名前も送り、Server Action が人の変えた工程だけを選ぶ
     expect(await submit()).toMatchObject({
       note: "ACME_TOKEN を使う",
       "image:implement": "java",
+      "image-from:implement": "default",
       "agent:implement": "strong",
+      "agent-from:implement": "claude",
       "image:integrate": "default",
     });
+  });
+
+  it("今の名前が変わったら（タスクの詳細で変えた後）、選択を今の名前に合わせる", () => {
+    renderForm(false, steps);
+    act(() => radio("command")?.click());
+    expect(select("image:implement")?.value).toBe("default");
+    renderForm(false, [
+      { ...steps[0], image: "java" } as ResumeStepSetting,
+      steps[1] as ResumeStepSetting,
+    ]);
+    expect(select("image:implement")?.value).toBe("java");
+  });
+
+  it("再開に失敗したら、選んでいた工程の設定を戻す", async () => {
+    resumeTaskAction.mockResolvedValueOnce({
+      message: "断られた",
+      images: { implement: "java" },
+      agents: { implement: "strong" },
+    } as never);
+    renderForm(false, steps);
+    act(() => radio("command")?.click());
+    const command = container.querySelector<HTMLInputElement>("#test-command");
+    if (command) act(() => typeInto(command, "npm test"));
+    await submit();
+    expect(container.textContent).toContain("断られた");
+    expect(select("image:implement")?.value).toBe("java");
+    expect(select("agent:implement")?.value).toBe("strong");
   });
 
   it("テストを決めずに再開する（工程の選択からやり直す）ときは、工程の設定を出さない", async () => {

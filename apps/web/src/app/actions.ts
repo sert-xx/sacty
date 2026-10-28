@@ -66,7 +66,7 @@ import {
 import { projectSchedulesPath, projectSettingsPath, schedulePath } from "@/lib/paths";
 import { needsProjectSelect } from "@/lib/project-select";
 import { readScheduleForm, type ScheduleFormValues, toScheduleInput } from "@/lib/schedule-form";
-import { stepChoicesFrom } from "@/lib/step-options";
+import { changedStepChoices, type StepChoices, stepChoicesFrom } from "@/lib/step-options";
 
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -236,8 +236,10 @@ export type ResumeState = {
   tests?: "command" | "none";
   testCommand?: string;
   noTestsReason?: string;
-  /** 再開のときに足す補足（エラーのときに戻す）。 */
+  /** 再開のときに足す補足と、選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
   note?: string;
+  images?: StepChoices;
+  agents?: StepChoices;
 };
 
 /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限を受け取る。 */
@@ -262,26 +264,22 @@ export async function resumeTaskAction(
   const testCommand = String(formData.get("testCommand") ?? "").trim();
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim();
+  // 選び直した工程の設定も、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に戻す）
+  const choices = stepChoicesFrom(formData);
   const kept: ResumeState = {
     capUsd: capText,
     ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
     testCommand,
     noTestsReason,
     note,
+    images: choices.images,
+    agents: choices.agents,
   };
   if (note.length > RESUME_NOTE_MAX) {
     return { ...kept, message: a.resumeNoteTooLong(RESUME_NOTE_MAX) };
   }
-  // 再開と一緒に変える工程のイメージ・エージェント（image:<工程>・agent:<工程>。今と同じ名前はデーモンが変えない）
-  const images: Partial<Record<StepKey, string>> = {};
-  const agents: Partial<Record<StepKey, string>> = {};
-  for (const [name, value] of formData.entries()) {
-    const [kind, rawStep] = name.split(":");
-    const step = StepKey.safeParse(rawStep);
-    if (!step.success || typeof value !== "string" || !value) continue;
-    if (kind === "image") images[step.data] = value;
-    else if (kind === "agent") agents[step.data] = value;
-  }
+  // 再開と一緒に変える工程のイメージ・エージェント（人が変えた工程だけ。今と同じ名前はデーモンも変えない）
+  const { images, agents } = changedStepChoices(formData);
   let tests: { testCommand: string } | { noTestsReason: string } | undefined;
   if (choice === "command") {
     if (!testCommand || testCommand.length > 1000)

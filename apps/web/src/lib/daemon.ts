@@ -607,15 +607,18 @@ export async function submitTaskForReview(
 }
 
 /** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */
+/** 再開と一緒に渡す補足と、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */
+export type ResumeOptions = {
+  note: string;
+  images: Partial<Record<StepKey, string>>;
+  agents: Partial<Record<StepKey, string>>;
+};
+
 export async function resumeTask(
   id: string,
   capUsd: number | undefined,
-  tests?: { testCommand: string } | { noTestsReason: string },
-  extra: {
-    note?: string;
-    images?: Partial<Record<StepKey, string>>;
-    agents?: Partial<Record<StepKey, string>>;
-  } = {},
+  tests: { testCommand: string } | { noTestsReason: string } | undefined,
+  options: ResumeOptions,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
     method: "POST",
@@ -623,9 +626,9 @@ export async function resumeTask(
     body: JSON.stringify({
       ...(capUsd === undefined ? {} : { capUsd }),
       ...(tests ? { tests } : {}),
-      ...(extra.note ? { note: extra.note } : {}),
-      ...(extra.images && Object.keys(extra.images).length > 0 ? { images: extra.images } : {}),
-      ...(extra.agents && Object.keys(extra.agents).length > 0 ? { agents: extra.agents } : {}),
+      ...(options.note ? { note: options.note } : {}),
+      images: options.images,
+      agents: options.agents,
     }),
   });
   if (res.status === 409) {

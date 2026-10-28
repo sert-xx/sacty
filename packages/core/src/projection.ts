@@ -28,13 +28,14 @@ import type {
   Verdict,
 } from "./events.js";
 import {
+  bodyWithResumeNote,
   DEFAULT_DOCUMENTS_DIR,
   EXPORT_STEPS,
   exportSteps,
   isDocumentsDir,
   MAX_INTEGRATION_ATTEMPTS,
-  RESUME_NOTE_HEADING,
   REWORK_STEPS,
+  resumeNotes,
   SKIPPABLE_STEPS,
 } from "./events.js";
 import { type DaemonText, message } from "./message-code.js";
@@ -1812,7 +1813,11 @@ export function applyEvent(
       }
       task.repo = event.payload.repo;
       if (event.payload.title) task.title = event.payload.title;
-      if (event.payload.body !== undefined) task.body = event.payload.body;
+      if (event.payload.body !== undefined) {
+        // 再開のときに人が足した補足は、トリアージで書いた概要に置き換えず、後ろに残す（後の工程に届くように）
+        const notes = resumeNotes(task.body);
+        task.body = [event.payload.body.trimEnd(), notes].filter(Boolean).join("\n\n");
+      }
       task.ticketTriage = {
         reason: event.payload.reason,
         by: event.actor === "person" ? "person" : "orchestrator",
@@ -2300,11 +2305,7 @@ export function applyEvent(
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
       // 人が再開のときに足した補足は、説明の後に足す（後の工程とオーケストレーターは説明を読む）
-      if (event.payload.note) {
-        task.body = [task.body.trimEnd(), `${RESUME_NOTE_HEADING}\n\n${event.payload.note}`]
-          .filter(Boolean)
-          .join("\n\n");
-      }
+      if (event.payload.note) task.body = bodyWithResumeNote(task, event.payload.note);
       task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
       break;

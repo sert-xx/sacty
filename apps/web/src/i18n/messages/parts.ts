@@ -153,7 +153,7 @@ const ja = {
     capNote: "上限に達したら、もう一度ここで決めます。",
     noteLabel: "補足（任意）",
     noteHint:
-      "タスクの説明の後に、見出しを付けて足します。オーケストレーターと、これから実行する工程が読みます。",
+      "タスクの内容の後に、見出しを付けて足します。オーケストレーターと、これから実行する工程が読みます。",
     notePlaceholder: "例：認証は環境変数 ACME_TOKEN を使ってください。",
     stepsTitle: "工程のイメージ・エージェントを変える",
     stepsHint:
@@ -413,7 +413,7 @@ const en: PartsMessages = {
     capNote: "When the cap is reached, you decide here again.",
     noteLabel: "Additional notes (optional)",
     noteHint:
-      "Added after the task details under its own heading. The orchestrator and the steps still to run read it.",
+      "Added after the task description under its own heading. The orchestrator and the steps still to run read it.",
     notePlaceholder: "e.g. Use the ACME_TOKEN environment variable for authentication.",
     stepsTitle: "Change step images and agents",
     stepsHint:

@@ -4,6 +4,7 @@ import {
   AUDIT_ADOPT_NOTE_MAX,
   QUESTION_MAX,
   RERUN_NOTE_MAX,
+  RESUME_NOTE_MAX,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
 } from "./events.js";
@@ -65,6 +66,7 @@ const PARAMS = {
   "override.notAllowed": null,
   "resume.bugfixNeedsTestCommand": null,
   "resume.stepSettingsRechoose": null,
+  "resume.bodyTooLong": null,
   "operation.incomplete": null,
   "operation.attempted": null,
   "operation.unconfirmed": null,
@@ -99,6 +101,7 @@ const PARAMS = {
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
   "input.noteTooLong": null,
+  "input.resumeNoteTooLong": null,
   "input.auditNoteTooLong": null,
   "input.remarkTooLong": null,
   // オーケストレーターへの質問（PBI-54）
@@ -707,6 +710,7 @@ const ja: MessageDictionary = {
   "operation.connectionMissing":
     "外部作業は開始していません。選択された接続先が利用できません。設定を確認してから再開してください。",
   "resume.capRequired": "予算で止まったタスクを再開するには、新しい上限が必要です。",
+  "resume.bodyTooLong": `補足を足すと、タスクの内容が${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます（再実行で直せなくなります）。補足を短くしてください。`,
   "resume.stepSettingsRechoose":
     "テストを決めずに再開すると工程の選択からやり直すため、工程のイメージ・エージェントは一緒に変えられません。テストの扱いを決めるか、工程を選び直した後に変えてください。",
   "resume.capTooLow": ({ usedUsd }) =>
@@ -745,6 +749,7 @@ const ja: MessageDictionary = {
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.noteTooLong": `補足は${RERUN_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.resumeNoteTooLong": `補足は${RESUME_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.auditNoteTooLong": `採用に添える手入れは${AUDIT_ADOPT_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
   "input.questionRequired": "質問を入力してください。",
@@ -1349,6 +1354,7 @@ const en: MessageDictionary = {
   "operation.connectionMissing":
     "The operation has not started. The selected connection is unavailable. Check its configuration before resuming.",
   "resume.capRequired": "To resume a task stopped by its budget, set a new cap.",
+  "resume.bodyTooLong": `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be rerun). Shorten the notes.`,
   "resume.stepSettingsRechoose":
     "Resuming without deciding the tests chooses the steps again, so the step images and agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",
   "resume.capTooLow": ({ usedUsd }) =>
@@ -1387,6 +1393,7 @@ const en: MessageDictionary = {
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.noteTooLong": `Keep the additional notes within ${RERUN_NOTE_MAX.toLocaleString("en-US")} characters.`,
+  "input.resumeNoteTooLong": `Keep the additional notes within ${RESUME_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.auditNoteTooLong": `Keep the note you attach to the adoption within ${AUDIT_ADOPT_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",
   "input.questionRequired": "Enter a question.",

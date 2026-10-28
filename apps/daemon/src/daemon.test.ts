@@ -4505,24 +4505,64 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("再開の工程の設定が誤っていれば、何も記録せずに断る", async () => {
+    it("再開の工程の設定・補足が1つでも誤っていれば、正しいものも含めて何も記録せずに断る", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
         activity,
         [{ kind: "failed", reason: "error", message: "失敗" }],
         { config: withImages(), planner: plan() },
       );
-      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "説明" });
       await service.runNext(id);
-      const before = service.get(id)?.activity.length;
-      expect(() =>
-        service.resume(id, { note: "補足", images: { requirements: "missing" } }),
-      ).toThrow(InvalidOperationError);
-      expect(() => service.resume(id, { agents: { requirements: "missing" } })).toThrow(
-        InvalidOperationError,
+      const before = service.get(id);
+      const rejects = (input: unknown, code: string) =>
+        expect(() => service.resume(id, input)).toThrow(
+          expect.objectContaining({ messages: [expect.objectContaining({ code })] }),
+        );
+      // 正しいイメージの変更と、誤ったエージェント
+      rejects(
+        {
+          note: "補足",
+          images: { requirements: "playwright" },
+          agents: { requirements: "missing" },
+        },
+        "agent.notInAgents",
       );
-      expect(service.get(id)?.activity.length).toBe(before);
+      rejects({ images: { requirements: "missing" } }, "image.notInImages");
+      // 選んでいない工程（統合レビューのエージェントは、選んだ工程でも stepAgentChange が断る）
+      rejects({ images: { integrate: "playwright" } }, "image.stepMissing");
+      rejects({ agents: { integrate: "claude-subscription" } }, "agent.stepMissing");
+      // 補足の長さ（入力の上限と、説明に足した後の上限）
+      expect(() => service.resume(id, { note: "あ".repeat(10_001) })).toThrow(
+        expect.objectContaining({ name: "ZodError" }),
+      );
+      const after = service.get(id);
+      expect(after?.activity.length).toBe(before?.activity.length);
+      expect(after?.task).toMatchObject({ status: "paused", body: "説明" });
+      expect(after?.task.images).toEqual(before?.task.images);
+      expect(after?.task.agents).toEqual(before?.task.agents);
+      activity.close();
+    });
+
+    it("補足を足した説明が、再実行で直す説明の上限を超えるなら断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "あ".repeat(9_000),
+      });
+      await service.runNext(id);
+      expect(() => service.resume(id, { note: "い".repeat(5_000) })).toThrow(
+        expect.objectContaining({ messages: [message("resume.bodyTooLong")] }),
+      );
       expect(service.get(id)?.task.status).toBe("paused");
+      service.resume(id, { note: "い".repeat(900) });
+      expect(service.get(id)?.task.status).toBe("queued");
       activity.close();
     });
 
@@ -29520,16 +29560,19 @@ describe("タスクの開始時の情報収集", () => {
     expect(task?.gathered?.brief).toBe(BRIEF);
     expect(ja(task?.pausedMessage)).toContain("フロントか API か、チケットから決められない");
     await service.chooseTicketRepository(id, "https://github.com/acme/api");
-    service.resume(id, {});
+    service.resume(id, { note: "再送の上限は3回にする" });
     await service.runNext(id); // 集め直さず、選んだリポジトリで題と概要を書く
     expect(types(service, id).filter((t) => t === "InformationGathered")).toHaveLength(1);
     expect(executor.stdins[1]).toContain("取り込んだ JIRA のチケットを読んで");
     expect(executor.stdins[1]).toContain("PAY-100 エピック：二重請求をなくす");
+    // 再開の補足は、トリアージに渡し、トリアージで書いた概要の後ろにも残す（後の工程が読む）
+    expect(executor.stdins[1]).toContain("人が再開のときに足した補足");
+    expect(executor.stdins[1]).toContain("再送の上限は3回にする");
     task = service.get(id)?.task;
     expect(task).toMatchObject({
       repo: "https://github.com/acme/api",
       title: "PAY-1 決済の再送（API）",
-      body: "API の再送を直す",
+      body: "API の再送を直す\n\n## 補足（再開で人が足したもの）\n\n再送の上限は3回にする",
     });
     expect(task && awaitingTicketTriage(task)).toBe(false);
     activity.close();

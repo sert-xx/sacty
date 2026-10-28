@@ -178,6 +178,29 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     );
   });
 
+  it("再開で足した補足は、再開の行に「補足あり」を付け、本文を詳細に出す（日英）", () => {
+    const resumed = event({
+      type: "TaskResumed",
+      payload: { retry: true, note: "ACME_TOKEN を使う" },
+    });
+    expect(describeEventParts(resumed, ja)).toEqual({
+      text: "再開（人間）・補足あり",
+      detail: "ACME_TOKEN を使う",
+    });
+    expect(describeEventParts(resumed, labels.en)).toEqual({
+      text: "Resumed (person), with notes",
+      detail: "ACME_TOKEN を使う",
+    });
+    // 工程の選択からやり直す再開でも、区切りのコロンを続けない
+    const rechosen = event({
+      type: "TaskResumed",
+      payload: { retry: true, rechooseSteps: true, note: "補足" },
+    });
+    expect(describeEventParts(rechosen, ja).text).toBe(
+      "再開（人間）：工程の選択からやり直します・補足あり",
+    );
+  });
+
   it("人がテストの扱いを決めた記録と、工程の選択からやり直す再開を、日英で作業履歴に出す", () => {
     expect(
       describeEvent(event({ type: "TestsDecided", payload: { testCommand: "make check" } })),
