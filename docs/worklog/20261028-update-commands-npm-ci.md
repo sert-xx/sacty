@@ -25,6 +25,9 @@
 ## 確かめたこと
 
 - `npx vitest run apps/web/src/components/shell/update-notice.test.ts tests/docs`：4 ファイル・99 件が通過。
+- `npm run lint`・`npm run typecheck`・`npm run build`：通過。
+- `npx vitest run`：2,852 件が通過、8 件（4 ファイル）が失敗。失敗したのは `agent-sessions`・`context-mcp`・`host-mcp-processes`・`question-form.browser` のテストで、
+  main（変更前）でも同じ 8 件が失敗した。作業した環境が root で動き、コンテナに init が無く、Playwright の版に合うブラウザーが無いためで、この変更とは関係しない。
 - まっさらな複製で `npm ci`：終了コード0。`node_modules/.bin/sacty` が作られ、作業ツリーに差分は残らなかった。
 
 ## レビューの指摘と対応
