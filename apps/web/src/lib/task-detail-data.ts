@@ -108,7 +108,13 @@ export async function loadTaskDetail(
     task.fix ? getTask(task.fix.taskId).catch(() => undefined) : undefined,
     task.deployment?.fix ? getTask(task.deployment.fix.taskId).catch(() => undefined) : undefined,
     // 子タスクと派生で作ったタスクの題は、タスクの一覧を1度だけ取って引く（1件ずつ取らない。作業履歴も取らない）
-    task.split || derivedIds.length > 0 ? listTasks() : undefined,
+    // 一覧を取れなくても、派生で作ったタスクは ID で出す（子タスクの一覧は、今までどおり取れなければ詳細も出さない）
+    task.split || derivedIds.length > 0
+      ? listTasks().catch((error: unknown) => {
+          if (task.split) throw error;
+          return undefined;
+        })
+      : undefined,
     canControl(task) ? getCleanupPlan(task.id) : undefined,
     // 再実行のダイアログでも、選べるイメージを出す
     task.steps.length > 0 || canRerun(task) ? getStatus().catch(() => undefined) : undefined,

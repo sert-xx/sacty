@@ -622,10 +622,11 @@ const TaskCreated = z.object({
       .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
       .optional(),
     /**
-     * 完了したタスクから、人がその続きの作業のために作った（派生）。元の（完了した）タスク。元のタスクの成果の記録は、
-     * 説明の後に sacty が足したもの（DERIVE_RECORD_HEADING から後）。1つのタスクから、いくつでも作れる。
+     * 完了したタスクから、人がその続きの作業のために作った（派生）。元の（完了した）タスクと、sacty が説明の後に足した
+     * 元のタスクの記録の本文（record。人が書いた依頼と分けるため、見出しを探さずにこの本文をそのまま取り除く）。1つの
+     * タスクから、いくつでも作れる。派生で作ったタスクの再実行も、元のタスクと記録を引き継ぐ。
      */
-    derivedFrom: z.object({ taskId: z.string().min(1) }).optional(),
+    derivedFrom: z.object({ taskId: z.string().min(1), record: z.string().optional() }).optional(),
     /**
      * 人がタスクの作成時に指定した工程の組み合わせ（進め方）。オーケストレーターは、組み合わせを選ばずにこれを使い、
      * ベースブランチ・テストのコマンド・イメージなどだけを決める。工程の見直しでも工程を飛ばさない。無ければ
@@ -2735,33 +2736,24 @@ function headingAt(body: string, heading: string): number {
 export function rerunEditableBody(task: {
   body: string;
   rerun?: unknown;
-  derivedFrom?: unknown;
+  derivedFrom?: { record?: string };
 }): string {
   let body = task.body;
-  // 元のタスクの記録は、人の説明の後・再実行の補足の前にあるので、その部分だけを除く
+  // 元のタスクの記録は、人の説明の後・再実行の補足の前にある。作成のときに記録した本文そのものを除く（成果の本文に
+  // 見出しと同じ行があっても、境目を誤らない）
   const record = derivedRecord(task);
-  if (record) {
-    const at = body.indexOf(record);
-    body = `${body.slice(0, at).trimEnd()}${body.slice(at + record.length)}`;
+  const recordAt = record ? body.indexOf(`\n\n${record}`) : -1;
+  if (record && recordAt >= 0) {
+    body = `${body.slice(0, recordAt)}${body.slice(recordAt + 2 + record.length)}`;
   }
   const at = task.rerun ? headingAt(body, RERUN_RECORD_HEADING) : -1;
   if (at < 0) return record ? body.trimEnd() : body;
   return body.slice(0, at).trimEnd();
 }
 
-/**
- * 派生で作ったタスクの説明の、sacty が足した元のタスクの記録（見出しから、再実行の補足・前の試行の記録の前まで）。
- * 派生でないタスク・記録が無ければ undefined。
- */
-export function derivedRecord(task: { body: string; derivedFrom?: unknown }): string | undefined {
-  if (!task.derivedFrom) return undefined;
-  const start = headingAt(task.body, DERIVE_RECORD_HEADING);
-  if (start < 0) return undefined;
-  const rest = task.body.slice(start + 1);
-  const ends = [RERUN_NOTE_HEADING, RERUN_RECORD_HEADING]
-    .map((heading) => headingAt(rest, heading))
-    .filter((at) => at >= 0);
-  return (ends.length > 0 ? rest.slice(0, Math.min(...ends)) : rest).trimEnd();
+/** 派生で作ったタスクの、sacty が説明の後に足した元のタスクの記録の本文。派生でないタスクなら undefined。 */
+export function derivedRecord(task: { derivedFrom?: { record?: string } }): string | undefined {
+  return task.derivedFrom?.record || undefined;
 }
 
 /**

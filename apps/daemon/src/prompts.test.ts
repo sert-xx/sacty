@@ -14,7 +14,6 @@ import {
   answerMarker,
   buildChatPrompt,
   buildChildBody,
-  buildDeriveBody,
   buildExportDocument,
   buildExportPrompt,
   buildFinalReviewPrompt,
@@ -35,6 +34,8 @@ import {
   CHAT_PROMPT_MAX,
   clip,
   commentableLines,
+  deriveBody,
+  deriveRecord,
   extractBlocks,
   extractDocumentPages,
   extractExport,
@@ -3504,7 +3505,7 @@ describe("最終レビューに渡す実装の PR の CI", () => {
   });
 });
 
-describe("派生のタスクの説明（buildDeriveBody）", () => {
+describe("派生のタスクの説明（deriveRecord・deriveBody）", () => {
   const original = {
     id: "t-1",
     title: "決済の改修",
@@ -3546,7 +3547,9 @@ describe("派生のタスクの説明（buildDeriveBody）", () => {
   } as unknown as Task;
 
   it("人の依頼の後に、元のタスクの記録（チケット・取り込み元・PR・最終レビュー・成果・質問と答え）を足す", () => {
-    const body = buildDeriveBody(original, "  残りの画面を直す  ");
+    const record = deriveRecord(original);
+    const body = deriveBody("  残りの画面を直す  ", record);
+    expect(body).toBe(`残りの画面を直す\n\n${record}`);
     expect(body.startsWith("残りの画面を直す\n\n## 元のタスクの記録（完了したタスク）\n")).toBe(
       true,
     );

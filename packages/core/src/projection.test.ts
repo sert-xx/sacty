@@ -2075,6 +2075,35 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     expect(() => applyEvent(tasks, other)).toThrow(/not from a completed/);
   });
 
+  it("派生で作ったタスクの再実行は、元のタスクがいま完了していなくても受け付け、つながりを保つ", () => {
+    const original = {
+      ...done,
+      id: "t1",
+      projectId: "default",
+      status: "awaiting_approval",
+    } as Task;
+    const tasks = new Map([["t1", original]]);
+    const rerun = ev(
+      "t3",
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "again",
+          body: "body",
+          start: "sacty",
+          derivedFrom: { taskId: "t1", record: "## 元のタスクの記録（完了したタスク）" },
+          rerun: { taskId: "t2" },
+        },
+      },
+      "person",
+    );
+    const next = applyEvent(tasks, rerun);
+    expect(next.get("t1")?.derivedTasks).toEqual(["t3"]);
+    expect(next.get("t3")?.derivedFrom?.record).toBe("## 元のタスクの記録（完了したタスク）");
+    // 再実行でない派生は、元のタスクが完了していなければ受け付けない
+    expect(() => applyEvent(tasks, derived("t4", "t1"))).toThrow(/not from a completed/);
+  });
+
   it("元のタスクが作業履歴に無ければ、元のタスクへの記録だけを省く", () => {
     const tasks = project([derived("t2", "missing")]);
     expect(tasks.get("t2")?.derivedFrom).toEqual({ taskId: "missing" });

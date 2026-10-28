@@ -283,7 +283,6 @@ import {
   type BodyText,
   buildChatPrompt,
   buildChildBody,
-  buildDeriveBody,
   buildExportDocument,
   buildExportPrompt,
   buildFinalReviewPrompt,
@@ -312,6 +311,8 @@ import {
   changeableSteps,
   checkProvenance,
   continuablePullRequest,
+  deriveBody,
+  deriveRecord,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
   type ExportDestination,
@@ -4871,13 +4872,12 @@ export class TaskService {
       }
     }
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
-    // 派生で作ったタスクは、人が直した説明の後に、元のタスクの記録を付け直す（記録は人の入力の上限に数えない）。元の
-    // タスクが今も派生できるなら、元のタスクとのつながりも引き継ぐ
+    // 派生で作ったタスクは、人が直した説明の後に、元のタスクの記録を付け直し（記録は人の入力の上限に数えない）、元の
+    // タスクとのつながりと記録を引き継ぐ（再実行を重ねても、記録を人が直す説明に混ぜない）
     const record = derivedRecord(previous);
-    const derivedOf = previous.derivedFrom && this.tasks.get(previous.derivedFrom.taskId);
     const body = buildRerunBody(
       previous,
-      [input.body ?? "", record ?? ""].filter((part) => part.trim()).join("\n\n"),
+      record ? deriveBody(input.body ?? "", record) : (input.body ?? ""),
       input.note ?? "",
       (text) => renderMessage(text, "ja"),
     );
@@ -4894,9 +4894,7 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
-            ...(derivedOf && canDerive(derivedOf) && derivedOf.projectId === previous.projectId
-              ? { derivedFrom: { taskId: derivedOf.id } }
-              : {}),
+            ...(previous.derivedFrom ? { derivedFrom: previous.derivedFrom } : {}),
             // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
             // 組み合わせは引き継がず、オーケストレーターが選ぶ
             ...(isSecurityTask(previous) ? { plan: taskPlan(previous) } : {}),
@@ -4945,6 +4943,7 @@ export class TaskService {
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const record = deriveRecord(original);
     return this.append({ id: randomUUID(), projectId: original.projectId }, [
       {
         actor: "person",
@@ -4952,11 +4951,11 @@ export class TaskService {
           type: "TaskCreated",
           payload: {
             title: input.title,
-            body: buildDeriveBody(original, input.body),
+            body: deriveBody(input.body, record),
             start: "sacty",
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
-            derivedFrom: { taskId: original.id },
+            derivedFrom: { taskId: original.id, record },
             ...(plan ? { plan } : {}),
           },
         },

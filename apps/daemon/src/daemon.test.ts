@@ -28918,7 +28918,7 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
     const { service: restarted } = makeService(activity, []);
     expect(restarted.get(id)?.task.derivedTasks).toEqual([derived.id, second.id]);
-    expect(restarted.get(derived.id)?.task.derivedFrom).toEqual({ taskId: id });
+    expect(restarted.get(derived.id)?.task.derivedFrom).toEqual(derived.derivedFrom);
     activity.close();
   });
 
@@ -28950,15 +28950,67 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     activity.close();
   });
 
-  it("派生で作ったタスクを中止して再実行すると、人が直す説明から記録を除き、記録は sacty が付け直す（長い記録でも上限に数えない）", async () => {
+  it("チケットから取り込んだタスクから作っても、チケットを引き継がない（記録にキーと URL だけを書く）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [out(`# 結果\n${"あ".repeat(8000)}`)], {
-      planner: planner("investigate"),
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
     });
+    const { service } = makeService(
+      activity,
+      [
+        triageOut({
+          repo: "https://github.com/acme/app",
+          title: "PAY-1 決済の調査",
+          summary: "再送が遅い",
+          reason: "決済のコードがある",
+        }),
+        out("結果"),
+      ],
+      {
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+        gateway: fakeGateway(),
+        projects,
+        settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+        tickets: new FakeTickets(),
+        planner: planner("investigate"),
+      },
+    );
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    await service.runNext(id); // チケットを読む
+    await service.runNext(id); // 調査
+    service.approve(id, { step: "investigate", submission: 1 });
+    expect(service.get(id)?.task.ticket?.key).toBe("PAY-1");
+    const derived = service.deriveTask(id, { title: "直す", body: "再送を直す", repo: null });
+    expect(derived.start).toBe("sacty");
+    expect(derived.ticket).toBeUndefined();
+    expect(derived.source).toBeUndefined();
+    expect(derived.body).toContain("- チケット：PAY-1（https://jira.example.com/browse/PAY-1）");
+    activity.close();
+  });
+
+  it("派生で作ったタスクを中止して再実行すると、人が直す説明から記録を除き、記録は sacty が付け直す（成果に見出しと同じ行があっても・再実行を重ねても）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 成果の本文に、再実行の補足・前の試行の記録・元のタスクの記録と同じ見出しがあっても、境目を誤らない
+    const output = [
+      "# 結果",
+      "## 補足（再実行で人が足したもの）",
+      "あ".repeat(5500),
+      RERUN_RECORD_HEADING,
+      DERIVE_RECORD_HEADING,
+    ].join("\n");
+    const { service } = makeService(activity, [out(output)], { planner: planner("investigate") });
     const id = await completedTask(service);
     const request = "い".repeat(9000);
     const derived = service.deriveTask(id, { title: "直す", body: request, repo: null });
     expect(derived.body.length).toBeGreaterThan(TASK_BODY_MAX);
+    expect(derived.derivedFrom?.record).toBeDefined();
+    expect(derived.body).toBe(`${request}\n\n${derived.derivedFrom?.record}`);
     await service.cancel(derived.id);
     const editable = rerunEditableBody(service.get(derived.id)?.task as Task);
     expect(editable).toBe(request);
@@ -28969,15 +29021,24 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
       note: "補足",
       repo: null,
     });
-    expect(rerun.derivedFrom).toEqual({ taskId: id });
+    expect(rerun.derivedFrom).toEqual(derived.derivedFrom);
     expect(rerun.body.startsWith(`${request}\n\n${DERIVE_RECORD_HEADING}\n`)).toBe(true);
     expect(rerun.body).toContain(`- 元のタスク：決済の調査（${id}）`);
-    expect(rerun.body).toContain(RERUN_RECORD_HEADING);
     expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, rerun.id]);
     // 再実行のタスクの説明の元も、人が直した説明と補足だけ（記録は重ならない）
     expect(rerunEditableBody(rerun)).toBe(
       `${request}\n\n## 補足（再実行で人が足したもの）\n\n補足`,
     );
+    // 再実行を重ねても、記録を人が直す説明に混ぜず、つながりを保つ
+    await service.cancel(rerun.id);
+    const again = service.rerunTask(rerun.id, {
+      title: "直す",
+      body: rerunEditableBody(service.get(rerun.id)?.task as Task),
+      repo: null,
+    });
+    expect(again.derivedFrom).toEqual(derived.derivedFrom);
+    expect(rerunEditableBody(again).length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    expect(rerunEditableBody(again)).not.toContain(DERIVE_RECORD_HEADING);
     activity.close();
   });
 
@@ -29037,7 +29098,7 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     expect((await post(id, { title: "B", body: " ", repo: null })).status).toBe(400);
     const ok = await post(id, { title: "B", body: "b", repo: null });
     expect(ok.status).toBe(201);
-    expect(((await ok.json()) as { task: Task }).task.derivedFrom).toEqual({ taskId: id });
+    expect(((await ok.json()) as { task: Task }).task.derivedFrom?.taskId).toBe(id);
     activity.close();
   });
 });

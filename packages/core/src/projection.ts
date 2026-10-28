@@ -835,10 +835,14 @@ export function applyEvent(
       next.set(rerunOf.id, { ...rerunOf, rerunBy: event.taskId });
     }
     // 派生（完了したタスクの続きの作業）。元のタスクに、派生で作ったタスクを記録する（いくつでも作れる）。
-    // 元のタスクが作業履歴に無ければ、記録だけを省く
+    // 派生で作ったタスクの再実行は、作ったときに元のタスクが完了していたので、いまの元のタスクの状態は問わない
+    // （再レビューなどで完了でなくなっていても、つながりと記録を落とさない）。元のタスクが作業履歴に無ければ、記録だけを省く
     const derivedOf = event.payload.derivedFrom && next.get(event.payload.derivedFrom.taskId);
     if (derivedOf) {
-      if (!canDerive(derivedOf) || derivedOf.projectId !== event.projectId) {
+      if (
+        (!event.payload.rerun && !canDerive(derivedOf)) ||
+        derivedOf.projectId !== event.projectId
+      ) {
         throw new ActivityIntegrityError(event, "the derived task is not from a completed task");
       }
       next.set(derivedOf.id, {

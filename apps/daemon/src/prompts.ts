@@ -3712,13 +3712,12 @@ export function buildRerunBody(
 const DERIVE_OUTPUT_IN_BODY = 6_000;
 
 /**
- * 完了したタスクから派生するときの、新しいタスクの説明。人が書いた依頼（続きで何をするか）に、元のタスクの記録（工程・
- * 工程の成果・PR・最終レビュー・質問と答え）を足す。元のタスクは完了していて、その変更（マージした PR など）は残って
- * いるので、後の工程は、この記録を前提に依頼を進める。
+ * 完了したタスクから派生するときに、新しいタスクの説明の後に足す、元のタスクの記録（工程・工程の成果・PR・最終レビュー・
+ * 質問と答え）。元のタスクは完了していて、その変更（マージした PR など）は残っているので、後の工程は、この記録を前提に
+ * 人の依頼を進める。説明は、人の依頼の後に空行を挟んでこれを足したもの（deriveBody）。
  */
-export function buildDeriveBody(original: Task, body: string): string {
+export function deriveRecord(original: Task): string {
   const record: string[] = [
-    "",
     DERIVE_RECORD_HEADING,
     "",
     "このタスクは、完了したタスクから、その続きの作業のために作ったタスクです。元のタスクの変更（マージした PR など）は、そのまま残っています。以下は元のタスクの記録です。上の依頼が優先します。記録の成果は、依頼のために要る部分だけを使い、依頼に無いことはしないでください。",
@@ -3778,7 +3777,12 @@ export function buildDeriveBody(original: Task, body: string): string {
       );
     }
   }
-  return [body.trim(), ...record].join("\n");
+  return record.join("\n");
+}
+
+/** 派生のタスクの説明。人の依頼の後に、空行を挟んで元のタスクの記録を足す（再実行の画面で、記録をそのまま除けるように）。 */
+export function deriveBody(request: string, record: string): string {
+  return request.trim() ? `${request.trim()}\n\n${record}` : record;
 }
 
 /** 長い文を先頭だけにする。切る位置がサロゲートペアの途中なら、1つ前で切る（文字を壊さない）。 */
