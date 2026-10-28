@@ -11,6 +11,7 @@ import {
   ScheduleInput,
   SecurityCategory,
   StepKey,
+  StepPlan,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
   TaskTemplate,
@@ -36,6 +37,7 @@ import {
   deleteAuditMemory,
   deleteProject,
   deleteSchedule,
+  deriveTask,
   type GitHubAccounts,
   getGitHubAccounts,
   importProject,
@@ -881,6 +883,43 @@ export async function rerunTaskAction(
       note: values.note,
       repo: values.repo || null,
       ...(values.image ? { image: values.image } : {}),
+    });
+  } catch {
+    return { message: a.daemonDown, values };
+  }
+  if (!result.ok) return { message: result.message, values };
+  refresh();
+  redirect(`/tasks/${encodeURIComponent(result.task.id)}`);
+}
+
+export type DeriveTaskState = {
+  message?: string;
+  values?: { title: string; body: string; repo: string; plan: string };
+};
+
+/**
+ * 完了したタスクから、続きの作業のタスクを作る（派生）。作ったタスクの詳細に移る。リポジトリが空欄なら、リポジトリを
+ * 指定しない。進め方が空なら、オーケストレーターが選ぶ。入力の検査・リポジトリと進め方の確かめは、デーモンが行う。
+ */
+export async function deriveTaskAction(
+  _prev: DeriveTaskState,
+  formData: FormData,
+): Promise<DeriveTaskState> {
+  const a = (await getMessages()).common.action;
+  const values = {
+    title: String(formData.get("title") ?? ""),
+    body: String(formData.get("body") ?? ""),
+    repo: String(formData.get("repo") ?? "").trim(),
+    plan: String(formData.get("plan") ?? ""),
+  };
+  const plan = StepPlan.safeParse(values.plan);
+  let result: Awaited<ReturnType<typeof deriveTask>>;
+  try {
+    result = await deriveTask(String(formData.get("taskId") ?? ""), {
+      title: values.title,
+      body: values.body,
+      repo: values.repo || null,
+      ...(plan.success ? { plan: plan.data } : {}),
     });
   } catch {
     return { message: a.daemonDown, values };

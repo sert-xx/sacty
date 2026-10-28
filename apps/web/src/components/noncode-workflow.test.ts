@@ -8,6 +8,7 @@ import type { Locale } from "@/i18n/locale";
 let locale: Locale = "ja";
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 vi.mock("@/app/actions", () => ({
+  deriveTaskAction: async () => ({}),
   gateAction: async () => ({}),
   pauseTaskAction: async () => ({}),
   cancelTaskAction: async () => ({}),

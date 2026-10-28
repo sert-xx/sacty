@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -296,6 +296,7 @@ PR を参考にするだけのタスク（例「12 番の PR と同じ直し方�
 - 作った区分には、作ったタスクへのリンクが出ます。
   同じ区分では、もう作れません。
 - 対応のタスクの詳細の先頭には、元のレポートへのリンクと区分が出ます。
+- 区分をまたいで直したい・一部の指摘だけを直したいときは、[続きのタスク](#完了したタスクの続きのタスクを作る) を作り、内容に直す指摘を書いてください。
 
 ### セキュリティ対応
 
@@ -699,6 +700,22 @@ Enter と Shift + Enter は改行します。
     再実行した後の中止したタスクには、作ったタスクへのリンクが出ます。
 - 実装の PR を作っている途中に一時停止すると、PR を作り終えて実装の承認待ちになり、一時停止はしません（画面に、止めなかったことが出ます）。
   PR で判断するか、止めるなら中止してください。
+
+## 完了したタスクの続きのタスクを作る
+
+完了したタスクの成果をもとに、続きの作業（見つかった問題の対応・追加の改善など）を別のタスクとして進められます。
+完了したタスクの詳細の「続きのタスク」の欄で「続きのタスクを作る」を押します。
+
+- 開いた画面で、作業するリポジトリ（空欄ならリポジトリ無し）・進め方・タイトル・内容（続きで何をするか）を書きます。
+  内容は必須です。
+- sacty は、元のタスクを指す新しいタスクを作ります。
+  内容の後に、元のタスクの記録（工程の成果・PR・最終レビュー・質問と答え）を足して渡します。
+- 元のタスクは変わりません。
+  1つのタスクから、いくつでも作れます。
+  作ったタスクは「続きのタスク」の欄に並び、作ったタスクの詳細の先頭には元のタスクへのリンクが出ます。
+- チケットや取り込み元（Issue・PR）は引き継ぎません（結果をチケットや Issue に返しません）。
+- セキュリティチェック・セキュリティ対応のタスクからは、進め方を「セキュリティ対応」か「セキュリティチェック」にした続きだけを作れます（指定しなければ「セキュリティ対応」）。
+  レポートの内容を公開の場所に出さないためです。
 
 ## タスクの一覧
 

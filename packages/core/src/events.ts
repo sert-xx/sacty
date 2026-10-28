@@ -631,6 +631,12 @@ const TaskCreated = z.object({
       .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
       .optional(),
     /**
+     * 完了したタスクから、人がその続きの作業のために作った（派生）。元の（完了した）タスクと、sacty が説明の後に足した
+     * 元のタスクの記録の本文（record。人が書いた依頼と分けるため、見出しを探さずにこの本文をそのまま取り除く）。1つの
+     * タスクから、いくつでも作れる。派生で作ったタスクの再実行も、元のタスクと記録を引き継ぐ。
+     */
+    derivedFrom: z.object({ taskId: z.string().min(1), record: z.string().optional() }).optional(),
+    /**
      * 人がタスクの作成時に指定した工程の組み合わせ（進め方）。オーケストレーターは、組み合わせを選ばずにこれを使い、
      * ベースブランチ・テストのコマンド・イメージなどだけを決める。工程の見直しでも工程を飛ばさない。無ければ
      * オーケストレーターが選ぶ。
@@ -2712,6 +2718,32 @@ export const RerunTaskInput = z
   .strict();
 export type RerunTaskInput = z.input<typeof RerunTaskInput>;
 
+/**
+ * 完了したタスクから、続きの作業のタスクを作る入力（派生）。題と説明（続きで何をするか）は人が書き、元のタスクの成果の
+ * 記録は sacty が説明の後に足す。repo は作業するリポジトリ（プロジェクトの対象から選ぶ。null はリポジトリを指定しない）。
+ * plan は進め方（省略すると、オーケストレーターが選ぶ）。
+ */
+export const DeriveTaskInput = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, code("input.titleRequired"))
+      .max(TASK_TITLE_MAX, code("input.titleTooLong")),
+    body: z
+      .string()
+      .trim()
+      .min(1, code("input.bodyRequired"))
+      .max(TASK_BODY_MAX, code("input.bodyTooLong")),
+    repo: z.string().trim().min(1).nullable(),
+    plan: StepPlan.optional(),
+  })
+  .strict();
+export type DeriveTaskInput = z.input<typeof DeriveTaskInput>;
+
+/** 派生のタスクの説明で、sacty が足した元のタスクの記録の見出し（ここから後は sacty が書いたもの）。 */
+export const DERIVE_RECORD_HEADING = "## 元のタスクの記録（完了したタスク）";
+
 /** セキュリティチェックのレポートの区分から、対応のタスクを作る入力。 */
 export const RequestSecurityFixInput = z.object({ category: SecurityCategory }).strict();
 export type RequestSecurityFixInput = z.input<typeof RequestSecurityFixInput>;
@@ -2719,14 +2751,46 @@ export type RequestSecurityFixInput = z.input<typeof RequestSecurityFixInput>;
 /** 再実行のタスクの説明で、sacty が足した前の試行の記録の見出し（ここから後は sacty が書いたもの）。 */
 export const RERUN_RECORD_HEADING = "## 前の試行の記録（中止したタスク）";
 
+/** 再実行のタスクの説明で、人が足した補足の見出し。 */
+export const RERUN_NOTE_HEADING = "## 補足（再実行で人が足したもの）";
+
+/** 説明の中の、sacty が足した記録の見出しの位置（無ければ -1）。 */
+function headingAt(body: string, heading: string): number {
+  // 人の説明が空なら、見出しは説明の先頭にある
+  return body.startsWith(heading) ? 0 : body.indexOf(`\n${heading}`);
+}
+
 /**
- * 再実行の画面で、直す元にする説明。再実行で作ったタスクなら、sacty が足した前の試行の記録を除く（再実行を重ねても
- * 記録が積み重ならず、説明の長さの上限を超えないように。記録は、再実行のたびに作り直す）。
+ * 再実行の画面で、直す元にする説明。sacty が足した記録を除く：再実行で作ったタスクなら前の試行の記録を、派生で作った
+ * タスクなら元のタスクの記録を（再実行を重ねても記録が積み重ならず、人が直す説明が長さの上限を超えないように。記録は、
+ * 再実行のたびに sacty が作り直す・付け直す）。
  */
-export function rerunEditableBody(task: { body: string; rerun?: unknown }): string {
-  if (!task.rerun) return task.body;
-  const at = task.body.indexOf(`\n${RERUN_RECORD_HEADING}`);
-  return (at >= 0 ? task.body.slice(0, at) : task.body).trimEnd();
+export function rerunEditableBody(task: {
+  body: string;
+  rerun?: unknown;
+  derivedFrom?: { record?: string };
+}): string {
+  let body = task.body;
+  // 元のタスクの記録は、人の説明の後・再実行の補足の前にある。作成のときに記録した本文そのものを除く（成果の本文に
+  // 見出しと同じ行があっても、境目を誤らない）
+  // （人の説明が空なら、記録は説明の先頭にある）
+  const record = derivedRecord(task);
+  if (record && body.startsWith(record)) {
+    body = body.slice(record.length).replace(/^\n+/, "");
+  } else if (record) {
+    const recordAt = body.indexOf(`\n\n${record}`);
+    if (recordAt >= 0) {
+      body = `${body.slice(0, recordAt)}${body.slice(recordAt + 2 + record.length)}`;
+    }
+  }
+  const at = task.rerun ? headingAt(body, RERUN_RECORD_HEADING) : -1;
+  if (at < 0) return record ? body.trimEnd() : body;
+  return body.slice(0, at).trimEnd();
+}
+
+/** 派生で作ったタスクの、sacty が説明の後に足した元のタスクの記録の本文。派生でないタスクなら undefined。 */
+export function derivedRecord(task: { derivedFrom?: { record?: string } }): string | undefined {
+  return task.derivedFrom?.record || undefined;
 }
 
 /**

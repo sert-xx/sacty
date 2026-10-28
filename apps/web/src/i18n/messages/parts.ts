@@ -218,6 +218,30 @@ const ja = {
     submitting: "作成中…",
     rerunBy: "再実行したタスク：",
   },
+  /** 完了したタスクから、続きの作業のタスクを作る（派生）。 */
+  derive: {
+    title: "続きのタスク",
+    hint: "完了したタスクの成果をもとに、続きの作業（見つかった問題の対応・追加の改善など）を別のタスクとして作ります。元のタスクは変わりません。いくつでも作れます。",
+    none: "まだ作っていません。",
+    open: "続きのタスクを作る",
+    dialogTitle: "続きのタスクを作る",
+    description: "このタスクの成果を引き継いだ新しいタスクを作ります。",
+    descriptionHint:
+      "内容の後に、このタスクの記録（工程の成果・PR・最終レビュー・質問と答え）を足して渡します。チケットや取り込み元は引き継ぎません。",
+    securityHint:
+      "セキュリティのタスクからは、進め方をセキュリティ対応かセキュリティチェックにした続きだけを作れます（指定しなければセキュリティ対応）。",
+    titleLabel: "タイトル",
+    body: "内容（続きで何をするか）",
+    bodyPlaceholder: "例：調査で見つかった SF-2 と SF-3 を直す",
+    repository: "作業するリポジトリ（任意）",
+    repositoryHint:
+      "空欄なら、リポジトリを指定せずに作ります。コードの変更が要るときは、オーケストレーターがプロジェクトの対象から選びます。",
+    plan: "進め方",
+    planAuto: "自動（オーケストレーターが選ぶ）",
+    close: "閉じる",
+    submit: "作成する",
+    submitting: "作成中…",
+  },
   changeDecision: {
     requirementsHelp:
       "認めると要求要件の承認を取り消し、もう一度承認します。認めなければ、申し出た工程の成果物をそのまま提出します。",
@@ -440,6 +464,29 @@ const en: PartsMessages = {
     submit: "Rerun",
     submitting: "Creating…",
     rerunBy: "Rerun task: ",
+  },
+  derive: {
+    title: "Follow-up tasks",
+    hint: "Creates a separate task for follow-up work based on this completed task's results (handling issues it found, further improvements, and so on). The original task doesn't change. You can create as many as you need.",
+    none: "None yet.",
+    open: "Create a follow-up task",
+    dialogTitle: "Create a follow-up task",
+    description: "Creates a new task that takes over this task's results.",
+    descriptionHint:
+      "This task's record (step outputs, PRs, final review, questions and answers) is added after the description. The ticket and intake source aren't carried over.",
+    securityHint:
+      "From a security task, you can create only a follow-up whose plan is security fix or security check (security fix if you don't choose).",
+    titleLabel: "Title",
+    body: "Description (what to do next)",
+    bodyPlaceholder: "Example: fix SF-2 and SF-3 found by the investigation",
+    repository: "Repository to work in (optional)",
+    repositoryHint:
+      "Leave it empty to create the task without a repository. When code must change, the Orchestrator chooses one from the project's targets.",
+    plan: "Plan",
+    planAuto: "Automatic (the Orchestrator chooses)",
+    close: "Close",
+    submit: "Create",
+    submitting: "Creating…",
   },
   changeDecision: {
     requirementsHelp:

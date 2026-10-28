@@ -12,6 +12,7 @@ const paused = {
 };
 const getTask = vi.fn(async (_id: string) => ({ task: paused as unknown, activity: [] }));
 const findings = vi.fn();
+const list = vi.fn(async (): Promise<unknown[]> => []);
 vi.mock("@/lib/daemon", () => ({
   getTask: (id: string) => getTask(id),
   getSecurityFindings: (id: string) => findings(id),
@@ -19,7 +20,7 @@ vi.mock("@/lib/daemon", () => ({
   getProject: async () => ({ project: { name: "Acme" } }),
   getCleanupPlan: async () => [],
   getStatus: async () => ({ problems: [], images: [] }),
-  listTasks: async () => [],
+  listTasks: () => list(),
   listProjectRepositories: (id: string) => candidates(id),
 }));
 
@@ -86,5 +87,42 @@ describe("セキュリティチェックのレポートの指摘と、対応の�
     expect(data?.securityReport?.id).toBe("r1");
     expect(data?.securityFindings).toBeUndefined();
     expect(findings).not.toHaveBeenCalled();
+  });
+});
+
+describe("派生で作ったタスクの題（PR #242 レビュー指摘）", () => {
+  const original = {
+    ...paused,
+    id: "o1",
+    status: "idle",
+    steps: [{ key: "investigate", state: "done" }],
+    derivedTasks: ["d1", "d2"],
+  };
+  beforeEach(() => {
+    getTask.mockClear();
+    getTask.mockImplementation(async () => ({ task: original, activity: [] }));
+    list.mockReset();
+  });
+  afterEach(() => {
+    getTask.mockImplementation(async () => ({ task: paused, activity: [] }));
+    list.mockImplementation(async () => []);
+  });
+
+  it("タスクの一覧を1度だけ取って題を引き、派生で作ったタスクの詳細は1件ずつ取らない", async () => {
+    list.mockResolvedValueOnce([
+      { id: "d1", title: "続き1" },
+      { id: "x", title: "別" },
+    ]);
+    const data = await loadTaskDetail("o1", { repositories: false });
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(getTask).toHaveBeenCalledTimes(1);
+    expect(data?.derivedTasks).toEqual([{ id: "d1", title: "続き1" }, { id: "d2" }]);
+  });
+
+  it("一覧を取れなくても詳細を出し、派生で作ったタスクは ID で出す", async () => {
+    list.mockRejectedValueOnce(new Error("daemon 500"));
+    const data = await loadTaskDetail("o1", { repositories: false });
+    expect(data?.task.id).toBe("o1");
+    expect(data?.derivedTasks).toEqual([{ id: "d1" }, { id: "d2" }]);
   });
 });

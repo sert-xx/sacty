@@ -34,6 +34,8 @@ import {
   CHAT_PROMPT_MAX,
   clip,
   commentableLines,
+  deriveBody,
+  deriveRecord,
   extractBlocks,
   extractDocumentPages,
   extractExport,
@@ -3500,5 +3502,70 @@ describe("最終レビューに渡す実装の PR の CI", () => {
     }).join("\n");
     expect(text).toContain("CI の結果を理由に不合格にしない");
     expect(text).not.toContain("PR（ドラフト）https");
+  });
+});
+
+describe("派生のタスクの説明（deriveRecord・deriveBody）", () => {
+  const original = {
+    id: "t-1",
+    title: "決済の改修",
+    body: "再送を直す",
+    ticket: {
+      platform: "jira",
+      service: "jira-server",
+      key: "PAY-1",
+      url: "https://jira.example.com/browse/PAY-1",
+    },
+    source: {
+      repo: "https://github.com/acme/app",
+      number: 7,
+      url: "https://github.com/acme/app/issues/7",
+    },
+    steps: [
+      { key: "requirements", state: "done" },
+      { key: "implement", state: "done" },
+    ],
+    outputs: { implement: "# 実装の説明" },
+    approved: { requirements: { output: `# 要求要件\n${"あ".repeat(7000)}`, submission: 1 } },
+    pullRequest: { branch: "sacty/t-1", commit: "abc", url: "https://github.com/acme/app/pull/9" },
+    pullRequestMerge: { number: 9 },
+    stepPullRequests: [
+      {
+        step: "requirements",
+        url: "https://github.com/acme/app/pull/8",
+        state: "merged",
+        superseded: false,
+      },
+    ],
+    lastReview: {
+      passed: true,
+      summary: "目的を満たす",
+      humanChecks: ["本番で再送を1回試す"],
+      viewpoints: [],
+    },
+    questions: [{ text: "冪等キーは何？", answer: { text: "注文 ID\n2行目" } }],
+  } as unknown as Task;
+
+  it("人の依頼の後に、元のタスクの記録（チケット・取り込み元・PR・最終レビュー・成果・質問と答え）を足す", () => {
+    const record = deriveRecord(original);
+    const body = deriveBody("  残りの画面を直す  ", record);
+    expect(body).toBe(`残りの画面を直す\n\n${record}`);
+    expect(body.startsWith("残りの画面を直す\n\n## 元のタスクの記録（完了したタスク）\n")).toBe(
+      true,
+    );
+    expect(body).toContain("- 元のタスク：決済の改修（t-1）");
+    expect(body).toContain("- 作業したリポジトリ：https://github.com/acme/app");
+    expect(body).toContain("- チケット：PAY-1（https://jira.example.com/browse/PAY-1）");
+    expect(body).toContain("- 取り込み元：https://github.com/acme/app/issues/7");
+    expect(body).toContain("- 実装の PR（マージ済み）：https://github.com/acme/app/pull/9");
+    expect(body).toContain("- 要求要件の PR（merged）：https://github.com/acme/app/pull/8");
+    expect(body).toContain("- 最終レビュー：合格（目的を満たす）");
+    expect(body).toContain("  - 人が確かめること：本番で再送を1回試す");
+    expect(body).toContain("### 要求要件の成果（承認済み）");
+    expect(body).toContain("### 実装の成果（未承認）");
+    // 成果は1件 6000 文字まで
+    expect(body).toContain("…（長いため、先頭だけ）");
+    expect(body).not.toContain("あ".repeat(6001));
+    expect(body).toContain("- 質問：冪等キーは何？\n  答え：注文 ID\n  2行目");
   });
 });

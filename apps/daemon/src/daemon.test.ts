@@ -31,6 +31,7 @@ import {
   budgetState,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
+  DERIVE_RECORD_HEADING,
   deliveredWithoutChanges,
   exportDue,
   isCompleted,
@@ -11241,6 +11242,44 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     // 回ごとに別の目印（前回のレビューを、今回の投稿済みと見なさない）
     expect(pulls.reviews[1]?.body).toContain(`<!-- sacty-review:${id}:2 -->`);
     expect(service.get(id)?.activity.some((e) => e.type === "ReviewRestarted")).toBe(true);
+    activity.close();
+  });
+
+  it("派生で作ったタスクの再実行は、元のタスクを再レビューで完了でなくした後も、説明を空にして重ねても、元のタスクと記録を保つ（PR #242 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+    const { service } = makeService(activity, [out(`# レビュー\n${"あ".repeat(6000)}`)], {
+      pulls,
+      settings,
+    });
+    const [task] = service.importIssues([pr(9, ["sacty-review"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    await service.runNext(id);
+    const derived = service.deriveTask(id, { title: "指摘を直す", body: "直す", repo: null });
+    const record = derived.derivedFrom?.record ?? "";
+    expect(record).toContain(DERIVE_RECORD_HEADING);
+    await service.cancel(derived.id);
+    // 元のタスクを再レビューで完了でなくする（派生はできなくなる）
+    service.rereview(id);
+    expect(service.get(id)?.task.status).toBe("queued");
+    // 説明を空にして再実行する（記録が説明の先頭に来る）
+    const first = service.rerunTask(derived.id, { title: "指摘を直す", body: "", repo: null });
+    expect(first.derivedFrom).toEqual({ taskId: id, record });
+    expect(first.body.startsWith(record)).toBe(true);
+    expect(rerunEditableBody(first)).toBe("");
+    await service.cancel(first.id);
+    // 画面の初期値（空）のまま、もう一度再実行できる
+    const second = service.rerunTask(first.id, {
+      title: "指摘を直す",
+      body: rerunEditableBody(service.get(first.id)?.task as Task),
+      repo: null,
+    });
+    expect(second.derivedFrom).toEqual({ taskId: id, record });
+    expect(rerunEditableBody(second)).toBe("");
+    expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, first.id, second.id]);
     activity.close();
   });
 
@@ -28853,6 +28892,251 @@ describe("中止したタスクの再実行", () => {
     expect(service.get(rerun.id)?.task.repo).toBe("https://github.com/acme/api");
     // 同じチケットは、取り込み直さない
     expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
+    activity.close();
+  });
+});
+
+describe("完了したタスクから続きのタスクを作る（派生）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const planner = (plan: "investigate" | "security-check") => async () => ({
+    steps: ["investigate" as const],
+    plan,
+    reason: "調べる",
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  /** 調査だけのタスクを、成果を承認して完了させる。 */
+  const completedTask = async (service: TaskService) => {
+    const task = service.createTask({ projectId: "default", title: "決済の調査", body: "遅い" });
+    await service.runNext(task.id);
+    const done = service.approve(task.id, { step: "investigate", submission: 1 });
+    expect(isCompleted(done)).toBe(true);
+    return task.id;
+  };
+
+  it("元のタスクを指す新しいタスクを作り、依頼の後に元のタスクの記録を足す。いくつでも作れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("N+1 のクエリが2か所ある")], {
+      planner: planner("investigate"),
+    });
+    const id = await completedTask(service);
+    const derived = service.deriveTask(id, {
+      title: "N+1 を直す",
+      body: "調査で見つかった N+1 を直す",
+      repo: "https://github.com/acme/app",
+    });
+    expect(derived).toMatchObject({
+      title: "N+1 を直す",
+      start: "sacty",
+      status: "queued",
+      repo: "https://github.com/acme/app",
+      derivedFrom: { taskId: id },
+    });
+    expect(derived.requestedPlan).toBeUndefined();
+    expect(derived.body).toMatch(/^調査で見つかった N\+1 を直す\n\n/);
+    expect(derived.body).toContain(DERIVE_RECORD_HEADING);
+    expect(derived.body).toContain(`- 元のタスク：決済の調査（${id}）`);
+    expect(derived.body).toContain("### 調査の成果（承認済み）");
+    expect(derived.body).toContain("N+1 のクエリが2か所ある");
+    // 2つ目も作れる（リポジトリ無し・進め方の指定あり）
+    const second = service.deriveTask(id, {
+      title: "文書にする",
+      body: "調査の結果を文書にまとめる",
+      repo: null,
+      plan: "document",
+    });
+    expect(second).toMatchObject({ noRepo: true, requestedPlan: "document" });
+    // 元のタスクは完了のまま、作ったタスクを作った順に記録する（再起動の後も作業履歴から同じに戻る）
+    expect(service.get(id)?.task).toMatchObject({ derivedTasks: [derived.id, second.id] });
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    const { service: restarted } = makeService(activity, []);
+    expect(restarted.get(id)?.task.derivedTasks).toEqual([derived.id, second.id]);
+    expect(restarted.get(derived.id)?.task.derivedFrom).toEqual(derived.derivedFrom);
+    activity.close();
+  });
+
+  it("取り込み元のあるタスクから作っても、取り込み元を引き継がない（記録に URL だけを書く）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(activity, [out("結果")], {
+      pulls,
+      planner: planner("investigate"),
+    });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 7,
+        title: "遅い画面を調べて",
+        body: "",
+        url: "https://github.com/acme/app/issues/7",
+        labels: ["sacty"],
+      },
+    ]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const derived = service.deriveTask(id, { title: "直す", body: "遅い画面を直す", repo: null });
+    expect(derived.start).toBe("sacty");
+    expect(derived.source).toBeUndefined();
+    expect(derived.ticket).toBeUndefined();
+    expect(derived.body).toContain("- 取り込み元：https://github.com/acme/app/issues/7");
+    activity.close();
+  });
+
+  it("チケットから取り込んだタスクから作っても、チケットを引き継がない（記録にキーと URL だけを書く）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    const { service } = makeService(
+      activity,
+      [
+        triageOut({
+          repo: "https://github.com/acme/app",
+          title: "PAY-1 決済の調査",
+          summary: "再送が遅い",
+          reason: "決済のコードがある",
+        }),
+        out("結果"),
+      ],
+      {
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+        gateway: fakeGateway(),
+        projects,
+        settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+        tickets: new FakeTickets(),
+        planner: planner("investigate"),
+      },
+    );
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    await service.runNext(id); // チケットを読む
+    await service.runNext(id); // 調査
+    service.approve(id, { step: "investigate", submission: 1 });
+    expect(service.get(id)?.task.ticket?.key).toBe("PAY-1");
+    const derived = service.deriveTask(id, { title: "直す", body: "再送を直す", repo: null });
+    expect(derived.start).toBe("sacty");
+    expect(derived.ticket).toBeUndefined();
+    expect(derived.source).toBeUndefined();
+    expect(derived.body).toContain("- チケット：PAY-1（https://jira.example.com/browse/PAY-1）");
+    activity.close();
+  });
+
+  it("派生で作ったタスクを中止して再実行すると、人が直す説明から記録を除き、記録は sacty が付け直す（成果に見出しと同じ行があっても・再実行を重ねても）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 成果の本文に、再実行の補足・前の試行の記録・元のタスクの記録と同じ見出しがあっても、境目を誤らない
+    const output = [
+      "# 結果",
+      "## 補足（再実行で人が足したもの）",
+      "あ".repeat(5500),
+      RERUN_RECORD_HEADING,
+      DERIVE_RECORD_HEADING,
+    ].join("\n");
+    const { service } = makeService(activity, [out(output)], { planner: planner("investigate") });
+    const id = await completedTask(service);
+    const request = "い".repeat(9000);
+    const derived = service.deriveTask(id, { title: "直す", body: request, repo: null });
+    expect(derived.body.length).toBeGreaterThan(TASK_BODY_MAX);
+    expect(derived.derivedFrom?.record).toBeDefined();
+    expect(derived.body).toBe(`${request}\n\n${derived.derivedFrom?.record}`);
+    await service.cancel(derived.id);
+    const editable = rerunEditableBody(service.get(derived.id)?.task as Task);
+    expect(editable).toBe(request);
+    // 再実行の画面の初期値のまま送れる
+    const rerun = service.rerunTask(derived.id, {
+      title: "直す",
+      body: editable,
+      note: "補足",
+      repo: null,
+    });
+    expect(rerun.derivedFrom).toEqual(derived.derivedFrom);
+    expect(rerun.body.startsWith(`${request}\n\n${DERIVE_RECORD_HEADING}\n`)).toBe(true);
+    expect(rerun.body).toContain(`- 元のタスク：決済の調査（${id}）`);
+    expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, rerun.id]);
+    // 再実行のタスクの説明の元も、人が直した説明と補足だけ（記録は重ならない）
+    expect(rerunEditableBody(rerun)).toBe(
+      `${request}\n\n## 補足（再実行で人が足したもの）\n\n補足`,
+    );
+    // 再実行を重ねても、記録を人が直す説明に混ぜず、つながりを保つ
+    await service.cancel(rerun.id);
+    const again = service.rerunTask(rerun.id, {
+      title: "直す",
+      body: rerunEditableBody(service.get(rerun.id)?.task as Task),
+      repo: null,
+    });
+    expect(again.derivedFrom).toEqual(derived.derivedFrom);
+    expect(rerunEditableBody(again).length).toBeLessThanOrEqual(TASK_BODY_MAX);
+    expect(rerunEditableBody(again)).not.toContain(DERIVE_RECORD_HEADING);
+    activity.close();
+  });
+
+  it("完了していないタスク・対象に無いリポジトリからは作らない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("結果")], { planner: planner("investigate") });
+    const task = service.createTask({ projectId: "default", title: "A", body: "a" });
+    const input = { title: "B", body: "b", repo: null };
+    expect(() => service.deriveTask(task.id, input)).toThrowError(InvalidOperationError);
+    await service.runNext(task.id); // 承認待ち
+    expect(() => service.deriveTask(task.id, input)).toThrowError(InvalidOperationError);
+    service.approve(task.id, { step: "investigate", submission: 1 });
+    expect(() =>
+      service.deriveTask(task.id, { ...input, repo: "https://github.com/other/x" }),
+    ).toThrowError(InvalidOperationError);
+    expect(service.get(task.id)?.task.derivedTasks).toBeUndefined();
+    activity.close();
+  });
+
+  it("セキュリティのタスクの続きは、セキュリティの組み合わせだけ（指定しなければセキュリティ対応）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# セキュリティチェックの結果")], {
+      planner: planner("security-check"),
+    });
+    const { id } = service.createTask({ template: "security-check", projectId: "default" });
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const input = { title: "SF-1 と SF-2 を直す", body: "まとめて直す", repo: null };
+    expect(() => service.deriveTask(id, { ...input, plan: "standard" })).toThrowError(
+      new InvalidOperationError(message("derive.securityPlanRequired")),
+    );
+    expect(service.deriveTask(id, input)).toMatchObject({ requestedPlan: "security-fix" });
+    expect(service.deriveTask(id, { ...input, plan: "security-check" })).toMatchObject({
+      requestedPlan: "security-check",
+    });
+    activity.close();
+  });
+
+  it("API で作り、作ったタスクを 201 で返す。完了していなければ 409、入力の誤りは 400", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("結果")], { planner: planner("investigate") });
+    const pending = service.createTask({ projectId: "default", title: "A", body: "a" });
+    const app = createApp(service, "tok");
+    const post = (taskId: string, body: unknown) =>
+      app.request(`/api/tasks/${taskId}/derive`, {
+        method: "POST",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const ng = await post(pending.id, { title: "B", body: "b", repo: null });
+    expect(ng.status).toBe(409);
+    expect(await ng.json()).toEqual({
+      error: "invalid_operation",
+      messages: [message("derive.notCompleted")],
+    });
+    const id = await completedTask(service);
+    expect((await post(id, { title: "B", body: " ", repo: null })).status).toBe(400);
+    const ok = await post(id, { title: "B", body: "b", repo: null });
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.derivedFrom?.taskId).toBe(id);
     activity.close();
   });
 });

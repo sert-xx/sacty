@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  canDerive,
   canRequestSecurityFix,
   canRerun,
   isFinished,
@@ -38,6 +39,10 @@ export type TaskDetailData = {
   rerunOf?: Task;
   /** 中止したタスクを再実行して作ったタスク。 */
   rerunBy?: Task;
+  /** 完了したタスクから派生して作ったタスクの、元のタスク。 */
+  derivedFrom?: Task;
+  /** このタスクから派生して作ったタスク（作った順。読めなかったものは ID だけ）。 */
+  derivedTasks?: { id: string; title?: string }[];
   /** 中止したときに片付けるもの（操作できるときだけ）。 */
   cleanupPlan?: CleanupItem[];
   /** 工程のイメージの候補の元（取得できなければ無い。PBI-106）。 */
@@ -81,6 +86,7 @@ export async function loadTaskDetail(
   if (!found) return null;
   const { task, activity } = found;
   const completed = isFinished(task) && task.status !== "cancelled";
+  const derivedIds = canDerive(task) ? (task.derivedTasks ?? []) : [];
   const [
     project,
     parent,
@@ -95,12 +101,20 @@ export async function loadTaskDetail(
     rerunBy,
     securityFindings,
     securityReport,
+    derivedFrom,
   ] = await Promise.all([
     getProject(task.projectId),
     task.parent ? getTask(task.parent.taskId) : undefined,
     task.fix ? getTask(task.fix.taskId).catch(() => undefined) : undefined,
     task.deployment?.fix ? getTask(task.deployment.fix.taskId).catch(() => undefined) : undefined,
-    task.split ? listTasks() : undefined,
+    // 子タスクと派生で作ったタスクの題は、タスクの一覧を1度だけ取って引く（1件ずつ取らない。作業履歴も取らない）
+    // 一覧を取れなくても、派生で作ったタスクは ID で出す（子タスクの一覧は、今までどおり取れなければ詳細も出さない）
+    task.split || derivedIds.length > 0
+      ? listTasks().catch((error: unknown) => {
+          if (task.split) throw error;
+          return undefined;
+        })
+      : undefined,
     canControl(task) ? getCleanupPlan(task.id) : undefined,
     // 再実行のダイアログでも、選べるイメージを出す
     task.steps.length > 0 || canRerun(task) ? getStatus().catch(() => undefined) : undefined,
@@ -112,6 +126,7 @@ export async function loadTaskDetail(
     task.rerunBy ? getTask(task.rerunBy).catch(() => undefined) : undefined,
     canRequestSecurityFix(task) ? getSecurityFindings(task.id).catch(() => null) : undefined,
     task.securityFix ? getTask(task.securityFix.taskId).catch(() => undefined) : undefined,
+    task.derivedFrom ? getTask(task.derivedFrom.taskId).catch(() => undefined) : undefined,
   ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -124,6 +139,11 @@ export async function loadTaskDetail(
     children: (all ?? []).filter((t) => childIds.has(t.id)),
     ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
     ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
+    ...(derivedFrom ? { derivedFrom: derivedFrom.task } : {}),
+    derivedTasks: derivedIds.map((id) => {
+      const found = all?.find((t) => t.id === id);
+      return { id, ...(found ? { title: found.title } : {}) };
+    }),
     ...(completed ? { audit: audit ?? null } : {}),
     ...(securityFindings !== undefined ? { securityFindings } : {}),
     ...(securityReport ? { securityReport: securityReport.task } : {}),

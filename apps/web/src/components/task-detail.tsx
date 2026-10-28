@@ -4,6 +4,7 @@ import {
   type ActivityEvent,
   appliedProposalFor,
   canDecideTests,
+  canDerive,
   canOverrideVerification,
   canRechooseSteps,
   canRereview,
@@ -14,6 +15,7 @@ import {
   gatePullRequest,
   investigationIsGoal,
   isRepoless,
+  isSecurityTask,
   openProposal,
   rerunEditableBody,
   type StepKey,
@@ -26,6 +28,7 @@ import { TaskAuditCard } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeploymentWatchCard } from "@/components/deployment";
+import { DerivedTasksCard } from "@/components/derive-dialog";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
@@ -268,6 +271,18 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 data-testid="rerun-of"
               >
                 {data.rerunOf?.title ?? task.rerun.taskId}
+              </Link>
+            </>
+          )}
+          {task.derivedFrom && (
+            <>
+              {m.derivedFrom}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.derivedFrom.taskId)}`}
+                className="text-accent-foreground underline"
+                data-testid="derived-from"
+              >
+                {data.derivedFrom?.title ?? task.derivedFrom.taskId}
               </Link>
             </>
           )}
@@ -662,6 +677,14 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           {/* 承認したセキュリティチェックのレポートの区分ごとの対応のタスク */}
           {data.securityFindings !== undefined && (
             <SecurityFixesCard task={task} findings={data.securityFindings} />
+          )}
+          {/* 完了したタスクの続きの作業のタスク（派生） */}
+          {canDerive(task) && (
+            <DerivedTasksCard
+              task={task}
+              derived={data.derivedTasks ?? []}
+              security={isSecurityTask(task)}
+            />
           )}
           {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}
           <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />

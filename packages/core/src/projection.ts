@@ -362,6 +362,10 @@ export type Task = {
   rerun?: PayloadOf<"TaskCreated">["rerun"];
   /** 中止したタスクを再実行して作ったタスク（再実行は1度だけ）。 */
   rerunBy?: string;
+  /** 完了したタスクから、続きの作業のために作ったタスクの、元のタスク（派生）。 */
+  derivedFrom?: PayloadOf<"TaskCreated">["derivedFrom"];
+  /** このタスクから派生して作ったタスク（作った順）。 */
+  derivedTasks?: string[];
   /** 完了したタスクの監査（PBI-125）。監査を待つ記録（AuditQueued）が無ければ無い。 */
   audit?: TaskAuditState;
   /**
@@ -841,6 +845,22 @@ export function applyEvent(
       }
       next.set(rerunOf.id, { ...rerunOf, rerunBy: event.taskId });
     }
+    // 派生（完了したタスクの続きの作業）。元のタスクに、派生で作ったタスクを記録する（いくつでも作れる）。
+    // 派生で作ったタスクの再実行は、作ったときに元のタスクが完了していたので、いまの元のタスクの状態は問わない
+    // （再レビューなどで完了でなくなっていても、つながりと記録を落とさない）。元のタスクが作業履歴に無ければ、記録だけを省く
+    const derivedOf = event.payload.derivedFrom && next.get(event.payload.derivedFrom.taskId);
+    if (derivedOf) {
+      if (
+        (!event.payload.rerun && !canDerive(derivedOf)) ||
+        derivedOf.projectId !== event.projectId
+      ) {
+        throw new ActivityIntegrityError(event, "the derived task is not from a completed task");
+      }
+      next.set(derivedOf.id, {
+        ...derivedOf,
+        derivedTasks: [...(derivedOf.derivedTasks ?? []), event.taskId],
+      });
+    }
     next.set(event.taskId, {
       id: event.taskId,
       projectId: event.projectId,
@@ -872,6 +892,7 @@ export function applyEvent(
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
       ...(event.payload.securityFix ? { securityFix: event.payload.securityFix } : {}),
       ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),
+      ...(event.payload.derivedFrom ? { derivedFrom: event.payload.derivedFrom } : {}),
       ...(event.payload.schedule ? { schedule: event.payload.schedule } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
@@ -2839,6 +2860,14 @@ export function canRerun(task: Task): boolean {
     task.parent === undefined &&
     task.start !== "github_pull_request"
   );
+}
+
+/**
+ * 完了したタスクから、続きの作業のタスクを作れるか（派生）。工程をすべて終えて止まっている（中止していない）タスクだけ。
+ * 何度でも作れる。
+ */
+export function canDerive(task: Task): boolean {
+  return task.status === "idle" && isCompleted(task);
 }
 
 /**

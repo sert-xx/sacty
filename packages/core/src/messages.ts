@@ -58,6 +58,8 @@ const PARAMS = {
   "rerun.notCancelled": null,
   "rerun.notRerunnable": null,
   "rerun.alreadyRerun": null,
+  "derive.notCompleted": null,
+  "derive.securityPlanRequired": null,
   "resume.notPaused": null,
   "resume.testsNotUndecided": null,
   "override.notAllowed": null,
@@ -92,6 +94,7 @@ const PARAMS = {
   "schedule.dayInvalid": null,
   "schedule.projectMissing": null,
   "input.titleRequired": null,
+  "input.bodyRequired": null,
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
   "input.noteTooLong": null,
@@ -684,6 +687,9 @@ const ja: MessageDictionary = {
   "rerun.notRerunnable":
     "このタスクは再実行できません（分割で作った子タスクは親から、PR のレビューは PR から依頼し直してください）。",
   "rerun.alreadyRerun": "このタスクは再実行済みです。再実行で作ったタスクを確かめてください。",
+  "derive.notCompleted": "完了したタスクからだけ、続きのタスクを作れます。",
+  "derive.securityPlanRequired":
+    "セキュリティチェック・セキュリティ対応のタスクからは、進め方をセキュリティ対応かセキュリティチェックにした続きのタスクだけを作れます（レポートの内容を公開の場所に出さないため）。",
   "resume.notPaused": "一時停止中のタスクではありません。",
   "override.notAllowed":
     "実装の検証が続けて通らずに止まったタスクではないため、レビューへ進められません。",
@@ -732,6 +738,7 @@ const ja: MessageDictionary = {
   "schedule.dayInvalid": "日は1から31の間で入力してください。",
   "schedule.projectMissing": "スケジュールタスクのプロジェクトが見つかりません。",
   "input.titleRequired": "タイトルを入力してください。",
+  "input.bodyRequired": "内容を入力してください。",
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.noteTooLong": `補足は${RERUN_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
@@ -1320,6 +1327,9 @@ const en: MessageDictionary = {
   "rerun.notRerunnable":
     "This task can't be rerun (rerun a subtask from its parent, and request a PR review again on the PR).",
   "rerun.alreadyRerun": "This task has already been rerun. Check the task created by the rerun.",
+  "derive.notCompleted": "A follow-up task can be created only from a completed task.",
+  "derive.securityPlanRequired":
+    "From a security check or security fix task, you can create only a follow-up task whose plan is security fix or security check (so the report doesn't reach public places).",
   "resume.notPaused": "The task is not paused.",
   "override.notAllowed":
     "The task did not stop because verification of the implementation kept failing, so it cannot be moved to review.",
@@ -1368,6 +1378,7 @@ const en: MessageDictionary = {
   "schedule.dayInvalid": "Enter a day between 1 and 31.",
   "schedule.projectMissing": "The project of this scheduled task was not found.",
   "input.titleRequired": "Enter a title.",
+  "input.bodyRequired": "Enter the details.",
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.noteTooLong": `Keep the additional notes within ${RERUN_NOTE_MAX.toLocaleString("en-US")} characters.`,

@@ -2,6 +2,7 @@ import {
   type ActivityEvent,
   type DaemonText,
   DEFAULT_DOCUMENTS_DIR,
+  DERIVE_RECORD_HEADING,
   DOCUMENT_PAGES_MAX,
   ExportVia,
   type FinalReview,
@@ -24,6 +25,7 @@ import {
   type Provenance,
   type ProvenanceItem,
   type PullRequestCi,
+  RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
   type ReviewComment,
@@ -3646,7 +3648,7 @@ export function buildRerunBody(
   render: (text: DaemonText) => string,
 ): string {
   const lines: string[] = [body.trim() || "（内容なし）"];
-  if (note.trim()) lines.push("", "## 補足（再実行で人が足したもの）", "", note.trim());
+  if (note.trim()) lines.push("", RERUN_NOTE_HEADING, "", note.trim());
   const record: string[] = [
     "",
     RERUN_RECORD_HEADING,
@@ -3704,6 +3706,83 @@ export function buildRerunBody(
     }
   }
   return [...lines, ...record].join("\n");
+}
+
+/** 派生のタスクの説明に入れる、元のタスクの成果1件の長さの上限。 */
+const DERIVE_OUTPUT_IN_BODY = 6_000;
+
+/**
+ * 完了したタスクから派生するときに、新しいタスクの説明の後に足す、元のタスクの記録（工程・工程の成果・PR・最終レビュー・
+ * 質問と答え）。元のタスクは完了していて、その変更（マージした PR など）は残っているので、後の工程は、この記録を前提に
+ * 人の依頼を進める。説明は、人の依頼の後に空行を挟んでこれを足したもの（deriveBody）。
+ */
+export function deriveRecord(original: Task): string {
+  const record: string[] = [
+    DERIVE_RECORD_HEADING,
+    "",
+    "このタスクは、完了したタスクから、その続きの作業のために作ったタスクです。元のタスクの変更（マージした PR など）は、そのまま残っています。以下は元のタスクの記録です。上の依頼が優先します。記録の成果は、依頼のために要る部分だけを使い、依頼に無いことはしないでください。",
+    "",
+    `- 元のタスク：${original.title}（${original.id}）`,
+  ];
+  const repo = original.source?.repo ?? original.repo ?? original.repository?.url;
+  if (repo) record.push(`- 作業したリポジトリ：${repo}`);
+  if (original.ticket) record.push(`- チケット：${original.ticket.key}（${original.ticket.url}）`);
+  if (original.source) record.push(`- 取り込み元：${original.source.url}`);
+  if (original.steps.length > 0) {
+    record.push(
+      `- 工程：${original.steps.map((s) => `${STEP_NAME[s.key]}（${s.state}）`).join(" → ")}`,
+    );
+  }
+  if (original.pullRequest?.url) {
+    const state = original.pullRequestMerge
+      ? "マージ済み"
+      : original.pullRequestState === "closed"
+        ? "閉じた"
+        : "マージしていない";
+    record.push(`- 実装の PR（${state}）：${original.pullRequest.url}`);
+  }
+  for (const pr of original.stepPullRequests.filter((p) => !p.superseded)) {
+    record.push(`- ${STEP_NAME[pr.step]}の PR（${pr.state}）：${pr.url}`);
+  }
+  if (original.split) {
+    record.push(
+      `- 分割で作った子タスク：${original.split.children.map((c) => c.title).join("・")}`,
+    );
+  }
+  const review = original.lastReview;
+  if (review) {
+    record.push(
+      `- 最終レビュー：${review.passed ? "合格" : "不合格"}${review.summary ? `（${ja(review.summary)}）` : ""}`,
+      ...(review.humanChecks ?? []).map((c) => `  - 人が確かめること：${c}`),
+    );
+  }
+  for (const step of original.steps) {
+    const output = original.approved[step.key]?.output ?? original.outputs[step.key];
+    if (!output?.trim()) continue;
+    const approved = original.approved[step.key] ? "承認済み" : "未承認";
+    record.push(
+      "",
+      `### ${STEP_NAME[step.key]}の成果（${approved}）`,
+      "",
+      clip(output.trim(), DERIVE_OUTPUT_IN_BODY),
+    );
+  }
+  const answered = original.questions.filter((q) => q.answer?.text);
+  if (answered.length > 0) {
+    record.push("", "### 人の質問と、オーケストレーターの答え", "");
+    for (const q of answered) {
+      record.push(
+        `- 質問：${clip(q.text, RERUN_QUESTION_IN_BODY)}`,
+        `  答え：${clip(q.answer?.text ?? "", RERUN_QUESTION_IN_BODY).replaceAll("\n", "\n  ")}`,
+      );
+    }
+  }
+  return record.join("\n");
+}
+
+/** 派生のタスクの説明。人の依頼の後に、空行を挟んで元のタスクの記録を足す（再実行の画面で、記録をそのまま除けるように）。 */
+export function deriveBody(request: string, record: string): string {
+  return request.trim() ? `${request.trim()}\n\n${record}` : record;
 }
 
 /** 長い文を先頭だけにする。切る位置がサロゲートペアの途中なら、1つ前で切る（文字を壊さない）。 */

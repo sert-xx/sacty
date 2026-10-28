@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
+<!-- Code: apps/daemon/src/security.ts, apps/web/src/components/security-fixes.tsx, apps/web/src/components/derive-dialog.tsx, apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/task-step-settings.tsx, apps/web/src/components/implementation.tsx, apps/web/src/components/provenance.tsx, apps/web/src/components/task-list.tsx, apps/web/src/lib/task-filter.ts -->
 
 [日本語](tasks.md) | **English**
 
@@ -203,6 +203,7 @@ The task details of an approved security check show a "Security fixes" section. 
 - One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
 - A category with a task shows a link to it. You cannot create another one for the same category.
 - The top of a fix task's details shows a link to the original report and the category.
+- To fix findings across categories, or only some of them, create a [follow-up task](#create-a-follow-up-task-from-a-completed-task) and write the findings to fix in its description.
 
 ### Security fix
 
@@ -504,6 +505,16 @@ The details of a task stopped by the budget limit show a field for the new cumul
   - A task imported from a ticket keeps the ticket and doesn't read it again.
   - A task can be rerun only once. Afterwards, the cancelled task shows a link to the new task.
 - If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused). Decide on the PR, or cancel the task to stop it.
+
+## Create a follow-up task from a completed task
+
+You can carry on with follow-up work (handling issues it found, further improvements, and so on) as a separate task based on a completed task's results. In the "Follow-up tasks" section of a completed task's details, press "Create a follow-up task".
+
+- In the dialog, write the repository to work in (empty means no repository), the plan, the title, and the description (what to do next). The description is required.
+- sacty creates a new task that points to the original one. It adds the original task's record (step outputs, PRs, final review, questions and answers) after the description.
+- The original task doesn't change. You can create as many follow-up tasks from one task as you need. They are listed in the "Follow-up tasks" section, and the top of a follow-up task's details shows a link to the original task.
+- The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
+- From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose). This keeps the report's contents out of public places.
 
 ## Task list
 

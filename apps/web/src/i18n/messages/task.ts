@@ -18,6 +18,7 @@ const ja = {
   repoChoiceHint: (reason: string) => `選んだ理由：${reason}`,
   parent: " ・ 親タスク：",
   rerunOf: " ・ 再実行の元：",
+  derivedFrom: " ・ 続きの元：",
   sourceOpen: "（",
   sourceClose: "）",
   gathered: {
@@ -409,6 +410,7 @@ const en: TaskMessages = {
   repoChoiceHint: (reason) => `Why: ${reason}`,
   parent: " · Parent task: ",
   rerunOf: " · Rerun of: ",
+  derivedFrom: " · Follow-up of: ",
   sourceOpen: " (",
   sourceClose: ")",
   gathered: {

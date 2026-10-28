@@ -362,6 +362,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
           actor,
           event.payload.template ? l.template[event.payload.template] : undefined,
           event.payload.rerun !== undefined,
+          event.payload.derivedFrom !== undefined,
         ) +
         // 作成時に、進め方の工程ごとに指定したイメージ・エージェント
         (event.payload.images ? e.createdImages(stepNames(event.payload.images, l)) : "") +
