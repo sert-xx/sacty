@@ -7911,15 +7911,14 @@ export class TaskService {
         ]);
         return "published";
       }
-      // レビューへ進める（検証に通った・人がレビューへ進めた）ので、ドラフトを外す。外せなければ、承認待ちにせずに止める
-      // （再開すると、ここからやり直す）。ドラフトかは、台帳ではなく GitHub の今の PR で決める（ドラフトに戻した応答を
-      // 受け取れなかったときも外すため）。人が先に外していれば何もしない
-      if (pr.draft) {
-        try {
-          await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
-        } catch (error) {
-          return fail(message("pr.readyFailed", { detail: errorText(error) }));
-        }
+      // レビューへ進める（検証に通った・人がレビューへ進めた）ので、ドラフトを外す。外せない・今の状態を確かめられなければ、
+      // 承認待ちにせずに止める（再開すると、ここからやり直す）。ドラフトかは、台帳や PR の更新の答えではなく、外す前に
+      // GitHub の今の PR を読んで決める（ドラフトに戻した答え・更新の答えを受け取れなかったときも外すため）。すでに
+      // 外れていれば（人が外した・ドラフトを使えないリポジトリ）何もしない
+      try {
+        await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
+      } catch (error) {
+        return fail(message("pr.readyFailed", { detail: errorText(error) }));
       }
       const submitted = this.append(task, [
         {

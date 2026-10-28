@@ -713,9 +713,11 @@ async function setPullRequestDraft(
     "content-type": "application/json",
   };
   const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, { headers });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw apiError("getPr", res.status, json);
-  if ((json.draft === true) === input.draft) return { draft: input.draft };
+  // 答えを読めない・ドラフトかが書かれていないときは、今の状態を決められないので失敗にする（ドラフトのまま承認待ちにしない）
+  const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+  if (!res.ok) throw apiError("getPr", res.status, json ?? {});
+  if (typeof json?.draft !== "boolean") throw apiError("draftPr", res.status, {});
+  if (json.draft === input.draft) return { draft: input.draft };
   const id = json.node_id;
   if (typeof id !== "string" || !id) throw apiError("draftPr", res.status, {});
   const mutation = input.draft ? "convertPullRequestToDraft" : "markPullRequestReadyForReview";
@@ -728,9 +730,13 @@ async function setPullRequestDraft(
       variables: { id },
     }),
   });
-  const answer = (await done.json().catch(() => ({}))) as Record<string, unknown>;
+  const answer = ((await done.json().catch(() => undefined)) ?? {}) as Record<string, unknown>;
   const errors = Array.isArray(answer.errors) ? answer.errors : [];
-  if (!done.ok || errors.length > 0) {
+  // 変えた後の状態が答えにあり、求めた状態になっているときだけ成功にする（答えを読めないときも失敗）
+  const changed = (
+    answer.data as Record<string, { pullRequest?: { isDraft?: unknown } }> | undefined
+  )?.[mutation]?.pullRequest?.isDraft;
+  if (!done.ok || errors.length > 0 || changed !== input.draft) {
     const first = errors[0] as Record<string, unknown> | undefined;
     throw apiError("draftPr", done.status, {
       message: typeof first?.message === "string" ? first.message : answer.message,

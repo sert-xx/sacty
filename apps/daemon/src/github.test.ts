@@ -84,7 +84,10 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
-      { status: 200, json: { data: { markPullRequestReadyForReview: {} } } },
+      {
+        status: 200,
+        json: { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
+      },
     ]);
     const result = await new GitHubPullRequests(impl).setDraft({
       repo: input.repo,
@@ -106,7 +109,10 @@ describe("GitHub の PR（PBI-10b）", () => {
   it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: false, node_id: "PR_node" } },
-      { status: 200, json: { data: { convertPullRequestToDraft: {} } } },
+      {
+        status: 200,
+        json: { data: { convertPullRequestToDraft: { pullRequest: { isDraft: true } } } },
+      },
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
     ]);
     const client = new GitHubPullRequests(impl);
@@ -115,6 +121,38 @@ describe("GitHub の PR（PBI-10b）", () => {
     await client.setDraft(args);
     expect(JSON.stringify(calls[1]?.body)).toContain("convertPullRequestToDraft");
     expect(calls).toHaveLength(3);
+  });
+
+  it("PR の答えを読めない・ドラフトかが書かれていないときは、切り替えずに失敗にする（ドラフトのまま進めない）", async () => {
+    for (const json of [undefined, { number: 7, node_id: "PR_node" }]) {
+      const { impl, calls } = fakeFetch([{ status: 200, json }]);
+      const error = await new GitHubPullRequests(impl)
+        .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+        .catch((e: unknown) => e);
+      expect(ja(errorText(error)), JSON.stringify(json)).toContain(
+        "PR のドラフトを切り替えられませんでした",
+      );
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("GraphQL の答えを読めない・変えた後の状態が求めたものでないときは、失敗にする", async () => {
+    for (const answer of [
+      undefined,
+      { data: { markPullRequestReadyForReview: {} } },
+      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: true } } } },
+    ]) {
+      const { impl } = fakeFetch([
+        { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
+        { status: 200, json: answer },
+      ]);
+      const error = await new GitHubPullRequests(impl)
+        .setDraft({ repo: input.repo, token: input.token, number: 7, draft: false })
+        .catch((e: unknown) => e);
+      expect(ja(errorText(error)), JSON.stringify(answer)).toContain(
+        "PR のドラフトを切り替えられませんでした",
+      );
+    }
   });
 
   it("GraphQL の答えにエラーがあれば、ドラフトの切り替えの失敗にする", async () => {
