@@ -1,0 +1,34 @@
+# 承認ゲートで差し戻すときに、工程のイメージ・エージェントを一緒に変えられるようにする
+
+- 日付: 2026-10-28（UTC）
+- タスク: なし
+- PR: なし
+- ブランチ: claude/busy-meitner-okr4dx
+- 関係する ADR: [承認ゲートで差し戻すときに、工程のイメージ・エージェントを一緒に変えられる](../adr/20261028-1417-request-changes-with-step-settings.md)
+
+## 目的
+
+タスクの作成のとき（工程ごとの設定）と同じように、差し戻すときにも工程のイメージ・エージェントを変えてから差し戻せるようにする。
+
+## したこと
+
+- コア：`RequestChangesInput` に `images`・`agents` を足した。
+- デーモン：再開で使っていた工程の設定の確かめと記録を `stepSettingChanges` にまとめ、`requestChanges` からも使うようにした。
+  `StepImageChanged`・`StepAgentChanged` を、差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する。
+- 画面：
+  - 再開の欄の工程の選択の表を `step-choice-table.tsx`（`StepChoiceTable`）に分け、再開の欄と差し戻しのフォームで共通にした。
+  - 差し戻しのフォーム（`gate-form.tsx`）に、工程のイメージ・エージェントの折りたたみ（`GateStepSettings`）を足した。開いたときに `/step-options` から
+    候補を読み、選んでいるやり直す工程から後ろの工程を出す。今の設定（人が選んだエージェントが無ければ config.yaml で決まるもの）を初めに選ぶ。
+  - Server Action（`gateAction`）で、人が変えた工程だけ（`changedStepChoices`）をデーモンへ渡し、断られたときは選んだ設定を戻す。
+- ドキュメント：仕様書（承認）・ユーザードキュメント（タスク）を日英で直し、ADR を足した。
+
+## 確かめたこと
+
+- `npm run lint`・`npm run typecheck`：通った。
+- `npx vitest run apps/web packages/core apps/daemon/src/daemon.test.ts`：今回足したテスト（差し戻しと一緒の工程の設定の記録と、やり直しでの使用・
+  誤った設定で何も記録しない・差し戻しのフォームの表示と送信・Server Action）を含めて通った。
+  `question-form.browser` の1件は、この環境に Playwright のブラウザーの版が無いために落ちた（今回の変更とは関係ない）。
+- `npx vitest run tests/docs`：通った。
+- `npm run build` の後、スクリーンショットの仕組み（架空のデータ）を一時的に写して、要求要件の承認待ちのタスクの承認の画面で、折りたたみを開くと
+  やり直す工程から後ろの工程のイメージ・エージェントの選択が出ることを確かめた。判断の欄は狭いので、選択の表の並べ方を画面の幅ではなく表の幅
+  （コンテナークエリー）で変えるようにし、再開の欄の表示が変わらないことも確かめた（写しは残していない。ユーザードキュメントのスクリーンショットは撮り直していない）。

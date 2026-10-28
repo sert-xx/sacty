@@ -326,7 +326,14 @@ export async function submitForReviewAction(
   return {};
 }
 
-export type GateState = { message?: string; comments?: string; target?: StepKey };
+export type GateState = {
+  message?: string;
+  comments?: string;
+  target?: StepKey;
+  /** 差し戻しと一緒に選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
+  images?: StepChoices;
+  agents?: StepChoices;
+};
 
 /** 承認ゲートでの判断（承認・差し戻し・上限を超えた差し戻し）。どれを押したかは decision で受け取る。 */
 export async function gateAction(_prev: GateState, formData: FormData): Promise<GateState> {
@@ -338,11 +345,14 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   const submission = Number(formData.get("submission"));
   const rawTarget = formData.get("target");
   const target = rawTarget === null ? undefined : StepKey.safeParse(rawTarget).data;
+  // 差し戻しと一緒に変える工程の設定は、人が変えた工程だけを渡し、エラーのときに戻す（再開の欄と同じ）
+  const { images, agents } = changedStepChoices(formData);
+  const kept = { comments, images, agents };
   if (!step.success || (rawTarget !== null && !target)) {
-    return { message: a.invalidStep, comments };
+    return { ...kept, message: a.invalidStep };
   }
   if (!Number.isInteger(submission) || submission < 1) {
-    return { message: a.invalidSubmission, comments };
+    return { ...kept, message: a.invalidSubmission };
   }
 
   let result: Awaited<ReturnType<typeof approveStep>>;
@@ -360,12 +370,14 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
         target,
         comments: lines,
         continueOverLimit: decision === "continue",
+        images,
+        agents,
       });
     }
   } catch {
-    return { message: a.daemonDown, comments, target };
+    return { ...kept, message: a.daemonDown, target };
   }
-  if (!result.ok) return { message: result.message, comments, target };
+  if (!result.ok) return { ...kept, message: result.message, target };
   // 承認・差し戻しでお知らせの対象が変わるので、ヘッダーも描き直す（redirect だけでは、移る先の画面と共通のレイアウト
   // ＝ヘッダーは描き直されず、古いお知らせが残る。PBI-98）
   refresh();

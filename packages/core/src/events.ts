@@ -2897,6 +2897,12 @@ export const RequestChangesInput = z.object({
     .transform((list) => list.filter((c) => c.length > 0)),
   /** エスカレーションの後、上限を超えて差し戻しを続けるか。 */
   continueOverLimit: z.boolean().default(false),
+  /**
+   * 差し戻しと一緒に変える工程のイメージ・エージェント（タスクの詳細で変えるのと同じ。StepImageChanged・StepAgentChanged）。
+   * 選んだ工程だけを指定でき、今と同じ名前は変えない。
+   */
+  images: StepImageMap.optional(),
+  agents: StepAgentMap.optional(),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
 

@@ -9725,6 +9725,26 @@ export class TaskService {
     return { type: "StepAgentChanged", payload: { step, from, to: agent } };
   }
 
+  /**
+   * 再開・差し戻しと一緒に変える工程のイメージ・エージェントのイベント（今と同じ名前は除く）。誤った名前・工程があれば、
+   * 理由を示して断る（何も記録しない）。
+   */
+  private stepSettingChanges(
+    task: Task,
+    input: { images?: Partial<Record<StepKey, string>>; agents?: Partial<Record<StepKey, string>> },
+  ): { actor: Actor; event: EventInput }[] {
+    const events: { actor: Actor; event: EventInput }[] = [];
+    for (const [step, image] of Object.entries(input.images ?? {}) as [StepKey, string][]) {
+      const event = this.stepImageChange(task, step, image);
+      if (event) events.push({ actor: "person", event });
+    }
+    for (const [step, agent] of Object.entries(input.agents ?? {}) as [StepKey, string][]) {
+      const event = this.stepAgentChange(task, step, agent);
+      if (event) events.push({ actor: "person", event });
+    }
+    return events;
+  }
+
   /** 人が選んだ工程のエージェントが config.yaml から消えていたら、理由を示して一時停止する（PBI-121）。 */
   private pauseForMissingAgent(task: Task, step: StepKey, name: string): void {
     const latest = this.mustGet(task.id);
@@ -11505,19 +11525,12 @@ export class TaskService {
     const rechooseSteps = !input.tests && canRechooseSteps(task);
     // 再開と一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
     // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
-    const imageSteps = Object.entries(input.images ?? {}) as [StepKey, string][];
-    const agentSteps = Object.entries(input.agents ?? {}) as [StepKey, string][];
-    if (rechooseSteps && imageSteps.length + agentSteps.length > 0) {
+    const settingCount =
+      Object.keys(input.images ?? {}).length + Object.keys(input.agents ?? {}).length;
+    if (rechooseSteps && settingCount > 0) {
       throw new InvalidOperationError(message("resume.stepSettingsRechoose"));
     }
-    for (const [step, image] of imageSteps) {
-      const event = this.stepImageChange(task, step, image);
-      if (event) events.push({ actor: "person", event });
-    }
-    for (const [step, agent] of agentSteps) {
-      const event = this.stepAgentChange(task, step, agent);
-      if (event) events.push({ actor: "person", event });
-    }
+    events.push(...this.stepSettingChanges(task, input));
     // 補足を足した説明が、再実行の画面で直す説明の上限を超えるなら断る（人が自分の補足を削らないと再実行できなくなる）。
     // 確かめるのは再開の時点の説明（チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある）
     if (input.note) {
@@ -11624,12 +11637,16 @@ export class TaskService {
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
       throw new InvalidOperationError(message("gate.remarksRequired"));
     }
+    // 差し戻しと一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。差し戻しの前に同じ書き込みで
+    // 記録し、やり直す工程から使う。上限でエスカレーションするときも記録する（人の指定を黙って失わないため）
+    const settings = this.stepSettingChanges(task, input);
     const round = rounds + 1;
     const toRemarks = (texts: string[]) =>
       texts.map((text, i) => ({ id: `${target}-${round}-${i + 1}`, text }));
 
     if (task.status === "awaiting_approval" && rounds >= MAX_CHANGE_REQUESTS) {
       return this.append(task, [
+        ...settings,
         {
           actor: "sacty",
           event: {
@@ -11687,6 +11704,7 @@ export class TaskService {
           ]
         : [];
     return this.append(task, [
+      ...settings,
       ...missed,
       {
         actor: "person",

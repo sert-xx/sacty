@@ -4546,6 +4546,91 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("差し戻しと一緒にイメージ・エージェントを変え、やり直しから使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const strong = agent({ id: "strong", model: "claude-opus-5-5" });
+      const config = (): ConfigResult => {
+        const loaded = withImages()() as { ok: true; config: SactyConfig };
+        return {
+          ok: true,
+          config: {
+            ...loaded.config,
+            agents: Object.fromEntries([agent(), strong].map((a) => [a.id, a])),
+          },
+        };
+      };
+      const { service, executor } = makeService(
+        activity,
+        [out("# 要求要件 v1"), out("# 要求要件 v2")],
+        { config, planner: plan() },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      service.requestChanges(id, {
+        step: "requirements",
+        submission: 1,
+        comments: ["足りない"],
+        // 今と同じ名前（設計の java）は変えない
+        images: { requirements: "playwright", design: "java" },
+        agents: { requirements: "strong" },
+      });
+      const after = service.get(id);
+      // 工程の設定の変更を、差し戻しより前に記録する
+      expect(
+        after?.activity
+          .filter((e) =>
+            ["StepImageChanged", "StepAgentChanged", "ChangesRequested"].includes(e.type),
+          )
+          .map((e) => ({ type: e.type, actor: e.actor })),
+      ).toEqual([
+        { type: "StepImageChanged", actor: "person" },
+        { type: "StepAgentChanged", actor: "person" },
+        { type: "ChangesRequested", actor: "person" },
+      ]);
+      expect(after?.task.images).toMatchObject({ requirements: "playwright", design: "java" });
+      expect(after?.task.agents).toEqual({ requirements: "strong" });
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, used(playwright)]);
+      expect(promptOf(executor, 1)).toContain("claude-opus-5-5");
+      activity.close();
+    });
+
+    it("差し戻しの工程の設定が誤っていれば、差し戻しも含めて何も記録せずに断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件")], {
+        config: withImages(),
+        planner: plan(),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      const before = service.get(id);
+      const request = { step: "requirements", submission: 1, comments: ["足りない"] };
+      expect(() =>
+        service.requestChanges(id, {
+          ...request,
+          images: { requirements: "playwright" },
+          agents: { requirements: "missing" },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          messages: [expect.objectContaining({ code: "agent.notInAgents" })],
+        }),
+      );
+      expect(() =>
+        service.requestChanges(id, { ...request, images: { integrate: "playwright" } }),
+      ).toThrow(
+        expect.objectContaining({
+          messages: [expect.objectContaining({ code: "image.stepMissing" })],
+        }),
+      );
+      const after = service.get(id);
+      expect(after?.activity.length).toBe(before?.activity.length);
+      expect(after?.task.status).toBe("awaiting_approval");
+      expect(after?.task.images).toEqual(before?.task.images);
+      activity.close();
+    });
+
     it("補足を足した説明が、再実行で直す説明の上限を超えるなら断る", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(

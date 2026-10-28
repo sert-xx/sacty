@@ -7,6 +7,7 @@ import {
   gatePullRequest,
   MAX_CHANGE_REQUESTS,
   reworkTargets,
+  stepAgentChangeable,
   type Task,
   type TaskRemark,
 } from "@sacty/core";
@@ -260,6 +261,14 @@ export function ReviewView({ task }: { task: Task }) {
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
             notReproduced={step === "reproduce"}
             noChanges={step === "implement" && deliveredWithoutChanges(task)}
+            steps={task.steps
+              .filter((s) => s.state !== "skip")
+              .map((s) => ({
+                step: s.key,
+                image: task.images?.[s.key] ?? "default",
+                agentChangeable: stepAgentChangeable(s.key),
+                ...(task.agents?.[s.key] ? { agent: task.agents[s.key] } : {}),
+              }))}
             pullRequest={
               // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）。PR のマージで承認する
               watched?.step === step

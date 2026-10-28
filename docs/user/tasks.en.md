@@ -488,6 +488,7 @@ For example, you can rerun only a step that stopped on an error or was sent back
 
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
 - Who changed what, when, and from what to what is kept in the Activity.
+- When requesting changes on the approval screen, you can also choose again the images and agents of the step to redo and the steps after it, under "Change step images and agents" (open it to use it). The current settings are selected at first, and only the steps you changed are recorded, only when you request changes (not when you approve).
 - If the chosen agent can no longer be used (you deleted it from config.yaml, removed its price, and so on), the task pauses when the step runs. Choose again, then resume.
 - Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
 

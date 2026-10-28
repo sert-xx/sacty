@@ -50,6 +50,12 @@ const ja = {
     commentsHint: (max: number) =>
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡します。同じ工程への差し戻しが${max}回を超えるとエスカレーションです。`,
     commentsPlaceholder: "1 行に 1 件。例：受け入れ条件に、エラー時の振る舞いがない",
+    stepsTitle: "工程のイメージ・エージェントを変える",
+    stepsHint:
+      "タスクの詳細で変えるのと同じです。差し戻すときだけ、差し戻しと一緒に記録し、やり直す工程から使います。出すのは、やり直す工程から後ろの工程です。",
+    stepsLoading: "候補を読み込み中…",
+    stepsFailed: (reason: string) =>
+      `候補を読めませんでした：${reason}。工程の設定は変えずに差し戻せます。`,
     requestOverLimit: "上限を超えて差し戻す",
     request: "差し戻す",
     approve: "承認する",
@@ -133,6 +139,12 @@ const en: ReviewMessages = {
     commentsHint: (max) =>
       `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
     commentsPlaceholder: "One per line, e.g. The acceptance criteria don't cover error behavior",
+    stepsTitle: "Change step images and agents",
+    stepsHint:
+      "The same as changing them in the task details. Recorded only when requesting changes, and used from the step to redo. Shows the step to redo and the steps after it.",
+    stepsLoading: "Loading choices…",
+    stepsFailed: (reason) =>
+      `Could not load the choices: ${reason}. You can still request changes without changing the steps.`,
     requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
