@@ -1,5 +1,13 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { createContext, type ReactNode, useContext } from "react";
 import { Hint } from "@/components/ui/hint";
+
+/**
+ * 中のカードを折りたたまない範囲。成果物を工程ごとに1つずつ表示するときは、確かめ終えたものでもページが長くならない
+ * ので、開いて出す。
+ */
+export const ExpandCards = createContext(false);
 
 /**
  * タスク詳細のカード。collapsed なら折りたたんで見出しだけを出す（開けば中身を読める）。
@@ -42,7 +50,8 @@ export function CardSection({
       )}
     </h2>
   );
-  if (collapsed) {
+  const expand = useContext(ExpandCards);
+  if (collapsed && !expand) {
     return (
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
         <details aria-labelledby={id} className="group [&[open]>summary]:mb-3">
