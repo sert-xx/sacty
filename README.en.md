@@ -9,7 +9,7 @@ sacty is an AI software factory. After gathering the information related to the 
 You need macOS, Node.js 22.23.4 or later, Docker, and the GitHub CLI (`gh`).
 
 ```sh
-npm install
+npm ci
 npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml (set the AI endpoint, auth mode, and model prices)
 npx sacty secret set openai-api-key   # stores the OpenAI API key for the template's AI (Codex with an API key; for other auth modes see docs/user/config.en.md)

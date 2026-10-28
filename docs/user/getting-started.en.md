@@ -10,7 +10,7 @@ This page walks you through installing sacty, starting it, and running your firs
 
 - macOS
 - Node.js 22.23.4 or later
-  - The version is written in `.node-version` and `mise.toml` at the repository root. If your version manager (mise, nodenv, fnm, and so on) is set up to switch versions by directory (such as `mise activate` for mise or `--use-on-cd` for fnm), it uses that version. If not, switch with a command such as `fnm use` before `npm install`
+  - The version is written in `.node-version` and `mise.toml` at the repository root. If your version manager (mise, nodenv, fnm, and so on) is set up to switch versions by directory (such as `mise activate` for mise or `--use-on-cd` for fnm), it uses that version. If not, switch with a command such as `fnm use` before `npm ci`
 - Docker (Docker Desktop, OrbStack, Colima, and so on. Steps run inside containers)
 - GitHub CLI (`gh`)
   - Sign in with the account you use to access GitHub ([Project settings](project-settings.en.md#github-account))
@@ -18,7 +18,7 @@ This page walks you through installing sacty, starting it, and running your firs
 ## Setup
 
 ```sh
-npm install
+npm ci
 npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml
 ```
@@ -68,11 +68,13 @@ First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run
 
 ```sh
 git pull origin main
-npm install
+npm ci
 npm run build
 npx sacty image build
 npx sacty up
 ```
+
+`npm ci` reinstalls the dependencies exactly as written in `package-lock.json`. It does not rewrite `package-lock.json`, so even if you changed the npm registry in your settings, no changes are left in the working tree and the next `git pull` does not conflict.
 
 `npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI, so always stop it first.
 

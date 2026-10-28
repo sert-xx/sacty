@@ -11,7 +11,7 @@ sacty は AI ソフトウェアファクトリー。
 macOS・Node.js 22.23.4 以上・Docker・GitHub CLI（`gh`）が要る。
 
 ```sh
-npm install
+npm ci
 npm run build
 npx sacty config init   # ~/.sacty/config.yaml を作る（AI の接続先・認証方式・モデルの単価を設定する）
 npx sacty secret set openai-api-key   # 雛形の AI（Codex の API キー）の、OpenAI の API キーを保存する（ほかの認証方式は docs/user/config.md）
