@@ -1,6 +1,6 @@
 "use client";
 
-import { type PauseReason, RESUME_NOTE_MAX, type StepKey } from "@sacty/core";
+import { type PauseReason, RESUME_NOTE_MAX } from "@sacty/core";
 import { useActionState, useState } from "react";
 import { type ResumeState, resumeTaskAction, submitForReviewAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -10,36 +10,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { usd } from "@/lib/labels";
-import {
-  agentField,
-  agentFromField,
-  imageField,
-  imageFromField,
-  type StepChoices,
-} from "@/lib/step-options";
-import { useSelectValue } from "@/lib/use-select-value";
+import type { StepChoices } from "@/lib/step-options";
+import { type StepChoiceSetting, StepChoiceTable } from "./step-choice-table";
 
 const initial: ResumeState = {};
 
 /** 足せる補足の長さを出すのは、これより短くなったときだけ（いつも出すと、読み飛ばされやすくなる）。 */
 const NOTE_ROOM_NOTICE = 1_000;
 
-const SELECT =
-  "h-9 w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60";
-
-/**
- * 再開と一緒に変えられる工程の設定の1行（まだ終わっていない工程）。options が undefined なら、候補を確かめられない
- * （設定を読めない）ので選ばせない。agent が undefined の工程（統合レビュー）は、エージェントを変えられない。
- */
-export type ResumeStepSetting = {
-  step: StepKey;
-  image: string;
-  imageOptions?: { name: string; description: string }[];
-  agent?: {
-    current?: string;
-    options?: { id: string; model?: string; reasoningEffort?: string }[];
-  };
-};
+/** 再開と一緒に変えられる工程の設定の1行（まだ終わっていない工程）。 */
+export type ResumeStepSetting = StepChoiceSetting;
 
 export function ResumeForm({
   taskId,
@@ -326,145 +306,11 @@ function ResumeStepSettings({
                 {r.stepsUnavailable}
               </p>
             )}
-            <div
-              aria-hidden="true"
-              className="hidden grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)] gap-x-2 text-xs font-medium text-muted-foreground sm:grid"
-            >
-              <span />
-              <span>{r.stepImage}</span>
-              <span>{r.stepAgent}</span>
-            </div>
-            <ul className="flex flex-col gap-3 sm:gap-2">
-              {steps.map((s) => {
-                const image = chosen.images?.[s.step];
-                const agent = chosen.agents?.[s.step];
-                return (
-                  <ResumeStepRow key={s.step} setting={s} chosenImage={image} chosenAgent={agent} />
-                );
-              })}
-            </ul>
+            <StepChoiceTable steps={steps} chosen={chosen} idPrefix="resume-step" />
           </>
         )}
       </div>
     </details>
-  );
-}
-
-/**
- * 再開の欄の工程の1行。選択は非制御のまま（自動の更新で、選んでいる途中の値を消さない）、今の名前を初めに選んでおく。
- * 描いたときの今の名前も送り、Server Action は人が変えた工程だけをデーモンへ渡す（その間に変えた名前を戻さない）。
- * 今の名前が候補から消えていたら、空の選択にして送らない（選び直してもらう）。候補の出し方は、タスクの詳細の
- * StepImageForm・StepAgentForm と同じ（イメージは選んだものの説明、エージェントはモデルとリーズニングエフォート）。
- */
-function ResumeStepRow({
-  setting: s,
-  chosenImage,
-  chosenAgent,
-}: {
-  setting: ResumeStepSetting;
-  chosenImage?: string;
-  chosenAgent?: string;
-}) {
-  const m = useMessages();
-  const r = m.parts.resume;
-  const label = m.labels.step[s.step];
-  const imageKnown = s.imageOptions?.some((o) => o.name === s.image);
-  const initialImage = chosenImage ?? (imageKnown ? s.image : "");
-  const [image, imageRef] = useSelectValue(initialImage);
-  const imageNote = s.imageOptions?.find((o) => o.name === image)?.description;
-  const agentCurrent = s.agent?.current;
-  const agentKnown = s.agent?.options?.some((o) => o.id === agentCurrent);
-  const initialAgent = chosenAgent ?? (agentKnown ? agentCurrent : "");
-  const imageId = `resume-step-image-${s.step}`;
-  const agentId = `resume-step-agent-${s.step}`;
-  return (
-    <li
-      className="grid grid-cols-1 items-start gap-x-2 gap-y-1 sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1fr)]"
-      data-testid={`resume-step-${s.step}`}
-    >
-      <span className="flex min-h-9 items-center text-sm font-medium">{label}</span>
-      <div className="flex min-w-0 flex-col gap-1">
-        {/* 狭い幅では列の見出しを出さないので、選択ごとに小さな見出しを出す */}
-        <span aria-hidden="true" className="text-xs text-muted-foreground sm:hidden">
-          {r.stepImage}
-        </span>
-        {s.imageOptions ? (
-          <>
-            <input type="hidden" name={imageFromField(s.step)} value={s.image} />
-            {/* 今の名前（タスクの詳細で変えた後）か、エラーで戻した選択が変わったら作り直す（非制御の選択は、初めの値が
-                変わっても選択を変えないため）。イメージとエージェントで分け、変わった方だけを作り直す */}
-            <select
-              key={`${s.image}:${chosenImage ?? ""}`}
-              id={imageId}
-              name={imageField(s.step)}
-              ref={imageRef}
-              defaultValue={initialImage}
-              aria-label={m.task.images.label(label)}
-              aria-describedby={imageNote ? `${imageId}-note` : undefined}
-              data-testid={imageId}
-              className={SELECT}
-            >
-              {!imageKnown && (
-                <option value="" disabled>
-                  {s.image}
-                </option>
-              )}
-              {s.imageOptions.map((o) => (
-                <option key={o.name} value={o.name} title={o.description}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-            {imageNote && (
-              <p
-                id={`${imageId}-note`}
-                className="text-xs leading-5 wrap-anywhere text-muted-foreground"
-              >
-                {imageNote}
-              </p>
-            )}
-          </>
-        ) : (
-          <span className="flex min-h-9 items-center font-mono text-sm">{s.image}</span>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-col gap-1">
-        <span aria-hidden="true" className="text-xs text-muted-foreground sm:hidden">
-          {r.stepAgent}
-        </span>
-        {s.agent?.options ? (
-          <>
-            {agentCurrent && (
-              <input type="hidden" name={agentFromField(s.step)} value={agentCurrent} />
-            )}
-            <select
-              key={`${agentCurrent ?? ""}:${chosenAgent ?? ""}`}
-              id={agentId}
-              name={agentField(s.step)}
-              defaultValue={initialAgent}
-              aria-label={m.task.agents.label(label)}
-              data-testid={agentId}
-              className={SELECT}
-            >
-              {!agentKnown && (
-                <option value="" disabled>
-                  {agentCurrent ?? m.task.agents.unknown}
-                </option>
-              )}
-              {s.agent.options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {m.task.agents.option(o.id, o.model, o.reasoningEffort)}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : (
-          <span className="flex min-h-9 items-center font-mono text-sm text-muted-foreground">
-            {s.agent ? (agentCurrent ?? m.task.agents.unknown) : "—"}
-          </span>
-        )}
-      </div>
-    </li>
   );
 }
 

@@ -389,6 +389,38 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     expect(order).toEqual(["refresh", "redirect"]);
   });
 
+  it("差し戻しでは、人が変えた工程の設定だけを渡し、断られたら選んだ設定を戻す", async () => {
+    requestChanges.mockResolvedValue({ ok: false, message: "断られた" });
+    const data = form({
+      taskId: "t1",
+      step: "requirements",
+      decision: "request",
+      submission: "1",
+      comments: "直す\n\n足りない",
+      // 変えた工程と、触っていない工程（今の名前のまま）
+      "image:requirements": "java",
+      "image-from:requirements": "default",
+      "agent:requirements": "claude",
+      "agent-from:requirements": "claude",
+      "agent:design": "strong",
+      "agent-from:design": "claude",
+    });
+    expect(await gateAction({}, data)).toEqual({
+      message: "断られた",
+      comments: "直す\n\n足りない",
+      images: { requirements: "java" },
+      agents: { design: "strong" },
+    });
+    expect(requestChanges).toHaveBeenCalledWith("t1", {
+      step: "requirements",
+      submission: 1,
+      comments: ["直す", "足りない"],
+      continueOverLimit: false,
+      images: { requirements: "java" },
+      agents: { design: "strong" },
+    });
+  });
+
   it("承認できなければ、描き直さずに理由を返す", async () => {
     approveStep.mockResolvedValue({ ok: false, message: "承認できません。" });
     expect(await gateAction({}, gate("approve"))).toMatchObject({ message: "承認できません。" });

@@ -1,13 +1,27 @@
 "use client";
 
 import { GATED_STEPS, type StepKey } from "@sacty/core";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
+import { type StepOptions, stepOptionsLoader } from "@/lib/step-options";
+import { type StepChoiceSetting, StepChoiceTable } from "./step-choice-table";
+
+/**
+ * 差し戻しと一緒にイメージ・エージェントを変えられる工程（飛ばした工程を除く、タスクの工程の順）。image は今のイメージ、
+ * agent は人が選んだエージェント（無ければ config.yaml で決まるもの）。agentChangeable でない工程（統合レビュー）は、
+ * エージェントを変えられない。
+ */
+export type GateStepSetting = {
+  step: StepKey;
+  image: string;
+  agentChangeable: boolean;
+  agent?: string;
+};
 
 const initial: GateState = {};
 
@@ -24,6 +38,7 @@ export function GateForm({
   rework,
   notReproduced = false,
   noChanges = false,
+  steps = [],
 }: {
   taskId: string;
   step: StepKey;
@@ -43,11 +58,16 @@ export function GateForm({
   notReproduced?: boolean;
   /** 実装に変更が無く、PR を作らなかった実装の承認（PBI-90・PBI-110）。承認すると変更なしで完了する。 */
   noChanges?: boolean;
+  /** 差し戻しと一緒にイメージ・エージェントを変えられる工程。やり直す工程から後ろの分を出す。 */
+  steps?: GateStepSetting[];
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
   const t = m.review.gate;
   const stepLabel = m.labels.step;
+  // 選んでいるやり直す工程（工程の設定に出す工程を決める。ラジオは非制御のまま、選び直しを追う）
+  const [picked, setPicked] = useState<StepKey>();
+  const target = picked ?? state.target ?? defaultTarget;
 
   return (
     <form action={formAction} className="flex flex-col gap-3">
@@ -112,20 +132,21 @@ export function GateForm({
       {targets.length > 1 && (
         <fieldset className="flex flex-col gap-1.5">
           <legend className="pb-1 text-sm font-medium">{t.targetLegend}</legend>
-          {targets.map((target) => (
-            <label key={target} className="flex min-h-9 items-start gap-2 text-sm leading-6">
+          {targets.map((option) => (
+            <label key={option} className="flex min-h-9 items-start gap-2 text-sm leading-6">
               <input
                 type="radio"
                 name="target"
-                value={target}
-                defaultChecked={target === (state.target ?? defaultTarget)}
+                value={option}
+                defaultChecked={option === (state.target ?? defaultTarget)}
+                onChange={() => setPicked(option)}
                 className="mt-1.5 size-4 accent-primary"
               />
               <span>
-                {target === targets[0] ? t.redo(stepLabel[target]) : t.redoFrom(stepLabel[target])}
-                {target !== targets[0] && GATED_STEPS.includes(target) && (
+                {option === targets[0] ? t.redo(stepLabel[option]) : t.redoFrom(stepLabel[option])}
+                {option !== targets[0] && GATED_STEPS.includes(option) && (
                   <span className="block text-xs text-muted-foreground">
-                    {t.revokeNote(stepLabel[target])}
+                    {t.revokeNote(stepLabel[option])}
                   </span>
                 )}
               </span>
@@ -151,6 +172,17 @@ export function GateForm({
             aria-invalid={Boolean(state.message)}
             aria-describedby={state.message ? "gate-error" : undefined}
           />
+          {steps.length > 0 && (
+            <GateStepSettings
+              steps={steps.slice(
+                Math.max(
+                  steps.findIndex((s) => s.step === target),
+                  0,
+                ),
+              )}
+              chosen={state}
+            />
+          )}
         </>
       )}
       {targets.length === 0 && step === "operation" && (
@@ -187,5 +219,58 @@ export function GateForm({
         )}
       </div>
     </form>
+  );
+}
+
+/**
+ * 差し戻しと一緒に変える工程のイメージ・エージェント。普段は変えないので、折りたたんで出し、開いたときに候補を読む
+ * （タスクの作成のダイアログと同じ。画面の自動の更新のたびには読まない）。差し戻すときだけ記録する。
+ */
+function GateStepSettings({ steps, chosen }: { steps: GateStepSetting[]; chosen: GateState }) {
+  const m = useMessages();
+  const t = m.review.gate;
+  const [options, setOptions] = useState<StepOptions>({ status: "idle" });
+  const [load] = useState(() => stepOptionsLoader());
+  const rows: StepChoiceSetting[] =
+    options.status === "loaded"
+      ? steps.map((s) => {
+          const current = s.agent ?? options.stepAgents[s.step];
+          return {
+            step: s.step,
+            image: s.image,
+            imageOptions: options.images,
+            ...(s.agentChangeable
+              ? { agent: { ...(current ? { current } : {}), options: options.agents } }
+              : {}),
+          };
+        })
+      : [];
+  return (
+    <details
+      className="rounded-md border border-border bg-muted/40"
+      data-testid="gate-steps"
+      onToggle={(e) => {
+        if (e.currentTarget.open) load(m.forms.task.repositoriesNoAnswer, setOptions);
+      }}
+    >
+      <summary className="min-h-9 cursor-pointer px-3 py-2 text-sm font-medium marker:text-muted-foreground">
+        {t.stepsTitle} <Hint text={t.stepsHint} />
+      </summary>
+      <div className="flex flex-col gap-2 border-t border-border p-3">
+        {options.status === "loading" && (
+          <p role="status" className="text-xs leading-5 text-muted-foreground">
+            {t.stepsLoading}
+          </p>
+        )}
+        {options.status === "failed" && (
+          <p role="alert" className="text-xs leading-5 text-warn">
+            {t.stepsFailed(options.message)}
+          </p>
+        )}
+        {options.status === "loaded" && (
+          <StepChoiceTable steps={rows} chosen={chosen} idPrefix="gate-step" />
+        )}
+      </div>
+    </details>
   );
 }

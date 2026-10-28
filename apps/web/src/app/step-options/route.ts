@@ -3,8 +3,8 @@ import { DaemonUnavailableError, getStatus } from "@/lib/daemon";
 import { stepAgentOptions, stepImageOptions } from "@/lib/labels";
 
 /**
- * タスクの作成のダイアログで、進め方の工程ごとに選べるイメージ・エージェント。ダイアログの「工程ごとに設定」を開いたときに
- * だけ読む。選択肢はタスクの詳細で変えるときと同じ（設定を読めないときは、選べない理由を返す。消えた名前と取り違えないため）。
+ * タスクの作成のダイアログ・差し戻しのフォームで、工程ごとに選べるイメージ・エージェント。ダイアログの「工程ごとに設定」・
+ * 差し戻しのフォームの工程の設定の折りたたみを開いたときにだけ読む。選択肢はタスクの詳細で変えるときと同じ（設定を読めないときは、選べない理由を返す。消えた名前と取り違えないため）。
  */
 export async function GET() {
   const m = await getMessages();

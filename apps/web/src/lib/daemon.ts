@@ -717,6 +717,9 @@ export function requestChanges(
     target?: StepKey;
     comments: string[];
     continueOverLimit: boolean;
+    /** 差し戻しと一緒に、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */
+    images: Partial<Record<StepKey, string>>;
+    agents: Partial<Record<StepKey, string>>;
   },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
