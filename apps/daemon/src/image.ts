@@ -170,7 +170,7 @@ export function imageBuildFailure(
   build: SactyConfig["imageBuild"],
   language?: LanguageImage,
 ): string {
-  const node = build.baseImage ?? "Docker Hub の node:22-bookworm-slim";
+  const node = build.baseImage ?? "Docker Hub の node:26-bookworm-slim";
   const hints = [
     "Docker が起動しているか",
     ...(language

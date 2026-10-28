@@ -476,7 +476,7 @@ if (${JSON.stringify(mode)} === "throw") {
 }
 `,
     );
-    // Node 22 では、型を消して読むのに、フラグが要る
+    // 型の取り除きが既定で切れている古い Node（22.17 以前）でも読めるように、フラグを付ける
     const flags = ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"];
     const child = spawn(process.execPath, [...flags, file], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),

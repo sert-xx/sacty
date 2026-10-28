@@ -195,11 +195,11 @@
 - `sacty image build [<名前>...]` は `packages/cli/docker/Dockerfile` を `docker build` する。
   名前を省くと既定と `images` のすべてを作る。
   設定ファイルが無ければ既定で作り、ほかの誤りがあれば作らない。
-  - 元のイメージ（`BASE_IMAGE`）の既定は `node:22-bookworm-slim`。
+  - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
     Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex（`@openai/codex@0.160.0`）を `npm install -g` で入れる。
     最後に `USER node`・`WORKDIR /workspace`。
   - 言語ごとのイメージは、元のイメージに Node.js 18 以上と npm があればそれを使う。
-    無ければ `node_image`（無ければ `image_build.base_image`、それも無ければ `node:22-bookworm-slim`）から写す。
+    無ければ `node_image`（無ければ `image_build.base_image`、それも無ければ `node:26-bookworm-slim`）から写す。
     `node` ユーザーが無ければ作り、`HOME=/home/node`・`GOPATH=/home/node/go` にする。
     `maven_mirror` があれば Maven の `settings.xml` と Gradle の init スクリプトを書く。
   - `packages` は元のイメージにある dnf・microdnf・yum・apt-get で root で入れ、`enable_repos` はその `--enablerepo` にする（apt-get では失敗）。

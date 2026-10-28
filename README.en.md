@@ -6,7 +6,7 @@ sacty is an AI software factory. After gathering the information related to the 
 
 ## Quick start
 
-You need macOS, Node.js 22.23.4 or later, Docker, and the GitHub CLI (`gh`).
+You need macOS, Node.js 26.12.1 or later, Docker, and the GitHub CLI (`gh`).
 
 ```sh
 npm ci

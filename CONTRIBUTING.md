@@ -13,7 +13,7 @@ README・仕様書・ユーザードキュメントには、英語の版 `*.en.m
 
 ## 開発の環境を用意する
 
-macOS・Node.js 22.23.4 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
+macOS・Node.js 26.12.1 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
 Node.js の版は、リポジトリのルートの `.node-version` と `mise.toml` に書いてあります。
 mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合わせて版を切り替える設定（mise の `mise activate`、fnm の `--use-on-cd` など）をしていれば、ルートに移るとその版が使われます。
 その設定をしていなければ、`npm ci` の前に `fnm use` などで切り替えてください（版が入っていなければ、ツールの手順で入れてください）。

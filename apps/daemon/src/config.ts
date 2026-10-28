@@ -417,7 +417,7 @@ const ConfigFile = z.object({
         image: z.string().trim().min(1).optional(),
         /**
          * Node.js を写す元のイメージ（元のイメージに Node.js 18 以上と npm が無いとき）。書かなければ image_build.base_image、
-         * それも無ければ node:22-bookworm-slim。
+         * それも無ければ node:26-bookworm-slim。
          */
         node_image: z.string().trim().min(1).optional(),
         /**
@@ -1226,7 +1226,7 @@ image: ${DEFAULT_IMAGE}
 # npm のレジストリを書く（書かなければ、Docker Hub の node のイメージと npm の公開レジストリ）。
 # 元のイメージは Node.js 18 以上で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
 # image_build:
-#   base_image: registry.example.com/library/node:22-bookworm-slim
+#   base_image: registry.example.com/library/node:26-bookworm-slim
 #   npm_registry: https://npm.example.com/repository/npm/
 #   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
 #   npm_version: 11        # イメージに入れる npm の版（min-release-age は npm 11 から）

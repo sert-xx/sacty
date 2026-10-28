@@ -839,7 +839,7 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
   it("既定のイメージは候補に並べず、どれも合わないときの最後の手段として中身のとおりに説明し、理由を書かせる（PBI-105）", () => {
     const repoTask = { title: "x", body: "", steps: [] } as unknown as Task;
     const prompt = buildOrchestratorPrompt(repoTask, {
-      images: [{ name: "node-pw", description: "Node.js 22・Playwright" }],
+      images: [{ name: "node-pw", description: "Node.js 26・Playwright" }],
     });
     // 候補の1つとして並べない・書かない工程を default にしない
     expect(prompt).not.toMatch(/^\s*- default：/m);

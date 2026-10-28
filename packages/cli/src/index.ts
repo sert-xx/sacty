@@ -139,7 +139,7 @@ async function imageBuild(names: string[]): Promise<void> {
     console.log(
       language
         ? `[sacty] イメージ ${tag}（${language.name}）を作成します（元のイメージ：${language.baseImage}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`
-        : `[sacty] イメージ ${tag} を作成します（元のイメージ：${build.baseImage ?? "node:22-bookworm-slim"}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`,
+        : `[sacty] イメージ ${tag} を作成します（元のイメージ：${build.baseImage ?? "node:26-bookworm-slim"}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`,
     );
     let failure: string | undefined;
     try {

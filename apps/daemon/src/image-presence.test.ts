@@ -222,7 +222,7 @@ describe("確かめるイメージと案内", () => {
     ]) {
       expect(isRegistryImage(image), image).toBe(true);
     }
-    for (const image of ["sacty-agent:1.12.0", "library/node:22", "acme/agent:1", "sacty-agent"]) {
+    for (const image of ["sacty-agent:1.12.0", "library/node:26", "acme/agent:1", "sacty-agent"]) {
       expect(isRegistryImage(image), image).toBe(false);
     }
   });
