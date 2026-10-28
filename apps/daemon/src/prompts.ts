@@ -25,6 +25,7 @@ import {
   type Provenance,
   type ProvenanceItem,
   type PullRequestCi,
+  RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
   type ReviewComment,
@@ -3647,7 +3648,7 @@ export function buildRerunBody(
   render: (text: DaemonText) => string,
 ): string {
   const lines: string[] = [body.trim() || "（内容なし）"];
-  if (note.trim()) lines.push("", "## 補足（再実行で人が足したもの）", "", note.trim());
+  if (note.trim()) lines.push("", RERUN_NOTE_HEADING, "", note.trim());
   const record: string[] = [
     "",
     RERUN_RECORD_HEADING,

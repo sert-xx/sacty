@@ -2719,14 +2719,49 @@ export type RequestSecurityFixInput = z.input<typeof RequestSecurityFixInput>;
 /** 再実行のタスクの説明で、sacty が足した前の試行の記録の見出し（ここから後は sacty が書いたもの）。 */
 export const RERUN_RECORD_HEADING = "## 前の試行の記録（中止したタスク）";
 
+/** 再実行のタスクの説明で、人が足した補足の見出し。 */
+export const RERUN_NOTE_HEADING = "## 補足（再実行で人が足したもの）";
+
+/** 説明の中の、sacty が足した記録の見出しの位置（無ければ -1）。 */
+function headingAt(body: string, heading: string): number {
+  return body.indexOf(`\n${heading}`);
+}
+
 /**
- * 再実行の画面で、直す元にする説明。再実行で作ったタスクなら、sacty が足した前の試行の記録を除く（再実行を重ねても
- * 記録が積み重ならず、説明の長さの上限を超えないように。記録は、再実行のたびに作り直す）。
+ * 再実行の画面で、直す元にする説明。sacty が足した記録を除く：再実行で作ったタスクなら前の試行の記録を、派生で作った
+ * タスクなら元のタスクの記録を（再実行を重ねても記録が積み重ならず、人が直す説明が長さの上限を超えないように。記録は、
+ * 再実行のたびに sacty が作り直す・付け直す）。
  */
-export function rerunEditableBody(task: { body: string; rerun?: unknown }): string {
-  if (!task.rerun) return task.body;
-  const at = task.body.indexOf(`\n${RERUN_RECORD_HEADING}`);
-  return (at >= 0 ? task.body.slice(0, at) : task.body).trimEnd();
+export function rerunEditableBody(task: {
+  body: string;
+  rerun?: unknown;
+  derivedFrom?: unknown;
+}): string {
+  let body = task.body;
+  // 元のタスクの記録は、人の説明の後・再実行の補足の前にあるので、その部分だけを除く
+  const record = derivedRecord(task);
+  if (record) {
+    const at = body.indexOf(record);
+    body = `${body.slice(0, at).trimEnd()}${body.slice(at + record.length)}`;
+  }
+  const at = task.rerun ? headingAt(body, RERUN_RECORD_HEADING) : -1;
+  if (at < 0) return record ? body.trimEnd() : body;
+  return body.slice(0, at).trimEnd();
+}
+
+/**
+ * 派生で作ったタスクの説明の、sacty が足した元のタスクの記録（見出しから、再実行の補足・前の試行の記録の前まで）。
+ * 派生でないタスク・記録が無ければ undefined。
+ */
+export function derivedRecord(task: { body: string; derivedFrom?: unknown }): string | undefined {
+  if (!task.derivedFrom) return undefined;
+  const start = headingAt(task.body, DERIVE_RECORD_HEADING);
+  if (start < 0) return undefined;
+  const rest = task.body.slice(start + 1);
+  const ends = [RERUN_NOTE_HEADING, RERUN_RECORD_HEADING]
+    .map((heading) => headingAt(rest, heading))
+    .filter((at) => at >= 0);
+  return (ends.length > 0 ? rest.slice(0, Math.min(...ends)) : rest).trimEnd();
 }
 
 /**

@@ -3,13 +3,14 @@ import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from "./events.js";
 import {
+  applyEvent,
   awaitingGathering,
   awaitingRepository,
   awaitingTicketTriage,
   canDecideTests,
+  canDerive,
   canOverrideVerification,
   canRechooseSteps,
-  canDerive,
   canRerun,
   canRetryExport,
   deliveredWithoutChanges,
@@ -2064,6 +2065,14 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
 
   it("完了していないタスクからの派生は、作業履歴に受け付けない", () => {
     expect(() => project([created("t1"), derived("t2", "t1")])).toThrow(/not from a completed/);
+  });
+
+  it("別のプロジェクトのタスクからの派生は、完了していても作業履歴に受け付けない", () => {
+    const original = { ...done, id: "t1", projectId: "default", status: "idle" } as Task;
+    const tasks = new Map([["t1", original]]);
+    expect(applyEvent(tasks, derived("t2", "t1")).get("t1")?.derivedTasks).toEqual(["t2"]);
+    const other = { ...derived("t3", "t1"), projectId: "other" } as ActivityEvent;
+    expect(() => applyEvent(tasks, other)).toThrow(/not from a completed/);
   });
 
   it("元のタスクが作業履歴に無ければ、元のタスクへの記録だけを省く", () => {

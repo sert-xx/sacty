@@ -86,6 +86,7 @@ export async function loadTaskDetail(
   if (!found) return null;
   const { task, activity } = found;
   const completed = isFinished(task) && task.status !== "cancelled";
+  const derivedIds = canDerive(task) ? (task.derivedTasks ?? []) : [];
   const [
     project,
     parent,
@@ -101,13 +102,13 @@ export async function loadTaskDetail(
     securityFindings,
     securityReport,
     derivedFrom,
-    derivedTasks,
   ] = await Promise.all([
     getProject(task.projectId),
     task.parent ? getTask(task.parent.taskId) : undefined,
     task.fix ? getTask(task.fix.taskId).catch(() => undefined) : undefined,
     task.deployment?.fix ? getTask(task.deployment.fix.taskId).catch(() => undefined) : undefined,
-    task.split ? listTasks() : undefined,
+    // 子タスクと派生で作ったタスクの題は、タスクの一覧を1度だけ取って引く（1件ずつ取らない。作業履歴も取らない）
+    task.split || derivedIds.length > 0 ? listTasks() : undefined,
     canControl(task) ? getCleanupPlan(task.id) : undefined,
     // 再実行のダイアログでも、選べるイメージを出す
     task.steps.length > 0 || canRerun(task) ? getStatus().catch(() => undefined) : undefined,
@@ -120,13 +121,6 @@ export async function loadTaskDetail(
     canRequestSecurityFix(task) ? getSecurityFindings(task.id).catch(() => null) : undefined,
     task.securityFix ? getTask(task.securityFix.taskId).catch(() => undefined) : undefined,
     task.derivedFrom ? getTask(task.derivedFrom.taskId).catch(() => undefined) : undefined,
-    Promise.all(
-      (canDerive(task) ? (task.derivedTasks ?? []) : []).map((id) =>
-        getTask(id)
-          .then((found) => ({ id, ...(found ? { title: found.task.title } : {}) }))
-          .catch(() => ({ id })),
-      ),
-    ),
   ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -140,7 +134,10 @@ export async function loadTaskDetail(
     ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
     ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
     ...(derivedFrom ? { derivedFrom: derivedFrom.task } : {}),
-    derivedTasks,
+    derivedTasks: derivedIds.map((id) => {
+      const found = all?.find((t) => t.id === id);
+      return { id, ...(found ? { title: found.title } : {}) };
+    }),
     ...(completed ? { audit: audit ?? null } : {}),
     ...(securityFindings !== undefined ? { securityFindings } : {}),
     ...(securityReport ? { securityReport: securityReport.task } : {}),

@@ -1143,11 +1143,13 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 - 人は次のものを決める（`RerunTaskInput`）。
   対象に無いリポジトリ・`images` に無いイメージは断る。
   - 題
-  - 説明（元の説明。再実行のタスクなら sacty が足した記録を除いたもの。`rerunEditableBody`）
+  - 説明（元の説明から、sacty が足した記録（再実行のタスクなら前の試行の記録、派生のタスクなら元のタスクの記録）を除いたもの。`rerunEditableBody`）
   - 補足（10000 文字まで）
   - 作業するリポジトリ（プロジェクトの対象から。`null` はリポジトリ無しで、リポジトリを指定せずに作ったタスクと同じく進む）
   - イメージ（`images` の名前か `default`。無ければいつもどおり決める）
 - 説明は、人が直した説明の後に、補足（`## 補足（再実行で人が足したもの）`）と、前の試行の記録（`## 前の試行の記録（中止したタスク）`）を足したもの（`buildRerunBody`）。
+  派生で作ったタスクの再実行では、人が直した説明の後に、元のタスクの記録（`derivedRecord`）を sacty が付け直す（人の入力の上限に数えない）。
+  元のタスクが今も派生できる（`canDerive`・同じプロジェクト）なら、`derivedFrom` も引き継ぎ、元のタスクの続きのタスクに加わる。
   記録は、中止で消えなかったもの：元のタスク・作業したリポジトリ・チケットと取り込み元・工程とその状態・工程を選んだ理由・最後に止まった理由・閉じた PR・中止した日時・工程の成果（承認済みなら承認したもの。1件 3000 文字まで）・無効にしていない差し戻しの指摘・答えのある質問と答え。
   中止で作業領域・ブランチ・PR は消えているので、最初からやり直すよう書く。
 - 指定したイメージは、プロジェクトの対象の指定より優先して、すべての工程で使う（`StepsChosen` の `imageSource` は `rerun`）。
@@ -1160,7 +1162,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   レポートの区分から作った対応のタスクなら、`securityFix`（元のレポート・区分・指摘の全件）も引き継ぐ（説明に入りきらなかった指摘を落とさないため）。
   ほかの組み合わせは引き継がず、オーケストレーターが選ぶ。
 
-コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
+コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`・`derivedRecord`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
 
 ### 完了したタスクから続きのタスクを作る（派生）
 
@@ -1187,7 +1189,9 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 - 元のタスクがセキュリティの組み合わせ（`isSecurityTask`）なら、進め方は `security-fix` か `security-check` だけ（指定しなければ `security-fix`。ほかは `derive.securityPlanRequired`。409）。
   記録に入るレポート・修正の範囲を、公開の場所に出さないため（上の「セキュリティチェックとセキュリティ対応」の公開しない扱い）。
   `securityFix`（元のレポート・区分・指摘の全件）は引き継がない（直す指摘は、人が内容に書く）。
+- 続きのタスクを中止して再実行するときは、元のタスクの記録を除いた説明を人が直し、記録は sacty が付け直す（上の「中止したタスクの再実行」）。
 - 画面では、完了したタスクの詳細に「続きのタスク」の欄（作ったタスクの一覧と、作るダイアログ）を出し、続きのタスクの詳細の先頭には元のタスクへのリンクを出す。
+  作ったタスクの題は、タスクの一覧（`GET /api/tasks`）を1度だけ取って引く（1件ずつ取らない）。
   セキュリティの組み合わせのタスクでは、進め方の選択肢をセキュリティの組み合わせだけにする。
 
 コード: `apps/daemon/src/service.ts`（`deriveTask`）、`apps/daemon/src/prompts.ts`（`buildDeriveBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/derive`）、`packages/core/src/events.ts`（`DeriveTaskInput`・`DERIVE_RECORD_HEADING`）、`packages/core/src/projection.ts`（`canDerive`・`applyEvent`）、`apps/web/src/components/derive-dialog.tsx`（`DerivedTasksCard`）、`apps/web/src/lib/task-detail-data.ts`

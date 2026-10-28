@@ -52,6 +52,7 @@ import {
   DecideChangeInput,
   DeriveTaskInput,
   deploymentCheckRunning,
+  derivedRecord,
   EventInput,
   type ExportPlan,
   excludedRepositories,
@@ -4870,8 +4871,15 @@ export class TaskService {
       }
     }
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
-    const body = buildRerunBody(previous, input.body ?? "", input.note ?? "", (text) =>
-      renderMessage(text, "ja"),
+    // 派生で作ったタスクは、人が直した説明の後に、元のタスクの記録を付け直す（記録は人の入力の上限に数えない）。元の
+    // タスクが今も派生できるなら、元のタスクとのつながりも引き継ぐ
+    const record = derivedRecord(previous);
+    const derivedOf = previous.derivedFrom && this.tasks.get(previous.derivedFrom.taskId);
+    const body = buildRerunBody(
+      previous,
+      [input.body ?? "", record ?? ""].filter((part) => part.trim()).join("\n\n"),
+      input.note ?? "",
+      (text) => renderMessage(text, "ja"),
     );
     return this.append({ id: randomUUID(), projectId: previous.projectId }, [
       {
@@ -4886,6 +4894,9 @@ export class TaskService {
             ...(repo ? { repo } : { noRepo: true as const }),
             budgetCapUsd,
             rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
+            ...(derivedOf && canDerive(derivedOf) && derivedOf.projectId === previous.projectId
+              ? { derivedFrom: { taskId: derivedOf.id } }
+              : {}),
             // セキュリティの組み合わせは引き継ぐ（最小限の変更の決まりと、公開しない扱いを外さないため）。ほかの
             // 組み合わせは引き継がず、オーケストレーターが選ぶ
             ...(isSecurityTask(previous) ? { plan: taskPlan(previous) } : {}),

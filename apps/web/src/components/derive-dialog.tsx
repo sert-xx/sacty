@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
+import { useSelectValue } from "@/lib/use-select-value";
 
 const initial: DeriveTaskState = {};
 
@@ -103,9 +104,11 @@ function DeriveDialog({
   const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   const values = state.values;
   const plans = security ? SECURITY_PLANS : PLAN_ORDER;
-  const [plan, setPlan] = useState<string>(values?.plan ?? "");
-  // セキュリティのタスクの続きは、選ばなければ先頭（セキュリティ対応）になる
-  const shown = plans.find((p) => p === plan) ?? (security ? plans[0] : undefined);
+  // セキュリティのタスクの続きは、自動を選べないので、先頭（セキュリティ対応）を初めから選んでおく。選択欄は非制御にし
+  // （送信の後に React がフォームを戻しても、入れた値を初期値に残す）、工程の並びを出すために実際の選択を追う
+  const planDefault = values?.plan ?? (security ? "security-fix" : "");
+  const [plan, planRef] = useSelectValue(planDefault);
+  const shown = plans.find((p) => p === plan);
   return (
     <Dialog
       onOpenChange={(open) => {
@@ -162,8 +165,10 @@ function DeriveDialog({
               id="derive-plan"
               name="plan"
               className={`${SELECT} self-start`}
-              value={plan}
-              onChange={(e) => setPlan(e.target.value)}
+              // 送信が戻ったら、戻した値を初期値にして付け直す（React がフォームを戻しても、選んだ進め方を消さない）
+              key={planDefault}
+              ref={planRef}
+              defaultValue={planDefault}
               aria-describedby="derive-plan-note"
               data-testid="derive-plan"
             >

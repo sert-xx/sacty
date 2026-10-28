@@ -28922,6 +28922,65 @@ describe("完了したタスクから続きのタスクを作る（派生）", (
     activity.close();
   });
 
+  it("取り込み元のあるタスクから作っても、取り込み元を引き継がない（記録に URL だけを書く）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(activity, [out("結果")], {
+      pulls,
+      planner: planner("investigate"),
+    });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 7,
+        title: "遅い画面を調べて",
+        body: "",
+        url: "https://github.com/acme/app/issues/7",
+        labels: ["sacty"],
+      },
+    ]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    const derived = service.deriveTask(id, { title: "直す", body: "遅い画面を直す", repo: null });
+    expect(derived.start).toBe("sacty");
+    expect(derived.source).toBeUndefined();
+    expect(derived.ticket).toBeUndefined();
+    expect(derived.body).toContain("- 取り込み元：https://github.com/acme/app/issues/7");
+    activity.close();
+  });
+
+  it("派生で作ったタスクを中止して再実行すると、人が直す説明から記録を除き、記録は sacty が付け直す（長い記録でも上限に数えない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out(`# 結果\n${"あ".repeat(8000)}`)], {
+      planner: planner("investigate"),
+    });
+    const id = await completedTask(service);
+    const request = "い".repeat(9000);
+    const derived = service.deriveTask(id, { title: "直す", body: request, repo: null });
+    expect(derived.body.length).toBeGreaterThan(TASK_BODY_MAX);
+    await service.cancel(derived.id);
+    const editable = rerunEditableBody(service.get(derived.id)?.task as Task);
+    expect(editable).toBe(request);
+    // 再実行の画面の初期値のまま送れる
+    const rerun = service.rerunTask(derived.id, {
+      title: "直す",
+      body: editable,
+      note: "補足",
+      repo: null,
+    });
+    expect(rerun.derivedFrom).toEqual({ taskId: id });
+    expect(rerun.body.startsWith(`${request}\n\n${DERIVE_RECORD_HEADING}\n`)).toBe(true);
+    expect(rerun.body).toContain(`- 元のタスク：決済の調査（${id}）`);
+    expect(rerun.body).toContain(RERUN_RECORD_HEADING);
+    expect(service.get(id)?.task.derivedTasks).toEqual([derived.id, rerun.id]);
+    // 再実行のタスクの説明の元も、人が直した説明と補足だけ（記録は重ならない）
+    expect(rerunEditableBody(rerun)).toBe(
+      `${request}\n\n## 補足（再実行で人が足したもの）\n\n補足`,
+    );
+    activity.close();
+  });
+
   it("完了していないタスク・対象に無いリポジトリからは作らない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("結果")], { planner: planner("investigate") });
