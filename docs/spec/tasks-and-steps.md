@@ -1124,7 +1124,8 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   ただし、開始済みの作業は再開を拒否し、停止を維持する。
 - 再開のときの補足と工程の設定：人は再開と一緒に、次のものを渡せる（`ResumeTaskInput` の `note`・`images`・`agents`）。
   - 補足（10000 文字まで。`RESUME_NOTE_MAX`）は `TaskResumed` の `note` に記録し、投影がタスクの説明の後に `## 補足（再開で人が足したもの）`（`RESUME_NOTE_HEADING`）の見出しを付けて足す（`bodyWithResumeNote`）。
-    オーケストレーターとすべての工程は説明を読むので、これから実行する工程にそのまま届く。
+    オーケストレーターと工程は説明を読むので、これから実行する工程にそのまま届く。
+    説明を入れない経路（承認済みの要求要件・設計を渡す実装と最終レビュー）には、投影の `resumeNotes` を別の節として渡す（`resumeNotePromptLines`。承認済みの文書と食い違えば補足を優先させる）。
     再開のたびに、別の見出しで足す。
     派生・再実行で作ったタスクは、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）の前に入れる（再実行の画面の説明にも残る）。
     派生の記録があれば、作成のときに記録した本文の位置に入れる（再実行の記録はその後ろにあるので探さない）。無ければ、再実行の記録の見出しを探す。
@@ -1154,7 +1155,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`withoutResumeNoteHeadings`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`・`rerunnableKind`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`withoutResumeNoteHeadings`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`・`rerunnableKind`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/daemon/src/prompts.ts`（`resumeNotePromptLines`・`resumeNoteLines`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
 
 ### 終わったタスクの作業領域の片付け
 

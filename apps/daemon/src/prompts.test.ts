@@ -1786,6 +1786,31 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     );
   });
 
+  it("タスクの内容を入れない実装・最終レビューにも、人が再開のときに足した補足を渡す（設計あり・なし・テストあり・なし）", () => {
+    const NOTE = "認証は環境変数 ACME_TOKEN を使う";
+    const HEADING = "--- 人が再開のときに足した補足";
+    for (const steps of [
+      ["requirements", "design", "implement"],
+      ["requirements", "implement"],
+    ] as const) {
+      for (const extra of [{ testCommand: "npm test" }, { noTestsReason: NO_TESTS }]) {
+        const label = `${steps.join()} ${Object.keys(extra).join()}`;
+        // 補足は説明の後ろにもあるが、ここの経路は説明を読まないので、別に渡す
+        const t = task({ ...extra, resumeNotes: [NOTE] }, [...steps]);
+        const implement = buildPrompt(t, "implement");
+        expect(implement, label).toContain(HEADING);
+        expect(implement, label).toContain(NOTE);
+        const testCommand = "testCommand" in extra ? { testCommand: extra.testCommand } : {};
+        const review = buildFinalReviewPrompt(t, "diff", testCommand);
+        expect(review, label).toContain(NOTE);
+        // 補足が無ければ、節を出さない
+        const none = task(extra, [...steps]);
+        expect(buildPrompt(none, "implement"), label).not.toContain(HEADING);
+        expect(buildFinalReviewPrompt(none, "diff", testCommand), label).not.toContain(HEADING);
+      }
+    }
+  });
+
   it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {
     const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
     const implement = buildPrompt(t, "implement");

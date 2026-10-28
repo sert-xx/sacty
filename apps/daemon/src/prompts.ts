@@ -1429,6 +1429,20 @@ function directImplementLines(
   return lines;
 }
 
+/**
+ * 人が再開のときに足した補足（タスクの内容を入れない経路に添える。内容を入れる経路では、補足は内容の後ろにすでにある）。
+ * 補足は承認の後に人が足したものなので、承認済みの要求要件・設計と食い違えば補足を優先させる。
+ */
+function resumeNotePromptLines(task: Task): string[] {
+  const notes = resumeNoteSections(task.resumeNotes ?? []);
+  if (!notes) return [];
+  return [
+    "",
+    "--- 人が再開のときに足した補足（承認済みの要求要件・設計と食い違うときは、補足を優先してください） ---",
+    notes,
+  ];
+}
+
 /** タスクの内容。タスクの開始時に集めた情報と、引き継いで直す既存の PR のことと、その PR の指摘も含める。 */
 function taskContent(
   task: Task,
@@ -1961,9 +1975,11 @@ export function buildPrompt(
         task.approved.design?.output ?? "（なし）",
         "",
         ...investigationLines(task),
-        // タスクの内容を入れない経路なので、タスクの開始時に集めた情報と、引き継いで直す PR のことはここで添える
+        // タスクの内容を入れない経路なので、タスクの開始時に集めた情報と、引き継いで直す PR のことと、人が再開のときに
+        // 足した補足はここで添える
         ...gatheredLines(task),
         ...continued,
+        ...resumeNotePromptLines(task),
         "",
         noTests
           ? "--- 観点（承認済み・すべてを満たす） ---"
@@ -2499,6 +2515,8 @@ export function buildFinalReviewPrompt(
             "",
             "--- 承認済みの設計 ---",
             task.approved.design?.output ?? "（なし）",
+            // タスクの内容を入れない経路なので、人が再開のときに足した補足はここで添える
+            ...resumeNotePromptLines(task),
           ]),
     "",
     "--- テスト観点 ---",
