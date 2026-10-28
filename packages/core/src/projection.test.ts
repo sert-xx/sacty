@@ -2612,3 +2612,50 @@ describe("再開の補足と、再実行・取り込みの説明", () => {
     expect(rerunEditableBody({ body })).toBe(body);
   });
 });
+
+describe("チケットのトリアージと再開の補足", () => {
+  const H = RESUME_NOTE_HEADING;
+  const ticketTask = (body: string) =>
+    ev(
+      "t1",
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "PAY-1",
+          body,
+          start: "jira",
+          ticket: {
+            platform: "jira",
+            service: "jira-server",
+            key: "PAY-1",
+            url: "https://jira.example.com/browse/PAY-1",
+          },
+        },
+      },
+      "person",
+    );
+
+  it("人の補足は作業履歴から取り、説明にある補足の見出し（チケットの文）は補足として残さない", () => {
+    seq = 0;
+    const task = project([
+      // チケットの本文に、補足の見出しの行がある
+      ticketTask(`チケットの本文\n\n${H}\n\nチケットの文`),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error" } }),
+      ev("t1", { type: "TaskResumed", payload: { retry: true, note: "人の補足" } }, "person"),
+      ev(
+        "t1",
+        {
+          type: "TicketTriaged",
+          payload: {
+            repo: "https://github.com/acme/app",
+            body: `概要\n${H}\n概要に写された見出し`,
+            reason: "理由",
+          },
+        },
+        "orchestrator",
+      ),
+    ]).get("t1");
+    expect(task?.resumeNotes).toEqual(["人の補足"]);
+    expect(task?.body).toBe(`概要\n概要に写された見出し\n\n${H}\n\n人の補足`);
+  });
+});

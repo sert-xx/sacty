@@ -2838,6 +2838,14 @@ export function bodyWithResumeNote(task: ResumeNoteTask, note: string): string {
   return [before, section, after].filter(Boolean).join("\n\n");
 }
 
+/** 補足の見出しの行を除く（人の補足ではない文を、人の補足に見せかけないため。チケットのトリアージの概要など）。 */
+export function withoutResumeNoteHeadings(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== RESUME_NOTE_HEADING)
+    .join("\n");
+}
+
 /** 改行を LF にそろえる（フォームの送信は改行を CRLF にするので、画面の欄の数え方と長さをそろえる）。 */
 export function normalizeNewlines(text: string): string {
   return text.replace(/\r\n?/g, "\n");

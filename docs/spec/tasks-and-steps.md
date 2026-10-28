@@ -1131,7 +1131,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - 補足は、説明に足すほかに投影の `resumeNotes` に足した順で貯める（説明を書き換える取り込みで使う。説明の見出しからは読み直さない）。
   - 改行は LF にそろえてから数える（`ResumeTaskInput` の `note`・Server Action。`normalizeNewlines`）。
   - 補足のせいで、説明のうち再実行の画面で直す部分（`rerunEditableBody`）が `TASK_BODY_MAX` を新たに超えるなら、何も記録せずに断る（`resume.bodyTooLong`。足せる長さを示し、足せなければ、補足なしで再開するか中止して再実行で内容を直すよう案内する。`resumeNoteRoom`）。
-    再実行できない種類のタスク（子タスク・PR のタスク）と、補足を足す前から上限を超える説明（取り込んだ長い Issue など）は、補足の上限（`RESUME_NOTE_MAX`）だけで確かめる。
+    再実行できない種類のタスク（子タスク・PR のタスク。`canRerun` と同じ `rerunnableKind` で判定する）と、補足を足す前から上限を超える説明（取り込んだ長い Issue など）は、補足の上限（`RESUME_NOTE_MAX`）だけで確かめる。
     確かめるのは再開の時点の説明で、チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある。
   - チケットのトリアージを待って止まったタスクでは、補足をトリアージ（`buildTicketTriagePrompt`）に判断の材料として渡し（概要には写させない）、`TicketTriaged` で説明を概要に書き換えるときに、補足（`resumeNotes`）を概要の後ろに残す。
     トリアージの概要に補足の見出しの行があれば除く（チケットの文を人の補足に見せかけない）。
@@ -1154,7 +1154,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`withoutResumeNoteHeadings`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`・`rerunnableKind`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
 
 ### 終わったタスクの作業領域の片付け
 

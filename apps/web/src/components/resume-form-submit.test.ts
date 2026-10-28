@@ -212,6 +212,19 @@ describe("再開の欄の補足と工程の設定", () => {
     );
     expect(container.querySelector<HTMLTextAreaElement>("#resume-note")?.maxLength).toBe(5_000);
     expect(container.querySelector("#resume-note-room")).toBeNull();
+    // 境目：1000 文字では出さず、999 文字で出す
+    act(() =>
+      root.render(
+        h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 1_000 }),
+      ),
+    );
+    expect(container.querySelector("#resume-note-room")).toBeNull();
+    act(() =>
+      root.render(
+        h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 999 }),
+      ),
+    );
+    expect(container.querySelector("#resume-note-room")?.textContent).toBe(r.noteRoom(999));
     act(() =>
       root.render(
         h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 120 }),

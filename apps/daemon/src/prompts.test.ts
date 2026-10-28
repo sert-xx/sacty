@@ -30,6 +30,7 @@ import {
   buildStepPullRequestTitle,
   buildStepReviewPrompt,
   buildTicketPullRequestComment,
+  buildTicketTriagePrompt,
   CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
   clip,
@@ -3567,5 +3568,58 @@ describe("派生のタスクの説明（deriveRecord・deriveBody）", () => {
     expect(body).toContain("…（長いため、先頭だけ）");
     expect(body).not.toContain("あ".repeat(6001));
     expect(body).toContain("- 質問：冪等キーは何？\n  答え：注文 ID\n  2行目");
+  });
+});
+
+describe("チケットのトリアージに渡す再開の補足", () => {
+  const ticketTask = (events: Record<string, unknown>[]) => {
+    const created = {
+      type: "TaskCreated",
+      payload: {
+        title: "PAY-1",
+        body: "チケットの本文\n\n## 補足（再開で人が足したもの）\n\nチケットの文",
+        start: "jira",
+        ticket: {
+          platform: "jira",
+          service: "jira-server",
+          key: "PAY-1",
+          url: "https://jira.example.com/browse/PAY-1",
+        },
+      },
+    };
+    const activity = [created, ...events].map(
+      (e, i) =>
+        ({
+          ...EventInput.parse(e),
+          seq: i + 1,
+          id: `e${i + 1}`,
+          taskId: "t1",
+          projectId: "default",
+          actor: "person",
+          at: "2026-10-28T00:00:00.000Z",
+        }) as ActivityEvent,
+    );
+    return project(activity).get("t1") as Task;
+  };
+
+  it("説明に補足の見出しがあっても、人が再開で足していなければ補足の節を出さない", () => {
+    const prompt = buildTicketTriagePrompt(ticketTask([]), ["https://github.com/acme/app"], "jira");
+    expect(prompt).not.toContain("人が再開のときに足した補足");
+    expect(prompt).not.toContain("チケットの文");
+  });
+
+  it("人が再開で足した補足だけを、判断の材料として渡す（概要には写させない）", () => {
+    const prompt = buildTicketTriagePrompt(
+      ticketTask([
+        { type: "TaskPaused", payload: { reason: "error" } },
+        { type: "TaskResumed", payload: { retry: true, note: "人の補足" } },
+      ]),
+      ["https://github.com/acme/app"],
+      "jira",
+    );
+    expect(prompt).toContain("人が再開のときに足した補足");
+    expect(prompt).toContain("概要には写さないでください");
+    expect(prompt).toContain("人の補足");
+    expect(prompt).not.toContain("チケットの文");
   });
 });
