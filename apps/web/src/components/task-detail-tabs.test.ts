@@ -8,7 +8,8 @@ import type { TaskDetailData } from "@/lib/task-detail-data";
 /*
  * タスクの詳細のタブ（PR #250 レビュー指摘）。既存のリンクのハッシュ（#audit・#proposals・#event-…）で、要素のある
  * タブを開くこと、出していないタブの指定は概要にすること、矢印キーで移れること、工程の無い古いタスクでも監視の
- * 記録を出すことを、実際の DOM で確かめる。
+ * 記録を出すことを、実際の DOM で確かめる。パネルを開いてから移ること（順序）と、同じ画面へのリンク（next/link は
+ * hashchange を起こさない）・不正なハッシュも確かめる（PR #250 の2回目のレビュー指摘）。
  */
 vi.mock("@/app/actions", () => ({
   deriveTaskAction: async () => ({}),
@@ -52,11 +53,39 @@ function newTask(): Task {
 
 let container: HTMLDivElement;
 let root: Root;
+/** 次のフレームで動かす処理（描いた後に、flushFrames で動かす）。 */
+let frames: FrameRequestCallback[] = [];
+/** scrollIntoView を呼んだ要素と、そのとき要素を含むパネルがすべて見えていたか。 */
+let scrolled: { id: string; visible: boolean }[] = [];
+const visible = (el: Element) => {
+  for (
+    let p = el.closest("[role=tabpanel]");
+    p;
+    p = p.parentElement?.closest("[role=tabpanel]") ?? null
+  ) {
+    if ((p as HTMLElement).hidden) return false;
+  }
+  return true;
+};
+/** ためたフレームを、React の描き直しを挟んで動かす。 */
+function flushFrames() {
+  while (frames.length > 0) {
+    const run = frames;
+    frames = [];
+    act(() => {
+      for (const cb of run) cb(0);
+    });
+  }
+}
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn();
+  frames = [];
+  scrolled = [];
+  Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+    scrolled.push({ id: this.id, visible: visible(this) });
+  });
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    cb(0);
-    return 0;
+    frames.push(cb);
+    return frames.length;
   });
   container = document.createElement("div");
   document.body.append(container);
@@ -95,9 +124,48 @@ describe("タスクの詳細のタブ", () => {
   it("開いた URL のハッシュ（#audit）の要素があるタブを開いて、そこへ移る", () => {
     window.history.replaceState(null, "", "/tasks/t1#audit");
     render(newTask(), { audit: null });
+    flushFrames();
     expect(panel("audit").hidden).toBe(false);
     expect(panel("overview").hidden).toBe(true);
-    expect(document.getElementById("audit")?.scrollIntoView).toHaveBeenCalled();
+    // パネルを開いてから移る（移ったときに、要素を含むパネルが見えている）
+    expect(scrolled).toEqual([{ id: "audit", visible: true }]);
+  });
+
+  it("不正なパーセント表記のハッシュ（#100%）でも、ふつうに表示する", () => {
+    window.history.replaceState(null, "", "/tasks/t1#100%");
+    render(newTask());
+    flushFrames();
+    expect(panel("overview").hidden).toBe(false);
+    expect(scrolled).toEqual([]);
+  });
+
+  it("ほかのタブから、同じ画面へのハッシュ付きのリンク（判断する）を押すと、そのタブを開いて移る", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const task = newTask();
+      task.proposals = [{} as Task["proposals"][number]];
+      window.history.replaceState(null, "", "/tasks/t1?tab=costs");
+      render(task);
+      expect(panel("costs").hidden).toBe(false);
+      // next/link は history.pushState で移る（hashchange は起きない）。ここではリンクの既定の移動を止め、URL を書き換える
+      const link = document.createElement("a");
+      link.href = "/tasks/t1#proposals";
+      document.body.append(link);
+      const navigate = (event: Event) => {
+        event.preventDefault();
+        window.history.pushState(null, "", "/tasks/t1#proposals");
+      };
+      document.addEventListener("click", navigate);
+      act(() => link.click());
+      document.removeEventListener("click", navigate);
+      act(() => vi.runAllTimers());
+      flushFrames();
+      expect(panel("overview").hidden).toBe(false);
+      expect(panel("costs").hidden).toBe(true);
+      expect(scrolled).toEqual([{ id: "proposals", visible: true }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("同じ画面でハッシュが変わったら（#proposals・#event-…）、そのタブへ切り替える", () => {
@@ -110,13 +178,19 @@ describe("タスクの詳細のタブ", () => {
       window.history.replaceState(null, "", "/tasks/t1?tab=costs#proposals");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
+    flushFrames();
     expect(panel("overview").hidden).toBe(false);
     expect(panel("costs").hidden).toBe(true);
     act(() => {
       window.history.replaceState(null, "", "/tasks/t1#event-e1");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
+    flushFrames();
     expect(panel("activity").hidden).toBe(false);
+    expect(scrolled).toEqual([
+      { id: "proposals", visible: true },
+      { id: "event-e1", visible: true },
+    ]);
   });
 
   it("出していないタブ（監査の無いタスクの ?tab=audit）は、概要にする", () => {

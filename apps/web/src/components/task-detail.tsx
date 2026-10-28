@@ -196,16 +196,14 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   available.current = keys;
   // 開いたタブは URL に残す（リロード・共有しても同じタブを開く）。ハッシュ（監査の根拠の #event-…・監査の一覧の
   // #audit・判断の #proposals）の要素が隠したタブにあれば、そのタブを開いてから移る
-  useEffect(() => {
-    const open = () => {
-      if (revealHash((key) => setTab(key as TabKey))) return;
+  useRevealHash(
+    (key) => setTab(key as TabKey),
+    "tab",
+    () => {
       const asked = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
       setTab(asked && available.current.includes(asked) ? asked : "overview");
-    };
-    open();
-    window.addEventListener("hashchange", open);
-    return () => window.removeEventListener("hashchange", open);
-  }, []);
+    },
+  );
   const choose = (key: TabKey) => {
     setTab(key);
     const url = new URL(window.location.href);
@@ -380,8 +378,18 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
  * URL のハッシュの要素が、隠したタブ・成果物の工程の中にあれば、その中身を開いてから要素へ移る。
  * 開いた先（data-tab・data-step の値）を select に渡す。移ったら true。
  */
-export function revealHash(select: (key: string) => void, attribute = "tab"): boolean {
-  const id = decodeURIComponent(window.location.hash.slice(1));
+export function revealHash(
+  select: (key: string) => void,
+  attribute = "tab",
+  hash = window.location.hash,
+): boolean {
+  let id: string;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    // 不正なパーセント表記（#100% など）は、ハッシュが無いものとして扱う
+    return false;
+  }
   const target = id ? document.getElementById(id) : null;
   const key = target?.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[attribute];
   if (!target || key === undefined) return false;
@@ -391,6 +399,46 @@ export function revealHash(select: (key: string) => void, attribute = "tab"): bo
     requestAnimationFrame(() => target.scrollIntoView({ block: "center" })),
   );
   return true;
+}
+
+/**
+ * ハッシュの要素を開いて移る（revealHash）のを、画面を開いたとき・ハッシュが変わったとき・同じ画面へのハッシュ付きの
+ * リンクを押したときに行う。画面の中のリンク（next/link）は history.pushState で移るので hashchange が起きない。
+ * 押したリンクの URL のハッシュで、移った後に開く。fallback は、ハッシュで開けなかったときの初めの表示。
+ */
+function useRevealHash(select: (key: string) => void, attribute: string, fallback?: () => void) {
+  const latest = useRef({ select, fallback });
+  latest.current = { select, fallback };
+  useEffect(() => {
+    const open = (hash?: string) => {
+      if (!revealHash((key) => latest.current.select(key), attribute, hash)) {
+        latest.current.fallback?.();
+      }
+    };
+    const onHashChange = () => open();
+    const onClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const link = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(link instanceof HTMLAnchorElement) || link.target === "_blank") return;
+      const url = new URL(link.href, window.location.href);
+      if (
+        url.origin !== window.location.origin ||
+        url.pathname !== window.location.pathname ||
+        !url.hash
+      )
+        return;
+      // 移った後（URL を書き換えた後）に開く
+      setTimeout(() => open(url.hash), 0);
+    };
+    open();
+    window.addEventListener("hashchange", onHashChange);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [attribute]);
 }
 
 /** タブの並びの中を、左右の矢印キー・Home・End で移る（選んだタブにフォーカスを移す）。 */
@@ -687,12 +735,7 @@ function Deliverables({ data }: { data: TaskDetailData }) {
   const [chosen, setChosen] = useState<StepKey | undefined>(undefined);
   const selected = panels.some((p) => p.key === chosen) ? chosen : fallback;
   // ハッシュの要素（#deliverable-design など）が隠した工程にあれば、その工程を開く
-  useEffect(() => {
-    const open = () => revealHash((key) => setChosen(key as StepKey), "step");
-    open();
-    window.addEventListener("hashchange", open);
-    return () => window.removeEventListener("hashchange", open);
-  }, []);
+  useRevealHash((key) => setChosen(key as StepKey), "step");
   const state = new Map(task.steps.map((s) => [s.key, s.state]));
   return (
     <>
