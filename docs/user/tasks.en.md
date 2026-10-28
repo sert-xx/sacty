@@ -98,7 +98,7 @@ Like a normal task, the Orchestrator chooses how to proceed, and the task goes t
 
 If everything is already in place and nothing needs to change, the task finishes without a PR, keeping the check results as investigation results (you approve it in the web UI to finish). If, after Requirements, Design, and Implementation, it turns out that nothing needs to change, no PR is created either. The check results are kept in the implementation notes, and the task finishes when you approve it in the web UI (see "When the implementation has no changes" below).
 
-For tasks created from a template, the template name appears in "Started from" in the list, at the top of the details, and in "Task created" in the Activity.
+For tasks created from a template, the template name appears in "Started from" in the list, in "Started from" in the properties of the details, and in "Task created" in the Activity.
 
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks` (do not pass `title` or `body`). The CLI has no command to create tasks.
 
@@ -118,7 +118,7 @@ The task details look like this.
 | Activity | The whole Activity (newest first; open the run log from an agent run line) |
 | Costs | The amount used and the cap, the cost per step, and the Orchestrator session |
 | Step settings | The steps and why they were chosen, the base branch, the test command, export destinations, step images, and step agents |
-| Audit | The audit result (only for audited tasks; [Audit](audit.en.md)) |
+| Audit | The audit result (only for completed tasks; if not audited yet, it says so; [Audit](audit.en.md)) |
 
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
@@ -225,7 +225,7 @@ The task details of an approved security check show a "Security fixes" section. 
 
 - One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
 - A category with a task shows a link to it. You cannot create another one for the same category.
-- The top of a fix task's details shows a link to the original report and the category.
+- "Report" in the properties of a fix task's details shows a link to the original report and the category.
 - To fix findings across categories, or only some of them, create a [follow-up task](#create-a-follow-up-task-from-a-completed-task) and write the findings to fix in its description.
 
 ### Security fix
@@ -539,7 +539,7 @@ You can carry on with follow-up work (handling issues it found, further improvem
 
 - In the dialog, write the repository to work in (empty means no repository), the plan, the title, and the description (what to do next). The description is required.
 - sacty creates a new task that points to the original one. It adds the original task's record (step outputs, PRs, final review, questions and answers) after the description.
-- The original task doesn't change. You can create as many follow-up tasks from one task as you need. They are listed in the "Follow-up tasks" section, and the top of a follow-up task's details shows a link to the original task.
+- The original task doesn't change. You can create as many follow-up tasks from one task as you need. They are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose). This keeps the report's contents out of public places.
 

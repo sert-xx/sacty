@@ -98,11 +98,9 @@ describe("タスクの詳細の並び", () => {
     expect(html).toContain("Design draft");
     // 承認済みでも、見出しだけの折りたたみ（details）にしない
     expect(html).not.toMatch(/<details aria-labelledby="deliverable-requirements"/);
-    const requirements = html.indexOf('id="deliverable-requirements"');
-    const design = html.indexOf('id="deliverable-design"');
     // 開いているのは、いまの工程（設計）の成果物だけ
-    expect(html.lastIndexOf("<div hidden", requirements)).toBeGreaterThan(-1);
-    expect(html.slice(html.lastIndexOf("<div", design - 200), design)).not.toContain("hidden");
+    expect(tag(html, "deliverable-panel-requirements")).toContain("hidden");
+    expect(tag(html, "deliverable-panel-design")).not.toContain("hidden");
   });
 
   it("いまの工程は、作業中・承認待ち・最後に終えた工程の順に選ぶ", () => {

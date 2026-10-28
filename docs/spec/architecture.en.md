@@ -61,11 +61,12 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 - Layout of the task details (`TaskDetailView`)
   - The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen (visible while scrolling).
   - The notice when waiting for an approval or a decision (`GateNotice`) and the resume section appear below the tabs on every tab.
-  - The tabs are Overview, Activity, Costs, Step settings, and Audit (only for audited tasks). The open tab is kept in `?tab=` (omitted for Overview).
+  - The tabs are Overview, Activity, Costs, Step settings, and Audit (only for completed tasks). The open tab is kept in `?tab=` (omitted for Overview; a tab that is not shown falls back to Overview).
     Hidden tabs are still rendered, so text being typed and open sections are kept when switching tabs.
-  - When the URL has `#event-<ID>` (a link from audit evidence to an Activity line), the Activity tab opens and scrolls to that line.
+  - When the element of the URL hash (such as `#event-<ID>`, `#audit`, or `#proposals`) is in a hidden tab, that tab opens and then the page scrolls to the element (on opening and when the hash changes on the same page).
+  - Tabs (the view tabs and the deliverable steps) can be moved with the left and right arrow keys, Home, and End (only the selected tab is in the focus order).
   - Deliverables on the Overview tab are shown one step at a time (`Deliverables`). At first, the running step, the step awaiting approval, or the last finished step is chosen, in that order (`currentStep`).
-    Because they are shown one at a time, approved cards are not collapsed (`ExpandCards`). An after-merge watch that has not started cannot be chosen.
+    Because they are shown one at a time, approved cards are not collapsed (`ExpandCards`). An after-merge watch that has not started cannot be chosen (an old task with a watch record but no step can be chosen).
   - The right column shows the properties (current step, PR, cost, project, repository, branch, tests, ticket, related tasks, created and last updated) and the recent Activity (5 entries).
   - The change proposals and verdicts section appears only when there are proposals.
 - The ID in the URL decides the project of a project screen. An ID that is not in the daemon's project list is 404.

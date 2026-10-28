@@ -25,7 +25,7 @@ import {
 import { cn } from "cn";
 import { Check } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ActionLink } from "@/components/action-link";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection, ExpandCards } from "@/components/card-section";
@@ -189,19 +189,18 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
     { key: "settings", label: l.settings },
     ...(data.audit !== undefined ? [{ key: "audit" as const, label: l.audit }] : []),
   ];
-  // 開いたタブは URL に残す（リロード・共有しても同じタブを開く）。監査の根拠のリンク（#event-…）は作業履歴を開く
+  const keys = tabs.map((t) => t.key);
+  // 出していないタブ（監査の無いタスクの監査など）は、概要にする
+  const shown = keys.includes(tab) ? tab : "overview";
+  const available = useRef(keys);
+  available.current = keys;
+  // 開いたタブは URL に残す（リロード・共有しても同じタブを開く）。ハッシュ（監査の根拠の #event-…・監査の一覧の
+  // #audit・判断の #proposals）の要素が隠したタブにあれば、そのタブを開いてから移る
   useEffect(() => {
     const open = () => {
-      if (window.location.hash.startsWith("#event-")) {
-        setTab("activity");
-        const target = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
-        requestAnimationFrame(() => target?.scrollIntoView({ block: "center" }));
-        return;
-      }
-      const asked = new URLSearchParams(window.location.search).get("tab");
-      if (asked && ["overview", "activity", "costs", "settings", "audit"].includes(asked)) {
-        setTab(asked as TabKey);
-      }
+      if (revealHash((key) => setTab(key as TabKey))) return;
+      const asked = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
+      setTab(asked && available.current.includes(asked) ? asked : "overview");
     };
     open();
     window.addEventListener("hashchange", open);
@@ -240,19 +239,25 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             )}
           </div>
         </div>
-        <div role="tablist" aria-label={l.tabs} className="-mb-px flex gap-1 overflow-x-auto">
+        <div
+          role="tablist"
+          aria-label={l.tabs}
+          className="-mb-px flex gap-1 overflow-x-auto"
+          onKeyDown={(e) => moveTab(e, keys, shown, choose, (k) => `tab-${k}`)}
+        >
           {tabs.map((t) => (
             <button
               key={t.key}
               type="button"
               role="tab"
               id={`tab-${t.key}`}
-              aria-selected={tab === t.key}
+              aria-selected={shown === t.key}
               aria-controls={`panel-${t.key}`}
+              tabIndex={shown === t.key ? 0 : -1}
               onClick={() => choose(t.key)}
               className={cn(
                 "inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap",
-                tab === t.key
+                shown === t.key
                   ? "border-primary font-semibold text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
@@ -304,10 +309,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-6">
-          <TabPanel tab="overview" open={tab}>
+          <TabPanel tab="overview" open={shown}>
             <Overview data={data} />
           </TabPanel>
-          <TabPanel tab="activity" open={tab}>
+          <TabPanel tab="activity" open={shown}>
             <section
               aria-labelledby="activity"
               className="flex flex-col gap-1 rounded-xl border border-border bg-card p-5"
@@ -318,7 +323,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               <ActivityList task={task} events={[...activity].reverse()} anchors />
             </section>
           </TabPanel>
-          <TabPanel tab="costs" open={tab}>
+          <TabPanel tab="costs" open={shown}>
             <section className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5">
               <CostMeter task={task} />
             </section>
@@ -327,19 +332,19 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {/* オーケストレーターのセッション（PBI-67） */}
             <OrchestratorSession task={task} />
           </TabPanel>
-          <TabPanel tab="settings" open={tab}>
+          <TabPanel tab="settings" open={shown}>
             <StepsChoice task={task} data={data} />
           </TabPanel>
           {/* 完了したタスクの監査（PBI-124） */}
           {data.audit !== undefined && (
-            <TabPanel tab="audit" open={tab}>
+            <TabPanel tab="audit" open={shown}>
               <TaskAuditCard audit={data.audit} />
             </TabPanel>
           )}
         </div>
         <aside className="flex min-w-0 flex-col gap-6">
           <Properties data={data} />
-          {tab !== "activity" && activity.length > 0 && (
+          {shown !== "activity" && activity.length > 0 && (
             <section
               aria-labelledby="recent"
               className="flex flex-col gap-1 rounded-xl border border-border bg-card p-4"
@@ -371,6 +376,48 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   );
 }
 
+/**
+ * URL のハッシュの要素が、隠したタブ・成果物の工程の中にあれば、その中身を開いてから要素へ移る。
+ * 開いた先（data-tab・data-step の値）を select に渡す。移ったら true。
+ */
+export function revealHash(select: (key: string) => void, attribute = "tab"): boolean {
+  const id = decodeURIComponent(window.location.hash.slice(1));
+  const target = id ? document.getElementById(id) : null;
+  const key = target?.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[attribute];
+  if (!target || key === undefined) return false;
+  select(key);
+  // 開いたタブを描いてから移る
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => target.scrollIntoView({ block: "center" })),
+  );
+  return true;
+}
+
+/** タブの並びの中を、左右の矢印キー・Home・End で移る（選んだタブにフォーカスを移す）。 */
+function moveTab<K extends string>(
+  event: KeyboardEvent<HTMLElement>,
+  keys: K[],
+  current: K,
+  select: (key: K) => void,
+  idOf: (key: K) => string,
+) {
+  const index = keys.indexOf(current);
+  const next =
+    event.key === "ArrowRight"
+      ? keys[(index + 1) % keys.length]
+      : event.key === "ArrowLeft"
+        ? keys[(index - 1 + keys.length) % keys.length]
+        : event.key === "Home"
+          ? keys[0]
+          : event.key === "End"
+            ? keys.at(-1)
+            : undefined;
+  if (next === undefined) return;
+  event.preventDefault();
+  select(next);
+  document.getElementById(idOf(next))?.focus();
+}
+
 /** タブの中身。隠したタブも描いておく（入力の途中の文字・開いた欄を消さない）。 */
 function TabPanel({ tab, open, children }: { tab: TabKey; open: TabKey; children: ReactNode }) {
   return (
@@ -378,6 +425,7 @@ function TabPanel({ tab, open, children }: { tab: TabKey; open: TabKey; children
       role="tabpanel"
       id={`panel-${tab}`}
       aria-labelledby={`tab-${tab}`}
+      data-tab={tab}
       hidden={tab !== open}
       className="flex flex-col gap-6"
     >
@@ -627,8 +675,8 @@ function Deliverables({ data }: { data: TaskDetailData }) {
     panels.push({ key: "implement", node: <Implementation task={task} /> });
   }
   // マージの後の CI/CD とデプロイの監視（PBI-89）
-  // まだ始まっていない監視は、成果が無いので選べない
-  if (has("deployment", (s) => s.state !== "todo")) {
+  // まだ始まっていない監視は、成果が無いので選べない。工程の無い古いタスクでも、監視の記録があれば出す
+  if (has("deployment", (s) => s.state !== "todo") || task.deployment) {
     panels.push({
       key: "deployment",
       node: <DeploymentWatchCard task={task} fixTask={data.deploymentFix} />,
@@ -638,6 +686,13 @@ function Deliverables({ data }: { data: TaskDetailData }) {
   const fallback = panels.find((p) => p.key === current)?.key ?? panels.at(-1)?.key;
   const [chosen, setChosen] = useState<StepKey | undefined>(undefined);
   const selected = panels.some((p) => p.key === chosen) ? chosen : fallback;
+  // ハッシュの要素（#deliverable-design など）が隠した工程にあれば、その工程を開く
+  useEffect(() => {
+    const open = () => revealHash((key) => setChosen(key as StepKey), "step");
+    open();
+    window.addEventListener("hashchange", open);
+    return () => window.removeEventListener("hashchange", open);
+  }, []);
   const state = new Map(task.steps.map((s) => [s.key, s.state]));
   return (
     <>
@@ -651,13 +706,30 @@ function Deliverables({ data }: { data: TaskDetailData }) {
             <h2 className="text-[15px] font-semibold">
               {l.deliverables} <Hint text={l.deliverablesHint} />
             </h2>
-            <div role="tablist" aria-label={l.deliverables} className="flex flex-wrap gap-1">
+            <div
+              role="tablist"
+              aria-label={l.deliverables}
+              className="flex flex-wrap gap-1"
+              onKeyDown={(e) =>
+                selected &&
+                moveTab(
+                  e,
+                  panels.map((p) => p.key),
+                  selected,
+                  setChosen,
+                  (k) => `deliverable-tab-${k}`,
+                )
+              }
+            >
               {panels.map((p) => (
                 <button
                   key={p.key}
                   type="button"
                   role="tab"
+                  id={`deliverable-tab-${p.key}`}
                   aria-selected={p.key === selected}
+                  aria-controls={`deliverable-panel-${p.key}`}
+                  tabIndex={p.key === selected ? 0 : -1}
                   onClick={() => setChosen(p.key)}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
@@ -682,7 +754,15 @@ function Deliverables({ data }: { data: TaskDetailData }) {
             </div>
           </div>
           {panels.map((p) => (
-            <div key={p.key} hidden={p.key !== selected} className="flex flex-col gap-6">
+            <div
+              key={p.key}
+              role="tabpanel"
+              id={`deliverable-panel-${p.key}`}
+              aria-labelledby={`deliverable-tab-${p.key}`}
+              data-step={p.key}
+              hidden={p.key !== selected}
+              className="flex flex-col gap-6"
+            >
               <ExpandCards value={true}>{p.node}</ExpandCards>
             </div>
           ))}

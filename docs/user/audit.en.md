@@ -32,7 +32,7 @@ SACTY_AUDIT_MOCK=1 npx sacty up
 
 ## The Audit tab in task details
 
-Audited tasks have an "Audit" tab in their details.
+Completed tasks have an "Audit" tab in their details (if not audited yet, it says so).
 
 | Item | What it shows |
 | --- | --- |

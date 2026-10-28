@@ -100,7 +100,7 @@ step_agents:
   - The failed jobs and logs
   - The result of the check by the skill (each of the CI/CD check and the deployment check)
   - A link to the fix task
-- A link to the original task appears at the top of the fix task's details.
+- A link to the original task appears in "Fix of" in the properties of the fix task's details.
 - The Activity also records whether the step was included (or why it was skipped), the start of the watch, the CI/CD result, the check, and the fix task registration (or why one was not created).
 
 ## When it could not be checked

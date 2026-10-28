@@ -34,6 +34,7 @@
 - `npm run typecheck -w @sacty/web`・`npx biome check .`：通過。
 - `npx vitest run tests/docs`：93 件通過。
 - `npx vitest run apps/web`：582 件通過（`task-detail-layout.test.ts` の 6 件を含む）。
+  レビューの対応の後は、`npx vitest run apps/web tests/docs` で 687 件通過（`task-detail-tabs.test.ts` の 6 件を含む）。
   `question-form.browser.test.ts` は、この環境に必要な版の Playwright のブラウザーが無いため起動できない（変更前も同じ）。
 - `npx vitest run`：daemon の 8 件（`agent-sessions`・`context-mcp`・`host-mcp-processes`）が落ちる。変更前のコードでも同じ 8 件が落ちる（この環境によるもの）。
 - 架空のデータ（`scripts/docs-screenshots/seed.mjs`）で `sacty up` を起動し、8 つのタスクを各タブ・スクロールの後・スマホ幅（390px）で撮って確かめた。
@@ -43,7 +44,13 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | — |
+| [要修正] 監査の一覧の `#audit` と、判断の案内の `#proposals` でも、要素のあるタブを開く（初めに開いたときと、同じ画面の中の操作の両方） | ハッシュの要素が隠したタブ・成果物の工程にあれば、そのタブ・工程を開いてから移る（`revealHash`。パネルに `data-tab`・`data-step`）。jsdom で `#audit`・`#proposals`・`#event-` を確かめるテストを足した（`task-detail-tabs.test.ts`） |
+| [要修正] 工程の無い古いタスクでも、監視の記録（`task.deployment`）があれば監視の結果を出す | まだ始まっていない監視を隠す条件と、記録がある監視を出す条件を分けた。テストを足した |
+| [提案] `?tab=` は、出しているタブかで確かめる | 出していないタブの指定は概要にする（表示の時にも、出しているタブに無ければ概要にする） |
+| [提案] 表示のタブと成果物の工程のタブを、矢印キーで移れるようにする | 左右の矢印キー・Home・End で移り、フォーカスも移す。選んだタブだけをフォーカスの順に入れる（`moveTab`） |
+| [提案] 成果物のタブとパネルを結び付ける | タブに `id`・`aria-controls`、パネルに `role="tabpanel"`・`id`・`aria-labelledby` を付けた |
+| [提案] 監査のタブの条件を実装に合わせる（未監査の完了タスクにも出る） | 実装のまま、docs を「完了したタスクだけ。まだ監査していなければ、その旨」に直した（ユーザードキュメント・仕様・ADR。日英） |
+| [提案] 「詳細の先頭」に出るとしていた元のレポート・テンプレート・続きの元・修正の元を、プロパティの項目名に合わせる | ユーザードキュメントと仕様（tasks-and-steps・deployment-watch）を、プロパティの項目名で書き直した（日英） |
 
 ## 残したこと
 
