@@ -21,6 +21,9 @@ import { useSelectValue } from "@/lib/use-select-value";
 
 const initial: ResumeState = {};
 
+/** 足せる補足の長さを出すのは、これより短くなったときだけ（いつも出すと、読み飛ばされやすくなる）。 */
+const NOTE_ROOM_NOTICE = 1_000;
+
 const SELECT =
   "h-9 w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60";
 
@@ -227,12 +230,12 @@ export function ResumeForm({
             rows={3}
             defaultValue={state.note ?? ""}
             placeholder={r.notePlaceholder}
-            aria-describedby={noteRoom < RESUME_NOTE_MAX ? "resume-note-room" : undefined}
+            aria-describedby={noteRoom < NOTE_ROOM_NOTICE ? "resume-note-room" : undefined}
             className="bg-card"
             data-testid="resume-note"
           />
-          {/* 説明が長く、補足の上限より短くしか足せないときは、残りを出す（足せなければ、取れる手を出す） */}
-          {noteRoom < RESUME_NOTE_MAX && (
+          {/* 説明が長く、足せる補足が少ないときだけ、残りを出す（足せなければ、取れる手を出す） */}
+          {noteRoom < NOTE_ROOM_NOTICE && (
             <p id="resume-note-room" className="text-xs leading-5 text-muted-foreground">
               {noteRoom > 0 ? r.noteRoom(noteRoom) : r.noteNoRoom}
             </p>

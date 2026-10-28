@@ -156,7 +156,7 @@ const ja = {
       "タスクの内容の後に、見出しを付けて足します。オーケストレーターと、これから実行する工程が読みます。",
     notePlaceholder: "例：認証は環境変数 ACME_TOKEN を使ってください。",
     noteRoom: (room: number) =>
-      `タスクの内容が長いため、補足は${room.toLocaleString("ja-JP")}文字まで足せます（再実行で直せる長さに収めるため）。`,
+      `タスクの内容が長いため、補足は${room.toLocaleString("ja-JP")}文字まで足せます。`,
     noteNoRoom:
       "タスクの内容が長いため、補足を足せません。補足なしで再開するか、中止して再実行で内容を直してください。",
     stepsTitle: "工程のイメージ・エージェントを変える",
@@ -420,7 +420,7 @@ const en: PartsMessages = {
       "Added after the task description under its own heading. The Orchestrator and the steps still to run read it.",
     notePlaceholder: "e.g. Use the ACME_TOKEN environment variable for authentication.",
     noteRoom: (room) =>
-      `The task description is long, so up to ${room.toLocaleString("en-US")} characters of notes can be added (to stay within what can be edited when rerunning).`,
+      `The task description is long, so up to ${room.toLocaleString("en-US")} character${room === 1 ? "" : "s"} of notes can be added.`,
     noteNoRoom:
       "The task description is too long to add notes. Resume without notes, or cancel and fix the description in a rerun.",
     stepsTitle: "Change step images and agents",

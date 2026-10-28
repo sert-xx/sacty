@@ -12,8 +12,6 @@ import {
   RESUME_NOTE_HEADING,
   RESUME_NOTE_MAX,
   rerunEditableBody,
-  resumeNoteRoom,
-  resumeNotes,
   STEP_PLANS,
   TASK_BODY_MAX,
 } from "./events.js";
@@ -38,6 +36,7 @@ import {
   pendingQuestion,
   project,
   questionBlocked,
+  resumeNoteRoom,
   reworkTargets,
   skippableSteps,
   stepRunning,
@@ -2526,6 +2525,8 @@ describe("再開の補足を説明に足す", () => {
       resumed("t1", "補足2"),
     ]).get("t1");
     expect(task?.body).toBe(`説明\n\n${H}\n\n補足1\n\n${H}\n\n補足2`);
+    // 説明を書き換える取り込みのために、補足を作業履歴から別に貯める（説明の見出しから読み直さない）
+    expect(task?.resumeNotes).toEqual(["補足1", "補足2"]);
   });
 
   it("説明が空なら、見出しから始める", () => {
@@ -2550,8 +2551,6 @@ describe("再開の補足と、再実行・取り込みの説明", () => {
     expect(rerunEditableBody({ ...task, body })).toBe(
       `説明\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足\n\n${RESUME_NOTE_HEADING}\n\n再開の補足`,
     );
-    // 説明から取り出す補足には、前の試行の記録を含めない
-    expect(resumeNotes({ ...task, body })).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
   });
 
   it("派生で作ったタスクは、元のタスクの記録の前に入れる（記録に再実行の記録と同じ見出しの行があっても、境目を誤らない）", () => {
@@ -2571,31 +2570,45 @@ describe("再開の補足と、再実行・取り込みの説明", () => {
       expect(rerunEditableBody({ ...task, body })).toBe(
         `依頼\n\n${RESUME_NOTE_HEADING}\n\n再開の補足${rerun ? `\n\n${RERUN_NOTE_HEADING}\n\n再実行の補足` : ""}`,
       );
-      expect(resumeNotes({ ...task, body })).toBe(`${RESUME_NOTE_HEADING}\n\n再開の補足`);
     }
   });
 
-  it("足せる補足の長さは、ちょうどその長さを足すと、再実行で直す説明が上限に収まる", () => {
-    for (const task of [
-      { body: "あ".repeat(9_000) },
-      { body: `依頼\n\n${record}`, rerun: "t0" },
-      { body: "" },
-    ]) {
-      const room = resumeNoteRoom(task);
-      const editable = (note: string) =>
-        rerunEditableBody({ ...task, body: bodyWithResumeNote(task, note) }).length;
-      if (room < RESUME_NOTE_MAX) {
-        expect(editable("い".repeat(room))).toBe(TASK_BODY_MAX);
-      } else {
-        expect(editable("い".repeat(room))).toBeLessThanOrEqual(TASK_BODY_MAX);
+  it("足せる補足の長さは、補足のせいで再実行で直す説明が上限を新たに超えない長さ（ちょうど足すと上限に収まる）", () => {
+    const H = RESUME_NOTE_HEADING.length;
+    const task = (t: Partial<Task>) => ({ start: "sacty", ...t }) as Task;
+    const cases: [Task, number][] = [
+      [task({ body: "" }), TASK_BODY_MAX - H - 2],
+      [task({ body: "あ".repeat(9_000) }), TASK_BODY_MAX - 9_000 - H - 4],
+      [task({ body: `依頼\n\n${record}`, rerun: "t0" }), TASK_BODY_MAX - H - 6],
+      // 上限ちょうどの説明は、補足を足すと超えるので足せない
+      [task({ body: "あ".repeat(TASK_BODY_MAX) }), -H - 4],
+    ];
+    for (const [t, room] of cases) {
+      expect(resumeNoteRoom(t)).toBe(room);
+      if (room > 0) {
+        expect(
+          rerunEditableBody({ ...t, body: bodyWithResumeNote(t, "い".repeat(room)) }).length,
+        ).toBe(TASK_BODY_MAX);
       }
     }
-    expect(resumeNoteRoom({ body: "あ".repeat(TASK_BODY_MAX) })).toBeLessThanOrEqual(0);
+  });
+
+  it("補足を足す前から上限を超える説明・再実行できない種類のタスクは、補足の上限だけで確かめる", () => {
+    const long = "あ".repeat(TASK_BODY_MAX + 1);
+    // 取り込んだ長い Issue（補足が無くても、再実行では説明を直す必要がある）
+    expect(resumeNoteRoom({ start: "github_issue", body: long } as Task)).toBe(RESUME_NOTE_MAX);
+    // PR のタスク・子タスクは再実行できない
+    const full = "あ".repeat(TASK_BODY_MAX);
+    expect(resumeNoteRoom({ start: "github_pull_request", body: full } as Task)).toBe(
+      RESUME_NOTE_MAX,
+    );
+    expect(resumeNoteRoom({ start: "sacty", body: full, parent: "p" } as Task)).toBe(
+      RESUME_NOTE_MAX,
+    );
   });
 
   it("ふつうのタスクは説明の後に足し、再実行の画面の説明にも残す", () => {
     const body = bodyWithResumeNote({ body: "説明" }, "補足");
     expect(rerunEditableBody({ body })).toBe(body);
-    expect(resumeNotes({ body: "説明" })).toBe("");
   });
 });

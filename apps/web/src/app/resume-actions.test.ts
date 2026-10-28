@@ -142,4 +142,33 @@ describe("タスクの再開の補足と工程の設定", () => {
     expect(state.agents).toEqual({ implement: "strong" });
     expect(resumeTask).not.toHaveBeenCalled();
   });
+
+  it("デーモンが断ったときも、戻す選択は人が変えた工程だけ（触っていない工程は今の名前から始める）", async () => {
+    resumeTask.mockResolvedValue({ ok: false, message: "断られた" });
+    const state = await resumeTaskAction(
+      {},
+      form({
+        taskId: "t1",
+        "image-from:implement": "default",
+        "image:implement": "java",
+        "image-from:requirements": "default",
+        "image:requirements": "default",
+        "agent-from:requirements": "claude",
+        "agent:requirements": "claude",
+      }),
+    );
+    expect(state).toMatchObject({ message: "断られた" });
+    expect(state.images).toEqual({ implement: "java" });
+    expect(state.agents).toEqual({});
+  });
+
+  it("補足の改行は LF にそろえてから数え、渡す", async () => {
+    const note = `${"あ".repeat(4_999)}\r\n${"い".repeat(5_000)}`;
+    await resumeTaskAction({}, form({ taskId: "t1", note }));
+    expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
+      note: `${"あ".repeat(4_999)}\n${"い".repeat(5_000)}`,
+      images: {},
+      agents: {},
+    });
+  });
 });

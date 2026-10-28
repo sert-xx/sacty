@@ -204,6 +204,14 @@ describe("再開の欄の補足と工程の設定", () => {
 
   it("説明が長いときは足せる補足の長さを出し、足せなければ欄を使えなくして取れる手を出す", () => {
     const r = messagesFor("ja").parts.resume;
+    // 足せる量が多いうちは、上限だけにして案内は出さない（いつも出すと読み飛ばされやすい）
+    act(() =>
+      root.render(
+        h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 5_000 }),
+      ),
+    );
+    expect(container.querySelector<HTMLTextAreaElement>("#resume-note")?.maxLength).toBe(5_000);
+    expect(container.querySelector("#resume-note-room")).toBeNull();
     act(() =>
       root.render(
         h(ResumeForm, { taskId: "t1", reason: "error", usedUsd: 0, capUsd: 10, noteRoom: 120 }),

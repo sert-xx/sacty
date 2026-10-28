@@ -1359,7 +1359,7 @@ const en: MessageDictionary = {
   "resume.capRequired": "To resume a task stopped by its budget, set a new cap.",
   "resume.bodyTooLong": ({ room }) =>
     room > 0
-      ? `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be edited when rerunning). Keep the notes within ${room.toLocaleString("en-US")} characters.`
+      ? `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be edited when rerunning). Keep the notes within ${room.toLocaleString("en-US")} character${room === 1 ? "" : "s"}.`
       : `The task description is too long to add notes (it would exceed the ${TASK_BODY_MAX.toLocaleString("en-US")} characters that can be edited when rerunning). Resume without notes, or cancel and fix the description in a rerun.`,
   "resume.stepSettingsRechoose":
     "Resuming without deciding the tests chooses the steps again, so the step images and agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",

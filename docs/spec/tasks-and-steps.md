@@ -1127,10 +1127,14 @@ AI は `guardian_agent`（無ければ `default_agent`）。
     オーケストレーターとすべての工程は説明を読むので、これから実行する工程にそのまま届く。
     再開のたびに、別の見出しで足す。
     派生・再実行で作ったタスクは、sacty が足した記録（派生の元のタスクの記録・再実行の前の試行の記録）の前に入れる（再実行の画面の説明にも残る）。
-    派生の記録は作成のときに記録した本文の位置で求め、再実行の記録の見出しはその後ろで探す。
-  - 補足を足した説明のうち再実行の画面で直す部分（`rerunEditableBody`）が `TASK_BODY_MAX` を超えるなら、何も記録せずに断る（`resume.bodyTooLong`。足せる長さを示す。`resumeNoteRoom`）。
+    派生の記録があれば、作成のときに記録した本文の位置に入れる（再実行の記録はその後ろにあるので探さない）。無ければ、再実行の記録の見出しを探す。
+  - 補足は、説明に足すほかに投影の `resumeNotes` に足した順で貯める（説明を書き換える取り込みで使う。説明の見出しからは読み直さない）。
+  - 改行は LF にそろえてから数える（`ResumeTaskInput` の `note`・Server Action。`normalizeNewlines`）。
+  - 補足のせいで、説明のうち再実行の画面で直す部分（`rerunEditableBody`）が `TASK_BODY_MAX` を新たに超えるなら、何も記録せずに断る（`resume.bodyTooLong`。足せる長さを示し、足せなければ、補足なしで再開するか中止して再実行で内容を直すよう案内する。`resumeNoteRoom`）。
+    再実行できない種類のタスク（子タスク・PR のタスク）と、補足を足す前から上限を超える説明（取り込んだ長い Issue など）は、補足の上限（`RESUME_NOTE_MAX`）だけで確かめる。
     確かめるのは再開の時点の説明で、チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある。
   - チケットのトリアージを待って止まったタスクでは、補足をトリアージ（`buildTicketTriagePrompt`）に判断の材料として渡し（概要には写させない）、`TicketTriaged` で説明を概要に書き換えるときに、補足（`resumeNotes`）を概要の後ろに残す。
+    トリアージの概要に補足の見出しの行があれば除く（チケットの文を人の補足に見せかけない）。
   - 工程ごとのイメージ・エージェントは、タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を `TaskResumed` の前に記録する。
     今と同じ名前の工程は記録しない。
     選んでいない工程・設定に無い名前・統合レビューのエージェント・設定（config.yaml）を読めないときは、1つでもあれば何も記録せずに断る。
@@ -1138,7 +1142,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - 画面の再開の欄には、補足の入力欄と、まだ終わっていない工程のイメージ・エージェントの選択（折りたたみ。今の名前を初めに選ぶ）を出す。
     描いたときの今の名前も一緒に送り、Server Action は人が変えた工程だけをデーモンへ渡す（`changedStepChoices`。触っていない工程の古い名前で、その間に変えた名前を戻さない）。
     再開が断られたときに戻す選択も、人が変えた工程だけにする。
-    説明が長く、足せる補足が `RESUME_NOTE_MAX` より短いときは、補足の欄の上限をその長さにして残りを出し、足せなければ欄を使えなくして、補足なしで再開するか中止して再実行で内容を直すよう案内する。
+    補足の欄の上限は、足せる補足の長さにする。足せる長さが 1000 文字を下回ったときだけ残りを出し、足せなければ欄を使えなくして、補足なしで再開するか中止して再実行で内容を直すよう案内する。
     作業履歴の再開の行には、補足を足したことを出し、補足の本文を詳細に出す。
 - 中止：ゴールガーディアンの判定中は中止できない。
   セッションログ（`runs/`）は消さない。
@@ -1150,7 +1154,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
   5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
 
-コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteRoom`・`resumeNotes`）、`packages/core/src/projection.ts`（`project`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
 
 ### 終わったタスクの作業領域の片付け
 

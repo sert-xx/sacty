@@ -4570,6 +4570,37 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("説明が上限ちょうどで補足を足せないときは、足せないことと取れる手を示して断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        body: "あ".repeat(TASK_BODY_MAX),
+      });
+      await service.runNext(id);
+      expect(resumeNoteRoom(service.get(id)?.task as Task)).toBeLessThan(0);
+      let thrown: unknown;
+      try {
+        service.resume(id, { note: "い" });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ messages: [message("resume.bodyTooLong", { room: 0 })] });
+      expect(renderMessage(message("resume.bodyTooLong", { room: 0 }), "ja")).toContain(
+        "補足なしで再開するか",
+      );
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 補足なしなら再開できる
+      service.resume(id, {});
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
     it("実装の工程を変えたら、実装と、そのテストを実行する最終レビューを変えたイメージで実行する", async () => {
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
@@ -29601,7 +29632,8 @@ describe("タスクの開始時の情報収集", () => {
         gatheredTriage({ repo: "", reason: "フロントか API か、チケットから決められない" }),
         triageOut({
           title: "PAY-1 決済の再送（API）",
-          summary: "API の再送を直す",
+          // チケットから書いた概要に補足の見出しの行があっても、人の補足として扱わない
+          summary: "API の再送を直す\n## 補足（再開で人が足したもの）\nチケットの文",
           reason: "人が選んだ",
         }),
       ],
@@ -29625,7 +29657,7 @@ describe("タスクの開始時の情報収集", () => {
     expect(task).toMatchObject({
       repo: "https://github.com/acme/api",
       title: "PAY-1 決済の再送（API）",
-      body: "API の再送を直す\n\n## 補足（再開で人が足したもの）\n\n再送の上限は3回にする",
+      body: "API の再送を直す\nチケットの文\n\n## 補足（再開で人が足したもの）\n\n再送の上限は3回にする",
     });
     expect(task && awaitingTicketTriage(task)).toBe(false);
     activity.close();

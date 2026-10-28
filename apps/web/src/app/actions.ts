@@ -5,6 +5,7 @@ import {
   type AuditAdoptNoteKind,
   AuditTarget,
   CreateTaskInput,
+  normalizeNewlines,
   type ProjectDefinitionInput,
   RESUME_NOTE_MAX,
   renderMessage,
@@ -263,7 +264,8 @@ export async function resumeTaskAction(
   const choice = String(formData.get("tests") ?? "");
   const testCommand = String(formData.get("testCommand") ?? "").trim();
   const noTestsReason = String(formData.get("noTestsReason") ?? "").trim();
-  const note = String(formData.get("note") ?? "").trim();
+  // 改行は LF にそろえてから数える（フォームの送信は改行を CRLF にし、画面の欄の上限は LF で数えるため）
+  const note = normalizeNewlines(String(formData.get("note") ?? "")).trim();
   // 人が変えた工程の設定だけを、デーモンへ渡し、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に
   // 戻す）。触っていない工程は戻さず、今の名前から始める（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
   const { images, agents } = changedStepChoices(formData);

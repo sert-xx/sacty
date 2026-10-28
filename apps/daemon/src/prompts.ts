@@ -32,7 +32,7 @@ import {
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
   renderMessage,
-  resumeNotes,
+  resumeNoteSections,
   SelfReview,
   StepKey,
   StepPlan,
@@ -5170,7 +5170,7 @@ const TICKET_HEADING = "sacty-ticket";
  * 補足は sacty が概要の後ろにそのまま残す（後の工程が読む）ので、概要には写させず、判断にだけ使わせる（二重に入らないように）。
  */
 function resumeNoteLines(task: Task): string[] {
-  const notes = resumeNotes(task);
+  const notes = resumeNoteSections(task.resumeNotes ?? []);
   if (!notes) return [];
   return [
     "--- 人が再開のときに足した補足（チケットの内容より優先し、リポジトリ・題・概要を決める判断に使ってください。sacty が概要の後ろにそのまま残すので、概要には写さないでください） ---",
