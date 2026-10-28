@@ -10,7 +10,7 @@ This page walks you through installing sacty, starting it, and running your firs
 
 - macOS
 - Node.js 22.23.4 or later
-  - The version is written in `.node-version` and `mise.toml` at the repository root. If your version manager (mise, nodenv, fnm, and so on) is set up to switch versions by directory (such as `mise activate` for mise or `--use-on-cd` for fnm), it uses that version. If not, switch with a command such as `fnm use` before `npm install`
+  - The version is written in `.node-version` and `mise.toml` at the repository root. If your version manager (mise, nodenv, fnm, and so on) is set up to switch versions by directory (such as `mise activate` for mise or `--use-on-cd` for fnm), it uses that version. If not, switch with a command such as `fnm use` before `npm ci`
 - Docker (Docker Desktop, OrbStack, Colima, and so on. Steps run inside containers)
 - GitHub CLI (`gh`)
   - Sign in with the account you use to access GitHub ([Project settings](project-settings.en.md#github-account))
@@ -18,7 +18,7 @@ This page walks you through installing sacty, starting it, and running your firs
 ## Setup
 
 ```sh
-npm install
+npm ci
 npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml
 ```

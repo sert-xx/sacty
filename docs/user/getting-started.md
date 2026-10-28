@@ -10,7 +10,7 @@ sacty をインストールし、起動して、最初のタスクを動かす�
 
 - macOS
 - Node.js 22.23.4 以上
-  - リポジトリのルートの `.node-version` と `mise.toml` に版を書いています。mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合わせて版を切り替える設定（mise の `mise activate`、fnm の `--use-on-cd` など）をしていれば、その版が使われます。設定していなければ、`npm install` の前に `fnm use` などで切り替えてください
+  - リポジトリのルートの `.node-version` と `mise.toml` に版を書いています。mise・nodenv・fnm などの版の管理ツールで、ディレクトリに合わせて版を切り替える設定（mise の `mise activate`、fnm の `--use-on-cd` など）をしていれば、その版が使われます。設定していなければ、`npm ci` の前に `fnm use` などで切り替えてください
 - Docker（Docker Desktop・OrbStack・Colima など。工程はコンテナの中で実行します）
 - GitHub CLI（`gh`）
   - GitHub にアクセスするアカウントでログインしておいてください（[プロジェクトの設定](project-settings.md#github-アカウント)）
@@ -18,7 +18,7 @@ sacty をインストールし、起動して、最初のタスクを動かす�
 ## セットアップ
 
 ```sh
-npm install
+npm ci
 npm run build
 npx sacty config init   # ~/.sacty/config.yaml を作る
 ```
