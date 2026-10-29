@@ -65,7 +65,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
   - In an escalation with a change proposal the Goal Guardian could not judge (`change_undecidable`; one a person has not decided yet; `openProposal`), the link goes to "Change requests and verdicts" in the task details (`/tasks/<ID>#proposals`).
   - In the following cases, the link goes to the sacty approval screen (`/tasks/<ID>/review`).
     - Any other escalation (such as confirming the step to redo for PR comments)
-    - The task is `awaiting_approval` and the PR was closed, merged with different content, or does not exist
+    - The task is `awaiting_approval` and the PR for the current submission is not open (it was closed, or it was merged and the next check has not recorded the approval yet) or does not exist
   - A link that opens outside is marked with "↗" and, for screen readers, "opens in a new tab" (`ActionLink`).
   - From the notifications, it opens without switching the project.
   - On the dashboard and in the notifications, the link is the task title, so only the title is truncated and the mark is placed outside the truncation. The mark stays even for a long title (PR #148 review suggestion).

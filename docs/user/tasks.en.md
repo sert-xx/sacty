@@ -397,7 +397,7 @@ While awaiting approval, if the PR of the current submission is open, you can op
 Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
-- When the PR was closed without merging, was merged with content different from the submission, or does not exist yet.
+- When the PR was closed without merging, or does not exist yet.
 
 Approval in PRs proceeds in this order.
 
@@ -420,9 +420,10 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - The Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between. The decision and its reasons are kept in the Activity and the PR section.
   - If requests for changes to the same step exceed the limit, it becomes an Escalation.
 - When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
-- If a PR is closed without being merged, or merged with contents different from what sacty submitted, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- If a PR is closed without being merged, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- If you edit the PR and then merge it (merged with contents different from what sacty submitted), the merge is still treated as approval and the task moves to the next step. For Requirements and Design, the files you edited become the approved deliverable.
 - In the following cases, no Requirements or Design PRs are created.
-  - Steps that need no approval (such as an earlier Investigation)
+  - Steps that need no approval (such as Reproduce and Review)
   - Tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design). Investigation-only tasks are approved in the web UI.
   - Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed. They are still approved in the web UI.
 - Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
