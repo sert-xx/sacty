@@ -11,7 +11,7 @@ import {
   type Task,
 } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildErrorReport, fence } from "./error-report.js";
+import { buildErrorReport, cell, fence } from "./error-report.js";
 import { SessionLogStore } from "./session-logs.js";
 
 let dir: string;
@@ -255,5 +255,12 @@ describe("フェンス", () => {
   it("中身の ` の並びより長いフェンスで囲む", () => {
     expect(fence("a\n```\nb")).toBe("````\na\n```\nb\n````");
     expect(fence("plain", "json")).toBe("```json\nplain\n```");
+  });
+});
+
+describe("表のセル", () => {
+  it("1行にし、バックスラッシュと | をエスケープする（中身の \\| で表の区切りが崩れない）", () => {
+    expect(cell("a|b\nc")).toBe("a\\|b c");
+    expect(cell("C:\\path\\|x")).toBe("C:\\\\path\\\\\\|x");
   });
 });

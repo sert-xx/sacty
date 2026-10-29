@@ -226,8 +226,9 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function cell(text: string): string {
-  return oneLine(text).replace(/\|/g, "\\|");
+/** 表のセルにする（1行にし、バックスラッシュと | をエスケープする。中身の \| で表の区切りが崩れないように）。 */
+export function cell(text: string): string {
+  return oneLine(text).replace(/[\\|]/g, "\\$&");
 }
 
 /** 中身の ` の並びより長いフェンスで囲む（中身のコードブロックで閉じないように）。 */
