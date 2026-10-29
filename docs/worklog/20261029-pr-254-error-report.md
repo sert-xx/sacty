@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-29（UTC）
 - タスク: なし
-- PR: なし
+- PR: #254
 - ブランチ: claude/error-report-feature-jiwiaw
 - 関係する ADR: [エラーレポートを Markdown のダウンロードにし、オーケストレーターの分析を任意で足す](../adr/20261029-0609-error-report-markdown-download.md)
 
