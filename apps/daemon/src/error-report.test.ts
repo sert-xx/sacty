@@ -10,7 +10,7 @@ import {
   project,
   type Task,
 } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildErrorReport, cell, fence } from "./error-report.js";
 import { SessionLogStore } from "./session-logs.js";
 
@@ -354,5 +354,41 @@ describe("レビューの指摘（PR #254）", () => {
     expect(report).toContain("（ログが大きいので、末尾");
     expect(report).not.toContain("raw ");
     log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
+  });
+});
+
+describe("レビューの指摘（PR #254 の再レビュー）", () => {
+  it("要約が入りきらない実行が続いても、ログを読むのは新しい実行から summarizedRuns 件まで", () => {
+    const { task, activity } = failedTask();
+    const logs = [];
+    for (let i = 0; i < 100; i++) {
+      const log = store.open(
+        {
+          taskId: "t1",
+          runId: `run-x${String(i).padStart(3, "0")}`,
+          role: "implement",
+          agentId: "claude",
+          runtime: "claude-code",
+          authMode: "api-key",
+        },
+        () => [],
+      );
+      log.stdout(`${say(`実行 ${i} ${"ぜ".repeat(500)}`)}\n`);
+      logs.push(log);
+    }
+    const snapshot = vi.spyOn(store, "snapshot");
+    const report = buildErrorReport({
+      task,
+      activity,
+      logs: store,
+      generatedAt: "now",
+      locale: "ja",
+      limits: { totalBytes: 12_000, summarizedRuns: 10 },
+    });
+    // 実行中の実行（いまの写し）を読んだのは10件まで。読まなかった実行は、省いた数に入れる
+    expect(snapshot.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(report).toMatch(/大きさの上限のため、古い \d+ 件の実行の要約を省きました/);
+    for (const log of logs)
+      log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
   });
 });

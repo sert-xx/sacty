@@ -713,16 +713,20 @@ export function buildErrorReport(input: ErrorReportInput): string {
     if (rows.omitted > 0) runLines.push(w.rowsOmitted(rows.omitted), "");
     runLines.push(...head, ...rows.lines);
     runRoom -= bytes(rows.lines);
-    // エージェントの動きの要約は、新しい実行から summarizedRuns 件まで
+    // エージェントの動きの要約は、ログのある新しい実行から summarizedRuns 件までを読む（入らなかった実行も読んだ数に
+    // 数え、古い実行のログまで読み続けない）
     const summaries: string[][] = [];
     let skipped = 0;
+    let read = 0;
     for (let i = runs.length - 1; i >= 0; i--) {
       const run = runs[i] as RunInfo;
-      if (summaries.length >= L.summarizedRuns) {
+      if (!run.meta) continue;
+      if (read >= L.summarizedRuns) {
         skipped++;
         continue;
       }
-      const digest = run.meta ? digestOf(run) : undefined;
+      read++;
+      const digest = digestOf(run);
       if (!digest || digest.missing) continue;
       const block = [
         "",

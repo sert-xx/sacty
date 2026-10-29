@@ -79,6 +79,7 @@ Within the overall limit, room is given in this order (parts are left out in the
 4. Activity: all the rest. It includes the first `timelineHead` (20) records and as many of the newest as fit; when the middle is left out, the number left out is given
 
 The raw log text is not kept after each run is summarized, and standard error is read only for the runs described in detail.
+Logs are read for summaries only for up to `summarizedRuns` (30) of the newest runs with a log (runs whose summaries did not fit are counted too).
 
 Secrets are already masked in the activity and session logs when they are recorded ([Secrets](secrets.en.md)), so the report does not mask them again.
 
