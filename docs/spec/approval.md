@@ -69,15 +69,16 @@
     - 状態が `awaiting_approval`
     - 今の提出の PR（`gatePullRequest`）が `open`
     - PR の URL が `https://` で始まる
+  - エスカレーションで、ゴールガーディアンが判定できなかった変更の申し出（`change_undecidable`。人がまだ決めていないもの。`openProposal`）があるときは、タスクの詳細の「変更の申し出と判定」（`/tasks/<ID>#proposals`）へ案内する。
   - 次のときは、sacty の承認の画面（`/tasks/<ID>/review`）へ案内する。
-    - エスカレーション（PR の指摘の戻し先の確認など）
-    - PR が閉じられた・提出と違う内容でマージされた・無い
+    - それ以外のエスカレーション（PR の指摘の戻し先の確認など）
+    - 状態が `awaiting_approval` で、今の提出の PR が開いていない（閉じられた、またはマージの後で次の確認がまだ承認を記録していない）・無い
   - 外部へ開くリンクは、見た目の「↗」と読み上げの「新しいタブで開く」で示す（`ActionLink`）。
   - お知らせからは、プロジェクトを切り替えずに開く。
   - ダッシュボード・お知らせでは、導線はタスクの題のリンクなので、題だけを省略し、印は省略の外に置く。
     長い題でも印が残る（PR #148 レビュー提案）。
 
-コード（画面の導線）: `apps/web/src/lib/labels.ts`（`personAction`・`personLink`・`reviewPullRequestUrl`）、`apps/web/src/components/action-link.tsx`（`ActionLink`・`ExternalMark`）
+コード（画面の導線）: `apps/web/src/lib/labels.ts`（`personAction`・`personLink`・`reviewPullRequestUrl`）、`packages/core/src/projection.ts`（`openProposal`）、`apps/web/src/components/action-link.tsx`（`ActionLink`・`ExternalMark`）
 
 コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
 
@@ -142,7 +143,7 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 
 ## PR の確認
 
-デーモンは60秒ごとに、承認待ちの PR を確かめる（前の確認が終わるまで次を始めない）。
+デーモンは60秒ごとに、今の提出の PR（`gatePullRequest`）があり、状態が承認待ち（`awaiting_approval`）かエスカレーション（`escalated`）のタスクの PR を確かめる（前の確認が終わるまで次を始めない）。
 
 - マージされた：`PullRequestMerged` と `StepApproved`（どちらも actor `person`）を記録する。
   - sacty の提出と違う内容でマージされた（PR の先頭が sacty のコミットと違う）ときも承認にする（`edited`）。
@@ -152,11 +153,17 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 - マージされずに閉じられた：`PullRequestClosed` を記録し、承認にせず人間の判断を待つ。
   画面から承認はできない（差し戻すか中止する）。
 - 開き直された：`PullRequestReopened` を記録して見守りを続ける。
+- 変わっていない：PR が開いたままで状態が `awaiting_approval` なら、レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
 - 実装の PR のマージでは、マージの後の監視の工程を飛ばしていなければ、同じ追記でマージの後の監視を始める（[マージの後の監視](deployment-watch.md)）。
-  確認の終わりに、監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
+- 確認の終わりに、次を順に行う。
+  1. コンテキストにする改修の PR がマージされたメモリーを消す（`cleanupPromotedMemories`。[メモリー](memory.md#コンテキストへの昇格)）。
+  2. PR のレビューの取り込みのタスクのうち終わっていないものの PR を確かめ、マージされた・マージせずに閉じられたら中止する（`checkReviewPullRequests`）。
+  3. 公開の後、ラベルを付ける前に止まった PR にラベルを付ける（`resumePullRequestLabels`。[PR のレビュー用のラベル](#pr-のレビュー用のラベル)）。
+  4. 最終レビューの前に作った実装の PR の CI を待っているタスクの CI を確かめる（`checkVerificationCi`。[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）。
+  5. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`resumePullRequestLabels`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
 ## PR の本文と PR テンプレート
 

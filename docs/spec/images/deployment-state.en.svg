@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 440" width="1040" height="440" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 490" width="1040" height="490" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/deployment-state.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">After-merge watch states</title>
-  <desc id="desc">Merging the implementation PR starts waiting for CI/CD; if it passes and the skill exists, an agent checks as the skill says. The result is passed, failed, skipped, or timed_out; on failed a fix task is decided.</desc>
+  <desc id="desc">Merging the implementation PR starts waiting for CI/CD; if it passes and the skill exists, an agent checks as the skill says. If the merge commit is unknown, the watch is skipped without waiting. The result is passed, failed, skipped, or timed_out; on failed a fix task is decided.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -47,11 +47,12 @@
   <path d="M360 160 L360 82 Q360 72 370 72 L540 72" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M760 58 L830 62" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M760 92 C795 92 795 158 830 158" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M720 124 L720 258 Q720 268 730 268.4 L830 272" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M720 124 L720 258 Q720 268 730 268.4 L828 272" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M470 172 L490 172 Q500 172 510 172 L790 172 Q800 172 800 162 L800 90 Q800 80 810 80 L830 80" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M470 202 L802 202 Q812 202 812 192 L812 191 Q812 182 821 182 L830 182" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M470 232 L780 232 Q790 232 790 242 L790 286 Q790 296 800 297 L830 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M470 232 L780 232 Q790 232 790 242 L790 286 Q790 296 799.9 297 L828 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M360 264 L360 378 Q360 388 370 388 L830 388" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M110 246 L110 452 Q110 462 120 462 L1022 462 Q1032 462 1032 452 L1032 322 Q1032 316 1026 316 L1020 316" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="20" y="170" width="180" height="76" rx="10" class="card" style=""/>
   <svg x="36" y="184" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
   <text x="72" y="202" class="title">PR merged</text>
@@ -76,13 +77,13 @@
   <svg x="846" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>
   <text x="882" y="162" class="title">failed</text>
   <text x="846" y="190" class="sub">Decide on a fix task</text>
-  <rect x="830" y="232" width="190" height="108" rx="10" class="card" style=""/>
-  <svg x="846" y="246" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
-  <text x="882" y="264" class="title">skipped</text>
-  <rect x="846" y="277" width="151.7" height="21" rx="5" class="pill"/>
-  <text x="854" y="292" class="code">no_ci・check_unknown</text>
-  <rect x="846" y="303" width="57.4" height="21" rx="5" class="pill"/>
-  <text x="854" y="318" class="code">budget</text>
+  <rect x="828" y="232" width="192" height="108" rx="10" class="card" style=""/>
+  <svg x="844" y="246" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
+  <text x="880" y="264" class="title">skipped</text>
+  <rect x="844" y="277" width="124.1" height="21" rx="5" class="pill"/>
+  <text x="852" y="292" class="code">no_commit・no_ci</text>
+  <rect x="844" y="303" width="158.6" height="21" rx="5" class="pill"/>
+  <text x="852" y="318" class="code">check_unknown・budget</text>
   <rect x="830" y="350" width="190" height="76" rx="10" class="card" style=""/>
   <svg x="846" y="364" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="882" y="382" class="title">timed_out</text>
@@ -103,4 +104,6 @@
   <text x="610" y="226" class="label" text-anchor="middle">none after 5 minutes (no_ci)</text>
   <rect x="535.7" y="369" width="128.7" height="18" rx="4" class="label-bg"/>
   <text x="600" y="382" class="label" text-anchor="middle">not done in 60 minutes</text>
+  <rect x="468.2" y="443" width="183.6" height="18" rx="4" class="label-bg"/>
+  <text x="560" y="456" class="label" text-anchor="middle">merge commit unknown (no_commit)</text>
 </svg>

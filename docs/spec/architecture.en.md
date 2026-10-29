@@ -32,10 +32,11 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Kind | Path |
 | --- | --- |
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
-| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
+| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview}`, `GET /api/tasks/:id/{cleanup-plan,security-findings}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
 | Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
+| Audit | `GET /api/tasks/:id/audit`, `POST /api/tasks/:id/audit/resume`, `GET /api/projects/:id/audits`, `GET /api/audits/dashboard`, `POST /api/audits/proposals/:id/{adopt,reject}`, `POST /api/audits/memories/:id/delete` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `GET /api/notifications`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
@@ -230,8 +231,11 @@ Because the elements on the screen stay as they are, text being typed, selection
   | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen. `{ missing: true }` if the task does not exist (including tasks of a deleted project) |
   | `GET /live/tasks/<ID>/runs/<run ID>?events=&stderr=` | What was added to the run log after what the screen has (see below) |
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |
+  | `GET /live/update` | The notice of a newer sacty version (`loadUpdateData`; every 30 seconds; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-for-a-newer-version)) |
+  | `GET /live/docker` | The notices about Docker and the agent images (`loadDockerData`; every 30 seconds; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-docker-and-the-agent-images)) |
+  | `GET /live/notifications?after=<number>` | The notifications after the number, for desktop notifications (`loadDesktopFeed`; every 5 seconds; refetched only while desktop notifications are On in this browser, without the version comparison, and also while the tab is hidden; [Notifications](notifications.en.md#desktop-notifications)) |
 
-- The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
+- The interval is 3 seconds (`LIVE_INTERVAL_MS`). However, `/live/update` and `/live/docker` (notices shown on every screen) use 30 seconds (`UPDATE_LIVE_INTERVAL_MS`, `DOCKER_LIVE_INTERVAL_MS`), and `/live/notifications` uses 5 seconds (`DESKTOP_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
 - On `{ missing: true }`, the screen keeps showing the last data. The task details, the deliverable review, and the run log redraw the screen (`RefreshWhenMissing`;
   the server treats the task as missing and returns 404, so a task of a project deleted while it is open does not stay on screen).
 - While the screen is not visible (the tab is hidden), the web UI does not poll. When it becomes visible, it refetches the data once right away.
@@ -267,7 +271,8 @@ Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVA
 `apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`), `apps/web/src/components/live-status.tsx` (`RefreshWhenMissing`),
 `apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`loadAgentFiles`),
 `apps/web/src/components/live-status.tsx` (`StaleNotice`, `FollowProjectAfterRecovery`), `apps/daemon/src/session-logs.ts` (`completeUtf8Length`), `apps/web/src/lib/daemon-signal.ts` (`withDaemonSignal`, `LIVE_SERVER_TIMEOUT_MS`),
-`apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`)
+`apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`),
+`apps/web/src/app/live/update/route.ts`, `apps/web/src/components/shell/update-notice-live.tsx` (`UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/app/live/docker/route.ts`, `apps/web/src/components/shell/docker-notice-live.tsx` (`DOCKER_LIVE_INTERVAL_MS`), `apps/web/src/app/live/notifications/route.ts`, `apps/web/src/lib/desktop-notifications.ts` (`DESKTOP_INTERVAL_MS`)
 
 ## Data location (SACTY_HOME)
 
@@ -311,7 +316,7 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
 
   When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten. Nothing is written if there is nothing to remove.
 - Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).
-  - Deleting (`DELETE /api/projects/:id`) removes only the project definition. Tasks and the activity log are not deleted (tasks of a deleted project are not shown or counted).
+  - Deleting (`DELETE /api/projects/:id`) removes the project definition and the project's scheduled tasks (`schedules.deleteForProject`; [Scheduled tasks](scheduled-tasks.en.md)). Tasks (including those created by scheduled tasks) and the activity log are not deleted (tasks of a deleted project are not shown or counted).
     If the project does not exist, it returns 404. If the project has unfinished tasks, or completed tasks with work still running or queued (audits, deployment checks, and so on)
     or a question being answered, it does not delete the project and returns 409 (`project.hasActiveTasks`, with the count). After deleting, it also removes the secret warnings of that project.
   - For tasks of a deleted project, the daemon's `GET /api/tasks/:id` and the run records (`…/runs/:runId/{log,files/:file,agent-files,agent-files/raw}`)

@@ -6,11 +6,11 @@ export const deploymentState = {
   name: "deployment-state",
   outputs: ["spec"],
   width: 1040,
-  height: 440,
+  height: 490,
   title: t("マージの後の監視の状態", "After-merge watch states"),
   desc: t(
-    "実装の PR のマージで CI/CD を待ち始め、通ってスキルがあればスキルに従って確かめる。結果は passed・failed・skipped・timed_out のどれかになり、failed なら修正のタスクを決める。",
-    "Merging the implementation PR starts waiting for CI/CD; if it passes and the skill exists, an agent checks as the skill says. The result is passed, failed, skipped, or timed_out; on failed a fix task is decided.",
+    "実装の PR のマージで CI/CD を待ち始め、通ってスキルがあればスキルに従って確かめる。マージのコミットが分からなければ、待たずに飛ばす。結果は passed・failed・skipped・timed_out のどれかになり、failed なら修正のタスクを決める。",
+    "Merging the implementation PR starts waiting for CI/CD; if it passes and the skill exists, an agent checks as the skill says. If the merge commit is unknown, the watch is skipped without waiting. The result is passed, failed, skipped, or timed_out; on failed a fix task is decided.",
   ),
   items: [
     {
@@ -84,15 +84,15 @@ export const deploymentState = {
     {
       kind: "card",
       id: "skipped",
-      x: 830,
+      x: 828,
       y: 232,
-      w: 190,
+      w: 192,
       h: 108,
       icon: "flag",
       title: "skipped",
       lines: [
-        { as: "code", text: "no_ci・check_unknown" },
-        { as: "code", text: "budget" },
+        { as: "code", text: "no_commit・no_ci" },
+        { as: "code", text: "check_unknown・budget" },
       ],
     },
     {
@@ -199,6 +199,21 @@ export const deploymentState = {
       via: [[360, 388]],
       label: t("60分で終わらない", "not done in 60 minutes"),
       labelAt: [600, 382],
+    },
+    {
+      kind: "edge",
+      from: "merge",
+      to: "skipped",
+      fromSide: "b",
+      toSide: "r",
+      toOffset: 30,
+      via: [
+        [110, 462],
+        [1032, 462],
+        [1032, 316],
+      ],
+      label: t("マージのコミットが分からない（no_commit）", "merge commit unknown (no_commit)"),
+      labelAt: [560, 456],
     },
   ],
 };

@@ -8,7 +8,7 @@ Related ADRs: none
 
 ## Event shape
 
-- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 83 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their judgments, verification, git and PRs, reviews, replies to the intake source, questions, export, PR labels, the after-merge watch, audits of completed tasks, and so on).
+- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 93 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their judgments, verification, git and PRs, CI of the draft PR before the final review, reviews, replies to the intake source, questions, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds the following to the shape for writing.
   - `seq` (increasing monotonically across the whole activity log)
   - `id` (UUID)
@@ -136,7 +136,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot
 
 - Task details read `{ task, activity }` from `GET /api/tasks/:id` and list the activity log newest first, with text for each event kind.
 - The per-step cost table aggregates events that carry cost by row (the table in [Cost](#cost)). The rows are in the following order.
-  1. Ticket reading, repository selection, and the Orchestrator (only when recorded)
+  1. Information gathering, ticket reading, repository selection, and the Orchestrator (only when recorded)
   2. The steps, in the task's step order
      - Steps that have not run are shown with 0 runs.
      - Records for steps not in the step list are also shown.

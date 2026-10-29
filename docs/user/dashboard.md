@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/web/src/components/dashboard.tsx、apps/web/src/lib/dashboard-data.ts、apps/web/src/i18n/messages/dashboard.ts、packages/core/src/dashboard.ts、apps/daemon/src/service.ts -->
+<!-- 対応するコード: apps/web/src/components/dashboard.tsx、apps/web/src/lib/dashboard-data.ts、apps/web/src/lib/notification-problems.ts、apps/web/src/i18n/messages/dashboard.ts、packages/core/src/dashboard.ts、apps/daemon/src/service.ts -->
 
 **日本語** | [English](dashboard.en.md)
 
@@ -18,7 +18,7 @@
 
 | 欄 | 出すもの | 空のとき |
 | --- | --- | --- |
-| あなたの出番 | 承認待ち・一時停止・エスカレーションのタスクを、待っている時間が長い順に出します。題を押すと、判断する画面に移ります | 「対応待ちはありません。」 |
+| あなたの出番 | 承認待ち・一時停止・エスカレーションのタスクを、待っている時間が長い順に出します。題を押すと、判断する画面に移ります。承認待ちで、今の提出の PR が開いているときは、GitHub の PR を新しいタブで開きます（題に「↗」が付きます） | 「対応待ちはありません。」 |
 | 止まっているタスクの理由 | 一時停止の理由ごとの件数です。行を押すと、その理由のタスクが欄の中に出ます。利用上限と認証は、1か所直せばまとめて動くことが多いので目立たせます | 「止まっているタスクはありません。」 |
 | 終わっていないタスク | 完了・中止を除くすべてのタスクです。5件より多いときは、欄の中でスクロールします | 「終わっていないタスクはありません。」 |
 | 費用と予算 | 今日と直近7日の費用を、概算で出します。予算の 80% 以上を使ったか、上限に達したタスクも出します | 「予算に近いタスクはありません。」 |
@@ -30,6 +30,13 @@
 
 幅が足りれば欄を横に並べ、足りなければ縦に積みます。
 スマホの幅でも同じ欄を出します。
+
+## Slack の通知を送れなかったとき
+
+Slack の通知を送れなかったときは、欄の上に警告が出ます。
+警告には、送れなかった理由と、「Sacty の設定で Slack の通知を確かめる」のリンクが出ます。
+リンクを押すと「Sacty の設定」に移るので、Slack の通知の設定を確かめてください。
+次に送れたら、警告は消えます（[通知](notifications.md)）。
 
 ## 期間と数え方
 
@@ -55,4 +62,5 @@
 - [はじめに](getting-started.md)
 - [タスクを進める](tasks.md)
 - [Issue・PR・チケットの取り込み](intake.md)
+- [通知](notifications.md)
 - [config.yaml の設定](config.md)

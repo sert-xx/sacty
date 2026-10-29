@@ -118,7 +118,7 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
 - Tasks that have a skill and are waiting for the check (`awaitingDeploymentCheck`) are picked up by the worker as queued work (paused tasks are not picked up). The limit on concurrent runs is the same as for other runs.
 - If the budget limit has been reached, the check does not run and `DeploymentWatchSkipped` (`budget`) is recorded (the task is not stopped).
 - The run environment
-  - The AI is the agent a person chose in the task details ([Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)). Otherwise it is `step_agents.deployment`, or `default_agent` if that is not set either.
+  - The AI is the agent a person set for this step (set when creating the task, or changed in the task details, when resuming a paused task, or when requesting changes; see [Step images and agents specified at creation](tasks-and-steps.en.md#step-images-and-agents-specified-at-creation) and [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)). Otherwise it is `step_agents.deployment`, or `default_agent` if that is not set either.
   - The image is the image of this step. As for other steps, the Orchestrator chooses it and a person can change it. If there is none, the default image is used.
   - The workspace is a copy of the code at the merge commit, written to `workspaces/_deployment/<run ID>` (deleted afterward).
   - The project's context (external PFs and MCP servers) is passed in the same way as for step agents.

@@ -186,6 +186,7 @@ You can write the following keys in `step_agents`.
 | `deployment` | The check in the after-merge watch step ([After-merge watch](deployment-watch.en.md)) |
 
 - Writing a name that does not exist or an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+- When a person specifies a step's agent at task creation ([Set the image and agent for each step](tasks.en.md#set-the-image-and-agent-for-each-step)), or in the task details, when resuming a paused task, or when requesting changes ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)), that agent takes precedence over `step_agents` for that task.
 - The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed. Writing it is an error, so delete it.
 
 ## Agent tiers
@@ -244,11 +245,11 @@ What happens when an agent's run fails depends on the kind of run.
 
 | Run | On failure |
 | --- | --- |
-| Steps, the integration review, the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks) | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
+| Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks) | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
 | Exports, the post-merge watch, audits, and answers to questions | The failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on). At a usage limit, the fallback agent is used from the next run |
 
 - Whether a run failed is judged from the agent's exit code and output, not from logs on standard error.
-- Switching when the run ended normally but its answer was not in the right form applies only to the Orchestrator's choice of steps and reading tickets.
+- Switching when the run ended normally but its answer was not in the right form applies only to information gathering, the Orchestrator's choice of steps, and reading tickets.
 - sacty records the switch in the activity log with the reason, such as "reached its usage limit", "failed to authenticate", or "failed".
 - For `cooldown_minutes`, the failed agent is not used and the fallback agent is used instead. Where the fallback is used depends on the reason for the failure.
   - Usage limit: the fallback is used for other tasks too.

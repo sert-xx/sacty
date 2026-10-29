@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/install-security-tools.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/install-security-tools.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage, withImages, pinnedImage, stepSettingChanges), apps/web/src/components/step-image-form.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -190,13 +190,15 @@ npx sacty image build java17     # build by name (default is the default image)
 - The default image (`image`) is the last resort when none of `images` fits. It is a minimal image with only Node.js and git to run Claude Code and Codex; it has no test browsers, DB clients, or tools for other languages. Even for a Node.js repository, a matching image in `images` is used instead.
 - For a step that runs in the default image, the reason why none of `images` fits is recorded in the Activity (the task page). If the orchestrator gave no reason for a step, the task does not stop; the step runs in the default image and the Activity shows "Runs on the default image with no reason". When tests fail, check this and add the tools each image includes (such as Playwright) to its `description` in `images`.
 - If the Goal Guardian reports that a tool written in the test (verification) command is not in the image that runs the tests, sacty pauses the task and guides you to add the tool to the image ([When the verification tool is not in the image](tasks.en.md#when-the-verification-tool-is-not-in-the-image)).
-- If you specify an image for a project target (a repository or an Org), the orchestrator does not choose, and every step uses that image. A repository's setting takes precedence over an Org's (see [Project settings](project-settings.en.md#targets)).
+- When creating a task, you can specify the image for each step ([Set the image and agent for each step](tasks.en.md#set-the-image-and-agent-for-each-step)). A specified step uses that image (it takes precedence over the project target's image and the orchestrator's choice).
+- If you specify an image for a project target (a repository or an Org), the orchestrator does not choose, and every step except those whose image a person specified at creation uses that image. A repository's setting takes precedence over an Org's (see [Project settings](project-settings.en.md#targets)).
+- If you choose an image when rerunning a cancelled task, it takes precedence over the project target's image, and every step uses it.
 - For a PR-review-only task ([Intake](intake.en.md)) too, if no image is specified, the orchestrator chooses the image for the review step from `images`. The review runs the project's verification such as tests and lint, so the orchestrator is asked to choose an image that has those tools. If `images` is not configured, the review runs in the default image without the orchestrator.
 - The chosen image and the reason are recorded in the Activity. If a name not in `images` is chosen or specified, sacty stops and shows the reason.
 
 ### Changing a step's image
 
-If the orchestrator chooses an image that doesn't fit a step (for example, the default image for a repository that needs Playwright), you can choose again for each step. Make the change in "Step images" on the "Step settings" tab of the task detail.
+If the orchestrator chooses an image that doesn't fit a step (for example, the default image for a repository that needs Playwright), you can choose again for each step. Make the change in "Step images" on the "Step settings" tab of the task detail. When resuming a paused task and when requesting changes on the approval screen, you can also choose again together, under "Change step images and agents" (open it to use it; [Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel), [Changing a step's agent](tasks.en.md#changing-a-steps-agent)). A changed image is handled the same way as a change on the task detail.
 
 - You can choose a name in `images` or `default` (the default image). The list shows only the names, and the description of the chosen image (`description` in `images`) appears below it.
 - When the change is not possible, the screen shows the following.
@@ -209,7 +211,7 @@ If the orchestrator chooses an image that doesn't fit a step (for example, the d
   - Each step on the screen shows when a change takes effect.
 - The Goal Guardian runs the tests for verifying the implementation in the Implementation step's image. If you change the Implementation image, the next final review uses it.
 - For a step that stopped with a failure or a pause, change the image and then retry with "Resume"; the step runs with the changed image.
-- You can also change tasks whose project target specifies an image. Only the steps a person changed take precedence over the target's image.
+- You can also change tasks whose images were set by the project target, by a person at creation, or by a person on rerun. Only the steps a person changed use the changed image (the other steps keep what was set before).
 - The Activity records a change as who changed which step from what to what.
   - The step images list shows when a person changed it and the previous name.
   - Why the Orchestrator left a step on the default image (or that no reason was given) is shown in the step images list until a person changes it.

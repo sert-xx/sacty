@@ -23,7 +23,7 @@ Read [Working with tasks](tasks.en.md) first for how tasks are created.
 | Time | The time to create the task (the clock of the computer running Sacty) |
 | Days | For Weekly, choose at least one |
 | Day | The day (1 to 31) for Monthly. If the month has no such day (such as the 31st), the task is created on its last day |
-| Task to create | The same fields as "Create task" (template, target repository, plan, title, description) |
+| Task to create | Template, target repository, plan, title, and description (the same fields as "Create task", except that there is no "Set per step", so you cannot set the image and agent for each step) |
 
 The contents of the task are checked on saving, in the same way as "Create task".
 If they cannot be used, for example the target repository is not in the project's targets, the reason appears and nothing is saved.

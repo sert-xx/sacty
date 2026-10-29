@@ -1350,12 +1350,12 @@ budget:
 # web:
 #   auth: false
 
-# sacty の最新版（GitHub の sacty のリポジトリの main）を1日ごとに確かめ、新しい版があれば画面に出す（既定は true）。
+# sacty の最新版（GitHub の sacty のリポジトリの最新のリリース）を1日ごとに確かめ、新しい版があれば画面に出す（既定は true）。
 # インターネットに出られない環境では false にする（GitHub に問い合わせない）
 # update_check: false
 
 # エージェントの1回の実行とテストのコマンドの上限（分。1〜720）。過ぎるとコンテナを止め、タスクを一時停止する。
-# roles で役割ごとに上書きする（工程の名前のほか guardian・final-review・rework・orchestrator・chat・export・audit・audit-dive）
+# roles で役割ごとに上書きする（工程の名前のほか guardian・final-review・rework・orchestrator・gather・chat・export・audit・audit-dive）
 # run_timeout:
 #   agent_minutes: 30   # 既定 30
 #   test_minutes: 20    # 既定 20

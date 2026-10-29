@@ -57,15 +57,17 @@
   キーボードでは、印に止まったまま矢印キー・PageUp/PageDown でスクロールできる。
   補足はポータルに出るので、Tab では中に移らない。
   印からフォーカスが外れたら閉じる。
-- 作業履歴の長い行（コンテキストの用意の使える外部 PF の一覧）は、1行目だけを出す。
-  残りは「詳細」を開いて読む。
+- 作業履歴のコンテキストの用意の行（`ContextResolved`）は、読んだ層と警告だけを出す。
+  置いた段階のサブエージェントの定義（段階ごとのエージェント・モデル・リーズニングエフォート。`ContextTiers`）と、使える外部 PF の一覧は、「詳細」を開いて読む（どちらも無ければ「詳細」を出さない）。
+- 作業履歴の補足つきの再開の行（`TaskResumed` の `note`）は、再開の文に「・補足あり」を添えて出す。
+  人が足した補足の本文は「詳細」を開いて読む（どの再開で足したかを読み返すため）。
 - 作業履歴の差し戻しの行（`ChangesRequested`）は、指摘の件数だけを出す。
   人が書いた指摘の本文（指摘の ID と本文、1件ずつ1行）は「詳細」を開いて読む。
   承認の画面は承認待ち・エスカレーションの間しか中身を出さないので、承認の後や完了・中止の後に指摘を読み返すのに使う。
 - カードの見出しは、短い事実（件数・状態）を `note` に、仕組みの説明を `hint` に渡す。
 - 既存の `title` 属性（費用の「概算」など）で出していた補足は、この部品に置き換えた。
 
-コード: `apps/web/src/components/ui/hint.tsx`（`Hint`・`WithHint`）、`apps/web/src/components/card-section.tsx`（`CardSection`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）
+コード: `apps/web/src/components/ui/hint.tsx`（`Hint`・`WithHint`）、`apps/web/src/components/card-section.tsx`（`CardSection`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/task-detail.tsx`（`EventText`）
 
 ## 辞書と検査
 

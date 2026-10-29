@@ -42,7 +42,7 @@ sacty uses the targets as follows.
   - Issues that have the label to import are imported as tasks.
   - PRs that have the review label (or that request your review) are imported as review-only tasks.
 - The same org or repository cannot be registered in another project. If an org and a repository in it are in different projects, the repository takes precedence (it is excluded from the org's project).
-- If you choose an "Image" for a target (a name in `images` of `config.yaml`, or `default`), the Orchestrator does not choose one, and every step uses it. A repository's choice takes precedence over its org's ([Container images](images.en.md#which-image-a-step-runs-in)). The list shows only the image names, and the description of the chosen image (`description` in `images`) appears below the target's row.
+- If you choose an "Image" for a target (a name in `images` of `config.yaml`, or `default`), the Orchestrator does not choose one, and every step uses it. However, a step whose image a person chose when creating the task, and an image chosen when rerunning a cancelled task, take precedence. A repository's choice takes precedence over its org's ([Container images](images.en.md#which-image-a-step-runs-in)). The list shows only the image names, and the description of the chosen image (`description` in `images`) appears below the target's row.
 
 Once you register a target, sacty may push branches to the target repositories and open PRs, depending on the task.
 
@@ -97,7 +97,7 @@ You can delete a project from the "Danger zone" at the end of the project settin
 3. After deleting, the web UI moves to the project list.
 
 - A deleted project cannot be restored. If you want to keep its definition, export it first.
-- Only the project settings are deleted. Tasks and the activity log are kept, but they no longer appear on any screen (opening a task's URL shows that it is not found) or count on the dashboard.
+- The project settings and the project's [scheduled tasks](scheduled-tasks.en.md) are deleted. Tasks (including tasks that scheduled tasks created) and the activity log are kept, but they no longer appear on any screen (opening a task's URL shows that it is not found) or count on the dashboard.
 - While the project has unfinished tasks (other than completed and cancelled ones), work still running or queued (such as audits), or a question being answered, it cannot be deleted.
   The dialog shows the count; complete or cancel the tasks, then delete the project again.
 

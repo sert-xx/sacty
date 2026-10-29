@@ -1644,7 +1644,7 @@ export class TaskService {
       ]);
       return;
     }
-    // 人がタスクの詳細で選んだエージェントを優先する（PBI-121）。選んだ名前が消えていれば、理由を示して止める
+    // 人が選んだエージェント（作成時の指定、またはタスクの詳細・再開・差し戻しでの変更）を優先する（PBI-121）。選んだ名前が消えていれば、理由を示して止める
     const chosen = stepAgentFor(config, "deployment", this.mustGet(task.id).agents?.deployment);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, "deployment", chosen.missing);

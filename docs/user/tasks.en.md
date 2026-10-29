@@ -122,7 +122,7 @@ The task details look like this.
 
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
-- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the test command, the ticket, related tasks, and when the task was created and last updated.
+- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the tests (the test command), the ticket, where the task started from (with the template's name for a task created from a template), related tasks (the parent, the task it reruns, the task it follows up, the task it fixes, and the report), the task it was rerun as, and when the task was created and last updated. The PR, the branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
   Below it, the recent Activity (5 entries) is shown.
 
 ## Information gathering at the start of a task
@@ -397,7 +397,7 @@ While awaiting approval, if the PR of the current submission is open, you can op
 Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
-- When the PR was closed without merging, was merged with content different from the submission, or does not exist yet.
+- When the PR was closed without merging, or does not exist yet.
 
 Approval in PRs proceeds in this order.
 
@@ -420,9 +420,10 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - The Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between. The decision and its reasons are kept in the Activity and the PR section.
   - If requests for changes to the same step exceed the limit, it becomes an Escalation.
 - When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
-- If a PR is closed without being merged, or merged with contents different from what sacty submitted, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- If a PR is closed without being merged, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- If you edit the PR and then merge it (merged with contents different from what sacty submitted), the merge is still treated as approval and the task moves to the next step. For Requirements and Design, the files you edited become the approved deliverable.
 - In the following cases, no Requirements or Design PRs are created.
-  - Steps that need no approval (such as an earlier Investigation)
+  - Steps that need no approval (such as Reproduce and Review)
   - Tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design). Investigation-only tasks are approved in the web UI.
   - Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed. They are still approved in the web UI.
 - Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
@@ -499,9 +500,9 @@ In the following cases, check every item.
 
 ## Changing a step's image
 
-The "Step settings" tab of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
+The "Step settings" tab of the task detail shows the image of each step and where it came from ("chosen by the Orchestrator", "set on the project target", "set by a person at creation", "set by a person on rerun", "changed by a person from …", "not set", and so on). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
 
-If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). See [Container images](images.en.md#changing-a-steps-image) for details.
+If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). When resuming a paused task ([Pause, resume, and cancel](#pause-resume-and-cancel)) and when requesting changes on the approval screen, you can also choose the image again together, under "Change step images and agents" (open it to use it; [Changing a step's agent](#changing-a-steps-agent)). See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Changing a step's agent
 
@@ -512,6 +513,7 @@ For example, you can rerun only a step that stopped on an error or was sent back
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
 - Who changed what, when, and from what to what is kept in the Activity.
 - When requesting changes on the approval screen, you can also choose again the images and agents of the step to redo and the steps after it, under "Change step images and agents" (open it to use it). The current settings are selected at first, and only the steps you changed are recorded, only when you request changes (not when you approve).
+- When resuming a paused task, you can also choose again the images and agents of the steps not yet finished in the resume form ([Pause, resume, and cancel](#pause-resume-and-cancel)).
 - If the chosen agent can no longer be used (you deleted it from config.yaml, removed its price, and so on), the task pauses when the step runs. Choose again, then resume.
 - Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
 

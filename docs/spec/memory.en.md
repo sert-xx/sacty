@@ -158,7 +158,8 @@ Code: `apps/daemon/src/memory.ts` (`expiredMemories`, `MEMORY_CLEANUP_INTERVAL_M
 - The audit (survey and deep dive) gets the same mounts (to check for duplicates). sacty does not add the reading instructions there.
 - The following get none.
   - The Goal Guardian (change-request judgement, final review, integration review, and judging where to send PR remarks back (role `rework`))
-  - The orchestrator
+  - Information gathering (at the start of a task; role `gather`)
+  - The orchestrator (choosing steps, reading tickets, and so on; ticket reading also runs as role `orchestrator`)
   - Question answers
   - Exports
 - The rework after sending back runs again under the step's role, so it gets them.
@@ -180,7 +181,7 @@ Code: `apps/daemon/default-context/skills/memory/SKILL.md`
 
 - The Audit tab shows the memories that audit registered (title, layer, repository, summary, contents). Memories not yet deleted have a Delete button; confirming deletes it (`POST /api/audits/memories/:id/delete`).
 - People cannot register memories.
-- Deleted memories show only a mark (deleted by a person, by the limit, by expiry, or after becoming context), without contents or the Delete button. A deleted memory cannot be deleted again (409).
+- Deleted memories show only a mark ("Deleted" for one a person deleted, otherwise "Deleted (limit)", "Deleted (expired)", or "Made context"), without contents or the Delete button. A deleted memory cannot be deleted again (409).
 - After deleting, sacty rewrites the layer where the memory currently lives (the destination, if the audit moved it).
 
-Code: `apps/daemon/src/service.ts` (`deleteAuditMemory`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/components/audit.tsx` (`TaskAuditCard`)
+Code: `apps/daemon/src/service.ts` (`deleteAuditMemory`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/components/audit.tsx` (`TaskAuditCard`), `apps/web/src/i18n/messages/audit.ts`

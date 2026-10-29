@@ -62,14 +62,15 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
     - The task is `awaiting_approval`
     - The PR of the current submission (`gatePullRequest`) is `open`
     - The PR's URL starts with `https://`
+  - In an escalation with a change proposal the Goal Guardian could not judge (`change_undecidable`; one a person has not decided yet; `openProposal`), the link goes to "Change requests and verdicts" in the task details (`/tasks/<ID>#proposals`).
   - In the following cases, the link goes to the sacty approval screen (`/tasks/<ID>/review`).
-    - Escalation (such as confirming the step to redo for PR comments)
-    - The PR was closed, merged with different content, or does not exist
+    - Any other escalation (such as confirming the step to redo for PR comments)
+    - The task is `awaiting_approval` and the PR for the current submission is not open (it was closed, or it was merged and the next check has not recorded the approval yet) or does not exist
   - A link that opens outside is marked with "↗" and, for screen readers, "opens in a new tab" (`ActionLink`).
   - From the notifications, it opens without switching the project.
   - On the dashboard and in the notifications, the link is the task title, so only the title is truncated and the mark is placed outside the truncation. The mark stays even for a long title (PR #148 review suggestion).
 
-Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
+Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `packages/core/src/projection.ts` (`openProposal`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
 
 Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`StepPullRequestKey`, `DEFAULT_DOCUMENTS_DIR`, `isDocumentsDir`), `packages/core/src/projection.ts` (`stepDocumentPath`), `apps/daemon/src/prompts.ts` (`buildStepDocument`)
 
@@ -115,17 +116,24 @@ Code: `apps/daemon/src/service.ts` (`labelPullRequest`, `labelDue`, `resumePullR
 
 ## The PR check
 
-Every 60 seconds the daemon checks PRs waiting for approval (the next check does not start until the previous one finishes).
+Every 60 seconds the daemon checks the PRs of tasks that have a PR for the current submission (`gatePullRequest`) and are waiting for approval (`awaiting_approval`) or escalated (`escalated`) (the next check does not start until the previous one finishes).
 
 - Merged: `PullRequestMerged` and `StepApproved` (both with actor `person`) are recorded.
   - It is also approval when the PR was merged with content different from sacty's submission (the PR's head differs from sacty's commit) (`edited`).
   - For Requirements and Design, the file is read from the merge commit, and the version the person edited becomes the approved result. If the file was deleted or cannot be read, sacty's version is approved. If it cannot be fetched, nothing is recorded and the next check tries again.
 - Closed without merging: `PullRequestClosed` is recorded, and instead of approving, the task waits for a person's decision. It cannot be approved from the web UI (request changes or cancel).
 - Reopened: `PullRequestReopened` is recorded and watching continues.
+- Unchanged: if the PR is still open and the task is `awaiting_approval`, reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
 - If the status, PR, or commit changes during the check, nothing is recorded.
-- When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)). At the end of the check, the CI/CD of tasks waiting for monitoring is checked (`checkDeployments`).
+- When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
+- At the end of the check, the following are done in order.
+  1. Memories whose PR promoting them to context was merged are deleted (`cleanupPromotedMemories`; [Memory](memory.en.md#promotion-to-context)).
+  2. For PR review intake tasks that have not finished, the PR is checked, and the task is cancelled if the PR was merged or closed without merging (`checkReviewPullRequests`).
+  3. PRs that stopped after the publish but before the label was attached get the label (`resumePullRequestLabels`; [The review label on PRs](#the-review-label-on-prs)).
+  4. The CI of tasks waiting for the CI of the implementation PR opened before the final review is checked (`checkVerificationCi`; [Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)).
+  5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
 
-Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
+Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`, `cleanupPromotedMemories`, `checkReviewPullRequests`, `resumePullRequestLabels`, `checkVerificationCi`, `checkDeployments`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
 
 ## PR body and PR template
 

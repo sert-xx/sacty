@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/install-security-tools.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/install-security-tools.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage・withImages・pinnedImage・stepSettingChanges）、apps/web/src/components/step-image-form.tsx -->
 
 **日本語** | [English](images.en.md)
 
@@ -231,8 +231,11 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
   オーケストレーターが理由を書かなかった工程は、止めずに既定のイメージで進め、「理由が無いまま既定のイメージで動かす」と作業履歴に出します。
   テストが失敗したときは、ここを見て、`images` の `description` に、そのイメージに入っているツール（Playwright など）を書き足してください。
 - テスト（検証）のコマンドに書いたツールが、テストを実行するイメージに無いとゴールガーディアンが報告したときは、sacty はタスクを一時停止して、イメージにツールを足す案内を出します（[検証のツールがイメージに無いとき](tasks.md#検証のツールがイメージに無いとき)）。
-- プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使います。
+- タスクを作るときに、工程ごとにイメージを指定できます（[工程ごとのイメージとエージェントを指定する](tasks.md#工程ごとのイメージとエージェントを指定する)）。
+  指定した工程は、そのイメージを使います（プロジェクトの対象の指定・オーケストレーターの選択より優先します）。
+- プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、作成時に人がイメージを指定した工程を除くすべての工程でそれを使います。
   リポジトリの指定が Org の指定より優先します（[プロジェクトの設定](project-settings.md#対象)）。
+- 中止したタスクを再実行するときにイメージを選ぶと、プロジェクトの対象の指定より優先し、すべての工程でそれを使います。
 - PR のレビューだけのタスク（[取り込み](intake.md)）でも、イメージを指定していなければ、オーケストレーターがレビューの工程のイメージを `images` から選びます。
   レビューは対象のプロジェクトのテスト・lint などの検証を実行するので、そのツールが入ったイメージを選ばせます。
   `images` を設定していなければ、オーケストレーターを使わずに既定のイメージでレビューします。
@@ -243,6 +246,8 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 
 オーケストレーターが工程に合わないイメージを選んだとき（Playwright の要るリポジトリで既定のイメージを選んだなど）は、工程ごとに選び直せます。
 選び直す所は、タスクの詳細の「工程の設定」タブの「工程のイメージ」です。
+一時停止したタスクを再開するときと、承認の画面で差し戻すときも、「工程のイメージ・エージェントを変える」（開いて使います）で一緒に選び直せます（[一時停止・再開・中止](tasks.md#一時停止再開中止)・[工程のエージェントを変える](tasks.md#工程のエージェントを変える)）。
+変えたイメージの扱いは、タスクの詳細で変えたときと同じです。
 
 - 選べるのは、`images` の名前と `default`（既定のイメージ）です。
   選択肢には名前だけが出て、選んだイメージの説明（`images` の `description`）は下に出ます。
@@ -257,8 +262,8 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - 実装の検証のテストは、ゴールガーディアンが実装の工程のイメージで実行します。
   実装の工程のイメージを変えると、次の最終レビューから使います。
 - 失敗や一時停止で止まった工程は、イメージを変えてから「再開する」でやり直すと、変えたイメージで実行します。
-- プロジェクトの対象でイメージを指定しているタスクも変えられます。
-  人が変えた工程だけ、その指定より優先します。
+- プロジェクトの対象の指定・作成時の人の指定・再実行での人の指定でイメージが決まったタスクも変えられます。
+  人が変えた工程だけ、変えたイメージを使います（ほかの工程は、それまでの指定のままです）。
 - 変えたことは、作業履歴に「誰が・どの工程を・何から何に変えたか」で残ります。
   - 工程のイメージの欄には、人が変えた時刻と変える前の名前が出ます。
   - オーケストレーターが既定のイメージにした理由（または理由が無いこと）は、人が変えるまで工程のイメージの欄に出ます。

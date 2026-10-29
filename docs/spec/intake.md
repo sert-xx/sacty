@@ -174,15 +174,18 @@ JIRA の接続先は、組織内 PF（`gateway.platforms`、無ければプロ�
 
 ## 取り込み元へのコメント
 
-- 調査が目的のタスクを承認したら、結果を取り込み元にコメントする。
-  セキュリティの組み合わせ（`security-check`・`security-fix`）のタスクはコメントしない（レポートは攻撃の手がかりになるため。[タスクと工程](tasks-and-steps.md#セキュリティチェックとセキュリティ対応)）。
+- 調査が目的のタスクを承認したら、結果を取り込み元にコメントする（`awaitingIssueComment`）。
+  セキュリティの組み合わせ（`security-check`・`security-fix`）のタスクは、この調査の結果をコメントしない（レポートは攻撃の手がかりになるため。`isSecurityTask`。[タスクと工程](tasks-and-steps.md#セキュリティチェックとセキュリティ対応)）。
+  下の JIRA の PR の URL のコメントは、これとは別で、セキュリティの組み合わせのタスクでも送る。
 - GitHub
   - 目印 `<!-- sacty-investigation:<タスク ID> -->` を入れ、前に投稿したものがあれば二重に投稿しない。
   - 本文は 60000 文字まで。
   - 書き出した先の URL があれば添える。
   - 失敗は `IssueCommentFailed` に記録する。
 - JIRA
-  - 調査の結果と、PR を作ったら PR の URL（と書き出した先の URL）を、1回コメントする（`POST /rest/api/2/issue/<キー>/comment`）。
+  - 調査が目的のタスクの結果を、上のとおり1回コメントする（`POST /rest/api/2/issue/<キー>/comment`。記録は `IssueCommented`・`IssueCommentFailed`）。
+  - PR を作ったタスク（中止したものを除く）は、これとは別に、PR の URL（と書き出した先の URL）を1回コメントする（`awaitingTicketPrComment`。記録は `TicketPullRequestCommented`）。
+    調査の結果を含まないので、`security-fix` のタスクでも送る。
   - チケットの状態は変えない。
 
 コード: `apps/daemon/src/service.ts`（`commentInvestigation`・`awaitingIssueComment`・`awaitingTicketPrComment`）、`apps/daemon/src/prompts.ts`（`investigationMarker`・`buildInvestigationComment`・`buildTicketPullRequestComment`）、`apps/daemon/src/tickets.ts`（`JiraTickets.comment`）

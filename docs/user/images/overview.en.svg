@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 470" width="1040" height="470" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/overview.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">sacty at a glance</title>
-  <desc id="desc">You create and approve tasks in the web UI. The daemon starts agent containers and handles GitHub intake and PRs. Agents use internal PFs, MCP servers, and GitHub reads through the gateway with a per-run token. AI is called directly, or through the gateway with via_gateway in providers.codex.</desc>
+  <desc id="desc">You create and approve tasks in the web UI. The daemon starts agent containers, takes in GitHub issues and PRs and JIRA tickets, and creates and checks PRs. Agents use internal PFs, MCP servers, and GitHub reads through the gateway with a per-run token. AI is called directly, or through the gateway with via_gateway in providers.codex.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -48,12 +48,13 @@
   <path d="M160 224 L180 224 Q190 224 190 214 L190 144 Q190 134 200 134 L230 134" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M450 134 L500 134" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M615 86 L615 72 Q615 62 625 62 L770 62 Q780 62 780 72 L780 104 Q780 114 790 114 L800 114" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M615 182 L615 236" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M730 284 L800 246" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M450 380 L770 380 Q780 380 780 370 L780 282 Q780 272 790 272 L800 272" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M730 164 L870 164 Q880 164 880 174 L880 220" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M615 182 L615 226" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M690 342 L690 380 Q690 390 700 390 L800 390" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M450 408 L800 408" class="muted" style="" marker-end="url(#ah-arrow)"/>
   <path d="M500 284 L350 284 Q340 284 340 294 L340 356" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M450 400 L800 400" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M340 432 L340 446 Q340 456 350 456 L1020 456 Q1030 456 1030 446 L1030 180 Q1030 170 1020 170 L919 170 Q910 170 910 161 L910 152" class="muted" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M450 378 L770 378 Q780 378 780 368 L780 286 Q780 276 790 276 L800 276" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M340 432 L340 446 Q340 456 350 456 L1020 456 Q1030 456 1030 446 L1030 186 Q1030 176 1020 176 L1000 176 Q990 176 990 166 L990 152" class="muted" style="" marker-end="url(#ah-arrow)"/>
   <path d="M90 196 L90 34 Q90 24 100 24 L900 24 Q910 24 910 34 L910 76" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="20" y="196" width="140" height="56" rx="10" class="card" style=""/>
   <svg x="36" y="211" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
@@ -67,11 +68,12 @@
   <text x="552" y="118" class="title">Daemon</text>
   <text x="516" y="146" class="sub">Activity log, step runs,</text>
   <text x="516" y="166" class="sub">intake, PR checks</text>
-  <rect x="500" y="236" width="230" height="96" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="516" y="250" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="552" y="268" class="title">Agents</text>
-  <text x="516" y="296" class="sub">Orchestrator, steps,</text>
-  <text x="516" y="316" class="sub">goal guardian (containers)</text>
+  <rect x="500" y="226" width="230" height="116" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="516" y="240" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="552" y="258" class="title">Agents</text>
+  <text x="516" y="286" class="sub">Orchestrator, information</text>
+  <text x="516" y="306" class="sub">gatherer, steps, goal</text>
+  <text x="516" y="326" class="sub">guardian (containers)</text>
   <rect x="230" y="356" width="220" height="76" rx="10" class="card" style=""/>
   <svg x="246" y="370" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
   <text x="282" y="388" class="title">Gateway</text>
@@ -81,23 +83,25 @@
   <text x="852" y="108" class="title">GitHub</text>
   <text x="816" y="136" class="sub">Issue・PR</text>
   <rect x="800" y="220" width="220" height="76" rx="10" class="card" style=""/>
-  <svg x="816" y="234" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></svg>
-  <text x="852" y="252" class="title">AI endpoint</text>
-  <text x="816" y="280" class="sub">Claude・Codex</text>
+  <svg x="816" y="234" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="3.5" y="3.5" width="17" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>
+  <text x="852" y="252" class="title">PFs, MCP servers</text>
+  <text x="816" y="280" class="sub">JIRA, internal APIs, etc.</text>
   <rect x="800" y="356" width="220" height="76" rx="10" class="card" style=""/>
-  <svg x="816" y="370" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="3.5" y="3.5" width="17" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>
-  <text x="852" y="388" class="title">PFs, MCP servers</text>
-  <text x="816" y="416" class="sub">Internal APIs, etc.</text>
+  <svg x="816" y="370" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></svg>
+  <text x="852" y="388" class="title">AI endpoint</text>
+  <text x="816" y="416" class="sub">Claude・Codex</text>
   <rect x="57.7" y="167" width="94.6" height="18" rx="4" class="label-bg"/>
   <text x="105" y="180" class="label" text-anchor="middle">create, approve</text>
   <rect x="661.8" y="53" width="70.5" height="18" rx="4" class="label-bg"/>
   <text x="697" y="66" class="label" text-anchor="middle">intake, PRs</text>
-  <rect x="620" y="201" width="45.9" height="18" rx="4" class="label-bg"/>
-  <text x="625" y="214" class="label" text-anchor="start">starts</text>
-  <rect x="743.3" y="249" width="43.4" height="18" rx="4" class="label-bg"/>
-  <text x="765" y="262" class="label" text-anchor="middle">direct</text>
-  <rect x="783" y="317" width="98.1" height="18" rx="4" class="label-bg"/>
-  <text x="788" y="330" class="label" text-anchor="start">with via_gateway</text>
+  <rect x="767.3" y="155" width="75.3" height="18" rx="4" class="label-bg"/>
+  <text x="805" y="168" class="label" text-anchor="middle">JIRA intake</text>
+  <rect x="620" y="195" width="45.9" height="18" rx="4" class="label-bg"/>
+  <text x="625" y="208" class="label" text-anchor="start">starts</text>
+  <rect x="718.3" y="381" width="43.4" height="18" rx="4" class="label-bg"/>
+  <text x="740" y="394" class="label" text-anchor="middle">direct</text>
+  <rect x="576" y="399" width="98.1" height="18" rx="4" class="label-bg"/>
+  <text x="625" y="412" class="label" text-anchor="middle">with via_gateway</text>
   <rect x="377.4" y="265" width="85.2" height="18" rx="4" class="label-bg"/>
   <text x="420" y="278" class="label" text-anchor="middle">per-run token</text>
   <rect x="650.5" y="447" width="79" height="18" rx="4" class="label-bg"/>
