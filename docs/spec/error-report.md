@@ -53,6 +53,8 @@ sacty の処理（作業履歴）・各実行のエージェントの動き（�
 
 セッションログは、画面の実行のログと同じ読み分け（Claude Code の stream-json と Codex の `exec --json`）で読む。
 実行中の実行は、いまの写し（[作業履歴](event-log.md#セッションログ実行ごとのファイル)）を読む。
+終わりの記録が無く、写しも無い実行（デーモンが止まって閉じられなかった実行）は、保存済みのファイルの末尾を読む（画面の実行のログと同じ中身）。
+閉じるときの伏せ直しを経ていないので、実行の途中で分かった秘密情報を伏せ直していない場合があることを、その実行の詳細と要約に書く。
 
 コード: `apps/daemon/src/error-report.ts`（`buildErrorReport`）、`packages/core/src/session-log.ts`（`parseSessionLog`）、`apps/daemon/src/service.ts`（`errorReport`）、`apps/daemon/src/server.ts`（`createApp`）
 

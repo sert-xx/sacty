@@ -53,6 +53,8 @@ The sections are in this order.
 
 Session logs are read the same way as on the run log page (Claude Code's stream-json and Codex's `exec --json`).
 For a run in progress, the current snapshot is read ([Activity](event-log.en.md#session-logs-files-per-run)).
+For a run with no end recorded and no snapshot (a run the daemon stopped before closing), the tail of the saved files is read (the same content as the run log page).
+Because it did not go through the re-masking at close, the run's details and summary say that secrets found during the run may not have been masked again.
 
 Code: `apps/daemon/src/error-report.ts` (`buildErrorReport`), `packages/core/src/session-log.ts` (`parseSessionLog`), `apps/daemon/src/service.ts` (`errorReport`), `apps/daemon/src/server.ts` (`createApp`)
 

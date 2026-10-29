@@ -392,3 +392,42 @@ describe("レビューの指摘（PR #254 の再レビュー）", () => {
       log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
   });
 });
+
+describe("レビューの指摘（PR #254 の3回目のレビュー）", () => {
+  it("デーモンが止まって閉じられなかった実行も、起動し直した後のレポートに保存済みのログを入れ、そのことを書く", () => {
+    const { task, activity } = failedTask();
+    // 閉じる前にデーモンが止まった（終わりの記録が無い）実行
+    const log = store.open(
+      {
+        taskId: "t1",
+        runId: "run-1",
+        role: "requirements",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "api-key",
+      },
+      () => [],
+    );
+    log.stdout(`${[say("依存関係を入れます"), toolError("npm ERR! network")].join("\n")}\n`);
+    log.stderr("fatal: lost connection\n");
+    const snapshot = log.snapshot();
+    expect(snapshot).toBeDefined();
+    // 起動し直したデーモン（ログの置き場所は同じで、開いている実行は無い）
+    const restarted = new SessionLogStore(join(dir, "runs"));
+    expect(restarted.snapshot("t1", "run-1")).toBeUndefined();
+    const report = buildErrorReport({
+      task,
+      activity,
+      logs: restarted,
+      generatedAt: "now",
+      locale: "ja",
+    });
+    expect(report).not.toContain("この実行のセッションログはありません。");
+    expect(report).toContain("tool-error npm ERR! network");
+    expect(report).toContain("fatal: lost connection");
+    expect(report).toContain("デーモンが止まって閉じられなかった実行の、保存済みのログです");
+    expect(report).toContain("| 1 | run-1 | requirements |");
+    expect(report).toContain("終わりの記録なし");
+    log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
+  });
+});
