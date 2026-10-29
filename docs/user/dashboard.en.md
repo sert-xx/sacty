@@ -1,4 +1,4 @@
-<!-- Code: apps/web/src/components/dashboard.tsx, apps/web/src/lib/dashboard-data.ts, apps/web/src/i18n/messages/dashboard.ts, packages/core/src/dashboard.ts, apps/daemon/src/service.ts -->
+<!-- Code: apps/web/src/components/dashboard.tsx, apps/web/src/lib/dashboard-data.ts, apps/web/src/lib/notification-problems.ts, apps/web/src/i18n/messages/dashboard.ts, packages/core/src/dashboard.ts, apps/daemon/src/service.ts -->
 
 [日本語](dashboard.md) | **English**
 
@@ -16,7 +16,7 @@ The dashboard looks like this.
 
 | Section | What it shows | When empty |
 | --- | --- | --- |
-| Needs you | Tasks awaiting approval, paused, or escalated, longest wait first. Press a title to go to the screen where you decide | "Nothing needs you right now." |
+| Needs you | Tasks awaiting approval, paused, or escalated, longest wait first. Press a title to go to the screen where you decide. If the task is awaiting approval and the PR of the current submission is open, the title opens the PR on GitHub in a new tab instead (the title has a "↗") | "Nothing needs you right now." |
 | Why tasks are paused | Paused tasks counted by reason. Press a row to expand that reason's tasks inside the section. Usage limit and authentication are highlighted because one fix usually resumes all of them | "No tasks are paused." |
 | Open tasks | All tasks except completed and cancelled ones. With more than 5 tasks, the section scrolls inside | "There are no open tasks." |
 | Cost and budget | The cost for today and the last 7 days, as an estimate. Also the tasks that used 80% or more of their budget or reached the cap | "No task is near its budget." |
@@ -27,6 +27,10 @@ The dashboard looks like this.
 | Audit | Per project, the causes, recurred and needing-decision counts and the adoption rate, and, per week, the changes requested and PR remarks per task. Press a project name to open its audit page ([Audits](audit.en.md)). The card is hidden when the audit data cannot be read | "No audit results yet." |
 
 Sections sit side by side when there is room and stack otherwise. The same sections appear at phone width.
+
+## When Slack notifications could not be sent
+
+If a Slack notification could not be sent, a warning appears above the sections. The warning shows why it could not be sent and the link "Check Slack notifications in Sacty settings". The link takes you to the Sacty settings, where you can check the Slack notification settings. The warning goes away once a notification is sent (see [Notifications](notifications.en.md)).
 
 ## Periods and counting
 
@@ -46,4 +50,5 @@ Sections sit side by side when there is room and stack otherwise. The same secti
 - [Getting started](getting-started.en.md)
 - [Working with tasks](tasks.en.md)
 - [Intake of issues, PRs, and tickets](intake.en.md)
+- [Notifications](notifications.en.md)
 - [config.yaml settings](config.en.md)

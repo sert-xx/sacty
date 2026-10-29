@@ -19,7 +19,7 @@ If something failed, sacty registers a fix task automatically. This is done as t
    - If not, sacty skips this step (it does not watch CI/CD either). The reason for skipping appears on the task's page and in the Activity.
 
 - You do not need to turn it on or off in the project settings (there is no such setting).
-- It is used in the plans that include Implement (standard, skip design, and bug fix). For a task split, sacty watches the Implementation PR of each subtask.
+- It is used in the plans that include Implement (Standard, Skip design, Implement directly, Bug fix, and Security fix). For a task whose plan is "Split", sacty watches the Implementation PR of each subtask.
 - The project's GitHub account needs permission to read Actions and checks in the target repository.
 - If you add the skill after the task has started, that task does not watch (later tasks do). If the Implementation PR removes the skill, sacty watches only CI/CD.
 
@@ -73,7 +73,8 @@ Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 | `ci.result` | `passed` (passing), `failed` (something failed), `skipped` (not checked), `unknown` (cannot be determined) |
 | `deployment.result` | `healthy` (working correctly), `unhealthy` (erroring), `skipped` (not checked), `unknown` (cannot be determined) |
 
-- The AI used for the check is `step_agents.deployment` in `config.yaml` (`default_agent` if omitted).
+- The AI used for the check is the agent a person set for this step (you can set it when creating the task, in the task details, when resuming, or when requesting changes; see [Changing a step's agent](tasks.en.md#changing-a-steps-agent)).
+  If none is set, it is `step_agents.deployment` in `config.yaml` (`default_agent` if omitted).
 
 ```yaml
 step_agents:

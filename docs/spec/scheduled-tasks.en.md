@@ -36,7 +36,8 @@ Code: `packages/core/src/schedules.ts` (`ScheduleRule`, `ScheduleInput`, `Schedu
 
 ## The contents of the task
 
-The contents of the task to create use the same fields as "Create task" in the web UI.
+The contents of the task to create use the same fields as "Create task" in the web UI, except that they do not hold the image and agent for each step ("Set per step")
+(`ScheduledTaskSettings` has no `images` or `agents`). The images and agents of the created task's steps are decided as for a task with nothing set.
 
 - With a template (`template`), the title and description come from the template (no title, description, or plan is kept).
   If the target repository is omitted and the project's targets are exactly one repository, that one is used.
@@ -92,7 +93,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
 - The list shows the name, the schedule, the next run, the last run, and the state (Enabled or Paused).
   "Create scheduled task" opens the create dialog.
 - The create and edit dialog has the name, enabled, the schedule (repeat, time, days, day), and the same task fields as "Create task" (template, target repository, plan, title, description).
-  The task fields use the same component as "Create task" (`TaskFields`).
+  The task fields use the same component as "Create task" (`TaskFields`), but without the step settings (`steps` is not passed), so "Set per step" does not appear and the hint for the plan does not mention setting images and agents.
   Saving moves to the details.
 - The details (`/projects/<ID>/schedules/<scheduled task ID>`) show the settings, the contents of the task, and the list of tasks this scheduled task created (scheduled time, steps, status), and allow editing and deleting.
   If the task for the last time could not be created, it shows the reason.

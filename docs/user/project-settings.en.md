@@ -97,7 +97,7 @@ You can delete a project from the "Danger zone" at the end of the project settin
 3. After deleting, the web UI moves to the project list.
 
 - A deleted project cannot be restored. If you want to keep its definition, export it first.
-- Only the project settings are deleted. Tasks and the activity log are kept, but they no longer appear on any screen (opening a task's URL shows that it is not found) or count on the dashboard.
+- The project settings and the project's [scheduled tasks](scheduled-tasks.en.md) are deleted. Tasks (including tasks that scheduled tasks created) and the activity log are kept, but they no longer appear on any screen (opening a task's URL shows that it is not found) or count on the dashboard.
 - While the project has unfinished tasks (other than completed and cancelled ones), work still running or queued (such as audits), or a question being answered, it cannot be deleted.
   The dialog shows the count; complete or cancel the tasks, then delete the project again.
 
