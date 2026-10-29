@@ -122,7 +122,7 @@ The task details look like this.
 
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
-- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the test command, the ticket, related tasks, and when the task was created and last updated.
+- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the tests (the test command), the ticket, where the task started from (with the template's name for a task created from a template), related tasks (the parent, the task it reruns, the task it follows up, the task it fixes, and the report), the task it was rerun as, and when the task was created and last updated. The PR, the branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
   Below it, the recent Activity (5 entries) is shown.
 
 ## Information gathering at the start of a task
@@ -499,9 +499,9 @@ In the following cases, check every item.
 
 ## Changing a step's image
 
-The "Step settings" tab of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
+The "Step settings" tab of the task detail shows the image of each step and where it came from ("chosen by the Orchestrator", "set on the project target", "set by a person at creation", "set by a person on rerun", "changed by a person from …", "not set", and so on). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
 
-If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). See [Container images](images.en.md#changing-a-steps-image) for details.
+If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). When resuming a paused task ([Pause, resume, and cancel](#pause-resume-and-cancel)) and when requesting changes on the approval screen, you can also choose the image again together, under "Change step images and agents" (open it to use it; [Changing a step's agent](#changing-a-steps-agent)). See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Changing a step's agent
 
@@ -512,6 +512,7 @@ For example, you can rerun only a step that stopped on an error or was sent back
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
 - Who changed what, when, and from what to what is kept in the Activity.
 - When requesting changes on the approval screen, you can also choose again the images and agents of the step to redo and the steps after it, under "Change step images and agents" (open it to use it). The current settings are selected at first, and only the steps you changed are recorded, only when you request changes (not when you approve).
+- When resuming a paused task, you can also choose again the images and agents of the steps not yet finished in the resume form ([Pause, resume, and cancel](#pause-resume-and-cancel)).
 - If the chosen agent can no longer be used (you deleted it from config.yaml, removed its price, and so on), the task pauses when the step runs. Choose again, then resume.
 - Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
 

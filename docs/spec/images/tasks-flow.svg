@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 910" width="1040" height="910" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 950" width="1040" height="950" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/tasks-flow.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">タスクの進み方</title>
   <desc id="desc">情報収集のエージェントがタスクに関係する情報を集めてまとめ、オーケストレーターが進め方を選び、工程のエージェントが工程を実行する。承認ゲートのある工程では人が判断し、差し戻すと選んだ工程からやり直す。工程が終わるごとに、要らない工程を飛ばす。</desc>
@@ -43,66 +43,68 @@
     <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
-  <path d="M420 96 L420 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 226 L420 260" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 356 L420 390" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 486 L420 520" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 576 L420 610" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 706 L420 740" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M420 796 L420 830" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M580 548 L650 548 Q660 548 660 558 L660 758 Q660 768 650 768 L580 768" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M260 658 L240 658 Q230 658 230 648 L230 468 Q230 458 240 458 L260 458" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M260 768 L220 788" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M120 730 L120 428 Q120 418 130 418 L260 418" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <rect x="260" y="20" width="320" height="76" rx="10" class="card" style=""/>
+  <path d="M420 136 L420 170" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 266 L420 300" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 396 L420 430" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 526 L420 560" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 616 L420 650" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 746 L420 780" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M420 836 L420 870" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M580 588 L650 588 Q660 588 660 598 L660 798 Q660 808 650 808 L580 808" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M260 698 L240 698 Q230 698 230 688 L230 508 Q230 498 240 498 L260 498" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M260 808 L220 828" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M120 770 L120 468 Q120 458 130 458 L260 458" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="260" y="20" width="320" height="116" rx="10" class="card" style=""/>
   <svg x="276" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8 13h8M8 17h5"/></svg>
   <text x="312" y="52" class="title">タスクの作成</text>
   <text x="276" y="80" class="sub">画面・取り込み・タスク分割・監視の修正</text>
-  <rect x="260" y="130" width="320" height="96" rx="10" class="card" style=""/>
-  <svg x="276" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
-  <text x="312" y="162" class="title">情報収集</text>
-  <text x="276" y="190" class="sub">チケットの親・URL・コード・MCP</text>
-  <text x="276" y="210" class="sub">などから集めて絞り込む</text>
-  <rect x="260" y="260" width="320" height="96" rx="10" class="card" style=""/>
-  <svg x="276" y="274" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
-  <text x="312" y="292" class="title">オーケストレーター</text>
-  <text x="276" y="320" class="sub">進め方（plan）・ベースブランチ</text>
-  <text x="276" y="340" class="sub">テストのコマンドなどを選ぶ</text>
-  <rect x="260" y="390" width="320" height="96" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="276" y="404" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="312" y="422" class="title">工程を実行する</text>
-  <text x="276" y="450" class="sub">工程のエージェント</text>
-  <text x="276" y="470" class="sub">実装は検証と PR の作成まで</text>
-  <rect x="260" y="520" width="320" height="56" rx="10" class="card" style=""/>
-  <svg x="276" y="535" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
-  <text x="312" y="553" class="title">承認ゲートのある工程？</text>
-  <rect x="260" y="610" width="320" height="96" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
-  <svg x="276" y="624" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
-  <text x="312" y="642" class="title">承認待ち</text>
-  <text x="276" y="670" class="sub">人が判断する</text>
-  <text x="276" y="690" class="sub">画面か、PR のマージ</text>
-  <rect x="260" y="740" width="320" height="56" rx="10" class="card" style=""/>
-  <svg x="276" y="755" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
-  <text x="312" y="773" class="title">まだの工程がある？</text>
-  <rect x="260" y="830" width="320" height="56" rx="10" class="card" style=""/>
-  <svg x="276" y="845" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
-  <text x="312" y="863" class="title">完了（監査へ）</text>
-  <rect x="20" y="730" width="200" height="116" rx="10" class="card" style=""/>
-  <svg x="36" y="744" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M20 12a8 8 0 0 1-13.7 5.7M4 12a8 8 0 0 1 13.7-5.7"/><path d="M18 2.5v4h-4M6 21.5v-4h4"/></svg>
-  <text x="72" y="762" class="title">工程の見直し</text>
-  <text x="36" y="790" class="sub">要らない要求要件・</text>
-  <text x="36" y="810" class="sub">設計・再現を飛ばす</text>
-  <text x="36" y="830" class="sub">（指定した進め方は除く）</text>
-  <rect x="440" y="584" width="33" height="18" rx="4" class="label-bg"/>
-  <text x="445" y="597" class="label" text-anchor="start">はい</text>
-  <rect x="440" y="714" width="33" height="18" rx="4" class="label-bg"/>
-  <text x="445" y="727" class="label" text-anchor="start">承認</text>
-  <rect x="440" y="804" width="33" height="18" rx="4" class="label-bg"/>
-  <text x="445" y="817" class="label" text-anchor="start">無い</text>
-  <rect x="665" y="647" width="148" height="18" rx="4" class="label-bg"/>
-  <text x="670" y="660" class="label" text-anchor="start">いいえ（前段の調査など）</text>
-  <rect x="62.5" y="587" width="159.5" height="18" rx="4" class="label-bg"/>
-  <text x="222" y="600" class="label" text-anchor="end">差し戻し（選んだ工程から）</text>
-  <rect x="223.5" y="747" width="33" height="18" rx="4" class="label-bg"/>
-  <text x="240" y="760" class="label" text-anchor="middle">ある</text>
+  <text x="276" y="100" class="sub">スケジュールタスク・セキュリティ対応</text>
+  <text x="276" y="120" class="sub">監査の提案・再実行・派生（続き）</text>
+  <rect x="260" y="170" width="320" height="96" rx="10" class="card" style=""/>
+  <svg x="276" y="184" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+  <text x="312" y="202" class="title">情報収集</text>
+  <text x="276" y="230" class="sub">チケットの親・URL・コード・MCP</text>
+  <text x="276" y="250" class="sub">などから集めて絞り込む</text>
+  <rect x="260" y="300" width="320" height="96" rx="10" class="card" style=""/>
+  <svg x="276" y="314" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
+  <text x="312" y="332" class="title">オーケストレーター</text>
+  <text x="276" y="360" class="sub">進め方（plan）・ベースブランチ</text>
+  <text x="276" y="380" class="sub">テストのコマンドなどを選ぶ</text>
+  <rect x="260" y="430" width="320" height="96" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="276" y="444" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="312" y="462" class="title">工程を実行する</text>
+  <text x="276" y="490" class="sub">工程のエージェント</text>
+  <text x="276" y="510" class="sub">実装は検証と PR の作成まで</text>
+  <rect x="260" y="560" width="320" height="56" rx="10" class="card" style=""/>
+  <svg x="276" y="575" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="312" y="593" class="title">承認ゲートのある工程？</text>
+  <rect x="260" y="650" width="320" height="96" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="276" y="664" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <text x="312" y="682" class="title">承認待ち</text>
+  <text x="276" y="710" class="sub">人が判断する</text>
+  <text x="276" y="730" class="sub">画面か、PR のマージ</text>
+  <rect x="260" y="780" width="320" height="56" rx="10" class="card" style=""/>
+  <svg x="276" y="795" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.2-2.5 3.8M12 17.2h.01"/></svg>
+  <text x="312" y="813" class="title">まだの工程がある？</text>
+  <rect x="260" y="870" width="320" height="56" rx="10" class="card" style=""/>
+  <svg x="276" y="885" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M5 21.5V3.5M5 4h12l-2.5 4L17 12H5"/></svg>
+  <text x="312" y="903" class="title">完了（監査へ）</text>
+  <rect x="20" y="770" width="200" height="116" rx="10" class="card" style=""/>
+  <svg x="36" y="784" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="M20 12a8 8 0 0 1-13.7 5.7M4 12a8 8 0 0 1 13.7-5.7"/><path d="M18 2.5v4h-4M6 21.5v-4h4"/></svg>
+  <text x="72" y="802" class="title">工程の見直し</text>
+  <text x="36" y="830" class="sub">要らない要求要件・</text>
+  <text x="36" y="850" class="sub">設計・再現を飛ばす</text>
+  <text x="36" y="870" class="sub">（指定した進め方は除く）</text>
+  <rect x="440" y="624" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="445" y="637" class="label" text-anchor="start">はい</text>
+  <rect x="440" y="754" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="445" y="767" class="label" text-anchor="start">承認</text>
+  <rect x="440" y="844" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="445" y="857" class="label" text-anchor="start">無い</text>
+  <rect x="665" y="687" width="171" height="18" rx="4" class="label-bg"/>
+  <text x="670" y="700" class="label" text-anchor="start">いいえ（再現・レビューなど）</text>
+  <rect x="62.5" y="627" width="159.5" height="18" rx="4" class="label-bg"/>
+  <text x="222" y="640" class="label" text-anchor="end">差し戻し（選んだ工程から）</text>
+  <rect x="223.5" y="787" width="33" height="18" rx="4" class="label-bg"/>
+  <text x="240" y="800" class="label" text-anchor="middle">ある</text>
 </svg>
