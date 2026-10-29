@@ -429,6 +429,12 @@ const ja = {
     PullRequestReviewImported: (number: number, authors: string, count: number) =>
       `PR #${number} の指摘（${authors}）を${count}件取り込んだ`,
     QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
+    ErrorAnalysisRequested: (id: string, actor: string) =>
+      `オーケストレーターにエラーの分析を求めた（${id}・${actor}）`,
+    ErrorAnalyzed: (id: string, failed: string | undefined, cost: string) =>
+      failed === undefined
+        ? `オーケストレーターがエラーを分析した（${id}・${cost}）`
+        : `オーケストレーターがエラーを分析できなかった（${id}・${cost}）：${failed}`,
     ExportStarted: (step: string) => `${step}の書き出しを始めた`,
     OutputExported: (
       step: string,
@@ -865,6 +871,12 @@ const en: LabelMessages = {
     PullRequestReviewImported: (number, authors, count) =>
       `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`,
     QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
+    ErrorAnalysisRequested: (id, actor) =>
+      `Asked the Orchestrator to analyze the errors (${id}, ${actor})`,
+    ErrorAnalyzed: (id, failed, cost) =>
+      failed === undefined
+        ? `The Orchestrator analyzed the errors (${id}, ${cost})`
+        : `The Orchestrator could not analyze the errors (${id}, ${cost}): ${failed}`,
     ExportStarted: (step) => `Started exporting the ${step}`,
     OutputExported: (step, name, result, cost) =>
       "url" in result

@@ -15631,6 +15631,123 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
   });
 });
 
+describe("エラーレポートと、オーケストレーターのエラーの分析", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const failed: AgentOutcome = { kind: "failed", reason: "error", message: "exit code 1" };
+
+  /** 要求要件の実行が失敗して止まったタスク。 */
+  async function failedTask(outcomes: (AgentOutcome | typeof HOLD)[]) {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const made = makeService(activity, [failed, ...outcomes], { sessionLogs });
+    const { id } = made.service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await made.service.runNext(id);
+    return { ...made, activity, sessionLogs, id };
+  }
+
+  it("失敗の記録・実行・作業履歴をレポートにし、分析させると、レポートとログを読んだ分析を足す", async () => {
+    const { activity, service, executor, id } = await failedTask([
+      out("### 何が起きたか\n要求要件の実行が終了コード 1 で止まった", 1000),
+    ]);
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "error" });
+    const report = service.errorReport(id, "ja") ?? "";
+    expect(report).toContain("# エラーレポート：決済API");
+    expect(report).toContain("AgentRunFailed");
+    expect(report).toContain("exit code 1");
+    expect(report).toContain("まだ分析していません");
+    expect(service.errorReport("missing", "ja")).toBeUndefined();
+
+    const before = service.get(id)?.task;
+    const usedBefore = before?.budget.usedUsd ?? 0;
+    const { task: requested, analyzed } = service.analyzeErrors(id);
+    expect(requested.errorAnalyses).toEqual([{ id: "A-1", requestedAt: expect.any(String) }]);
+    await analyzed;
+
+    const task = service.get(id)?.task;
+    expect(task?.errorAnalyses[0]?.result?.text).toContain(
+      "要求要件の実行が終了コード 1 で止まった",
+    );
+    // 状態は変えず、費用はタスクの予算に入る（1000出力トークン = $0.015）
+    expect(task?.status).toBe("paused");
+    expect(task?.steps).toEqual(before?.steps);
+    expect(task?.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "ErrorAnalyzed",
+      actor: "orchestrator",
+      payload: { analysisId: "A-1", runResult: "completed" },
+    });
+    // 指示には、エラーレポート（分析の節を除く）とログの読み方を入れ、全体のレポートをログと同じ場所に置く
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain("このタスクで起きたエラーの分析を求められました");
+    expect(prompt).toContain("--- エラーレポート ---");
+    expect(prompt).toContain("AgentRunFailed");
+    expect(prompt).not.toContain("## オーケストレーターの分析");
+    expect(prompt).toContain("/sacty-logs/error-report.md");
+    const mounted = executor.logMounts.at(-1);
+    expect(mounted?.readOnly).toBe(true);
+    expect(mounted?.files["error-report.md"]).toContain("# エラーレポート：決済API");
+    expect(existsSync(mounted?.dir ?? "")).toBe(false);
+
+    // 分析を足したレポート
+    const analyzedReport = service.errorReport(id, "en") ?? "";
+    expect(analyzedReport).toContain("## Orchestrator's analysis");
+    expect(analyzedReport).toContain("要求要件の実行が終了コード 1 で止まった");
+    activity.close();
+  });
+
+  it("API：レポートを Markdown で返し（無いタスクは 404）、分析の求めは 201、求められない状態は 409", async () => {
+    const { activity, service, id } = await failedTask([HOLD]);
+    const token = "test-token";
+    const app = createApp(service, token);
+    const headers = { authorization: `Bearer ${token}` };
+    const report = await app.request(`/api/tasks/${id}/error-report?lang=en`, { headers });
+    expect(report.status).toBe(200);
+    expect(report.headers.get("content-type")).toContain("text/markdown");
+    expect(await report.text()).toContain("# Error report: 決済API");
+    expect((await app.request("/api/tasks/nope/error-report", { headers })).status).toBe(404);
+    const analyze = () =>
+      app.request(`/api/tasks/${id}/error-analysis`, { method: "POST", headers });
+    const ok = await analyze();
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.errorAnalyses).toHaveLength(1);
+    const again = await analyze();
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({
+      error: "invalid_operation",
+      messages: [{ code: "errorReport.analyzing" }],
+    });
+    await service.cancel(id);
+    activity.close();
+  });
+
+  it("分析を待っている間は次の求めを受け付けず、中止すると分析を止めて記録する", async () => {
+    const { activity, service, executor, id } = await failedTask([HOLD]);
+    const { analyzed } = service.analyzeErrors(id);
+    const run = await executor.started.promise;
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "errorReport.analyzing" }] }),
+    );
+    await service.cancel(id);
+    await analyzed;
+    expect(executor.killed).toContain(run);
+    // 中止の前に、止めた分析を記録する（費用を残す）
+    expect(service.get(id)?.task.status).toBe("cancelled");
+    expect(service.get(id)?.task.errorAnalyses[0]?.result?.failed).toEqual(
+      message("errorReport.cancelled"),
+    );
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "task.cancelled" }] }),
+    );
+    // 中止したタスクでも、レポートは作れる
+    expect(service.errorReport(id, "ja")).toContain("TaskCancelled");
+    activity.close();
+  });
+});
+
 describe("質問への答えで、各実行のセッションログを調べる（PBI-91）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",

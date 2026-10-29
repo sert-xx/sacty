@@ -37,7 +37,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | 種類 | パス |
 | --- | --- |
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
-| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview}`・`GET /api/tasks/:id/{cleanup-plan,security-findings}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
+| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`・`GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
 | スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
@@ -59,6 +59,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `/projects/<ID>/schedules`・`/projects/<ID>/schedules/<スケジュールタスクの ID>` | そのプロジェクトのスケジュールタスクの一覧・詳細（[スケジュールタスク](scheduled-tasks.md)） |
 | `/projects/current`・`/projects/current/tasks`・`/projects/current/schedules` | 表示しているプロジェクト（cookie）の設定・タスクの一覧・スケジュールタスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
 | `/tasks/<ID>`・`/tasks/<ID>/review`・`/tasks/<ID>/runs/<実行の ID>` | タスクの詳細・成果物のレビュー・実行のログ |
+| `/tasks/<ID>/error-report` | エラーレポートのダウンロード（[エラーレポート](error-report.md)） |
 | `/settings` | sacty の設定 |
 
 - 画面の中のリンクと移動先は、`apps/web/src/lib/paths.ts` で作る（プロジェクトの ID はエンコードする）。

@@ -116,6 +116,16 @@ const PARAMS = {
   "chat.failed": z.object({ detail: TextParam }),
   "chat.emptyAnswer": null,
   "chat.cancelled": null,
+  // エラーレポートのための、オーケストレーターのエラーの分析
+  "errorReport.analyzing": null,
+  "errorReport.budgetExceeded": z.object({
+    usedUsd: z.number().nonnegative(),
+    capUsd: z.number().nonnegative(),
+  }),
+  "errorReport.unavailable": null,
+  "errorReport.failed": z.object({ detail: TextParam }),
+  "errorReport.empty": null,
+  "errorReport.cancelled": null,
   // 成果の書き出し（PBI-56）
   "export.notDecided": null,
   "export.destinationUnknown": z.object({ name: z.string() }),
@@ -766,6 +776,15 @@ const ja: MessageDictionary = {
     `オーケストレーターが質問に答えられませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
   "chat.emptyAnswer": "オーケストレーターの答えが空でした。",
   "chat.cancelled": "タスクを中止したため、答えるのをやめました。",
+  "errorReport.analyzing": "前の分析をしているところです。分析が終わってから求めてください。",
+  "errorReport.budgetExceeded": ({ usedUsd, capUsd }) =>
+    `予算の上限に達しているため、分析できません（${formatUsd(usedUsd)} / ${formatUsd(capUsd)}）。分析の費用もタスクの予算に入ります。`,
+  "errorReport.unavailable":
+    "設定（config.yaml）に問題があるため、分析できません。画面の上の問題を確かめてください。",
+  "errorReport.failed": ({ detail }, text) =>
+    `オーケストレーターがエラーを分析できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
+  "errorReport.empty": "オーケストレーターの分析が空でした。",
+  "errorReport.cancelled": "タスクを中止したため、分析をやめました。",
   "export.notDecided": "オーケストレーターが書き出し先を決めなかったため、書き出しません。",
   "export.destinationUnknown": ({ name }) =>
     `オーケストレーターが選んだ書き出し先「${name}」は、使える接続先（gateway.platforms・MCP サーバー）に無いため、書き出しません。`,
@@ -1414,6 +1433,15 @@ const en: MessageDictionary = {
     `The Orchestrator could not answer the question: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "chat.emptyAnswer": "The Orchestrator's answer was empty.",
   "chat.cancelled": "Stopped answering because the task was cancelled.",
+  "errorReport.analyzing": "The previous analysis is still running. Ask again after it finishes.",
+  "errorReport.budgetExceeded": ({ usedUsd, capUsd }) =>
+    `The errors can't be analyzed because the budget cap has been reached (${formatUsd(usedUsd)} / ${formatUsd(capUsd)}). The cost of the analysis is part of the task's budget.`,
+  "errorReport.unavailable":
+    "The errors can't be analyzed because of a problem in the settings (config.yaml). Check the problem shown at the top of the page.",
+  "errorReport.failed": ({ detail }, text) =>
+    `The Orchestrator could not analyze the errors: ${text(detail).replace(/[。.]\s*$/, "")}.`,
+  "errorReport.empty": "The Orchestrator's analysis was empty.",
+  "errorReport.cancelled": "Stopped the analysis because the task was cancelled.",
   "export.notDecided": "Not exported because the Orchestrator did not choose where to export.",
   "export.destinationUnknown": ({ name }) =>
     `Not exported because "${name}", chosen by the Orchestrator, is not an available connection (gateway.platforms or an MCP server).`,

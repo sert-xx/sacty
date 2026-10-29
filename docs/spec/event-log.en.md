@@ -8,7 +8,7 @@ Related ADRs: none
 
 ## Event shape
 
-- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 93 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their judgments, verification, git and PRs, CI of the draft PR before the final review, reviews, replies to the intake source, questions, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
+- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 95 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their judgments, verification, git and PRs, CI of the draft PR before the final review, reviews, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds the following to the shape for writing.
   - `seq` (increasing monotonically across the whole activity log)
   - `id` (UUID)
@@ -48,7 +48,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   3. The event is applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw. Even for a cancelled task, however, the session-saving records `AgentSessionArchived` and `OrchestratorSessionUsed` are accepted.
 - Some events are records only and do not change state (`AiRequestsRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`).
-- When an event that carries cost (the 15 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
+- When an event that carries cost (the 16 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
 - Main fields of `Task`
   - `status`
   - `steps` (`todo`, `active`, `done`, or `skip` per step)
@@ -81,7 +81,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 - The unit price (`PricePerMTok`) is in US dollars per million tokens: `input`, `cachedInput`, `cacheWrite` (default 0), and `output`.
 - Cost = (`input` × the `input` price + `cacheRead` × the `cachedInput` price + `cacheWrite` × the `cacheWrite` price + `output` × the `output` price) ÷ 10^6 (the numerator is rounded to an integer before dividing).
 - Subscription and stub runs are treated as an estimated cost (`estimated`) converted at the same unit prices, and are used for budget checks.
-- The events that carry cost counted toward the task budget are the following 15 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
+- The events that carry cost counted toward the task budget are the following 16 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
 
   | Event | Row in the per-step cost table |
   | --- | --- |
@@ -92,6 +92,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |
+  | `ErrorAnalyzed` | Error analysis (`errorAnalysis`; [Error report](error-report.en.md)) |
   | `DeploymentChecked` | The after-merge watch step (`deployment`; [After-merge watch](deployment-watch.en.md)) |
   | `ChangeJudged`, `ReworkJudged`, `FinalReviewed`, `FinalReviewFailed` | Goal Guardian (`guardian`) |
 
@@ -141,7 +142,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot
      - Steps that have not run are shown with 0 runs.
      - Records for steps not in the step list are also shown.
      - The deployment check goes in the row of the after-merge watch step. It is shown while running too.
-  3. Export, answers to questions, and the Goal Guardian (only when recorded)
+  3. Export, answers to questions, error analysis, and the Goal Guardian (only when recorded)
 - Ticket reading and repository selection decided by a person, and `StepsChosen` from the era of fixed steps (no agent, cost, or usage), are not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order. So they match the task's cost (`budget.usedUsd`, `budget.estimated`).
 - The table's cells carry no mark for whether a cost is estimated (a converted estimate), to keep the table readable. The hint on the table's heading explains that converted values are not actual charges.

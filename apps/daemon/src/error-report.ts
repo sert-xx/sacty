@@ -1,0 +1,730 @@
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
+import {
+  type ActivityEvent,
+  type FailureKind,
+  failureKind,
+  isChargedEvent,
+  type LogEntry,
+  parseSessionLog,
+  renderMessage,
+  type Task,
+} from "@sacty/core";
+import { STEP_NAME } from "./prompts.js";
+import {
+  type SessionLogFile,
+  type SessionLogMeta,
+  type SessionLogStore,
+  validLogId,
+} from "./session-logs.js";
+
+/**
+ * タスクのエラーレポート（Markdown）。通信できない環境でも、ファイルとして渡して調べられるよう、sacty の処理（作業履歴）・
+ * 各実行のエージェントの動き（セッションログ）・エラーの記録を1つの文書にまとめる。エラーの箇所は詳しく、ほかは短くし、
+ * 全体の大きさに上限を置く（テキストファイルとして重くしない）。
+ * 作業履歴とセッションログは、書くときに秘密情報を伏せてあるので、ここでは伏せ直さない。
+ */
+
+/** レポートの大きさの上限と、部分ごとの上限（バイトか文字数）。 */
+export const ERROR_REPORT_LIMITS = {
+  /** レポート全体（バイト）。超えたら末尾を切る。 */
+  totalBytes: 256_000,
+  /** 詳しく書くエラー（新しいものから）。ほかは一覧に1行で出す。 */
+  detailedFailures: 5,
+  /** エラーの前に添える、sacty の記録の数。 */
+  contextEvents: 8,
+  /** エラーの記録の JSON（文字数）。 */
+  payloadChars: 4_000,
+  /** JSON の中の1つの文字列（文字数）。 */
+  payloadStringChars: 1_200,
+  /** エラーの実行の、標準エラー出力の末尾（文字数）。 */
+  stderrTailChars: 6_000,
+  /** エラーの実行の、最後のエージェントの出来事の数と、全体の文字数。 */
+  tailEntries: 30,
+  tailChars: 10_000,
+  /** 出来事1つの文字数。 */
+  entryChars: 700,
+  /** 実行の要約の、最後のメッセージの文字数。 */
+  lastMessageChars: 400,
+  /** セッションログを読む末尾の大きさ（バイト）。大きいログは末尾だけを集計する。 */
+  logReadBytes: 2_000_000,
+  /** 作業履歴の1行（文字数）。 */
+  timelineLineChars: 260,
+  /** 作業履歴の先頭に必ず残す行の数（残りは新しいものから入るだけ）。 */
+  timelineHead: 20,
+  /** オーケストレーターの分析（文字数）。 */
+  analysisChars: 20_000,
+} as const;
+
+export type ReportLocale = "ja" | "en";
+
+export type ErrorReportInput = {
+  task: Task;
+  activity: readonly ActivityEvent[];
+  projectName?: string;
+  logs?: SessionLogStore;
+  generatedAt: string;
+  locale: ReportLocale;
+  /** オーケストレーターの分析の節を入れるか（分析の指示に渡すときは入れない）。既定は入れる。 */
+  includeAnalysis?: boolean;
+  /** 大きさの上限（テストで小さくする）。 */
+  limits?: Partial<typeof ERROR_REPORT_LIMITS>;
+};
+
+const T = {
+  ja: {
+    title: (t: string) => `# エラーレポート：${t}`,
+    notice:
+      "> sacty が作ったエラーレポートです。作業履歴とセッションログは記録のときに秘密情報を伏せていますが、タスクの内容・コードの一部・URL を含みます。共有する先に注意してください。",
+    meta: "## 基本の情報",
+    task: "タスク",
+    project: "プロジェクト",
+    status: "状態",
+    pausedReason: "一時停止の理由",
+    pausedMessage: "止まった理由の詳細",
+    steps: "工程",
+    repository: "リポジトリ",
+    pullRequest: "PR",
+    cost: "費用",
+    created: "作成",
+    updated: "最終更新",
+    generated: "レポートの作成",
+    noSteps: "（まだ決めていない）",
+    summary: "## エラーの概要",
+    noFailures: "エラーの記録はありません。",
+    failureCount: (n: number) => `エラーの記録：${n} 件`,
+    kind: { error: "失敗", stop: "停止", check: "確認の不合格" } satisfies Record<
+      FailureKind,
+      string
+    >,
+    columns: ["#", "時刻", "種類", "記録", "工程・役割", "内容"],
+    analysis: "## オーケストレーターの分析",
+    analysisAt: (at: string) => `分析の時刻：${at}`,
+    analysisPending: "オーケストレーターが分析しているところです。",
+    analysisFailed: (why: string) => `分析できませんでした：${why}`,
+    noAnalysis:
+      "まだ分析していません。画面の「エラーレポート」の「オーケストレーターに分析させる」で、原因の推定と対処を足せます。",
+    details: "## エラーの詳細",
+    detailOmitted: (n: number) => `ほかに古いエラーが ${n} 件あります（上の一覧を参照）。`,
+    before: "直前の sacty の記録",
+    record: "記録（JSON）",
+    run: "実行",
+    runMeta: (role: string, agent: string, model: string, result: string) =>
+      `役割 ${role}・エージェント ${agent}${model ? `・モデル ${model}` : ""}・結果 ${result}`,
+    runLogMissing: "この実行のセッションログはありません。",
+    stderrTail: "標準エラー出力（末尾）",
+    agentTail: (n: number) => `エージェントの最後の動き（最後の ${n} 件）`,
+    runs: "## 実行の一覧（各工程のエージェントの動き）",
+    noRuns: "実行の記録はありません。",
+    runColumns: ["#", "実行", "役割", "エージェント・モデル", "開始", "時間", "結果", "費用"],
+    activity: "### エージェントの動き",
+    runSummary: (s: RunStats) =>
+      `メッセージ ${s.messages}・ツールの呼び出し ${s.toolCalls}（失敗 ${s.toolErrors}）・エラー ${s.errors}`,
+    tools: "よく使ったツール",
+    lastMessage: "最後のメッセージ",
+    partial: (mb: string) => `（ログが大きいので、末尾 ${mb} だけを集計）`,
+    truncatedLog: "（記録の上限で、ログの間を省いています）",
+    unfinished: "終わりの記録なし",
+    timeline: "## 作業履歴（sacty の処理）",
+    timelineOmitted: (n: number) => `… 間の ${n} 件を省きました …`,
+    footer: "## このレポートについて",
+    footerLines: (l: typeof ERROR_REPORT_LIMITS) => [
+      `- 詳しく書くのは、新しいエラー ${l.detailedFailures} 件まで。`,
+      `- エージェントの動きは、セッションログを読み分けた要約です。全体のログは画面の実行のログ、またはデーモンの \`runs/<タスク ID>/\` にあります。`,
+      `- レポートは ${Math.round(l.totalBytes / 1000)}KB までにし、作業履歴は入りきらない間を省きます。`,
+    ],
+    cut: "（レポートの大きさの上限に達したため、ここから後を省きました）",
+    none: "（なし）",
+  },
+  en: {
+    title: (t: string) => `# Error report: ${t}`,
+    notice:
+      "> An error report created by sacty. Secrets are masked in the activity and session logs when they are recorded, but the report includes the task's content, parts of the code, and URLs. Be careful about whom you share it with.",
+    meta: "## Basic information",
+    task: "Task",
+    project: "Project",
+    status: "Status",
+    pausedReason: "Pause reason",
+    pausedMessage: "Why it stopped",
+    steps: "Steps",
+    repository: "Repository",
+    pullRequest: "PR",
+    cost: "Cost",
+    created: "Created",
+    updated: "Last updated",
+    generated: "Report created",
+    noSteps: "(not decided yet)",
+    summary: "## Summary of errors",
+    noFailures: "There are no error records.",
+    failureCount: (n: number) => `Error records: ${n}`,
+    kind: { error: "Failure", stop: "Stopped", check: "Check failed" } satisfies Record<
+      FailureKind,
+      string
+    >,
+    columns: ["#", "Time", "Kind", "Record", "Step / role", "Details"],
+    analysis: "## Orchestrator's analysis",
+    analysisAt: (at: string) => `Analyzed at: ${at}`,
+    analysisPending: "The Orchestrator is analyzing the errors.",
+    analysisFailed: (why: string) => `Could not analyze: ${why}`,
+    noAnalysis:
+      'Not analyzed yet. Use "Ask the Orchestrator to analyze" under "Error report" on the task page to add the likely cause and what to do.',
+    details: "## Error details",
+    detailOmitted: (n: number) => `There are ${n} older errors (see the list above).`,
+    before: "sacty's records just before",
+    record: "Record (JSON)",
+    run: "Run",
+    runMeta: (role: string, agent: string, model: string, result: string) =>
+      `role ${role} · agent ${agent}${model ? ` · model ${model}` : ""} · result ${result}`,
+    runLogMissing: "There is no session log for this run.",
+    stderrTail: "Standard error (tail)",
+    agentTail: (n: number) => `The agent's last actions (last ${n})`,
+    runs: "## Runs (what each step's agent did)",
+    noRuns: "There are no runs.",
+    runColumns: ["#", "Run", "Role", "Agent / model", "Started", "Duration", "Result", "Cost"],
+    activity: "### What the agents did",
+    runSummary: (s: RunStats) =>
+      `messages ${s.messages} · tool calls ${s.toolCalls} (failed ${s.toolErrors}) · errors ${s.errors}`,
+    tools: "Most used tools",
+    lastMessage: "Last message",
+    partial: (mb: string) => `(the log is large, so only the last ${mb} is counted)`,
+    truncatedLog: "(part of the log was left out because of the recording limit)",
+    unfinished: "no end recorded",
+    timeline: "## Activity (what sacty did)",
+    timelineOmitted: (n: number) => `… ${n} records in between are left out …`,
+    footer: "## About this report",
+    footerLines: (l: typeof ERROR_REPORT_LIMITS) => [
+      `- Only the newest ${l.detailedFailures} errors are described in detail.`,
+      "- The agents' actions are summaries read from the session logs. The full logs are on the run log page, or in the daemon's `runs/<task ID>/`.",
+      `- The report is kept within ${Math.round(l.totalBytes / 1000)}KB, and the middle of the activity is left out when it does not fit.`,
+    ],
+    cut: "(The rest is left out because the report reached its size limit.)",
+    none: "(none)",
+  },
+} as const;
+
+type Words = (typeof T)[ReportLocale];
+
+export type RunStats = {
+  messages: number;
+  toolCalls: number;
+  toolErrors: number;
+  errors: number;
+};
+
+/** 文字数で切り詰める（切ったら … を付ける）。 */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+}
+
+/** 末尾を残して切り詰める。 */
+function clipHead(text: string, max: number): string {
+  return text.length > max ? `…${text.slice(text.length - max + 1)}` : text;
+}
+
+/** 1行にする（表のセル・一覧の行に入れる）。 */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function cell(text: string): string {
+  return oneLine(text).replace(/\|/g, "\\|");
+}
+
+/** 中身の ` の並びより長いフェンスで囲む（中身のコードブロックで閉じないように）。 */
+export function fence(text: string, lang = ""): string {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+  const mark = "`".repeat(longest + 1);
+  return `${mark}${lang}\n${text.replace(/\n+$/, "")}\n${mark}`;
+}
+
+/** 利用者に見せる文（DaemonText）と、その他の値を文にする。 */
+function textOf(value: unknown, locale: ReportLocale): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && "code" in (value as object)) return renderMessage(value, locale);
+  return JSON.stringify(value);
+}
+
+/** JSON の中の長い文字列を切り詰める（記録の JSON を読める大きさにする）。 */
+function shrink(value: unknown, max: number, locale: ReportLocale): unknown {
+  if (typeof value === "string") return clip(value, max);
+  if (Array.isArray(value)) return value.map((v) => shrink(v, max, locale));
+  if (value && typeof value === "object") {
+    // 文言のコードは、読める文にする
+    if ("code" in value && typeof (value as { code: unknown }).code === "string") {
+      return clip(renderMessage(value, locale), max);
+    }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, shrink(v, max, locale)]),
+    );
+  }
+  return value;
+}
+
+const SHORT_KEYS = [
+  "step",
+  "role",
+  "reason",
+  "result",
+  "passed",
+  "verdict",
+  "runResult",
+  "exitCode",
+  "command",
+  "message",
+  "failed",
+  "note",
+  "summary",
+  "url",
+  "branch",
+  "number",
+  "target",
+  "costUsd",
+] as const;
+
+/** 作業履歴の1件の、短い説明（主な項目だけ）。 */
+function shortPayload(event: ActivityEvent, locale: ReportLocale): string {
+  const payload = event.payload as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of SHORT_KEYS) {
+    const value = payload[key];
+    if (value === undefined || value === null || value === "") continue;
+    if (key === "costUsd" && value === 0) continue;
+    parts.push(`${key}=${oneLine(textOf(value, locale))}`);
+  }
+  const runId = runOf(event);
+  if (runId) parts.push(`run=${runId.slice(0, 8)}`);
+  return parts.join(" ");
+}
+
+/** 記録が指す実行の ID。 */
+function runOf(event: ActivityEvent): string | undefined {
+  const id = (event.payload as { runId?: unknown }).runId;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+/** 記録の工程・役割。 */
+function roleOf(event: ActivityEvent): string {
+  const payload = event.payload as { step?: unknown; role?: unknown };
+  if (typeof payload.step === "string") return payload.step;
+  if (typeof payload.role === "string") return payload.role;
+  return event.actor;
+}
+
+function stepLabel(step: string, locale: ReportLocale): string {
+  const name = (STEP_NAME as Record<string, string>)[step];
+  return locale === "ja" && name ? `${name}（${step}）` : step;
+}
+
+type RunInfo = {
+  runId: string;
+  meta?: SessionLogMeta;
+  role?: string;
+  costUsd: number;
+  /** 作業履歴で最初に出た位置（ログの無い実行の並び）。 */
+  order: number;
+};
+
+function readMeta(path: string): SessionLogMeta | undefined {
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf8")) as SessionLogMeta;
+    return typeof meta === "object" && meta !== null && typeof meta.runId === "string"
+      ? meta
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** タスクの実行（作業履歴に出てくる実行と、セッションログのある実行）。始めた順。 */
+function collectRuns(input: ErrorReportInput): RunInfo[] {
+  const runs = new Map<string, RunInfo>();
+  const get = (runId: string) => {
+    let run = runs.get(runId);
+    if (!run) {
+      run = { runId, costUsd: 0, order: runs.size };
+      runs.set(runId, run);
+    }
+    return run;
+  };
+  for (const event of input.activity) {
+    const runId = runOf(event);
+    if (!runId || !validLogId(runId)) continue;
+    const run = get(runId);
+    run.role ??= roleOf(event);
+    if (isChargedEvent(event)) run.costUsd += event.payload.costUsd;
+  }
+  const dir = input.logs?.taskDir(input.task.id);
+  if (dir) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      const runId = /^(.+)\.meta\.json$/.exec(name)?.[1];
+      if (!runId || !validLogId(runId)) continue;
+      const meta = readMeta(join(dir, name));
+      if (meta) get(runId).meta = meta;
+    }
+  }
+  return [...runs.values()].sort((a, b) => {
+    const x = a.meta?.startedAt ?? "￿";
+    const y = b.meta?.startedAt ?? "￿";
+    return x === y ? a.order - b.order : x.localeCompare(y);
+  });
+}
+
+/** ファイルの末尾 max バイトを読む（途中から読んだら、最初の改行までを捨てる）。 */
+function readTail(path: string, max: number): { text: string; partial: boolean } | undefined {
+  let fd: number | undefined;
+  try {
+    const size = statSync(path).size;
+    const start = Math.max(0, size - max);
+    const buf = Buffer.alloc(size - start);
+    fd = openSync(path, "r");
+    readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString("utf8");
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    return { text, partial: start > 0 };
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+type RunLog = { events?: string; stderr?: string; partial: boolean; running: boolean };
+
+/** 実行のセッションログ（実行中なら、いまの写し）。 */
+function readRunLog(input: ErrorReportInput, run: RunInfo, max: number): RunLog | undefined {
+  const store = input.logs;
+  if (!store || !run.meta) return undefined;
+  if (!run.meta.finishedAt) {
+    const snapshot = store.snapshot(input.task.id, run.runId);
+    if (!snapshot) return { partial: false, running: false };
+    return {
+      events: clipHead(snapshot.events, max),
+      stderr: clipHead(snapshot.stderr, max),
+      partial: snapshot.events.length > max,
+      running: true,
+    };
+  }
+  const read = (file: SessionLogFile) => {
+    const path = store.path(input.task.id, run.runId, file);
+    return path ? readTail(path, max) : undefined;
+  };
+  const events = read("events");
+  const stderr = read("stderr");
+  return {
+    ...(events ? { events: events.text } : {}),
+    ...(stderr ? { stderr: stderr.text } : {}),
+    partial: events?.partial ?? false,
+    running: false,
+  };
+}
+
+function statsOf(entries: readonly LogEntry[]): {
+  stats: RunStats;
+  tools: [string, number][];
+  lastMessage?: string;
+  truncated: boolean;
+} {
+  const stats: RunStats = { messages: 0, toolCalls: 0, toolErrors: 0, errors: 0 };
+  const tools = new Map<string, number>();
+  let lastMessage: string | undefined;
+  let truncated = false;
+  for (const e of entries) {
+    if (e.kind === "message" && e.text.trim()) {
+      stats.messages++;
+      lastMessage = e.text;
+    } else if (e.kind === "toolCall") {
+      stats.toolCalls++;
+      tools.set(e.name || "?", (tools.get(e.name || "?") ?? 0) + 1);
+    } else if (e.kind === "toolResult" && e.isError) stats.toolErrors++;
+    else if (e.kind === "error" || (e.kind === "result" && e.isError)) stats.errors++;
+    else if (e.kind === "truncated") truncated = true;
+  }
+  return {
+    stats,
+    tools: [...tools.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8),
+    ...(lastMessage !== undefined ? { lastMessage } : {}),
+    truncated,
+  };
+}
+
+/** エージェントの出来事1つを、1行（と必要なら中身）にする。 */
+function entryLine(e: LogEntry, max: number): string {
+  const body = (() => {
+    switch (e.kind) {
+      case "session":
+        return `session ${e.text}`;
+      case "thinking":
+        return `thinking ${e.text}`;
+      case "message":
+        return `message ${e.text}`;
+      case "toolCall":
+        return `tool ${e.name}${e.unfinished ? " (unfinished)" : ""} ${e.input}`;
+      case "toolResult":
+        return `${e.isError ? "tool-error" : "tool-result"} ${e.text}`;
+      case "result":
+        return `${e.isError ? "result-error" : "result"} ${e.detail} ${e.text}`;
+      case "turn":
+        return `turn ${e.text}`;
+      case "error":
+        return `error ${e.text}`;
+      case "truncated":
+        return `truncated ${e.droppedBytes} bytes / ${e.droppedLines} lines`;
+      case "raw":
+        return `raw ${e.text}`;
+    }
+  })();
+  return `- L${e.line} ${clip(oneLine(body), max)}`;
+}
+
+/** レポートの部分。重要な順に並べて、全体の上限に入るだけ入れる。 */
+export function buildErrorReport(input: ErrorReportInput): string {
+  const L = { ...ERROR_REPORT_LIMITS, ...input.limits };
+  const w: Words = T[input.locale];
+  const { task, activity, locale } = input;
+  const failures = activity.filter((e) => failureKind(e) !== undefined);
+  const runs = collectRuns(input);
+  const runIndex = new Map(runs.map((r, i) => [r.runId, i + 1]));
+
+  const sections: string[] = [];
+  const logCache = new Map<string, RunLog | undefined>();
+  const logOf = (run: RunInfo) => {
+    if (!logCache.has(run.runId)) logCache.set(run.runId, readRunLog(input, run, L.logReadBytes));
+    return logCache.get(run.runId);
+  };
+
+  // 基本の情報
+  const sep = locale === "ja" ? "：" : ": ";
+  const meta = [
+    w.title(oneLine(task.title)),
+    "",
+    w.notice,
+    "",
+    w.meta,
+    "",
+    `- ${w.task}${sep}${task.id}`,
+    `- ${w.project}${sep}${input.projectName ? `${input.projectName}（${task.projectId}）` : task.projectId}`,
+    `- ${w.status}${sep}${task.status}`,
+    ...(task.pausedReason ? [`- ${w.pausedReason}${sep}${task.pausedReason}`] : []),
+    ...(task.pausedMessage
+      ? [`- ${w.pausedMessage}${sep}${oneLine(textOf(task.pausedMessage, locale))}`]
+      : []),
+    `- ${w.steps}${sep}${task.steps.length > 0 ? task.steps.map((s) => `${s.key}（${s.state}）`).join(" → ") : w.noSteps}`,
+    ...(task.repository
+      ? [
+          `- ${w.repository}${sep}${task.repository.url}（${task.repository.baseBranch}・${task.repository.baseCommit.slice(0, 7)}）`,
+        ]
+      : task.repo
+        ? [`- ${w.repository}${sep}${task.repo}`]
+        : []),
+    ...(task.pullRequest?.url ? [`- ${w.pullRequest}${sep}${task.pullRequest.url}`] : []),
+    `- ${w.cost}${sep}$${task.budget.usedUsd.toFixed(4)} / $${task.budget.capUsd.toFixed(2)}`,
+    `- ${w.created}${sep}${task.createdAt}`,
+    `- ${w.updated}${sep}${task.updatedAt}`,
+    `- ${w.generated}${sep}${input.generatedAt}`,
+  ];
+  sections.push(meta.join("\n"));
+
+  // エラーの概要（すべてのエラーを1行ずつ）
+  const summary: string[] = [w.summary, ""];
+  if (failures.length === 0) summary.push(w.noFailures);
+  else {
+    summary.push(w.failureCount(failures.length), "");
+    summary.push(`| ${w.columns.join(" | ")} |`, `|${w.columns.map(() => " --- ").join("|")}|`);
+    failures.forEach((e, i) => {
+      const kind = failureKind(e) as FailureKind;
+      summary.push(
+        `| ${i + 1} | ${e.at} | ${w.kind[kind]} | ${e.type} | ${cell(roleOf(e))} | ${cell(clip(shortPayload(e, locale), 300))} |`,
+      );
+    });
+  }
+  sections.push(summary.join("\n"));
+
+  // オーケストレーターの分析
+  if (input.includeAnalysis !== false) {
+    const latest = task.errorAnalyses.at(-1);
+    const done = [...task.errorAnalyses].reverse().find((a) => a.result?.text);
+    const lines: string[] = [w.analysis, ""];
+    if (latest && !latest.result) lines.push(w.analysisPending, "");
+    if (latest?.result?.failed !== undefined) {
+      lines.push(w.analysisFailed(oneLine(textOf(latest.result.failed, locale))), "");
+    }
+    if (done?.result?.text) {
+      lines.push(w.analysisAt(done.result.at), "", clip(done.result.text, L.analysisChars));
+    } else if (!latest) lines.push(w.noAnalysis);
+    sections.push(lines.join("\n").trimEnd());
+  }
+
+  // エラーの詳細（新しいものから）
+  if (failures.length > 0) {
+    const lines: string[] = [w.details];
+    const detailed = failures.slice(-L.detailedFailures).reverse();
+    for (const e of detailed) {
+      const n = failures.indexOf(e) + 1;
+      lines.push(
+        "",
+        `### ${n}. ${w.kind[failureKind(e) as FailureKind]}${sep}${e.type} (${stepLabel(roleOf(e), locale)}, ${e.at})`,
+        "",
+      );
+      const position = activity.indexOf(e);
+      const context = activity.slice(Math.max(0, position - L.contextEvents), position);
+      if (context.length > 0) {
+        lines.push(`**${w.before}**`, "");
+        for (const c of context) {
+          lines.push(
+            `- ${c.at} ${c.actor} ${c.type} ${clip(oneLine(shortPayload(c, locale)), L.timelineLineChars)}`,
+          );
+        }
+        lines.push("");
+      }
+      const json = JSON.stringify(shrink(e.payload, L.payloadStringChars, locale), null, 2);
+      lines.push(`**${w.record}**`, "", fence(clip(json, L.payloadChars), "json"));
+      const runId = runOf(e);
+      const run = runId ? runs.find((r) => r.runId === runId) : undefined;
+      if (!run) continue;
+      lines.push("", `**${w.run} #${runIndex.get(run.runId)}** (${run.runId})`, "");
+      if (run.meta) {
+        lines.push(
+          `- ${w.runMeta(
+            run.meta.role,
+            run.meta.agentId,
+            run.meta.model ?? "",
+            resultOf(run.meta, w),
+          )}`,
+        );
+      }
+      const log = logOf(run);
+      if (!log || (log.events === undefined && log.stderr === undefined)) {
+        lines.push(`- ${w.runLogMissing}`);
+        continue;
+      }
+      if (log.stderr?.trim()) {
+        lines.push("", `**${w.stderrTail}**`, "", fence(clipHead(log.stderr, L.stderrTailChars)));
+      }
+      if (log.events) {
+        const entries = parseSessionLog(log.events).filter((x) => x.kind !== "thinking");
+        const tail = entries.slice(-L.tailEntries);
+        const rendered: string[] = [];
+        let room = L.tailChars;
+        for (const entry of [...tail].reverse()) {
+          const line = entryLine(entry, L.entryChars);
+          if (line.length + 1 > room) break;
+          rendered.unshift(line);
+          room -= line.length + 1;
+        }
+        if (rendered.length > 0) {
+          lines.push("", `**${w.agentTail(rendered.length)}**`, "", ...rendered);
+        }
+      }
+    }
+    if (failures.length > detailed.length) {
+      lines.push("", w.detailOmitted(failures.length - detailed.length));
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  // 実行の一覧と、各実行のエージェントの動き
+  {
+    const lines: string[] = [w.runs, ""];
+    if (runs.length === 0) lines.push(w.noRuns);
+    else {
+      lines.push(
+        `| ${w.runColumns.join(" | ")} |`,
+        `|${w.runColumns.map(() => " --- ").join("|")}|`,
+      );
+      runs.forEach((run, i) => {
+        const m = run.meta;
+        lines.push(
+          `| ${i + 1} | ${run.runId.slice(0, 8)} | ${cell(m?.role ?? run.role ?? "")} | ${cell([m?.agentId, m?.model].filter(Boolean).join(" / "))} | ${m?.startedAt ?? ""} | ${durationOf(m)} | ${cell(m ? resultOf(m, w) : "")} | ${run.costUsd > 0 ? `$${run.costUsd.toFixed(4)}` : ""} |`,
+        );
+      });
+      lines.push("", w.activity);
+      runs.forEach((run, i) => {
+        const log = logOf(run);
+        if (!log?.events) return;
+        const { stats, tools, lastMessage, truncated } = statsOf(parseSessionLog(log.events));
+        lines.push(
+          "",
+          `#### ${i + 1}. ${stepLabel(run.meta?.role ?? run.role ?? "", locale)} (${run.runId.slice(0, 8)})`,
+          "",
+          `- ${w.runSummary(stats)}${log.partial ? ` ${w.partial(`${Math.round(L.logReadBytes / 1_000_000)}MB`)}` : ""}${truncated ? ` ${w.truncatedLog}` : ""}`,
+        );
+        if (tools.length > 0) {
+          lines.push(`- ${w.tools}${sep}${tools.map(([name, n]) => `${name}×${n}`).join("、")}`);
+        }
+        if (lastMessage) {
+          lines.push(`- ${w.lastMessage}${sep}${clip(oneLine(lastMessage), L.lastMessageChars)}`);
+        }
+      });
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  const footer = [w.footer, "", ...w.footerLines(L)].join("\n");
+
+  // 作業履歴：残りの大きさに入る分だけ（先頭の数件と、新しいものから）
+  const used = Buffer.byteLength(`${[...sections, footer].join("\n\n")}\n\n`);
+  const lineOf = (e: ActivityEvent) =>
+    `- ${e.seq} ${e.at} ${e.actor} ${e.type}${failureKind(e) ? " ⚠" : ""} ${clip(oneLine(shortPayload(e, locale)), L.timelineLineChars)}`.trimEnd();
+  const timeline: string[] = [w.timeline, ""];
+  let room = L.totalBytes - used - Buffer.byteLength(timeline.join("\n")) - 200;
+  const head: string[] = [];
+  const tail: string[] = [];
+  let i = 0;
+  for (; i < Math.min(L.timelineHead, activity.length); i++) {
+    const line = lineOf(activity[i] as ActivityEvent);
+    const bytes = Buffer.byteLength(line) + 1;
+    if (bytes > room) break;
+    head.push(line);
+    room -= bytes;
+  }
+  let j = activity.length - 1;
+  for (; j >= i; j--) {
+    const line = lineOf(activity[j] as ActivityEvent);
+    const bytes = Buffer.byteLength(line) + 1;
+    if (bytes > room) break;
+    tail.unshift(line);
+    room -= bytes;
+  }
+  const omitted = j - i + 1;
+  timeline.push(
+    ...(activity.length === 0 ? [w.none] : head),
+    ...(omitted > 0 ? [w.timelineOmitted(omitted)] : []),
+    ...tail,
+  );
+  sections.push(timeline.join("\n"), footer);
+
+  return limitBytes(`${sections.join("\n\n")}\n`, L.totalBytes, w.cut);
+}
+
+/** 上限のバイト数を超えたら、行の切れ目で切り、省いたことを書く。 */
+function limitBytes(text: string, max: number, note: string): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  const room = max - Buffer.byteLength(note) - 4;
+  let cut = Buffer.from(text).subarray(0, room).toString("utf8");
+  // 切れた文字（U+FFFD）と、途中の行を捨てる
+  cut = cut.replace(/�+$/, "");
+  const newline = cut.lastIndexOf("\n");
+  if (newline > 0) cut = cut.slice(0, newline);
+  return `${cut}\n\n${note}\n`;
+}
+
+function resultOf(meta: SessionLogMeta, w: Words): string {
+  if (!meta.finishedAt) return w.unfinished;
+  if (!meta.outcome) return "";
+  return meta.outcome.kind === "completed" ? "completed" : `failed（${meta.outcome.reason}）`;
+}
+
+function durationOf(meta: SessionLogMeta | undefined): string {
+  if (!meta?.finishedAt) return "";
+  const ms = Date.parse(meta.finishedAt) - Date.parse(meta.startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}

@@ -14,7 +14,7 @@ import {
 
 /**
  * 費用の表の行。工程と、工程の外の費用：チケットの読み取り（オーケストレーター。PBI-52）・作業するリポジトリの選択
- * （オーケストレーター。PBI-73）・オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
+ * （オーケストレーター。PBI-73）・オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・エラーの分析（オーケストレーター）・
  * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。マージの後のデプロイの確認は、マージの後の
  * 監視の工程（deployment）の行（PBI-116）。
  */
@@ -25,12 +25,13 @@ export type CostRole =
   | "repository"
   | "orchestrator"
   | "chat"
+  | "errorAnalysis"
   | "export"
   | "guardian";
 
 /** 工程の外の行（表に出す順）。 */
 const OUTSIDE_BEFORE = ["gather", "triage", "repository", "orchestrator"] as const;
-const OUTSIDE_AFTER = ["export", "chat", "guardian"] as const;
+const OUTSIDE_AFTER = ["export", "chat", "errorAnalysis", "guardian"] as const;
 const OUTSIDE: readonly CostRole[] = [...OUTSIDE_BEFORE, ...OUTSIDE_AFTER];
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
@@ -203,6 +204,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       // タスクの詳細での質問への答え（PBI-54）
       case "QuestionAnswered":
         push("chat", runOf(event, event.payload, event.payload.runResult));
+        return;
+      // エラーレポートのための、オーケストレーターのエラーの分析
+      case "ErrorAnalyzed":
+        push("errorAnalysis", runOf(event, event.payload, event.payload.runResult));
         return;
       // 承認した成果の書き出し（PBI-56）
       case "OutputExported":

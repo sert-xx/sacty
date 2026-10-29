@@ -2,7 +2,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { projectSettingsPath, projectTasksPath, switchPath, taskPath } from "./paths";
+import {
+  errorReportFileName,
+  errorReportPath,
+  projectSettingsPath,
+  projectTasksPath,
+  switchPath,
+  taskPath,
+} from "./paths";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
 
@@ -40,5 +47,17 @@ describe("画面の URL（PBI-114）", () => {
       return old.filter((re) => re.test(text)).map((re) => `${relative(SRC, file)}: ${re}`);
     });
     expect(found).toEqual([]);
+  });
+});
+
+describe("エラーレポートのダウンロード", () => {
+  it("URL の ID はエンコードし、ファイルの名前はタスクの短い ID と UTC の日時にする", () => {
+    expect(errorReportPath("t 1")).toBe("/tasks/t%201/error-report");
+    const at = new Date("2026-10-29T06:09:30.000Z");
+    expect(errorReportFileName("0f3a9c2e-1111-2222", at)).toBe(
+      "sacty-error-report-0f3a9c2e-20261029T0609.md",
+    );
+    // ファイルの名前に使えない文字は除き、何も残らなければ task にする
+    expect(errorReportFileName('"/;', at)).toBe("sacty-error-report-task-20261029T0609.md");
   });
 });

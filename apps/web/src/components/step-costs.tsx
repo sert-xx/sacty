@@ -37,6 +37,7 @@ export function StepCosts({
   const count = new Intl.NumberFormat(NUMBER_LOCALE[locale]);
   const roleLabel = (role: CostRole) =>
     role === "chat" ||
+    role === "errorAnalysis" ||
     role === "export" ||
     role === "gather" ||
     role === "triage" ||

@@ -32,7 +32,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Kind | Path |
 | --- | --- |
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
-| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview}`, `GET /api/tasks/:id/{cleanup-plan,security-findings}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
+| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`, `GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
 | Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
@@ -54,6 +54,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/projects/<ID>/schedules`, `/projects/<ID>/schedules/<scheduled task ID>` | The project's scheduled task list and details ([Scheduled tasks](scheduled-tasks.en.md)) |
 | `/projects/current`, `/projects/current/tasks`, `/projects/current/schedules` | Moves (303) to the settings, the task list, or the scheduled task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
 | `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
+| `/tasks/<ID>/error-report` | Downloading the error report ([Error report](error-report.en.md)) |
 | `/settings` | The sacty settings |
 
 - The web UI builds its links and destinations in `apps/web/src/lib/paths.ts` (project IDs are encoded).

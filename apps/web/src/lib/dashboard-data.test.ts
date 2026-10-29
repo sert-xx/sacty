@@ -55,6 +55,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   misses: [],
   importedFeedback: [],
   questions: [],
+  errorAnalyses: [],
   exports: {},
   stepPullRequests: [],
   stepBranches: [],

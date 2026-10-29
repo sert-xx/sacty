@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts, apps/daemon/src/config.ts (loadConfig), apps/daemon/src/instance-lock.ts, apps/daemon/src/intake.ts, apps/daemon/src/secrets.ts, apps/daemon/src/host-mcp.ts, apps/daemon/src/services.ts, apps/daemon/src/notifier.ts -->
+<!-- Code: packages/cli/src/index.ts, apps/daemon/src/config.ts (loadConfig), apps/daemon/src/instance-lock.ts, apps/daemon/src/intake.ts, apps/daemon/src/secrets.ts, apps/daemon/src/host-mcp.ts, apps/daemon/src/services.ts, apps/daemon/src/notifier.ts, apps/daemon/src/error-report.ts, apps/web/src/components/error-report.tsx -->
 
 [日本語](troubleshooting.md) | **English**
 
@@ -50,6 +50,25 @@ A paused task's details show why it stopped and a "Resume" button.
 | Stopped on an image name that is not in `images` | Add it to `images` in `config.yaml`, or fix the image specified for the project's target ([Container images](images.en.md#which-image-a-step-runs-in)) |
 | Stopped because docker compose services could not start | Check whether the settings named in the reason (`privileged`, host networking, mounts outside the workspace, and so on) are used ([docker compose services](compose.en.md#unsupported-settings)) |
 | Cannot connect to MySQL or similar with `localhost` | Write `127.0.0.1`, or connect by service name ([docker compose services](compose.en.md#reaching-services-via-localhost)) |
+
+## Getting an error report
+
+When you want someone to look at a task that stopped with an error, hand them the error report.
+The "Error report" box in the right column of the task page appears only for tasks with error records.
+
+1. Press "Download the report".
+   A Markdown file (`sacty-error-report-<short task ID>-<date and time>.md`) with what Sacty did, what each step's agent did, and the details of the errors is downloaded.
+   The headings are in the UI language.
+2. If you want a likely cause, press "Ask the Orchestrator to analyze" first.
+   When the analysis is done, its time appears; download the report after that.
+   The analysis goes into the "Orchestrator's analysis" section of the report.
+   The cost of the analysis is added to that task's cost.
+
+The report is not sent to any server.
+You can hand it over as a file even without a network connection.
+It is kept within 256KB, and the middle of a long activity is left out.
+Secrets are masked, but it includes the task's content, parts of the code, and URLs, so be careful whom you give it to.
+The details of its contents are in [Error report (specification)](../spec/error-report.en.md).
 
 ## Notifications
 

@@ -514,6 +514,19 @@ export function askQuestion(id: string, text: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/questions`, { text });
 }
 
+/** オーケストレーターに、エラーレポートのためのエラーの分析を求める（分析は待たない）。 */
+export function analyzeErrors(id: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/error-analysis`, {});
+}
+
+/** タスクのエラーレポート（Markdown）。タスクが無ければ null。 */
+export async function getErrorReport(id: string, locale: "ja" | "en"): Promise<string | null> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/error-report?lang=${locale}`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return res.text();
+}
+
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
 /** sacty の設定の通知先に、テストの通知を送る（PBI-38・PBI-115）。 */
 /** 画面のデスクトップ通知のための、最近の通知（after より後。省けば最後の番号だけ）。 */

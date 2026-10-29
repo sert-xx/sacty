@@ -32,6 +32,7 @@ import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeploymentWatchCard } from "@/components/deployment";
 import { DerivedTasksCard } from "@/components/derive-dialog";
+import { ErrorReportCard, showErrorReport } from "@/components/error-report";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
@@ -342,6 +343,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
         </div>
         <aside className="flex min-w-0 flex-col gap-6">
           <Properties data={data} />
+          {/* エラーレポート（エラーの記録があるときだけ） */}
+          {showErrorReport(task, activity) && <ErrorReportCard task={task} activity={activity} />}
           {shown !== "activity" && activity.length > 0 && (
             <section
               aria-labelledby="recent"

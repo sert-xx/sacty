@@ -79,6 +79,23 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
       },
       "orchestrator",
     );
+    // エラーの分析も、質問と同じくどこでも挟める
+    if (rand() < 0.5) return;
+    const analysisId = `A-${questions}`;
+    add({ type: "ErrorAnalysisRequested", payload: { analysisId } }, "person");
+    const analyzed = pick(["completed", "failed", "interrupted"] as const);
+    add(
+      {
+        type: "ErrorAnalyzed",
+        payload: {
+          analysisId,
+          ...(analyzed === "completed" ? { analysis: "原因" } : { failed: "失敗" }),
+          runResult: analyzed,
+          ...charged(),
+        },
+      },
+      "orchestrator",
+    );
   };
   let runs = 0;
   /** 工程を、失敗を何回か挟んでから完了させる。開始の記録が無い完了（古い作業履歴）も混ぜる。 */

@@ -56,6 +56,7 @@ export const CHARGED_EVENT_TYPES = [
   "FinalReviewed",
   "FinalReviewFailed",
   "QuestionAnswered",
+  "ErrorAnalyzed",
   "OutputExported",
   "DeploymentChecked",
 ] as const satisfies readonly ActivityEvent["type"][];

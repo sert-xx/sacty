@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は93（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は95（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -58,7 +58,7 @@
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` は受け付ける。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`）。
-- 費用を持つイベント（[費用](#費用)の15種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
+- 費用を持つイベント（[費用](#費用)の16種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
   - `status`
@@ -92,7 +92,7 @@
 - 単価（`PricePerMTok`）は100万トークンあたりの米ドルで、`input`・`cachedInput`・`cacheWrite`（既定 0）・`output`。
 - 費用 = (`input`×`input` の単価 + `cacheRead`×`cachedInput` の単価 + `cacheWrite`×`cacheWrite` の単価 + `output`×`output` の単価) ÷ 10^6（分子を整数に丸めてから割る）。
 - サブスクリプションとスタブの実行は、同じ単価で換算した推定の費用（`estimated`）として扱い、予算の判定に使う。
-- タスクの予算に入れる費用を持つイベントは、次の15種類（`CHARGED_EVENT_TYPES`）。
+- タスクの予算に入れる費用を持つイベントは、次の16種類（`CHARGED_EVENT_TYPES`）。
   `costUsd` を持つイベントはこれですべて。
   統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する。
 
@@ -105,6 +105,7 @@
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |
+  | `ErrorAnalyzed` | エラーの分析（`errorAnalysis`。[エラーレポート](error-report.md)） |
   | `DeploymentChecked` | マージの後の監視の工程（`deployment`。[マージの後の監視](deployment-watch.md)） |
   | `ChangeJudged`・`ReworkJudged`・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
 
@@ -164,7 +165,7 @@
      - 工程の一覧に無い工程の記録も出す。
      - デプロイの確認は、マージの後の監視の工程の行に入れる。
        実行中も出す。
-  3. 書き出し・質問への答え・ゴールガーディアン（記録があるときだけ）
+  3. 書き出し・質問への答え・エラーの分析・ゴールガーディアン（記録があるときだけ）
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足す。
   そのため、タスクの費用（`budget.usedUsd`・`budget.estimated`）と一致する。
