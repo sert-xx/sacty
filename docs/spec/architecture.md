@@ -37,10 +37,11 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | 種類 | パス |
 | --- | --- |
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
-| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
+| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview}`・`GET /api/tasks/:id/{cleanup-plan,security-findings}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
 | スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
+| 監査 | `GET /api/tasks/:id/audit`・`POST /api/tasks/:id/audit/resume`・`GET /api/projects/:id/audits`・`GET /api/audits/dashboard`・`POST /api/audits/proposals/:id/{adopt,reject}`・`POST /api/audits/memories/:id/delete` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`GET /api/notifications`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
@@ -284,8 +285,12 @@ sacty は、npm workspaces の4つのパッケージでできている。
   | `GET /live/tasks/<ID>/review` | 成果物のレビューの画面のタスク。タスクが無ければ（消したプロジェクトのタスクを含む）`{ missing: true }` |
   | `GET /live/tasks/<ID>/runs/<実行の ID>?events=&stderr=` | 実行のログの、画面が持っている分に足された分（下を参照） |
   | `GET /live/projects` | プロジェクトの一覧と、取り込みの状況（`loadProjectList`） |
+  | `GET /live/update` | sacty の新しい版の知らせ（`loadUpdateData`。30秒ごと。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
+  | `GET /live/docker` | Docker とエージェントのイメージの注意（`loadDockerData`。30秒ごと。[デーモンの起動と終了](daemon-lifecycle.md#docker-とエージェントのイメージの確かめ)） |
+  | `GET /live/notifications?after=<番号>` | デスクトップ通知に出す、番号より後の通知（`loadDesktopFeed`。5秒ごと。このブラウザでデスクトップ通知を On にしているときだけ取り直し、版の比べは使わず、タブが隠れている間も取り直す。[通知](notifications.md#デスクトップ通知)） |
 
 - 間隔は3秒（`LIVE_INTERVAL_MS`）。
+  ただし、`/live/update`・`/live/docker`（どの画面にも出す知らせ）は30秒（`UPDATE_LIVE_INTERVAL_MS`・`DOCKER_LIVE_INTERVAL_MS`）、`/live/notifications` は5秒（`DESKTOP_INTERVAL_MS`）。
   タスクの状態によらず、タスクが無いとき・すべてが承認待ち・一時停止・完了のときも取り直す。
   前の取り直しが終わってから次の間隔を数えるので、問い合わせは重ならない。
 - `{ missing: true }` のとき、表示は最後のデータのまま残す。タスクの詳細・成果物のレビュー・実行のログは、画面を描き直す（`RefreshWhenMissing`。
@@ -339,7 +344,8 @@ sacty は、npm workspaces の4つのパッケージでできている。
 `apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）、`apps/web/src/components/review.tsx`（`LiveReview`）、`apps/web/src/components/live-status.tsx`（`RefreshWhenMissing`）、
 `apps/web/src/components/run-log.tsx`（`LiveRunLog`・`applyChunk`）、`apps/web/src/lib/run-log-data.ts`（`loadAgentFiles`）、
 `apps/web/src/components/live-status.tsx`（`StaleNotice`・`FollowProjectAfterRecovery`）、`apps/daemon/src/session-logs.ts`（`completeUtf8Length`）、`apps/web/src/lib/daemon-signal.ts`（`withDaemonSignal`・`LIVE_SERVER_TIMEOUT_MS`）、
-`apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）
+`apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）、
+`apps/web/src/app/live/update/route.ts`、`apps/web/src/components/shell/update-notice-live.tsx`（`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/docker/route.ts`、`apps/web/src/components/shell/docker-notice-live.tsx`（`DOCKER_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/notifications/route.ts`、`apps/web/src/lib/desktop-notifications.ts`（`DESKTOP_INTERVAL_MS`）
 
 ## データの置き場所（SACTY_HOME）
 
@@ -387,7 +393,7 @@ sacty は、npm workspaces の4つのパッケージでできている。
   設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば、消して書き直す。
   消すものが無ければ書かない。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
-  - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義だけを消す。タスクと作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
+  - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義と、そのプロジェクトのスケジュールタスク（`schedules.deleteForProject`。[スケジュールタスク](scheduled-tasks.md)）を消す。タスク（スケジュールタスクが作ったものを含む）と作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
     プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）・
     回答中の質問があれば、削除せずに 409（`project.hasActiveTasks`。件数を添える）を返す。消したら、そのプロジェクトの秘密情報の警告も消す。
   - 消したプロジェクトのタスクは、デーモンの `GET /api/tasks/:id` と実行の記録（`…/runs/:runId/{log,files/:file,agent-files,agent-files/raw}`）で

@@ -40,12 +40,13 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
   - Esc or a click or tap outside closes it.
 - A hint opened by hovering does not take focus. The hint text is also placed hidden inside the mark (`sr-only`) and linked from the mark by `aria-describedby`. A screen reader therefore reads the mark's name ("Details") and the text without opening it.
 - A long hint is limited in height to 20rem or the free space on the side of the mark where it is placed (the Positioner's `--available-height`), and scrolls inside. With the keyboard, the arrow keys and PageUp/PageDown scroll it while the mark keeps focus. The hint is in a portal, so Tab does not move into it. It closes when focus leaves the mark.
-- A long activity line (the list of available external platforms in the context preparation) shows only its first line. "Details" opens the rest.
+- A context preparation activity line (`ContextResolved`) shows only the layers read and the warnings. "Details" opens the definitions of the tier subagents placed (each tier's agent, model, and reasoning effort; `ContextTiers`) and the list of available external platforms (without either, no "Details" is shown).
+- A resume activity line with a note (`note` of `TaskResumed`) shows the resume text with ", with notes" added. "Details" opens the note the person added (to read again which resume added it).
 - A request-for-changes activity line (`ChangesRequested`) shows only the number of comments. "Details" opens the comments a person wrote (the comment ID and text, one per line). The approval page shows its content only while the task is awaiting approval or escalated, so this is how to read the comments again after approval, completion, or cancellation.
 - Card headings take a short fact (a count or a status) as `note` and the explanation of the mechanism as `hint`.
 - Hints that used to be `title` attributes (such as the cost "Estimate") were replaced by this component.
 
-Code: `apps/web/src/components/ui/hint.tsx` (`Hint`, `WithHint`), `apps/web/src/components/card-section.tsx` (`CardSection`), `apps/web/src/lib/labels.ts` (`describeEventParts`)
+Code: `apps/web/src/components/ui/hint.tsx` (`Hint`, `WithHint`), `apps/web/src/components/card-section.tsx` (`CardSection`), `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/task-detail.tsx` (`EventText`)
 
 ## Dictionaries and checks
 

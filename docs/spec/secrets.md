@@ -39,7 +39,7 @@ sacty は値をホストで使うときに取り出し、作業履歴・ログ�
 デーモンは待ち受けを始めたら、使う秘密情報をまとめて取り出す（`prefetchSecrets`）。
 
 - 対象（`secretUses`）
-  - 使うエージェント（既定・ゴールガーディアン・`step_agents`）の runtime の接続先の `auth.secret`（`providers.<codex|claude>.auth.secret`。`providerKeyOf`）
+  - 使うエージェント（既定・ゴールガーディアン・監査（`audit_agent`）・`step_agents` と、それらの `fallback` の代わりのエージェント（代わりの代わりも含む））の runtime の接続先の `auth.secret`（`providers.<codex|claude>.auth.secret`。`providerKeyOf`）
   - `gateway.platforms` の `auth.secret`・`auth.token.secret`
   - `gateway.mcp_servers` の `env` の秘密情報
   - sacty の設定の通知先（Slack のトークン・Webhook の URL。`settingsSecretUses`）

@@ -205,7 +205,8 @@ PR を見守る確認のたび・掃除のたび・起動のときに確かめ�
   読み方の指示は足さない。
 - 次のものには渡さない。
   - ゴールガーディアン（変更の申し出の判定・最終レビュー・統合レビュー・PR の指摘の差し戻し先の判定（役割 `rework`））
-  - オーケストレーター
+  - 情報収集（タスクの開始時。役割 `gather`）
+  - オーケストレーター（工程の選択・チケットの読み取りなど。チケットの読み取りも役割 `orchestrator` で実行する）
   - 質問への答え
   - 書き出し
 - 差し戻した後の手直しは工程の役で実行し直すので、そこには渡る。
@@ -230,8 +231,8 @@ PR を見守る確認のたび・掃除のたび・起動のときに確かめ�
 - 監査のタブに、その監査が登録したメモリー（題・階層・リポジトリ・概要・中身）を出す。
   消していないものには「消す」が出て、確定のボタンを押すと消す（`POST /api/audits/memories/:id/delete`）。
 - 人は登録できない。
-- 消したものは印（人が消した・上限で消した・期限で消した・コンテキストにした）だけを出し、中身と「消す」は出さない。
+- 消したものは印（人が消したものは「消した」、ほかは「上限で消した」・「期限で消した」・「コンテキストにした」）だけを出し、中身と「消す」は出さない。
   消したものを、もう一度は消せない（409）。
 - 消した後は、メモリーの今の置き場所（監査が移していれば、移した先）の階層を書き直す。
 
-コード: `apps/daemon/src/service.ts`（`deleteAuditMemory`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/components/audit.tsx`（`TaskAuditCard`）
+コード: `apps/daemon/src/service.ts`（`deleteAuditMemory`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/components/audit.tsx`（`TaskAuditCard`）、`apps/web/src/i18n/messages/audit.ts`

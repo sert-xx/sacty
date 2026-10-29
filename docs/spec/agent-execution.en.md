@@ -2,7 +2,7 @@
 
 # Agent execution
 
-sacty carries out steps, information gathering, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The Goal Guardian (the final review) and the Reproduce step's agent run them inside their own containers.
+sacty carries out steps, information gathering, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The agents of the Goal Guardian (the final review), the Reproduce step, and the PR review step run them inside their own containers.
 
 Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
 
@@ -180,9 +180,10 @@ Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_
 - sacty does not run the test command in a container of its own.
   - The Goal Guardian runs the tests for verifying the implementation inside the final review.
   - The Reproduce step's agent runs the reproduction test.
-  - Both report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
+  - The Goal Guardian and the Reproduce step's agent report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
+  - The PR review step's agent fetches dependencies in the copy of the PR's code and runs verification such as formatters, linters, type checks, tests, and builds. For verification that could not run, it writes the command and why it stopped in the review body ([Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)).
 - The final review runs on the Implementation step's image (or the Reproduce step's if absent), with that image's `env`. It runs on a disposable copy of the implemented working tree (the copy's .git is a copy of the saved metadata). If the implementation uses services, it is connected to them ([Services](services.en.md)).
-- The test code runs inside an agent container. So, as in any other agent run, it can reach the agent's authentication values in the container. In runs that use the gateway, it can also reach the per-run gateway token.
+- The test code (in a PR review, including the PR's dependency install scripts and tests) runs inside the container of the agent that runs the tests. So, as in any other agent run, it can reach the agent's authentication values in the container. In runs that use the gateway, it can also reach the per-run gateway token.
 - The time limit is that of the role running the tests ("Container" above; without a role override, `agent_minutes` + `test_minutes`).
 
-Code: `apps/daemon/src/service.ts` (`verify`, `runGuardian`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`)
+Code: `apps/daemon/src/service.ts` (`verify`, `runGuardian`), `apps/daemon/src/prompts.ts` (`reviewVerificationLines`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`, `TEST_RUNNING_ROLES`)

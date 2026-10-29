@@ -157,10 +157,11 @@ sacty の更新で既定のモデルが変わっても、設定が読めなく�
 
 使う AI と役割の対応は `agentFor` が決める。
 `step_agents` にあればそれを使い、無ければ `default_agent`（`integrate` は `guardian_agent`、`gather` は `orchestrator` の AI）を使う。
-工程（マージの後の監視・外部作業・書き出しを含む）は、人がタスクの詳細で選んだエージェントがあれば、それを優先する（`stepAgentFor`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
+工程（マージの後の監視・外部作業・書き出しを含む）は、人が指定したエージェント（タスクの `agents`）があれば、`step_agents` より優先する（`stepAgentFor`）。
+人が指定するのは、タスクの作成時（`TaskCreated` の `agents`。[作成時に指定した工程のイメージ・エージェント](tasks-and-steps.md#作成時に指定した工程のイメージエージェント)）と、タスクの詳細・一時停止したタスクの再開・差し戻し（`StepAgentChanged`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
 作業履歴には、使った AI の `authMode`・`model`・`reasoningEffort` だけを残す（秘密の値・接続先の URL は残さない。`agentSetting`）。
 
-コード: `apps/daemon/src/config.ts`（`buildAgents`・`loadConfig`・`agentFor`・`stepAgentFor`・`agentSetting`）、`apps/daemon/src/service.ts`（`TaskService.status`）
+コード: `apps/daemon/src/config.ts`（`buildAgents`・`loadConfig`・`agentFor`・`stepAgentFor`・`agentSetting`）、`apps/daemon/src/service.ts`（`TaskService.status`）、`packages/core/src/projection.ts`（`applyEvent`）
 
 ## イメージの設定の検査
 

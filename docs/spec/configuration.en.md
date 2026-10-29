@@ -128,10 +128,10 @@ Of the agents merged from the defaults and the overrides, the following cannot b
 
 The warnings are kept in `agentWarnings` and shown as warnings in the web UI (`warnings` of `GET /api/status`). Agents with `runtime: stub` are usable without looking at endpoints or prices (the price is `price_per_mtok_usd`, or 0).
 
-`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`, the AI of `orchestrator` for `gather`). For steps (including the after-merge watch, operations, and exports), an agent a person chose in the task details takes precedence (`stepAgentFor`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
+`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`, the AI of `orchestrator` for `gather`). For steps (including the after-merge watch, operations, and exports), an agent a person specified (the task's `agents`) takes precedence over `step_agents` (`stepAgentFor`). A person specifies it at task creation (`agents` of `TaskCreated`; [Step images and agents specified at creation](tasks-and-steps.en.md#step-images-and-agents-specified-at-creation)) and in the task details, when resuming a paused task, and when requesting changes (`StepAgentChanged`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
 The Activity keeps only the `authMode`, `model`, and `reasoningEffort` of the AI used (it does not keep secret values or endpoint URLs; `agentSetting`).
 
-Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `stepAgentFor`, `agentSetting`), `apps/daemon/src/service.ts` (`TaskService.status`)
+Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `stepAgentFor`, `agentSetting`), `apps/daemon/src/service.ts` (`TaskService.status`), `packages/core/src/projection.ts` (`applyEvent`)
 
 ## Validation of image settings
 

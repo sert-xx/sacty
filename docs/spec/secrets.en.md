@@ -33,7 +33,7 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 When the daemon starts listening, it retrieves the secrets it will use all at once (`prefetchSecrets`).
 
 - Targets (`secretUses`)
-  - `auth.secret` of the endpoints for the runtimes of the agents in use (default, Goal Guardian, `step_agents`) (`providers.<codex|claude>.auth.secret`; `providerKeyOf`)
+  - `auth.secret` of the endpoints for the runtimes of the agents in use (default, Goal Guardian, audit (`audit_agent`), `step_agents`, and the agents in their `fallback`, including fallbacks of fallbacks) (`providers.<codex|claude>.auth.secret`; `providerKeyOf`)
   - `auth.secret` and `auth.token.secret` of `gateway.platforms`
   - Secrets in `env` of `gateway.mcp_servers`
   - The notification destination in the sacty settings (the Slack token or webhook URL; `settingsSecretUses`)

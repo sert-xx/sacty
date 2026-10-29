@@ -186,6 +186,7 @@ You can write the following keys in `step_agents`.
 | `deployment` | The check in the after-merge watch step ([After-merge watch](deployment-watch.en.md)) |
 
 - Writing a name that does not exist or an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+- When a person specifies a step's agent at task creation ([Set the image and agent for each step](tasks.en.md#set-the-image-and-agent-for-each-step)), or in the task details, when resuming a paused task, or when requesting changes ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)), that agent takes precedence over `step_agents` for that task.
 - The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed. Writing it is an error, so delete it.
 
 ## Agent tiers

@@ -118,14 +118,15 @@ Code: `apps/daemon/src/tickets.ts` (`JiraTickets`, `ticketJql`), `apps/daemon/sr
 
 ## Comments on the intake source
 
-- When a task whose goal is investigation is approved, sacty posts the result as a comment on the intake source. Tasks with a security plan (`security-check`, `security-fix`) are not commented on (the report can give attackers a lead. [Tasks and steps](tasks-and-steps.en.md#security-check-and-security-fix)).
+- When a task whose goal is investigation is approved, sacty posts the result as a comment on the intake source (`awaitingIssueComment`). For tasks with a security plan (`security-check`, `security-fix`), this investigation result is not posted (the report can give attackers a lead; `isSecurityTask`. [Tasks and steps](tasks-and-steps.en.md#security-check-and-security-fix)). The JIRA comment with the PR URL below is separate from this and is sent for tasks with a security plan too.
 - GitHub
   - sacty includes the marker `<!-- sacty-investigation:<task ID> -->`, and does not post twice if it posted a comment before.
   - The body is up to 60000 characters.
   - If there is a URL the result was exported to, sacty adds it.
   - Failures are recorded in `IssueCommentFailed`.
 - JIRA
-  - sacty comments once with the investigation result and, if a PR was created, the PR URL (and the URL the result was exported to) (`POST /rest/api/2/issue/<key>/comment`).
+  - sacty comments the result of a task whose goal is investigation once, as above (`POST /rest/api/2/issue/<key>/comment`; recorded as `IssueCommented` or `IssueCommentFailed`).
+  - For a task that created a PR (except cancelled ones), sacty separately comments the PR URL (and the URL the result was exported to) once (`awaitingTicketPrComment`; recorded as `TicketPullRequestCommented`). It does not contain the investigation result, so it is sent for `security-fix` tasks too.
   - sacty does not change the ticket's status.
 
 Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueComment`, `awaitingTicketPrComment`), `apps/daemon/src/prompts.ts` (`investigationMarker`, `buildInvestigationComment`, `buildTicketPullRequestComment`), `apps/daemon/src/tickets.ts` (`JiraTickets.comment`)
