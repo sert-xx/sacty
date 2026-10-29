@@ -69,6 +69,11 @@ export type ErrorReportInput = {
   locale: ReportLocale;
   /** オーケストレーターの分析の節を入れるか（分析の指示に渡すときは入れない）。既定は入れる。 */
   includeAnalysis?: boolean;
+  /**
+   * デーモンが止まって閉じられなかった実行のログ（閉じるときの伏せ直しを経ていない）の中身を入れず、省いたことだけを書く
+   * （分析の指示に渡すとき）。
+   */
+  omitStaleLogs?: boolean;
   /** 大きさの上限（テストで小さくする）。 */
   limits?: Partial<typeof ERROR_REPORT_LIMITS>;
 };
@@ -116,6 +121,8 @@ const T = {
     runLogMissing: "この実行のセッションログはありません。",
     staleLog:
       "（デーモンが止まって閉じられなかった実行の、保存済みのログです。実行の途中で分かった秘密情報は、伏せ直していない場合があります）",
+    staleOmitted:
+      "デーモンが止まって閉じられなかった実行のため、ログの中身を省きました（秘密情報を伏せ直していない場合があるため）。",
     stderrTail: "標準エラー出力（末尾）",
     agentTail: (n: number) => `エージェントの最後の動き（最後の ${n} 件）`,
     runs: "## 実行の一覧（各工程のエージェントの動き）",
@@ -184,6 +191,8 @@ const T = {
     runLogMissing: "There is no session log for this run.",
     staleLog:
       "(The saved log of a run that the daemon stopped before closing. Secrets found during the run may not have been masked again.)",
+    staleOmitted:
+      "The log's content is left out because the daemon stopped this run before closing it (secrets may not have been masked again).",
     stderrTail: "Standard error (tail)",
     agentTail: (n: number) => `The agent's last actions (last ${n})`,
     runs: "## Runs (what each step's agent did)",
@@ -419,7 +428,7 @@ function tailBytes(text: string, max: number): { text: string; partial: boolean 
  * stale：終わりの記録が無く、このデーモンで開いてもいない（デーモンが止まって閉じられなかった）実行の、保存済みのファイル。
  * 閉じるときの伏せ直し（書き始めた後に分かった秘密情報）を経ていない。
  */
-type RunLog = { events?: string; stderr?: string; partial: boolean; stale?: true };
+type RunLog = { events?: string; stderr?: string; partial: boolean; stale?: true; omitted?: true };
 
 /** 実行のセッションログ（実行中なら、いまの写し）の末尾。stderr は求めたときだけ読む。 */
 function readRunLog(
@@ -433,7 +442,10 @@ function readRunLog(
   if (!run.meta.finishedAt) {
     const snapshot = store.snapshot(input.task.id, run.runId);
     // デーモンが止まって閉じられなかった実行は、保存済みのファイルの末尾を読む（画面の実行のログと同じ中身）
-    if (!snapshot) return { ...readSaved(input, store, run, max, withStderr), stale: true };
+    if (!snapshot) {
+      if (input.omitStaleLogs) return { partial: false, stale: true, omitted: true };
+      return { ...readSaved(input, store, run, max, withStderr), stale: true };
+    }
     const events = tailBytes(snapshot.events, max);
     return {
       events: events.text,
@@ -474,6 +486,8 @@ type RunDigest = {
   missing: boolean;
   /** デーモンが止まって閉じられなかった実行の、保存済みのログ。 */
   stale: boolean;
+  /** stale のログの中身を入れなかった（omitStaleLogs）。 */
+  omitted: boolean;
   partial: boolean;
   stats: RunStats;
   tools: [string, number][];
@@ -495,8 +509,9 @@ function digestRun(
   if (!log) return undefined;
   const entries = log.events ? parseSessionLog(log.events) : [];
   const digest: RunDigest = {
-    missing: log.events === undefined && log.stderr === undefined,
+    missing: log.omitted !== true && log.events === undefined && log.stderr === undefined,
     stale: log.stale === true,
+    omitted: log.omitted === true,
     partial: log.partial,
     ...statsOf(entries),
     tail: [],
@@ -682,6 +697,10 @@ export function buildErrorReport(input: ErrorReportInput): string {
         details.push(`- ${w.runLogMissing}`);
         continue;
       }
+      if (digest.omitted) {
+        details.push(`- ${w.staleOmitted}`);
+        continue;
+      }
       if (digest.stale) details.push(`- ${w.staleLog}`);
       if (digest.stderr) details.push("", `**${w.stderrTail}**`, "", fence(digest.stderr));
       if (digest.tail.length > 0) {
@@ -752,18 +771,21 @@ export function buildErrorReport(input: ErrorReportInput): string {
       read++;
       const digest = digestOf(run);
       if (!digest || digest.missing) continue;
-      const block = [
-        "",
-        `#### ${i + 1}. ${stepLabel(run.meta?.role ?? run.role ?? "", locale)} (${run.runId.slice(0, 8)})`,
-        "",
-        `- ${w.runSummary(digest.stats)}${digest.partial ? ` ${w.partial(`${Math.round(L.logReadBytes / 1_000_000)}MB`)}` : ""}${digest.truncated ? ` ${w.truncatedLog}` : ""}${digest.stale ? ` ${w.staleLog}` : ""}`,
-        ...(digest.tools.length > 0
-          ? [`- ${w.tools}${sep}${digest.tools.map(([name, n]) => `${name}×${n}`).join("、")}`]
-          : []),
-        ...(digest.lastMessage
-          ? [`- ${w.lastMessage}${sep}${clip(oneLine(digest.lastMessage), L.lastMessageChars)}`]
-          : []),
-      ];
+      const title = `#### ${i + 1}. ${stepLabel(run.meta?.role ?? run.role ?? "", locale)} (${run.runId.slice(0, 8)})`;
+      const block = digest.omitted
+        ? ["", title, "", `- ${w.staleOmitted}`]
+        : [
+            "",
+            title,
+            "",
+            `- ${w.runSummary(digest.stats)}${digest.partial ? ` ${w.partial(`${Math.round(L.logReadBytes / 1_000_000)}MB`)}` : ""}${digest.truncated ? ` ${w.truncatedLog}` : ""}${digest.stale ? ` ${w.staleLog}` : ""}`,
+            ...(digest.tools.length > 0
+              ? [`- ${w.tools}${sep}${digest.tools.map(([name, n]) => `${name}×${n}`).join("、")}`]
+              : []),
+            ...(digest.lastMessage
+              ? [`- ${w.lastMessage}${sep}${clip(oneLine(digest.lastMessage), L.lastMessageChars)}`]
+              : []),
+          ];
       if (bytes(block) > runRoom) {
         skipped++;
         continue;

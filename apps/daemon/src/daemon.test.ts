@@ -15747,6 +15747,58 @@ describe("エラーレポートと、オーケストレーターのエラーの�
     activity.close();
   });
 
+  it("閉じられなかった実行のログの中身は、分析の指示にもマウントするレポートにも入れない", async () => {
+    const { activity, sessionLogs, id } = await failedTask([]);
+    // デーモンが止まって閉じられなかった実行（途中で分かった秘密情報は、閉じるときにしか伏せ直さない）
+    const log = sessionLogs.open(
+      {
+        taskId: id,
+        runId: "stale-run",
+        role: "design",
+        agentId: "claude-subscription",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => [],
+    );
+    log.stdout(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "token=fake-late-secret-123" }] } })}\n`,
+    );
+    // 起動し直したデーモン（その実行は開いていない）
+    const { service, executor } = makeService(activity, [out("### 何が起きたか\n分析")], {
+      sessionLogs: new SessionLogStore(join(dir, "runs")),
+    });
+    // 人がダウンロードするレポートには、注記つきで入る
+    expect(service.errorReport(id, "ja")).toContain("fake-late-secret-123");
+    await service.analyzeErrors(id).analyzed;
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    const mounted = executor.logMounts.at(-1)?.files ?? {};
+    expect(prompt).toContain("ログの中身を省きました");
+    expect(prompt).not.toContain("fake-late-secret-123");
+    expect(mounted["error-report.md"]).toContain("ログの中身を省きました");
+    expect(Object.values(mounted).join("\n")).not.toContain("fake-late-secret-123");
+    log.close({ kind: "completed", output: "" });
+    activity.close();
+  });
+
+  it("並べたセッションログを消せなくても、分析の結果と費用を記録する", async () => {
+    const { activity, service, id } = await failedTask([out("### 何が起きたか\n分析", 1000)]);
+    // 並べる場所をファイルにして、並べるのも消すのも失敗させる
+    mkdirSync(join(dir, "workspaces"), { recursive: true });
+    writeFileSync(join(dir, "workspaces", "_question-logs"), "");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
+    await service.analyzeErrors(id).analyzed;
+    expect(service.get(id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
+    expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("エラーの分析に並べたセッションログを消せませんでした"),
+      expect.anything(),
+    );
+    warn.mockRestore();
+    activity.close();
+  });
+
   it("API：レポートを Markdown で返し（無いタスクは 404）、分析の求めは 201、求められない状態は 409", async () => {
     const { activity, service, id } = await failedTask([HOLD]);
     const token = "test-token";

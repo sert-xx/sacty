@@ -10121,6 +10121,8 @@ export class TaskService {
         generatedAt: new Date().toISOString(),
         locale: "ja",
         includeAnalysis: false,
+        // 伏せ直しを経ていない（デーモンが止まって閉じられなかった）実行のログは、AI に渡さない
+        omitStaleLogs: true,
       });
       let reportFile = false;
       if ("runs" in logs) {
@@ -10206,7 +10208,15 @@ export class TaskService {
         ...setting,
       };
     } finally {
-      rmSync(logsDir, { recursive: true, force: true });
+      // 消せなくても、結果と費用は記録する（分析待ちを残さない）
+      try {
+        rmSync(logsDir, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(
+          `[daemon] エラーの分析に並べたセッションログを消せませんでした（${task.id}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     const latest = this.tasks.get(task.id);
     if (

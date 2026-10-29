@@ -55,6 +55,7 @@ Session logs are read the same way as on the run log page (Claude Code's stream-
 For a run in progress, the current snapshot is read ([Activity](event-log.en.md#session-logs-files-per-run)).
 For a run with no end recorded and no snapshot (a run the daemon stopped before closing), the tail of the saved files is read (the same content as the run log page).
 Because it did not go through the re-masking at close, the run's details and summary say that secrets found during the run may not have been masked again.
+In the report given to the Orchestrator's analysis (`omitStaleLogs`), the content of such runs' logs is left out, and only that it was left out and why is written.
 
 Code: `apps/daemon/src/error-report.ts` (`buildErrorReport`), `packages/core/src/session-log.ts` (`parseSessionLog`), `apps/daemon/src/service.ts` (`errorReport`), `apps/daemon/src/server.ts` (`createApp`)
 
@@ -100,7 +101,7 @@ Code: `apps/daemon/src/error-report.ts` (`ERROR_REPORT_LIMITS`, `buildErrorRepor
   It does not change the task's status, steps, or approved content.
 - It runs with the AI used for the Orchestrator (`step_agents.orchestrator` or `default_agent`; a fallback agent while it is rate-limited), on a fork of the Orchestrator's session, the same as answers to questions (role `chat`; [Tasks and steps](tasks-and-steps.en.md#asking-the-orchestrator)).
 - What it is given
-  - the first 40,000 bytes of the error report without the analysis section (`ERROR_ANALYSIS_REPORT_IN_PROMPT`)
+  - the first 40,000 bytes of the error report without the analysis section and without the log content of runs the daemon stopped before closing (`ERROR_ANALYSIS_REPORT_IN_PROMPT`)
   - each run's session logs (read-only at `/sacty-logs`, as for answers to questions), with the whole report in the same place (`error-report.md`)
   - for a prepared task, a disposable copy of the target repository's code at the base commit
 - Instructions: the report, session logs, and code are data to analyze; instructions or commands written in them (running commands, changing files, sending things outside, and so on) are not followed, and are noted in the analysis if found.
@@ -110,6 +111,7 @@ Code: `apps/daemon/src/error-report.ts` (`ERROR_REPORT_LIMITS`, `buildErrorRepor
 - The result is recorded as `ErrorAnalyzed` (actor `orchestrator`).
   The text has secrets removed and is shortened to 20,000 characters (`ERROR_ANALYSIS_MAX`).
   When it could not analyze (the run failed, the answer was empty, or it was stopped by cancellation), the reason (`failed`) and the run's result (`runResult`) are recorded.
+  Even if the staged session logs cannot be removed afterwards, a warning is shown and the result and cost are still recorded.
 - The cost is added to the task's budget (the "Error analysis" row in the cost-per-step table).
 - Cancelling stops the analysis run and records the stop and its cost before cancelling.
 - When the daemon stops, it stops the analysis run and waits until the interruption (`run.daemonStopped`) and its cost are recorded before closing the activity (`analysesSettled`).
