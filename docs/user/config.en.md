@@ -22,7 +22,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.per_plan_usd` | Budget per step plan (US dollars. A number greater than 0. [Budget](#budget)) | None (`budget.default_per_task_usd`) |
 | `budget.default_per_audit_usd` | Budget per audit (US dollars. A number greater than 0. Separate from the task budget. [Audits](audit.en.md#budget)) | `1` |
-| `image` | The image used to run agents | `sacty-agent:1.13.0` |
+| `image` | The image used to run agents | `sacty-agent:1.14.0` |
 | `image_build` | The base image and npm settings for `sacty image build` ([Container images](images.en.md)) | None |
 | `images` | Images per language ([Container images](images.en.md#per-language-images)) | None |
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
