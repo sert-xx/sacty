@@ -162,10 +162,10 @@ Code: `apps/daemon/src/instance-lock.ts` (`acquireInstanceLock`, `alreadyRunning
 On SIGINT or SIGTERM, the daemon does the following, only once.
 
 1. It stops the git processes fetching contexts for retrieving secrets, together with their process groups (`stopFetchProcessesSync`). These git processes run in their own process groups.
-2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up.
+2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up. It also waits for error analyses started from the UI to be recorded and cleaned up (after stopping starts, analyses are not accepted; [Error report](error-report.en.md#orchestrators-analysis)).
 3. It starts stopping the host MCP servers and the context's command MCP servers. It does not wait for cleanup. For the context's servers, it also removes the layer copies.
 4. It stops the running agent containers. After this, it starts no new containers (a run that was copying its workspace ends with `run.daemonStopped` without starting, even after the copy finishes).
-5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. If it has not finished after 3 seconds (`DRAIN_REPORT_MS`), it shows what has not finished yet (running tasks, intake, PR checks, scheduled task checks). After 20 seconds, it shows a warning and continues.
+5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. If it has not finished after 3 seconds (`DRAIN_REPORT_MS`), it shows what has not finished yet (running tasks, error analyses, intake, PR checks, scheduled task checks). After 20 seconds, it shows a warning and continues.
 6. It closes the gateway, waits for the host MCP servers to stop, and closes the API listener. If the host MCP servers have not stopped after 3 seconds, it also shows that it is waiting for them. Then it closes the DB, releases the lock (also removing the `daemon-owner.json` it wrote), and exits with exit code 0.
 
 On `FORCE_STOP_SIGNAL` (SIGUSR2; `sacty up` sends it when Ctrl+C is pressed again) while stopping, it exits with exit code 1 without waiting for cleanup. Runs that were being cleaned up are recovered as interrupted at the next start (step 7 of "Daemon startup order" above).

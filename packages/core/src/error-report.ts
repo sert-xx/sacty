@@ -27,7 +27,9 @@ export function failureKind(event: ActivityEvent): FailureKind | undefined {
         ? "check"
         : undefined;
     case "DeploymentChecked":
-      return event.payload.result === "unhealthy" ? "check" : undefined;
+      // 確認の実行そのものの失敗（failed・runResult）は、下の共通の判定で失敗にする
+      if (event.payload.result === "unhealthy") return "check";
+      break;
   }
   if (event.type.endsWith("Failed")) return "error";
   if (payload.failed !== undefined || payload.runResult === "failed") return "error";

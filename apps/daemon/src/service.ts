@@ -5276,6 +5276,25 @@ export class TaskService {
         },
       ]);
     }
+    // デーモンが止まって終わらなかったエラーの分析も、中断として記録する（次の分析を受け付けるため）
+    for (const task of [...this.tasks.values()]) {
+      const analysis = pendingErrorAnalysis(task);
+      if (!analysis || task.status === "cancelled") continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "ErrorAnalyzed",
+            payload: {
+              analysisId: analysis.id,
+              failed: message("run.daemonStopped"),
+              runResult: "interrupted",
+              agentId: "unknown",
+            },
+          },
+        },
+      ]);
+    }
     // デーモンが止まって途中になったデプロイの確認は、マージの後の監視の工程（PBI-116）なら、ほかの工程の実行と同じく
     // 中断として記録して一時停止する（再開すると確かめ直す）。工程の無い PBI-116 より前のタスクの監視は、確かめられなかった
     // （中断）として終える（やり直さない。PBI-89）
@@ -10052,6 +10071,7 @@ export class TaskService {
     const blocked = errorAnalysisBlocked(task);
     if (blocked) throw new InvalidOperationError(blocked);
     if (this.cancelling.has(id)) throw new InvalidOperationError(message("task.cancelled"));
+    if (this.stopping) throw new InvalidOperationError(message("errorReport.stopping"));
     const config = this.deps.config();
     if (!config.ok) throw new InvalidOperationError(message("errorReport.unavailable"));
     const analysisId = `A-${task.errorAnalyses.length + 1}`;
@@ -10147,6 +10167,14 @@ export class TaskService {
           runResult: "interrupted",
           ...cost,
         };
+      } else if (this.stopping && outcome.kind === "failed") {
+        // デーモンを止めるために止めた実行は、中断として記録する（費用は残す）
+        payload = {
+          analysisId,
+          failed: message("run.daemonStopped"),
+          runResult: "interrupted",
+          ...cost,
+        };
       } else if (outcome.kind === "failed") {
         payload = {
           analysisId,
@@ -10217,6 +10245,14 @@ export class TaskService {
   /** デーモンを止め始めた（main.ts が、実行中のコンテナを止める前に呼ぶ）。 */
   beginShutdown(): void {
     this.stopping = true;
+  }
+
+  /**
+   * 画面から始めたエラーの分析の、結果・費用の記録と後片付けの終わり（ワーカーの外で動くので、デーモンを止めるときに
+   * 作業履歴を閉じる前に待つ）。
+   */
+  analysesSettled(): Promise<void> {
+    return Promise.all([...this.analyses.values()].map((a) => a.done)).then(() => {});
   }
 
   /** 監査を進めるタスクか。 */

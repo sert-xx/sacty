@@ -54,6 +54,8 @@ export const ERROR_REPORT_LIMITS = {
   timelineHead: 20,
   /** オーケストレーターの分析（文字数）。 */
   analysisChars: 20_000,
+  /** 要約を書く実行の数（新しいものから）。 */
+  summarizedRuns: 30,
 } as const;
 
 export type ReportLocale = "ja" | "en";
@@ -127,11 +129,13 @@ const T = {
     unfinished: "終わりの記録なし",
     timeline: "## 作業履歴（sacty の処理）",
     timelineOmitted: (n: number) => `… 間の ${n} 件を省きました …`,
+    rowsOmitted: (n: number) => `（大きさの上限のため、古い ${n} 件を省きました）`,
+    summariesOmitted: (n: number) => `（大きさの上限のため、古い ${n} 件の実行の要約を省きました）`,
     footer: "## このレポートについて",
     footerLines: (l: typeof ERROR_REPORT_LIMITS) => [
       `- 詳しく書くのは、新しいエラー ${l.detailedFailures} 件まで。`,
       `- エージェントの動きは、セッションログを読み分けた要約です。全体のログは画面の実行のログ、またはデーモンの \`runs/<タスク ID>/\` にあります。`,
-      `- レポートは ${Math.round(l.totalBytes / 1000)}KB までにし、作業履歴は入りきらない間を省きます。`,
+      `- レポートは ${Math.round(l.totalBytes / 1000)}KB までにします。基本の情報・分析・エラーの詳細を先に入れ、エラーの概要・実行の一覧・作業履歴は入りきらない古いものを省きます。`,
     ],
     cut: "（レポートの大きさの上限に達したため、ここから後を省きました）",
     none: "（なし）",
@@ -191,11 +195,14 @@ const T = {
     unfinished: "no end recorded",
     timeline: "## Activity (what sacty did)",
     timelineOmitted: (n: number) => `… ${n} records in between are left out …`,
+    rowsOmitted: (n: number) => `(The oldest ${n} rows are left out because of the size limit.)`,
+    summariesOmitted: (n: number) =>
+      `(Summaries of the oldest ${n} runs are left out because of the size limit.)`,
     footer: "## About this report",
     footerLines: (l: typeof ERROR_REPORT_LIMITS) => [
       `- Only the newest ${l.detailedFailures} errors are described in detail.`,
       "- The agents' actions are summaries read from the session logs. The full logs are on the run log page, or in the daemon's `runs/<task ID>/`.",
-      `- The report is kept within ${Math.round(l.totalBytes / 1000)}KB, and the middle of the activity is left out when it does not fit.`,
+      `- The report is kept within ${Math.round(l.totalBytes / 1000)}KB. The basic information, the analysis, and the error details go in first; the oldest parts of the error summary, the runs, and the activity are left out when they do not fit.`,
     ],
     cut: "(The rest is left out because the report reached its size limit.)",
     none: "(none)",
@@ -396,20 +403,33 @@ function readTail(path: string, max: number): { text: string; partial: boolean }
   }
 }
 
-type RunLog = { events?: string; stderr?: string; partial: boolean; running: boolean };
+/** 文字列の末尾 max バイト（UTF-8）。途中から切ったら、切れた文字と最初の改行までを捨てる（途中の JSONL の行を読まない）。 */
+function tailBytes(text: string, max: number): { text: string; partial: boolean } {
+  const buf = Buffer.from(text);
+  if (buf.length <= max) return { text, partial: false };
+  const cut = buf.subarray(buf.length - max).toString("utf8");
+  return { text: cut.slice(cut.indexOf("\n") + 1), partial: true };
+}
 
-/** 実行のセッションログ（実行中なら、いまの写し）。 */
-function readRunLog(input: ErrorReportInput, run: RunInfo, max: number): RunLog | undefined {
+type RunLog = { events?: string; stderr?: string; partial: boolean };
+
+/** 実行のセッションログ（実行中なら、いまの写し）の末尾。stderr は求めたときだけ読む。 */
+function readRunLog(
+  input: ErrorReportInput,
+  run: RunInfo,
+  max: number,
+  withStderr: boolean,
+): RunLog | undefined {
   const store = input.logs;
   if (!store || !run.meta) return undefined;
   if (!run.meta.finishedAt) {
     const snapshot = store.snapshot(input.task.id, run.runId);
-    if (!snapshot) return { partial: false, running: false };
+    if (!snapshot) return { partial: false };
+    const events = tailBytes(snapshot.events, max);
     return {
-      events: clipHead(snapshot.events, max),
-      stderr: clipHead(snapshot.stderr, max),
-      partial: snapshot.events.length > max,
-      running: true,
+      events: events.text,
+      ...(withStderr ? { stderr: tailBytes(snapshot.stderr, max).text } : {}),
+      partial: events.partial,
     };
   }
   const read = (file: SessionLogFile) => {
@@ -417,13 +437,58 @@ function readRunLog(input: ErrorReportInput, run: RunInfo, max: number): RunLog 
     return path ? readTail(path, max) : undefined;
   };
   const events = read("events");
-  const stderr = read("stderr");
+  const stderr = withStderr ? read("stderr") : undefined;
   return {
     ...(events ? { events: events.text } : {}),
     ...(stderr ? { stderr: stderr.text } : {}),
     partial: events?.partial ?? false,
-    running: false,
   };
+}
+
+/**
+ * 実行のログの要約（集計と、詳しく書くときの末尾）。原文は要約したら持たない（多くの実行のログを、レポートを作り終える
+ * まで抱えないように）。
+ */
+type RunDigest = {
+  /** ログが無い（読めない）。 */
+  missing: boolean;
+  partial: boolean;
+  stats: RunStats;
+  tools: [string, number][];
+  lastMessage?: string;
+  truncated: boolean;
+  /** エージェントの最後の出来事（詳しく書く実行だけ）。 */
+  tail: string[];
+  /** 標準エラー出力の末尾（詳しく書く実行だけ）。 */
+  stderr?: string;
+};
+
+function digestRun(
+  input: ErrorReportInput,
+  run: RunInfo,
+  L: typeof ERROR_REPORT_LIMITS,
+  detailed: boolean,
+): RunDigest | undefined {
+  const log = readRunLog(input, run, L.logReadBytes, detailed);
+  if (!log) return undefined;
+  const entries = log.events ? parseSessionLog(log.events) : [];
+  const digest: RunDigest = {
+    missing: log.events === undefined && log.stderr === undefined,
+    partial: log.partial,
+    ...statsOf(entries),
+    tail: [],
+  };
+  if (!detailed) return digest;
+  const tail = entries.filter((x) => x.kind !== "thinking").slice(-L.tailEntries);
+  let room = L.tailChars;
+  for (const entry of [...tail].reverse()) {
+    const line = entryLine(entry, L.entryChars);
+    if (line.length + 1 > room) break;
+    digest.tail.unshift(line);
+    room -= line.length + 1;
+  }
+  if (log.stderr?.trim()) digest.stderr = clipHead(log.stderr, L.stderrTailChars);
+  return digest;
 }
 
 function statsOf(entries: readonly LogEntry[]): {
@@ -493,12 +558,16 @@ export function buildErrorReport(input: ErrorReportInput): string {
   const runs = collectRuns(input);
   const runIndex = new Map(runs.map((r, i) => [r.runId, i + 1]));
 
-  const sections: string[] = [];
-  const logCache = new Map<string, RunLog | undefined>();
-  const logOf = (run: RunInfo) => {
-    if (!logCache.has(run.runId)) logCache.set(run.runId, readRunLog(input, run, L.logReadBytes));
-    return logCache.get(run.runId);
+  const detailed = failures.slice(-L.detailedFailures).reverse();
+  const detailedRuns = new Set(detailed.map(runOf).filter((id) => id !== undefined));
+  const digests = new Map<string, RunDigest | undefined>();
+  const digestOf = (run: RunInfo) => {
+    if (!digests.has(run.runId)) {
+      digests.set(run.runId, digestRun(input, run, L, detailedRuns.has(run.runId)));
+    }
+    return digests.get(run.runId);
   };
+  const bytes = (lines: readonly string[]) => Buffer.byteLength(lines.join("\n")) + 2;
 
   // 基本の情報
   const sep = locale === "ja" ? "：" : ": ";
@@ -530,45 +599,30 @@ export function buildErrorReport(input: ErrorReportInput): string {
     `- ${w.updated}${sep}${task.updatedAt}`,
     `- ${w.generated}${sep}${input.generatedAt}`,
   ];
-  sections.push(meta.join("\n"));
-
-  // エラーの概要（すべてのエラーを1行ずつ）
-  const summary: string[] = [w.summary, ""];
-  if (failures.length === 0) summary.push(w.noFailures);
-  else {
-    summary.push(w.failureCount(failures.length), "");
-    summary.push(`| ${w.columns.join(" | ")} |`, `|${w.columns.map(() => " --- ").join("|")}|`);
-    failures.forEach((e, i) => {
-      const kind = failureKind(e) as FailureKind;
-      summary.push(
-        `| ${i + 1} | ${e.at} | ${w.kind[kind]} | ${e.type} | ${cell(roleOf(e))} | ${cell(clip(shortPayload(e, locale), 300))} |`,
-      );
-    });
-  }
-  sections.push(summary.join("\n"));
 
   // オーケストレーターの分析
+  const analysis: string[] = [];
   if (input.includeAnalysis !== false) {
     const latest = task.errorAnalyses.at(-1);
     const done = [...task.errorAnalyses].reverse().find((a) => a.result?.text);
-    const lines: string[] = [w.analysis, ""];
-    if (latest && !latest.result) lines.push(w.analysisPending, "");
+    analysis.push(w.analysis, "");
+    if (latest && !latest.result) analysis.push(w.analysisPending, "");
     if (latest?.result?.failed !== undefined) {
-      lines.push(w.analysisFailed(oneLine(textOf(latest.result.failed, locale))), "");
+      analysis.push(w.analysisFailed(oneLine(textOf(latest.result.failed, locale))), "");
     }
     if (done?.result?.text) {
-      lines.push(w.analysisAt(done.result.at), "", clip(done.result.text, L.analysisChars));
-    } else if (!latest) lines.push(w.noAnalysis);
-    sections.push(lines.join("\n").trimEnd());
+      analysis.push(w.analysisAt(done.result.at), "", clip(done.result.text, L.analysisChars));
+    } else if (!latest) analysis.push(w.noAnalysis);
+    while (analysis.at(-1) === "") analysis.pop();
   }
 
   // エラーの詳細（新しいものから）
+  const details: string[] = [];
   if (failures.length > 0) {
-    const lines: string[] = [w.details];
-    const detailed = failures.slice(-L.detailedFailures).reverse();
+    details.push(w.details);
     for (const e of detailed) {
       const n = failures.indexOf(e) + 1;
-      lines.push(
+      details.push(
         "",
         `### ${n}. ${w.kind[failureKind(e) as FailureKind]}${sep}${e.type} (${stepLabel(roleOf(e), locale)}, ${e.at})`,
         "",
@@ -576,22 +630,22 @@ export function buildErrorReport(input: ErrorReportInput): string {
       const position = activity.indexOf(e);
       const context = activity.slice(Math.max(0, position - L.contextEvents), position);
       if (context.length > 0) {
-        lines.push(`**${w.before}**`, "");
+        details.push(`**${w.before}**`, "");
         for (const c of context) {
-          lines.push(
+          details.push(
             `- ${c.at} ${c.actor} ${c.type} ${clip(oneLine(shortPayload(c, locale)), L.timelineLineChars)}`,
           );
         }
-        lines.push("");
+        details.push("");
       }
       const json = JSON.stringify(shrink(e.payload, L.payloadStringChars, locale), null, 2);
-      lines.push(`**${w.record}**`, "", fence(clip(json, L.payloadChars), "json"));
+      details.push(`**${w.record}**`, "", fence(clip(json, L.payloadChars), "json"));
       const runId = runOf(e);
       const run = runId ? runs.find((r) => r.runId === runId) : undefined;
       if (!run) continue;
-      lines.push("", `**${w.run} #${runIndex.get(run.runId)}** (${run.runId})`, "");
+      details.push("", `**${w.run} #${runIndex.get(run.runId)}** (${run.runId})`, "");
       if (run.meta) {
-        lines.push(
+        details.push(
           `- ${w.runMeta(
             run.meta.role,
             run.meta.agentId,
@@ -600,98 +654,123 @@ export function buildErrorReport(input: ErrorReportInput): string {
           )}`,
         );
       }
-      const log = logOf(run);
-      if (!log || (log.events === undefined && log.stderr === undefined)) {
-        lines.push(`- ${w.runLogMissing}`);
+      const digest = digestOf(run);
+      if (!digest || digest.missing) {
+        details.push(`- ${w.runLogMissing}`);
         continue;
       }
-      if (log.stderr?.trim()) {
-        lines.push("", `**${w.stderrTail}**`, "", fence(clipHead(log.stderr, L.stderrTailChars)));
-      }
-      if (log.events) {
-        const entries = parseSessionLog(log.events).filter((x) => x.kind !== "thinking");
-        const tail = entries.slice(-L.tailEntries);
-        const rendered: string[] = [];
-        let room = L.tailChars;
-        for (const entry of [...tail].reverse()) {
-          const line = entryLine(entry, L.entryChars);
-          if (line.length + 1 > room) break;
-          rendered.unshift(line);
-          room -= line.length + 1;
-        }
-        if (rendered.length > 0) {
-          lines.push("", `**${w.agentTail(rendered.length)}**`, "", ...rendered);
-        }
+      if (digest.stderr) details.push("", `**${w.stderrTail}**`, "", fence(digest.stderr));
+      if (digest.tail.length > 0) {
+        details.push("", `**${w.agentTail(digest.tail.length)}**`, "", ...digest.tail);
       }
     }
     if (failures.length > detailed.length) {
-      lines.push("", w.detailOmitted(failures.length - detailed.length));
+      details.push("", w.detailOmitted(failures.length - detailed.length));
     }
-    sections.push(lines.join("\n"));
   }
 
-  // 実行の一覧と、各実行のエージェントの動き
-  {
-    const lines: string[] = [w.runs, ""];
-    if (runs.length === 0) lines.push(w.noRuns);
-    else {
-      lines.push(
-        `| ${w.runColumns.join(" | ")} |`,
-        `|${w.runColumns.map(() => " --- ").join("|")}|`,
-      );
-      runs.forEach((run, i) => {
+  const footer = [w.footer, "", ...w.footerLines(L)];
+
+  // 大きさの上限の中で、基本の情報・分析・エラーの詳細・この節を先に取り、残りを
+  // エラーの概要（3分の1まで）→ 実行の一覧（その残りの半分まで）→ 作業履歴の順に分ける
+  let room = L.totalBytes - bytes(meta) - bytes(analysis) - bytes(details) - bytes(footer) - 400;
+
+  // エラーの概要（新しいものから、入る分だけ）
+  const summary: string[] = [w.summary, ""];
+  if (failures.length === 0) summary.push(w.noFailures);
+  else {
+    summary.push(w.failureCount(failures.length), "");
+    const head = [`| ${w.columns.join(" | ")} |`, `|${w.columns.map(() => " --- ").join("|")}|`];
+    const rows = newestThatFit(
+      failures.map((e, i) => {
+        const kind = failureKind(e) as FailureKind;
+        return `| ${i + 1} | ${e.at} | ${w.kind[kind]} | ${e.type} | ${cell(roleOf(e))} | ${cell(clip(shortPayload(e, locale), 300))} |`;
+      }),
+      Math.max(0, Math.floor(room / 3) - bytes([...summary, ...head]) - 200),
+    );
+    if (rows.omitted > 0) summary.push(w.rowsOmitted(rows.omitted), "");
+    summary.push(...head, ...rows.lines);
+  }
+  room -= bytes(summary);
+
+  // 実行の一覧と、各実行のエージェントの動き（新しいものから、入る分だけ）
+  const runLines: string[] = [w.runs, ""];
+  if (runs.length === 0) runLines.push(w.noRuns);
+  else {
+    let runRoom = Math.max(0, Math.floor(room / 2) - 200);
+    const head = [
+      `| ${w.runColumns.join(" | ")} |`,
+      `|${w.runColumns.map(() => " --- ").join("|")}|`,
+    ];
+    runRoom -= bytes(head);
+    const rows = newestThatFit(
+      runs.map((run, i) => {
         const m = run.meta;
-        lines.push(
-          `| ${i + 1} | ${run.runId.slice(0, 8)} | ${cell(m?.role ?? run.role ?? "")} | ${cell([m?.agentId, m?.model].filter(Boolean).join(" / "))} | ${m?.startedAt ?? ""} | ${durationOf(m)} | ${cell(m ? resultOf(m, w) : "")} | ${run.costUsd > 0 ? `$${run.costUsd.toFixed(4)}` : ""} |`,
-        );
-      });
-      lines.push("", w.activity);
-      runs.forEach((run, i) => {
-        const log = logOf(run);
-        if (!log?.events) return;
-        const { stats, tools, lastMessage, truncated } = statsOf(parseSessionLog(log.events));
-        lines.push(
-          "",
-          `#### ${i + 1}. ${stepLabel(run.meta?.role ?? run.role ?? "", locale)} (${run.runId.slice(0, 8)})`,
-          "",
-          `- ${w.runSummary(stats)}${log.partial ? ` ${w.partial(`${Math.round(L.logReadBytes / 1_000_000)}MB`)}` : ""}${truncated ? ` ${w.truncatedLog}` : ""}`,
-        );
-        if (tools.length > 0) {
-          lines.push(`- ${w.tools}${sep}${tools.map(([name, n]) => `${name}×${n}`).join("、")}`);
-        }
-        if (lastMessage) {
-          lines.push(`- ${w.lastMessage}${sep}${clip(oneLine(lastMessage), L.lastMessageChars)}`);
-        }
-      });
+        return `| ${i + 1} | ${run.runId.slice(0, 8)} | ${cell(m?.role ?? run.role ?? "")} | ${cell([m?.agentId, m?.model].filter(Boolean).join(" / "))} | ${m?.startedAt ?? ""} | ${durationOf(m)} | ${cell(m ? resultOf(m, w) : "")} | ${run.costUsd > 0 ? `$${run.costUsd.toFixed(4)}` : ""} |`;
+      }),
+      Math.floor(runRoom / 2),
+    );
+    if (rows.omitted > 0) runLines.push(w.rowsOmitted(rows.omitted), "");
+    runLines.push(...head, ...rows.lines);
+    runRoom -= bytes(rows.lines);
+    // エージェントの動きの要約は、新しい実行から summarizedRuns 件まで
+    const summaries: string[][] = [];
+    let skipped = 0;
+    for (let i = runs.length - 1; i >= 0; i--) {
+      const run = runs[i] as RunInfo;
+      if (summaries.length >= L.summarizedRuns) {
+        skipped++;
+        continue;
+      }
+      const digest = run.meta ? digestOf(run) : undefined;
+      if (!digest || digest.missing) continue;
+      const block = [
+        "",
+        `#### ${i + 1}. ${stepLabel(run.meta?.role ?? run.role ?? "", locale)} (${run.runId.slice(0, 8)})`,
+        "",
+        `- ${w.runSummary(digest.stats)}${digest.partial ? ` ${w.partial(`${Math.round(L.logReadBytes / 1_000_000)}MB`)}` : ""}${digest.truncated ? ` ${w.truncatedLog}` : ""}`,
+        ...(digest.tools.length > 0
+          ? [`- ${w.tools}${sep}${digest.tools.map(([name, n]) => `${name}×${n}`).join("、")}`]
+          : []),
+        ...(digest.lastMessage
+          ? [`- ${w.lastMessage}${sep}${clip(oneLine(digest.lastMessage), L.lastMessageChars)}`]
+          : []),
+      ];
+      if (bytes(block) > runRoom) {
+        skipped++;
+        continue;
+      }
+      runRoom -= bytes(block);
+      summaries.unshift(block);
     }
-    sections.push(lines.join("\n"));
+    runLines.push("", w.activity);
+    if (skipped > 0) runLines.push("", w.summariesOmitted(skipped));
+    for (const block of summaries) runLines.push(...block);
   }
+  room -= bytes(runLines);
 
-  const footer = [w.footer, "", ...w.footerLines(L)].join("\n");
-
-  // 作業履歴：残りの大きさに入る分だけ（先頭の数件と、新しいものから）
-  const used = Buffer.byteLength(`${[...sections, footer].join("\n\n")}\n\n`);
+  // 作業履歴：残りに入る分だけ（先頭の数件と、新しいものから）
   const lineOf = (e: ActivityEvent) =>
     `- ${e.seq} ${e.at} ${e.actor} ${e.type}${failureKind(e) ? " ⚠" : ""} ${clip(oneLine(shortPayload(e, locale)), L.timelineLineChars)}`.trimEnd();
   const timeline: string[] = [w.timeline, ""];
-  let room = L.totalBytes - used - Buffer.byteLength(timeline.join("\n")) - 200;
+  room -= bytes(timeline);
   const head: string[] = [];
   const tail: string[] = [];
   let i = 0;
   for (; i < Math.min(L.timelineHead, activity.length); i++) {
     const line = lineOf(activity[i] as ActivityEvent);
-    const bytes = Buffer.byteLength(line) + 1;
-    if (bytes > room) break;
+    const size = Buffer.byteLength(line) + 1;
+    if (size > room) break;
     head.push(line);
-    room -= bytes;
+    room -= size;
   }
   let j = activity.length - 1;
   for (; j >= i; j--) {
     const line = lineOf(activity[j] as ActivityEvent);
-    const bytes = Buffer.byteLength(line) + 1;
-    if (bytes > room) break;
+    const size = Buffer.byteLength(line) + 1;
+    if (size > room) break;
     tail.unshift(line);
-    room -= bytes;
+    room -= size;
   }
   const omitted = j - i + 1;
   timeline.push(
@@ -699,9 +778,27 @@ export function buildErrorReport(input: ErrorReportInput): string {
     ...(omitted > 0 ? [w.timelineOmitted(omitted)] : []),
     ...tail,
   );
-  sections.push(timeline.join("\n"), footer);
 
+  const sections = [meta, summary, analysis, details, runLines, timeline, footer]
+    .filter((lines) => lines.length > 0)
+    .map((lines) => lines.join("\n"));
   return limitBytes(`${sections.join("\n\n")}\n`, L.totalBytes, w.cut);
+}
+
+/** 行のうち、新しいもの（末尾）から max バイトに入る分（元の順のまま）と、省いた数。 */
+function newestThatFit(
+  lines: readonly string[],
+  max: number,
+): { lines: string[]; omitted: number } {
+  const kept: string[] = [];
+  let room = max;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const size = Buffer.byteLength(lines[i] as string) + 1;
+    if (size > room) break;
+    kept.unshift(lines[i] as string);
+    room -= size;
+  }
+  return { lines: kept, omitted: lines.length - kept.length };
 }
 
 /** 上限のバイト数を超えたら、行の切れ目で切り、省いたことを書く。 */

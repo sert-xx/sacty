@@ -126,6 +126,7 @@ const PARAMS = {
   "errorReport.failed": z.object({ detail: TextParam }),
   "errorReport.empty": null,
   "errorReport.cancelled": null,
+  "errorReport.stopping": null,
   // 成果の書き出し（PBI-56）
   "export.notDecided": null,
   "export.destinationUnknown": z.object({ name: z.string() }),
@@ -785,6 +786,7 @@ const ja: MessageDictionary = {
     `オーケストレーターがエラーを分析できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
   "errorReport.empty": "オーケストレーターの分析が空でした。",
   "errorReport.cancelled": "タスクを中止したため、分析をやめました。",
+  "errorReport.stopping": "デーモンを止めているため、分析できません。",
   "export.notDecided": "オーケストレーターが書き出し先を決めなかったため、書き出しません。",
   "export.destinationUnknown": ({ name }) =>
     `オーケストレーターが選んだ書き出し先「${name}」は、使える接続先（gateway.platforms・MCP サーバー）に無いため、書き出しません。`,
@@ -1442,6 +1444,7 @@ const en: MessageDictionary = {
     `The Orchestrator could not analyze the errors: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "errorReport.empty": "The Orchestrator's analysis was empty.",
   "errorReport.cancelled": "Stopped the analysis because the task was cancelled.",
+  "errorReport.stopping": "The errors can't be analyzed because the daemon is stopping.",
   "export.notDecided": "Not exported because the Orchestrator did not choose where to export.",
   "export.destinationUnknown": ({ name }) =>
     `Not exported because "${name}", chosen by the Orchestrator, is not an available connection (gateway.platforms or an MCP server).`,

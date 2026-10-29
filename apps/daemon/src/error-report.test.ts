@@ -264,3 +264,95 @@ describe("表のセル", () => {
     expect(cell("C:\\path\\|x")).toBe("C:\\\\path\\\\\\|x");
   });
 });
+
+describe("レビューの指摘（PR #254）", () => {
+  it("デプロイの確認は unhealthy を確認の不合格にし、確認の実行そのものの失敗は失敗にする", () => {
+    const checked = (payload: Record<string, unknown>) =>
+      failureKind(
+        ev({
+          type: "DeploymentChecked",
+          payload: { agentId: "o", ...payload },
+        } as EventInput),
+      );
+    expect(checked({ result: "unhealthy", runResult: "completed" })).toBe("check");
+    expect(checked({ result: "unknown", failed: "スキルを読めない", runResult: "failed" })).toBe(
+      "error",
+    );
+    expect(checked({ result: "healthy", runResult: "completed" })).toBeUndefined();
+  });
+
+  it("エラーが多くても、分析・最新のエラーの詳細・最新の概要の行は残し、古い概要の行を省く", () => {
+    const { activity } = failedTask();
+    const many = [...activity];
+    const failuresFrom = many.length;
+    for (let i = 0; i < 1000; i++) {
+      many.push(
+        ev(
+          {
+            type: "IssueCommentFailed",
+            payload: { message: `failure-${i} ${"y".repeat(300)}` },
+          },
+          "sacty",
+        ),
+      );
+    }
+    many.push(
+      ev({ type: "ErrorAnalysisRequested", payload: { analysisId: "A-1" } }, "person"),
+      ev(
+        {
+          type: "ErrorAnalyzed",
+          payload: {
+            analysisId: "A-1",
+            analysis: "### 原因の推定\nコメントの権限が無い",
+            runResult: "completed",
+            agentId: "o",
+          },
+        },
+        "orchestrator",
+      ),
+    );
+    // レポートは作業履歴の記録を読むだけなので、投影できない記録（取り込み元の無いタスクのコメントの失敗）も並べられる
+    const task = project([...many.slice(0, failuresFrom), ...many.slice(failuresFrom + 1000)]).get(
+      "t1",
+    ) as Task;
+    const report = buildErrorReport({ task, activity: many, generatedAt: "now", locale: "ja" });
+    expect(Buffer.byteLength(report)).toBeLessThanOrEqual(256_000);
+    expect(report).not.toContain("（レポートの大きさの上限に達したため");
+    expect(report).toContain("コメントの権限が無い");
+    expect(report).toContain("### 1002. 失敗：IssueCommentFailed");
+    expect(report).toMatch(/\| 1002 \| .*message=failure-999 /);
+    expect(report).toMatch(/大きさの上限のため、古い \d+ 件を省きました/);
+  });
+
+  it("実行中のログの写しも、UTF-8 のバイト数で末尾を切り、途中の行を読まない", () => {
+    const { task, activity } = failedTask();
+    const log = store.open(
+      {
+        taskId: "t1",
+        runId: "run-1",
+        role: "requirements",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "api-key",
+      },
+      () => [],
+    );
+    // 日本語の1行は約 3,000 バイト（1,000 文字）
+    log.stdout(
+      `${Array.from({ length: 10 }, (_, i) => say(`行${i}${"あ".repeat(1000)}`)).join("\n")}\n`,
+    );
+    const report = buildErrorReport({
+      task,
+      activity,
+      logs: store,
+      generatedAt: "now",
+      locale: "ja",
+      limits: { logReadBytes: 7_000 },
+    });
+    // 末尾の 7,000 バイトに入るのは、最後の2行だけ（途中の行は捨てる）
+    expect(report).toContain("メッセージ 2・");
+    expect(report).toContain("（ログが大きいので、末尾");
+    expect(report).not.toContain("raw ");
+    log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
+  });
+});
