@@ -36,6 +36,21 @@ export function failureKind(event: ActivityEvent): FailureKind | undefined {
   return undefined;
 }
 
+/**
+ * エラーの分析の実行を表す役割の名前。分析は質問と同じ仕組み（オーケストレーターのセッションの複製）で、セッションログの
+ * 役割は chat として記録するので、作業履歴の ErrorAnalyzed から読み替えて表示する。
+ */
+export const ERROR_ANALYSIS_ROLE = "error-analysis";
+
+/** 作業履歴で、エラーの分析の実行だった実行の ID。 */
+export function errorAnalysisRunIds(activity: readonly ActivityEvent[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of activity) {
+    if (event.type === "ErrorAnalyzed" && event.payload.runId) ids.add(event.payload.runId);
+  }
+  return ids;
+}
+
 /** 作業履歴に、エラーレポートでエラーとして扱う記録があるか（画面がレポートの欄を出すか決める）。 */
 export function hasFailures(activity: readonly ActivityEvent[]): boolean {
   return activity.some((e) => failureKind(e) !== undefined);

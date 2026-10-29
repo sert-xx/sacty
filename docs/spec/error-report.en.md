@@ -100,6 +100,7 @@ Code: `apps/daemon/src/error-report.ts` (`ERROR_REPORT_LIMITS`, `buildErrorRepor
 - It can be requested while the task is in progress.
   It does not change the task's status, steps, or approved content.
 - It runs with the AI used for the Orchestrator (`step_agents.orchestrator` or `default_agent`; a fallback agent while it is rate-limited), on a fork of the Orchestrator's session, the same as answers to questions (role `chat`; [Tasks and steps](tasks-and-steps.en.md#asking-the-orchestrator)).
+  Because the session log keeps the role `chat`, a run with `ErrorAnalyzed` in the activity is shown as an error analysis (`error-analysis`; `ERROR_ANALYSIS_ROLE`) in the error report's runs, in the log list given to questions and analyses, and on the run log page (it is not counted as a question).
 - What it is given
   - the first 40,000 bytes of the error report without the analysis section and without the log content of runs the daemon stopped before closing (`ERROR_ANALYSIS_REPORT_IN_PROMPT`)
   - each run's session logs (read-only at `/sacty-logs`, as for answers to questions), with the whole report in the same place (`error-report.md`)

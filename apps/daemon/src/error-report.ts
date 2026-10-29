@@ -2,6 +2,8 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } fr
 import { join } from "node:path";
 import {
   type ActivityEvent,
+  ERROR_ANALYSIS_ROLE,
+  errorAnalysisRunIds,
   type FailureKind,
   failureKind,
   isChargedEvent,
@@ -333,7 +335,8 @@ function roleOf(event: ActivityEvent): string {
 }
 
 function stepLabel(step: string, locale: ReportLocale): string {
-  const name = (STEP_NAME as Record<string, string>)[step];
+  const name =
+    step === ERROR_ANALYSIS_ROLE ? "エラーの分析" : (STEP_NAME as Record<string, string>)[step];
   return locale === "ja" && name ? `${name}（${step}）` : step;
 }
 
@@ -376,6 +379,7 @@ function collectRuns(input: ErrorReportInput): RunInfo[] {
     if (isChargedEvent(event)) run.costUsd += event.payload.costUsd;
   }
   const dir = input.logs?.taskDir(input.task.id);
+  const analyses = errorAnalysisRunIds(input.activity);
   if (dir) {
     let names: string[] = [];
     try {
@@ -388,6 +392,13 @@ function collectRuns(input: ErrorReportInput): RunInfo[] {
       if (!runId || !validLogId(runId)) continue;
       const meta = readMeta(join(dir, name));
       if (meta) get(runId).meta = meta;
+    }
+  }
+  // エラーの分析の実行は、セッションログでは chat（質問と同じ仕組み）なので、作業履歴から読み替える
+  for (const run of runs.values()) {
+    if (analyses.has(run.runId)) {
+      run.role = ERROR_ANALYSIS_ROLE;
+      if (run.meta) run.meta = { ...run.meta, role: ERROR_ANALYSIS_ROLE };
     }
   }
   return [...runs.values()].sort((a, b) => {

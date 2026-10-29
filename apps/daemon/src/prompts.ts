@@ -3563,6 +3563,7 @@ const RUN_ROLE_NAME: Record<string, string> = {
   "final-review": "最終レビュー",
   rework: "差し戻し先の判断（ゴールガーディアン）",
   chat: "質問への答え（オーケストレーター）",
+  "error-analysis": "エラーの分析（オーケストレーター）",
   export: "成果の書き出し",
   audit: "大まかな監査",
   "audit-dive": "監査の深掘り",

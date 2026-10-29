@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ActivityEvent, ArchivedAgentFile } from "@sacty/core";
+import { type ActivityEvent, type ArchivedAgentFile, ERROR_ANALYSIS_ROLE } from "@sacty/core";
 import { AGENT_FILES_DIR, archivedFilePath } from "./agent-sessions.js";
 import {
   type SessionLogFile,
@@ -167,6 +167,10 @@ export function stageQuestionLogs(input: {
     if (event.type === "ExportStarted" || event.type === "OutputExported") {
       roles.set(event.payload.runId, "export");
     }
+    // エラーの分析は、セッションログでは chat（質問と同じ仕組み）なので、作業履歴から読み替える
+    if (event.type === "ErrorAnalyzed" && event.payload.runId) {
+      roles.set(event.payload.runId, ERROR_ANALYSIS_ROLE);
+    }
   }
 
   const metas = new Map<string, SessionLogMeta | undefined>();
@@ -213,7 +217,7 @@ export function stageQuestionLogs(input: {
     const run: QuestionLogRun = {
       runId,
       status: meta.finishedAt ? "available" : "unfinished",
-      role: meta.role,
+      role: roles.get(runId) === ERROR_ANALYSIS_ROLE ? ERROR_ANALYSIS_ROLE : meta.role,
       agentId: meta.agentId,
       runtime: meta.runtime,
       ...(meta.model ? { model: meta.model } : {}),

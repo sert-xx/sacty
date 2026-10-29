@@ -69,7 +69,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - Tabs (the view tabs and the deliverable steps) can be moved with the left and right arrow keys, Home, and End (only the selected tab is in the focus order).
   - Deliverables on the Overview tab are shown one step at a time (`Deliverables`). At first, the running step, the step awaiting approval, or the last finished step is chosen, in that order (`currentStep`).
     Because they are shown one at a time, approved cards are not collapsed (`ExpandCards`). An after-merge watch that has not started cannot be chosen (an old task with a watch record but no step can be chosen).
-  - The right column shows the properties (current step, PR, cost, project, repository, branch, tests, ticket, related tasks, created and last updated) and the recent Activity (5 entries).
+  - The right column shows, in this order, the properties (current step, PR, cost, project, repository, branch, tests, ticket, related tasks, created and last updated), the error report (only for tasks with error records; [Error report](error-report.en.md#ui)), and the recent Activity (5 entries).
   - The change proposals and verdicts section appears only when there are proposals.
 - The ID in the URL decides the project of a project screen. An ID that is not in the daemon's project list is 404.
 - "All tasks" in the task list can be filtered on the screen (`TaskFilterBar`, `matchesFilter`). The filters are not shown when there are no tasks.

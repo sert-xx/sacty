@@ -351,4 +351,21 @@ describe("質問への答えに読ませるセッションログ（PBI-91）", (
     ).toEqual([]);
     expect(tree(other)).toEqual([QUESTION_LOG_INDEX]);
   });
+
+  it("エラーの分析の実行は、セッションログの役割（chat）でなく、エラーの分析として一覧に出し、質問の回数に数えない", () => {
+    run("t1", "r-q1", "chat");
+    run("t1", "r-a1", "chat");
+    const logs = stageQuestionLogs({
+      store,
+      taskId: "t1",
+      activity: [
+        ev("t1", "QuestionAnswered", { runId: "r-q1", questionId: "Q-1" }),
+        ev("t1", "ErrorAnalyzed", { runId: "r-a1", analysisId: "A-1" }),
+      ],
+      dest,
+    });
+    const byId = Object.fromEntries(logs.runs.map((r) => [r.runId, r]));
+    expect(byId["r-q1"]).toMatchObject({ role: "chat", attempt: 1 });
+    expect(byId["r-a1"]).toMatchObject({ role: "error-analysis", attempt: 1 });
+  });
 });

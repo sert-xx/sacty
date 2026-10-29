@@ -123,6 +123,7 @@ The task details look like this.
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
 - "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the tests (the test command), the ticket, where the task started from (with the template's name for a task created from a template), related tasks (the parent, the task it reruns, the task it follows up, the task it fixes, and the report), the task it was rerun as, and when the task was created and last updated. The PR, the branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
+  For a task with error records, "Error report" appears below it ([Getting an error report](troubleshooting.en.md#getting-an-error-report)).
   Below it, the recent Activity (5 entries) is shown.
 
 ## Information gathering at the start of a task

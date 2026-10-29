@@ -431,3 +431,50 @@ describe("レビューの指摘（PR #254 の3回目のレビュー）", () => {
     log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
   });
 });
+
+describe("セルフレビュー：エラーの分析の実行の役割", () => {
+  it("分析の実行は、セッションログの役割（chat）でなく、エラーの分析として一覧と要約に出す", () => {
+    const { activity } = failedTask();
+    const all = [
+      ...activity,
+      ev({ type: "ErrorAnalysisRequested", payload: { analysisId: "A-1" } }, "person"),
+      ev(
+        {
+          type: "ErrorAnalyzed",
+          payload: {
+            analysisId: "A-1",
+            analysis: "分析",
+            runResult: "completed",
+            agentId: "o",
+            runId: "run-a1",
+          },
+        },
+        "orchestrator",
+      ),
+    ];
+    const log = store.open(
+      {
+        taskId: "t1",
+        runId: "run-a1",
+        role: "chat",
+        agentId: "o",
+        runtime: "claude-code",
+        authMode: "api-key",
+      },
+      () => [],
+    );
+    log.stdout(`${say("原因を調べます")}\n`);
+    log.close({ kind: "completed", output: "" } as Parameters<typeof log.close>[0]);
+    const task = project(all).get("t1") as Task;
+    const report = buildErrorReport({
+      task,
+      activity: all,
+      logs: store,
+      generatedAt: "now",
+      locale: "ja",
+    });
+    expect(report).toMatch(/\| run-a1 \| error-analysis \|/);
+    expect(report).toMatch(/#### \d+\. エラーの分析（error-analysis） \(run-a1\)/);
+    expect(report).not.toMatch(/\| run-a1 \| chat \|/);
+  });
+});
