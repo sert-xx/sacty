@@ -23,6 +23,11 @@ const ja = {
       "リポジトリを点検し、区分ごとの指摘のレポートを作ります。題と内容は Sacty が決めます。",
     templateSecurityCheckHint:
       "点検する区分：依存の脆弱性・サプライチェーン・コードの脆弱性・秘密情報の混入・設定。コードは変えません。承認したレポートの区分ごとに、対応のタスクを作れます。",
+    templateDocsSetup: "ドキュメント構築",
+    templateDocsSetupNote:
+      "実装からドキュメントと、それを参照・修正するスキルを作る PR を作ります。題と内容は Sacty が決めます。",
+    templateDocsSetupHint:
+      "既存のドキュメントは棚卸しして活かし、書き直しません。最初の PR は入口・全体の構成・スキルに絞り、確かめてほしいことを質問の形で PR の説明に挙げます。",
     plan: "進め方",
     planAuto: "自動",
     planAutoNote: "タスクの内容からオーケストレーターが選択",
@@ -104,6 +109,11 @@ const en: FormsMessages = {
       "Checks the repository and writes a report of findings by category. Sacty writes the title and description.",
     templateSecurityCheckHint:
       "Categories: dependency vulnerabilities, supply chain, code vulnerabilities, leaked secrets, and configuration. It does not change the code. From an approved report, you can create a fix task for each category.",
+    templateDocsSetup: "Docs setup",
+    templateDocsSetupNote:
+      "Opens a PR with docs written from the code and skills to look them up and update them. Sacty writes the title and description.",
+    templateDocsSetupHint:
+      "It takes stock of the existing docs and builds on them without rewriting. The first PR covers the index, the overall structure, and the skills, and lists what to confirm as questions in the PR description.",
     plan: "Plan",
     planAuto: "Automatic",
     planAutoNote: "The Orchestrator chooses from the task",
