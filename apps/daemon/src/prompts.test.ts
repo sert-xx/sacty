@@ -1,6 +1,7 @@
 import {
   type ActivityEvent,
   EventInput,
+  guardianTestsPassed,
   project,
   renderMessage,
   STEP_PLANS,
@@ -3114,6 +3115,99 @@ describe("申告されたテストの結果の抜粋（PR #188 レビュー提�
     );
     expect(check?.output).toHaveLength(7999);
     expect(lone(check?.output ?? "")).toBe(false);
+  });
+});
+
+describe("差分が文書だけのとき、ツールが無くて実行できなかった検証を人の確認へ回す（PBI-158）", () => {
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const COMMAND = "go test ./... && golangci-lint run";
+  const reported = (extra: Record<string, unknown> = {}) =>
+    block({
+      "sacty-final-review": {
+        viewpoints: [{ id: "REQ", verified: true, reason: "満たす" }],
+        remarks: [],
+        tests: {
+          command: COMMAND,
+          exitCode: 127,
+          output: "go: command not found",
+          missingCommands: ["go", "golangci-lint", "pnpm"],
+          ...extra,
+        },
+        humanChecks: ["読みやすさを目視で確かめる"],
+        summary: "ok",
+      },
+    });
+
+  it("文書だけの差分なら、止めず（missingCommands は空）、テストは通ったものとして、実行できなかった検証を humanChecks に足す", () => {
+    const review = extractFinalReview(reported(), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(review.missingCommands).toEqual([]);
+    expect(review.passed).toBe(true);
+    // コマンドに語として書いてあるものだけ（pnpm は書いていない）を記録する
+    expect(review.tests?.missingCommands).toEqual(["go", "golangci-lint"]);
+    expect(review.tests?.exitCode).toBe(127);
+    // ゴールガーディアンの項目は残し、足した項目は何を・どこで実行するかを書く
+    expect(review.humanChecks).toHaveLength(2);
+    expect(review.humanChecks?.[0]).toBe("読みやすさを目視で確かめる");
+    expect(review.humanChecks?.[1]).toContain(
+      "go・golangci-lint がテストを実行したイメージに入っていない",
+    );
+    expect(review.humanChecks?.[1]).toContain("go・golangci-lint のある環境で");
+    expect(review.humanChecks?.[1]).toContain(`\`${COMMAND}\``);
+    expect(guardianTestsPassed(review.tests as NonNullable<typeof review.tests>)).toBe(true);
+  });
+
+  it("文書だけでない差分（documentsOnly が無い）なら、今までどおり missingCommands を返して止め、記録しない", () => {
+    const review = extractFinalReview(reported(), ["REQ"], [], { testCommand: COMMAND });
+    expect(review.missingCommands).toEqual(["go", "golangci-lint"]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+    // 終了コード 127 は通ったものではない
+    expect(review.passed).toBe(false);
+  });
+
+  it("文書だけの差分でも、ツールが無いという申告が無い（実際の失敗）なら通さない", () => {
+    const review = extractFinalReview(reported({ missingCommands: [], exitCode: 1 }), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(review.missingCommands).toEqual([]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.passed).toBe(false);
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+  });
+
+  it("文書だけの差分でも、観点を検証していなければ不合格のまま（ツールが無いことで合格にしない）", () => {
+    const review = extractFinalReview(
+      reported().replace('"verified":true', '"verified":false'),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(review.passed).toBe(false);
+    expect(review.tests?.missingCommands).toEqual(["go", "golangci-lint"]);
+  });
+
+  it("コマンドが長くても改行・バッククォートを含んでも、項目を1行にする", () => {
+    const long = `go test ./...\n&& echo \`x\` ${"y".repeat(500)}`;
+    const review = extractFinalReview(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          tests: { command: long, exitCode: 127, output: "", missingCommands: ["go"] },
+          summary: "ok",
+        },
+      }),
+      [],
+      [],
+      { testCommand: long, documentsOnly: true },
+    );
+    const item = review.humanChecks?.[0] ?? "";
+    expect(item).not.toContain("\n");
+    expect(item.length).toBeLessThan(700);
   });
 });
 

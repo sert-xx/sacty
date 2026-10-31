@@ -106,4 +106,32 @@ describe("テストが決まらずに止まったタスクの再開", () => {
     expect(html).toContain(messagesFor("ja").parts.resume.resume);
     expect(html).not.toContain(t.legend);
   });
+
+  it("テストのコマンドのツールがイメージに無くて止まったタスクは、テストの扱いを出す（工程の選択からやり直す案内は出さない。PBI-158）", () => {
+    const missing = event(3, "t1", {
+      type: "TaskPaused",
+      payload: {
+        reason: "error",
+        message: {
+          code: "verify.commandMissing",
+          params: { commands: ["go"], image: "default", step: "implement" },
+        },
+      },
+    });
+    const task = project([
+      created(1, "t1"),
+      chosen(2, "t1", ["investigate", "implement"], "go test ./..."),
+      missing,
+    ]).get("t1") as Task;
+    for (const language of ["ja", "en"] as const) {
+      locale = language;
+      const t = messagesFor(language).parts.resume.tests;
+      const html = render(task);
+      expect(html).toContain(t.legend);
+      expect(html).toContain('name="tests" value="command"');
+      expect(html).toContain('name="tests" value="none"');
+      expect(html).not.toContain(t.keepRechooseHint);
+      expect(html).not.toContain(t.noneBugfix);
+    }
+  });
 });

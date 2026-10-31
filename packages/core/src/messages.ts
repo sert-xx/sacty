@@ -709,7 +709,7 @@ const ja: MessageDictionary = {
   "override.notAllowed":
     "実装の検証が続けて通らずに止まったタスクではないため、レビューへ進められません。",
   "resume.testsNotUndecided":
-    "このタスクは、テストのコマンドが決まらずに止まったタスクではありません。テストの扱いを指定せずに再開してください。",
+    "このタスクは、テストのコマンドが決まらずに止まった・テストのコマンドのツールがイメージに無くて止まったタスクではありません。テストの扱いを指定せずに再開してください。",
   "resume.bugfixNeedsTestCommand":
     "不具合の修正（再現の工程がある）は、テストなしでは進められません。テストのコマンドを指定してください。",
   "operation.incomplete":
@@ -1126,9 +1126,14 @@ const ja: MessageDictionary = {
   "verify.commandMissing": ({ commands: names, image, step }) => {
     const label = step === "reproduce" ? "再現" : "実装";
     const commands = names.join("・");
-    return image === "default"
-      ? `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（既定のイメージ）に入っていません。既定のイメージは最低限のものです。config.yaml の images に、${commands} を入れたイメージ（packages に OS のパッケージを、無ければ run に導入のコマンドを書き、description にもそのツールを書く）を足し、npx sacty image build <名前> で作ってから、タスクの詳細の「工程のイメージ」で${label}の工程をそのイメージに変えて、再開してください（再開すると、テストを実行し直します）。`
-      : `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（${image}）に入っていません。config.yaml の images.${image} の packages（OS のパッケージ）か run（導入のコマンド）で入れ、npx sacty image build ${image} で作り直してから、再開してください（再開すると、テストを実行し直します）。入っているイメージがほかにあれば、タスクの詳細の「工程のイメージ」で${label}の工程のイメージを変えてから再開してもかまいません。`;
+    const guide =
+      image === "default"
+        ? `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（既定のイメージ）に入っていません。既定のイメージは最低限のものです。config.yaml の images に、${commands} を入れたイメージ（packages に OS のパッケージを、無ければ run に導入のコマンドを書き、description にもそのツールを書く）を足し、npx sacty image build <名前> で作ってから、タスクの詳細の「工程のイメージ」で${label}の工程をそのイメージに変えて、再開してください（再開すると、テストを実行し直します）。`
+        : `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（${image}）に入っていません。config.yaml の images.${image} の packages（OS のパッケージ）か run（導入のコマンド）で入れ、npx sacty image build ${image} で作り直してから、再開してください（再開すると、テストを実行し直します）。入っているイメージがほかにあれば、タスクの詳細の「工程のイメージ」で${label}の工程のイメージを変えてから再開してもかまいません。`;
+    // 変更が文書だけなど、このイメージで検証しなくてよいなら、再開のときにテストの扱いを決め直せる（PBI-158）
+    return step === "implement"
+      ? `${guide}検証をこのイメージで実行しなくてよいときは、再開のときの「テストの扱い」で、テストのコマンドを指定し直すか、テストなしで進めると決めることもできます。`
+      : guide;
   },
   "verify.diffUnavailable": ({ detail }, text) =>
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
@@ -1366,7 +1371,7 @@ const en: MessageDictionary = {
   "override.notAllowed":
     "The task did not stop because verification of the implementation kept failing, so it cannot be moved to review.",
   "resume.testsNotUndecided":
-    "This task did not stop because its test command was undetermined. Resume without specifying how to handle tests.",
+    "This task did not stop because its test command was undetermined or because a tool of its test command is missing from the image. Resume without specifying how to handle tests.",
   "resume.bugfixNeedsTestCommand":
     "A bug fix (with a reproduce step) cannot proceed without tests. Specify the test command.",
   "operation.incomplete":
@@ -1786,9 +1791,14 @@ const en: MessageDictionary = {
   "verify.commandMissing": ({ commands: names, image, step }) => {
     const label = step === "reproduce" ? "reproduction" : "implementation";
     const commands = names.join(", ");
-    return image === "default"
-      ? `The test (verification) command uses ${commands}, which is not in the image that runs the tests (the default image). The default image is minimal. Add an image with ${commands} to images in config.yaml (list OS packages in packages, or the install commands in run, and name the tool in description), build it with npx sacty image build <name>, change the image of the ${label} step to it under "Step images" in the task details, and resume (resuming runs the tests again).`
-      : `The test (verification) command uses ${commands}, which is not in the image that runs the tests (${image}). Install it with packages (OS packages) or run (install commands) of images.${image} in config.yaml, rebuild with npx sacty image build ${image}, and resume (resuming runs the tests again). If another image has it, you can instead change the image of the ${label} step under "Step images" in the task details and resume.`;
+    const guide =
+      image === "default"
+        ? `The test (verification) command uses ${commands}, which is not in the image that runs the tests (the default image). The default image is minimal. Add an image with ${commands} to images in config.yaml (list OS packages in packages, or the install commands in run, and name the tool in description), build it with npx sacty image build <name>, change the image of the ${label} step to it under "Step images" in the task details, and resume (resuming runs the tests again).`
+        : `The test (verification) command uses ${commands}, which is not in the image that runs the tests (${image}). Install it with packages (OS packages) or run (install commands) of images.${image} in config.yaml, rebuild with npx sacty image build ${image}, and resume (resuming runs the tests again). If another image has it, you can instead change the image of the ${label} step under "Step images" in the task details and resume.`;
+    // If the image need not verify the change (for example, documents only), the test handling can be decided again on resume (PBI-158)
+    return step === "implement"
+      ? `${guide} If this image does not need to run the verification, you can instead choose "Tests" when resuming and specify a different test command or proceed without tests.`
+      : guide;
   },
   "verify.diffUnavailable": ({ detail }, text) =>
     `Could not get the diff, so the final review was not done: ${text(detail)}`,

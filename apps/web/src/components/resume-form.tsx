@@ -53,10 +53,12 @@ export function ResumeForm({
    */
   repoOptional?: boolean;
   /**
-   * テストのコマンドが決まらずに止まったタスク。再開のときに、テストのコマンドを指定するか、テストなしで進めるかを選べる。
+   * テストのコマンドが決まらずに止まったタスクと、テストのコマンドのツールがイメージに無くて止まったタスク。再開のときに、
+   * テストのコマンドを指定するか、テストなしで進めるかを選べる。
    * bugfix：不具合の修正（テストなしにできない）。rechoose：決めずに再開すると、工程の選択からやり直す。
+   * current：いまのテストのコマンド（ツールがイメージに無くて止まったタスク。指定し直すときの初期値）。
    */
-  tests?: { bugfix: boolean; rechoose: boolean };
+  tests?: { bugfix: boolean; rechoose: boolean; current?: string };
   /** 実装の検証が続けて通らずに止まったタスク。人の判断で、レビュー（実装の承認）へ進められる。 */
   toReview?: boolean;
   /** 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。 */
@@ -155,7 +157,7 @@ export function ResumeForm({
                   name="testCommand"
                   required
                   maxLength={1000}
-                  defaultValue={state.testCommand ?? ""}
+                  defaultValue={state.testCommand ?? tests.current ?? ""}
                   placeholder="npm ci && npm test"
                   className="bg-card font-mono"
                 />

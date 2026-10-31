@@ -21,6 +21,7 @@ import {
   resumeNoteRoom,
   type StepKey,
   type Task,
+  testToolsMissing,
 } from "@sacty/core";
 import { cn } from "cn";
 import { Check } from "lucide-react";
@@ -286,6 +287,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 tests: {
                   bugfix: task.steps.some((s) => s.key === "reproduce"),
                   rechoose: canRechooseSteps(task),
+                  // ツールがイメージに無くて止まったタスクは、いまのテストのコマンドを直せるよう、入力欄に初期値として出す
+                  ...(testToolsMissing(task) && task.testCommand
+                    ? { current: task.testCommand }
+                    : {}),
                 },
               }
             : {})}

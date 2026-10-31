@@ -43,6 +43,7 @@ import {
   skippableSteps,
   stepRunning,
   type Task,
+  testToolsMissing,
 } from "./projection.js";
 
 let seq = 0;
@@ -1599,6 +1600,122 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
     expect(canDecideTests(task)).toBe(true);
     expect(canRechooseSteps(task)).toBe(false);
     expect(() => project([...events, resumed("t1", true)])).toThrow(/cannot be chosen again/);
+  });
+});
+
+describe("テストのコマンドのツールがイメージに無くて止まったタスクの再開（人がテストを決め直す。PBI-158）", () => {
+  const missingStop = {
+    code: "verify.commandMissing",
+    params: { commands: ["go"], image: "default", step: "implement" },
+  };
+  const stopped = (
+    taskId: string,
+    options: { testCommand?: string; noTestsReason?: string; message?: unknown } = {},
+  ) => [
+    created(taskId),
+    ev(taskId, {
+      type: "StepsChosen",
+      payload: {
+        steps: [...STEP_PLANS.direct],
+        plan: "direct",
+        reason: "小さい",
+        ...("testCommand" in options
+          ? options.testCommand
+            ? { testCommand: options.testCommand }
+            : {}
+          : { testCommand: "go test ./..." }),
+        ...(options.noTestsReason ? { noTestsReason: options.noTestsReason } : {}),
+      },
+    } as EventInput),
+    ev(taskId, {
+      type: "TaskPaused",
+      payload: { reason: "error", message: options.message ?? missingStop },
+    } as EventInput),
+  ];
+  const decide = (taskId: string, payload: { testCommand?: string; noTestsReason?: string }) =>
+    ev(taskId, { type: "TestsDecided", payload }, "person");
+  const resume = (taskId: string) =>
+    ev(taskId, { type: "TaskResumed", payload: { retry: true } }, "person");
+
+  it("ツールが無くて止まったタスクは、テストの扱いを決められる（工程の選択からのやり直しはできない）", () => {
+    seq = 0;
+    const task = project(stopped("t1")).get("t1") as Task;
+    expect(testToolsMissing(task)).toBe(true);
+    expect(canDecideTests(task)).toBe(true);
+    expect(canRechooseSteps(task)).toBe(false);
+  });
+
+  it("テストのコマンドを指定し直すと、そのコマンドにし、人が決めたことがわかる", () => {
+    seq = 0;
+    const task = project([
+      ...stopped("t1"),
+      decide("t1", { testCommand: "npm run lint" }),
+      resume("t1"),
+    ]).get("t1");
+    expect(task?.testCommand).toBe("npm run lint");
+    expect(task?.noTestsReason).toBeUndefined();
+    expect(task?.testsDecidedBy).toBe("person");
+    expect(task?.status).toBe("queued");
+  });
+
+  it("テストなしで進めると決めたら、止まる前のテストのコマンドを残さない（残すと同じコマンドをまた実行して止まる）", () => {
+    seq = 0;
+    const task = project([
+      ...stopped("t1"),
+      decide("t1", { noTestsReason: "変更は Markdown だけ" }),
+      resume("t1"),
+    ]).get("t1");
+    expect(task?.noTestsReason).toBe("変更は Markdown だけ");
+    expect(task?.testCommand).toBeUndefined();
+    expect(task?.testsDecidedBy).toBe("person");
+  });
+
+  it("ほかの理由で止まったタスク・テストのコマンドが決まっていないタスク・止まっていないタスクでは、今までどおり決められない", () => {
+    seq = 0;
+    const other = project(
+      stopped("t1", { message: { code: "verify.testsUnavailable", params: { detail: "x" } } }),
+    ).get("t1") as Task;
+    expect(testToolsMissing(other)).toBe(false);
+    expect(canDecideTests(other)).toBe(false);
+    expect(() =>
+      project([
+        ...stopped("t2", { message: { code: "verify.testsUnavailable", params: { detail: "x" } } }),
+        decide("t2", { testCommand: "x" }),
+      ]),
+    ).toThrow(/not undecided/);
+    // 文章だけの古い止め方（コードの無い文）は当てない
+    expect(
+      testToolsMissing(project(stopped("t3", { message: "ツールが無い" })).get("t3") as Task),
+    ).toBe(false);
+    // テストの仕組みが無いタスク（実装が申告したコマンドで検証する）は、今までどおり決め直せない
+    const noTests = project(stopped("t4", { testCommand: "", noTestsReason: "テストは無い" })).get(
+      "t4",
+    ) as Task;
+    expect(testToolsMissing(noTests)).toBe(false);
+    // 止まっていない（再開後の）タスクは決められない
+    const resumed = project([...stopped("t5"), resume("t5")]).get("t5") as Task;
+    expect(testToolsMissing(resumed)).toBe(false);
+    expect(() =>
+      project([...stopped("t6"), resume("t6"), decide("t6", { testCommand: "x" })]),
+    ).toThrow(/not undecided/);
+  });
+
+  it("不具合の修正は、ツールが無くて止まっても、テストなしにできない", () => {
+    seq = 0;
+    const events = [
+      created("t1"),
+      ev("t1", {
+        type: "StepsChosen",
+        payload: { steps: [...STEP_PLANS.bugfix], testCommand: "go test ./..." },
+      }),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error", message: missingStop } }),
+    ] as ActivityEvent[];
+    expect(() => project([...events, decide("t1", { noTestsReason: "なし" })])).toThrow(
+      /needs a test command/,
+    );
+    expect(
+      project([...events, decide("t1", { testCommand: "make check" })]).get("t1")?.testCommand,
+    ).toBe("make check");
   });
 });
 

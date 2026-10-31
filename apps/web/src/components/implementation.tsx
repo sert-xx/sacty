@@ -241,6 +241,13 @@ export function Implementation({ task }: { task: Task }) {
                 <Hint text={m.environmentOnlyHint} />{" "}
               </>
             )}
+            {/* 差分が文書だけで、ツールがイメージに無くて実行できなかった検証を、人の確認に回した（PBI-158） */}
+            {tests.missingCommands && (
+              <>
+                <Pill tone={NG}>{m.toolsMissing(tests.missingCommands.join("・"))}</Pill>
+                <Hint text={m.toolsMissingHint} />{" "}
+              </>
+            )}
             <span className="text-xs text-muted-foreground">
               {m.runMeta(
                 tests.exitCode,

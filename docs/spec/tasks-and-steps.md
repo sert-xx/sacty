@@ -885,6 +885,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
+    ただし、差分が文書のファイルだけで、ツールが無くて実行できなかった検証を人の確認に回したとき（`tests.missingCommands` がある。下のツールがイメージに無いときの項）は、終了コードにかかわらず通ったものとする。
   - 実装がテストを対応させていない観点は、ゴールガーディアンの判定にかかわらず不合格にし、理由を `review.viewpointUnmapped` にする（指示にも、その観点を不合格にするよう書く）。
     テストの仕組みが無いタスクには当てない。
   - 実装は、実行される振る舞いの無い変更（文書・コメント・文言など）だけの観点を、テストを書かずに差分で確かめると申告できる（テストの対応で `tests` を空にし、`untested` に理由を書く。`TestMapping`）。
@@ -907,18 +908,29 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
   やり直しの指示には、最終レビューの所見・ゴールガーディアンが実行したテスト（コマンド・終了コード・結果の抜粋）・検証できなかった観点を渡す（`feedbackLines`）。
-  環境によると判断した失敗は、実装で直す対象ではないと添えて渡す。
+  環境によると判断した失敗と、差分が文書だけでツールが無くて実行できなかった検証は、実装で直す対象ではないと添えて渡す。
   続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
   人の判断で、不合格のままレビューへ進めることもできる（下の「人がレビューへ進める」）。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
-  ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、判定を記録せずに、使った分の費用を `FinalReviewFailed` に記録して一時停止する（`verify.commandMissing`）。
-  このとき、ツールの名前・イメージの名前・工程（実装）を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直すか、ほかのイメージに変えるよう案内する。
-  既定のイメージなら、`images` にイメージを足すよう案内する。
-  再開すると、実装をやり直さずに最終レビュー（テストの実行）からやり直す。
+  ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、次のとおりにする。
   テストのコマンドに書いていない名前（`npm test` の中のスクリプトが使うツールなど）と、`/` を含む名前（`./scripts/check.sh` など）はリポジトリの問題として当てず、ふつうの判定にする。
+  - タスクの差分（起点からの変更。名前の変更は変更元と変更先に分けて見る）が文書のファイルだけでないとき：判定を記録せずに、使った分の費用を `FinalReviewFailed` に記録して一時停止する（`verify.commandMissing`）。
+    このとき、ツールの名前・イメージの名前・工程（実装）を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直すか、ほかのイメージに変えるよう案内する。
+    既定のイメージなら、`images` にイメージを足すよう案内する。
+    あわせて、再開のときに「テストの扱い」でテストのコマンドを指定し直すか、テストなしで進めると決められることも案内する（下の「ツールが無くて止まったタスクの再開」）。
+    再開すると、実装をやり直さずに最終レビュー（テストの実行）からやり直す。
+  - 差分が文書のファイルだけのとき（`isDocumentsOnly`）：止めずに、ゴールガーディアンの判定を `FinalReviewed` に記録する。
+    文書のファイルは、拡張子が `md`・`markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org` のもの（大文字・小文字は問わない。テストのファイルを探すときに文書として除く一覧と同じ）。
+    コード・設定・画像・拡張子の無いファイルなど、文書でないものが1つでもあれば（文書と混ざる差分、コードを文書の名前に変えた差分を含む）、文書だけとは見なさない。
+    差分が空のとき・ファイルごとの変更を取れないときも、文書だけとは見なさず、上のとおり止める。
+    - `tests.missingCommands` に、実行できなかったツール（上で当てた名前）を記録し、テストは通ったものとして判定する（`guardianTestsPassed`）。観点・指摘の判定は、ゴールガーディアンのとおりに当てる。
+    - 実行できなかった検証を、`humanChecks` の末尾に1項目足す（「<ツール> がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。<ツール> のある環境で、テスト（検証）のコマンド `…` を実行して確かめてください。」。コマンドは1行にして 300 文字まで）。
+      この項目は、ほかの `humanChecks` と同じく、実装の PR の本文の「人が確かめること」と、実装の成果物の「人が確かめること」に出る。
+    - 実装の成果物のテストには「<ツール> が無く実行できず」を、PR の本文のテストの行には「一部を実行できず」と、ツールが無く差分が文書だけなので止めずに進めたことを添える。
+    - ゴールガーディアンの指示（`buildFinalReviewPrompt`）には、ツールが無くても、実行できる検証と観点・指摘の判定を最後まで行うよう書く。
 
-  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`）、`apps/daemon/src/service.ts`（`verify`）
+  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 再現の工程の後（PBI-29）：sacty は再現のテストを実行しない。
   再現のエージェントへの指示で、書いたテストをテストのコマンドで自分で実行し、不具合のために失敗することを確かめさせ、`sacty-reproduction` に `tests`・`reproduced`・`command`・`exitCode`・`output`（結果の抜粋）を書かせる（`extractReproduction`）。
   sacty は、工程の完了と同じ追記で `ReproductionChecked` を記録する（`reproductionChecked`）。
@@ -940,7 +952,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`）。
   環境による失敗だけで合格にしたときは、終了コードの後ろに「環境による失敗だけ。下の「人が確かめること」」を添える。
   チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
-- 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155）。
+- 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155。差分が文書だけのときにツールが無くて実行できなかった検証の項目も `humanChecks` に入る）。
   - PR の本文：「人が確かめること」のチェックリスト（`- [ ]`）にする。改行は空白にして1項目1行にする（`humanCheckBodyLines`）。
     既存の PR を引き継いだタスクは PR の本文を変えないので、本文には出ない（タスクの画面の最終レビューで確かめる）。
     本文の長さの上限で省かれないよう、テンプレートを使う本文・使わない本文のどちらでも footer の、承認の案内の前に置く。
@@ -1094,7 +1106,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   人の判断なので、テストのファイルを探す歯止め（`checkNoTests`）は当てない。
   不具合の修正（再現の工程がある）は、テストなしにできない（`resume.bugfixNeedsTestCommand`）。
 - どちらか1つだけを渡せる。
-  テストが決まらずに止まったのではないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
+  テストが決まらずに止まったのでも、ツールが無くて止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
   画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
 - 決めずに再開したとき、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
@@ -1102,8 +1114,21 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   工程を始めた後なら、今までどおり止まった所から再開する（検証でまた止まる）。
 - 画面の再開の欄では、テストの扱い（決めずに再開する・テストのコマンドを指定する・テストなしで進める）を選べる。
   不具合の修正では、テストなしを選べない。
+  ツールが無くて止まったタスクでは、テストのコマンドの入力欄の初期値にいまのコマンドを出す。
 
-コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
+#### ツールが無くて止まったタスクの再開
+
+最終レビューで、決まっているテストのコマンドのツールがイメージに無く、差分に文書でないファイルがあって止まったタスク（`testToolsMissing`。一時停止の理由が `verify.commandMissing` で、`testCommand` があり、`noTestsReason` が無い）も、同じ `tests` でテストの扱いを決め直せる（`canDecideTests`）。
+テストのコマンドは決まっているので、決めずに再開すると、止まった所から最終レビューをやり直す（工程の選択からはやり直さない。`canRechooseSteps` は当てない）。
+`noTestsReason` を持つタスク（テストの仕組みが無いと判断し、実装が申告したコマンドで検証するタスク）は当てない。
+
+- テストのコマンドを指定し直す：`TestsDecided` を記録して `Task.testCommand` を置き換える。
+- テストなしで進める：`TestsDecided` を記録して `Task.noTestsReason` にし、止まる前の `Task.testCommand` を消す（残すと同じコマンドをまた実行して止まる）。
+  不具合の修正は、テストなしにできない。
+
+渡し方・人が決めたことの示し方・どちらか1つだけを渡せることは、上と同じ。
+
+コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`testToolsMissing`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
 
 ## ゴールガーディアン
 

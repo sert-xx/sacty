@@ -17,6 +17,22 @@ function isDocument(name: string): boolean {
   return dot > 0 && DOCUMENT_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
 
+/**
+ * タスクの差分（起点からの変更のパス。名前の変更は変更元と変更先に分けたもの）が、文書のファイルだけか（PBI-158）。
+ * 実行される振る舞いの無い変更なら、テストのコマンドのツールがイメージに無くても、検証を人の確認へ回して止めずに進める判断に使う。
+ * 拡張子は上の文書の一覧のとおり（`md`・`markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org`）。コードなど文書でないファイルが
+ * 1つでもあれば、文書と混ざっていても false。差分が空のときも false（確かめられないものは文書だけとは見なさない）。
+ */
+export function isDocumentsOnly(paths: readonly string[]): boolean {
+  return (
+    paths.length > 0 &&
+    paths.every((path) => {
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      return isDocument(name);
+    })
+  );
+}
+
 /** テストのファイルを探しきれなかった理由（PR #105 再レビュー指摘）。 */
 export type TestFileScanIncomplete =
   | { reason: "limit"; limit: number }

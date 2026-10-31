@@ -333,8 +333,10 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
   The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
 
+- Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.txt`) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
+
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
-The tests run by the Goal Guardian show "Environment failures only".
+The tests run by the Goal Guardian show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
 Check them before merging the PR.
 
 ### When the verification tool is not in the image
@@ -342,6 +344,8 @@ Check them before merging the PR.
 If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the Implementation step's image), the Goal Guardian reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
 
 Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the implementation.
+
+However, when every changed file is a document (such as `.md` or `.txt`), the task does not stop. It goes on to final approval, and the verification that could not run appears under "For a person to check" ([For a person to check](#for-a-person-to-check)). If even one changed file is not a document, such as code, the task stops here.
 
 1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands). If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too ([Container images](images.en.md#per-language-images)).
 
@@ -357,6 +361,8 @@ Fix the image as guided, then press "Resume". Resuming redoes the final review (
 
 2. Rebuild the image with `npx sacty image build <name>`.
 3. If you added a new image, change the image of the Implementation step under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
+
+If you want to go on without fixing the image (for example, when the verification need not run in that image), you can instead resume with "Tests" in the resume section: specify the test command again, or proceed without tests (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding redoes the final review from where it stopped). When you proceed without tests, tests are not run and the Goal Guardian judges by the task's goal. A bug fix cannot proceed without tests.
 
 If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
 

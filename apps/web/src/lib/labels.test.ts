@@ -1559,6 +1559,23 @@ describe("ゴールガーディアンが最終レビューの中で実行した�
     expect(verificationResults(task({ lastReview: review(1) })).tests).not.toHaveProperty(
       "environmentFailures",
     );
+    // 差分が文書だけで、ツールが無くて実行できなかった検証を人の確認へ回したときも、通ったものとする（PBI-158）
+    expect(
+      verificationResults(
+        task({
+          lastReview: {
+            ...environment,
+            tests: { ...environment.tests, exitCode: 127, missingCommands: ["go"] },
+          },
+        }),
+      ).tests,
+    ).toMatchObject({ exitCode: 127, passed: true, missingCommands: ["go"] });
+    expect(verificationResults(task({ lastReview: review(127) })).tests).toMatchObject({
+      passed: false,
+    });
+    expect(verificationResults(task({ lastReview: review(127) })).tests).not.toHaveProperty(
+      "missingCommands",
+    );
     // 実装で用意したテスト（PBI-94）の結果も、ゴールガーディアンが実行したものから決める
     const m = taskMessages.ja;
     const noTests = { noTestsReason: "無い", addedTestCommand: "make test" };

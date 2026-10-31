@@ -401,7 +401,7 @@ import {
   sharedComposeRunDir,
 } from "./shared-compose.js";
 import { templateTask } from "./task-templates.js";
-import { findTestFiles, noTestsStop } from "./test-files.js";
+import { findTestFiles, isDocumentsOnly, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
@@ -7537,17 +7537,25 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
-    const { missingCommands, ...review } = extractFinalReview(
-      outcome.output,
-      // セキュリティ対応は、テストを対応させない観点 SEC-MIN（差分が最小限か）も判定させる
-      finalReviewVerdictIds(task),
-      current.remarks.filter((r) => !r.voided).map((r) => r.id),
-      {
-        ...(testCommand ? { testCommand } : {}),
-        unmappedViewpoints,
-        ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
-      },
-    );
+    const extractReview = (documentsOnly: boolean) =>
+      extractFinalReview(
+        outcome.output,
+        // セキュリティ対応は、テストを対応させない観点 SEC-MIN（差分が最小限か）も判定させる
+        finalReviewVerdictIds(task),
+        current.remarks.filter((r) => !r.voided).map((r) => r.id),
+        {
+          ...(testCommand ? { testCommand } : {}),
+          unmappedViewpoints,
+          ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+          ...(documentsOnly ? { documentsOnly } : {}),
+        },
+      );
+    let { missingCommands, ...review } = extractReview(false);
+    // 差分が文書のファイルだけなら、ツールが無くて実行できなかった検証を止めずに人の確認へ回す（PBI-158）。実行される
+    // 振る舞いの無い変更で、イメージを直しても検証の結果は変わらないため。コードなど文書でないファイルが1つでもあれば止める
+    if (missingCommands.length > 0 && (await this.changesOnlyDocuments(current, dir))) {
+      ({ missingCommands, ...review } = extractReview(true));
+    }
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
     // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
     if (missingCommands.length > 0) {
@@ -7599,6 +7607,24 @@ export class TaskService {
     ]);
     if (review.passed) this.checkBudget(reviewed);
     else this.pauseIfVerificationKeepsFailing(reviewed);
+  }
+
+  /**
+   * タスクの差分（起点からの変更）が、文書のファイルだけか（PBI-158）。名前の変更は変更元と変更先に分けて見るので、コードを
+   * 文書の名前に変えても通らない。差分を取れなければ、文書だけとは見なさない（止める側に倒す）。
+   */
+  private async changesOnlyDocuments(task: Task, dir: string): Promise<boolean> {
+    if (!task.repository) return false;
+    try {
+      const changes = await this.deps.repos.diffStats(
+        dir,
+        this.trustedGitDir(task),
+        task.repository.baseCommit,
+      );
+      return isDocumentsOnly(changes.map((c) => c.path));
+    } catch {
+      return false;
+    }
   }
 
   /**

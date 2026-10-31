@@ -7734,6 +7734,249 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("差分が文書だけなら、ツールが無くても止めずに人の確認へ回す（PBI-158）", () => {
+    /** go が無くてテストを実行できなかったと申告する最終レビュー（観点はすべて検証済み）。 */
+    const missingGo = (exitCode = 127) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode,
+              output: "sh: 1: npm: not found",
+              missingCommands: ["npm"],
+            },
+            humanChecks: ["文章を目視で確かめる"],
+            summary: "テストは実行できなかったが、差分は文書だけ",
+          },
+        }),
+      );
+    const withChanges = (paths: { path: string; added?: number; removed?: number }[]) => {
+      const repos = new FakeRepos();
+      repos.changes = paths.map((c) => ({
+        path: c.path,
+        added: c.added ?? 1,
+        removed: c.removed ?? 0,
+      }));
+      return repos;
+    };
+
+    it("文書の拡張子のファイルだけの差分なら、止めずに最終承認へ進み、実行できなかった検証が人が確かめることに出る", async () => {
+      const repos = withChanges([{ path: "README.md" }, { path: "docs/guide.md" }]);
+      const { activity, service, pulls, id } = await toImplement([implement("# v1"), missingGo()], {
+        repos,
+      });
+      await drain(service);
+      const task = service.get(id)?.task;
+      // 止まらずに、実装の承認待ちへ進む
+      expect(task?.status).not.toBe("paused");
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(types(service, id)).toContain("FinalReviewed");
+      expect(types(service, id)).not.toContain("FinalReviewFailed");
+      expect(task?.lastReview).toMatchObject({
+        passed: true,
+        tests: { command: "npm test", exitCode: 127, missingCommands: ["npm"] },
+      });
+      const checks = task?.lastReview?.humanChecks ?? [];
+      expect(checks[0]).toBe("文章を目視で確かめる");
+      expect(checks).toHaveLength(2);
+      expect(checks[1]).toContain("npm がテストを実行したイメージに入っていない");
+      expect(checks[1]).toContain(
+        "npm のある環境で、テスト（検証）のコマンド `npm test` を実行して確かめてください",
+      );
+      // PR の本文の「人が確かめること」に出る
+      const body = pulls.calls.at(-1)?.body ?? "";
+      expect(body).toContain("**人が確かめること**");
+      expect(body).toContain("- [ ] npm がテストを実行したイメージに入っていないため");
+      expect(body).toContain("一部を実行できず");
+      activity.close();
+    });
+
+    it("文書だけの差分でも、ツールが無いのではない失敗（終了コード 1 でツールの申告なし）は今までどおり不合格にする", async () => {
+      const repos = withChanges([{ path: "README.md" }]);
+      const failed = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: { command: "npm test", exitCode: 1, output: "markdown lint failed" },
+            summary: "テストが失敗",
+          },
+        }),
+      );
+      const { activity, service, id } = await toImplement(
+        [implement("# v1"), failed, implement("# v2"), review()],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.lastReview).toMatchObject({ passed: false, tests: { exitCode: 1 } });
+      expect(task?.lastReview?.tests?.missingCommands).toBeUndefined();
+      activity.close();
+    });
+
+    it("文書だけの差分で、観点を満たしていないために不合格なら、やり直しの指示に、ツールが無くて実行できなかった検証は直す対象ではないと渡す", async () => {
+      const repos = withChanges([{ path: "README.md" }]);
+      const unverified = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: false, reason: "手順が足りない" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 127,
+              output: "sh: 1: npm: not found",
+              missingCommands: ["npm"],
+            },
+            summary: "手順が足りない",
+          },
+        }),
+      );
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# v1"), unverified, implement("# v2"), review()],
+        { repos },
+      );
+      await drain(service);
+      const failed = service.get(id)?.activity.find((e) => e.type === "FinalReviewed");
+      expect(failed?.type === "FinalReviewed" && failed.payload.passed).toBe(false);
+      // 止まらずに、実装をやり直す
+      expect(promptOf(executor, 5)).toContain(
+        "ツール（npm）がイメージに無く、実行できなかった検証があります（実装で直す対象ではありません。",
+      );
+      activity.close();
+    });
+
+    it.each([
+      ["コードだけ", [{ path: "src/pay.ts" }]],
+      ["文書とコードが混ざる", [{ path: "README.md" }, { path: "src/pay.ts" }]],
+      [
+        "コードを文書の名前に変えた（変更元の削除と変更先の追加）",
+        [
+          { path: "src/pay.ts", removed: 3 },
+          { path: "docs/pay.md", added: 3 },
+        ],
+      ],
+      [
+        "文書と文書でないファイル（画像・設定）が混ざる",
+        [{ path: "README.md" }, { path: "docs/a.png" }],
+      ],
+      ["差分が空", []],
+    ])(
+      "%s なら、今までどおり verify.commandMissing で止まり、判定を記録しない",
+      async (_name, paths) => {
+        const repos = withChanges(paths);
+        const { activity, service, id } = await toImplement([implement("# v1"), missingGo()], {
+          repos,
+        });
+        await drain(service);
+        const task = service.get(id)?.task;
+        expect(task?.status).toBe("paused");
+        expect(task?.pausedMessage).toEqual({
+          code: "verify.commandMissing",
+          params: { commands: ["npm"], image: "default", step: "implement" },
+        });
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        expect(types(service, id)).toContain("FinalReviewFailed");
+        activity.close();
+      },
+    );
+
+    it("差分のファイルごとの変更を取れないときは、文書だけとは見なさず、止める", async () => {
+      const repos = withChanges([{ path: "README.md" }]);
+      // 差分の本文は取れるが、ファイルごとの変更だけを取れない
+      repos.diffStats = async () => {
+        throw new Error("git が失敗");
+      };
+      const { activity, service, id } = await toImplement([implement("# v1"), missingGo()], {
+        repos,
+      });
+      await drain(service);
+      expect(service.get(id)?.task.pausedMessage).toMatchObject({ code: "verify.commandMissing" });
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      activity.close();
+    });
+  });
+
+  describe("ツールが無くて止まったタスクの再開で、人がテストの扱いを決め直す（PBI-158）", () => {
+    const stoppedByMissingTool = async () => {
+      const missing = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [],
+            remarks: [],
+            tests: {
+              command: "npm test",
+              exitCode: 127,
+              output: "sh: 1: npm: not found",
+              missingCommands: ["npm"],
+            },
+            summary: "テストを実行できない",
+          },
+        }),
+      );
+      const made = await toImplement([implement("# v1"), missing, review()]);
+      await drain(made.service);
+      expect(made.service.get(made.id)?.task.pausedMessage).toMatchObject({
+        code: "verify.commandMissing",
+      });
+      return made;
+    };
+
+    it("テストなしで進めると決めて再開すると、同じテストのコマンドを実行せず、最終レビューが通って承認待ちへ進む", async () => {
+      const { activity, service, executor, id } = await stoppedByMissingTool();
+      const runs = executor.calls.length;
+      service.resume(id, { tests: { noTestsReason: "変更は文書だけで、検証のツールが無い" } });
+      const decided = service.get(id)?.activity.find((e) => e.type === "TestsDecided");
+      expect(decided?.actor).toBe("person");
+      expect(decided?.type === "TestsDecided" && decided.payload).toEqual({
+        noTestsReason: "変更は文書だけで、検証のツールが無い",
+      });
+      expect(service.get(id)?.task.testCommand).toBeUndefined();
+      await drain(service);
+      const task = service.get(id)?.task;
+      // 実装はやり直さず、最終レビューだけをやり直す。テストのコマンドは実行させない
+      expect(executor.calls.length).toBe(runs + 1);
+      expect(promptOf(executor, runs)).not.toContain("--- テスト（検証）の実行 ---");
+      expect(task?.lastReview?.passed).toBe(true);
+      expect(task?.gate?.step).toBe("implement");
+      expect(task?.pausedMessage).toBeUndefined();
+      activity.close();
+    });
+
+    it("テストのコマンドを指定し直して再開すると、そのコマンドで最終レビューのテストを実行する", async () => {
+      const { activity, service, executor, id } = await stoppedByMissingTool();
+      const runs = executor.calls.length;
+      service.resume(id, { tests: { testCommand: "true" } });
+      await drain(service);
+      expect(promptOf(executor, runs)).toContain("```sh\ntrue\n```");
+      expect(promptOf(executor, runs)).toContain("人が再開のときに指定したもの");
+      expect(service.get(id)?.task.gate?.step).toBe("implement");
+      activity.close();
+    });
+
+    it("ツールが無くて止まったのではないタスクでは、テストの扱いを指定できない", async () => {
+      const { activity, service, id } = await toImplement([implement("# v1"), review()]);
+      await service.pause(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(() => service.resume(id, { tests: { noTestsReason: "x" } })).toThrow(
+        expect.objectContaining({ messages: [{ code: "resume.testsNotUndecided" }] }),
+      );
+      activity.close();
+    });
+  });
+
   it("テストが通っても、テストの対応していない観点があれば不合格にする", async () => {
     const { activity, service, id } = await toImplement([
       implement("# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),

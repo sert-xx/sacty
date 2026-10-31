@@ -547,6 +547,12 @@ function feedbackLines(task: Task): string[] {
                 ...r.tests.environmentFailures.map((f) => `- ${f}`),
               ]
             : []),
+          // 差分が文書だけで、ツールがイメージに無くて実行できなかった検証も、実装で直す対象ではない（PBI-158）
+          ...(r.tests.missingCommands
+            ? [
+                `ツール（${r.tests.missingCommands.join("・")}）がイメージに無く、実行できなかった検証があります（実装で直す対象ではありません。人が確かめる項目として扱います）。`,
+              ]
+            : []),
           ...(r.tests.output
             ? ["テストの結果の抜粋：", r.tests.output.slice(-OUTPUT_IN_PROMPT)]
             : []),
@@ -2606,7 +2612,7 @@ export function buildFinalReviewPrompt(
     ...(testCommand
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
-          "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。",
+          "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。ツールが無くても、実行できる検証と、観点・指摘の判定は最後まで行ってください。",
           "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。それ以外は空にしてください。",
         ]
       : []),
@@ -2667,9 +2673,17 @@ export function extractFinalReview(
     unmappedViewpoints?: readonly string[];
     /** セキュリティ対応の差分が修正の範囲を守っていない。観点 SEC-MIN を、ゴールガーディアンの判定にかかわらず不合格にする。 */
     scopeViolation?: ScopeViolation;
+    /**
+     * タスクの差分が文書のファイルだけと、sacty が確かめた（PBI-158）。ツールがイメージに無かったと申告されても止めず、
+     * 実行できなかった検証を人が確かめること（humanChecks）に足して、テストは通ったものとして判定する。
+     */
+    documentsOnly?: boolean;
   } = {},
 ): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary" | "tests" | "humanChecks"> & {
-  /** テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。 */
+  /**
+   * テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。呼び出し元は、あれば止める。
+   * ただし documentsOnly のときは、止めずに進めるので空にして、`tests.missingCommands` に記録する。
+   */
   missingCommands: string[];
 } {
   const found = findBlock(output, FINAL_REVIEW_HEADING);
@@ -2685,13 +2699,12 @@ export function extractFinalReview(
   );
   // 人が最終承認で確かめること（PBI-155）
   const humanChecks = texts(found?.raw.humanChecks);
-  const checks = humanChecks.length > 0 ? { humanChecks } : {};
   const command = options.testCommand;
   if (!command) {
     return {
       ...verdicts,
       viewpoints,
-      ...checks,
+      ...(humanChecks.length > 0 ? { humanChecks } : {}),
       passed: verdicts.passed && viewpoints.every((v) => v.verified),
       missingCommands: [],
     };
@@ -2703,15 +2716,9 @@ export function extractFinalReview(
   // 環境による失敗（PBI-155）は、テストのコマンドが失敗したときだけ読む（成功したのに書いてあっても使わない）
   const environmentFailures =
     exitCode !== undefined && exitCode !== 0 ? texts(raw.environmentFailures) : [];
-  const tests = {
-    command,
-    ...(exitCode !== undefined ? { exitCode } : {}),
-    output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
-    ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
-  };
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
-  const missingCommands = Array.isArray(raw.missingCommands)
+  const reportedMissing = Array.isArray(raw.missingCommands)
     ? [
         ...new Set(
           raw.missingCommands
@@ -2720,6 +2727,25 @@ export function extractFinalReview(
         ),
       ]
     : [];
+  // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）
+  const skipped = options.documentsOnly === true ? reportedMissing : [];
+  const missingCommands = options.documentsOnly === true ? [] : reportedMissing;
+  const checks =
+    humanChecks.length > 0 || skipped.length > 0
+      ? {
+          humanChecks: [
+            ...humanChecks,
+            ...(skipped.length > 0 ? [missingToolsCheck(skipped, command)] : []),
+          ],
+        }
+      : {};
+  const tests = {
+    command,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
+    ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
+    ...(skipped.length > 0 ? { missingCommands: skipped } : {}),
+  };
   return {
     ...verdicts,
     viewpoints,
@@ -2729,6 +2755,16 @@ export function extractFinalReview(
     tests,
     missingCommands,
   };
+}
+
+/**
+ * 差分が文書だけで、テストのコマンドのツールがイメージに無くて実行できなかった検証を、人が最終承認で確かめることにする文
+ * （PBI-158）。PR の本文と画面の「人が確かめること」にそのまま出るので、何を・どこで実行するかを書く。
+ */
+function missingToolsCheck(tools: readonly string[], command: string): string {
+  const names = tools.join("・");
+  const shown = command.replace(/\s+/g, " ").replace(/`/g, "'");
+  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${headOf(shown, 300)}\` を実行して確かめてください。`;
 }
 
 /** ゴールガーディアンが写したテストの結果の抜粋のうち、記録する文字数。 */
@@ -2982,7 +3018,7 @@ function resultTableLines(task: Task): string[] {
     }),
     "",
     guardianTests
-      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
+      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
       : tests
         ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
         : task.noTestsReason
