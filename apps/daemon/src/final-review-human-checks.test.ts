@@ -172,32 +172,61 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(prompt).toContain('"humanChecks":[]');
   });
 
-  it("最終レビューの指示に、PR のコミットには成果物が足され、作業領域の写しには無いので、リポジトリ全体の検査の結果は違いうることと、人の確認に回すことを書く", () => {
+  // 要求要件・設計の PR をマージ済みのタスク（成果物のファイルは、タスクブランチにあり、実装の PR に入る）
+  const withDocuments = (documentsDir = "docs/sacty") =>
+    ({
+      stepPullRequests: ["requirements", "design"].map((step) => ({
+        step,
+        path: `${documentsDir}/t-1/${step}.md`,
+      })),
+      ...(documentsDir === "docs/sacty" ? {} : { documentsDir }),
+    }) as unknown as Partial<Task>;
+
+  it("要求要件・設計の成果物を PR に足すタスクの最終レビューの指示に、写しには成果物が無く、リポジトリ全体の検査の結果は違いうることを書く。写しで通ったものは未確認として人の確認に回し、写しで失敗したものはこれまでどおり不合格にする", () => {
     for (const testCommand of ["npm test", undefined]) {
       const prompt = buildFinalReviewPrompt(
-        task(),
+        task(withDocuments()),
         "diff",
         testCommand ? { testCommand } : undefined,
       );
       expect(prompt).toContain("--- PR の中身と作業領域の写し ---");
-      // 成果物の置き場所（既定は docs/sacty。タスクの短い ID のディレクトリ）を示す
+      // 成果物の置き場所(タスクの短い ID のディレクトリ)を示す
       expect(prompt).toContain("sacty が docs/sacty/t-1/ の下に足す成果物");
       expect(prompt).toContain("作業領域の写しには、このファイルが無い");
       expect(prompt).toContain("prettier --check .");
+      // 写しで通った検査は、PR の中身では未確認として humanChecks に書く
+      expect(prompt).toContain("作業領域の写しで通った、リポジトリ全体に効く検査は");
       expect(prompt).toContain("PR の中身で通るかは未確認");
-      // 不合格にせず、人の確認（humanChecks）に回す
-      expect(prompt).toContain("それを理由に不合格にはせず");
       expect(prompt).toContain("humanChecks に書いて、人の確認に回す");
+      // 写しで失敗した検査は、これまでどおり不合格の理由にする(人の確認に逃がさない)
+      expect(prompt).toContain("作業領域の写しで失敗した検査は、これまでどおり不合格の理由にする");
+      expect(prompt).toContain("humanChecks に回さない");
+      // 写しで失敗した検査まで、不合格にしないと読める文言は無い
+      expect(prompt).not.toContain("それを理由に不合格にはせず");
     }
   });
 
   it("成果物のディレクトリをオーケストレーターが決めていれば、そのディレクトリを書く", () => {
-    const prompt = buildFinalReviewPrompt(
-      task({ documentsDir: "docs/ai" } as Partial<Task>),
-      "diff",
-    );
+    const prompt = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff");
     expect(prompt).toContain("sacty が docs/ai/t-1/ の下に足す成果物");
     expect(prompt).not.toContain("docs/sacty/");
+  });
+
+  it("成果物を PR に足さないタスク(要求要件・設計の PR が無い・既存の PR を引き継ぐ)の最終レビューの指示には、この節を入れない", () => {
+    for (const extra of [
+      {},
+      { continuedPullRequest: { number: 7, url: "https://github.com/acme/app/pull/7" } },
+      { ...withDocuments(), continuedPullRequest: { number: 7 } },
+    ]) {
+      const prompt = buildFinalReviewPrompt(task(extra as unknown as Partial<Task>), "diff", {
+        testCommand: "npm test",
+      });
+      expect(prompt).not.toContain("--- PR の中身と作業領域の写し ---");
+      expect(prompt).not.toContain("作業領域の写しには、このファイルが無い");
+      expect(prompt).not.toContain("PR の中身で通るかは未確認");
+      // ほかの節は残る
+      expect(prompt).toContain("--- 人が確かめること ---");
+    }
   });
 
   it("テストのコマンドが無い最終レビューでは、人が確かめることだけを書く", () => {

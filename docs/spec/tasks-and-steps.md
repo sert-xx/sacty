@@ -885,12 +885,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - `environmentFailures`・`humanChecks` は、配列で読む。1件は文字列のほか、`{"name": "...", "reason": "..."}` のようなオブジェクトも読み、「名前：根拠」の1行の文字列にして記録する（`reportedItems`。オブジェクトで返されたときに申告を捨てて、環境による失敗だけなのに不合格になっていた）。オブジェクトで読む項目名は、名前が `name`・`test`・`check`・`command`、根拠が `reason`・`message`・`description`・`evidence`（それぞれ先にあるもの。JSON の並びにかかわらず名前、根拠の順）で、`output`・`log` などほかの項目は読まない。記録する前に、秘密情報（`token=` などの代入の形）と URL の認証情報（`user:pass@`）、秘密らしい名前（token・key・secret・password・auth・signature など）のクエリ・フラグメントの値を伏せる（`redactLog`・`redactUrlCredentials`）。確かめる対象の URL が消えないよう、クエリ・フラグメント全体は伏せない。値が false の `environment`・`environmental`・`isEnvironment` の旗が付いた項目は、環境による失敗として読まない。読めない項目・空の項目・「なし」「none」「n/a」「false」「environment: false」のような「無い」「環境による失敗ではない」を表す項目は捨てる。配列でない値（「なし」の文字列・1件のオブジェクトなど）は読まない。
   - `tests.otherFailures`（ツール不足のほかの失敗。止める側の欄）は、読める形かにかかわらず、書いてあるかで見る（`hasReportedFailure`）。空でない文字列・0 でない数値・`true`・オブジェクト（空でも）が1件でもあれば「失敗の申告あり」とし、空の値と「なし」「none」「n/a」だけなら「無し」とする（`no`・`false` の文字列は、書いてあるものとして「申告あり」）。読めない形を「無し」と見なして、文書だけの差分の歯止めが外れないようにする。
   - `tests.missingCommands` も、名前の文字列のほか `{"name": "..."}`（`command`・`tool` でもよい）を読む（`reportedNames`）。指示でも、`environmentFailures` は「名前：根拠」の文字列の配列で書かせる。
-- 指示（`pullRequestContentLines`）で、実装の PR のコミットと作業領域の写しの違いを伝える。
+- 要求要件・設計の成果物を PR に足すタスク（要求要件・設計の PR があり、既存の PR を引き継いでいない）では、指示（`pullRequestContentLines`）で、実装の PR のコミットと作業領域の写しの違いを伝える。それ以外のタスクには、この節を入れない。
   PR のコミットには、sacty が成果物（承認済みの要求要件・設計のファイル。置き場所は `<documentsDir>/<タスク ID の先頭8文字>/`、既定は `docs/sacty`）を足すが、作業領域の写しにはこのファイルが無い。
   そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（`prettier --check .`・markdownlint など）の結果は、写しと PR の中身で違うことがある。
-  写しで実行したそのような検査は、それを理由に不合格にせず、PR の中身で通るかは未確認であることを `humanChecks` に書かせて、人の確認に回させる。
-  テストのコマンドの有無にかかわらず入れる。
-  最終レビューの写しに成果物を足すことはしない。
+  - 写しで通ったそのような検査は、PR の中身で通るかは未確認であることを `humanChecks` に書かせて、人の確認に回させる。
+  - 写しで失敗した検査は、これまでどおり不合格の理由にさせる（成果物のファイルが無くても失敗するので、PR の中身でも失敗する）。成果物のせいと推測して `humanChecks` に回させない。環境による失敗の扱いは、上の `humanCheckLines` のとおり。
+  - テストのコマンドの有無にかかわらず入れる。最終レビューの写しに成果物を足すことはしない。
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
