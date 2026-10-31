@@ -119,6 +119,40 @@ import type { SharedComposeFetcher } from "./shared-compose.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
 import { removeEntry } from "./workspace-cleanup.js";
 
+/**
+ * 消すのを失敗させる場所（テストで指定したときだけ。ほかは本物の rmSync・rm に渡す）。親をファイルにするなどの方法は、
+ * Node の版によって rm が例外を出さないことがあるため、ここで確実に失敗させる。
+ */
+const removal = vi.hoisted(() => ({ fail: undefined as RegExp | undefined }));
+const removalError = (path: unknown) =>
+  Object.assign(new Error(`EACCES: permission denied, rm '${String(path)}'`), { code: "EACCES" });
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    rmSync: (
+      path: Parameters<typeof actual.rmSync>[0],
+      options?: Parameters<typeof actual.rmSync>[1],
+    ) => {
+      if (removal.fail?.test(String(path))) throw removalError(path);
+      return actual.rmSync(path, options);
+    },
+  };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (
+      path: Parameters<typeof actual.rm>[0],
+      options?: Parameters<typeof actual.rm>[1],
+    ) => {
+      if (removal.fail?.test(String(path))) throw removalError(path);
+      return actual.rm(path, options);
+    },
+  };
+});
+
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
 
@@ -15781,23 +15815,34 @@ describe("エラーレポートと、オーケストレーターのエラーの�
     activity.close();
   });
 
-  it("並べたセッションログを消せなくても、分析の結果と費用を記録する", async () => {
-    const { activity, service, id } = await failedTask([out("### 何が起きたか\n分析", 1000)]);
-    // 並べる場所をファイルにして、並べるのも消すのも失敗させる
-    mkdirSync(join(dir, "workspaces"), { recursive: true });
-    writeFileSync(join(dir, "workspaces", "_question-logs"), "");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
-    await service.analyzeErrors(id).analyzed;
-    expect(service.get(id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
-    expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("エラーの分析に並べたセッションログを消せませんでした"),
-      expect.anything(),
-    );
-    warn.mockRestore();
-    activity.close();
-  });
+  for (const [where, pattern] of [
+    ["並べたセッションログ", /_question-logs/],
+    ["分析のためのコードの写し", /_guardian/],
+  ] as const) {
+    it(`${where}を消せなくても、分析の結果と費用を記録し、警告を出す`, async () => {
+      const { activity, service, id } = await failedTask([out("### 何が起きたか\n分析", 1000)]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      removal.fail = pattern;
+      try {
+        const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
+        await service.analyzeErrors(id).analyzed;
+        expect(service.get(id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
+        expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+        expect(service.get(id)?.activity.at(-1)).toMatchObject({
+          type: "ErrorAnalyzed",
+          payload: { runResult: "completed", costUsd: 0.015 },
+        });
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("消せませんでした"),
+          expect.stringContaining("EACCES"),
+        );
+      } finally {
+        removal.fail = undefined;
+        warn.mockRestore();
+        activity.close();
+      }
+    });
+  }
 
   it("API：レポートを Markdown で返し（無いタスクは 404）、分析の求めは 201、求められない状態は 409", async () => {
     const { activity, service, id } = await failedTask([HOLD]);

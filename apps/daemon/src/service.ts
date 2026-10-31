@@ -2035,8 +2035,14 @@ export class TaskService {
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
       return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
     } finally {
-      // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）
-      await rm(workspaceDir, { recursive: true, force: true });
+      // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）。消せなくても、実行の結果
+      // （判定・答え・分析と費用）を失わないよう、警告だけにする
+      await rm(workspaceDir, { recursive: true, force: true }).catch((error: unknown) => {
+        console.warn(
+          `[daemon] ゴールガーディアン・オーケストレーターの実行の作業領域を消せませんでした（${task.id}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      });
     }
   }
 
