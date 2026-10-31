@@ -19,11 +19,16 @@
     "format": "biome format --write .",
     "docs:diagrams": "node scripts/docs-diagrams/build.mjs",
     "docs:screenshots": "node scripts/docs-screenshots/capture.mjs",
-    "typecheck": "tsc -b packages/core apps/daemon packages/cli && npm run typecheck -w @sacty/web"
+    "typecheck": "tsc -b packages/core apps/daemon packages/cli && npm run typecheck -w @sacty/web",
+    "desktop:dev": "node apps/desktop/scripts/start.mjs",
+    "desktop:package": "node apps/desktop/scripts/package.mjs",
+    "desktop:dmg": "node apps/desktop/scripts/dmg.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@electron/packager": "20.3.0",
     "@types/node": "^26.6.5",
+    "electron": "45.1.0",
     "jsdom": "^26.1.0",
     "playwright": "1.61.1",
     "typescript": "^7.0.2",
