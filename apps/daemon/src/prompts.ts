@@ -54,7 +54,7 @@ import {
   lastJsonAnswer,
   withoutCandidates,
 } from "./agent-json.js";
-import { redactLog } from "./ci.js";
+import { redactLog, redactUrlCredentials } from "./ci.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { withoutGitHubComments } from "./github-comments.js";
@@ -2777,11 +2777,58 @@ function missingToolsCheck(
   output: string,
 ): string {
   const names = tools.join("・");
-  const shown = command.replace(/\s+/g, " ").replace(/`/g, "'");
-  // 出力の末尾は、秘密情報を伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
-  const tail = tailOf(redactLog(output, []).replace(/\s+/g, " ").replace(/`/g, "'").trim(), 300);
-  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${headOf(shown, 300)}\` を実行して確かめてください。ゴールガーディアンが実行したときの終了コードは ${exitCode ?? "申告なし"}${tail ? `、出力の末尾は「${tail}」` : ""}です。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。`;
+  const shown = headOf(hiddenOneLine(command), 200);
+  const excerpt = outputExcerpt(output);
+  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${shown}\` を実行して確かめてください。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。ゴールガーディアンが実行したときの終了コードは ${exitCode ?? "申告なし"}${excerpt ? `、${excerpt}` : ""}です。`;
 }
+
+/** 人に見せる文字列から、秘密情報と URL の認証情報（クエリ・フラグメントを含む）を伏せ、1行にする（切り詰める前に使う）。 */
+function hiddenOneLine(text: string): string {
+  return redactUrlCredentials(redactLog(text, []), { queryAndFragment: true })
+    .replace(/\s+/g, " ")
+    .replace(/`/g, "'")
+    .trim();
+}
+
+/** 出力のうち、失敗らしい行を拾う目印。 */
+const FAILURE_LINE = /error|fail|fatal|panic|exception|denied|cannot|unable to|invalid|✗|✘|✖|×/i;
+
+/**
+ * テストの出力の抜粋（人が確かめる項目に出す）。ツールが無いという行は出力の末尾に出やすく、`a && b` や `a ; b` の前半の失敗は
+ * 先頭や途中にあるので、末尾だけでなく、先頭と、失敗らしい行（先頭・末尾に含まれないもの）も載せる。短ければ全体を1回だけ載せる。
+ * 秘密情報と URL の認証情報は、行に分けたり切り詰めたりする前に、全文で伏せる。
+ */
+function outputExcerpt(output: string): string {
+  const lines = redactUrlCredentials(redactLog(output, []), { queryAndFragment: true })
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").replace(/`/g, "'").trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const flat = lines.join(" / ");
+  if (Array.from(flat).length <= EXCERPT_WHOLE_MAX) return `出力は「${flat}」`;
+  const head = headOf(flat, EXCERPT_EDGE);
+  const tail = tailOf(flat, EXCERPT_EDGE);
+  const failures = [
+    ...new Set(
+      lines.filter(
+        (line) => FAILURE_LINE.test(line) && !head.includes(line) && !tail.includes(line),
+      ),
+    ),
+  ]
+    .slice(0, EXCERPT_FAILURE_LINES)
+    .map((line) => headOf(line, EXCERPT_FAILURE_LINE_MAX));
+  return [
+    `出力の先頭は「${head}…」`,
+    ...(failures.length > 0 ? [`途中の失敗らしい行は「${failures.join(" / ")}」`] : []),
+    `末尾は「${tail}」`,
+  ].join("、");
+}
+
+/** 出力の抜粋の長さ（文字）。全体を載せる上限・先頭と末尾の長さ・失敗らしい行の数と1行の上限。 */
+const EXCERPT_WHOLE_MAX = 300;
+const EXCERPT_EDGE = 120;
+const EXCERPT_FAILURE_LINES = 3;
+const EXCERPT_FAILURE_LINE_MAX = 100;
 
 /** 末尾の limit 文字（長ければ先頭に … を付ける。サロゲートペアの途中では切らない）。 */
 function tailOf(text: string, limit: number): string {

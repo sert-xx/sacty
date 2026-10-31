@@ -7,6 +7,7 @@ import {
   logExcerpt,
   readTail,
   redactLog,
+  redactUrlCredentials,
 } from "./ci.js";
 import { resolveInRepository } from "./deployment.js";
 
@@ -34,6 +35,32 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     }
     expect(out).toContain("Authorization: Bearer [REDACTED]");
     expect(out).toContain("password=[REDACTED]");
+  });
+
+  it("URL のユーザー情報を、スキームの大文字・小文字にかかわらず伏せる（認証情報の無い URL は変えない）", () => {
+    for (const scheme of ["https", "HTTPS", "hTtPs", "http", "HTTP", "git+ssh", "FTP"]) {
+      const out = redactLog(`clone ${scheme}://alice:passw0rdSecret@example.com/x.git failed`, []);
+      expect(out, scheme).not.toContain("alice");
+      expect(out, scheme).not.toContain("passw0rdSecret");
+      expect(out, scheme).toContain("example.com/x.git");
+    }
+    // ユーザー名だけ・パスワードだけ
+    expect(redactLog("https://tokenOnly12345@example.com/", [])).not.toContain("tokenOnly12345");
+    expect(redactLog("https://:pwOnly12345@example.com/", [])).not.toContain("pwOnly12345");
+    // 認証情報の無い URL は、そのまま
+    const plain = "see https://example.com/a?b=c#d and HTTPS://Example.com/Path";
+    expect(redactLog(plain, [])).toBe(plain);
+    // 読めない URL は、中身を残さない
+    expect(redactLog("x https://user:secretPw@[bad/ y", [])).not.toContain("secretPw");
+  });
+
+  it("クエリとフラグメントも伏せる指定では、中身を伏せる（指定しなければ残す）", () => {
+    const text = "GET HTTPS://example.com/a?token=queryValue#fragValue ok";
+    const out = redactUrlCredentials(text, { queryAndFragment: true });
+    expect(out).not.toContain("queryValue");
+    expect(out).not.toContain("fragValue");
+    expect(out).toContain("example.com/a");
+    expect(redactUrlCredentials(text)).toBe(text);
   });
 
   it("時刻を除き、末尾の行を取り、伏せてから切り詰める（境界をまたぐ値も残らない）", () => {

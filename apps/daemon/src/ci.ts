@@ -65,9 +65,49 @@ const SECRET_ASSIGNMENTS =
  * 切り詰める前に呼ぶ（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）。
  */
 export function redactLog(text: string, secrets: readonly string[]): string {
-  let result = redact(text, secrets);
+  // URL のユーザー情報（https://user:pass@host/）は、ほかの形に分かれる前に、URL として読んで伏せる
+  let result = redactUrlCredentials(redact(text, secrets));
   for (const pattern of SECRET_PATTERNS) result = result.replace(pattern, "[REDACTED]");
   return result.replace(SECRET_ASSIGNMENTS, (_all, name: string) => `${name}[REDACTED]`);
+}
+
+/** スキーム（大文字・小文字は問わない）と `//` で始まる URL らしい文字列。 */
+const URL_LIKE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+
+/**
+ * 文章の中の URL から、認証情報を除く（PBI-158）。ユーザー名・パスワード（`https://user:pass@host/`）を `REDACTED` に置き換える。
+ * スキームの大文字・小文字は問わない（`HTTPS://` も）。queryAndFragment が true なら、クエリとフラグメントの中身も
+ * `REDACTED` にする（トークンがクエリに入ることがあるため）。URL として読めない文字列は `[REDACTED URL]` にする。
+ * 認証情報（と、指定したときのクエリ・フラグメント）が無い URL は、そのまま返す。
+ */
+export function redactUrlCredentials(
+  text: string,
+  options: { queryAndFragment?: boolean } = {},
+): string {
+  return text.replace(URL_LIKE, (value) => {
+    try {
+      const url = new URL(value);
+      let changed = false;
+      if (url.username || url.password) {
+        url.username = "REDACTED";
+        url.password = "REDACTED";
+        changed = true;
+      }
+      if (options.queryAndFragment) {
+        if (url.search) {
+          url.search = "?REDACTED";
+          changed = true;
+        }
+        if (url.hash) {
+          url.hash = "#REDACTED";
+          changed = true;
+        }
+      }
+      return changed ? url.href : value;
+    } catch {
+      return "[REDACTED URL]";
+    }
+  });
 }
 
 /** ログの行の先頭の時刻（GitHub Actions のログの形）。 */

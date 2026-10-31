@@ -926,12 +926,15 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     差分が空のとき・ファイルごとの変更を取れないときも、文書だけとは見なさず、上のとおり止める。
     - `tests.missingCommands` に、実行できなかったツール（上で当てた名前）を記録し、テストは通ったものとして判定する（`guardianTestsPassed`）。観点・指摘の判定は、ゴールガーディアンのとおりに当てる。
       ただし、ゴールガーディアンが `tests.otherFailures` に、ツール不足のほかの失敗（テストの失敗・lint のエラーなど）を1件でも申告したときは、記録も項目の追加もせず、止めずにふつうの判定にする（終了コードが 0 でなく、`environmentFailures` の申告も無ければ、テストは不合格）。
-    - 実行できなかった検証を、`humanChecks` の末尾に1項目足す（「<ツール> がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。<ツール> のある環境で、テスト（検証）のコマンド `…` を実行して確かめてください。ゴールガーディアンが実行したときの終了コードは N、出力の末尾は「…」です。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。」。コマンドは1行にして 300 文字まで、出力の末尾は秘密情報を伏せてから 300 文字まで。`redactLog`）。
+    - 実行できなかった検証を、`humanChecks` の末尾に1項目足す（「<ツール> がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。<ツール> のある環境で、テスト（検証）のコマンド `…` を実行して確かめてください。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。ゴールガーディアンが実行したときの終了コードは N、出力は「…」です。」）。
+      コマンドは1行にして 200 文字まで。
+      出力は、300 文字までなら全体を1回だけ載せ、それより長ければ、先頭 120 文字・途中の失敗らしい行（`error`・`fail`・`fatal`・`panic` などを含む行のうち、先頭と末尾に含まれないもの。3行まで、1行 100 文字まで）・末尾 120 文字を載せる。`a && b` の前半の失敗が、後ろのツール不足の行に隠れないようにするため。
+      コマンドと出力は、秘密情報（`redactLog`）と URL の認証情報（`redactUrlCredentials`。スキームの大文字・小文字を問わず、ユーザー名・パスワード・クエリ・フラグメントの中身）を、全文で伏せてから、行に分けて切り詰める。
       この項目は、ほかの `humanChecks` と同じく、実装の PR の本文の「人が確かめること」と、実装の成果物の「人が確かめること」に出る。
     - 実装の成果物のテストには「<ツール> が無く実行できず」を、PR の本文のテストの行には「一部を実行できず」と、ツールが無く差分が文書だけなので止めずに進めたことを添える。
     - ゴールガーディアンの指示（`buildFinalReviewPrompt`）には、ツールが無くても、実行できる検証と観点・指摘の判定を最後まで行うよう書く。
 
-  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
+  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`apps/daemon/src/ci.ts`（`redactLog`・`redactUrlCredentials`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 再現の工程の後（PBI-29）：sacty は再現のテストを実行しない。
   再現のエージェントへの指示で、書いたテストをテストのコマンドで自分で実行し、不具合のために失敗することを確かめさせ、`sacty-reproduction` に `tests`・`reproduced`・`command`・`exitCode`・`output`（結果の抜粋）を書かせる（`extractReproduction`）。
   sacty は、工程の完了と同じ追記で `ReproductionChecked` を記録する（`reproductionChecked`）。
