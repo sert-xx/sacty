@@ -169,7 +169,11 @@ else {
           screen = secureWindow();
           await screen.loadURL(url);
           if (child.exitCode !== null || child.signalCode !== null) throw new Error(t("exited"));
-          child.once("close", () => {
+          const runningChild = child;
+          const runningDiagnostics = diagnostics;
+          runningChild.once("exit", async () => {
+            await runningDiagnostics.waitForClose();
+            if (child !== runningChild) return;
             child = undefined;
             if (!quitting) {
               dialog.showErrorBox(
