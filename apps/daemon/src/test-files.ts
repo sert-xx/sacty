@@ -18,9 +18,18 @@ function isDocument(name: string): boolean {
 }
 
 /**
+ * 差分が文書だけかを判断するときの、文書の拡張子（PBI-158）。上のテストのファイルを探すときの一覧から、`txt` を外したもの。
+ * `txt` は、依存やビルドの定義（requirements.txt・constraints.txt・CMakeLists.txt など）にも使われ、実行される振る舞いを
+ * 変えうるため。テストのファイルを探すときの一覧は変えない。
+ */
+const CHANGE_DOCUMENT_EXTENSIONS = new Set(
+  [...DOCUMENT_EXTENSIONS].filter((extension) => extension !== "txt"),
+);
+
+/**
  * タスクの差分（起点からの変更のパス。名前の変更は変更元と変更先に分けたもの）が、文書のファイルだけか（PBI-158）。
  * 実行される振る舞いの無い変更なら、テストのコマンドのツールがイメージに無くても、検証を人の確認へ回して止めずに進める判断に使う。
- * 拡張子は上の文書の一覧のとおり（`md`・`markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org`）。コードなど文書でないファイルが
+ * 拡張子は `md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org`（大文字・小文字は問わない）。コードなど文書でないファイルが
  * 1つでもあれば、文書と混ざっていても false。差分が空のときも false（確かめられないものは文書だけとは見なさない）。
  */
 export function isDocumentsOnly(paths: readonly string[]): boolean {
@@ -28,7 +37,8 @@ export function isDocumentsOnly(paths: readonly string[]): boolean {
     paths.length > 0 &&
     paths.every((path) => {
       const name = path.slice(path.lastIndexOf("/") + 1);
-      return isDocument(name);
+      const dot = name.lastIndexOf(".");
+      return dot > 0 && CHANGE_DOCUMENT_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
     })
   );
 }

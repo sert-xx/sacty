@@ -7824,6 +7824,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("文書だけの差分でも、ゴールガーディアンがツール不足のほかの失敗を申告したら、通さずに実装をやり直す", async () => {
+      const repos = withChanges([{ path: "README.md" }]);
+      const mixed = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "docs lint failed",
+              missingCommands: ["npm"],
+              otherFailures: ["docs lint が失敗：README.md のリンク切れ"],
+            },
+            summary: "lint が失敗",
+          },
+        }),
+      );
+      const { activity, service, id } = await toImplement(
+        [implement("# v1"), mixed, implement("# v2"), review()],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.status).not.toBe("paused");
+      expect(task?.lastReview?.passed).toBe(false);
+      expect(task?.lastReview?.tests?.missingCommands).toBeUndefined();
+      activity.close();
+    });
+
     it("文書だけの差分で、観点を満たしていないために不合格なら、やり直しの指示に、ツールが無くて実行できなかった検証は直す対象ではないと渡す", async () => {
       const repos = withChanges([{ path: "README.md" }]);
       const unverified = out(
@@ -7872,6 +7906,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "文書と文書でないファイル（画像・設定）が混ざる",
         [{ path: "README.md" }, { path: "docs/a.png" }],
       ],
+      ["依存の定義（.txt）を含む", [{ path: "README.md" }, { path: "requirements.txt" }]],
       ["差分が空", []],
     ])(
       "%s なら、今までどおり verify.commandMissing で止まり、判定を記録しない",

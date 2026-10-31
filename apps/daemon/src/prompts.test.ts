@@ -3155,8 +3155,85 @@ describe("差分が文書だけのとき、ツールが無くて実行できな�
       "go・golangci-lint がテストを実行したイメージに入っていない",
     );
     expect(review.humanChecks?.[1]).toContain("go・golangci-lint のある環境で");
+    expect(review.humanChecks?.[1]).toContain(
+      "終了コードは 127、出力の末尾は「go: command not found」",
+    );
     expect(review.humanChecks?.[1]).toContain(`\`${COMMAND}\``);
     expect(guardianTestsPassed(review.tests as NonNullable<typeof review.tests>)).toBe(true);
+  });
+
+  it("人が確かめることの項目に、終了コードと出力の末尾と、ツール不足以外の失敗を確かめる旨を書く", () => {
+    const review = extractFinalReview(
+      reported({
+        exitCode: 1,
+        output: "lint failed\nREADME.md:3 broken link\ngo: command not found",
+      }),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    const item = review.humanChecks?.[1] ?? "";
+    expect(item).toContain("終了コードは 1");
+    expect(item).toContain(
+      "出力の末尾は「lint failed README.md:3 broken link go: command not found」",
+    );
+    expect(item).toContain(
+      "ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください",
+    );
+    // 申告が無いときは、そう書く
+    const none = extractFinalReview(reported({ exitCode: undefined, output: "" }), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(none.humanChecks?.[1]).toContain("終了コードは 申告なし");
+    expect(none.humanChecks?.[1]).not.toContain("出力の末尾");
+  });
+
+  it("出力の末尾は、秘密情報を伏せてから切り詰める（切り詰めの境界をまたぐ値が残らない）", () => {
+    const secret = `ghp_${"A1b2C3d4E5".repeat(4)}`;
+    // 末尾の 300 文字の始まりが、値の前・中・後に来るように、値の後ろの長さを変える
+    for (let after = 240; after <= 320; after += 2) {
+      const output = `${"x".repeat(20)} token=${secret} ${"y".repeat(after)}`;
+      const review = extractFinalReview(reported({ output }), ["REQ"], [], {
+        testCommand: COMMAND,
+        documentsOnly: true,
+      });
+      const item = review.humanChecks?.[1] ?? "";
+      expect(item, `after ${after}`).toContain("出力の末尾は");
+      // 値の一部も残らない
+      expect(item, `after ${after}`).not.toContain("A1b2C3d4E5");
+    }
+  });
+
+  it("ゴールガーディアンがツール不足のほかの失敗を申告したら、文書だけの差分でも通ったものにしない（止めずに、ふつうの判定にする）", () => {
+    const review = extractFinalReview(
+      reported({
+        exitCode: 1,
+        otherFailures: ["docs:lint が失敗：README.md の相対リンクが切れている"],
+      }),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(review.missingCommands).toEqual([]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.passed).toBe(false);
+    // ツール不足の項目は足さない（失敗として実装をやり直す）
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+    // 失敗が環境によるものとして申告されていれば、これまでどおり通る
+    const env = extractFinalReview(
+      reported({ exitCode: 1, otherFailures: ["x"], environmentFailures: ["x：起点でも失敗する"] }),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(env.passed).toBe(true);
+    // 空の申告は、申告が無いのと同じ
+    const empty = extractFinalReview(reported({ otherFailures: [" ", ""] }), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(empty.passed).toBe(true);
   });
 
   it("文書だけでない差分（documentsOnly が無い）なら、今までどおり missingCommands を返して止め、記録しない", () => {

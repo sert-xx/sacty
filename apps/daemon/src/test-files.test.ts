@@ -163,9 +163,7 @@ describe("止める理由の文言（PR #105 再レビュー指摘）", () => {
 describe("差分が文書のファイルだけか（PBI-158）", () => {
   it("文書の拡張子のファイルだけなら true（大文字・小文字、深いパス、複数の拡張子）", () => {
     expect(isDocumentsOnly(["README.md"])).toBe(true);
-    expect(isDocumentsOnly(["docs/a.md", "docs/deep/b.MARKDOWN", "notes.txt", "x/y.rst"])).toBe(
-      true,
-    );
+    expect(isDocumentsOnly(["docs/a.md", "docs/deep/b.MARKDOWN", "x/y.rst"])).toBe(true);
     expect(isDocumentsOnly(["guide.adoc", "guide.asciidoc", "plan.org"])).toBe(true);
     // テストのディレクトリの中の文書やテストについての文書も、文書
     expect(isDocumentsOnly(["tests/README.md", "docs/TESTING.md"])).toBe(true);
@@ -175,6 +173,18 @@ describe("差分が文書のファイルだけか（PBI-158）", () => {
     expect(isDocumentsOnly(["main.go"])).toBe(false);
     expect(isDocumentsOnly(["docs/a.md", "main.go"])).toBe(false);
     expect(isDocumentsOnly(["main.go", "docs/a.md"])).toBe(false);
+    // `.txt` は、依存やビルドの定義にも使われるので、文書とは見なさない（テストのファイルを探すときは文書のまま）
+    for (const name of [
+      "notes.txt",
+      "requirements.txt",
+      "constraints.txt",
+      "CMakeLists.txt",
+      "docs/CMakeLists.txt",
+    ]) {
+      expect(isDocumentsOnly(["README.md", name]), name).toBe(false);
+      expect(isDocumentsOnly([name]), name).toBe(false);
+    }
+    expect(looksLikeTestFile("test_cases.txt")).toBe(false);
     // 設定・画像・拡張子の無いファイルは文書とは見なさない
     expect(isDocumentsOnly(["README.md", "docs/diagram.png"])).toBe(false);
     expect(isDocumentsOnly(["README.md", "Makefile"])).toBe(false);

@@ -54,6 +54,7 @@ import {
   lastJsonAnswer,
   withoutCandidates,
 } from "./agent-json.js";
+import { redactLog } from "./ci.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { withoutGitHubComments } from "./github-comments.js";
@@ -2604,6 +2605,7 @@ export function buildFinalReviewPrompt(
               output: "結果の抜粋（実行した件数・失敗したテストとその理由）",
               missingCommands: [],
               environmentFailures: [],
+              otherFailures: [],
             },
             humanChecks: [],
           }
@@ -2613,6 +2615,7 @@ export function buildFinalReviewPrompt(
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
           "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。ツールが無くても、実行できる検証と、観点・指摘の判定は最後まで行ってください。",
+          "ツールが無くて実行できなかったことのほかに失敗（テストの失敗・lint のエラーなど）があれば、失敗ごとに otherFailures に1件ずつ書いてください（無ければ空）。",
           "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。それ以外は空にしてください。",
         ]
       : []),
@@ -2727,15 +2730,21 @@ export function extractFinalReview(
         ),
       ]
     : [];
-  // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）
-  const skipped = options.documentsOnly === true ? reportedMissing : [];
+  // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）。
+  // ただし、ゴールガーディアンがツール不足のほかの失敗を申告したときは、その失敗を見逃さないよう、通ったものにしない
+  // （止めずに、ふつうの判定にする。終了コードが 0 でなければ不合格）
+  const otherFailures = texts(raw.otherFailures);
+  const skipped =
+    options.documentsOnly === true && otherFailures.length === 0 ? reportedMissing : [];
   const missingCommands = options.documentsOnly === true ? [] : reportedMissing;
   const checks =
     humanChecks.length > 0 || skipped.length > 0
       ? {
           humanChecks: [
             ...humanChecks,
-            ...(skipped.length > 0 ? [missingToolsCheck(skipped, command)] : []),
+            ...(skipped.length > 0
+              ? [missingToolsCheck(skipped, command, exitCode, text(raw.output))]
+              : []),
           ],
         }
       : {};
@@ -2761,10 +2770,23 @@ export function extractFinalReview(
  * 差分が文書だけで、テストのコマンドのツールがイメージに無くて実行できなかった検証を、人が最終承認で確かめることにする文
  * （PBI-158）。PR の本文と画面の「人が確かめること」にそのまま出るので、何を・どこで実行するかを書く。
  */
-function missingToolsCheck(tools: readonly string[], command: string): string {
+function missingToolsCheck(
+  tools: readonly string[],
+  command: string,
+  exitCode: number | undefined,
+  output: string,
+): string {
   const names = tools.join("・");
   const shown = command.replace(/\s+/g, " ").replace(/`/g, "'");
-  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${headOf(shown, 300)}\` を実行して確かめてください。`;
+  // 出力の末尾は、秘密情報を伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
+  const tail = tailOf(redactLog(output, []).replace(/\s+/g, " ").replace(/`/g, "'").trim(), 300);
+  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${headOf(shown, 300)}\` を実行して確かめてください。ゴールガーディアンが実行したときの終了コードは ${exitCode ?? "申告なし"}${tail ? `、出力の末尾は「${tail}」` : ""}です。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。`;
+}
+
+/** 末尾の limit 文字（長ければ先頭に … を付ける。サロゲートペアの途中では切らない）。 */
+function tailOf(text: string, limit: number): string {
+  const chars = Array.from(text);
+  return chars.length > limit ? `…${chars.slice(-limit).join("")}` : text;
 }
 
 /** ゴールガーディアンが写したテストの結果の抜粋のうち、記録する文字数。 */

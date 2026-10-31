@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #188
 - ブランチ: claude/awesome-shannon-mtth67
-- 関係する ADR: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)
+- 関係する ADR: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)
 
 ## 目的
 
@@ -36,7 +36,7 @@
 - 画面（`apps/web`）：実装の成果物に「ゴールガーディアンが実行したテスト」を出し（前の版の記録は「テストの実行」のまま）、再現の確かめの補足を、
   再現のエージェントが実行して申告した結果である、という説明にした。
 - docs：
-  - ADR を足した（[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)）。
+  - ADR を足した（[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)）。
   - `20261021-1330-verification-command-and-missing-tool.md` と `20261015-0000-verify-without-test-command.md` を `git mv` で `superseded` にし、
     すでに `superseded` の `20261010-0834-superseded-implement-test-final-review.md`・`20261012-0516-superseded-bugfix-reproduce-step.md`・
     `20261013-0226-superseded-compose-services-per-run.md` の `置き換え先` に、置き換えた部分を書き足した。名前を変えた ADR へのリンクを直した。

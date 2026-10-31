@@ -18,7 +18,7 @@
 
 ## したこと
 
-- 文書だけの差分の判定：`isDocumentsOnly`（`apps/daemon/src/test-files.ts`）。文書の拡張子は、テストのファイルを探すときに文書として除く一覧（`md`・`markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org`）をそのまま使った。差分が空のときは false。
+- 文書だけの差分の判定：`isDocumentsOnly`（`apps/daemon/src/test-files.ts`）。文書の拡張子は、テストのファイルを探すときに文書として除く一覧から `txt`（requirements.txt・CMakeLists.txt など、依存やビルドの定義にも使われる）を外したもの（`md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org`）。探索用の一覧は変えていない。差分が空のときは false。
   差分のパスは `diffStats`（名前の変更を変更元と変更先に分ける）から取る。コードを文書の名前に変えても文書だけにならない。取れなければ止める側に倒す（`changesOnlyDocuments`）。
 - 最終レビューの読み取り（`extractFinalReview`）に `documentsOnly` を足した。申告されたツール不足があるときだけ、`missingCommands` を空にして止めず、`tests.missingCommands` に記録し、実行できなかった検証を `humanChecks` に1項目足す（`missingToolsCheck`）。
   `guardianTestsPassed` は、`tests.missingCommands` があれば通ったものとする。`GuardianTests` に省略可の `missingCommands` を足した（それより前の記録はそのまま読める）。
@@ -38,7 +38,7 @@
 - `npm run typecheck`：通った。
 - `npm run build`：通った。
 - `npx vitest run tests/docs`：93 件通った（英語の版との突き合わせを含む）。
-- `npx vitest run`（全体）：3101 件通った。失敗は2件で、どちらも main でも同じように失敗する、この PC の環境による失敗（Playwright の Chromium が入っていない `question-form.browser.test.ts`、`install-security-tools.test.ts`）。
+- `npx vitest run`（全体）：3106 件通った。失敗は2件と1スイートで、どちらも main でも同じように失敗する、この PC の環境による失敗（Playwright の Chromium が入っていない `question-form.browser.test.ts`、`install-security-tools.test.ts`）。
 - 境界を確かめるテスト（`daemon.test.ts`・`prompts.test.ts`・`test-files.test.ts`・`projection.test.ts`・web）：
   - 文書だけ（`README.md`・`docs/guide.md`）：止まらずに実装の承認待ちへ進み、`tests.missingCommands` と `humanChecks` に出る。PR の本文の「人が確かめること」にも出る。
   - コードだけ・文書とコードが混ざる・コードを文書の名前に変えた・文書と画像が混ざる・差分が空・ファイルごとの変更を取れない：いずれも、これまでどおり `verify.commandMissing` で止まり、判定を記録しない。
@@ -58,8 +58,18 @@
 | テストなしにしても、止まる前の `testCommand` が残り、同じコマンドでまた止まる | 投影で `testCommand` を消した（テストあり） |
 | 実装のやり直しの指示に「終了コード 127」だけが載り、直す対象に見える | 直す対象ではないと添えた（テストあり） |
 
+### DA のレビュー後の修正
+
+| 指摘 | 対応 |
+| --- | --- |
+| 文書だけの差分でツール不足の申告があると、ほかの本物の失敗まで「通った」になり、人の確認の項目にも書かれない | 項目に、終了コードと出力の末尾（`redactLog` で秘密情報を伏せてから 300 文字に切り詰める）と、ツール不足のほかの失敗が混ざっていないか確かめる旨を足した。ゴールガーディアンが `tests.otherFailures` に申告した失敗があるときは、通ったものにせず、ふつうの判定にする（申告に頼る限界と、`&&` の途中で止まった後ろの失敗を見逃しうることは ADR の影響に書いた）。伏せる前に切り詰めると値が残る境界のテストと、`otherFailures` を無視すると落ちるテストを付けた |
+| 文書の拡張子の一覧が広すぎる（`.txt` は requirements.txt・CMakeLists.txt などを含む） | 差分の判定用から `txt` を外した（探索用の一覧は変えない）。`.md` がコードに埋め込まれる場合など、残る穴を ADR の影響に書いた |
+| 20261021-1431 の扱いが ADR の規則に合っていない | 一部を置き換える ADR として `superseded` を付け（ファイル名・ステータス）、置き換え先に、置き換えた部分を1行で書いた。新しい ADR の置き換え元に、そのリンクを書き、名前の変更で切れたリンク（ADR・仕様書・作業履歴）を直した |
+| PR の本文が長い | 冒頭に変更の要約を3行で置き、振る舞いの水準の短い説明に書き直した |
+
 ## 残したこと
 
 - 案B（オーケストレーターが文書だけの依頼で `testCommand` を絞る）・案C（不足を実装の前に知らせる）・案E（指示の矛盾の整理）は、範囲外。
-- 文書の拡張子の一覧は、テストのファイルを探すときのものと同じ（`.mdx` などは含まない）。広げるときは新しい ADR で決める。
+- 文書の拡張子の一覧は、`.mdx` や `.txt` を含まない。広げるときは新しい ADR で決める。
+- ゴールガーディアンが `tests.otherFailures` を書き忘れた失敗は、見逃す。
 - 実際のゴールガーディアン（AI）での確かめ（同じ依頼・同じ環境での再試行と、Go のコードを1行変えるだけのタスクで止まること）は、していない。自動のテストは、ゴールガーディアンの出力を差し替えて確かめている。
