@@ -53,8 +53,10 @@ import {
   DeriveTaskInput,
   deploymentCheckRunning,
   derivedRecord,
+  ERROR_ANALYSIS_MAX,
   EventInput,
   type ExportPlan,
+  errorAnalysisBlocked,
   excludedRepositories,
   exportDue,
   exportSteps,
@@ -93,6 +95,7 @@ import {
   type PullRequestTemplateUse,
   parseOrgUrl,
   parseRepoUrl,
+  pendingErrorAnalysis,
   pendingQuestion,
   project,
   projectConflicts,
@@ -210,6 +213,7 @@ import {
   extractDeploymentCheck,
   findDeploymentSkill,
 } from "./deployment.js";
+import { buildErrorReport, type ReportLocale } from "./error-report.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
@@ -286,6 +290,7 @@ import {
   type BodyText,
   buildChatPrompt,
   buildChildBody,
+  buildErrorAnalysisPrompt,
   buildExportDocument,
   buildExportPrompt,
   buildFinalReviewPrompt,
@@ -316,6 +321,7 @@ import {
   continuablePullRequest,
   deriveBody,
   deriveRecord,
+  ERROR_REPORT_FILE,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
   type ExportDestination,
@@ -844,6 +850,8 @@ export class TaskService {
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
   private readonly chats = new Map<string, { runId: string; done: Promise<void> }>();
+  /** エラーの分析をしている実行（タスクごとに1つ。止めるための実行の ID と、終わり）。 */
+  private readonly analyses = new Map<string, { runId: string; done: Promise<void> }>();
   /** 作業領域を消している途中のタスク（消し終わるまでの Promise。作り直す・読む前に待つ。PBI-157）。 */
   private readonly retiring = new Map<string, Promise<void>>();
   /** 作業領域を用意している途中のタスク（用意を1つずつにする。PBI-157 レビュー指摘）。 */
@@ -2027,8 +2035,14 @@ export class TaskService {
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
       return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
     } finally {
-      // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）
-      await rm(workspaceDir, { recursive: true, force: true });
+      // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）。消せなくても、実行の結果
+      // （判定・答え・分析と費用）を失わないよう、警告だけにする
+      await rm(workspaceDir, { recursive: true, force: true }).catch((error: unknown) => {
+        console.warn(
+          `[daemon] ゴールガーディアン・オーケストレーターの実行の作業領域を消せませんでした（${task.id}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      });
     }
   }
 
@@ -3760,7 +3774,11 @@ export class TaskService {
     const active = [...this.tasks.values()].filter(
       (t) =>
         t.projectId === id &&
-        (!isFinished(t) || this.inflight.has(t.id) || queued.has(t.id) || this.chats.has(t.id)),
+        (!isFinished(t) ||
+          this.inflight.has(t.id) ||
+          queued.has(t.id) ||
+          this.chats.has(t.id) ||
+          this.analyses.has(t.id)),
     ).length;
     if (active > 0)
       throw new InvalidOperationError(message("project.hasActiveTasks", { count: active }));
@@ -5264,6 +5282,25 @@ export class TaskService {
         },
       ]);
     }
+    // デーモンが止まって終わらなかったエラーの分析も、中断として記録する（次の分析を受け付けるため）
+    for (const task of [...this.tasks.values()]) {
+      const analysis = pendingErrorAnalysis(task);
+      if (!analysis || task.status === "cancelled") continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "ErrorAnalyzed",
+            payload: {
+              analysisId: analysis.id,
+              failed: message("run.daemonStopped"),
+              runResult: "interrupted",
+              agentId: "unknown",
+            },
+          },
+        },
+      ]);
+    }
     // デーモンが止まって途中になったデプロイの確認は、マージの後の監視の工程（PBI-116）なら、ほかの工程の実行と同じく
     // 中断として記録して一時停止する（再開すると確かめ直す）。工程の無い PBI-116 より前のタスクの監視は、確かめられなかった
     // （中断）として終える（やり直さない。PBI-89）
@@ -5375,6 +5412,7 @@ export class TaskService {
     return (
       this.inflight.has(taskId) ||
       this.chats.has(taskId) ||
+      this.analyses.has(taskId) ||
       this.cancelling.has(taskId) ||
       this.preparing.has(taskId) ||
       (this.borrowed.get(taskId) ?? 0) > 0
@@ -5520,7 +5558,9 @@ export class TaskService {
 
   /** 動いている実行（工程・質問への答え）と、停止を確かめられなかったコンテナの実行。 */
   private activeRunIds(): Set<string> {
-    const active = new Set<string>([...this.chats.values()].map((c) => c.runId));
+    const active = new Set<string>(
+      [...this.chats.values(), ...this.analyses.values()].map((c) => c.runId),
+    );
     for (const entry of this.inflight.values()) for (const runId of entry.runIds) active.add(runId);
     for (const task of this.tasks.values())
       for (const runId of task.unstoppedRuns ?? []) active.add(runId);
@@ -8486,6 +8526,12 @@ export class TaskService {
         this.deps.executor.kill(chat.runId);
         await chat.done;
       }
+      // エラーを分析している実行も、同じく止めて記録を待つ
+      const analysis = this.analyses.get(id);
+      if (analysis) {
+        this.deps.executor.kill(analysis.runId);
+        await analysis.done;
+      }
       const cleanup: CleanupResult[] = [];
       const inflight = this.inflight.get(id);
       // 止めたコンテナが無くなったことを確かめられなければ、作業領域は消さない（まだ書き込まれうるため）
@@ -9123,7 +9169,17 @@ export class TaskService {
           : fresh,
       );
     } finally {
-      if (handoff) rmSync(handoffDir, { recursive: true, force: true });
+      // 消せなくても、実行の結果（答え・分析と費用）は失わない（残ったものは、起動のときの片付けで消す）
+      if (handoff) {
+        try {
+          rmSync(handoffDir, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[daemon] 引き継ぎのために書いたファイルを消せませんでした（${run.taskId}）：`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
     }
     let reason = plan.mode === "new" ? plan.reason : undefined;
     let failedRunId: string | undefined;
@@ -10001,6 +10057,212 @@ export class TaskService {
     this.warnIfNeeded(this.mustGet(task.id));
   }
 
+  // ─── エラーレポート ───────────────────────────────────────────────────────────
+
+  /**
+   * タスクのエラーレポート（Markdown）。sacty の処理（作業履歴）・各実行のエージェントの動き（セッションログ）・エラーの詳細と、
+   * あればオーケストレーターの分析をまとめる。タスクが無ければ undefined。
+   */
+  errorReport(id: string, locale: ReportLocale): string | undefined {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    return buildErrorReport({
+      task,
+      activity: this.deps.activity.forTask(id),
+      projectName: this.deps.projects.get(task.projectId)?.name,
+      ...(this.deps.sessionLogs ? { logs: this.deps.sessionLogs } : {}),
+      generatedAt: new Date().toISOString(),
+      locale,
+    });
+  }
+
+  /**
+   * エラーレポートのために、オーケストレーターにエラーを分析させる。求めを記録し、分析は待たずに返す（analyzed で待てる）。
+   * 作業中のタスクでも求められ、タスクの状態・工程・承認済みの内容は変えない。中止したタスク・予算の上限に達したタスクでは
+   * 求められない。分析を待つ求めは、1タスクに1件まで。
+   */
+  analyzeErrors(id: string): { task: Task; analyzed: Promise<void> } {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    const blocked = errorAnalysisBlocked(task);
+    if (blocked) throw new InvalidOperationError(blocked);
+    if (this.cancelling.has(id)) throw new InvalidOperationError(message("task.cancelled"));
+    if (this.stopping) throw new InvalidOperationError(message("errorReport.stopping"));
+    const config = this.deps.config();
+    if (!config.ok) throw new InvalidOperationError(message("errorReport.unavailable"));
+    const analysisId = `A-${task.errorAnalyses.length + 1}`;
+    const requested = this.append(task, [
+      { actor: "person", event: { type: "ErrorAnalysisRequested", payload: { analysisId } } },
+    ]);
+    const entry: { runId: string; done: Promise<void> } = {
+      runId: randomUUID(),
+      done: Promise.resolve(),
+    };
+    const analyzed = this.runErrorAnalysis(requested, analysisId, entry, config.config)
+      .catch((error) => {
+        console.error(`[daemon] could not record the error analysis for task ${id}:`, error);
+      })
+      .finally(() => {
+        if (this.analyses.get(id) === entry) this.analyses.delete(id);
+        void this.retireWorkspace(id);
+      });
+    entry.done = analyzed;
+    this.analyses.set(id, entry);
+    return { task: requested, analyzed };
+  }
+
+  /**
+   * オーケストレーターに、エラーレポートとセッションログを読ませてエラーを分析させる。質問への答えと同じく、オーケストレーターの
+   * セッションの複製で実行し（role は chat）、用意済みのタスクは起点のコードの使い捨ての写しを渡す。分析から秘密情報を
+   * 取り除いてから、長ければ切り詰める。分析できなくても、使った分の費用は記録する。
+   */
+  private async runErrorAnalysis(
+    task: Task,
+    analysisId: string,
+    run: { runId: string },
+    config: SactyConfig,
+  ): Promise<void> {
+    const agent = this.usableAgent(config, agentFor(config, "orchestrator"), task.id, "chat");
+    const setting = { agentId: agent.id, ...agentSetting(agent), runId: run.runId };
+    let payload: Extract<EventInput, { type: "ErrorAnalyzed" }>["payload"];
+    const logsDir = join(this.deps.workspaceRoot, "_question-logs", run.runId);
+    try {
+      const activity = this.deps.activity.forTask(task.id);
+      const logs = this.stageQuestionLogs(task.id, activity, logsDir, run.runId, true);
+      const report = buildErrorReport({
+        task,
+        activity,
+        projectName: this.deps.projects.get(task.projectId)?.name,
+        ...(this.deps.sessionLogs ? { logs: this.deps.sessionLogs } : {}),
+        generatedAt: new Date().toISOString(),
+        locale: "ja",
+        includeAnalysis: false,
+        // 伏せ直しを経ていない（デーモンが止まって閉じられなかった）実行のログは、AI に渡さない
+        omitStaleLogs: true,
+      });
+      let reportFile = false;
+      if ("runs" in logs) {
+        try {
+          writeFileSync(join(logsDir, ERROR_REPORT_FILE), report, { mode: 0o600 });
+          reportFile = true;
+        } catch {
+          reportFile = false;
+        }
+      }
+      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+        task,
+        {
+          agent,
+          image: config.image,
+          prompt: buildErrorAnalysisPrompt(task, report, logs, reportFile),
+          role: "chat",
+          ...("runs" in logs
+            ? {
+                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
+                readDirs: [CONTAINER_LOGS_DIR],
+              }
+            : {}),
+          runId: run.runId,
+          stopped: () => this.cancelling.has(task.id),
+          onRunId: (next) => {
+            run.runId = next;
+          },
+        },
+        "base",
+      );
+      const cost = {
+        ...setting,
+        runId,
+        ...(outcome.usage ? { usage: outcome.usage } : {}),
+        costUsd,
+        estimated,
+      };
+      const text = outcome.kind === "completed" ? outcome.output.trim() : "";
+      if (this.cancelling.has(task.id)) {
+        payload = {
+          analysisId,
+          failed: message("errorReport.cancelled"),
+          runResult: "interrupted",
+          ...cost,
+        };
+      } else if (this.stopping && outcome.kind === "failed") {
+        // デーモンを止めるために止めた実行は、中断として記録する（費用は残す）
+        payload = {
+          analysisId,
+          failed: message("run.daemonStopped"),
+          runResult: "interrupted",
+          ...cost,
+        };
+      } else if (outcome.kind === "failed") {
+        payload = {
+          analysisId,
+          failed: message("errorReport.failed", { detail: outcome.message }),
+          runResult: "failed",
+          ...cost,
+        };
+      } else if (!text) {
+        payload = {
+          analysisId,
+          failed: message("errorReport.empty"),
+          runResult: "failed",
+          ...cost,
+        };
+      } else {
+        payload = {
+          analysisId,
+          analysis:
+            text.length > ERROR_ANALYSIS_MAX ? `${text.slice(0, ERROR_ANALYSIS_MAX - 1)}…` : text,
+          runResult: "completed",
+          ...cost,
+        };
+      }
+    } catch (error) {
+      payload = {
+        analysisId,
+        failed: message("errorReport.failed", { detail: errorText(error) }),
+        runResult: "failed",
+        ...setting,
+      };
+    } finally {
+      // 消せなくても、結果と費用は記録する（分析待ちを残さない）
+      try {
+        rmSync(logsDir, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(
+          `[daemon] エラーの分析に並べたセッションログを消せませんでした（${task.id}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    const latest = this.tasks.get(task.id);
+    if (
+      !latest ||
+      latest.status === "cancelled" ||
+      pendingErrorAnalysis(latest)?.id !== analysisId
+    ) {
+      return;
+    }
+    try {
+      this.append(latest, [{ actor: "orchestrator", event: { type: "ErrorAnalyzed", payload } }]);
+    } catch (error) {
+      const { analysis: _analysis, failed: _failed, ...rest } = payload;
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "orchestrator",
+          event: {
+            type: "ErrorAnalyzed",
+            payload: {
+              ...rest,
+              failed: message("errorReport.failed", { detail: errorText(error) }),
+              runResult: "failed",
+            },
+          },
+        },
+      ]);
+    }
+    this.warnIfNeeded(this.mustGet(task.id));
+  }
+
   // ─── 完了したタスクの監査（PBI-125） ───────────────────────────────────────────────
 
   /** デーモンを止めている（止めるときの実行の失敗を、監査の失敗として記録しない）。 */
@@ -10009,6 +10271,14 @@ export class TaskService {
   /** デーモンを止め始めた（main.ts が、実行中のコンテナを止める前に呼ぶ）。 */
   beginShutdown(): void {
     this.stopping = true;
+  }
+
+  /**
+   * 画面から始めたエラーの分析の、結果・費用の記録と後片付けの終わり（ワーカーの外で動くので、デーモンを止めるときに
+   * 作業履歴を閉じる前に待つ）。
+   */
+  analysesSettled(): Promise<void> {
+    return Promise.all([...this.analyses.values()].map((a) => a.done)).then(() => {});
   }
 
   /** 監査を進めるタスクか。 */

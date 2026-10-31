@@ -1,6 +1,6 @@
 import type { ActivityEvent } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { parseSessionLog, runLogId } from "./session-log";
+import { parseSessionLog, runLogId, runRoleKey } from "./session-log";
 
 const jsonl = (...events: unknown[]) => events.map((e) => JSON.stringify(e)).join("\n");
 
@@ -152,5 +152,22 @@ describe("セッションログの並べ方（PBI-62）", () => {
     // 写したエージェントの元のファイルの記録からも、その実行の画面に行ける（PBI-66）
     expect(runLogId(event("AgentSessionArchived", { runId: "r6", files: [] }))).toBe("r6");
     expect(runLogId(event("TaskPaused", { runId: "r5" }))).toBeUndefined();
+    // エラーの分析の実行の行からも、その実行の画面に行ける
+    expect(runLogId(event("ErrorAnalyzed", { runId: "r7" }))).toBe("r7");
+  });
+
+  it("エラーの分析の実行は、セッションログの役割（chat）を作業履歴から読み替える", () => {
+    const event = (type: string) =>
+      ({
+        id: 1,
+        taskId: "t",
+        at: "",
+        actor: "orchestrator",
+        type,
+        payload: {},
+      }) as unknown as ActivityEvent;
+    expect(runRoleKey("chat", [event("ErrorAnalyzed")])).toBe("error-analysis");
+    expect(runRoleKey("chat", [event("QuestionAnswered")])).toBe("chat");
+    expect(runRoleKey("implement", [])).toBe("implement");
   });
 });

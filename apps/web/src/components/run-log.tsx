@@ -18,7 +18,7 @@ import type { AgentFiles, RunLogMeta } from "@/lib/daemon";
 import { formatStamp } from "@/lib/labels";
 import { fetchLive, LIVE_INTERVAL_MS, type LiveStale, pollWhileVisible } from "@/lib/live";
 import type { RunLogData } from "@/lib/run-log-data";
-import { type LogEntry, parseSessionLog } from "@/lib/session-log";
+import { type LogEntry, parseSessionLog, runRoleKey } from "@/lib/session-log";
 
 /** 画面に並べる出来事の上限（多すぎるとページが重くなるため。残りは生のファイルで見る）。 */
 const MAX_ENTRIES = 2_000;
@@ -269,7 +269,11 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
         </>
       ) : (
         <>
-          <Summary meta={data.log.meta} messages={messages} />
+          <Summary
+            meta={data.log.meta}
+            roleKey={runRoleKey(data.log.meta.role, data.rows)}
+            messages={messages}
+          />
           <section
             aria-labelledby="run-download"
             className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-5 text-sm"
@@ -310,12 +314,21 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
   );
 }
 
-function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
+function Summary({
+  meta,
+  roleKey,
+  messages,
+}: {
+  meta: RunLogMeta;
+  /** 役割の表示の名前を引くキー（runRoleKey。エラーの分析は作業履歴から読み替える）。 */
+  roleKey: string;
+  messages: Messages;
+}) {
   const m = messages.runLog;
   const role =
-    messages.labels.step[meta.role as StepKey] ??
-    (m.roles as Record<string, string>)[meta.role] ??
-    meta.role;
+    messages.labels.step[roleKey as StepKey] ??
+    (m.roles as Record<string, string>)[roleKey] ??
+    roleKey;
   const outcome = meta.outcome;
   const files = { events: m.events, stderr: m.stderr } as const;
   return (

@@ -1522,6 +1522,38 @@ const QuestionAnswered = z.object({
   }),
 });
 
+/** オーケストレーターのエラーの分析の上限（文字数）。 */
+export const ERROR_ANALYSIS_MAX = 20_000;
+
+/**
+ * 人間が、エラーレポートのためにオーケストレーターにエラーの分析を求めた。分析はタスクの状態・工程・承認済みの内容を
+ * 変えない。分析を待つ求めは、1タスクに1件まで。id はタスクの中で一意（A-1, A-2, …）。
+ */
+const ErrorAnalysisRequested = z.object({
+  type: z.literal("ErrorAnalysisRequested"),
+  payload: z.object({ analysisId: z.string().min(1) }),
+});
+
+/**
+ * オーケストレーターが、エラーレポート・セッションログ・コードを読んでエラーを分析した。分析できなければ analysis の
+ * 代わりに failed（理由）を持つ。費用はタスクの予算に入れる（タスクの状態は変えない）。
+ */
+const ErrorAnalyzed = z.object({
+  type: z.literal("ErrorAnalyzed"),
+  payload: z.object({
+    analysisId: z.string().min(1),
+    analysis: z.string().min(1).max(ERROR_ANALYSIS_MAX).optional(),
+    failed: DaemonText.optional(),
+    runResult: GuardianRunResult,
+    agentId: z.string(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 /**
  * 承認した成果の書き出しを始めた（PBI-56）。結果（OutputExported）の前にデーモンが止まったら、次の書き出しで、
  * 書き出し先に目印のあるページを探して更新させる（同じ成果を二重に書き出さない）。approvedAt は書き出す承認済みの版。
@@ -2566,6 +2598,8 @@ export const EventInput = z.discriminatedUnion("type", [
   TicketPullRequestCommented,
   QuestionAsked,
   QuestionAnswered,
+  ErrorAnalysisRequested,
+  ErrorAnalyzed,
   ExportStarted,
   OutputExported,
   ExportRequested,

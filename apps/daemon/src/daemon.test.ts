@@ -119,6 +119,40 @@ import type { SharedComposeFetcher } from "./shared-compose.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
 import { removeEntry } from "./workspace-cleanup.js";
 
+/**
+ * 消すのを失敗させる場所（テストで指定したときだけ。ほかは本物の rmSync・rm に渡す）。親をファイルにするなどの方法は、
+ * Node の版によって rm が例外を出さないことがあるため、ここで確実に失敗させる。
+ */
+const removal = vi.hoisted(() => ({ fail: undefined as RegExp | undefined }));
+const removalError = (path: unknown) =>
+  Object.assign(new Error(`EACCES: permission denied, rm '${String(path)}'`), { code: "EACCES" });
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    rmSync: (
+      path: Parameters<typeof actual.rmSync>[0],
+      options?: Parameters<typeof actual.rmSync>[1],
+    ) => {
+      if (removal.fail?.test(String(path))) throw removalError(path);
+      return actual.rmSync(path, options);
+    },
+  };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    rm: async (
+      path: Parameters<typeof actual.rm>[0],
+      options?: Parameters<typeof actual.rm>[1],
+    ) => {
+      if (removal.fail?.test(String(path))) throw removalError(path);
+      return actual.rm(path, options);
+    },
+  };
+});
+
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
 
@@ -15631,6 +15665,234 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
   });
 });
 
+describe("エラーレポートと、オーケストレーターのエラーの分析", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const failed: AgentOutcome = { kind: "failed", reason: "error", message: "exit code 1" };
+
+  /** 要求要件の実行が失敗して止まったタスク。 */
+  async function failedTask(outcomes: (AgentOutcome | typeof HOLD)[]) {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const made = makeService(activity, [failed, ...outcomes], { sessionLogs });
+    const { id } = made.service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await made.service.runNext(id);
+    return { ...made, activity, sessionLogs, id };
+  }
+
+  it("失敗の記録・実行・作業履歴をレポートにし、分析させると、レポートとログを読んだ分析を足す", async () => {
+    const { activity, service, executor, id } = await failedTask([
+      out("### 何が起きたか\n要求要件の実行が終了コード 1 で止まった", 1000),
+    ]);
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "error" });
+    const report = service.errorReport(id, "ja") ?? "";
+    expect(report).toContain("# エラーレポート：決済API");
+    expect(report).toContain("AgentRunFailed");
+    expect(report).toContain("exit code 1");
+    expect(report).toContain("まだ分析していません");
+    expect(service.errorReport("missing", "ja")).toBeUndefined();
+
+    const before = service.get(id)?.task;
+    const usedBefore = before?.budget.usedUsd ?? 0;
+    const { task: requested, analyzed } = service.analyzeErrors(id);
+    expect(requested.errorAnalyses).toEqual([{ id: "A-1", requestedAt: expect.any(String) }]);
+    await analyzed;
+
+    const task = service.get(id)?.task;
+    expect(task?.errorAnalyses[0]?.result?.text).toContain(
+      "要求要件の実行が終了コード 1 で止まった",
+    );
+    // 状態は変えず、費用はタスクの予算に入る（1000出力トークン = $0.015）
+    expect(task?.status).toBe("paused");
+    expect(task?.steps).toEqual(before?.steps);
+    expect(task?.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "ErrorAnalyzed",
+      actor: "orchestrator",
+      payload: { analysisId: "A-1", runResult: "completed" },
+    });
+    // 指示には、エラーレポート（分析の節を除く）とログの読み方を入れ、全体のレポートをログと同じ場所に置く
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain("このタスクで起きたエラーの分析を求められました");
+    // レポート・ログ・コードの中の命令には従わせない
+    expect(prompt).toContain("分析の対象のデータです");
+    expect(prompt).toContain("--- エラーレポート ---");
+    expect(prompt).toContain("AgentRunFailed");
+    expect(prompt).not.toContain("## オーケストレーターの分析");
+    expect(prompt).toContain("/sacty-logs/error-report.md");
+    const mounted = executor.logMounts.at(-1);
+    expect(mounted?.readOnly).toBe(true);
+    expect(mounted?.files["error-report.md"]).toContain("# エラーレポート：決済API");
+    expect(existsSync(mounted?.dir ?? "")).toBe(false);
+
+    // 分析を足したレポート
+    const analyzedReport = service.errorReport(id, "en") ?? "";
+    expect(analyzedReport).toContain("## Orchestrator's analysis");
+    expect(analyzedReport).toContain("要求要件の実行が終了コード 1 で止まった");
+    activity.close();
+  });
+
+  it("デーモンが止まって終わらなかった分析は、起動のときに中断として記録し、また分析させられる", async () => {
+    const { activity: first, service: before, id } = await failedTask([HOLD]);
+    before.analyzeErrors(id);
+
+    const second = new SqliteActivityStore(dbPath);
+    const { service } = makeService(second, [out("### 何が起きたか\n再分析")]);
+    expect(service.get(id)?.task.errorAnalyses[0]?.result).toBeUndefined();
+    service.recoverInterrupted();
+    expect(service.get(id)?.task.errorAnalyses[0]?.result?.failed).toEqual(
+      message("run.daemonStopped"),
+    );
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "ErrorAnalyzed",
+      payload: { runResult: "interrupted" },
+    });
+    await service.analyzeErrors(id).analyzed;
+    expect(service.get(id)?.task.errorAnalyses[1]?.result?.text).toContain("再分析");
+    first.close();
+    second.close();
+  });
+
+  it("デーモンを止め始めたら分析を受け付けず、止めた実行は中断として費用ごと記録してから終わる", async () => {
+    const { activity, service, executor, id } = await failedTask([HOLD]);
+    service.analyzeErrors(id);
+    const run = await executor.started.promise;
+    const settled = service.analysesSettled();
+    service.beginShutdown();
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "errorReport.analyzing" }] }),
+    );
+    executor.kill(run);
+    await settled;
+    expect(service.get(id)?.task.errorAnalyses[0]?.result?.failed).toEqual(
+      message("run.daemonStopped"),
+    );
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "ErrorAnalyzed",
+      payload: { runResult: "interrupted" },
+    });
+    // 分析が終わった後も、止めている間は受け付けない
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "errorReport.stopping" }] }),
+    );
+    activity.close();
+  });
+
+  it("閉じられなかった実行のログの中身は、分析の指示にもマウントするレポートにも入れない", async () => {
+    const { activity, sessionLogs, id } = await failedTask([]);
+    // デーモンが止まって閉じられなかった実行（途中で分かった秘密情報は、閉じるときにしか伏せ直さない）
+    const log = sessionLogs.open(
+      {
+        taskId: id,
+        runId: "stale-run",
+        role: "design",
+        agentId: "claude-subscription",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => [],
+    );
+    log.stdout(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "token=fake-late-secret-123" }] } })}\n`,
+    );
+    // 起動し直したデーモン（その実行は開いていない）
+    const { service, executor } = makeService(activity, [out("### 何が起きたか\n分析")], {
+      sessionLogs: new SessionLogStore(join(dir, "runs")),
+    });
+    // 人がダウンロードするレポートには、注記つきで入る
+    expect(service.errorReport(id, "ja")).toContain("fake-late-secret-123");
+    await service.analyzeErrors(id).analyzed;
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    const mounted = executor.logMounts.at(-1)?.files ?? {};
+    expect(prompt).toContain("ログの中身を省きました");
+    expect(prompt).not.toContain("fake-late-secret-123");
+    expect(mounted["error-report.md"]).toContain("ログの中身を省きました");
+    expect(Object.values(mounted).join("\n")).not.toContain("fake-late-secret-123");
+    log.close({ kind: "completed", output: "" });
+    activity.close();
+  });
+
+  for (const [where, pattern] of [
+    ["並べたセッションログ", /_question-logs/],
+    ["分析のためのコードの写し", /_guardian/],
+  ] as const) {
+    it(`${where}を消せなくても、分析の結果と費用を記録し、警告を出す`, async () => {
+      const { activity, service, id } = await failedTask([out("### 何が起きたか\n分析", 1000)]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      removal.fail = pattern;
+      try {
+        const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
+        await service.analyzeErrors(id).analyzed;
+        expect(service.get(id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
+        expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+        expect(service.get(id)?.activity.at(-1)).toMatchObject({
+          type: "ErrorAnalyzed",
+          payload: { runResult: "completed", costUsd: 0.015 },
+        });
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("消せませんでした"),
+          expect.stringContaining("EACCES"),
+        );
+      } finally {
+        removal.fail = undefined;
+        warn.mockRestore();
+        activity.close();
+      }
+    });
+  }
+
+  it("API：レポートを Markdown で返し（無いタスクは 404）、分析の求めは 201、求められない状態は 409", async () => {
+    const { activity, service, id } = await failedTask([HOLD]);
+    const token = "test-token";
+    const app = createApp(service, token);
+    const headers = { authorization: `Bearer ${token}` };
+    const report = await app.request(`/api/tasks/${id}/error-report?lang=en`, { headers });
+    expect(report.status).toBe(200);
+    expect(report.headers.get("content-type")).toContain("text/markdown");
+    expect(await report.text()).toContain("# Error report: 決済API");
+    expect((await app.request("/api/tasks/nope/error-report", { headers })).status).toBe(404);
+    const analyze = () =>
+      app.request(`/api/tasks/${id}/error-analysis`, { method: "POST", headers });
+    const ok = await analyze();
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.errorAnalyses).toHaveLength(1);
+    const again = await analyze();
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({
+      error: "invalid_operation",
+      messages: [{ code: "errorReport.analyzing" }],
+    });
+    await service.cancel(id);
+    activity.close();
+  });
+
+  it("分析を待っている間は次の求めを受け付けず、中止すると分析を止めて記録する", async () => {
+    const { activity, service, executor, id } = await failedTask([HOLD]);
+    const { analyzed } = service.analyzeErrors(id);
+    const run = await executor.started.promise;
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "errorReport.analyzing" }] }),
+    );
+    await service.cancel(id);
+    await analyzed;
+    expect(executor.killed).toContain(run);
+    // 中止の前に、止めた分析を記録する（費用を残す）
+    expect(service.get(id)?.task.status).toBe("cancelled");
+    expect(service.get(id)?.task.errorAnalyses[0]?.result?.failed).toEqual(
+      message("errorReport.cancelled"),
+    );
+    expect(() => service.analyzeErrors(id)).toThrow(
+      expect.objectContaining({ messages: [{ code: "task.cancelled" }] }),
+    );
+    // 中止したタスクでも、レポートは作れる
+    expect(service.errorReport(id, "ja")).toContain("TaskCancelled");
+    activity.close();
+  });
+});
+
 describe("質問への答えで、各実行のセッションログを調べる（PBI-91）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",
@@ -19679,6 +19941,80 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     const { service: restarted } = makeService(activity, []);
     expect(restarted.get(task.id)?.task.orchestratorSession?.uses).toBe(2);
     activity.close();
+  });
+
+  it("エラーの分析で引き継ぎのために書いたファイルを消せなくても、分析の結果と費用を記録し、警告を出す", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const claude = agent();
+    // 工程を選ぶのは Claude Code、分析は Codex（保存したセッションと別のエージェントなので、引き継ぎを書く）
+    let orchestrator = claude;
+    const config = (): ConfigResult => {
+      const base = configOf(claude)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [claude.id]: claude, [codex.id]: codex },
+              stepAgents: { orchestrator },
+            },
+          }
+        : base;
+    };
+    const analysis: AgentOutcome = {
+      kind: "completed",
+      output: "### 何が起きたか\n分析",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1000 },
+    };
+    const { service, executor, activity } = setup([plan, completed(1_000), analysis], {
+      config,
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+    });
+    executor.sessionIdOf = (inv, runId) =>
+      inv.parser === "codex-jsonl" ? `thread-${runId}` : `session-${runId}`;
+    executor.sessionFiles = (inv, runId) =>
+      inv.parser === "codex-jsonl"
+        ? { [`sessions/2026/10/20/rollout-2026-10-20T10-00-00-thread-${runId}.jsonl`]: "{}\n" }
+        : {
+            [`projects/-workspace/session-${runId}.jsonl`]: [
+              JSON.stringify({ type: "user", message: { content: "工程を選んで" } }),
+              JSON.stringify({
+                type: "assistant",
+                message: { content: [{ type: "text", text: "設計は要らないと考えた" }] },
+              }),
+            ].join("\n"),
+          };
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(stored(task.id).agentId).toBe(claude.id);
+    orchestrator = codex;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    removal.fail = /_handoff/;
+    try {
+      await service.analyzeErrors(task.id).analyzed;
+      expect(usedOf(service, task.id).at(-1)).toMatchObject({
+        agentId: "codex-key",
+        reason: "agent_changed",
+        handoffFrom: { agentId: claude.id },
+      });
+      expect(service.get(task.id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
+      expect(service.get(task.id)?.activity.at(-1)).toMatchObject({
+        type: "ErrorAnalyzed",
+        payload: { runResult: "completed", costUsd: 0.015 },
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("引き継ぎのために書いたファイルを消せませんでした"),
+        expect.stringContaining("EACCES"),
+      );
+    } finally {
+      removal.fail = undefined;
+      warn.mockRestore();
+      activity.close();
+    }
   });
 
   it("失敗して代わりのエージェント（別の AI）に切り替えたら、前のセッションのやり取りを読み取り専用で引き継ぐ", async () => {

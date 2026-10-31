@@ -32,7 +32,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Kind | Path |
 | --- | --- |
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
-| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview}`, `GET /api/tasks/:id/{cleanup-plan,security-findings}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
+| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`, `GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
 | Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
@@ -54,6 +54,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/projects/<ID>/schedules`, `/projects/<ID>/schedules/<scheduled task ID>` | The project's scheduled task list and details ([Scheduled tasks](scheduled-tasks.en.md)) |
 | `/projects/current`, `/projects/current/tasks`, `/projects/current/schedules` | Moves (303) to the settings, the task list, or the scheduled task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
 | `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
+| `/tasks/<ID>/error-report` | Downloading the error report ([Error report](error-report.en.md)) |
 | `/settings` | The sacty settings |
 
 - The web UI builds its links and destinations in `apps/web/src/lib/paths.ts` (project IDs are encoded).
@@ -68,7 +69,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - Tabs (the view tabs and the deliverable steps) can be moved with the left and right arrow keys, Home, and End (only the selected tab is in the focus order).
   - Deliverables on the Overview tab are shown one step at a time (`Deliverables`). At first, the running step, the step awaiting approval, or the last finished step is chosen, in that order (`currentStep`).
     Because they are shown one at a time, approved cards are not collapsed (`ExpandCards`). An after-merge watch that has not started cannot be chosen (an old task with a watch record but no step can be chosen).
-  - The right column shows the properties (current step, PR, cost, project, repository, branch, tests, ticket, related tasks, created and last updated) and the recent Activity (5 entries).
+  - The right column shows, in this order, the properties (current step, PR, cost, project, repository, branch, tests, ticket, related tasks, created and last updated), the error report (only for tasks with error records; [Error report](error-report.en.md#ui)), and the recent Activity (5 entries).
   - The change proposals and verdicts section appears only when there are proposals.
 - The ID in the URL decides the project of a project screen. An ID that is not in the daemon's project list is 404.
 - "All tasks" in the task list can be filtered on the screen (`TaskFilterBar`, `matchesFilter`). The filters are not shown when there are no tasks.

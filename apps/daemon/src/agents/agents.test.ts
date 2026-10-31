@@ -17,6 +17,26 @@ import {
   parseCodexEvents,
 } from "./parse.js";
 
+/** 消すのを失敗させる場所（テストで指定したときだけ。ほかは本物の rmSync に渡す）。 */
+const removal = vi.hoisted(() => ({ fail: undefined as RegExp | undefined }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    rmSync: (
+      path: Parameters<typeof actual.rmSync>[0],
+      options?: Parameters<typeof actual.rmSync>[1],
+    ) => {
+      if (removal.fail?.test(String(path))) {
+        throw Object.assign(new Error(`EACCES: permission denied, rm '${String(path)}'`), {
+          code: "EACCES",
+        });
+      }
+      return actual.rmSync(path, options);
+    },
+  };
+});
+
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
 
@@ -2363,5 +2383,57 @@ agents:
     expect(result.config.agentWarnings).toEqual([]);
     // 既定の工程の AI は、providers.codex があるので codex_standard のまま
     expect(result.config.defaultAgent.id).toBe("codex_standard");
+  });
+});
+
+describe("実行の後の設定の場所の後片付け（偽のdockerコマンド。PR #254 の6回目のレビュー）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    removal.fail = undefined;
+    process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("設定の場所を消せなくても、実行の出力と使用量を返し、警告を出す", async () => {
+    const { chmodSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"分析"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}'
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, "{}");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    removal.fail = /sacty-run-/;
+    try {
+      const outcome = await new DockerExecutor().run({
+        runId: "r-cleanup",
+        image: "img",
+        workspaceDir: dir,
+        invocation: {
+          command: ["codex"],
+          env: { CODEX_HOME: "/.codex" },
+          stage: { containerDir: "/.codex", files: [{ hostPath: hostAuth, name: "auth.json" }] },
+          parser: "codex-jsonl",
+        },
+      });
+      expect(outcome).toMatchObject({ kind: "completed", output: "分析", usage: { output: 5 } });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("エージェントの設定の場所を消せませんでした"),
+        expect.stringContaining("EACCES"),
+      );
+    } finally {
+      removal.fail = undefined;
+      warn.mockRestore();
+    }
   });
 });

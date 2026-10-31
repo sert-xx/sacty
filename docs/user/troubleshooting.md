@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/cli/src/index.ts、apps/daemon/src/config.ts（loadConfig）、apps/daemon/src/instance-lock.ts、apps/daemon/src/intake.ts、apps/daemon/src/secrets.ts、apps/daemon/src/host-mcp.ts、apps/daemon/src/services.ts、apps/daemon/src/notifier.ts -->
+<!-- 対応するコード: packages/cli/src/index.ts、apps/daemon/src/config.ts（loadConfig）、apps/daemon/src/instance-lock.ts、apps/daemon/src/intake.ts、apps/daemon/src/secrets.ts、apps/daemon/src/host-mcp.ts、apps/daemon/src/services.ts、apps/daemon/src/notifier.ts、apps/daemon/src/error-report.ts、apps/web/src/components/error-report.tsx -->
 
 **日本語** | [English](troubleshooting.en.md)
 
@@ -50,6 +50,27 @@
 | `images` に無いイメージの名前で止まった | `config.yaml` の `images` に足すか、プロジェクトの対象のイメージの指定を直してください（[コンテナイメージ](images.md#どのイメージで動くか)） |
 | docker compose のサービスを起動できずに止まった | 理由に出た設定（`privileged`・ホストのネットワーク・作業領域の外のマウントなど）を使っていないか確かめてください（[docker compose のサービス](compose.md#使えない設定)） |
 | MySQL などに `localhost` でつなげない | `127.0.0.1` と書くか、サービス名で接続してください（[docker compose のサービス](compose.md#localhost-のままでも届く)） |
+
+## エラーレポートを出す
+
+エラーで止まったタスクを人に見てもらうときは、エラーレポートを渡してください。
+タスクの詳細の右の列の「エラーレポート」は、エラーの記録があるタスクにだけ出ます。
+
+![タスクの詳細の右の列のエラーレポート（エラーの件数・レポートのダウンロード・オーケストレーターに分析させるボタン）](images/task-error-report.png)
+
+1. 「レポートをダウンロード」を押します。
+   Sacty の処理・各工程のエージェントの動き・エラーの詳細をまとめた Markdown ファイル（`sacty-error-report-<タスクの短い ID>-<日時>.md`）がダウンロードされます。
+   見出しは画面の言語です。
+2. 原因の見当を付けたいときは、先に「オーケストレーターに分析させる」を押します。
+   分析が終わると時刻が出るので、それからダウンロードしてください。
+   分析の結果は、レポートの「オーケストレーターの分析」に入ります。
+   分析の費用は、そのタスクの費用に入ります。
+
+レポートはサーバーに送られません。
+通信できない環境でも、ファイルとして渡せます。
+大きさは 256KB までで、長い作業履歴は間を省きます。
+秘密情報は伏せてありますが、タスクの内容・コードの一部・URL を含むので、渡す先に注意してください。
+中身の詳細は [エラーレポート（仕様書）](../spec/error-report.md) にあります。
 
 ## 通知
 

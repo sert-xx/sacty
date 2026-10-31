@@ -774,6 +774,14 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       );
     case "QuestionAsked":
       return e.QuestionAsked(event.payload.questionId, actor);
+    case "ErrorAnalysisRequested":
+      return e.ErrorAnalysisRequested(event.payload.analysisId, actor);
+    case "ErrorAnalyzed":
+      return e.ErrorAnalyzed(
+        event.payload.analysisId,
+        event.payload.failed === undefined ? undefined : l.text(event.payload.failed),
+        cost(event.payload.costUsd, event.payload.estimated),
+      );
     case "ExportStarted":
       return e.ExportStarted(l.step[event.payload.step]);
     case "OutputExported": {

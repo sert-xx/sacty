@@ -337,6 +337,7 @@ const shutdown = async () => {
   const draining = waitNamed(
     {
       実行中のタスク: worker.drain(),
+      エラーの分析: service.analysesSettled(),
       取り込み: intake.stop(),
       "PR の確認": prWatcher.stop(),
       スケジュールタスクの確認: scheduleRunner.stop(),

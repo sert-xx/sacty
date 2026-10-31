@@ -26,6 +26,7 @@ import { getMessages } from "@/i18n/server";
 import { currentProjectId, selectProject } from "@/lib/current-project";
 import {
   adoptAuditProposal,
+  analyzeErrors,
   approveStep,
   askQuestion,
   CONTEXT_CHECK_PARAM,
@@ -827,6 +828,23 @@ export async function requestSecurityFixAction(
 }
 
 /** 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。 */
+/** オーケストレーターに、エラーレポートのためのエラーの分析を求める。 */
+export async function analyzeErrorsAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof analyzeErrors>>;
+  try {
+    result = await analyzeErrors(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
 export async function retryExportAction(
   _prev: TaskControlState,
   formData: FormData,

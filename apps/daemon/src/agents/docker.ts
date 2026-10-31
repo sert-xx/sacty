@@ -583,7 +583,17 @@ export class DockerExecutor implements AgentExecutor {
         if (stopped) await log.archiveAgentFiles({ dir: staging, ...session });
         else log.agentFilesNotArchived({ ...session, reason: "container_not_confirmed" });
       }
-      if (staging) rmSync(staging, { recursive: true, force: true });
+      // 消せなくても、実行の結果（出力・使用量）は失わない（警告だけにする）
+      if (staging) {
+        try {
+          rmSync(staging, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[daemon] エージェントの設定の場所を消せませんでした（${staging}）：`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
     }
     return outcome.kind === "failed"
       ? { ...outcome, message: redactText(outcome.message, stagedSecrets) }

@@ -219,6 +219,16 @@ export type TaskQuestion = {
 };
 
 /**
+ * エラーレポートのための、オーケストレーターのエラーの分析。result が無ければ分析を待っている。
+ * 分析できなかったときは、text の代わりに failed（理由）を持つ。
+ */
+export type TaskErrorAnalysis = {
+  id: string;
+  requestedAt: string;
+  result?: { text?: string; failed?: DaemonText; at: string; runId?: string };
+};
+
+/**
  * 工程の成果の書き出し（PBI-56）。url は最後に書き出せた先（差し戻しの後に承認し直したら、ここを更新する）。
  * last は最後に結果を記録した書き出し、started は始めて、まだ結果を記録していない書き出し（デーモンが止まった・
  * 人間が止めたなど。次の書き出しで、目印のあるページを探して続ける）。retry は、人間が書き出し直しを求めた。
@@ -704,6 +714,8 @@ export type Task = {
   importedFeedback: string[];
   /** オーケストレーターへの質問と答え（古い順。PBI-54）。 */
   questions: TaskQuestion[];
+  /** エラーレポートのための、オーケストレーターのエラーの分析（古い順）。 */
+  errorAnalyses: TaskErrorAnalysis[];
   /** 取り込んで、まだ差し戻しに反映していない PR の指摘と、ゴールガーディアンの戻し先の判断。 */
   pendingReview?: {
     keys: string[];
@@ -920,6 +932,7 @@ export function applyEvent(
       misses: [],
       importedFeedback: [],
       questions: [],
+      errorAnalyses: [],
       exports: {},
       stepPullRequests: [],
       stepBranches: [],
@@ -1886,6 +1899,37 @@ export function applyEvent(
       break;
     }
 
+    // エラーの分析。タスクの状態・工程・承認済みの内容は変えない（作業中でも受け付ける）。
+    // 分析を待つ求めは1件まで。分析の費用は予算に入れる
+    case "ErrorAnalysisRequested":
+      if (pendingErrorAnalysis(task)) {
+        throw new ActivityIntegrityError(event, "an error analysis is pending");
+      }
+      if (task.errorAnalyses.some((a) => a.id === event.payload.analysisId)) {
+        throw new ActivityIntegrityError(event, "analysis id is used twice");
+      }
+      task.errorAnalyses = [
+        ...task.errorAnalyses,
+        { id: event.payload.analysisId, requestedAt: event.at },
+      ];
+      break;
+
+    case "ErrorAnalyzed": {
+      if (pendingErrorAnalysis(task)?.id !== event.payload.analysisId) {
+        throw new ActivityIntegrityError(event, "the error analysis is not pending");
+      }
+      const result = {
+        ...(event.payload.analysis !== undefined ? { text: event.payload.analysis } : {}),
+        ...(event.payload.failed !== undefined ? { failed: event.payload.failed } : {}),
+        ...(event.payload.runId !== undefined ? { runId: event.payload.runId } : {}),
+        at: event.at,
+      };
+      task.errorAnalyses = task.errorAnalyses.map((a) =>
+        a.id === event.payload.analysisId ? { ...a, result } : a,
+      );
+      break;
+    }
+
     // 成果の書き出し（PBI-56）。タスクの状態・工程は変えない（書き出せなくても、タスクは止めない）
     case "ExportStarted": {
       const { step, runId, approvedAt } = event.payload;
@@ -2584,6 +2628,27 @@ export function questionBlocked(task: Task): DaemonMessage | undefined {
   if (pendingQuestion(task)) return message("chat.answering");
   if (budgetState(task.budget) === "exceeded") {
     return message("chat.budgetExceeded", {
+      usedUsd: task.budget.usedUsd,
+      capUsd: task.budget.capUsd,
+    });
+  }
+  return undefined;
+}
+
+/** 結果を待っている、オーケストレーターのエラーの分析。 */
+export function pendingErrorAnalysis(task: Task): TaskErrorAnalysis | undefined {
+  return task.errorAnalyses.find((a) => !a.result);
+}
+
+/**
+ * オーケストレーターにエラーを分析させられない理由。中止したタスク・分析を待っているタスク・予算の上限に達した
+ * タスクでは分析させない。分析させられるなら undefined。
+ */
+export function errorAnalysisBlocked(task: Task): DaemonMessage | undefined {
+  if (task.status === "cancelled") return message("task.cancelled");
+  if (pendingErrorAnalysis(task)) return message("errorReport.analyzing");
+  if (budgetState(task.budget) === "exceeded") {
+    return message("errorReport.budgetExceeded", {
       usedUsd: task.budget.usedUsd,
       capUsd: task.budget.capUsd,
     });

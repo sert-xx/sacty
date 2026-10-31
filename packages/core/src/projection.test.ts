@@ -28,11 +28,13 @@ import {
   canRetryExport,
   deliveredWithoutChanges,
   documentOutput,
+  errorAnalysisBlocked,
   exportDue,
   gatePullRequest,
   isCompleted,
   isFinished,
   isRepoless,
+  pendingErrorAnalysis,
   pendingQuestion,
   project,
   questionBlocked,
@@ -929,6 +931,91 @@ describe("オーケストレーターへの質問（PBI-54）", () => {
       ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
     ]).get("t1");
     expect(cancelled && questionBlocked(cancelled)).toEqual({ code: "task.cancelled" });
+  });
+});
+
+describe("エラーレポートのためのエラーの分析", () => {
+  const requested = (taskId: string, analysisId: string) =>
+    ev(taskId, { type: "ErrorAnalysisRequested", payload: { analysisId } }, "person");
+  const analyzed = (taskId: string, analysisId: string, costUsd: number) =>
+    ev(
+      taskId,
+      {
+        type: "ErrorAnalyzed",
+        payload: {
+          analysisId,
+          analysis: "認証の期限切れ",
+          runResult: "completed",
+          agentId: "o",
+          runId: "a1",
+          costUsd,
+        },
+      },
+      "orchestrator",
+    );
+
+  it("分析を残し、費用を予算に入れる。状態・工程は変えない（実行中でも受け付ける）", () => {
+    seq = 0;
+    const base = [created("t1"), steps("t1"), started("t1", "r1")];
+    const before = project(base).get("t1");
+    const task = project([
+      ...base,
+      requested("t1", "A-1"),
+      analyzed("t1", "A-1", 0.25),
+      requested("t1", "A-2"),
+    ]).get("t1");
+    expect(task?.errorAnalyses.map((a) => [a.id, a.result?.text, a.result?.runId])).toEqual([
+      ["A-1", "認証の期限切れ", "a1"],
+      ["A-2", undefined, undefined],
+    ]);
+    expect(task && pendingErrorAnalysis(task)?.id).toBe("A-2");
+    expect(task?.status).toBe("running");
+    expect(task?.steps).toEqual(before?.steps);
+    expect(task?.budget.usedUsd).toBe(0.25);
+  });
+
+  it("待っている求めは1件まで。求めの無い分析・同じ ID の求めは受け付けない", () => {
+    seq = 0;
+    expect(() => project([created("t1"), requested("t1", "A-1"), requested("t1", "A-2")])).toThrow(
+      /an error analysis is pending/,
+    );
+    seq = 0;
+    expect(() => project([created("t1"), analyzed("t1", "A-1", 0)])).toThrow(/not pending/);
+    seq = 0;
+    expect(() =>
+      project([
+        created("t1"),
+        requested("t1", "A-1"),
+        analyzed("t1", "A-1", 0),
+        requested("t1", "A-1"),
+      ]),
+    ).toThrow(/used twice/);
+  });
+
+  it("分析させられない理由：中止・分析を待っている・予算の上限", () => {
+    seq = 0;
+    const capped = project([
+      created("t1", 0.5),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 0.5),
+    ]).get("t1");
+    expect(capped && errorAnalysisBlocked(capped)).toEqual({
+      code: "errorReport.budgetExceeded",
+      params: { usedUsd: 0.5, capUsd: 0.5 },
+    });
+    seq = 0;
+    const pending = project([created("t1"), requested("t1", "A-1")]).get("t1");
+    expect(pending && errorAnalysisBlocked(pending)).toEqual({ code: "errorReport.analyzing" });
+    seq = 0;
+    const cancelled = project([
+      created("t1"),
+      ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
+    ]).get("t1");
+    expect(cancelled && errorAnalysisBlocked(cancelled)).toEqual({ code: "task.cancelled" });
+    seq = 0;
+    const fresh = project([created("t1")]).get("t1");
+    expect(fresh && errorAnalysisBlocked(fresh)).toBeUndefined();
   });
 });
 

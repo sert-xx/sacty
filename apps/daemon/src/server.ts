@@ -545,6 +545,24 @@ export function createApp(
     }
   });
 
+  // エラーレポート（Markdown）。?lang=en で英語の見出しにする（既定は日本語）
+  app.get("/api/tasks/:id/error-report", (c) => {
+    const id = c.req.param("id");
+    if (!service.visibleTask(id)) return c.json({ error: "not_found" }, 404);
+    const report = service.errorReport(id, c.req.query("lang") === "en" ? "en" : "ja");
+    if (report === undefined) return c.json({ error: "not_found" }, 404);
+    return c.body(report, 200, { "content-type": "text/markdown; charset=utf-8" });
+  });
+
+  // エラーレポートのための、オーケストレーターのエラーの分析。分析は待たずに返す
+  app.post("/api/tasks/:id/error-analysis", (c) => {
+    try {
+      return c.json({ task: service.analyzeErrors(c.req.param("id")).task }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 再レビュー（PBI-44）
   app.post("/api/tasks/:id/rereview", (c) => {
     try {
