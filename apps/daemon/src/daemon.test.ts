@@ -19943,6 +19943,80 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     activity.close();
   });
 
+  it("エラーの分析で引き継ぎのために書いたファイルを消せなくても、分析の結果と費用を記録し、警告を出す", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const claude = agent();
+    // 工程を選ぶのは Claude Code、分析は Codex（保存したセッションと別のエージェントなので、引き継ぎを書く）
+    let orchestrator = claude;
+    const config = (): ConfigResult => {
+      const base = configOf(claude)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [claude.id]: claude, [codex.id]: codex },
+              stepAgents: { orchestrator },
+            },
+          }
+        : base;
+    };
+    const analysis: AgentOutcome = {
+      kind: "completed",
+      output: "### 何が起きたか\n分析",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1000 },
+    };
+    const { service, executor, activity } = setup([plan, completed(1_000), analysis], {
+      config,
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+    });
+    executor.sessionIdOf = (inv, runId) =>
+      inv.parser === "codex-jsonl" ? `thread-${runId}` : `session-${runId}`;
+    executor.sessionFiles = (inv, runId) =>
+      inv.parser === "codex-jsonl"
+        ? { [`sessions/2026/10/20/rollout-2026-10-20T10-00-00-thread-${runId}.jsonl`]: "{}\n" }
+        : {
+            [`projects/-workspace/session-${runId}.jsonl`]: [
+              JSON.stringify({ type: "user", message: { content: "工程を選んで" } }),
+              JSON.stringify({
+                type: "assistant",
+                message: { content: [{ type: "text", text: "設計は要らないと考えた" }] },
+              }),
+            ].join("\n"),
+          };
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(stored(task.id).agentId).toBe(claude.id);
+    orchestrator = codex;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    removal.fail = /_handoff/;
+    try {
+      await service.analyzeErrors(task.id).analyzed;
+      expect(usedOf(service, task.id).at(-1)).toMatchObject({
+        agentId: "codex-key",
+        reason: "agent_changed",
+        handoffFrom: { agentId: claude.id },
+      });
+      expect(service.get(task.id)?.task.errorAnalyses[0]?.result?.text).toContain("分析");
+      expect(service.get(task.id)?.activity.at(-1)).toMatchObject({
+        type: "ErrorAnalyzed",
+        payload: { runResult: "completed", costUsd: 0.015 },
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("引き継ぎのために書いたファイルを消せませんでした"),
+        expect.stringContaining("EACCES"),
+      );
+    } finally {
+      removal.fail = undefined;
+      warn.mockRestore();
+      activity.close();
+    }
+  });
+
   it("失敗して代わりのエージェント（別の AI）に切り替えたら、前のセッションのやり取りを読み取り専用で引き継ぐ", async () => {
     const codex = agent({
       id: "codex-key",

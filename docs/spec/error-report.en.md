@@ -112,7 +112,7 @@ Code: `apps/daemon/src/error-report.ts` (`ERROR_REPORT_LIMITS`, `buildErrorRepor
 - The result is recorded as `ErrorAnalyzed` (actor `orchestrator`).
   The text has secrets removed and is shortened to 20,000 characters (`ERROR_ANALYSIS_MAX`).
   When it could not analyze (the run failed, the answer was empty, or it was stopped by cancellation), the reason (`failed`) and the run's result (`runResult`) are recorded.
-  Even if the staged session logs or the copy of the code for the analysis cannot be removed afterwards, a warning is shown and the result and cost are still recorded.
+  Even if the staged session logs, the copy of the code for the analysis, the files written for the handoff (`_handoff`), or the agent's config location cannot be removed afterwards, a warning is shown and the result and cost are still recorded.
 - The cost is added to the task's budget (the "Error analysis" row in the cost-per-step table).
 - Cancelling stops the analysis run and records the stop and its cost before cancelling.
 - When the daemon stops, it stops the analysis run and waits until the interruption (`run.daemonStopped`) and its cost are recorded before closing the activity (`analysesSettled`).

@@ -41,7 +41,7 @@ Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `D
 - sacty does not put the instructions (prompt) for the agent in the command arguments. It writes them to the container's stdin with `docker run -i` and then closes it (PBI-149). In an argument, a large prompt (such as the Goal Guardian's, which includes a diff) exceeds Linux's per-argument limit (128 KiB) and fails with `argument list too long`. The prompt itself is unchanged.
   - The output relay and localhost forwarding pass stdin through to the command.
   - Runs without instructions (`stub`) get no `-i`, and stdin is closed at once.
-- sacty mounts a temporary directory per run read-write at the config location. Before the run starts, it copies the composed context ([Context composition](context.en.md)), the saved session, and the auth files into it.
+- sacty mounts a temporary directory per run read-write at the config location. Before the run starts, it copies the composed context ([Context composition](context.en.md)), the saved session, and the auth files into it. It is removed after the run; if it cannot be removed, only a warning is shown and the run's result (output and usage) is kept.
 - sacty wraps the command in small Node.js scripts inside the container.
   - Outer: relays output. The command writes its output to a temporary file, which the script reads and streams, discarding every 8MB streamed. The exit code is unchanged.
   - Inner: forwards localhost (only for runs that started compose services).

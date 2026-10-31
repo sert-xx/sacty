@@ -9169,7 +9169,17 @@ export class TaskService {
           : fresh,
       );
     } finally {
-      if (handoff) rmSync(handoffDir, { recursive: true, force: true });
+      // 消せなくても、実行の結果（答え・分析と費用）は失わない（残ったものは、起動のときの片付けで消す）
+      if (handoff) {
+        try {
+          rmSync(handoffDir, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[daemon] 引き継ぎのために書いたファイルを消せませんでした（${run.taskId}）：`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
     }
     let reason = plan.mode === "new" ? plan.reason : undefined;
     let failedRunId: string | undefined;
