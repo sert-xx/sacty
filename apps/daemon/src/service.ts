@@ -966,6 +966,8 @@ export class TaskService {
       (t) =>
         (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
     );
+    // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
+    const rechecked = new Set<string>();
     for (const task of waiting) {
       const pr = gatePullRequest(task);
       if (!pr?.number || !pr.repo) continue;
@@ -1005,7 +1007,12 @@ export class TaskService {
         // 開いたままの PR は、レビュー・コメントを指摘として取り込む（PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
           try {
-            await this.importFeedback(latest, token);
+            const settled = await this.importFeedback(latest, token);
+            if (settled === "pull_request_changed" && !rechecked.has(task.id)) {
+              rechecked.add(task.id);
+              const again = this.tasks.get(task.id);
+              if (again) waiting.push(again);
+            }
           } catch (error) {
             console.warn(
               `[daemon] PR #${pr.number}（${pr.repo}）のレビューを取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -1797,8 +1804,13 @@ export class TaskService {
    * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す（PBI-14b・PBI-58）。
    * まだ取り込んでいないものを、最後のフィードバックから一定の時間（書き終わるのを待つ）たってから、
    * まとめて取り込む。途中で止まっても、次の確認で続きから進める（判断・反映）。
+   * 差し戻す直前に PR の状態を読み直し、開いたままでなければ（判断の間にマージされた・閉じられた）差し戻さず
+   * `"pull_request_changed"` を返す（呼び出し元が、マージ・クローズとして確かめ直す）。
    */
-  private async importFeedback(task: Task, token: string): Promise<void> {
+  private async importFeedback(
+    task: Task,
+    token: string,
+  ): Promise<"pull_request_changed" | undefined> {
     // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
     const pr = gatePullRequest(task);
     if (!pr?.number || !pr.repo) return;
@@ -1862,7 +1874,27 @@ export class TaskService {
         { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
       ]);
     }
-    this.settleReview(current);
+    // 判断の間（エージェントの実行は長い）に、人が PR をマージした・閉じたかもしれない。差し戻す前に PR の状態を読み直し、
+    // 開いたままでなければ差し戻さない（マージは承認。承認した成果を差し戻して、マージ済みのタスクが動き出さないように）。
+    // 取り込んだ指摘と判断は作業履歴に残っている。マージ・クローズの記録は、確かめ直し（checkPullRequests）が行う
+    const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+    // 読んでいる間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
+    const settling = this.tasks.get(task.id);
+    const watched = settling ? gatePullRequest(settling) : undefined;
+    if (
+      !settling ||
+      this.cancelling.has(task.id) ||
+      settling.status !== "awaiting_approval" ||
+      settling.pendingReview?.keys.join() !== pending.keys.join() ||
+      !settling.pendingReview?.judgement ||
+      watched?.step !== pr.step ||
+      watched.number !== pr.number ||
+      watched.commit !== pr.commit
+    ) {
+      return;
+    }
+    if (status.state !== "open") return "pull_request_changed";
+    this.settleReview(settling);
   }
 
   /**

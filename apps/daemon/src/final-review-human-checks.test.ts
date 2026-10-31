@@ -172,6 +172,34 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(prompt).toContain('"humanChecks":[]');
   });
 
+  it("最終レビューの指示に、PR のコミットには成果物が足され、作業領域の写しには無いので、リポジトリ全体の検査の結果は違いうることと、人の確認に回すことを書く", () => {
+    for (const testCommand of ["npm test", undefined]) {
+      const prompt = buildFinalReviewPrompt(
+        task(),
+        "diff",
+        testCommand ? { testCommand } : undefined,
+      );
+      expect(prompt).toContain("--- PR の中身と作業領域の写し ---");
+      // 成果物の置き場所（既定は docs/sacty。タスクの短い ID のディレクトリ）を示す
+      expect(prompt).toContain("sacty が docs/sacty/t-1/ の下に足す成果物");
+      expect(prompt).toContain("作業領域の写しには、このファイルが無い");
+      expect(prompt).toContain("prettier --check .");
+      expect(prompt).toContain("PR の中身で通るかは未確認");
+      // 不合格にせず、人の確認（humanChecks）に回す
+      expect(prompt).toContain("それを理由に不合格にはせず");
+      expect(prompt).toContain("humanChecks に書いて、人の確認に回す");
+    }
+  });
+
+  it("成果物のディレクトリをオーケストレーターが決めていれば、そのディレクトリを書く", () => {
+    const prompt = buildFinalReviewPrompt(
+      task({ documentsDir: "docs/ai" } as Partial<Task>),
+      "diff",
+    );
+    expect(prompt).toContain("sacty が docs/ai/t-1/ の下に足す成果物");
+    expect(prompt).not.toContain("docs/sacty/");
+  });
+
   it("テストのコマンドが無い最終レビューでは、人が確かめることだけを書く", () => {
     const prompt = buildFinalReviewPrompt(
       task({ noTestsReason: "テストが無い" } as Partial<Task>),

@@ -38,6 +38,7 @@ import {
   StepPlan,
   type StepPullRequestKey,
   sameGitHubUrl,
+  stepDocumentPath,
   type Task,
   type TaskProposal,
   type TaskQuestion,
@@ -2621,6 +2622,7 @@ export function buildFinalReviewPrompt(
           "",
         ]),
     ...humanCheckLines(Boolean(testCommand)),
+    ...pullRequestContentLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest) : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
@@ -2741,6 +2743,22 @@ function humanCheckLines(withTests: boolean): string[] {
           "- 失敗のうち1件でも、変更によるもの・環境によると確かめられないものがあれば、environmentFailures を空にして、テストが通らなかったものとして判定する",
         ]
       : []),
+    "",
+  ];
+}
+
+/**
+ * 実装の PR のコミットには、作業領域の写し（最終レビューが見るコード）に無い、sacty が足す成果物（要求要件・設計のファイル）が入る。
+ * リポジトリ全体を対象にする検査の結果が PR の中身と違いうることを伝え、そのときは不合格にせず、人の確認に回させる。
+ */
+function pullRequestContentLines(task: Task): string[] {
+  // 成果物は、オーケストレーターが決めたディレクトリ（既定は docs/sacty）の下の、タスクの短い ID のディレクトリに置かれる
+  const dir = stepDocumentPath(task, "requirements").replace(/\/[^/]+$/, "");
+  return [
+    "--- PR の中身と作業領域の写し ---",
+    `- 実装の PR のコミットには、あなたが見ている変更のほかに、sacty が ${dir}/ の下に足す成果物（承認済みの要求要件・設計のファイル）が入る。作業領域の写しには、このファイルが無い（要求要件・設計の成果物を PR に足さないタスクでは、この節は当てはまらない）`,
+    "- そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（例：prettier --check .・markdownlint・コミット前の検査）の結果は、作業領域の写しと PR の中身で違うことがある（写しで通っても、PR に入る成果物のファイルで失敗しうる）",
+    "- 作業領域の写しで実行した、リポジトリ全体に効く検査は、PR の中身での結果とは言い切らない。それを理由に不合格にはせず、その検査と「写しには成果物のファイルが無いので、PR の中身で通るかは未確認」であることを humanChecks に書いて、人の確認に回す",
     "",
   ];
 }
