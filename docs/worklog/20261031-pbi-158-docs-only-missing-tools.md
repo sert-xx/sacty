@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-31（UTC）
 - タスク: PBI-158
-- PR: なし
+- PR: #258
 - ブランチ: feat/issue-158-docs-only-missing-tools
 - 関係する ADR: [差分が文書のファイルだけなら、ツールがイメージに無くても止めずに人の確認へ回し、ツールが無くて止まったタスクは再開でテストの扱いを決め直せる](../adr/20261031-1510-docs-only-missing-tools-to-human-checks.md)
 
