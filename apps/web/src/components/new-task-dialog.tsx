@@ -286,6 +286,7 @@ export function TaskFields({
               ["", t.templateNone],
               ["sacty-setup", t.templateSetup],
               ["security-check", t.templateSecurityCheck],
+              ["docs-setup", t.templateDocsSetup],
             ] as const
           ).map(([value, label]) => (
             <label
@@ -322,6 +323,15 @@ export function TaskFields({
           >
             {t.templateSecurityCheckNote}
             <Hint text={t.templateSecurityCheckHint} className="size-4" />
+          </p>
+        )}
+        {template === "docs-setup" && (
+          <p
+            data-testid="template-docs-hint"
+            className="flex flex-wrap items-center gap-1 text-xs leading-5 text-muted-foreground"
+          >
+            {t.templateDocsSetupNote}
+            <Hint text={t.templateDocsSetupHint} className="size-4" />
           </p>
         )}
       </fieldset>

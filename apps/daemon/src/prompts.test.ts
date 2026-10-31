@@ -1399,6 +1399,7 @@ describe("成果の書き出し（PBI-56）", () => {
         { key: "implement", state: "done" },
       ],
       approved: {},
+      outputs: {},
       testMap: [],
       reproductionTests: [],
       exports: {
@@ -1411,6 +1412,34 @@ describe("成果の書き出し（PBI-56）", () => {
       "## 書き出した成果\n\n- 要求要件：https://wiki/1\n- 設計：https://wiki/2\n",
     );
     expect(buildPullRequestBody({ ...task, exports: {} })).not.toContain("書き出した成果");
+  });
+
+  it("テンプレートを使わない PR の本文にも、実装の説明（表・質問を含む）を「変更」として入れる。説明が無ければ見出しも入れない", () => {
+    const report = [
+      "## 棚卸し",
+      "",
+      "| 場所 | 扱い |",
+      "| --- | --- |",
+      "| README.md | そのまま参照する |",
+      "",
+      "## 人に確かめること",
+      "",
+      "- 決済の再試行は3回まででよいですか？",
+    ].join("\n");
+    const task = {
+      ...base,
+      steps: [{ key: "implement", state: "active" }],
+      approved: {},
+      outputs: { implement: report },
+      testMap: [],
+      reproductionTests: [],
+      exports: {},
+    } as unknown as Task;
+    const body = buildPullRequestBody(task);
+    expect(body).toContain(`## 変更\n\n${report}\n`);
+    // テンプレートに沿わせるときの「変更」と同じ中身
+    expect(buildPullRequestBodyParts(task).changes).toBe(report);
+    expect(buildPullRequestBody({ ...task, outputs: {} } as Task)).not.toContain("## 変更");
   });
 
   it("実装の PR の本文の最後に、マージが実装の承認になることと指摘の伝え方を書く（PBI-110。成果物チェックと書かない）", () => {

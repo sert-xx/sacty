@@ -66,6 +66,7 @@ const ja = {
   template: {
     "sacty-setup": "Sacty セットアップ",
     "security-check": "セキュリティチェック",
+    "docs-setup": "ドキュメント構築",
   } satisfies Record<NonNullable<Task["template"]>, string>,
   /** セキュリティチェックの指摘の区分。 */
   securityCategory: {
@@ -572,7 +573,11 @@ const en: LabelMessages = {
     schedule: "Scheduled task",
     security: "Security check report",
   },
-  template: { "sacty-setup": "Sacty setup", "security-check": "Security check" },
+  template: {
+    "sacty-setup": "Sacty setup",
+    "security-check": "Security check",
+    "docs-setup": "Docs setup",
+  },
   securityCategory: {
     dependency: "Dependency vulnerabilities",
     "supply-chain": "Supply chain",

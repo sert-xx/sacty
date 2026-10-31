@@ -141,7 +141,7 @@ Related ADRs: [Fill the body of PRs sacty opens with fixed rules following the h
 
 Whenever sacty opens or updates a PR, it looks for the PR template of the repository where the PR is opened, and if there is one, writes the body in the shape of its headings and items. This covers the implementation PR and the requirements and design PRs (the same goes for PRs of fix tasks created by the after-merge watch).
 
-If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop.
+If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop. The fixed body of the implementation PR (`buildPullRequestBodyText`) contains, in this order, the approved requirements, the output of the Implementation step (heading "変更"; when there is no output, the heading is left out too), the exported results, viewpoint → test → result, and the Goal Guardian's final review. As when following a template, what the implementing agent wrote in its implementation notes (tables, items for a person to confirm, and so on) stays in the PR body.
 
 ### Finding the template
 

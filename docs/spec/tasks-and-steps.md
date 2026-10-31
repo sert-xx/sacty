@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -49,7 +49,7 @@
 ### タスクのテンプレート
 
 `POST /api/tasks` の本文に `template` があれば、テンプレートからタスクを作る（`CreateTemplateTaskInput`）。
-テンプレートは `sacty-setup`（Sacty セットアップ）と `security-check`（セキュリティチェック）。
+テンプレートは `sacty-setup`（Sacty セットアップ）・`security-check`（セキュリティチェック）・`docs-setup`（ドキュメント構築）。
 
 - 受け付けるのは `template`・`projectId`・`repo` だけ。
   `title`・`body` ほかの項目を渡すと 400（題と説明は sacty が決める）。
@@ -81,8 +81,27 @@
      置き場所・リンク先・reference・見出しは、マージの後の監視の `DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING` から作る（[マージの後の監視](deployment-watch.md)）。
 - ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが `investigate` を選べば、調査の結果を画面で承認して完了する）。
   工程を進めた後に変更が要らないとわかったときは、ファイルを変えずに検査の結果と理由を実装の説明に書くよう求める（PR を作らず、人間が確かめて変更なしで完了する。[承認と差し戻し](approval.md#実装に変更が無いとき)）。
+- `docs-setup` の題は `ドキュメント構築（<owner>/<name>）`、説明（ゴール）は `templateTask` が決めた文。
+  `sacty-setup` と同じく、進め方はオーケストレーターが選ぶ（大きなリポジトリでは、領域ごとに子タスクにする `split` も選べるようにゴールに書く）。
+  ゴールは、対象のリポジトリの実装から、エージェントが作業の前に読むドキュメントと、それを参照する・直すスキルを作る PR を作ること。
+  特定の言語・ツールを前提にしない文にしている。
+  1. 既存のドキュメントを棚卸しする（場所・内容・実装と合うか・扱いの表）。
+     既存のものは消さない・動かさない・書き直さず、リンクする。
+     コードで確かめられるずれだけを最小限に直し、大きな書き直しは提案に留める。
+     置き場所・形・言語が決まっていれば従い、無ければ `docs/` に置いて入口を `docs/README.md` にする。
+  2. 実装から、コードを少し読むだけではわからないこと（目的と用語・全体の構成と依存の向き・主な処理の流れ・データ・外部とのつなぎ・規約と不変条件）だけを書く。
+     ビルド・テストの実行の仕方は書かない（`sacty-setup` が扱う）。
+     新しく作るドキュメントの先頭に、状態（`AI 生成・未レビュー` か `レビュー済み`。`DOCS_STATUS`）と対応するコードの場所を書かせ、このタスクで作ったものは `AI 生成・未レビュー` にさせる。
+     確かめられないことは `（未確認）` と書かせ、人に確かめることとして実装の説明に挙げさせる（sacty が実装の説明を PR の本文に載せる。[PR の本文と PR テンプレート](approval.md#pr-の本文と-pr-テンプレート)）。
+  3. スキル `docs-lookup`（参照する）と `docs-update`（直す）を作る（`DOCS_SKILLS`）。
+     置き場所は `deployment-observer` と同じ規則（原本を `.agents/skills/<名前>/SKILL.md`、`.claude/skills/<名前>` を原本への相対のシンボリックリンク）で、`DEPLOYMENT_SKILL_PATHS` から作る。
+     `docs-lookup` には、未レビューのドキュメントはコードで確かめてから使うこと・食い違ったらコードを正とすることを、`docs-update` には、実装を変えたら同じ PR でドキュメントと入口を直すこと・`レビュー済み` にするのは人が確かめたときだけであることを書かせる。
+- `docs-setup` のゴールには、レビューの負担を抑えるため、最初の PR を棚卸しの結果・入口・全体の構成・2つのスキル・エージェント向けの指示からの案内に絞り、残りの項目を入口に「未作成」として並べることを書く。
+  実装の説明には、棚卸しの表と、`（未確認）` のことを短く答えられる質問の形で挙げさせ、PR の本文を自分で書かないよう求める。
+  コードは変えさせない。
+  整っていて変更が要らなければ PR を作らずに調査だけで終えること・工程を進めた後に変更が要らないとわかったときの扱いは、`sacty-setup` と同じ。
 
-コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`prepareTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING`）
+コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`prepareTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`・`DOCS_SKILLS`・`DOCS_STATUS`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING`）
 
 ## 工程
 
