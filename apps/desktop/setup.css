@@ -1,0 +1,135 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #24322d;
+  background: #f5f5ef;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 720px;
+  padding: 24px 40px;
+  margin: auto;
+}
+.brand {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+.brand span {
+  margin-left: 12px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #637369;
+}
+h1 {
+  font-size: 32px;
+  letter-spacing: -1px;
+  margin: 20px 0 12px;
+}
+h2 {
+  font-size: 19px;
+  margin: 0 0 12px;
+}
+p {
+  line-height: 1.65;
+  color: #53635a;
+}
+section {
+  border-top: 1px solid #d4ddd3;
+  margin-top: 20px;
+  padding-top: 16px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+input {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 12px;
+  background: white;
+  border: 1px solid #b6c4b8;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font: inherit;
+}
+button {
+  padding: 12px 20px;
+  border: 1px solid #205b41;
+  border-radius: 8px;
+  color: white;
+  background: #205b41;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  margin: 0 8px 8px 0;
+}
+button.secondary {
+  background: transparent;
+  color: #205b41;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid #91bb9f;
+  outline-offset: 3px;
+}
+.footnote {
+  font-size: 12px;
+  margin-top: 28px;
+}
+select {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid #b6c4b8;
+  border-radius: 6px;
+  background: white;
+  color: inherit;
+}
+.hint-wrap {
+  display: inline-block;
+  position: relative;
+  font-size: 13px;
+  font-weight: normal;
+}
+button.hint {
+  border-radius: 50%;
+  border-color: #9aaba0;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  color: #53635a;
+  background: transparent;
+  font-size: 12px;
+}
+.tooltip {
+  position: absolute;
+  z-index: 1;
+  top: 26px;
+  left: 0;
+  box-sizing: border-box;
+  width: min(320px, 75vw);
+  max-height: 20rem;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #b6c4b8;
+  border-radius: 6px;
+  background: white;
+  color: #24322d;
+  line-height: 1.6;
+  box-shadow: 0 4px 15px #24322d1a;
+}
+
+#diagnostic-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+}

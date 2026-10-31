@@ -11,6 +11,8 @@ Here is an overview of sacty.
 
 ## Contents
 
+- [Desktop app](desktop.en.md): run and build the proposal application
+
 1. [Getting started](getting-started.en.md): installation, startup, your first project and task, where data is stored
 2. [Dashboard](dashboard.en.md): what each section shows, how periods are counted, empty states
 3. [config.yaml settings](config.en.md): list of settings, connections and prices, auth modes, default agents and overrides, models per step, budgets
