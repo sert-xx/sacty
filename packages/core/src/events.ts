@@ -424,9 +424,10 @@ export type PauseReason = z.infer<typeof PauseReason>;
 /**
  * タスクのテンプレート（PBI-90）。sacty-setup：対象のリポジトリを sacty で扱うためのエージェントの設定を検査し、
  * 足りないものを整える（題と説明は sacty が決める）。security-check：対象のリポジトリのセキュリティチェック
- * （進め方 security-check に決める。スケジュールタスクから定期的に作る）。
+ * （進め方 security-check に決める。スケジュールタスクから定期的に作る）。docs-setup：対象のリポジトリの実装から、
+ * エージェントが参照するドキュメントと、それを参照する・直すスキルを作る（既存のドキュメントを棚卸しして活かす）。
  */
-export const TaskTemplate = z.enum(["sacty-setup", "security-check"]);
+export const TaskTemplate = z.enum(["sacty-setup", "security-check", "docs-setup"]);
 export type TaskTemplate = z.infer<typeof TaskTemplate>;
 
 /**

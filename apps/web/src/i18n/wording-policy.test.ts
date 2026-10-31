@@ -37,6 +37,7 @@ const EXCEPTIONS: Record<string, string> = {
   "parts.implementation.noTestsSkipped": "検証の状態。何をしていない・誰が判定するの2文",
   "parts.resume.ticketNoRepo": "エラー。何が無い・何をするの2文",
   "forms.task.templateSetupNote": "テンプレートを選んだときの説明。何をする・何を決めるの2文",
+  "forms.task.templateDocsSetupNote": "テンプレートを選んだときの説明。何をする・何を決めるの2文",
   "forms.task.noRepository": "エラー。何が無い・何をするの2文",
   "projects.editor.ticketsNoPlatforms": "エラー。何が無い・何をするの2文",
   "projects.editor.excluded": "見出し。括弧で理由を添える",

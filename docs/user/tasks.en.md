@@ -102,6 +102,31 @@ For tasks created from a template, the template name appears in "Started from" i
 
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks` (do not pass `title` or `body`). The CLI has no command to create tasks.
 
+### Template "Docs setup"
+
+In a repository with few docs, agents cannot get enough context and may not produce what you expect. With this template, you can create a task that builds docs from the code and adds skills for agents to look them up and update them, just by choosing the repository.
+
+1. On the "Create task" screen, choose the "Docs setup" template.
+2. Choose the target repository and press "Create". You do not enter a title or contents (sacty decides them).
+
+Like a normal task, the Orchestrator chooses how to proceed, and the task goes through approvals and PRs. The agent does the following. It does not change the code.
+
+- It takes stock of the existing docs (README, docs, AGENTS.md, and so on) and writes the result as a table in the PR description. Existing docs are not deleted, moved, or rewritten; the new docs link to them. If the location and format are already decided, it follows them (otherwise the docs go in `docs/` with `docs/README.md` as the index).
+- From the code, it writes what cannot be learned by reading a little code (purpose and terms, overall structure, main flows, data, external connections, and conventions). How to build and test is set up by the "Sacty setup" template.
+- It creates two skills. The originals go under `.agents/skills/`, and the ones under `.claude/skills/` for Claude Code are relative symbolic links to the originals.
+  - `docs-lookup`: a skill to find and read the docs before working.
+  - `docs-update`: a skill to update the docs in the same PR when the code changes.
+
+To keep the review light, it works as follows.
+
+- New docs get the status `AI 生成・未レビュー` (AI-generated, not reviewed) at the top. Agents check unreviewed docs against the code before using them. When you have checked a doc, change it to `レビュー済み` (reviewed) yourself or ask an agent to.
+- What cannot be confirmed in the code is written as `（未確認）` (unconfirmed) and listed in the PR description as questions you can answer briefly. You do not have to read every doc; answer the questions and check the overall structure doc.
+- The first PR is limited to the stock-taking results, the index, the overall structure, and the two skills. The remaining items are listed in the index as not yet written. For a large repository, the Orchestrator may split the work into child tasks by area (one PR per area).
+
+If everything is already in place and nothing needs to change, the task finishes without a PR and keeps the investigation results, as with "Sacty setup".
+
+From the API, send `{"template": "docs-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks`.
+
 ## Reading the task details
 
 The task details look like this.
