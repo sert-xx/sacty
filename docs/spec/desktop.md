@@ -43,3 +43,7 @@ CLI の起動後、認証 URL を取得し、画面の HTTP 応答を最大60秒
 完成品から DMG を作成できる。アプリの相対リンクを保ったままコピーし、Applications フォルダへのリンクとともに圧縮ディスクイメージへ格納する。署名・公証は追加しない。
 
 コード: `apps/desktop/scripts/dmg.mjs`
+
+完成品の検証はコピー前から終了確認まで一時フォルダで行い、成功・検証失敗・コピー失敗時ともアプリの停止を待って再帰削除する。停止を確認できない場合は削除せずエラーを返す。
+
+コード: `apps/desktop/scripts/smoke.mjs`、`apps/desktop/scripts/smoke-workspace.mjs`

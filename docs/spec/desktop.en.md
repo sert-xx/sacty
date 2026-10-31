@@ -43,3 +43,7 @@ Code: `apps/desktop/scripts/package.mjs`, `apps/desktop/scripts/start.mjs`, `app
 A DMG can be created from the packaged application. The app is copied while preserving relative links and stored in a compressed disk image alongside a link to the Applications folder. Signing and notarization are not added.
 
 Code: `apps/desktop/scripts/dmg.mjs`
+
+Packaged-app verification uses a temporary folder from copying through shutdown verification. On success, verification failure, or copy failure, it waits for application shutdown before recursively removing the folder. If shutdown cannot be confirmed, it keeps the folder and reports an error.
+
+Code: `apps/desktop/scripts/smoke.mjs`, `apps/desktop/scripts/smoke-workspace.mjs`
