@@ -60,7 +60,7 @@ Do not paste API keys into chats or Issues. See [Configuration](config.en.md) fo
 
 ## Quit the app
 
-Closing the window or quitting the application stops its daemon and web processes. It does not attach to sacty running elsewhere.
+Closing the window or quitting the application stops its daemon and web processes. Repeated quit requests still wait for shutdown to finish. If shutdown fails, follow the message and try quitting again. It does not attach to sacty running elsewhere.
 
 ## Build the prototype
 

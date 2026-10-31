@@ -3,6 +3,7 @@ const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { isAppUrl, openExternalLink } = require("./links.cjs");
 const { notificationPermissions } = require("./permissions.cjs");
+const { createShutdownHandler } = require("./shutdown.cjs");
 const { saveLanguage } = require("./preferences.cjs");
 const { pickLocale, messagesFor, text } = require("./messages.cjs");
 const {
@@ -198,12 +199,21 @@ else {
       dialog.showErrorBox("Sacty", error.message);
       app.quit();
     });
-  app.on("before-quit", (event) => {
-    preparation?.abort();
-    if (quitting || !child) return;
-    event.preventDefault();
-    quitting = true;
-    stopChild(child).finally(() => app.quit());
-  });
+  app.on(
+    "before-quit",
+    createShutdownHandler({
+      getChild: () => child,
+      stop: stopChild,
+      abort: () => preparation?.abort(),
+      onStopping: () => {
+        quitting = true;
+      },
+      onStopped: () => app.quit(),
+      onFailure: () => {
+        quitting = false;
+        dialog.showErrorBox("Sacty", t("shutdownFailed"));
+      },
+    }),
+  );
   app.on("window-all-closed", () => app.quit());
 }
