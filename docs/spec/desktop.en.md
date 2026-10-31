@@ -16,7 +16,7 @@ Code: `apps/desktop/main.cjs`, `apps/desktop/runtime.cjs`
 
 When the configured `image` is an older standard image, the app shows the replacement and asks for confirmation. Only the standard repository name with a three-component numeric version is eligible. Custom names, registries, tags, and future versions are left unchanged.
 
-After confirmation, the current image is checked and imported from the bundle if missing. The original settings are then backed up with mode 600 before changing only the image name, preserving YAML comments and other settings. Cancellation and import failure leave settings untouched. Edits made after confirmation are not overwritten.
+After confirmation, the current image is checked and imported from the bundle if missing. The original settings are then backed up with mode 600 before changing only the image name, preserving YAML comments and other settings. Cancellation and import failure leave settings untouched. Edits made after confirmation are not overwritten. Parsed YAML values before and after the update are compared. If anything other than the top-level `image` changes, the update is rejected before creating backup or temporary files. This also rejects changes to aliases sharing a YAML anchor.
 
 Code: `apps/desktop/config-tool.mjs`, `apps/desktop/runtime.cjs`
 

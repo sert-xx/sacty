@@ -97,6 +97,64 @@ describe("standard image upgrades", () => {
     expect(readFileSync(join(f.home, backup ?? ""), "utf8")).toBe(f.original);
     expect(statSync(join(f.home, backup ?? "")).mode & 0o777).toBe(0o600);
   });
+  it.each(["image", "description"])(
+    "rejects a shared image anchor used by a custom %s before writing files",
+    (field) => {
+      const f = fixture();
+      const original =
+        f.original.replace("image: sacty-agent:1.0.0", "image: &shared sacty-agent:1.0.0") +
+        `\nimages:\n  custom:\n    base_image: node:26\n    description: ${field === "description" ? "*shared" : "Custom"}\n    image: ${field === "image" ? "*shared" : "custom:1.0.0"}\n`;
+      writeFileSync(f.path, original);
+      const state = inspectSettings(f.home);
+      expect(state.migration).toBeDefined();
+      const files = readdirSync(f.home).sort();
+      expect(() => migrateSettings(state.migration.snapshot, f.home)).toThrow("configSharedImage");
+      expect(readFileSync(f.path, "utf8")).toBe(original);
+      expect(readdirSync(f.home).sort()).toEqual(files);
+    },
+  );
+  it("reports a shared-anchor migration error through the runtime without changing settings", async () => {
+    const f = fixture("sacty-agent:1.0.0", true);
+    const original =
+      f.original.replace("image: sacty-agent:1.0.0", "image: &shared sacty-agent:1.0.0") +
+      "\nimages:\n  custom:\n    base_image: node:26\n    description: Custom\n    image: *shared\n";
+    writeFileSync(f.path, original);
+    const files = readdirSync(f.home).sort();
+    await expect(
+      prepare(f.paths, () => {}, undefined, { confirmMigration: async () => true }),
+    ).rejects.toThrow("参照が共有");
+    expect(readFileSync(f.path, "utf8")).toBe(original);
+    // Only the fake Docker call log is created; migration must not create files.
+    expect(
+      readdirSync(f.home)
+        .filter((name) => name !== "calls")
+        .sort(),
+    ).toEqual(files);
+  });
+  it("can migrate an unshared anchored image", () => {
+    const f = fixture();
+    const original = f.original.replace(
+      "image: sacty-agent:1.0.0",
+      "image: &shared sacty-agent:1.0.0",
+    );
+    writeFileSync(f.path, original);
+    migrateSettings(inspectSettings(f.home).migration.snapshot, f.home);
+    expect(inspectSettings(f.home).images[0]).toBe(DEFAULT_IMAGE);
+    expect(readFileSync(f.path, "utf8")).toContain("&shared");
+  });
+  it("can replace an image alias without changing its anchor elsewhere", () => {
+    const f = fixture();
+    const original =
+      "images:\n  custom:\n    base_image: node:26\n    description: Custom\n    image: &shared sacty-agent:1.0.0\n" +
+      f.original.replace("image: sacty-agent:1.0.0", "image: *shared");
+    writeFileSync(f.path, original);
+    const before = parseDocument(original).toJS();
+    migrateSettings(inspectSettings(f.home).migration.snapshot, f.home);
+    expect(parseDocument(readFileSync(f.path, "utf8")).toJS()).toEqual({
+      ...before,
+      image: DEFAULT_IMAGE,
+    });
+  });
   it("does not overwrite configuration edited after confirmation", () => {
     const f = fixture();
     const state = inspectSettings(f.home);

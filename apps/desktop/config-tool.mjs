@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_IMAGE, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { imageBuildSettings } from "@sacty/daemon/image";
 import { parseDocument } from "yaml";
@@ -41,13 +42,19 @@ export function migrateSettings(snapshot, home = resolveHome()) {
     throw new Error("configChanged");
   const document = parseDocument(original);
   if (document.errors.length) throw new Error("configFailed");
+  const previous = document.toJS();
   document.set("image", state.migration.to);
+  const updated = document.toString();
+  // Updating an anchored scalar also changes aliases, so check the serialized result
+  // before creating either the backup or replacement file.
+  if (!isDeepStrictEqual(parseDocument(updated).toJS(), { ...previous, image: state.migration.to }))
+    throw new Error("configSharedImage");
   const suffix = randomUUID();
   const backup = join(home, `config.yaml.desktop-backup-${suffix}`);
   const temporary = join(home, `.config-${suffix}.tmp`);
   try {
     writeFileSync(backup, original, { mode: 0o600, flag: "wx" });
-    writeFileSync(temporary, document.toString(), { mode: 0o600, flag: "wx" });
+    writeFileSync(temporary, updated, { mode: 0o600, flag: "wx" });
     if (digest(readFileSync(path, "utf8")) !== snapshot) throw new Error("configChanged");
     renameSync(temporary, path);
   } finally {
@@ -62,7 +69,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       process.argv[2] === "migrate" ? migrateSettings(process.argv[3]) : inspectSettings();
     console.log(JSON.stringify(result));
   } catch (error) {
-    const known = ["configFailed", "authRequired", "configChanged"];
+    const known = ["configFailed", "authRequired", "configChanged", "configSharedImage"];
     console.error(known.includes(error.message) ? error.message : "updateFailed");
     process.exitCode = 1;
   }

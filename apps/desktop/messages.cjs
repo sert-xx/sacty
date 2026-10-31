@@ -44,6 +44,7 @@ const messages = {
     cancel: "取り消す",
     updateCancelled: "更新を取り消しました。",
     configChanged: "設定が変更されています。もう一度起動してください。",
+    configSharedImage: "イメージ名の参照が共有されています。設定を分けて再試行してください。",
     updateFailed: "設定を更新できません。設定ファイルを確認してください。",
   },
   en: {
@@ -93,6 +94,8 @@ const messages = {
     cancel: "Cancel",
     updateCancelled: "Update cancelled.",
     configChanged: "Your settings have changed. Start again.",
+    configSharedImage:
+      "The image name is shared by YAML aliases. Separate the settings and try again.",
     updateFailed: "Could not update settings. Check the configuration file.",
   },
 };

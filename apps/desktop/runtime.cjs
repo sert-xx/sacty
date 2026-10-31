@@ -147,7 +147,9 @@ async function prepare(
       throw new Error(
         text(
           locale,
-          ["configFailed", "authRequired", "configChanged"].includes(code) ? code : "updateFailed",
+          ["configFailed", "authRequired", "configChanged", "configSharedImage"].includes(code)
+            ? code
+            : "updateFailed",
         ),
       );
     }

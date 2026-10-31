@@ -36,7 +36,7 @@ The existing screen runs inside the app. This example uses test data.
 2. Replace the app in Applications with the one from the new DMG.
 3. Start the app and, when prompted to update the standard image, check the displayed versions and confirm.
 
-Settings are backed up before being changed. Cancelling leaves them unchanged. Update custom images separately when using them.
+Settings are backed up before being changed. Cancelling leaves them unchanged. Update custom images separately when using them. If the image name is shared through a YAML anchor and updating it would change other settings, the update stops without changing your configuration. Replace the shared references with separate values and retry.
 
 ## Use notifications
 
