@@ -565,6 +565,13 @@ function feedbackLines(task: Task): string[] {
     ...r.remarks
       .filter((m) => !m.notRecurred)
       .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${ja(m.reason)}`),
+    // 観点・指摘に問題が無く、テストが通らなかったことだけが理由のときは、直す箇所が指摘として無いので、そう伝える。
+    // 実装で直らない失敗に、無関係な変更を重ねさせない
+    ...(r.tests && r.viewpoints.every((v) => v.verified) && r.remarks.every((m) => m.notRecurred)
+      ? [
+          "観点と過去の指摘には、問題は見つかっていません。不合格の理由は、ゴールガーディアンが実行したテストが通らなかったことだけです。上の出力で、実装の変更で直る失敗かを確かめてください。実装で直る失敗が無ければ、無関係な変更を足さないでください。",
+        ]
+      : []),
   ];
 }
 
@@ -2085,6 +2092,43 @@ const oneLine = (v: string) => v.replace(/\s*\n\s*/g, " ");
 const texts = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) : []);
 
 /**
+ * ゴールガーディアンが、項目の一覧（環境による失敗・他の失敗・人が確かめること）を、文字列でなくオブジェクトで返したとき
+ * （`{"name": "...", "reason": "..."}`。実証で、環境による失敗の申告がこの形で捨てられ、合格のはずの最終レビューが不合格に
+ * なった）も読めるようにする。1件の項目を1行の文字列にする：文字列はそのまま、オブジェクトは文字列の値を「：」でつなぐ
+ * （JSON の並びの `name`・`reason` の順が「名前：根拠」になる）。文字列もオブジェクトも読めないもの・空のものは除く。
+ * 一覧（配列）でないものは読まない（「なし」のような文字列を、失敗の申告として扱わないため）。
+ */
+const reportedItems = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((item) => {
+      if (typeof item === "string") return text(item);
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        return Object.values(item)
+          .map((value) => oneLine(text(value)))
+          .filter(Boolean)
+          .join("：");
+      }
+      return "";
+    })
+    .filter(Boolean);
+};
+
+/** ツールの名前の一覧（`missingCommands`）を読む。名前の文字列のほか、`{"name": "go"}` のような形の項目も、その名前を読む。 */
+const reportedNames = (v: unknown): string[] =>
+  (Array.isArray(v) ? v : []).map((item) => {
+    if (typeof item === "string") return item.trim();
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const o = item as Record<string, unknown>;
+      for (const key of ["name", "command", "tool"]) {
+        const name = text(o[key]);
+        if (name) return name;
+      }
+    }
+    return "";
+  });
+
+/**
  * エージェントの出力から、指摘への対応とテスト観点（JSONのブロック）を取り出す。
  * 読んだブロックは表示用の本文から取り除く。同じ種類のブロックが複数あれば最後のものを使う。
  * 知らない指摘のIDと、項目の欠けたテスト観点は無視する。
@@ -2616,7 +2660,7 @@ export function buildFinalReviewPrompt(
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
           "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。ツールが無くても、実行できる検証と、観点・指摘の判定は最後まで行ってください。",
           "ツールが無くて実行できなかったことのほかに失敗（テストの失敗・lint のエラーなど）があれば、失敗ごとに otherFailures に1件ずつ書いてください（無ければ空）。",
-          "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。それ以外は空にしてください。",
+          "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。1件は「名前：根拠」の1つの文字列にして、文字列の配列で書きます。それ以外は空にしてください。",
         ]
       : []),
     "humanChecks には、人が最終承認で確かめることを1件ずつ書いてください（無ければ空）。",
@@ -2637,7 +2681,7 @@ function humanCheckLines(withTests: boolean): string[] {
           "",
           "--- 環境によるテストの失敗 ---",
           "- テストのコマンドの失敗が、すべて環境によるものなら、テストの失敗を理由に不合格にしない。環境によるものとは、変更を外した起点の状態でも同じように失敗する（起点のコミットを別の場所に取り出して同じテストを実行するなど）、または差分と関係の無い環境の要因（プロセス・権限・ネットワーク・OS など）で失敗すると確かめられるもの",
-          "- そのときは、失敗したテストごとに、名前と環境によると判断した根拠を tests.environmentFailures に書く。観点に対応するテストは、通っていることを確かめる",
+          "- そのときは、失敗したテストごとに、名前と環境によると判断した根拠を tests.environmentFailures に書く（1件は「名前：根拠」の1つの文字列にした、文字列の配列）。観点に対応するテストは、通っていることを確かめる",
           "- 失敗のうち1件でも、変更によるもの・環境によると確かめられないものがあれば、environmentFailures を空にして、テストが通らなかったものとして判定する",
         ]
       : []),
@@ -2701,7 +2745,7 @@ export function extractFinalReview(
         : v,
   );
   // 人が最終承認で確かめること（PBI-155）
-  const humanChecks = texts(found?.raw.humanChecks);
+  const humanChecks = reportedItems(found?.raw.humanChecks);
   const command = options.testCommand;
   if (!command) {
     return {
@@ -2718,22 +2762,20 @@ export function extractFinalReview(
     typeof raw.exitCode === "number" && Number.isInteger(raw.exitCode) ? raw.exitCode : undefined;
   // 環境による失敗（PBI-155）は、テストのコマンドが失敗したときだけ読む（成功したのに書いてあっても使わない）
   const environmentFailures =
-    exitCode !== undefined && exitCode !== 0 ? texts(raw.environmentFailures) : [];
+    exitCode !== undefined && exitCode !== 0 ? reportedItems(raw.environmentFailures) : [];
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
-  const reportedMissing = Array.isArray(raw.missingCommands)
-    ? [
-        ...new Set(
-          raw.missingCommands
-            .map((name) => (typeof name === "string" ? name.trim() : ""))
-            .filter((name) => name && !name.includes("/") && words.has(name)),
-        ),
-      ]
-    : [];
+  const reportedMissing = [
+    ...new Set(
+      reportedNames(raw.missingCommands).filter(
+        (name) => name && !name.includes("/") && words.has(name),
+      ),
+    ),
+  ];
   // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）。
   // ただし、ゴールガーディアンがツール不足のほかの失敗を申告したときは、その失敗を見逃さないよう、通ったものにしない
   // （止めずに、ふつうの判定にする。終了コードが 0 でなければ不合格）
-  const otherFailures = texts(raw.otherFailures);
+  const otherFailures = reportedItems(raw.otherFailures);
   const skipped =
     options.documentsOnly === true && otherFailures.length === 0 ? reportedMissing : [];
   const missingCommands = options.documentsOnly === true ? [] : reportedMissing;

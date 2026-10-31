@@ -1,0 +1,274 @@
+import { type FinalReview, GuardianTests, guardianTestsPassed, type Task } from "@sacty/core";
+import { describe, expect, it } from "vitest";
+import { buildFinalReviewPrompt, buildPrompt, extractFinalReview } from "./prompts.js";
+
+// ゴールガーディアンが、環境による失敗などの一覧を、文字列でなくオブジェクトの配列で返しても読めること。
+// 実証（複数言語のモノレポ）で、`environmentFailures` が `{name, reason}` の配列で返され、文字列だけを読む読み取りが
+// すべて捨てて、合格のはずの最終レビューが「不合格（0件）」になり、実装が差分なしの再送を繰り返した。
+
+const COMMAND = "make setup && make lint test smoke build";
+
+const block = (b: Record<string, unknown>) =>
+  `説明の文\n\`\`\`json\n${JSON.stringify({ "sacty-final-review": b })}\n\`\`\``;
+
+/** 実際に不合格になった出力の形：観点は検証済み・指摘は再発なし・終了コード 2・環境による失敗がオブジェクトの配列。 */
+const SETUP_FAILURE = {
+  name: "make setup（cd worker && python3 -m venv .venv）",
+  reason:
+    "イメージの python3 に ensurepip が無く、venv を作れません。起点のコミットを別の場所に取り出して make setup を実行しても、同じエラーで終了コード 2 になりました。",
+};
+const FLATTENED = `${SETUP_FAILURE.name}：${SETUP_FAILURE.reason}`;
+
+const reported = (tests: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  block({
+    viewpoints: [{ id: "REQ", verified: true, reason: "受け入れ条件をテストが検証している" }],
+    remarks: [{ id: "implement-1-1", notRecurred: true, reason: "再発していない" }],
+    tests: { command: COMMAND, output: "make setup が終了コード 2", missingCommands: [], ...tests },
+    humanChecks: [],
+    summary: "要求を満たす。合格",
+    ...extra,
+  });
+
+const read = (output: string, options: { documentsOnly?: boolean } = {}) =>
+  extractFinalReview(output, ["REQ"], ["implement-1-1"], { testCommand: COMMAND, ...options });
+
+describe("最終レビューの、環境による失敗がオブジェクトの配列で返ったとき", () => {
+  it("実際の出力の形（終了コード 2・{name, reason}）でも、環境による失敗だけとして合格にし、「名前：根拠」の文字列で記録する", () => {
+    const review = read(reported({ exitCode: 2, environmentFailures: [SETUP_FAILURE] }));
+    expect(review.passed).toBe(true);
+    expect(review.tests?.exitCode).toBe(2);
+    expect(review.tests?.environmentFailures).toEqual([FLATTENED]);
+    // 記録する形（FinalReviewed の tests）として読めて、通ったものと判定される
+    const recorded = GuardianTests.parse(review.tests);
+    expect(guardianTestsPassed(recorded)).toBe(true);
+    // 指摘が無いまま不合格になる（観点も指摘も問題が無い）形ではない
+    expect(review.viewpoints.every((v) => v.verified)).toBe(true);
+    expect(review.remarks.every((m) => m.notRecurred)).toBe(true);
+  });
+
+  it("文字列の配列（これまでの形）と、文字列とオブジェクトが混ざった配列も読む。読めない項目だけ捨てる", () => {
+    const strings = read(reported({ exitCode: 2, environmentFailures: [FLATTENED] }));
+    expect(strings.passed).toBe(true);
+    expect(strings.tests?.environmentFailures).toEqual([FLATTENED]);
+    const mixed = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          SETUP_FAILURE,
+          "go test：差分と関係の無いプロセスの権限で失敗する",
+          {},
+          { name: "", reason: "  " },
+          { count: 3, nested: { a: "b" } },
+          null,
+          7,
+          [],
+          "",
+        ],
+      }),
+    );
+    expect(mixed.passed).toBe(true);
+    expect(mixed.tests?.environmentFailures).toEqual([
+      FLATTENED,
+      "go test：差分と関係の無いプロセスの権限で失敗する",
+    ]);
+  });
+
+  it("名前だけ・根拠だけのオブジェクトも、1件として読む。値の改行は1行にする（人の確認の項目に入るため）", () => {
+    const review = read(
+      reported({
+        exitCode: 1,
+        environmentFailures: [
+          { name: "make setup" },
+          { reason: "ensurepip が無い\n\n起点でも同じ" },
+        ],
+      }),
+    );
+    expect(review.tests?.environmentFailures).toEqual([
+      "make setup",
+      "ensurepip が無い 起点でも同じ",
+    ]);
+  });
+});
+
+describe("最終レビューの、環境による失敗の境界（不合格のままにするもの）", () => {
+  it("環境による失敗を申告していない（キーが無い・空）終了コード 2 は不合格のまま", () => {
+    for (const environmentFailures of [
+      undefined,
+      [],
+      [{}],
+      [{ name: "", reason: "" }],
+      [null, 3],
+    ]) {
+      const review = read(reported({ exitCode: 2, environmentFailures }));
+      expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
+      expect(review.tests).not.toHaveProperty("environmentFailures");
+    }
+  });
+
+  it("配列でない申告（「なし」の文字列・1件のオブジェクト）は、環境による失敗として読まない", () => {
+    for (const environmentFailures of ["なし", "ensurepip が無い", SETUP_FAILURE, 1, true]) {
+      const review = read(reported({ exitCode: 2, environmentFailures }));
+      expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
+      expect(review.tests).not.toHaveProperty("environmentFailures");
+    }
+  });
+
+  it("環境の失敗と本物の失敗が混ざるときは、ゴールガーディアンが環境による失敗を空にして申告し、不合格になる", () => {
+    const review = read(
+      reported({
+        exitCode: 1,
+        environmentFailures: [],
+        otherFailures: [{ name: "go test ./order", reason: "TestShippingCountry が失敗する" }],
+      }),
+    );
+    expect(review.passed).toBe(false);
+    expect(review.tests).not.toHaveProperty("environmentFailures");
+  });
+
+  it("終了コードの申告が無ければ、環境による失敗の申告があっても不合格にする", () => {
+    const review = read(reported({ environmentFailures: [SETUP_FAILURE] }));
+    expect(review.passed).toBe(false);
+    expect(review.tests).not.toHaveProperty("environmentFailures");
+  });
+
+  it("終了コード 0 なら合格のまま。環境による失敗の申告は記録しない", () => {
+    const review = read(reported({ exitCode: 0, environmentFailures: [SETUP_FAILURE] }));
+    expect(review.passed).toBe(true);
+    expect(review.tests).not.toHaveProperty("environmentFailures");
+  });
+
+  it("環境による失敗だけでも、観点が未検証・指摘が再発していれば不合格にする", () => {
+    const unverified = read(
+      reported(
+        { exitCode: 2, environmentFailures: [SETUP_FAILURE] },
+        { viewpoints: [{ id: "REQ", verified: false, reason: "形だけ" }] },
+      ),
+    );
+    expect(unverified.passed).toBe(false);
+    const recurred = read(
+      reported(
+        { exitCode: 2, environmentFailures: [SETUP_FAILURE] },
+        { remarks: [{ id: "implement-1-1", notRecurred: false, reason: "再発している" }] },
+      ),
+    );
+    expect(recurred.passed).toBe(false);
+  });
+});
+
+describe("最終レビューの、他の一覧の項目がオブジェクトで返ったとき", () => {
+  it("humanChecks も、{description} のようなオブジェクトを読んで記録する", () => {
+    const review = read(
+      reported(
+        { exitCode: 0 },
+        { humanChecks: ["画面を目で見る", { check: "実機で確かめる", reason: "作業領域に無い" }] },
+      ),
+    );
+    expect(review.passed).toBe(true);
+    expect(review.humanChecks).toEqual(["画面を目で見る", "実機で確かめる：作業領域に無い"]);
+  });
+
+  it("otherFailures がオブジェクトでも、文書だけの差分でツール不足を通ったものにしない", () => {
+    const output = reported({
+      exitCode: 1,
+      missingCommands: ["make"],
+      otherFailures: [{ name: "docs:lint", reason: "リンクが切れている" }],
+    });
+    const review = read(output, { documentsOnly: true });
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.passed).toBe(false);
+  });
+
+  it("missingCommands が {name} のオブジェクトでも、ツール不足として読む（読めずに黙って不合格にしない）", () => {
+    const output = reported({
+      exitCode: 127,
+      missingCommands: [{ name: "make" }, { tool: "make" }],
+    });
+    // 文書だけでなければ、ツール不足として止める側に返す
+    expect(read(output).missingCommands).toEqual(["make"]);
+    // 文書だけなら、止めずに記録して通す
+    const docs = read(output, { documentsOnly: true });
+    expect(docs.missingCommands).toEqual([]);
+    expect(docs.tests?.missingCommands).toEqual(["make"]);
+    expect(docs.passed).toBe(true);
+    // コマンドに書いていない名前・パスは、これまでどおり読まない
+    const unknown = read(
+      reported({ exitCode: 127, missingCommands: [{ name: "cargo" }, { name: "/usr/bin/make" }] }),
+    );
+    expect(unknown.missingCommands).toEqual([]);
+  });
+});
+
+const failedTask = (review: Partial<FinalReview>) =>
+  ({
+    id: "t-1",
+    title: "配送先を足す",
+    body: "配送先の国コードを足す",
+    steps: [
+      { key: "requirements", state: "done" },
+      { key: "implement", state: "active" },
+    ],
+    remarks: [],
+    outputs: { implement: "# 実装の説明" },
+    approved: { requirements: { output: "# 要求要件", submission: 1 } },
+    reproductionTests: [],
+    testMap: [{ viewpointId: "REQ", tests: ["order.test.ts"] }],
+    exports: {},
+    stepPullRequests: [],
+    proposals: [],
+    repository: {
+      url: "https://github.com/acme/app",
+      baseBranch: "main",
+      baseCommit: "abcdef1234",
+    },
+    verifyFeedback: {
+      kind: "review",
+      review: {
+        passed: false,
+        viewpoints: [{ viewpointId: "REQ", verified: true, reason: "検証している" }],
+        remarks: [],
+        summary: "テストが通らなかった",
+        tests: { command: COMMAND, exitCode: 2, output: "make: *** [setup] Error 2" },
+        agentId: "claude",
+        runId: "r1",
+        costUsd: 0,
+        estimated: false,
+        at: "2026-10-31T15:31:00.000Z",
+        ...review,
+      },
+    },
+  }) as unknown as Task;
+
+const NO_FINDINGS =
+  "観点と過去の指摘には、問題は見つかっていません。不合格の理由は、ゴールガーディアンが実行したテストが通らなかったことだけです。";
+
+describe("指摘が無いままテストだけで不合格になったときの、実装のやり直しの指示", () => {
+  it("観点・指摘に問題が無く、テストが通らなかったことだけが理由だと伝え、無関係な変更を足させない", () => {
+    const prompt = buildPrompt(failedTask({}), "implement");
+    expect(prompt).toContain(NO_FINDINGS);
+    expect(prompt).toContain("実装で直る失敗が無ければ、無関係な変更を足さないでください");
+    expect(prompt).toContain("テスト：make setup && make lint test smoke build（終了コード 2）");
+  });
+
+  it("観点が未検証・指摘が再発しているときは、その指摘を挙げ、この文は出さない", () => {
+    const unverified = buildPrompt(
+      failedTask({ viewpoints: [{ viewpointId: "REQ", verified: false, reason: "形だけ" }] }),
+      "implement",
+    );
+    expect(unverified).toContain("[REQ] 観点を検証できていない：形だけ");
+    expect(unverified).not.toContain(NO_FINDINGS);
+    const recurred = buildPrompt(
+      failedTask({ remarks: [{ remarkId: "r-1", notRecurred: false, reason: "再発" }] }),
+      "implement",
+    );
+    expect(recurred).toContain("[r-1] 過去の指摘が再発している：再発");
+    expect(recurred).not.toContain(NO_FINDINGS);
+  });
+});
+
+describe("ゴールガーディアンへの指示の、環境による失敗の書き方", () => {
+  it("environmentFailures を、1件が「名前：根拠」の文字列の配列で書かせる", () => {
+    const prompt = buildFinalReviewPrompt(failedTask({}), "diff", { testCommand: COMMAND });
+    expect(prompt).toContain("1件は「名前：根拠」の1つの文字列にして、文字列の配列で書きます");
+    expect(prompt).toContain("（1件は「名前：根拠」の1つの文字列にした、文字列の配列）");
+  });
+});
