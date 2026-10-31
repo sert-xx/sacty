@@ -64,6 +64,20 @@ describe("bounded desktop diagnostics", () => {
     p.stderr.write("sk-private-key");
     expect(log.text()).toBe("[REDACTED]");
   });
+  it.each(["HTTPS", "hTtPs", "HTTP", "hTtP"])(
+    "redacts URL credentials, query and fragment with a %s scheme",
+    (scheme) => {
+      const p = child();
+      const log = captureDiagnostics(p);
+      p.stderr.write(
+        `URL ${scheme}://alice:opaque-pass@example.com/fail?q=opaque-query#opaque-fragment\n`,
+      );
+      expect(log.text()).toContain("example.com/fail");
+      expect(log.text()).toContain("REDACTED");
+      for (const secret of ["alice", "opaque-pass", "opaque-query", "opaque-fragment"])
+        expect(log.text()).not.toContain(secret);
+    },
+  );
   it("bounds retained output and discards oversized lines", () => {
     const p = child();
     const log = captureDiagnostics(p, { maxBytes: 128, maxLineBytes: 64 });

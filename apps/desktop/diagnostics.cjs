@@ -15,7 +15,7 @@ function sanitize(line) {
       /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
       "[REDACTED]",
     )
-    .replace(/https?:\/\/[^\s"'<>]+/g, (value) => {
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (value) => {
       try {
         const url = new URL(value);
         if (url.username || url.password) {
