@@ -3,6 +3,7 @@ const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { isAppUrl, openExternalLink } = require("./links.cjs");
 const { notificationPermissions } = require("./permissions.cjs");
+const { captureDiagnostics } = require("./diagnostics.cjs");
 const { createShutdownHandler } = require("./shutdown.cjs");
 const { saveLanguage } = require("./preferences.cjs");
 const { pickLocale, messagesFor, text } = require("./messages.cjs");
@@ -13,6 +14,7 @@ const {
   waitForScreen,
   stopChild,
   saveApiKey,
+  redact,
 } = require("./runtime.cjs");
 
 let setup;
@@ -22,6 +24,7 @@ let busy = false;
 let quitting = false;
 let paths;
 let preparation;
+let diagnostics;
 let locale = "ja";
 const t = (key, values) => text(locale, key, values);
 const setupUrl = pathToFileURL(join(__dirname, "setup.html")).href;
@@ -137,6 +140,7 @@ else {
         validateSender(event);
         if (busy || child) return { ok: false, message: t("busy") };
         busy = true;
+        diagnostics = undefined;
         const progress = (message) => {
           if (setup && !setup.isDestroyed()) setup.webContents.send("desktop:progress", message);
         };
@@ -160,16 +164,18 @@ else {
           });
           progress(t("starting"));
           child = launch(paths);
+          diagnostics = captureDiagnostics(child);
           const url = await waitForScreen(child, { locale });
-          child.stdout.resume();
-          child.stderr.resume();
           screen = secureWindow();
           await screen.loadURL(url);
           if (child.exitCode !== null || child.signalCode !== null) throw new Error(t("exited"));
-          child.once("exit", () => {
+          child.once("close", () => {
             child = undefined;
             if (!quitting) {
-              dialog.showErrorBox("Sacty", t("exited"));
+              dialog.showErrorBox(
+                "Sacty",
+                [t("exited"), diagnostics?.text()].filter(Boolean).join("\n\n"),
+              );
               app.quit();
             }
           });
@@ -183,10 +189,12 @@ else {
           screen?.destroy();
           screen = undefined;
           await stopChild(child);
+          await diagnostics?.waitForClose();
           child = undefined;
           return {
             ok: false,
-            message: error instanceof Error ? error.message : t("startFailed"),
+            message: redact(error instanceof Error ? error.message : t("startFailed")),
+            diagnostics: diagnostics?.text() || "",
           };
         } finally {
           busy = false;

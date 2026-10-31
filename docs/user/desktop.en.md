@@ -46,7 +46,7 @@ Enable desktop notifications in Sacty settings on the main screen. Allow notific
 
 ## If startup fails
 
-After fixing the cause, use the same start button to retry.
+After fixing the cause, use the same start button to retry. When diagnostic output is available, open “View diagnostics” to inspect causes such as port conflicts. Only output with credentials removed is displayed; it is not saved to disk or sent externally.
 
 | Message or condition | Action |
 | --- | --- |

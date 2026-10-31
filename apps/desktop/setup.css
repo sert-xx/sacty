@@ -126,3 +126,10 @@ button.hint {
   line-height: 1.6;
   box-shadow: 0 4px 15px #24322d1a;
 }
+
+#diagnostic-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+}

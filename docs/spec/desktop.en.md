@@ -8,9 +8,9 @@ A macOS proposal application. It runs the existing CLI as a separate process and
 
 The app prevents duplicate launches and checks Docker and GitHub CLI connectivity in its setup screen. The CLI creates a configuration template only when missing. The existing configuration determines the required images. Only missing images matching the bundled manifest name and CPU trigger an archive import and another check. A missing custom image never triggers a standard-image import. Missing custom images produce an explanation.
 
-After starting the CLI, the app captures the authentication URL and waits up to 60 seconds for an HTTP response before opening a dedicated window. Failed startup stops the launched CLI and allows retrying. Quitting invokes the existing CLI shutdown procedure and waits up to 35 seconds. Configurations with screen authentication disabled are rejected. Every quit request during shutdown is deferred; quitting is allowed only after shutdown completes. Shutdown failures are reported and can be retried.
+After starting the CLI, the app captures the authentication URL and waits up to 60 seconds for an HTTP response before opening a dedicated window. Failed startup stops the launched CLI and allows retrying. Quitting invokes the existing CLI shutdown procedure and waits up to 35 seconds. Configurations with screen authentication disabled are rejected. Up to 64KiB of CLI diagnostics is retained in memory before and after readiness, available in failed-start setup or unexpected-exit messages. Lines are reassembled before removing credential-bearing lines, known key formats, and URL credentials and query strings. Lines exceeding 8KiB are discarded. Diagnostics are neither saved to disk nor sent externally. Every quit request during shutdown is deferred; quitting is allowed only after shutdown completes. Shutdown failures are reported and can be retried.
 
-Code: `apps/desktop/main.cjs`, `apps/desktop/runtime.cjs`
+Code: `apps/desktop/main.cjs`, `apps/desktop/runtime.cjs`, `apps/desktop/diagnostics.cjs`
 
 ## Image updates
 

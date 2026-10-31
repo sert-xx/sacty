@@ -14,7 +14,11 @@ async function setup(locale: string) {
     settings: async () => ({ locale, messages: messagesFor(locale) }),
     language: vi.fn(async (value: string) => ({ locale: value, messages: messagesFor(value) })),
     onProgress: vi.fn(),
-    start: vi.fn(async () => ({ ok: false, message: "Startup test error" })),
+    start: vi.fn(async () => ({
+      ok: false,
+      message: "Startup test error",
+      diagnostics: "Error: EADDRINUSE 4700",
+    })),
     saveKey: vi.fn(async () => ({ ok: true })),
     help: vi.fn(),
   };
@@ -49,8 +53,28 @@ describe("localized desktop setup", () => {
       start.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(f.document.querySelector("#status")?.textContent).toBe("Startup test error");
+      expect(f.document.querySelector("#diagnostics")?.hidden).toBe(false);
+      expect(f.document.querySelector("#diagnostic-output")?.textContent).toContain("EADDRINUSE");
       expect(start.disabled).toBe(false);
       expect(select.disabled).toBe(false);
+    } finally {
+      f.dom.window.close();
+    }
+  });
+  it("renders diagnostic output as text and clears it before retry", async () => {
+    const f = await setup("ja");
+    try {
+      const diagnostics = '<img src=x onerror="alert(1)"> EADDRINUSE';
+      f.bridge.start.mockResolvedValueOnce({ ok: false, message: "Failed", diagnostics });
+      const start = f.document.querySelector("#start") as HTMLButtonElement;
+      start.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(f.document.querySelector("#diagnostic-output")?.textContent).toBe(diagnostics);
+      expect(f.document.querySelector("#diagnostic-output img")).toBeNull();
+      start.click();
+      expect(f.document.querySelector("#diagnostics")?.hidden).toBe(true);
+      expect(f.document.querySelector("#diagnostic-output")?.textContent).toBe("");
+      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       f.dom.window.close();
     }

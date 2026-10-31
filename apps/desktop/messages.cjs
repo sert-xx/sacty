@@ -17,6 +17,7 @@ const messages = {
     start: "Sacty を開く",
     help: "設定の手順を見る",
     detailsLabel: "補足",
+    diagnosticsTitle: "診断情報を見る",
     imageHint: "初回は同梱イメージを Docker に読み込みます。数分かかる場合があります。",
     ready: "起動してください。",
     checking: "接続の確認中",
@@ -67,6 +68,7 @@ const messages = {
     start: "Open Sacty",
     help: "View setup instructions",
     detailsLabel: "Details",
+    diagnosticsTitle: "View diagnostics",
     imageHint:
       "The bundled image is imported into Docker on first use. This may take several minutes.",
     ready: "Open Sacty when ready.",

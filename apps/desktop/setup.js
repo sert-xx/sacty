@@ -3,6 +3,8 @@ const save = document.getElementById("save");
 const key = document.getElementById("key");
 const language = document.getElementById("language");
 const status = document.getElementById("status");
+const diagnosticPanel = document.getElementById("diagnostics");
+const diagnosticOutput = document.getElementById("diagnostic-output");
 const keyStatus = document.getElementById("key-status");
 let messages;
 function render(settings) {
@@ -38,11 +40,18 @@ window.desktop.onProgress((message) => {
   status.textContent = message;
 });
 start.addEventListener("click", async () => {
+  diagnosticPanel.hidden = true;
+  diagnosticPanel.open = false;
+  diagnosticOutput.textContent = "";
   start.disabled = true;
   language.disabled = true;
   try {
     const result = await window.desktop.start();
-    if (!result.ok) status.textContent = result.message;
+    if (!result.ok) {
+      status.textContent = result.message;
+      diagnosticOutput.textContent = result.diagnostics || "";
+      diagnosticPanel.hidden = !result.diagnostics;
+    }
   } catch {
     status.textContent = messages.startFailed;
   } finally {
