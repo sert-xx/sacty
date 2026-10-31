@@ -2101,9 +2101,32 @@ const NONE_ITEM =
 
 const isNoneItem = (item: string) => NONE_ITEM.test(item.replace(/[。.\s]+$/u, ""));
 
-/** 人に見せる項目から、秘密情報と URL の認証情報（クエリ・フラグメントを含む）を伏せる。 */
+/** 失敗が「無い」ことを表す文字列（`otherFailures`。止める側の欄なので、`no`・`false` は含めず、狭くする）。 */
+const NO_FAILURE_ITEM = /^(none|n\/a|なし)$/i;
+
+/** 「環境による失敗ではない」旗になる項目名（値が false のとき）。 */
+const ENVIRONMENT_FLAG_KEYS = [
+  "environment",
+  "environmental",
+  "isEnvironment",
+  "isEnvironmental",
+  "is_environment",
+  "is_environmental",
+] as const;
+
+const isFalse = (v: unknown) =>
+  v === false || (typeof v === "string" && /^(false|no)$/i.test(v.trim()));
+
+/** URL のクエリ・フラグメントの、秘密らしい名前（token・key・secret・password・auth・signature など）の値。 */
+const SECRET_QUERY_VALUE =
+  /([?&#;][\w.-]*(?:token|key|secret|passw(?:or)?d|pwd|auth|sig(?:nature)?|credential|session|jwt)[\w.-]*=)[^\s&#"'<>`]+/gi;
+
+/**
+ * 人に見せる項目から、秘密情報（`token=` などの代入の形）と URL の認証情報（`user:pass@`）、秘密らしい名前のクエリの値を伏せる。
+ * 確かめる対象の URL（`http://localhost:3000/#/settings?tab=2` など）が消えないよう、クエリ・フラグメント全体は伏せない。
+ */
 const hideItem = (item: string) =>
-  redactUrlCredentials(redactLog(item, []), { queryAndFragment: true });
+  redactUrlCredentials(redactLog(item, [])).replace(SECRET_QUERY_VALUE, "$1[REDACTED]");
 
 /**
  * ゴールガーディアンが、項目の一覧（環境による失敗・人が確かめること）を、文字列でなくオブジェクトで返したとき
@@ -2121,6 +2144,8 @@ const reportedItems = (v: unknown): string[] => {
       if (typeof item === "string") return text(item);
       if (item && typeof item === "object" && !Array.isArray(item)) {
         const o = item as Record<string, unknown>;
+        // 「環境によるものではない」旗が付いた項目は、環境による失敗として読まない
+        if (ENVIRONMENT_FLAG_KEYS.some((key) => isFalse(o[key]))) return "";
         const first = (keys: readonly string[]) =>
           keys.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
         return [first(ITEM_NAME_KEYS), first(ITEM_REASON_KEYS)].filter(Boolean).join("：");
@@ -2134,10 +2159,11 @@ const reportedItems = (v: unknown): string[] => {
 /**
  * 失敗の申告が1件でもあるか（`otherFailures`。止める側の欄なので、読めない形でも、書いてあれば「ある」とする）。
  * 空でない文字列・0 でない数値・真・オブジェクト（空でも）が1件でもあれば true。配列は中の項目を見る。
- * 無い・空の値と、「なし」のような「無い」を表す文字列だけなら false。
+ * 無い・空の値と、「なし」「none」「n/a」だけなら false（`no`・`false` の文字列は、書いてあるものとして true）。
  */
 function hasReportedFailure(v: unknown): boolean {
-  if (typeof v === "string") return text(v) !== "" && !isNoneItem(text(v));
+  if (typeof v === "string")
+    return text(v) !== "" && !NO_FAILURE_ITEM.test(text(v).replace(/[。.\s]+$/u, ""));
   if (typeof v === "number") return v !== 0;
   if (v === true) return true;
   if (Array.isArray(v)) return v.some(hasReportedFailure);

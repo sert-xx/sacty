@@ -238,6 +238,82 @@ describe("最終レビューの、一覧の項目の読み方（項目名・伏�
   });
 });
 
+describe("最終レビューの、項目の URL と「環境によるものではない」旗", () => {
+  it("確かめる対象の URL（クエリ・フラグメント）は残し、認証情報と秘密らしい名前の値だけ伏せる", () => {
+    const review = read(
+      reported(
+        { exitCode: 0 },
+        {
+          humanChecks: [
+            "http://localhost:3000/#/settings?tab=2 を開いて目視する",
+            { check: "https://example.com/a?page=3&sort=asc#section-2 を見る" },
+            "https://bob:pa55word@example.com/x?token=abcd1234efgh&tab=2 を開く",
+            "http://localhost:3000/cb?code=1&api_key=abcd1234efgh#access_token=zzzz9999yyyy を確かめる",
+            "https://example.com/?signature=s1g9n4tur3&Password=hunter22 を開く",
+          ],
+        },
+      ),
+    );
+    const checks = review.humanChecks ?? [];
+    expect(checks[0]).toBe("http://localhost:3000/#/settings?tab=2 を開いて目視する");
+    expect(checks[1]).toBe("https://example.com/a?page=3&sort=asc#section-2 を見る");
+    expect(checks[2]).toContain("tab=2");
+    expect(checks[3]).toContain("code=1");
+    const shown = JSON.stringify(checks);
+    for (const value of ["pa55word", "abcd1234efgh", "zzzz9999yyyy", "s1g9n4tur3", "hunter22"]) {
+      expect(shown, value).not.toContain(value);
+    }
+  });
+
+  it("環境による失敗の項目でも、URL は残し、認証情報を伏せる", () => {
+    const review = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          {
+            name: "npm ci",
+            reason: "https://u:p4ssw0rd9@registry.example.com/pkg?tab=2 に届かない",
+          },
+        ],
+      }),
+    );
+    const failure = review.tests?.environmentFailures?.[0] ?? "";
+    expect(failure).toContain("registry.example.com/pkg?tab=2");
+    expect(failure).not.toContain("p4ssw0rd9");
+  });
+
+  it("environment・environmental・isEnvironment が false の項目は、環境による失敗として読まない", () => {
+    for (const flag of [
+      { environment: false },
+      { environmental: false },
+      { isEnvironment: false },
+      { is_environmental: "false" },
+      { environment: "no" },
+    ]) {
+      const review = read(
+        reported({
+          exitCode: 2,
+          environmentFailures: [{ name: "go test ./order", reason: "TestX が失敗する", ...flag }],
+        }),
+      );
+      expect(review.passed, JSON.stringify(flag)).toBe(false);
+      expect(review.tests).not.toHaveProperty("environmentFailures");
+    }
+    // true・旗なしの項目は読む。旗が false の項目だけ除く
+    const mixed = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          { name: "a", reason: "ensurepip が無い", environment: true },
+          { name: "b", reason: "本物の失敗", environment: false },
+          { name: "c", reason: "権限が無い" },
+        ],
+      }),
+    );
+    expect(mixed.tests?.environmentFailures).toEqual(["a：ensurepip が無い", "c：権限が無い"]);
+  });
+});
+
 describe("最終レビューの、他の一覧の項目がオブジェクトで返ったとき", () => {
   it("humanChecks も、{description} のようなオブジェクトを読んで記録する", () => {
     const review = read(
@@ -255,6 +331,8 @@ describe("最終レビューの、他の一覧の項目がオブジェクトで�
       [{ name: "docs:lint", reason: "リンクが切れている" }],
       "lint failed",
       ["lint failed"],
+      "no",
+      ["false"],
       [{ detail: { file: "README.md", line: 3 } }],
       [{}],
       [{ failure: "x" }],
@@ -280,7 +358,7 @@ describe("最終レビューの、他の一覧の項目がオブジェクトで�
       ["", " ", null],
       "なし",
       ["none"],
-      [false, 0, "N/A"],
+      [false, 0, "N/A", "なし。"],
     ]) {
       const output = reported({ exitCode: 127, missingCommands: ["make"], otherFailures });
       const review = read(output, { documentsOnly: true });

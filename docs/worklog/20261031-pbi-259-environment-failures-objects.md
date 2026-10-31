@@ -22,7 +22,7 @@
 
 ## したこと
 
-- `reportedItems`（`apps/daemon/src/prompts.ts`）：一覧の 1 件を、文字列はそのまま、オブジェクトは決めた項目名（名前：`name`・`test`・`check`・`command`、根拠：`reason`・`message`・`description`・`evidence`）だけを、JSON の並びにかかわらず「名前：根拠」の 1 行にして読む。読めない項目・空の項目・「なし」「none」「n/a」「environment: false」のような「無い」を表す項目は捨て、配列でない値は読まない。読んだ項目は、人に見せる前に `redactLog`・`redactUrlCredentials` で伏せる。`environmentFailures`・`humanChecks` に使う。記録の形（文字列の配列）は変えない。
+- `reportedItems`（`apps/daemon/src/prompts.ts`）：一覧の 1 件を、文字列はそのまま、オブジェクトは決めた項目名（名前：`name`・`test`・`check`・`command`、根拠：`reason`・`message`・`description`・`evidence`）だけを、JSON の並びにかかわらず「名前：根拠」の 1 行にして読む。読めない項目・空の項目・「なし」「none」「n/a」「environment: false」のような「無い」を表す項目は捨て、配列でない値は読まない。読んだ項目は、人に見せる前に `redactLog`・`redactUrlCredentials` と、秘密らしい名前（token・key・secret・password・auth・signature など）のクエリ・フラグメントの値の伏せ字を通す（クエリ・フラグメント全体は伏せず、確かめる URL を残す）。値が false の `environment` などの旗が付いた項目は、環境による失敗として読まない。`environmentFailures`・`humanChecks` に使う。記録の形（文字列の配列）は変えない。
 - `hasReportedFailure`：`otherFailures` は止める側の欄なので、読める形かにかかわらず、書いてあれば「失敗の申告あり」とする（文字列・数値・真・オブジェクト（空でも））。
 - `reportedNames`：`missingCommands` の項目に `{"name": "go"}`（`command`・`tool`）も読む。
 - ゴールガーディアンへの指示に、`environmentFailures` は「名前：根拠」の文字列の配列で書くことを足した。
@@ -50,6 +50,9 @@
 | `otherFailures` のオブジェクトを捨てると、文書だけの差分でほかの失敗を見逃す | 読める形に頼らず、書いてあるかで見る（`hasReportedFailure`）ようにした。テストあり |
 | オブジェクトの全文字列の値を連結すると、`output`・`log` などの余計な項目が伏せ字を通らずに PR の本文に出る | 読む項目名を限り、連結後に伏せ字を通した。並び順に依存しない。テストあり |
 | `environment: false`・「なし」を環境による失敗として通してしまう | 「無い」を表す項目を除いた。テストあり |
+| クエリ・フラグメントまで伏せると、確かめる URL（`http://localhost:3000/#/settings?tab=2`）が消える | URL の認証情報と、秘密らしい名前のクエリの値だけ伏せるようにした。テストあり |
+| `{name, environment: false}` のような旗付きの項目が環境による失敗として読まれる | 旗が false の項目は読まない。テストあり |
+| `otherFailures` の「無い」に `no`・`false` の文字列まで含めると、失敗の申告を見逃す | 「なし」「none」「n/a」と空だけを「無い」とした。テストあり |
 
 ## 残したこと
 
