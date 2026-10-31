@@ -14,6 +14,8 @@ This is a macOS proposal prototype. Signing, notarization, and automatic updates
 4. Press the start button. A configuration template is created only if missing. Existing configuration and work history are reused.
 5. If the standard image is missing, the bundled image is imported before opening the screen. The first import may take several minutes.
 
+The key-save result appears after the save process and its output have finished. Errors produce a message to check your input and Keychain rather than a success message.
+
 Prepare custom images separately. Only the default image is bundled. If screen authentication is disabled in your existing configuration, enable it again.
 
 External links, such as PRs and deployment results, open in your default browser.

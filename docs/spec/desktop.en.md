@@ -28,7 +28,7 @@ Code: `apps/desktop/messages.cjs`, `apps/desktop/preferences.cjs`, `apps/desktop
 
 ## Authentication and permissions
 
-Only the setup screen receives limited IPC capabilities; the sender is validated. API keys are saved under a fixed Keychain service. Keys are validated and passed through standard input, never process arguments. The input is cleared and keys are not logged.
+Only the setup screen receives limited IPC capabilities; the sender is validated. API keys are saved under a fixed Keychain service. Keys are validated and passed through standard input, never process arguments. The input is cleared and keys are not logged. Up to 64KiB of standard error output is accumulated. On the `close` event, after standard streams have closed, the exit code and complete retained output are checked for errors. This includes output arriving after exit and error markers split across chunks. Output exceeding the limit is treated as failure because diagnostics would be incomplete.
 
 The application screen has no preload script. Both windows disable Node.js integration and enable context isolation and sandboxing. Notifications are allowed only from the main screen's main frame on its own origin. Notification opt-in uses the existing settings screen; OS-level permission may also be required. All other permission requests, new windows, and external navigation are denied. Main-screen external links are handed to the default browser only for HTTP/HTTPS URLs without credentials. Redirects do not open the browser. Help opens a fixed URL in the selected language.
 

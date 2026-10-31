@@ -75,6 +75,7 @@ describe("desktop runtime", () => {
     ]);
     expect(input).toContain("-s sacty -a openai-api-key -w sk-example-key-value");
     process.emit("exit", 0);
+    process.emit("close", 0);
     await saving;
     await expect(saveApiKey("sk-example\nother-command", spawn)).rejects.toThrow("形式");
     expect(spawn).toHaveBeenCalledTimes(1);
@@ -85,6 +86,73 @@ describe("desktop runtime", () => {
     const saving = saveApiKey("sk-example-key-value", () => process);
     process.stderr.write("security: SecKeychainItemCreateFromContent: error");
     process.emit("exit", 0);
+    process.emit("close", 0);
+    await expect(saving).rejects.toThrow("保存できません");
+  });
+
+  it("detects an error marker split between stderr chunks", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    const checked = expect(saving).rejects.toThrow("保存できません");
+    process.stderr.write("err");
+    process.stderr.write("or");
+    process.emit("exit", 0);
+    process.emit("close", 0);
+    await checked;
+  });
+
+  it("waits for close and catches error output arriving after exit", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    const settled = vi.fn();
+    void saving.then(settled, settled);
+    process.emit("exit", 0);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    const checked = expect(saving).rejects.toThrow("保存できません");
+    process.stderr.write("security: error after exit");
+    process.emit("close", 0);
+    await checked;
+  });
+
+  it("rejects stderr overflow instead of accepting incomplete diagnostic output", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    const checked = expect(saving).rejects.toThrow("保存できません");
+    process.stderr.write("x".repeat(128 * 1024));
+    process.emit("close", 0);
+    await checked;
+  });
+
+  it("retains an early error across later stderr output without exposing it", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    const checked = expect(saving).rejects.toThrow(
+      /^保存できません。入力とキーチェーンを確認してください。$/,
+    );
+    process.stderr.write("error sk-example-key-value");
+    process.stderr.write("x".repeat(128 * 1024));
+    process.emit("close", 0);
+    await checked;
+  });
+
+  it("allows harmless stderr only once stdio is closed", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    const settled = vi.fn();
+    void saving.then(settled);
+    process.stderr.write("security> ");
+    process.emit("exit", 0);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    process.emit("close", 0);
+    await expect(saving).resolves.toBeUndefined();
+  });
+
+  it("rejects nonzero close codes even without stderr", async () => {
+    const process = child();
+    const saving = saveApiKey("sk-example-key-value", () => process);
+    process.emit("close", 1);
     await expect(saving).rejects.toThrow("保存できません");
   });
 

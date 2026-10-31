@@ -211,15 +211,24 @@ async function saveApiKey(value, spawnProcess = spawn, locale = "ja") {
     throw new Error(text(locale, "keyInvalid"));
   await new Promise((resolve, reject) => {
     const child = spawnProcess("/usr/bin/security", ["-i"], { stdio: ["pipe", "ignore", "pipe"] });
-    let failed = false;
+    const stderrLimit = 64 * 1024;
+    let stderr = Buffer.alloc(0);
+    let overflow = false;
     child.stderr.on("data", (data) => {
-      if (/error|failed|SecKeychain|SecItem/i.test(data.toString())) failed = true;
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const remaining = stderrLimit - stderr.length;
+      if (chunk.length > remaining) overflow = true;
+      if (remaining > 0) stderr = Buffer.concat([stderr, chunk.subarray(0, remaining)]);
     });
-    child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0 && !failed ? resolve() : reject(new Error(text(locale, "keyFailed"))),
-    );
-    child.stdin.on("error", reject);
+    const fail = () => reject(new Error(text(locale, "keyFailed")));
+    child.once("error", fail);
+    // exit may precede the final stderr data; close waits for stdio to close.
+    child.once("close", (code) => {
+      const failed = overflow || /error|failed|SecKeychain|SecItem/i.test(stderr.toString("utf8"));
+      if (code === 0 && !failed) resolve();
+      else fail();
+    });
+    child.stdin.on("error", fail);
     child.stdin.end(`add-generic-password -U -s sacty -a openai-api-key -w ${value}\n`);
   });
 }
