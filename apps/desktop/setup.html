@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sacty</title>
+  <link rel="stylesheet" href="setup.css">
+</head>
+<body>
+  <main hidden>
+    <p class="brand">Sacty <span data-i18n="preview"></span></p>
+    <label for="language" data-i18n="language">Language</label>
+    <select id="language"><option value="ja">日本語</option><option value="en">English</option></select>
+    <h1 data-i18n="welcome">Get started</h1>
+    <p data-i18n="prerequisites"></p>
+    <span class="hint-wrap"><button class="hint" type="button" data-i18n-aria="detailsLabel" aria-describedby="setup-hint">i</button><span id="setup-hint" class="tooltip" role="tooltip" data-i18n="setupHint" hidden></span></span>
+    <section>
+      <h2 data-i18n="keyTitle">OpenAI API key</h2>
+      <p data-i18n="keyHelp"></p>
+      <label for="key" data-i18n="keyLabel">API key</label>
+      <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+      <button id="save" class="secondary" type="button" data-i18n="saveKey" disabled></button>
+      <p id="key-status" role="status"></p>
+    </section>
+    <section>
+      <h2><span data-i18n="startTitle"></span> <span class="hint-wrap"><button class="hint" type="button" data-i18n-aria="detailsLabel" aria-describedby="image-hint">i</button><span id="image-hint" class="tooltip" role="tooltip" data-i18n="imageHint" hidden></span></span></h2>
+      <button id="start" type="button" data-i18n="start" disabled></button>
+      <button id="help" class="secondary" type="button" data-i18n="help"></button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>
