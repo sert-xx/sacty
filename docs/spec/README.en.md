@@ -44,6 +44,8 @@ Code: `<path>` (`<function name>`)
 
 ## Contents
 
+- [Desktop app](desktop.en.md): startup, authentication, and packaging
+
 - [Overall structure](architecture.en.md): packages (core, daemon, web, cli), processes and communication, where data is stored
 - [Daemon startup and shutdown](daemon-lifecycle.en.md): `sacty up`, startup order, double starts, shutdown
 - [Configuration (config.yaml)](configuration.en.md): settings and defaults, agents and auth modes, validation rules

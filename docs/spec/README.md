@@ -55,6 +55,8 @@
 
 ## 目次
 
+- [デスクトップ版](desktop.md)：起動・認証・パッケージ
+
 - [全体の構成](architecture.md)：パッケージ（core・daemon・web・cli）、プロセスと通信、データの置き場所
 - [デーモンの起動と終了](daemon-lifecycle.md)：`sacty up`、起動の順序、二重の起動、終了
 - [設定（config.yaml）](configuration.md)：項目と既定値、エージェントと認証方式、検査の規則
