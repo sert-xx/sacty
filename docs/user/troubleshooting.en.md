@@ -56,6 +56,8 @@ A paused task's details show why it stopped and a "Resume" button.
 When you want someone to look at a task that stopped with an error, hand them the error report.
 The "Error report" box in the right column of the task page appears only for tasks with error records.
 
+![The error report in the right column of the task page (the number of errors, downloading the report, and the button to ask the Orchestrator to analyze)](images/task-error-report.en.png)
+
 1. Press "Download the report".
    A Markdown file (`sacty-error-report-<short task ID>-<date and time>.md`) with what Sacty did, what each step's agent did, and the details of the errors is downloaded.
    The headings are in the UI language.

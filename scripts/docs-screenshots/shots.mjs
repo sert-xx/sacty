@@ -40,6 +40,12 @@ export const SHOTS = [
   { name: "task-paused", path: "/tasks/b2d4f6a8-0002", height: 520 },
   { name: "task-budget-paused", path: "/tasks/b8d0f2a4-0008", height: 760 },
   {
+    // エラーの記録があるタスクの、右の列のエラーレポートの欄
+    name: "task-error-report",
+    path: "/tasks/b2d4f6a8-0002",
+    selector: 'section[aria-labelledby="error-report"]',
+  },
+  {
     name: "task-costs",
     // 工程ごとの費用は、費用のタブにある
     path: "/tasks/b8d0f2a4-0008?tab=costs",
