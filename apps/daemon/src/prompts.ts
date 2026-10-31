@@ -3162,7 +3162,7 @@ function sactyFooter(task: Task, what: string): string {
 }
 
 /**
- * sacty が作るPRの本文。承認済みの要求要件、観点とテストの対応、テストの結果、
+ * sacty が作るPRの本文。承認済みの要求要件、実装のエージェントの説明、観点とテストの対応、テストの結果、
  * ゴールガーディアンの最終レビューを載せる（人間が成果物を確かめるための材料）。
  * PR テンプレートが無いとき・使えないときの本文（PBI-87）。
  */
@@ -3184,12 +3184,15 @@ export function joinBodyText(text: BodyText): string {
 /** テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。 */
 export function buildPullRequestBodyText(task: Task, stage: PullRequestBodyStage = {}): BodyText {
   const intro = `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`;
+  const implement = (task.outputs.implement ?? "").trim();
   const main = [
     intro,
     "",
     ...(closesLines(task).length > 0 ? [...closesLines(task), ""] : []),
     ...approvedBasisLines(task, "##"),
     "",
+    // 実装のエージェントの説明（テンプレートに沿わせるときの「変更」と同じ中身。人が変更の中身を PR で読めるように）
+    ...(implement ? ["## 変更", "", implement, ""] : []),
     // 書き出した成果（要求要件・設計など）の URL（PBI-56）
     ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
     // 要求要件・設計の PR（マージで承認済み。成果のファイルは、この PR にも含まれる。PBI-57）
