@@ -155,6 +155,89 @@ describe("最終レビューの、環境による失敗の境界（不合格の�
   });
 });
 
+describe("最終レビューの、一覧の項目の読み方（項目名・伏せ字・「無い」を表す項目）", () => {
+  it("オブジェクトは、決めた項目名の文字列だけを読む。output・log など、ほかの項目は PR の本文に出さない", () => {
+    const review = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          {
+            name: "make setup",
+            reason: "ensurepip が無い",
+            output: "TOKEN=abc123def456ghi789jkl012 の入った長い出力",
+            log: "/Users/someone/work の中身",
+            stderr: "error",
+          },
+        ],
+      }),
+    );
+    expect(review.tests?.environmentFailures).toEqual(["make setup：ensurepip が無い"]);
+  });
+
+  it("JSON の項目の並びにかかわらず「名前：根拠」の順にする。message・description・check なども読む", () => {
+    const review = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          { reason: "ensurepip が無い", name: "make setup" },
+          { message: "権限が無い", check: "go test ./proc" },
+          { description: "ネットワークに届かない", test: "npm ci" },
+        ],
+      }),
+    );
+    expect(review.tests?.environmentFailures).toEqual([
+      "make setup：ensurepip が無い",
+      "go test ./proc：権限が無い",
+      "npm ci：ネットワークに届かない",
+    ]);
+  });
+
+  it("項目は、人に見せる前に、秘密情報と URL の認証情報を伏せる（文字列・オブジェクトとも）", () => {
+    const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const review = read(
+      reported(
+        {
+          exitCode: 2,
+          environmentFailures: [
+            {
+              name: "npm ci",
+              reason: `https://user:hunter2pass@registry.example.com/x?token=${secret} に届かない`,
+            },
+            `git clone HTTPS://bob:pa55word@example.com/r.git が失敗する（${secret}）`,
+          ],
+        },
+        { humanChecks: [{ check: `実機で確かめる ${secret}` }] },
+      ),
+    );
+    const shown = JSON.stringify([review.tests?.environmentFailures, review.humanChecks]);
+    for (const value of [secret, "hunter2pass", "pa55word"]) expect(shown).not.toContain(value);
+    expect(review.tests?.environmentFailures?.[0]).toContain("npm ci：");
+    expect(review.passed).toBe(true);
+  });
+
+  it("「環境による失敗ではない」「無い」を表す項目は、環境による失敗として通さない", () => {
+    for (const environmentFailures of [
+      [{ environment: false }],
+      ["environment: false", "environment=false"],
+      ["none"],
+      ["なし", "無し。"],
+      ["n/a", "N/A"],
+      ["null", "false", "no"],
+      [{ name: "none" }, { reason: "なし" }, { name: "N/A" }],
+    ]) {
+      const review = read(reported({ exitCode: 2, environmentFailures }));
+      expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
+      expect(review.tests).not.toHaveProperty("environmentFailures");
+    }
+    // 本物の項目が混ざっていれば、その項目だけ読む
+    const mixed = read(
+      reported({ exitCode: 2, environmentFailures: ["なし", "make setup：ensurepip が無い"] }),
+    );
+    expect(mixed.passed).toBe(true);
+    expect(mixed.tests?.environmentFailures).toEqual(["make setup：ensurepip が無い"]);
+  });
+});
+
 describe("最終レビューの、他の一覧の項目がオブジェクトで返ったとき", () => {
   it("humanChecks も、{description} のようなオブジェクトを読んで記録する", () => {
     const review = read(
@@ -167,15 +250,43 @@ describe("最終レビューの、他の一覧の項目がオブジェクトで�
     expect(review.humanChecks).toEqual(["画面を目で見る", "実機で確かめる：作業領域に無い"]);
   });
 
-  it("otherFailures がオブジェクトでも、文書だけの差分でツール不足を通ったものにしない", () => {
-    const output = reported({
-      exitCode: 1,
-      missingCommands: ["make"],
-      otherFailures: [{ name: "docs:lint", reason: "リンクが切れている" }],
-    });
-    const review = read(output, { documentsOnly: true });
-    expect(review.tests?.missingCommands).toBeUndefined();
-    expect(review.passed).toBe(false);
+  it("otherFailures は存在で見る：読めない形でも、書いてあれば、文書だけの差分でツール不足を通ったものにしない", () => {
+    for (const otherFailures of [
+      [{ name: "docs:lint", reason: "リンクが切れている" }],
+      "lint failed",
+      ["lint failed"],
+      [{ detail: { file: "README.md", line: 3 } }],
+      [{}],
+      [{ failure: "x" }],
+      [["lint failed"]],
+      [1],
+      [true],
+      { name: "docs:lint" },
+    ]) {
+      const output = reported({ exitCode: 1, missingCommands: ["make"], otherFailures });
+      const review = read(output, { documentsOnly: true });
+      expect(review.tests?.missingCommands, JSON.stringify(otherFailures)).toBeUndefined();
+      expect(review.passed, JSON.stringify(otherFailures)).toBe(false);
+    }
+  });
+
+  it("otherFailures が無い・空・「なし」だけなら、文書だけの差分でツール不足を人の確認に回して通す", () => {
+    for (const otherFailures of [
+      undefined,
+      null,
+      [],
+      "",
+      "  ",
+      ["", " ", null],
+      "なし",
+      ["none"],
+      [false, 0, "N/A"],
+    ]) {
+      const output = reported({ exitCode: 127, missingCommands: ["make"], otherFailures });
+      const review = read(output, { documentsOnly: true });
+      expect(review.tests?.missingCommands, JSON.stringify(otherFailures)).toEqual(["make"]);
+      expect(review.passed, JSON.stringify(otherFailures)).toBe(true);
+    }
   });
 
   it("missingCommands が {name} のオブジェクトでも、ツール不足として読む（読めずに黙って不合格にしない）", () => {

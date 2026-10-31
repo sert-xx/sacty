@@ -882,7 +882,9 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 承認済みの受け入れの確かめ方のうち、作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）は、確かめられる範囲（合成の入力・イベントなど）をテストが検証しているかで判定させ、残りを `humanChecks` に書かせる。テストやコードで確かめられるのに確かめていないことは、`humanChecks` に回さずに不合格の理由にさせる。
   - テストのコマンドがあるときは、失敗がすべて環境によるもの（変更を外した起点の状態でも同じように失敗する、または差分と関係の無い環境の要因で失敗すると確かめられる）なら、失敗したテストごとに名前と根拠を `tests.environmentFailures` に書かせ、テストの失敗を理由に不合格にさせない。1件でも変更によるもの・環境によると確かめられないものがあれば、空にさせる。
   - sacty は `humanChecks` を `FinalReviewed` に記録する。
-  - `environmentFailures`・`humanChecks`・`tests.otherFailures` は、配列で読む。1件は文字列のほか、`{"name": "...", "reason": "..."}` のようなオブジェクトも読み、文字列の値を「：」でつないだ1行の文字列（「名前：根拠」）にして記録する（`reportedItems`。オブジェクトで返されたときに申告を捨てて、環境による失敗だけなのに不合格になっていた）。読めない項目・空の項目は捨てる。配列でない値（「なし」の文字列・1件のオブジェクトなど）は読まない。`tests.missingCommands` も、名前の文字列のほか `{"name": "..."}`（`command`・`tool` でもよい）を読む（`reportedNames`）。指示でも、`environmentFailures` は「名前：根拠」の文字列の配列で書かせる。
+  - `environmentFailures`・`humanChecks` は、配列で読む。1件は文字列のほか、`{"name": "...", "reason": "..."}` のようなオブジェクトも読み、「名前：根拠」の1行の文字列にして記録する（`reportedItems`。オブジェクトで返されたときに申告を捨てて、環境による失敗だけなのに不合格になっていた）。オブジェクトで読む項目名は、名前が `name`・`test`・`check`・`command`、根拠が `reason`・`message`・`description`・`evidence`（それぞれ先にあるもの。JSON の並びにかかわらず名前、根拠の順）で、`output`・`log` などほかの項目は読まない。記録する前に、秘密情報と URL の認証情報を伏せる（`redactLog`・`redactUrlCredentials`）。読めない項目・空の項目・「なし」「none」「n/a」「false」「environment: false」のような「無い」「環境による失敗ではない」を表す項目は捨てる。配列でない値（「なし」の文字列・1件のオブジェクトなど）は読まない。
+  - `tests.otherFailures`（ツール不足のほかの失敗。止める側の欄）は、読める形かにかかわらず、書いてあるかで見る（`hasReportedFailure`）。空でない文字列・0 でない数値・`true`・オブジェクト（空でも）が1件でもあれば「失敗の申告あり」とし、空の値と「なし」のような文字列だけなら「無し」とする。読めない形を「無し」と見なして、文書だけの差分の歯止めが外れないようにする。
+  - `tests.missingCommands` も、名前の文字列のほか `{"name": "..."}`（`command`・`tool` でもよい）を読む（`reportedNames`）。指示でも、`environmentFailures` は「名前：根拠」の文字列の配列で書かせる。
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。

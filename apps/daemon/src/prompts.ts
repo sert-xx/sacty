@@ -2091,12 +2091,28 @@ const oneLine = (v: string) => v.replace(/\s*\n\s*/g, " ");
 /** 文字列の配列として読む（文字列でないもの・空のものは除く。PBI-155）。 */
 const texts = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) : []);
 
+/** 一覧の項目として読むオブジェクトの項目名。名前に当たるものと、根拠に当たるもの（それぞれ、先にあるものを使う）。 */
+const ITEM_NAME_KEYS = ["name", "test", "check", "command"] as const;
+const ITEM_REASON_KEYS = ["reason", "message", "description", "evidence"] as const;
+
+/** 「無い」「環境による失敗ではない」を表す項目（失敗の申告として読まない）。 */
+const NONE_ITEM =
+  /^(none|n\/a|na|nil|null|no|false|なし|無し|ありません|該当なし|environment\s*[:=]\s*(false|no))$/i;
+
+const isNoneItem = (item: string) => NONE_ITEM.test(item.replace(/[。.\s]+$/u, ""));
+
+/** 人に見せる項目から、秘密情報と URL の認証情報（クエリ・フラグメントを含む）を伏せる。 */
+const hideItem = (item: string) =>
+  redactUrlCredentials(redactLog(item, []), { queryAndFragment: true });
+
 /**
- * ゴールガーディアンが、項目の一覧（環境による失敗・他の失敗・人が確かめること）を、文字列でなくオブジェクトで返したとき
+ * ゴールガーディアンが、項目の一覧（環境による失敗・人が確かめること）を、文字列でなくオブジェクトで返したとき
  * （`{"name": "...", "reason": "..."}`。実証で、環境による失敗の申告がこの形で捨てられ、合格のはずの最終レビューが不合格に
- * なった）も読めるようにする。1件の項目を1行の文字列にする：文字列はそのまま、オブジェクトは文字列の値を「：」でつなぐ
- * （JSON の並びの `name`・`reason` の順が「名前：根拠」になる）。文字列もオブジェクトも読めないもの・空のものは除く。
- * 一覧（配列）でないものは読まない（「なし」のような文字列を、失敗の申告として扱わないため）。
+ * なった）も読めるようにする。1件の項目を1行の文字列にする：文字列はそのまま、オブジェクトは決めた項目名
+ * （名前：name・test・check・command、根拠：reason・message・description・evidence）の文字列だけを、JSON の並びにかかわらず
+ * 「名前：根拠」の順につなぐ（output・log など、ほかの項目は読まない）。人に見せる前に、秘密情報と URL の認証情報を伏せる。
+ * 読めない項目・空の項目・「なし」のような「無い」を表す項目、一覧（配列）でないものは読まない
+ * （「なし」の文字列を失敗の申告として扱わないため）。
  */
 const reportedItems = (v: unknown): string[] => {
   if (!Array.isArray(v)) return [];
@@ -2104,15 +2120,29 @@ const reportedItems = (v: unknown): string[] => {
     .map((item) => {
       if (typeof item === "string") return text(item);
       if (item && typeof item === "object" && !Array.isArray(item)) {
-        return Object.values(item)
-          .map((value) => oneLine(text(value)))
-          .filter(Boolean)
-          .join("：");
+        const o = item as Record<string, unknown>;
+        const first = (keys: readonly string[]) =>
+          keys.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
+        return [first(ITEM_NAME_KEYS), first(ITEM_REASON_KEYS)].filter(Boolean).join("：");
       }
       return "";
     })
-    .filter(Boolean);
+    .filter((item) => item && !isNoneItem(item))
+    .map(hideItem);
 };
+
+/**
+ * 失敗の申告が1件でもあるか（`otherFailures`。止める側の欄なので、読めない形でも、書いてあれば「ある」とする）。
+ * 空でない文字列・0 でない数値・真・オブジェクト（空でも）が1件でもあれば true。配列は中の項目を見る。
+ * 無い・空の値と、「なし」のような「無い」を表す文字列だけなら false。
+ */
+function hasReportedFailure(v: unknown): boolean {
+  if (typeof v === "string") return text(v) !== "" && !isNoneItem(text(v));
+  if (typeof v === "number") return v !== 0;
+  if (v === true) return true;
+  if (Array.isArray(v)) return v.some(hasReportedFailure);
+  return v !== null && typeof v === "object";
+}
 
 /** ツールの名前の一覧（`missingCommands`）を読む。名前の文字列のほか、`{"name": "go"}` のような形の項目も、その名前を読む。 */
 const reportedNames = (v: unknown): string[] =>
@@ -2775,9 +2805,8 @@ export function extractFinalReview(
   // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）。
   // ただし、ゴールガーディアンがツール不足のほかの失敗を申告したときは、その失敗を見逃さないよう、通ったものにしない
   // （止めずに、ふつうの判定にする。終了コードが 0 でなければ不合格）
-  const otherFailures = reportedItems(raw.otherFailures);
-  const skipped =
-    options.documentsOnly === true && otherFailures.length === 0 ? reportedMissing : [];
+  const hasOtherFailures = hasReportedFailure(raw.otherFailures);
+  const skipped = options.documentsOnly === true && !hasOtherFailures ? reportedMissing : [];
   const missingCommands = options.documentsOnly === true ? [] : reportedMissing;
   const checks =
     humanChecks.length > 0 || skipped.length > 0
