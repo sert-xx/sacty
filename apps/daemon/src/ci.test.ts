@@ -191,6 +191,56 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     expect(JSON.parse(redactLog(key, []))).toEqual({ a: "[REDACTED]", b: "x" });
   });
 
+  it("JSON の文字列の中のエスケープした引用符を含む秘密の値も、入れ子の JSON まで全体を伏せる（JSON の構文は壊さない）", () => {
+    // 架空の値。引用符の前が3文字・4文字の値と、引用符の前のエスケープしたバックスラッシュ
+    for (const password of [
+      'abc"FAKE_SUFFIX_123',
+      'abcd"FAKE_SUFFIX_123',
+      'ab\\"FAKE_SUFFIX_123',
+    ]) {
+      const value = { password, x: 1 };
+      // そのまま・エスケープした JSON・エスケープを重ねた JSON・JSON の値の中の JSON
+      for (const text of [
+        JSON.stringify(value),
+        JSON.stringify(JSON.stringify(value)),
+        JSON.stringify(JSON.stringify(JSON.stringify(value))),
+        JSON.stringify({ reason: JSON.stringify(value), y: 2 }),
+      ]) {
+        const hidden = redactLog(text, []);
+        expect(hidden, text).not.toContain("FAKE_SUFFIX_123");
+        expect(() => JSON.parse(hidden), hidden).not.toThrow();
+      }
+    }
+    expect(
+      JSON.parse(redactLog(JSON.stringify({ password: 'abc"FAKE_SUFFIX_123', x: 1 }), [])),
+    ).toEqual({
+      password: "[REDACTED]",
+      x: 1,
+    });
+    // `'` で始まる値の中の `"` も値に含める（JSON の文字列の外へは出さない）
+    for (const value of [
+      { reason: `password='abc"FAKE_SUFFIX_123'`, x: 1 },
+      { reason: "password='abcFAKE_SUFFIX_123", x: 1 },
+    ]) {
+      for (const text of [JSON.stringify(value), JSON.stringify(JSON.stringify(value))]) {
+        const hidden = redactLog(text, []);
+        expect(hidden, text).not.toContain("FAKE_SUFFIX_123");
+        expect(() => JSON.parse(hidden), hidden).not.toThrow();
+      }
+    }
+    expect(
+      JSON.parse(redactLog(JSON.stringify({ reason: "password='abcFAKE_SUFFIX_123", x: 1 }), [])),
+    ).toEqual({
+      reason: "password='[REDACTED]",
+      x: 1,
+    });
+    expect(redactLog(`password='abc"FAKE_SUFFIX_123' next`, [])).toBe("password='[REDACTED]' next");
+    // ふつうのログのエスケープした引用符も値に含め、閉じの引用符の後は残す
+    expect(redactLog('password="abc\\"FAKE_SUFFIX_123" next', [])).toBe(
+      'password="[REDACTED]" next',
+    );
+  });
+
   it("括弧を含む秘密の値も、ふつうのログと JSON の両方で全体を伏せる（JSON の構文は壊さない）", () => {
     // 架空の値
     for (const text of [
