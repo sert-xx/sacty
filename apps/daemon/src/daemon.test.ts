@@ -7931,6 +7931,62 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       },
     );
 
+    for (const [kind, paths] of [
+      ["文書だけ", [{ path: "README.md" }]],
+      ["文書でないファイルがある", [{ path: "src/a.go" }]],
+    ] as const) {
+      for (const mode of ["pause", "cancel"] as const) {
+        it(`差分（${kind}）を取る間に${mode === "pause" ? "一時停止" : "中止"}されたら、最終レビューの判定もツール不足の停止も記録しない（レビュー指摘）`, async () => {
+          const repos = withChanges([...paths]);
+          const gate = Promise.withResolvers<void>();
+          const entered = Promise.withResolvers<void>();
+          const read = repos.diffStats.bind(repos);
+          let calls = 0;
+          repos.diffStats = async () => {
+            calls++;
+            if (calls === 1) {
+              entered.resolve();
+              await gate.promise;
+            }
+            return read();
+          };
+          const { activity, service, executor, id } = await toImplement(
+            [implement("# v1"), missingGo(), missingGo()],
+            { repos },
+          );
+          const running = drain(service);
+          await entered.promise;
+          const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+          gate.resolve();
+          await stopping;
+          await running;
+          const task = service.get(id)?.task;
+          expect(task?.status).toBe(mode === "pause" ? "paused" : "cancelled");
+          expect(types(service, id)).not.toContain("FinalReviewed");
+          // 使った分の費用は記録する（判定は記録しない）
+          const failed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewFailed");
+          expect(failed?.map((e) => e.type === "FinalReviewFailed" && e.payload.message)).toEqual([
+            { code: "verify.stoppedByPerson" },
+          ]);
+          if (mode === "pause") {
+            expect(task?.pausedReason).toBe("manual");
+            // 再開すると、最終レビューからやり直す
+            const runs = executor.calls.length;
+            service.resume(id, {});
+            await drain(service);
+            expect(executor.calls.length).toBe(runs + 1);
+            expect(service.get(id)?.task.pausedMessage).toEqual(
+              kind === "文書だけ"
+                ? undefined
+                : expect.objectContaining({ code: "verify.commandMissing" }),
+            );
+            if (kind === "文書だけ") expect(types(service, id)).toContain("FinalReviewed");
+          }
+          activity.close();
+        });
+      }
+    }
+
     it("差分のファイルごとの変更を取れないときは、文書だけとは見なさず、止める", async () => {
       const repos = withChanges([{ path: "README.md" }]);
       // 差分の本文は取れるが、ファイルごとの変更だけを取れない

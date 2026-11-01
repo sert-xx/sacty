@@ -191,6 +191,41 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     expect(JSON.parse(redactLog(key, []))).toEqual({ a: "[REDACTED]", b: "x" });
   });
 
+  it("括弧を含む秘密の値も、ふつうのログと JSON の両方で全体を伏せる（JSON の構文は壊さない）", () => {
+    // 架空の値
+    for (const text of [
+      "password={FAKE_VALUE_123}",
+      "password=abcd{FAKE_VALUE_123}",
+      "token: [FAKE_VALUE_123]",
+      'password="{FAKE_VALUE_123} x"',
+      "password='{FAKE_VALUE_123}'",
+      "Authorization: Bearer {FAKE_VALUE_123}",
+    ]) {
+      expect(redactLog(text, []), text).not.toContain("FAKE_VALUE_123");
+    }
+    for (const value of [
+      { password: "{FAKE_VALUE_123}" },
+      { password: "abcd{FAKE_VALUE_123}", x: 1 },
+      { secret: "[FAKE_VALUE_123]", list: [1, 2] },
+      { reason: "password={FAKE_VALUE_123}" },
+      { reason: 'password="{FAKE_VALUE_123}"' },
+    ]) {
+      // そのまま・エスケープした JSON
+      for (const text of [JSON.stringify(value), JSON.stringify(JSON.stringify(value))]) {
+        const hidden = redactLog(text, []);
+        expect(hidden, text).not.toContain("FAKE_VALUE_123");
+        expect(() => JSON.parse(hidden), hidden).not.toThrow();
+      }
+    }
+    // JSON のキーの後の、引用符の無い値と、配列・オブジェクト
+    expect(
+      JSON.parse(redactLog('{"token":12345678,"api_key":[1,2],"secret":{"a":"b"}}', [])),
+    ).toEqual({ token: "[REDACTED]", api_key: [1, 2], secret: { a: "b" } });
+    expect(JSON.parse(JSON.parse(redactLog(JSON.stringify('{"token":12345678}'), [])))).toEqual({
+      token: "[REDACTED]",
+    });
+  });
+
   it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
     // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）
     for (const input of [
@@ -204,6 +239,9 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       "https://a".repeat(200_000),
       `https://${"@".repeat(2_000_000)}`,
       `https://${"x'".repeat(1_000_000)}`,
+      // 秘密の値の後ろの、バックスラッシュの長い並び
+      `password=${"\\".repeat(2_000_000)}"`,
+      `password="${"\\".repeat(2_000_000)}"`,
       // JSON の文字列と、その区切り
       '"'.repeat(2_000_000),
       `{${'"k":"https://a","r":"a@b",'.repeat(80_000)}`,

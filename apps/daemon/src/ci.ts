@@ -59,11 +59,16 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
 ];
 /**
- * `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。値は、JSON の区切り（`{}[]`）と、
- * エスケープした引用符（`\"`）の前で終える（JSON の構文を壊さないため。PBI-158）。
+ * `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。値は次のどれか（PBI-158）。
+ * - 引用符（`"`・`'`・エスケープした `\"`）で始まる値：閉じの引用符（と改行）の前まで。括弧なども値に含める
+ * - 引用符の無い値：空白・引用符・`&`・`,`・`;` と、引用符をエスケープしている `\` の前まで（括弧も値に含める）。
+ *   JSON のキーの後（`"token": …`）なら、JSON の区切りの括弧の前までを値とする（redactLog で切り分ける）
+ * どの値も、閉じの引用符と、引用符をエスケープしている `\` の並びは残す（JSON の文字列の区切りを壊さないため。
+ * エスケープを重ねた JSON の `\\\"` も）。名前の前後の引用符はエスケープしていてもよい（エスケープした JSON の
+ * `\"password\":\"…\"`）。
  */
 const SECRET_ASSIGNMENTS =
-  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)((?:[^\s"'&,;\\{}[\]]|\\[^\s"'\\]|\\\\){4,})/gi;
+  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\\*["']?\s*[:=]\s*)(?:(\\*")((?:[^"\\\r\n]|\\+(?=[^"\\\r\n])){4,})|(')((?:[^'"\\\r\n]|\\+(?=[^"\\\r\n])){4,})|((?:[^\s"'&,;\\]|\\+(?=[^\s"'\\])){4,}))/gi;
 
 /**
  * CI のログから、秘密情報を伏せる（PBI-89）。渡した値（使ったトークンなど）と、よくある秘密情報の形を伏せる。
@@ -73,11 +78,30 @@ export function redactLog(text: string, secrets: readonly string[]): string {
   // URL のユーザー情報（https://user:pass@host/）は、ほかの形に分かれる前に、URL として読んで伏せる
   let result = redactUrlCredentials(redact(text, secrets));
   for (const pattern of SECRET_PATTERNS) result = result.replace(pattern, "[REDACTED]");
-  return result.replace(SECRET_ASSIGNMENTS, (_all, name: string, value: string) => {
-    // JSON の引用符の無い値（`"token": 12345678`）は、JSON の文字列にして伏せる。null・true・false は秘密情報ではないので残す
-    if (!/"\s*:\s*$/.test(name)) return `${name}[REDACTED]`;
-    return /^(?:null|true|false)$/.test(value) ? `${name}${value}` : `${name}"[REDACTED]"`;
-  });
+  return result.replace(
+    SECRET_ASSIGNMENTS,
+    (
+      all: string,
+      name: string,
+      doubleQuote: string | undefined,
+      doubleQuoted: string | undefined,
+      singleQuote: string | undefined,
+      singleQuoted: string | undefined,
+      bare: string | undefined,
+    ) => {
+      if (doubleQuoted !== undefined) return `${name}${doubleQuote}[REDACTED]`;
+      if (singleQuoted !== undefined) return `${name}${singleQuote}[REDACTED]`;
+      const value = bare ?? "";
+      const key = /(\\*)"\s*:\s*$/.exec(name);
+      if (!key) return `${name}[REDACTED]`;
+      // JSON のキーの後の引用符の無い値（`"token": 12345678}`）は、区切りの括弧の前までを JSON の文字列にして伏せる。
+      // null・true・false は秘密情報ではないので残す。括弧で始まる値（配列・オブジェクト）は、中の値を別に調べる
+      const secret = /^[^{}[\]]*/.exec(value)?.[0] ?? "";
+      if (secret.length < 4 || /^(?:null|true|false)$/.test(secret)) return all;
+      const quote = `${key[1]}"`;
+      return `${name}${quote}[REDACTED]${quote}${value.slice(secret.length)}`;
+    },
+  );
 }
 
 /** スキームに使える文字（大文字・小文字は問わない）。 */
