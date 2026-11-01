@@ -395,6 +395,12 @@ export type Verdict = z.infer<typeof Verdict>;
 /** 実装の検証（テストと最終レビュー）が、続けて通らなかったときに止める回数。 */
 export const MAX_VERIFY_ATTEMPTS = 3;
 
+/**
+ * 最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更（範囲外の変更）を見つけたときに、不合格にする観点の ID。
+ * 設計のテスト観点ではないので、ゴールガーディアンが範囲外の変更を申告したときだけ、判定に足される。
+ */
+export const SCOPE_VIEWPOINT = "SCOPE";
+
 /** 観点ごとの、テストの対応。工程エージェントが申告する。 */
 export const TestMapping = z.object({
   viewpointId: z.string().min(1),

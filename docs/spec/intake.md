@@ -49,6 +49,10 @@ GitHub には、ホストの `gh` にログイン済みのアカウントでア�
     何が変わったかは見分けない。
   - 取り込み元ごとに、どこまで読んだか（更新日時）を種類ごとにメモリーに持ち、続きから読む。
     プロジェクトの設定・ラベル・On/Off が変わったとき（間隔は含まない）と、デーモンを再起動したときは、先頭から読み直す（取り込み済みのものは二重に取り込まない）。
+  - GitHub の検索の位置は、その検索を始めた時刻より先には進めない。先なら、始めた時刻（秒未満は切り捨て）に戻す。
+    ただし、上限や失敗で検索が終わらなかったときの位置は戻さず、そのまま持って次の取り込みがその先から続ける（戻すと、先頭の同じ部分を繰り返して残りへ進めない）。
+    GitHub の更新日時はこの機械の時計とずれることがあり、先に進んだ更新日時をそのまま持つと、時刻が戻った後に更新されたもの（ラベルを付けた PR など）が、持った位置より古い更新日時になって、次の更新まで検索に当たらないため。
+    戻すと余分に読み直すだけで、取り込み済みのものは二重に取り込まない。
   - 1つの取り込み元の失敗は、ほかの取り込み元を止めない。
 - 検索で何も見つからなければ、取り込みの処理（`importIssues`・`importTickets`。すべてのタスクを調べる）を呼ばない。
 - 取り込みは、`config.yaml` を読めれば動く。
@@ -69,7 +73,7 @@ GitHub には、ホストの `gh` にログイン済みのアカウントでア�
     定期の確認の前でも理由がわかる。
     画面は、理由と、すべての種類の記録を出す。
 
-コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`settingsSaveCount`・`status`）
+コード: `apps/daemon/src/intake.ts`（`IssueIntake`・`clampCursor`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`settingsSaveCount`・`status`）
 
 ## GitHub の Issue・PR
 

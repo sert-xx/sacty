@@ -2,7 +2,7 @@
 
 import { type Project, type ProjectTarget, targetUrlProblem } from "@sacty/core";
 import { RefreshCwIcon, XIcon } from "lucide-react";
-import { startTransition, useActionState, useId, useState, useTransition } from "react";
+import { startTransition, useActionState, useEffect, useId, useState, useTransition } from "react";
 import {
   reloadGitHubAccountsAction,
   type SaveProjectState,
@@ -61,6 +61,12 @@ export function ProjectEditor({
     ? [...new Set([...hostPlatforms, ...projectPlatforms.platforms.map((p) => p.name)])]
     : hostPlatforms;
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
+  // 設定を読み込んだときの版。保存するときに送り、その後にほかの保存で変わっていれば、上書きせずに知らせる（PBI-274）。
+  // 自分が保存したら、その版に進める（画面の再取得では進めない。ほかの保存の内容を見ていないため）
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState(project?.updatedAt ?? "");
+  useEffect(() => {
+    if (state.updatedAt) setBaseUpdatedAt(state.updatedAt);
+  }, [state.updatedAt]);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
   const uid = useId();
   const messages = useMessages();
@@ -167,6 +173,7 @@ export function ProjectEditor({
       className="flex flex-col gap-6"
     >
       <input type="hidden" name="id" value={project?.id ?? ""} />
+      <input type="hidden" name="baseUpdatedAt" value={baseUpdatedAt} />
       <input type="hidden" name="definition" value={definition} />
 
       <section className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5">
@@ -769,6 +776,21 @@ export function ProjectEditor({
         <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
           {state.message}
         </p>
+      )}
+      {/* 読み込んだ後にほかの保存で変わっていた。編集中の入力は、再読み込みするまで残す（PBI-274） */}
+      {state.conflict && (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm leading-6 text-muted-foreground">{t.reloadLatestNote}</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => window.location.reload()}
+            className="w-fit"
+          >
+            <RefreshCwIcon aria-hidden="true" />
+            {t.reloadLatest}
+          </Button>
+        </div>
       )}
       {state.saved && !state.message && !state.contextError && (
         <p role="status" className="text-sm text-accent-foreground">

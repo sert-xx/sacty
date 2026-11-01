@@ -1,6 +1,6 @@
 "use client";
 
-import { isCompleted, type Task } from "@sacty/core";
+import { isCompleted, SCOPE_VIEWPOINT, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
@@ -288,6 +288,19 @@ export function Implementation({ task }: { task: Task }) {
           </p>
           {review.summary && <p className="break-words">{messages.labels.text(review.summary)}</p>}
           <HumanChecks review={review} />
+          {review.viewpoints
+            .filter((v) => v.viewpointId === SCOPE_VIEWPOINT && !v.verified)
+            .map((v) => (
+              <div
+                key={v.viewpointId}
+                className="flex flex-col gap-1 rounded-lg border border-warn-line p-3"
+              >
+                <p className="flex items-center gap-1 font-semibold text-destructive">
+                  {m.outOfScope} <Hint text={m.outOfScopeHint} />
+                </p>
+                <p className="break-words">{messages.labels.text(v.reason)}</p>
+              </div>
+            ))}
           {review.remarks.length > 0 && (
             <>
               <p className="text-xs text-muted-foreground">{m.recurrence}</p>

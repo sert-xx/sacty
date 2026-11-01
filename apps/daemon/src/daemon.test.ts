@@ -3198,6 +3198,8 @@ describe("設計の工程（PBI-8）", () => {
     expect(prompt).toContain("# 設計 v1"); // 前回の下書き
     // 前回のテスト観点も、IDつきで全項目を渡す（指摘が TV-n を指しても分かるように。レビュー指摘）
     expect(prompt).toContain("- [TV-1] A\n  - 入力：Aの入力\n  - 期待結果：Aの期待結果");
+    // テスト観点の ID は sacty が配列の順に振り直す。消す観点は出さず、削除の行も作らせない
+    expect(prompt).toContain("消す観点は出さず、削除の行も作らないでください");
     expect(prompt).toContain("[design-1-1] 異常系のテスト観点が無い");
     const task = service.get(id)?.task;
     expect(task?.gate).toEqual({ step: "design", submission: 2 });
@@ -7925,6 +7927,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
   });
 
+  it("実装の説明の先頭の行の字下げは保存する（字下げしたコードを普通の文と見分けられるように。PBI-264）", async () => {
+    const indented = '    console.log("内部用コード");\n\nAPI を足しました。';
+    const { activity, service, id } = await toImplement([implement(indented), review()]);
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.outputs.implement).toBe(indented);
+    // 保存した説明から作る PR の本文は、字下げしたコードを要約にせず、後の文を使う
+    expect(task && buildPullRequestBody(task)).toContain("- 変更：API を足しました。");
+    activity.close();
+  });
+
   it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {
     const { activity, service, executor, repos, id } = await toImplement([
       implement("# 実装の説明"),
@@ -8086,6 +8099,63 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const task = service.get(id)?.task;
     expect(task?.gate?.step).toBe("implement");
     expect(task?.verifyFailures).toBe(0);
+    activity.close();
+  });
+
+  it("ゴールガーディアンが範囲外の変更を申告したら、観点がすべて検証済みでも不合格にし、外すよう伝えて実装をやり直す。判断できないものは人の確認に回し、不合格にしない", async () => {
+    const OUT =
+      "RoomsPage.tsx の狭い画面のカード表示と rooms.spec.ts の期待の逆転：どの要求要件・設計にも無い";
+    const withScope = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      withScope({ outOfScope: [OUT] }),
+      implement("# v2"),
+      // 範囲内か判断できないものは humanChecks に回し、不合格にしない
+      withScope({ outOfScope: [], humanChecks: ["範囲内か判断できない：a.ts（解釈が分かれる）"] }),
+    ]);
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(scope?.verified).toBe(false);
+    expect(ja(scope?.reason)).toContain(OUT);
+    // 設計の観点は、すべて検証済みのまま
+    expect(
+      first?.type === "FinalReviewed" && first.payload.viewpoints.filter((v) => v.verified),
+    ).toHaveLength(2);
+    // 実装のやり直しに、範囲外の変更を外すことを伝える
+    const retry = promptOf(executor, 5);
+    expect(retry).toContain("[SCOPE] 観点を検証できていない");
+    expect(retry).toContain(OUT);
+    expect(retry).toContain("起点のコードの状態に戻して外してください");
+    expect(second?.type === "FinalReviewed" && second.payload.passed).toBe(true);
+    expect(
+      second?.type === "FinalReviewed" &&
+        second.payload.viewpoints.some((v) => v.viewpointId === "SCOPE"),
+    ).toBe(false);
+    expect(second?.type === "FinalReviewed" && second.payload.humanChecks).toEqual([
+      "範囲内か判断できない：a.ts（解釈が分かれる）",
+    ]);
+    // 最終レビューの指示に、範囲外の変更の判定が入っている
+    expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
     activity.close();
   });
 
@@ -8811,9 +8881,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       title: "決済API",
       number: undefined,
     });
-    expect(call?.body).toContain(
-      "| TV-1 同じキーの再送 | 同じキーで2回送る | 決済は1回 | pay.test.ts › 同じキーの再送 | ✅ TV-1の判定理由 |",
-    );
+    expect(call?.body).toContain("| TV-1 同じキーの再送 | pay.test.ts › 同じキーの再送 | ✅ |");
+    // 入力・期待結果・所見の全文は、表の外の折りたたみに出す
+    expect(call?.body).toContain("  - 入力：同じキーで2回送る");
+    expect(call?.body).toContain("  - 最終レビューの所見：TV-1の判定理由");
     expect(call?.body).toContain("requirements-1-1：再発なし");
 
     const task = service.get(id)?.task;
@@ -9655,6 +9726,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       },
     );
 
+    it("確認して決めたことを文書に書いてほしい指摘は、決定を変えないので実装に戻る。判断の基準と、決定を変えない旨の理由を残す（PBI-266。S9）", async () => {
+      const pulls = new FakePulls();
+      const reason =
+        "決定を変えない：『過去の削除は戻せない』は承認済みの要求要件で決まっていて、文書に書くだけ";
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("implement", reason)],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [
+        item("comment:266", {
+          body: "要求要件で確認した『過去の削除は戻せない』を、README と設計メモに書いてください",
+        }),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      // 判断の指示に、決定を変えるかで決める基準と、理由の書き方がある
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("過去の削除は戻せない");
+      expect(prompt).toContain("決定を変えない指摘は、この PR の実装で直します");
+      expect(prompt).toContain(
+        "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+      );
+      // 設計には戻らず、実装への差し戻しになる（承認済みの設計は残る）
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.remarks.at(-1)?.step).toBe("implement");
+      expect(task?.approved.design).toBeDefined();
+      expect(task?.prRework).toMatchObject({ target: "implement", decided: true, reason });
+      activity.close();
+    });
+
+    it("決定を変える指摘（画面の姿を変える）は、これまでどおり、その決定を持つ設計に戻る（PBI-266。S8）", async () => {
+      const pulls = new FakePulls();
+      const reason = "決定を変える：設計が決めた、月を選んでいない間の画面の姿を変える";
+      const { activity, service, id } = await toImplementGate([rework("design", reason), design], {
+        pulls,
+        now: later,
+      });
+      pulls.feedbackList = [
+        item("comment:267", {
+          body: "月を選んでいないとき、いま見ている範囲が『これからの予約』だと画面で分かるようにしてください",
+        }),
+      ];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.remarks.at(-1)?.step).toBe("design");
+      expect(task?.approved.design).toBeUndefined();
+      expect(task?.prRework).toMatchObject({ target: "design", decided: true, reason });
+      activity.close();
+    });
+
     it("最後のフィードバックから時間がたつまで待ち、取り込んだものは二重に取り込まない", async () => {
       const pulls = new FakePulls();
       let now = Date.parse(at) + 30_000; // 最後のコメントから30秒
@@ -9668,6 +9790,95 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 書き終わるのを待って、まとめて取り込む
       now = later();
       await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported"),
+      ).toHaveLength(1);
+      activity.close();
+    });
+
+    it("GitHub の時刻がこの機械の時計より先に進んでいても、初めて見た時刻から数えて待ち、その時刻の1時間後まで待ち続けない（PBI-270）", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at); // この機械の時計
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      // GitHub の時刻は1時間先なので、コメントの時刻は未来になっている
+      pulls.feedbackList = [
+        item("comment:20", { at: new Date(Date.parse(at) + 3_600_000).toISOString() }),
+      ];
+      const imported = () =>
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported") ?? [];
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(0);
+      // 初めて見てから2分たつまでは待つ
+      now = Date.parse(at) + 119_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(0);
+      // 2分たったら、GitHub の時刻がまだ先でも取り込む
+      now = Date.parse(at) + 121_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(1);
+      activity.close();
+    });
+
+    it("書き終わるのを待つ時間は、新しいコメントが見つかるたびに、そのコメントを見た時刻から数え直す（GitHub の時刻が先に進んでいるとき）", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at);
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      const ahead = (ms: number) => new Date(Date.parse(at) + 3_600_000 + ms).toISOString();
+      pulls.feedbackList = [item("comment:21", { at: ahead(0) })];
+      await service.checkPullRequests();
+      // 1分半後に2件目のコメントが付いたので、1件目から2分たっても取り込まない
+      now = Date.parse(at) + 90_000;
+      pulls.feedbackList = [
+        item("comment:21", { at: ahead(0) }),
+        item("comment:22", { at: ahead(90_000) }),
+      ];
+      await service.checkPullRequests();
+      now = Date.parse(at) + 130_000;
+      await service.checkPullRequests();
+      const imported = () =>
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported") ?? [];
+      expect(imported()).toHaveLength(0);
+      // 2件目を見てから2分たったら、2件まとめて取り込む
+      now = Date.parse(at) + 91_000 + 120_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(1);
+      expect(service.get(id)?.task.importedFeedback).toEqual(["comment:21", "comment:22"]);
+      activity.close();
+    });
+
+    it("初めて見た時刻は、指摘を取り込む対象から外れたタスク（中止など）の分を忘れる（常駐中に増え続けない。PBI-270）", async () => {
+      const pulls = new FakePulls();
+      const now = Date.parse(at);
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      const seen = (service as unknown as { feedbackSeenAt: Map<string, unknown> }).feedbackSeenAt;
+      // 待っている間（取り込む前）は、見た時刻を持つ
+      pulls.feedbackList = [item("comment:24")];
+      await service.checkPullRequests();
+      expect(seen.has(id)).toBe(true);
+      // 中止されたら、次の確認で忘れる
+      await service.cancel(id);
+      await service.checkPullRequests();
+      expect(seen.size).toBe(0);
+      activity.close();
+    });
+
+    it("GitHub の時刻がこの機械の時計より遅れていても、取り込みを遅らせない（PBI-270）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => Date.parse(at) + 3_600_000 },
+      );
+      pulls.feedbackList = [item("comment:23")];
       await service.checkPullRequests();
       expect(
         service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported"),
@@ -11634,7 +11845,17 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const send = (method: string, path: string, body: unknown) =>
       app.request(path, {
         method,
-        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+          // 変えるときは、読み込んだ版を送る（PBI-274）
+          ...(method === "PUT"
+            ? {
+                "if-match":
+                  service.getProject(path.split("/").pop() ?? "")?.project.updatedAt ?? "",
+              }
+            : {}),
+        },
         body: JSON.stringify(body),
       });
     const definition = (name: string, repo: string, context?: string) => ({
@@ -11738,7 +11959,11 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const save = () =>
       app.request("/api/projects/a", {
         method: "PUT",
-        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+          "if-match": service.getProject("a")?.project.updatedAt ?? "",
+        },
         body: JSON.stringify({
           name: "A",
           targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
@@ -14962,7 +15187,7 @@ describe("API", () => {
     // コードを指定していない標準の検査も、コードと引数で返す（zod の英語の文は返さない）
     const save = await app.request(`/api/projects/${pay.id}`, {
       method: "PUT",
-      headers: json,
+      headers: { ...json, "if-match": service.getProject(pay.id)?.project.updatedAt ?? "" },
       body: JSON.stringify({
         name: "決済",
         targets: [{ scope: "repo" }],
@@ -15846,8 +16071,9 @@ describe("再現の工程（PBI-29）", () => {
     // PR の本文には、再現の説明と、再現のテストの観点（REPRO）を載せる
     const body = pulls.calls[0]?.body ?? "";
     expect(body).toContain("## 不具合の再現");
-    expect(body).toContain("# 再現の説明");
-    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|.*✅/);
+    // 全文は載せない（再現の説明は見出しだけなので、要点は無く、全文のある場所だけを書く）
+    expect(body).toContain("全文は sacty のタスクの画面で確かめてください。");
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \| ✅ \|/);
     expect(body).not.toContain("## 要求要件");
     // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
     expect(reworkTargets(done as Task, "implement")).toEqual(["implement"]);
@@ -18596,7 +18822,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       baseBranch: "main",
       title: "決済API",
     });
-    expect(pulls.calls[2]?.body).toContain("## 要求要件・設計の PR（マージで承認済み）");
+    // 全文は載せず、マージで承認した PR へのリンクにする（PBI-264）
+    expect(pulls.calls[2]?.body).toContain("## 要求要件（人間が承認済み）");
+    expect(pulls.calls[2]?.body).toContain("全文は、マージで承認した次の PR にあります。");
+    expect(pulls.calls[2]?.body).toContain("- 要求要件：https://github.com/acme/app/pull/7");
     expect(pulls.calls[2]?.body).toContain("- 設計：https://github.com/acme/app/pull/8");
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
@@ -22988,7 +23217,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     await preview(app, "p", undefined, "codex");
     await app.request("/api/projects/p", {
       method: "PUT",
-      headers: json,
+      headers: { ...json, "if-match": service.getProject("p")?.project.updatedAt ?? "" },
       body: JSON.stringify({
         name: "決済",
         targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
@@ -23075,7 +23304,11 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       githubAccounts: { "github.com": "me" },
     };
     const put = (body: unknown) =>
-      app.request("/api/projects/p", { method: "PUT", headers: json, body: JSON.stringify(body) });
+      app.request("/api/projects/p", {
+        method: "PUT",
+        headers: { ...json, "if-match": service.getProject("p")?.project.updatedAt ?? "" },
+        body: JSON.stringify(body),
+      });
     const broken = await put({
       ...definition,
       context: { repo: "https://github.com/acme/broken.git" },
@@ -23528,14 +23761,16 @@ describe("PR テンプレート（PBI-87）", () => {
     expect(impl).toContain(
       "## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の成果物です。",
     );
-    expect(impl).toContain("**要求要件（人間が承認済み）**\n\n# 要求要件 v1");
-    expect(impl).toContain("## 変更内容\n\n# 実装の説明");
-    expect(impl).toContain("## テスト\n\n| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |");
+    expect(impl).toContain("最終レビュー：合格。所見");
     expect(impl).toContain(
-      "テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）\n\n- [ ] 単体テストを足した",
+      "**要求要件（人間が承認済み）**\n\n全文は、マージで承認した次の PR にあります。\n\n- 要求要件：https://github.com/acme/app/pull/7",
     );
-    expect(impl).toContain("<summary>sacty の記録</summary>");
-    expect(impl).toContain("**ゴールガーディアンの最終レビュー**\n\n合格。所見");
+    expect(impl).toContain("## 変更内容\n\n# 実装の説明");
+    expect(impl).toContain("## テスト\n\n| 観点 | テスト | 最終レビュー |");
+    expect(impl).toContain("テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）");
+    expect(impl).toContain("<summary>観点ごとの詳細");
+    expect(impl).toContain("- [ ] 単体テストを足した");
+    // 最終レビューが短ければ、全文の折りたたみ（sacty の記録）は出さない
     expect(impl).not.toMatch(/\[[xX]\]/);
     // 最後の部分に、タスクの ID と、マージが実装の承認になることの案内（PBI-110）
     expect(impl).toContain(
@@ -23629,8 +23864,7 @@ describe("PR テンプレート（PBI-87）", () => {
     ]) {
       const made = await toPullRequest(
         templates,
-        implement(),
-        `# 要求要件 v1\n\n${"長い要求要件。".repeat(20_000)}`,
+        implement(`# 実装の説明\n\n${"長い説明。".repeat(20_000)}`),
       );
       const body = made.pulls.calls[2]?.body ?? "";
       expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
@@ -23651,6 +23885,19 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     expect(leaked.pulls.calls[2]?.body).not.toContain("ghp_secret");
     leaked.activity.close();
+  });
+
+  it("要約で切れる境界に秘密の値がまたがっても、切れた先頭を本文に出さない（PBI-264）", async () => {
+    for (const templates of [found(), new FakeTemplates(async () => ({ kind: "none" }))]) {
+      const leaked = await toPullRequest(
+        templates,
+        implement(`# 実装の説明\n\n${"あ".repeat(235)}ghp_secret を使った`),
+      );
+      const body = leaked.pulls.calls[2]?.body ?? "";
+      expect(body).toContain("あ".repeat(100));
+      expect(body).not.toContain("ghp_");
+      leaked.activity.close();
+    }
   });
 });
 

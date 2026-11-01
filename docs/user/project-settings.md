@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（deleteProjectAction） -->
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx、apps/web/src/components/delete-project.tsx、apps/web/src/app/actions.ts（saveProjectAction・deleteProjectAction） -->
 
 **日本語** | [English](project-settings.en.md)
 
@@ -95,6 +95,16 @@ gh auth login --hostname ghe.example.com      # GitHub Enterprise Server も、�
 
 保存するときに、sacty はコンテキストを読んで検査し、`mcp.yaml`・`platforms.yaml` などに誤りがあれば知らせます。
 保存はしますが、このままでは工程の実行で止まります。
+
+## 同時に変更したとき
+
+複数の人（やエージェント）が同じプロジェクトの設定を開いて保存するとき、sacty は先に保存された変更を、後の保存で黙って消しません。
+
+- 設定の画面を開いた後に、ほかの保存でそのプロジェクトの設定が変わっていると、保存はしません。
+  画面に理由と「再読み込みして最新の設定を見る」ボタンを出します。
+- 押して画面を読み込み直し、最新の設定を確かめてから、もう一度変更してください。再読み込みするまで、編集中の入力は画面に残ります。再読み込みすると入力は消えるので、残したい変更は先に書き写してください（ボタンの近くにも案内を出します）。
+- 別の項目だけを変えていたときも、同じように保存しません（項目ごとの併合はしません）。
+- 自分で保存した後は、続けて保存できます。
 
 ## エクスポート・インポート
 

@@ -178,6 +178,12 @@ export type TaskRemark = {
   response?: string;
   /** 対応を書いた提出回。 */
   respondedIn?: number;
+  /**
+   * この指摘を渡した実行が提出された提出回（回答の有無にかかわらず）。無ければ、まだその工程の実行がこの指摘を
+   * 見て提出していない（差し戻しの直しの対象）。承認のあとに上流へ戻して再実行するとき、対応済みの古い指摘を
+   * 今回の差し戻しと区別するのに使う。
+   */
+  submittedIn?: number;
   /** 前提が変わったなどの理由で、人間が無効にした指摘。エージェントには渡さない。 */
   voided: boolean;
 };
@@ -1144,8 +1150,8 @@ export function applyEvent(
           if (r.step !== step || r.voided) return r;
           const text = responses.get(r.id);
           return text === undefined
-            ? { ...r, response: undefined, respondedIn: undefined }
-            : { ...r, response: text, respondedIn: submission };
+            ? { ...r, response: undefined, respondedIn: undefined, submittedIn: submission }
+            : { ...r, response: text, respondedIn: submission, submittedIn: submission };
         });
       }
       break;

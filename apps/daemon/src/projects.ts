@@ -56,7 +56,17 @@ export class SqliteProjectStore implements ProjectStore {
   }
 
   put(id: string, definition: ProjectDefinition): Project {
-    const at = this.now().toISOString();
+    // 更新の時刻は、設定を読んだ後に変わったかを照合する版として使う（PBI-274）。同じミリ秒の2回の保存や、時計の巻き戻りでも
+    // 前の値と必ず変わるよう、前の値より後にする
+    const previous = (
+      this.db.prepare("SELECT updated_at FROM projects WHERE id = ?").get(id) as
+        | { updated_at: string }
+        | undefined
+    )?.updated_at;
+    const clock = this.now().getTime();
+    const at = new Date(
+      previous !== undefined ? Math.max(clock, new Date(previous).getTime() + 1) : clock,
+    ).toISOString();
     this.db
       .prepare(
         `INSERT INTO projects (id, definition, created_at, updated_at) VALUES (?, ?, ?, ?)

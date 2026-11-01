@@ -463,6 +463,21 @@ describe("最終レビューの、他の一覧の項目がオブジェクトで�
     }
   });
 
+  it("otherFailures の項目に長い空白列があっても、線形時間で読む（末尾の句点・空白を除く処理）", () => {
+    const blanks = " ".repeat(100_000);
+    const started = Date.now();
+    for (const otherFailures of [
+      `lint${blanks}failed`,
+      [`lint${blanks}failed`],
+      [{ name: `a${blanks}b` }],
+    ]) {
+      const output = reported({ exitCode: 1, missingCommands: ["make"], otherFailures });
+      const review = read(output, { documentsOnly: true });
+      expect(review.passed).toBe(false);
+    }
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("otherFailures が無い・空・「なし」だけなら、文書だけの差分でツール不足を人の確認に回して通す", () => {
     for (const otherFailures of [
       undefined,

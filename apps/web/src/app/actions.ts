@@ -469,8 +469,16 @@ export async function decideChangeAction(
 
 /**
  * message は保存できなかった理由。contextError は、保存したがコンテキストに誤りがあること（PBI-76。画面の言語の文）。
+ * conflict は、読み込んだ後にほかの保存で設定が変わっていたため保存しなかったこと、updatedAt は、保存した設定の版
+ * （次の保存で照合に使う。PBI-274）。
  */
-export type SaveProjectState = { message?: string; saved?: boolean; contextError?: string };
+export type SaveProjectState = {
+  message?: string;
+  saved?: boolean;
+  contextError?: string;
+  conflict?: boolean;
+  updatedAt?: string;
+};
 
 /** プロジェクトを作る・変える。定義は編集画面が JSON にまとめて送る。 */
 export async function saveProjectAction(
@@ -479,6 +487,8 @@ export async function saveProjectAction(
 ): Promise<SaveProjectState> {
   const a = (await getMessages()).common.action;
   const id = String(formData.get("id") ?? "") || undefined;
+  // 画面が設定を読み込んだときの版（変えるときだけ。PBI-274）
+  const base = String(formData.get("baseUpdatedAt") ?? "") || undefined;
   let definition: unknown;
   try {
     definition = JSON.parse(String(formData.get("definition") ?? ""));
@@ -487,11 +497,12 @@ export async function saveProjectAction(
   }
   let result: Awaited<ReturnType<typeof saveProject>>;
   try {
-    result = await saveProject(id, definition as ProjectDefinitionInput);
+    result = await saveProject(id, definition as ProjectDefinitionInput, base);
   } catch {
     return { message: a.daemonDown };
   }
-  if (!result.ok) return { message: result.message };
+  if (!result.ok)
+    return { message: result.message, ...(result.conflict ? { conflict: true } : {}) };
   // 保存したコンテキストの誤り（PBI-76）。保存はしたので、知らせるだけにする
   if (!id) {
     // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
@@ -506,7 +517,11 @@ export async function saveProjectAction(
       ? renderMessage(result.contextError, (await getMessages()).locale)
       : undefined;
   refresh();
-  return { saved: true, ...(contextError ? { contextError } : {}) };
+  return {
+    saved: true,
+    updatedAt: result.project.updatedAt,
+    ...(contextError ? { contextError } : {}),
+  };
 }
 
 export type DeleteProjectState = { message?: string };

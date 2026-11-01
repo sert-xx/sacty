@@ -52,6 +52,9 @@ const ja = {
     recurrence: "過去の指摘の再発",
     notRecurred: "再発なし",
     recurred: "再発している",
+    /** 依頼にも承認済みの要求要件・設計にも無い変更で、最終レビューが不合格にしたもの。 */
+    outOfScope: "範囲外の変更",
+    outOfScopeHint: "依頼にも承認済みの要求要件・設計にも無い変更です。実装をやり直して外します。",
     /** 人が最終承認で確かめること（PBI-155）。 */
     humanChecks: "人が確かめること",
     humanChecksHint:
@@ -324,6 +327,9 @@ const en: PartsMessages = {
     recurrence: "Recurrence of past comments",
     notRecurred: "Not recurring",
     recurred: "Recurring",
+    outOfScope: "Out-of-scope changes",
+    outOfScopeHint:
+      "Changes that neither the request nor the approved requirements and design call for. The implementation is redone to remove them.",
     humanChecks: "For a person to check",
     humanChecksHint:
       "The Goal Guardian could not check these in the workspace. Check them before merging the implementation PR.",

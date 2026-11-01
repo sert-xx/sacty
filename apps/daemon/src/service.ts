@@ -852,6 +852,11 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /**
+   * PR のフィードバックを、このデーモンが初めて見た時刻（タスクの ID → フィードバックの key → 時刻。メモリーだけ）。
+   * 書き終わるのを待つ時間は、GitHub の時刻だけでなく、これも使って数える（PBI-270）。
+   */
+  private readonly feedbackSeenAt = new Map<string, Map<string, number>>();
   /** レビュー用のラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
   private readonly labeling = new Set<string>();
   /**
@@ -974,6 +979,13 @@ export class TaskService {
       (t) =>
         (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
     );
+    // 指摘を取り込む対象から外れたタスク（完了・中止・差し戻し・マージなど）の、初めて見た時刻は忘れる（常駐中に増え続けないため。PBI-270）
+    const importing = new Set(
+      waiting.filter((t) => t.status === "awaiting_approval").map((t) => t.id),
+    );
+    for (const id of [...this.feedbackSeenAt.keys()]) {
+      if (!importing.has(id)) this.feedbackSeenAt.delete(id);
+    }
     // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
     const rechecked = new Set<string>();
     for (const task of waiting) {
@@ -1835,10 +1847,21 @@ export class TaskService {
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
         .filter((item) => !handedOverFeedback(current, pr, item));
-      if (fresh.length === 0) return;
-      // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
-      const newest = Math.max(...fresh.map((item) => Date.parse(item.at) || 0));
-      if (this.now() - newest < FEEDBACK_QUIET_MS) return;
+      if (fresh.length === 0) {
+        this.feedbackSeenAt.delete(task.id);
+        return;
+      }
+      // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ。
+      // フィードバックの時刻は GitHub の時刻なので、それがこの機械の時計より先に進んでいても待ち続けないよう、
+      // このデーモンが初めて見た時刻より後には数えない（見た時点で、そのフィードバックはもう書かれている）
+      const now = this.now();
+      const previouslySeen = this.feedbackSeenAt.get(task.id);
+      const seenAt = new Map(fresh.map((item) => [item.key, previouslySeen?.get(item.key) ?? now]));
+      this.feedbackSeenAt.set(task.id, seenAt);
+      const newest = Math.max(
+        ...fresh.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
+      );
+      if (now - newest < FEEDBACK_QUIET_MS) return;
       // 一度に取り込むのは、指摘の件数の上限まで（古い順）。残りは取り込み済みにせず、次の取り込みに残す
       const batch = fresh.slice(0, REMARKS_MAX);
       const latest = this.tasks.get(task.id);
@@ -3765,11 +3788,19 @@ export class TaskService {
     };
   }
 
-  /** プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。 */
-  saveProject(id: string | undefined, raw: unknown): Project {
+  /**
+   * プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。
+   * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに拒否する
+   * （PBI-274。照合と保存の間に待ちが無いので、同時に保存しても、先に保存した変更を後の保存が消さない）。
+   */
+  saveProject(id: string | undefined, raw: unknown, base?: string): Project {
     const definition = ProjectDefinition.parse(raw);
-    if (id && !this.deps.projects.get(id)) {
+    const current = id ? this.deps.projects.get(id) : undefined;
+    if (id && !current) {
       throw new InvalidOperationError(message("project.notFound"));
+    }
+    if (current && base !== undefined && current.updatedAt !== base) {
+      throw new InvalidOperationError(message("project.changedElsewhere"));
     }
     // チケットの取り込み先の重複は、ホストの PF だけプロジェクトをまたいで調べる（コンテキストの PF はプロジェクトごと。
     // PBI-74）。設定を読めなければ、これまでどおりすべてを調べる
@@ -6726,7 +6757,10 @@ export class TaskService {
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
       // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
-      { testCommand: step === "implement" && Boolean(latest.noTestsReason) },
+      {
+        testCommand: step === "implement" && Boolean(latest.noTestsReason),
+        keepIndent: step === "implement",
+      },
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
@@ -8323,8 +8357,8 @@ export class TaskService {
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, { verifying }),
-        buildPullRequestBodyParts(task, { verifying }),
+        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets }),
+        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
