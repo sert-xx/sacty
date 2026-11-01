@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-269
-- PR: なし
+- PR: #271
 - ブランチ: feat/issue-269-conflict-indicator
 - 関係する ADR: [承認待ちの間に実装の PR がベースブランチと競合したら、画面に出すだけにして、自動では取り込まない](../adr/20261101-1400-show-pull-request-conflict-while-awaiting-approval.md)
 
@@ -41,7 +41,7 @@
   - 画面の文言の規則（`wording-policy.test.ts`）の 4 件は、足した案内が長かったため。文言を短くし、補足（Hint）に分けて直した。直した後に通った。
   - 並行実行のテスト（`daemon.test.ts`「実行待ちのタスクを、古い順に」）の 1 件は、負荷（ロードアベレージ 40 前後）による時間の判定の失敗。単独で再実行すると通った。
   - `install-security-tools.test.ts` の 2 件は、環境による既知の失敗（`/usr/local/bin` に書き込めない）。この PR と関係しない。
-  - Playwright 未導入によるブラウザーのテスト（`question-form.browser.test.ts`）は、この環境では動かせていない（`tests/docs`・画面のテストへの影響は無い）。
+  - この環境には Playwright の Chromium が入っていたので、ブラウザーのテスト（`question-form.browser.test.ts`）も全体の実行の中で通った。
 - 動作確認（動画）：一時の `SACTY_HOME`（リポジトリの外）で `sacty up` を起動し（ポートは 4851・4852。4700・4800・4810 は使っていない）、`scripts/docs-screenshots` の架空のデータを入れた。GitHub の API だけ、デーモンの `fetch` を差し替えて、`mergeable` を手元のファイルで切り替えた（PR の確認の間隔は、動画のために 60 秒から 3 秒に縮めた）。
   1. 競合なし：「あなたの出番」はいつもの表示。
   2. `mergeable: false` にすると、数秒でダッシュボードの「あなたの出番」の状態が「実装の PR がベースブランチと競合」になり、行に取り込む操作の案内が出る。
