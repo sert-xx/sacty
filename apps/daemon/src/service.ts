@@ -2029,6 +2029,11 @@ export class TaskService {
       context?: ExecuteRun["context"];
       contextMcp?: ExecuteRun["contextMcp"];
       estimateCost?: boolean;
+      /**
+       * 実装後のコードの写しに、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物）を、PR のコミットの内容で
+       * 入れる（最終レビュー。リポジトリ全体の検査を PR と同じ中身で行わせるため。実装の作業領域には入れない）。
+       */
+      include?: { commit: string; paths: string[] };
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
@@ -2060,6 +2065,7 @@ export class TaskService {
               this.repoDir(task),
               workspaceDir,
               this.trustedGitDir(task),
+              ...(run.include ? [run.include] : []),
             );
           }
         } catch (error) {
@@ -7444,6 +7450,36 @@ export class TaskService {
   }
 
   /**
+   * 最終レビューの写しに入れる、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物。PBI-57）と、その
+   * 内容を持つコミット。コミットは、最終レビューの前に作った実装の PR のコミット（CI を待つコミット）で、PR の中身そのもの
+   * （人が PR の中で直してマージした内容を含む）。要求要件・設計の PR が無いタスク・既存の PR を引き継いだタスク・PR を
+   * まだ作っていないタスクは undefined。コミットを取得できなければ（警告だけ出して）undefined にする。写しに入れられなくても、
+   * 最終レビューは、成果物が無い写しで（指示でその違いを伝えて）続ける。
+   */
+  private async stepDocumentsForReview(
+    task: Task,
+  ): Promise<{ commit: string; paths: string[] } | undefined> {
+    // (テストが作る不完全なタスクでも読めるよう、項目が無いときは空として扱う)
+    const stepPullRequests = task.stepPullRequests ?? [];
+    const commit = task.pullRequestCi?.commit;
+    if (!task.repository || !task.taskBranch || task.continuedPullRequest || !commit) return;
+    if (stepPullRequests.length === 0) return;
+    const usedSecrets: string[] = [];
+    try {
+      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      // 作ったコミットは退避したメタデータにあるので、通常は取得しない（用意し直したときだけ、リモートから取得する）
+      await this.deps.repos.fetchCommits(this.trustedGitDir(task), [commit], authEnv);
+    } catch (error) {
+      console.warn(
+        `[daemon] 最終レビューの写しに入れる成果物のコミットを取得できませんでした（${task.id}）：`,
+        renderMessage(redactText(errorText(error), usedSecrets), "ja"),
+      );
+      return;
+    }
+    return { commit, paths: [...new Set(stepPullRequests.map((p) => p.path))] };
+  }
+
+  /**
    * 実装を検証する。ゴールガーディアンが新しいセッションで、実装の工程のイメージ・サービスにつないだ実装後のコードの写しで
    * テスト（検証）のコマンドを実行し、その結果と差分・コードから最終レビューする（sacty はテストを別に実行しない）。
    * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
@@ -7627,6 +7663,9 @@ export class TaskService {
       return;
     }
     const started = services?.started;
+    // 実装の PR に sacty が足す成果物は、実装の作業領域に無いので、最終レビューの写しに PR の内容で入れる。入れられなければ、
+    // 入っていないものとして指示を作る（指示が、写しで通った検査を未確認として人の確認に回させる）
+    const include = await this.stepDocumentsForReview(this.mustGet(task.id));
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(
@@ -7636,9 +7675,11 @@ export class TaskService {
           image: services?.image || testImage.image,
           imageEnv: testImage.env,
           runId,
+          ...(include ? { include } : {}),
           prompt: [
             buildFinalReviewPrompt(current, diff, {
               ...(testCommand ? { testCommand } : {}),
+              ...(include ? { stepDocumentsIncluded: true } : {}),
               ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
               ...(prCi?.result
                 ? {

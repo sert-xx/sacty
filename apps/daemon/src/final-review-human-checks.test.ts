@@ -206,9 +206,56 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     }
   });
 
+  it("成果物のファイルを写しに入れた最終レビューの指示は、検査を PR と同じ中身で行わせ、成果物が原因の失敗も不合格にし、成果物を範囲・過剰さの判定に含めず、直し方（リポジトリの方針に合わせる）を指摘に添えさせる", () => {
+    for (const testCommand of ["npm test", undefined]) {
+      const prompt = buildFinalReviewPrompt(task(withDocuments()), "diff", {
+        ...(testCommand ? { testCommand } : {}),
+        stepDocumentsIncluded: true,
+      });
+      expect(prompt).toContain("--- PR の中身と作業領域の写し ---");
+      expect(prompt).toContain("sacty が docs/sacty/t-1/ の下に足す成果物");
+      expect(prompt).toContain("このファイルを PR のコミットと同じ内容で入れてある");
+      expect(prompt).toContain("PR の中身と同じ範囲で実行される");
+      // 成果物が原因の失敗も、人の確認に逃がさず不合格にする。写しには無い前提の文言は出さない
+      expect(prompt).toContain("成果物のファイルが原因で失敗した検査も、PR の中身で失敗するので");
+      expect(prompt).toContain("humanChecks に回さない");
+      expect(prompt).not.toContain("PR の中身で通るかは未確認");
+      expect(prompt).not.toContain("作業領域の写しには、このファイルが無い");
+      // 成果物は、実装の変更ではないので、範囲・過剰さ・観点の判定に含めない
+      expect(prompt).toContain("今回の実装の変更ではなく、下の差分には出ない");
+      expect(prompt).toContain("変更の範囲・過剰さ・観点の判定に含めない");
+      // 直し方：実装は書き換えられないので、検査の設定をリポジトリの方針に合わせる。タスクごとに行を足さない
+      expect(prompt).toContain(
+        "実装が書き換えても PR には残らないので、ファイルの書式を直させない",
+      );
+      expect(prompt).toContain("リポジトリの方針に合わせて直させる");
+      expect(prompt).toContain("成果物の置き場所（docs/sacty/）をまとめて対象外にする");
+      expect(prompt).toContain("タスクの ID ごとのファイルやディレクトリを1つずつ足さない");
+      // その直しは範囲外・過剰にしない。確かめるだけのテストは足させない
+      expect(prompt).toContain("変更の範囲外・過剰とはしない");
+      expect(prompt).toContain("設定を確かめるだけのテストを足させない");
+    }
+  });
+
+  it("成果物を写しに入れていても、成果物を PR に足さないタスクには、この節を入れない", () => {
+    for (const extra of [{}, { ...withDocuments(), continuedPullRequest: { number: 7 } }]) {
+      const prompt = buildFinalReviewPrompt(task(extra as unknown as Partial<Task>), "diff", {
+        stepDocumentsIncluded: true,
+      });
+      expect(prompt).not.toContain("--- PR の中身と作業領域の写し ---");
+      expect(prompt).not.toContain("PR のコミットと同じ内容で入れてある");
+    }
+  });
+
   it("成果物のディレクトリをオーケストレーターが決めていれば、そのディレクトリを書く", () => {
     const prompt = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff");
     expect(prompt).toContain("sacty が docs/ai/t-1/ の下に足す成果物");
+    // 写しに入れたときの、まとめて対象外にする置き場所も、そのディレクトリにする
+    const included = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff", {
+      stepDocumentsIncluded: true,
+    });
+    expect(included).toContain("成果物の置き場所（docs/ai/）をまとめて対象外にする");
+    expect(included).not.toContain("docs/sacty/");
     expect(prompt).not.toContain("docs/sacty/");
   });
 

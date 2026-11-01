@@ -226,6 +226,121 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(existsSync(join(gitDir, "GUARDIAN-MARK"))).toBe(false);
   });
 
+  it("include を渡すと、PR に足すファイルを、そのコミットの内容で写しに入れる。作業領域の同じパスは置き換え、コミットに無ければ消し、途中のリンクはたどらない", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // PR のコミット：成果物のファイルを足したもの（作業領域には無い）
+    const commit = (
+      await workspace.commitFiles({
+        gitDir,
+        parent: git(origin, "rev-parse", "main"),
+        files: {
+          "docs/sacty/t-1/design.md": "# 設計\n",
+          "docs/sacty/t-1/requirements.md": "# 要求\n",
+        },
+        branch: "sacty/task-docs",
+        message: "docs",
+        date: "2026-11-01T00:00:00Z",
+        allowEmpty: true,
+      })
+    ).commit;
+    writeFileSync(join(clone, "new.ts"), "new\n");
+    const include = {
+      commit,
+      paths: [
+        "docs/sacty/t-1/design.md",
+        "docs/sacty/t-1/requirements.md",
+        "docs/sacty/t-1/missing.md",
+      ],
+    };
+
+    // 作業領域に無ければ足す。差分には関係しない（作業領域は書き換えない）
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, include);
+    expect(readFileSync(join(out, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+    expect(readFileSync(join(out, "docs/sacty/t-1/requirements.md"), "utf8")).toBe("# 要求\n");
+    expect(readFileSync(join(out, "new.ts"), "utf8")).toBe("new\n");
+    expect(existsSync(join(clone, "docs"))).toBe(false);
+    expect(existsSync(join(out, "docs/sacty/t-1/missing.md"))).toBe(false);
+
+    // 作業領域に同じパスのファイルがあれば、コミットの内容にする。コミットに無いパスは、作業領域のものも消す
+    mkdirSync(join(clone, "docs/sacty/t-1"), { recursive: true });
+    writeFileSync(join(clone, "docs/sacty/t-1/design.md"), "エージェントが書いた\n");
+    writeFileSync(join(clone, "docs/sacty/t-1/missing.md"), "エージェントが書いた\n");
+    writeFileSync(join(clone, "docs/sacty/t-1/other.md"), "include に無いパスは残す\n");
+    const out2 = join(dir, "copy2");
+    await workspace.copyWorkingTree(clone, out2, gitDir, include);
+    expect(readFileSync(join(out2, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+    expect(existsSync(join(out2, "docs/sacty/t-1/missing.md"))).toBe(false);
+    expect(readFileSync(join(out2, "docs/sacty/t-1/other.md"), "utf8")).toBe(
+      "include に無いパスは残す\n",
+    );
+
+    // 途中のディレクトリがホストのディレクトリへのリンクでも、リンクの先には書かない
+    rmSync(join(clone, "docs"), { recursive: true });
+    const hostDir = join(dir, "host-dir");
+    mkdirSync(hostDir);
+    symlinkSync(hostDir, join(clone, "docs"));
+    const out3 = join(dir, "copy3");
+    await workspace.copyWorkingTree(clone, out3, gitDir, include);
+    expect(readdirSync(hostDir)).toEqual([]);
+    expect(lstatSync(join(out3, "docs")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(out3, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+
+    // 不正なパス・メタデータの無い include は受け付けない
+    await expect(
+      workspace.copyWorkingTree(clone, join(dir, "bad1"), gitDir, {
+        commit,
+        paths: ["../escape.md"],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      workspace.copyWorkingTree(clone, join(dir, "bad2"), undefined, include),
+    ).rejects.toThrow();
+  });
+
+  it("リポジトリ全体の検査は、include なしの写しでは通り、成果物を入れた写しでは、成果物が原因で落ちる（PR と同じ中身で検査する）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // 成果物の書式が、リポジトリの検査（ここでは、Markdown の行末に空白が無いこと）に合わない
+    const path = "docs/sacty/t-1/design.md";
+    const { commit } = await workspace.commitFiles({
+      gitDir,
+      parent: git(origin, "rev-parse", "main"),
+      files: { [path]: "# 設計 \n" },
+      branch: "sacty/task-docs",
+      message: "docs",
+      date: "2026-11-01T00:00:00Z",
+      allowEmpty: true,
+    });
+    const check = (cwd: string) => {
+      const script =
+        "const fs=require('fs'),p=require('path');let bad=[];" +
+        "(function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){" +
+        "if(e.name==='.git')continue;const f=p.join(d,e.name);" +
+        "if(e.isDirectory())walk(f);else if(f.endsWith('.md')&&/ $/m.test(fs.readFileSync(f,'utf8')))bad.push(f)}})('.');" +
+        "if(bad.length){console.error(bad.join(','));process.exit(1)}";
+      try {
+        execFileSync("node", ["-e", script], { cwd, stdio: "pipe" });
+        return 0;
+      } catch (error) {
+        return (error as { status: number }).status;
+      }
+    };
+    const without = join(dir, "without");
+    await workspace.copyWorkingTree(clone, without, gitDir);
+    expect(check(without)).toBe(0);
+    const included = join(dir, "included");
+    await workspace.copyWorkingTree(clone, included, gitDir, { commit, paths: [path] });
+    expect(check(included)).toBe(1);
+  });
+
   it("多数のファイルを写す間も、イベントループを止めない（ほかのタイマーが進む。PBI-156）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

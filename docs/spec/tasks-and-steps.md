@@ -871,6 +871,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   差分を取れなければ、最終レビューをせずに一時停止する（`verify.diffUnavailable`。再開すると差分の取得からやり直す）。
 - 最終レビューは、実装後の作業領域の使い捨ての写しで、実装の工程のイメージ（無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して動かす。
   写しの .git は、作業領域の .git ではなく、エージェントが触る前に退避したメタデータの写し（テストが git を参照できる。実装の変更は起点からの変更に見える）。
+  要求要件・設計の成果物を PR に足すタスクでは、写しに成果物のファイルも入れる（下の、成果物を PR に足すタスクの項）。
   そのイメージが `images` から消えていれば、実行せずに一時停止する（`verify.testsUnavailable`）。
   実装の工程がサービスを使うなら、テストの前に起動してつなぐ（[サービス](services.md#いつ起動するか)）。
 - テスト（検証）のコマンド（オーケストレーターの `testCommand`。テストの仕組みが無いタスクでは実装が申告したコマンド）があれば、指示（`testRunLines`）で、判定の前にそのコマンドを作業領域で実行させる。
@@ -885,12 +886,16 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - `environmentFailures`・`humanChecks` は、配列で読む。1件は文字列のほか、`{"name": "...", "reason": "..."}` のようなオブジェクトも読み、「名前：根拠」の1行の文字列にして記録する（`reportedItems`。オブジェクトで返されたときに申告を捨てて、環境による失敗だけなのに不合格になっていた）。オブジェクトで読む項目名は、名前が `name`・`test`・`check`・`command`、根拠が `reason`・`message`・`description`・`evidence`（それぞれ先にあるもの。JSON の並びにかかわらず名前、根拠の順）で、`output`・`log` などほかの項目は読まない。記録する前に、秘密情報（`token=` などの代入の形）と URL の認証情報（`user:pass@`）、秘密らしい名前（token・key・secret・password・auth・signature など）のクエリ・フラグメントの値を伏せる（`redactLog`・`redactUrlCredentials`）。確かめる対象の URL が消えないよう、クエリ・フラグメント全体は伏せない。値が false の `environment`・`environmental`・`isEnvironment` の旗が付いた項目は、環境による失敗として読まない。読めない項目・空の項目・「なし」「none」「n/a」「false」「environment: false」のような「無い」「環境による失敗ではない」を表す項目は捨てる。配列でない値（「なし」の文字列・1件のオブジェクトなど）は読まない。
   - `tests.otherFailures`（ツール不足のほかの失敗。止める側の欄）は、読める形かにかかわらず、書いてあるかで見る（`hasReportedFailure`）。空でない文字列・0 でない数値・`true`・オブジェクト（空でも）が1件でもあれば「失敗の申告あり」とし、空の値と「なし」「none」「n/a」だけなら「無し」とする（`no`・`false` の文字列は、書いてあるものとして「申告あり」）。読めない形を「無し」と見なして、文書だけの差分の歯止めが外れないようにする。
   - `tests.missingCommands` も、名前の文字列のほか `{"name": "..."}`（`command`・`tool` でもよい）を読む（`reportedNames`）。指示でも、`environmentFailures` は「名前：根拠」の文字列の配列で書かせる。
-- 要求要件・設計の成果物を PR に足すタスク（要求要件・設計の PR があり、既存の PR を引き継いでいない）では、指示（`pullRequestContentLines`）で、実装の PR のコミットと作業領域の写しの違いを伝える。それ以外のタスクには、この節を入れない。
-  PR のコミットには、sacty が成果物（承認済みの要求要件・設計のファイル。置き場所は `<documentsDir>/<タスク ID の先頭8文字>/`、既定は `docs/sacty`）を足すが、作業領域の写しにはこのファイルが無い。
-  そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（`prettier --check .`・markdownlint など）の結果は、写しと PR の中身で違うことがある。
-  - 写しで通ったそのような検査は、PR の中身で通るかは未確認であることを `humanChecks` に書かせて、人の確認に回させる。
-  - 写しで失敗した検査は、これまでどおり不合格の理由にさせる（成果物のファイルが無くても失敗するので、PR の中身でも失敗する）。成果物のせいと推測して `humanChecks` に回させない。環境による失敗の扱いは、上の `humanCheckLines` のとおり。
-  - テストのコマンドの有無にかかわらず入れる。最終レビューの写しに成果物を足すことはしない。
+- 要求要件・設計の成果物を PR に足すタスク（要求要件・設計の PR があり、既存の PR を引き継いでいない）では、実装の PR のコミットに、sacty が成果物（承認済みの要求要件・設計のファイル。置き場所は `<documentsDir>/<タスク ID の先頭8文字>/`、既定は `docs/sacty`）を足す。
+  実装の作業領域にはこのファイルが無い（実装の変更として差分・範囲の判定に混ざらないように、作業領域には入れない。PR のコミットを作るときに、タスクブランチのファイルを引き継ぐ）。
+  - 最終レビューの前に作った実装の PR のコミット（`pullRequestCi.commit`）があれば、最終レビューの写しに、成果物のファイルをそのコミットの内容で入れる（`stepDocumentsForReview`・`copyWorkingTree` の `include`）。
+    PR のコミットを作るときに成果物を引き継ぐ扱い（`keep`）と同じで、人が PR の中で直してマージした内容も含む。写しにあった同じパスのファイルは置き換え、コミットに無いパスは写しからも消す。写しの中のリンクはたどらず、ホストのファイルを書き換えない。
+    リポジトリ全体を対象にするフォーマッター・リンター・検査（`prettier --check .`・markdownlint など）は、PR と同じ中身で実行される。成果物が原因で失敗した検査も不合格の理由になり、実装をやり直す（人の確認には回さない）。
+  - 指示（`pullRequestContentLines`）で、次を伝える。
+    - 成果物は今回の実装の変更ではなく、差分に出ない。変更の範囲・過剰さ・観点の判定に含めず、中身（要求要件・設計の文面）をレビューしない。
+    - 成果物のファイルで検査が失敗したときは、指摘に直し方を書く。成果物は実装が書き換えても PR に残らないので、書式を直させない。検査の設定（`.prettierignore` など）をリポジトリの方針に合わせて直させる（すでに生成物・文書の扱いがあればそれに従い、無ければ置き場所を、タスクの ID ごとではなくまとめて対象外にする）。この設定の直しは範囲外・過剰とせず、設定を確かめるだけのテストは足させない。
+  - コミットを取得できず、写しに入れられないとき（警告だけ出して、最終レビューは続ける）は、写しに成果物が無いことを指示で伝える。写しで通った、リポジトリ全体に効く検査は、PR の中身で通るかは未確認であることを `humanChecks` に書かせて人の確認に回し、写しで失敗した検査は、これまでどおり不合格の理由にさせる（成果物が無くても失敗するので、成果物のせいと推測して `humanChecks` に回さない）。環境による失敗の扱いは、上の `humanCheckLines` のとおり。
+  - 要求要件・設計の PR が無いタスクと、既存の PR を引き継いだタスクには、この節を入れず、写しにも成果物を入れない。テストのコマンドの有無にかかわらず入れる。
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
@@ -914,7 +919,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
   合格なら、実装の工程のまま、sacty が実装の PR のドラフトを外し、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
-  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`pullRequestContentLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
+  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`pullRequestContentLines`・`extractFinalReview`）、`apps/daemon/src/service.ts`（`stepDocumentsForReview`・`runGuardian`）、`apps/daemon/src/repository.ts`（`copyWorkingTree`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
   やり直しの指示には、最終レビューの所見・ゴールガーディアンが実行したテスト（コマンド・終了コード・結果の抜粋）・検証できなかった観点を渡す（`feedbackLines`）。
   環境によると判断した失敗と、差分が文書だけでツールが無くて実行できなかった検証は、実装で直す対象ではないと添えて渡す。

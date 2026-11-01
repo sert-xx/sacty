@@ -2605,6 +2605,8 @@ export function buildFinalReviewPrompt(
     scopeViolation?: ScopeViolation;
     /** 最終レビューの前に作った実装の PR と、その CI の結果（あれば、判断の材料にする）。 */
     pullRequest?: { url?: string; ci: PullRequestCi };
+    /** 実装の PR に sacty が足す成果物のファイルを、作業領域の写しに PR のコミットと同じ内容で入れてある。 */
+    stepDocumentsIncluded?: boolean;
   } = {},
 ): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
@@ -2670,7 +2672,7 @@ export function buildFinalReviewPrompt(
           "",
         ]),
     ...humanCheckLines(Boolean(testCommand)),
-    ...pullRequestContentLines(task),
+    ...pullRequestContentLines(task, options.stepDocumentsIncluded === true),
     ...baseMergeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest) : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
@@ -2797,20 +2799,38 @@ function humanCheckLines(withTests: boolean): string[] {
 }
 
 /**
- * 要求要件・設計の成果物を PR に足すタスクでは、実装の PR のコミットに、作業領域の写し（最終レビューが見るコード）に無い、
- * sacty が足す成果物のファイルが入る。リポジトリ全体を対象にする検査は、写しで通っても PR の中身では通らないことがあるので、
- * 写しで通ったものは未確認として人の確認に回させる。写しで失敗したものは、これまでどおり不合格の理由にする。
+ * 要求要件・設計の成果物を PR に足すタスクでは、実装の PR のコミットに、実装の作業領域にも無い、sacty が足す成果物のファイルが
+ * 入る。リポジトリ全体を対象にする検査は、成果物を含むかで結果が変わる。
+ * - included（最終レビューの写しに、PR のコミットと同じ内容で成果物を入れた）：検査は PR と同じ中身で行われるので、
+ *   成果物が原因の失敗も不合格の理由にする。成果物は実装の変更ではないので、範囲・過剰さの判定には含めず、検査が落ちたときの
+ *   直し方（リポジトリの検査の設定を方針に合わせる）を指摘に添えさせる。
+ * - 入れられなかった：写しには成果物が無いので、写しで通った検査は未確認として人の確認に回させる。写しで失敗したものは
+ *   不合格の理由にする。
  * 成果物を PR に足さないタスク（工程を省いた・既存の PR を引き継いだ）では、節ごと入れない。
  */
-function pullRequestContentLines(task: Task): string[] {
+function pullRequestContentLines(task: Task, included: boolean): string[] {
   // (テストが作る不完全なタスクでも読めるよう、項目が無いときは空として扱う)
   const stepPullRequests = task.stepPullRequests ?? [];
   if (task.continuedPullRequest || stepPullRequests.length === 0) return [];
   // 成果物は、オーケストレーターが決めたディレクトリ（既定は docs/sacty）の下の、タスクの短い ID のディレクトリに置かれる
   const dirs = [...new Set(stepPullRequests.map((p) => p.path.replace(/\/[^/]+$/, "")))];
+  const roots = [...new Set(dirs.map((d) => d.replace(/\/[^/]+$/, "")))];
+  const dirList = dirs.map((d) => `${d}/`).join("・");
+  const rootList = roots.map((d) => `${d}/`).join("・");
+  if (included) {
+    return [
+      "--- PR の中身と作業領域の写し ---",
+      `- 実装の PR のコミットには、あなたが見ている変更のほかに、sacty が ${dirList} の下に足す成果物（承認済みの要求要件・設計のファイル）が入る。作業領域の写しには、このファイルを PR のコミットと同じ内容で入れてある。リポジトリ全体を対象にするフォーマッター・リンター・検査（例：prettier --check .・markdownlint・コミット前の検査）は、PR の中身と同じ範囲で実行される`,
+      "- 成果物のファイルが原因で失敗した検査も、PR の中身で失敗するので、これまでどおり不合格の理由にする（humanChecks に回さない）。環境による失敗の扱いは、上の「環境によるテストの失敗」のとおり",
+      "- 成果物は、今回の実装の変更ではなく、下の差分には出ない。変更の範囲・過剰さ・観点の判定に含めない。成果物の中身（要求要件・設計の文面）をレビューしない",
+      `- 成果物のファイルで検査が失敗したときは、指摘に、次の直し方を書く。成果物は sacty が置く承認済みの文書で、実装が書き換えても PR には残らないので、ファイルの書式を直させない。リポジトリの検査の設定（例：.prettierignore・markdownlint の除外）を、リポジトリの方針に合わせて直させる。リポジトリにすでに生成物・文書の扱いがあればそれに従い、無ければ成果物の置き場所（${rootList}）をまとめて対象外にする。タスクの ID ごとのファイルやディレクトリを1つずつ足さない（タスクのたびに行が増える）`,
+      "- その設定の直しは、検査を通すために必要な変更なので、変更の範囲外・過剰とはしない。ただし、設定を確かめるだけのテストを足させない",
+      "",
+    ];
+  }
   return [
     "--- PR の中身と作業領域の写し ---",
-    `- 実装の PR のコミットには、あなたが見ている変更のほかに、sacty が ${dirs.map((d) => `${d}/`).join("・")} の下に足す成果物（承認済みの要求要件・設計のファイル）が入る。作業領域の写しには、このファイルが無い`,
+    `- 実装の PR のコミットには、あなたが見ている変更のほかに、sacty が ${dirList} の下に足す成果物（承認済みの要求要件・設計のファイル）が入る。作業領域の写しには、このファイルが無い`,
     "- そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（例：prettier --check .・markdownlint・コミット前の検査）の結果は、作業領域の写しと PR の中身で違うことがある",
     "- 作業領域の写しで通った、リポジトリ全体に効く検査は、PR の中身で通るとは言い切らない。合格の理由にはするが、その検査と「写しには成果物のファイルが無いので、PR の中身で通るかは未確認」であることを humanChecks に書いて、人の確認に回す",
     "- 作業領域の写しで失敗した検査は、これまでどおり不合格の理由にする（成果物のファイルが無くても失敗するのだから、PR の中身でも失敗する）。成果物のファイルがあるから通らないのではないかと推測して、humanChecks に回さない。環境による失敗の扱いは、上の「環境によるテストの失敗」のとおり",
