@@ -54,6 +54,46 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     expect(redactLog("x https://user:secretPw@[bad/ y", [])).not.toContain("secretPw");
   });
 
+  it("ユーザー情報に引用符を含む URL も、認証情報とクエリを残さない", () => {
+    // 架空の値。new URL はユーザー情報の ' と " を受け付ける
+    for (const quote of ["'", '"']) {
+      const text = `clone https://alice:p${quote}FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123 failed`;
+      for (const out of [
+        redactLog(text, []),
+        redactUrlCredentials(text, { queryAndFragment: true }),
+      ]) {
+        expect(out, quote).not.toContain("alice");
+        expect(out, quote).not.toContain("FAKE_SUFFIX_123");
+        expect(out, quote).toContain("example.com/path");
+      }
+      expect(redactUrlCredentials(text, { queryAndFragment: true }), quote).not.toContain(
+        "FAKE_QUERY_123",
+      );
+    }
+    // 引用符で囲んだ URL は、引用符を URL に含めない
+    const quoted = "git clone 'https://bob:FAKE_PW_456@example.org/x.git' failed";
+    const out = redactLog(quoted, []);
+    expect(out).not.toContain("FAKE_PW_456");
+    expect(out).toContain("example.org/x.git' failed");
+    expect(redactLog("see 'https://example.com/a' and \"http://example.org\"", [])).toBe(
+      "see 'https://example.com/a' and \"http://example.org\"",
+    );
+  });
+
+  it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
+    // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）
+    for (const input of [
+      "a.".repeat(1_000_000),
+      "a+b-".repeat(500_000),
+      "https://'".repeat(200_000),
+      "x://".repeat(500_000),
+    ]) {
+      const started = performance.now();
+      redactUrlCredentials(input, { queryAndFragment: true });
+      expect(performance.now() - started, input.slice(0, 8)).toBeLessThan(1_000);
+    }
+  });
+
   it("クエリとフラグメントも伏せる指定では、中身を伏せる（指定しなければ残す）", () => {
     const text = "GET HTTPS://example.com/a?token=queryValue#fragValue ok";
     const out = redactUrlCredentials(text, { queryAndFragment: true });
