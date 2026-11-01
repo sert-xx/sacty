@@ -6,6 +6,7 @@ import {
   buildPullRequestBody,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
+  extractBlocks,
   withoutProgressReport,
 } from "./prompts.js";
 
@@ -475,6 +476,29 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     expect(withoutProgressReport("- 変更しました。\n- コミットはしていません。")).toBe(
       "- 変更しました。",
     );
+  });
+
+  it("抽出（extractBlocks）を通しても、先頭の行の字下げを保つ（実装の工程）", () => {
+    const output = '    console.log("内部用コード");\n\nAPI を足しました。\n';
+    expect(extractBlocks(output, new Set(), [], { keepIndent: true }).output).toBe(
+      output.trimEnd(),
+    );
+    // 前後の空行は除く。ほかの工程は従来どおり前後の空白を除く
+    expect(extractBlocks("\n\n  a\n", new Set(), [], { keepIndent: true }).output).toBe("  a");
+    expect(extractBlocks("  a\n", new Set()).output).toBe("a");
+    const implement = extractBlocks(
+      "    コミット・プッシュはしていません。\n\n変更しました。",
+      new Set(),
+      [],
+      { keepIndent: true },
+    ).output;
+    expect(withoutProgressReport(implement)).toBe(implement);
+    const body = buildPullRequestBody(
+      task({
+        outputs: { implement: extractBlocks(output, new Set(), [], { keepIndent: true }).output },
+      }),
+    );
+    expect(body).toContain("- 変更：API を足しました。");
   });
 
   it("結論の「変更」の要約も、4文字で開いたコードの中の3文字のフェンスで終わらない", () => {

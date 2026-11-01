@@ -7925,6 +7925,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
   });
 
+  it("実装の説明の先頭の行の字下げは保存する（字下げしたコードを普通の文と見分けられるように。PBI-264）", async () => {
+    const indented = '    console.log("内部用コード");\n\nAPI を足しました。';
+    const { activity, service, id } = await toImplement([implement(indented), review()]);
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.outputs.implement).toBe(indented);
+    // 保存した説明から作る PR の本文は、字下げしたコードを要約にせず、後の文を使う
+    expect(task && buildPullRequestBody(task)).toContain("- 変更：API を足しました。");
+    activity.close();
+  });
+
   it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {
     const { activity, service, executor, repos, id } = await toImplement([
       implement("# 実装の説明"),

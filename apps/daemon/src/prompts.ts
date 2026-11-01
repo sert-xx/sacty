@@ -2348,7 +2348,14 @@ export function extractBlocks(
    * 実装の工程だけ true にする。それ以外（ほかの工程・テストの仕組みがあるタスクの実装）では、そのコードブロックも本文のまま残し、
    * 申告として扱わない（PR #105 再レビュー指摘）。
    */
-  options: { testCommand?: boolean } = {},
+  options: {
+    testCommand?: boolean;
+    /**
+     * 本文の先頭の行の字下げを残す（前後の空行と末尾の空白だけを除く）。実装の工程の説明は PR の本文に載り、先頭が字下げした
+     * コードのとき、字下げを消すと、コードを普通の文と見分けられなくなるため（PBI-264）。ほかの工程は従来どおり前後の空白を除く。
+     */
+    keepIndent?: boolean;
+  } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
@@ -2447,7 +2454,9 @@ export function extractBlocks(
   const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   return {
-    output: withoutCandidates(body, [...used, ...reports, ...classified]).trim(),
+    output: options.keepIndent
+      ? trimBlankLines(withoutCandidates(body, [...used, ...reports, ...classified]))
+      : withoutCandidates(body, [...used, ...reports, ...classified]).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     viewpointPositions: viewpointPositions ?? [],
