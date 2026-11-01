@@ -520,9 +520,29 @@ Requirements, designs, documents, and investigation results are written minimal 
 
 If you want more detail somewhere, write that part in a remark and request changes (for example, "異常系を詳しく" or "移行の手順を書いて"). The agent adds detail only where you asked and keeps the rest short. Text added for a remark is not removed in later revisions.
 
+## How the agent revises after you request changes
+
+When you send requirements or a design back, the agent starts from the previous deliverable and rewrites only the parts your remarks concern. It does not rewrite from scratch.
+Sections and items unrelated to your remarks stay as they are. What was fixed in an earlier round is not undone either.
+
+- When a remark spans several sections, the agent fixes every section it concerns.
+- When a remark changes the direction of the deliverable (purpose, scope, approach), the agent fixes what concerns the direction throughout.
+- When your remark answers a question, the agent reflects the answer where it applies and removes that item from "確認したいこと".
+- The required sections, IDs, and the handling of questions are the same as in the first draft.
+- When the previous deliverable cannot be read (for example, it is empty), it cannot be the base, so the agent rewrites to handle your remarks.
+
+When the change is small, the number of self-review rounds is also reduced ([Self-review before submitting](#self-review-before-submitting)).
+The aim is that the less needs to change, the less a revision costs.
+
 ## Self-review before submitting
 
 In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
+
+When the agent revises after you request changes, it narrows the review to the difference from the previous deliverable and what that change directly requires.
+When the remark is small (at most 2 places to fix, and no change of direction; for example, reflecting the answer to a question, or correcting the wording of one requirement), it is at most 2 rounds including the first.
+If the first review finds no `must` findings, the agent submits at that point.
+For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
+Which one the agent took is written at the start of the self-review summary.
 
 The result appears on the deliverable cards, the Implementation card, and the approval screen.
 
