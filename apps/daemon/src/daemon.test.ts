@@ -7737,6 +7737,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("環境による失敗が {name, reason} のオブジェクトの配列で申告されても、環境による失敗だけとして最終承認へ進み、実装をやり直さない（PBI-259）", async () => {
+    const environment = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "満たす" },
+            { id: "TV-2", verified: true, reason: "満たす" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+          tests: {
+            command: "npm test",
+            exitCode: 2,
+            output: "make setup が終了コード 2",
+            missingCommands: [],
+            environmentFailures: [
+              {
+                name: "make setup（python3 -m venv .venv）",
+                reason: "ensurepip が無い。起点のコミットでも同じ失敗になる",
+              },
+            ],
+          },
+          humanChecks: [],
+          summary: "要求を満たす。合格",
+        },
+      }),
+    );
+    const { activity, service, pulls, id } = await toImplement([implement("# v1"), environment]);
+    await drain(service);
+    const task = service.get(id)?.task;
+    // 不合格（指摘 0 件）にならず、実装の承認待ちへ進む。実装のやり直し（再実行）もしない
+    expect(task?.status).not.toBe("paused");
+    expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+    expect(task?.verifyFailures).toBe(0);
+    expect(task?.lastReview).toMatchObject({
+      passed: true,
+      tests: {
+        exitCode: 2,
+        environmentFailures: [
+          "make setup（python3 -m venv .venv）：ensurepip が無い。起点のコミットでも同じ失敗になる",
+        ],
+      },
+    });
+    expect(types(service, id).filter((t) => t === "FinalReviewed")).toHaveLength(1);
+    // PR の本文の「人が確かめること」に、環境による失敗が出る
+    const body = pulls.calls.at(-1)?.body ?? "";
+    expect(body).toContain(
+      "- [ ] 環境によると判断したテストの失敗：make setup（python3 -m venv .venv）：ensurepip が無い",
+    );
+    activity.close();
+  });
+
   describe("差分が文書だけなら、ツールが無くても止めずに人の確認へ回す（PBI-158）", () => {
     /** go が無くてテストを実行できなかったと申告する最終レビュー（観点はすべて検証済み）。 */
     const missingGo = (exitCode = 127) =>
