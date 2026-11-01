@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -514,6 +514,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         await mkdir(dirname(target), { recursive: true });
         // 読んだバイト列をそのまま書く（UTF-8 の BOM も、コミットのとおりに残す）
         await writeFile(target, blob.bytes);
+        // 実行ビットも、コミットのファイルの種類に合わせる（作業ツリーとインデックスで、ファイルの種類の差分が出ないように）
+        await chmod(target, blob.mode === "100755" ? 0o755 : 0o644);
         await inIndex([
           "update-index",
           "--add",

@@ -450,6 +450,45 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(copied.equals(committed)).toBe(true);
   });
 
+  it("include の成果物の実行ビット（100755）も、コミットのとおりにして、作業ツリーとインデックスで種類の差分が出ない", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // 実行ビットの付いた成果物（人が PR の中で直したときなど）のコミットを、git で直接作る
+    const parent = git(origin, "rev-parse", "main");
+    const path = "docs/sacty/t-1/run.md";
+    const blob = execFileSync("git", ["--git-dir", gitDir, "hash-object", "-w", "--stdin"], {
+      input: "# 実行\n",
+      encoding: "utf8",
+    }).trim();
+    const indexFile = join(dir, "tmp-index");
+    const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+    const plumbing = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", gitDir, ...args], { env, encoding: "utf8" }).trim();
+    plumbing("read-tree", parent);
+    plumbing("update-index", "--add", "--cacheinfo", `100755,${blob},${path}`);
+    const tree = plumbing("write-tree");
+    const commit = plumbing(
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=t",
+      "commit-tree",
+      tree,
+      "-p",
+      parent,
+      "-m",
+      "docs",
+    );
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, { commit, paths: [path] });
+    expect(lstatSync(join(out, path)).mode & 0o111).not.toBe(0);
+    expect(git(out, "ls-files", "-s", "--", path)).toMatch(/^100755 /);
+    expect(git(out, "diff", "--summary", "--", "docs")).toBe("");
+  });
+
   it("多数のファイルを写す間も、イベントループを止めない（ほかのタイマーが進む。PBI-156）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();
