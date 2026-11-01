@@ -85,8 +85,9 @@ const URL_END = /[\s"'<>`]/;
  * 前へスキームを、後ろへ本体を調べる（文字列の長さに比例する時間で済ませる。URL の無い長いログで、候補ごとに残りを
  * 探し直さない）。ユーザー情報は引用符を含みうる（`https://user:p'ss@host/`）ので、権限の終わりまでに `@` があれば
  * そこまでを URL に含める（ログの引用符をまたいで伏せすぎることはあるが、認証情報の後半を残さない）。
+ * queryAndFragment が true なら、クエリ・フラグメントの中の引用符でも終えない。
  */
-function urlRanges(text: string): { start: number; end: number }[] {
+function urlRanges(text: string, queryAndFragment: boolean): { start: number; end: number }[] {
   const ranges: { start: number; end: number }[] = [];
   let from = 0;
   for (let colon = text.indexOf("://"); colon !== -1; colon = text.indexOf("://", colon + 1)) {
@@ -111,6 +112,17 @@ function urlRanges(text: string): { start: number; end: number }[] {
     let end = lastAt === -1 ? body : lastAt + 1;
     while (end < text.length && !URL_END.test(text[end] as string)) end++;
     if (end === body) continue;
+    // クエリ・フラグメントを伏せるときは、その中の引用符（`?session='…`）で URL を終えない。空白までにクエリか
+    // フラグメントがあれば、空白までを URL に含める（閉じの引用符まで伏せることはあるが、値の後半を残さない）
+    if (queryAndFragment) {
+      let next = end;
+      while (next < text.length && !/\s/.test(text[next] as string)) next++;
+      let marked = false;
+      for (let i = lastAt === -1 ? body : lastAt + 1; i < next && !marked; i++) {
+        marked = text[i] === "?" || text[i] === "#";
+      }
+      if (marked) end = next;
+    }
     ranges.push({ start, end });
     from = end;
     // URL の中の `://` は、次の候補にしない
@@ -131,7 +143,7 @@ export function redactUrlCredentials(
 ): string {
   let result = "";
   let last = 0;
-  for (const { start, end } of urlRanges(text)) {
+  for (const { start, end } of urlRanges(text, options.queryAndFragment === true)) {
     result += text.slice(last, start) + redactUrl(text.slice(start, end), options);
     last = end;
   }
