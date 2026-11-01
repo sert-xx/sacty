@@ -2492,6 +2492,114 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     }
   });
 
+  it("要求要件と設計の指示に、依頼の目的に関わる判断と依頼者に不利益な既定を「確認したいこと」に出し、依頼者が一番決めたいことから並べることを書く", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).toContain(
+        "依頼の目的に関わる判断（何をどこまで・何を優先して実現するか、依頼者が一番決めたいこと）は、should に置かず、ここに置く",
+      );
+      expect(prompt, step).toContain(
+        "並べ方：依頼者が一番決めたいこと（依頼の目的に直結すること）から順に書く",
+      );
+      expect(prompt, step).toContain("推奨の答えは、依頼の意図に沿う向きにする");
+      expect(prompt, step).toContain(
+        "依頼者に不利益が出うる既定（元に戻せない・失われる・使えなくなる・手間や費用が増える・依頼の意図と逆に働く、など）と、依頼の目的に関わる判断は、「既定で決めたこと」に置かず、「確認したいこと」に出す",
+      );
+      // should の上限を超えたときも、不利益な既定は既定に回さない
+      expect(prompt, step).toContain("これらは「既定で決めたこと」に回さず、害の小さいものを回す");
+    }
+  });
+
+  it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、理由の分からない ID の欠番と参照だけの項目を残さないことを書く", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const [step, name] of [
+      ["requirements", "要求要件"],
+      ["design", "設計"],
+    ] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).toContain(`--- ${name}の本文に書くもの ---`);
+      expect(prompt, step).toContain(
+        `本文には、${name}そのものだけを書く。次のものは、本文のどこにも（区切り線「---」の後ろや末尾にも）書かない`,
+      );
+      expect(prompt, step).toContain("作業の経過・手順・結果の報告");
+      expect(prompt, step).toContain(
+        "人間の指摘・PR の指摘・再開の補足への対応の報告（ID が付いた指摘への対応は、本文ではなく、sacty-responses の JSON の text に書く。",
+      );
+      expect(prompt, step).toContain("エージェントや sacty に向けたメモ・指示");
+      expect(prompt, step).toContain("最初の提出では 1 から欠番なく振る");
+      expect(prompt, step).toContain("ID を詰めず");
+      expect(prompt, step).toContain(
+        "「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする",
+      );
+      expect(prompt, step).toContain("理由の分からない欠番がある指摘は、should でも直す");
+      // sacty が配列の順に振り直すテスト観点の TV-n には、ID の固定と削除行の保持を求めない
+      expect(prompt, step).toContain(
+        "要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る",
+      );
+      expect(prompt, step).not.toContain("要求・受け入れ条件・テスト観点などの ID");
+      expect(prompt, step).toContain(
+        "sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない",
+      );
+      expect(prompt, step).toContain("sacty が振るテスト観点の TV-n は除く");
+      expect(prompt, step).not.toContain("振り直して、他の箇所の参照も合わせる");
+      expect(prompt, step).toContain(
+        "参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する",
+      );
+      expect(prompt, step).toContain("提出の前に、本文を最初から最後まで読み直して");
+      // 提出の前のセルフレビューでも、must として直させる
+      expect(prompt, step).toContain(
+        "依頼者に不利益が出うる既定が「確認したいこと」に無い（「既定で決めたこと」にある）指摘は、記述を足す指摘であっても must として直す",
+      );
+    }
+  });
+
+  it("引き継いだ PR の指摘（ID が無い）に対応しないときの報告は、要求要件・設計では「確認したいこと」に書かせ（sacty-responses では保存されない）、実装では説明に書かせる", () => {
+    const t = {
+      ...task(["requirements", "design", "implement"]),
+      continuedPullRequest: {
+        repo: "https://github.com/acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        branch: "feature/retry",
+        baseBranch: "main",
+      },
+    };
+    const feedback = [
+      {
+        key: "review_comment:1",
+        kind: "review_comment" as const,
+        author: "reviewer",
+        at: "2026-11-01T00:00:00Z",
+        body: "回数は定数にしてください",
+      },
+    ];
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step, { continuedFeedback: feedback });
+      expect(prompt, step).toContain("回数は定数にしてください");
+      expect(prompt, step).toContain(
+        "対応したことの報告は書かない。対応しない・対応できない指摘があれば、人間が判断することとして、その指摘と理由を「確認したいこと」に書く（引き継いだ PR の指摘には指摘の ID が無いので、sacty-responses には書かない）",
+      );
+      expect(prompt, step).not.toContain("その指摘と理由を説明に書く");
+      expect(prompt, step).toContain(
+        "ID が無い指摘（引き継いだ PR の指摘など）は、対応したことを書かず",
+      );
+    }
+    // 実装は本文の決まりが無いので、これまでどおり説明に書かせる
+    const implement = buildPrompt(t, "implement", { continuedFeedback: feedback });
+    expect(implement).toContain("その指摘と理由を説明に書く");
+    expect(implement).not.toContain("「確認したいこと」に書く（引き継いだ PR");
+  });
+
+  it("文書・調査の結果・実装の指示には、要求要件・設計の本文の決まりを出さない", () => {
+    const t = task(["investigate", "document", "requirements", "design", "implement"]);
+    for (const step of ["investigate", "document", "implement"] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).not.toContain("の本文に書くもの ---");
+      expect(prompt, step).not.toContain("依頼者が一番決めたいこと");
+    }
+  });
+
   it("設計は、書くことがある節だけを作り、テスト観点を要る分だけにし、異常系・境界値を今回の変更で起こりうるものにする", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
     expect(prompt).toContain("今回の変更で書くことがあるものだけにする");

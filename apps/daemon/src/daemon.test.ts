@@ -3198,6 +3198,8 @@ describe("設計の工程（PBI-8）", () => {
     expect(prompt).toContain("# 設計 v1"); // 前回の下書き
     // 前回のテスト観点も、IDつきで全項目を渡す（指摘が TV-n を指しても分かるように。レビュー指摘）
     expect(prompt).toContain("- [TV-1] A\n  - 入力：Aの入力\n  - 期待結果：Aの期待結果");
+    // テスト観点の ID は sacty が配列の順に振り直す。消す観点は出さず、削除の行も作らせない
+    expect(prompt).toContain("消す観点は出さず、削除の行も作らないでください");
     expect(prompt).toContain("[design-1-1] 異常系のテスト観点が無い");
     const task = service.get(id)?.task;
     expect(task?.gate).toEqual({ step: "design", submission: 2 });

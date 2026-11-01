@@ -213,6 +213,7 @@ To fix an existing PR itself, for example to address review comments on a PR a p
 - The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
 - The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
+  If the agent of these steps decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
 - Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
 - "Taking over PR" appears on the "Step settings" tab of the task details.
 - Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
@@ -513,8 +514,10 @@ Requirements and designs start (right after the summary, if there is one) with t
 
 | Section | Contents | What to do |
 | --- | --- | --- |
-| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
-| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5) | Write a remark and request changes only for the ones you disagree with |
+| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
+| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
+
+The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it.
 
 Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 20 lines for a small change and about 60 lines even for a large change.
 

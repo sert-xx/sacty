@@ -408,6 +408,8 @@ export function passedContinuedFeedback(
 export function continuedPullRequestLines(
   task: Task,
   feedback: readonly PullRequestFeedback[] | "unreadable" | undefined,
+  /** 工程。要求要件・設計は、本文に作業の報告を書かせないので、対応しない指摘の書き先が違う。 */
+  step?: StepKey,
 ): string[] {
   const pr = task.continuedPullRequest;
   if (!pr) return [];
@@ -416,7 +418,9 @@ export function continuedPullRequestLines(
     "--- 引き継いで直す PR ---",
     `このタスクは、既存の PR（${pr.url || `${pr.repo}/pull/${pr.number}`}。${pr.branch} → ${pr.baseBranch}）を引き継いで直します。対象リポジトリのコードは、その PR のブランチ（${pr.branch}）の先頭のもの（PR の変更を含む）です。実装の変更は、sacty が同じブランチにコミットとして積みます（新しい PR は作らず、PR の題・本文も変えません）。`,
     "- PR の目的と既存の変更を保ち、タスクが求めること（PR の指摘への対応など）だけを変える。PR の変更をやり直す・指摘に無い変更を足すことはしない",
-    "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
+    step === "requirements" || step === "design"
+      ? `- PR の指摘のうち、タスクが対応を求めているものに対応する。対応したことの報告は書かない。対応しない・対応できない指摘があれば、人間が判断することとして、その指摘と理由を「確認したいこと」に書く（引き継いだ PR の指摘には指摘の ID が無いので、${RESPONSES_HEADING} には書かない）`
+      : "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
     "- PR の指摘の状況（誰が・どこに・何を指摘したか、作者が対応・返答したか）は、下のデータで確かめる",
   ];
   if (feedback === undefined) return lines;
@@ -723,7 +727,7 @@ function earsLines(): string[] {
     `- 受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ${EARS_SKILL} があれば、それに従う`,
     "  - 1つの要求を1文にし、次のどれかの文型で書く：常時「<システム>は、<応答>しなければならない。」、イベント駆動「<きっかけ>とき、…」、状態駆動「<状態>の間、…」、望まない振る舞い「<望まない事象>場合、…」、オプション「<機能>を含む場合、…」（状態ときっかけの両方が要れば組み合わせる）",
     "  - 書き出すときは、文型ごとに見出し（常時・イベント駆動など）を分け、文型ごとの列の表にする（常時は ID・システム・応答、イベント駆動と望まない振る舞いは ID・トリガー・システム・応答、状態駆動は ID・状態・システム・応答、オプションは ID・機能・システム・応答、複合は ID・状態・トリガー・システム・応答）。1行に1つの要求を書き、応答の列には「しなければならない」を書かない",
-    "  - 要求に ID（R-1、R-2…）を付け、応答は第三者が合否を決められる形（数・時間・状態など）で書く。異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く（既存の仕組みが扱っていて、今回の変更で変わらないものは書かない）",
+    "  - 要求に ID（R-1、R-2…）を付け（最初の提出では欠番なく連番で付け、直しても付け直さない）、応答は第三者が合否を決められる形（数・時間・状態など）で書く。異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く（既存の仕組みが扱っていて、今回の変更で変わらないものは書かない）",
   ];
 }
 
@@ -773,11 +777,34 @@ function readerLoadLines(deliverable: string): string[] {
       ],
     ),
     `- ${deliverable}の最初（何を実現するかの短い要約を書くなら、その直後）に、次の2つの節を置き、詳細はそのあとに書く。人間がこの2つの節を読めば、承認するかを決められるようにする`,
-    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、それぞれ重要な順に書く。1件ごとに、問い・推奨の答え・その理由を1〜2行で書く。無ければ「なし」と書く",
-    "    - must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無いが、本当にそうなるものだけにする",
+    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、1件ごとに、問い・推奨の答え・その理由を1〜2行で書く。無ければ「なし」と書く",
+    "    - must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無いが、本当にそうなるものだけにする。依頼の目的に関わる判断（何をどこまで・何を優先して実現するか、依頼者が一番決めたいこと）は、should に置かず、ここに置く",
     `    - should：後で答えが違うと分かったら、追加の作業が要ること。最大 ${SHOULD_QUESTIONS_MAX} 件`,
+    "    - 並べ方：依頼者が一番決めたいこと（依頼の目的に直結すること）から順に書く。規約や慣習から決まりやすいことを先に置かない。推奨の答えは、依頼の意図に沿う向きにする",
     `  - 「既定で決めたこと」：依頼に書かれていないが、あなたが既存のコード・規約・慣習から決めたことのうち、人間が異論を持ちうるもの。最大 ${DECISIONS_MAX} 件、1件1行。既存のやり方にそのまま従っただけのことは書かない。確認したいことの should が ${SHOULD_QUESTIONS_MAX} 件を超えるときは、重要度の低いものを推奨の答えで決めて、ここに回す`,
+    "  - 依頼者に不利益が出うる既定（元に戻せない・失われる・使えなくなる・手間や費用が増える・依頼の意図と逆に働く、など）と、依頼の目的に関わる判断は、「既定で決めたこと」に置かず、「確認したいこと」に出す。should の件数の上限を超えるときも、これらは「既定で決めたこと」に回さず、害の小さいものを回す",
     `- 目安：${deliverable}の全体を、小さな変更なら ${DRAFT_LINES.small} 行、大きな変更でも ${DRAFT_LINES.large} 行ほどまでにする（出力の形が決まった JSON のブロックは数えない）`,
+    ...deliverableBodyLines(deliverable),
+  ];
+}
+
+/**
+ * 要求要件・設計の本文に書いてよいもの。出力の全体（決まった形の JSON を除く）が、そのまま人間の承認の画面・PR の
+ * ファイルになる。作業の経過・指摘への対応の報告・エージェント向けのメモが残ると、人間が判断する文書に混ざる（F16）。
+ * 本文で振る ID（要求の R-n など。sacty が振るテスト観点の TV-n は除く）の理由の分からない欠番と、別の文書への参照だけの項目も、
+ * 読む人が引っかかる。提出の前に、本文を読み直して確かめさせる。
+ */
+function deliverableBodyLines(deliverable: string): string[] {
+  return [
+    "",
+    `--- ${deliverable}の本文に書くもの ---`,
+    `- 本文には、${deliverable}そのものだけを書く。次のものは、本文のどこにも（区切り線「---」の後ろや末尾にも）書かない`,
+    "  - 作業の経過・手順・結果の報告（「〜を取り込みました」「〜を直しました」「コミット・プッシュはしていません」など）、前の版との違いの説明",
+    `  - 人間の指摘・PR の指摘・再開の補足への対応の報告（ID が付いた指摘への対応は、本文ではなく、${RESPONSES_HEADING} の JSON の text に書く。対応できなかったことも同じ。ID が無い指摘（引き継いだ PR の指摘など）は、対応したことを書かず、対応しないものだけを、人間が判断することとして「確認したいこと」に、指摘と理由で書く）`,
+    "  - エージェントや sacty に向けたメモ・指示、タスクやエージェントの ID（指摘の ID を含む）",
+    "- 要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る。差し戻しで項目を消したときは、ID を詰めず（人の指摘・承認済みの文書が ID で指しているため）、「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする。この規則は、sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない（消すテスト観点は配列から外し、削除の行を JSON に残さない）",
+    "- 別の文書（ほかのタスクの要求要件・チケット・PR など）を参照する項目は、参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する。読む人が参照先を開かなくても分かるようにする",
+    "- 提出の前に、本文を最初から最後まで読み直して、上の3点が残っていないことを確かめ、残っていれば直す（セルフレビューの観点 D-6・D-10 でも確かめる）",
   ];
 }
 
@@ -1238,6 +1265,8 @@ function selfReviewLines(kind: "design-doc" | "code", deliverable: string): stri
       ? [
           `- ${deliverable}の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする（作業領域の外に置き、リポジトリには書かない）`,
           "- 記述を足す指摘（D-3 などの「書かれていない」）は must だけを直し、should は直さない（足りなければ人間が差し戻しで求める）。記述を削る指摘（D-10）は should も直す",
+          "- 本文に作業の経過・指摘への対応の報告・エージェント向けのメモが残っている、別の文書への参照だけの項目がある、依頼の目的に関わる判断や依頼者に不利益が出うる既定が「確認したいこと」に無い（「既定で決めたこと」にある）指摘は、記述を足す指摘であっても must として直す",
+          "- 最初の提出で、本文で振る ID（要求の R-n など。sacty が振るテスト観点の TV-n は除く）に、理由の分からない欠番がある指摘は、should でも直す（番号を詰めるだけで、記述を足さない）。差し戻しの後の版で、消した要求を「R-5（削除：理由）」のように残している行は、欠番として直さない",
         ]
       : []),
     "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
@@ -1291,7 +1320,7 @@ export function provenanceInputs(
   const remarks = task.remarks.filter((r) => r.step === step && !r.voided);
   const investigation = investigationLines(task).slice(1).join("\n");
   return [
-    { name: "task.md", text: taskContent(task, extra) },
+    { name: "task.md", text: taskContent(task, extra, step) },
     ...(remarks.length > 0
       ? [
           {
@@ -1549,6 +1578,7 @@ function resumeNoteJudgeLines(task: Task): string[] {
 function taskContent(
   task: Task,
   extra: { continuedFeedback?: readonly PullRequestFeedback[] | "unreadable" },
+  step?: StepKey,
 ): string {
   // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
   return [
@@ -1557,7 +1587,7 @@ function taskContent(
     task.body || "（内容なし）",
     ...securityFindingLines(task),
     ...gatheredLines(task),
-    ...continuedPullRequestLines(task, extra.continuedFeedback),
+    ...continuedPullRequestLines(task, extra.continuedFeedback, step),
   ].join("\n");
 }
 
@@ -1597,8 +1627,8 @@ export function buildPrompt(
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
-  const continued = continuedPullRequestLines(task, extra.continuedFeedback);
-  const content = taskContent(task, extra);
+  const continued = continuedPullRequestLines(task, extra.continuedFeedback, step);
+  const content = taskContent(task, extra, step);
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 
@@ -1850,7 +1880,7 @@ export function buildPrompt(
               )
             : ["（なし）"]),
           "",
-          "テスト観点は、直さないものも含めて全件を出し直してください（ID は sacty が振り直します）。",
+          "テスト観点は、直さないものも含めて全件を出し直してください（ID は sacty が振り直します。消す観点は出さず、削除の行も作らないでください）。",
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
