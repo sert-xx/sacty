@@ -225,15 +225,13 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
       expect(prompt).toContain("今回の実装の変更ではなく、下の差分には出ない");
       expect(prompt).toContain("変更の範囲・過剰さ・観点の判定に含めない");
       // 直し方：実装は書き換えられないので、検査の設定をリポジトリの方針に合わせる。タスクごとに行を足さない
-      expect(prompt).toContain(
-        "実装が書き換えても PR には残らないので、ファイルの書式を直させない",
-      );
-      expect(prompt).toContain("リポジトリの方針に合わせて直させる");
+      expect(prompt).toContain("実装が書き換えても PR には残らないので、ファイルの書式を直さない");
+      expect(prompt).toContain("リポジトリの方針に合わせて直す");
       expect(prompt).toContain("成果物の置き場所（docs/sacty/）をまとめて対象外にする");
       expect(prompt).toContain("タスクの ID ごとのファイルやディレクトリを1つずつ足さない");
       // その直しは範囲外・過剰にしない。確かめるだけのテストは足させない
       expect(prompt).toContain("変更の範囲外・過剰とはしない");
-      expect(prompt).toContain("設定を確かめるだけのテストを足させない");
+      expect(prompt).toContain("設定を確かめるだけのテストは足さない");
     }
   });
 
@@ -254,7 +252,9 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     const included = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff", {
       stepDocumentsIncluded: true,
     });
-    expect(included).toContain("成果物の置き場所（docs/ai/）をまとめて対象外にする");
+    // 既定でない置き場所は、ほかのファイルと共有されうるので、全体は対象外にしない
+    expect(included).toContain("成果物のディレクトリ（docs/ai/t-1/）に当たる範囲を対象外にする");
+    expect(included).toContain("置き場所（docs/ai/）はリポジトリのほかのファイルと共有されうる");
     expect(included).not.toContain("docs/sacty/");
     expect(prompt).not.toContain("docs/sacty/");
   });

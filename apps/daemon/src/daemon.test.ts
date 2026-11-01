@@ -18274,6 +18274,27 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     made.activity.close();
   });
 
+  it("成果物のファイルを写しに書けない（通常のファイルでない・大きすぎる・テキストでない）ときも、コミットを取得できないときと同じく、最終レビューを止めずに成果物が無い写しで続ける", async () => {
+    const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+      ci: passingCi,
+    });
+    const { service, repos, executor, id } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    repos.readFail = true;
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await drain(service);
+    expect(repos.workingCopies.at(-1)?.include).toBeUndefined();
+    const guardian = promptOf(executor, executor.calls.length - 1);
+    expect(guardian).toContain("作業領域の写しには、このファイルが無い");
+    expect(guardian).toContain("PR の中身で通るかは未確認");
+    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    made.activity.close();
+  });
+
   it("PR の指摘でゴールガーディアンがこの工程と判断したら、要求要件をやり直して同じ PR を更新する。判断と理由は台帳に残る（受け入れ条件 3）", async () => {
     const made = await start([
       out("# 要求要件 v1"),

@@ -7460,7 +7460,7 @@ export class TaskService {
    * 最終レビューの写しに入れる、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物。PBI-57）と、その
    * 内容を持つコミット。コミットは、最終レビューの前に作った実装の PR のコミット（CI を待つコミット）で、PR の中身そのもの
    * （人が PR の中で直してマージした内容を含む）。要求要件・設計の PR が無いタスク・既存の PR を引き継いだタスク・PR を
-   * まだ作っていないタスクは undefined。コミットを取得できなければ（警告だけ出して）undefined にする。写しに入れられなくても、
+   * まだ作っていないタスクは undefined。コミットを取得できない・ファイルを写しに書けない（通常のファイルでない・大きすぎる・テキストでない）ときも（警告だけ出して）undefined にする。写しに入れられなくても、
    * 最終レビューは、成果物が無い写しで（指示でその違いを伝えて）続ける。
    */
   private async stepDocumentsForReview(
@@ -7472,18 +7472,23 @@ export class TaskService {
     if (!task.repository || !task.taskBranch || task.continuedPullRequest || !commit) return;
     if (stepPullRequests.length === 0) return;
     const usedSecrets: string[] = [];
+    const paths = [...new Set(stepPullRequests.map((p) => p.path))];
+    const gitDir = this.trustedGitDir(task);
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       // 作ったコミットは退避したメタデータにあるので、通常は取得しない（用意し直したときだけ、リモートから取得する）
-      await this.deps.repos.fetchCommits(this.trustedGitDir(task), [commit], authEnv);
+      await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
+      // 写しに書けるファイルか（通常のファイル・大きすぎない・テキスト）も、写す前に確かめる。写しの作成の途中で失敗して
+      // 最終レビューが止まるのではなく、取得の失敗と同じく、成果物が無い写しで続ける（指示でその違いを伝える）
+      for (const path of paths) await this.deps.repos.readFile(gitDir, commit, path);
     } catch (error) {
       console.warn(
-        `[daemon] 最終レビューの写しに入れる成果物のコミットを取得できませんでした（${task.id}）：`,
+        `[daemon] 最終レビューの写しに成果物を入れられませんでした（${task.id}）：`,
         renderMessage(redactText(errorText(error), usedSecrets), "ja"),
       );
       return;
     }
-    return { commit, paths: [...new Set(stepPullRequests.map((p) => p.path))] };
+    return { commit, paths };
   }
 
   /**

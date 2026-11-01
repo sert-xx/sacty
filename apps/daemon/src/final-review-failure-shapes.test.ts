@@ -387,7 +387,7 @@ describe("最終レビューの、他の一覧の項目がオブジェクトで�
   });
 });
 
-const failedTask = (review: Partial<FinalReview>) =>
+const failedTask = (review: Partial<FinalReview>, extra: Partial<Task> = {}) =>
   ({
     id: "t-1",
     title: "配送先を足す",
@@ -425,6 +425,7 @@ const failedTask = (review: Partial<FinalReview>) =>
         ...review,
       },
     },
+    ...extra,
   }) as unknown as Task;
 
 const NO_FINDINGS =
@@ -451,6 +452,101 @@ describe("指摘が無いままテストだけで不合格になったときの�
     );
     expect(recurred).toContain("[r-1] 過去の指摘が再発している：再発");
     expect(recurred).not.toContain(NO_FINDINGS);
+  });
+});
+
+describe("成果物のファイルで検査が落ちて不合格になったときの、実装のやり直しの指示", () => {
+  // 要求要件・設計の PR をマージ済みのタスク（成果物は PR に入るが、実装の作業領域には無い）
+  const withDocuments = (documentsDir = "docs/sacty"): Partial<Task> =>
+    ({
+      stepPullRequests: ["requirements", "design"].map((step) => ({
+        step,
+        path: `${documentsDir}/t-1/${step}.md`,
+      })),
+    }) as unknown as Partial<Task>;
+  const OUTPUT = "[warn] docs/sacty/t-1/design.md\n[warn] Code style issues found in 2 files.";
+
+  it("検査の出力に成果物のパスが出ていれば、そのパスを挙げ、書式ではなく検査の設定をリポジトリの方針に合わせて直すよう伝える。変更の無い再提出をさせない", () => {
+    const prompt = buildPrompt(
+      failedTask(
+        { tests: { command: "prettier --check .", exitCode: 1, output: OUTPUT } },
+        withDocuments(),
+      ),
+      "implement",
+    );
+    expect(prompt).toContain("sacty が PR に足す成果物（docs/sacty/t-1/）のファイルが出ています");
+    expect(prompt).toContain("検査は、このファイルで落ちています");
+    expect(prompt).toContain("書き換えても PR に残りません");
+    expect(prompt).toContain("ファイルの書式を直さない");
+    expect(prompt).toContain("リポジトリの検査の設定（例：.prettierignore");
+    expect(prompt).toContain("リポジトリの方針に合わせて直す");
+    expect(prompt).toContain("成果物の置き場所（docs/sacty/）をまとめて対象外にする");
+    expect(prompt).toContain("変更の無い再提出はしないでください");
+    // 「直る失敗が無ければ無関係な変更を足さない」と矛盾しない（成果物で落ちた検査を直す対象に含める）
+    expect(prompt).toContain(
+      "実装の変更で直る失敗も、sacty が足す成果物のファイルで落ちた検査も無ければ、無関係な変更を足さないでください",
+    );
+    expect(prompt).not.toContain("実装で直る失敗が無ければ、無関係な変更を足さないでください");
+  });
+
+  it("出力に成果物のパスが無くても、成果物が PR に入ることと、そのファイルで落ちているときの直し方を伝える。他のタスクのパスでは案内しない", () => {
+    const prompt = buildPrompt(failedTask({}, withDocuments()), "implement");
+    expect(prompt).not.toContain("のファイルが出ています");
+    expect(prompt).toContain("sacty が足す成果物（docs/sacty/t-1/）も入ります");
+    expect(prompt).toContain("リポジトリ全体の検査がそのファイルで落ちているときは");
+    expect(prompt).toContain("リポジトリの方針に合わせて直す");
+    // 別のタスクの ID のディレクトリが出力に出ていても、このタスクの成果物とは見なさない
+    const other = buildPrompt(
+      failedTask(
+        {
+          tests: { command: "prettier --check .", exitCode: 1, output: "docs/sacty/zzz/design.md" },
+        },
+        withDocuments(),
+      ),
+      "implement",
+    );
+    expect(other).not.toContain("のファイルが出ています");
+  });
+
+  it("成果物を PR に足さないタスクには、成果物の案内を出さない", () => {
+    for (const extra of [
+      {},
+      { ...withDocuments(), continuedPullRequest: { number: 7 } } as unknown as Partial<Task>,
+    ]) {
+      const prompt = buildPrompt(
+        failedTask({ tests: { command: "x", exitCode: 1, output: OUTPUT } }, extra),
+        "implement",
+      );
+      expect(prompt).not.toContain("sacty が足す成果物");
+      expect(prompt).not.toContain("sacty が PR に足す成果物");
+      expect(prompt).toContain(NO_FINDINGS);
+      expect(prompt).toContain("実装で直る失敗が無ければ、無関係な変更を足さないでください");
+    }
+  });
+
+  it("置き場所が既定の docs/sacty でないときは、置き場所の全体を対象外にせず、タスクの ID のディレクトリに当たる範囲にさせる", () => {
+    const prompt = buildPrompt(
+      failedTask(
+        {
+          tests: {
+            command: "prettier --check .",
+            exitCode: 1,
+            output: "[warn] docs/t-1/design.md",
+          },
+        },
+        withDocuments("docs"),
+      ),
+      "implement",
+    );
+    expect(prompt).toContain("成果物のディレクトリ（docs/t-1/）に当たる範囲を対象外にする");
+    expect(prompt).toContain("置き場所（docs/）はリポジトリのほかのファイルと共有されうる");
+    expect(prompt).toContain("その全体は対象外にしない");
+    expect(prompt).not.toContain("成果物の置き場所（docs/）をまとめて対象外にする");
+    // ゴールガーディアンへの指示も同じ
+    const guardian = buildFinalReviewPrompt(failedTask({}, withDocuments("docs")), "diff", {
+      stepDocumentsIncluded: true,
+    });
+    expect(guardian).toContain("その全体は対象外にしない");
   });
 });
 
