@@ -261,6 +261,234 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(existsSync(join(gitDir, "GUARDIAN-MARK"))).toBe(false);
   });
 
+  it("include を渡すと、PR に足すファイルを、そのコミットの内容で写しに入れる。作業領域の同じパスは置き換え、コミットに無ければ消し、途中のリンクはたどらない", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // PR のコミット：成果物のファイルを足したもの（作業領域には無い）
+    const commit = (
+      await workspace.commitFiles({
+        gitDir,
+        parent: git(origin, "rev-parse", "main"),
+        files: {
+          "docs/sacty/t-1/design.md": "# 設計\n",
+          "docs/sacty/t-1/requirements.md": "# 要求\n",
+        },
+        branch: "sacty/task-docs",
+        message: "docs",
+        date: "2026-11-01T00:00:00Z",
+        allowEmpty: true,
+      })
+    ).commit;
+    writeFileSync(join(clone, "new.ts"), "new\n");
+    const include = {
+      commit,
+      paths: [
+        "docs/sacty/t-1/design.md",
+        "docs/sacty/t-1/requirements.md",
+        "docs/sacty/t-1/missing.md",
+      ],
+    };
+
+    // 作業領域に無ければ足す。差分には関係しない（作業領域は書き換えない）
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, include);
+    expect(readFileSync(join(out, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+    expect(readFileSync(join(out, "docs/sacty/t-1/requirements.md"), "utf8")).toBe("# 要求\n");
+    expect(readFileSync(join(out, "new.ts"), "utf8")).toBe("new\n");
+    expect(existsSync(join(clone, "docs"))).toBe(false);
+    expect(existsSync(join(out, "docs/sacty/t-1/missing.md"))).toBe(false);
+
+    // 作業領域に同じパスのファイルがあれば、コミットの内容にする。コミットに無いパスは、作業領域のものも消す
+    mkdirSync(join(clone, "docs/sacty/t-1"), { recursive: true });
+    writeFileSync(join(clone, "docs/sacty/t-1/design.md"), "エージェントが書いた\n");
+    writeFileSync(join(clone, "docs/sacty/t-1/missing.md"), "エージェントが書いた\n");
+    writeFileSync(join(clone, "docs/sacty/t-1/other.md"), "include に無いパスは残す\n");
+    const out2 = join(dir, "copy2");
+    await workspace.copyWorkingTree(clone, out2, gitDir, include);
+    expect(readFileSync(join(out2, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+    expect(existsSync(join(out2, "docs/sacty/t-1/missing.md"))).toBe(false);
+    expect(readFileSync(join(out2, "docs/sacty/t-1/other.md"), "utf8")).toBe(
+      "include に無いパスは残す\n",
+    );
+
+    // 途中のディレクトリがホストのディレクトリへのリンクでも、リンクの先には書かない
+    rmSync(join(clone, "docs"), { recursive: true });
+    const hostDir = join(dir, "host-dir");
+    mkdirSync(hostDir);
+    symlinkSync(hostDir, join(clone, "docs"));
+    const out3 = join(dir, "copy3");
+    await workspace.copyWorkingTree(clone, out3, gitDir, include);
+    expect(readdirSync(hostDir)).toEqual([]);
+    expect(lstatSync(join(out3, "docs")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(out3, "docs/sacty/t-1/design.md"), "utf8")).toBe("# 設計\n");
+
+    // 不正なパス・メタデータの無い include は受け付けない
+    await expect(
+      workspace.copyWorkingTree(clone, join(dir, "bad1"), gitDir, {
+        commit,
+        paths: ["../escape.md"],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      workspace.copyWorkingTree(clone, join(dir, "bad2"), undefined, include),
+    ).rejects.toThrow();
+  });
+
+  it("リポジトリ全体の検査は、include なしの写しでは通り、成果物を入れた写しでは、成果物が原因で落ちる（PR と同じ中身で検査する）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // 成果物の書式が、リポジトリの検査（ここでは、Markdown の行末に空白が無いこと）に合わない
+    const path = "docs/sacty/t-1/design.md";
+    const { commit } = await workspace.commitFiles({
+      gitDir,
+      parent: git(origin, "rev-parse", "main"),
+      files: { [path]: "# 設計 \n" },
+      branch: "sacty/task-docs",
+      message: "docs",
+      date: "2026-11-01T00:00:00Z",
+      allowEmpty: true,
+    });
+    const check = (cwd: string) => {
+      const script =
+        "const fs=require('fs'),p=require('path');let bad=[];" +
+        "(function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){" +
+        "if(e.name==='.git')continue;const f=p.join(d,e.name);" +
+        "if(e.isDirectory())walk(f);else if(f.endsWith('.md')&&/ $/m.test(fs.readFileSync(f,'utf8')))bad.push(f)}})('.');" +
+        "if(bad.length){console.error(bad.join(','));process.exit(1)}";
+      try {
+        execFileSync("node", ["-e", script], { cwd, stdio: "pipe" });
+        return 0;
+      } catch (error) {
+        return (error as { status: number }).status;
+      }
+    };
+    const without = join(dir, "without");
+    await workspace.copyWorkingTree(clone, without, gitDir);
+    expect(check(without)).toBe(0);
+    const included = join(dir, "included");
+    await workspace.copyWorkingTree(clone, included, gitDir, { commit, paths: [path] });
+    expect(check(included)).toBe(1);
+  });
+
+  it("include の成果物は、写しの .git のインデックスにも、追加・置換・削除を反映する（git ls-files で追跡ファイルを列挙する検査が、PR と同じファイルを見る）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    const { commit } = await workspace.commitFiles({
+      gitDir,
+      parent: git(origin, "rev-parse", "main"),
+      files: { "docs/sacty/t-1/design.md": "# 設計 \n", "docs/sacty/t-1/new.md": "# 新\n" },
+      branch: "sacty/task-docs",
+      message: "docs",
+      date: "2026-11-01T00:00:00Z",
+      allowEmpty: true,
+    });
+    const tracked = (cwd: string) =>
+      git(cwd, "--git-dir", join(cwd, ".git"), "--work-tree", cwd, "ls-files").split("\n");
+    // 作業領域に、同じパスの追跡されないファイルがある（コミットの内容に置き換える）
+    mkdirSync(join(clone, "docs/sacty/t-1"), { recursive: true });
+    writeFileSync(join(clone, "docs/sacty/t-1/design.md"), "エージェントが書いた\n");
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, {
+      commit,
+      paths: ["docs/sacty/t-1/design.md", "docs/sacty/t-1/new.md", "docs/sacty/t-1/gone.md"],
+    });
+    const files = tracked(out);
+    expect(files).toContain("docs/sacty/t-1/design.md");
+    expect(files).toContain("docs/sacty/t-1/new.md");
+    expect(files).toContain("pay.ts");
+    expect(files).not.toContain("docs/sacty/t-1/gone.md");
+    // インデックスの内容は、コミットのとおり（作業ツリーの内容と同じ＝差分が無い）
+    expect(git(out, "diff", "--name-only", "--", "docs")).toBe("");
+    // 追跡ファイルを列挙する検査（行末空白）が、PR と同じく成果物を見て失敗する
+    const bad = tracked(out).filter(
+      (f) => f.endsWith(".md") && / $/m.test(readFileSync(join(out, f), "utf8")),
+    );
+    expect(bad).toEqual(["docs/sacty/t-1/design.md"]);
+    // include なしの写しでは、成果物は追跡されない
+    const plain = join(dir, "plain");
+    await workspace.copyWorkingTree(clone, plain, gitDir);
+    expect(tracked(plain)).not.toContain("docs/sacty/t-1/new.md");
+  });
+
+  it("include の成果物の UTF-8 の BOM は、コミットのとおりに残して写す", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    const path = "docs/sacty/t-1/bom.md";
+    const { commit } = await workspace.commitFiles({
+      gitDir,
+      parent: git(origin, "rev-parse", "main"),
+      files: { [path]: "\uFEFF# BOM 付き\n" },
+      branch: "sacty/task-docs",
+      message: "docs",
+      date: "2026-11-01T00:00:00Z",
+      allowEmpty: true,
+    });
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, { commit, paths: [path] });
+    const copied = readFileSync(join(out, path));
+    expect([...copied.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    // コミットの内容とバイト列が同じ
+    const committed = execFileSync("git", [
+      "--git-dir",
+      gitDir,
+      "cat-file",
+      "blob",
+      `${commit}:${path}`,
+    ]);
+    expect(copied.equals(committed)).toBe(true);
+  });
+
+  it("include の成果物の実行ビット（100755）も、コミットのとおりにして、作業ツリーとインデックスで種類の差分が出ない", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    await workspace.prepare(clone, gitDir, origin, "main");
+    // 実行ビットの付いた成果物（人が PR の中で直したときなど）のコミットを、git で直接作る
+    const parent = git(origin, "rev-parse", "main");
+    const path = "docs/sacty/t-1/run.md";
+    const blob = execFileSync("git", ["--git-dir", gitDir, "hash-object", "-w", "--stdin"], {
+      input: "# 実行\n",
+      encoding: "utf8",
+    }).trim();
+    const indexFile = join(dir, "tmp-index");
+    const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+    const plumbing = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", gitDir, ...args], { env, encoding: "utf8" }).trim();
+    plumbing("read-tree", parent);
+    plumbing("update-index", "--add", "--cacheinfo", `100755,${blob},${path}`);
+    const tree = plumbing("write-tree");
+    const commit = plumbing(
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=t",
+      "commit-tree",
+      tree,
+      "-p",
+      parent,
+      "-m",
+      "docs",
+    );
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir, { commit, paths: [path] });
+    expect(lstatSync(join(out, path)).mode & 0o111).not.toBe(0);
+    expect(git(out, "ls-files", "-s", "--", path)).toMatch(/^100755 /);
+    expect(git(out, "diff", "--summary", "--", "docs")).toBe("");
+  });
+
   it("多数のファイルを写す間も、イベントループを止めない（ほかのタイマーが進む。PBI-156）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

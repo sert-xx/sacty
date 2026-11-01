@@ -426,12 +426,22 @@ class FakeRepos implements RepositoryWorkspace {
     return this.changes;
   }
   /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
-  workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
+  workingCopies: {
+    dir: string;
+    outDir: string;
+    gitDir?: string;
+    include?: { commit: string; paths: string[] };
+  }[] = [];
   copyFail?: string;
   /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
   copyStarted = Promise.withResolvers<void>();
   copyGate?: Promise<void>;
-  async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
+  async copyWorkingTree(
+    dir: string,
+    outDir: string,
+    gitDir?: string,
+    include?: { commit: string; paths: string[] },
+  ) {
     if (this.copyFail) throw new Error(this.copyFail);
     this.copyStarted.resolve();
     if (this.copyGate) {
@@ -440,7 +450,17 @@ class FakeRepos implements RepositoryWorkspace {
     }
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
-    this.workingCopies.push({ dir, outDir, ...(gitDir ? { gitDir } : {}) });
+    // PR に足す成果物のファイルを、PR のコミットの内容で入れる（偽物は、パスを本文にして書く）
+    for (const path of include?.paths ?? []) {
+      mkdirSync(dirname(join(outDir, path)), { recursive: true });
+      writeFileSync(join(outDir, path), `included from ${include?.commit}`);
+    }
+    this.workingCopies.push({
+      dir,
+      outDir,
+      ...(gitDir ? { gitDir } : {}),
+      ...(include ? { include } : {}),
+    });
   }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
   snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
@@ -18219,6 +18239,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       github?: FakeGitHub;
       /** 工程の選び方（無ければ、どのタスクも steps の工程にする）。 */
       planner?: ServiceDeps["planner"];
+      /** 最終レビューの前に実装の PR をドラフトで作り、CI を待つ（既定は、待たずに最終レビューへ進む）。 */
+      ci?: ServiceDeps["ci"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -18228,6 +18250,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.settings ? { settings: options.settings } : {}),
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
+      ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       now: later,
       pulls,
       repos,
@@ -18445,6 +18468,95 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const again = new SqliteActivityStore(dbPath);
     expect(makeService(again, [], { stepPullRequests: true }).service.get(id)?.task).toEqual(done);
     again.close();
+  });
+
+  /** CI が通る（最終レビューの前に、実装の PR のドラフトの CI を待つ流れを確かめるため）。 */
+  const passingCi = {
+    snapshot: async () => ({
+      checks: [
+        {
+          kind: "workflow" as const,
+          name: "CI",
+          status: "completed" as const,
+          conclusion: "success",
+        },
+      ],
+      failedRuns: [],
+    }),
+    failures: async () => [],
+  } satisfies NonNullable<ServiceDeps["ci"]>;
+
+  it("要求要件・設計の成果物を PR に足すタスクは、最終レビューの写しに、その成果物のファイルを実装の PR のコミットの内容で入れる。実装の作業領域には入れない", async () => {
+    const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+      ci: passingCi,
+    });
+    const { service, repos, executor, id } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    // 最終レビューの前に、実装の PR をドラフトで作って CI を待つ。CI が終わったら最終レビューに進む
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await drain(service);
+    const docs = [docOf(id, "requirements"), docOf(id, "design")];
+    // 最終レビューの写しに入れるのは、最終レビューの前に作った実装の PR のコミットにある成果物のファイル
+    const prCommit = "c1".padEnd(40, "0");
+    expect(repos.published[0]).toBeDefined();
+    expect(repos.workingCopies.at(-1)?.include).toEqual({ commit: prCommit, paths: docs });
+    // 取得を確かめた（通常は退避したメタデータにあるので、何も取得しない偽物でも呼ばれる）
+    expect(repos.fetchedCommits.at(-1)?.commits).toEqual([prCommit]);
+    // 指示は、成果物を入れた写しの文言になる（写しで通った検査を未確認にしない）
+    const guardian = promptOf(executor, executor.calls.length - 1);
+    expect(guardian).toContain(
+      "作業領域の写しには、このファイルを PR のコミットと同じ内容で入れてある",
+    );
+    expect(guardian).not.toContain("PR の中身で通るかは未確認");
+    // 写す元は実装の作業領域のままで、そこには成果物を入れない（差分・範囲の判定に混ぜない）
+    expect(repos.workingCopies.at(-1)?.dir).toBe(repos.prepared[0]?.dir);
+    made.activity.close();
+  });
+
+  it("最終レビューの写しに成果物を入れるためのコミットを取得できなくても、最終レビューは止めず、成果物が無い写しで、その違いを伝える指示で続ける", async () => {
+    const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+      ci: passingCi,
+    });
+    const { service, repos, executor, id } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    repos.fetchFail = "network down";
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await drain(service);
+    expect(repos.workingCopies.at(-1)?.include).toBeUndefined();
+    const guardian = promptOf(executor, executor.calls.length - 1);
+    expect(guardian).toContain("作業領域の写しには、このファイルが無い");
+    expect(guardian).toContain("PR の中身で通るかは未確認");
+    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    made.activity.close();
+  });
+
+  it("成果物のファイルを写しに書けない（通常のファイルでない・大きすぎる・テキストでない）ときも、コミットを取得できないときと同じく、最終レビューを止めずに成果物が無い写しで続ける", async () => {
+    const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+      ci: passingCi,
+    });
+    const { service, repos, executor, id } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    await drain(service);
+    repos.readFail = true;
+    await service.checkPullRequests();
+    await service.checkPullRequests();
+    await drain(service);
+    expect(repos.workingCopies.at(-1)?.include).toBeUndefined();
+    const guardian = promptOf(executor, executor.calls.length - 1);
+    expect(guardian).toContain("作業領域の写しには、このファイルが無い");
+    expect(guardian).toContain("PR の中身で通るかは未確認");
+    expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
+    made.activity.close();
   });
 
   it("PR の指摘でゴールガーディアンがこの工程と判断したら、要求要件をやり直して同じ PR を更新する。判断と理由は台帳に残る（受け入れ条件 3）", async () => {
