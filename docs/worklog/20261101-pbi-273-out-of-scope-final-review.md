@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-273
-- PR: なし
+- PR: #264
 - ブランチ: feat/issue-273-out-of-scope-review
 - 関係する ADR: [最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更と、既存のテストの期待を変える変更を、観点 SCOPE の不合格にする](../adr/20261101-1348-fail-out-of-scope-changes-in-final-review.md)
 
