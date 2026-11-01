@@ -409,6 +409,7 @@ const PARAMS = {
   "git.invalidBaseCommit": null,
   "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.mergeTreeUnsupported": null,
+  "git.tooManyConflicts": z.object({ count: z.number(), limit: z.number() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.invalidPath": null,
@@ -1190,7 +1191,9 @@ const ja: MessageDictionary = {
   "git.baseCommitMissing": ({ commit }) =>
     `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
   "git.mergeTreeUnsupported":
-    "ベースブランチを取り込むには、ホストの git が 2.38 以上（git merge-tree --write-tree が使える版）である必要があります。git を更新してください。",
+    "ベースブランチを取り込むには、ホストの git が 2.40 以上（git merge-tree --write-tree と --merge-base が使える版）である必要があります。git を更新してください。",
+  "git.tooManyConflicts": ({ count, limit }) =>
+    `ベースブランチとの競合が ${count} 件あり、取り込める上限（${limit} 件）を超えています。作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.invalidPath": "コミットするファイルのパスが不正です。",
@@ -1864,7 +1867,9 @@ const en: MessageDictionary = {
   "git.baseCommitMissing": ({ commit }) =>
     `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,
   "git.mergeTreeUnsupported":
-    "Merging the base branch needs git 2.38 or later on the host (a version with git merge-tree --write-tree). Update git.",
+    "Merging the base branch needs git 2.40 or later on the host (a version with git merge-tree --write-tree and --merge-base). Update git.",
+  "git.tooManyConflicts": ({ count, limit }) =>
+    `Merging the base branch conflicts in ${count} files, over the limit of ${limit}. The workspace was not changed. Have a person resolve the conflicts, then resume.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
   "git.invalidPath": "The path of the file to commit is not valid.",

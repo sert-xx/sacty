@@ -72,6 +72,7 @@ import {
   isRepoless,
   isSecurityTask,
   latestStepPullRequest,
+  MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
@@ -5696,10 +5697,17 @@ export class TaskService {
       const base = workBaseCommit(repository, task.baseMerge);
       const tip = await this.deps.repos.fetchBranch(gitDir, repository.baseBranch, authEnv);
       if (tip === base) return { kind: "clean" };
-      const merged = await this.deps.repos.mergeBase({ dir, gitDir, base, target: tip });
+      const merged = await this.deps.repos.mergeBase({
+        dir,
+        gitDir,
+        base,
+        target: tip,
+        maxConflicts: MAX_BASE_CONFLICTS,
+      });
       if (merged.status === "unchanged") return { kind: "clean" };
       // 作業領域に書いた結果を、すぐ記録する（以後の差分・コミットは、取り込んだ先頭を起点にする）
-      const conflicts = merged.conflicts.slice(0, 100);
+      // 全件を記録する（競合が多すぎるときは、mergeBase が作業領域を書き換える前に失敗する）。切り捨てると、残りの目印を検査できない
+      const conflicts = merged.conflicts;
       this.append(this.mustGet(task.id), [
         {
           actor: "sacty",

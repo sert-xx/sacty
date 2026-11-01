@@ -335,7 +335,7 @@ Even if another task or a person's PR is merged into the base branch (main and t
   An implementation with markers left cannot be moved to review with "Move to review". "Resume" redoes the implementation with the files that have markers.
 - If the latest base branch cannot be fetched or merged (a network failure, for example), the task pauses with the reason.
   Fix the cause and press "Resume" to start again from the merge.
-- Merging the base branch needs git 2.38 or later on the host. If it is older, the task stops with a message about it.
+- Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.
 - A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) pushes to a person's PR branch, so it does not merge the base branch.
 
 ### When verification keeps failing
