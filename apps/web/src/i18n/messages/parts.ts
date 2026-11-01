@@ -117,10 +117,11 @@ const ja = {
     branch: "ブランチ",
     commit: "コミット",
     misses: (n: number) => `ゴールガーディアンの見逃し ${n}件`,
-    missesHelp: "最終レビューで合格にした成果物を、人が実装の承認で差し戻しました。",
+    missesHelp: "最終レビューで合格にした成果物を、見逃しが原因として、人が差し戻しました。",
     remarks: (ids: string) => `指摘：${ids}`,
     none: "（なし）",
     rework: "戻し先",
+    reworkCause: (cause: string) => `原因：${cause}`,
     reworkJudged: (step: string, reason: string) => `${step}からやり直し：${reason}`,
     reworkUndecided: (step: string, reason: string) =>
       `${step}からやり直し・戻し先を判断できず：${reason}`,
@@ -389,11 +390,11 @@ const en: PartsMessages = {
     branch: "Branch",
     commit: "Commit",
     misses: (n) => `${n} Goal Guardian miss${n === 1 ? "" : "es"}`,
-    missesHelp:
-      "A person requested changes on the Implement approval for a deliverable that passed the final review.",
+    missesHelp: "A person sent back a deliverable that passed the final review, citing a miss.",
     remarks: (ids) => `Comments: ${ids}`,
     none: "(none)",
     rework: "Redo from",
+    reworkCause: (cause) => `Cause: ${cause}`,
     reworkJudged: (step, reason) => `Redoing from ${step}: ${reason}`,
     reworkUndecided: (step, reason) =>
       `Redoing from ${step} · the step to redo could not be decided: ${reason}`,

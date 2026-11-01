@@ -133,8 +133,13 @@ Each dashboard section contains the following.
   - A send-back is counted once, by the record of the actual send-back (`ChangesRequested`).
     - Those the goal guardian made from PR feedback (the projection keeps that record's time in `prRework`) count as "rework from PR feedback", and the others as "changes requested by a person".
     - A judgement `ReworkJudged` that did not lead to a send-back is not counted.
-  - It also counts goal guardian misses (`GuardianMissed`), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).
+  - So that rework that is not a miss can be told apart, send-backs are also counted by cause (`cause` of `ChangesRequested`; `reworkByCause`). A record without a cause (including the activity log from before causes were recorded) counts as "unknown cause" (`unspecified`). This covers a request for changes where a person chose no cause, and PR feedback whose cause the Goal Guardian could not judge.
+    For the activity log from before causes were recorded, a request for changes counts as `guardian_missed` when `GuardianMissed` comes right before it (the previous record of the same task), and as `unspecified` otherwise.
+    The goal guardian miss count is the number of `GuardianMissed`, so it is not always equal to the number of send-backs whose cause is `guardian_missed` (no miss is recorded when there was no passed final review).
+  - It also counts goal guardian misses (`GuardianMissed`, recorded only by a send-back whose cause is a miss), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).
   - Rework by step counts changes requested by a person and rework from PR feedback by the step whose deliverable was sent back. The step is `step` of `ChangesRequested` (the step at the approval gate). Requirements, design, and implement (`REWORK_STEPS`) are always shown, other steps only when they have a count.
+  - "Rework with unknown cause" (`reworkByCause.unspecified`) is shown right under "Goal guardian misses" (so that rework whose cause was not chosen does not go unseen, since it is not known whether it was a miss).
+  - Rework known not to be a miss is shown by cause: "New request or change of direction" and "Conflict from base changes".
 - Period boundaries follow the local date of the machine running sacty (the daemon), not the UI language.
   - Today: from 0:00 of that day.
   - Last 7 days: 7 days including today.

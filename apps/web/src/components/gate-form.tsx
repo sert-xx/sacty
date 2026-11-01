@@ -155,6 +155,33 @@ export function GateForm({
         </fieldset>
       )}
       {targets.length > 0 && (
+        <fieldset className="flex flex-col gap-1.5" data-testid="rework-cause">
+          <legend className="flex items-center gap-1 pb-1 text-sm font-medium">
+            {t.causeLegend}
+            <Hint text={t.causeHint} />
+          </legend>
+          {(
+            [
+              ["", t.causeNone],
+              ["guardian_missed", t.causeGuardianMissed],
+              ["new_request", t.causeNewRequest],
+              ["base_changed", t.causeBaseChanged],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="flex min-h-9 items-start gap-2 text-sm leading-6">
+              <input
+                type="radio"
+                name="cause"
+                value={value}
+                defaultChecked={value === (state.cause ?? "")}
+                className="mt-1.5 size-4 accent-primary"
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {targets.length > 0 && (
         <>
           <span className="flex items-center gap-1">
             <Label htmlFor="gate-comments">

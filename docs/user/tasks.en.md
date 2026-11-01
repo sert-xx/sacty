@@ -517,6 +517,23 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - Which one was used appears in "Body" in the PR section of the task page.
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
 
+## Cause of a request for changes
+
+When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted as Goal Guardian misses.
+
+| Choice | When to use it |
+| --- | --- |
+| Don't choose (initial choice) | Request changes without deciding the cause. It is not counted as a miss, and is counted under "Rework with unknown cause" on the dashboard |
+| The Goal Guardian missed it | A flaw the final review (Integration review) could have caught. When you send back a deliverable it had passed, a miss is recorded |
+| A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
+| A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
+
+- When changes are requested from PR feedback, the Goal Guardian also judges the cause together with where to send it back. If it cannot decide, no cause is set (it is not counted as a miss, and is counted under "Rework with unknown cause").
+- When you request changes on the approval screen, you choose where to send it back, so the Goal Guardian does not judge the cause. To count misses correctly, choose the cause when you know it.
+- The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Goal Guardian miss" lists only what was recorded as a miss.
+- The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
+- Requests for changes from before the cause could be chosen have no cause. On the dashboard, a request for changes with a miss record is counted as a miss, and the others as "Rework with unknown cause".
+
 ## Ask the Orchestrator
 
 Use "Ask the Orchestrator" (the AI icon at the bottom right of the screen) in the task details to ask about the status of the task. Questions and answers stay in the panel that opens on the right of the screen.

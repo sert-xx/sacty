@@ -45,6 +45,13 @@ const ja = {
     redo: (step: string) => `${step}をやり直す`,
     redoFrom: (step: string) => `${step}からやり直す`,
     revokeNote: (step: string) => `${step}の承認を取り消し、もう一度承認します。`,
+    causeLegend: "差し戻しの原因",
+    causeHint:
+      "ゴールガーディアンの見逃しとして数えるのは、見逃したと選んだ差し戻しだけです。選ばなければ、原因が分からない差し戻しとして数えます。",
+    causeNone: "選ばない（分からない）",
+    causeGuardianMissed: "ゴールガーディアンが見逃した（確かめられたはずの不備）",
+    causeNewRequest: "新しい要望・方針の変更（承認した内容に無かったこと）",
+    causeBaseChanged: "ベースブランチの変化による競合（先の PR のマージなど）",
     commentsLabel: "指摘（差し戻すときは必須）",
     commentsLabelRework: "指摘（空なら取り込んだ指摘のまま）",
     commentsHint: (max: number) =>
@@ -134,6 +141,13 @@ const en: ReviewMessages = {
     redo: (step) => `Redo ${step}`,
     redoFrom: (step) => `Redo from ${step}`,
     revokeNote: (step) => `Revokes the ${step} approval; approve it again afterwards.`,
+    causeLegend: "Cause of the rework",
+    causeHint:
+      "Only a rework marked as missed counts as a Goal Guardian miss. If you choose nothing, it is counted as rework with an unknown cause.",
+    causeNone: "Don't choose (unknown)",
+    causeGuardianMissed: "The Goal Guardian missed it (a flaw it could have caught)",
+    causeNewRequest: "A new request or change of direction (not in what was approved)",
+    causeBaseChanged: "A conflict from changes to the base branch (e.g. an earlier PR merged)",
     commentsLabel: "Comments (required to request changes)",
     commentsLabelRework: "Comments (empty keeps the imported ones)",
     commentsHint: (max) =>

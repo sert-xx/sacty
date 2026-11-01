@@ -4,7 +4,7 @@
 - タスク: PBI-10
 - PR: #7
 - ブランチ: feat/issue-10b-pull-request
-- 関係する ADR: [最終レビューに通ったら sacty が sacty のブランチにプッシュして PR を作り、成果物チェックのゲートで止める](../adr/20261010-0858-superseded-pull-request-and-deliverable-gate.md)、[成果物チェックで人間が差し戻したら、そのとき合格だったゴールガーディアンの最終レビューを「見逃し」として記録する](../adr/20261010-0858-guardian-missed-record.md)
+- 関係する ADR: [最終レビューに通ったら sacty が sacty のブランチにプッシュして PR を作り、成果物チェックのゲートで止める](../adr/20261010-0858-superseded-pull-request-and-deliverable-gate.md)、[成果物チェックで人間が差し戻したら、そのとき合格だったゴールガーディアンの最終レビューを「見逃し」として記録する](../adr/20261010-0858-superseded-guardian-missed-record.md)
 
 ## 目的
 

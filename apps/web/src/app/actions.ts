@@ -8,6 +8,7 @@ import {
   normalizeNewlines,
   type ProjectDefinitionInput,
   RESUME_NOTE_MAX,
+  ReworkCause,
   renderMessage,
   type SactySettingsInput,
   ScheduleInput,
@@ -331,6 +332,8 @@ export type GateState = {
   message?: string;
   comments?: string;
   target?: StepKey;
+  /** 差し戻しの原因（エラーのときに戻す。PBI-268）。 */
+  cause?: ReworkCause;
   /** 差し戻しと一緒に選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
   images?: StepChoices;
   agents?: StepChoices;
@@ -346,9 +349,11 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   const submission = Number(formData.get("submission"));
   const rawTarget = formData.get("target");
   const target = rawTarget === null ? undefined : StepKey.safeParse(rawTarget).data;
+  // 原因は、選ばなければ決めない。知らない値も決めない（見逃しにしない。PBI-268）
+  const cause = ReworkCause.safeParse(formData.get("cause")).data;
   // 差し戻しと一緒に変える工程の設定は、人が変えた工程だけを渡し、エラーのときに戻す（再開の欄と同じ）
   const { images, agents } = changedStepChoices(formData);
-  const kept = { comments, images, agents };
+  const kept = { comments, images, agents, cause };
   if (!step.success || (rawTarget !== null && !target)) {
     return { ...kept, message: a.invalidStep };
   }
@@ -369,6 +374,7 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
         step: step.data,
         submission,
         target,
+        ...(cause ? { cause } : {}),
         comments: lines,
         continueOverLimit: decision === "continue",
         images,

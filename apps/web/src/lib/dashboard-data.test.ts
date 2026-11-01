@@ -98,6 +98,7 @@ const summary = (patch: Partial<DashboardSummary> = {}): DashboardSummary => ({
       fixTask: 1,
     },
     reworkBySteps: { design: 2, implement: 1 },
+    reworkByCause: { guardian_missed: 0, new_request: 1, base_changed: 0, unspecified: 2 },
   },
   queue: { running: 1, queued: 2, max: 3 },
   ...patch,

@@ -15,6 +15,7 @@ import {
   type ProjectAudits,
   type ProjectDefinitionInput,
   type RerunTaskInput,
+  type ReworkCause,
   renderMessage,
   type SactySettings,
   type SactySettingsInput,
@@ -742,6 +743,8 @@ export function requestChanges(
     step: StepKey;
     submission: number;
     target?: StepKey;
+    /** 差し戻しの原因（PBI-268）。決めなければ無い。 */
+    cause?: ReworkCause;
     comments: string[];
     continueOverLimit: boolean;
     /** 差し戻しと一緒に、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */

@@ -9135,6 +9135,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const sent = service.requestChanges(id, {
       step: "implement",
       submission: 1,
+      cause: "guardian_missed",
       comments: ["失敗時のログが無い"],
     });
     expect(sent.status).toBe("queued");
@@ -9556,8 +9557,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   describe("PR へのフィードバックの取り込み（PBI-14b）", () => {
-    const rework = (target: string, reason = "理由") =>
-      out(`\`\`\`json\n${JSON.stringify({ "sacty-rework": { target, reason } })}\n\`\`\``);
+    const rework = (target: string, reason = "理由", cause?: string) =>
+      out(
+        `\`\`\`json\n${JSON.stringify({ "sacty-rework": { target, ...(cause ? { cause } : {}), reason } })}\n\`\`\``,
+      );
     const at = "2026-10-11T00:00:00Z";
     /** 最後のフィードバックから、書き終わるのを待つ時間がたった時刻。 */
     const later = () => Date.parse(at) + 3 * 60_000;
@@ -9604,7 +9607,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
       const pulls = new FakePulls();
       const { activity, service, executor, id } = await toImplementGate(
-        [rework("implement", "実装で直せる")],
+        [rework("implement", "実装で直せる", "guardian_missed")],
         { pulls, now: later },
       );
       pulls.feedbackList = [
@@ -9661,6 +9664,67 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2", "comment:3"]);
       activity.close();
     });
+
+    it.each([
+      ["base_changed", "main と競合しています。解消してください"],
+      ["new_request", "文書に1文足してください"],
+    ] as const)(
+      "指摘の原因が %s なら、見逃しにせず、原因を作業履歴と PR の欄に残す（PBI-268）",
+      async (cause, body) => {
+        const pulls = new FakePulls();
+        const { activity, service, executor, id } = await toImplementGate(
+          [rework("implement", "実装で直せる", cause)],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:268", { body })];
+        const before = executor.calls.length;
+        await service.checkPullRequests();
+        const events = service.get(id)?.activity ?? [];
+        expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
+          ["PullRequestReviewImported", "person"],
+          ["ReworkJudged", "guardian"],
+          ["ChangesRequested", "person"],
+        ]);
+        expect(events.at(-2)?.payload).toMatchObject({ target: "implement", cause });
+        expect(events.at(-1)?.payload).toMatchObject({ step: "implement", cause });
+        expect(events.some((e) => e.type === "GuardianMissed")).toBe(false);
+        const task = service.get(id)?.task;
+        expect(task?.misses).toEqual([]);
+        expect(task?.status).toBe("queued");
+        expect(task?.prRework).toMatchObject({ target: "implement", decided: true, cause });
+        // ゴールガーディアンには、原因も判断させる
+        const prompt = promptOf(executor, before);
+        expect(prompt).toContain("この指摘が起きた原因を判断");
+        expect(prompt).toContain("guardian_missed");
+        expect(prompt).toContain("new_request");
+        expect(prompt).toContain("base_changed");
+        activity.close();
+      },
+    );
+
+    it.each([
+      ["原因を答えない", undefined],
+      ["原因を判断できない（undecidable）", "undecidable"],
+      ["知らない原因", "other"],
+    ] as const)(
+      "ゴールガーディアンが%s指摘は、見逃しにせず、原因を決めない（PBI-268）",
+      async (_name, cause) => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [rework("implement", "実装で直せる", cause)],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:269")];
+        await service.checkPullRequests();
+        const events = service.get(id)?.activity ?? [];
+        expect(events.slice(-2).map((e) => e.type)).toEqual(["ReworkJudged", "ChangesRequested"]);
+        expect(events.at(-2)?.payload).not.toHaveProperty("cause");
+        expect(events.at(-1)?.payload).not.toHaveProperty("cause");
+        expect(service.get(id)?.task.misses).toEqual([]);
+        expect(service.get(id)?.task.prRework?.cause).toBeUndefined();
+        activity.close();
+      },
+    );
 
     it("確認して決めたことを文書に書いてほしい指摘は、決定を変えないので実装に戻る。判断の基準と、決定を変えない旨の理由を残す（PBI-266。S9）", async () => {
       const pulls = new FakePulls();
@@ -9825,7 +9889,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     it("設計まで戻す判断なら、人間の確認を待たずに設計に差し戻し、作り直した設計を人間の承認に回す（PBI-58）", async () => {
       const pulls = new FakePulls();
       const { activity, service, executor, id } = await toImplementGate(
-        [rework("design", "観点が足りない"), design],
+        [rework("design", "観点が足りない", "guardian_missed"), design],
         { pulls, now: later },
       );
       pulls.feedbackList = [
@@ -10124,7 +10188,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     it("戻し先を判断している間に PR がマージされず開いたままなら、今までどおり差し戻す", async () => {
       const pulls = new FakePulls();
       const { activity, service, executor, id } = await toImplementGate(
-        [rework("design", "観点が足りない"), design],
+        [rework("design", "観点が足りない", "guardian_missed"), design],
         { pulls, now: later },
       );
       const spy = changeDuringJudgement(executor, () => {});
@@ -10449,12 +10513,96 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       step: "implement",
       submission: 1,
       target: "design",
+      cause: "guardian_missed",
       comments: ["観点が足りない"],
     });
     expect(sent.steps.map((st) => st.state)).toEqual(["done", "active", "todo"]);
     expect(sent.approved.design).toBeUndefined();
     expect(sent.approved.requirements).toBeDefined();
     expect(sent.misses).toHaveLength(1);
+    activity.close();
+  });
+
+  it("原因を決めない差し戻しは、合格の最終レビューを差し戻しても見逃しにせず、原因を記録しない（PBI-268）", async () => {
+    const { activity, service, id } = await toImplementGate();
+    expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+    const sent = service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      comments: ["直して"],
+    });
+    expect(sent.misses).toEqual([]);
+    expect(types(service, id)).not.toContain("GuardianMissed");
+    const requested = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
+    expect(requested?.payload).not.toHaveProperty("cause");
+    activity.close();
+  });
+
+  it.each(["base_changed", "new_request"] as const)(
+    "原因が %s の差し戻しは、合格の最終レビューを差し戻しても見逃しにせず、原因を記録する（PBI-268）",
+    async (cause) => {
+      const { activity, service, id } = await toImplementGate();
+      expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+      const sent = service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        cause,
+        comments: ["main と競合しています"],
+      });
+      expect(sent.status).toBe("queued");
+      expect(sent.misses).toEqual([]);
+      expect(types(service, id)).not.toContain("GuardianMissed");
+      const requested = service.get(id)?.activity.filter((e) => e.type === "ChangesRequested");
+      expect(requested?.at(-1)?.payload).toMatchObject({ cause });
+      activity.close();
+    },
+  );
+
+  it("競合で差し戻した後の新しい最終レビューを、見逃しとして差し戻すと、そのレビューの見逃しを数える（PBI-268）", async () => {
+    const { activity, service, id } = await toImplementGate([
+      out(
+        [
+          "# 実装の説明 v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["a"] },
+              { viewpointId: "TV-2", tests: ["b"] },
+            ],
+          }),
+          block({ "sacty-responses": [{ remarkId: "implement-1-1", text: "解消した" }] }),
+        ].join("\n\n"),
+      ),
+      review(undefined, [
+        ["requirements-1-1", true],
+        ["implement-1-1", true],
+      ]),
+    ]);
+    service.requestChanges(id, {
+      step: "implement",
+      submission: 1,
+      cause: "base_changed",
+      comments: ["main と競合しています"],
+    });
+    expect(service.get(id)?.task.misses).toEqual([]);
+    await drain(service);
+    const second = service.get(id)?.task;
+    expect(second?.gate).toEqual({ step: "implement", submission: 2 });
+    const sent = service.requestChanges(id, {
+      step: "implement",
+      submission: 2,
+      cause: "guardian_missed",
+      comments: ["失敗時のログが無い"],
+    });
+    expect(sent.misses).toMatchObject([
+      { reviewAt: second?.lastReview?.at, remarkIds: ["implement-2-1"] },
+    ]);
+    expect(
+      service
+        .get(id)
+        ?.activity.filter((e) => e.type === "ChangesRequested")
+        .slice(-2)
+        .map((e) => (e.payload as { cause?: string }).cause),
+    ).toEqual(["base_changed", "guardian_missed"]);
     activity.close();
   });
 
@@ -15568,6 +15716,8 @@ describe("統合レビュー（PBI-31）", () => {
       step: "integrate",
       submission: current(service, id),
       comments: ["エラーの表示が無い"],
+      // 原因が見逃しでも、不合格のレビューは見逃しに数えない（原因の省略で外れているのではないことを確かめる）
+      cause: "guardian_missed",
     });
     parent = service.get(id)?.task;
     expect(parent?.status).toBe("queued");
@@ -15600,6 +15750,7 @@ describe("統合レビュー（PBI-31）", () => {
     service.requestChanges(id, {
       step: "integrate",
       submission: current(service, id),
+      cause: "guardian_missed",
       comments: ["画面が崩れている"],
     });
     expect(service.get(id)?.task.misses).toEqual([

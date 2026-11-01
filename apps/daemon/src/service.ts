@@ -1979,6 +1979,8 @@ export class TaskService {
       submission: gate.submission,
       target,
       comments: pending.remarks,
+      // ゴールガーディアンが判断した原因（判断できなければ、原因を決めない。見逃しにしない。PBI-268）
+      ...(judgement.cause ? { cause: judgement.cause } : {}),
     });
   }
 
@@ -12285,8 +12287,9 @@ export class TaskService {
         throw new InvalidOperationError(message("gate.remarksRequired"));
       }
     }
-    // ゴールガーディアンが最終レビューで合格にした成果物を人間が差し戻したら、見逃しとして記録する
-    // 統合レビュー（PBI-31）で合格にしたものを差し戻した場合も、見逃しとして記録する
+    // ゴールガーディアンが最終レビューで合格にした成果物を、見逃しが原因として差し戻したら、見逃しとして記録する
+    // 統合レビュー（PBI-31）で合格にしたものを差し戻した場合も、見逃しとして記録する。base の変化による競合や、
+    // 新しく足した要望・方針の変更による差し戻し、原因を決めていない差し戻しは、見逃しにしない（PBI-268）
     const review =
       input.step === "implement"
         ? task.lastReview
@@ -12294,7 +12297,9 @@ export class TaskService {
           ? task.integration
           : undefined;
     const missed =
-      review?.passed && !task.misses.some((m) => m.reviewAt === review.at)
+      input.cause === "guardian_missed" &&
+      review?.passed &&
+      !task.misses.some((m) => m.reviewAt === review.at)
         ? [
             {
               actor: "sacty" as const,
@@ -12312,7 +12317,14 @@ export class TaskService {
         actor: "person",
         event: {
           type: "ChangesRequested",
-          payload: { step: input.step, target, round, remarks, overLimit },
+          payload: {
+            step: input.step,
+            target,
+            round,
+            remarks,
+            overLimit,
+            ...(input.cause ? { cause: input.cause } : {}),
+          },
         },
       },
     ]);

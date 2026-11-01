@@ -31,6 +31,7 @@ import {
   type ReviewComment,
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
+  ReworkCause,
   renderMessage,
   resumeNoteSections,
   SCOPE_VIEWPOINT,
@@ -4376,6 +4377,37 @@ export function buildStepPullRequestBodyParts(
 }
 
 /**
+ * 戻し先の判断と一緒に、差し戻しの原因も判断させる指示（PBI-268）。ゴールガーディアンの見逃しとして数えるのは、
+ * 確かめられたのに見逃したものだけにするため、見逃しではない原因を先に選べるようにする。
+ */
+const REWORK_CAUSE_LINES = [
+  "あわせて、この指摘が起きた原因を判断してください。",
+  "- guardian_missed：承認済みの要求要件・設計、リポジトリのコードやテストから、最終レビューのときに確かめられたはずの不備を見逃した",
+  "- new_request：承認済みの要求要件・設計に無い、人が新しく足した要望や、方針の変更である",
+  "- base_changed：ベースブランチが進んだこと（先にマージされた PR など）による競合・衝突で、成果物そのものの不備ではない",
+  "- undecidable（判断できない）：どれとも言い切れない",
+  "見逃しと決めつけず、新しい要望や競合が原因ではないかを先に確かめてください。",
+];
+
+const REWORK_ANSWER_FORMAT = (targets: readonly StepKey[]) =>
+  `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`;
+
+/**
+ * 要求要件の工程を省いたタスクで、原因の判断に渡す元の依頼（最終レビューが基準にしたタスクの目的）。
+ * 承認済みの要求要件があるタスクは、その要求要件が基準なので出さない（PBI-268）。
+ */
+function requestLines(task: Task): string[] {
+  if (task.approved.requirements) return [];
+  return [
+    "",
+    "--- タスク（目的。承認済みの要求要件が無いので、これが依頼の基準） ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+  ];
+}
+
+/**
  * 戻し先の判断の基準（PBI-266）。指摘が承認済みの前の工程の決定を変えるかで決め、変えないなら、その PR の工程
  * （own）で直す。理由の先頭に、どの決定を変える・変えないかを短く書かせる。
  */
@@ -4427,6 +4459,7 @@ export function buildReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
     ...reworkDecisionLines("実装"),
     ...approved,
+    ...requestLines(task),
     ...resumeNoteJudgeLines(task),
     ...(viewpoints.length > 0
       ? [
@@ -4441,10 +4474,12 @@ export function buildReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...REWORK_CAUSE_LINES,
+    "",
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`,
+    REWORK_ANSWER_FORMAT(targets),
     "```",
   ].join("\n");
 }
@@ -4485,6 +4520,7 @@ function buildStepReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
     ...reworkDecisionLines(name),
     ...approved,
+    ...requestLines(task),
     ...resumeNoteJudgeLines(task),
     "",
     `--- この PR の${name}（指摘の対象） ---`,
@@ -4502,10 +4538,12 @@ function buildStepReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...REWORK_CAUSE_LINES,
+    "",
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`,
+    REWORK_ANSWER_FORMAT(targets),
     "```",
   ].join("\n");
 }
@@ -4514,16 +4552,19 @@ function buildStepReworkPrompt(
 export function extractRework(
   output: string,
   targets: readonly StepKey[],
-): { target?: StepKey; reason: DaemonText } {
+): { target?: StepKey; cause?: ReworkCause; reason: DaemonText } {
   const found = lastJsonAnswer(
     output,
-    (value): { target?: StepKey; reason: string } | undefined => {
+    (value): { target?: StepKey; cause?: ReworkCause; reason: string } | undefined => {
       const v = headedObject(value, REWORK_HEADING) ?? {};
       const reason = text(v.reason);
       if (!reason) return undefined;
-      if (v.target === "undecidable") return { reason };
+      // 原因は、読めなければ（無い・undecidable・知らない値）無いものとする。見逃しにはしない
+      const cause = ReworkCause.safeParse(v.cause);
+      const withCause = cause.success ? { cause: cause.data } : {};
+      if (v.target === "undecidable") return { ...withCause, reason };
       const target = targets.find((t) => t === v.target);
-      return target ? { target, reason } : undefined;
+      return target ? { target, ...withCause, reason } : undefined;
     },
   );
   return found?.value ?? { reason: message("guardian.reworkUnreadable") };
