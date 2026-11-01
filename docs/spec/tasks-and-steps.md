@@ -949,6 +949,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - 実装の成果物のテストには「<ツール> が無く実行できず」を、PR の本文のテストの行には「一部を実行できず」と、ツールが無く差分が文書だけなので止めずに進めたことを添える。
     - ゴールガーディアンの指示（`buildFinalReviewPrompt`）には、ツールが無くても、実行できる検証と観点・指摘の判定を最後まで行うよう書く。
 
+  - 差分を取る間に人間が一時停止・中止を求めたとき：判定もツール不足の停止も記録せずに、使った分の費用を `FinalReviewFailed`（`verify.stoppedByPerson`）に記録し、一時停止・中止する。再開すると、最終レビューからやり直す。
   コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`apps/daemon/src/ci.ts`（`redactLog`・`redactUrlCredentials`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 再現の工程の後（PBI-29）：sacty は再現のテストを実行しない。
   再現のエージェントへの指示で、書いたテストをテストのコマンドで自分で実行し、不具合のために失敗することを確かめさせ、`sacty-reproduction` に `tests`・`reproduced`・`command`・`exitCode`・`output`（結果の抜粋）を書かせる（`extractReproduction`）。

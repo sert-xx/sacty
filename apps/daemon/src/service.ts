@@ -7585,8 +7585,32 @@ export class TaskService {
     let { missingCommands, ...review } = extractReview(false);
     // 差分が文書のファイルだけなら、ツールが無くて実行できなかった検証を止めずに人の確認へ回す（PBI-158）。実行される
     // 振る舞いの無い変更で、イメージを直しても検証の結果は変わらないため。コードなど文書でないファイルが1つでもあれば止める
-    if (missingCommands.length > 0 && (await this.changesOnlyDocuments(current, dir))) {
-      ({ missingCommands, ...review } = extractReview(true));
+    if (missingCommands.length > 0) {
+      const documentsOnly = await this.changesOnlyDocuments(current, dir);
+      // 差分を取る間に人間が止めたら、判定を記録しない（使った分の費用だけ記録する。一時停止は runNext の後始末で
+      // 記録し、再開すると最終レビューからやり直す）
+      if (this.stopRequested(task.id)) {
+        this.append(current, [
+          {
+            actor: "guardian",
+            event: {
+              type: "FinalReviewFailed",
+              payload: {
+                reason: "error",
+                message: message("verify.stoppedByPerson"),
+                agentId: agent.id,
+                ...agentSetting(agent),
+                runId,
+                usage: outcome.usage,
+                costUsd,
+                estimated,
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      if (documentsOnly) ({ missingCommands, ...review } = extractReview(true));
     }
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
     // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
