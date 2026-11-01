@@ -2177,9 +2177,15 @@ const ITEM_REASON_KEYS = ["reason", "message", "description", "evidence"] as con
 const NONE_ITEM =
   /^(none|n\/a|na|nil|null|no|false|なし|無し|ありません|該当なし|特になし|特にありません|[-ー—―–]+|environment\s*[:=]\s*(false|no))$/i;
 
+/** 末尾の句点・ピリオド・空白を除く（正規表現 `[。.\s]+$` は、長い空白列で二乗時間になるので、後ろから数える）。 */
+function withoutTrailingStops(value: string): string {
+  let end = value.length;
+  while (end > 0 && /[。.\s]/u.test(value.charAt(end - 1))) end--;
+  return value.slice(0, end);
+}
+
 /** 全角の英数字・記号（`ＮＯＮＥ`・`ｎ／ａ`）は半角にそろえてから、末尾の句点・空白を除いて見る。 */
-const isNoneItem = (item: string) =>
-  NONE_ITEM.test(item.normalize("NFKC").replace(/[。.\s]+$/u, ""));
+const isNoneItem = (item: string) => NONE_ITEM.test(withoutTrailingStops(item.normalize("NFKC")));
 
 /** 失敗が「無い」ことを表す文字列（`otherFailures`。止める側の欄なので、`no`・`false` は含めず、狭くする）。 */
 const NO_FAILURE_ITEM = /^(none|n\/a|なし)$/i;
@@ -2306,7 +2312,7 @@ const reportedItems = (v: unknown): string[] => {
  */
 function hasReportedFailure(v: unknown): boolean {
   if (typeof v === "string")
-    return text(v) !== "" && !NO_FAILURE_ITEM.test(text(v).replace(/[。.\s]+$/u, ""));
+    return text(v) !== "" && !NO_FAILURE_ITEM.test(withoutTrailingStops(text(v)));
   if (typeof v === "number") return v !== 0;
   if (v === true) return true;
   if (Array.isArray(v)) return v.some(hasReportedFailure);
@@ -3346,8 +3352,16 @@ export function extractIntegrationReview(
 /** 表のセルに入れられるよう、改行と縦棒を置き換える。 */
 const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
 
-/** 改行を空白にして1行にする。 */
-const flat = (value: string) => value.replace(/\s*\r?\n\s*/g, " ").trim();
+/**
+ * 改行を空白にして1行にする（改行の前後の空白と、空行は1つの空白にまとめる）。改行で分けて行ごとに整える：
+ * 改行の無い長い空白列に `\s*\r?\n\s*` を当てると、始点ごとに空白列を読み直して二乗時間になる。
+ */
+const flat = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ");
 
 /** 1行にして、max 文字までにする（超えたら末尾に「…」）。 */
 function shortText(value: string, max: number): string {
@@ -3524,20 +3538,33 @@ function leadOf(text: string, max: number): string {
   return stop >= Math.floor(max / 3) ? cut.slice(0, stop + 1) : `${cut}…`;
 }
 
+/** コードブロックの開始フェンス（行頭の ``` か ~~~ を3つ以上）。文字と長さを覚えておく。 */
+type CodeFence = { char: string; size: number };
+
+function openingFence(trimmed: string): CodeFence | undefined {
+  const opened = trimmed.match(/^(`{3,}|~{3,})/);
+  return opened?.[1] ? { char: opened[1].charAt(0), size: opened[1].length } : undefined;
+}
+
+/** 終了フェンスか。開始と同じ文字だけの行で、開始以上の長さのもの（4文字で開いたコードの中の3文字は、終わりではない）。 */
+function closesFence(trimmed: string, fence: CodeFence): boolean {
+  return trimmed.length >= fence.size && trimmed === fence.char.repeat(trimmed.length);
+}
+
 /** 文章の最初の段落（見出し・表・コードブロックを除く）の頭。無ければ空。 */
 function leadParagraph(text: string, max = BODY_LEAD_MAX): string {
   const found: string[] = [];
-  let fence: string | undefined;
+  let fence: CodeFence | undefined;
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const trimmed = line.trim();
-    const opened = trimmed.match(/^(`{3,}|~{3,})/);
     if (fence) {
-      if (opened && trimmed.startsWith(fence)) fence = undefined;
+      if (closesFence(trimmed, fence)) fence = undefined;
       continue;
     }
+    const opened = openingFence(trimmed);
     if (opened) {
       if (found.length > 0) break;
-      fence = opened[1]?.[0]?.repeat(3);
+      fence = opened;
       continue;
     }
     if (trimmed === "") {
@@ -3572,21 +3599,30 @@ const PROGRESS_SENTENCE_MAX = 100;
  */
 export function withoutProgressReport(text: string): string {
   const out: string[] = [];
-  let fence: string | undefined;
+  let fence: CodeFence | undefined;
+  // コードブロックの外だけ、空行が続くのを1行にまとめる（コードの中の空行は、そのまま残す）
+  let blankRun = 0;
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const trimmed = line.trim();
-    const opened = trimmed.match(/^(`{3,}|~{3,})/);
     if (fence) {
-      if (opened && trimmed.startsWith(fence)) fence = undefined;
+      if (closesFence(trimmed, fence)) fence = undefined;
       out.push(line);
       continue;
     }
+    const opened = openingFence(trimmed);
     if (opened) {
-      fence = opened[1]?.[0]?.repeat(3);
+      fence = opened;
+      blankRun = 0;
       out.push(line);
+      continue;
+    }
+    if (line === "") {
+      blankRun++;
+      if (blankRun <= 1) out.push(line);
       continue;
     }
     if (trimmed === "" || trimmed.startsWith("|") || trimmed.startsWith("#")) {
+      blankRun = 0;
       out.push(line);
       continue;
     }
@@ -3599,13 +3635,15 @@ export function withoutProgressReport(text: string): string {
         PROGRESS_STATE.test(t)
       );
     });
-    if (kept.length === sentences.length) out.push(line);
-    else if (kept.join("").trim() !== "") out.push(kept.join("").trimEnd());
+    if (kept.length === sentences.length) {
+      blankRun = 0;
+      out.push(line);
+    } else if (kept.join("").trim() !== "") {
+      blankRun = 0;
+      out.push(kept.join("").trimEnd());
+    }
   }
-  return out
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return out.join("\n").trim();
 }
 
 /** PR の本文に載せる、実装のエージェントの説明（作業の経過の報告を除いたもの）。 */

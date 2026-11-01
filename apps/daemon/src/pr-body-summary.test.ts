@@ -387,6 +387,75 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     expect(withoutProgressReport(topic)).toBe(topic);
   });
 
+  it("コードブロックは、開始と同じ文字で十分な長さの終了フェンスまで続く。中の文・空行は変えない", () => {
+    // 4文字で開いたコードの中の3文字は終わりではない（中の「コミット・プッシュはしていません。」を消さない）
+    const outer = [
+      "変更しました。",
+      "````md",
+      "```",
+      "コミット・プッシュはしていません。",
+      "```",
+      "",
+      "",
+      "",
+      "コミット・プッシュはしていません。",
+      "````",
+      "コミット・プッシュはしていません。",
+      "確かめました。",
+    ].join("\n");
+    expect(withoutProgressReport(outer)).toBe(
+      [
+        "変更しました。",
+        "````md",
+        "```",
+        "コミット・プッシュはしていません。",
+        "```",
+        "",
+        "",
+        "",
+        "コミット・プッシュはしていません。",
+        "````",
+        "確かめました。",
+      ].join("\n"),
+    );
+    // ~~~ の中の ``` は終わりではない。info string 付きの行や短いフェンスも終わりではない
+    const tilde =
+      "~~~\n```\nコミットはしていません。\n```json\n~~~\nコミットはしていません。\n終わり。";
+    expect(withoutProgressReport(tilde)).toBe(
+      "~~~\n```\nコミットはしていません。\n```json\n~~~\n終わり。",
+    );
+    // コードブロックの外の続く空行は1行にまとめる
+    expect(withoutProgressReport("a\n\n\n\nb\n\nコミットはしていません。\n\nc")).toBe(
+      "a\n\nb\n\nc",
+    );
+  });
+
+  it("結論の「変更」の要約も、4文字で開いたコードの中の3文字のフェンスで終わらない", () => {
+    const body = buildPullRequestBody(
+      task({
+        outputs: {
+          implement: "````\n```\n中の文\n```\n````\n\nキャンセル API を足しました。",
+        },
+      }),
+    );
+    expect(body).toContain("- 変更：キャンセル API を足しました。");
+    expect(body).not.toContain("- 変更：中の文");
+  });
+
+  it("改行の無い長い空白列でも、線形時間で本文を作る", () => {
+    // 文の途中の長い空白（行の端ではないので、trim では消えない）
+    const blanks = " ".repeat(100_000);
+    const started = Date.now();
+    const body = buildPullRequestBody(
+      task({
+        outputs: { implement: `x${blanks}y` },
+        lastReview: review({ summary: `合格。p${blanks}q` }),
+      }),
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(body).toContain("- 変更：x");
+  });
+
   it("報告だけの説明は「変更」の節ごと出さない。空でも壊れない", () => {
     const body = buildPullRequestBody(
       task({ outputs: { implement: "コミット・プッシュはしていません。" } }),
