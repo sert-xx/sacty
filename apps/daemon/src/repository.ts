@@ -496,13 +496,31 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     if (gitDir) await cp(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
     // PR に足すファイルを、PR のコミットの内容にする（作業領域にあった同じパスのファイルは、PR には入らないので消す）
     if (include && gitDir) {
+      // 写しの .git のインデックスにも、同じ内容を反映する（`git ls-files` で追跡ファイルを列挙する検査が、PR と同じファイルを見るように）
+      const indexEnv = isolatedEnv(join(outDir, ".git", "index"));
+      const inIndex = (args: string[]) =>
+        git(
+          args[0] ?? "git",
+          ["--git-dir", join(outDir, ".git"), "--work-tree", outDir, ...SAFE_CONFIG, ...args],
+          indexEnv,
+        );
       for (const path of include.paths) {
         if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
-        const body = await this.readFile(gitDir, include.commit, path);
+        const blob = await this.readBlob(gitDir, include.commit, path);
         const target = await this.clearPath(outDir, path);
-        if (body === undefined) continue;
+        // 置き換え・削除に備えて、そのパス（ディレクトリだったときは、その下も）のインデックスの項目を外す
+        await inIndex(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", path]);
+        if (blob === undefined) continue;
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, body);
+        // 読んだバイト列をそのまま書く（UTF-8 の BOM も、コミットのとおりに残す）
+        await writeFile(target, blob.bytes);
+        await inIndex([
+          "update-index",
+          "--add",
+          "--replace",
+          "--cacheinfo",
+          `${blob.mode},${blob.object},${path}`,
+        ]);
       }
     }
   }
@@ -950,6 +968,19 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   async readFile(gitDir: string, commit: string, path: string) {
+    const blob = await this.readBlob(gitDir, commit, path);
+    return blob && new TextDecoder("utf-8", { fatal: true }).decode(blob.bytes);
+  }
+
+  /**
+   * readFile と同じ検査（通常のファイルだけ・大きさの上限・テキスト）をして、内容をそのままのバイト列（UTF-8 の BOM も
+   * 残す）と、ファイルの種類・オブジェクトの ID で返す。無ければ undefined。
+   */
+  private async readBlob(
+    gitDir: string,
+    commit: string,
+    path: string,
+  ): Promise<{ bytes: Buffer; mode: string; object: string } | undefined> {
     if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
     if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
     const env = isolatedEnv("/dev/null");
@@ -987,7 +1018,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       throw new MessageError(message("git.fileNotText", { path }));
     }
     if (text.includes("\0")) throw new MessageError(message("git.fileNotText", { path }));
-    return text;
+    return { bytes, mode: found.mode, object: found.object };
   }
 
   async readLink(gitDir: string, commit: string, path: string) {
