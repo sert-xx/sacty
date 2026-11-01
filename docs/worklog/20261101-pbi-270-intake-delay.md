@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-270
-- PR: #266
+- PR: #267
 - ブランチ: feat/issue-270-intake-delay
 - 関係する ADR: [GitHub の時刻がこの機械の時計とずれても取り込みが遅れないよう、PR の指摘の待ち時間と検索の読んだ位置を、この機械の時計で抑える](../adr/20261101-1352-intake-times-bounded-by-local-clock.md)
 
