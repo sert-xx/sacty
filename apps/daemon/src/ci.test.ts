@@ -55,9 +55,17 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
   });
 
   it("ユーザー情報に引用符を含む URL も、認証情報とクエリを残さない", () => {
-    // 架空の値。new URL はユーザー情報の ' と " を受け付ける
-    for (const quote of ["'", '"']) {
-      const text = `clone https://alice:p${quote}FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123 failed`;
+    // 架空の値。new URL はユーザー情報の ' と " を受け付ける。地の文の " は JSON の文字列の区切りと見なすので、" は JSON の
+    // 文字列の中で確かめる
+    for (const [quote, text] of [
+      ["'", "clone https://alice:p'FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123 failed"],
+      [
+        '"',
+        JSON.stringify({
+          cmd: 'clone https://alice:p"FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123 failed',
+        }),
+      ],
+    ] as const) {
       for (const out of [
         redactLog(text, []),
         redactUrlCredentials(text, { queryAndFragment: true }),
@@ -85,7 +93,6 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     for (const url of [
       "https://example.com/path?session='FAKE_WHOLE_789",
       "https://example.com/path#'FAKE_WHOLE_789",
-      'https://example.com/path?a=1&session="FAKE_WHOLE_789',
       "https://example.com/pa'th?session=FAKE_WHOLE_789",
       "https://example.com/path?session=<FAKE_WHOLE_789>",
     ]) {
@@ -94,6 +101,13 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       expect(out, url).toContain("example.com/");
       expect(out, url).toMatch(/ done$/);
     }
+    // " は、JSON の文字列の中なら越えて伏せる
+    const json = JSON.stringify({
+      cmd: 'GET https://example.com/path?a=1&session="FAKE_WHOLE_789 done',
+    });
+    const hidden = redactUrlCredentials(json, { queryAndFragment: true });
+    expect(hidden).not.toContain("FAKE_WHOLE_789");
+    expect(JSON.parse(hidden)).toEqual({ cmd: "GET https://example.com/path?REDACTED done" });
     // クエリ・フラグメントの無い URL は、引用符で終える（引用符の後ろを変えない）
     const quoted = "see 'https://example.com/a','b' and 'https://example.org/x?k=v' ok";
     expect(redactUrlCredentials(quoted, { queryAndFragment: true })).toBe(
@@ -110,7 +124,7 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       "x https://alice:FAKE\\'PW_321@example.com/p",
       "x https://alice:FAKE\\PW_321@example.com/p",
       "x HTTPS://FAKE\\PW_321@example.com",
-      'x HTTPS://FAKE\\"PW_321@example.com',
+      'x {"url":"HTTPS://FAKE\\"PW_321@example.com"}',
     ]) {
       for (const out of [
         redactLog(text, []),
@@ -123,6 +137,58 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     // パスの `@` は、ユーザー情報と見なさない
     const plain = "see https://registry.example.com/@acme/pkg and https://example.com/users/@alice";
     expect(redactLog(plain, [])).toBe(plain);
+  });
+
+  it("JSON の構文を壊さない（URL とメールアドレスが別のフィールドにあっても、伏せる範囲がフィールドの外へ出ない）", () => {
+    const values: unknown[] = [
+      "https://example.com",
+      "a@example.com",
+      "https://example.com/p?x=1#f",
+      "see 'https://example.com' now",
+      "https://alice:FAKE_PW_654@example.com/x",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEow",
+      'token: abc"def',
+      "C:\\path\\x",
+      null,
+      true,
+      12345678,
+      ["https://example.com", "a@example.com"],
+      { url: "https://example.com/?k=v", mail: "a@example.com" },
+    ];
+    for (const key of ["summary", "token", "password", "authorization"]) {
+      for (const a of values) {
+        for (const b of values) {
+          const value = { [key]: a, reason: b };
+          // そのまま・整形・エスケープした JSON（文字列の中の JSON）
+          for (const text of [
+            JSON.stringify(value),
+            JSON.stringify(value, null, 2),
+            JSON.stringify(JSON.stringify(value)),
+            JSON.stringify({ nested: JSON.stringify(value) }),
+          ]) {
+            for (const hidden of [
+              redactLog(text, []),
+              redactUrlCredentials(redactLog(text, []), { queryAndFragment: true }),
+            ]) {
+              expect(() => JSON.parse(hidden), hidden).not.toThrow();
+              expect(hidden).not.toContain("FAKE_PW_654");
+            }
+          }
+        }
+      }
+    }
+    // 秘密情報の無いフィールドは変えない
+    const plain = JSON.stringify({ summary: "https://example.com", reason: "a@example.com" });
+    expect(redactLog(plain, [])).toBe(plain);
+    // 引用符の無い値は、JSON の文字列にして伏せる（null・true・false は残す）
+    expect(JSON.parse(redactLog('{"token":12345678,"secret":null,"password":true}', []))).toEqual({
+      token: "[REDACTED]",
+      secret: null,
+      password: true,
+    });
+    // 終わりの行が無い秘密鍵は、文字列の末尾まで伏せる
+    const key = JSON.stringify({ a: "-----BEGIN RSA PRIVATE KEY-----\nMIIEow", b: "x" });
+    expect(JSON.parse(redactLog(key, []))).toEqual({ a: "[REDACTED]", b: "x" });
   });
 
   it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
@@ -138,9 +204,17 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       "https://a".repeat(200_000),
       `https://${"@".repeat(2_000_000)}`,
       `https://${"x'".repeat(1_000_000)}`,
+      // JSON の文字列と、その区切り
+      '"'.repeat(2_000_000),
+      `{${'"k":"https://a","r":"a@b",'.repeat(80_000)}`,
+      `"${'x\\"'.repeat(700_000)}`,
+      JSON.stringify(
+        JSON.stringify(JSON.stringify(Array(30_000).fill({ u: "https://a?b", m: "a@b" }))),
+      ),
     ]) {
       const started = performance.now();
       redactUrlCredentials(input, { queryAndFragment: true });
+      redactLog(input, []);
       expect(performance.now() - started, input.slice(0, 8)).toBeLessThan(1_000);
     }
   });
