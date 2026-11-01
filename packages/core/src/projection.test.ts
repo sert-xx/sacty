@@ -2782,6 +2782,15 @@ describe("ベースブランチの取り込み", () => {
     expect(paused.status).toBe("paused");
     expect(canOverrideVerification(paused)).toBe(false);
     expect(canOverrideVerification({ ...paused, verifyFeedback: undefined })).toBe(true);
+    // 取り込みで新しく競合したもの（fresh）は、検証に通らなかった回数に数えない
+    const fresh = project([
+      ...base,
+      ev("t1", { type: "BaseConflictsRemained", payload: { files: ["README.md"], fresh: true } }),
+    ]).get("t1");
+    expect(fresh?.status).toBe("queued");
+    expect(fresh?.verification).toBeUndefined();
+    expect(fresh?.verifyFailures).toBe(0);
+    expect(fresh?.verifyFeedback).toEqual({ kind: "merge", files: ["README.md"] });
     // 検証の待ちでなければ記録できない
     expect(() =>
       project([

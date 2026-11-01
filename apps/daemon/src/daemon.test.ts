@@ -4112,6 +4112,39 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の実行の間にベースブランチが進んで新しく競合したのは、検証に通らなかった回数に数えず、競合したファイルを渡してやり直す", async () => {
+      const repos = new FakeRepos();
+      repos.remote.main = "base123";
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id); // 実装（このときは、ベースブランチは進んでいない）
+      expect(repos.merges).toEqual([]);
+      // 実装の実行の間に、ベースブランチが進んで、競合した
+      repos.remote.main = tip;
+      repos.mergeResult = { status: "conflicted", conflicts: conflictedFiles };
+      repos.markers = [...conflictedFiles];
+      const runs = executor.calls.length;
+      await service.runNext(id);
+      expect(executor.calls.length).toBe(runs);
+      const fresh = service.get(id)?.task as Task;
+      expect(fresh.status).toBe("queued");
+      expect(fresh.verifyFailures).toBe(0);
+      expect(fresh.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+      expect(service.get(id)?.activity.at(-1)?.payload).toMatchObject({ fresh: true });
+
+      // やり直しで目印を消し忘れたら、そのときは数える
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain("README.md");
+      await service.runNext(id);
+      const again = service.get(id)?.task as Task;
+      expect(again.verifyFailures).toBe(1);
+      expect(again.status).toBe("queued");
+      expect(service.get(id)?.activity.at(-1)?.payload).not.toHaveProperty("fresh");
+      activity.close();
+    });
+
     it("ベースブランチの最新を取得できなければ、実装を実行せず、理由を示して止める", async () => {
       const repos = withBaseMoved();
       repos.fetchBranchFail = "network is down";

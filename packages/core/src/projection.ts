@@ -1411,7 +1411,14 @@ export function applyEvent(
           "the implementation is not waiting for verification",
         );
       }
-      failVerification(task, { kind: "merge", files: event.payload.files });
+      if (event.payload.fresh) {
+        // 取り込みで新しく競合した（エージェントの誤りではない）ので、検証に通らなかった回数には数えない
+        task.verification = undefined;
+        task.verifyFeedback = { kind: "merge", files: event.payload.files };
+        task.status = "queued";
+      } else {
+        failVerification(task, { kind: "merge", files: event.payload.files });
+      }
       break;
 
     case "TestsRun": {

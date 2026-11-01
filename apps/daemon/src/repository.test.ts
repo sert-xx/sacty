@@ -736,28 +736,74 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       ).toEqual([path, "pay.ts"]);
     });
 
-    it("競合の目印は、始めと終わりの行がそろったときだけ検出する。シンボリックリンク・無いファイル・作業領域の外は見ない", async () => {
-      const { workspace, clone } = await prepareMerge();
+    it("競合の目印は、ID のラベルが付いた始めの行か終わりの行が1つでも残っていれば検出する（消し忘れも）。ラベルの無い似た行や単独の =======、シンボリックリンク・無いファイル・作業領域の外は見ない", async () => {
+      const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      writeFileSync(join(clone, "README.md"), "# app\n\n1. one\n2. two (mine)\n3. three\n");
+      const tip = advanceMain(origin, "README.md", "# app\n\n1. one\n2. two (theirs)\n3. three\n");
+      await workspace.fetchBranch(gitDir, "main");
+      await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip });
+      const conflicted = readFileSync(join(clone, "README.md"), "utf8");
+      const lines = conflicted.split("\n");
+      const start = lines.findIndex((l) => l.startsWith("<<<<<<< "));
+      const sep = lines.indexOf("=======");
+      const end = lines.findIndex((l) => l.startsWith(">>>>>>> "));
+      expect([start, sep, end].every((i) => i >= 0)).toBe(true);
+      const without = (...drop: number[]) => lines.filter((_, i) => !drop.includes(i)).join("\n");
+      const detect = async (text: string) => {
+        writeFileSync(join(clone, "README.md"), text);
+        return workspace.conflictMarkers(clone, ["README.md"]);
+      };
+      // 消さずに残っている・始めの行だけ残っている・終わりの行だけ残っている
+      expect(await detect(conflicted)).toEqual(["README.md"]);
+      expect(await detect(without(sep, end))).toEqual(["README.md"]);
+      expect(await detect(without(start, sep))).toEqual(["README.md"]);
+      // 始めと終わりの行を消せば、解消している（単独の ======= は、Markdown の見出しの下線と区別できないので見ない）
+      expect(await detect(without(start, end))).toEqual([]);
+      expect(await detect(without(start, sep, end))).toEqual([]);
+
+      // ラベルの無い似た行や、見出しの下線は目印にしない
       writeFileSync(join(clone, "heading.md"), "Title\n=======\n\ntext\n");
       writeFileSync(
-        join(clone, "marked.txt"),
-        "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n",
+        join(clone, "similar.md"),
+        "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\n<<<<<<< ours\n>>>>>>> theirs\n",
       );
-      writeFileSync(join(clone, "half.txt"), "<<<<<<< only the start\n");
       const outside = join(dir, "outside.txt");
-      writeFileSync(outside, "<<<<<<< a\n>>>>>>> b\n");
+      writeFileSync(outside, `<<<<<<< ${"a".repeat(40)}\n>>>>>>> ${"b".repeat(40)}\n`);
       symlinkSync(outside, join(clone, "link.txt"));
       expect(
         await workspace.conflictMarkers(clone, [
           "heading.md",
-          "marked.txt",
-          "half.txt",
+          "similar.md",
           "link.txt",
           "missing.txt",
           "../outside.txt",
         ]),
-      ).toEqual(["marked.txt"]);
-      expect(await workspace.conflictMarkers(join(dir, "missing"), ["marked.txt"])).toEqual([]);
+      ).toEqual([]);
+      expect(await workspace.conflictMarkers(join(dir, "missing"), ["README.md"])).toEqual([]);
+    });
+
+    it("ディレクトリとファイルの名前が衝突して git が避けた名前（<名前>~<ID>）は、残っているうちは解消していないものとする", async () => {
+      const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      // タスクは docs というファイルを足し、別のタスクは docs/ ディレクトリを足してマージした
+      writeFileSync(join(clone, "docs"), "mine\n");
+      mkdirSync(join(origin, "docs"));
+      const tip = advanceMain(origin, "docs/a.md", "theirs\n");
+      await workspace.fetchBranch(gitDir, "main");
+      const merged = await workspace.mergeBase({
+        dir: clone,
+        gitDir,
+        base: baseCommit,
+        target: tip,
+      });
+      expect(merged.status).toBe("conflicted");
+      const renamed = merged.conflicts.filter((c) => /~[0-9a-f]{40,}$/.test(c));
+      expect(renamed).toHaveLength(1);
+      expect(existsSync(join(clone, renamed[0] as string))).toBe(true);
+      // 避けた名前のファイルが残っている間は、解消していない（目印は無くても）
+      expect(await workspace.conflictMarkers(clone, merged.conflicts)).toEqual(renamed);
+      // 消せば解消（ディレクトリ側の docs は、残す側として決めた）
+      rmSync(join(clone, renamed[0] as string));
+      expect(await workspace.conflictMarkers(clone, merged.conflicts)).toEqual([]);
     });
 
     it("取り込むものが無ければ何もせず、作業領域の変更は消えない。ベースブランチが続けて進んだら、前に取り込んだ先頭を起点に取り込む", async () => {
