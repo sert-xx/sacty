@@ -2959,6 +2959,249 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
   });
 });
 
+describe("差し戻しは前回の成果物を元に、指摘の所だけ直す（PBI-265）", () => {
+  const task = (extra: Partial<Task> = {}): Task =>
+    ({
+      id: "t-1",
+      title: "予約",
+      body: "名前を変える",
+      steps: ["requirements", "design", "implement"].map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: {
+        requirements: { output: "# 承認済みの要求要件", submission: 1 },
+      },
+      testViewpoints: [{ id: "TV-1", title: "再試行", input: "失敗", expected: "再試行" }],
+      reproductionTests: [],
+      testCommand: "npm test",
+      proposals: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const remark = (id: string, step: "requirements" | "design", round: number, text: string) => ({
+    id,
+    step,
+    round,
+    text,
+    voided: false,
+  });
+  const PARTIAL =
+    "--- 差し戻しの直し方（前回の要求要件を元に、指摘に関わる所だけを書き換える） ---";
+  // 前回の提出のセルフレビューは通っている（記録あり）
+  const PASSED = { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "" };
+  const redo = (extra: Partial<Task> = {}) =>
+    task({
+      outputs: { requirements: "# 要求要件 v1\n\n- R-1 …\n- R-2 …" },
+      selfReviews: { requirements: PASSED },
+      remarks: [remark("requirements-1-1", "requirements", 1, "R-2 の答えは 201 にする")],
+      ...extra,
+    } as Partial<Task>);
+
+  it("要求要件の差し戻しに、前回の下書きと指摘を渡し、指摘に関わる所だけを書き換えさせる", () => {
+    const prompt = buildPrompt(redo(), "requirements");
+    expect(prompt).toContain("--- 前回の下書き ---\n# 要求要件 v1\n\n- R-1 …\n- R-2 …");
+    expect(prompt).toContain("- [requirements-1-1] R-2 の答えは 201 にする");
+    expect(prompt).toContain(PARTIAL);
+    expect(prompt).toContain("最初から書き直さない");
+    expect(prompt).toContain("一字一句そのまま保つ");
+    // 本文に書かないとしたものが前回の下書きに残っていれば、関係の無い所でも取り除く（PBI-263 との整合）
+    expect(prompt).toContain("関係の無い所でも取り除く");
+    expect(prompt.indexOf("--- 要求要件の本文に書くもの ---")).toBeLessThan(
+      prompt.indexOf(PARTIAL),
+    );
+    expect(prompt).toContain("今回：requirements-1-1");
+    // 成果物の全体を出し直す（直した所だけを返さない）
+    expect(prompt).toContain("要求要件の全体を出し直す（直した所だけを返さない）");
+    // 前回の下書きより後ろ（指摘のあと）に直し方が来る
+    expect(prompt.indexOf("--- 前回の下書き ---")).toBeLessThan(prompt.indexOf(PARTIAL));
+  });
+
+  it("初回と、指摘の無いやり直しには、直し方の節を出さない", () => {
+    expect(buildPrompt(task(), "requirements")).not.toContain("--- 差し戻しの直し方");
+    expect(buildPrompt(task(), "requirements")).not.toContain("小さい指摘");
+    // 要求要件が変わっただけの設計のやり直し（設計への指摘が無い）
+    const redesign = task({ outputs: { design: "# 設計 v1" } } as Partial<Task>);
+    const prompt = buildPrompt(redesign, "design");
+    expect(prompt).toContain("# 設計 v1");
+    expect(prompt).not.toContain("--- 差し戻しの直し方");
+    expect(prompt).not.toContain("小さい指摘");
+  });
+
+  it("指摘が複数の節にまたがる・方針を変えるときの決まりを書く", () => {
+    const prompt = buildPrompt(redo(), "requirements");
+    expect(prompt).toContain("関わる節をすべて直す");
+    expect(prompt).toContain("方針に関わる所を、全体に及ぶまで直す。方針に関わらない所は保つ");
+  });
+
+  it("質の基準（確認したいこと・EARS・ID・分量）は、作り直しでも守らせる", () => {
+    const prompt = buildPrompt(redo(), "requirements");
+    expect(prompt).toContain("冒頭の「確認したいこと」「既定で決めたこと」の節");
+    expect(prompt).toContain("ID（R-n。付け直さない。消した ID は使い回さない）");
+    expect(prompt).toContain(
+      "その答えを関わる所に反映し、その項目を「確認したいこと」から外す。直した結果、人間が決めることが新しく出たら、「確認したいこと」に足す",
+    );
+    // 初回と同じ決まりが、指示に残っている
+    expect(prompt).toContain("受け入れ条件を EARS");
+    expect(prompt).toContain("「確認したいこと」：人間が決めないと確定できないこと");
+    expect(prompt).toContain(
+      "--- 要求要件の分量（初版は最小限にし、詳しさは人間の差し戻しで足す） ---",
+    );
+    // 指摘ごとの対応の報告は、これまでどおり付けさせる
+    expect(prompt).toContain('{"sacty-responses"');
+  });
+
+  it("差し戻しが2回目以降なら、今回の指摘と前の差し戻しへの対応を分ける", () => {
+    const prompt = buildPrompt(
+      redo({
+        remarks: [
+          remark("requirements-1-1", "requirements", 1, "異常系を詳しく"),
+          remark("requirements-2-1", "requirements", 2, "R-2 の答えは 201 にする"),
+        ],
+      }),
+      "requirements",
+    );
+    expect(prompt).toContain("今回：requirements-2-1）");
+    expect(prompt).not.toContain("今回：requirements-1-1");
+    expect(prompt).toContain(
+      "前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている",
+    );
+    // 無効にした指摘は数えない
+    const voided = buildPrompt(
+      redo({
+        remarks: [
+          { ...remark("requirements-1-1", "requirements", 1, "古い指摘"), voided: true },
+          remark("requirements-2-1", "requirements", 2, "R-2 の答えは 201 にする"),
+        ],
+      }),
+      "requirements",
+    );
+    expect(voided).not.toContain("前の差し戻しの指摘（今回の指摘より前のもの）");
+    expect(voided).toContain("今回：requirements-2-1）");
+  });
+
+  it("セルフレビューは、範囲を直した所に絞り、小さい指摘なら回数を初回を含めて 2 回までにする", () => {
+    const prompt = buildPrompt(redo(), "requirements");
+    expect(prompt).toContain(
+      "前回の下書きとの差分と、その直しが直接必要にした既存の箇所を、レビューの範囲にする",
+    );
+    expect(prompt).toContain(
+      "直す所が 2 か所以内（「確認したいこと」の項目と、その答えを反映する所は、まとめて1か所と数える）",
+    );
+    expect(prompt).toContain(
+      "小さい指摘：初回のレビューで must が無ければ、そこで提出する。must があれば直して再レビューし、回数の上限は初回を含めて 2 回",
+    );
+    expect(prompt).toContain(
+      "小さくない指摘（直す所が 2 か所を超える、または方針を変える）：上の回数の上限のとおり（初回を含めて最大 5 回）",
+    );
+    expect(prompt).toContain("判断に迷うときは、小さくない指摘として進める");
+    // 通常の指示と報告の形は変わらない
+    expect(prompt).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+    expect(prompt).toContain('{"sacty-self-review": {"rounds": 2, "passed": true');
+    // 初回の提出には、この決まりを出さない
+    expect(buildPrompt(task(), "requirements")).not.toContain("初回のレビューで must が無ければ");
+  });
+
+  it("前回のセルフレビューが未合格・記録なしなら、直し方は絞るが、セルフレビューは通常どおり全体を見る", () => {
+    for (const selfReviews of [
+      { requirements: { ...PASSED, passed: false, remaining: ["R-3 が曖昧"] } },
+      { requirements: null },
+      {},
+    ]) {
+      const prompt = buildPrompt(redo({ selfReviews } as Partial<Task>), "requirements");
+      expect(prompt).toContain(PARTIAL);
+      expect(prompt).not.toContain("初回のレビューで must が無ければ");
+      expect(prompt).not.toContain("前回の下書きとの差分と、その直しが直接必要にした既存の箇所");
+      expect(prompt).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+    }
+  });
+
+  it("対応済みの設計の指摘が残っていても、上流の変更による設計の再実行は差し戻しの直しにしない", () => {
+    const rerun = task({
+      outputs: { design: "# 設計 v1\n\n## 処理の流れ\n…" },
+      remarks: [
+        {
+          ...remark("design-1-1", "design", 1, "リトライの間隔を 5 秒にする"),
+          response: "5 秒にした",
+          respondedIn: 1,
+          submittedIn: 1,
+        },
+        // 回答が欠けた指摘も、提出済みなら今回の差し戻しではない
+        {
+          ...remark("design-1-2", "design", 1, "ログを足す"),
+          submittedIn: 1,
+        },
+      ],
+      selfReviews: { design: PASSED },
+    } as Partial<Task>);
+    const prompt = buildPrompt(rerun, "design");
+    expect(prompt).not.toContain("--- 差し戻しの直し方");
+    expect(prompt).not.toContain("一字一句そのまま保つ");
+    expect(prompt).not.toContain("初回のレビューで must が無ければ");
+    // 前回の下書きは、最新の要求要件に合わせ直させるために渡す
+    expect(prompt).toContain("要求要件が変わった場合は、最新の要求要件に合わせてください");
+    // 同じ状態でも、未対応の新しい差し戻しがあれば、差し戻しの直しになる
+    const again = task({
+      ...rerun,
+      remarks: [...rerun.remarks, remark("design-2-1", "design", 2, "間隔を 3 秒にする")],
+    } as Partial<Task>);
+    const promptAgain = buildPrompt(again, "design");
+    expect(promptAgain).toContain("今回：design-2-1）");
+  });
+
+  it("設計の差し戻しも同じ。テスト観点は全件を出し直させ、ID の付け直しは sacty に任せる", () => {
+    const design = task({
+      outputs: { design: "# 設計 v1\n\n## 処理の流れ\n…" },
+      remarks: [remark("design-1-1", "design", 1, "リトライの間隔を 5 秒にする")],
+      selfReviews: { design: PASSED },
+    } as Partial<Task>);
+    const prompt = buildPrompt(design, "design");
+    expect(prompt).toContain("# 設計 v1");
+    expect(prompt).toContain("- [TV-1] 再試行");
+    expect(prompt).toContain(
+      "--- 差し戻しの直し方（前回の設計とテスト観点を元に、指摘に関わる所だけを書き換える） ---",
+    );
+    expect(prompt).toContain("今回：design-1-1");
+    expect(prompt).toContain("節の選び方・テスト観点の書き方");
+    expect(prompt).toContain("テスト観点は、直さないものも含めて全件を出し直してください");
+    expect(prompt).toContain("設計とテスト観点の全体を出し直す");
+    expect(prompt).toContain("初回を含めて 2 回");
+    // 設計に EARS の決まりは出さない
+    expect(prompt).not.toContain("ID（R-n");
+  });
+
+  it("前回の下書きが読めない（空）ときは、元にせず指摘に対応して書き直し、セルフレビューは通常どおりにする", () => {
+    for (const output of ["", "  \n "]) {
+      const prompt = buildPrompt(
+        redo({ outputs: { requirements: output } } as Partial<Task>),
+        "requirements",
+      );
+      expect(prompt).toContain("--- 差し戻しの直し方（前回の要求要件が読めません） ---");
+      expect(prompt).toContain(
+        "元にできないので、人間の指摘にすべて対応するように、要求要件を書き直す",
+      );
+      expect(prompt).not.toContain(PARTIAL);
+      expect(prompt).not.toContain("一字一句そのまま保つ");
+      expect(prompt).not.toContain("初回のレビューで must が無ければ");
+      expect(prompt).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+      expect(prompt).toContain("- [requirements-1-1] R-2 の答えは 201 にする");
+    }
+    // 前回の下書きが無い（outputs に無い）ときも同じ
+    const missing = buildPrompt(redo({ outputs: {} } as Partial<Task>), "requirements");
+    expect(missing).toContain("前回の要求要件が読めません");
+    expect(missing).toContain("--- 前回の下書き ---\n（なし）");
+  });
+
+  it("実装のセルフレビューと、ほかの工程には出さない", () => {
+    const prompt = buildPrompt(redo(), "implement");
+    expect(prompt).not.toContain("--- 差し戻しの直し方");
+    expect(prompt).not.toContain("初回のレビューで must が無ければ");
+  });
+});
+
 describe("オーケストレーターの答えの出し方（既定のスキル plan-steps。PBI-146）", () => {
   const task = () =>
     ({

@@ -834,6 +834,90 @@ function deliverableBodyLines(deliverable: string): string[] {
   ];
 }
 
+/** 差し戻しの直しで、小さい指摘とみなす、直す所の数の上限。 */
+const SMALL_REMARK_PLACES_MAX = 2;
+/** 小さい指摘の差し戻しの直しで、セルフレビューをする回数の上限（初回を含む）。 */
+const SMALL_REMARK_REVIEW_ROUNDS_MAX = 2;
+
+/**
+ * 要求要件・設計の差し戻しの直し方（PBI-265）。
+ * partial は、前回の下書きを元に、指摘に関わる所だけを書き換える。unreadable は、前回の下書きが空で元にできないので、
+ * 指摘に対応して書き直す。指摘が無い（初回、または要求要件が変わっただけのやり直し）ときは undefined。
+ */
+type ReworkMode = "partial" | "unreadable";
+
+function reworkMode(
+  task: Task,
+  step: "requirements" | "design",
+  previous: string | undefined,
+): ReworkMode | undefined {
+  if (currentRemarks(task, step).length === 0) return undefined;
+  return previous?.trim() ? "partial" : "unreadable";
+}
+
+/**
+ * 今回の差し戻しの指摘（その工程の最新の差し戻しの回のうち、まだその工程の提出に渡していないもの。`submittedIn`）。提出済みの指摘（回答の有無を問わない）しか無いのは、
+ * 上流の変更（要求要件の再承認など）で、前回の下書きを最新の上流に合わせ直す再実行のときで、差し戻しの直しではない。
+ */
+function currentRemarks(task: Task, step: StepKey) {
+  const remarks = humanRemarks(task).filter((r) => r.step === step);
+  const latest = Math.max(0, ...remarks.map((r) => r.round ?? 0));
+  return remarks.filter((r) => (r.round ?? 0) === latest && r.submittedIn === undefined);
+}
+
+/**
+ * 差し戻しの直しのセルフレビューを絞ってよいか。前回の下書きが前のセルフレビューを通っているとき（passed）に限る。
+ * 未合格・記録なし（人が文書を直した後を含む）は、前回の未解決が今回の差分の外に残りうるので、全体をレビューする。
+ */
+function reviewRework(
+  task: Task,
+  step: "requirements" | "design",
+  rework: ReworkMode | undefined,
+): ReworkMode | undefined {
+  return rework === "partial" && task.selfReviews?.[step]?.passed === true ? rework : undefined;
+}
+
+/**
+ * 差し戻しで、前回の成果物を元に、指摘に関わる所だけを書き換えさせる。成果物を丸ごと作り直すと、費用の大半を占める
+ * 要求要件・設計の実行が、指摘が小さくても1回ぶん丸ごとかかる。質の基準（必須の節・ID・確認したいことの扱い）は、初回と
+ * 同じに保たせる。前回の下書きが読めないときは、元にできないので書き直させる（セルフレビューは通常どおり）。
+ */
+function reworkLines(
+  task: Task,
+  step: "requirements" | "design",
+  deliverable: string,
+  mode: ReworkMode | undefined,
+): string[] {
+  if (!mode) return [];
+  const remarks = humanRemarks(task).filter((r) => r.step === step);
+  const current = currentRemarks(task, step);
+  const earlier = remarks.length - current.length;
+  if (mode === "unreadable") {
+    return [
+      "",
+      `--- 差し戻しの直し方（前回の${deliverable}が読めません） ---`,
+      `- 前回の${deliverable}が空で、読めません。元にできないので、人間の指摘にすべて対応するように、${deliverable}を書き直す`,
+      "- 書き直しでも、上に書いた構成・形式・分量の決まりを守る",
+    ];
+  }
+  return [
+    "",
+    `--- 差し戻しの直し方（前回の${deliverable}を元に、指摘に関わる所だけを書き換える） ---`,
+    `- 上の「前回の下書き」を元にして、最初から書き直さない。人間の指摘（今回：${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
+    "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない。ただし、上の「本文に書くもの」で書かないとしたもの（作業の報告など）が前回の下書きに残っていれば、関係の無い所でも取り除く",
+    ...(earlier > 0
+      ? [
+          "- 前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている。今回の直しで崩さない。人間の求めで足した記述も削らない",
+        ]
+      : []),
+    "- 指摘が複数の節にまたがるときは、関わる節をすべて直す（一部だけ直して、節の間に食い違いを残さない）",
+    "- 指摘が成果物の方針（目的・範囲・方式）を変えるときは、方針に関わる所を、全体に及ぶまで直す。方針に関わらない所は保つ",
+    `- 質の基準は、初回と同じに保つ。冒頭の「確認したいこと」「既定で決めたこと」の節・必須の節・${step === "requirements" ? "EARS の形式・ID（R-n。付け直さない。消した ID は使い回さない）" : "節の選び方・テスト観点の書き方"}・分量の目安を、直したあとも守る`,
+    "- 指摘が「確認したいこと」への答えなら、その答えを関わる所に反映し、その項目を「確認したいこと」から外す。直した結果、人間が決めることが新しく出たら、「確認したいこと」に足す",
+    `- ${deliverable}の全体を出し直す（直した所だけを返さない）。指摘ごとの対応は、上の形式で付ける`,
+  ];
+}
+
 /**
  * 要求要件の工程への、受け入れの確かめ方の書き方（PBI-155）。最終レビューは作業領域（コンテナ）でテストを実行して
  * 確かめるので、そこで確かめられないもの（実機など）は、人が最終承認で確かめる項目として分けて書かせる。
@@ -1282,7 +1366,11 @@ function splitRepositoryFields(task: Task): string {
  * 再レビューを繰り返させ、結果を決まった形（見出し sacty-self-review の JSON）で報告させる。sacty はその JSON を読み、
  * 成果物の本文から取り除く。
  */
-function selfReviewLines(kind: "design-doc" | "code", deliverable: string): string[] {
+function selfReviewLines(
+  kind: "design-doc" | "code",
+  deliverable: string,
+  rework?: ReworkMode,
+): string[] {
   return [
     "",
     "--- 提出の前のセルフレビュー ---",
@@ -1297,11 +1385,26 @@ function selfReviewLines(kind: "design-doc" | "code", deliverable: string): stri
       : []),
     "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
     "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
+    ...(rework === "partial" ? partialReworkReviewLines(deliverable) : []),
     "- スキルが成果の説明の末尾に書く「自己レビュー」の節は書かない。代わりに、結果を次の形式で必ず付ける（sacty が読み、成果物の本文からは取り除く）",
     "- このプロンプトが求めるほかの出力の形（ほかの JSON のブロック）は変えない",
     "```json",
     `{"${SELF_REVIEW_HEADING}": {"rounds": 2, "passed": true, "remaining": ["残った must の指摘の要約（無ければ空）"], "notReviewed": ["見られなかった観点（無ければ空）"], "summary": "短い総評"}}`,
     "```",
+  ];
+}
+
+/**
+ * 差し戻しの直し（前回の下書きを元に、指摘の所だけ直した提出。PBI-265）のセルフレビュー。前回の下書きは、前の提出で
+ * セルフレビューを通り、人間が読んでいる。レビューの範囲を直した所に絞り、指摘が小さいときは回数も減らす。
+ */
+function partialReworkReviewLines(deliverable: string): string[] {
+  return [
+    `- 差し戻しの直しなので、${deliverable}の全体ではなく、前回の下書きとの差分と、その直しが直接必要にした既存の箇所を、レビューの範囲にする（初回のレビューから。前回の下書きを一時ファイルにも置き、差分を担当に渡す）。指摘が成果物の方針（目的・範囲・方式）を変えたときだけ、全体を範囲にする`,
+    `- 今回の指摘が小さいかで、回数の上限を変える。小さい指摘は、今回の指摘で直す所が ${SMALL_REMARK_PLACES_MAX} か所以内（「確認したいこと」の項目と、その答えを反映する所は、まとめて1か所と数える）で、方針を変えないもの（例：確認したいことへの答えの反映、1つの要求の文言や値の訂正）`,
+    `  - 小さい指摘：初回のレビューで must が無ければ、そこで提出する。must があれば直して再レビューし、回数の上限は初回を含めて ${SMALL_REMARK_REVIEW_ROUNDS_MAX} 回。上限に達しても must が残るときは、残った指摘を報告して提出する`,
+    `  - 小さくない指摘（直す所が ${SMALL_REMARK_PLACES_MAX} か所を超える、または方針を変える）：上の回数の上限のとおり（初回を含めて最大 5 回）`,
+    "  - 判断に迷うときは、小さくない指摘として進める。どちらで進めたかを、報告の summary の最初に書く（「小さい指摘」または「小さくない指摘」）",
   ];
 }
 
@@ -1851,7 +1954,11 @@ export function buildPrompt(
       ];
       if (hasRemarks) lines.push("", "--- 前回の下書き ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "要求要件の本文"));
-      lines.push(...selfReviewLines("design-doc", "要求要件"));
+      const rework = reworkMode(task, "requirements", previous);
+      lines.push(...reworkLines(task, "requirements", "要求要件", rework));
+      lines.push(
+        ...selfReviewLines("design-doc", "要求要件", reviewRework(task, "requirements", rework)),
+      );
       if (extra.inputDir) lines.push(...provenanceLines("requirements", extra.inputDir));
       return lines.join("\n");
     }
@@ -1910,7 +2017,11 @@ export function buildPrompt(
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
-      lines.push(...selfReviewLines("design-doc", "設計とテスト観点"));
+      const rework = reworkMode(task, "design", previous);
+      lines.push(...reworkLines(task, "design", "設計とテスト観点", rework));
+      lines.push(
+        ...selfReviewLines("design-doc", "設計とテスト観点", reviewRework(task, "design", rework)),
+      );
       if (extra.inputDir) lines.push(...provenanceLines("design", extra.inputDir));
       return lines.join("\n");
     }
