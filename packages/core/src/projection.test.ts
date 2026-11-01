@@ -2724,6 +2724,7 @@ describe("ベースブランチの取り込み", () => {
   const merged = (id: string, commit: string, conflicts: string[]) =>
     ev(id, { type: "BaseBranchMerged", payload: { from: "b1", commit, conflicts } });
   const implemented = (id: string) => verifiedImplementation(id).slice(0, 2);
+  const merged1 = (id: string) => merged(id, "n1", []);
 
   it("取り込みを記録し、最後の取り込みを作業領域のベースにする。起点の記録は変えない", () => {
     seq = 0;
@@ -2760,6 +2761,34 @@ describe("ベースブランチの取り込み", () => {
     ]).get("t2");
     expect(task?.baseMerge).toBeUndefined();
     expect(task?.repository?.baseBranch).toBe("develop");
+  });
+
+  it("検証の待ちで取り込むと、前の PR の CI の結果を捨てる（取り込む前のコードのもの）。実装の実行の前の取り込みは、そのまま", () => {
+    seq = 0;
+    const verifying = [
+      ...prepared("t1"),
+      ...implemented("t1"),
+      ev("t1", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit: "c1",
+          url: "https://github.com/acme/app/pull/7",
+          number: 7,
+          verifying: true,
+        },
+      }),
+      ev("t1", {
+        type: "PullRequestCiFinished",
+        payload: { commit: "c1", result: "passed", checks: [], failures: [] },
+      }),
+    ];
+    const waiting = project(verifying).get("t1");
+    expect(waiting?.pullRequestCi?.result).toBe("passed");
+    const merged = project([...verifying, merged1("t1")]).get("t1");
+    expect(merged?.baseMerge?.commit).toBe("n1");
+    expect(merged?.pullRequestCi).toBeUndefined();
+    expect(merged?.verification).toBeDefined();
   });
 
   it("競合の目印が残っていると、検証に進まず実装をやり直す。レビューへは進められない", () => {
