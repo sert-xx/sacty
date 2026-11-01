@@ -1,6 +1,7 @@
 import {
   type ActivityEvent,
   EventInput,
+  guardianTestsPassed,
   project,
   renderMessage,
   STEP_PLANS,
@@ -3114,6 +3115,282 @@ describe("申告されたテストの結果の抜粋（PR #188 レビュー提�
     );
     expect(check?.output).toHaveLength(7999);
     expect(lone(check?.output ?? "")).toBe(false);
+  });
+});
+
+describe("差分が文書だけのとき、ツールが無くて実行できなかった検証を人の確認へ回す（PBI-158）", () => {
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const COMMAND = "go test ./... && golangci-lint run";
+  const reported = (extra: Record<string, unknown> = {}) =>
+    block({
+      "sacty-final-review": {
+        viewpoints: [{ id: "REQ", verified: true, reason: "満たす" }],
+        remarks: [],
+        tests: {
+          command: COMMAND,
+          exitCode: 127,
+          output: "go: command not found",
+          missingCommands: ["go", "golangci-lint", "pnpm"],
+          ...extra,
+        },
+        humanChecks: ["読みやすさを目視で確かめる"],
+        summary: "ok",
+      },
+    });
+
+  it("文書だけの差分なら、止めず（missingCommands は空）、テストは通ったものとして、実行できなかった検証を humanChecks に足す", () => {
+    const review = extractFinalReview(reported(), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(review.missingCommands).toEqual([]);
+    expect(review.passed).toBe(true);
+    // コマンドに語として書いてあるものだけ（pnpm は書いていない）を記録する
+    expect(review.tests?.missingCommands).toEqual(["go", "golangci-lint"]);
+    expect(review.tests?.exitCode).toBe(127);
+    // ゴールガーディアンの項目は残し、足した項目は何を・どこで実行するかを書く
+    expect(review.humanChecks).toHaveLength(2);
+    expect(review.humanChecks?.[0]).toBe("読みやすさを目視で確かめる");
+    expect(review.humanChecks?.[1]).toContain(
+      "go・golangci-lint がテストを実行したイメージに入っていない",
+    );
+    expect(review.humanChecks?.[1]).toContain("go・golangci-lint のある環境で");
+    expect(review.humanChecks?.[1]).toContain("終了コードは 127、出力は「go: command not found」");
+    expect(review.humanChecks?.[1]).toContain(`\`${COMMAND}\``);
+    expect(guardianTestsPassed(review.tests as NonNullable<typeof review.tests>)).toBe(true);
+  });
+
+  const itemOf = (extra: Record<string, unknown>, command = COMMAND) =>
+    extractFinalReview(reported({ ...extra }), ["REQ"], [], {
+      testCommand: command,
+      documentsOnly: true,
+    }).humanChecks?.[1] ?? "";
+
+  it("人が確かめることの項目に、終了コードと出力と、ツール不足以外の失敗を確かめる旨を書く", () => {
+    const item = itemOf({
+      exitCode: 1,
+      output: "lint failed\nREADME.md:3 broken link\ngo: command not found",
+    });
+    expect(item).toContain("終了コードは 1");
+    expect(item).toContain(
+      "出力は「lint failed / README.md:3 broken link / go: command not found」",
+    );
+    expect(item).toContain(
+      "ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください",
+    );
+    // 申告が無いときは、そう書く
+    const none = itemOf({ exitCode: undefined, output: "" });
+    expect(none).toContain("終了コードは 申告なし");
+    expect(none).not.toContain("出力は");
+  });
+
+  it("長い出力は、先頭と末尾に加えて途中の失敗らしい行も載せる（前半の失敗が、後ろのツール不足に隠れない）", () => {
+    const filler = Array.from({ length: 80 }, (_, i) => `ok step ${i}`).join("\n");
+    const output = `docs build start\n${filler}\nERROR: docs lint failed: README.md:12 broken link\n${filler}\ngo: command not found`;
+    const item = itemOf({ exitCode: 127, output });
+    expect(item).toContain("出力の先頭は「docs build start");
+    expect(item).toContain(
+      "途中の失敗らしい行は「ERROR: docs lint failed: README.md:12 broken link」",
+    );
+    expect(item).toContain("末尾は「");
+    expect(item).toContain("go: command not found");
+    // 失敗らしい行が無ければ、その節は出さない
+    expect(itemOf({ exitCode: 127, output: `${filler}\ngo: command not found` })).not.toContain(
+      "途中の失敗らしい行",
+    );
+    // 先頭か末尾に含まれる行は、重ねて載せない
+    const short = itemOf({ exitCode: 1, output: `error first\n${filler}\nfailed last` });
+    expect(short).not.toContain("途中の失敗らしい行は「error first");
+    // 失敗らしい行が多くても、3行まで・1行 100 文字まで
+    const many = Array.from({ length: 10 }, (_, i) => `error ${i} ${"z".repeat(300)}`).join("\n");
+    const capped = itemOf({
+      exitCode: 1,
+      output: `${"ok\n".repeat(200)}${many}\n${"ok\n".repeat(200)}`,
+    });
+    expect(capped).toContain("error 2 ");
+    expect(capped).not.toContain("error 3 ");
+    expect(capped).not.toContain("z".repeat(101));
+  });
+
+  it("出力の抜粋は、秘密情報を全文で伏せてから切り詰める（切り詰めの境界をまたぐ値が残らない）", () => {
+    const secret = `ghp_${"A1b2C3d4E5".repeat(4)}`;
+    // 先頭の 120 文字・末尾の 120 文字の境界の前後に値が来るように、位置を変える
+    for (let at = 60; at <= 160; at += 2) {
+      const head = `${"x".repeat(at)} token=${secret} ${"y".repeat(400)}`;
+      const tail = `${"y".repeat(400)} ${"x".repeat(at)} token=${secret}`;
+      for (const output of [head, tail, `${tail}\n${"w".repeat(at)}`]) {
+        const item = itemOf({ output });
+        expect(item, `at ${at}`).toContain("出力の先頭は");
+        expect(item, `at ${at}`).not.toContain("A1b2C3d4E5");
+      }
+    }
+  });
+
+  it("出力とコマンドから、URL の認証情報（スキームの大文字・小文字を問わない）とクエリ・フラグメントを除く", () => {
+    const output = [
+      "fetch HTTPS://alice:passw0rdSecret@example.com/x?token=queryTokenValue#fragValue failed",
+      "also https://bob:otherSecret99@example.org/y",
+      "pad ".repeat(100),
+      "go: command not found",
+    ].join("\n");
+    const command = "curl HtTpS://carol:cmdSecret77@example.net/z?k=cmdQuery && go test ./...";
+    const item = itemOf({ output }, command);
+    for (const hidden of [
+      "alice",
+      "passw0rdSecret",
+      "queryTokenValue",
+      "fragValue",
+      "bob",
+      "otherSecret99",
+      "carol",
+      "cmdSecret77",
+      "cmdQuery",
+    ]) {
+      expect(item, hidden).not.toContain(hidden);
+    }
+    expect(item).toContain("example.com/x");
+    expect(item).toContain("example.net/z");
+    expect(item).toContain("REDACTED");
+  });
+
+  it("空白の無い長い URL の並びの出力も、長さに比例する時間で項目にする", () => {
+    const output = `${JSON.stringify(Array(200_000).fill("https://a"))}\ngo: command not found`;
+    const started = performance.now();
+    const item = itemOf({ output });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(item).toContain("go: command not found");
+  });
+
+  it("クエリ・フラグメントの中に引用符がある URL も、出力とコマンドから値を除く", () => {
+    // 架空の値
+    for (const url of [
+      "https://example.com/path?session='FAKE_WHOLE_789",
+      "https://example.com/path#'FAKE_WHOLE_789",
+    ]) {
+      const item = itemOf(
+        { output: `fetch ${url} failed\ngo: command not found` },
+        `curl ${url} && go test ./...`,
+      );
+      expect(item, url).not.toContain("FAKE_WHOLE_789");
+      expect(item, url).toContain("example.com/path");
+    }
+  });
+
+  it("ユーザー情報に引用符を含む URL も、出力とコマンドから認証情報とクエリを除く", () => {
+    // 架空の値
+    const url = "https://alice:p'FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123";
+    const item = itemOf(
+      { output: `fetch ${url} failed\ngo: command not found` },
+      `curl ${url} && go test ./...`,
+    );
+    for (const hidden of ["alice", "FAKE_SUFFIX_123", "FAKE_QUERY_123"]) {
+      expect(item, hidden).not.toContain(hidden);
+    }
+    expect(item).toContain("example.com/path");
+  });
+
+  it("JSON の形の認証ヘッダーも、出力から値を除く", () => {
+    // 架空の値
+    const json = JSON.stringify({ Authorization: "Bearer FAKE_CREDENTIAL_987" });
+    for (const line of [json, JSON.stringify(json)]) {
+      const item = itemOf({ output: `request ${line}\ngo: command not found` });
+      expect(item, line).not.toContain("FAKE_CREDENTIAL_987");
+      expect(item, line).toContain("go: command not found");
+    }
+  });
+
+  it("JSON の文字列の中のエスケープした引用符を含む秘密の値も、出力から全体を除く", () => {
+    // 架空の値
+    for (const password of ['abc"FAKE_SUFFIX_123', 'abcd"FAKE_SUFFIX_123']) {
+      const json = JSON.stringify({ password });
+      for (const line of [json, JSON.stringify(json)]) {
+        const item = itemOf({ output: `config ${line}\ngo: command not found` });
+        expect(item, line).not.toContain("FAKE_SUFFIX_123");
+        expect(item, line).toContain("go: command not found");
+      }
+    }
+  });
+
+  it("ゴールガーディアンがツール不足のほかの失敗を申告したら、文書だけの差分でも通ったものにしない（止めずに、ふつうの判定にする）", () => {
+    const review = extractFinalReview(
+      reported({
+        exitCode: 1,
+        otherFailures: ["docs:lint が失敗：README.md の相対リンクが切れている"],
+      }),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(review.missingCommands).toEqual([]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.passed).toBe(false);
+    // ツール不足の項目は足さない（失敗として実装をやり直す）
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+    // 失敗が環境によるものとして申告されていれば、これまでどおり通る
+    const env = extractFinalReview(
+      reported({ exitCode: 1, otherFailures: ["x"], environmentFailures: ["x：起点でも失敗する"] }),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(env.passed).toBe(true);
+    // 空の申告は、申告が無いのと同じ
+    const empty = extractFinalReview(reported({ otherFailures: [" ", ""] }), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(empty.passed).toBe(true);
+  });
+
+  it("文書だけでない差分（documentsOnly が無い）なら、今までどおり missingCommands を返して止め、記録しない", () => {
+    const review = extractFinalReview(reported(), ["REQ"], [], { testCommand: COMMAND });
+    expect(review.missingCommands).toEqual(["go", "golangci-lint"]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+    // 終了コード 127 は通ったものではない
+    expect(review.passed).toBe(false);
+  });
+
+  it("文書だけの差分でも、ツールが無いという申告が無い（実際の失敗）なら通さない", () => {
+    const review = extractFinalReview(reported({ missingCommands: [], exitCode: 1 }), ["REQ"], [], {
+      testCommand: COMMAND,
+      documentsOnly: true,
+    });
+    expect(review.missingCommands).toEqual([]);
+    expect(review.tests?.missingCommands).toBeUndefined();
+    expect(review.passed).toBe(false);
+    expect(review.humanChecks).toEqual(["読みやすさを目視で確かめる"]);
+  });
+
+  it("文書だけの差分でも、観点を検証していなければ不合格のまま（ツールが無いことで合格にしない）", () => {
+    const review = extractFinalReview(
+      reported().replace('"verified":true', '"verified":false'),
+      ["REQ"],
+      [],
+      { testCommand: COMMAND, documentsOnly: true },
+    );
+    expect(review.passed).toBe(false);
+    expect(review.tests?.missingCommands).toEqual(["go", "golangci-lint"]);
+  });
+
+  it("コマンドが長くても改行・バッククォートを含んでも、項目を1行にする", () => {
+    const long = `go test ./...\n&& echo \`x\` ${"y".repeat(500)}`;
+    const review = extractFinalReview(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          tests: { command: long, exitCode: 127, output: "", missingCommands: ["go"] },
+          summary: "ok",
+        },
+      }),
+      [],
+      [],
+      { testCommand: long, documentsOnly: true },
+    );
+    const item = review.humanChecks?.[0] ?? "";
+    expect(item).not.toContain("\n");
+    expect(item.length).toBeLessThan(700);
   });
 });
 

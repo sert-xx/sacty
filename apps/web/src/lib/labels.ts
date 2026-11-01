@@ -128,6 +128,8 @@ export type TestRunView = {
   byGuardian?: true;
   /** 環境によるとゴールガーディアンが判断したテストの失敗（PBI-155）。 */
   environmentFailures?: string[];
+  /** イメージにツールが無くて実行できなかった検証（差分が文書だけで、止めずに進めたとき。PBI-158）。 */
+  missingCommands?: string[];
 };
 
 /**
@@ -155,6 +157,7 @@ export function verificationResults(task: Task): {
         ...(review.tests.environmentFailures
           ? { environmentFailures: review.tests.environmentFailures }
           : {}),
+        ...(review.tests.missingCommands ? { missingCommands: review.tests.missingCommands } : {}),
         at: review.at,
         byGuardian: true,
       }

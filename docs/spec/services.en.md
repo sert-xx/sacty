@@ -4,7 +4,7 @@
 
 When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the agent containers (steps, and the final review that runs the tests) to their network. Agents are not given Docker permissions. The compose file is either the target repository's own or a shared compose (in another repository) written in the project, never both.
 
-Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md), [Information gathering sorts the services needed for tests and manual checks; the Orchestrator starts only the dependencies based on it, and the step starts the target apps inside its container](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
+Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md), [Information gathering sorts the services needed for tests and manual checks; the Orchestrator starts only the dependencies based on it, and the step starts the target apps inside its container](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
 
 ## When services start
 

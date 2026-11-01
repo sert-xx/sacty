@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findTestFiles, looksLikeTestFile, noTestsStop } from "./test-files.js";
+import { findTestFiles, isDocumentsOnly, looksLikeTestFile, noTestsStop } from "./test-files.js";
 
 describe("テストのファイルらしいものを探す（PBI-94）", () => {
   let dir: string;
@@ -157,5 +157,46 @@ describe("止める理由の文言（PR #105 再レビュー指摘）", () => {
       code: "orchestrator.noTestsUnreadable",
       params: { reason: "無い", path: "src/locked", detail: "EACCES" },
     });
+  });
+});
+
+describe("差分が文書のファイルだけか（PBI-158）", () => {
+  it("文書の拡張子のファイルだけなら true（大文字・小文字、深いパス、複数の拡張子）", () => {
+    expect(isDocumentsOnly(["README.md"])).toBe(true);
+    expect(isDocumentsOnly(["docs/a.md", "docs/deep/b.MARKDOWN", "x/y.rst"])).toBe(true);
+    expect(isDocumentsOnly(["guide.adoc", "guide.asciidoc", "plan.org"])).toBe(true);
+    // テストのディレクトリの中の文書やテストについての文書も、文書
+    expect(isDocumentsOnly(["tests/README.md", "docs/TESTING.md"])).toBe(true);
+  });
+
+  it("コードなど文書でないファイルが1つでもあれば false（コードだけ・文書とコードの混在）", () => {
+    expect(isDocumentsOnly(["main.go"])).toBe(false);
+    expect(isDocumentsOnly(["docs/a.md", "main.go"])).toBe(false);
+    expect(isDocumentsOnly(["main.go", "docs/a.md"])).toBe(false);
+    // `.txt` は、依存やビルドの定義にも使われるので、文書とは見なさない（テストのファイルを探すときは文書のまま）
+    for (const name of [
+      "notes.txt",
+      "requirements.txt",
+      "constraints.txt",
+      "CMakeLists.txt",
+      "docs/CMakeLists.txt",
+    ]) {
+      expect(isDocumentsOnly(["README.md", name]), name).toBe(false);
+      expect(isDocumentsOnly([name]), name).toBe(false);
+    }
+    expect(looksLikeTestFile("test_cases.txt")).toBe(false);
+    // 設定・画像・拡張子の無いファイルは文書とは見なさない
+    expect(isDocumentsOnly(["README.md", "docs/diagram.png"])).toBe(false);
+    expect(isDocumentsOnly(["README.md", "Makefile"])).toBe(false);
+    expect(isDocumentsOnly(["README.md", ".github/workflows/ci.yml"])).toBe(false);
+    // 拡張子が文書でも、文書の拡張子が名前の一部に入っているだけのものは当たらない
+    expect(isDocumentsOnly(["docs.md/script.sh"])).toBe(false);
+    expect(isDocumentsOnly(["notes.md.bak"])).toBe(false);
+    // 名前が拡張子だけのファイル（.md）は、拡張子の無い隠しファイルなので文書とは見なさない
+    expect(isDocumentsOnly(["docs/.md"])).toBe(false);
+  });
+
+  it("差分が空なら false（確かめられないものは文書だけとは見なさない）", () => {
+    expect(isDocumentsOnly([])).toBe(false);
   });
 });

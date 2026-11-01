@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -885,6 +885,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
+    ただし、差分が文書のファイルだけで、ツールが無くて実行できなかった検証を人の確認に回したとき（`tests.missingCommands` がある。下のツールがイメージに無いときの項）は、終了コードにかかわらず通ったものとする。
   - 実装がテストを対応させていない観点は、ゴールガーディアンの判定にかかわらず不合格にし、理由を `review.viewpointUnmapped` にする（指示にも、その観点を不合格にするよう書く）。
     テストの仕組みが無いタスクには当てない。
   - 実装は、実行される振る舞いの無い変更（文書・コメント・文言など）だけの観点を、テストを書かずに差分で確かめると申告できる（テストの対応で `tests` を空にし、`untested` に理由を書く。`TestMapping`）。
@@ -907,18 +908,39 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
   やり直しの指示には、最終レビューの所見・ゴールガーディアンが実行したテスト（コマンド・終了コード・結果の抜粋）・検証できなかった観点を渡す（`feedbackLines`）。
-  環境によると判断した失敗は、実装で直す対象ではないと添えて渡す。
+  環境によると判断した失敗と、差分が文書だけでツールが無くて実行できなかった検証は、実装で直す対象ではないと添えて渡す。
   続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
   人の判断で、不合格のままレビューへ進めることもできる（下の「人がレビューへ進める」）。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
-  ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、判定を記録せずに、使った分の費用を `FinalReviewFailed` に記録して一時停止する（`verify.commandMissing`）。
-  このとき、ツールの名前・イメージの名前・工程（実装）を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直すか、ほかのイメージに変えるよう案内する。
-  既定のイメージなら、`images` にイメージを足すよう案内する。
-  再開すると、実装をやり直さずに最終レビュー（テストの実行）からやり直す。
+  ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、次のとおりにする。
   テストのコマンドに書いていない名前（`npm test` の中のスクリプトが使うツールなど）と、`/` を含む名前（`./scripts/check.sh` など）はリポジトリの問題として当てず、ふつうの判定にする。
+  - タスクの差分（起点からの変更。名前の変更は変更元と変更先に分けて見る）が文書のファイルだけでないとき：判定を記録せずに、使った分の費用を `FinalReviewFailed` に記録して一時停止する（`verify.commandMissing`）。
+    このとき、ツールの名前・イメージの名前・工程（実装）を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直すか、ほかのイメージに変えるよう案内する。
+    既定のイメージなら、`images` にイメージを足すよう案内する。
+    テストのコマンドが決まっていて `noTestsReason` が無いタスク（`testsDecidable`）なら、あわせて、再開のときに「テストの扱い」でテストのコマンドを指定し直すか、テストなしで進めると決められることも案内する（下の「ツールが無くて止まったタスクの再開」）。
+    実装が申告したテストのコマンドで検証するタスク（`noTestsReason` がある）は、決め直せないので案内しない。
+    再開すると、実装をやり直さずに最終レビュー（テストの実行）からやり直す。
+  - 差分が文書のファイルだけのとき（`isDocumentsOnly`）：止めずに、ゴールガーディアンの判定を `FinalReviewed` に記録する。
+    文書のファイルは、拡張子が `md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org` のもの（大文字・小文字は問わない。テストのファイルを探すときに文書として除く一覧から、依存やビルドの定義にも使われる `txt` を外したもの。テストのファイルを探すときの一覧は変えない）。
+    コード・設定・画像・拡張子の無いファイルなど、文書でないものが1つでもあれば（文書と混ざる差分、コードを文書の名前に変えた差分を含む）、文書だけとは見なさない。
+    差分が空のとき・ファイルごとの変更を取れないときも、文書だけとは見なさず、上のとおり止める。
+    - `tests.missingCommands` に、実行できなかったツール（上で当てた名前）を記録し、テストは通ったものとして判定する（`guardianTestsPassed`）。観点・指摘の判定は、ゴールガーディアンのとおりに当てる。
+      ただし、ゴールガーディアンが `tests.otherFailures` に、ツール不足のほかの失敗（テストの失敗・lint のエラーなど）を1件でも申告したときは、記録も項目の追加もせず、止めずにふつうの判定にする（終了コードが 0 でなく、`environmentFailures` の申告も無ければ、テストは不合格）。
+    - 実行できなかった検証を、`humanChecks` の末尾に1項目足す（「<ツール> がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。<ツール> のある環境で、テスト（検証）のコマンド `…` を実行して確かめてください。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。ゴールガーディアンが実行したときの終了コードは N、出力は「…」です。」）。
+      コマンドは1行にして 200 文字まで。
+      出力は、300 文字までなら全体を1回だけ載せ、それより長ければ、先頭 120 文字・途中の失敗らしい行（`error`・`fail`・`fatal`・`panic` などを含む行のうち、先頭と末尾に含まれないもの。3行まで、1行 100 文字まで）・末尾 120 文字を載せる。`a && b` の前半の失敗が、後ろのツール不足の行に隠れないようにするため。
+      コマンドと出力は、秘密情報（`redactLog`）と URL の認証情報（`redactUrlCredentials`。スキームの大文字・小文字を問わず、ユーザー名・パスワード・クエリ・フラグメントの中身）を、全文で伏せてから、行に分けて切り詰める。
+      この項目は、ほかの `humanChecks` と同じく、実装の PR の本文の「人が確かめること」と、実装の成果物の「人が確かめること」に出る。
+      URL は、`://` の位置から前のスキームと後ろの本体を調べて取り出す（入力の長さに比例する時間で済ませる。空白の無い URL の並びでも、一度調べた所を調べ直さない）。スキームは、前に単語の文字があっても（`_https://`）英字から始める。
+      - ユーザー情報（ユーザー名とパスワードを伏せる）：権限（ユーザー情報とホスト。空白と、生の `/`・`?`・`#` の前まで）に `@` があれば、最後の `@` までをユーザー情報として URL に含める。ユーザー情報は `'`・`\` を含みうるので、それらでは終えない（引用符をまたいで伏せすぎることはあるが、認証情報の後半を残さない）。空白・生の `/`・`?`・`#` を含むユーザー情報は、その前までしか伏せない（パスの `@`、たとえば `https://example.com/users/@alice` を、ユーザー情報と見なさないため）。権限に `@` があるのにユーザー情報として読まれない URL（`https:` などで `\` を `/` と読むもの）は、`[REDACTED URL]` にする。
+      - クエリ・フラグメント（クエリ・フラグメントも伏せるときだけ）：URL として読んだクエリ（`?` から）とフラグメント（`#` から）の全体を、`?REDACTED`・`#REDACTED` にする。中の `/`・`?`・`#`（`?session=A/B`・`?session=A?B`・`#B`）も含めて伏せる。クエリかフラグメントがあれば、URL の範囲を、中の引用符・山括弧で終えずに次の空白まで伸ばす（空白を含む値は、空白の前までしか伏せない）。
+      - JSON：JSON のキー・値の位置にある文字列（前後の空白を除いた隣の文字が、前は `{`・`[`・`,`・`:`、後は `,`・`:`・`}`・`]` のもの）は、デコードした中身ごとに伏せ、変えたときだけエンコードし直す（入れ子の JSON の文字列も同じ）。JSON の文字列の外では、`"` と、それをエスケープしている `\` を、ユーザー情報の範囲にも、クエリ・フラグメントを伸ばす範囲にも含めない（ほかのフィールドへ出て構文を壊さないように）。このため、JSON の文字列の外の `"` を含むユーザー情報・クエリは、`"` の前までしか伏せない。
+    - 実装の成果物のテストには「<ツール> が無く実行できず」を、PR の本文のテストの行には「一部を実行できず」と、ツールが無く差分が文書だけなので止めずに進めたことを添える。
+    - ゴールガーディアンの指示（`buildFinalReviewPrompt`）には、ツールが無くても、実行できる検証と観点・指摘の判定を最後まで行うよう書く。
 
-  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`）、`apps/daemon/src/service.ts`（`verify`）
+  - 差分を取る間に人間が一時停止・中止を求めたとき：判定もツール不足の停止も記録せずに、使った分の費用を `FinalReviewFailed`（`verify.stoppedByPerson`）に記録し、一時停止・中止する。再開すると、最終レビューからやり直す。
+  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`apps/daemon/src/ci.ts`（`redactLog`・`redactUrlCredentials`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 再現の工程の後（PBI-29）：sacty は再現のテストを実行しない。
   再現のエージェントへの指示で、書いたテストをテストのコマンドで自分で実行し、不具合のために失敗することを確かめさせ、`sacty-reproduction` に `tests`・`reproduced`・`command`・`exitCode`・`output`（結果の抜粋）を書かせる（`extractReproduction`）。
   sacty は、工程の完了と同じ追記で `ReproductionChecked` を記録する（`reproductionChecked`）。
@@ -940,7 +962,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`）。
   環境による失敗だけで合格にしたときは、終了コードの後ろに「環境による失敗だけ。下の「人が確かめること」」を添える。
   チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
-- 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155）。
+- 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155。差分が文書だけのときにツールが無くて実行できなかった検証の項目も `humanChecks` に入る）。
   - PR の本文：「人が確かめること」のチェックリスト（`- [ ]`）にする。改行は空白にして1項目1行にする（`humanCheckBodyLines`）。
     既存の PR を引き継いだタスクは PR の本文を変えないので、本文には出ない（タスクの画面の最終レビューで確かめる）。
     本文の長さの上限で省かれないよう、テンプレートを使う本文・使わない本文のどちらでも footer の、承認の案内の前に置く。
@@ -1094,7 +1116,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   人の判断なので、テストのファイルを探す歯止め（`checkNoTests`）は当てない。
   不具合の修正（再現の工程がある）は、テストなしにできない（`resume.bugfixNeedsTestCommand`）。
 - どちらか1つだけを渡せる。
-  テストが決まらずに止まったのではないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
+  テストが決まらずに止まったのでも、ツールが無くて止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
   画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
 - 決めずに再開したとき、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
@@ -1102,8 +1124,21 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   工程を始めた後なら、今までどおり止まった所から再開する（検証でまた止まる）。
 - 画面の再開の欄では、テストの扱い（決めずに再開する・テストのコマンドを指定する・テストなしで進める）を選べる。
   不具合の修正では、テストなしを選べない。
+  ツールが無くて止まったタスクでは、テストのコマンドの入力欄の初期値にいまのコマンドを出す。
 
-コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
+#### ツールが無くて止まったタスクの再開
+
+最終レビューで、決まっているテストのコマンドのツールがイメージに無く、差分に文書でないファイルがあって止まったタスク（`testToolsMissing`。一時停止の理由が `verify.commandMissing` で、`testCommand` があり、`noTestsReason` が無い）も、同じ `tests` でテストの扱いを決め直せる（`canDecideTests`）。
+テストのコマンドは決まっているので、決めずに再開すると、止まった所から最終レビューをやり直す（工程の選択からはやり直さない。`canRechooseSteps` は当てない）。
+`noTestsReason` を持つタスク（テストの仕組みが無いと判断し、実装が申告したコマンドで検証するタスク）は当てない。
+
+- テストのコマンドを指定し直す：`TestsDecided` を記録して `Task.testCommand` を置き換える。
+- テストなしで進める：`TestsDecided` を記録して `Task.noTestsReason` にし、止まる前の `Task.testCommand` を消す（残すと同じコマンドをまた実行して止まる）。
+  不具合の修正は、テストなしにできない。
+
+渡し方・人が決めたことの示し方・どちらか1つだけを渡せることは、上と同じ。
+
+コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`testToolsMissing`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
 
 ## ゴールガーディアン
 

@@ -60,6 +60,9 @@ const ja = {
     environmentOnly: "環境による失敗だけ",
     environmentOnlyHint:
       "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
+    toolsMissing: (tools: string) => `${tools} が無く実行できず`,
+    toolsMissingHint:
+      "テストのコマンドのツールがイメージに無く、変更が文書のファイルだけなので、止めずに進めました。実行できなかった検証は「人が確かめること」にあります。",
     /** テストの仕組みが無いタスク（PBI-94）。 */
     noTestsTitle: "テストで検証していません",
     noTestsAddedTitle: "実装で用意したテストで検証しました",
@@ -328,6 +331,9 @@ const en: PartsMessages = {
     environmentOnly: "Environment failures only",
     environmentOnlyHint:
       "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment, so the tests count as passed.",
+    toolsMissing: (tools) => `Could not run: ${tools} missing`,
+    toolsMissingHint:
+      'A tool of the test command is not in the image, and the change touches only document files, so the task went on instead of stopping. The verification that could not run is listed under "For a person to check".',
     noTestsTitle: "Not verified by tests",
     noTestsAddedTitle: "Verified by the tests added in the implementation",
     noTestsAddedFailedTitle: "The tests added in the implementation failed",

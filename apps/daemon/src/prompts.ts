@@ -54,6 +54,7 @@ import {
   lastJsonAnswer,
   withoutCandidates,
 } from "./agent-json.js";
+import { redactLog, redactUrlCredentials } from "./ci.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { withoutGitHubComments } from "./github-comments.js";
@@ -545,6 +546,12 @@ function feedbackLines(task: Task): string[] {
             ? [
                 "環境によるとゴールガーディアンが判断したテストの失敗（実装で直す対象ではありません）：",
                 ...r.tests.environmentFailures.map((f) => `- ${f}`),
+              ]
+            : []),
+          // 差分が文書だけで、ツールがイメージに無くて実行できなかった検証も、実装で直す対象ではない（PBI-158）
+          ...(r.tests.missingCommands
+            ? [
+                `ツール（${r.tests.missingCommands.join("・")}）がイメージに無く、実行できなかった検証があります（実装で直す対象ではありません。人が確かめる項目として扱います）。`,
               ]
             : []),
           ...(r.tests.output
@@ -2598,6 +2605,7 @@ export function buildFinalReviewPrompt(
               output: "結果の抜粋（実行した件数・失敗したテストとその理由）",
               missingCommands: [],
               environmentFailures: [],
+              otherFailures: [],
             },
             humanChecks: [],
           }
@@ -2606,7 +2614,8 @@ export function buildFinalReviewPrompt(
     ...(testCommand
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
-          "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。",
+          "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。ツールが無くても、実行できる検証と、観点・指摘の判定は最後まで行ってください。",
+          "ツールが無くて実行できなかったことのほかに失敗（テストの失敗・lint のエラーなど）があれば、失敗ごとに otherFailures に1件ずつ書いてください（無ければ空）。",
           "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。それ以外は空にしてください。",
         ]
       : []),
@@ -2667,9 +2676,17 @@ export function extractFinalReview(
     unmappedViewpoints?: readonly string[];
     /** セキュリティ対応の差分が修正の範囲を守っていない。観点 SEC-MIN を、ゴールガーディアンの判定にかかわらず不合格にする。 */
     scopeViolation?: ScopeViolation;
+    /**
+     * タスクの差分が文書のファイルだけと、sacty が確かめた（PBI-158）。ツールがイメージに無かったと申告されても止めず、
+     * 実行できなかった検証を人が確かめること（humanChecks）に足して、テストは通ったものとして判定する。
+     */
+    documentsOnly?: boolean;
   } = {},
 ): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary" | "tests" | "humanChecks"> & {
-  /** テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。 */
+  /**
+   * テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。呼び出し元は、あれば止める。
+   * ただし documentsOnly のときは、止めずに進めるので空にして、`tests.missingCommands` に記録する。
+   */
   missingCommands: string[];
 } {
   const found = findBlock(output, FINAL_REVIEW_HEADING);
@@ -2685,13 +2702,12 @@ export function extractFinalReview(
   );
   // 人が最終承認で確かめること（PBI-155）
   const humanChecks = texts(found?.raw.humanChecks);
-  const checks = humanChecks.length > 0 ? { humanChecks } : {};
   const command = options.testCommand;
   if (!command) {
     return {
       ...verdicts,
       viewpoints,
-      ...checks,
+      ...(humanChecks.length > 0 ? { humanChecks } : {}),
       passed: verdicts.passed && viewpoints.every((v) => v.verified),
       missingCommands: [],
     };
@@ -2703,15 +2719,9 @@ export function extractFinalReview(
   // 環境による失敗（PBI-155）は、テストのコマンドが失敗したときだけ読む（成功したのに書いてあっても使わない）
   const environmentFailures =
     exitCode !== undefined && exitCode !== 0 ? texts(raw.environmentFailures) : [];
-  const tests = {
-    command,
-    ...(exitCode !== undefined ? { exitCode } : {}),
-    output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
-    ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
-  };
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
-  const missingCommands = Array.isArray(raw.missingCommands)
+  const reportedMissing = Array.isArray(raw.missingCommands)
     ? [
         ...new Set(
           raw.missingCommands
@@ -2720,6 +2730,31 @@ export function extractFinalReview(
         ),
       ]
     : [];
+  // 差分が文書だけなら、ツールが無くて実行できなかった検証を、止めずに人が確かめることへ回す（PBI-158）。
+  // ただし、ゴールガーディアンがツール不足のほかの失敗を申告したときは、その失敗を見逃さないよう、通ったものにしない
+  // （止めずに、ふつうの判定にする。終了コードが 0 でなければ不合格）
+  const otherFailures = texts(raw.otherFailures);
+  const skipped =
+    options.documentsOnly === true && otherFailures.length === 0 ? reportedMissing : [];
+  const missingCommands = options.documentsOnly === true ? [] : reportedMissing;
+  const checks =
+    humanChecks.length > 0 || skipped.length > 0
+      ? {
+          humanChecks: [
+            ...humanChecks,
+            ...(skipped.length > 0
+              ? [missingToolsCheck(skipped, command, exitCode, text(raw.output))]
+              : []),
+          ],
+        }
+      : {};
+  const tests = {
+    command,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
+    ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
+    ...(skipped.length > 0 ? { missingCommands: skipped } : {}),
+  };
   return {
     ...verdicts,
     viewpoints,
@@ -2729,6 +2764,76 @@ export function extractFinalReview(
     tests,
     missingCommands,
   };
+}
+
+/**
+ * 差分が文書だけで、テストのコマンドのツールがイメージに無くて実行できなかった検証を、人が最終承認で確かめることにする文
+ * （PBI-158）。PR の本文と画面の「人が確かめること」にそのまま出るので、何を・どこで実行するかを書く。
+ */
+function missingToolsCheck(
+  tools: readonly string[],
+  command: string,
+  exitCode: number | undefined,
+  output: string,
+): string {
+  const names = tools.join("・");
+  const shown = headOf(hiddenOneLine(command), 200);
+  const excerpt = outputExcerpt(output);
+  return `${names} がテストを実行したイメージに入っていないため、検証を実行できませんでした（差分が文書だけなので止めずに進めています）。${names} のある環境で、テスト（検証）のコマンド \`${shown}\` を実行して確かめてください。ツール不足のほかの失敗（テストの失敗・lint のエラーなど）が混ざっていないかも、あわせて確かめてください。ゴールガーディアンが実行したときの終了コードは ${exitCode ?? "申告なし"}${excerpt ? `、${excerpt}` : ""}です。`;
+}
+
+/** 人に見せる文字列から、秘密情報と URL の認証情報（クエリ・フラグメントを含む）を伏せ、1行にする（切り詰める前に使う）。 */
+function hiddenOneLine(text: string): string {
+  return redactUrlCredentials(redactLog(text, []), { queryAndFragment: true })
+    .replace(/\s+/g, " ")
+    .replace(/`/g, "'")
+    .trim();
+}
+
+/** 出力のうち、失敗らしい行を拾う目印。 */
+const FAILURE_LINE = /error|fail|fatal|panic|exception|denied|cannot|unable to|invalid|✗|✘|✖|×/i;
+
+/**
+ * テストの出力の抜粋（人が確かめる項目に出す）。ツールが無いという行は出力の末尾に出やすく、`a && b` や `a ; b` の前半の失敗は
+ * 先頭や途中にあるので、末尾だけでなく、先頭と、失敗らしい行（先頭・末尾に含まれないもの）も載せる。短ければ全体を1回だけ載せる。
+ * 秘密情報と URL の認証情報は、行に分けたり切り詰めたりする前に、全文で伏せる。
+ */
+function outputExcerpt(output: string): string {
+  const lines = redactUrlCredentials(redactLog(output, []), { queryAndFragment: true })
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").replace(/`/g, "'").trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const flat = lines.join(" / ");
+  if (Array.from(flat).length <= EXCERPT_WHOLE_MAX) return `出力は「${flat}」`;
+  const head = headOf(flat, EXCERPT_EDGE);
+  const tail = tailOf(flat, EXCERPT_EDGE);
+  const failures = [
+    ...new Set(
+      lines.filter(
+        (line) => FAILURE_LINE.test(line) && !head.includes(line) && !tail.includes(line),
+      ),
+    ),
+  ]
+    .slice(0, EXCERPT_FAILURE_LINES)
+    .map((line) => headOf(line, EXCERPT_FAILURE_LINE_MAX));
+  return [
+    `出力の先頭は「${head}…」`,
+    ...(failures.length > 0 ? [`途中の失敗らしい行は「${failures.join(" / ")}」`] : []),
+    `末尾は「${tail}」`,
+  ].join("、");
+}
+
+/** 出力の抜粋の長さ（文字）。全体を載せる上限・先頭と末尾の長さ・失敗らしい行の数と1行の上限。 */
+const EXCERPT_WHOLE_MAX = 300;
+const EXCERPT_EDGE = 120;
+const EXCERPT_FAILURE_LINES = 3;
+const EXCERPT_FAILURE_LINE_MAX = 100;
+
+/** 末尾の limit 文字（長ければ先頭に … を付ける。サロゲートペアの途中では切らない）。 */
+function tailOf(text: string, limit: number): string {
+  const chars = Array.from(text);
+  return chars.length > limit ? `…${chars.slice(-limit).join("")}` : text;
 }
 
 /** ゴールガーディアンが写したテストの結果の抜粋のうち、記録する文字数。 */
@@ -2982,7 +3087,7 @@ function resultTableLines(task: Task): string[] {
     }),
     "",
     guardianTests
-      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
+      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
       : tests
         ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
         : task.noTestsReason

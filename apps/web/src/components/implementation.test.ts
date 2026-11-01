@@ -78,6 +78,32 @@ describe("Implementation の人が確かめること（PBI-155）", () => {
   });
 });
 
+describe("Implementation の、ツールが無くて実行できなかった検証（PBI-158）", () => {
+  const skipped = review({
+    tests: { command: "go test ./...", exitCode: 127, output: "", missingCommands: ["go"] },
+    humanChecks: [
+      "go のある環境で、テスト（検証）のコマンド `go test ./...` を実行して確かめてください",
+    ],
+  });
+
+  it("実行できなかったことを示し、人が確かめることに出す。テストの不合格とは出さない", () => {
+    const html = render(task(skipped));
+    expect(html).toContain("go が無く実行できず");
+    expect(html).toContain(
+      "go のある環境で、テスト（検証）のコマンド `go test ./...` を実行して確かめてください",
+    );
+    expect(html).not.toContain("不合格");
+    expect(render(task(skipped), "en")).toContain("Could not run: go missing");
+  });
+
+  it("記録が無ければ（コードを含む差分・それより前の版）、出さない", () => {
+    const html = render(
+      task(review({ tests: { command: "go test ./...", exitCode: 0, output: "" } })),
+    );
+    expect(html).not.toContain("無く実行できず");
+  });
+});
+
 describe("Implementation のテストを書かずに差分で確かめる観点", () => {
   const designed = (lastReview?: FinalReview) =>
     ({

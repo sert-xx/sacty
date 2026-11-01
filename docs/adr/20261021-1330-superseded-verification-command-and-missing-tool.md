@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: なし
 - 置き換え元: なし
-- 置き換え先: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](20261021-1431-guardian-runs-tests.md)（ツールが無いことを sacty のテストの実行の終了コード 127 と出力で見分け、`TestsRun`・`ReproductionChecked` を記録せずに止める部分）
+- 置き換え先: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](20261021-1431-superseded-guardian-runs-tests.md)（ツールが無いことを sacty のテストの実行の終了コード 127 と出力で見分け、`TestsRun`・`ReproductionChecked` を記録せずに止める部分）
 
 ## 背景
 

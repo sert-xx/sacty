@@ -13,6 +13,7 @@ import {
   extractAuditDive,
   extractAuditSurvey,
 } from "./audit-prompts.js";
+import { redactLog } from "./ci.js";
 
 const task = {
   id: "t1",
@@ -74,6 +75,18 @@ describe("大まかな監査の出力（PBI-125）", () => {
       memoryMoves: [],
       memoryPromotions: [],
     });
+  });
+
+  it("秘密情報を伏せてから読んでも、URL とメールアドレスが別のフィールドにある出力を読める（PBI-158）", () => {
+    const output = block({
+      "sacty-audit-survey": {
+        summary: "https://example.com",
+        concerns: [{ step: "implement", reason: "a@example.com" }],
+      },
+    });
+    const read = extractAuditSurvey(redactLog(output, []), task);
+    expect(read).toEqual(extractAuditSurvey(output, task));
+    expect(read.ok).toBe(true);
   });
 
   it("形が合わなければ読めない理由を返す。懸念が空なら空", () => {

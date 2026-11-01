@@ -2327,6 +2327,9 @@ export function applyEvent(
           throw new ActivityIntegrityError(event, "a bug fix needs a test command");
         }
         task.noTestsReason = event.payload.noTestsReason;
+        // ツールが無くて止まったタスク（PBI-158）の、決まっていたテストのコマンドは使わない（残すと、テストなしと決めても
+        // 同じコマンドを実行して、また止まる）
+        task.testCommand = undefined;
       }
       task.testsDecidedBy = "person";
       break;
@@ -2891,9 +2894,30 @@ export function testsUndecided(task: Task): boolean {
   );
 }
 
-/** テストが決まらずに止まったタスクで、人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。 */
+/**
+ * 最終レビューで、テストのコマンドに書いたツールがテストを実行するイメージに無くて止まったタスクか（PBI-158。
+ * `verify.commandMissing`）。決まっているテストのコマンドが、このイメージでは実行できない。テストのコマンドが決まっている
+ * （テストの仕組みが無いタスクの、実装が申告したコマンドは含めない）タスクだけ。
+ */
+export function testToolsMissing(task: Task): boolean {
+  const stopped = task.pausedMessage;
+  return (
+    task.status === "paused" &&
+    task.pausedReason === "error" &&
+    typeof stopped === "object" &&
+    stopped.code === "verify.commandMissing" &&
+    Boolean(task.testCommand) &&
+    !task.noTestsReason &&
+    task.steps.some((s) => s.key === "implement" || s.key === "reproduce")
+  );
+}
+
+/**
+ * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらずに止まったタスクと、
+ * 決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）。
+ */
 export function canDecideTests(task: Task): boolean {
-  return task.status === "paused" && testsUndecided(task);
+  return task.status === "paused" && (testsUndecided(task) || testToolsMissing(task));
 }
 
 /**
@@ -2903,6 +2927,8 @@ export function canDecideTests(task: Task): boolean {
 export function canRechooseSteps(task: Task): boolean {
   return (
     canDecideTests(task) &&
+    // ツールが無くて止まったタスク（PBI-158）は、工程の選択をやり直しても同じテストのコマンドになりうる。決め直すか、そのまま再開する
+    !testToolsMissing(task) &&
     task.resumeTo === "queued" &&
     task.currentRunId === undefined &&
     !task.operationAttempted &&
