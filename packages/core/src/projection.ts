@@ -1401,6 +1401,8 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the repository is not prepared");
       }
       task.baseMerge = { ...event.payload, at: event.at };
+      // 検証の待ちで取り込んだなら、前の CI の結果は取り込む前のコードのものなので、PR を作り直して CI を待ち直す
+      if (task.verification !== undefined) task.pullRequestCi = undefined;
       break;
 
     case "BaseConflictsRemained":

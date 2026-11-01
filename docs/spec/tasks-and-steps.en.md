@@ -595,7 +595,7 @@ So that the implementation PR does not stay in conflict with the base branch, sa
 
 - When it merges (`syncBase`):
   - Before the implementation run starts (`runNextInner`). This is the same for the first run and for redoing the implementation after a rejection, after taking in PR comments, or after a re-review.
-  - Before the final review (`syncBeforeVerify`), in case the base branch moved during the implementation run. The final review runs on the code after the merge. It does not merge while it waits for the PR's CI (while `pullRequestCi` is set), when the budget limit has been reached, or when there is no workspace.
+  - Before the final review (`syncBeforeVerify`), in case the base branch moved during the implementation run. The final review runs on the code after the merge. While it waits for the PR's CI the task does not go on to the final review, so it does not merge. If the base branch has moved after the CI result is in (including when a task paused on a conflict is resumed and returns to the final review without redoing the implementation), it merges then: on a conflict the implementation is redone; without one, `BaseBranchMerged` discards the earlier CI result (`pullRequestCi`) and the PR is made again as a merge commit and its CI is awaited again. It does not merge when the budget limit has been reached or when there is no workspace.
   - It does not merge while the task waits for approval (when a person rejects it or writes PR comments, it merges before the implementation is redone).
   - It does not merge when `ServiceDeps.mergeBase` is `false` (for tests; the default is to merge).
 - How it merges:

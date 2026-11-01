@@ -4166,6 +4166,95 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    describe("検証の待ちに戻るとき（PR を作った後・再開）", () => {
+      class StubCi implements CiStatusReader {
+        async snapshot() {
+          return {
+            checks: [
+              {
+                kind: "workflow" as const,
+                name: "CI",
+                status: "completed" as const,
+                conclusion: "success" as const,
+              },
+            ],
+            failedRuns: [],
+          };
+        }
+        async failures() {
+          return [];
+        }
+      }
+      /** 実装して PR をドラフトで作り、CI の結果が出て、最終レビューに進む直前まで進める。 */
+      async function toCiFinished(outcomes: AgentOutcome[], repos: FakeRepos) {
+        let clock = Date.now();
+        const made = await toImplement(outcomes, {
+          repos,
+          mergeBase: true,
+          draftPullRequests: true,
+          ci: new StubCi(),
+          now: () => clock,
+        });
+        await made.service.runNext(made.id); // 実装
+        await made.service.runNext(made.id); // 最終レビューの前に、PR をドラフトで作る
+        await made.service.checkPullRequests();
+        await made.service.checkPullRequests();
+        expect(made.service.get(made.id)?.task.pullRequestCi?.result).toBe("passed");
+        return { ...made, advance: (ms: number) => (clock += ms) };
+      }
+
+      it("PR の CI の結果が出た後（競合で止まって再開した場合を含む）にベースブランチが進んで競合していたら、古いコードで最終レビューをせず、競合したファイルを渡して実装をやり直す", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        const { activity, service, executor, id } = await toCiFinished(
+          [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+          repos,
+        );
+        // 最終レビューの前に、ベースブランチが進んで、競合した
+        repos.remote.main = tip;
+        repos.mergeResult = { status: "conflicted", conflicts: conflictedFiles };
+        repos.markers = [...conflictedFiles];
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(executor.calls.length).toBe(runs);
+        expect(repos.merges).toMatchObject([{ base: "base123", target: tip }]);
+        const task = service.get(id)?.task as Task;
+        expect(task.status).toBe("queued");
+        expect(task.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+        expect(task.verifyFailures).toBe(0);
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        activity.close();
+      });
+
+      it("PR の CI の結果が出た後にベースブランチが進んで競合しなければ、取り込んだコードで PR を作り直して CI を待ち直してから、最終レビューに進む", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        const { activity, service, executor, id } = await toCiFinished(
+          [implement("# 実装"), review()],
+          repos,
+        );
+        const before = service.get(id)?.task.pullRequest?.commit;
+        repos.remote.main = tip;
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        // 取り込んで、PR を作り直した。前の CI の結果は使わず、CI を待ち直す。最終レビューはまだ
+        expect(repos.merges).toMatchObject([{ base: "base123", target: tip }]);
+        expect(executor.calls.length).toBe(runs);
+        const waiting = service.get(id)?.task as Task;
+        expect(waiting.baseMerge?.commit).toBe(tip);
+        expect(waiting.pullRequest?.commit).not.toBe(before);
+        expect(waiting.pullRequestCi?.result).toBeUndefined();
+        expect(repos.publishInputs.at(-1)).toEqual({ baseCommit: tip, merge: tip });
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("passed");
+        await drain(service);
+        expect(types(service, id)).toContain("FinalReviewed");
+        expect(repos.merges).toHaveLength(1);
+        activity.close();
+      });
+    });
+
     it("ベースブランチの最新を取得できなければ、実装を実行せず、理由を示して止める", async () => {
       const repos = withBaseMoved();
       repos.fetchBranchFail = "network is down";
