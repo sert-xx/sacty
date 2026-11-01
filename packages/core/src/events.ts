@@ -1173,6 +1173,9 @@ const RepositoryPrepared = z.object({
   }),
 });
 
+/** ベースブランチとの競合として記録・検査するファイルの数の上限（超えるときは、取り込まずに理由を示して止める）。 */
+export const MAX_BASE_CONFLICTS = 1000;
+
 /**
  * ベースブランチの最新を、実装の作業領域に取り込んだ（ホストで、作業領域の内容とベースブランチの先頭を3方向でマージした）。
  * from は取り込む前に作業領域がベースにしていたコミット、commit は取り込んだベースブランチの先頭。conflicts は、競合して
@@ -1184,7 +1187,7 @@ const BaseBranchMerged = z.object({
   payload: z.object({
     from: z.string().min(1),
     commit: z.string().min(1),
-    conflicts: z.array(z.string().min(1)).max(100),
+    conflicts: z.array(z.string().min(1)).max(MAX_BASE_CONFLICTS),
   }),
 });
 
@@ -1195,7 +1198,7 @@ const BaseBranchMerged = z.object({
 const BaseConflictsRemained = z.object({
   type: z.literal("BaseConflictsRemained"),
   payload: z.object({
-    files: z.array(z.string().min(1)).min(1).max(100),
+    files: z.array(z.string().min(1)).min(1).max(MAX_BASE_CONFLICTS),
     /**
      * この検証の前の取り込みで、新しく競合した（実装の実行の間にベースブランチが進んだ。エージェントが目印を消し忘れた
      * のではない）。検証に通らなかった回数には数えず、競合したファイルを渡して実装をやり直す。

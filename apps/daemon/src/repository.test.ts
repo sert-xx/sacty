@@ -806,6 +806,89 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       expect(await workspace.conflictMarkers(clone, merged.conflicts)).toEqual([]);
     });
 
+    it("両側が同じファイルを別名へ改名して内容も競合したとき、git が書く長い目印（<<<<<<<<）とパス付きのラベルも、残っているうちは解消していないものとする", async () => {
+      const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      // 作業領域は README.md を ours.md に改名して内容を変え、別のタスクは theirs.md に改名して同じ行を変えてマージした
+      renameSync(join(clone, "README.md"), join(clone, "ours.md"));
+      writeFileSync(join(clone, "ours.md"), "# app\n\n1. one\n2. two (mine)\n3. three\n");
+      git(origin, "mv", "README.md", "theirs.md");
+      const tip = advanceMain(origin, "theirs.md", "# app\n\n1. one\n2. two (theirs)\n3. three\n");
+      await workspace.fetchBranch(gitDir, "main");
+      const merged = await workspace.mergeBase({
+        dir: clone,
+        gitDir,
+        base: baseCommit,
+        target: tip,
+      });
+      expect(merged.status).toBe("conflicted");
+      expect(merged.conflicts.length).toBeGreaterThan(0);
+      // 実際に git が書いた目印は、7文字より長く、ID にパスが付いている
+      const marked = merged.conflicts.filter(
+        (c) =>
+          existsSync(join(clone, c)) &&
+          /^<{8,} [0-9a-f]{40,}:/m.test(readFileSync(join(clone, c), "utf8")),
+      );
+      expect(marked.length).toBeGreaterThan(0);
+      expect(await workspace.conflictMarkers(clone, marked)).toEqual(marked);
+      // 目印の行を消せば、解消したことになる
+      for (const c of marked) {
+        const text = readFileSync(join(clone, c), "utf8")
+          .split("\n")
+          .filter((line) => !/^([<>]{8,} [0-9a-f]{40,}|={8,}$)/.test(line))
+          .join("\n");
+        writeFileSync(join(clone, c), text);
+      }
+      expect(await workspace.conflictMarkers(clone, marked)).toEqual([]);
+    });
+
+    it("競合の目印の行の見分け：長い目印・パス付きのラベルは目印とし、ラベルの無い似た行・短い ID は目印としない", async () => {
+      const { workspace, clone } = await prepareMerge();
+      const id = "a".repeat(40);
+      const check = async (text: string) => {
+        writeFileSync(join(clone, "x.txt"), text);
+        return (await workspace.conflictMarkers(clone, ["x.txt"])).length === 1;
+      };
+      expect(await check(`<<<<<<<< ${id}:ours.txt\nx\n`)).toBe(true);
+      expect(await check(`x\n>>>>>>>>> ${id}:dir/with space.txt\n`)).toBe(true);
+      expect(await check(`<<<<<<< ${id}\r\nx\n`)).toBe(true);
+      expect(await check(`<<<<<<< ${id}:\n`)).toBe(true);
+      expect(await check(`<<<<<<< HEAD\nx\n>>>>>>> branch\n`)).toBe(false);
+      expect(await check(`<<<<<<<< abc123:ours.txt\n`)).toBe(false);
+      expect(await check(`<<<<<< ${id}\n`)).toBe(false);
+      expect(await check(`text <<<<<<<< ${id}\n`)).toBe(false);
+      expect(await check("Title\n=======\n")).toBe(false);
+    });
+
+    it("競合したファイルが上限を超えるときは、作業領域を書き換えずに、件数と上限を示して失敗する。上限以内なら取り込む", async () => {
+      const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      // 3つのファイルが競合する
+      for (const name of ["a.txt", "b.txt", "c.txt"]) {
+        writeFileSync(join(clone, name), `${name} mine\n`);
+        writeFileSync(join(origin, name), `${name} theirs\n`);
+      }
+      git(origin, "add", "--all");
+      git(origin, "commit", "-m", "main: three files");
+      const tip = git(origin, "rev-parse", "HEAD");
+      await workspace.fetchBranch(gitDir, "main");
+      const before = readFileSync(join(clone, "a.txt"), "utf8");
+      await expect(
+        workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip, maxConflicts: 2 }),
+      ).rejects.toThrow(/3 件.*2 件/);
+      // 作業領域は書き換えていない（目印は入っていない）
+      expect(readFileSync(join(clone, "a.txt"), "utf8")).toBe(before);
+      expect(await workspace.conflictMarkers(clone, ["a.txt", "b.txt", "c.txt"])).toEqual([]);
+      // 上限と同じ件数なら取り込む
+      const merged = await workspace.mergeBase({
+        dir: clone,
+        gitDir,
+        base: baseCommit,
+        target: tip,
+        maxConflicts: 3,
+      });
+      expect(merged.status).toBe("conflicted");
+      expect(merged.conflicts.sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+    });
+
     it("取り込むものが無ければ何もせず、作業領域の変更は消えない。ベースブランチが続けて進んだら、前に取り込んだ先頭を起点に取り込む", async () => {
       const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
       writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");

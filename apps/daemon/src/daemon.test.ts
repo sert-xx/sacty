@@ -39,6 +39,7 @@ import {
   isCompleted,
   isFinished,
   isRepoless,
+  MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_VERIFY_ATTEMPTS,
@@ -566,9 +567,22 @@ class FakeRepos implements RepositoryWorkspace {
   };
   mergeFail?: string;
   merges: { dir: string; gitDir: string; base: string; target: string }[] = [];
-  async mergeBase(input: { dir: string; gitDir: string; base: string; target: string }) {
+  async mergeBase(input: {
+    dir: string;
+    gitDir: string;
+    base: string;
+    target: string;
+    maxConflicts?: number;
+  }) {
     this.merges.push(input);
     if (this.mergeFail) throw new Error(this.mergeFail);
+    // 実際の取り込みと同じく、競合が上限より多ければ、結果を返さずに失敗する
+    if (
+      input.maxConflicts !== undefined &&
+      this.mergeResult.conflicts.length > input.maxConflicts
+    ) {
+      throw new Error(`競合が多すぎます（${this.mergeResult.conflicts.length} 件）`);
+    }
     return this.mergeResult;
   }
   /** 競合の目印が残っているパス（解消すると、テストで外す）。 */
@@ -4089,6 +4103,52 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const done = service.get(id)?.task as Task;
       expect(done.gate).toEqual({ step: "implement", submission: 1 });
       expect(done.verifyFeedback).toBeUndefined();
+      activity.close();
+    });
+
+    it("競合したファイルが100件を超えても全件を記録し、先頭の100件だけを解消して101件目以降に目印が残っていれば、最終レビューに進まない", async () => {
+      const files = Array.from({ length: 150 }, (_, i) => `src/file-${i}.ts`);
+      const repos = withBaseMoved();
+      repos.mergeResult = { status: "conflicted", conflicts: files };
+      repos.markers = [...files];
+      const { activity, service, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id);
+      // 切り捨てずに、150件すべてを記録する
+      expect(service.get(id)?.task.baseMerge?.conflicts).toEqual(files);
+      // 先頭の100件だけを解消した
+      repos.markers = files.slice(100);
+      await service.runNext(id);
+      const failed = service.get(id)?.task as Task;
+      expect(failed.verifyFeedback).toEqual({ kind: "merge", files: files.slice(100) });
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      // 残りも解消すれば、最終レビューへ進む
+      repos.markers = [];
+      await drain(service);
+      expect(types(service, id)).toContain("FinalReviewed");
+      activity.close();
+    });
+
+    it("競合したファイルが上限（MAX_BASE_CONFLICTS）を超えるときは、取り込みを記録せずに理由を示して一時停止する", async () => {
+      const repos = withBaseMoved();
+      repos.mergeResult = {
+        status: "conflicted",
+        conflicts: Array.from({ length: MAX_BASE_CONFLICTS + 1 }, (_, i) => `f-${i}.ts`),
+      };
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        repos,
+        mergeBase: true,
+      });
+      await drain(service);
+      expect(repos.merges).toMatchObject([{ maxConflicts: MAX_BASE_CONFLICTS }]);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(types(service, id)).not.toContain("BaseBranchMerged");
+      expect(JSON.stringify(service.get(id)?.activity.at(-2)?.payload)).toContain("merge.failed");
+      expect(task.baseMerge).toBeUndefined();
       activity.close();
     });
 

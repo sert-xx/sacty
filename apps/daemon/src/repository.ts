@@ -130,6 +130,11 @@ export interface RepositoryWorkspace {
     gitDir: string;
     base: string;
     target: string;
+    /**
+     * 競合したファイルの数の上限。超えるときは、作業領域を書き換えずに、理由を示して失敗する（全件の目印を検査できない
+     * まま、解消したことにしない）。
+     */
+    maxConflicts?: number;
   }): Promise<{ status: "unchanged" | "merged" | "conflicted"; conflicts: string[] }>;
   /**
    * paths（リポジトリの根からの相対パス）のうち、競合の目印（mergeBase が書く、ID のラベルの付いた <<<<<<< の行か
@@ -327,8 +332,11 @@ const COMMIT_RE = /^[0-9a-f]{40,64}$/;
 /** 競合の目印を探すファイルの大きさの上限（これより大きいファイルは読まない）。 */
 const MARKER_SCAN_LIMIT = 20 * 1024 * 1024;
 
-/** 競合の目印の行。git が書く、ツリーかコミットの ID のラベルが付いた始めの行と終わりの行。 */
-const CONFLICT_MARKER_RE = /^(<{7}|>{7}) [0-9a-f]{40,64}\r?$/m;
+/**
+ * 競合の目印の行。git が書く、ツリーかコミットの ID のラベルが付いた始めの行と終わりの行。両側が同じファイルを別名へ
+ * 改名して内容も競合したときなどは、目印が長くなり（`<<<<<<<<`。7 文字より多い）、ラベルにパスが付く（`<ID>:ours.txt`）。
+ */
+const CONFLICT_MARKER_RE = /^(<{7,}|>{7,}) [0-9a-f]{40,64}(?::[^\r\n]*)?\r?$/m;
 
 /** ディレクトリとファイルの名前が衝突したときに、git が避けて付ける名前（`docs~<ID>`）。 */
 const RENAMED_CONFLICT_RE = /~[0-9a-f]{40,64}$/;
@@ -693,6 +701,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         );
       }
       const conflicts = [...new Set(names)];
+      // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
+      if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
+        throw new MessageError(
+          message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
+        );
+      }
       // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
       if (tree !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, tree]);
       return {
