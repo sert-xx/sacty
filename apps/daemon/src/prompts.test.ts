@@ -3345,6 +3345,28 @@ describe("差分が文書だけのとき、ツールが無くて実行できな�
     expect(item).toContain("example.com/path");
   });
 
+  it("JSON の形の認証ヘッダーも、出力から値を除く", () => {
+    // 架空の値
+    const json = JSON.stringify({ Authorization: "Bearer FAKE_CREDENTIAL_987" });
+    for (const line of [json, JSON.stringify(json)]) {
+      const item = itemOf({ output: `request ${line}\ngo: command not found` });
+      expect(item, line).not.toContain("FAKE_CREDENTIAL_987");
+      expect(item, line).toContain("go: command not found");
+    }
+  });
+
+  it("JSON の文字列の中のエスケープした引用符を含む秘密の値も、出力から全体を除く", () => {
+    // 架空の値
+    for (const password of ['abc"FAKE_SUFFIX_123', 'abcd"FAKE_SUFFIX_123']) {
+      const json = JSON.stringify({ password });
+      for (const line of [json, JSON.stringify(json)]) {
+        const item = itemOf({ output: `config ${line}\ngo: command not found` });
+        expect(item, line).not.toContain("FAKE_SUFFIX_123");
+        expect(item, line).toContain("go: command not found");
+      }
+    }
+  });
+
   it("ゴールガーディアンがツール不足のほかの失敗を申告したら、文書だけの差分でも通ったものにしない（止めずに、ふつうの判定にする）", () => {
     const review = extractFinalReview(
       reported({
