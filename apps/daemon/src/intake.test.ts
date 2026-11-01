@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { message, parseRepoUrl, renderMessage } from "@sacty/core";
+import { type DaemonText, message, parseRepoUrl, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
@@ -9,7 +9,7 @@ import type { ConfigResult } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { FoundIssue, IssueSearch } from "./github.js";
+import type { FoundIssue, IssueSearch, IssueSearchResult } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
 import { fillTemplate, limitBody } from "./pr-template.js";
@@ -1547,6 +1547,44 @@ describe("GitHub の時刻のずれと検索の読んだ位置（PBI-270）", ()
     await intake.tick();
     // 次の since は、検索を終えた時刻（08:58:00）ではなく、始めた時刻（08:52:00）
     expect(search.sinces).toEqual([undefined, "2026-11-01T08:52:00Z"]);
+    activity.close();
+  });
+
+  it("検索が上限で打ち切られたときの位置は戻さず、複数回の取り込みで残りへ進み、検索が終わってから持ち越す位置を検索開始時刻で抑える", async () => {
+    const { activity, service, search, intake, clock } = reviewIntake();
+    // 結果が多く、1回の検索では取り切れない（打ち切った位置は、GitHub の時刻が先に進んでいて、この機械の時計より先）
+    const pages: { issues: FoundIssue[]; cursor: string; incomplete?: DaemonText }[] = [
+      { issues: [pr(1)], cursor: "2026-11-01T09:51:00Z", incomplete: message("intake.partial") },
+      { issues: [pr(2)], cursor: "2026-11-01T09:52:00Z", incomplete: message("intake.partial") },
+      { issues: [pr(3)], cursor: "2026-11-01T09:53:00Z" },
+    ];
+    const sinces: (string | undefined)[] = [];
+    let call = 0;
+    search.search = async (_host, _query, _token, since) => {
+      sinces.push(since);
+      return pages[Math.min(call++, pages.length - 1)] as IssueSearchResult;
+    };
+    clock("2026-11-01T08:52:00Z");
+    await intake.tick();
+    clock("2026-11-01T08:53:30Z");
+    await intake.tick();
+    clock("2026-11-01T08:55:00Z");
+    await intake.tick();
+    clock("2026-11-01T08:56:30Z");
+    await intake.tick();
+    // 打ち切られた間は、返された位置から続ける。終わった検索（08:55:00 に始めた）の位置は、その時刻に抑える
+    expect(sinces).toEqual([
+      undefined,
+      "2026-11-01T09:51:00Z",
+      "2026-11-01T09:52:00Z",
+      "2026-11-01T08:55:00Z",
+    ]);
+    expect(
+      service
+        .list()
+        .map((t) => t.source?.number)
+        .sort(),
+    ).toEqual([1, 2, 3]);
     activity.close();
   });
 

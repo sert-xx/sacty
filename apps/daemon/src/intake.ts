@@ -257,7 +257,14 @@ export class IssueIntake {
           : result.issues;
         for (const issue of issues) foundIn.set(issue, cursorKey);
         found.push(...issues);
-        if (result.cursor) advanced.set(cursorKey, clampCursor(result.cursor, searchedAt));
+        // 検索が終わっていないとき（上限・失敗）の位置は、次の検索がその先から続けるためのものなので、そのまま持つ
+        // （戻すと、先頭の同じ部分を繰り返して先へ進めない）。上限で戻すのは、検索が終わって持ち越す位置だけ
+        if (result.cursor) {
+          advanced.set(
+            cursorKey,
+            result.incomplete ? result.cursor : clampCursor(result.cursor, searchedAt),
+          );
+        }
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
