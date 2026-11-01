@@ -430,6 +430,27 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     );
   });
 
+  it("フェンスは CommonMark の字下げ（0〜3空白）で読む。4空白以上の字下げの行は終わりでも始まりでもない", () => {
+    // コードの中の4空白で字下げした ``` は終了ではない（中の文を消さない）
+    const inside = "```text\n    ```\nコミット・プッシュはしていません。\n```\n終わり。";
+    expect(withoutProgressReport(inside)).toBe(inside);
+    // 3空白までの字下げ・後ろの空白は終了になる。info string 付きは終了にならない
+    const closed = "```\n```json\n   ```  \nコミット・プッシュはしていません。\n終わり。";
+    expect(withoutProgressReport(closed)).toBe("```\n```json\n   ```  \n終わり。");
+    // 4空白で字下げした ``` はコードの始まりではない（その後の文は通常の文として扱う）
+    expect(
+      withoutProgressReport("始め。\n    ```\nコミット・プッシュはしていません。\n終わり。"),
+    ).toBe("始め。\n    ```\n終わり。");
+    // 結論の要約も、コードの中の字下げした ``` で終わらない
+    const body = buildPullRequestBody(
+      task({
+        outputs: { implement: "```text\n    ```\n中の文\n```\n\nキャンセル API を足しました。" },
+      }),
+    );
+    expect(body).toContain("- 変更：キャンセル API を足しました。");
+    expect(body).not.toContain("- 変更：中の文");
+  });
+
   it("結論の「変更」の要約も、4文字で開いたコードの中の3文字のフェンスで終わらない", () => {
     const body = buildPullRequestBody(
       task({

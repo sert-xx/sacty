@@ -3538,17 +3538,22 @@ function leadOf(text: string, max: number): string {
   return stop >= Math.floor(max / 3) ? cut.slice(0, stop + 1) : `${cut}…`;
 }
 
-/** コードブロックの開始フェンス（行頭の ``` か ~~~ を3つ以上）。文字と長さを覚えておく。 */
+/**
+ * コードブロックのフェンス（CommonMark の規則）。元の行で読む：字下げは0〜3空白まで（4空白以上はコードの中の字下げで、
+ * フェンスではない）。開始は ``` か ~~~ を3つ以上（``` の行の後ろに ` は置けない）。終了は開始と同じ文字だけで
+ * 開始以上の長さ、後ろは空白だけ（4文字で開いたコードの中の3文字は、終わりではない）。
+ */
 type CodeFence = { char: string; size: number };
 
-function openingFence(trimmed: string): CodeFence | undefined {
-  const opened = trimmed.match(/^(`{3,}|~{3,})/);
+function openingFence(line: string): CodeFence | undefined {
+  const opened = line.match(/^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
   return opened?.[1] ? { char: opened[1].charAt(0), size: opened[1].length } : undefined;
 }
 
-/** 終了フェンスか。開始と同じ文字だけの行で、開始以上の長さのもの（4文字で開いたコードの中の3文字は、終わりではない）。 */
-function closesFence(trimmed: string, fence: CodeFence): boolean {
-  return trimmed.length >= fence.size && trimmed === fence.char.repeat(trimmed.length);
+function closesFence(line: string, fence: CodeFence): boolean {
+  const closed = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+  const marks = closed?.[1] ?? "";
+  return marks.length >= fence.size && marks.charAt(0) === fence.char;
 }
 
 /** 文章の最初の段落（見出し・表・コードブロックを除く）の頭。無ければ空。 */
@@ -3558,10 +3563,10 @@ function leadParagraph(text: string, max = BODY_LEAD_MAX): string {
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const trimmed = line.trim();
     if (fence) {
-      if (closesFence(trimmed, fence)) fence = undefined;
+      if (closesFence(line, fence)) fence = undefined;
       continue;
     }
-    const opened = openingFence(trimmed);
+    const opened = openingFence(line);
     if (opened) {
       if (found.length > 0) break;
       fence = opened;
@@ -3605,11 +3610,11 @@ export function withoutProgressReport(text: string): string {
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const trimmed = line.trim();
     if (fence) {
-      if (closesFence(trimmed, fence)) fence = undefined;
+      if (closesFence(line, fence)) fence = undefined;
       out.push(line);
       continue;
     }
-    const opened = openingFence(trimmed);
+    const opened = openingFence(line);
     if (opened) {
       fence = opened;
       blankRun = 0;
