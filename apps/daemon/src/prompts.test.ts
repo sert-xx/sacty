@@ -2532,7 +2532,16 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       expect(prompt, step).toContain(
         "「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする",
       );
-      expect(prompt, step).toContain("理由の分からない ID の欠番がある指摘は、should でも直す");
+      expect(prompt, step).toContain("理由の分からない欠番がある指摘は、should でも直す");
+      // sacty が配列の順に振り直すテスト観点の TV-n には、ID の固定と削除行の保持を求めない
+      expect(prompt, step).toContain(
+        "要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る",
+      );
+      expect(prompt, step).not.toContain("要求・受け入れ条件・テスト観点などの ID");
+      expect(prompt, step).toContain(
+        "sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない",
+      );
+      expect(prompt, step).toContain("sacty が振るテスト観点の TV-n は除く");
       expect(prompt, step).not.toContain("振り直して、他の箇所の参照も合わせる");
       expect(prompt, step).toContain(
         "参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する",
