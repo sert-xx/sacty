@@ -2492,6 +2492,62 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     }
   });
 
+  it("要求要件と設計の指示に、依頼の目的に関わる判断と依頼者に不利益な既定を「確認したいこと」に出し、依頼者が一番決めたいことから並べることを書く", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).toContain(
+        "依頼の目的に関わる判断（何をどこまで・何を優先して実現するか、依頼者が一番決めたいこと）は、should に置かず、ここに置く",
+      );
+      expect(prompt, step).toContain(
+        "並べ方：依頼者が一番決めたいこと（依頼の目的に直結すること）から順に書く",
+      );
+      expect(prompt, step).toContain("推奨の答えは、依頼の意図に沿う向きにする");
+      expect(prompt, step).toContain(
+        "依頼者に不利益が出うる既定（元に戻せない・失われる・使えなくなる・手間や費用が増える・依頼の意図と逆に働く、など）と、依頼の目的に関わる判断は、「既定で決めたこと」に置かず、「確認したいこと」に出す",
+      );
+      // should の上限を超えたときも、不利益な既定は既定に回さない
+      expect(prompt, step).toContain("これらは「既定で決めたこと」に回さず、害の小さいものを回す");
+    }
+  });
+
+  it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、ID の欠番と参照だけの項目を残さないことを書く", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const [step, name] of [
+      ["requirements", "要求要件"],
+      ["design", "設計"],
+    ] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).toContain(`--- ${name}の本文に書くもの ---`);
+      expect(prompt, step).toContain(
+        `本文には、${name}そのものだけを書く。次のものは、本文のどこにも（区切り線「---」の後ろや末尾にも）書かない`,
+      );
+      expect(prompt, step).toContain("作業の経過・手順・結果の報告");
+      expect(prompt, step).toContain(
+        "人間の指摘・PR の指摘・再開の補足への対応の報告（指摘への対応は、本文ではなく、sacty-responses の JSON の text に書く。",
+      );
+      expect(prompt, step).toContain("エージェントや sacty に向けたメモ・指示");
+      expect(prompt, step).toContain("1 から欠番なく連番で振る");
+      expect(prompt, step).toContain(
+        "参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する",
+      );
+      expect(prompt, step).toContain("提出の前に、本文を最初から最後まで読み直して");
+      // 提出の前のセルフレビューでも、must として直させる
+      expect(prompt, step).toContain(
+        "依頼者に不利益が出うる既定が「確認したいこと」に無い（「既定で決めたこと」にある）指摘は、記述を足す指摘であっても must として直す",
+      );
+    }
+  });
+
+  it("文書・調査の結果・実装の指示には、要求要件・設計の本文の決まりを出さない", () => {
+    const t = task(["investigate", "document", "requirements", "design", "implement"]);
+    for (const step of ["investigate", "document", "implement"] as const) {
+      const prompt = buildPrompt(t, step);
+      expect(prompt, step).not.toContain("の本文に書くもの ---");
+      expect(prompt, step).not.toContain("依頼者が一番決めたいこと");
+    }
+  });
+
   it("設計は、書くことがある節だけを作り、テスト観点を要る分だけにし、異常系・境界値を今回の変更で起こりうるものにする", () => {
     const prompt = buildPrompt(task(["requirements", "design", "implement"]), "design");
     expect(prompt).toContain("今回の変更で書くことがあるものだけにする");

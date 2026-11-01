@@ -315,6 +315,46 @@ describe("既定のスキル drawio（draw.io の公式のスキル）", () => {
   });
 });
 
+describe("既定の review スキルの、要求要件・設計の読みやすさの観点", () => {
+  const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
+
+  it("D-6 は、本文に残った作業の経過・指摘への対応の報告・エージェント向けのメモ、ID の欠番、参照だけの項目を must で探す", () => {
+    expect(catalog()).toMatch(
+      /^\| D-6 \| 形式・明確さ \|.*本文に残った作業の経過・指摘への対応の報告・エージェント向けのメモ、ID の欠番、別の文書を参照するだけの項目 \|/m,
+    );
+    const d6 = read("skills/review/review-execution/references/D-6.md");
+    expect(d6).toContain("本文の末尾と区切り線（`---`）の後ろを読み");
+    expect(d6).toContain("欠番なく連番か");
+    expect(d6).toContain("参照先を開かなくても何を求めるかが、その項目の中で分かるか");
+    expect(d6).toContain("文書そのものではない文章が残っている（`must`）");
+    expect(d6).toContain("ID の欠番（R-4 の次が R-6、など）");
+    expect(d6).toContain("別の文書への参照だけの項目");
+  });
+
+  it("D-10 は、依頼の目的に関わる判断・依頼者に不利益な既定が既定に紛れていないか、確認したいことの並びを見る", () => {
+    expect(catalog()).toMatch(
+      /^\| D-10 \| 簡潔さ・範囲 \|.*依頼の目的に関わる判断と、依頼者に不利益が出うる既定が、既定に紛れていないか。判断する項目が、依頼者が一番決めたいことから並んでいるか/m,
+    );
+    const d10 = read("skills/review/review-execution/references/D-10.md");
+    expect(d10).toContain("依頼者に不利益が出うるか");
+    expect(d10).toContain("確認したいことに移させる");
+    expect(d10).toContain("依頼者が一番決めたいこと（依頼の目的に直結すること）から並んでいるか");
+    expect(d10).toContain("確認したいことに出ていない（`must`）");
+  });
+});
+
+describe("既定の ears-requirements スキルの、ID の振り方", () => {
+  it("ID は欠番なく連番で振り、消したら振り直し、別の文書を参照する要求には中身を併記する", () => {
+    const text = read("skills/ears-requirements/SKILL.md");
+    expect(text).toContain("1 から欠番なく連番で振る");
+    expect(text).toContain("後ろを振り直して");
+    expect(text).toContain("参照だけにせず、参照先の中身を1行で併記する");
+    // 欠番を生む前の規則は残さない
+    expect(text).not.toContain("直しても付け直さない");
+    expect(text).not.toContain("消した要求の ID は使い回さない");
+  });
+});
+
 describe("既定の review スキルの、コードの簡潔さと UX の観点", () => {
   const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
 
