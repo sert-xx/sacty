@@ -1471,8 +1471,11 @@ describe("GitHub の時刻のずれと検索の読んだ位置（PBI-270）", ()
   class UpdatedSearch implements IssueSearch {
     sinces: (string | undefined)[] = [];
     items: { issue: FoundIssue; updatedAt: string }[] = [];
+    /** 設定すると、検索はこれが解けるまで結果を返さない（検索の間に時計を進めるため）。 */
+    hold: Promise<void> | undefined;
     async search(_host: string, _query: string, _token: string, since?: string) {
       this.sinces.push(since);
+      await this.hold;
       const found = this.items
         .filter((i) => since === undefined || Date.parse(i.updatedAt) >= Date.parse(since))
         .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
@@ -1521,6 +1524,29 @@ describe("GitHub の時刻のずれと検索の読んだ位置（PBI-270）", ()
         .map((t) => t.source?.number)
         .sort(),
     ).toEqual([260, 261]);
+    activity.close();
+  });
+
+  it("検索の間に時計が進んでも、読んだ位置の上限は検索が終わった時刻ではなく、検索を始めた時刻にする", async () => {
+    const { activity, search, intake, clock } = reviewIntake();
+    // GitHub の時刻が先に進んでいて、検索が返す位置は 09:51:44（この機械の時計より先）
+    search.items.push({ issue: pr(260), updatedAt: "2026-11-01T09:51:44Z" });
+    let release: () => void = () => {};
+    search.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    clock("2026-11-01T08:52:00Z");
+    const running = intake.tick();
+    await vi.waitFor(() => expect(search.sinces).toHaveLength(1));
+    // 検索の結果を待っている間に、時計が進む
+    clock("2026-11-01T08:58:00Z");
+    release();
+    await running;
+    search.hold = undefined;
+    clock("2026-11-01T08:59:30Z");
+    await intake.tick();
+    // 次の since は、検索を終えた時刻（08:58:00）ではなく、始めた時刻（08:52:00）
+    expect(search.sinces).toEqual([undefined, "2026-11-01T08:52:00Z"]);
     activity.close();
   });
 

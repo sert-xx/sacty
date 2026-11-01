@@ -9777,6 +9777,25 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("初めて見た時刻は、指摘を取り込む対象から外れたタスク（中止など）の分を忘れる（常駐中に増え続けない。PBI-270）", async () => {
+      const pulls = new FakePulls();
+      const now = Date.parse(at);
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      const seen = (service as unknown as { feedbackSeenAt: Map<string, unknown> }).feedbackSeenAt;
+      // 待っている間（取り込む前）は、見た時刻を持つ
+      pulls.feedbackList = [item("comment:24")];
+      await service.checkPullRequests();
+      expect(seen.has(id)).toBe(true);
+      // 中止されたら、次の確認で忘れる
+      await service.cancel(id);
+      await service.checkPullRequests();
+      expect(seen.size).toBe(0);
+      activity.close();
+    });
+
     it("GitHub の時刻がこの機械の時計より遅れていても、取り込みを遅らせない（PBI-270）", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await toImplementGate(

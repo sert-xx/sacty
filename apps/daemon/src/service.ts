@@ -979,6 +979,13 @@ export class TaskService {
       (t) =>
         (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
     );
+    // 指摘を取り込む対象から外れたタスク（完了・中止・差し戻し・マージなど）の、初めて見た時刻は忘れる（常駐中に増え続けないため。PBI-270）
+    const importing = new Set(
+      waiting.filter((t) => t.status === "awaiting_approval").map((t) => t.id),
+    );
+    for (const id of [...this.feedbackSeenAt.keys()]) {
+      if (!importing.has(id)) this.feedbackSeenAt.delete(id);
+    }
     // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
     const rechecked = new Set<string>();
     for (const task of waiting) {
