@@ -6747,7 +6747,10 @@ export class TaskService {
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
       // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
-      { testCommand: step === "implement" && Boolean(latest.noTestsReason) },
+      {
+        testCommand: step === "implement" && Boolean(latest.noTestsReason),
+        keepIndent: step === "implement",
+      },
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
@@ -8344,8 +8347,8 @@ export class TaskService {
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, { verifying }),
-        buildPullRequestBodyParts(task, { verifying }),
+        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets }),
+        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの

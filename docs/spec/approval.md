@@ -173,9 +173,41 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 sacty は PR を作る・更新するたびに、PR を作るリポジトリの PR テンプレートを探し、あればその見出し・項目の形で本文を書く。
 対象は、実装の PR と、要求要件・設計の PR（マージの後の監視で作る修正のタスクの PR も同じ）。
 テンプレートが無い・使えないときは、sacty の決まった形の本文（`buildPullRequestBody`・`buildStepPullRequestBody`）にする。
-実装の PR の決まった形の本文（`buildPullRequestBodyText`）には、承認済みの要求要件・実装の工程の出力（見出し「変更」。出力が無ければ見出しも入れない）・書き出した成果・観点 → テスト → 実行結果・ゴールガーディアンの最終レビューを、この順に入れる。
-テンプレートに沿わせるときと同じく、実装のエージェントが実装の説明に書いたこと（表・人に確かめることなど）が PR の本文に残る。
 どちらでも PR の作成は止めない。
+
+### 実装の PR の本文の組み立て
+
+実装の PR の本文は、結論から短く読めるようにする。
+承認済みの要求要件・設計の全文や、レビューの長い文は載せず、リンクか折りたたみにする。
+決まった形の本文（`buildPullRequestBodyText`）は、次の順に入れる。
+
+1. タスクの ID の行と、`Closes #<番号>`（Issue から取り込んだタスク）
+2. 「結論」
+   - 変更の要約：実装の工程の出力の最初の段落（字下げのない行だけ。見出し・表・コードブロック・字下げした行を除く）の頭。出力が無ければ行ごと出さない。
+   - 最終レビューの判定と所見の頭。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - 人が最終レビューの不合格のまま進めた記録と不合格の要点（あれば。`overrideBodyLines`）
+   - 人が確かめること（あれば。`humanCheckBodyLines`）
+3. 承認済みの要求要件（再現のタスクは不具合の再現。`approvedBasisLines`）
+   - 全文は載せず、最初の段落の頭と、全文のある場所にする（`approvedBasisDigest`）。
+     全文のある場所は、マージで承認した要求要件・設計の PR の URL とファイルのパス。PR が無ければ「全文は sacty のタスクの画面で確かめてください。」と書く。
+   - 要求要件の工程を省いたタスクと、セキュリティ対応の修正の範囲は、短い文なので従来のとおり。
+4. 「変更」：実装の工程の出力。結論の変更の要約と同じだけなら出さない。出力が無ければ見出しも入れない。
+5. 書き出した成果
+6. 観点 → テスト → 実行結果
+   - 表の列は「観点」「テスト」「最終レビュー」。観点は ID と題（60 文字まで）、テストは 1 件目の名前（70 文字まで）と「ほか N 件」、最終レビューは ✅ か ❌ だけ。
+   - 表の下に、テストの行（上の「テスト：」）を置く。
+   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。
+7. 最終レビューの全文（折りたたみ）。結論に載せた頭より長いとき、または前の指摘の再発の確認があるときだけ出す。
+
+共通の規則は次のとおり。
+
+- 実装の工程の出力から、作業の経過の報告の文を除く（`withoutProgressReport`）。
+  除くのは、コミット・プッシュ・GitHub への反映などの話題の語と、していません・未完了・sacty が行うなどの状態の語を両方含む、100 文字以内の文。
+  触るのは、フェンスの外の、行頭が空白でない行の文だけ。コードブロック（CommonMark のフェンス：字下げは 0〜3 空白、終了は開始と同じ文字で開始以上の長さ）・表・見出しの行と、字下げのある行（リストの中のコード・字下げしたコードなど）は触らない。
+  Markdown の規則を一つずつ読まず、迷う入力は消さない側に倒す（報告の文が1つ残るほうが、コードが壊れるより害が小さい）。結論の要約（`leadParagraph`）も、字下げのない行だけを使う。実装の工程の出力は、先頭の行の字下げを消さずに保存する（前後の空行と末尾の空白だけを除く。`extractBlocks` の `keepIndent`。ほかの工程は従来どおり前後の空白を除く）。
+  実装の指示にも、説明は PR の本文にそのまま載ること、作業の経過の報告は書かないことを書く（`IMPLEMENT_REPORT_LINE`）。
+- 最終レビューの所見の頭の「合格。」「不合格。」は除いて出す（判定は別に書くので、「合格。合格。」と重ねない）。
+- 結論の長い文は、`BODY_LEAD_MAX`（240 文字）以内の文の切れ目（「。」）で切る。切れ目が無ければ「…」を付ける。
 
 ### テンプレートを探す
 
@@ -217,11 +249,12 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   チェックボックスのある見出しには書かない（外したチェックボックスだけを残す）。
   最初の見出しより前は、コメントとチェックボックスだけを残す。
 - 実装の PR の内容（`buildPullRequestBodyParts`）
-  - 目的：承認済みの要求要件（再現のタスクは不具合の再現）
-  - 変更：実装の工程の出力
-  - テスト：観点 → テスト → 実行結果の表とテストの結果
+  - 目的：最終レビューの判定と所見の頭、人が確かめることの件数（あれば「この PR の末尾にあります」）、承認済みの要求要件（再現のタスクは不具合の再現）の要点と全文のある場所
+  - 変更：実装の工程の出力（作業の経過の報告を除く）
+  - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果・要求要件・設計の PR・ゴールガーディアンの最終レビューは「sacty の記録」にする。
+  - 書き出した成果とゴールガーディアンの最終レビューの全文は「sacty の記録」にする。
+  - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程）
   - 変更：成果のファイルと指摘への対応
@@ -243,10 +276,10 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     省いたところで閉じられていない HTML のコメント・コードブロック・折りたたみは閉じる。
   - テンプレートを使わない本文（`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）にも同じ上限を使う。
     最後の部分（sacty が作った旨と、マージが実装の承認になることの案内）は省かない。
-  - 省けない部分（`keep`）は、タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが承認になることの案内。
+  - 省けない部分（`keep`）は、タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが承認になることの案内、決まった形の本文の結論に置いた人が確かめること・人が不合格のまま進めた記録。
     省いた後の本文に、これらが行として丸ごと（前後が行の境目）・HTML のコメントとコードブロックの外に残っていなければ、最後の部分の前に出し直す。
     `Closes #123` があっても `Closes #12` が残ったとは見なさない。
-- 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。
+- 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
   - 使ったテンプレート（`repo`：テンプレートのあったリポジトリの URL、`path`）
@@ -255,7 +288,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - タスクの画面の PR の欄に「本文」として出す。
     この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 

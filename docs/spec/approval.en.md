@@ -142,7 +142,34 @@ Related ADRs: [Fill the body of PRs sacty opens with fixed rules following the h
 
 Whenever sacty opens or updates a PR, it looks for the PR template of the repository where the PR is opened, and if there is one, writes the body in the shape of its headings and items. This covers the implementation PR and the requirements and design PRs (the same goes for PRs of fix tasks created by the after-merge watch).
 
-If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop. The fixed body of the implementation PR (`buildPullRequestBodyText`) contains, in this order, the approved requirements, the output of the Implementation step (heading "変更"; when there is no output, the heading is left out too), the exported results, viewpoint → test → result, and the Goal Guardian's final review. As when following a template, what the implementing agent wrote in its implementation notes (tables, items for a person to confirm, and so on) stays in the PR body.
+If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop.
+
+### Assembling the implementation PR body
+
+The implementation PR body is written to be read short, conclusion first. The full text of the approved requirements and design, and long review text, are not included; they become a link or a collapsed section. The fixed body (`buildPullRequestBodyText`) contains, in this order:
+
+1. The task ID line, and `Closes #<number>` (for a task taken in from an Issue)
+2. "結論" (Conclusion)
+   - Summary of the change: the head of the first paragraph (only lines without indentation; excluding headings, tables, code blocks, and indented lines) of the Implementation step's output. When there is no output, the line is left out.
+   - The final review's verdict and the head of its summary. "（なし）" when there is no final review yet, and a note when it is being verified.
+   - The record that a person moved the task on despite the failed final review, and the failed points (if any; `overrideBodyLines`)
+   - What a person should confirm (if any; `humanCheckBodyLines`)
+3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
+   - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
+   - A task that skipped the requirements step, and the fix scope of a security fix, are short, so they stay as before.
+4. "変更" (Changes): the Implementation step's output. Left out when it is the same as the change summary in the conclusion. When there is no output, the heading is left out too.
+5. The exported results
+6. Viewpoint → test → result
+   - The table columns are "観点", "テスト", and "最終レビュー". The viewpoint is the ID and title (up to 60 characters), the test is the name of the first test (up to 70 characters) and "ほか N 件", and the final review is only ✅ or ❌.
+   - Below the table is the test line (the "テスト：" line above).
+   - Each viewpoint's input, expected result, all tests, and the final review's findings go into the collapsed section "観点ごとの詳細" outside the table.
+7. The full text of the final review (collapsed). Shown only when it is longer than the head shown in the conclusion, or when there is a recurrence check of earlier remarks.
+
+The common rules are as follows.
+
+- Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Only sentences in lines that are outside a code fence and do not start with whitespace are touched. Lines of code blocks (CommonMark fences: indentation of 0 to 3 spaces, closed by the same character at least as long as the opening), tables, and headings, and every indented line (code inside a list, indented code, and so on), are left alone. The rule does not parse Markdown piece by piece and errs on the side of keeping: one leftover progress sentence does less harm than broken code. The summary of the change (`leadParagraph`) also uses only lines without indentation. The Implementation step's output is saved with the indentation of its first line kept (only blank lines before and after and trailing whitespace are removed; `keepIndent` of `extractBlocks`; other steps still trim as before). The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
+- The leading "合格。" or "不合格。" of the final review's summary is removed (the verdict is written separately, so it is not repeated as "合格。合格。").
+- A long sentence in the conclusion is cut at a sentence break ("。") within `BODY_LEAD_MAX` (240 characters). If there is no break, "…" is added.
 
 ### Finding the template
 
@@ -173,11 +200,12 @@ A template is judged absent or unusable as follows.
 - Explanations, example text, and code blocks in a heading are removed; HTML comments and checkboxes are kept. All checkboxes are unchecked, even if checked in the template (because sacty has not checked them).
 - Headings with no content or that do not apply get "該当なし（sacty は記入していません）" (Not applicable; sacty did not fill this in) (`NOT_APPLICABLE`). Headings with checkboxes do not get it (only the unchecked checkboxes remain). Before the first heading, only comments and checkboxes remain.
 - Content of the implementation PR (`buildPullRequestBodyParts`)
-  - Purpose: the approved requirements (the bug reproduction for a reproduce task)
-  - Changes: the Implementation step's output
-  - Tests: the viewpoint → test → result table and the test results
+  - Purpose: the final review's verdict and the head of its summary, the number of items for a person to confirm (if any, "この PR の末尾にあります" (it is at the end of this PR)), and the head and the location of the full text of the approved requirements (the bug reproduction for a reproduce task)
+  - Changes: the Implementation step's output (without progress reports)
+  - Tests: the viewpoint → test → result table and the test results (6 in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
   - Related Issue: `Closes #<number>` (for a task taken in from an Issue)
-  - Exported results, the requirements and design PRs, and the Goal Guardian's final review go into "the sacty record".
+  - The exported results and the full text of the Goal Guardian's final review go into "the sacty record".
+  - What a person should confirm and the record that a person moved on despite the failure go into the last part (footer).
 - Content of the requirements and design PRs (`buildStepPullRequestBodyParts`)
   - Purpose: which step's result it is (and the approved earlier steps)
   - Changes: the result's file and the responses to comments
@@ -194,15 +222,15 @@ A template is judged absent or unusable as follows.
   - The body is kept to 65,000 characters (`PR_BODY_MAX`). This is a bit shorter than GitHub's limit of 65,536 characters and is measured by JavaScript length.
   - If it is longer, the end of the part before the last part is cut, and a note that it was cut (`TRUNCATED_NOTE`) is written. HTML comments, code blocks, and collapsible sections left open at the cut are closed.
   - The same limit applies to bodies that do not use a template (`buildPullRequestBodyText`, `buildStepPullRequestBodyText`). The last part (the note that sacty created the PR and the guidance that merging means approval of the implementation) is not cut.
-  - Parts that cannot be cut (`keep`) are the task ID line, `Closes #<number>` (including one placed in a template heading), and the guidance that merging the requirements and design PRs means approval. If, after cutting, one of them does not remain in the body as a whole line (with line boundaries before and after) outside HTML comments and code blocks, it is put back before the last part. `Closes #12` is not considered to remain just because `Closes #123` is present.
-- Secret values: secret values used in opening that PR (such as the GitHub token) are redacted from the body (`[REDACTED]`). The reason text kept in the ledger is also redacted.
+  - Parts that cannot be cut (`keep`) are the task ID line, `Closes #<number>` (including one placed in a template heading), the guidance that merging the requirements and design PRs means approval, and, in the fixed body, what a person should confirm and the record that a person moved on despite the failure, both placed in the conclusion. If, after cutting, one of them does not remain in the body as a whole line (with line boundaries before and after) outside HTML comments and code blocks, it is put back before the last part. `Closes #12` is not considered to remain just because `Closes #123` is present.
+- Secret values: secret values used in opening that PR (such as the GitHub token) are redacted from the body (`[REDACTED]`). So that the cut-off head of a secret is not left by a summary or truncation (the summary of the change, test names and viewpoint titles in the table, the items a person should check, the findings of an override, and so on), they are redacted from every string of the task before the body is built (`PullRequestBodyStage.secrets`). The replacement just before publishing is kept too. The reason text kept in the ledger is also redacted.
 - Ledger: `template` in `PullRequestPublished` and `StepPullRequestPublished` keeps the following.
   - The template used (`repo`: the URL of the repository where the template was, `path`)
   - Or the reason for using the fixed shape (`fallback`: `none` or `unusable`; `message`: `pr.templateFailed`, `pr.templateTooLarge`, `pr.templateInvalid`, `pr.templateEmpty`, `pr.templateOrgPrivate`, and so on)
   - `truncated` if it was cut
   - It is shown as "Body" in the PR section of the task screen. Records from before this version do not have it (nothing is shown in the web UI).
 
-Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
+Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`, `resultTableLines`, `approvedBasisLines`, `withoutProgressReport`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
 
 ## Importing PR comments
 
