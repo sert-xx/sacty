@@ -4393,6 +4393,21 @@ const REWORK_ANSWER_FORMAT = (targets: readonly StepKey[]) =>
   `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`;
 
 /**
+ * 要求要件の工程を省いたタスクで、原因の判断に渡す元の依頼（最終レビューが基準にしたタスクの目的）。
+ * 承認済みの要求要件があるタスクは、その要求要件が基準なので出さない（PBI-268）。
+ */
+function requestLines(task: Task): string[] {
+  if (task.approved.requirements) return [];
+  return [
+    "",
+    "--- タスク（目的。承認済みの要求要件が無いので、これが依頼の基準） ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+  ];
+}
+
+/**
  * 戻し先の判断の基準（PBI-266）。指摘が承認済みの前の工程の決定を変えるかで決め、変えないなら、その PR の工程
  * （own）で直す。理由の先頭に、どの決定を変える・変えないかを短く書かせる。
  */
@@ -4444,6 +4459,7 @@ export function buildReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
     ...reworkDecisionLines("実装"),
     ...approved,
+    ...requestLines(task),
     ...resumeNoteJudgeLines(task),
     ...(viewpoints.length > 0
       ? [
@@ -4504,6 +4520,7 @@ function buildStepReworkPrompt(
     "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
     ...reworkDecisionLines(name),
     ...approved,
+    ...requestLines(task),
     ...resumeNoteJudgeLines(task),
     "",
     `--- この PR の${name}（指摘の対象） ---`,

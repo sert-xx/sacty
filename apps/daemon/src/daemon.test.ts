@@ -15716,6 +15716,8 @@ describe("統合レビュー（PBI-31）", () => {
       step: "integrate",
       submission: current(service, id),
       comments: ["エラーの表示が無い"],
+      // 原因が見逃しでも、不合格のレビューは見逃しに数えない（原因の省略で外れているのではないことを確かめる）
+      cause: "guardian_missed",
     });
     parent = service.get(id)?.task;
     expect(parent?.status).toBe("queued");

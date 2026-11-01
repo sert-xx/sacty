@@ -1576,6 +1576,27 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(step).toContain("（設計をやり直します）");
   });
 
+  it("要求要件を省いたタスクは、原因の判断に元の依頼を渡す。要求要件があるタスクには渡さない（PBI-268）", () => {
+    const base = { id: "t1", approved: {}, outputs: {}, testViewpoints: [] };
+    const request = (title: string, body: string, approved: object = {}) =>
+      ({ ...base, title, body, approved }) as unknown as Task;
+    const targets: StepKey[] = ["implement", "requirements"];
+    const a = buildReworkPrompt(request("依頼A", "本文A"), ["x"], targets);
+    const b = buildReworkPrompt(request("依頼B", "本文B"), ["x"], targets);
+    expect(a).toContain("# 依頼A");
+    expect(a).toContain("本文A");
+    expect(a).not.toBe(b);
+    // 設計の PR の判断にも渡す
+    expect(buildReworkPrompt(request("依頼A", "本文A"), ["x"], ["design"], "design")).toContain(
+      "本文A",
+    );
+    // 承認済みの要求要件があれば、それが基準なので依頼は渡さない
+    const withRequirements = request("依頼A", "本文A", {
+      requirements: { output: "# 承認済みの要求要件" },
+    });
+    expect(buildReworkPrompt(withRequirements, ["x"], targets)).not.toContain("本文A");
+  });
+
   describe("戻し先は、指摘が承認済みの決定を変えるかで決める（PBI-266）", () => {
     // S9：確認して決めた制約を、文書に書いてほしい（要求要件の決定は変わらない。設計の影響範囲の一覧に無かっただけ）
     const s9 = "要求要件で確認した『過去の削除は戻せない』を、README と設計メモに書いてください";
