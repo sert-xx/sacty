@@ -33,6 +33,10 @@ There are three kinds of intake (`IntakeKind`). sacty takes in each kind separat
   - sacty advances the read position of each intake source (the GitHub update time, or where to continue for tickets) only after the intake (saving the tasks) succeeds. If the intake fails, the next round reads again from the previous position. Items from the failed round are not skipped, and items already taken in are not taken in twice.
   - If the save count of the sacty settings (`settingsSaveCount`) or the version of the project settings (`projectsRevision`) differs between the start and the end of an intake, sacty does not advance the position. This keeps items that were not taken in, for example because intake was turned Off and back On midway, from being skipped. What changed is not distinguished.
   - For each intake source, sacty keeps how far it has read (the update time) in memory per kind, and continues from there. When the project settings, a label, or On/Off changes (not including the interval), or the daemon restarts, it reads again from the beginning (items already taken in are not taken in twice).
+  - The position of a GitHub search is never advanced past the time the search started. If it is ahead, it is set back to the time the search started (fractions of a second dropped).
+    However, when a search did not finish (a limit or a failure), its position is kept as is so that the next intake continues from there (setting it back would repeat the same leading part and never reach the rest).
+    GitHub's update times can differ from this machine's clock. If a position that is ahead were kept as it is, something updated after the time returned to normal (such as a PR that was just labeled) would have an update time older than the kept position, and the search would not find it until its next update.
+    Setting it back only reads a little extra; items already taken in are not taken in twice.
   - A failure in one intake source does not stop the other intake sources.
 - If the search finds nothing, sacty does not call the intake processing (`importIssues`, `importTickets`; they look through all tasks).
 - Intake runs as long as `config.yaml` can be read. `config.yaml` has no intake items, and `github:` is not read even if written. If it cannot be read, nothing is taken in.
@@ -46,7 +50,7 @@ There are three kinds of intake (`IntakeKind`). sacty takes in each kind separat
   - The web UI shows only the kinds that are On and configured, and adds the kind to targets that could not be taken in.
   - Even when the sacty settings store cannot be read, the status returns the recorded intakes with `settingsUnreadable: true` and the reason it could not be read now (`settingsError`). It has no labels and so on. The reason is known even before the periodic check, and the web UI shows the reason and the records of every kind.
 
-Code: `apps/daemon/src/intake.ts` (`IssueIntake`), `packages/core/src/projects.ts` (`IntakeKind`, `intakeIntervalSec`, `SactySettings`), `apps/daemon/src/service.ts` (`recordIntake`, `settingsSaveCount`, `status`)
+Code: `apps/daemon/src/intake.ts` (`IssueIntake`, `clampCursor`), `packages/core/src/projects.ts` (`IntakeKind`, `intakeIntervalSec`, `SactySettings`), `apps/daemon/src/service.ts` (`recordIntake`, `settingsSaveCount`, `status`)
 
 ## GitHub Issues and PRs
 

@@ -311,11 +311,15 @@ export function createApp(
     }
   });
 
+  // 変えるときは、読み込んだときの updatedAt を If-Match で送る。その後にほかの保存で変わっていれば 409（上書きしない。PBI-274）。
+  // 送らなければ 428（版の照合なしに上書きしない）
   app.put("/api/projects/:id", async (c) => {
+    const base = c.req.header("if-match");
+    if (!base) return c.json({ error: "precondition_required" }, 428);
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      const project = service.saveProject(c.req.param("id"), json.body);
+      const project = service.saveProject(c.req.param("id"), json.body, base);
       prefetchProjectSecrets(project.id);
       // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
       const contextError = await service.checkProjectContext(project.id);

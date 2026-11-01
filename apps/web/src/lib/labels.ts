@@ -750,11 +750,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       const where = e.changesAtStep(l.step[event.payload.step]);
       const tail = e.changesTail(event.payload.remarks.length, event.payload.overLimit, actor);
       const target = event.payload.target;
+      // 原因を決めた差し戻しだけ、原因を添える（PBI-268）。見逃しとそれ以外が、作業履歴で区別できる
+      const cause = event.payload.cause ? e.changesCause(l.reworkCause[event.payload.cause]) : "";
       if (target && target !== event.payload.step) {
         // 承認ゲートのある工程に戻すときだけ、その承認を取り消す
-        return `${e.changesTarget(where, l.step[target], GATED_STEPS.includes(target))}${tail}`;
+        return `${e.changesTarget(where, l.step[target], GATED_STEPS.includes(target))}${tail}${cause}`;
       }
-      return `${where}${tail}`;
+      return `${where}${tail}${cause}`;
     }
     case "TaskCancelled": {
       const names = (result: string) => [

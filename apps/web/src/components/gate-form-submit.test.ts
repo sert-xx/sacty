@@ -95,6 +95,38 @@ async function submit() {
   return data ? Object.fromEntries(data.entries()) : undefined;
 }
 
+describe("差し戻しの原因（PBI-268）", () => {
+  const radios = () =>
+    [...container.querySelectorAll<HTMLInputElement>('input[name="cause"]')].map((r) => r.value);
+
+  it("原因は、選ばない（既定）・見逃し・新しい要望・競合から選べ、選んだ値を渡す", async () => {
+    renderForm();
+    expect(radios()).toEqual(["", "guardian_missed", "new_request", "base_changed"]);
+    expect(container.querySelector<HTMLInputElement>('input[name="cause"]:checked')?.value).toBe(
+      "",
+    );
+    expect(await submit()).toMatchObject({ cause: "" });
+  });
+
+  it("選んだ原因を渡す", async () => {
+    renderForm();
+    const base = container.querySelector<HTMLInputElement>(
+      'input[name="cause"][value="base_changed"]',
+    );
+    act(() => base?.click());
+    expect(await submit()).toMatchObject({ cause: "base_changed" });
+  });
+
+  it("差し戻しに失敗したら、選んでいた原因を戻す", async () => {
+    gateAction.mockResolvedValueOnce({ message: "断られた", cause: "new_request" } as never);
+    renderForm();
+    await submit();
+    expect(container.querySelector<HTMLInputElement>('input[name="cause"]:checked')?.value).toBe(
+      "new_request",
+    );
+  });
+});
+
 describe("差し戻しと一緒に変える工程の設定", () => {
   it("開くまで候補を読まず、開くとやり直す工程から後ろの工程を、今の名前を選んで出す", async () => {
     renderForm();

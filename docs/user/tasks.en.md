@@ -213,6 +213,7 @@ To fix an existing PR itself, for example to address review comments on a PR a p
 - The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
 - The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
+  If the agent of these steps decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
 - Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
 - "Taking over PR" appears on the "Step settings" tab of the task details.
 - Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
@@ -296,6 +297,7 @@ Even a repository without test code uses a check that mechanically validates its
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
+  - There is a change that neither the request nor the approved requirements and design call for ([Out-of-scope changes](#out-of-scope-changes))
 - For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the Goal Guardian's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
 - The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the Goal Guardian reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 - A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
@@ -353,6 +355,30 @@ In the task details, you can choose one of the following.
 - "Resume": redoes the implementation.
 - "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
 
+### Out-of-scope changes
+
+For each change in the diff, the Goal Guardian checks whether the request, the approved requirements and design, or a person's earlier comment calls for it, or whether it is needed to make a requested change.
+If either of the following exists, the final review fails (viewpoint `SCOPE`) and the implementation is redone to remove the out-of-scope changes.
+A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Security checks and fixes](#security-checks-and-fixes)) looks at the same thing.
+
+- A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
+- A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
+
+Treated as in scope:
+
+- Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
+- Formatting or refactoring that does not change behavior
+- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The Goal Guardian reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
+- Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
+
+What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
+
+The reason for the failure and the out-of-scope changes appear in the final review of the implementation deliverable.
+The redo is told to remove only the out-of-scope changes and keep every other change. It puts them back to the current comparison base (after the base branch has been merged in, the merged head, so the base branch's changes stay).
+If the review does not pass three times in a row, the task pauses, like any other failure.
+If you judge that the changes are in scope, use "Move to review" ([When verification keeps failing](#when-verification-keeps-failing)).
+For a task that takes over an existing PR, however, "Move to review" is not available. This judgment applies to that task too, so if a change is wrongly treated as out of scope, use "Resume" and write in the supplement why you judge it in scope.
+
 ### For a person to check
 
 What cannot be checked in the workspace (container) does not fail the final review; it is left as items a person checks before merging.
@@ -364,7 +390,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
 
 - Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 
-These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
+These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
 The tests run by the Goal Guardian show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
 Check them before merging the PR.
 
@@ -481,6 +507,7 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
   - It checks every minute and takes them in 2 minutes after the last comment.
   - The Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between. The decision and its reasons are kept in the Activity and the PR section.
+  - The target depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on). A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR). Only a comment that changes the decision itself goes back to the step that holds it. The reason says which decision is changed or not changed.
   - If requests for changes to the same step exceed the limit, it becomes an Escalation.
 - When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
 - If a PR is closed without being merged, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
@@ -492,9 +519,26 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 - Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
 - The form of the PR body
   - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
-  - If there is no template or it cannot be read, sacty uses its own format.
+  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, the conclusion of the final review, and what you should confirm in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs, expected results, and the final review's findings are in the collapsed section "観点ごとの詳細" (details per viewpoint). In a body that follows a template, what you should confirm is at the end of the body.
   - Which one was used appears in "Body" in the PR section of the task page.
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
+
+## Cause of a request for changes
+
+When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted as Goal Guardian misses.
+
+| Choice | When to use it |
+| --- | --- |
+| Don't choose (initial choice) | Request changes without deciding the cause. It is not counted as a miss, and is counted under "Rework with unknown cause" on the dashboard |
+| The Goal Guardian missed it | A flaw the final review (Integration review) could have caught. When you send back a deliverable it had passed, a miss is recorded |
+| A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
+| A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
+
+- When changes are requested from PR feedback, the Goal Guardian also judges the cause together with where to send it back. If it cannot decide, no cause is set (it is not counted as a miss, and is counted under "Rework with unknown cause").
+- When you request changes on the approval screen, you choose where to send it back, so the Goal Guardian does not judge the cause. To count misses correctly, choose the cause when you know it.
+- The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Goal Guardian miss" lists only what was recorded as a miss.
+- The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
+- Requests for changes from before the cause could be chosen have no cause. On the dashboard, a request for changes with a miss record is counted as a miss, and the others as "Rework with unknown cause".
 
 ## Ask the Orchestrator
 
@@ -519,16 +563,39 @@ Requirements and designs start (right after the summary, if there is one) with t
 
 | Section | Contents | What to do |
 | --- | --- | --- |
-| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
-| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5) | Write a remark and request changes only for the ones you disagree with |
+| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
+| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
+
+The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it.
 
 Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 20 lines for a small change and about 60 lines even for a large change.
 
 If you want more detail somewhere, write that part in a remark and request changes (for example, "異常系を詳しく" or "移行の手順を書いて"). The agent adds detail only where you asked and keeps the rest short. Text added for a remark is not removed in later revisions.
 
+## How the agent revises after you request changes
+
+When you send requirements or a design back, the agent starts from the previous deliverable and rewrites only the parts your remarks concern. It does not rewrite from scratch.
+Sections and items unrelated to your remarks stay as they are. What was fixed in an earlier round is not undone either.
+
+- When a remark spans several sections, the agent fixes every section it concerns.
+- When a remark changes the direction of the deliverable (purpose, scope, approach), the agent fixes what concerns the direction throughout.
+- When your remark answers a question, the agent reflects the answer where it applies and removes that item from "確認したいこと".
+- The required sections, IDs, and the handling of questions are the same as in the first draft.
+- When the previous deliverable cannot be read (for example, it is empty), it cannot be the base, so the agent rewrites to handle your remarks.
+
+When the change is small, the number of self-review rounds is also reduced ([Self-review before submitting](#self-review-before-submitting)).
+The aim is that the less needs to change, the less a revision costs.
+
 ## Self-review before submitting
 
 In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
+
+When the agent revises requirements or a design after you request changes, working from a non-empty previous deliverable, it narrows the review to the difference from the previous deliverable and what that change directly requires (this does not apply to changes requested on the implementation).
+However, the agent reviews the whole deliverable as usual when the self-review of the previous submission did not pass or has no record (including after a person edited the document), when the previous deliverable is empty, or when the remark changes the direction.
+When the remark is small (at most 2 places to fix, and no change of direction; for example, reflecting the answer to a question, or correcting the wording of one requirement), it is at most 2 rounds including the first.
+If the first review finds no `must` findings, the agent submits at that point.
+For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
+Which one the agent took is written at the start of the self-review summary.
 
 The result appears on the deliverable cards, the Implementation card, and the approval screen.
 

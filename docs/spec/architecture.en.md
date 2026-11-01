@@ -133,8 +133,13 @@ Each dashboard section contains the following.
   - A send-back is counted once, by the record of the actual send-back (`ChangesRequested`).
     - Those the goal guardian made from PR feedback (the projection keeps that record's time in `prRework`) count as "rework from PR feedback", and the others as "changes requested by a person".
     - A judgement `ReworkJudged` that did not lead to a send-back is not counted.
-  - It also counts goal guardian misses (`GuardianMissed`), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).
+  - So that rework that is not a miss can be told apart, send-backs are also counted by cause (`cause` of `ChangesRequested`; `reworkByCause`). A record without a cause (including the activity log from before causes were recorded) counts as "unknown cause" (`unspecified`). This covers a request for changes where a person chose no cause, and PR feedback whose cause the Goal Guardian could not judge.
+    For the activity log from before causes were recorded, a request for changes counts as `guardian_missed` when `GuardianMissed` comes right before it (the previous record of the same task), and as `unspecified` otherwise.
+    The goal guardian miss count is the number of `GuardianMissed`, so it is not always equal to the number of send-backs whose cause is `guardian_missed` (no miss is recorded when there was no passed final review).
+  - It also counts goal guardian misses (`GuardianMissed`, recorded only by a send-back whose cause is a miss), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).
   - Rework by step counts changes requested by a person and rework from PR feedback by the step whose deliverable was sent back. The step is `step` of `ChangesRequested` (the step at the approval gate). Requirements, design, and implement (`REWORK_STEPS`) are always shown, other steps only when they have a count.
+  - "Rework with unknown cause" (`reworkByCause.unspecified`) is shown right under "Goal guardian misses" (so that rework whose cause was not chosen does not go unseen, since it is not known whether it was a miss).
+  - Rework known not to be a miss is shown by cause: "New request or change of direction" and "Conflict from base changes".
 - Period boundaries follow the local date of the machine running sacty (the daemon), not the UI language.
   - Today: from 0:00 of that day.
   - Last 7 days: 7 days including today.
@@ -317,6 +322,12 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
 
   When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten. Nothing is written if there is nothing to remove.
 - Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).
+  - Changing (`PUT /api/projects/:id`) takes the `updatedAt` that was read, in the `If-Match` header, and saves only if it matches the `updatedAt` at the time of saving.
+    Without the header, it returns 428 (`precondition_required`; nothing is saved). If another save changed the project after it was read, it does not overwrite, returns 409 (`project.changedElsewhere`), and changes neither the settings nor `updatedAt`.
+    The check and the save run in the same synchronous call (`saveProject`), so even when saves are made at the same time, a later save cannot erase the change of an earlier one. Changes are not merged per field (a save that changed only another field also gets 409). Creating (`POST`) and importing need no version.
+    `updatedAt` is always later than the previous value after each save (even for two saves in the same millisecond or when the clock goes back; `SqliteProjectStore.put`).
+  - The screen (`ProjectEditor`) sends the version it read with each save (`baseUpdatedAt`) and moves to the returned `updatedAt` after its own save. It does not move to a version that arrives with a page refresh (it has not seen the content of the other save).
+    On 409 (`project.changedElsewhere`), it shows the reason and a "Reload to see the latest settings" button. The input being edited stays until the page is reloaded.
   - Deleting (`DELETE /api/projects/:id`) removes the project definition and the project's scheduled tasks (`schedules.deleteForProject`; [Scheduled tasks](scheduled-tasks.en.md)). Tasks (including those created by scheduled tasks) and the activity log are not deleted (tasks of a deleted project are not shown or counted).
     If the project does not exist, it returns 404. If the project has unfinished tasks, or completed tasks with work still running or queued (audits, deployment checks, and so on)
     or a question being answered, it does not delete the project and returns 409 (`project.hasActiveTasks`, with the count). After deleting, it also removes the secret warnings of that project.
@@ -328,4 +339,4 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
     and then the web UI moves to the project list. If the displayed project (cookie) is deleted, the first project is displayed.
 
 Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`,
-`apps/daemon/src/service.ts` (`deleteProject`, `visibleTask`, `adoptAuditProposal`, `createAuditFixTask`), `apps/daemon/src/server.ts`, `apps/web/src/components/delete-project.tsx` (`DeleteProjectSection`), `apps/web/src/app/actions.ts` (`deleteProjectAction`)
+`apps/daemon/src/service.ts` (`saveProject`, `deleteProject`, `visibleTask`, `adoptAuditProposal`, `createAuditFixTask`), `apps/daemon/src/server.ts`, `apps/web/src/components/delete-project.tsx` (`DeleteProjectSection`), `apps/web/src/app/actions.ts` (`saveProjectAction`, `deleteProjectAction`), `apps/web/src/components/project-editor.tsx` (`ProjectEditor`), `apps/web/src/lib/daemon.ts` (`saveProject`)

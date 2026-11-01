@@ -160,6 +160,12 @@ const ja = {
     reviewOnPr: "PR でチェックする",
     newTab: "（新しいタブで開く）",
   },
+  /** 差し戻しの原因（PBI-268）。 */
+  reworkCause: {
+    guardian_missed: "ゴールガーディアンの見逃し",
+    base_changed: "ベースの変化による競合",
+    new_request: "新しい要望・方針の変更",
+  },
   cleanupTarget: {
     container: "実行中のコンテナ",
     workspace: "作業領域",
@@ -414,6 +420,8 @@ const ja = {
       `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
     /** 差し戻しの詳細（展開）に出す、指摘の1件。 */
     changesRemark: (id: string, text: string) => `${id}：${text}`,
+    /** 差し戻しの原因を、作業履歴の行の後ろに足す（PBI-268）。 */
+    changesCause: (cause: string) => `（原因：${cause}）`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
     /** 長い行を展開する印（PR #127 レビュー指摘）。 */
     more: "詳細",
@@ -680,6 +688,11 @@ const en: LabelMessages = {
     reviewOnPr: "Review on the PR",
     newTab: "(opens in a new tab)",
   },
+  reworkCause: {
+    guardian_missed: "Goal Guardian miss",
+    base_changed: "Conflict from base changes",
+    new_request: "New request or change of direction",
+  },
   cleanupTarget: {
     container: "Running container",
     workspace: "Workspace",
@@ -878,6 +891,7 @@ const en: LabelMessages = {
     changesTail: (count, overLimit, actor) =>
       `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
     changesRemark: (id, text) => `${id}: ${text}`,
+    changesCause: (cause) => ` (cause: ${cause})`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
     more: "Details",
     ContextResolved: (layers, warnings) =>

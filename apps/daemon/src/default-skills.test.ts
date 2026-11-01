@@ -315,6 +315,57 @@ describe("既定のスキル drawio（draw.io の公式のスキル）", () => {
   });
 });
 
+describe("既定の review スキルの、要求要件・設計の読みやすさの観点", () => {
+  const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
+
+  it("D-6 は、要求要件・設計など人が承認する成果物で、本文に残った作業のメモ・参照だけの項目（must）と、理由の分からない ID の欠番（should）を探す", () => {
+    expect(catalog()).toMatch(
+      /^\| D-6 \| 形式・明確さ \|.*（要求要件・設計など、人が承認する成果物のとき）本文に残った作業の経過・指摘への対応の報告・エージェント向けのメモ、理由の分からない ID の欠番、別の文書を参照するだけの項目 \|/m,
+    );
+    const d6 = read("skills/review/review-execution/references/D-6.md");
+    expect(d6).toContain("本文の末尾と区切り線（`---`）の後ろを読み");
+    expect(d6).toContain("ID を持たない文書では確かめない");
+    expect(d6).toContain("「R-5（削除：理由）」のように理由つきで残っていれば欠番とは見なさない");
+    expect(d6).toContain("変更履歴・作業履歴・経緯の節がある文書（ADR・CHANGELOG・README など）は");
+    expect(d6).toContain("参照先を開かなくても何を求めるかが、その項目の中で分かるか");
+    expect(d6).toContain("文書そのものではない文章が残っている（`must`）");
+    expect(d6).toContain(
+      "理由の分からない欠番（R-4 の次が R-6 で、R-5 の行も理由も無い、など。自動で採番し直される ID は除く）",
+    );
+    expect(d6).toContain("最初の提出で見つけたら、番号を詰めさせる（`should`）");
+    // ツールが自動で採番し直すテスト観点の ID などには、欠番の指摘も削除行の保持も求めない
+    expect(d6).toContain(
+      "ツールが自動で採番し直す ID（テスト観点の ID など、配列の順に振り直されるもの）",
+    );
+    expect(d6).not.toContain("要求・受け入れ条件・テスト観点などの ID");
+    expect(d6).toContain("別の文書への参照だけの項目");
+  });
+
+  it("D-10 は、依頼の目的に関わる判断・依頼者に不利益な既定が既定に紛れていないか、確認したいことの並びを見る", () => {
+    expect(catalog()).toMatch(
+      /^\| D-10 \| 簡潔さ・範囲 \|.*「確認したいこと」「既定で決めたこと」の節がある文書では、依頼の目的に関わる判断と、依頼者に不利益が出うる既定が、既定に紛れていないか。判断する項目が、依頼者が一番決めたいことから並んでいるか/m,
+    );
+    const d10 = read("skills/review/review-execution/references/D-10.md");
+    expect(d10).toContain("依頼者に不利益が出うるか");
+    expect(d10).toContain("確認したいことに移させる");
+    expect(d10).toContain("依頼者が一番決めたいこと（依頼の目的に直結すること）から並んでいるか");
+    expect(d10).toContain("確認したいことに出ていない（`must`）");
+    expect(d10).toContain("節が無い文書では確かめない");
+  });
+});
+
+describe("既定の ears-requirements スキルの、ID の振り方", () => {
+  it("ID は直しても付け直さず、最初の提出では欠番なく振り、消した要求は理由つきで残し、別の文書を参照する要求には中身を併記する", () => {
+    const text = read("skills/ears-requirements/SKILL.md");
+    expect(text).toContain("直しても付け直さない。消した要求の ID は使い回さない");
+    expect(text).toContain("最初の提出では、1 から欠番なく振る");
+    expect(text).toContain("「R-5（削除：理由）」のように残して、欠番の理由が分かるようにする");
+    expect(text).toContain("参照だけにせず、参照先の中身を1行で併記する");
+    // ID を振り直す規則は置かない（承認済みの文書・人の指摘の ID がずれる）
+    expect(text).not.toContain("後ろを振り直して");
+  });
+});
+
 describe("既定の review スキルの、コードの簡潔さと UX の観点", () => {
   const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
 

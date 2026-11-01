@@ -201,9 +201,41 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 sacty は PR を作る・更新するたびに、PR を作るリポジトリの PR テンプレートを探し、あればその見出し・項目の形で本文を書く。
 対象は、実装の PR と、要求要件・設計の PR（マージの後の監視で作る修正のタスクの PR も同じ）。
 テンプレートが無い・使えないときは、sacty の決まった形の本文（`buildPullRequestBody`・`buildStepPullRequestBody`）にする。
-実装の PR の決まった形の本文（`buildPullRequestBodyText`）には、承認済みの要求要件・実装の工程の出力（見出し「変更」。出力が無ければ見出しも入れない）・書き出した成果・観点 → テスト → 実行結果・ゴールガーディアンの最終レビューを、この順に入れる。
-テンプレートに沿わせるときと同じく、実装のエージェントが実装の説明に書いたこと（表・人に確かめることなど）が PR の本文に残る。
 どちらでも PR の作成は止めない。
+
+### 実装の PR の本文の組み立て
+
+実装の PR の本文は、結論から短く読めるようにする。
+承認済みの要求要件・設計の全文や、レビューの長い文は載せず、リンクか折りたたみにする。
+決まった形の本文（`buildPullRequestBodyText`）は、次の順に入れる。
+
+1. タスクの ID の行と、`Closes #<番号>`（Issue から取り込んだタスク）
+2. 「結論」
+   - 変更の要約：実装の工程の出力の最初の段落（字下げのない行だけ。見出し・表・コードブロック・字下げした行を除く）の頭。出力が無ければ行ごと出さない。
+   - 最終レビューの判定と所見の頭。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - 人が最終レビューの不合格のまま進めた記録と不合格の要点（あれば。`overrideBodyLines`）
+   - 人が確かめること（あれば。`humanCheckBodyLines`）
+3. 承認済みの要求要件（再現のタスクは不具合の再現。`approvedBasisLines`）
+   - 全文は載せず、最初の段落の頭と、全文のある場所にする（`approvedBasisDigest`）。
+     全文のある場所は、マージで承認した要求要件・設計の PR の URL とファイルのパス。PR が無ければ「全文は sacty のタスクの画面で確かめてください。」と書く。
+   - 要求要件の工程を省いたタスクと、セキュリティ対応の修正の範囲は、短い文なので従来のとおり。
+4. 「変更」：実装の工程の出力。結論の変更の要約と同じだけなら出さない。出力が無ければ見出しも入れない。
+5. 書き出した成果
+6. 観点 → テスト → 実行結果
+   - 表の列は「観点」「テスト」「最終レビュー」。観点は ID と題（60 文字まで）、テストは 1 件目の名前（70 文字まで）と「ほか N 件」、最終レビューは ✅ か ❌ だけ。
+   - 表の下に、テストの行（上の「テスト：」）を置く。
+   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。
+7. 最終レビューの全文（折りたたみ）。結論に載せた頭より長いとき、または前の指摘の再発の確認があるときだけ出す。
+
+共通の規則は次のとおり。
+
+- 実装の工程の出力から、作業の経過の報告の文を除く（`withoutProgressReport`）。
+  除くのは、コミット・プッシュ・GitHub への反映などの話題の語と、していません・未完了・sacty が行うなどの状態の語を両方含む、100 文字以内の文。
+  触るのは、フェンスの外の、行頭が空白でない行の文だけ。コードブロック（CommonMark のフェンス：字下げは 0〜3 空白、終了は開始と同じ文字で開始以上の長さ）・表・見出しの行と、字下げのある行（リストの中のコード・字下げしたコードなど）は触らない。
+  Markdown の規則を一つずつ読まず、迷う入力は消さない側に倒す（報告の文が1つ残るほうが、コードが壊れるより害が小さい）。結論の要約（`leadParagraph`）も、字下げのない行だけを使う。実装の工程の出力は、先頭の行の字下げを消さずに保存する（前後の空行と末尾の空白だけを除く。`extractBlocks` の `keepIndent`。ほかの工程は従来どおり前後の空白を除く）。
+  実装の指示にも、説明は PR の本文にそのまま載ること、作業の経過の報告は書かないことを書く（`IMPLEMENT_REPORT_LINE`）。
+- 最終レビューの所見の頭の「合格。」「不合格。」は除いて出す（判定は別に書くので、「合格。合格。」と重ねない）。
+- 結論の長い文は、`BODY_LEAD_MAX`（240 文字）以内の文の切れ目（「。」）で切る。切れ目が無ければ「…」を付ける。
 
 ### テンプレートを探す
 
@@ -245,11 +277,12 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   チェックボックスのある見出しには書かない（外したチェックボックスだけを残す）。
   最初の見出しより前は、コメントとチェックボックスだけを残す。
 - 実装の PR の内容（`buildPullRequestBodyParts`）
-  - 目的：承認済みの要求要件（再現のタスクは不具合の再現）
-  - 変更：実装の工程の出力
-  - テスト：観点 → テスト → 実行結果の表とテストの結果
+  - 目的：最終レビューの判定と所見の頭、人が確かめることの件数（あれば「この PR の末尾にあります」）、承認済みの要求要件（再現のタスクは不具合の再現）の要点と全文のある場所
+  - 変更：実装の工程の出力（作業の経過の報告を除く）
+  - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果・要求要件・設計の PR・ゴールガーディアンの最終レビューは「sacty の記録」にする。
+  - 書き出した成果とゴールガーディアンの最終レビューの全文は「sacty の記録」にする。
+  - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程）
   - 変更：成果のファイルと指摘への対応
@@ -271,10 +304,10 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     省いたところで閉じられていない HTML のコメント・コードブロック・折りたたみは閉じる。
   - テンプレートを使わない本文（`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）にも同じ上限を使う。
     最後の部分（sacty が作った旨と、マージが実装の承認になることの案内）は省かない。
-  - 省けない部分（`keep`）は、タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが承認になることの案内。
+  - 省けない部分（`keep`）は、タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが承認になることの案内、決まった形の本文の結論に置いた人が確かめること・人が不合格のまま進めた記録。
     省いた後の本文に、これらが行として丸ごと（前後が行の境目）・HTML のコメントとコードブロックの外に残っていなければ、最後の部分の前に出し直す。
     `Closes #123` があっても `Closes #12` が残ったとは見なさない。
-- 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。
+- 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。要約・短縮（結論の要約・表のテスト名や観点の題・人が確かめること・不合格のまま進めた記録の所見など）で切れた先頭が残らないよう、本文を作る前に、タスクのすべての文字列から伏せる（`PullRequestBodyStage.secrets`）。公開の直前の置換も残す。
   台帳に残す理由の文も伏せる。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、次を残す。
   - 使ったテンプレート（`repo`：テンプレートのあったリポジトリの URL、`path`）
@@ -283,12 +316,16 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - タスクの画面の PR の欄に「本文」として出す。
     この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`）。
   - 最後のフィードバックから2分（`FEEDBACK_QUIET_MS`）待ってから取り込む。
+    各フィードバックの時刻は、GitHub の時刻と、デーモンが初めて見た時刻（メモリーだけ。`feedbackSeenAt`）の早い方にする。
+    GitHub の時刻がこの機械の時計より先に進んでいても、初めて見てから2分で取り込む（GitHub の時刻まで待ち続けない）。
+    GitHub の時刻が遅れているときは、見た時点で2分たっていれば待たない。
+    指摘を取り込む対象から外れたタスク（承認待ちでなくなった・中止など）の分は、次の確認で忘れる。
   - 古い順に最大50件（`REMARKS_MAX`）、1件 2000 文字（`REMARK_MAX`）まで。
   - 同じものは二度取り込まない。
   - 引き継いだ既存の PR では、実装の工程の指示に渡した指摘を取り込まない（実装に対応させたため。[既存の PR の引き継ぎ](tasks-and-steps.md#既存の-pr-の引き継ぎ)）。
@@ -311,7 +348,18 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - bot の投稿
   - 元のタスクのプロジェクトのアカウントが投稿した、sacty のレビューの目印で始まるレビュー・行へのコメント
 - 取り込んだら、ゴールガーディアンが戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに差し戻す。
+  - 戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決める。
+    - 決定を変えない指摘は、その PR の工程（実装の PR なら実装）に戻す。文書への追記、実装の直し、決定済みのことの反映漏れがこれにあたる。
+      承認済みの成果物に書き漏れ（影響範囲の一覧に無い、テスト観点に無いなど）があっても、指摘の求めることが承認済みの決定から導けるなら、決定を変えるものとしない。
+    - 決定そのものを変える指摘だけ、その決定を持つ工程（設計・要求要件）に戻す。複数の指摘のうち1つでも決定を変えるなら、その決定を持つ工程に戻す。複数の工程にまたがるなら前の工程に戻す。
+    - 前の工程に戻すと、承認済みの成果物を作り直してもう一度承認するので、費用も手間も大きいため。
+  - 判断の理由（`ReworkJudged` の `reason`）の先頭には、指摘がどの決定を変えるか、または変えないかを短く書かせる。
+    書式は指示で求めるだけで、sacty は検査しない（理由は読み取れれば、書式に関わらず記録する）。
   判断できなければ、戻せる工程の先頭（実装の PR なら実装、要求要件・設計ならその工程）をやり直す。
+- 戻し先と一緒に、差し戻しの原因（`cause`）も判断させる（[差し戻し](#差し戻し)）。
+  `guardian_missed`・`new_request`・`base_changed` のどれかで、判断できなければ（答えが無い・`undecidable`・知らない値）原因を決めない（原因が分からない差し戻しとして数える）。
+  判断は `ReworkJudged` の `cause` に残し、差し戻し（`ChangesRequested`）に引き継ぐ。
+  承認済みの要求要件が無いタスク（要求要件の工程を省いたもの）は、最終レビューが基準にした元の依頼（タスクの題名と本文）も判断に渡す。承認済みの要求要件があるタスクには渡さない（要求要件が基準）。
 - 差し戻す直前に、PR の状態をもう一度読む（判断の最中や、判断を記録した後の再開で、人がマージ・クローズしていることがあるため）。
   - 開いたままなら、差し戻す。
   - マージされた・マージされずに閉じられたなら、差し戻さない。取り込んだ指摘（`PullRequestReviewImported`）と判断（`ReworkJudged`）は作業履歴に残し、同じ確認の中で状態を確かめ直して、[PR の確認](#pr-の確認)の「マージされた」「マージされずに閉じられた」として記録する（マージなら `PullRequestMerged` と `StepApproved`。`StepApproved` が、反映の途中の指摘の状態を消す）。
@@ -319,7 +367,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 読み直しの間に、人が差し戻した・中止したなどで状態が変わっていれば、記録しない。読めなければ、次の確認でやり直す。
   - マージの後に届いた指摘を、続きのタスクにするなどはしない。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
 
 ## 差し戻し
 
@@ -331,14 +379,29 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   人は指摘を無効にでき、無効にした指摘はエージェントに渡さない。
 - 前の工程に戻すと、その工程から後の承認を取り消し、検証の結果と失敗の回数を戻す。
   PR で承認したタスクでは、マージ済みの PR は戻さない。
-- 最終レビュー・統合レビューに通ったものを人が差し戻すと、見逃し（`GuardianMissed`）を記録する。
+- 差し戻しには、原因（`ReworkCause`。`ChangesRequested` の `cause`）を付けられる。省略すると、原因を決めない差し戻しとして記録し、集計では「原因が分からない」差し戻しに数える。
+  - 人は、承認の画面の「差し戻しの原因」で選ぶ（初めは「選ばない」）。人が承認の画面（API の `request-changes`）で差し戻す流れは、戻し先を人が選ぶのでゴールガーディアンの判断（`judgeRework`）を通らない。選ばなければ原因を判断させず、原因が分からない差し戻しになる（判断のためだけに実行を増やさない）。
+  - PR の指摘の差し戻しは、ゴールガーディアンが戻し先と一緒に判断した原因を使う（`settleReview`）。
+  - 原因は、作業履歴の差し戻しの行と、PR の欄の戻し先（PR の指摘のとき。`prRework` の `cause`）に出す。
+  - 上限でエスカレーションになる差し戻し（`TaskEscalated`）には、原因を残さない。上限を超えて差し戻すときに、あらためて選ぶ。
+- 見逃し（`GuardianMissed`）を記録するのは、原因が `guardian_missed` で、差し戻した成果物が最終レビュー（実装の承認待ち）・統合レビュー（統合レビューの承認待ち）に合格していたときだけ。
+  - 原因が `new_request`・`base_changed` のとき、原因を決めないときは記録しない（原因を決めない差し戻しは、見逃しかどうか分からないものとして、集計の「原因が分からない」に出す。見逃しの数の横で見られる）。
+  - 同じレビューの見逃しは1回だけ記録する。
+  - 原因を記録する前の作業履歴は、そのまま読める（原因を持たない差し戻しは、集計で、直前に見逃しの記録（`GuardianMissed`）があれば見逃し、無ければ「原因が分からない」として扱う。記録済みの見逃しは、見逃しのまま数える）。
+
+| 原因（`ReworkCause`） | 意味 |
+| --- | --- |
+| `guardian_missed` | ゴールガーディアンが、確かめられたはずの不備を見逃した |
+| `new_request` | 承認済みの要求要件・設計に無い、人が新しく足した要望や方針の変更 |
+| `base_changed` | ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物そのものの不備ではない |
+
 - 人は差し戻しと一緒に、工程のイメージ・エージェントを変えられる（`RequestChangesInput` の `images`・`agents`）。
   タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
   1つでも誤っていれば、差し戻しも含めて何も記録せずに断る。
   画面は、やり直す工程とそれより後の工程（飛ばした工程を除く）を出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えた工程だけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
 
 ## エスカレーション
 

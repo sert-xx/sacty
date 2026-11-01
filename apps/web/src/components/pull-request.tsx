@@ -191,6 +191,11 @@ export function PullRequestCard({ task }: { task: Task }) {
                 {rework.decided
                   ? m.reworkJudged(step[rework.target], text(rework.reason))
                   : m.reworkUndecided(step[rework.target], text(rework.reason))}
+                {rework.cause && (
+                  <span className="block text-xs text-muted-foreground">
+                    {m.reworkCause(messages.labels.reworkCause[rework.cause])}
+                  </span>
+                )}
               </dd>
             </>
           )}

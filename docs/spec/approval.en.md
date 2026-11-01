@@ -170,7 +170,34 @@ Related ADRs: [Fill the body of PRs sacty opens with fixed rules following the h
 
 Whenever sacty opens or updates a PR, it looks for the PR template of the repository where the PR is opened, and if there is one, writes the body in the shape of its headings and items. This covers the implementation PR and the requirements and design PRs (the same goes for PRs of fix tasks created by the after-merge watch).
 
-If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop. The fixed body of the implementation PR (`buildPullRequestBodyText`) contains, in this order, the approved requirements, the output of the Implementation step (heading "変更"; when there is no output, the heading is left out too), the exported results, viewpoint → test → result, and the Goal Guardian's final review. As when following a template, what the implementing agent wrote in its implementation notes (tables, items for a person to confirm, and so on) stays in the PR body.
+If there is no template or it cannot be used, sacty uses its own fixed body (`buildPullRequestBody`, `buildStepPullRequestBody`). In either case, opening the PR does not stop.
+
+### Assembling the implementation PR body
+
+The implementation PR body is written to be read short, conclusion first. The full text of the approved requirements and design, and long review text, are not included; they become a link or a collapsed section. The fixed body (`buildPullRequestBodyText`) contains, in this order:
+
+1. The task ID line, and `Closes #<number>` (for a task taken in from an Issue)
+2. "結論" (Conclusion)
+   - Summary of the change: the head of the first paragraph (only lines without indentation; excluding headings, tables, code blocks, and indented lines) of the Implementation step's output. When there is no output, the line is left out.
+   - The final review's verdict and the head of its summary. "（なし）" when there is no final review yet, and a note when it is being verified.
+   - The record that a person moved the task on despite the failed final review, and the failed points (if any; `overrideBodyLines`)
+   - What a person should confirm (if any; `humanCheckBodyLines`)
+3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
+   - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
+   - A task that skipped the requirements step, and the fix scope of a security fix, are short, so they stay as before.
+4. "変更" (Changes): the Implementation step's output. Left out when it is the same as the change summary in the conclusion. When there is no output, the heading is left out too.
+5. The exported results
+6. Viewpoint → test → result
+   - The table columns are "観点", "テスト", and "最終レビュー". The viewpoint is the ID and title (up to 60 characters), the test is the name of the first test (up to 70 characters) and "ほか N 件", and the final review is only ✅ or ❌.
+   - Below the table is the test line (the "テスト：" line above).
+   - Each viewpoint's input, expected result, all tests, and the final review's findings go into the collapsed section "観点ごとの詳細" outside the table.
+7. The full text of the final review (collapsed). Shown only when it is longer than the head shown in the conclusion, or when there is a recurrence check of earlier remarks.
+
+The common rules are as follows.
+
+- Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Only sentences in lines that are outside a code fence and do not start with whitespace are touched. Lines of code blocks (CommonMark fences: indentation of 0 to 3 spaces, closed by the same character at least as long as the opening), tables, and headings, and every indented line (code inside a list, indented code, and so on), are left alone. The rule does not parse Markdown piece by piece and errs on the side of keeping: one leftover progress sentence does less harm than broken code. The summary of the change (`leadParagraph`) also uses only lines without indentation. The Implementation step's output is saved with the indentation of its first line kept (only blank lines before and after and trailing whitespace are removed; `keepIndent` of `extractBlocks`; other steps still trim as before). The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
+- The leading "合格。" or "不合格。" of the final review's summary is removed (the verdict is written separately, so it is not repeated as "合格。合格。").
+- A long sentence in the conclusion is cut at a sentence break ("。") within `BODY_LEAD_MAX` (240 characters). If there is no break, "…" is added.
 
 ### Finding the template
 
@@ -201,11 +228,12 @@ A template is judged absent or unusable as follows.
 - Explanations, example text, and code blocks in a heading are removed; HTML comments and checkboxes are kept. All checkboxes are unchecked, even if checked in the template (because sacty has not checked them).
 - Headings with no content or that do not apply get "該当なし（sacty は記入していません）" (Not applicable; sacty did not fill this in) (`NOT_APPLICABLE`). Headings with checkboxes do not get it (only the unchecked checkboxes remain). Before the first heading, only comments and checkboxes remain.
 - Content of the implementation PR (`buildPullRequestBodyParts`)
-  - Purpose: the approved requirements (the bug reproduction for a reproduce task)
-  - Changes: the Implementation step's output
-  - Tests: the viewpoint → test → result table and the test results
+  - Purpose: the final review's verdict and the head of its summary, the number of items for a person to confirm (if any, "この PR の末尾にあります" (it is at the end of this PR)), and the head and the location of the full text of the approved requirements (the bug reproduction for a reproduce task)
+  - Changes: the Implementation step's output (without progress reports)
+  - Tests: the viewpoint → test → result table and the test results (6 in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
   - Related Issue: `Closes #<number>` (for a task taken in from an Issue)
-  - Exported results, the requirements and design PRs, and the Goal Guardian's final review go into "the sacty record".
+  - The exported results and the full text of the Goal Guardian's final review go into "the sacty record".
+  - What a person should confirm and the record that a person moved on despite the failure go into the last part (footer).
 - Content of the requirements and design PRs (`buildStepPullRequestBodyParts`)
   - Purpose: which step's result it is (and the approved earlier steps)
   - Changes: the result's file and the responses to comments
@@ -222,20 +250,24 @@ A template is judged absent or unusable as follows.
   - The body is kept to 65,000 characters (`PR_BODY_MAX`). This is a bit shorter than GitHub's limit of 65,536 characters and is measured by JavaScript length.
   - If it is longer, the end of the part before the last part is cut, and a note that it was cut (`TRUNCATED_NOTE`) is written. HTML comments, code blocks, and collapsible sections left open at the cut are closed.
   - The same limit applies to bodies that do not use a template (`buildPullRequestBodyText`, `buildStepPullRequestBodyText`). The last part (the note that sacty created the PR and the guidance that merging means approval of the implementation) is not cut.
-  - Parts that cannot be cut (`keep`) are the task ID line, `Closes #<number>` (including one placed in a template heading), and the guidance that merging the requirements and design PRs means approval. If, after cutting, one of them does not remain in the body as a whole line (with line boundaries before and after) outside HTML comments and code blocks, it is put back before the last part. `Closes #12` is not considered to remain just because `Closes #123` is present.
-- Secret values: secret values used in opening that PR (such as the GitHub token) are redacted from the body (`[REDACTED]`). The reason text kept in the ledger is also redacted.
+  - Parts that cannot be cut (`keep`) are the task ID line, `Closes #<number>` (including one placed in a template heading), the guidance that merging the requirements and design PRs means approval, and, in the fixed body, what a person should confirm and the record that a person moved on despite the failure, both placed in the conclusion. If, after cutting, one of them does not remain in the body as a whole line (with line boundaries before and after) outside HTML comments and code blocks, it is put back before the last part. `Closes #12` is not considered to remain just because `Closes #123` is present.
+- Secret values: secret values used in opening that PR (such as the GitHub token) are redacted from the body (`[REDACTED]`). So that the cut-off head of a secret is not left by a summary or truncation (the summary of the change, test names and viewpoint titles in the table, the items a person should check, the findings of an override, and so on), they are redacted from every string of the task before the body is built (`PullRequestBodyStage.secrets`). The replacement just before publishing is kept too. The reason text kept in the ledger is also redacted.
 - Ledger: `template` in `PullRequestPublished` and `StepPullRequestPublished` keeps the following.
   - The template used (`repo`: the URL of the repository where the template was, `path`)
   - Or the reason for using the fixed shape (`fallback`: `none` or `unusable`; `message`: `pr.templateFailed`, `pr.templateTooLarge`, `pr.templateInvalid`, `pr.templateEmpty`, `pr.templateOrgPrivate`, and so on)
   - `truncated` if it was cut
   - It is shown as "Body" in the PR section of the task screen. Records from before this version do not have it (nothing is shown in the web UI).
 
-Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
+Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`, `resultTableLines`, `approvedBasisLines`, `withoutProgressReport`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
 
 ## Importing PR comments
 
 - While a PR is open and waiting for approval, its reviews, line comments, and ordinary comments are imported as comments (`PullRequestReviewImported`, actor `person`).
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
+    The time of each feedback is the earlier of its GitHub time and the time the daemon first saw it (memory only; `feedbackSeenAt`).
+    Even if GitHub's time is ahead of this machine's clock, the feedback is imported 2 minutes after it was first seen (it does not keep waiting for GitHub's time).
+    If GitHub's time is behind, there is no wait when 2 minutes have already passed by the time it is seen.
+    The times for tasks that are no longer in scope for import (no longer awaiting approval, cancelled, and so on) are dropped at the next check.
   - Up to 50 (`REMARKS_MAX`) are imported, oldest first, at up to 2000 characters each (`REMARK_MAX`).
   - The same item is not imported twice.
   - For a taken-over existing PR, comments passed to the prompt of the Implement step are not imported (the implementation addressed them; [Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
@@ -249,6 +281,15 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - Posts by bots
   - Reviews and line comments posted by the original task's project account that start with sacty's review marker
 - Once imported, the Goal Guardian decides where to send them back to (redoing that step, or requesting changes to an earlier step) (`ReworkJudged`), and changes are requested without a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for the implementation PR, that step for Requirements or Design) is redone.
+  - The target depends on whether the comment changes a decision already approved in an earlier step (acceptance criteria, behavior, screens, the shape of APIs and data, test viewpoints, and what was confirmed and decided).
+    - A comment that does not change a decision goes back to the step of that PR (Implementation for the implementation PR). Adding to documents, fixing the implementation, and reflecting something already decided are such comments.
+      Even if an approved output left something out (it is not in the list of what is affected, or not in the test viewpoints), the comment is not treated as changing a decision when what it asks for follows from the approved decisions.
+    - Only a comment that changes the decision itself goes back to the step that holds it (Design or Requirements). If even one of several comments changes a decision, it goes back to the step that holds that decision; if they span several steps, to the earlier step.
+    - Going back to an earlier step re-creates the approved output and has it approved again, which costs more effort and money.
+  - The Goal Guardian is asked to start the reason (`reason` of `ReworkJudged`) with which decision the comment changes or does not change.
+    The format is only requested in the instruction; sacty does not check it (a reason is recorded whatever its format, as long as it can be read).
+- Along with where to send them back to, the Goal Guardian also decides the cause of the request for changes (`cause`; see [Request changes](#request-changes)). It is one of `guardian_missed`, `new_request`, and `base_changed`; if it cannot decide (no answer, `undecidable`, or an unknown value), no cause is set (counted as rework with an unknown cause). The judgment is kept in `cause` of `ReworkJudged` and carried over to the request for changes (`ChangesRequested`).
+  For a task with no approved requirements (one that skipped the Requirements step), the original request that the final review used as its standard (the task's title and body) is also given to this judgment. A task with approved requirements does not get it (the requirements are the standard).
 - Just before requesting changes, the PR's status is read once more (a person may have merged or closed it during the judgment, or before a resumed check after the judgment was recorded).
   - If it is still open, changes are requested.
   - If it was merged, or closed without merging, changes are not requested. The imported comments (`PullRequestReviewImported`) and the judgment (`ReworkJudged`) stay in the ledger, and the status is checked again within the same check and recorded as "Merged" or "Closed without merging" in [The PR check](#the-pr-check) (for a merge, `PullRequestMerged` and `StepApproved`; `StepApproved` clears the state of the comments that were being worked on).
@@ -256,7 +297,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - If the status changed during the re-read (a person requested changes, the task was cancelled, and so on), nothing is recorded. If it cannot be read, the next check tries again.
   - Comments that arrive after a merge are not turned into a follow-up task or the like.
 
-Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `settleReview`, `judgeRework`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`)
+Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`)
 
 ## Request changes
 
@@ -266,11 +307,26 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbac
   - If the target is omitted, the first one (`implement` when Implementation is waiting for approval).
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.
-- When a person requests changes to something that passed the final review or Integration review, a miss (`GuardianMissed`) is recorded.
+- A request for changes can carry a cause (`ReworkCause`; `cause` of `ChangesRequested`). If omitted, it is recorded as a request for changes with no cause decided and counted as rework with an "unknown cause" in the summary.
+  - A person chooses it with "Cause of the rework" on the approval screen (initially "Don't choose"). When a person requests changes on the approval screen (the `request-changes` API), the person chooses where to send it back, so it does not go through the Goal Guardian's judgment (`judgeRework`). If no cause is chosen, the cause is not judged and the rework has an unknown cause (no extra run is made just for the judgment).
+  - For a request for changes from PR feedback, the cause the Goal Guardian judged together with where to send it back is used (`settleReview`).
+  - The cause is shown on the request-for-changes line of the Activity and in the PR section's "Redo from" (for PR feedback; `cause` of `prRework`).
+  - A request for changes that ends in an escalation at the limit (`TaskEscalated`) does not keep a cause. A person chooses it again when requesting changes beyond the limit.
+- A miss (`GuardianMissed`) is recorded only when the cause is `guardian_missed` and the deliverable sent back had passed the final review (Implementation waiting for approval) or Integration review (Integration review waiting for approval).
+  - It is not recorded when the cause is `new_request` or `base_changed`, or when no cause is decided (a request for changes with no cause is shown under "unknown cause" in the summary, next to the miss count, because it is not known whether it was a miss).
+  - A miss for the same review is recorded once.
+  - The activity log from before causes were recorded is read as it is (a request for changes without a cause is in the summary it counts as a miss when a miss record (`GuardianMissed`) comes right before it, and as "unknown cause" otherwise; a miss already recorded is still counted as a miss).
+
+| Cause (`ReworkCause`) | Meaning |
+| --- | --- |
+| `guardian_missed` | The Goal Guardian missed a flaw it could have caught |
+| `new_request` | A new request or change of direction a person added that is not in the approved requirements or design |
+| `base_changed` | A conflict or clash caused by the base branch moving on (such as an earlier PR being merged), not a flaw in the deliverable itself |
+
 - A person can change the step images and agents together with a request for changes (`images` and `agents` of `RequestChangesInput`). They are checked in the same way as changing them in the task details (`changeStepImage`, `changeStepAgent`), and `StepImageChanged` and `StepAgentChanged` are recorded in the same write before the request for changes (`ChangesRequested`) or the escalation at the limit (`TaskEscalated`) (the same name as now is not recorded). If any of them is wrong, nothing is recorded, including the request for changes. The screen shows the step to redo and the steps after it (except skipped steps), and loads the choices when the collapsed section is opened (`/step-options`). Only the steps a person changed are sent (`changedStepChoices`).
 - The text of the comments in a request for changes can be read with "Details" on the request-for-changes line of the Activity in the task details, even when the task is not awaiting approval ([Screen wording and hints](ui-wording.en.md)).
 
-Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voidRemark`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`), `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/gate-form.tsx` (`GateStepSettings`)
+Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voidRemark`), `packages/core/src/events.ts` (`ReworkCause`, `RequestChangesInput`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `extractRework`), `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/gate-form.tsx` (`GateStepSettings`)
 
 ## Escalation
 

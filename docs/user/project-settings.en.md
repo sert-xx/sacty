@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx, apps/web/src/components/delete-project.tsx, apps/web/src/app/actions.ts (deleteProjectAction) -->
+<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx, apps/web/src/components/delete-project.tsx, apps/web/src/app/actions.ts (saveProjectAction, deleteProjectAction) -->
 
 [日本語](project-settings.md) | **English**
 
@@ -77,6 +77,16 @@ In the "Context repository" field, write the following.
 See [Context repository](context.en.md) ([Where to put it](context.en.md#where-to-put-it)) for how to write it and what it contains. To remove it, clear the repository and save.
 
 When you save, sacty reads and checks the context, and tells you if `mcp.yaml`, `platforms.yaml`, or other files have errors. sacty still saves the settings, but as they are, step runs will stop.
+
+## When several people change the settings
+
+When several people (or agents) open and save the settings of the same project, sacty does not silently erase a change that was saved first with a later save.
+
+- If another save changed the project's settings after you opened the settings page, your save is not applied.
+  The page shows the reason and a "Reload to see the latest settings" button.
+- Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page. Reloading discards it, so copy any change you want to keep first (the page also says this next to the button).
+- A save that changed only another field is also not applied (changes are not merged per field).
+- After you save, you can save again.
 
 ## Export and import
 

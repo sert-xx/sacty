@@ -38,6 +38,7 @@ const PARAMS = {
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
+  "project.changedElsewhere": null,
   "project.targetDuplicated": z.object({ scope: Scope, target: z.string() }),
   "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
   "project.ticketKeyDuplicated": z.object({ platform: z.string(), key: z.string() }),
@@ -357,6 +358,7 @@ const PARAMS = {
   "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
   "review.viewpointUnmapped": null,
+  "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
   "review.scopeViolated": z.object({
     outside: z.array(z.string()),
     lines: z.number().int().nonnegative().optional(),
@@ -686,6 +688,8 @@ const ja: MessageDictionary = {
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
+  "project.changedElsewhere":
+    "このプロジェクトの設定は、画面を開いた後に、ほかの保存で変わりました。保存していません。再読み込みして最新の設定を確かめ、もう一度変更してください。",
   "project.targetDuplicated": ({ scope, target }) =>
     `${scopeJa[scope]}「${target}」が重複しています。`,
   "project.ticketKeyDuplicated": ({ platform, key }) =>
@@ -1118,6 +1122,8 @@ const ja: MessageDictionary = {
     `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
+  "review.outOfScope": ({ items }) =>
+    `依頼にも承認済みの要求要件・設計にも無い変更、または既存のテストの期待を変える変更があります：${items.join(" / ")}`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "差分が修正の範囲を守っていません（sacty の検査）。",
@@ -1358,6 +1364,8 @@ const en: MessageDictionary = {
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
+  "project.changedElsewhere":
+    "This project's settings were changed by another save after you opened this page. Nothing was saved. Reload the page, check the latest settings, then make your change again.",
   "project.targetDuplicated": ({ scope, target }) =>
     `The ${scopeEn[scope]} "${target}" is listed more than once.`,
   "project.ticketKeyDuplicated": ({ platform, key }) =>
@@ -1792,6 +1800,8 @@ const en: MessageDictionary = {
     `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
+  "review.outOfScope": ({ items }) =>
+    `The diff has changes that neither the request nor the approved requirements and design call for, or that change what an existing test expects: ${items.join(" / ")}`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "The diff does not stay within the fix scope (sacty's check).",

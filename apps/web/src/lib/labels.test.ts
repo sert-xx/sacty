@@ -124,6 +124,31 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         ja,
       ).text;
     expect(back("implement")).toBe("実装を差し戻し：指摘1件（人間）");
+    // 原因を決めた差し戻しは、原因を添える（PBI-268）
+    const because = (cause: "guardian_missed" | "base_changed" | "new_request") =>
+      describeEventParts(
+        event({
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            cause,
+            round: 1,
+            remarks: [{ id: "x", text: "y" }],
+            overLimit: false,
+          },
+        }),
+        ja,
+      ).text;
+    expect(because("guardian_missed")).toBe(
+      "実装を差し戻し：指摘1件（人間）（原因：ゴールガーディアンの見逃し）",
+    );
+    expect(because("base_changed")).toBe(
+      "実装を差し戻し：指摘1件（人間）（原因：ベースの変化による競合）",
+    );
+    expect(because("new_request")).toBe(
+      "実装を差し戻し：指摘1件（人間）（原因：新しい要望・方針の変更）",
+    );
     expect(back("design")).toBe(
       "実装を差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
     );
