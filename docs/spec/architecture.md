@@ -394,6 +394,12 @@ sacty は、npm workspaces の4つのパッケージでできている。
   設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば、消して書き直す。
   消すものが無ければ書かない。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
+  - 変更（`PUT /api/projects/:id`）は、読み込んだときの `updatedAt` を `If-Match` ヘッダーで受け取り、保存の時点の `updatedAt` と一致するときだけ保存する。
+    ヘッダーが無ければ 428（`precondition_required`。保存しない）。読み込んだ後にほかの保存で変わっていれば、上書きせずに 409（`project.changedElsewhere`）を返し、設定も `updatedAt` も変えない。
+    照合と保存は同じ同期の処理（`saveProject`）で行うので、同時に保存しても、先に保存した変更を後の保存が消さない。項目ごとの併合はしない（別の項目だけを変えていても 409）。作成（`POST`）・インポートは版を要らない。
+    `updatedAt` は、保存するたびに前の値より後の時刻になる（同じミリ秒に2回保存しても、時計が戻っても変わる。`SqliteProjectStore.put`）。
+  - 画面（`ProjectEditor`）は、設定を読み込んだ版を保存に添え（`baseUpdatedAt`）、自分が保存したら返ってきた `updatedAt` に進める。画面の取り直しで届いた版には進めない（ほかの保存の内容を見ていないため）。
+    409（`project.changedElsewhere`）のときは、理由と「再読み込みして最新の設定を見る」ボタンを出す。編集中の入力は、再読み込みするまで残す。
   - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義と、そのプロジェクトのスケジュールタスク（`schedules.deleteForProject`。[スケジュールタスク](scheduled-tasks.md)）を消す。タスク（スケジュールタスクが作ったものを含む）と作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
     プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）・
     回答中の質問があれば、削除せずに 409（`project.hasActiveTasks`。件数を添える）を返す。消したら、そのプロジェクトの秘密情報の警告も消す。
@@ -405,4 +411,4 @@ sacty は、npm workspaces の4つのパッケージでできている。
     消したらプロジェクトの一覧へ移る。表示しているプロジェクト（cookie）が消えたら、最初のプロジェクトを表示する。
 
 コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`、
-`apps/daemon/src/service.ts`（`deleteProject`・`visibleTask`・`adoptAuditProposal`・`createAuditFixTask`）、`apps/daemon/src/server.ts`、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`deleteProjectAction`）
+`apps/daemon/src/service.ts`（`saveProject`・`deleteProject`・`visibleTask`・`adoptAuditProposal`・`createAuditFixTask`）、`apps/daemon/src/server.ts`、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`saveProjectAction`・`deleteProjectAction`）、`apps/web/src/components/project-editor.tsx`（`ProjectEditor`）、`apps/web/src/lib/daemon.ts`（`saveProject`）

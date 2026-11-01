@@ -215,6 +215,7 @@ const ja = {
       `作成しましたが、コンテキストに誤りがあります。工程の実行で止まります：${detail}`,
     savedContextError: (detail: string) =>
       `保存しましたが、コンテキストに誤りがあります。工程の実行で止まります：${detail}`,
+    reloadLatest: "再読み込みして最新の設定を見る",
     save: "保存する",
     create: "作成する",
   },
@@ -435,6 +436,7 @@ const en: ProjectsMessages = {
       `Created, but the context has an error. Steps will stop: ${detail}`,
     savedContextError: (detail) =>
       `Saved, but the context has an error. Steps will stop: ${detail}`,
+    reloadLatest: "Reload to see the latest settings",
     save: "Save",
     create: "Create",
   },

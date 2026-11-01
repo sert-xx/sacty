@@ -3763,11 +3763,19 @@ export class TaskService {
     };
   }
 
-  /** プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。 */
-  saveProject(id: string | undefined, raw: unknown): Project {
+  /**
+   * プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。
+   * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに拒否する
+   * （PBI-274。照合と保存の間に待ちが無いので、同時に保存しても、先に保存した変更を後の保存が消さない）。
+   */
+  saveProject(id: string | undefined, raw: unknown, base?: string): Project {
     const definition = ProjectDefinition.parse(raw);
-    if (id && !this.deps.projects.get(id)) {
+    const current = id ? this.deps.projects.get(id) : undefined;
+    if (id && !current) {
       throw new InvalidOperationError(message("project.notFound"));
+    }
+    if (current && base !== undefined && current.updatedAt !== base) {
+      throw new InvalidOperationError(message("project.changedElsewhere"));
     }
     // チケットの取り込み先の重複は、ホストの PF だけプロジェクトをまたいで調べる（コンテキストの PF はプロジェクトごと。
     // PBI-74）。設定を読めなければ、これまでどおりすべてを調べる
