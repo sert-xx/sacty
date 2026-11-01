@@ -2524,7 +2524,7 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       );
       expect(prompt, step).toContain("作業の経過・手順・結果の報告");
       expect(prompt, step).toContain(
-        "人間の指摘・PR の指摘・再開の補足への対応の報告（指摘への対応は、本文ではなく、sacty-responses の JSON の text に書く。",
+        "人間の指摘・PR の指摘・再開の補足への対応の報告（ID が付いた指摘への対応は、本文ではなく、sacty-responses の JSON の text に書く。",
       );
       expect(prompt, step).toContain("エージェントや sacty に向けたメモ・指示");
       expect(prompt, step).toContain("最初の提出では 1 から欠番なく振る");
@@ -2552,6 +2552,43 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
         "依頼者に不利益が出うる既定が「確認したいこと」に無い（「既定で決めたこと」にある）指摘は、記述を足す指摘であっても must として直す",
       );
     }
+  });
+
+  it("引き継いだ PR の指摘（ID が無い）に対応しないときの報告は、要求要件・設計では「確認したいこと」に書かせ（sacty-responses では保存されない）、実装では説明に書かせる", () => {
+    const t = {
+      ...task(["requirements", "design", "implement"]),
+      continuedPullRequest: {
+        repo: "https://github.com/acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        branch: "feature/retry",
+        baseBranch: "main",
+      },
+    };
+    const feedback = [
+      {
+        key: "review_comment:1",
+        kind: "review_comment" as const,
+        author: "reviewer",
+        at: "2026-11-01T00:00:00Z",
+        body: "回数は定数にしてください",
+      },
+    ];
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step, { continuedFeedback: feedback });
+      expect(prompt, step).toContain("回数は定数にしてください");
+      expect(prompt, step).toContain(
+        "対応したことの報告は書かない。対応しない・対応できない指摘があれば、人間が判断することとして、その指摘と理由を「確認したいこと」に書く（引き継いだ PR の指摘には指摘の ID が無いので、sacty-responses には書かない）",
+      );
+      expect(prompt, step).not.toContain("その指摘と理由を説明に書く");
+      expect(prompt, step).toContain(
+        "ID が無い指摘（引き継いだ PR の指摘など）は、対応したことを書かず",
+      );
+    }
+    // 実装は本文の決まりが無いので、これまでどおり説明に書かせる
+    const implement = buildPrompt(t, "implement", { continuedFeedback: feedback });
+    expect(implement).toContain("その指摘と理由を説明に書く");
+    expect(implement).not.toContain("「確認したいこと」に書く（引き継いだ PR");
   });
 
   it("文書・調査の結果・実装の指示には、要求要件・設計の本文の決まりを出さない", () => {

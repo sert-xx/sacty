@@ -408,6 +408,8 @@ export function passedContinuedFeedback(
 export function continuedPullRequestLines(
   task: Task,
   feedback: readonly PullRequestFeedback[] | "unreadable" | undefined,
+  /** 工程。要求要件・設計は、本文に作業の報告を書かせないので、対応しない指摘の書き先が違う。 */
+  step?: StepKey,
 ): string[] {
   const pr = task.continuedPullRequest;
   if (!pr) return [];
@@ -416,7 +418,9 @@ export function continuedPullRequestLines(
     "--- 引き継いで直す PR ---",
     `このタスクは、既存の PR（${pr.url || `${pr.repo}/pull/${pr.number}`}。${pr.branch} → ${pr.baseBranch}）を引き継いで直します。対象リポジトリのコードは、その PR のブランチ（${pr.branch}）の先頭のもの（PR の変更を含む）です。実装の変更は、sacty が同じブランチにコミットとして積みます（新しい PR は作らず、PR の題・本文も変えません）。`,
     "- PR の目的と既存の変更を保ち、タスクが求めること（PR の指摘への対応など）だけを変える。PR の変更をやり直す・指摘に無い変更を足すことはしない",
-    "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
+    step === "requirements" || step === "design"
+      ? `- PR の指摘のうち、タスクが対応を求めているものに対応する。対応したことの報告は書かない。対応しない・対応できない指摘があれば、人間が判断することとして、その指摘と理由を「確認したいこと」に書く（引き継いだ PR の指摘には指摘の ID が無いので、${RESPONSES_HEADING} には書かない）`
+      : "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
     "- PR の指摘の状況（誰が・どこに・何を指摘したか、作者が対応・返答したか）は、下のデータで確かめる",
   ];
   if (feedback === undefined) return lines;
@@ -796,7 +800,7 @@ function deliverableBodyLines(deliverable: string): string[] {
     `--- ${deliverable}の本文に書くもの ---`,
     `- 本文には、${deliverable}そのものだけを書く。次のものは、本文のどこにも（区切り線「---」の後ろや末尾にも）書かない`,
     "  - 作業の経過・手順・結果の報告（「〜を取り込みました」「〜を直しました」「コミット・プッシュはしていません」など）、前の版との違いの説明",
-    `  - 人間の指摘・PR の指摘・再開の補足への対応の報告（指摘への対応は、本文ではなく、${RESPONSES_HEADING} の JSON の text に書く。対応できなかったことも同じ）`,
+    `  - 人間の指摘・PR の指摘・再開の補足への対応の報告（ID が付いた指摘への対応は、本文ではなく、${RESPONSES_HEADING} の JSON の text に書く。対応できなかったことも同じ。ID が無い指摘（引き継いだ PR の指摘など）は、対応したことを書かず、対応しないものだけを、人間が判断することとして「確認したいこと」に、指摘と理由で書く）`,
     "  - エージェントや sacty に向けたメモ・指示、タスクやエージェントの ID（指摘の ID を含む）",
     "- 要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る。差し戻しで項目を消したときは、ID を詰めず（人の指摘・承認済みの文書が ID で指しているため）、「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする。この規則は、sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない（消すテスト観点は配列から外し、削除の行を JSON に残さない）",
     "- 別の文書（ほかのタスクの要求要件・チケット・PR など）を参照する項目は、参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する。読む人が参照先を開かなくても分かるようにする",
@@ -1316,7 +1320,7 @@ export function provenanceInputs(
   const remarks = task.remarks.filter((r) => r.step === step && !r.voided);
   const investigation = investigationLines(task).slice(1).join("\n");
   return [
-    { name: "task.md", text: taskContent(task, extra) },
+    { name: "task.md", text: taskContent(task, extra, step) },
     ...(remarks.length > 0
       ? [
           {
@@ -1574,6 +1578,7 @@ function resumeNoteJudgeLines(task: Task): string[] {
 function taskContent(
   task: Task,
   extra: { continuedFeedback?: readonly PullRequestFeedback[] | "unreadable" },
+  step?: StepKey,
 ): string {
   // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
   return [
@@ -1582,7 +1587,7 @@ function taskContent(
     task.body || "（内容なし）",
     ...securityFindingLines(task),
     ...gatheredLines(task),
-    ...continuedPullRequestLines(task, extra.continuedFeedback),
+    ...continuedPullRequestLines(task, extra.continuedFeedback, step),
   ].join("\n");
 }
 
@@ -1622,8 +1627,8 @@ export function buildPrompt(
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
-  const continued = continuedPullRequestLines(task, extra.continuedFeedback);
-  const content = taskContent(task, extra);
+  const continued = continuedPullRequestLines(task, extra.continuedFeedback, step);
+  const content = taskContent(task, extra, step);
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 

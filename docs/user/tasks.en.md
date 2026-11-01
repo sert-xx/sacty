@@ -213,6 +213,7 @@ To fix an existing PR itself, for example to address review comments on a PR a p
 - The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
 - The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
 - Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
+  If the agent of these steps decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
 - Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
 - "Taking over PR" appears on the "Step settings" tab of the task details.
 - Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).

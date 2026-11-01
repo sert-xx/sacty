@@ -85,4 +85,12 @@
 | --- | --- |
 | テスト観点にも「削除後の ID 固定」と「削除行の保持」を求めているが、`viewpointsWithPositions` は配列順に `TV-n` を振り直し、JSON に ID・削除状態の欄が無い。設計の再提出の指示（「ID は sacty が振り直します」）と両立せず、削除行に必須項目を埋めると有効なテスト観点として後工程へ渡る | 正しい。`viewpointsWithPositions`（配列順に採番）・再提出の指示とも確かめた。ID の固定と削除行の保持を、本文でエージェントが振る ID（要求の `R-n` など）に限り、sacty が振る `TV-n` を除いた。`deliverableBodyLines` の規則から「テスト観点」を外して `TV-n` を除く旨を足し、セルフレビューの指示・D-6（手順 8・チェックポイント）・仕様書・ユーザードキュメント（日英）・ADR も同じ範囲にそろえた。設計の再提出の指示には、消す観点は出さず、削除の行も作らない、と足した。テストで、規則に「テスト観点などの ID」が無いこと・`TV-n` を除くことを確かめる |
 
-確かめたこと：`prompts.ts` と D-6 の変更を外すと、追加した期待のテスト 3 件（`prompts.test.ts`・`default-skills.test.ts`・`daemon.test.ts` の各 1 件）が落ちる。`biome check`・`typecheck`・`prompts.test.ts`・`default-skills.test.ts`・`daemon.test.ts`・`tests/docs` が通る。
+確かめたこと（1 件目）：`prompts.ts` と D-6 の変更を外すと、追加した期待のテスト 3 件（`prompts.test.ts`・`default-skills.test.ts`・`daemon.test.ts` の各 1 件）が落ちる。`biome check`・`typecheck`・`prompts.test.ts`・`default-skills.test.ts`・`daemon.test.ts`・`tests/docs` が通る。
+
+## Sacty の自動レビューの再レビューの指摘（レビュー 5728708341）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 既存 PR の引き継ぎで、`continuedPullRequestLines` が未対応の指摘と理由の報告を求めるが、引き継いだ PR のコメントは `Task.remarks` に入らず、`service.ts` が `extractBlocks` に渡す有効な ID に無い。報告を `sacty-responses` に移すと応答は除外され、JSON も本文から消えるため、理由が保存・表示されない | 正しい。`extractBlocks` が有効な ID に無い `remarkId` の応答を捨てることを確かめた。新しい置き場所は作らず、既存の「確認したいこと」に合わせた：要求要件・設計の工程では、引き継いだ PR の指摘に対応しないものを、人間が判断することとして指摘と理由で「確認したいこと」に書かせ、対応したことの報告は書かせない。`sacty-responses` に書かせるのは ID が付いた指摘だけにした（本文の決まり `deliverableBodyLines` に明記）。実装の工程は、これまでどおり説明に書かせる。仕様書・ユーザードキュメント（日英）とテストを合わせた |
+
+確かめたこと（2 件目）：引き継いだ PR の指摘の指示が、要求要件・設計では「確認したいこと」に、実装では説明に向くことを `prompts.test.ts` で確かめる。
