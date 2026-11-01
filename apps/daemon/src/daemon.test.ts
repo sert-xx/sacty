@@ -9591,6 +9591,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("確認して決めたことを文書に書いてほしい指摘は、決定を変えないので実装に戻る。判断の基準と、決定を変えない旨の理由を残す（PBI-266。S9）", async () => {
+      const pulls = new FakePulls();
+      const reason =
+        "決定を変えない：『過去の削除は戻せない』は承認済みの要求要件で決まっていて、文書に書くだけ";
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("implement", reason)],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [
+        item("comment:266", {
+          body: "要求要件で確認した『過去の削除は戻せない』を、README と設計メモに書いてください",
+        }),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      // 判断の指示に、決定を変えるかで決める基準と、理由の書き方がある
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("過去の削除は戻せない");
+      expect(prompt).toContain("決定を変えない指摘は、この PR の実装で直します");
+      expect(prompt).toContain(
+        "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+      );
+      // 設計には戻らず、実装への差し戻しになる（承認済みの設計は残る）
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.remarks.at(-1)?.step).toBe("implement");
+      expect(task?.approved.design).toBeDefined();
+      expect(task?.prRework).toMatchObject({ target: "implement", decided: true, reason });
+      activity.close();
+    });
+
+    it("決定を変える指摘（画面の姿を変える）は、これまでどおり、その決定を持つ設計に戻る（PBI-266。S8）", async () => {
+      const pulls = new FakePulls();
+      const reason = "決定を変える：設計が決めた、月を選んでいない間の画面の姿を変える";
+      const { activity, service, id } = await toImplementGate([rework("design", reason), design], {
+        pulls,
+        now: later,
+      });
+      pulls.feedbackList = [
+        item("comment:267", {
+          body: "月を選んでいないとき、いま見ている範囲が『これからの予約』だと画面で分かるようにしてください",
+        }),
+      ];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.remarks.at(-1)?.step).toBe("design");
+      expect(task?.approved.design).toBeUndefined();
+      expect(task?.prRework).toMatchObject({ target: "design", decided: true, reason });
+      activity.close();
+    });
+
     it("最後のフィードバックから時間がたつまで待ち、取り込んだものは二重に取り込まない", async () => {
       const pulls = new FakePulls();
       let now = Date.parse(at) + 30_000; // 最後のコメントから30秒
