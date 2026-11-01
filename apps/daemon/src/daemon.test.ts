@@ -9431,6 +9431,235 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    /** ゴールガーディアンの戻し先の判断（sacty-rework）を実行しているときに、PR の状態を変える（人が GitHub で操作した）。 */
+    function changeDuringJudgement(
+      executor: FakeExecutor,
+      change: () => void,
+    ): { judged: () => number } {
+      let judged = 0;
+      executor.respond = (invocation) => {
+        if (invocation.command.join(" ").includes("sacty-rework")) {
+          judged += 1;
+          change();
+        }
+        return undefined;
+      };
+      return { judged: () => judged };
+    }
+
+    const changeCount = (service: TaskService, id: string) =>
+      service.get(id)?.activity.filter((e) => e.type === "ChangesRequested").length ?? 0;
+
+    it("戻し先を判断している間に人が PR をマージしたら、差し戻さずにマージ（人の承認）として記録する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: later },
+      );
+      const commit = service.get(id)?.task.pullRequest?.commit;
+      const changes = changeCount(service, id);
+      const spy = changeDuringJudgement(executor, () => {
+        pulls.state = { state: "merged", mergedBy: "reviewer", headSha: commit };
+      });
+      pulls.feedbackList = [item("comment:701")];
+      await service.checkPullRequests();
+      expect(spy.judged()).toBe(1);
+      const events = service.get(id)?.activity ?? [];
+      // 取り込んだ指摘と判断は残し、差し戻し（と見逃し）は記録しない。同じ確認の中で、マージを承認として記録する
+      expect(events.slice(-4).map((e) => [e.type, e.actor])).toEqual([
+        ["PullRequestReviewImported", "person"],
+        ["ReworkJudged", "guardian"],
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      expect(changeCount(service, id)).toBe(changes);
+      expect(events.slice(-4).some((e) => e.type === "GuardianMissed")).toBe(false);
+      const task = service.get(id)?.task;
+      expect(task?.steps.every((st) => st.state === "done")).toBe(true);
+      expect(task?.status).toBe("idle");
+      expect(task?.pendingReview).toBeUndefined();
+      expect(task?.importedFeedback).toEqual(["comment:701"]);
+      // 完了したタスクは、もう確かめない・判断し直さない
+      await service.checkPullRequests();
+      expect(spy.judged()).toBe(1);
+      expect(service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged")).toHaveLength(
+        1,
+      );
+      activity.close();
+    });
+
+    it("戻し先を判断している間に PR がマージされず開いたままなら、今までどおり差し戻す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("design", "観点が足りない"), design],
+        { pulls, now: later },
+      );
+      const spy = changeDuringJudgement(executor, () => {});
+      pulls.feedbackList = [item("comment:702")];
+      const checked = pulls.checked.length;
+      await service.checkPullRequests();
+      expect(spy.judged()).toBe(1);
+      // 差し戻す前に、PR の状態を読み直す（確認の 1 回と合わせて 2 回）
+      expect(pulls.checked.length - checked).toBe(2);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkJudged",
+        "GuardianMissed",
+        "ChangesRequested",
+      ]);
+      expect(events.some((e) => e.type === "PullRequestMerged")).toBe(false);
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("戻し先を判断している間に PR がマージされずに閉じられたら、差し戻さずに閉じられたことを記録して人の判断を待つ。開き直されたら、判断し直さずに差し戻す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("design", "観点が足りない"), design],
+        { pulls, now: later },
+      );
+      const changes = changeCount(service, id);
+      const spy = changeDuringJudgement(executor, () => {
+        pulls.state = { state: "closed" };
+      });
+      pulls.feedbackList = [item("comment:703")];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
+        ["PullRequestReviewImported", "person"],
+        ["ReworkJudged", "guardian"],
+        ["PullRequestClosed", "sacty"],
+      ]);
+      expect(changeCount(service, id)).toBe(changes);
+      expect(service.get(id)?.task).toMatchObject({
+        status: "awaiting_approval",
+        pullRequestState: "closed",
+      });
+      // 閉じられている間は、判断した指摘を差し戻しに反映しない
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      // 開き直されたら、記録した判断のまま差し戻す（判断し直さない）
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(spy.judged()).toBe(1);
+      expect(changeCount(service, id)).toBe(changes + 1);
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(service.get(id)?.task.prRework).toMatchObject({ target: "design", decided: true });
+      activity.close();
+    });
+
+    it("判断を記録した後、差し戻す直前の読み直しでマージされていたら、差し戻さずにマージとして記録する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      // 確認の読みは開いたまま、差し戻す直前の読み直しでマージされている
+      const status = pulls.status.bind(pulls);
+      let reads = 0;
+      pulls.status = async (input) => {
+        reads += 1;
+        if (reads === 2) pulls.state = { state: "merged", mergedBy: "reviewer" };
+        return status(input);
+      };
+      await service.checkPullRequests();
+      expect(executor.calls).toHaveLength(0);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-2).map((e) => e.type)).toEqual(["PullRequestMerged", "StepApproved"]);
+      expect(changeCount(service, id)).toBe(changes);
+      expect(reads).toBe(3);
+      activity.close();
+    });
+
+    it("同じ確認の中の読み直しは1回だけ。開き・閉じ・開き・閉じと変わり続けても、読みは4回で終わり、判断を残して、次の確認で続ける", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      // 読むたびに、PR の状態が開き・閉じ・開き・閉じと変わる（5回目からは開いたまま）
+      const order: PullRequestStatus["state"][] = ["open", "closed", "open", "closed"];
+      const status = pulls.status.bind(pulls);
+      let reads = 0;
+      pulls.status = async (input) => {
+        pulls.state = { state: order[reads] ?? "open" };
+        reads += 1;
+        return status(input);
+      };
+      await service.checkPullRequests();
+      // 確認の1回と、読み直しの1回（それぞれが、差し戻す前の読み直しを含む）で、4回。それ以上は読まない
+      expect(reads).toBe(4);
+      expect(executor.calls).toHaveLength(0);
+      expect(changeCount(service, id)).toBe(changes);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      // 記録した判断は、差し戻しに反映されないまま残っている
+      expect(
+        service
+          .get(id)
+          ?.activity.slice(-1)
+          .map((e) => e.type),
+      ).toEqual(["ReworkJudged"]);
+      // 次の確認で続ける：開いたままなら、記録した判断のまま差し戻す（判断し直さない）
+      await service.checkPullRequests();
+      expect(executor.calls).toHaveLength(0);
+      expect(changeCount(service, id)).toBe(changes + 1);
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(service.get(id)?.task.prRework).toMatchObject({ target: "design", decided: true });
+      activity.close();
+    });
+
+    it("取り込んだ指摘の判断を記録した後、再起動の前にマージされていたら、差し戻さずにマージとして記録する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      pulls.state = { state: "merged", mergedBy: "reviewer" };
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-2).map((e) => e.type)).toEqual(["PullRequestMerged", "StepApproved"]);
+      expect(changeCount(service, id)).toBe(changes);
+      activity.close();
+    });
+
+    it("差し戻す直前の読み直しの間に人が差し戻したら、重ねて差し戻さない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      const status = pulls.status.bind(pulls);
+      let reads = 0;
+      pulls.status = async (input) => {
+        reads += 1;
+        if (reads === 2) {
+          service.requestChanges(id, {
+            step: "implement",
+            submission: service.get(id)?.task.gate?.submission ?? 1,
+            target: "implement",
+            comments: ["人の指摘"],
+          });
+        }
+        return status(input);
+      };
+      await service.checkPullRequests();
+      expect(changeCount(service, id)).toBe(changes + 1);
+      activity.close();
+    });
+
+    it("差し戻す直前の PR の状態を読めなければ、差し戻さずに、次の確認でやり直す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      const status = pulls.status.bind(pulls);
+      let reads = 0;
+      pulls.status = async (input) => {
+        reads += 1;
+        if (reads === 2) throw new Error("502 Bad Gateway");
+        return status(input);
+      };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(changeCount(service, id)).toBe(changes);
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(changeCount(service, id)).toBe(changes + 1);
+      activity.close();
+    });
+
     it("人間が戻し先を確かめていた作業履歴（rework_confirmation）も読み込み、確かめた戻し先で指摘を引き継ぐ（PBI-58 より前）", async () => {
       const pulls = new FakePulls();
       const made = await toImplementGate([], { pulls, now: later });

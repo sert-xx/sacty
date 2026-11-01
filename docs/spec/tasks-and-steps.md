@@ -885,6 +885,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - `environmentFailures`・`humanChecks` は、配列で読む。1件は文字列のほか、`{"name": "...", "reason": "..."}` のようなオブジェクトも読み、「名前：根拠」の1行の文字列にして記録する（`reportedItems`。オブジェクトで返されたときに申告を捨てて、環境による失敗だけなのに不合格になっていた）。オブジェクトで読む項目名は、名前が `name`・`test`・`check`・`command`、根拠が `reason`・`message`・`description`・`evidence`（それぞれ先にあるもの。JSON の並びにかかわらず名前、根拠の順）で、`output`・`log` などほかの項目は読まない。記録する前に、秘密情報（`token=` などの代入の形）と URL の認証情報（`user:pass@`）、秘密らしい名前（token・key・secret・password・auth・signature など）のクエリ・フラグメントの値を伏せる（`redactLog`・`redactUrlCredentials`・`hideSecretQueryValues`）。名前はパーセント符号化を戻し（`api%5Fkey`・`%74oken`・二重の符号化も）、`_`・`-`・`.`・`[` などの区切りと大文字の境目で単語に分けて、1語ずつ見る（`apiKey`・`access_token` は伏せ、`author`・`design`・`keyword`・`signIn` のような普通の語の一部には当てない）。値は、`;` や `?` に続く次の `名前=`（`?page=1;signature=…`・`/app;jsessionid=…?tab=2`）の手前までを伏せ、後ろのパラメーターを判定から飲み込まず、後ろのクエリも消さない。確かめる対象の URL が消えないよう、クエリ・フラグメント全体は伏せない。値が false の `environment`・`environmental`・`isEnvironment` の旗が付いた項目は、環境による失敗として読まない。読めない項目・空の項目・「なし」「none」「n/a」「false」「environment: false」のような「無い」「環境による失敗ではない」を表す項目は捨てる（全角は半角にそろえて見る）。オブジェクトは、名前と根拠をつなぐ前にそれぞれを見る：名前が「無い」を表すなら、根拠が書いてあっても項目ごと捨て、根拠だけが「無い」を表すなら、根拠を読まずに名前だけにする（名前も根拠も「なし」の項目が「なし：なし」として残らない）。配列でない値（「なし」の文字列・1件のオブジェクトなど）は読まない。
   - `tests.otherFailures`（ツール不足のほかの失敗。止める側の欄）は、読める形かにかかわらず、書いてあるかで見る（`hasReportedFailure`）。空でない文字列・0 でない数値・`true`・オブジェクト（空でも）が1件でもあれば「失敗の申告あり」とし、空の値と「なし」「none」「n/a」だけなら「無し」とする（`no`・`false` の文字列は、書いてあるものとして「申告あり」）。読めない形を「無し」と見なして、文書だけの差分の歯止めが外れないようにする。
   - `tests.missingCommands` も、名前の文字列のほか `{"name": "..."}`（`command`・`tool` でもよい）を読む（`reportedNames`）。指示でも、`environmentFailures` は「名前：根拠」の文字列の配列で書かせる。
+- 要求要件・設計の成果物を PR に足すタスク（要求要件・設計の PR があり、既存の PR を引き継いでいない）では、指示（`pullRequestContentLines`）で、実装の PR のコミットと作業領域の写しの違いを伝える。それ以外のタスクには、この節を入れない。
+  PR のコミットには、sacty が成果物（承認済みの要求要件・設計のファイル。置き場所は `<documentsDir>/<タスク ID の先頭8文字>/`、既定は `docs/sacty`）を足すが、作業領域の写しにはこのファイルが無い。
+  そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（`prettier --check .`・markdownlint など）の結果は、写しと PR の中身で違うことがある。
+  - 写しで通ったそのような検査は、PR の中身で通るかは未確認であることを `humanChecks` に書かせて、人の確認に回させる。
+  - 写しで失敗した検査は、これまでどおり不合格の理由にさせる（成果物のファイルが無くても失敗するので、PR の中身でも失敗する）。成果物のせいと推測して `humanChecks` に回させない。環境による失敗の扱いは、上の `humanCheckLines` のとおり。
+  - テストのコマンドの有無にかかわらず入れる。最終レビューの写しに成果物を足すことはしない。
 - 最終レビューは観点ごと・指摘ごとに判定し、すべて満たすときだけ合格。
   そのうえで sacty が次を当てる（`extractFinalReview`）。
   - テストのコマンドがあるときは、ゴールガーディアンが終了コード 0 を申告したか、0 以外で `environmentFailures` を申告したときだけ合格にする（`guardianTestsPassed`。申告が無い・0 以外で環境による失敗の申告も無ければ、観点の判定にかかわらず不合格）。
@@ -908,7 +914,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
   合格なら、実装の工程のまま、sacty が実装の PR のドラフトを外し、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
-  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
+  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`pullRequestContentLines`・`extractFinalReview`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 最終レビューに通らなければ、実装をやり直す。
   やり直しの指示には、最終レビューの所見・ゴールガーディアンが実行したテスト（コマンド・終了コード・結果の抜粋）・検証できなかった観点を渡す（`feedbackLines`）。
   環境によると判断した失敗と、差分が文書だけでツールが無くて実行できなかった検証は、実装で直す対象ではないと添えて渡す。

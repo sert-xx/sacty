@@ -125,6 +125,7 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - Reopened: `PullRequestReopened` is recorded and watching continues.
 - Unchanged: if the PR is still open and the task is `awaiting_approval`, reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
 - If the status, PR, or commit changes during the check, nothing is recorded.
+- If the PR is merged, or closed without merging, while comments are being imported (for example while the Goal Guardian is judging), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
 - When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
 - At the end of the check, the following are done in order.
   1. Memories whose PR promoting them to context was merged are deleted (`cleanupPromotedMemories`; [Memory](memory.en.md#promotion-to-context)).
@@ -220,6 +221,12 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - Posts by bots
   - Reviews and line comments posted by the original task's project account that start with sacty's review marker
 - Once imported, the Goal Guardian decides where to send them back to (redoing that step, or requesting changes to an earlier step) (`ReworkJudged`), and changes are requested without a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for the implementation PR, that step for Requirements or Design) is redone.
+- Just before requesting changes, the PR's status is read once more (a person may have merged or closed it during the judgment, or before a resumed check after the judgment was recorded).
+  - If it is still open, changes are requested.
+  - If it was merged, or closed without merging, changes are not requested. The imported comments (`PullRequestReviewImported`) and the judgment (`ReworkJudged`) stay in the ledger, and the status is checked again within the same check and recorded as "Merged" or "Closed without merging" in [The PR check](#the-pr-check) (for a merge, `PullRequestMerged` and `StepApproved`; `StepApproved` clears the state of the comments that were being worked on).
+  - If the PR is reopened after being closed without merging, changes are requested with the judgment already recorded (it is not judged again).
+  - If the status changed during the re-read (a person requested changes, the task was cancelled, and so on), nothing is recorded. If it cannot be read, the next check tries again.
+  - Comments that arrive after a merge are not turned into a follow-up task or the like.
 
 Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `settleReview`, `judgeRework`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`)
 
