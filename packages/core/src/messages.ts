@@ -38,6 +38,7 @@ const PARAMS = {
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
+  "project.changedElsewhere": null,
   "project.targetDuplicated": z.object({ scope: Scope, target: z.string() }),
   "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
   "project.ticketKeyDuplicated": z.object({ platform: z.string(), key: z.string() }),
@@ -687,6 +688,8 @@ const ja: MessageDictionary = {
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
+  "project.changedElsewhere":
+    "このプロジェクトの設定は、画面を開いた後に、ほかの保存で変わりました。保存していません。再読み込みして最新の設定を確かめ、もう一度変更してください。",
   "project.targetDuplicated": ({ scope, target }) =>
     `${scopeJa[scope]}「${target}」が重複しています。`,
   "project.ticketKeyDuplicated": ({ platform, key }) =>
@@ -1361,6 +1364,8 @@ const en: MessageDictionary = {
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
+  "project.changedElsewhere":
+    "This project's settings were changed by another save after you opened this page. Nothing was saved. Reload the page, check the latest settings, then make your change again.",
   "project.targetDuplicated": ({ scope, target }) =>
     `The ${scopeEn[scope]} "${target}" is listed more than once.`,
   "project.ticketKeyDuplicated": ({ platform, key }) =>

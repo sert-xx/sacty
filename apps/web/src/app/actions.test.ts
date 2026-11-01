@@ -315,6 +315,7 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
   beforeEach(() => {
     saveProject.mockReset();
     importProject.mockReset();
+    refresh.mockReset();
   });
   const created = (contextError?: unknown) => ({
     ok: true,
@@ -344,6 +345,41 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
       saved: true,
       contextError: expect.stringContaining("循環"),
     });
+  });
+
+  it("保存では、画面が読み込んだ版をデーモンに渡し、保存した版を返す（PBI-274）", async () => {
+    saveProject.mockResolvedValue({
+      ok: true,
+      project: { id: "p-a", name: "A", updatedAt: "2026-10-30T00:00:02.000Z" },
+    });
+    const state = await saveProjectAction(
+      {},
+      form({
+        id: "p-a",
+        baseUpdatedAt: "2026-10-30T00:00:01.000Z",
+        definition: JSON.stringify({ name: "A" }),
+      }),
+    );
+    expect(saveProject).toHaveBeenCalledWith("p-a", { name: "A" }, "2026-10-30T00:00:01.000Z");
+    expect(state).toMatchObject({ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" });
+  });
+
+  it("読み込んだ後にほかの保存で変わっていたら、保存せず、衝突として返す。更新の版は返さない", async () => {
+    saveProject.mockResolvedValue({ ok: false, message: "変わりました", conflict: true });
+    const state = await saveProjectAction(
+      {},
+      form({ id: "p-a", baseUpdatedAt: "old", definition: JSON.stringify({ name: "A" }) }),
+    );
+    expect(state).toEqual({ message: "変わりました", conflict: true });
+    expect(refresh).not.toHaveBeenCalled();
+    // ほかの理由の失敗は、衝突にしない
+    saveProject.mockResolvedValue({ ok: false, message: "重複です" });
+    expect(
+      await saveProjectAction(
+        {},
+        form({ id: "p-a", baseUpdatedAt: "old", definition: JSON.stringify({ name: "A" }) }),
+      ),
+    ).toEqual({ message: "重複です" });
   });
 
   it("コンテキストリポジトリを持つ定義をインポートしたら、設定の画面で誤りを確かめる", async () => {

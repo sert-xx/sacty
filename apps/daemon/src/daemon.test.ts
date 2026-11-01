@@ -11697,7 +11697,17 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const send = (method: string, path: string, body: unknown) =>
       app.request(path, {
         method,
-        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+          // 変えるときは、読み込んだ版を送る（PBI-274）
+          ...(method === "PUT"
+            ? {
+                "if-match":
+                  service.getProject(path.split("/").pop() ?? "")?.project.updatedAt ?? "",
+              }
+            : {}),
+        },
         body: JSON.stringify(body),
       });
     const definition = (name: string, repo: string, context?: string) => ({
@@ -11801,7 +11811,11 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const save = () =>
       app.request("/api/projects/a", {
         method: "PUT",
-        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+          "if-match": service.getProject("a")?.project.updatedAt ?? "",
+        },
         body: JSON.stringify({
           name: "A",
           targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
@@ -15025,7 +15039,7 @@ describe("API", () => {
     // コードを指定していない標準の検査も、コードと引数で返す（zod の英語の文は返さない）
     const save = await app.request(`/api/projects/${pay.id}`, {
       method: "PUT",
-      headers: json,
+      headers: { ...json, "if-match": service.getProject(pay.id)?.project.updatedAt ?? "" },
       body: JSON.stringify({
         name: "決済",
         targets: [{ scope: "repo" }],
@@ -23054,7 +23068,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     await preview(app, "p", undefined, "codex");
     await app.request("/api/projects/p", {
       method: "PUT",
-      headers: json,
+      headers: { ...json, "if-match": service.getProject("p")?.project.updatedAt ?? "" },
       body: JSON.stringify({
         name: "決済",
         targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
@@ -23141,7 +23155,11 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       githubAccounts: { "github.com": "me" },
     };
     const put = (body: unknown) =>
-      app.request("/api/projects/p", { method: "PUT", headers: json, body: JSON.stringify(body) });
+      app.request("/api/projects/p", {
+        method: "PUT",
+        headers: { ...json, "if-match": service.getProject("p")?.project.updatedAt ?? "" },
+        body: JSON.stringify(body),
+      });
     const broken = await put({
       ...definition,
       context: { repo: "https://github.com/acme/broken.git" },

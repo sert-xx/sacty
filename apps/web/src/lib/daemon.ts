@@ -372,21 +372,35 @@ export async function previewProjectContext(
 
 /**
  * プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。保存したコンテキストに誤りが
- * あれば、contextError に理由を返す（保存はする。PBI-76）。
+ * あれば、contextError に理由を返す（保存はする。PBI-76）。変えるときは、読み込んだときの updatedAt（base）を送り、
+ * その後にほかの保存で変わっていれば、保存せずに conflict を返す（PBI-274）。
  */
 export async function saveProject(
   id: string | undefined,
   definition: ProjectDefinitionInput,
+  base?: string,
 ): Promise<
-  { ok: true; project: Project; contextError?: DaemonText } | { ok: false; message: string }
+  | { ok: true; project: Project; contextError?: DaemonText }
+  | { ok: false; message: string; conflict?: true }
 > {
   const res = await daemonFetch(id ? `/api/projects/${encodeURIComponent(id)}` : "/api/projects", {
     method: id ? "PUT" : "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(id && base ? { "if-match": base } : {}),
+    },
     body: JSON.stringify(definition),
   });
   if (res.status === 409) {
-    return { ok: false, message: await operationMessage(res) };
+    const failure = res.clone();
+    const { messages } = (await failure.json()) as { messages?: { code?: unknown }[] };
+    return {
+      ok: false,
+      message: await operationMessage(res),
+      ...(messages?.some((m) => m.code === "project.changedElsewhere")
+        ? { conflict: true as const }
+        : {}),
+    };
   }
   if (res.status === 400) {
     return { ok: false, message: await inputMessage(res) };
