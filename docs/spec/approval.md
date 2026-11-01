@@ -153,7 +153,9 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 - マージされずに閉じられた：`PullRequestClosed` を記録し、承認にせず人間の判断を待つ。
   画面から承認はできない（差し戻すか中止する）。
 - 開き直された：`PullRequestReopened` を記録して見守りを続ける。
-- 変わっていない：PR が開いたままで状態が `awaiting_approval` なら、レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
+- 変わっていない：PR が開いたままで状態が `awaiting_approval` なら、次を順に行う。
+  1. 実装の PR なら、ベースブランチとの競合の変化を記録する（[ベースブランチとの競合の表示](#ベースブランチとの競合の表示)）。
+  2. レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
 - 指摘の取り込みの間（ゴールガーディアンの判断の最中など）にマージされた・マージされずに閉じられたときは、差し戻さない。同じ確認の中で状態を読み直し、上のマージ・閉じられた場合として記録する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 実装の PR のマージでは、マージの後の監視の工程を飛ばしていなければ、同じ追記でマージの後の監視を始める（[マージの後の監視](deployment-watch.md)）。
@@ -163,6 +165,33 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
   3. 公開の後、ラベルを付ける前に止まった PR にラベルを付ける（`resumePullRequestLabels`。[PR のレビュー用のラベル](#pr-のレビュー用のラベル)）。
   4. 最終レビューの前に作った実装の PR の CI を待っているタスクの CI を確かめる（`checkVerificationCi`。[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）。
   5. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
+
+### ベースブランチとの競合の表示
+
+承認待ちの間に先の PR がマージされて、実装の PR がベースブランチと競合したら、タスクの画面と「あなたの出番」に出す。
+出すだけで、ベースブランチは取り込まない（取り込みは、人が差し戻すか PR に指摘を書いたときに、実装をやり直す前に行う。[ベースブランチの取り込み](tasks-and-steps.md#ベースブランチの取り込み)）。
+
+- 競合の判定：PR の状態の確認（`GitHubPullRequests.status`）が読む、GitHub の PR の `mergeable`。
+  `false` が競合、`true` が競合なし。GitHub がまだ計算中（`null`）・読めないときは分からないので、前の記録のままにする（`PullRequestStatus` の `mergeable` は、`true`・`false` のときだけ持つ）。
+  PR の状態を読む 1 回の問い合わせに含まれるので、GitHub への問い合わせは増えない。
+- 記録：競合が変わったときだけ、actor `sacty` で記録する。同じ状態は重ねて記録しない。
+  - 競合した：`PullRequestConflicted`。`Task.pullRequestConflict`（PR の番号・そのときの提出のコミット・時刻）に持つ。
+  - 解消した（人が GitHub で直した・ベースブランチが戻った）：`PullRequestConflictResolved`。`Task.pullRequestConflict` を消す。
+  - 記録するのは、承認待ち（`awaiting_approval`）の実装の PR だけ。要求要件・設計の PR（タスクブランチへの PR）と、エスカレーション中は記録しない。
+  - 実行・取り込み・PR の更新・GitHub への書き込みは何も始めない。
+- 画面に出す条件（`pullRequestConflict`）：承認待ちで、実装のゲートの PR が開いていて、記録の PR の番号とコミットが今の提出と同じで、ゴールガーディアンが PR の指摘を判断している間（`pendingReview`）でないとき。
+  - PR を作り直した・更新した（`PullRequestPublished`）、マージされた・閉じられた・開き直された（`PullRequestMerged`・`PullRequestClosed`・`PullRequestReopened`）ときは、記録を消す。
+    開き直されたときは、次の確認で確かめ直す。
+  - 差し戻して承認待ちでなくなったときは出さない。
+- 出す場所：
+  - 状態の表示（`statusText`）が「実装の PR がベースブランチと競合」になる。ダッシュボードの「あなたの出番」・ヘッダーのお知らせ・タスクの一覧・詳細で同じ。人の出番のままで、「あなたの出番」の行は PR を開く。
+  - 「あなたの出番」の行（ダッシュボードと、タスクの一覧の上のカード）には、取り込む操作の案内（「差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます」。`AttentionRow.note`・`NeedsYouCard.note`）を添える。ヘッダーのお知らせは状態だけ。
+  - タスクの詳細の承認待ちの案内と、承認の画面の PR の欄に、取り込むための操作（この画面から指摘を入れて差し戻す・GitHub の PR に指摘を書く）の説明を出す。
+  - 引き継いだ PR（`Task.continuedPullRequest`。`mergesBase` が取り込まない）には、取り込む操作ではなく、GitHub で解消する案内（「引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください」）を、同じ場所に出す。競合の表示そのものは変えない。
+  - 作業履歴に「PR #N がベースブランチと競合している」「PR #N の競合が解消された」を出す。
+- 判定はマージの可否ではない。競合のまま人がマージしたときは、通常のマージとして承認する。
+
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`・`prConflictNote`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`resumePullRequestLabels`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 

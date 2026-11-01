@@ -16,7 +16,7 @@ The dashboard looks like this.
 
 | Section | What it shows | When empty |
 | --- | --- | --- |
-| Needs you | Tasks awaiting approval, paused, or escalated, longest wait first. Press a title to go to the screen where you decide. If the task is awaiting approval and the PR of the current submission is open, the title opens the PR on GitHub in a new tab instead (the title has a "↗") | "Nothing needs you right now." |
+| Needs you | Tasks awaiting approval, paused, or escalated, longest wait first. Press a title to go to the screen where you decide. If the task is awaiting approval and the PR of the current submission is open, the title opens the PR on GitHub in a new tab instead (the title has a "↗"). When the implementation PR conflicts with the base branch, the status says so ([When the base branch moves ahead](tasks.en.md#when-the-base-branch-moves-ahead)) | "Nothing needs you right now." |
 | Why tasks are paused | Paused tasks counted by reason. Press a row to expand that reason's tasks inside the section. Usage limit and authentication are highlighted because one fix usually resumes all of them | "No tasks are paused." |
 | Open tasks | All tasks except completed and cancelled ones. With more than 5 tasks, the section scrolls inside | "There are no open tasks." |
 | Cost and budget | The cost for today and the last 7 days, as an estimate. Also the tasks that used 80% or more of their budget or reached the cap | "No task is near its budget." |

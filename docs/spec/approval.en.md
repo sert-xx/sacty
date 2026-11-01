@@ -123,7 +123,9 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
   - For Requirements and Design, the file is read from the merge commit, and the version the person edited becomes the approved result. If the file was deleted or cannot be read, sacty's version is approved. If it cannot be fetched, nothing is recorded and the next check tries again.
 - Closed without merging: `PullRequestClosed` is recorded, and instead of approving, the task waits for a person's decision. It cannot be approved from the web UI (request changes or cancel).
 - Reopened: `PullRequestReopened` is recorded and watching continues.
-- Unchanged: if the PR is still open and the task is `awaiting_approval`, reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
+- Unchanged: if the PR is still open and the task is `awaiting_approval`, the following are done in order.
+  1. For an implementation PR, a change in the conflict with the base branch is recorded ([Showing a conflict with the base branch](#showing-a-conflict-with-the-base-branch)).
+  2. Reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
 - If the status, PR, or commit changes during the check, nothing is recorded.
 - If the PR is merged, or closed without merging, while comments are being imported (for example while the Goal Guardian is judging), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
 - When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
@@ -133,6 +135,33 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
   3. PRs that stopped after the publish but before the label was attached get the label (`resumePullRequestLabels`; [The review label on PRs](#the-review-label-on-prs)).
   4. The CI of tasks waiting for the CI of the implementation PR opened before the final review is checked (`checkVerificationCi`; [Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)).
   5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
+
+### Showing a conflict with the base branch
+
+When another PR is merged while the task waits for approval and the implementation PR conflicts with the base branch, the task screen and "Needs you" show it.
+It only shows it; the base branch is not merged in (it is merged in, before the implementation is redone, when a person rejects the task or writes a PR comment. [Merging the base branch](tasks-and-steps.en.md#merging-the-base-branch)).
+
+- How a conflict is judged: the `mergeable` of the GitHub PR that the PR status check (`GitHubPullRequests.status`) reads.
+  `false` is a conflict and `true` is no conflict. While GitHub is still computing it (`null`), or when it cannot be read, the answer is unknown and the earlier record is kept (`mergeable` of `PullRequestStatus` is present only for `true` and `false`).
+  It is part of the one request that reads the PR status, so the number of requests to GitHub does not grow.
+- Recording: it is recorded with actor `sacty`, only when the conflict changes. The same state is not recorded twice.
+  - Conflicted: `PullRequestConflicted`. It is held in `Task.pullRequestConflict` (the PR number, the commit of the submission at that time, and the time).
+  - Resolved (a person fixed it on GitHub, or the base branch went back): `PullRequestConflictResolved`. It clears `Task.pullRequestConflict`.
+  - Only the implementation PR of a task in `awaiting_approval` is recorded. The Requirements and Design PRs (PRs to the task branch) and escalated tasks are not.
+  - Nothing is started: no run, no merge, no PR update, and no write to GitHub.
+- When it is shown (`pullRequestConflict`): the task is waiting for approval, the PR of the Implement gate is open, the recorded PR number and commit are the same as the current submission, and the Goal Guardian is not judging PR comments (`pendingReview`).
+  - The record is cleared when the PR is created again or updated (`PullRequestPublished`), and when it is merged, closed, or reopened (`PullRequestMerged`, `PullRequestClosed`, `PullRequestReopened`).
+    When it is reopened, the next check looks again.
+  - It is not shown once the task is rejected and no longer waits for approval.
+- Where it is shown:
+  - The status text (`statusText`) becomes "Implement PR conflicts with the base branch". It is the same in "Needs you" on the dashboard, in the header notifications, and in the task list and details. The task still needs you, and the row in "Needs you" opens the PR.
+  - The rows of "Needs you" (the dashboard, and the cards above the task list) carry a note on how to merge the base in ("Send it back or comment on the PR to merge the base branch in"; `AttentionRow.note`, `NeedsYouCard.note`). The header notifications show only the status.
+  - The waiting-for-approval notice in the task details and the PR block of the approval screen explain how to merge the base in (send the task back with a comment from this screen, or write a comment on the GitHub PR).
+  - For a continued PR (`Task.continuedPullRequest`, which `mergesBase` does not merge into), the same places show how to resolve it on GitHub ("This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub") instead of how to merge the base in. The conflict itself is shown as usual.
+  - The Activity shows "PR #N conflicts with the base branch" and "The conflict on PR #N is resolved".
+- The judgment does not decide whether the PR can be merged. If a person merges it while it conflicts, it is approved as a normal merge.
+
+Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `recordPullRequestConflict`), `apps/daemon/src/github.ts` (`GitHubPullRequests.status`), `packages/core/src/projection.ts` (`pullRequestConflict`, `Task.pullRequestConflict`), `apps/web/src/lib/labels.ts` (`statusText`, `prConflictNote`), `apps/web/src/lib/dashboard-data.ts` (`attentionRows`), `apps/web/src/lib/task-list-data.ts`, `apps/web/src/components/task-detail.tsx` (`GateNotice`), `apps/web/src/components/gate-form.tsx`
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`, `cleanupPromotedMemories`, `checkReviewPullRequests`, `resumePullRequestLabels`, `checkVerificationCi`, `checkDeployments`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
 

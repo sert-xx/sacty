@@ -1024,8 +1024,10 @@ export class TaskService {
       const current = found.watched.state;
       // 前の版で、違う内容でのマージとして止めた（merged_outdated）タスクも、承認として進める（PBI-63）
       if (status.state === current) {
-        // 開いたままの PR は、レビュー・コメントを指摘として取り込む（PBI-14b・PBI-57）
+        // 開いたままの PR は、ベースブランチとの競合を画面に出し（取り込まない）、レビュー・コメントを指摘として取り込む
+        // （PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
+          latest = this.recordPullRequestConflict(latest, pr, status.mergeable) ?? latest;
           try {
             const settled = await this.importFeedback(latest, token);
             if (settled === "pull_request_changed" && !rechecked.has(task.id)) {
@@ -1118,6 +1120,34 @@ export class TaskService {
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+  }
+
+  /**
+   * 実装の承認待ちの PR が、ベースブランチと競合しているか（GitHub の mergeable）が変わったら記録する。画面に出すだけで、
+   * ベースブランチは取り込まず、実行も始めない（取り込みは、人が差し戻すか指摘を書いたときに行う）。PR の状態の確認で
+   * 読んだ値を使うので、GitHub への問い合わせは増えない。mergeable が分からない（GitHub が計算中・読めない）ときは、前の
+   * 記録のままにする。記録したら、記録後のタスクを返す。
+   */
+  private recordPullRequestConflict(
+    task: Task,
+    pr: { step: StepKey; number: number; commit: string },
+    mergeable: boolean | undefined,
+  ): Task | undefined {
+    if (pr.step !== "implement" || mergeable === undefined) return undefined;
+    // 記録済みか（ゴールガーディアンが指摘を判断している間は画面に出さないが、記録は残るので、重ねて記録しない）
+    const recorded = task.pullRequestConflict;
+    const conflicting = recorded?.number === pr.number && recorded.commit === pr.commit;
+    if (conflicting === !mergeable) return undefined;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: mergeable ? "PullRequestConflictResolved" : "PullRequestConflicted",
+          payload: { number: pr.number },
+        },
+      },
+    ]);
+    return this.tasks.get(task.id);
   }
 
   /**

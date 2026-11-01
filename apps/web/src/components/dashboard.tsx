@@ -210,6 +210,7 @@ function TaskRow({
   external,
   title,
   projectName,
+  note,
   aside,
 }: {
   testId: string;
@@ -218,15 +219,17 @@ function TaskRow({
   external?: boolean;
   title: string;
   projectName: string;
+  /** 題と状態の下に、全幅で添える案内（狭い画面では、状態も題の下に回る）。 */
+  note?: string;
   aside?: ReactNode;
 }) {
   const m = useMessages().dashboard.openTasks;
   return (
     <li
       data-testid={testId}
-      className="group flex min-h-16 items-center gap-4 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
+      className="group flex min-h-16 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
         <ActionLink
           href={href}
           external={external}
@@ -242,7 +245,15 @@ function TaskRow({
           {projectName}
         </span>
       </div>
-      {aside && <div className="flex shrink-0 flex-col items-end gap-0.5 text-sm">{aside}</div>}
+      {aside && (
+        <div className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-sm">{aside}</div>
+      )}
+      {/* 案内は、題と状態の下に全幅で置く（狭い画面で、状態欄に押されて1文字ずつ折り返さないように） */}
+      {note && (
+        <span data-testid={`${testId}-note`} className="basis-full text-xs text-warn">
+          {note}
+        </span>
+      )}
     </li>
   );
 }
@@ -278,6 +289,7 @@ export function AttentionCard({ data, now }: { data: DashboardData; now: number 
               external={task.external}
               title={task.title}
               projectName={task.projectName}
+              note={task.note}
               aside={
                 <>
                   <span className="sr-only">{t.openTasks.status}</span>

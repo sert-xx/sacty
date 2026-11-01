@@ -37,6 +37,7 @@ import {
   pendingErrorAnalysis,
   pendingQuestion,
   project,
+  pullRequestConflict,
   questionBlocked,
   resumeNoteRoom,
   reworkTargets,
@@ -1911,6 +1912,113 @@ describe("実装の工程の中で PR を作り、承認を待つ（PBI-110）",
     ]);
     expect(task?.verification).toBe("pending");
     expect(task?.publishPending).toBeUndefined();
+  });
+
+  describe("承認待ちの PR がベースブランチと競合している（画面に出す）", () => {
+    const waiting = (id: string) => [
+      created(id),
+      chosen(id),
+      prepared(id),
+      ...verifiedImplementation(id),
+      published(id),
+      submitted(id),
+    ];
+    const conflicted = (id: string, number = 7) =>
+      ev(id, { type: "PullRequestConflicted", payload: { number } });
+    const resolved = (id: string, number = 7) =>
+      ev(id, { type: "PullRequestConflictResolved", payload: { number } });
+
+    it("競合を記録すると画面に出し、解消を記録すると消す。競合しても取り込まず、状態は承認待ちのまま", () => {
+      seq = 0;
+      const task = project([...waiting("t"), conflicted("t")]).get("t");
+      expect(task && pullRequestConflict(task)).toMatchObject({ number: 7, commit: "c1" });
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.baseMerge).toBeUndefined();
+      seq = 0;
+      const cleared = project([...waiting("t"), conflicted("t"), resolved("t")]).get("t");
+      expect(cleared && pullRequestConflict(cleared)).toBeUndefined();
+      // 競合していない PR は、何も出さない
+      seq = 0;
+      const plain = project(waiting("t")).get("t");
+      expect(plain && pullRequestConflict(plain)).toBeUndefined();
+    });
+
+    it("PR を閉じた・マージした・開き直した・差し戻したら出さない（古い競合を新しい提出に出さない）", () => {
+      seq = 0;
+      const closed = project([
+        ...waiting("t"),
+        conflicted("t"),
+        ev("t", { type: "PullRequestClosed", payload: { number: 7 } }),
+      ]).get("t");
+      expect(closed?.pullRequestConflict).toBeUndefined();
+      seq = 0;
+      const reopened = project([
+        ...waiting("t"),
+        conflicted("t"),
+        ev("t", { type: "PullRequestClosed", payload: { number: 7 } }),
+        ev("t", { type: "PullRequestReopened", payload: { number: 7 } }),
+      ]).get("t");
+      expect(reopened && pullRequestConflict(reopened)).toBeUndefined();
+      seq = 0;
+      const merged = project([
+        ...waiting("t"),
+        conflicted("t"),
+        ev("t", { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+      ]).get("t");
+      expect(merged?.pullRequestConflict).toBeUndefined();
+      // 差し戻したら、承認待ちではなくなるので出さない（PR を更新したら記録も消える。daemon.test.ts で確かめる）
+      seq = 0;
+      const base = [...waiting("t"), conflicted("t")];
+      const updated = project([
+        ...base,
+        ev(
+          "t",
+          {
+            type: "ChangesRequested",
+            payload: {
+              step: "implement",
+              target: "implement",
+              round: 1,
+              remarks: [{ id: "implement-1-1", text: "直して" }],
+            },
+          },
+          "person",
+        ),
+      ]).get("t");
+      expect(updated && pullRequestConflict(updated)).toBeUndefined();
+    });
+
+    it("ゴールガーディアンが PR の指摘を判断している間は出さない（その指摘の取り込みでベースブランチを取り込む）", () => {
+      seq = 0;
+      const task = project([...waiting("t"), conflicted("t")]).get("t");
+      expect(task && pullRequestConflict(task)).toBeDefined();
+      if (task) {
+        const pending = { ...task, pendingReview: {} as NonNullable<Task["pendingReview"]> };
+        expect(pullRequestConflict(pending)).toBeUndefined();
+      }
+    });
+
+    it("見守っている実装の PR の記録だけを受け付ける（作業履歴の誤りは拒否する）", () => {
+      seq = 0;
+      // PR が無い・承認待ちでない
+      expect(() => project([created("t"), steps("t"), conflicted("t")])).toThrow(
+        /implementation pull request is not watched/,
+      );
+      // 別の PR の番号
+      seq = 0;
+      expect(() => project([...waiting("t"), conflicted("t", 8)])).toThrow(
+        /not the pull request of the task/,
+      );
+      // 閉じられた PR
+      seq = 0;
+      expect(() =>
+        project([
+          ...waiting("t"),
+          ev("t", { type: "PullRequestClosed", payload: { number: 7 } }),
+          conflicted("t"),
+        ]),
+      ).toThrow(/implementation pull request is not watched/);
+    });
   });
 
   it("回答が欠けた提出でも、指摘は提出済み（submittedIn）になり、未回答のまま残る", () => {

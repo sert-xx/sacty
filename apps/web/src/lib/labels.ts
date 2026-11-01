@@ -13,6 +13,7 @@ import {
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
+  pullRequestConflict,
   type StepKey,
   stepAgentChangeable,
   stepRunning,
@@ -23,6 +24,15 @@ import type { TaskMessages } from "@/i18n/messages/task";
 
 /** 画面の表示ラベル。文言は画面の言語の辞書（i18n/messages/labels）から取る。 */
 export const usd = formatUsd;
+
+/**
+ * 競合している PR の行に添える案内。通常は差し戻し・指摘でベースブランチを取り込むが、引き継いだ PR には取り込まない
+ * （GitHub で解消してもらう）ので、できる操作を分ける。
+ */
+export function prConflictNote(task: Task, l: LabelMessages): string | undefined {
+  if (!pullRequestConflict(task)) return undefined;
+  return task.continuedPullRequest ? l.state.prConflictContinuedNote : l.state.prConflictNote;
+}
 
 export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
@@ -57,6 +67,8 @@ export function statusText(task: Task, l: LabelMessages): string {
     if (task.pullRequestState === "closed") return l.state.prClosed;
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
     if (task.pullRequestState === "open") {
+      // ベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
+      if (pullRequestConflict(task)) return l.state.prConflicting(task.gate.submission);
       return l.state.stepPrAwaitingMerge(l.step.implement, task.gate.submission);
     }
     return l.state.stepApproval(l.step.implement, task.gate.submission);
@@ -632,6 +644,10 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":
       return e.PullRequestReopened(event.payload.number);
+    case "PullRequestConflicted":
+      return e.PullRequestConflicted(event.payload.number);
+    case "PullRequestConflictResolved":
+      return e.PullRequestConflictResolved(event.payload.number);
     case "IssueCommented":
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":

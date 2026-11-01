@@ -17,7 +17,7 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import { PAUSE_REASON_ORDER } from "@/lib/dashboard-rules";
-import { personLink, type StatusTone, statusText, statusTone } from "@/lib/labels";
+import { personLink, prConflictNote, type StatusTone, statusText, statusTone } from "@/lib/labels";
 import { notificationProblems } from "@/lib/notification-problems";
 
 /** ダッシュボードの「終わっていないタスク」の欄の1行（PBI-114）。 */
@@ -36,6 +36,8 @@ export type AttentionRow = OpenTaskRow & {
   external?: true;
   /** 待ち始めた時刻（その状態になった作業履歴の記録。無ければ updatedAt）。 */
   waitingSince: string;
+  /** 行に添える案内（実装の PR がベースブランチと競合しているとき、取り込む操作）。 */
+  note?: string;
 };
 
 /** 「止まっているタスクの理由」の1つの理由（PBI-118）。件数が 0 の理由は無い。 */
@@ -146,6 +148,7 @@ export function attentionRows(
       status: { text: statusText(t, labels), tone: statusTone(t) },
       ...personLink(t, labels),
       waitingSince: waitingSince[t.id] ?? t.updatedAt,
+      ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
     }))
     .sort((a, b) => a.waitingSince.localeCompare(b.waitingSince) || a.id.localeCompare(b.id));
 }

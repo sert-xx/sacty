@@ -603,6 +603,12 @@ export type Task = {
   /** 実装の PR のマージの記録（PBI-63）。 */
   pullRequestMerge?: PullRequestMerge;
   /**
+   * 承認待ちの間に見守っている実装の PR が、ベースブランチと競合している（PullRequestConflicted）。commit は、そのときの
+   * 提出のコミット。画面に出すだけで、取り込みは人の差し戻し・指摘で行う。画面に出すか（今の PR のものか）は
+   * `pullRequestConflict` で決める。
+   */
+  pullRequestConflict?: { number: number; commit: string; at: string };
+  /**
    * タスクブランチ（PBI-57）。これがあるタスクは、要求要件・設計をタスクブランチへの PR のマージで承認し、実装の PR を
    * タスクブランチからベースブランチに向けて作る。
    */
@@ -1524,6 +1530,7 @@ export function applyEvent(
         task.pullRequest = event.payload;
         task.pullRequestState = event.payload.number ? "open" : undefined;
         task.pullRequestMerge = undefined;
+        task.pullRequestConflict = undefined;
         task.pullRequestCi = { commit: event.payload.commit, startedAt: event.at };
         break;
       }
@@ -1539,6 +1546,7 @@ export function applyEvent(
       // 作り直した・更新した PR は、開いているものとして見守り直す
       task.pullRequestState = event.payload.number ? "open" : undefined;
       task.pullRequestMerge = undefined;
+      task.pullRequestConflict = undefined;
       task.status = "idle";
       break;
 
@@ -1773,11 +1781,34 @@ export function applyEvent(
       if (watched.step === "implement") {
         task.pullRequestState = state;
         if (merge) task.pullRequestMerge = merge;
+        // マージ・クローズ・開き直しで、競合の表示は消す（開き直したなら、次の確認で確かめ直す）
+        task.pullRequestConflict = undefined;
       } else {
         task.stepPullRequests = task.stepPullRequests.map((p) =>
           p.number === watched.number ? { ...p, state, ...(merge ? { merge } : {}) } : p,
         );
       }
+      break;
+    }
+
+    case "PullRequestConflicted":
+    case "PullRequestConflictResolved": {
+      // 競合を出すのは、承認待ちで見守っている実装の PR だけ（要求要件・設計の PR は、タスクブランチへの PR）
+      const watched = gatePullRequest(task);
+      if (
+        watched?.step !== "implement" ||
+        watched.state !== "open" ||
+        task.status !== "awaiting_approval"
+      ) {
+        throw new ActivityIntegrityError(event, "the implementation pull request is not watched");
+      }
+      if (watched.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      task.pullRequestConflict =
+        event.type === "PullRequestConflicted"
+          ? { number: watched.number, commit: watched.commit, at: event.at }
+          : undefined;
       break;
     }
 
@@ -2643,6 +2674,28 @@ export function gatePullRequest(task: Task):
     commit: found.commit,
     state: found.state,
   };
+}
+
+/**
+ * 承認待ちで見守っている実装の PR が、ベースブランチと競合しているなら、その記録（画面に出す）。人の出番（承認待ち）で、
+ * 今の提出の開いている PR のものだけ。PR を更新した・閉じた・マージした、ゴールガーディアンが PR の指摘を判断している（その
+ * 指摘の取り込みでベースブランチを取り込む）間は無い。
+ */
+export function pullRequestConflict(
+  task: Task,
+): NonNullable<Task["pullRequestConflict"]> | undefined {
+  const conflict = task.pullRequestConflict;
+  if (!conflict || task.status !== "awaiting_approval" || task.pendingReview) return undefined;
+  const watched = gatePullRequest(task);
+  if (
+    watched?.step !== "implement" ||
+    watched.state !== "open" ||
+    watched.number !== conflict.number ||
+    watched.commit !== conflict.commit
+  ) {
+    return undefined;
+  }
+  return conflict;
 }
 
 /** 承認ゲートで見守っている PR の、マージの記録（PBI-63）。マージされていなければ undefined。 */

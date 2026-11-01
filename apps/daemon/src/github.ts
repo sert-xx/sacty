@@ -197,7 +197,14 @@ export type PullRequestFeedback = {
  * （取れれば。PBI-63）。
  */
 export type PullRequestStatus = { headSha?: string } & (
-  | { state: "open" }
+  | {
+      state: "open";
+      /**
+       * ベースブランチとマージできるか（GitHub の mergeable。PR の取得に含まれる）。false が競合。GitHub がまだ計算中
+       * （null）・読めないときは無い。
+       */
+      mergeable?: boolean;
+    }
   | { state: "closed" }
   | { state: "merged"; mergedBy?: string; mergeCommit?: string }
 );
@@ -578,7 +585,13 @@ export class GitHubPullRequests implements PullRequests {
         ...(typeof mergeCommit === "string" && mergeCommit ? { mergeCommit } : {}),
       };
     }
-    return { state: json.state === "closed" ? "closed" : "open", ...head };
+    if (json.state === "closed") return { state: "closed", ...head };
+    // 計算中（null）は、まだ分からないので含めない
+    return {
+      state: "open",
+      ...head,
+      ...(typeof json.mergeable === "boolean" ? { mergeable: json.mergeable } : {}),
+    };
   }
 
   async addLabel(input: Parameters<PullRequests["addLabel"]>[0]): Promise<{ created: boolean }> {

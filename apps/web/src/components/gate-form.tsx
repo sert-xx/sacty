@@ -51,7 +51,16 @@ export function GateForm({
   maxChanges: number;
   pendingComments: string[];
   /** PR を作った工程（実装・要求要件・設計）。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
-  pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
+  pullRequest?: {
+    number: number;
+    url?: string;
+    closed: boolean;
+    mergedOutdated: boolean;
+    /** ベースブランチと競合している（実装の PR。画面に出すだけで、取り込みは差し戻し・指摘のとき）。 */
+    conflicting?: boolean;
+    /** 競合している PR が、引き継いだ PR（ベースブランチは取り込まない。GitHub で解消してもらう）。 */
+    conflictingContinued?: boolean;
+  };
   /** PR の指摘の戻し先の確認（PBI-14b）。ゴールガーディアンの提案と理由。 */
   rework?: { target: StepKey; note: string };
   /** 再現できなかった（PBI-29）。承認では先へ進めないので、承認のボタンは出さない。 */
@@ -93,6 +102,19 @@ export function GateForm({
           )}
           {pullRequest.closed && <p className="text-warn">{t.prClosed}</p>}
           {pullRequest.mergedOutdated && <p className="text-warn">{t.prMergedOutdated}</p>}
+          {pullRequest.conflicting && (
+            <p
+              data-testid="gate-pr-conflict"
+              className="flex flex-wrap items-center gap-1 text-warn"
+            >
+              {pullRequest.conflictingContinued ? t.prConflictContinued : t.prConflict}
+              <Hint
+                text={
+                  pullRequest.conflictingContinued ? t.prConflictContinuedHint : t.prConflictHint
+                }
+              />
+            </p>
+          )}
           <p className="text-muted-foreground">{t.prRequestNote}</p>
         </div>
       )}

@@ -17,6 +17,7 @@ import {
   isRepoless,
   isSecurityTask,
   openProposal,
+  pullRequestConflict,
   rerunEditableBody,
   resumeNoteRoom,
   type StepKey,
@@ -497,6 +498,8 @@ function GateNotice({ task }: { task: Task }) {
   const proposal = openProposal(task);
   // 承認ゲートで見守っている、sacty が作った PR（実装・要求要件・設計。PBI-57・PBI-110）
   const watched = gatePullRequest(task);
+  // 実装の PR がベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
+  const conflicting = pullRequestConflict(task) !== undefined;
   const action = personAction(task, labels);
   // PR の指摘の戻し先の確認（PBI-14b。PBI-58 より前の作業履歴だけ）
   const rework =
@@ -544,6 +547,11 @@ function GateNotice({ task }: { task: Task }) {
                               ? m.gate.stepPrHelp(labels.step[watched.step])
                               : m.gate.reviewHelp}
         </p>
+        {conflicting && (
+          <p data-testid="gate-pr-conflict" className="text-sm">
+            {task.continuedPullRequest ? m.gate.prConflictContinuedHelp : m.gate.prConflictHelp}
+          </p>
+        )}
       </div>
       <ActionLink
         href={action.href}

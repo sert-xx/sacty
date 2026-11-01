@@ -718,6 +718,29 @@ describe("あなたの出番の PR で確かめる工程（PBI-136）", () => {
   });
 });
 
+describe("あなたの出番の PR が競合しているとき", () => {
+  it("題の下に、取り込む操作の案内を出す。競合していない行には出さない", () => {
+    show(
+      base({
+        attention: [
+          attention("a", minutes(10), {
+            status: { text: "実装の PR がベースブランチと競合", tone: "person" },
+            note: "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
+            href: "https://github.com/acme/web/pull/7",
+            external: true,
+          }),
+          attention("b", minutes(5)),
+        ],
+      }),
+    );
+    expect(byId("attention-a")?.textContent).toContain("実装の PR がベースブランチと競合");
+    expect(byId("attention-a-note")?.textContent).toBe(
+      "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
+    );
+    expect(byId("attention-b-note")).toBeNull();
+  });
+});
+
 describe("長い題の PR の行でも、外部の印は残る（PR #148 レビュー提案）", () => {
   it("題だけを省略し、印は省略の外に置く", () => {
     show(

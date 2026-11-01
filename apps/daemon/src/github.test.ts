@@ -521,6 +521,28 @@ describe("承認待ちの間の PR の状態（PBI-14a）", () => {
   });
 });
 
+describe("承認待ちの PR のベースブランチとの競合（mergeable）", () => {
+  it("開いている PR の mergeable を、true・false のときだけ答えに含める（計算中の null・無いときは含めない）。追加の問い合わせはしない", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { state: "open", merged: false, head: { sha: "a" }, mergeable: false } },
+      { status: 200, json: { state: "open", merged: false, head: { sha: "a" }, mergeable: true } },
+      { status: 200, json: { state: "open", merged: false, mergeable: null } },
+      { status: 200, json: { state: "open", merged: false, mergeable: "dirty" } },
+      // 閉じた・マージ済みの PR には含めない
+      { status: 200, json: { state: "closed", merged: false, mergeable: false } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", mergeable: false });
+    expect(await client.status(pr)).toEqual({ state: "open", headSha: "a", mergeable: true });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await client.status(pr)).toEqual({ state: "closed" });
+    // PR の状態を読む 1 回の問い合わせだけ
+    expect(calls).toHaveLength(5);
+  });
+});
+
 describe("PR へのフィードバック（PBI-14b）", () => {
   it("レビュー（Request changes・本文のあるコメント）、行ごとのコメント、通常のコメントを、時刻の順に読む", async () => {
     const human = { login: "reviewer", type: "User" };

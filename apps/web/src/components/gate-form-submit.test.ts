@@ -198,3 +198,48 @@ describe("差し戻しと一緒に変える工程の設定", () => {
     expect(select("image:design")).toBeNull();
   });
 });
+
+describe("実装の PR がベースブランチと競合しているとき", () => {
+  const renderPr = (conflicting: boolean, conflictingContinued = false) =>
+    act(() =>
+      root.render(
+        h(GateForm, {
+          taskId: "t1",
+          step: "implement",
+          submission: 1,
+          targets: ["implement"],
+          defaultTarget: "implement",
+          escalated: false,
+          maxChanges: 3,
+          pendingComments: [],
+          pullRequest: {
+            number: 12,
+            url: "https://github.com/acme/app/pull/12",
+            closed: false,
+            mergedOutdated: false,
+            conflicting,
+            conflictingContinued,
+          },
+        }),
+      ),
+    );
+  const notice = () => container.querySelector('[data-testid="gate-pr-conflict"]');
+
+  it("競合していることと、取り込むための操作（差し戻す・PR に指摘を書く）を出し、解消されたら消す", () => {
+    renderPr(true);
+    expect(notice()?.textContent).toContain("競合は自動では取り込みません");
+    expect(notice()?.textContent).toContain("差し戻");
+    expect(notice()?.textContent).toContain("PR に指摘を書くと取り込みます");
+    // 差し戻しのボタンは、そのまま使える
+    expect(container.querySelector('button[value="request"]')).not.toBeNull();
+    renderPr(false);
+    expect(notice()).toBeNull();
+  });
+
+  it("引き継いだ PR には、取り込む操作ではなく、GitHub で解消する案内を出す", () => {
+    renderPr(true, true);
+    expect(notice()?.textContent).toContain("引き継いだ PR なので、ベースブランチは取り込みません");
+    expect(notice()?.textContent).toContain("GitHub で競合を解消してください");
+    expect(notice()?.textContent).not.toContain("PR に指摘を書くと取り込みます");
+  });
+});
