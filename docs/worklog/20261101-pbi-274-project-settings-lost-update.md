@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-274
-- PR: なし
+- PR: #269
 - ブランチ: feat/issue-274-settings-lost-update
 - 関係する ADR: [プロジェクトの設定の保存は、読み込んだ版を照合し、変わっていれば上書きせずに知らせる](../adr/20261101-1347-project-save-version-check.md)
 
