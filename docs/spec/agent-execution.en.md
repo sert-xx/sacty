@@ -138,7 +138,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
 
 ## Images
 
-- The default image is `image` (default `sacty-agent:1.14.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.14.0`).
+- The default image is `image` (default `sacty-agent:1.15.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.15.0`).
 - The name decides which image is used.
   - No name, or the name `default`: the default image.
   - A name in `images`: that entry.
