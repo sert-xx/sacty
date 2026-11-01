@@ -2,7 +2,7 @@
 
 # Overall structure
 
-sacty consists of four packages in npm workspaces. The `sacty` command (cli) starts the resident daemon (daemon) and the web UI (web). The web UI calls only the daemon's API, and the daemon records to the activity log and runs steps (in containers).
+sacty consists of five packages. Four of them (core, daemon, web, cli) are npm workspaces packages; the desktop app (desktop) is not in the workspaces and is run and built with `npm run desktop:*` at the root. The `sacty` command (cli) starts the resident daemon (daemon) and the web UI (web). The web UI calls only the daemon's API, and the daemon records to the activity log and runs steps (in containers).
 
 Related ADRs: none
 
@@ -14,8 +14,9 @@ Related ADRs: none
 | `apps/daemon` | `@sacty/daemon` | Resident process. HTTP API, activity log (SQLite), step execution, gateway, intake, notifications | `@sacty/core` |
 | `apps/web` | `@sacty/web` | Web UI (Next.js). Delegates operations to the daemon's API | `@sacty/core` |
 | `packages/cli` | `sacty` command | Commands such as `sacty up`, and the Dockerfile of the image for running agents (`packages/cli/docker/Dockerfile`) | `@sacty/core`, `@sacty/daemon`, `@sacty/web` |
+| `apps/desktop` | `@sacty/desktop` | The desktop app for macOS (Electron). It runs the `sacty` command as a separate process and displays the web UI ([Desktop app](desktop.en.md)) | None (packaging bundles the build output of cli, daemon, and web) |
 
-Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/package.json`, `packages/cli/package.json`
+Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/package.json`, `packages/cli/package.json`, `apps/desktop/package.json`
 
 ## Processes and communication
 

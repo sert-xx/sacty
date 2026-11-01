@@ -2,7 +2,8 @@
 
 # 全体の構成
 
-sacty は、npm workspaces の4つのパッケージでできている。
+sacty は、5つのパッケージでできている。
+そのうち4つ（core・daemon・web・cli）は npm workspaces のパッケージで、デスクトップ版（desktop）は workspaces に入れず、ルートの `npm run desktop:*` で動かす・作る。
 `sacty` コマンド（cli）が、常駐するデーモン（daemon）と画面（web）を起動する。
 画面はデーモンの API だけを呼び、デーモンが作業履歴への記録と工程の実行（コンテナ）を行う。
 
@@ -16,8 +17,9 @@ sacty は、npm workspaces の4つのパッケージでできている。
 | `apps/daemon` | `@sacty/daemon` | 常駐プロセス。HTTP の API、作業履歴（SQLite）、工程の実行、ゲートウェイ、取り込み、通知 | `@sacty/core` |
 | `apps/web` | `@sacty/web` | 画面（Next.js）。操作はデーモンの API に依頼する | `@sacty/core` |
 | `packages/cli` | `sacty` コマンド | `sacty up` などのコマンドと、エージェント実行用のイメージの Dockerfile（`packages/cli/docker/Dockerfile`） | `@sacty/core`・`@sacty/daemon`・`@sacty/web` |
+| `apps/desktop` | `@sacty/desktop` | macOS 向けのデスクトップ版（Electron）。`sacty` コマンドを別のプロセスで動かし、画面を表示する（[デスクトップ版](desktop.md)） | なし（作るときに cli・daemon・web の成果物を同梱する） |
 
-コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`
+コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`、`apps/desktop/package.json`
 
 ## プロセスと通信
 

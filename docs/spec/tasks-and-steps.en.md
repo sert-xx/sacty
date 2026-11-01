@@ -345,7 +345,7 @@ Code: `apps/daemon/src/prompts.ts` (`continuablePullRequest`, `CONTINUABLE_PLANS
 
 Security checks (the deliverable is a report) and fixes (the deliverable is a PR) use the plans `security-check` and `security-fix`. They use the Investigate, Implement, and After-merge watch steps as they are, and add rules to the prompts and the verification.
 
-Related ADR: [セキュリティチェックとセキュリティ対応を、既存の工程の組み合わせとして足し、対応の差分を修正の範囲と照らして最小限に保つ](../adr/20261026-1520-security-check-and-fix-plans.md)
+Related ADR: [セキュリティチェックとセキュリティ対応を、既存の工程の組み合わせとして足し、対応の差分を修正の範囲と照らして最小限に保つ](../adr/20261026-1520-superseded-security-check-and-fix-plans.md)
 
 - Whether a task is a security task is decided by the chosen plan (before choosing, the plan specified at creation) (`taskPlan`, `isSecurityTask`). Both are plans that need a target repository (`REPO_PLANS`); for a task without a repository, the Orchestrator chooses one from the project's targets.
 - The investigation prompt (`SECURITY_TOOL_LINES`): the agent does not set up for development, but runs the check tools in the workspace (osv-scanner, gitleaks, and so on), including network access to vulnerability databases, and uses the results as evidence. What it has no tool for or could not run is written as unchecked scope, and it does not write the values of secrets it finds or how to exploit a problem.

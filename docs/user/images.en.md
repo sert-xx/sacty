@@ -27,11 +27,11 @@ The image includes the following commands that agents use in their work. Command
 
 - All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). You get the versions that were current when the image was built.
 - `npx sacty image build` uses Docker's build cache, so a rebuild alone may not fetch the packages again. To pick up OS security updates, do one of the following and then rebuild.
-  - Use a newer base image (fetch it again with `docker pull <base image>`, or change to the tag of an updated version)
-  - Clear the build cache with `docker builder prune`
+  - Use a newer base image. sacty pins the default base image by its digest, so `docker pull` does not change it. Update to a sacty version whose base image digest is updated, or write an updated base image in `image_build.base_image` (a tag such as `node:26-bookworm-slim`, or `<tag>@sha256:<digest>`). If the image in `image_build.base_image` is a tag only, fetch it again with `docker pull <base image>`.
+  - Clear the build cache with `docker builder prune` (the packages sacty installs are fetched again, but the base image does not change)
 
   Commands that the base image already has are not reinstalled, so their updates come from the base image.
-- `osv-scanner` and `gitleaks` are not OS packages: sacty fetches a pinned version from the official GitHub releases and checks it against the hash file of the same release before installing it. If the GitHub releases cannot be reached, sacty reports a warning in the build log and builds the image without them (the steps report those categories as unchecked scope). If a hash does not match, the build stops.
+- `osv-scanner` and `gitleaks` are not OS packages: sacty fetches a pinned version from the official GitHub releases and checks it against a hash pinned in sacty before installing it. If the GitHub releases cannot be reached, sacty reports a warning in the build log and builds the image without them (the steps report those categories as unchecked scope). If a hash does not match, the build stops.
 - If a command cannot be installed, for example because the package mirror is unreachable, sacty reports a warning in the build log and builds the image anyway (agents use other means instead).
 - On RHEL-family base images, `rg`, `fd`, and `shellcheck` exist only in EPEL, so they are not installed if EPEL is not available. Because `packages` are installed before `run`, do not list EPEL packages in `packages`. Install them in the same `run`, after the command that enables EPEL.
 
@@ -67,7 +67,7 @@ image_build:
 
 ## Building images from a private registry
 
-In environments where Docker Hub or the public npm registry cannot be used, write the base image and the npm registry in `image_build` in `config.yaml`, and then run `sacty image build`. If you omit them, the image is built from `node:26-bookworm-slim` on Docker Hub and the public npm registry.
+In environments where Docker Hub or the public npm registry cannot be used, write the base image and the npm registry in `image_build` in `config.yaml`, and then run `sacty image build`. If you omit them, the image is built from `node:26-bookworm-slim` on Docker Hub and the public npm registry. The default base image is pinned by its digest in addition to the tag (the same sacty version builds from the same base image). Claude Code, Codex, and their dependencies are fetched from the `npm_registry` registry at the versions sacty pins in a lockfile. If the registry does not have those versions, or their contents differ from the public registry (`integrity` does not match), the build fails.
 
 ```yaml
 image: registry.example.com/sacty-agent:1.15.0

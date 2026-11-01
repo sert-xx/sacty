@@ -445,3 +445,45 @@ describe("イメージの作成（PBI-33）", () => {
     expect(new Set([none.hash, one.hash, two.hash]).size).toBe(3);
   });
 });
+
+describe("既定のイメージの固定（セキュリティチェックの指摘）", () => {
+  const docker = new URL("../../../packages/cli/docker/", import.meta.url);
+  const read = (path: string) => readFileSync(new URL(path, docker), "utf8");
+
+  it("元のイメージの既定は、タグとマルチアーキのインデックスのダイジェストで固定する", () => {
+    const dockerfile = read("Dockerfile");
+    for (const name of ["BASE_IMAGE", "NODE_IMAGE"]) {
+      expect(dockerfile).toMatch(
+        new RegExp(`^ARG ${name}=node:26-bookworm-slim@sha256:[0-9a-f]{64}$`, "m"),
+      );
+    }
+  });
+
+  it("CLI を置いた /opt/sacty/bin は、images の run より前に PATH に通す（run から claude・codex を呼べる。レビュー指摘）", () => {
+    const dockerfile = read("Dockerfile");
+    const link = dockerfile.indexOf("/opt/sacty/bin/codex");
+    const path = dockerfile.indexOf("ENV PATH=/opt/sacty/bin:$PATH");
+    const setup = dockerfile.indexOf("/run/secrets/setup;");
+    expect(link).toBeGreaterThan(0);
+    expect(path).toBeGreaterThan(link);
+    expect(setup).toBeGreaterThan(path);
+  });
+
+  it("エージェントの CLI は lockfile のとおりに入れ、lockfile には取得元の URL を書かない（プライベートのレジストリ）", () => {
+    const dockerfile = read("Dockerfile");
+    expect(dockerfile).toContain("npm ci --omit=dev");
+    expect(dockerfile).not.toMatch(/npm install -g @anthropic-ai|npm install -g @openai/);
+    const pkg = JSON.parse(read("agent-cli/package.json"));
+    const lock = JSON.parse(read("agent-cli/package-lock.json"));
+    // package.json の版と lockfile がそろっている（版を上げたら lockfile も作り直す）
+    expect(lock.packages[""].dependencies).toEqual(pkg.dependencies);
+    for (const [name, version] of Object.entries(pkg.dependencies)) {
+      expect(lock.packages[`node_modules/${name}`].version).toBe(version);
+    }
+    for (const [path, entry] of Object.entries(lock.packages)) {
+      if (path === "") continue;
+      expect(entry).not.toHaveProperty("resolved");
+      expect(entry).toHaveProperty("integrity");
+    }
+  });
+});
