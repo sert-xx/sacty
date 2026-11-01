@@ -1174,6 +1174,30 @@ const RepositoryPrepared = z.object({
 });
 
 /**
+ * ベースブランチの最新を、実装の作業領域に取り込んだ（ホストで、作業領域の内容とベースブランチの先頭を3方向でマージした）。
+ * from は取り込む前に作業領域がベースにしていたコミット、commit は取り込んだベースブランチの先頭。conflicts は、競合して
+ * 目印（<<<<<<<・=======・>>>>>>>）を残したファイル（リポジトリの根からの相対パス。競合が無ければ空）。コミットは、
+ * 実装を提出するときに、この commit を第2の親にしたマージコミットにする。
+ */
+const BaseBranchMerged = z.object({
+  type: z.literal("BaseBranchMerged"),
+  payload: z.object({
+    from: z.string().min(1),
+    commit: z.string().min(1),
+    conflicts: z.array(z.string().min(1)).max(100),
+  }),
+});
+
+/**
+ * 実装の提出の前に、ベースブランチとの競合の目印が作業領域に残っていた。検証（最終レビュー）に進まず、競合した
+ * ファイルを渡して実装をやり直す（続けて通らなければ一時停止する）。
+ */
+const BaseConflictsRemained = z.object({
+  type: z.literal("BaseConflictsRemained"),
+  payload: z.object({ files: z.array(z.string().min(1)).min(1).max(100) }),
+});
+
+/**
  * sacty がテストのコンテナでテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
  * 不合格なら実装をやり直す（続けて通らなければ一時停止）。
  * 今の版は記録しない（テストはゴールガーディアンが最終レビューの中で実行する）。それより前の作業履歴を読むために残す。
@@ -2630,6 +2654,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ChangeDecided,
   ChangeApplied,
   RepositoryPrepared,
+  BaseBranchMerged,
+  BaseConflictsRemained,
   TestsRun,
   TestsSkipped,
   FinalReviewed,

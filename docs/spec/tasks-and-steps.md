@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -922,6 +922,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
   人の判断で、不合格のままレビューへ進めることもできる（下の「人がレビューへ進める」）。
+  最終レビューの前に、ベースブランチとの競合の目印が作業領域に残っていたときも、同じ上限で数える（[ベースブランチの取り込み](#ベースブランチの取り込み)）。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
   ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、次のとおりにする。
   テストのコマンドに書いていない名前（`npm test` の中のスクリプトが使うツールなど）と、`/` を含む名前（`./scripts/check.sh` など）はリポジトリの問題として当てず、ふつうの判定にする。
@@ -973,6 +974,48 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     footer を長くしすぎないよう、1項目は `HUMAN_CHECK_ITEM_MAX`（1,000 文字）、一覧は `HUMAN_CHECKS_BODY_MAX`（6,000 文字）までにし、入りきらない項目は残りの件数と、sacty のタスクの画面で確かめることを書く。
   - 実装の成果物：最終レビューの欄に「人が確かめること」として出し、ゴールガーディアンが実行したテストには「環境による失敗だけ」を添える（`HumanChecks`）。どちらも無ければ出さない。
   - 環境による失敗だけで通ったテストは、対応表の実行結果を「テスト合格」にする（`verificationResults` の `passed`）。
+
+### ベースブランチの取り込み
+
+実装の PR がベースブランチと競合したままにならないよう、sacty がホストで、ベースブランチの最新を実装の作業領域に取り込む。
+履歴は書き換えない（強制プッシュ・リベースをしない）。
+既存の PR を引き継ぐタスク（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）は、人の PR のブランチに積むので、取り込まない。
+
+- 取り込む時点（`syncBase`）：
+  - 実装の実行を始める前（`runNextInner`）。初回も、差し戻し・PR の指摘の取り込み・再レビューで実装をやり直すときも同じ。
+  - 最終レビューの前（`syncBeforeVerify`）。実装の実行の間にベースブランチが進んだときのため。最終レビューは取り込んだ後のコードで行う。
+    PR を作って CI を待つ間（`pullRequestCi` がある間）と、予算の上限に達しているとき、作業領域が無いときは、取り込まない。
+  - 承認待ちの間は取り込まない（人が差し戻す・PR の指摘を書くと、実装のやり直しの前に取り込む）。
+  - 設定 `ServiceDeps.mergeBase` が `false` のときは取り込まない（テスト用。既定は取り込む）。
+- 取り込み方：
+  1. ベースブランチ（`repository.baseBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
+     作業領域が今ベースにしているコミット（`workBaseCommit`。取り込み前は起点のコミット、取り込み後は最後に取り込んだ先頭）と同じなら、何もしない。
+  2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものは除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree`）。
+     作業領域の git の設定・フィルター・フックは使わず、コミットも作らない。
+  3. 結果を作業領域に書く（`git read-tree -m -u`）。競合したファイルには、目印（`<<<<<<<`・`=======`・`>>>>>>>`）を残す。上が実装の側、下がベースブランチの側。
+  4. 取り込んだ先頭と、競合したファイルの一覧（最大 100 件）を `BaseBranchMerged` に記録する。`Task.baseMerge` に最後の取り込みを持つ。
+     記録した起点のコミット（`Task.repository.baseCommit`）は変えない。ベースブランチを選び直して作業領域を用意し直したとき（`RepositoryPrepared`）は、`baseMerge` を消す。
+- 目印が残っているファイル（`conflictMarkers`）：`BaseBranchMerged` の競合したファイルのうち、`<<<<<<<` の行と `>>>>>>>` の行の両方が残っているもの。
+  通常のファイルだけを読み（シンボリックリンクと、作業領域の外を指すものは読まない）、20 MiB を超えるファイルは読まない。
+  目印が残っているうちは、さらに取り込まず、そのファイルを返す。
+  目印を入れられない競合（バイナリ・片方での削除など）は、目印では解消を確かめられない。
+- 実装の指示（`mergeConflictLines`）：実装の実行を始める前に、目印が残っているファイルがあれば、一覧と解消の仕方を渡す。
+  上下の意味、両方の意図を生かすこと、ベースブランチ側の変更を自分の変更として書き直したり消したりしないこと、目印の行をすべて消すこと、git でのマージ・リベース・フェッチ・コミット・プッシュをしないことを書く。
+- 最終レビューの前に目印が残っていれば、最終レビューに進まず（ゴールガーディアンを実行しない）、`BaseConflictsRemained` を記録して実装をやり直す。
+  - 検証に通らなかったものとして数える（`verifyFailures`。やり直しの指示には「前回の検証：ベースブランチとの競合の目印が残っていました」と一覧を渡す）。
+  - 続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にし、競合したファイルを示す（`verify.mergeConflictsRemain`）。再開すると数え直し、目印のあるファイルを渡して実装をやり直す。
+  - 目印が残って止まったタスクは、人が「レビューへ進める」ことはできない（`canOverrideVerification`）。
+- 取得・マージに失敗したときは、実装の実行の前なら実行せずに（`AgentRunFailed`）、最終レビューの前なら最終レビューをせずに、理由を示して一時停止する（`merge.failed`）。
+  再開すると、取り込みからやり直す。
+  ホストの git が 2.38 より古く `git merge-tree --write-tree` が使えないときは、`git.mergeTreeUnsupported` を示す。
+- 取り込んだ後の実装：
+  - 実装の差分・ファイルごとの変更・変更なしの判定の起点は、取り込んだ先頭（`workBaseCommit`）。ベースブランチ側の変更は、実装の差分に含まれない。
+  - 作業領域を用意し直すときは、取り込んだ先頭で用意する（起点のコミットに戻さない）。
+  - 提出するコミット（`publish`）は、取り込んだ先頭が、親にするコミットの履歴にまだ含まれていなければ、その先頭を第 2 の親にしたマージコミットにする。含まれていれば、親は 1 つ。
+    内容が親と変わらなくても、含まれていなければマージコミットを作る。コミットの日時は提出ごとに決まる（再開しても同じコミットになる）。
+  - 最終レビューの指示（`baseMergeLines`・`guardianCodeLines`）に、取り込んだこと、差分は取り込んだ先頭からの実装の変更であること、ベースブランチ側の変更は変更の範囲・過剰さの判定に含めないこと、競合を解消した内容がベースブランチ側の変更を壊していないかを確かめることを伝える。
+
+コード: `apps/daemon/src/service.ts`（`mergesBase`・`syncBase`・`syncBeforeVerify`・`runNextInner`・`publish`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/repository.ts`（`mergeBase`・`conflictMarkers`・`publish`）、`apps/daemon/src/prompts.ts`（`mergeConflictLines`・`baseMergeLines`・`guardianCodeLines`）、`packages/core/src/events.ts`（`BaseBranchMerged`・`BaseConflictsRemained`）、`packages/core/src/projection.ts`（`baseMerge`・`workBaseCommit`・`canOverrideVerification`）
 
 ### 最終レビューの前の実装の PR と CI
 

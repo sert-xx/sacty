@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 940" width="1040" height="940" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">From implementation to awaiting approval</title>
-  <desc id="desc">After the implementation step, sacty opens the implementation PR as a draft and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
+  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -44,8 +44,8 @@
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
   <path d="M410 96 L410 130" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M410 240 L410 270" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M260 185 L225 185 Q215 185 215 195 L215 423 Q215 433 225 433 L260 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M410 250 L410 270" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M260 190 L224.9 186.1 Q215 185 215 195 L215 423 Q215 433 225 433 L260 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 374 L410 405" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M560 433 L640 433" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <path d="M410 461 L410 505" class="flow" style="" marker-end="url(#ah-arrow)"/>
@@ -61,11 +61,12 @@
   <svg x="276" y="34" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="312" y="52" class="title">Implementation step</text>
   <text x="276" y="80" class="sub">The agent implements</text>
-  <rect x="260" y="130" width="300" height="110" rx="10" class="card" style=""/>
+  <rect x="260" y="130" width="300" height="120" rx="10" class="card" style=""/>
   <svg x="276" y="144" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
   <text x="312" y="162" class="title">Open a draft PR</text>
-  <text x="276" y="190" class="sub">sacty commits and pushes</text>
-  <text x="276" y="210" class="sub">None if nothing changed</text>
+  <text x="276" y="190" class="sub">Merges in the base branch,</text>
+  <text x="276" y="210" class="sub">sacty commits and pushes</text>
+  <text x="276" y="230" class="sub">None if nothing changed</text>
   <rect x="260" y="270" width="300" height="104" rx="10" class="card" style=""/>
   <svg x="276" y="284" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="312" y="302" class="title">Wait for the PR's CI</text>

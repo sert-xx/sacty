@@ -22,6 +22,8 @@ export function failureKind(event: ActivityEvent): FailureKind | undefined {
       return "stop";
     case "TestsRun":
       return event.payload.passed ? undefined : "check";
+    case "BaseConflictsRemained":
+      return "check";
     case "PullRequestCiFinished":
       return event.payload.result === "failed" || event.payload.result === "timed_out"
         ? "check"

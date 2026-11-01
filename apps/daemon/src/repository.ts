@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { cp, rm } from "node:fs/promises";
+import { cp, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -109,7 +109,33 @@ export interface RepositoryWorkspace {
      * 無いので、コミットの内容はこのパスだけ commit のものにする（作業領域の変更が無ければ、これまでどおりエラー）。
      */
     keep?: { commit: string; paths: string[] };
+    /**
+     * ベースブランチから作業領域に取り込んだコミット（mergeBase。取得済みであること）。parent の履歴にまだ含まれていなければ、
+     * これを第2の親にしたマージコミットにする（作業領域は、このコミットをマージした内容になっているので、コミットの内容は
+     * そのまま作業領域の内容）。含まれていれば、これまでどおり parent だけを親にする。内容が parent と変わらなくても、
+     * 含まれていなければ新しいコミットを作る（PR が、ベースブランチの先頭を含む履歴になるように）。
+     */
+    merge?: string;
   }): Promise<{ commit: string }>;
+  /**
+   * ベースブランチの先頭（target。取得済みであること）を、作業領域の内容に取り込む。作業領域は base（作業領域が今ベースに
+   * している起点のコミット）に実装の変更を加えたものなので、base を共通の祖先にして、作業領域の内容と target を3方向で
+   * マージし、結果を作業領域に書く（履歴は書き換えない。コミットは作らない）。競合したファイルには、目印
+   * （<<<<<<<・=======・>>>>>>>。上が作業領域の側、下が target の側）を残し、conflicts にそのパスを返す。
+   * target が既に base の履歴に含まれていれば何もしない（unchanged）。作業領域・利用者の git の設定は読まず、
+   * 退避したメタデータの git で行う。
+   */
+  mergeBase(input: {
+    dir: string;
+    gitDir: string;
+    base: string;
+    target: string;
+  }): Promise<{ status: "unchanged" | "merged" | "conflicted"; conflicts: string[] }>;
+  /**
+   * paths（リポジトリの根からの相対パス）のうち、競合の目印（<<<<<<< の行と >>>>>>> の行の両方）が作業領域のファイルに
+   * 残っているもの。通常のファイルだけを読む（シンボリックリンクや、作業領域の外を指すものは読まない）。
+   */
+  conflictMarkers(dir: string, paths: string[]): Promise<string[]>;
   /** 既にあるコミットを、ブランチにプッシュする（タスクブランチを作る。PBI-57）。強制プッシュはしない。 */
   pushCommit(
     gitDir: string,
@@ -267,7 +293,37 @@ function gitBytes(
   });
 }
 
+/**
+ * git を実行し、終了コードで失敗にしない（終了コードそのものが答えのコマンド用。merge-tree の競合は 1、
+ * merge-base --is-ancestor の「祖先でない」は 1）。起動できなければエラー。
+ */
+function gitResult(
+  args: string[],
+  env: Record<string, string>,
+): Promise<{ code: number; out: string; err: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    let err = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      out.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      err += chunk;
+    });
+    child.on("error", (error) =>
+      reject(new MessageError(message("git.unavailable", { detail: error.message }))),
+    );
+    child.on("close", (code) =>
+      resolve({ code: code ?? -1, out: Buffer.concat(out).toString("utf8"), err: err.trim() }),
+    );
+  });
+}
+
 const COMMIT_RE = /^[0-9a-f]{40,64}$/;
+
+/** 競合の目印を探すファイルの大きさの上限（これより大きいファイルは読まない）。 */
+const MARKER_SCAN_LIMIT = 20 * 1024 * 1024;
 
 /** コミットから読むファイルの大きさの上限（要求要件・設計の成果のファイル。PBI-63）。 */
 const FILE_LIMIT = 1024 * 1024;
@@ -484,6 +540,9 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       throw new MessageError(message("git.invalidParentCommit"));
     }
     if (keep && !keep.paths.every(validPath)) throw new MessageError(message("git.invalidPath"));
+    if (input.merge !== undefined && !COMMIT_RE.test(input.merge)) {
+      throw new MessageError(message("git.invalidParentCommit"));
+    }
     const author = await this.author();
     const commit = await this.stage(input.dir, input.gitDir, input.baseCommit, async (run) => {
       let tree = (await run("write-tree", ["write-tree"])).trim();
@@ -513,8 +572,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         tree = (await run("write-tree", ["write-tree"])).trim();
       }
       const parentTree = (await run("rev-parse", ["rev-parse", `${input.parent}^{tree}`])).trim();
+      // ベースブランチから取り込んだコミットが、まだ親の履歴に無ければ、第2の親にする（マージコミット）
+      const merging =
+        input.merge !== undefined &&
+        !(await this.isAncestor(input.gitDir, input.merge, input.parent));
       // 前回プッシュした内容から変わっていなければ、同じコミットをそのまま使う
-      if (tree === parentTree && input.parent !== input.baseCommit) return input.parent;
+      if (tree === parentTree && input.parent !== input.baseCommit && !merging) return input.parent;
       return (
         await git(
           "commit-tree",
@@ -526,6 +589,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
             tree,
             "-p",
             input.parent,
+            ...(merging && input.merge ? ["-p", input.merge] : []),
             "-m",
             input.message,
           ],
@@ -546,6 +610,108 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       cloneEnv(input.authEnv),
     );
     return { commit };
+  }
+
+  /** commit が ancestorOf の履歴に含まれるか（同じコミットも含む）。どちらも取得済みであること。 */
+  private async isAncestor(gitDir: string, commit: string, ancestorOf: string): Promise<boolean> {
+    if (!COMMIT_RE.test(commit) || !COMMIT_RE.test(ancestorOf)) {
+      throw new MessageError(message("git.invalidParentCommit"));
+    }
+    const result = await gitResult(
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "merge-base", "--is-ancestor", commit, ancestorOf],
+      isolatedEnv("/dev/null"),
+    );
+    // 0：含まれる、1：含まれない。それ以外（コミットが無いなど）は失敗
+    if (result.code === 0) return true;
+    if (result.code === 1) return false;
+    throw new MessageError(
+      message("git.failed", { command: "merge-base", detail: result.err || `exit ${result.code}` }),
+    );
+  }
+
+  async mergeBase(input: Parameters<RepositoryWorkspace["mergeBase"]>[0]) {
+    if (!COMMIT_RE.test(input.base) || !COMMIT_RE.test(input.target)) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
+    // 取り込むものが無い（ベースブランチの先頭が、今の起点の履歴に含まれている）
+    if (
+      input.base === input.target ||
+      (await this.isAncestor(input.gitDir, input.target, input.base))
+    ) {
+      return { status: "unchanged" as const, conflicts: [] };
+    }
+    return this.stage(input.dir, input.gitDir, input.base, async (run) => {
+      // 作業領域の内容（新しく作ったファイルも含む）を、ツリーにする
+      const mine = (await run("write-tree", ["write-tree"])).trim();
+      // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
+      // 目印を入れたファイルを含む結果のツリーができる
+      const merged = await gitResult(
+        [
+          "--git-dir",
+          input.gitDir,
+          ...SAFE_CONFIG,
+          "merge-tree",
+          "--write-tree",
+          "--no-messages",
+          "--name-only",
+          "-z",
+          `--merge-base=${input.base}`,
+          mine,
+          input.target,
+        ],
+        isolatedEnv("/dev/null"),
+      );
+      // 129 は使い方の誤り（--write-tree が無い古い git）
+      if (merged.code === 129) throw new MessageError(message("git.mergeTreeUnsupported"));
+      if (merged.code !== 0 && merged.code !== 1) {
+        throw new MessageError(
+          message("git.failed", {
+            command: "merge-tree",
+            detail: merged.err || `exit ${merged.code}`,
+          }),
+        );
+      }
+      const [tree, ...names] = merged.out.split("\0").filter((x) => x !== "");
+      if (!tree || !COMMIT_RE.test(tree)) {
+        throw new MessageError(
+          message("git.failed", { command: "merge-tree", detail: "unexpected output" }),
+        );
+      }
+      const conflicts = [...new Set(names)];
+      // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
+      if (tree !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, tree]);
+      return {
+        status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
+        conflicts,
+      };
+    });
+  }
+
+  async conflictMarkers(dir: string, paths: string[]) {
+    const root = await realpath(dir).catch(() => undefined);
+    if (!root) return [];
+    const remaining: string[] = [];
+    for (const path of paths) {
+      if (await this.hasConflictMarkers(root, path)) remaining.push(path);
+    }
+    return remaining;
+  }
+
+  private async hasConflictMarkers(root: string, path: string): Promise<boolean> {
+    const file = join(root, path);
+    try {
+      // シンボリックリンクはたどらない。作業領域（エージェントが書き換えられる）の外のファイルを読まない
+      if (!(await lstat(file)).isFile()) return false;
+      const real = await realpath(file);
+      if (relative(root, real).split(sep)[0] === ".." || relative(root, real) === "") return false;
+      const stat = await lstat(real);
+      if (stat.size > MARKER_SCAN_LIMIT) return false;
+      const text = (await readFile(real)).toString("utf8");
+      // 始めの行と終わりの行の両方がそろったときだけ、目印とする（Markdown の見出しの下線の ======= だけでは目印にしない）
+      return /^<{7}( |$)/m.test(text) && /^>{7}( |$)/m.test(text);
+    } catch {
+      return false;
+    }
   }
 
   async pushCommit(

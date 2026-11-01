@@ -44,6 +44,7 @@ import {
   stepRunning,
   type Task,
   testToolsMissing,
+  workBaseCommit,
 } from "./projection.js";
 
 let seq = 0;
@@ -2708,6 +2709,86 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
       baseBranch: "main",
     } as Task["continuedPullRequest"];
     expect(canOverrideVerification(paused({ continuedPullRequest }))).toBe(false);
+  });
+});
+
+describe("ベースブランチの取り込み", () => {
+  const prepared = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+  ];
+  const merged = (id: string, commit: string, conflicts: string[]) =>
+    ev(id, { type: "BaseBranchMerged", payload: { from: "b1", commit, conflicts } });
+  const implemented = (id: string) => verifiedImplementation(id).slice(0, 2);
+
+  it("取り込みを記録し、最後の取り込みを作業領域のベースにする。起点の記録は変えない", () => {
+    seq = 0;
+    const task = project([...prepared("t1"), merged("t1", "n1", ["README.md"])]).get("t1");
+    expect(task?.baseMerge).toMatchObject({ from: "b1", commit: "n1", conflicts: ["README.md"] });
+    expect(task?.repository?.baseCommit).toBe("b1");
+    expect(
+      task && workBaseCommit(task.repository as NonNullable<Task["repository"]>, task.baseMerge),
+    ).toBe("n1");
+    const again = project([
+      ...prepared("t2"),
+      merged("t2", "n1", ["README.md"]),
+      ev("t2", { type: "BaseBranchMerged", payload: { from: "n1", commit: "n2", conflicts: [] } }),
+    ]).get("t2");
+    expect(again?.baseMerge).toMatchObject({ from: "n1", commit: "n2", conflicts: [] });
+    // 取り込まないタスクは、起点のまま
+    const plain = project([...prepared("t3")]).get("t3");
+    expect(plain?.baseMerge).toBeUndefined();
+    expect(
+      plain && workBaseCommit(plain.repository as NonNullable<Task["repository"]>, plain.baseMerge),
+    ).toBe("b1");
+  });
+
+  it("リポジトリを用意する前には取り込めない。ベースブランチを選び直して用意し直したら、取り込みは消える", () => {
+    seq = 0;
+    expect(() => project([created("t1"), merged("t1", "n1", [])])).toThrow(/not prepared/);
+    const task = project([
+      ...prepared("t2"),
+      merged("t2", "n1", []),
+      ev("t2", {
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "develop", baseCommit: "d1" },
+      }),
+    ]).get("t2");
+    expect(task?.baseMerge).toBeUndefined();
+    expect(task?.repository?.baseBranch).toBe("develop");
+  });
+
+  it("競合の目印が残っていると、検証に進まず実装をやり直す。レビューへは進められない", () => {
+    seq = 0;
+    const base = [...prepared("t1"), merged("t1", "n1", ["README.md"]), ...implemented("t1")];
+    const task = project([
+      ...base,
+      ev("t1", { type: "BaseConflictsRemained", payload: { files: ["README.md"] } }),
+    ]).get("t1");
+    expect(task?.status).toBe("queued");
+    expect(task?.verification).toBeUndefined();
+    expect(task?.verifyFailures).toBe(1);
+    expect(task?.verifyFeedback).toEqual({ kind: "merge", files: ["README.md"] });
+    // 続けて通らずに止まっても、目印のある実装はレビューへ進められない
+    const paused = project([
+      ...base,
+      ev("t1", { type: "BaseConflictsRemained", payload: { files: ["README.md"] } }),
+      ev("t1", { type: "TaskPaused", payload: { reason: "verification" } }),
+    ]).get("t1") as Task;
+    expect(paused.status).toBe("paused");
+    expect(canOverrideVerification(paused)).toBe(false);
+    expect(canOverrideVerification({ ...paused, verifyFeedback: undefined })).toBe(true);
+    // 検証の待ちでなければ記録できない
+    expect(() =>
+      project([
+        ...prepared("t2"),
+        ev("t2", { type: "BaseConflictsRemained", payload: { files: ["README.md"] } }),
+      ]),
+    ).toThrow(/not waiting for verification/);
   });
 });
 

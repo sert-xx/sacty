@@ -69,7 +69,8 @@ export type PullRequestCi = { commit: string; startedAt: string } & Partial<
 /**
  * 人が、ゴールガーディアンの不合格のまま実装の承認へ進められるか（VerificationOverridden）。実装の検証が続けて通らずに
  * 止まった（TaskPaused の verification）実装の工程。既存の PR を引き継ぐタスクは、不合格の実装を人の PR に積むことになり、
- * PR の本文にも覆した記録を残せないので、進められない（検証に通ってから積む）。
+ * PR の本文にも覆した記録を残せないので、進められない（検証に通ってから積む）。ベースブランチとの競合の目印が残って
+ * 止まったときも、目印のある実装は進められない。
  */
 export function canOverrideVerification(task: Task): boolean {
   return (
@@ -77,8 +78,21 @@ export function canOverrideVerification(task: Task): boolean {
     task.status === "paused" &&
     task.pausedReason === "verification" &&
     activeStep(task) === "implement" &&
-    !task.publishPending
+    !task.publishPending &&
+    // 競合の目印が残ったままの実装は、レビューへ進められない（目印を消して提出し直す）
+    task.verifyFeedback?.kind !== "merge"
   );
+}
+
+/**
+ * 実装の作業領域が、いまベースにしているコミット。ベースブランチの最新を取り込んでいれば（baseMerge）その先頭、なければ
+ * 起点のコミット。実装の差分（ここからの変更）と、変更が無いかの判定に使う。
+ */
+export function workBaseCommit(
+  repository: NonNullable<Task["repository"]>,
+  baseMerge: Task["baseMerge"],
+): string {
+  return baseMerge?.commit ?? repository.baseCommit;
 }
 
 /** 最終レビューの前に作った実装の PR の CI を待っているか（待つ間は、最終レビューに進まない）。 */
@@ -531,6 +545,12 @@ export type Task = {
   proposals: TaskProposal[];
   /** 実装の対象リポジトリ。 */
   repository?: PayloadOf<"RepositoryPrepared">;
+  /**
+   * 作業領域に取り込んだ、ベースブランチの最新（BaseBranchMerged の最後のもの）。あれば、作業領域は起点のコミットではなく
+   * この commit にマージした内容なので、実装の差分はこの commit からの変更になり、提出するコミットはこの commit を
+   * 第2の親にしたマージコミットになる（まだ親に含まれていなければ）。
+   */
+  baseMerge?: PayloadOf<"BaseBranchMerged"> & { at: string };
   /** 実装の最新の提出が申告した、観点とテストの対応。 */
   testMap: TestMapping[];
   /**
@@ -604,7 +624,9 @@ export type Task = {
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
   verifyFeedback?:
     | { kind: "tests"; tests: TestsRunResult }
-    | { kind: "review"; review: FinalReview };
+    | { kind: "review"; review: FinalReview }
+    /** 提出の前に、ベースブランチとの競合の目印が作業領域に残っていた（BaseConflictsRemained）。 */
+    | { kind: "merge"; files: string[] };
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
   escalation?: {
     step: StepKey;
@@ -1370,6 +1392,26 @@ export function applyEvent(
 
     case "RepositoryPrepared":
       task.repository = event.payload;
+      // ベースブランチを選び直して用意し直した作業領域は、新しい起点のコードのまま（取り込みは無い）
+      task.baseMerge = undefined;
+      break;
+
+    case "BaseBranchMerged":
+      if (!task.repository) {
+        throw new ActivityIntegrityError(event, "the repository is not prepared");
+      }
+      task.baseMerge = { ...event.payload, at: event.at };
+      break;
+
+    case "BaseConflictsRemained":
+      // 提出の前の検証の待ちで、競合の目印が残っていたので、検証に進まず実装をやり直す
+      if (task.status !== "idle" || task.verification === undefined) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for verification",
+        );
+      }
+      failVerification(task, { kind: "merge", files: event.payload.files });
       break;
 
     case "TestsRun": {

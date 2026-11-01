@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
+<!-- 対応するコード: apps/daemon/src/security.ts、apps/web/src/components/security-fixes.tsx、apps/web/src/components/derive-dialog.tsx、apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/repository.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/task-step-settings.tsx、apps/web/src/components/implementation.tsx、apps/web/src/components/provenance.tsx、apps/web/src/components/task-list.tsx、apps/web/src/lib/task-filter.ts -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -449,9 +449,30 @@ CI でしか確かめられない振る舞い（ワークフローの修正な�
   ドラフトを外せなかったときは、理由を出して止まります。
   原因を直してから「再開する」を押すと、ドラフトを外すところからやり直します。
 
+### ベースブランチが進んだとき
+
+別のタスクや人の PR が先にベースブランチ（main など）へマージされても、実装の PR がベースブランチと競合したままにならないよう、sacty が自動で対応します。
+
+- sacty は、実装を始める前と、最終レビューの前に、ベースブランチの最新を実装の作業領域に取り込みます。
+  差し戻しや PR の指摘で実装をやり直すときも、やり直す前に取り込みます。
+  承認待ちの間は取り込みません。ベースブランチが進んだ PR を直すときは、差し戻すか PR に指摘を書いてください。
+- 競合しなければ、そのまま取り込みます。PR には、ベースブランチの先頭を親に含むマージコミットが積まれます。
+  ベースブランチ側の変更は、PR の差分には出ません。履歴は書き換えません（強制プッシュ・リベースはしません）。
+- 競合したときは、競合したファイルに目印（`<<<<<<<`・`=======`・`>>>>>>>`）が残ります。
+  sacty は、競合したファイルの一覧を実装のエージェントに渡して、両方の変更が生きるように解消させます。
+  解消した内容が、マージコミットとして PR に積まれます。
+- 目印が残ったまま実装が終わったときは、最終レビューに進まず、競合したファイルを渡して実装をやり直します。
+  続けて 3 回解消できないときはタスクが一時停止し、競合したファイルが理由に出ます。
+  目印が残った実装は、「レビューへ進める」ことはできません。「再開する」で、目印のあるファイルを渡して実装をやり直します。
+- ベースブランチの最新を取得・マージできなかったとき（ネットワークの失敗など）は、理由を出して一時停止します。
+  原因を直してから「再開する」を押すと、取り込みからやり直します。
+- ベースブランチの取り込みには、ホストの git が 2.38 以上である必要があります。古いときは、その案内を出して止まります。
+- 既存の PR を引き継ぐタスク（[既存の PR を直す](#既存の-pr-を直す)）は、人の PR のブランチに積むので、ベースブランチを取り込みません。
+
 ### 検証に続けて通らないとき
 
 実装がテストか最終レビューに3回続けて通らないと、タスクは一時停止します。
+ベースブランチとの競合の目印が残ったまま通らなかったときも、同じ3回で止まります（[ベースブランチが進んだとき](#ベースブランチが進んだとき)）。
 タスクの詳細で、次のどちらかを選べます。
 
 - 「再開する」：実装をやり直します。
