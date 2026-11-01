@@ -341,6 +341,22 @@ const CONFLICT_MARKER_RE = /^(<{7,}|>{7,}) [0-9a-f]{40,64}(?::[^\r\n]*)?\r?$/m;
 /** ディレクトリとファイルの名前が衝突したときに、git が避けて付ける名前（`docs~<ID>`）。 */
 const RENAMED_CONFLICT_RE = /~[0-9a-f]{40,64}$/;
 
+/** ファイル・ディレクトリが無い（または、途中が通常のファイルに置き換わっている）ことを表すエラーか。 */
+const isMissing = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error.code === "ENOENT" || error.code === "ENOTDIR");
+
+/** 競合の目印を検査するために、ファイルを読めなかったときのエラー（対象のパスと原因を付ける）。 */
+const markerReadError = (path: string, error: unknown) =>
+  new MessageError(
+    message("git.failed", {
+      command: "conflictMarkers",
+      detail: `${path}: ${error instanceof Error ? error.message : String(error)}`,
+    }),
+  );
+
 /** コミットから読むファイルの大きさの上限（要求要件・設計の成果のファイル。PBI-63）。 */
 const FILE_LIMIT = 1024 * 1024;
 
@@ -717,7 +733,10 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   async conflictMarkers(dir: string, paths: string[]) {
-    const root = await realpath(dir).catch(() => undefined);
+    const root = await realpath(dir).catch((error: unknown) => {
+      if (isMissing(error)) return undefined;
+      throw markerReadError(dir, error);
+    });
     if (!root) return [];
     const remaining: string[] = [];
     for (const path of paths) {
@@ -746,8 +765,11 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       // 行が1つでも残っていれば、残っているとする（片方だけ消し忘れた場合も）。ラベルの無い似た行や、単独の =======（Markdown の
       // 見出しの下線）は、目印にしない
       return CONFLICT_MARKER_RE.test(text);
-    } catch {
-      return false;
+    } catch (error) {
+      // ファイルが無い（消した＝解消した）ときだけ、目印は無いとする。読めない（権限など）ときは、未検査のまま
+      // 解消したことにしないよう、対象のパスと原因を付けて伝える（呼び出し側が、理由を示して止める）
+      if (isMissing(error)) return false;
+      throw markerReadError(path, error);
     }
   }
 

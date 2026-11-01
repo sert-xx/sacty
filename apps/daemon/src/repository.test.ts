@@ -841,6 +841,26 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       expect(await workspace.conflictMarkers(clone, marked)).toEqual([]);
     });
 
+    it("目印の検査でファイルを読めないとき（権限など）は、目印なしとせず、パスと原因を付けて失敗する。ファイルが無い・途中が通常のファイルなら、解消済みとする", async () => {
+      const { workspace, clone } = await prepareMerge();
+      const id = "a".repeat(40);
+      writeFileSync(join(clone, "locked.txt"), `<<<<<<< ${id}\nx\n>>>>>>> ${id}\n`);
+      writeFileSync(join(clone, "plain"), "x\n");
+      // 消した・親がファイルに置き換わった（ENOENT・ENOTDIR）は、解消した
+      expect(await workspace.conflictMarkers(clone, ["gone.txt", "plain/child.txt"])).toEqual([]);
+      if (process.getuid?.() === 0) return; // root は権限に関係なく読める
+      chmodSync(join(clone, "locked.txt"), 0o000);
+      try {
+        await expect(workspace.conflictMarkers(clone, ["locked.txt"])).rejects.toThrow(
+          /locked\.txt.*EACCES/,
+        );
+      } finally {
+        chmodSync(join(clone, "locked.txt"), 0o644);
+      }
+      // 権限を戻せば、同じファイルの目印を検出する
+      expect(await workspace.conflictMarkers(clone, ["locked.txt"])).toEqual(["locked.txt"]);
+    });
+
     it("競合の目印の行の見分け：長い目印・パス付きのラベルは目印とし、ラベルの無い似た行・短い ID は目印としない", async () => {
       const { workspace, clone } = await prepareMerge();
       const id = "a".repeat(40);
