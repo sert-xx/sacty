@@ -82,6 +82,16 @@ const calls: {
       }),
   },
   {
+    name: "PR の指摘の戻し先と原因の判断（PBI-268）",
+    json: { "sacty-rework": { target: "implement", cause: "base_changed", reason: "競合" } },
+    check: (o) =>
+      expect(extractRework(o, ["design", "implement"])).toEqual({
+        target: "implement",
+        cause: "base_changed",
+        reason: "競合",
+      }),
+  },
+  {
     name: "最終レビュー",
     json: {
       "sacty-final-review": {

@@ -135,6 +135,7 @@ const empty = (): DashboardData => ({
       fixTask: 0,
     },
     reworkBySteps: {},
+    reworkByCause: { guardian_missed: 0, new_request: 0, base_changed: 0, unspecified: 0 },
   },
   queue: { running: 0, queued: 0, max: 3 },
 });
@@ -501,6 +502,7 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
             fixTask: 1,
           },
           reworkBySteps: { design: 3, document: 1 },
+          reworkByCause: { guardian_missed: 2, new_request: 1, base_changed: 1, unspecified: 0 },
         },
       }),
     );
@@ -514,9 +516,14 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
     expect(byId("rework-implement")?.textContent).toBe("0回");
     expect(byId("rework-document")?.textContent).toBe("1回");
     expect(byId("rework-investigate")).toBeNull();
+    // 見逃しではない差し戻しは、原因ごとに分けて出す（見逃しは「ゴールガーディアンの見逃し」の欄）
+    expect(byId("rework-cause-new_request")?.textContent).toBe("1回");
+    expect(byId("rework-cause-base_changed")?.textContent).toBe("1回");
+    expect(byId("rework-cause-unspecified")?.textContent).toBe("0回");
+    expect(byId("rework-cause-guardian_missed")).toBeNull();
     // 数字の意味は補足に
     const hints = [...(card("quality")?.querySelectorAll('[data-slot="hint"]') ?? [])];
-    expect(hints.length).toBeGreaterThanOrEqual(6);
+    expect(hints.length).toBeGreaterThanOrEqual(7);
   });
 
   it("英語", () => {

@@ -421,6 +421,28 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     });
   });
 
+  it("差し戻しの原因は、選んだときだけ渡す。選ばない・知らない値は渡さず、断られたら選んだ原因を戻す（PBI-268）", async () => {
+    requestChanges.mockResolvedValue({ ok: false, message: "断られた" });
+    const request = (cause?: string) =>
+      form({
+        taskId: "t1",
+        step: "implement",
+        decision: "request",
+        submission: "1",
+        comments: "直す",
+        ...(cause === undefined ? {} : { cause }),
+      });
+    expect(await gateAction({}, request("base_changed"))).toMatchObject({ cause: "base_changed" });
+    expect(requestChanges).toHaveBeenLastCalledWith(
+      "t1",
+      expect.objectContaining({ cause: "base_changed" }),
+    );
+    for (const cause of [undefined, "", "other"]) {
+      await gateAction({}, request(cause));
+      expect(requestChanges.mock.lastCall?.[1]).not.toHaveProperty("cause");
+    }
+  });
+
   it("承認できなければ、描き直さずに理由を返す", async () => {
     approveStep.mockResolvedValue({ ok: false, message: "承認できません。" });
     expect(await gateAction({}, gate("approve"))).toMatchObject({ message: "承認できません。" });

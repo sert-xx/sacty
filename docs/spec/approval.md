@@ -284,6 +284,9 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 元のタスクのプロジェクトのアカウントが投稿した、sacty のレビューの目印で始まるレビュー・行へのコメント
 - 取り込んだら、ゴールガーディアンが戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに差し戻す。
   判断できなければ、戻せる工程の先頭（実装の PR なら実装、要求要件・設計ならその工程）をやり直す。
+- 戻し先と一緒に、差し戻しの原因（`cause`）も判断させる（[差し戻し](#差し戻し)）。
+  `guardian_missed`・`new_request`・`base_changed` のどれかで、判断できなければ（答えが無い・`undecidable`・知らない値）原因を決めない。
+  判断は `ReworkJudged` の `cause` に残し、差し戻し（`ChangesRequested`）に引き継ぐ。
 - 差し戻す直前に、PR の状態をもう一度読む（判断の最中や、判断を記録した後の再開で、人がマージ・クローズしていることがあるため）。
   - 開いたままなら、差し戻す。
   - マージされた・マージされずに閉じられたなら、差し戻さない。取り込んだ指摘（`PullRequestReviewImported`）と判断（`ReworkJudged`）は作業履歴に残し、同じ確認の中で状態を確かめ直して、[PR の確認](#pr-の確認)の「マージされた」「マージされずに閉じられた」として記録する（マージなら `PullRequestMerged` と `StepApproved`。`StepApproved` が、反映の途中の指摘の状態を消す）。
@@ -303,14 +306,29 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   人は指摘を無効にでき、無効にした指摘はエージェントに渡さない。
 - 前の工程に戻すと、その工程から後の承認を取り消し、検証の結果と失敗の回数を戻す。
   PR で承認したタスクでは、マージ済みの PR は戻さない。
-- 最終レビュー・統合レビューに通ったものを人が差し戻すと、見逃し（`GuardianMissed`）を記録する。
+- 差し戻しには、原因（`ReworkCause`。`ChangesRequested` の `cause`）を付けられる。省略すると、原因を決めない差し戻しとして記録する。
+  - 人は、承認の画面の「差し戻しの原因」で選ぶ（初めは「選ばない」）。
+  - PR の指摘の差し戻しは、ゴールガーディアンが戻し先と一緒に判断した原因を使う（`settleReview`）。
+  - 原因は、作業履歴の差し戻しの行と、PR の欄の戻し先（PR の指摘のとき。`prRework` の `cause`）に出す。
+  - 上限でエスカレーションになる差し戻し（`TaskEscalated`）には、原因を残さない。上限を超えて差し戻すときに、あらためて選ぶ。
+- 見逃し（`GuardianMissed`）を記録するのは、原因が `guardian_missed` で、差し戻した成果物が最終レビュー（実装の承認待ち）・統合レビュー（統合レビューの承認待ち）に合格していたときだけ。
+  - 原因が `new_request`・`base_changed` のとき、原因を決めないときは記録しない。
+  - 同じレビューの見逃しは1回だけ記録する。
+  - 原因を記録する前の作業履歴は、そのまま読める（原因を持たない差し戻しは「原因を決めていない」として扱う。記録済みの見逃しは、見逃しのまま数える）。
+
+| 原因（`ReworkCause`） | 意味 |
+| --- | --- |
+| `guardian_missed` | ゴールガーディアンが、確かめられたはずの不備を見逃した |
+| `new_request` | 承認済みの要求要件・設計に無い、人が新しく足した要望や方針の変更 |
+| `base_changed` | ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物そのものの不備ではない |
+
 - 人は差し戻しと一緒に、工程のイメージ・エージェントを変えられる（`RequestChangesInput` の `images`・`agents`）。
   タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
   1つでも誤っていれば、差し戻しも含めて何も記録せずに断る。
   画面は、やり直す工程とそれより後の工程（飛ばした工程を除く）を出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えた工程だけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
 
 ## エスカレーション
 

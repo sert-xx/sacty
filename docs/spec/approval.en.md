@@ -221,6 +221,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - Posts by bots
   - Reviews and line comments posted by the original task's project account that start with sacty's review marker
 - Once imported, the Goal Guardian decides where to send them back to (redoing that step, or requesting changes to an earlier step) (`ReworkJudged`), and changes are requested without a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for the implementation PR, that step for Requirements or Design) is redone.
+- Along with where to send them back to, the Goal Guardian also decides the cause of the request for changes (`cause`; see [Request changes](#request-changes)). It is one of `guardian_missed`, `new_request`, and `base_changed`; if it cannot decide (no answer, `undecidable`, or an unknown value), no cause is set. The judgment is kept in `cause` of `ReworkJudged` and carried over to the request for changes (`ChangesRequested`).
 - Just before requesting changes, the PR's status is read once more (a person may have merged or closed it during the judgment, or before a resumed check after the judgment was recorded).
   - If it is still open, changes are requested.
   - If it was merged, or closed without merging, changes are not requested. The imported comments (`PullRequestReviewImported`) and the judgment (`ReworkJudged`) stay in the ledger, and the status is checked again within the same check and recorded as "Merged" or "Closed without merging" in [The PR check](#the-pr-check) (for a merge, `PullRequestMerged` and `StepApproved`; `StepApproved` clears the state of the comments that were being worked on).
@@ -238,11 +239,26 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbac
   - If the target is omitted, the first one (`implement` when Implementation is waiting for approval).
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.
-- When a person requests changes to something that passed the final review or Integration review, a miss (`GuardianMissed`) is recorded.
+- A request for changes can carry a cause (`ReworkCause`; `cause` of `ChangesRequested`). If omitted, it is recorded as a request for changes with no cause decided.
+  - A person chooses it with "Cause of the rework" on the approval screen (initially "Don't choose").
+  - For a request for changes from PR feedback, the cause the Goal Guardian judged together with where to send it back is used (`settleReview`).
+  - The cause is shown on the request-for-changes line of the Activity and in the PR section's "Redo from" (for PR feedback; `cause` of `prRework`).
+  - A request for changes that ends in an escalation at the limit (`TaskEscalated`) does not keep a cause. A person chooses it again when requesting changes beyond the limit.
+- A miss (`GuardianMissed`) is recorded only when the cause is `guardian_missed` and the deliverable sent back had passed the final review (Implementation waiting for approval) or Integration review (Integration review waiting for approval).
+  - It is not recorded when the cause is `new_request` or `base_changed`, or when no cause is decided.
+  - A miss for the same review is recorded once.
+  - The activity log from before causes were recorded is read as it is (a request for changes without a cause is treated as "cause not decided"; a miss already recorded is still counted as a miss).
+
+| Cause (`ReworkCause`) | Meaning |
+| --- | --- |
+| `guardian_missed` | The Goal Guardian missed a flaw it could have caught |
+| `new_request` | A new request or change of direction a person added that is not in the approved requirements or design |
+| `base_changed` | A conflict or clash caused by the base branch moving on (such as an earlier PR being merged), not a flaw in the deliverable itself |
+
 - A person can change the step images and agents together with a request for changes (`images` and `agents` of `RequestChangesInput`). They are checked in the same way as changing them in the task details (`changeStepImage`, `changeStepAgent`), and `StepImageChanged` and `StepAgentChanged` are recorded in the same write before the request for changes (`ChangesRequested`) or the escalation at the limit (`TaskEscalated`) (the same name as now is not recorded). If any of them is wrong, nothing is recorded, including the request for changes. The screen shows the step to redo and the steps after it (except skipped steps), and loads the choices when the collapsed section is opened (`/step-options`). Only the steps a person changed are sent (`changedStepChoices`).
 - The text of the comments in a request for changes can be read with "Details" on the request-for-changes line of the Activity in the task details, even when the task is not awaiting approval ([Screen wording and hints](ui-wording.en.md)).
 
-Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voidRemark`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`), `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/gate-form.tsx` (`GateStepSettings`)
+Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voidRemark`), `packages/core/src/events.ts` (`ReworkCause`, `RequestChangesInput`), `packages/core/src/projection.ts` (`reworkTargets`, `reopen`, `changeRounds`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `extractRework`), `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/gate-form.tsx` (`GateStepSettings`)
 
 ## Escalation
 

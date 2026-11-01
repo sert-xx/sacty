@@ -647,7 +647,7 @@ export function FlowCard({ data }: { data: DashboardData }) {
 export function QualityCard({ data }: { data: DashboardData }) {
   const all = useMessages();
   const m = all.dashboard.quality;
-  const { counts, reworkBySteps } = data.quality;
+  const { counts, reworkBySteps, reworkByCause } = data.quality;
   const signals = [
     ["changesRequested", m.changesRequested, m.changesRequestedHint],
     ["pullRequestRework", m.pullRequestRework, m.pullRequestReworkHint],
@@ -679,12 +679,28 @@ export function QualityCard({ data }: { data: DashboardData }) {
       <h3 className="px-5 pb-1 text-sm font-medium">
         <WithHint hint={m.byStepsHint}>{m.bySteps}</WithHint>
       </h3>
-      <dl className={cn(row, "px-5 pb-5")}>
+      <dl className={cn(row, "px-5 pb-4")}>
         {steps.map((step) => (
           <Fragment key={step}>
             <dt className="text-muted-foreground">{all.labels.step[step]}</dt>
             <dd data-testid={`rework-${step}`} className="text-right font-semibold tabular-nums">
               {m.times(reworkBySteps[step] ?? 0)}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+      <h3 className="px-5 pb-1 text-sm font-medium">
+        <WithHint hint={m.byCauseHint}>{m.byCause}</WithHint>
+      </h3>
+      <dl className={cn(row, "px-5 pb-5")}>
+        {(["new_request", "base_changed", "unspecified"] as const).map((cause) => (
+          <Fragment key={cause}>
+            <dt className="text-muted-foreground">{m.causes[cause]}</dt>
+            <dd
+              data-testid={`rework-cause-${cause}`}
+              className="text-right font-semibold tabular-nums"
+            >
+              {m.times(reworkByCause[cause])}
             </dd>
           </Fragment>
         ))}

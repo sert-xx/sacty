@@ -1,5 +1,5 @@
 import { addUsd, isChargedEvent } from "./cost.js";
-import type { ActivityEvent, StepKey } from "./events.js";
+import type { ActivityEvent, ReworkCause, StepKey } from "./events.js";
 import { isFinished, type Task } from "./projection.js";
 
 /**
@@ -23,6 +23,16 @@ export type QualityKind =
   | "integrationFailed"
   /** マージの後の監視で修正のタスクを作った（DeploymentFixRegistered）。 */
   | "fixTask";
+
+/** 差し戻しの原因の集計の区分（PBI-268）。unspecified は、原因を決めていない差し戻し（過去の作業履歴を含む）。 */
+export type ReworkCauseKey = ReworkCause | "unspecified";
+
+export const REWORK_CAUSE_KEYS: readonly ReworkCauseKey[] = [
+  "guardian_missed",
+  "new_request",
+  "base_changed",
+  "unspecified",
+];
 
 export type DashboardSummary = {
   /** 期間の境を決めたタイムゾーン（デーモンのマシン）。 */
@@ -54,6 +64,12 @@ export type DashboardSummary = {
     counts: Record<QualityKind, number>;
     /** 工程ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。差し戻した工程＝承認ゲートで止まっていた工程）。 */
     reworkBySteps: Partial<Record<StepKey, number>>;
+    /**
+     * 原因ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。PBI-268）。guardian_missed は、差し戻した人かゴールガーディアンが
+     * 見逃しと判断したもの。ゴールガーディアンの見逃し（counts.guardianMissed）は、そのうち合格の最終レビューがあったものと、
+     * 原因を記録する前の作業履歴の見逃しを数えるので、同じ数とは限らない。
+     */
+    reworkByCause: Record<ReworkCauseKey, number>;
   };
   queue: {
     /** 実行中（ワーカーが処理している）タスクの数。 */
@@ -103,7 +119,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 type CostEntry = { at: number; projectId: string; usd: number };
 type FinishEntry = { at: number; projectId: string; cancelled: boolean; leadMs: number };
-type QualityEntry = { at: number; projectId: string; kind: QualityKind; step?: StepKey };
+type QualityEntry = {
+  at: number;
+  projectId: string;
+  kind: QualityKind;
+  step?: StepKey;
+  /** 差し戻し（ChangesRequested）の原因。 */
+  cause?: ReworkCauseKey;
+};
 
 const QUALITY_KINDS: readonly QualityKind[] = [
   "changesRequested",
@@ -152,6 +175,7 @@ export class DashboardStats {
           projectId: event.projectId,
           kind: after.prRework?.at === event.at ? "pullRequestRework" : "changesRequested",
           step: event.payload.step,
+          cause: event.payload.cause ?? "unspecified",
         });
         break;
       case "GuardianMissed":
@@ -238,10 +262,15 @@ export class DashboardStats {
       number
     >;
     const reworkBySteps: Partial<Record<StepKey, number>> = {};
+    const reworkByCause = Object.fromEntries(REWORK_CAUSE_KEYS.map((k) => [k, 0])) as Record<
+      ReworkCauseKey,
+      number
+    >;
     for (const q of live(this.quality)) {
       if (q.at < days30Start) continue;
       counts[q.kind] += 1;
       if (q.step) reworkBySteps[q.step] = (reworkBySteps[q.step] ?? 0) + 1;
+      if (q.cause) reworkByCause[q.cause] += 1;
     }
 
     const waitingSince: Record<string, string> = {};
@@ -280,7 +309,12 @@ export class DashboardStats {
           days30: new Date(days30Start).toISOString(),
         },
       },
-      quality: { since: new Date(days30Start).toISOString(), counts, reworkBySteps },
+      quality: {
+        since: new Date(days30Start).toISOString(),
+        counts,
+        reworkBySteps,
+        reworkByCause,
+      },
       queue: {
         running: count(input.queue.running),
         queued: count(input.queue.waiting),

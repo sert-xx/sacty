@@ -1957,6 +1957,15 @@ const PullRequestReviewImported = z.object({
 });
 
 /**
+ * 差し戻しの原因（PBI-268）。
+ * guardian_missed：ゴールガーディアンが確かめられたはずの不備を見逃した。
+ * base_changed：ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物の不備ではない。
+ * new_request：承認済みの要求要件・設計に無い、人が新しく足した要望・方針の変更。
+ */
+export const ReworkCause = z.enum(["guardian_missed", "base_changed", "new_request"]);
+export type ReworkCause = z.infer<typeof ReworkCause>;
+
+/**
  * 取り込んだ PR の指摘で、どの工程まで戻すかのゴールガーディアンの判断（PBI-14b）。target が無ければ
  * 判断できなかった。判断した工程に、人間の確認を待たずに差し戻す。判断できなければ実装をやり直す（PBI-58）。
  * PBI-58 より前の作業履歴では、設計・要求要件まで戻す・判断できないときは人間が確かめた（rework_confirmation）。
@@ -1965,6 +1974,8 @@ const ReworkJudged = z.object({
   type: z.literal("ReworkJudged"),
   payload: z.object({
     target: StepKey.optional(),
+    /** 差し戻しの原因の判断（PBI-268）。判断できなければ無い。 */
+    cause: ReworkCause.optional(),
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
     agentId: z.string(),
@@ -2065,8 +2076,8 @@ const BranchPushed = z.object({
 });
 
 /**
- * ゴールガーディアンが最終レビューで合格にした成果物を、人間が差し戻した（見逃し）。
- * ゴールガーディアンの精度を測るために記録する。
+ * ゴールガーディアンが最終レビューで合格にした成果物を、見逃しが原因（ReworkCause の guardian_missed）で差し戻した（見逃し）。
+ * ゴールガーディアンの精度を測るために記録する。PBI-267 までの作業履歴は、差し戻しのたびに記録している。
  */
 const GuardianMissed = z.object({
   type: z.literal("GuardianMissed"),
@@ -2165,6 +2176,11 @@ const ChangesRequested = z.object({
   payload: z.object({
     /** 承認ゲートで止まっていた工程。 */
     step: StepKey,
+    /**
+     * 差し戻しの原因（PBI-268）。ゴールガーディアンの見逃しとして数えるのは guardian_missed のときだけ。
+     * 原因を決めていない差し戻し（PBI-267 までの作業履歴を含む）には無い。
+     */
+    cause: ReworkCause.optional(),
     /**
      * やり直す工程（指摘はこの工程に付く）。承認ゲートの工程か、それより前の工程。
      * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
@@ -2970,6 +2986,8 @@ export type ApproveStepInput = z.infer<typeof ApproveStepInput>;
 export const RequestChangesInput = z.object({
   step: StepKey,
   submission: Submission,
+  /** 差し戻しの原因（PBI-268）。省略すると、原因を決めていない差し戻しとして記録する（見逃しには数えない）。 */
+  cause: ReworkCause.optional(),
   /** やり直す工程。省略すると承認ゲートの工程。 */
   target: StepKey.optional(),
   comments: z

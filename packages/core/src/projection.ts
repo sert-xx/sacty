@@ -15,6 +15,7 @@ import type {
   Remark,
   ReviewComment,
   ReviewVerdict,
+  ReworkCause,
   SecurityCategory,
   SelfReview,
   StepKey,
@@ -742,13 +743,20 @@ export type Task = {
   pendingReview?: {
     keys: string[];
     remarks: string[];
-    judgement?: { target?: StepKey; reason: DaemonText };
+    judgement?: { target?: StepKey; cause?: ReworkCause; reason: DaemonText };
   };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
    * 戻し先を判断できなかったので実装をやり直した。人間が戻し先を確かめた作業履歴（PBI-14b）には無い。
    */
-  prRework?: { target: StepKey; decided: boolean; reason: DaemonText; at: string };
+  prRework?: {
+    target: StepKey;
+    decided: boolean;
+    /** ゴールガーディアンが判断した差し戻しの原因（PBI-268）。判断できなければ無い。 */
+    cause?: ReworkCause;
+    reason: DaemonText;
+    at: string;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -1304,6 +1312,7 @@ export function applyEvent(
         task.prRework = {
           target,
           decided: judged.target !== undefined,
+          ...(event.payload.cause ? { cause: event.payload.cause } : {}),
           reason: judged.reason,
           at: event.at,
         };
@@ -1640,6 +1649,7 @@ export function applyEvent(
         ...task.pendingReview,
         judgement: {
           ...(event.payload.target ? { target: event.payload.target } : {}),
+          ...(event.payload.cause ? { cause: event.payload.cause } : {}),
           reason: event.payload.reason,
         },
       };

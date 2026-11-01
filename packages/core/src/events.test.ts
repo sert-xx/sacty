@@ -3,6 +3,7 @@ import {
   CreateTaskInput,
   EventInput,
   RESUME_NOTE_MAX,
+  RequestChangesInput,
   ResumeTaskInput,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
@@ -118,5 +119,45 @@ describe("ResumeTaskInput の補足", () => {
     const result = ResumeTaskInput.safeParse({ note: `${"あ".repeat(RESUME_NOTE_MAX)}\r\nい` });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toContain("input.resumeNoteTooLong");
+  });
+});
+
+describe("差し戻しの原因（PBI-268）", () => {
+  const changes = (extra: Record<string, unknown> = {}) => ({
+    type: "ChangesRequested",
+    payload: {
+      step: "implement",
+      round: 1,
+      remarks: [{ id: "implement-1-1", text: "直して" }],
+      ...extra,
+    },
+  });
+
+  it("原因の無い過去の差し戻しも読める。原因は3種類だけ", () => {
+    // PBI-267 までの作業履歴には、cause が無い
+    expect(EventInput.parse(changes()).payload).not.toHaveProperty("cause");
+    for (const cause of ["guardian_missed", "base_changed", "new_request"]) {
+      expect(EventInput.parse(changes({ cause })).payload).toMatchObject({ cause });
+    }
+    expect(EventInput.safeParse(changes({ cause: "other" })).success).toBe(false);
+  });
+
+  it("戻し先の判断（ReworkJudged）の原因は、あってもなくてもよい", () => {
+    const judged = (extra: Record<string, unknown> = {}) => ({
+      type: "ReworkJudged",
+      payload: { reason: "r", agentId: "a", ...extra },
+    });
+    expect(EventInput.safeParse(judged()).success).toBe(true);
+    expect(EventInput.safeParse(judged({ cause: "new_request" })).success).toBe(true);
+    expect(EventInput.safeParse(judged({ cause: "x" })).success).toBe(false);
+  });
+
+  it("差し戻しの入力の原因は省略でき、知らない値は断る", () => {
+    const input = { step: "implement", submission: 1, comments: ["x"] };
+    expect(RequestChangesInput.parse(input)).not.toHaveProperty("cause");
+    expect(RequestChangesInput.parse({ ...input, cause: "base_changed" }).cause).toBe(
+      "base_changed",
+    );
+    expect(RequestChangesInput.safeParse({ ...input, cause: "x" }).success).toBe(false);
   });
 });

@@ -31,6 +31,7 @@ import {
   type ReviewComment,
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
+  ReworkCause,
   renderMessage,
   resumeNoteSections,
   SelfReview,
@@ -3834,6 +3835,22 @@ export function buildStepPullRequestBodyParts(
 }
 
 /**
+ * 戻し先の判断と一緒に、差し戻しの原因も判断させる指示（PBI-268）。ゴールガーディアンの見逃しとして数えるのは、
+ * 確かめられたのに見逃したものだけにするため、見逃しではない原因を先に選べるようにする。
+ */
+const REWORK_CAUSE_LINES = [
+  "あわせて、この指摘が起きた原因を判断してください。",
+  "- guardian_missed：承認済みの要求要件・設計、リポジトリのコードやテストから、最終レビューのときに確かめられたはずの不備を見逃した",
+  "- new_request：承認済みの要求要件・設計に無い、人が新しく足した要望や、方針の変更である",
+  "- base_changed：ベースブランチが進んだこと（先にマージされた PR など）による競合・衝突で、成果物そのものの不備ではない",
+  "- undecidable（判断できない）：どれとも言い切れない",
+  "見逃しと決めつけず、新しい要望や競合が原因ではないかを先に確かめてください。",
+];
+
+const REWORK_ANSWER_FORMAT = (targets: readonly StepKey[]) =>
+  `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "reason": "判断の理由"}}`;
+
+/**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
  * セッションで実行し、承認済みの要求要件・設計と、指摘と、タスクの開始時に集めた情報と、人が再開のときに足した補足を渡す
  * （タスクの内容や工程の経緯は渡さない）。
@@ -3881,10 +3898,12 @@ export function buildReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...REWORK_CAUSE_LINES,
+    "",
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    REWORK_ANSWER_FORMAT(targets),
     "```",
   ].join("\n");
 }
@@ -3942,10 +3961,12 @@ function buildStepReworkPrompt(
     "--- PR への人間の指摘 ---",
     ...remarks.map((r) => `- ${r}`),
     "",
+    ...REWORK_CAUSE_LINES,
+    "",
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    REWORK_ANSWER_FORMAT(targets),
     "```",
   ].join("\n");
 }
@@ -3954,16 +3975,19 @@ function buildStepReworkPrompt(
 export function extractRework(
   output: string,
   targets: readonly StepKey[],
-): { target?: StepKey; reason: DaemonText } {
+): { target?: StepKey; cause?: ReworkCause; reason: DaemonText } {
   const found = lastJsonAnswer(
     output,
-    (value): { target?: StepKey; reason: string } | undefined => {
+    (value): { target?: StepKey; cause?: ReworkCause; reason: string } | undefined => {
       const v = headedObject(value, REWORK_HEADING) ?? {};
       const reason = text(v.reason);
       if (!reason) return undefined;
-      if (v.target === "undecidable") return { reason };
+      // 原因は、読めなければ（無い・undecidable・知らない値）無いものとする。見逃しにはしない
+      const cause = ReworkCause.safeParse(v.cause);
+      const withCause = cause.success ? { cause: cause.data } : {};
+      if (v.target === "undecidable") return { ...withCause, reason };
       const target = targets.find((t) => t === v.target);
-      return target ? { target, reason } : undefined;
+      return target ? { target, ...withCause, reason } : undefined;
     },
   );
   return found?.value ?? { reason: message("guardian.reworkUnreadable") };

@@ -101,7 +101,8 @@ const ja = {
     pullRequestRework: "PR の指摘の差し戻し",
     pullRequestReworkHint: "取り込んだ PR の指摘で、工程をやり直した回数です。",
     guardianMissed: "ゴールガーディアンの見逃し",
-    guardianMissedHint: "最終レビューで合格にした成果物を、人が実装の承認で差し戻した回数です。",
+    guardianMissedHint:
+      "最終レビューで合格にした成果物を、見逃しが原因として人が実装の承認で差し戻した回数です。競合や新しい要望による差し戻しは数えません。",
     integrationFailed: "統合レビューの不合格",
     integrationFailedHint: "子タスクの成果を組み合わせた統合レビューで、不合格になった回数です。",
     fixTask: "監視で作った修正のタスク",
@@ -109,6 +110,14 @@ const ja = {
       "マージの後の監視で CI/CD やデプロイの失敗を見つけ、修正のタスクを作った回数です。",
     bySteps: "工程ごとの差し戻し",
     byStepsHint: "人の差し戻しと PR の指摘の差し戻しを、差し戻された成果物の工程ごとに数えます。",
+    byCause: "差し戻しの原因",
+    byCauseHint:
+      "人の差し戻しと PR の指摘の差し戻しを、原因ごとに数えます。見逃しは、ゴールガーディアンの見逃しの欄に数えます。原因は差し戻すときに選ぶか、PR の指摘ならゴールガーディアンが判断します。",
+    causes: {
+      new_request: "新しい要望・方針の変更",
+      base_changed: "ベースの変化による競合",
+      unspecified: "原因を決めていない",
+    },
     times: (n: number) => `${n}回`,
   },
   /** 工程の待ち行列（PBI-118）。 */
@@ -216,7 +225,7 @@ const en: DashboardMessages = {
     pullRequestReworkHint: "How many times imported PR feedback sent a step back for rework.",
     guardianMissed: "Goal guardian misses",
     guardianMissedHint:
-      "How many times a person sent back, at implementation approval, a deliverable the final review had passed.",
+      "How many times a person sent back, at implementation approval, a deliverable the final review had passed, with a miss as the cause. Rework caused by conflicts or new requests is not counted.",
     integrationFailed: "Integration review failures",
     integrationFailedHint:
       "How many times the integration review of combined subtask results did not pass.",
@@ -226,6 +235,14 @@ const en: DashboardMessages = {
     bySteps: "Rework by step",
     byStepsHint:
       "Changes requested by a person and rework from PR feedback, counted by the step whose deliverable was sent back.",
+    byCause: "Rework by cause",
+    byCauseHint:
+      "Changes requested by a person and rework from PR feedback, counted by cause. Misses are counted under Goal guardian misses. The cause is chosen when requesting changes, or judged by the Goal Guardian for PR feedback.",
+    causes: {
+      new_request: "New request or change of direction",
+      base_changed: "Conflict from base changes",
+      unspecified: "Cause not decided",
+    },
     times: (n) => `${n} time${n === 1 ? "" : "s"}`,
   },
   queue: {
