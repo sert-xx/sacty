@@ -54,6 +54,8 @@ import {
   lastJsonAnswer,
   withoutCandidates,
 } from "./agent-json.js";
+import { redact } from "./agents/redact.js";
+import { redactDeep } from "./audit-evidence.js";
 import { redactLog, redactUrlCredentials } from "./ci.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
@@ -3522,7 +3524,22 @@ function resultTableLines(task: Task): string[] {
  * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI を待ってから
  * 最終レビューをする）。
  */
-export type PullRequestBodyStage = { verifying?: boolean };
+export type PullRequestBodyStage = {
+  verifying?: boolean;
+  /**
+   * 使った秘密の値。本文を作る前に、タスクの文字列からこれを伏せる。要約・短縮（`leadOf`・`shortText`・`headOf` など）の後で
+   * 完全一致で伏せると、切れ目をまたいだ秘密の値の先頭が残るため。公開の直前の置換（service の `pullRequestBody`）も別に残す。
+   */
+  secrets?: readonly string[];
+};
+
+/** 使った秘密の値を、タスクのすべての文字列から伏せる（要約・短縮の前に。切れた値が残らないように）。 */
+function hideSecrets(task: Task, secrets: readonly string[] | undefined): Task {
+  const targets = secrets ?? [];
+  return targets.some((s) => s.length > 0)
+    ? redactDeep(task, (value) => redact(value, targets))
+    : task;
+}
 
 /** 人が、ゴールガーディアンの不合格のまま、いまの提出をレビューへ進めたか（VerificationOverridden）。 */
 function overriddenNow(task: Task): boolean {
@@ -3901,7 +3918,11 @@ export function joinBodyText(text: BodyText): string {
  * テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。結論（変更の要約・最終レビュー・
  * 人が確かめること）を冒頭に置き、承認済みの要求要件・設計は全文を載せずに要点とリンクにする（PBI-264）。
  */
-export function buildPullRequestBodyText(task: Task, stage: PullRequestBodyStage = {}): BodyText {
+export function buildPullRequestBodyText(
+  rawTask: Task,
+  stage: PullRequestBodyStage = {},
+): BodyText {
+  const task = hideSecrets(rawTask, stage.secrets);
   const intro = `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`;
   const implement = implementReport(task);
   const changeLead = implement ? leadParagraph(implement) : "";
@@ -3952,7 +3973,11 @@ export function buildPullRequestBodyText(task: Task, stage: PullRequestBodyStage
  * 変更（実装のエージェントの説明）・テスト（観点とテストの対応と結果）・関係する Issue（Closes）に分け、最終レビューの全文などは
  * sacty の記録にする。タスクの ID は footer に必ず入れる。
  */
-export function buildPullRequestBodyParts(task: Task, stage: PullRequestBodyStage = {}): BodyParts {
+export function buildPullRequestBodyParts(
+  rawTask: Task,
+  stage: PullRequestBodyStage = {},
+): BodyParts {
+  const task = hideSecrets(rawTask, stage.secrets);
   const implement = implementReport(task);
   const fullReview = finalReviewFullLines(task, stage);
   const humanCount = humanCheckItems(task).length;

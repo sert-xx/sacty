@@ -645,3 +645,76 @@ describe("長さの上限（PBI-264）", () => {
     expect(body.split("- [ ] 実機で確かめる").length - 1).toBe(1);
   });
 });
+
+describe("要約・短縮の前に秘密の値を伏せる（PBI-264）", () => {
+  // 切れ目をまたぐ秘密の値：短縮してから完全一致で伏せると、切れた先頭が残る
+  const SECRET = "sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const LEAK = "sk-live";
+  const cases: [string, (filler: (n: number) => string) => Record<string, unknown>][] = [
+    // 変更の要約（240 文字）
+    ["変更の要約", (f) => ({ outputs: { implement: `${f(230)}${SECRET}` } })],
+    // 最終レビューの所見の頭（240 文字）
+    [
+      "最終レビューの所見の頭",
+      (f) => ({ lastReview: review({ summary: `合格。${f(230)}${SECRET}` }) }),
+    ],
+    // 表のテスト名（70 文字）
+    ["テスト名", (f) => ({ testMap: [{ viewpointId: "TV-1", tests: [`${f(60)}${SECRET}`] }] })],
+    // 表の観点の題（60 文字）
+    [
+      "観点の題",
+      (f) => ({
+        approved: {
+          requirements: { output: REQUIREMENTS, submission: 1 },
+          design: {
+            output: "# 設計",
+            submission: 1,
+            testViewpoints: [
+              { id: "TV-1", title: `${f(50)}${SECRET}`, input: "入力", expected: "期待" },
+            ],
+          },
+        },
+      }),
+    ],
+    // 承認済みの要求要件の要点（240 文字）
+    [
+      "要求要件の要点",
+      (f) => ({
+        approved: {
+          requirements: { output: `# 要求要件\n\n${f(230)}${SECRET}`, submission: 1 },
+          design: { output: "# 設計", submission: 1, testViewpoints: [] },
+        },
+      }),
+    ],
+    // 人が確かめること（1 項目 1000 文字）
+    ["人が確かめること", (f) => ({ lastReview: review({ humanChecks: [`${f(990)}${SECRET}`] }) })],
+    // 不合格のまま進めた記録の所見（1000 文字）
+    [
+      "不合格のまま進めた記録",
+      (f) => ({
+        lastReview: review({ passed: false, summary: `${f(990)}${SECRET}` }),
+        submissions: {},
+        verificationOverride: { at: "2026-10-27T00:00:00Z", submission: 1 },
+      }),
+    ],
+  ];
+
+  for (const [name, build] of cases) {
+    it(`${name}：切れ目をまたぐ秘密の値の先頭が残らない`, () => {
+      const t = task(build((n) => "あ".repeat(n)));
+      // 伏せる前の本文では、切れた先頭が残る（このテストが切れ目をまたいでいること）
+      const raw = buildPullRequestBodyText(t);
+      expect(`${raw.main}${raw.footer}`, "切れ目をまたいでいない").toContain(LEAK);
+      // 秘密の値を渡すと、要約・短縮の前に伏せるので、切れた先頭も残らない
+      const text = buildPullRequestBodyText(t, { secrets: [SECRET] });
+      expect(text.main + text.footer + text.keep.join("\n")).not.toContain(LEAK);
+      const parts = buildPullRequestBodyParts(t, { secrets: [SECRET] });
+      expect(JSON.stringify(parts)).not.toContain(LEAK);
+    });
+  }
+
+  it("秘密の値を渡さなければ、本文は従来どおり", () => {
+    const t = task();
+    expect(buildPullRequestBodyText(t, { secrets: [] })).toEqual(buildPullRequestBodyText(t));
+  });
+});

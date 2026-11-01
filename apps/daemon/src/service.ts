@@ -8324,8 +8324,8 @@ export class TaskService {
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, { verifying }),
-        buildPullRequestBodyParts(task, { verifying }),
+        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets }),
+        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの

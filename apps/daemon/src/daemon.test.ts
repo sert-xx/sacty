@@ -23520,6 +23520,19 @@ describe("PR テンプレート（PBI-87）", () => {
     expect(leaked.pulls.calls[2]?.body).not.toContain("ghp_secret");
     leaked.activity.close();
   });
+
+  it("要約で切れる境界に秘密の値がまたがっても、切れた先頭を本文に出さない（PBI-264）", async () => {
+    for (const templates of [found(), new FakeTemplates(async () => ({ kind: "none" }))]) {
+      const leaked = await toPullRequest(
+        templates,
+        implement(`# 実装の説明\n\n${"あ".repeat(235)}ghp_secret を使った`),
+      );
+      const body = leaked.pulls.calls[2]?.body ?? "";
+      expect(body).toContain("あ".repeat(100));
+      expect(body).not.toContain("ghp_");
+      leaked.activity.close();
+    }
+  });
 });
 
 describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => {
