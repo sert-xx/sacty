@@ -2151,9 +2151,11 @@ const ITEM_REASON_KEYS = ["reason", "message", "description", "evidence"] as con
 
 /** 「無い」「環境による失敗ではない」を表す項目（失敗の申告として読まない）。 */
 const NONE_ITEM =
-  /^(none|n\/a|na|nil|null|no|false|なし|無し|ありません|該当なし|environment\s*[:=]\s*(false|no))$/i;
+  /^(none|n\/a|na|nil|null|no|false|なし|無し|ありません|該当なし|特になし|特にありません|[-ー—―–]+|environment\s*[:=]\s*(false|no))$/i;
 
-const isNoneItem = (item: string) => NONE_ITEM.test(item.replace(/[。.\s]+$/u, ""));
+/** 全角の英数字・記号（`ＮＯＮＥ`・`ｎ／ａ`）は半角にそろえてから、末尾の句点・空白を除いて見る。 */
+const isNoneItem = (item: string) =>
+  NONE_ITEM.test(item.normalize("NFKC").replace(/[。.\s]+$/u, ""));
 
 /** 失敗が「無い」ことを表す文字列（`otherFailures`。止める側の欄なので、`no`・`false` は含めず、狭くする）。 */
 const NO_FAILURE_ITEM = /^(none|n\/a|なし)$/i;
@@ -2171,16 +2173,72 @@ const ENVIRONMENT_FLAG_KEYS = [
 const isFalse = (v: unknown) =>
   v === false || (typeof v === "string" && /^(false|no)$/i.test(v.trim()));
 
-/** URL のクエリ・フラグメントの、秘密らしい名前（token・key・secret・password・auth・signature など）の値。 */
-const SECRET_QUERY_VALUE =
-  /([?&#;][\w.-]*(?:token|key|secret|passw(?:or)?d|pwd|auth|sig(?:nature)?|credential|session|jwt)[\w.-]*=)[^\s&#"'<>`]+/gi;
+/** URL のクエリ・フラグメントの、`名前=値`（区切りは `?`・`&`・`#`・`;`）。名前は符号化されていることがある。 */
+const QUERY_PARAMETER = /([?&#;])([^\s=&#?;"'<>`]*)=([^\s&#"'<>`]+)/g;
+
+/** 秘密らしい名前を作る単語（名前を単語に分けて、1語ずつ見る）。 */
+const SECRET_WORDS = new Set([
+  "token",
+  "key",
+  "secret",
+  "password",
+  "passwd",
+  "passcode",
+  "pwd",
+  "auth",
+  "authorization",
+  "sig",
+  "signature",
+  "credential",
+  "credentials",
+  "session",
+  "jwt",
+  "bearer",
+]);
+
+/** 単語に分かれずに続けて書かれた秘密らしい名前（`apikey`・`accesstoken`・`sessionid` など）。 */
+const SECRET_COMPOUND =
+  /^(?:(?:api|access|secret|private|signing|client|auth|refresh|id|bearer|session|app|master|encryption)(?:key|token|secret)|sessionid|jsessionid|phpsessid|sessid|authtoken|authkey|apikey|passwd|credentials?)$/;
+
+/** パーセント符号化を戻す（二重に符号化された名前、壊れた符号化が混じる名前も、戻せる部分は戻す）。 */
+const decodeName = (name: string) => {
+  let decoded = name.replace(/\+/g, " ");
+  for (let i = 0; i < 3 && /%[0-9a-f]{2}/i.test(decoded); i++) {
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      decoded = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      );
+    }
+  }
+  return decoded;
+};
+
+/** クエリの名前が、秘密らしいか。符号化を戻し、区切り（`_`・`-`・`.`・`[`・空白）と大文字の境目で単語に分けて、1語ずつ見る（`author`・`design` のような普通の語の一部には当てない）。 */
+const isSecretParameterName = (name: string) => {
+  const plain = decodeName(name).normalize("NFKC");
+  // `sign` は、名前の全体がそれのときだけ（署名の値）。`signIn`・`design` の一部には当てない
+  if (plain.trim().toLowerCase() === "sign") return true;
+  return plain
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .some((word) => SECRET_WORDS.has(word) || SECRET_COMPOUND.test(word));
+};
+
+/** URL のクエリ・フラグメントの、秘密らしい名前（token・key・secret・password・auth・signature など）の値を伏せる。 */
+const hideSecretQueryValues = (item: string) =>
+  item.replace(QUERY_PARAMETER, (all, delimiter: string, name: string) =>
+    isSecretParameterName(name) ? `${delimiter}${name}=[REDACTED]` : all,
+  );
 
 /**
  * 人に見せる項目から、秘密情報（`token=` などの代入の形）と URL の認証情報（`user:pass@`）、秘密らしい名前のクエリの値を伏せる。
  * 確かめる対象の URL（`http://localhost:3000/#/settings?tab=2` など）が消えないよう、クエリ・フラグメント全体は伏せない。
  */
-const hideItem = (item: string) =>
-  redactUrlCredentials(redactLog(item, [])).replace(SECRET_QUERY_VALUE, "$1[REDACTED]");
+const hideItem = (item: string) => hideSecretQueryValues(redactUrlCredentials(redactLog(item, [])));
 
 /**
  * ゴールガーディアンが、項目の一覧（環境による失敗・人が確かめること）を、文字列でなくオブジェクトで返したとき
@@ -2202,7 +2260,11 @@ const reportedItems = (v: unknown): string[] => {
         if (ENVIRONMENT_FLAG_KEYS.some((key) => isFalse(o[key]))) return "";
         const first = (keys: readonly string[]) =>
           keys.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
-        return [first(ITEM_NAME_KEYS), first(ITEM_REASON_KEYS)].filter(Boolean).join("：");
+        const name = first(ITEM_NAME_KEYS);
+        // 名前が「なし」などなら、何も申告していない項目（根拠が書いてあっても読まない）。根拠だけが「なし」などなら、根拠は読まない
+        if (name && isNoneItem(name)) return "";
+        const reason = first(ITEM_REASON_KEYS);
+        return [name, reason && !isNoneItem(reason) ? reason : ""].filter(Boolean).join("：");
       }
       return "";
     })
