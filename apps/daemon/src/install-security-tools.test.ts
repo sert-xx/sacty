@@ -22,9 +22,12 @@ const sha256 = (path: string) => createHash("sha256").update(readFileSync(path))
 /**
  * GitHub の代わりに、リリースの添付物を置いた場所から返す curl（無いものは失敗）と、x86_64 を返す uname、
  * 指定の終了コードで終わる install を、PATH の先頭に置いて実行する。スクリプトに固定した x86_64 のハッシュは、
- * 置いた添付物のハッシュ（tamper なら、別の中身のハッシュ）に差し替えた写しを実行する。
+ * 置いた添付物のハッシュ（tamper に挙げた道具は、別の中身のハッシュ）に差し替えた写しを実行する。
  */
-function run(installExit: number, options: { tamper?: boolean; missing?: string[] } = {}) {
+function run(
+  installExit: number,
+  options: { tamper?: ("osv" | "gitleaks")[]; missing?: string[] } = {},
+) {
   dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
   const bin = join(dir, "bin");
   const assets = join(dir, "assets");
@@ -42,14 +45,20 @@ function run(installExit: number, options: { tamper?: boolean; missing?: string[
   writeFileSync(join(assets, "osv-scanner_SHA256SUMS"), "0  osv-scanner_linux_amd64\n");
   const osvSha = sha256(join(assets, "osv-scanner_linux_amd64"));
   const gitleaksSha = sha256(join(assets, tarball));
-  const pinned = (sha: string) =>
-    options.tamper ? sha.replace(/^./, (c) => (c === "0" ? "1" : "0")) : sha;
+  const pinned = (tool: "osv" | "gitleaks", sha: string) =>
+    options.tamper?.includes(tool) ? sha.replace(/^./, (c) => (c === "0" ? "1" : "0")) : sha;
   const copy = join(dir, "install-security-tools.sh");
   writeFileSync(
     copy,
     readFileSync(SCRIPT, "utf8")
-      .replace(/^OSV_SCANNER_SHA256_AMD64=.*$/m, `OSV_SCANNER_SHA256_AMD64=${pinned(osvSha)}`)
-      .replace(/^GITLEAKS_SHA256_X64=.*$/m, `GITLEAKS_SHA256_X64=${pinned(gitleaksSha)}`),
+      .replace(
+        /^OSV_SCANNER_SHA256_AMD64=.*$/m,
+        `OSV_SCANNER_SHA256_AMD64=${pinned("osv", osvSha)}`,
+      )
+      .replace(
+        /^GITLEAKS_SHA256_X64=.*$/m,
+        `GITLEAKS_SHA256_X64=${pinned("gitleaks", gitleaksSha)}`,
+      ),
   );
   for (const name of options.missing ?? []) rmSync(join(assets, name));
   script("curl", [
@@ -81,12 +90,25 @@ describe("セキュリティの検査の道具を入れる", () => {
   });
 
   it("固定したハッシュと合わなければ、入れずに止める", () => {
-    const result = run(0, { tamper: true });
+    const result = run(0, { tamper: ["osv"] });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       "osv-scanner_linux_amd64 のハッシュが、固定したハッシュと合いません",
     );
     expect(result.stdout).not.toContain("を入れました");
+  });
+
+  it("osv-scanner が通っても、gitleaks のハッシュが合わなければ、gitleaks を置かずに止める", () => {
+    const result = run(0, { tamper: ["gitleaks"] });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("osv-scanner 2.7.0 を入れました");
+    expect(result.stderr).toContain(
+      "gitleaks_8.30.1_linux_x64.tar.gz のハッシュが、固定したハッシュと合いません",
+    );
+    expect(result.stdout).not.toContain("gitleaks 8.30.1 を入れました");
+    expect(readFileSync(join(dir ?? "", "installed"), "utf8")).not.toContain(
+      "/usr/local/bin/gitleaks",
+    );
   });
 
   it("取得できなければ、警告して続ける", () => {

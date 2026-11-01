@@ -27,8 +27,8 @@ The image includes the following commands that agents use in their work. Command
 
 - All of them are open-source software, installed from the OS distribution's packages (the mirrors configured in the base image). You get the versions that were current when the image was built.
 - `npx sacty image build` uses Docker's build cache, so a rebuild alone may not fetch the packages again. To pick up OS security updates, do one of the following and then rebuild.
-  - Use a newer base image (fetch it again with `docker pull <base image>`, or change to the tag of an updated version)
-  - Clear the build cache with `docker builder prune`
+  - Use a newer base image. sacty pins the default base image by its digest, so `docker pull` does not change it. Update to a sacty version whose base image digest is updated, or write an updated base image in `image_build.base_image` (a tag such as `node:26-bookworm-slim`, or `<tag>@sha256:<digest>`). If the image in `image_build.base_image` is a tag only, fetch it again with `docker pull <base image>`.
+  - Clear the build cache with `docker builder prune` (the packages sacty installs are fetched again, but the base image does not change)
 
   Commands that the base image already has are not reinstalled, so their updates come from the base image.
 - `osv-scanner` and `gitleaks` are not OS packages: sacty fetches a pinned version from the official GitHub releases and checks it against a hash pinned in sacty before installing it. If the GitHub releases cannot be reached, sacty reports a warning in the build log and builds the image without them (the steps report those categories as unchecked scope). If a hash does not match, the build stops.

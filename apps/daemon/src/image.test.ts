@@ -459,6 +459,16 @@ describe("既定のイメージの固定（セキュリティチェックの指�
     }
   });
 
+  it("CLI を置いた /opt/sacty/bin は、images の run より前に PATH に通す（run から claude・codex を呼べる。レビュー指摘）", () => {
+    const dockerfile = read("Dockerfile");
+    const link = dockerfile.indexOf("/opt/sacty/bin/codex");
+    const path = dockerfile.indexOf("ENV PATH=/opt/sacty/bin:$PATH");
+    const setup = dockerfile.indexOf("/run/secrets/setup;");
+    expect(link).toBeGreaterThan(0);
+    expect(path).toBeGreaterThan(link);
+    expect(setup).toBeGreaterThan(path);
+  });
+
   it("エージェントの CLI は lockfile のとおりに入れ、lockfile には取得元の URL を書かない（プライベートのレジストリ）", () => {
     const dockerfile = read("Dockerfile");
     expect(dockerfile).toContain("npm ci --omit=dev");

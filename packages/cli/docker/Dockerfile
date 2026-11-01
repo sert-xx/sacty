@@ -112,6 +112,9 @@ RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
   && ln -s ../agent-cli/node_modules/.bin/codex /opt/sacty/bin/codex \
   && if [ -n "$NPM_VERSION" ]; then npm install -g "npm@$NPM_VERSION" --no-audit --no-fund; fi \
   && rm -rf /tmp/sacty-npm-cache
+# /opt/sacty/bin を PATH の先頭にする。後の手順（images の run など）からも claude・codex を呼べるように、ここで通す
+# （gh の代わりは、run の後に同じ場所に置く。run の中の gh は、これまでどおり元のイメージのもの）
+ENV PATH=/opt/sacty/bin:$PATH
 
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
 # CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
@@ -158,9 +161,8 @@ RUN --mount=type=secret,id=setup,target=/run/secrets/setup \
 
 # gh の代わり：gh api（REST の GET と GraphQL の query）だけを、sacty のゲートウェイの GitHub の読み取りの中継に送る。
 # トークンはコンテナに入れない（ゲートウェイが、プロジェクトの gh のアカウントで認証する）。元のイメージに本物の gh が
-# あっても、認証が無く使えないので、PATH の先頭に置いてこちらを使わせる
+# あっても、認証が無く使えないので、PATH の先頭（/opt/sacty/bin。CLI の後で PATH に足してある）に置いてこちらを使わせる
 COPY --chmod=755 gh-shim.cjs /opt/sacty/bin/gh
-ENV PATH=/opt/sacty/bin:$PATH
 
 # root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
 RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi

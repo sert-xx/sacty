@@ -199,7 +199,7 @@
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
     既定は、タグに加えて、マルチアーキのインデックスのダイジェスト（`node:26-bookworm-slim@sha256:…`）で固定する（`NODE_IMAGE` の既定も同じ）。
     Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex（`@openai/codex@0.160.0`）は、`packages/cli/docker/agent-cli` の `package.json`・`package-lock.json` を `/opt/sacty/agent-cli` に写し、`npm ci --omit=dev` で推移依存までロックのとおりに入れる。
-    `claude`・`codex` は `/opt/sacty/bin` からのリンクにする。
+    `claude`・`codex` は `/opt/sacty/bin` からのリンクにし、`/opt/sacty/bin` をここで `PATH` の先頭に足す（後の `run` からも呼べる）。
     lockfile には取得元の URL（`resolved`）を書かず、設定したレジストリから取って `integrity` で確かめる（プライベートのレジストリでも同じ lockfile を使う）。
     `NPM_VERSION`（`image_build.npm_version`）があれば、その後に `npm install -g npm@<版>` で入れる。
     最後に `USER node`・`WORKDIR /workspace`。
@@ -213,7 +213,7 @@
     イメージに残す npm の設定（`registry` と `npm_config`）は別の secret で渡す。
   - secret の中身は BuildKit のキャッシュの判定に入らない。
     そのため、中身のハッシュ（`NPM_CONFIG_HASH`・`SACTY_SETUP_HASH`）を build-arg で渡し、変えたときに作り直されるようにする。
-  - `gh` の代わりに `packages/cli/docker/gh-shim.cjs` を `/opt/sacty/bin/gh` に置き、`PATH` の先頭にする（元のイメージの `gh` より先に使われる）。
+  - `gh` の代わりに `packages/cli/docker/gh-shim.cjs` を、`run` の後に `/opt/sacty/bin/gh` に置く（`PATH` の先頭なので、元のイメージの `gh` より先に使われる。`run` の中の `gh` は元のイメージのもの）。
     - `gh api` だけを受け、REST の `GET`・`HEAD` と GraphQL を `$SACTY_GITHUB_URL/<ホスト>/…` に送る（ホストは `--hostname`、無ければ `GH_HOST`）。
     - フィールド（`-f`・`-F`）は、REST ではクエリ、GraphQL では `query` と変数にする。
     - `--paginate`（REST は `link` をたどって配列をまとめる。GraphQL は `$endCursor` と `pageInfo`）・`--jq`（`jq` があるとき）・`-i`・`-H`・`--input` を受ける。

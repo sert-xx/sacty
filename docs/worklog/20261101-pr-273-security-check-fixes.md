@@ -66,3 +66,17 @@ sacty のセキュリティチェックが出した5件の指摘（SF-1〜SF-5�
 - ダイジェストで固定したので、元のイメージの OS の更新は、ダイジェストを更新するまで入らない（版上げの手順で更新する）。
 - 言語ごとのイメージで、`libatomic1` の無い元のイメージ（`debian:bookworm-slim` など）に Node.js 26 を写すと動かない（前からのもの）。
 - `NPM_CONFIG_HASH` などの build-arg を npm が設定とみなす警告（`Unknown env config "hash"`）は、前からのもので、このタスクでは直していない。
+
+## レビューの指摘と対応（1回目。review 5730654323）
+
+| 指摘 | 対応 |
+| --- | --- |
+| CLI を `/opt/sacty/bin` に移したが、`PATH` に足す `ENV` が `run`（setup）の後にあり、元のイメージに CLI が無いと `run` から `claude`・`codex` を呼べない | CLI のリンクを作った直後に `ENV PATH=/opt/sacty/bin:$PATH` を移した（後ろの `ENV` は消した）。`gh` の代わりは `run` の後に置くので、`run` の中の `gh` はこれまでどおり元のイメージのもの。順を確かめるテストを `apps/daemon/src/image.test.ts` に足した |
+| ハッシュの改ざんのテストが両方のハッシュを変えるので、gitleaks の不一致の処理まで届かない | 改ざんする道具を選べるようにし、osv-scanner が通った後に gitleaks の不一致で終了コード 1 になり、gitleaks を置かないテストを足した |
+| ユーザードキュメントの OS の更新の手順（`docker pull`・キャッシュの削除）が、ダイジェストの固定と合わない | 既定の元のイメージは `docker pull` で変わらないこと、ダイジェストを更新した sacty に更新するか `image_build.base_image` に更新先を書くこと、キャッシュの削除は sacty が入れるパッケージだけを取り直すことを、日英で書いた |
+
+確かめたこと：
+
+- `run` に `claude --version`・`codex --version`・`command -v gh` を書いた setup で `docker build`（arm64）：`2.1.296 (Claude Code)`・`codex-cli 0.160.0` が出て、`gh` は無し（元のイメージに無いため）。作ったイメージの node ユーザーで `claude`・`codex`・`gh` が `/opt/sacty/bin` から見つかった。
+- 足したテストは、修正を戻すと失敗する（`ENV` を元の位置に戻すと順のテストが、gitleaks の確かめを消すと不一致のテストが失敗）。
+- `npx biome check .`・`npm run typecheck`・`npx vitest run apps/daemon/src/image.test.ts apps/daemon/src/install-security-tools.test.ts`（20件）・`npx vitest run tests/docs`（93件）。
