@@ -294,6 +294,34 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.counts.changesRequested).toBe(5);
   });
 
+  it("原因を記録する前の作業履歴は、見逃しの記録が直前にある差し戻しを見逃し、無い差し戻しを原因が分からないものに数える（PBI-268）", () => {
+    const stats = new DashboardStats();
+    const t = task();
+    const base = { step: "implement", target: "implement", round: 1 };
+    const add = (type: ActivityEvent["type"], payload: Record<string, unknown>, taskId = "t1") =>
+      stats.add(event(type, NOW, payload, { taskId }), t, t);
+    // 見逃しの記録 → 差し戻し（原因を記録する前の記録の形）
+    add("GuardianMissed", { reviewAt: "", remarkIds: [] });
+    add("ChangesRequested", { ...base });
+    // 見逃しの記録が直前に無い差し戻し
+    add("ChangesRequested", { ...base });
+    // 別のタスクの差し戻しをはさんでも、同じタスクの直前が見逃しの記録なら見逃し。別のタスクの差し戻しは、そのタスクの直前で決める
+    add("GuardianMissed", { reviewAt: "", remarkIds: [] });
+    add("ChangesRequested", { ...base }, "t2");
+    add("ChangesRequested", { ...base });
+    // 見逃しの記録の直後が別の種類の記録なら、その後の差し戻しは見逃しにしない
+    add("GuardianMissed", { reviewAt: "", remarkIds: [] });
+    add("StepApproved", { step: "implement", next: "idle" });
+    add("ChangesRequested", { ...base });
+    const s = summarize(stats);
+    expect(s.quality.reworkByCause).toEqual({
+      guardian_missed: 2,
+      new_request: 0,
+      base_changed: 0,
+      unspecified: 3,
+    });
+  });
+
   it("PR の指摘の差し戻しは、実際に差し戻した記録を1回だけ数え、判断（ReworkJudged）だけでは数えない（PR #128 レビュー指摘）", () => {
     const stats = new DashboardStats();
     const t = task({ status: "awaiting_approval" });

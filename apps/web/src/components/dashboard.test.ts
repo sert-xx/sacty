@@ -502,7 +502,7 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
             fixTask: 1,
           },
           reworkBySteps: { design: 3, document: 1 },
-          reworkByCause: { guardian_missed: 2, new_request: 1, base_changed: 1, unspecified: 0 },
+          reworkByCause: { guardian_missed: 2, new_request: 1, base_changed: 1, unspecified: 2 },
         },
       }),
     );
@@ -519,11 +519,13 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
     // 見逃しではない差し戻しは、原因ごとに分けて出す（見逃しは「ゴールガーディアンの見逃し」の欄）
     expect(byId("rework-cause-new_request")?.textContent).toBe("1回");
     expect(byId("rework-cause-base_changed")?.textContent).toBe("1回");
-    expect(byId("rework-cause-unspecified")?.textContent).toBe("0回");
+    // 原因が分からない差し戻しは、見逃しの数の横に出す
+    expect(byId("quality-reworkUnspecified")?.textContent).toBe("2回");
+    expect(byId("rework-cause-unspecified")).toBeNull();
     expect(byId("rework-cause-guardian_missed")).toBeNull();
     // 数字の意味は補足に
     const hints = [...(card("quality")?.querySelectorAll('[data-slot="hint"]') ?? [])];
-    expect(hints.length).toBeGreaterThanOrEqual(7);
+    expect(hints.length).toBeGreaterThanOrEqual(8);
   });
 
   it("英語", () => {

@@ -648,12 +648,14 @@ export function QualityCard({ data }: { data: DashboardData }) {
   const all = useMessages();
   const m = all.dashboard.quality;
   const { counts, reworkBySteps, reworkByCause } = data.quality;
+  // 見逃しの数の横に、見逃しかどうか分からない差し戻しの数を出す（原因を選ばれなかった差し戻しが、見えなくならないように。PBI-268）
   const signals = [
-    ["changesRequested", m.changesRequested, m.changesRequestedHint],
-    ["pullRequestRework", m.pullRequestRework, m.pullRequestReworkHint],
-    ["guardianMissed", m.guardianMissed, m.guardianMissedHint],
-    ["integrationFailed", m.integrationFailed, m.integrationFailedHint],
-    ["fixTask", m.fixTask, m.fixTaskHint],
+    ["changesRequested", m.changesRequested, m.changesRequestedHint, counts.changesRequested],
+    ["pullRequestRework", m.pullRequestRework, m.pullRequestReworkHint, counts.pullRequestRework],
+    ["guardianMissed", m.guardianMissed, m.guardianMissedHint, counts.guardianMissed],
+    ["reworkUnspecified", m.reworkUnspecified, m.reworkUnspecifiedHint, reworkByCause.unspecified],
+    ["integrationFailed", m.integrationFailed, m.integrationFailedHint, counts.integrationFailed],
+    ["fixTask", m.fixTask, m.fixTaskHint, counts.fixTask],
   ] as const;
   const steps = [
     ...REWORK_STEPS,
@@ -665,13 +667,13 @@ export function QualityCard({ data }: { data: DashboardData }) {
   return (
     <DashboardCard id="quality" title={m.title} hint={m.hint}>
       <dl aria-label={m.counts} className={cn(row, "px-5 pb-4")}>
-        {signals.map(([key, label, hint]) => (
+        {signals.map(([key, label, hint, value]) => (
           <Fragment key={key}>
             <dt className="text-muted-foreground">
               <WithHint hint={hint}>{label}</WithHint>
             </dt>
             <dd data-testid={`quality-${key}`} className="text-right font-semibold tabular-nums">
-              {m.times(counts[key])}
+              {m.times(value)}
             </dd>
           </Fragment>
         ))}
@@ -693,7 +695,7 @@ export function QualityCard({ data }: { data: DashboardData }) {
         <WithHint hint={m.byCauseHint}>{m.byCause}</WithHint>
       </h3>
       <dl className={cn(row, "px-5 pb-5")}>
-        {(["new_request", "base_changed", "unspecified"] as const).map((cause) => (
+        {(["new_request", "base_changed"] as const).map((cause) => (
           <Fragment key={cause}>
             <dt className="text-muted-foreground">{m.causes[cause]}</dt>
             <dd

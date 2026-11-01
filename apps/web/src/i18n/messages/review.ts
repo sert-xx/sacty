@@ -47,8 +47,8 @@ const ja = {
     revokeNote: (step: string) => `${step}の承認を取り消し、もう一度承認します。`,
     causeLegend: "差し戻しの原因",
     causeHint:
-      "ゴールガーディアンの見逃しとして数えるのは、見逃したと選んだ差し戻しだけです。選ばなければ、原因を決めないまま記録します。",
-    causeNone: "選ばない",
+      "ゴールガーディアンの見逃しとして数えるのは、見逃したと選んだ差し戻しだけです。選ばなければ、原因が分からない差し戻しとして数えます。",
+    causeNone: "選ばない（分からない）",
     causeGuardianMissed: "ゴールガーディアンが見逃した（確かめられたはずの不備）",
     causeNewRequest: "新しい要望・方針の変更（承認した内容に無かったこと）",
     causeBaseChanged: "ベースブランチの変化による競合（先の PR のマージなど）",
@@ -143,8 +143,8 @@ const en: ReviewMessages = {
     revokeNote: (step) => `Revokes the ${step} approval; approve it again afterwards.`,
     causeLegend: "Cause of the rework",
     causeHint:
-      "Only a rework marked as missed counts as a Goal Guardian miss. If you choose nothing, the cause is recorded as undecided.",
-    causeNone: "Don't choose",
+      "Only a rework marked as missed counts as a Goal Guardian miss. If you choose nothing, it is counted as rework with an unknown cause.",
+    causeNone: "Don't choose (unknown)",
     causeGuardianMissed: "The Goal Guardian missed it (a flaw it could have caught)",
     causeNewRequest: "A new request or change of direction (not in what was approved)",
     causeBaseChanged: "A conflict from changes to the base branch (e.g. an earlier PR merged)",

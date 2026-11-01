@@ -24,7 +24,10 @@ export type QualityKind =
   /** マージの後の監視で修正のタスクを作った（DeploymentFixRegistered）。 */
   | "fixTask";
 
-/** 差し戻しの原因の集計の区分（PBI-268）。unspecified は、原因を決めていない差し戻し（過去の作業履歴を含む）。 */
+/**
+ * 差し戻しの原因の集計の区分（PBI-268）。unspecified は、原因が分からない差し戻し（人が原因を選ばず、ゴールガーディアンも判断していない。
+ * 原因を記録する前の作業履歴で、見逃しの記録（GuardianMissed）が直前に無いものを含む）。
+ */
 export type ReworkCauseKey = ReworkCause | "unspecified";
 
 export const REWORK_CAUSE_KEYS: readonly ReworkCauseKey[] = [
@@ -66,8 +69,8 @@ export type DashboardSummary = {
     reworkBySteps: Partial<Record<StepKey, number>>;
     /**
      * 原因ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。PBI-268）。guardian_missed は、差し戻した人かゴールガーディアンが
-     * 見逃しと判断したもの。ゴールガーディアンの見逃し（counts.guardianMissed）は、そのうち合格の最終レビューがあったものと、
-     * 原因を記録する前の作業履歴の見逃しを数えるので、同じ数とは限らない。
+     * 見逃しと判断したもの。ゴールガーディアンの見逃し（counts.guardianMissed）は、そのうち合格の最終レビューがあったものを数えるので、
+     * 同じ数とは限らない。unspecified は原因が分からないもの（見逃しかどうか分からない）で、見逃しの数と並べて出す。
      */
     reworkByCause: Record<ReworkCauseKey, number>;
   };
@@ -150,6 +153,8 @@ export class DashboardStats {
   private costs: CostEntry[] = [];
   private readonly finished = new Map<string, FinishEntry>();
   private quality: QualityEntry[] = [];
+  /** 直前のイベントが GuardianMissed だったタスク（原因を記録する前の作業履歴で、見逃しの差し戻しを見分ける。PBI-268）。 */
+  private readonly afterMissed = new Set<string>();
   /** 最後に古い記録を捨てた時刻（畳み込んだイベントの時刻で数える）。 */
   private prunedAt = Number.NEGATIVE_INFINITY;
 
@@ -175,7 +180,10 @@ export class DashboardStats {
           projectId: event.projectId,
           kind: after.prRework?.at === event.at ? "pullRequestRework" : "changesRequested",
           step: event.payload.step,
-          cause: event.payload.cause ?? "unspecified",
+          // 原因を記録する前の作業履歴は、見逃しの記録（GuardianMissed）が差し戻しの直前にあれば、見逃しの差し戻しとして数える
+          cause:
+            event.payload.cause ??
+            (this.afterMissed.has(event.taskId) ? "guardian_missed" : "unspecified"),
         });
         break;
       case "GuardianMissed":
@@ -190,6 +198,8 @@ export class DashboardStats {
         this.quality.push({ at, projectId: event.projectId, kind: "fixTask" });
         break;
     }
+    if (event.type === "GuardianMissed") this.afterMissed.add(event.taskId);
+    else this.afterMissed.delete(event.taskId);
     if (isChargedEvent(event) && event.payload.costUsd > 0) {
       this.costs.push({
         at,
