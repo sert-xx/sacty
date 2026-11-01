@@ -283,6 +283,13 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - bot の投稿
   - 元のタスクのプロジェクトのアカウントが投稿した、sacty のレビューの目印で始まるレビュー・行へのコメント
 - 取り込んだら、ゴールガーディアンが戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに差し戻す。
+  - 戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決める。
+    - 決定を変えない指摘は、その PR の工程（実装の PR なら実装）に戻す。文書への追記、実装の直し、決定済みのことの反映漏れがこれにあたる。
+      承認済みの成果物に書き漏れ（影響範囲の一覧に無い、テスト観点に無いなど）があっても、指摘の求めることが承認済みの決定から導けるなら、決定を変えるものとしない。
+    - 決定そのものを変える指摘だけ、その決定を持つ工程（設計・要求要件）に戻す。複数の指摘のうち1つでも決定を変えるなら、その決定を持つ工程に戻す。複数の工程にまたがるなら前の工程に戻す。
+    - 前の工程に戻すと、承認済みの成果物を作り直してもう一度承認するので、費用も手間も大きいため。
+  - 判断の理由（`ReworkJudged` の `reason`）の先頭には、指摘がどの決定を変えるか、または変えないかを短く書かせる。
+    書式は指示で求めるだけで、sacty は検査しない（理由は読み取れれば、書式に関わらず記録する）。
   判断できなければ、戻せる工程の先頭（実装の PR なら実装、要求要件・設計ならその工程）をやり直す。
 - 差し戻す直前に、PR の状態をもう一度読む（判断の最中や、判断を記録した後の再開で、人がマージ・クローズしていることがあるため）。
   - 開いたままなら、差し戻す。
@@ -291,7 +298,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 読み直しの間に、人が差し戻した・中止したなどで状態が変わっていれば、記録しない。読めなければ、次の確認でやり直す。
   - マージの後に届いた指摘を、続きのタスクにするなどはしない。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
 
 ## 差し戻し
 

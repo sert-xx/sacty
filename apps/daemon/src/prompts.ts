@@ -33,6 +33,7 @@ import {
   ReviewVerdict as ReviewVerdictSchema,
   renderMessage,
   resumeNoteSections,
+  SCOPE_VIEWPOINT,
   SelfReview,
   StepKey,
   StepPlan,
@@ -408,6 +409,8 @@ export function passedContinuedFeedback(
 export function continuedPullRequestLines(
   task: Task,
   feedback: readonly PullRequestFeedback[] | "unreadable" | undefined,
+  /** 工程。要求要件・設計は、本文に作業の報告を書かせないので、対応しない指摘の書き先が違う。 */
+  step?: StepKey,
 ): string[] {
   const pr = task.continuedPullRequest;
   if (!pr) return [];
@@ -416,7 +419,9 @@ export function continuedPullRequestLines(
     "--- 引き継いで直す PR ---",
     `このタスクは、既存の PR（${pr.url || `${pr.repo}/pull/${pr.number}`}。${pr.branch} → ${pr.baseBranch}）を引き継いで直します。対象リポジトリのコードは、その PR のブランチ（${pr.branch}）の先頭のもの（PR の変更を含む）です。実装の変更は、sacty が同じブランチにコミットとして積みます（新しい PR は作らず、PR の題・本文も変えません）。`,
     "- PR の目的と既存の変更を保ち、タスクが求めること（PR の指摘への対応など）だけを変える。PR の変更をやり直す・指摘に無い変更を足すことはしない",
-    "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
+    step === "requirements" || step === "design"
+      ? `- PR の指摘のうち、タスクが対応を求めているものに対応する。対応したことの報告は書かない。対応しない・対応できない指摘があれば、人間が判断することとして、その指摘と理由を「確認したいこと」に書く（引き継いだ PR の指摘には指摘の ID が無いので、${RESPONSES_HEADING} には書かない）`
+      : "- PR の指摘のうち、タスクが対応を求めているものに対応する。対応しない・対応できない指摘があれば、その指摘と理由を説明に書く",
     "- PR の指摘の状況（誰が・どこに・何を指摘したか、作者が対応・返答したか）は、下のデータで確かめる",
   ];
   if (feedback === undefined) return lines;
@@ -549,6 +554,26 @@ function mergeConflictLines(task: Task, files: readonly string[]): string[] {
   ];
 }
 
+/**
+ * 観点 SCOPE（範囲外の変更）が不合格のときの、やり直しの指示。戻し先は、差分の比較基準（workBaseCommit）の状態にする。
+ * ベースブランチを取り込んだ後の基準は取り込んだ先頭なので、起点のコードに戻すと、取り込んだベースブランチ側の変更まで消える。
+ */
+function scopeRevertLines(task: Task): string[] {
+  const base = task.baseMerge
+    ? `ベースブランチを取り込んだ先頭（${task.baseMerge.commit.slice(0, 7)}）のコードの状態`
+    : "起点のコードの状態";
+  const kept = task.baseMerge
+    ? "ベースブランチ側の変更（取り込んだ先頭に含まれるもの）と、そこにあった指定やテストの期待"
+    : "起点のコードにあった指定やテストの期待";
+  return [
+    `[${SCOPE_VIEWPOINT}] は、依頼にも承認済みの要求要件・設計にも無い変更です。上に挙げた変更を、${base}に戻して外してください。`,
+    `- 外すのは、挙げられた変更だけにする。ほかの変更（求められた変更と、そのために要る変更）と、${kept}は、そのまま残す`,
+    "- 良い変更に見えても、求められていなければ外す。必要だと思うなら、別のタスクとして提案できるよう、実装の説明に書く（この変更には入れない）",
+    `- 既存のテストの期待を変えていたなら、${base}の期待に戻す。求められた振る舞いの変更で、そのテストの期待も変わるはずだと考えるなら、要求要件・設計のどの項目によるか（これらを省いたタスクは、依頼や再現のテストのどの部分によるか）を実装の説明に書く`,
+    "- 外した後に、挙げられた変更が差分に残っていないかを、差分で確かめてから提出する。変更の無い再提出はしないでください",
+  ];
+}
+
 /** 直前の検証で通らなかった内容（実装のやり直しに渡す）。 */
 function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
@@ -619,6 +644,11 @@ function feedbackLines(task: Task): string[] {
     ...r.remarks
       .filter((m) => !m.notRecurred)
       .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${ja(m.reason)}`),
+    // 範囲外の変更は、足した変更を外して直す。外しすぎて、元からあった指定まで消さないよう伝える。
+    // 戻し先は、差分の比較基準（ベースブランチを取り込んでいれば、その先頭。workBaseCommit）の状態
+    ...(r.viewpoints.some((v) => v.viewpointId === SCOPE_VIEWPOINT && !v.verified)
+      ? scopeRevertLines(task)
+      : []),
     ...(places && shown.length > 0
       ? [
           `上の出力に、sacty が PR に足す成果物（${shown.map((d) => `${d}/`).join("・")}）のファイルが出ています。検査は、このファイルで落ちています。このファイルは作業領域に無く、書き換えても PR に残りません。${stepDocumentFixText(places)}。変更の無い再提出はしないでください。`,
@@ -723,7 +753,7 @@ function earsLines(): string[] {
     `- 受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ${EARS_SKILL} があれば、それに従う`,
     "  - 1つの要求を1文にし、次のどれかの文型で書く：常時「<システム>は、<応答>しなければならない。」、イベント駆動「<きっかけ>とき、…」、状態駆動「<状態>の間、…」、望まない振る舞い「<望まない事象>場合、…」、オプション「<機能>を含む場合、…」（状態ときっかけの両方が要れば組み合わせる）",
     "  - 書き出すときは、文型ごとに見出し（常時・イベント駆動など）を分け、文型ごとの列の表にする（常時は ID・システム・応答、イベント駆動と望まない振る舞いは ID・トリガー・システム・応答、状態駆動は ID・状態・システム・応答、オプションは ID・機能・システム・応答、複合は ID・状態・トリガー・システム・応答）。1行に1つの要求を書き、応答の列には「しなければならない」を書かない",
-    "  - 要求に ID（R-1、R-2…）を付け、応答は第三者が合否を決められる形（数・時間・状態など）で書く。異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く（既存の仕組みが扱っていて、今回の変更で変わらないものは書かない）",
+    "  - 要求に ID（R-1、R-2…）を付け（最初の提出では欠番なく連番で付け、直しても付け直さない）、応答は第三者が合否を決められる形（数・時間・状態など）で書く。異常系は、今回の変更で新しく起こりうるものだけを、望まない振る舞いの文型で書く（既存の仕組みが扱っていて、今回の変更で変わらないものは書かない）",
   ];
 }
 
@@ -773,11 +803,34 @@ function readerLoadLines(deliverable: string): string[] {
       ],
     ),
     `- ${deliverable}の最初（何を実現するかの短い要約を書くなら、その直後）に、次の2つの節を置き、詳細はそのあとに書く。人間がこの2つの節を読めば、承認するかを決められるようにする`,
-    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、それぞれ重要な順に書く。1件ごとに、問い・推奨の答え・その理由を1〜2行で書く。無ければ「なし」と書く",
-    "    - must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無いが、本当にそうなるものだけにする",
+    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、1件ごとに、問い・推奨の答え・その理由を1〜2行で書く。無ければ「なし」と書く",
+    "    - must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無いが、本当にそうなるものだけにする。依頼の目的に関わる判断（何をどこまで・何を優先して実現するか、依頼者が一番決めたいこと）は、should に置かず、ここに置く",
     `    - should：後で答えが違うと分かったら、追加の作業が要ること。最大 ${SHOULD_QUESTIONS_MAX} 件`,
+    "    - 並べ方：依頼者が一番決めたいこと（依頼の目的に直結すること）から順に書く。規約や慣習から決まりやすいことを先に置かない。推奨の答えは、依頼の意図に沿う向きにする",
     `  - 「既定で決めたこと」：依頼に書かれていないが、あなたが既存のコード・規約・慣習から決めたことのうち、人間が異論を持ちうるもの。最大 ${DECISIONS_MAX} 件、1件1行。既存のやり方にそのまま従っただけのことは書かない。確認したいことの should が ${SHOULD_QUESTIONS_MAX} 件を超えるときは、重要度の低いものを推奨の答えで決めて、ここに回す`,
+    "  - 依頼者に不利益が出うる既定（元に戻せない・失われる・使えなくなる・手間や費用が増える・依頼の意図と逆に働く、など）と、依頼の目的に関わる判断は、「既定で決めたこと」に置かず、「確認したいこと」に出す。should の件数の上限を超えるときも、これらは「既定で決めたこと」に回さず、害の小さいものを回す",
     `- 目安：${deliverable}の全体を、小さな変更なら ${DRAFT_LINES.small} 行、大きな変更でも ${DRAFT_LINES.large} 行ほどまでにする（出力の形が決まった JSON のブロックは数えない）`,
+    ...deliverableBodyLines(deliverable),
+  ];
+}
+
+/**
+ * 要求要件・設計の本文に書いてよいもの。出力の全体（決まった形の JSON を除く）が、そのまま人間の承認の画面・PR の
+ * ファイルになる。作業の経過・指摘への対応の報告・エージェント向けのメモが残ると、人間が判断する文書に混ざる（F16）。
+ * 本文で振る ID（要求の R-n など。sacty が振るテスト観点の TV-n は除く）の理由の分からない欠番と、別の文書への参照だけの項目も、
+ * 読む人が引っかかる。提出の前に、本文を読み直して確かめさせる。
+ */
+function deliverableBodyLines(deliverable: string): string[] {
+  return [
+    "",
+    `--- ${deliverable}の本文に書くもの ---`,
+    `- 本文には、${deliverable}そのものだけを書く。次のものは、本文のどこにも（区切り線「---」の後ろや末尾にも）書かない`,
+    "  - 作業の経過・手順・結果の報告（「〜を取り込みました」「〜を直しました」「コミット・プッシュはしていません」など）、前の版との違いの説明",
+    `  - 人間の指摘・PR の指摘・再開の補足への対応の報告（ID が付いた指摘への対応は、本文ではなく、${RESPONSES_HEADING} の JSON の text に書く。対応できなかったことも同じ。ID が無い指摘（引き継いだ PR の指摘など）は、対応したことを書かず、対応しないものだけを、人間が判断することとして「確認したいこと」に、指摘と理由で書く）`,
+    "  - エージェントや sacty に向けたメモ・指示、タスクやエージェントの ID（指摘の ID を含む）",
+    "- 要求・受け入れ条件など、本文であなたが振る ID（R-1 など）は、最初の提出では 1 から欠番なく振る。差し戻しで項目を消したときは、ID を詰めず（人の指摘・承認済みの文書が ID で指しているため）、「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする。この規則は、sacty が振る ID（テスト観点の TV-n は、JSON の配列の順に sacty が振り直す）には当てはめない（消すテスト観点は配列から外し、削除の行を JSON に残さない）",
+    "- 別の文書（ほかのタスクの要求要件・チケット・PR など）を参照する項目は、参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する。読む人が参照先を開かなくても分かるようにする",
+    "- 提出の前に、本文を最初から最後まで読み直して、上の3点が残っていないことを確かめ、残っていれば直す（セルフレビューの観点 D-6・D-10 でも確かめる）",
   ];
 }
 
@@ -826,7 +879,7 @@ function reworkLines(
     "",
     `--- 差し戻しの直し方（前回の${deliverable}を元に、指摘に関わる所だけを書き換える） ---`,
     `- 上の「前回の下書き」を元にして、最初から書き直さない。人間の指摘（今回：${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
-    "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない",
+    "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない。ただし、上の「本文に書くもの」で書かないとしたもの（作業の報告など）が前回の下書きに残っていれば、関係の無い所でも取り除く",
     ...(earlier > 0
       ? [
           "- 前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている。今回の直しで崩さない。人間の求めで足した記述も削らない",
@@ -1301,6 +1354,8 @@ function selfReviewLines(
       ? [
           `- ${deliverable}の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする（作業領域の外に置き、リポジトリには書かない）`,
           "- 記述を足す指摘（D-3 などの「書かれていない」）は must だけを直し、should は直さない（足りなければ人間が差し戻しで求める）。記述を削る指摘（D-10）は should も直す",
+          "- 本文に作業の経過・指摘への対応の報告・エージェント向けのメモが残っている、別の文書への参照だけの項目がある、依頼の目的に関わる判断や依頼者に不利益が出うる既定が「確認したいこと」に無い（「既定で決めたこと」にある）指摘は、記述を足す指摘であっても must として直す",
+          "- 最初の提出で、本文で振る ID（要求の R-n など。sacty が振るテスト観点の TV-n は除く）に、理由の分からない欠番がある指摘は、should でも直す（番号を詰めるだけで、記述を足さない）。差し戻しの後の版で、消した要求を「R-5（削除：理由）」のように残している行は、欠番として直さない",
         ]
       : []),
     "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
@@ -1369,7 +1424,7 @@ export function provenanceInputs(
   const remarks = task.remarks.filter((r) => r.step === step && !r.voided);
   const investigation = investigationLines(task).slice(1).join("\n");
   return [
-    { name: "task.md", text: taskContent(task, extra) },
+    { name: "task.md", text: taskContent(task, extra, step) },
     ...(remarks.length > 0
       ? [
           {
@@ -1627,6 +1682,7 @@ function resumeNoteJudgeLines(task: Task): string[] {
 function taskContent(
   task: Task,
   extra: { continuedFeedback?: readonly PullRequestFeedback[] | "unreadable" },
+  step?: StepKey,
 ): string {
   // タスクの開始時に集めた情報は、タスクの内容と一緒に、どの工程にも渡す
   return [
@@ -1635,7 +1691,7 @@ function taskContent(
     task.body || "（内容なし）",
     ...securityFindingLines(task),
     ...gatheredLines(task),
-    ...continuedPullRequestLines(task, extra.continuedFeedback),
+    ...continuedPullRequestLines(task, extra.continuedFeedback, step),
   ].join("\n");
 }
 
@@ -1675,8 +1731,8 @@ export function buildPrompt(
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
-  const continued = continuedPullRequestLines(task, extra.continuedFeedback);
-  const content = taskContent(task, extra);
+  const continued = continuedPullRequestLines(task, extra.continuedFeedback, step);
+  const content = taskContent(task, extra, step);
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 
@@ -1930,7 +1986,7 @@ export function buildPrompt(
               )
             : ["（なし）"]),
           "",
-          "テスト観点は、直さないものも含めて全件を出し直してください（ID は sacty が振り直します）。",
+          "テスト観点は、直さないものも含めて全件を出し直してください（ID は sacty が振り直します。消す観点は出さず、削除の行も作らないでください）。",
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
@@ -2794,6 +2850,8 @@ export function buildFinalReviewPrompt(
   const unmapped = noTests ? [] : finalReviewViewpointIds(task).filter((id) => !mapped.has(id));
   // 実装が、テストを書かずに差分で確かめると申告した観点（実行される振る舞いの無い変更）
   const untested = noTests ? [] : task.testMap.filter((m) => m.tests.length === 0 && m.untested);
+  // 範囲外の変更の申告欄（セキュリティ対応は観点 SEC-MIN が見るので、欄を出さない）
+  const scopeExample = outOfScopeApplies(task) ? { outOfScope: [] } : {};
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
     ...guardianCodeLines(task, "implemented"),
@@ -2845,6 +2903,7 @@ export function buildFinalReviewPrompt(
     ...humanCheckLines(Boolean(testCommand)),
     ...pullRequestContentLines(task, options.stepDocumentsIncluded === true),
     ...baseMergeLines(task),
+    ...outOfScopeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest) : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
@@ -2932,8 +2991,9 @@ export function buildFinalReviewPrompt(
               otherFailures: [],
             },
             humanChecks: [],
+            ...scopeExample,
           }
-        : { humanChecks: [] },
+        : { humanChecks: [], ...scopeExample },
     ),
     ...(testCommand
       ? [
@@ -2944,7 +3004,37 @@ export function buildFinalReviewPrompt(
         ]
       : []),
     "humanChecks には、人が最終承認で確かめることを1件ずつ書いてください（無ければ空）。",
+    ...(outOfScopeApplies(task)
+      ? [
+          "outOfScope には、上の「範囲外の変更」で範囲外と判定した変更を1件ずつ書いてください（無ければ空）。1件は「ファイルと変更の内容：どの依頼・要求要件・設計にも無い根拠」の1つの文字列にして、文字列の配列で書きます。",
+        ]
+      : []),
   ].join("\n");
+}
+
+/** 最終レビューで範囲外の変更を判定するタスクか。セキュリティ対応は、観点 SEC-MIN（差分が最小限か）が同じことを見る。 */
+function outOfScopeApplies(task: Task): boolean {
+  return !isSecurityFix(task);
+}
+
+/**
+ * 最終レビューで、範囲外の変更（依頼にも承認済みの要求要件・設計にも無い振る舞いの変更、既存のテストの期待を弱める・逆にする
+ * 変更）を不合格にさせる指示。範囲内か判断できないもの（依頼の解釈が分かれる）は、不合格にせず人の確認に回させる。
+ * 申告は outOfScope で受け、sacty が観点 SCOPE の不合格にする（extractFinalReview）。
+ */
+function outOfScopeLines(task: Task): string[] {
+  if (!outOfScopeApplies(task)) return [];
+  return [
+    "--- 範囲外の変更 ---",
+    "- 差分の変更ごとに、下に載せた、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）と人間の過去の指摘のどれかが求めている変更か、求めている変更を実現するのに要る変更かを確かめる",
+    "- どれにも当たらない振る舞いの変更（画面・API・設定・既定値・文言の変更や、機能・操作の追加）は、範囲外として outOfScope に書き、不合格にする。良い変更に見えても同じ。求められていない変更は、別のタスクで頼まれるものとする",
+    "- 既存のテストの期待を弱める・逆にする変更（期待値の変更、検証の削除、テストのスキップ・削除）は、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）が、そのテストの確かめている振る舞いを変えることを求めているときだけ範囲内とする。求めていなければ、先にベースブランチへマージされたテストも含めて、範囲外として outOfScope に書き、不合格にする",
+    "- 求められた変更を実現するのに要る変更（呼び出し元の追従・型の変更・求めた振る舞いのテストの追加や更新・競合の解消）は、範囲内とする。範囲外とするのは、それらで説明できない変更だけ。リファクタリング・整形などの振る舞いを変えない変更は、ここでは範囲外としない",
+    "- リポジトリの決まりが、この種の変更に伴って求める変更（README・CHANGELOG・版・ドキュメント・生成物の更新、PR テンプレートの項目など）は、要求要件・設計に書かれていなくても範囲内とする。決まりは指示に載せていないので、作業領域の AGENTS.md・CLAUDE.md・CONTRIBUTING・PR テンプレート・既存の変更の慣習を読んで確かめる。決まりが求めると確かめられる変更は、outOfScope に書かない（確かめられないものは、範囲外にせず、humanChecks に回す）",
+    "- 範囲内か判断できないもの（依頼や要求要件の解釈が分かれ、どちらとも読める）は、outOfScope に書かず、humanChecks に「範囲内か判断できない：<ファイルと変更の内容>（どう解釈が分かれるか）」を書く。不合格の理由にしない",
+    "- outOfScope の1件ごとに、変更したファイルと変更の内容、どの要求要件・設計・依頼にも無いと確かめた根拠を書く。ベースブランチ側の変更と、sacty が PR に足す成果物は、判定に含めない。根拠を書けないものは、書かない",
+    "",
+  ];
 }
 
 /**
@@ -3102,13 +3192,29 @@ export function extractFinalReview(
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
   const unmapped = new Set(options.unmappedViewpoints ?? []);
   const violation = options.scopeViolation;
-  const viewpoints = verdicts.viewpoints.map((v) =>
-    unmapped.has(v.viewpointId)
-      ? { ...v, verified: false, reason: message("review.viewpointUnmapped") }
-      : violation && v.viewpointId === MINIMAL_CHANGE_VIEWPOINT
-        ? { ...v, verified: false, reason: message("review.scopeViolated", violation) }
-        : v,
-  );
+  // 範囲外の変更（依頼にも承認済みの要求要件・設計にも無い変更）をゴールガーディアンが申告したら、観点 SCOPE を足して不合格にする。
+  // 申告が無ければ何も足さない（セキュリティ対応は SEC-MIN が見るので、申告があっても読まない）
+  const outOfScope = viewpointIds.includes(MINIMAL_CHANGE_VIEWPOINT)
+    ? []
+    : reportedItems(found?.raw.outOfScope);
+  const viewpoints = [
+    ...verdicts.viewpoints.map((v) =>
+      unmapped.has(v.viewpointId)
+        ? { ...v, verified: false, reason: message("review.viewpointUnmapped") }
+        : violation && v.viewpointId === MINIMAL_CHANGE_VIEWPOINT
+          ? { ...v, verified: false, reason: message("review.scopeViolated", violation) }
+          : v,
+    ),
+    ...(outOfScope.length > 0
+      ? [
+          {
+            viewpointId: SCOPE_VIEWPOINT,
+            verified: false,
+            reason: message("review.outOfScope", { items: outOfScope }),
+          },
+        ]
+      : []),
+  ];
   // 人が最終承認で確かめること（PBI-155）
   const humanChecks = reportedItems(found?.raw.humanChecks);
   const command = options.testCommand;
@@ -3916,6 +4022,24 @@ export function buildStepPullRequestBodyParts(
 }
 
 /**
+ * 戻し先の判断の基準（PBI-266）。指摘が承認済みの前の工程の決定を変えるかで決め、変えないなら、その PR の工程
+ * （own）で直す。理由の先頭に、どの決定を変える・変えないかを短く書かせる。
+ */
+function reworkDecisionLines(own: string): string[] {
+  return [
+    "",
+    "戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決めてください。",
+    `- 決定を変えない指摘は、この PR の${own}で直します。文書への追記、${own}の直し、決定済みのことの反映漏れがこれにあたります。`,
+    "  承認済みの成果物に書き漏れ（影響範囲の一覧に無い・テスト観点に無い、など）があっても、指摘が求めることが承認済みの決定から導けるなら、決定を変えるのではなく、決定の反映漏れです。",
+    "- 決定そのものを変える指摘（決まった振る舞い・画面・API やデータの形を別のものにする、決まっていないことを新しく決める、など）だけ、その決定を持つ工程に戻します。",
+    "- 複数の指摘のうち1つでも決定を変えるなら、その決定を持つ工程に戻します（複数の工程にまたがるなら、前の工程）。",
+    "- 承認済みの成果物を読み、指摘が求める内容がすでに決まっているかを確かめてから選んでください。",
+    "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+    "（例：「決定を変えない：確認して決めた○○は承認済みの要求要件にあり、文書に書くだけ」「決定を変える：設計が決めた△△の画面を、別の見せ方に変える」）。",
+  ];
+}
+
+/**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
  * セッションで実行し、承認済みの要求要件・設計と、指摘と、タスクの開始時に集めた情報と、人が再開のときに足した補足を渡す
  * （タスクの内容や工程の経緯は渡さない）。
@@ -3941,13 +4065,13 @@ export function buildReworkPrompt(
     "成果物（PR）に人間が付けた指摘を、どの工程からやり直せば解消できるかを判断してください。",
     ...guardianCodeLines(task, "implemented"),
     "",
-    "- implement（実装）：承認済みの要求要件・設計のままで、実装を直せば解消できる",
-    "- design（設計）：承認済みの設計（テスト観点を含む）が足りない・誤っているので、設計から直す必要がある",
-    "- requirements（要求要件）：承認済みの要求要件そのものが足りない・誤っている",
+    "- implement（実装）：承認済みの要求要件・設計の決定を変えずに、実装（文書への追記を含む）を直せば解消できる",
+    "- design（設計）：解消するには、承認済みの設計の決定（振る舞い・画面・API やデータの形・テスト観点）を変える必要がある",
+    "- requirements（要求要件）：解消するには、承認済みの要求要件の決定（受け入れ条件・範囲・確認して決めたこと）を変える必要がある",
     "- undecidable（判断できない）：指摘の意図が読み取れず、戻し先を決められない（実装をやり直します）",
     "",
-    "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認します。",
-    "できるだけ後ろの工程（実装）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。",
+    "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
+    ...reworkDecisionLines("実装"),
     ...approved,
     ...resumeNoteJudgeLines(task),
     ...(viewpoints.length > 0
@@ -3966,7 +4090,7 @@ export function buildReworkPrompt(
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`,
     "```",
   ].join("\n");
 }
@@ -4004,8 +4128,8 @@ function buildStepReworkPrompt(
     ...targets.map(describe),
     `- undecidable（判断できない）：指摘の意図が読み取れず、戻し先を決められない（${name}をやり直します）`,
     "",
-    "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認します。",
-    `できるだけこの工程（${name}）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。`,
+    "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認するので、費用も手間も大きくなります。",
+    ...reworkDecisionLines(name),
     ...approved,
     ...resumeNoteJudgeLines(task),
     "",
@@ -4027,7 +4151,7 @@ function buildStepReworkPrompt(
     ...gatheredLines(task, "guardian"),
     "判断を、次の形式で必ず出してください。",
     "```json",
-    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`,
     "```",
   ].join("\n");
 }

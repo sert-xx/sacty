@@ -3198,6 +3198,8 @@ describe("設計の工程（PBI-8）", () => {
     expect(prompt).toContain("# 設計 v1"); // 前回の下書き
     // 前回のテスト観点も、IDつきで全項目を渡す（指摘が TV-n を指しても分かるように。レビュー指摘）
     expect(prompt).toContain("- [TV-1] A\n  - 入力：Aの入力\n  - 期待結果：Aの期待結果");
+    // テスト観点の ID は sacty が配列の順に振り直す。消す観点は出さず、削除の行も作らせない
+    expect(prompt).toContain("消す観点は出さず、削除の行も作らないでください");
     expect(prompt).toContain("[design-1-1] 異常系のテスト観点が無い");
     const task = service.get(id)?.task;
     expect(task?.gate).toEqual({ step: "design", submission: 2 });
@@ -8089,6 +8091,63 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("ゴールガーディアンが範囲外の変更を申告したら、観点がすべて検証済みでも不合格にし、外すよう伝えて実装をやり直す。判断できないものは人の確認に回し、不合格にしない", async () => {
+    const OUT =
+      "RoomsPage.tsx の狭い画面のカード表示と rooms.spec.ts の期待の逆転：どの要求要件・設計にも無い";
+    const withScope = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      withScope({ outOfScope: [OUT] }),
+      implement("# v2"),
+      // 範囲内か判断できないものは humanChecks に回し、不合格にしない
+      withScope({ outOfScope: [], humanChecks: ["範囲内か判断できない：a.ts（解釈が分かれる）"] }),
+    ]);
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(scope?.verified).toBe(false);
+    expect(ja(scope?.reason)).toContain(OUT);
+    // 設計の観点は、すべて検証済みのまま
+    expect(
+      first?.type === "FinalReviewed" && first.payload.viewpoints.filter((v) => v.verified),
+    ).toHaveLength(2);
+    // 実装のやり直しに、範囲外の変更を外すことを伝える
+    const retry = promptOf(executor, 5);
+    expect(retry).toContain("[SCOPE] 観点を検証できていない");
+    expect(retry).toContain(OUT);
+    expect(retry).toContain("起点のコードの状態に戻して外してください");
+    expect(second?.type === "FinalReviewed" && second.payload.passed).toBe(true);
+    expect(
+      second?.type === "FinalReviewed" &&
+        second.payload.viewpoints.some((v) => v.viewpointId === "SCOPE"),
+    ).toBe(false);
+    expect(second?.type === "FinalReviewed" && second.payload.humanChecks).toEqual([
+      "範囲内か判断できない：a.ts（解釈が分かれる）",
+    ]);
+    // 最終レビューの指示に、範囲外の変更の判定が入っている
+    expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
+    activity.close();
+  });
+
   it("ゴールガーディアンがテストの結果を申告しなければ、不合格にする", async () => {
     const silent = out(
       block({
@@ -9588,6 +9647,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "implement",
       ]);
       expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2", "comment:3"]);
+      activity.close();
+    });
+
+    it("確認して決めたことを文書に書いてほしい指摘は、決定を変えないので実装に戻る。判断の基準と、決定を変えない旨の理由を残す（PBI-266。S9）", async () => {
+      const pulls = new FakePulls();
+      const reason =
+        "決定を変えない：『過去の削除は戻せない』は承認済みの要求要件で決まっていて、文書に書くだけ";
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("implement", reason)],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [
+        item("comment:266", {
+          body: "要求要件で確認した『過去の削除は戻せない』を、README と設計メモに書いてください",
+        }),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      // 判断の指示に、決定を変えるかで決める基準と、理由の書き方がある
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("過去の削除は戻せない");
+      expect(prompt).toContain("決定を変えない指摘は、この PR の実装で直します");
+      expect(prompt).toContain(
+        "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+      );
+      // 設計には戻らず、実装への差し戻しになる（承認済みの設計は残る）
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.remarks.at(-1)?.step).toBe("implement");
+      expect(task?.approved.design).toBeDefined();
+      expect(task?.prRework).toMatchObject({ target: "implement", decided: true, reason });
+      activity.close();
+    });
+
+    it("決定を変える指摘（画面の姿を変える）は、これまでどおり、その決定を持つ設計に戻る（PBI-266。S8）", async () => {
+      const pulls = new FakePulls();
+      const reason = "決定を変える：設計が決めた、月を選んでいない間の画面の姿を変える";
+      const { activity, service, id } = await toImplementGate([rework("design", reason), design], {
+        pulls,
+        now: later,
+      });
+      pulls.feedbackList = [
+        item("comment:267", {
+          body: "月を選んでいないとき、いま見ている範囲が『これからの予約』だと画面で分かるようにしてください",
+        }),
+      ];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.remarks.at(-1)?.step).toBe("design");
+      expect(task?.approved.design).toBeUndefined();
+      expect(task?.prRework).toMatchObject({ target: "design", decided: true, reason });
       activity.close();
     });
 
