@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-262
-- PR: なし
+- PR: #262
 - ブランチ: feat/issue-262-sacty-docs-in-verify-copy
 - 関係する ADR: [最終レビューの作業領域の写しに、実装の PR に入る要求要件・設計の成果物を PR のコミットの内容で入れ、リポジトリ全体の検査を PR と同じ中身で行わせる](../adr/20261101-0353-include-pr-documents-in-final-review-copy.md)
 
