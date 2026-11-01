@@ -142,6 +142,23 @@ describe("範囲外の変更の指示と、やり直しの伝え方（PBI-273）
     expect(prompt).toContain("outOfScope には、上の「範囲外の変更」で範囲外と判定した変更");
   });
 
+  it("リポジトリの決まり（AGENTS.md・CONTRIBUTING など）が求める README・CHANGELOG・生成物などの更新は、範囲内として、outOfScope に書かせない。決まりは作業領域で読んで確かめさせ、確かめられないものは人の確認に回す", () => {
+    for (const prompt of [
+      buildFinalReviewPrompt(task(), "diff", { testCommand: "npm test" }),
+      buildFinalReviewPrompt(task(), "diff"),
+    ]) {
+      expect(prompt).toContain(
+        "リポジトリの決まりが、この種の変更に伴って求める変更（README・CHANGELOG・版・ドキュメント・生成物の更新",
+      );
+      expect(prompt).toContain("要求要件・設計に書かれていなくても範囲内とする");
+      expect(prompt).toContain(
+        "作業領域の AGENTS.md・CLAUDE.md・CONTRIBUTING・PR テンプレート・既存の変更の慣習を読んで確かめる",
+      );
+      expect(prompt).toContain("決まりが求めると確かめられる変更は、outOfScope に書かない");
+      expect(prompt).toContain("確かめられないものは、範囲外にせず、humanChecks に回す");
+    }
+  });
+
   it("テストのコマンドが無い最終レビューにも、同じ指示と出力の形がある", () => {
     const prompt = buildFinalReviewPrompt(task(), "diff");
     expect(prompt).toContain("--- 範囲外の変更 ---");

@@ -361,6 +361,7 @@ Treated as in scope:
 
 - Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
 - Formatting or refactoring that does not change behavior
+- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The Goal Guardian reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
 - Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
 
 What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
