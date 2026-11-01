@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-265
-- PR: なし
+- PR: #266
 - ブランチ: feat/issue-265-partial-rework
 - 関係する ADR: [要求要件・設計の差し戻しでは、前回の成果物を元に、指摘に関わる所だけを書き換える](../adr/20261101-1355-partial-rework-of-requirements-and-design.md)
 
