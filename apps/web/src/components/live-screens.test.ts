@@ -858,6 +858,23 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
       a.textContent?.includes("チェックする"),
     );
     expect(external(link)).toEqual({ href: PR, target: "_blank" });
+    // 引き継いだ PR は取り込まないので、GitHub で解消する案内にする
+    server = detail(
+      task({
+        ...implement,
+        continuedPullRequest: {
+          repo: "acme/app",
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+          branch: "feat/x",
+          baseBranch: "main",
+        },
+        pullRequestConflict: { number: 7, commit: "c1", at: "2026-10-10T00:00:00.000Z" },
+      }),
+    );
+    await wait();
+    expect(notice()?.textContent).toContain("引き継いだ PR なので、ベースブランチは取り込みません");
+    expect(notice()?.textContent).not.toContain("指摘を書くと取り込みます");
     // 解消されたら消える
     server = detail(implement);
     await wait();

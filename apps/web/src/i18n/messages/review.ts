@@ -89,6 +89,10 @@ const ja = {
       "競合は自動では取り込みません。ここで指摘を入れて差し戻すか、PR に指摘を書くと取り込みます。",
     prConflictHint:
       "実装をやり直す前に、ベースブランチの最新を取り込みます。GitHub で自分で解消してもかまいません。",
+    prConflictContinued:
+      "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください。",
+    prConflictContinuedHint:
+      "差し戻しても、引き継いだ PR にはベースブランチを取り込みません。競合は GitHub で解消してください。",
     prRequestNote: "差し戻すときは、ここに指摘を入力してください。",
     reworkTitle: "PR の指摘の戻し先を確かめてください",
     reworkSuggestion: (step: string, note: string) =>
@@ -190,6 +194,10 @@ const en: ReviewMessages = {
       "The conflict is not merged in automatically. Send the task back with a comment here, or comment on the PR, to merge it in.",
     prConflictHint:
       "The latest base branch is merged in before the implementation is redone. You can also resolve the conflict yourself on GitHub.",
+    prConflictContinued:
+      "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub.",
+    prConflictContinuedHint:
+      "Even if you send it back, the base branch is not merged into a continued PR. Resolve the conflict on GitHub.",
     prRequestNote: "To request changes, enter your comments here.",
     reworkTitle: "Confirm the step to redo for the PR comments",
     reworkSuggestion: (step, note) => `Goal Guardian's suggestion: redo from ${step} (${note})`,

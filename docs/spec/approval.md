@@ -187,10 +187,11 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
   - 状態の表示（`statusText`）が「実装の PR がベースブランチと競合」になる。ダッシュボードの「あなたの出番」・ヘッダーのお知らせ・タスクの一覧・詳細で同じ。人の出番のままで、「あなたの出番」の行は PR を開く。
   - 「あなたの出番」の行（ダッシュボードと、タスクの一覧の上のカード）には、取り込む操作の案内（「差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます」。`AttentionRow.note`・`NeedsYouCard.note`）を添える。ヘッダーのお知らせは状態だけ。
   - タスクの詳細の承認待ちの案内と、承認の画面の PR の欄に、取り込むための操作（この画面から指摘を入れて差し戻す・GitHub の PR に指摘を書く）の説明を出す。
+  - 引き継いだ PR（`Task.continuedPullRequest`。`mergesBase` が取り込まない）には、取り込む操作ではなく、GitHub で解消する案内（「引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください」）を、同じ場所に出す。競合の表示そのものは変えない。
   - 作業履歴に「PR #N がベースブランチと競合している」「PR #N の競合が解消された」を出す。
 - 判定はマージの可否ではない。競合のまま人がマージしたときは、通常のマージとして承認する。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`・`prConflictNote`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`resumePullRequestLabels`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 

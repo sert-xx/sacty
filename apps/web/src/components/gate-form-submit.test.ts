@@ -200,7 +200,7 @@ describe("差し戻しと一緒に変える工程の設定", () => {
 });
 
 describe("実装の PR がベースブランチと競合しているとき", () => {
-  const renderPr = (conflicting: boolean) =>
+  const renderPr = (conflicting: boolean, conflictingContinued = false) =>
     act(() =>
       root.render(
         h(GateForm, {
@@ -218,6 +218,7 @@ describe("実装の PR がベースブランチと競合しているとき", () 
             closed: false,
             mergedOutdated: false,
             conflicting,
+            conflictingContinued,
           },
         }),
       ),
@@ -233,5 +234,12 @@ describe("実装の PR がベースブランチと競合しているとき", () 
     expect(container.querySelector('button[value="request"]')).not.toBeNull();
     renderPr(false);
     expect(notice()).toBeNull();
+  });
+
+  it("引き継いだ PR には、取り込む操作ではなく、GitHub で解消する案内を出す", () => {
+    renderPr(true, true);
+    expect(notice()?.textContent).toContain("引き継いだ PR なので、ベースブランチは取り込みません");
+    expect(notice()?.textContent).toContain("GitHub で競合を解消してください");
+    expect(notice()?.textContent).not.toContain("PR に指摘を書くと取り込みます");
   });
 });

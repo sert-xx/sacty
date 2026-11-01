@@ -279,6 +279,7 @@ export function ReviewView({ task }: { task: Task }) {
                     closed: watched.state === "closed",
                     mergedOutdated: watched.state === "merged_outdated",
                     conflicting: pullRequestConflict(task) !== undefined,
+                    conflictingContinued: task.continuedPullRequest !== undefined,
                   }
                 : undefined
             }

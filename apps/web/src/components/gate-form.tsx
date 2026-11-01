@@ -58,6 +58,8 @@ export function GateForm({
     mergedOutdated: boolean;
     /** ベースブランチと競合している（実装の PR。画面に出すだけで、取り込みは差し戻し・指摘のとき）。 */
     conflicting?: boolean;
+    /** 競合している PR が、引き継いだ PR（ベースブランチは取り込まない。GitHub で解消してもらう）。 */
+    conflictingContinued?: boolean;
   };
   /** PR の指摘の戻し先の確認（PBI-14b）。ゴールガーディアンの提案と理由。 */
   rework?: { target: StepKey; note: string };
@@ -105,8 +107,12 @@ export function GateForm({
               data-testid="gate-pr-conflict"
               className="flex flex-wrap items-center gap-1 text-warn"
             >
-              {t.prConflict}
-              <Hint text={t.prConflictHint} />
+              {pullRequest.conflictingContinued ? t.prConflictContinued : t.prConflict}
+              <Hint
+                text={
+                  pullRequest.conflictingContinued ? t.prConflictContinuedHint : t.prConflictHint
+                }
+              />
             </p>
           )}
           <p className="text-muted-foreground">{t.prRequestNote}</p>

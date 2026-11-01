@@ -549,7 +549,7 @@ function GateNotice({ task }: { task: Task }) {
         </p>
         {conflicting && (
           <p data-testid="gate-pr-conflict" className="text-sm">
-            {m.gate.prConflictHelp}
+            {task.continuedPullRequest ? m.gate.prConflictContinuedHelp : m.gate.prConflictHelp}
           </p>
         )}
       </div>

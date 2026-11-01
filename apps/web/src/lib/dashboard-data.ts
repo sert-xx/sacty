@@ -5,7 +5,6 @@ import {
   isFinished,
   type PauseReason,
   type Project,
-  pullRequestConflict,
   type Task,
 } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
@@ -18,7 +17,7 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import { PAUSE_REASON_ORDER } from "@/lib/dashboard-rules";
-import { personLink, type StatusTone, statusText, statusTone } from "@/lib/labels";
+import { personLink, prConflictNote, type StatusTone, statusText, statusTone } from "@/lib/labels";
 import { notificationProblems } from "@/lib/notification-problems";
 
 /** ダッシュボードの「終わっていないタスク」の欄の1行（PBI-114）。 */
@@ -149,7 +148,7 @@ export function attentionRows(
       status: { text: statusText(t, labels), tone: statusTone(t) },
       ...personLink(t, labels),
       waitingSince: waitingSince[t.id] ?? t.updatedAt,
-      ...(pullRequestConflict(t) ? { note: labels.state.prConflictNote } : {}),
+      ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
     }))
     .sort((a, b) => a.waitingSince.localeCompare(b.waitingSince) || a.id.localeCompare(b.id));
 }

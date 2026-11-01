@@ -231,6 +231,30 @@ describe("実装の PR がベースブランチと競合しているとき（画
     );
   });
 
+  it("引き継いだ PR は、ベースブランチを取り込まないので、取り込む操作ではなく GitHub で解消する案内を添える", () => {
+    const continued = conflicting({
+      continuedPullRequest: {
+        repo: "acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        branch: "feat/x",
+        baseBranch: "main",
+      },
+    } as Partial<Task>);
+    const note = attentionRows(projects, [continued], {}, ja)[0]?.note;
+    expect(note).toBe(
+      "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください",
+    );
+    expect(note).not.toContain("差し戻");
+    expect(attentionRows(projects, [continued], {}, labels.en)[0]?.note).toBe(
+      "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub",
+    );
+    // 競合の表示（状態）は、通常の PR と同じ
+    expect(attentionRows(projects, [continued], {}, ja)[0]?.status.text).toBe(
+      "実装の PR がベースブランチと競合",
+    );
+  });
+
   it("競合の記録が古い（別の提出・別の PR・閉じた・ゴールガーディアンが判断中）ときは出さない", () => {
     const text = (t: Task) => attentionRows(projects, [t], {}, ja)[0]?.status.text;
     const normal = "実装の PR のマージ待ち";

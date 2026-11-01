@@ -148,6 +148,9 @@ const ja = {
     prConflicting: (n: number) => `実装の PR がベースブランチと競合${n > 1 ? `（${n}回目）` : ""}`,
     /** 競合している PR の行に添える、取り込む操作（「あなたの出番」）。 */
     prConflictNote: "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
+    /** 引き継いだ PR の行に添える案内（ベースブランチは取り込まない）。 */
+    prConflictContinuedNote:
+      "引き継いだ PR なので、ベースブランチは取り込みません。GitHub で競合を解消してください",
     prMergedOutdated: "別の内容でマージ・承認へ",
     notReproduced: "再現できなかった・判断待ち",
     integrationFailed: "統合レビュー不合格・判断待ち",
@@ -677,6 +680,8 @@ const en: LabelMessages = {
     prConflicting: (n) =>
       `Implement PR conflicts with the base branch${n > 1 ? ` (submission ${n})` : ""}`,
     prConflictNote: "Send it back or comment on the PR to merge the base branch in",
+    prConflictContinuedNote:
+      "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub",
     prMergedOutdated: "Merged with different content · approving",
     notReproduced: "Not reproduced · needs you",
     integrationFailed: "Integration review failed · needs you",

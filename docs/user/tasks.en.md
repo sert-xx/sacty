@@ -332,6 +332,7 @@ Even if another task or a person's PR is merged into the base branch (main and t
   - The status in "Needs you" (the dashboard and the task list) and in the header notifications also becomes "Implement PR conflicts with the base branch". The rows in "Needs you" add "Send it back or comment on the PR to merge the base branch in".
   - It only shows it. sacty does not merge the base in or start a run on its own, and waits until you send the task back or write a comment.
   - You can also resolve the conflict yourself on GitHub. When it is resolved, the notice disappears at the next check. It also disappears when you send the task back and the implementation is redone.
+  - A continued PR ([Fixing an existing PR](#fixing-an-existing-pr)) also shows the conflict, but sacty does not merge the base branch in, even if you send the task back. Resolve the conflict on GitHub. The row in "Needs you", the task details, and the approval screen say "This is a continued PR, so the base branch is not merged in. Resolve the conflict on GitHub".
   - It is not shown for Requirements and Design PRs (PRs to the task branch).
 - If there is no conflict, it merges as is. The PR gets a merge commit that has the head of the base branch as a parent.
   The base branch's own changes do not appear in the PR's diff. History is not rewritten (no force push, no rebase).

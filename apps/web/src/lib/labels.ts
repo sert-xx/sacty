@@ -25,6 +25,15 @@ import type { TaskMessages } from "@/i18n/messages/task";
 /** 画面の表示ラベル。文言は画面の言語の辞書（i18n/messages/labels）から取る。 */
 export const usd = formatUsd;
 
+/**
+ * 競合している PR の行に添える案内。通常は差し戻し・指摘でベースブランチを取り込むが、引き継いだ PR には取り込まない
+ * （GitHub で解消してもらう）ので、できる操作を分ける。
+ */
+export function prConflictNote(task: Task, l: LabelMessages): string | undefined {
+  if (!pullRequestConflict(task)) return undefined;
+  return task.continuedPullRequest ? l.state.prConflictContinuedNote : l.state.prConflictNote;
+}
+
 export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
   const proposal = openProposal(task);
