@@ -779,15 +779,18 @@ export function ProjectEditor({
       )}
       {/* 読み込んだ後にほかの保存で変わっていた。編集中の入力は、再読み込みするまで残す（PBI-274） */}
       {state.conflict && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => window.location.reload()}
-          className="w-fit"
-        >
-          <RefreshCwIcon aria-hidden="true" />
-          {t.reloadLatest}
-        </Button>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm leading-6 text-muted-foreground">{t.reloadLatestNote}</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => window.location.reload()}
+            className="w-fit"
+          >
+            <RefreshCwIcon aria-hidden="true" />
+            {t.reloadLatest}
+          </Button>
+        </div>
       )}
       {state.saved && !state.message && !state.contextError && (
         <p role="status" className="text-sm text-accent-foreground">

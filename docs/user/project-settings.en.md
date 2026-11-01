@@ -84,7 +84,7 @@ When several people (or agents) open and save the settings of the same project, 
 
 - If another save changed the project's settings after you opened the settings page, your save is not applied.
   The page shows the reason and a "Reload to see the latest settings" button.
-- Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page (so you can copy it).
+- Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page. Reloading discards it, so copy any change you want to keep first (the page also says this next to the button).
 - A save that changed only another field is also not applied (changes are not merged per field).
 - After you save, you can save again.
 

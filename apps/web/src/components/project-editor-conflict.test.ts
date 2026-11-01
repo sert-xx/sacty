@@ -97,9 +97,13 @@ describe("設定の画面は、読み込んだ版を保存に添える（PBI-274
       name.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(reloadButton()).toBeUndefined();
+    expect(container.textContent).not.toContain(t.reloadLatestNote);
     await submit();
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("変わりました。");
     expect(reloadButton()).toBeDefined();
+    // 再読み込みで入力が消えることと、先に書き写すことを、ボタンの近くで案内する
+    expect(reloadButton()?.parentElement?.textContent).toContain(t.reloadLatestNote);
+    expect(t.reloadLatestNote).toContain("書き写");
     expect(name.value).toBe("決済（編集中）");
     await submit();
     expect(sent).toEqual(["2026-10-30T00:00:01.000Z", "2026-10-30T00:00:01.000Z"]);
@@ -111,5 +115,6 @@ describe("設定の画面は、読み込んだ版を保存に添える（PBI-274
     await submit();
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("重複しています。");
     expect(reloadButton()).toBeUndefined();
+    expect(container.textContent).not.toContain(t.reloadLatestNote);
   });
 });
