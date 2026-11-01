@@ -1575,6 +1575,66 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(step).not.toContain("implement");
     expect(step).toContain("（設計をやり直します）");
   });
+
+  describe("戻し先は、指摘が承認済みの決定を変えるかで決める（PBI-266）", () => {
+    // S9：確認して決めた制約を、文書に書いてほしい（要求要件の決定は変わらない。設計の影響範囲の一覧に無かっただけ）
+    const s9 = "要求要件で確認した『過去の削除は戻せない』を、README と設計メモに書いてください";
+    // S8：画面に、いま見ている範囲を出してほしい（設計が決めた画面の姿を変える）
+    const s8 =
+      "月を選んでいないとき、いま見ている範囲が『これからの予約』だと画面で分かるようにしてください";
+    const task = {
+      id: "t1",
+      approved: {
+        requirements: { output: "# 承認済みの要求要件\n\n過去の削除は戻せないままでよい" },
+        design: { output: "# 承認済みの設計\n\n## 影響範囲\n\n- README の表" },
+      },
+      outputs: { design: "# 設計" },
+      testViewpoints: [],
+    } as unknown as Task;
+    const prompts = [
+      buildReworkPrompt(task, [s9], ["implement", "design", "requirements"]),
+      buildReworkPrompt(task, [s8], ["implement", "design", "requirements"]),
+    ];
+
+    it("実装の PR：決定を変えない指摘（文書の追記・反映漏れ）は実装に戻し、決定を変える指摘だけ前の工程に戻すよう指示する", () => {
+      for (const p of prompts) {
+        expect(p).toContain(
+          "- implement（実装）：承認済みの要求要件・設計の決定を変えずに、実装（文書への追記を含む）を直せば解消できる",
+        );
+        expect(p).toContain(
+          "決定を変えない指摘は、この PR の実装で直します。文書への追記、実装の直し、決定済みのことの反映漏れ",
+        );
+        // 承認済みの成果物の書き漏れ（影響範囲の一覧に無い）を、決定の変更にしない
+        expect(p).toContain("決定の反映漏れです");
+        expect(p).toContain("決定そのものを変える指摘");
+        expect(p).toContain("その決定を持つ工程に戻します");
+        expect(p).toContain("- design（設計）：解消するには、承認済みの設計の決定");
+        expect(p).toContain("- requirements（要求要件）：解消するには、承認済みの要求要件の決定");
+      }
+      // 指摘の例と、承認済みの成果物が渡る
+      expect(prompts[0]).toContain(s9);
+      expect(prompts[0]).toContain("過去の削除は戻せないままでよい");
+      expect(prompts[1]).toContain(s8);
+    });
+
+    it("理由の先頭に、どの決定を変える・変えないかを書かせる（出力の形式の例にも入れる）", () => {
+      const step = buildReworkPrompt(task, [s8], ["design", "requirements"], "design");
+      for (const p of [...prompts, step]) {
+        expect(p).toContain(
+          "理由の先頭に、指摘がどの決定を変えるか、または変えないかを短く書いてください",
+        );
+        expect(p).toContain("決定を変えない／変える：承認済みの○○の△△（判断の理由）");
+      }
+    });
+
+    it("要求要件・設計の PR も、決定を変えない指摘はその工程で直す", () => {
+      const step = buildReworkPrompt(task, [s9], ["design", "requirements"], "design");
+      expect(step).toContain("決定を変えない指摘は、この PR の設計で直します");
+      expect(step).toContain(
+        "- requirements（要求要件）：承認済みの要求要件そのものが足りない・誤っている",
+      );
+    });
+  });
 });
 
 describe("リポジトリを指定しないタスク（PBI-73）", () => {
