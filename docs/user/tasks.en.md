@@ -297,6 +297,7 @@ Even a repository without test code uses a check that mechanically validates its
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
+  - There is a change that neither the request nor the approved requirements and design call for ([Out-of-scope changes](#out-of-scope-changes))
 - For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the Goal Guardian's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
 - The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the Goal Guardian reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 - A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
@@ -347,6 +348,30 @@ In the task details, you can choose one of the following.
 
 - "Resume": redoes the implementation.
 - "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
+
+### Out-of-scope changes
+
+For each change in the diff, the Goal Guardian checks whether the request, the approved requirements and design, or a person's earlier comment calls for it, or whether it is needed to make a requested change.
+If either of the following exists, the final review fails (viewpoint `SCOPE`) and the implementation is redone to remove the out-of-scope changes.
+A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Security checks and fixes](#security-checks-and-fixes)) looks at the same thing.
+
+- A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
+- A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
+
+Treated as in scope:
+
+- Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
+- Formatting or refactoring that does not change behavior
+- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The Goal Guardian reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
+- Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
+
+What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
+
+The reason for the failure and the out-of-scope changes appear in the final review of the implementation deliverable.
+The redo is told to remove only the out-of-scope changes and keep every other change. It puts them back to the current comparison base (after the base branch has been merged in, the merged head, so the base branch's changes stay).
+If the review does not pass three times in a row, the task pauses, like any other failure.
+If you judge that the changes are in scope, use "Move to review" ([When verification keeps failing](#when-verification-keeps-failing)).
+For a task that takes over an existing PR, however, "Move to review" is not available. This judgment applies to that task too, so if a change is wrongly treated as out of scope, use "Resume" and write in the supplement why you judge it in scope.
 
 ### For a person to check
 

@@ -33,6 +33,7 @@ import {
   ReviewVerdict as ReviewVerdictSchema,
   renderMessage,
   resumeNoteSections,
+  SCOPE_VIEWPOINT,
   SelfReview,
   StepKey,
   StepPlan,
@@ -553,6 +554,26 @@ function mergeConflictLines(task: Task, files: readonly string[]): string[] {
   ];
 }
 
+/**
+ * 観点 SCOPE（範囲外の変更）が不合格のときの、やり直しの指示。戻し先は、差分の比較基準（workBaseCommit）の状態にする。
+ * ベースブランチを取り込んだ後の基準は取り込んだ先頭なので、起点のコードに戻すと、取り込んだベースブランチ側の変更まで消える。
+ */
+function scopeRevertLines(task: Task): string[] {
+  const base = task.baseMerge
+    ? `ベースブランチを取り込んだ先頭（${task.baseMerge.commit.slice(0, 7)}）のコードの状態`
+    : "起点のコードの状態";
+  const kept = task.baseMerge
+    ? "ベースブランチ側の変更（取り込んだ先頭に含まれるもの）と、そこにあった指定やテストの期待"
+    : "起点のコードにあった指定やテストの期待";
+  return [
+    `[${SCOPE_VIEWPOINT}] は、依頼にも承認済みの要求要件・設計にも無い変更です。上に挙げた変更を、${base}に戻して外してください。`,
+    `- 外すのは、挙げられた変更だけにする。ほかの変更（求められた変更と、そのために要る変更）と、${kept}は、そのまま残す`,
+    "- 良い変更に見えても、求められていなければ外す。必要だと思うなら、別のタスクとして提案できるよう、実装の説明に書く（この変更には入れない）",
+    `- 既存のテストの期待を変えていたなら、${base}の期待に戻す。求められた振る舞いの変更で、そのテストの期待も変わるはずだと考えるなら、要求要件・設計のどの項目によるか（これらを省いたタスクは、依頼や再現のテストのどの部分によるか）を実装の説明に書く`,
+    "- 外した後に、挙げられた変更が差分に残っていないかを、差分で確かめてから提出する。変更の無い再提出はしないでください",
+  ];
+}
+
 /** 直前の検証で通らなかった内容（実装のやり直しに渡す）。 */
 function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
@@ -623,6 +644,11 @@ function feedbackLines(task: Task): string[] {
     ...r.remarks
       .filter((m) => !m.notRecurred)
       .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${ja(m.reason)}`),
+    // 範囲外の変更は、足した変更を外して直す。外しすぎて、元からあった指定まで消さないよう伝える。
+    // 戻し先は、差分の比較基準（ベースブランチを取り込んでいれば、その先頭。workBaseCommit）の状態
+    ...(r.viewpoints.some((v) => v.viewpointId === SCOPE_VIEWPOINT && !v.verified)
+      ? scopeRevertLines(task)
+      : []),
     ...(places && shown.length > 0
       ? [
           `上の出力に、sacty が PR に足す成果物（${shown.map((d) => `${d}/`).join("・")}）のファイルが出ています。検査は、このファイルで落ちています。このファイルは作業領域に無く、書き換えても PR に残りません。${stepDocumentFixText(places)}。変更の無い再提出はしないでください。`,
@@ -2742,6 +2768,8 @@ export function buildFinalReviewPrompt(
   const unmapped = noTests ? [] : finalReviewViewpointIds(task).filter((id) => !mapped.has(id));
   // 実装が、テストを書かずに差分で確かめると申告した観点（実行される振る舞いの無い変更）
   const untested = noTests ? [] : task.testMap.filter((m) => m.tests.length === 0 && m.untested);
+  // 範囲外の変更の申告欄（セキュリティ対応は観点 SEC-MIN が見るので、欄を出さない）
+  const scopeExample = outOfScopeApplies(task) ? { outOfScope: [] } : {};
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
     ...guardianCodeLines(task, "implemented"),
@@ -2793,6 +2821,7 @@ export function buildFinalReviewPrompt(
     ...humanCheckLines(Boolean(testCommand)),
     ...pullRequestContentLines(task, options.stepDocumentsIncluded === true),
     ...baseMergeLines(task),
+    ...outOfScopeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest) : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
@@ -2880,8 +2909,9 @@ export function buildFinalReviewPrompt(
               otherFailures: [],
             },
             humanChecks: [],
+            ...scopeExample,
           }
-        : { humanChecks: [] },
+        : { humanChecks: [], ...scopeExample },
     ),
     ...(testCommand
       ? [
@@ -2892,7 +2922,37 @@ export function buildFinalReviewPrompt(
         ]
       : []),
     "humanChecks には、人が最終承認で確かめることを1件ずつ書いてください（無ければ空）。",
+    ...(outOfScopeApplies(task)
+      ? [
+          "outOfScope には、上の「範囲外の変更」で範囲外と判定した変更を1件ずつ書いてください（無ければ空）。1件は「ファイルと変更の内容：どの依頼・要求要件・設計にも無い根拠」の1つの文字列にして、文字列の配列で書きます。",
+        ]
+      : []),
   ].join("\n");
+}
+
+/** 最終レビューで範囲外の変更を判定するタスクか。セキュリティ対応は、観点 SEC-MIN（差分が最小限か）が同じことを見る。 */
+function outOfScopeApplies(task: Task): boolean {
+  return !isSecurityFix(task);
+}
+
+/**
+ * 最終レビューで、範囲外の変更（依頼にも承認済みの要求要件・設計にも無い振る舞いの変更、既存のテストの期待を弱める・逆にする
+ * 変更）を不合格にさせる指示。範囲内か判断できないもの（依頼の解釈が分かれる）は、不合格にせず人の確認に回させる。
+ * 申告は outOfScope で受け、sacty が観点 SCOPE の不合格にする（extractFinalReview）。
+ */
+function outOfScopeLines(task: Task): string[] {
+  if (!outOfScopeApplies(task)) return [];
+  return [
+    "--- 範囲外の変更 ---",
+    "- 差分の変更ごとに、下に載せた、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）と人間の過去の指摘のどれかが求めている変更か、求めている変更を実現するのに要る変更かを確かめる",
+    "- どれにも当たらない振る舞いの変更（画面・API・設定・既定値・文言の変更や、機能・操作の追加）は、範囲外として outOfScope に書き、不合格にする。良い変更に見えても同じ。求められていない変更は、別のタスクで頼まれるものとする",
+    "- 既存のテストの期待を弱める・逆にする変更（期待値の変更、検証の削除、テストのスキップ・削除）は、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）が、そのテストの確かめている振る舞いを変えることを求めているときだけ範囲内とする。求めていなければ、先にベースブランチへマージされたテストも含めて、範囲外として outOfScope に書き、不合格にする",
+    "- 求められた変更を実現するのに要る変更（呼び出し元の追従・型の変更・求めた振る舞いのテストの追加や更新・競合の解消）は、範囲内とする。範囲外とするのは、それらで説明できない変更だけ。リファクタリング・整形などの振る舞いを変えない変更は、ここでは範囲外としない",
+    "- リポジトリの決まりが、この種の変更に伴って求める変更（README・CHANGELOG・版・ドキュメント・生成物の更新、PR テンプレートの項目など）は、要求要件・設計に書かれていなくても範囲内とする。決まりは指示に載せていないので、作業領域の AGENTS.md・CLAUDE.md・CONTRIBUTING・PR テンプレート・既存の変更の慣習を読んで確かめる。決まりが求めると確かめられる変更は、outOfScope に書かない（確かめられないものは、範囲外にせず、humanChecks に回す）",
+    "- 範囲内か判断できないもの（依頼や要求要件の解釈が分かれ、どちらとも読める）は、outOfScope に書かず、humanChecks に「範囲内か判断できない：<ファイルと変更の内容>（どう解釈が分かれるか）」を書く。不合格の理由にしない",
+    "- outOfScope の1件ごとに、変更したファイルと変更の内容、どの要求要件・設計・依頼にも無いと確かめた根拠を書く。ベースブランチ側の変更と、sacty が PR に足す成果物は、判定に含めない。根拠を書けないものは、書かない",
+    "",
+  ];
 }
 
 /**
@@ -3050,13 +3110,29 @@ export function extractFinalReview(
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
   const unmapped = new Set(options.unmappedViewpoints ?? []);
   const violation = options.scopeViolation;
-  const viewpoints = verdicts.viewpoints.map((v) =>
-    unmapped.has(v.viewpointId)
-      ? { ...v, verified: false, reason: message("review.viewpointUnmapped") }
-      : violation && v.viewpointId === MINIMAL_CHANGE_VIEWPOINT
-        ? { ...v, verified: false, reason: message("review.scopeViolated", violation) }
-        : v,
-  );
+  // 範囲外の変更（依頼にも承認済みの要求要件・設計にも無い変更）をゴールガーディアンが申告したら、観点 SCOPE を足して不合格にする。
+  // 申告が無ければ何も足さない（セキュリティ対応は SEC-MIN が見るので、申告があっても読まない）
+  const outOfScope = viewpointIds.includes(MINIMAL_CHANGE_VIEWPOINT)
+    ? []
+    : reportedItems(found?.raw.outOfScope);
+  const viewpoints = [
+    ...verdicts.viewpoints.map((v) =>
+      unmapped.has(v.viewpointId)
+        ? { ...v, verified: false, reason: message("review.viewpointUnmapped") }
+        : violation && v.viewpointId === MINIMAL_CHANGE_VIEWPOINT
+          ? { ...v, verified: false, reason: message("review.scopeViolated", violation) }
+          : v,
+    ),
+    ...(outOfScope.length > 0
+      ? [
+          {
+            viewpointId: SCOPE_VIEWPOINT,
+            verified: false,
+            reason: message("review.outOfScope", { items: outOfScope }),
+          },
+        ]
+      : []),
+  ];
   // 人が最終承認で確かめること（PBI-155）
   const humanChecks = reportedItems(found?.raw.humanChecks);
   const command = options.testCommand;
