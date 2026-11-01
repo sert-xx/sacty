@@ -1912,6 +1912,56 @@ describe("実装の工程の中で PR を作り、承認を待つ（PBI-110）",
     expect(task?.verification).toBe("pending");
     expect(task?.publishPending).toBeUndefined();
   });
+
+  it("回答が欠けた提出でも、指摘は提出済み（submittedIn）になり、未回答のまま残る", () => {
+    seq = 0;
+    const base = [
+      created("t"),
+      chosen("t"),
+      prepared("t"),
+      ...verifiedImplementation("t"),
+      published("t"),
+      submitted("t"),
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 1,
+            remarks: [{ id: "implement-1-1", text: "直して" }],
+          },
+        },
+        "person",
+      ),
+    ];
+    // 差し戻した直後は、まだ提出に渡していない
+    expect(project(base).get("t")?.remarks[0]?.submittedIn).toBeUndefined();
+    const task = project([
+      ...base,
+      ev("t", {
+        type: "AgentRunStarted",
+        payload: { runId: "impl-2", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "impl-2",
+          step: "implement",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 実装2",
+          responses: [],
+        },
+      }),
+    ]).get("t");
+    expect(task?.remarks[0]).toMatchObject({ submittedIn: 2 });
+    expect(task?.remarks[0]?.respondedIn).toBeUndefined();
+  });
 });
 
 describe("単発作業の二重開始をイベント再生でも拒否する", () => {

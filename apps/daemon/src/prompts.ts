@@ -856,13 +856,13 @@ function reworkMode(
 }
 
 /**
- * 今回の差し戻しの指摘（その工程の最新の差し戻しの回のうち、まだ対応していないもの）。対応済みの指摘しか無いのは、
+ * 今回の差し戻しの指摘（その工程の最新の差し戻しの回のうち、まだその工程の提出に渡していないもの。`submittedIn`）。提出済みの指摘（回答の有無を問わない）しか無いのは、
  * 上流の変更（要求要件の再承認など）で、前回の下書きを最新の上流に合わせ直す再実行のときで、差し戻しの直しではない。
  */
 function currentRemarks(task: Task, step: StepKey) {
   const remarks = humanRemarks(task).filter((r) => r.step === step);
   const latest = Math.max(0, ...remarks.map((r) => r.round ?? 0));
-  return remarks.filter((r) => (r.round ?? 0) === latest && r.respondedIn === undefined);
+  return remarks.filter((r) => (r.round ?? 0) === latest && r.submittedIn === undefined);
 }
 
 /**

@@ -3127,6 +3127,12 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
           ...remark("design-1-1", "design", 1, "リトライの間隔を 5 秒にする"),
           response: "5 秒にした",
           respondedIn: 1,
+          submittedIn: 1,
+        },
+        // 回答が欠けた指摘も、提出済みなら今回の差し戻しではない
+        {
+          ...remark("design-1-2", "design", 1, "ログを足す"),
+          submittedIn: 1,
         },
       ],
       selfReviews: { design: PASSED },
