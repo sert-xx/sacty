@@ -1026,7 +1026,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 目印が残って止まったタスクは、人が「レビューへ進める」ことはできない（`canOverrideVerification`）。
 - 取得・マージに失敗したときは、実装の実行の前なら実行せずに（`AgentRunFailed`）、最終レビューの前なら最終レビューをせずに、理由を示して一時停止する（`merge.failed`）。
   再開すると、取り込みからやり直す。
-  ホストの git が 2.38 より古く `git merge-tree --write-tree` が使えないときは、`git.mergeTreeUnsupported` を示す。
+  ホストの git が 2.40 より古く `git merge-tree --write-tree --merge-base` が使えないときは、`git.mergeTreeUnsupported` を示す。
 - 取り込んだ後の実装：
   - 実装の差分・ファイルごとの変更・変更なしの判定の起点は、取り込んだ先頭（`workBaseCommit`）。ベースブランチ側の変更は、実装の差分に含まれない。
   - 作業領域を用意し直すときは、取り込んだ先頭で用意する（起点のコミットに戻さない）。

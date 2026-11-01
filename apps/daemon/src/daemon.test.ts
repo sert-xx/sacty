@@ -607,7 +607,10 @@ class FakeRepos implements RepositoryWorkspace {
   }
   /** 競合の目印が残っているパス（解消すると、テストで外す）。 */
   markers: string[] = [];
+  /** あれば、競合の目印の検査が、これで失敗する（ファイルを読めないなど）。 */
+  markersFail?: string;
   async conflictMarkers(_dir: string, paths: string[]) {
+    if (this.markersFail) throw new Error(this.markersFail);
     return paths.filter((p) => this.markers.includes(p));
   }
   published: {
@@ -4149,6 +4152,27 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       repos.markers = [];
       await drain(service);
       expect(types(service, id)).toContain("FinalReviewed");
+      activity.close();
+    });
+
+    it("目印の検査でファイルを読めなければ、目印なしとして最終レビューに進まず、理由を示して止める。直れば続ける", async () => {
+      const files = ["README.md", ".prettierignore"];
+      const repos = withBaseMoved();
+      repos.mergeResult = { status: "conflicted", conflicts: files };
+      repos.markers = [...files];
+      const { activity, service, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id);
+      repos.markersFail = "EACCES: permission denied, open 'README.md'";
+      await service.runNext(id);
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      const shown = JSON.stringify(service.get(id)?.activity.slice(-3));
+      expect(shown).toContain("merge.failed");
+      expect(shown).toContain("EACCES");
       activity.close();
     });
 
