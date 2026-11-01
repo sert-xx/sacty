@@ -432,6 +432,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         await checkout();
       } catch {
         try {
+          // git にオプションとして読まれる値（`--upload-pack=…` など）を渡さないよう、渡す直前の位置でも確かめる
+          if (!COMMIT_RE.test(recorded)) throw new MessageError(message("git.invalidBaseCommit"));
           await git("fetch", ["fetch", "--quiet", "origin", recorded], env, dir);
           await checkout();
         } catch {
@@ -693,6 +695,11 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return this.stage(input.dir, input.gitDir, input.base, async (run) => {
       // 作業領域の内容（新しく作ったファイルも含む）を、ツリーにする
       const mine = (await run("write-tree", ["write-tree"])).trim();
+      if (!COMMIT_RE.test(mine)) {
+        throw new MessageError(
+          message("git.failed", { command: "write-tree", detail: "unexpected output" }),
+        );
+      }
       // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
       // 目印を入れたファイルを含む結果のツリーができる
       const merged = await gitResult(
