@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-264
-- PR: なし
+- PR: #268
 - ブランチ: feat/issue-264-pr-body-summary
 - 関係する ADR: [実装の PR の本文を、結論を冒頭に置き、要求要件・設計は要点とリンクにし、表のセルを短くする](../adr/20261101-1400-pr-body-conclusion-first.md)
 
