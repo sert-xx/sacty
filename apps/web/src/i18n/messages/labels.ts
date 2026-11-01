@@ -291,6 +291,12 @@ const ja = {
     ChangeApplied: (id: string) => `${id}の変更を反映`,
     RepositoryPrepared: (url: string, branch: string, commit: string) =>
       `対象リポジトリを用意（${url}・${branch}・${commit}）`,
+    BaseBranchMerged: (commit: string, conflicts: number, files: string) =>
+      conflicts > 0
+        ? `ベースブランチの最新（${commit}）を作業領域に取り込み：${conflicts}件のファイルが競合（${files}）`
+        : `ベースブランチの最新（${commit}）を作業領域に取り込み（競合なし）`,
+    BaseConflictsRemained: (files: string) =>
+      `競合の目印が作業領域に残っているため、最終レビューの前に実装をやり直す（${files}）`,
     TestsRun: (passed: boolean, exitCode: number, unmapped: string[]) =>
       `テストを実行：${passed ? "合格" : "不合格"}（終了コード ${exitCode}${unmapped.length > 0 ? `・テストの無い観点 ${unmapped.join(", ")}` : ""}）`,
     TestsSkipped: "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
@@ -764,6 +770,12 @@ const en: LabelMessages = {
     ChangeApplied: (id) => `${id} applied`,
     RepositoryPrepared: (url, branch, commit) =>
       `Target repository prepared (${url} · ${branch} · ${commit})`,
+    BaseBranchMerged: (commit, conflicts, files) =>
+      conflicts > 0
+        ? `Merged the latest base branch (${commit}) into the workspace: ${conflicts} file(s) conflict (${files})`
+        : `Merged the latest base branch (${commit}) into the workspace (no conflicts)`,
+    BaseConflictsRemained: (files) =>
+      `Conflict markers remain in the workspace, so the implementation is redone before the final review (${files})`,
     TestsRun: (passed, exitCode, unmapped) =>
       `Tests run: ${passed ? "passed" : "failed"} (exit code ${exitCode}${unmapped.length > 0 ? ` · viewpoints without tests: ${unmapped.join(", ")}` : ""})`,
     TestsSkipped: "No test command, so the tests were skipped; on to the final review",

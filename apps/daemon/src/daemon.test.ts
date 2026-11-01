@@ -30,6 +30,7 @@ import {
   awaitingTicketTriage,
   budgetState,
   canDecideTests,
+  canOverrideVerification,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   DERIVE_RECORD_HEADING,
@@ -38,6 +39,7 @@ import {
   isCompleted,
   isFinished,
   isRepoless,
+  MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_VERIFY_ATTEMPTS,
@@ -410,7 +412,10 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.deleteFail) throw new Error(this.deleteFail);
     this.deleted.push(branch);
   }
-  async diff() {
+  /** 差分の起点にしたコミット（ベースブランチを取り込んだら、その先頭）。 */
+  diffBases: string[] = [];
+  async diff(_dir?: string, _gitDir?: string, baseCommit?: string) {
+    if (baseCommit) this.diffBases.push(baseCommit);
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
   }
@@ -555,6 +560,39 @@ class FakeRepos implements RepositoryWorkspace {
     this.diffFull.push(options?.full === true);
     return this.prDiff;
   }
+  /** ベースブランチの取り込み（mergeBase）の結果と、呼び出しの記録。 */
+  mergeResult: { status: "unchanged" | "merged" | "conflicted"; conflicts: string[] } = {
+    status: "merged",
+    conflicts: [],
+  };
+  mergeFail?: string;
+  merges: { dir: string; gitDir: string; base: string; target: string }[] = [];
+  async mergeBase(input: {
+    dir: string;
+    gitDir: string;
+    base: string;
+    target: string;
+    maxConflicts?: number;
+  }) {
+    this.merges.push(input);
+    if (this.mergeFail) throw new Error(this.mergeFail);
+    // 実際の取り込みと同じく、競合が上限より多ければ、結果を返さずに失敗する
+    if (
+      input.maxConflicts !== undefined &&
+      this.mergeResult.conflicts.length > input.maxConflicts
+    ) {
+      throw new Error(`競合が多すぎます（${this.mergeResult.conflicts.length} 件）`);
+    }
+    return this.mergeResult;
+  }
+  /** 競合の目印が残っているパス（解消すると、テストで外す）。 */
+  markers: string[] = [];
+  /** あれば、競合の目印の検査が、これで失敗する（ファイルを読めないなど）。 */
+  markersFail?: string;
+  async conflictMarkers(_dir: string, paths: string[]) {
+    if (this.markersFail) throw new Error(this.markersFail);
+    return paths.filter((p) => this.markers.includes(p));
+  }
   published: {
     parent: string;
     branch: string;
@@ -562,6 +600,8 @@ class FakeRepos implements RepositoryWorkspace {
     date: string;
     keep?: { commit: string; paths: string[] };
   }[] = [];
+  /** published と同じ順の、起点（作業領域のベース）と、第2の親にするコミット（ベースブランチの取り込み）。 */
+  publishInputs: { baseCommit?: string; merge?: string }[] = [];
   publishFail?: string;
   /** true なら、作業領域が起点から何も変わっていない（PBI-90）。 */
   unchanged = false;
@@ -579,6 +619,7 @@ class FakeRepos implements RepositoryWorkspace {
     message: string;
     date: string;
     baseCommit?: string;
+    merge?: string;
     keep?: { commit: string; paths: string[] };
   }) {
     this.publishStarted.resolve();
@@ -592,6 +633,10 @@ class FakeRepos implements RepositoryWorkspace {
       message: input.message,
       date: input.date,
       ...(input.keep ? { keep: input.keep } : {}),
+    });
+    this.publishInputs.push({
+      ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
+      ...(input.merge ? { merge: input.merge } : {}),
     });
     const commit = `c${this.published.length}`.padEnd(40, "0");
     this.remote[input.branch] = commit;
@@ -1105,6 +1150,8 @@ function makeService(
     /** 要求要件・設計を PR のマージで承認する（PBI-57）。既定は、画面で承認する流れを確かめるので切る。 */
     stepPullRequests?: boolean;
     draftPullRequests?: boolean;
+    /** ベースブランチの最新を作業領域に取り込む。既定は、取り込みを確かめるテスト以外では切る。 */
+    mergeBase?: boolean;
     /** セッションログの置き場所（PBI-62）。 */
     sessionLogs?: SessionLogStore;
     /** オーケストレーターのセッションの置き場所（PBI-67）。 */
@@ -1178,6 +1225,7 @@ function makeService(
     stepPullRequests: options.stepPullRequests ?? false,
     // 最終レビューの前のドラフトの PR と CI の待ちは、既定では切る（そのテストでは入れる）
     draftPullRequests: options.draftPullRequests ?? false,
+    mergeBase: options.mergeBase ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
     ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
     ...(options.templates ? { templates: options.templates } : {}),
@@ -3928,6 +3976,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       memory?: boolean;
       /** 最終レビューの前に PR をドラフトで作り、CI を待つ。 */
       draftPullRequests?: boolean;
+      /** ベースブランチの最新を作業領域に取り込む。 */
+      mergeBase?: boolean;
       ci?: CiStatusReader;
     } = {},
   ) {
@@ -3964,6 +4014,358 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  describe("ベースブランチの取り込み（競合の解消）", () => {
+    const tip = "e".repeat(40);
+    const withBaseMoved = () => {
+      const repos = new FakeRepos();
+      // 作業領域を用意した後に、ベースブランチ（main）が進んだ
+      repos.remote.main = tip;
+      return repos;
+    };
+    const conflictedFiles = ["README.md", ".prettierignore"];
+    const conflicted = () => {
+      const repos = withBaseMoved();
+      repos.mergeResult = { status: "conflicted", conflicts: conflictedFiles };
+      repos.markers = [...conflictedFiles];
+      return repos;
+    };
+
+    it("実装を始める前にベースブランチの最新を取り込んで記録し、競合が無ければ、取り込んだ先頭を第2の親にしたマージコミットで出す", async () => {
+      const repos = withBaseMoved();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        { repos, mergeBase: true },
+      );
+      await drain(service);
+      // 取り込みは1回（最終レビューの前は、先頭が同じなので取り込み直さない）。起点を共通の祖先にする
+      expect(repos.merges).toMatchObject([{ base: "base123", target: tip }]);
+      const task = service.get(id)?.task as Task;
+      expect(task.baseMerge).toMatchObject({ from: "base123", commit: tip, conflicts: [] });
+      expect(types(service, id).filter((t) => t === "BaseBranchMerged")).toHaveLength(1);
+      // 競合が無いので、実装の指示に競合の節は入れない
+      expect(promptOf(executor, 3)).not.toContain("ベースブランチとの競合");
+      // 起点は変えず（元の起点は記録のまま）、実装の差分・コミットの起点は取り込んだ先頭にする
+      expect(task.repository?.baseCommit).toBe("base123");
+      expect(repos.publishInputs).toEqual([{ baseCommit: tip, merge: tip }]);
+      expect(repos.diffBases).toEqual([tip]);
+      expect(task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("ベースブランチが進んでいなければ、取り込まず、記録も残さない（これまでどおりのコミット）", async () => {
+      const repos = new FakeRepos();
+      repos.remote.main = "base123";
+      const { activity, service, id } = await toImplement([implement("# 実装"), review()], {
+        repos,
+        mergeBase: true,
+      });
+      await drain(service);
+      expect(repos.merges).toEqual([]);
+      expect(types(service, id)).not.toContain("BaseBranchMerged");
+      expect(repos.publishInputs).toEqual([{ baseCommit: "base123" }]);
+      activity.close();
+    });
+
+    it("競合したファイルを実装の指示に渡し、目印が残ったまま提出されたら、最終レビューに進まずに競合したファイルを渡して実装をやり直す", async () => {
+      const repos = conflicted();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id); // 実装（競合の目印が入った作業領域）
+      const first = promptOf(executor, 3);
+      expect(first).toContain("ベースブランチとの競合");
+      expect(first).toContain("README.md");
+      expect(first).toContain(".prettierignore");
+      expect(first).toContain("目印の行をすべて消す");
+      expect(first).toContain("マージ・リベース・フェッチ・コミット・プッシュはしない");
+      expect(service.get(id)?.task.baseMerge?.conflicts).toEqual(conflictedFiles);
+
+      // 目印が残ったまま：最終レビューには進まない（ゴールガーディアンを実行しない）
+      const runs = executor.calls.length;
+      await service.runNext(id);
+      expect(executor.calls.length).toBe(runs);
+      const failed = service.get(id)?.task as Task;
+      expect(failed.status).toBe("queued");
+      expect(failed.verification).toBeUndefined();
+      expect(failed.verifyFailures).toBe(1);
+      expect(failed.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(repos.published).toEqual([]);
+
+      // やり直し：目印が残っているうちは取り込み直さず、前回の検証の結果と競合したファイルを渡す。解消すれば最終レビューへ進む
+      repos.markers = [];
+      await service.runNext(id);
+      const second = promptOf(executor, executor.calls.length - 1);
+      expect(second).toContain("前回の検証：ベースブランチとの競合の目印が残っていました");
+      expect(repos.merges).toHaveLength(1);
+      await drain(service);
+      expect(types(service, id)).toContain("FinalReviewed");
+      expect(repos.publishInputs).toEqual([{ baseCommit: tip, merge: tip }]);
+      const done = service.get(id)?.task as Task;
+      expect(done.gate).toEqual({ step: "implement", submission: 1 });
+      expect(done.verifyFeedback).toBeUndefined();
+      activity.close();
+    });
+
+    it("競合したファイルが100件を超えても全件を記録し、先頭の100件だけを解消して101件目以降に目印が残っていれば、最終レビューに進まない", async () => {
+      const files = Array.from({ length: 150 }, (_, i) => `src/file-${i}.ts`);
+      const repos = withBaseMoved();
+      repos.mergeResult = { status: "conflicted", conflicts: files };
+      repos.markers = [...files];
+      const { activity, service, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id);
+      // 切り捨てずに、150件すべてを記録する
+      expect(service.get(id)?.task.baseMerge?.conflicts).toEqual(files);
+      // 先頭の100件だけを解消した
+      repos.markers = files.slice(100);
+      await service.runNext(id);
+      const failed = service.get(id)?.task as Task;
+      expect(failed.verifyFeedback).toEqual({ kind: "merge", files: files.slice(100) });
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      // 残りも解消すれば、最終レビューへ進む
+      repos.markers = [];
+      await drain(service);
+      expect(types(service, id)).toContain("FinalReviewed");
+      activity.close();
+    });
+
+    it("目印の検査でファイルを読めなければ、目印なしとして最終レビューに進まず、理由を示して止める。直れば続ける", async () => {
+      const files = ["README.md", ".prettierignore"];
+      const repos = withBaseMoved();
+      repos.mergeResult = { status: "conflicted", conflicts: files };
+      repos.markers = [...files];
+      const { activity, service, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id);
+      repos.markersFail = "EACCES: permission denied, open 'README.md'";
+      await service.runNext(id);
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      const shown = JSON.stringify(service.get(id)?.activity.slice(-3));
+      expect(shown).toContain("merge.failed");
+      expect(shown).toContain("EACCES");
+      activity.close();
+    });
+
+    it("競合したファイルが上限（MAX_BASE_CONFLICTS）を超えるときは、取り込みを記録せずに理由を示して一時停止する", async () => {
+      const repos = withBaseMoved();
+      repos.mergeResult = {
+        status: "conflicted",
+        conflicts: Array.from({ length: MAX_BASE_CONFLICTS + 1 }, (_, i) => `f-${i}.ts`),
+      };
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        repos,
+        mergeBase: true,
+      });
+      await drain(service);
+      expect(repos.merges).toMatchObject([{ maxConflicts: MAX_BASE_CONFLICTS }]);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(types(service, id)).not.toContain("BaseBranchMerged");
+      expect(JSON.stringify(service.get(id)?.activity.at(-2)?.payload)).toContain("merge.failed");
+      expect(task.baseMerge).toBeUndefined();
+      activity.close();
+    });
+
+    it("解消できないまま続けて通らなければ一時停止し、競合の目印が残った実装は、レビューへ進められない", async () => {
+      const repos = conflicted();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), implement("# 実装 v3")],
+        { repos, mergeBase: true },
+      );
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(task.pausedReason).toBe("verification");
+      expect(JSON.stringify(task.pausedMessage)).toContain("verify.mergeConflictsRemain");
+      expect(task.verifyFailures).toBe(MAX_VERIFY_ATTEMPTS);
+      expect(types(service, id).filter((t) => t === "BaseConflictsRemained")).toHaveLength(3);
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      // ゴールガーディアンは実行していない（要求要件 2・設計 1・実装 3）
+      expect(executor.calls).toHaveLength(6);
+      expect(canOverrideVerification(task)).toBe(false);
+      expect(repos.published).toEqual([]);
+      activity.close();
+    });
+
+    it("実装の実行の間にベースブランチが進んで新しく競合したのは、検証に通らなかった回数に数えず、競合したファイルを渡してやり直す", async () => {
+      const repos = new FakeRepos();
+      repos.remote.main = "base123";
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id); // 実装（このときは、ベースブランチは進んでいない）
+      expect(repos.merges).toEqual([]);
+      // 実装の実行の間に、ベースブランチが進んで、競合した
+      repos.remote.main = tip;
+      repos.mergeResult = { status: "conflicted", conflicts: conflictedFiles };
+      repos.markers = [...conflictedFiles];
+      const runs = executor.calls.length;
+      await service.runNext(id);
+      expect(executor.calls.length).toBe(runs);
+      const fresh = service.get(id)?.task as Task;
+      expect(fresh.status).toBe("queued");
+      expect(fresh.verifyFailures).toBe(0);
+      expect(fresh.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+      expect(service.get(id)?.activity.at(-1)?.payload).toMatchObject({ fresh: true });
+
+      // やり直しで目印を消し忘れたら、そのときは数える
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain("README.md");
+      await service.runNext(id);
+      const again = service.get(id)?.task as Task;
+      expect(again.verifyFailures).toBe(1);
+      expect(again.status).toBe("queued");
+      expect(service.get(id)?.activity.at(-1)?.payload).not.toHaveProperty("fresh");
+      activity.close();
+    });
+
+    describe("検証の待ちに戻るとき（PR を作った後・再開）", () => {
+      class StubCi implements CiStatusReader {
+        async snapshot() {
+          return {
+            checks: [
+              {
+                kind: "workflow" as const,
+                name: "CI",
+                status: "completed" as const,
+                conclusion: "success" as const,
+              },
+            ],
+            failedRuns: [],
+          };
+        }
+        async failures() {
+          return [];
+        }
+      }
+      /** 実装して PR をドラフトで作り、CI の結果が出て、最終レビューに進む直前まで進める。 */
+      async function toCiFinished(outcomes: AgentOutcome[], repos: FakeRepos) {
+        let clock = Date.now();
+        const made = await toImplement(outcomes, {
+          repos,
+          mergeBase: true,
+          draftPullRequests: true,
+          ci: new StubCi(),
+          now: () => clock,
+        });
+        await made.service.runNext(made.id); // 実装
+        await made.service.runNext(made.id); // 最終レビューの前に、PR をドラフトで作る
+        await made.service.checkPullRequests();
+        await made.service.checkPullRequests();
+        expect(made.service.get(made.id)?.task.pullRequestCi?.result).toBe("passed");
+        return { ...made, advance: (ms: number) => (clock += ms) };
+      }
+
+      it("PR の CI の結果が出た後（競合で止まって再開した場合を含む）にベースブランチが進んで競合していたら、古いコードで最終レビューをせず、競合したファイルを渡して実装をやり直す", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        const { activity, service, executor, id } = await toCiFinished(
+          [implement("# 実装 v1"), implement("# 実装 v2"), review()],
+          repos,
+        );
+        // 最終レビューの前に、ベースブランチが進んで、競合した
+        repos.remote.main = tip;
+        repos.mergeResult = { status: "conflicted", conflicts: conflictedFiles };
+        repos.markers = [...conflictedFiles];
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(executor.calls.length).toBe(runs);
+        expect(repos.merges).toMatchObject([{ base: "base123", target: tip }]);
+        const task = service.get(id)?.task as Task;
+        expect(task.status).toBe("queued");
+        expect(task.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+        expect(task.verifyFailures).toBe(0);
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        activity.close();
+      });
+
+      it("PR の CI の結果が出た後にベースブランチが進んで競合しなければ、取り込んだコードで PR を作り直して CI を待ち直してから、最終レビューに進む", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        const { activity, service, executor, id } = await toCiFinished(
+          [implement("# 実装"), review()],
+          repos,
+        );
+        const before = service.get(id)?.task.pullRequest?.commit;
+        repos.remote.main = tip;
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        // 取り込んで、PR を作り直した。前の CI の結果は使わず、CI を待ち直す。最終レビューはまだ
+        expect(repos.merges).toMatchObject([{ base: "base123", target: tip }]);
+        expect(executor.calls.length).toBe(runs);
+        const waiting = service.get(id)?.task as Task;
+        expect(waiting.baseMerge?.commit).toBe(tip);
+        expect(waiting.pullRequest?.commit).not.toBe(before);
+        expect(waiting.pullRequestCi?.result).toBeUndefined();
+        expect(repos.publishInputs.at(-1)).toEqual({ baseCommit: tip, merge: tip });
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("passed");
+        await drain(service);
+        expect(types(service, id)).toContain("FinalReviewed");
+        expect(repos.merges).toHaveLength(1);
+        activity.close();
+      });
+    });
+
+    it("ベースブランチの最新を取得できなければ、実装を実行せず、理由を示して止める", async () => {
+      const repos = withBaseMoved();
+      repos.fetchBranchFail = "network is down";
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+        repos,
+        mergeBase: true,
+      });
+      const runs = executor.calls.length;
+      await service.runNext(id);
+      expect(executor.calls.length).toBe(runs);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(types(service, id)).toContain("AgentRunFailed");
+      expect(JSON.stringify(service.get(id)?.activity.at(-2)?.payload)).toContain("merge.failed");
+      expect(JSON.stringify(service.get(id)?.activity.at(-2)?.payload)).toContain(
+        "network is down",
+      );
+      expect(task.baseMerge).toBeUndefined();
+      activity.close();
+    });
+
+    it("取り込みを切ると（既定のテストの設定）、取り込まず、これまでどおり出す", async () => {
+      const repos = withBaseMoved();
+      const { activity, service } = await toImplement([implement("# 実装"), review()], { repos });
+      await drain(service);
+      expect(repos.merges).toEqual([]);
+      expect(repos.publishInputs).toEqual([{ baseCommit: "base123" }]);
+      activity.close();
+    });
+
+    it("最終レビューの指示に、差分は取り込んだ先頭からの変更で、ベースブランチ側の変更は実装の差分ではないことを伝える", async () => {
+      const repos = conflicted();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        { repos, mergeBase: true },
+      );
+      await service.runNext(id);
+      repos.markers = [];
+      await service.runNext(id);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("--- ベースブランチの取り込み ---");
+      expect(prompt).toContain(`最新（${tip.slice(0, 7)}）`);
+      expect(prompt).toContain("README.md");
+      expect(prompt).toContain("実装の差分ではない");
+      activity.close();
+    });
+  });
 
   describe("実装に変更が無い（PBI-90）", () => {
     const unchanged = () => {

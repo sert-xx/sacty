@@ -513,10 +513,54 @@ export function humanRemarks(task: Task) {
   return task.remarks.filter((r) => !r.voided);
 }
 
+/** 競合したファイルを、指示に載せる件数の上限。 */
+const MERGE_FILES_IN_PROMPT = 30;
+
+/** リポジトリのファイル名を、指示の1行に載せる形にする（改行などの制御文字で、指示の行を足されないように）。 */
+function promptPath(path: string): string {
+  return path.replace(/\p{Cc}/gu, "?");
+}
+
+/**
+ * 作業領域に取り込んだベースブランチとの競合を、実装のエージェントに解消させる指示。競合したファイルには目印が入っている
+ * （sacty が、ホストでベースブランチの最新を作業領域の内容にマージした結果）。解消した内容は、sacty がマージコミットとして
+ * PR に積む。
+ */
+function mergeConflictLines(task: Task, files: readonly string[]): string[] {
+  if (files.length === 0) return [];
+  const merged = task.baseMerge ? task.baseMerge.commit.slice(0, 7) : undefined;
+  return [
+    "",
+    "--- ベースブランチとの競合（解消してください） ---",
+    `ベースブランチ（${task.repository?.baseBranch ?? "ベースブランチ"}）が進んだため、sacty が最新${merged ? `（${merged}）` : ""}を作業領域の内容にマージしました。次のファイルは競合したため、目印（<<<<<<<・=======・>>>>>>>）が入っています。`,
+    ...files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+    ...(files.length > MERGE_FILES_IN_PROMPT
+      ? [`- ほか ${files.length - MERGE_FILES_IN_PROMPT} 件`]
+      : []),
+    "- 目印の上側（<<<<<<< と ======= の間）が、あなたの実装の側。下側（======= と >>>>>>> の間）が、ベースブランチの側（別のタスクなどがマージした変更）",
+    ...(files.some((f) => /~[0-9a-f]{40,64}$/.test(f))
+      ? [
+          "- 名前が `<名前>~<ID>` の形のファイルは、ディレクトリとファイルの名前が衝突したため、git が避けた名前で置いたものです。どちらを残すかを決めて、残す内容を正しい名前にし、避けた名前のファイルは消してください（消すまで解消したことになりません）",
+        ]
+      : []),
+    "- どちらかを捨てずに、両方の意図が生きる内容にして、目印の行をすべて消す（<<<<<<< と >>>>>>> の行には長い ID が付いている。=======の行も消す。1行でも残ると解消したことになりません）。ベースブランチ側の変更を、自分の変更として書き直したり、消したりしない",
+    "- 解消したら、そのファイルに関わるテストも、ベースブランチ側の変更を含めて通るようにする",
+    "- git でのマージ・リベース・フェッチ・コミット・プッシュはしない（sacty が、解消した内容をマージコミットとして PR に積みます）。目印が残ったまま提出すると、最終レビューに進めず、実装をやり直すことになります",
+  ];
+}
+
 /** 直前の検証で通らなかった内容（実装のやり直しに渡す）。 */
 function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
   if (!feedback) return [];
+  if (feedback.kind === "merge") {
+    return [
+      "",
+      "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
+      "最終レビューに進む前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。最終レビューはまだ行っていません。",
+      ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+    ];
+  }
   if (feedback.kind === "tests") {
     const t = feedback.tests;
     return [
@@ -1030,7 +1074,9 @@ export function guardianCodeLines(task: Task, code: "base" | "implemented"): str
   const what =
     code === "base"
       ? `対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコード`
-      : `対象リポジトリ（${task.repository.url}）の、実装後のコード（起点のコミット ${task.repository.baseCommit.slice(0, 7)} に実装の変更を加えたもの）`;
+      : task.baseMerge
+        ? `対象リポジトリ（${task.repository.url}）の、実装後のコード（ベースブランチの最新 ${task.baseMerge.commit.slice(0, 7)} に実装の変更を加えたもの。起点のコミット ${task.repository.baseCommit.slice(0, 7)} からベースブランチが進んだので、sacty が最新を取り込んでいます）`
+        : `対象リポジトリ（${task.repository.url}）の、実装後のコード（起点のコミット ${task.repository.baseCommit.slice(0, 7)} に実装の変更を加えたもの）`;
   return [
     "",
     `作業領域（カレントディレクトリ）に、${what}があります。判断に必要なら、実際のコードを読んで確かめてください。`,
@@ -1521,6 +1567,10 @@ export function buildPrompt(
      */
     continuedFeedback?: readonly PullRequestFeedback[] | "unreadable";
     /**
+     * 実装を始める前に作業領域へ取り込んだベースブランチとの競合で、目印が残っているファイル（実装の工程で渡す）。
+     */
+    mergeConflicts?: readonly string[];
+    /**
      * 出典の分類の担当に読ませる Input のディレクトリ（コンテナの中のパス）。要求要件・設計の工程で、sacty が置いたときに
      * 渡す。渡さなければ、出典を分類させない。
      */
@@ -1950,7 +2000,10 @@ export function buildPrompt(
       const noTests = task.noTestsReason;
       // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と集めた情報（前段の調査があればその結果）から実装する
       if (!designed && withoutRequirements(task)) {
-        return directImplementLines(task, content, previous, remarks).join("\n");
+        return [
+          ...directImplementLines(task, content, previous, remarks),
+          ...mergeConflictLines(task, extra.mergeConflicts ?? []),
+        ].join("\n");
       }
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
@@ -2037,6 +2090,7 @@ export function buildPrompt(
       lines.push(
         ...feedbackLines(task),
         ...remarkLines(task, step, "観点ごとのテストの対応"),
+        ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
         ...selfReviewLines("code", "実装（コードとテスト）"),
       );
@@ -2687,6 +2741,7 @@ export function buildFinalReviewPrompt(
         ]),
     ...humanCheckLines(Boolean(testCommand)),
     ...pullRequestContentLines(task),
+    ...baseMergeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest) : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
@@ -2829,6 +2884,27 @@ function pullRequestContentLines(task: Task): string[] {
     "- そのため、リポジトリ全体を対象にするフォーマッター・リンター・検査（例：prettier --check .・markdownlint・コミット前の検査）の結果は、作業領域の写しと PR の中身で違うことがある",
     "- 作業領域の写しで通った、リポジトリ全体に効く検査は、PR の中身で通るとは言い切らない。合格の理由にはするが、その検査と「写しには成果物のファイルが無いので、PR の中身で通るかは未確認」であることを humanChecks に書いて、人の確認に回す",
     "- 作業領域の写しで失敗した検査は、これまでどおり不合格の理由にする（成果物のファイルが無くても失敗するのだから、PR の中身でも失敗する）。成果物のファイルがあるから通らないのではないかと推測して、humanChecks に回さない。環境による失敗の扱いは、上の「環境によるテストの失敗」のとおり",
+    "",
+  ];
+}
+
+/**
+ * ベースブランチの最新を作業領域に取り込んでいるタスクで、最終レビューに、差分と PR の中身の関係を伝える。差分は取り込んだ
+ * ベースブランチの先頭からの変更なので、別のタスクがマージした変更は含まれない。PR にはマージコミットで積まれる。
+ */
+function baseMergeLines(task: Task): string[] {
+  const merge = task.baseMerge;
+  if (!merge) return [];
+  const conflicted = merge.conflicts.length > 0;
+  return [
+    "--- ベースブランチの取り込み ---",
+    `- ベースブランチ（${task.repository?.baseBranch ?? "ベースブランチ"}）が進んだため、sacty が最新（${merge.commit.slice(0, 7)}）を作業領域に取り込んでいる。作業領域の写しは、取り込んだ後の内容で、下の差分は、取り込んだ先頭からの実装の変更である。PR には、その先頭を親に含むマージコミットとして積まれる`,
+    "- ベースブランチ側の変更（別のタスクなどがマージしたもの）は、今回の実装の差分ではない。変更の範囲・過剰さ・観点の判定に含めない。ただし、それを前提に、実装後のコードとテストが通るかは確かめる",
+    ...(conflicted
+      ? [
+          `- 取り込みでは ${merge.conflicts.slice(0, 10).map(promptPath).join("・")}${merge.conflicts.length > 10 ? " ほか" : ""} が競合し、実装のエージェントが解消した。解消した内容が、ベースブランチ側の変更を壊していない・実装の変更を消していないかを、差分とコードで確かめる`,
+        ]
+      : []),
     "",
   ];
 }

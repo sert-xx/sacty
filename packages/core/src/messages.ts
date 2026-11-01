@@ -379,6 +379,12 @@ const PARAMS = {
   "verify.stoppedByPerson": null,
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
   "verify.tooManyAttempts": z.object({ count: Count }),
+  "verify.mergeConflictsRemain": z.object({
+    count: Count,
+    files: TextParam,
+    total: z.number().int().nonnegative(),
+  }),
+  "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
   "pr.taskBranchChanged": z.object({ branch: TextParam, paths: TextParam, count: z.number() }),
@@ -402,6 +408,8 @@ const PARAMS = {
   "git.aborted": null,
   "git.invalidBaseCommit": null,
   "git.baseCommitMissing": z.object({ commit: z.string() }),
+  "git.mergeTreeUnsupported": null,
+  "git.tooManyConflicts": z.object({ count: z.number(), limit: z.number() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.invalidPath": null,
@@ -1147,6 +1155,10 @@ const ja: MessageDictionary = {
     `ゴールガーディアンの最終レビューを実行できませんでした：${text(detail)}`,
   "verify.tooManyAttempts": ({ count }) =>
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
+  "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
+    `ベースブランチとの競合の目印が、${count}回続けて作業領域に残りました（${text(files)}${total > 5 ? ` ほか、全${total}件` : ""}）。目印を消して提出し直す必要があります。再開すると、目印の残るファイルを渡して実装をやり直します（レビューへは進められません）。`,
+  "merge.failed": ({ detail }, text) =>
+    `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
   "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
@@ -1178,6 +1190,10 @@ const ja: MessageDictionary = {
   "git.invalidBaseCommit": "起点のコミットが不正です。",
   "git.baseCommitMissing": ({ commit }) =>
     `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
+  "git.mergeTreeUnsupported":
+    "ベースブランチを取り込むには、ホストの git が 2.40 以上（git merge-tree --write-tree と --merge-base が使える版）である必要があります。git を更新してください。",
+  "git.tooManyConflicts": ({ count, limit }) =>
+    `ベースブランチとの競合が ${count} 件あり、取り込める上限（${limit} 件）を超えています。作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.invalidPath": "コミットするファイルのパスが不正です。",
@@ -1815,6 +1831,10 @@ const en: MessageDictionary = {
     `Could not run the Goal Guardian's final review: ${text(detail)}`,
   "verify.tooManyAttempts": ({ count }) =>
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
+  "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
+    `Conflict markers with the base branch stayed in the workspace ${count} times in a row (${text(files)}${total > 5 ? ` and more, ${total} in total` : ""}). The markers must be removed before the implementation can be submitted. Resuming redoes the implementation with the files that still have markers (the task cannot be moved to review).`,
+  "merge.failed": ({ detail }, text) =>
+    `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,
   "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
@@ -1846,6 +1866,10 @@ const en: MessageDictionary = {
   "git.invalidBaseCommit": "The base commit is not valid.",
   "git.baseCommitMissing": ({ commit }) =>
     `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,
+  "git.mergeTreeUnsupported":
+    "Merging the base branch needs git 2.40 or later on the host (a version with git merge-tree --write-tree and --merge-base). Update git.",
+  "git.tooManyConflicts": ({ count, limit }) =>
+    `Merging the base branch conflicts in ${count} files, over the limit of ${limit}. The workspace was not changed. Have a person resolve the conflicts, then resume.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
   "git.invalidPath": "The path of the file to commit is not valid.",

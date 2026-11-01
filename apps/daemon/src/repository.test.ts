@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
 import { DIFF_LIMIT, GitRepositoryWorkspace, NothingToCommitError } from "./repository.js";
@@ -43,6 +43,41 @@ function makeOrigin(): string {
   git(origin, "commit", "-m", "init");
   return origin;
 }
+
+/**
+ * git が `merge-tree --write-tree --merge-base`（ベースブランチの取り込みが使う機能。2.40 以上）を使えるか。実装と同じく、
+ * 実際に呼んで、使い方の誤り（終了コード 129）になるかで見る。使えない git（2.39 以前）では、実際に使うテストを飛ばす。
+ */
+const MERGE_BASE_SUPPORTED = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "sacty-git-probe-"));
+  try {
+    git(probe, "init", "--quiet", "--initial-branch=main");
+    git(
+      probe,
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=t",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "x",
+    );
+    git(probe, "merge-tree", "--write-tree", "--merge-base=HEAD", "HEAD", "HEAD");
+    return true;
+  } catch (error) {
+    return (error as { status?: number }).status !== 129;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+if (!MERGE_BASE_SUPPORTED) {
+  console.warn(
+    `[repository.test] この環境の git（${git(tmpdir(), "--version")}）は merge-tree --merge-base（2.40 以上）を使えないので、ベースブランチの取り込みを実際に動かすテストを飛ばします。`,
+  );
+}
+/** `merge-tree --merge-base` を実際に使うテスト。git が 2.40 未満なら飛ばす（最低版はホストの要件。CI の git は新しい）。 */
+const itMerge = it.skipIf(!MERGE_BASE_SUPPORTED);
 
 // 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
 describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
@@ -523,6 +558,556 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     const retried = await workspace.publish(input);
     expect(retried.commit).toBe(first.commit);
     expect(git(origin, "rev-parse", input.branch)).toBe(first.commit);
+  });
+
+  describe("ベースブランチの取り込み（マージコミット）", () => {
+    /** 2行目をタスクが変える README を持つ origin から、作業領域を用意する。 */
+    const prepareMerge = async () => {
+      const origin = makeOrigin();
+      git(origin, "config", "receive.denyCurrentBranch", "ignore");
+      writeFileSync(join(origin, "README.md"), "# app\n\n1. one\n2. two\n3. three\n");
+      git(origin, "add", "--all");
+      git(origin, "commit", "-m", "readme");
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "task", "repo");
+      const gitDir = join(dir, "_git", "task.git");
+      const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+      return { origin, workspace, clone, gitDir, baseCommit, branch: "sacty/task-1234abcd" };
+    };
+    /** origin のベースブランチ（main）に、別のタスクがマージしたコミットを足す。 */
+    const advanceMain = (origin: string, file: string, content: string) => {
+      writeFileSync(join(origin, file), content);
+      git(origin, "add", "--all");
+      git(origin, "commit", "-m", `main: ${file}`);
+      return git(origin, "rev-parse", "HEAD");
+    };
+    const parents = (origin: string, rev: string) =>
+      git(origin, "log", "-1", "--format=%P", rev).split(" ").filter(Boolean);
+    /** ブランチをベースブランチにマージするとき、競合するか（GitHub の「マージできる」の判定と同じ3方向のマージ）。 */
+    const conflictsWith = (origin: string, main: string, branch: string) => {
+      try {
+        git(origin, "merge-tree", "--write-tree", "--quiet", main, branch);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    const isAncestor = (origin: string, a: string, b: string) => {
+      try {
+        git(origin, "merge-base", "--is-ancestor", a, b);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    itMerge(
+      "競合しなければ、作業領域にベースブランチの変更が入り、提出は親が2つのマージコミットになる（履歴は書き換えない）",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const tip = advanceMain(origin, "other.ts", "export const other = 1;\n");
+        expect(await workspace.fetchBranch(gitDir, "main")).toBe(tip);
+
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: baseCommit,
+          target: tip,
+        });
+        expect(merged).toEqual({ status: "merged", conflicts: [] });
+        // 作業領域には、ベースブランチの変更と、タスクの変更の両方がある
+        expect(readFileSync(join(clone, "other.ts"), "utf8")).toBe("export const other = 1;\n");
+        expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 1;\n");
+        // 作業領域の HEAD・退避したメタデータのブランチは動かさない（コミットは提出のときに作る）
+        expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
+
+        const input = {
+          dir: clone,
+          gitDir,
+          baseCommit: tip,
+          merge: tip,
+          parent: baseCommit,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T01:00:00.000Z",
+        };
+        const first = await workspace.publish(input);
+        expect(parents(origin, branch)).toEqual([baseCommit, tip]);
+        expect(git(origin, "rev-parse", branch)).toBe(first.commit);
+        expect(git(origin, "show", `${branch}:other.ts`)).toBe("export const other = 1;");
+        expect(git(origin, "show", `${branch}:pay.ts`)).toBe("export const pay = () => 1;");
+        // ベースブランチの先頭を含む履歴なので、ベースブランチに早送りでマージできる（PR が競合しない）
+        expect(isAncestor(origin, tip, branch)).toBe(true);
+        expect(conflictsWith(origin, tip, branch)).toBe(false);
+        expect(git(origin, "diff", "--stat", `${tip}...${branch}`)).toContain("pay.ts");
+        expect(git(origin, "diff", "--name-only", `${tip}..${branch}`)).toBe("pay.ts");
+
+        // 再開して同じ入力で作り直しても、同じマージコミットになる（プッシュ済みと枝分かれしない）
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+        expect((await workspace.publish(input)).commit).toBe(first.commit);
+
+        // 次の提出は、取り込み済みなので、前回のコミットだけを親にする
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 2;\n");
+        const second = await workspace.publish({
+          ...input,
+          parent: first.commit,
+          message: "m2",
+          date: "2026-10-10T02:00:00.000Z",
+        });
+        expect(parents(origin, second.commit)).toEqual([first.commit]);
+        // 変わっていなければ、同じコミットのまま
+        const third = await workspace.publish({
+          ...input,
+          parent: second.commit,
+          date: "2026-10-10T03:00:00.000Z",
+        });
+        expect(third.commit).toBe(second.commit);
+      },
+    );
+
+    itMerge(
+      "競合したファイルには目印を残して返し、解消するまで目印を検出し、解消した内容をマージコミットで出す",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
+        // タスクは2行目を変え、別のタスクも同じ行を変えてマージした
+        writeFileSync(join(clone, "README.md"), "# app\n\n1. one\n2. two (mine)\n3. three\n");
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const tip = advanceMain(
+          origin,
+          "README.md",
+          "# app\n\n1. one\n2. two (theirs)\n3. three\n",
+        );
+        await workspace.fetchBranch(gitDir, "main");
+
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: baseCommit,
+          target: tip,
+        });
+        expect(merged).toEqual({ status: "conflicted", conflicts: ["README.md"] });
+        const text = readFileSync(join(clone, "README.md"), "utf8");
+        expect(text).toMatch(/^<{7} /m);
+        expect(text).toMatch(/^={7}$/m);
+        expect(text).toMatch(/^>{7} /m);
+        // 上が作業領域の側、下がベースブランチの側
+        expect(text.indexOf("(mine)")).toBeLessThan(text.indexOf("(theirs)"));
+        // 競合しなかったファイルは、そのまま
+        expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 1;\n");
+        expect(await workspace.conflictMarkers(clone, ["README.md", "pay.ts"])).toEqual([
+          "README.md",
+        ]);
+
+        // 目印をすべて消して解消すると、目印は検出されない
+        writeFileSync(
+          join(clone, "README.md"),
+          "# app\n\n1. one\n2. two (mine) (theirs)\n3. three\n",
+        );
+        expect(await workspace.conflictMarkers(clone, ["README.md"])).toEqual([]);
+        const resolved = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit: tip,
+          merge: tip,
+          parent: baseCommit,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        expect(parents(origin, resolved.commit)).toEqual([baseCommit, tip]);
+        // 比較：取り込まずに（親が1つで）同じ内容を出すと、ベースブランチと競合したままになる（S7 の PR の状態）
+        const plain = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit: tip,
+          parent: baseCommit,
+          branch: "sacty/task-plain",
+          message: "決済API",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        expect(parents(origin, plain.commit)).toEqual([baseCommit]);
+        expect(conflictsWith(origin, tip, "sacty/task-plain")).toBe(true);
+        expect(git(origin, "show", `${branch}:README.md`)).toContain("two (mine) (theirs)");
+        expect(git(origin, "show", `${branch}:README.md`)).not.toContain("<<<<<<<");
+        expect(isAncestor(origin, tip, branch)).toBe(true);
+        expect(conflictsWith(origin, tip, branch)).toBe(false);
+        // ベースブランチ側の変更を、自分の変更として混ぜない：ベースブランチとの差は、タスクの2ファイルだけ
+        expect(git(origin, "diff", "--name-only", `${tip}..${branch}`).split("\n").sort()).toEqual([
+          "README.md",
+          "pay.ts",
+        ]);
+      },
+    );
+
+    itMerge(
+      "タスクブランチに積んだ要求要件・設計のファイルを引き継ぐ提出（keep）も、ベースブランチの先頭を第2の親にしたマージコミットになる",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        const taskBranch = "sacty/task-1234abcd";
+        const path = "docs/sacty/1234abcd/requirements.md";
+        // タスクブランチには、要求要件のファイルが積まれている（作業領域には無い）
+        await workspace.pushCommit(gitDir, baseCommit, taskBranch);
+        const step = await workspace.commitFiles({
+          gitDir,
+          parent: baseCommit,
+          files: { [path]: "# 要求要件\n" },
+          branch: taskBranch,
+          message: "[要求要件]",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const tip = advanceMain(origin, "other.ts", "o\n");
+        await workspace.fetchBranch(gitDir, "main");
+        await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip });
+        const parent = await workspace.fetchBranch(gitDir, taskBranch);
+        expect(parent).toBe(step.commit);
+        const published = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit: tip,
+          merge: tip,
+          parent,
+          branch: taskBranch,
+          message: "決済API",
+          date: "2026-10-10T02:00:00.000Z",
+          keep: { commit: parent, paths: [path] },
+        });
+        expect(parents(origin, published.commit)).toEqual([step.commit, tip]);
+        expect(git(origin, "show", `${taskBranch}:${path}`)).toBe("# 要求要件");
+        expect(git(origin, "show", `${taskBranch}:other.ts`)).toBe("o");
+        expect(git(origin, "show", `${taskBranch}:pay.ts`)).toContain("pay = () => 1");
+        expect(conflictsWith(origin, tip, taskBranch)).toBe(false);
+        expect(
+          git(origin, "diff", "--name-only", `${tip}..${taskBranch}`).split("\n").sort(),
+        ).toEqual([path, "pay.ts"]);
+      },
+    );
+
+    itMerge(
+      "競合の目印は、ID のラベルが付いた始めの行か終わりの行が1つでも残っていれば検出する（消し忘れも）。ラベルの無い似た行や単独の =======、シンボリックリンク・無いファイル・作業領域の外は見ない",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        writeFileSync(join(clone, "README.md"), "# app\n\n1. one\n2. two (mine)\n3. three\n");
+        const tip = advanceMain(
+          origin,
+          "README.md",
+          "# app\n\n1. one\n2. two (theirs)\n3. three\n",
+        );
+        await workspace.fetchBranch(gitDir, "main");
+        await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip });
+        const conflicted = readFileSync(join(clone, "README.md"), "utf8");
+        const lines = conflicted.split("\n");
+        const start = lines.findIndex((l) => l.startsWith("<<<<<<< "));
+        const sep = lines.indexOf("=======");
+        const end = lines.findIndex((l) => l.startsWith(">>>>>>> "));
+        expect([start, sep, end].every((i) => i >= 0)).toBe(true);
+        const without = (...drop: number[]) => lines.filter((_, i) => !drop.includes(i)).join("\n");
+        const detect = async (text: string) => {
+          writeFileSync(join(clone, "README.md"), text);
+          return workspace.conflictMarkers(clone, ["README.md"]);
+        };
+        // 消さずに残っている・始めの行だけ残っている・終わりの行だけ残っている
+        expect(await detect(conflicted)).toEqual(["README.md"]);
+        expect(await detect(without(sep, end))).toEqual(["README.md"]);
+        expect(await detect(without(start, sep))).toEqual(["README.md"]);
+        // 始めと終わりの行を消せば、解消している（単独の ======= は、Markdown の見出しの下線と区別できないので見ない）
+        expect(await detect(without(start, end))).toEqual([]);
+        expect(await detect(without(start, sep, end))).toEqual([]);
+
+        // ラベルの無い似た行や、見出しの下線は目印にしない
+        writeFileSync(join(clone, "heading.md"), "Title\n=======\n\ntext\n");
+        writeFileSync(
+          join(clone, "similar.md"),
+          "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\n<<<<<<< ours\n>>>>>>> theirs\n",
+        );
+        const outside = join(dir, "outside.txt");
+        writeFileSync(outside, `<<<<<<< ${"a".repeat(40)}\n>>>>>>> ${"b".repeat(40)}\n`);
+        symlinkSync(outside, join(clone, "link.txt"));
+        expect(
+          await workspace.conflictMarkers(clone, [
+            "heading.md",
+            "similar.md",
+            "link.txt",
+            "missing.txt",
+            "../outside.txt",
+          ]),
+        ).toEqual([]);
+        expect(await workspace.conflictMarkers(join(dir, "missing"), ["README.md"])).toEqual([]);
+      },
+    );
+
+    itMerge(
+      "ディレクトリとファイルの名前が衝突して git が避けた名前（<名前>~<ID>）は、残っているうちは解消していないものとする",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        // タスクは docs というファイルを足し、別のタスクは docs/ ディレクトリを足してマージした
+        writeFileSync(join(clone, "docs"), "mine\n");
+        mkdirSync(join(origin, "docs"));
+        const tip = advanceMain(origin, "docs/a.md", "theirs\n");
+        await workspace.fetchBranch(gitDir, "main");
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: baseCommit,
+          target: tip,
+        });
+        expect(merged.status).toBe("conflicted");
+        const renamed = merged.conflicts.filter((c) => /~[0-9a-f]{40,}$/.test(c));
+        expect(renamed).toHaveLength(1);
+        expect(existsSync(join(clone, renamed[0] as string))).toBe(true);
+        // 避けた名前のファイルが残っている間は、解消していない（目印は無くても）
+        expect(await workspace.conflictMarkers(clone, merged.conflicts)).toEqual(renamed);
+        // 消せば解消（ディレクトリ側の docs は、残す側として決めた）
+        rmSync(join(clone, renamed[0] as string));
+        expect(await workspace.conflictMarkers(clone, merged.conflicts)).toEqual([]);
+      },
+    );
+
+    itMerge(
+      "両側が同じファイルを別名へ改名して内容も競合したとき、git が書く長い目印（<<<<<<<<）とパス付きのラベルも、残っているうちは解消していないものとする",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        // 作業領域は README.md を ours.md に改名して内容を変え、別のタスクは theirs.md に改名して同じ行を変えてマージした
+        renameSync(join(clone, "README.md"), join(clone, "ours.md"));
+        writeFileSync(join(clone, "ours.md"), "# app\n\n1. one\n2. two (mine)\n3. three\n");
+        git(origin, "mv", "README.md", "theirs.md");
+        const tip = advanceMain(
+          origin,
+          "theirs.md",
+          "# app\n\n1. one\n2. two (theirs)\n3. three\n",
+        );
+        await workspace.fetchBranch(gitDir, "main");
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: baseCommit,
+          target: tip,
+        });
+        expect(merged.status).toBe("conflicted");
+        expect(merged.conflicts.length).toBeGreaterThan(0);
+        // 実際に git が書いた目印は、7文字より長く、ID にパスが付いている
+        const marked = merged.conflicts.filter(
+          (c) =>
+            existsSync(join(clone, c)) &&
+            /^<{8,} [0-9a-f]{40,}:/m.test(readFileSync(join(clone, c), "utf8")),
+        );
+        expect(marked.length).toBeGreaterThan(0);
+        expect(await workspace.conflictMarkers(clone, marked)).toEqual(marked);
+        // 目印の行を消せば、解消したことになる
+        for (const c of marked) {
+          const text = readFileSync(join(clone, c), "utf8")
+            .split("\n")
+            .filter((line) => !/^([<>]{8,} [0-9a-f]{40,}|={8,}$)/.test(line))
+            .join("\n");
+          writeFileSync(join(clone, c), text);
+        }
+        expect(await workspace.conflictMarkers(clone, marked)).toEqual([]);
+      },
+    );
+
+    it("目印の検査でファイルを読めないとき（権限など）は、目印なしとせず、パスと原因を付けて失敗する。ファイルが無い・途中が通常のファイルなら、解消済みとする", async () => {
+      const { workspace, clone } = await prepareMerge();
+      const id = "a".repeat(40);
+      writeFileSync(join(clone, "locked.txt"), `<<<<<<< ${id}\nx\n>>>>>>> ${id}\n`);
+      writeFileSync(join(clone, "plain"), "x\n");
+      // 消した・親がファイルに置き換わった（ENOENT・ENOTDIR）は、解消した
+      expect(await workspace.conflictMarkers(clone, ["gone.txt", "plain/child.txt"])).toEqual([]);
+      if (process.getuid?.() === 0) return; // root は権限に関係なく読める
+      chmodSync(join(clone, "locked.txt"), 0o000);
+      try {
+        await expect(workspace.conflictMarkers(clone, ["locked.txt"])).rejects.toThrow(
+          /locked\.txt.*EACCES/,
+        );
+      } finally {
+        chmodSync(join(clone, "locked.txt"), 0o644);
+      }
+      // 権限を戻せば、同じファイルの目印を検出する
+      expect(await workspace.conflictMarkers(clone, ["locked.txt"])).toEqual(["locked.txt"]);
+    });
+
+    it("競合の目印の行の見分け：長い目印・パス付きのラベルは目印とし、ラベルの無い似た行・短い ID は目印としない", async () => {
+      const { workspace, clone } = await prepareMerge();
+      const id = "a".repeat(40);
+      const check = async (text: string) => {
+        writeFileSync(join(clone, "x.txt"), text);
+        return (await workspace.conflictMarkers(clone, ["x.txt"])).length === 1;
+      };
+      expect(await check(`<<<<<<<< ${id}:ours.txt\nx\n`)).toBe(true);
+      expect(await check(`x\n>>>>>>>>> ${id}:dir/with space.txt\n`)).toBe(true);
+      expect(await check(`<<<<<<< ${id}\r\nx\n`)).toBe(true);
+      expect(await check(`<<<<<<< ${id}:\n`)).toBe(true);
+      expect(await check(`<<<<<<< HEAD\nx\n>>>>>>> branch\n`)).toBe(false);
+      expect(await check(`<<<<<<<< abc123:ours.txt\n`)).toBe(false);
+      expect(await check(`<<<<<< ${id}\n`)).toBe(false);
+      expect(await check(`text <<<<<<<< ${id}\n`)).toBe(false);
+      expect(await check("Title\n=======\n")).toBe(false);
+    });
+
+    itMerge(
+      "競合したファイルが上限を超えるときは、作業領域を書き換えずに、件数と上限を示して失敗する。上限以内なら取り込む",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        // 3つのファイルが競合する
+        for (const name of ["a.txt", "b.txt", "c.txt"]) {
+          writeFileSync(join(clone, name), `${name} mine\n`);
+          writeFileSync(join(origin, name), `${name} theirs\n`);
+        }
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "main: three files");
+        const tip = git(origin, "rev-parse", "HEAD");
+        await workspace.fetchBranch(gitDir, "main");
+        const before = readFileSync(join(clone, "a.txt"), "utf8");
+        await expect(
+          workspace.mergeBase({
+            dir: clone,
+            gitDir,
+            base: baseCommit,
+            target: tip,
+            maxConflicts: 2,
+          }),
+        ).rejects.toThrow(/3 件.*2 件/);
+        // 作業領域は書き換えていない（目印は入っていない）
+        expect(readFileSync(join(clone, "a.txt"), "utf8")).toBe(before);
+        expect(await workspace.conflictMarkers(clone, ["a.txt", "b.txt", "c.txt"])).toEqual([]);
+        // 上限と同じ件数なら取り込む
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: baseCommit,
+          target: tip,
+          maxConflicts: 3,
+        });
+        expect(merged.status).toBe("conflicted");
+        expect(merged.conflicts.sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+      },
+    );
+
+    it("この環境の git が merge-tree --merge-base（2.40 以上）を使えるか。使えないときは、実際に使うテストを飛ばしたことを、理由つきで出す", ({
+      skip,
+    }) => {
+      if (!MERGE_BASE_SUPPORTED) {
+        skip(
+          `git が 2.40 未満（${git(tmpdir(), "--version")}）なので、ベースブランチの取り込みを実際に動かすテストを飛ばした`,
+        );
+      }
+      expect(MERGE_BASE_SUPPORTED).toBe(true);
+    });
+
+    it("git が 2.40 未満（merge-tree --merge-base が使い方の誤り＝終了コード 129）なら、作業領域を書き換えずに、2.40 以上が必要だと案内して失敗する（git の版は偽って試す）", async () => {
+      const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+      const tip = advanceMain(origin, "other.ts", "export const other = 1;\n");
+      await workspace.fetchBranch(gitDir, "main");
+      // 本物の git に渡し、merge-tree の --merge-base だけ、古い git と同じ終了コード 129 で失敗する git を、PATH の先頭に置く
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const fakeDir = join(dir, "fake-bin");
+      mkdirSync(fakeDir);
+      writeFileSync(
+        join(fakeDir, "git"),
+        `#!/bin/sh\ncase " $* " in\n  *" merge-tree "*--merge-base*) echo "error: unknown option 'merge-base'" >&2; exit 129;;\nesac\nexec "${realGit}" "$@"\n`,
+        { mode: 0o755 },
+      );
+      const path = process.env.PATH;
+      process.env.PATH = `${fakeDir}${delimiter}${path ?? ""}`;
+      try {
+        await expect(
+          workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip }),
+        ).rejects.toThrow(/2\.40 以上/);
+      } finally {
+        process.env.PATH = path;
+      }
+      // 作業領域は書き換えていない
+      expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 1;\n");
+      expect(existsSync(join(clone, "other.ts"))).toBe(false);
+    });
+
+    itMerge(
+      "取り込むものが無ければ何もせず、作業領域の変更は消えない。ベースブランチが続けて進んだら、前に取り込んだ先頭を起点に取り込む",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        // 先頭が起点と同じ・起点の履歴に含まれる
+        expect(
+          await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: baseCommit }),
+        ).toEqual({ status: "unchanged", conflicts: [] });
+        expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 1;\n");
+
+        const first = advanceMain(origin, "a.ts", "a\n");
+        await workspace.fetchBranch(gitDir, "main");
+        await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: first });
+        expect(
+          await workspace.mergeBase({ dir: clone, gitDir, base: first, target: baseCommit }),
+        ).toEqual({ status: "unchanged", conflicts: [] });
+        const published = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit: first,
+          merge: first,
+          parent: baseCommit,
+          branch,
+          message: "m",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        // その後にまた進んだ
+        const second = advanceMain(origin, "b.ts", "b\n");
+        await workspace.fetchBranch(gitDir, "main");
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: first,
+          target: second,
+        });
+        expect(merged.status).toBe("merged");
+        expect(existsSync(join(clone, "b.ts"))).toBe(true);
+        const next = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit: second,
+          merge: second,
+          parent: published.commit,
+          branch,
+          message: "m2",
+          date: "2026-10-10T02:00:00.000Z",
+        });
+        expect(parents(origin, next.commit)).toEqual([published.commit, second]);
+        expect(isAncestor(origin, second, branch)).toBe(true);
+      },
+    );
+
+    itMerge(
+      "作業領域の git の設定（フィルター・フック）は使わない。不正なコミットは受け付けない",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit } = await prepareMerge();
+        const marker = join(dir, "pwned");
+        git(clone, "config", "filter.evil.clean", `touch ${marker}; cat`);
+        git(clone, "config", "core.hooksPath", dir);
+        writeFileSync(join(clone, ".gitattributes"), "* filter=evil merge=evil\n");
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const tip = advanceMain(origin, "other.ts", "o\n");
+        await workspace.fetchBranch(gitDir, "main");
+        await workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip });
+        expect(existsSync(marker)).toBe(false);
+        await expect(
+          workspace.mergeBase({ dir: clone, gitDir, base: "main", target: tip }),
+        ).rejects.toThrow();
+        await expect(
+          workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: "--upload-pack=x" }),
+        ).rejects.toThrow();
+        await expect(
+          workspace.publish({
+            dir: clone,
+            gitDir,
+            baseCommit,
+            merge: "not-a-commit",
+            parent: baseCommit,
+            branch: "sacty/task-1",
+            message: "m",
+            date: "2026-10-10T01:00:00.000Z",
+          }),
+        ).rejects.toThrow();
+      },
+    );
   });
 
   /**

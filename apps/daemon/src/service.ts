@@ -72,6 +72,7 @@ import {
   isRepoless,
   isSecurityTask,
   latestStepPullRequest,
+  MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
@@ -140,6 +141,7 @@ import {
   targetImageOf,
   taskPlan,
   exportProject as toProjectExport,
+  workBaseCommit,
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
@@ -640,6 +642,12 @@ export type ServiceDeps = {
    * false なら、検証に通った後に PR を作る（PR の CI を待たない流れを確かめるテストで切る）。
    */
   draftPullRequests?: boolean;
+  /**
+   * 実装の作業領域に、ベースブランチの最新を取り込むか（実装を始めるとき・最終レビューの前。取り込んだら、提出する
+   * コミットはベースブランチの先頭を第2の親にしたマージコミットになる）。既定は取り込む。false なら取り込まない
+   * （取り込みを確かめないテストで切る）。
+   */
+  mergeBase?: boolean;
   /** エージェントの実行ごとのセッションログの置き場所（PBI-62）。無ければ、残さない。 */
   sessionLogs?: SessionLogStore;
   /**
@@ -5643,6 +5651,74 @@ export class TaskService {
     };
   }
 
+  /**
+   * 実装の作業領域に、ベースブランチの最新を取り込むタスクか。sacty が PR を作る実装だけ。既存の PR を引き継ぐタスクは、
+   * 人の PR のブランチに積むので取り込まない。
+   */
+  private mergesBase(task: Task): boolean {
+    return this.deps.mergeBase !== false && !!task.repository && !task.continuedPullRequest;
+  }
+
+  /**
+   * ベースブランチの最新を、実装の作業領域に取り込む（ホストで、作業領域の内容とベースブランチの先頭を3方向でマージする。
+   * 履歴は書き換えない）。取り込んだら、提出するコミットは、その先頭を第2の親にしたマージコミットになる。
+   * - 取り込むものが無ければ、何もしない（clean）
+   * - 競合したファイルには目印が入る。目印が残っているうちは、さらに取り込まず、そのファイルを返す（conflicts。実装の
+   *   エージェントが解消する）。fresh は、この呼び出しで新しく競合したこと（前の取り込みの目印が残っているのではない）
+   * - 取得・マージできなければ failed（呼び出し側が止める）
+   * エージェントの実行中は呼ばない（作業領域を書き換えるため）。
+   */
+  private async syncBase(
+    task: Task,
+  ): Promise<
+    | { kind: "clean" }
+    | { kind: "conflicts"; files: string[]; fresh: boolean }
+    | { kind: "failed"; message: DaemonText }
+  > {
+    const repository = task.repository;
+    if (!repository) return { kind: "clean" };
+    const dir = this.repoDir(task);
+    const gitDir = this.trustedGitDir(task);
+    const usedSecrets: string[] = [];
+    try {
+      // 前に取り込んで競合した目印が残っていれば、先に解消させる（目印の上に、さらに取り込まない）
+      const pending = task.baseMerge?.conflicts ?? [];
+      if (pending.length > 0) {
+        const remaining = await this.deps.repos.conflictMarkers(dir, pending);
+        if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
+      }
+      const authEnv = await this.gitAuth(task, repository.url, usedSecrets);
+      const base = workBaseCommit(repository, task.baseMerge);
+      const tip = await this.deps.repos.fetchBranch(gitDir, repository.baseBranch, authEnv);
+      if (tip === base) return { kind: "clean" };
+      const merged = await this.deps.repos.mergeBase({
+        dir,
+        gitDir,
+        base,
+        target: tip,
+        maxConflicts: MAX_BASE_CONFLICTS,
+      });
+      if (merged.status === "unchanged") return { kind: "clean" };
+      // 作業領域に書いた結果を、すぐ記録する（以後の差分・コミットは、取り込んだ先頭を起点にする）
+      // 全件を記録する（競合が多すぎるときは、mergeBase が作業領域を書き換える前に失敗する）。切り捨てると、残りの目印を検査できない
+      const conflicts = merged.conflicts;
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: { type: "BaseBranchMerged", payload: { from: base, commit: tip, conflicts } },
+        },
+      ]);
+      return conflicts.length > 0
+        ? { kind: "conflicts", files: conflicts, fresh: true }
+        : { kind: "clean" };
+    } catch (error) {
+      return {
+        kind: "failed",
+        message: message("merge.failed", { detail: redactText(errorText(error), usedSecrets) }),
+      };
+    }
+  }
+
   /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを作業履歴に記録する）。 */
   private async prepareRepository(
     task: Task,
@@ -5702,8 +5778,13 @@ export class TaskService {
         url,
         branch,
         await this.gitAuth(task, url, usedSecrets),
-        // 用意し直すとき（作業領域が消えた）は、記録済みの起点のコミットで用意する（PBI-15）
-        rebase ? undefined : task.repository?.baseCommit,
+        // 用意し直すとき（作業領域が消えた）は、記録済みの起点のコミットで用意する（PBI-15）。ベースブランチの最新を
+        // 取り込んでいたなら、そのコミットで用意する（取り込む前の実装の変更は戻らないので、起点に戻すと取り込みが消える）
+        rebase
+          ? undefined
+          : task.repository
+            ? workBaseCommit(task.repository, task.baseMerge)
+            : undefined,
       );
       const { baseCommit, baseBranch } = prepared;
       if (rebase) return { ok: true, dir, prepared: { url, baseBranch, baseCommit } };
@@ -5715,9 +5796,11 @@ export class TaskService {
             event: { type: "RepositoryPrepared", payload: { url, baseBranch, baseCommit } },
           },
         ]);
-      } else if (baseCommit !== task.repository.baseCommit) {
+      } else if (baseCommit !== workBaseCommit(task.repository, task.baseMerge)) {
         throw new MessageError(
-          message("git.baseCommitMissing", { commit: task.repository.baseCommit }),
+          message("git.baseCommitMissing", {
+            commit: workBaseCommit(task.repository, task.baseMerge),
+          }),
         );
       }
       return { ok: true, dir };
@@ -5901,7 +5984,10 @@ export class TaskService {
     // 承認した成果で頼まれたコメントは、次の工程の前に投稿する
     const commenting = initial && awaitingGitHubComments(initial);
     if (initial && commenting) return this.postGitHubComments(initial, commenting);
-    if (initial && awaitingVerification(initial)) return this.verify(initial);
+    if (initial && awaitingVerification(initial)) {
+      if (!(await this.syncBeforeVerify(initial))) return;
+      return this.verify(this.mustGet(taskId));
+    }
     // 要求要件・設計の成果を、タスクブランチへの PR にして承認待ちにする（PBI-57）
     const waitingPr = initial && this.awaitingStepPullRequest(initial);
     if (initial && waitingPr) return this.publishStepPullRequest(initial, waitingPr);
@@ -6255,6 +6341,27 @@ export class TaskService {
       ]);
       return;
     }
+    // 実装は、始める前に、ベースブランチの最新を作業領域に取り込む（差し戻し・PR の指摘の取り込み・再レビューで実装を
+    // やり直すときも。並行する別のタスクのマージで PR が競合したままにならないように）。競合したファイルには目印が入るので、
+    // 実装の指示に渡して解消させる。取り込めなければ、実行せずに止める
+    let mergeConflicts: string[] = [];
+    if (step === "implement" && this.mergesBase(this.mustGet(task.id))) {
+      const synced = await this.syncBase(this.mustGet(task.id));
+      if (synced.kind === "failed") {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: { runId, step, agentId: agent.id, reason: "error", message: synced.message },
+            },
+          },
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        ]);
+        return;
+      }
+      if (synced.kind === "conflicts") mergeConflicts = synced.files;
+    }
     // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは使い捨ての写し（書き込めるので、
     // リポジトリの手順のセットアップなども実行できる。変更は残らない。PBI-40）
     const scratch = step !== "implement" && step !== "reproduce";
@@ -6458,6 +6565,7 @@ export class TaskService {
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
+            ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
@@ -7308,6 +7416,50 @@ export class TaskService {
   }
 
   /**
+   * 検証（最終レビュー）の前に、ベースブランチの最新を作業領域に取り込む（実装の実行の間にベースブランチが進んだとき。
+   * 競合で一時停止したタスクを再開して、実装をやり直さずに検証へ戻ったときも）。最終レビューは取り込んだ後のコードで行い、
+   * PR は取り込んだマージコミットで出す。PR の CI を待つ間は、ここに来ない（待つ間は検証に進まない）。CI の結果が出た後に
+   * ベースブランチが進んでいれば取り込み、PR を作り直して CI を待ち直す（前の CI の結果は、取り込む前のコードのもの）。
+   * 競合の目印が残っていれば、最終レビューに進まず、競合した
+   * ファイルを渡して実装をやり直す（続けて解消できなければ一時停止する）。取り込めなければ止める。
+   * 検証に進んでよければ true。
+   */
+  private async syncBeforeVerify(task: Task): Promise<boolean> {
+    if (
+      !this.mergesBase(task) ||
+      budgetState(task.budget) === "exceeded" ||
+      !existsSync(this.repoDir(task)) ||
+      !existsSync(this.trustedGitDir(task))
+    ) {
+      return true;
+    }
+    const synced = await this.syncBase(task);
+    if (synced.kind === "clean") return true;
+    if (synced.kind === "failed") {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: synced.message } },
+        },
+      ]);
+      return false;
+    }
+    // 実行の間にベースブランチが進んで新しく競合したのは、エージェントの誤りではないので、数えずにやり直す。
+    // 前の取り込みの目印が残っているときは、検証に通らなかったものとして数える
+    const failed = this.append(this.mustGet(task.id), [
+      {
+        actor: "sacty",
+        event: {
+          type: "BaseConflictsRemained",
+          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
+        },
+      },
+    ]);
+    if (!synced.fresh) this.pauseIfVerificationKeepsFailing(failed);
+    return false;
+  }
+
+  /**
    * 実装を検証する。ゴールガーディアンが新しいセッションで、実装の工程のイメージ・サービスにつないだ実装後のコードの写しで
    * テスト（検証）のコマンドを実行し、その結果と差分・コードから最終レビューする（sacty はテストを別に実行しない）。
    * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
@@ -7404,7 +7556,11 @@ export class TaskService {
     // （再開すると、差分の取得からやり直す）
     let diff: string;
     try {
-      diff = await this.deps.repos.diff(dir, this.trustedGitDir(task), task.repository.baseCommit);
+      diff = await this.deps.repos.diff(
+        dir,
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
     } catch (error) {
       this.append(current, [
         {
@@ -7429,7 +7585,7 @@ export class TaskService {
         const changes = await this.deps.repos.diffStats(
           dir,
           this.trustedGitDir(task),
-          task.repository.baseCommit,
+          workBaseCommit(task.repository, task.baseMerge),
         );
         scopeViolated = scopeViolation(securityScope(task), changes);
       } catch (error) {
@@ -7677,7 +7833,7 @@ export class TaskService {
       const changes = await this.deps.repos.diffStats(
         dir,
         this.trustedGitDir(task),
-        task.repository.baseCommit,
+        workBaseCommit(task.repository, task.baseMerge),
       );
       return isDocumentsOnly(changes.map((c) => c.path));
     } catch {
@@ -8083,7 +8239,10 @@ export class TaskService {
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
-        baseCommit: task.repository.baseCommit,
+        // ベースブランチの最新を取り込んでいれば、作業領域はそのコミットに実装の変更を加えたもの。コミットは、そのコミットを
+        // 第2の親にしたマージコミットにする（まだ parent の履歴に含まれていなければ）
+        baseCommit: workBaseCommit(task.repository, task.baseMerge),
+        ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
         message: `${task.title}\n\nsacty task ${task.id}`,
@@ -8457,6 +8616,8 @@ export class TaskService {
   /** 検証が続けて通らなければ、実装のやり直しを止めて人間に判断してもらう。 */
   private pauseIfVerificationKeepsFailing(task: Task): void {
     if (task.verifyFailures < MAX_VERIFY_ATTEMPTS) return;
+    // 競合の目印が残って通らなかったときは、そう伝える（目印のあるファイルを、レビューへ進められない理由と一緒に示す）
+    const feedback = task.verifyFeedback;
     this.append(task, [
       {
         actor: "sacty",
@@ -8464,7 +8625,14 @@ export class TaskService {
           type: "TaskPaused",
           payload: {
             reason: "verification",
-            message: message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
+            message:
+              feedback?.kind === "merge"
+                ? message("verify.mergeConflictsRemain", {
+                    count: MAX_VERIFY_ATTEMPTS,
+                    files: feedback.files.slice(0, 5).join(", "),
+                    total: feedback.files.length,
+                  })
+                : message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
           },
         },
       },
