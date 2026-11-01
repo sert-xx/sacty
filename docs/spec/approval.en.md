@@ -150,7 +150,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
 
 1. The task ID line, and `Closes #<number>` (for a task taken in from an Issue)
 2. "結論" (Conclusion)
-   - Summary of the change: the head of the first paragraph (excluding headings, tables, and code blocks) of the Implementation step's output. When there is no output, the line is left out.
+   - Summary of the change: the head of the first paragraph (only lines without indentation; excluding headings, tables, code blocks, and indented lines) of the Implementation step's output. When there is no output, the line is left out.
    - The final review's verdict and the head of its summary. "（なし）" when there is no final review yet, and a note when it is being verified.
    - The record that a person moved the task on despite the failed final review, and the failed points (if any; `overrideBodyLines`)
    - What a person should confirm (if any; `humanCheckBodyLines`)
@@ -167,7 +167,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
 
 The common rules are as follows.
 
-- Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Lines of code blocks, tables, and headings are left alone. The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
+- Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Only sentences in lines that are outside a code fence and do not start with whitespace are touched. Lines of code blocks (CommonMark fences: indentation of 0 to 3 spaces, closed by the same character at least as long as the opening), tables, and headings, and every indented line (code inside a list, indented code, and so on), are left alone. The rule does not parse Markdown piece by piece and errs on the side of keeping: one leftover progress sentence does less harm than broken code. The summary of the change (`leadParagraph`) also uses only lines without indentation. The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
 - The leading "合格。" or "不合格。" of the final review's summary is removed (the verdict is written separately, so it is not repeated as "合格。合格。").
 - A long sentence in the conclusion is cut at a sentence break ("。") within `BODY_LEAD_MAX` (240 characters). If there is no break, "…" is added.
 

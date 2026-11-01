@@ -3556,7 +3556,14 @@ function closesFence(line: string, fence: CodeFence): boolean {
   return marks.length >= fence.size && marks.charAt(0) === fence.char;
 }
 
-/** 文章の最初の段落（見出し・表・コードブロックを除く）の頭。無ければ空。 */
+/**
+ * 行頭が空白（字下げ）か。字下げした行は、字下げしたコード・リストの中のコードブロックなど、Markdown の規則を
+ * 一つずつ読まないと見分けられないものなので、PR の本文の整形では触らない（報告の文を除かない・要約に使わない）。
+ * 迷う入力は、報告の文が1つ残るほうが、コードが壊れるより害が小さい。
+ */
+const isIndented = (line: string) => /^[ \t]/.test(line);
+
+/** 文章の最初の段落（字下げした行・見出し・表・コードブロックを除く）の頭。無ければ空。 */
 function leadParagraph(text: string, max = BODY_LEAD_MAX): string {
   const found: string[] = [];
   let fence: CodeFence | undefined;
@@ -3576,7 +3583,8 @@ function leadParagraph(text: string, max = BODY_LEAD_MAX): string {
       if (found.length > 0) break;
       continue;
     }
-    if (/^#{1,6}\s/.test(trimmed) || trimmed.startsWith("|")) {
+    // 字下げのある行（字下げしたコード・リストの中身）は、要約にしない（迷うものは使わない側に倒す）
+    if (isIndented(line) || /^#{1,6}\s/.test(trimmed) || trimmed.startsWith("|")) {
       if (found.length > 0) break;
       continue;
     }
@@ -3598,9 +3606,12 @@ const PROGRESS_STATE =
 /** 作業の経過の報告として除く文の長さの上限（文字）。長い文は、中身のある説明かもしれないので残す。 */
 const PROGRESS_SENTENCE_MAX = 100;
 
+/** 前後の空行と末尾の空白を除く（先頭の行の字下げは残す：字下げしたコードの字下げを消さない）。 */
+const trimBlankLines = (value: string) => value.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+
 /**
  * 実装のエージェントの説明から、PR の読み手に意味の無い作業の経過の報告（「コミット・プッシュはしていません」
- * 「マージコミットと GitHub への反映は未完了です」など）の文を除く。コードブロックと表・見出しの行は触らない。
+ * 「マージコミットと GitHub への反映は未完了です」など）の文を除く。コードブロック・表・見出しの行と、字下げのある行（リストの中のコードなど）は触らない。字下げの無い行の文だけを除く。
  */
 export function withoutProgressReport(text: string): string {
   const out: string[] = [];
@@ -3617,6 +3628,11 @@ export function withoutProgressReport(text: string): string {
     const opened = openingFence(line);
     if (opened) {
       fence = opened;
+      blankRun = 0;
+      out.push(line);
+      continue;
+    }
+    if (isIndented(line) && trimmed !== "") {
       blankRun = 0;
       out.push(line);
       continue;
@@ -3648,12 +3664,12 @@ export function withoutProgressReport(text: string): string {
       out.push(kept.join("").trimEnd());
     }
   }
-  return out.join("\n").trim();
+  return trimBlankLines(out.join("\n"));
 }
 
 /** PR の本文に載せる、実装のエージェントの説明（作業の経過の報告を除いたもの）。 */
 function implementReport(task: Task): string {
-  return withoutProgressReport((task.outputs.implement ?? "").trim());
+  return withoutProgressReport(task.outputs.implement ?? "");
 }
 
 /** PR の本文の冒頭に出す、最終レビューの結論（判定と所見の頭）。 */

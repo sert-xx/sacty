@@ -451,6 +451,32 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     expect(body).not.toContain("- 変更：中の文");
   });
 
+  it("字下げのある行（リストの中のコード・字下げしたコード）は、報告の文を除かず、要約にも使わない", () => {
+    // リストの中のコードブロック（字下げが4空白以上でも、中の文を消さない）
+    const inList =
+      "- 変更の例\n\n    ```text\n    コミット・プッシュはしていません。\n    ```\n\n確かめました。";
+    expect(withoutProgressReport(inList)).toBe(inList);
+    const deeper =
+      "1. 手順\n\n   ```text\n   コミットはしていません。\n   ```\n   コミットはしていません。\n終わり。";
+    expect(withoutProgressReport(deeper)).toBe(deeper);
+    // 字下げしたコード（4空白・タブ）を最初の段落として採用しない
+    for (const code of ['    console.log("内部用コード");', '\tconsole.log("内部用コード");']) {
+      const body = buildPullRequestBody(
+        task({ outputs: { implement: `## 変更例\n\n${code}\n\nAPI を足しました。` } }),
+      );
+      expect(body).toContain("- 変更：API を足しました。");
+      expect(body).not.toContain("- 変更：console.log");
+    }
+    // 字下げのある行しか無ければ、要約は空（結論に「変更」を出さない）
+    expect(
+      buildPullRequestBody(task({ outputs: { implement: '    console.log("内部用コード");' } })),
+    ).not.toContain("- 変更：");
+    // 字下げの無い行の報告の文は、従来どおり除く（箇条書きの行頭も）
+    expect(withoutProgressReport("- 変更しました。\n- コミットはしていません。")).toBe(
+      "- 変更しました。",
+    );
+  });
+
   it("結論の「変更」の要約も、4文字で開いたコードの中の3文字のフェンスで終わらない", () => {
     const body = buildPullRequestBody(
       task({
