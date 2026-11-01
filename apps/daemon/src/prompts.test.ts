@@ -2511,7 +2511,7 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     }
   });
 
-  it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、ID の欠番と参照だけの項目を残さないことを書く", () => {
+  it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、理由の分からない ID の欠番と参照だけの項目を残さないことを書く", () => {
     const t = task(["requirements", "design", "implement"]);
     for (const [step, name] of [
       ["requirements", "要求要件"],
@@ -2527,7 +2527,13 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
         "人間の指摘・PR の指摘・再開の補足への対応の報告（指摘への対応は、本文ではなく、sacty-responses の JSON の text に書く。",
       );
       expect(prompt, step).toContain("エージェントや sacty に向けたメモ・指示");
-      expect(prompt, step).toContain("1 から欠番なく連番で振る");
+      expect(prompt, step).toContain("最初の提出では 1 から欠番なく振る");
+      expect(prompt, step).toContain("ID を詰めず");
+      expect(prompt, step).toContain(
+        "「R-5（削除：理由）」のように行を残して、欠番の理由が分かるようにする",
+      );
+      expect(prompt, step).toContain("理由の分からない ID の欠番がある指摘は、should でも直す");
+      expect(prompt, step).not.toContain("振り直して、他の箇所の参照も合わせる");
       expect(prompt, step).toContain(
         "参照だけにせず、参照先の中身（この項目で何を求めるか）を1行で併記する",
       );
