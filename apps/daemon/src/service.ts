@@ -852,6 +852,11 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /**
+   * PR のフィードバックを、このデーモンが初めて見た時刻（タスクの ID → フィードバックの key → 時刻。メモリーだけ）。
+   * 書き終わるのを待つ時間は、GitHub の時刻だけでなく、これも使って数える（PBI-270）。
+   */
+  private readonly feedbackSeenAt = new Map<string, Map<string, number>>();
   /** レビュー用のラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
   private readonly labeling = new Set<string>();
   /**
@@ -974,6 +979,13 @@ export class TaskService {
       (t) =>
         (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
     );
+    // 指摘を取り込む対象から外れたタスク（完了・中止・差し戻し・マージなど）の、初めて見た時刻は忘れる（常駐中に増え続けないため。PBI-270）
+    const importing = new Set(
+      waiting.filter((t) => t.status === "awaiting_approval").map((t) => t.id),
+    );
+    for (const id of [...this.feedbackSeenAt.keys()]) {
+      if (!importing.has(id)) this.feedbackSeenAt.delete(id);
+    }
     // 指摘の取り込みの間に PR がマージされた・閉じられたタスクは、状態を読み直して一度だけ確かめ直す
     const rechecked = new Set<string>();
     for (const task of waiting) {
@@ -1835,10 +1847,21 @@ export class TaskService {
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
         .filter((item) => !handedOverFeedback(current, pr, item));
-      if (fresh.length === 0) return;
-      // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
-      const newest = Math.max(...fresh.map((item) => Date.parse(item.at) || 0));
-      if (this.now() - newest < FEEDBACK_QUIET_MS) return;
+      if (fresh.length === 0) {
+        this.feedbackSeenAt.delete(task.id);
+        return;
+      }
+      // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ。
+      // フィードバックの時刻は GitHub の時刻なので、それがこの機械の時計より先に進んでいても待ち続けないよう、
+      // このデーモンが初めて見た時刻より後には数えない（見た時点で、そのフィードバックはもう書かれている）
+      const now = this.now();
+      const previouslySeen = this.feedbackSeenAt.get(task.id);
+      const seenAt = new Map(fresh.map((item) => [item.key, previouslySeen?.get(item.key) ?? now]));
+      this.feedbackSeenAt.set(task.id, seenAt);
+      const newest = Math.max(
+        ...fresh.map((item) => Math.min(Date.parse(item.at) || 0, seenAt.get(item.key) ?? now)),
+      );
+      if (now - newest < FEEDBACK_QUIET_MS) return;
       // 一度に取り込むのは、指摘の件数の上限まで（古い順）。残りは取り込み済みにせず、次の取り込みに残す
       const batch = fresh.slice(0, REMARKS_MAX);
       const latest = this.tasks.get(task.id);

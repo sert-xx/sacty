@@ -13,6 +13,19 @@ import type { FoundIssue, IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
 import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
+/**
+ * GitHub の検索の読んだ位置（更新日時）を、検索を始めた時刻より先に進めない。
+ * 読んだ位置は GitHub の更新日時なので、GitHub の時刻がこの機械の時計より先に進んでいる間に付いた更新日時を
+ * そのまま持つと、時刻が戻った後にラベルが付いたものや更新されたものが、その位置より古い更新日時になって
+ * 次の更新まで検索に当たらない（PBI-270）。検索を始めた時刻より先の位置は、その時刻に戻す。
+ * 戻すと余分に読み直すだけで、取り込み済みのものは二重に取り込まない。秒より細かい部分は切り捨てる。
+ */
+export function clampCursor(cursor: string, searchedAt: number): string {
+  const read = Date.parse(cursor);
+  if (!Number.isFinite(read) || read <= searchedAt) return cursor;
+  return new Date(Math.floor(searchedAt / 1000) * 1000).toISOString().replace(".000Z", "Z");
+}
+
 /** 1つの種類の取り込みの状態（PBI-100）。 */
 type KindState = {
   /**
@@ -229,6 +242,8 @@ export class IssueIntake {
         errors.push({ query, message: message("intake.skippedRateLimited") });
         continue;
       }
+      // この検索を始めた時刻（読んだ位置を、これより先に進めないために使う）
+      const searchedAt = this.now();
       try {
         const result = await this.search.search(host, query, auth.token, cursors.get(cursorKey));
         // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
@@ -242,7 +257,14 @@ export class IssueIntake {
           : result.issues;
         for (const issue of issues) foundIn.set(issue, cursorKey);
         found.push(...issues);
-        if (result.cursor) advanced.set(cursorKey, result.cursor);
+        // 検索が終わっていないとき（上限・失敗）の位置は、次の検索がその先から続けるためのものなので、そのまま持つ
+        // （戻すと、先頭の同じ部分を繰り返して先へ進めない）。上限で戻すのは、検索が終わって持ち越す位置だけ
+        if (result.cursor) {
+          advanced.set(
+            cursorKey,
+            result.incomplete ? result.cursor : clampCursor(result.cursor, searchedAt),
+          );
+        }
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
