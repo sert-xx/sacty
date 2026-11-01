@@ -70,7 +70,7 @@ const SECRET_PATTERNS: RegExp[] = [
  * 前後の引用符はエスケープしていてもよい（エスケープした JSON の `\"password\":\"…\"`）。
  */
 const SECRET_ASSIGNMENTS =
-  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\\*["']?\s*[:=]\s*)(?:(\\*")|(')|((?:[^\s"'&,;\\]|\\+(?=[^\s"'\\])){4,}))/gi;
+  /((?:authorization|proxy-authorization)\\*["']?\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\\*["']?\s*[:=]\s*)(?:(\\*")|(')|((?:[^\s"'&,;\\]|\\+(?=[^\s"'\\])){4,}))/gi;
 
 /**
  * `"` で始まる値の終わり（PBI-158）。from は開きの引用符の次、escapes は開きの引用符の前のバックスラッシュの数（0 なら

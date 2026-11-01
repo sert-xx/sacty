@@ -191,6 +191,28 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     expect(JSON.parse(redactLog(key, []))).toEqual({ a: "[REDACTED]", b: "x" });
   });
 
+  it("Authorization・Proxy-Authorization の値は、ヘッダーの形・JSON・エスケープした JSON のどれでも全体を伏せる", () => {
+    // 架空の値
+    expect(redactLog("Authorization: Bearer FAKE_CREDENTIAL_987", [])).toBe(
+      "Authorization: Bearer [REDACTED]",
+    );
+    expect(redactLog("proxy-authorization: Basic FAKE_CREDENTIAL_654", [])).toBe(
+      "proxy-authorization: Basic [REDACTED]",
+    );
+    const value = {
+      Authorization: "Bearer FAKE_CREDENTIAL_987",
+      "Proxy-Authorization": "Basic FAKE_CREDENTIAL_654",
+      x: 1,
+    };
+    const expected = { Authorization: "[REDACTED]", "Proxy-Authorization": "[REDACTED]", x: 1 };
+    expect(JSON.parse(redactLog(JSON.stringify(value), []))).toEqual(expected);
+    expect(JSON.parse(JSON.parse(redactLog(JSON.stringify(JSON.stringify(value)), [])))).toEqual(
+      expected,
+    );
+    const nested = JSON.stringify(JSON.stringify(JSON.stringify(value)));
+    expect(JSON.parse(JSON.parse(JSON.parse(redactLog(nested, []))))).toEqual(expected);
+  });
+
   it("JSON の文字列の中のエスケープした引用符を含む秘密の値も、入れ子の JSON まで全体を伏せる（JSON の構文は壊さない）", () => {
     // 架空の値。引用符の前が3文字・4文字の値と、引用符の前のエスケープしたバックスラッシュ
     for (const password of [
