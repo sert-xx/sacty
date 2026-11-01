@@ -8089,6 +8089,63 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("ゴールガーディアンが範囲外の変更を申告したら、観点がすべて検証済みでも不合格にし、外すよう伝えて実装をやり直す。判断できないものは人の確認に回し、不合格にしない", async () => {
+    const OUT =
+      "RoomsPage.tsx の狭い画面のカード表示と rooms.spec.ts の期待の逆転：どの要求要件・設計にも無い";
+    const withScope = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      withScope({ outOfScope: [OUT] }),
+      implement("# v2"),
+      // 範囲内か判断できないものは humanChecks に回し、不合格にしない
+      withScope({ outOfScope: [], humanChecks: ["範囲内か判断できない：a.ts（解釈が分かれる）"] }),
+    ]);
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(scope?.verified).toBe(false);
+    expect(ja(scope?.reason)).toContain(OUT);
+    // 設計の観点は、すべて検証済みのまま
+    expect(
+      first?.type === "FinalReviewed" && first.payload.viewpoints.filter((v) => v.verified),
+    ).toHaveLength(2);
+    // 実装のやり直しに、範囲外の変更を外すことを伝える
+    const retry = promptOf(executor, 5);
+    expect(retry).toContain("[SCOPE] 観点を検証できていない");
+    expect(retry).toContain(OUT);
+    expect(retry).toContain("起点のコードの状態に戻して外してください");
+    expect(second?.type === "FinalReviewed" && second.payload.passed).toBe(true);
+    expect(
+      second?.type === "FinalReviewed" &&
+        second.payload.viewpoints.some((v) => v.viewpointId === "SCOPE"),
+    ).toBe(false);
+    expect(second?.type === "FinalReviewed" && second.payload.humanChecks).toEqual([
+      "範囲内か判断できない：a.ts（解釈が分かれる）",
+    ]);
+    // 最終レビューの指示に、範囲外の変更の判定が入っている
+    expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
+    activity.close();
+  });
+
   it("ゴールガーディアンがテストの結果を申告しなければ、不合格にする", async () => {
     const silent = out(
       block({

@@ -357,6 +357,7 @@ const PARAMS = {
   "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
   "review.viewpointUnmapped": null,
+  "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
   "review.scopeViolated": z.object({
     outside: z.array(z.string()),
     lines: z.number().int().nonnegative().optional(),
@@ -1118,6 +1119,8 @@ const ja: MessageDictionary = {
     `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
+  "review.outOfScope": ({ items }) =>
+    `依頼にも承認済みの要求要件・設計にも無い変更、または既存のテストの期待を変える変更があります：${items.join(" / ")}`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "差分が修正の範囲を守っていません（sacty の検査）。",
@@ -1792,6 +1795,8 @@ const en: MessageDictionary = {
     `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
+  "review.outOfScope": ({ items }) =>
+    `The diff has changes that neither the request nor the approved requirements and design call for, or that change what an existing test expects: ${items.join(" / ")}`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "The diff does not stay within the fix scope (sacty's check).",
