@@ -376,6 +376,7 @@ const PARAMS = {
     testsDecidable: z.boolean().optional(),
   }),
   "verify.diffUnavailable": z.object({ detail: TextParam }),
+  "verify.stoppedByPerson": null,
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
   "verify.tooManyAttempts": z.object({ count: Count }),
   "verify.mergeConflictsRemain": z.object({
@@ -1145,6 +1146,8 @@ const ja: MessageDictionary = {
       ? `${guide}検証をこのイメージで実行しなくてよいときは、再開のときの「テストの扱い」で、テストのコマンドを指定し直すか、テストなしで進めると決めることもできます。`
       : guide;
   },
+  "verify.stoppedByPerson":
+    "人間が止めたため、最終レビューの判定を記録しませんでした。再開すると、最終レビューからやり直します。",
   "verify.diffUnavailable": ({ detail }, text) =>
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
@@ -1817,6 +1820,8 @@ const en: MessageDictionary = {
       ? `${guide} If this image does not need to run the verification, you can instead choose "Tests" when resuming and specify a different test command or proceed without tests.`
       : guide;
   },
+  "verify.stoppedByPerson":
+    "The final review verdict was not recorded because a person stopped the task. Resuming redoes the final review.",
   "verify.diffUnavailable": ({ detail }, text) =>
     `Could not get the diff, so the final review was not done: ${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>

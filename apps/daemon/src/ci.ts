@@ -59,11 +59,113 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
 ];
 /**
- * `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。値は、JSON の区切り（`{}[]`）と、
- * エスケープした引用符（`\"`）の前で終える（JSON の構文を壊さないため。PBI-158）。
+ * `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。値は次のどれか（PBI-158）。
+ * - `"`（エスケープした `\"` を含む）で始まる値：同じ深さの閉じの引用符（と改行）の前まで（quotedEnd で探す）。
+ *   中のエスケープした引用符（JSON の文字列の中の `\"`）と括弧も値に含める
+ * - `'` で始まる値：閉じの `'`（と改行）の前まで（quotedEnd ではなく singleQuotedEnd で探す）。`"` と括弧も値に含めるが、
+ *   JSON の文字列の外へは出さない
+ * - 引用符の無い値：空白・引用符・`&`・`,`・`;` と、引用符をエスケープしている `\` の前まで（括弧も値に含める）。
+ *   JSON のキーの後（`"token": …`）なら、JSON の区切りの括弧の前までを値とする
+ * どの値も、閉じの引用符と、それをエスケープしている `\` の並びは残す（JSON の文字列の区切りを壊さないため）。名前の
+ * 前後の引用符はエスケープしていてもよい（エスケープした JSON の `\"password\":\"…\"`）。
  */
 const SECRET_ASSIGNMENTS =
-  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)((?:[^\s"'&,;\\{}[\]]|\\[^\s"'\\]|\\\\){4,})/gi;
+  /((?:authorization|proxy-authorization)\\*["']?\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\\*["']?\s*[:=]\s*)(?:(\\*")|(')|((?:[^\s"'&,;\\]|\\+(?=[^\s"'\\])){4,}))/gi;
+
+/**
+ * `"` で始まる値の終わり（PBI-158）。from は開きの引用符の次、escapes は開きの引用符の前のバックスラッシュの数（0 なら
+ * JSON の文字列、1 ならエスケープした JSON の文字列、3 ならエスケープを重ねた JSON の文字列）。引用符の前のバックスラッシュの
+ * 並びの長さ r が、この深さでエスケープした引用符（下位のビットがすべて 1）なら値の中身、そうでなければ閉じの引用符（か、
+ * 外の文字列の終わり）なので、並びの前で終える。改行でも終える。
+ */
+function quotedEnd(text: string, from: number, escapes: number): number {
+  const mask = 2 ** Math.floor(Math.log2(escapes + 1) + 1) - 1;
+  let at = from;
+  while (at < text.length) {
+    const c = text[at] as string;
+    if (c === "\r" || c === "\n" || c === '"') return at;
+    if (c !== "\\") {
+      at++;
+      continue;
+    }
+    let run = at;
+    while (run < text.length && text[run] === "\\") run++;
+    if (text[run] === '"' && ((run - at) & mask) !== mask) return at;
+    at = text[run] === '"' ? run + 1 : run;
+  }
+  return at;
+}
+
+/**
+ * `'` で始まる値の終わり（PBI-158）。from は開きの引用符の次。閉じの `'`・改行の前までで、JSON の文字列の中なら、その文字列の
+ * 閉じの引用符の前まで、外なら次の JSON の文字列の前まで（JSON の文字列の区切りを壊さないため）。ranges は jsonStrings の結果。
+ */
+function singleQuotedEnd(
+  text: string,
+  from: number,
+  ranges: readonly { start: number; end: number }[],
+): number {
+  // ranges は重ならず、始まりの順に並ぶので、from より前に始まる最後の範囲を二分探索で探す
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((ranges[middle] as { start: number }).start < from) low = middle + 1;
+    else high = middle;
+  }
+  const before = ranges[low - 1];
+  const limit = before && from < before.end ? before.end - 1 : (ranges[low]?.start ?? text.length);
+  let at = from;
+  while (at < limit && !"'\r\n".includes(text[at] as string)) at++;
+  return at;
+}
+
+/** 名前と値の形の秘密情報（SECRET_ASSIGNMENTS）を伏せる。 */
+function redactAssignments(text: string): string {
+  const pattern = new RegExp(SECRET_ASSIGNMENTS.source, SECRET_ASSIGNMENTS.flags);
+  let result = "";
+  let last = 0;
+  let ranges: { start: number; end: number }[] | undefined;
+  for (let found = pattern.exec(text); found; found = pattern.exec(text)) {
+    const [all, name = "", doubleQuote, singleQuote, bare] = found;
+    const valueAt = found.index + name.length;
+    let replaced: string | undefined;
+    let end = found.index + all.length;
+    if (doubleQuote !== undefined) {
+      const from = valueAt + doubleQuote.length;
+      const until = quotedEnd(text, from, doubleQuote.length - 1);
+      if (until - from >= 4) {
+        replaced = `${name}${doubleQuote}[REDACTED]`;
+        end = until;
+      }
+    } else if (singleQuote !== undefined) {
+      ranges ??= jsonStrings(text);
+      const from = valueAt + 1;
+      const until = singleQuotedEnd(text, from, ranges);
+      if (until - from >= 4) {
+        replaced = `${name}'[REDACTED]`;
+        end = until;
+      }
+    } else {
+      const value = bare ?? "";
+      const key = /(\\*)"\s*:\s*$/.exec(name);
+      // JSON のキーの後の引用符の無い値（`"token": 12345678}`）は、区切りの括弧の前までを JSON の文字列にして伏せる。
+      // null・true・false は秘密情報ではないので残す。括弧で始まる値（配列・オブジェクト）は、中の値を別に調べる
+      const secret = key ? (/^[^{}[\]]*/.exec(value)?.[0] ?? "") : value;
+      if (!key) replaced = `${name}[REDACTED]`;
+      else if (secret.length >= 4 && !/^(?:null|true|false)$/.test(secret)) {
+        const quote = `${key[1]}"`;
+        replaced = `${name}${quote}[REDACTED]${quote}`;
+        end = valueAt + secret.length;
+      }
+    }
+    if (replaced === undefined) continue;
+    result += text.slice(last, found.index) + replaced;
+    last = end;
+    pattern.lastIndex = end;
+  }
+  return last === 0 ? text : result + text.slice(last);
+}
 
 /**
  * CI のログから、秘密情報を伏せる（PBI-89）。渡した値（使ったトークンなど）と、よくある秘密情報の形を伏せる。
@@ -73,11 +175,7 @@ export function redactLog(text: string, secrets: readonly string[]): string {
   // URL のユーザー情報（https://user:pass@host/）は、ほかの形に分かれる前に、URL として読んで伏せる
   let result = redactUrlCredentials(redact(text, secrets));
   for (const pattern of SECRET_PATTERNS) result = result.replace(pattern, "[REDACTED]");
-  return result.replace(SECRET_ASSIGNMENTS, (_all, name: string, value: string) => {
-    // JSON の引用符の無い値（`"token": 12345678`）は、JSON の文字列にして伏せる。null・true・false は秘密情報ではないので残す
-    if (!/"\s*:\s*$/.test(name)) return `${name}[REDACTED]`;
-    return /^(?:null|true|false)$/.test(value) ? `${name}${value}` : `${name}"[REDACTED]"`;
-  });
+  return redactAssignments(result);
 }
 
 /** スキームに使える文字（大文字・小文字は問わない）。 */
@@ -205,15 +303,15 @@ function redactUrls(
     : result + redactUrlsInText(text.slice(last), options, insideString);
 }
 
-/** JSON の値の前（`{`・`[`・`,`・`:`）と後（`,`・`:`・`}`・`]`）。 */
-const JSON_BEFORE = new Set(["{", "[", ",", ":"]);
-const JSON_AFTER = new Set([",", ":", "}", "]"]);
+/** JSON の値の前（`{`・`[`・`,`・`:`）と後（`,`・`:`・`}`・`]`）。`""` は文章の始まり・終わり（文章の全体が JSON の文字列のとき）。 */
+const JSON_BEFORE = new Set(["{", "[", ",", ":", ""]);
+const JSON_AFTER = new Set([",", ":", "}", "]", ""]);
 /** JSON の文字列らしいもの（改行を含まない。JSON として読めるかは別に確かめる）。 */
 const JSON_STRING = /"(?:[^"\\\n\r]|\\.)*"/y;
 
 /**
  * 文章の中の、JSON のキー・値の位置にある文字列（`"…"`）の範囲（PBI-158）。前後の空白を除いた隣の文字が、JSON の区切りの
- * ものだけを選ぶ（地の文の `"` を、JSON の文字列と見なさないように）。エスケープした `"`（前のバックスラッシュが奇数個）からは
+ * もの（文章の始まり・終わりも含む）だけを選ぶ（地の文の `"` を、JSON の文字列と見なさないように）。エスケープした `"`（前のバックスラッシュが奇数個）からは
  * 試さない（入れ子の JSON は、デコードした中身で調べる）。どの位置も、隣の `"` までを一度ずつ読む。JSON として読めない
  * もの（`\x` などのエスケープ）は選ばない。
  */
