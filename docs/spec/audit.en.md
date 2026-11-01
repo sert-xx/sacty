@@ -43,6 +43,7 @@ The audit flows as follows.
   - For the output, redaction is applied both to the raw JSON string and to the decoded texts (summary, reasons, causes, evidence, proposals, memories), so escaped values are covered too. After decoding, redaction runs before trimming, so values ending in a newline are covered.
   - Session logs are staged as hard links to the original logs, so sacty replaces them with redacted copies before mounting, leaving the originals unchanged.
   - The redaction covers the values of secrets used by the settings and sacty settings (including the audit AI's), the GitHub tokens of the project's chosen accounts and of the task's repository, and common secret patterns.
+  - Redaction keeps the JSON syntax of the output (it does not reach outside a JSON string, so the output is readable even when a URL and an email address are in different fields).
   - The values are never reused. sacty fetches them each time at these points:
     - Before sending to the audit AI
     - Before recording the result after the audit AI returns (together with the values fetched before sending)

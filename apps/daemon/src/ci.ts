@@ -47,18 +47,23 @@ export const isFailedConclusion = isFailedCiCheck;
 /**
  * よくある秘密情報の形（PBI-89。CI のログの抜粋に使う）。値の部分だけを伏せる（前の名前は残す）。
  * GitHub Actions はログの secrets を *** にするが、secrets に入れていない値（コマンドが出力した一時トークンなど）もある。
+ * 伏せる範囲は JSON の文字列の外へ出さない（監査の結果など、伏せてから JSON として読む出力を壊さないため。PBI-158）。
+ * 終わりの行が無い秘密鍵は、`"`（エスケープしたものを含む）の前か、文字列の末尾までを伏せる。
  */
 const SECRET_PATTERNS: RegExp[] = [
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[^"\\]|\\[^"])*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|(?=\\?")|$)/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
 ];
-/** `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。 */
+/**
+ * `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。値は、JSON の区切り（`{}[]`）と、
+ * エスケープした引用符（`\"`）の前で終える（JSON の構文を壊さないため。PBI-158）。
+ */
 const SECRET_ASSIGNMENTS =
-  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)([^\s"'&,;]{4,})/gi;
+  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)((?:[^\s"'&,;\\{}[\]]|\\[^\s"'\\]|\\\\){4,})/gi;
 
 /**
  * CI のログから、秘密情報を伏せる（PBI-89）。渡した値（使ったトークンなど）と、よくある秘密情報の形を伏せる。
@@ -68,7 +73,11 @@ export function redactLog(text: string, secrets: readonly string[]): string {
   // URL のユーザー情報（https://user:pass@host/）は、ほかの形に分かれる前に、URL として読んで伏せる
   let result = redactUrlCredentials(redact(text, secrets));
   for (const pattern of SECRET_PATTERNS) result = result.replace(pattern, "[REDACTED]");
-  return result.replace(SECRET_ASSIGNMENTS, (_all, name: string) => `${name}[REDACTED]`);
+  return result.replace(SECRET_ASSIGNMENTS, (_all, name: string, value: string) => {
+    // JSON の引用符の無い値（`"token": 12345678`）は、JSON の文字列にして伏せる。null・true・false は秘密情報ではないので残す
+    if (!/"\s*:\s*$/.test(name)) return `${name}[REDACTED]`;
+    return /^(?:null|true|false)$/.test(value) ? `${name}${value}` : `${name}"[REDACTED]"`;
+  });
 }
 
 /** スキームに使える文字（大文字・小文字は問わない）。 */
@@ -78,6 +87,8 @@ const SCHEME_CHAR = /[a-z0-9+.-]/i;
  * エスケープ `p\"ss` など、ユーザー情報に入りうるため）。
  */
 const AUTHORITY_END = /[\s/?#]/;
+/** JSON の文字列の外では、`"` も URL の終わりにする（JSON の文字列の区切りを越えないように）。 */
+const AUTHORITY_END_OUTSIDE = /[\s/?#"]/;
 /** ホストより後の、URL の終わり（ログの中の引用符・山括弧・バッククォート・空白）。 */
 const URL_END = /[\s"'<>`]/;
 const WHITESPACE = /\s/;
@@ -105,13 +116,18 @@ function nextMatch(text: string, test: (c: string) => boolean): (from: number) =
  * ユーザー情報は引用符・`\` を含みうる（`https://user:p'ss@host/`）ので、権限の終わりまでに `@` があれば
  * そこまでを URL に含める（ログの引用符をまたいで伏せすぎることはあるが、認証情報の後半を残さない）。
  * queryAndFragment が true なら、クエリ・フラグメントの中の引用符でも終えない。
+ * insideString が false（JSON の文字列の外）なら、`"` と、それをエスケープしている `\` は越えない（エスケープした JSON や、
+ * JSON の文字列と見なせなかった所でも、文字列の区切りを壊さないように）。
  */
 function urlRanges(
   text: string,
   queryAndFragment: boolean,
+  insideString: boolean,
 ): { start: number; end: number; userinfo: boolean }[] {
   const ranges: { start: number; end: number; userinfo: boolean }[] = [];
-  const nextSpace = nextMatch(text, (c) => WHITESPACE.test(c));
+  const authorityEnd = insideString ? AUTHORITY_END : AUTHORITY_END_OUTSIDE;
+  // クエリ・フラグメントを伸ばす先（JSON の文字列の外では、`"` の前まで）
+  const nextStop = nextMatch(text, (c) => WHITESPACE.test(c) || (!insideString && c === '"'));
   const nextMark = nextMatch(text, (c) => c === "?" || c === "#");
   let from = 0;
   for (let colon = text.indexOf("://"); colon !== -1; colon = text.indexOf("://", colon + 1)) {
@@ -124,7 +140,7 @@ function urlRanges(
     const body = colon + 3;
     // 権限は次の `://` の `/` までに終わるので、権限を調べる範囲は URL ごとに重ならない
     let lastAt = -1;
-    for (let i = body; i < text.length && !AUTHORITY_END.test(text[i] as string); i++) {
+    for (let i = body; i < text.length && !authorityEnd.test(text[i] as string); i++) {
       if (text[i] === "@") lastAt = i;
     }
     const host = lastAt === -1 ? body : lastAt + 1;
@@ -134,9 +150,16 @@ function urlRanges(
     // クエリ・フラグメントを伏せるときは、その中の引用符（`?session='…`）で URL を終えない。空白までにクエリか
     // フラグメントがあれば、空白までを URL に含める（閉じの引用符まで伏せることはあるが、値の後半を残さない）
     if (queryAndFragment) {
-      const space = nextSpace(end);
-      if (nextMark(host) < space) end = space;
+      const stop = nextStop(end);
+      if (nextMark(host) < stop) end = stop;
     }
+    // 引用符をエスケープしているバックスラッシュ（`\"`）は、URL に含めない（エスケープした JSON を壊さないように）
+    if (text[end] === '"' || text[end] === "'") {
+      let slashes = 0;
+      while (end - slashes - 1 >= host && text[end - slashes - 1] === "\\") slashes++;
+      if (slashes % 2 === 1) end--;
+    }
+    if (end === body) continue;
     ranges.push({ start, end, userinfo: lastAt !== -1 });
     from = end;
     // URL の中の `://` は、次の候補にしない
@@ -155,9 +178,99 @@ export function redactUrlCredentials(
   text: string,
   options: { queryAndFragment?: boolean } = {},
 ): string {
+  return redactUrls(text, options, false);
+}
+
+/**
+ * redactUrlCredentials の本体。insideString は、JSON の文字列をデコードした中身か（中身はまとめてエンコードし直すので、
+ * `"` を越えて伏せても、外の JSON の構文は壊れない）。
+ */
+function redactUrls(
+  text: string,
+  options: { queryAndFragment?: boolean },
+  insideString: boolean,
+): string {
+  // JSON の文字列（キーと値）は、デコードした中身ごとに伏せる（URL の範囲が、ほかのフィールドへ出ないように）
   let result = "";
   let last = 0;
-  for (const { start, end, userinfo } of urlRanges(text, options.queryAndFragment === true)) {
+  for (const { start, end, decoded } of jsonStrings(text)) {
+    const literal = text.slice(start, end);
+    const hidden = redactUrls(decoded, options, true);
+    result += redactUrlsInText(text.slice(last, start), options, insideString);
+    result += hidden === decoded ? literal : JSON.stringify(hidden);
+    last = end;
+  }
+  return last === 0
+    ? redactUrlsInText(text, options, insideString)
+    : result + redactUrlsInText(text.slice(last), options, insideString);
+}
+
+/** JSON の値の前（`{`・`[`・`,`・`:`）と後（`,`・`:`・`}`・`]`）。 */
+const JSON_BEFORE = new Set(["{", "[", ",", ":"]);
+const JSON_AFTER = new Set([",", ":", "}", "]"]);
+/** JSON の文字列らしいもの（改行を含まない。JSON として読めるかは別に確かめる）。 */
+const JSON_STRING = /"(?:[^"\\\n\r]|\\.)*"/y;
+
+/**
+ * 文章の中の、JSON のキー・値の位置にある文字列（`"…"`）の範囲（PBI-158）。前後の空白を除いた隣の文字が、JSON の区切りの
+ * ものだけを選ぶ（地の文の `"` を、JSON の文字列と見なさないように）。エスケープした `"`（前のバックスラッシュが奇数個）からは
+ * 試さない（入れ子の JSON は、デコードした中身で調べる）。どの位置も、隣の `"` までを一度ずつ読む。JSON として読めない
+ * もの（`\x` などのエスケープ）は選ばない。
+ */
+function jsonStrings(text: string): { start: number; end: number; decoded: string }[] {
+  const ranges: { start: number; end: number; decoded: string }[] = [];
+  const nextQuote = (from: number): number => {
+    for (let at = text.indexOf('"', from); at !== -1; at = text.indexOf('"', at + 1)) {
+      let slashes = 0;
+      while (at - slashes - 1 >= 0 && text[at - slashes - 1] === "\\") slashes++;
+      if (slashes % 2 === 0) return at;
+    }
+    return -1;
+  };
+  const neighbor = (from: number, step: 1 | -1): string => {
+    let at = from;
+    while (at >= 0 && at < text.length && WHITESPACE.test(text[at] as string)) at += step;
+    return text[at] ?? "";
+  };
+  for (let i = nextQuote(0); i !== -1; ) {
+    JSON_STRING.lastIndex = i;
+    const found = JSON_STRING.exec(text)?.[0];
+    const end = found ? i + found.length : -1;
+    const decoded =
+      found && JSON_BEFORE.has(neighbor(i - 1, -1)) && JSON_AFTER.has(neighbor(end, 1))
+        ? parseString(found)
+        : undefined;
+    if (decoded !== undefined) {
+      ranges.push({ start: i, end, decoded });
+      i = nextQuote(end);
+    } else {
+      i = nextQuote(i + 1);
+    }
+  }
+  return ranges;
+}
+
+function parseString(literal: string): string | undefined {
+  try {
+    return JSON.parse(literal) as string;
+  } catch {
+    return undefined;
+  }
+}
+
+/** JSON の文字列の外の文章（または JSON の文字列の中身）の URL から、認証情報を除く。 */
+function redactUrlsInText(
+  text: string,
+  options: { queryAndFragment?: boolean },
+  insideString: boolean,
+): string {
+  let result = "";
+  let last = 0;
+  for (const { start, end, userinfo } of urlRanges(
+    text,
+    options.queryAndFragment === true,
+    insideString,
+  )) {
     result += text.slice(last, start) + redactUrl(text.slice(start, end), userinfo, options);
     last = end;
   }
