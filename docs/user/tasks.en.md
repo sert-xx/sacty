@@ -355,7 +355,7 @@ If either of the following exists, the final review fails (viewpoint `SCOPE`) an
 A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Security checks and fixes](#security-checks-and-fixes)) looks at the same thing.
 
 - A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
-- A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
+- A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
 
 Treated as in scope:
 
@@ -367,9 +367,10 @@ Treated as in scope:
 What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
 
 The reason for the failure and the out-of-scope changes appear in the final review of the implementation deliverable.
-The redo is told to put back only the out-of-scope changes to the starting state and keep every other change.
+The redo is told to remove only the out-of-scope changes and keep every other change. It puts them back to the current comparison base (after the base branch has been merged in, the merged head, so the base branch's changes stay).
 If the review does not pass three times in a row, the task pauses, like any other failure.
 If you judge that the changes are in scope, use "Move to review" ([When verification keeps failing](#when-verification-keeps-failing)).
+For a task that takes over an existing PR, however, "Move to review" is not available. This judgment applies to that task too, so if a change is wrongly treated as out of scope, use "Resume" and write in the supplement why you judge it in scope.
 
 ### For a person to check
 

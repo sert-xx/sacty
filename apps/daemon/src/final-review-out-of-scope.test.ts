@@ -216,6 +216,37 @@ describe("範囲外の変更の指示と、やり直しの伝え方（PBI-273）
     expect(prompt).toContain("変更の無い再提出はしないでください");
   });
 
+  it("ベースブランチを取り込んだ後は、戻し先を取り込んだ先頭の状態にし、ベースブランチ側の変更を残すと伝える（起点のコードに戻させない）", () => {
+    const prompt = buildPrompt(
+      task({
+        verifyFeedback: { kind: "review", review: failed(OUT) },
+        baseMerge: { commit: "fedcba9876543210", conflicts: [] },
+      } as unknown as Partial<Task>),
+      "implement",
+    );
+    expect(prompt).toContain(
+      "ベースブランチを取り込んだ先頭（fedcba9）のコードの状態に戻して外してください",
+    );
+    expect(prompt).toContain("ベースブランチ側の変更（取り込んだ先頭に含まれるもの）");
+    expect(prompt).toContain("ベースブランチを取り込んだ先頭（fedcba9）のコードの状態の期待に戻す");
+    expect(prompt).not.toContain("起点のコードの状態に戻して外してください");
+    expect(prompt).not.toContain("起点のコードにあった指定");
+  });
+
+  it("既存のテストの期待を変えてよい根拠は、要求要件・設計を省いたタスクでは依頼や再現のテストにする（最終レビューの指示と、やり直しの指示）", () => {
+    const direct = task({
+      steps: [{ key: "implement", state: "active" }],
+    } as unknown as Partial<Task>);
+    expect(buildFinalReviewPrompt(direct, "diff")).toContain(
+      "承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）が、そのテストの確かめている振る舞いを変えることを求めているときだけ範囲内",
+    );
+    const prompt = buildPrompt(
+      task({ verifyFeedback: { kind: "review", review: failed(OUT) } } as Partial<Task>),
+      "implement",
+    );
+    expect(prompt).toContain("これらを省いたタスクは、依頼や再現のテストのどの部分によるか");
+  });
+
   it("SCOPE が不合格でない差し戻しには、この伝え方を足さない", () => {
     const other: FinalReview = {
       ...failed("x"),
