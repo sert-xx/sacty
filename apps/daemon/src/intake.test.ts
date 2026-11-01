@@ -34,6 +34,9 @@ const manyRepos = (name: string, n: number) =>
     target: `https://github.com/acme/${name}-${i}`,
   }));
 
+/** 取り込みの時計の始まり。検索の読んだ位置（更新日時）より後にする（読んだ位置は、検索を始めた時刻より先に進めないため。PBI-270）。 */
+const CLOCK_START = Date.parse("2026-10-20T00:00:00Z");
+
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
 
@@ -198,7 +201,7 @@ function setup(readable = true, gh = new FakeGh(), tickets?: TicketClient) {
       labels: ["sacty"],
     },
   ]);
-  let now = 1_000_000;
+  let now = CLOCK_START;
   const intake = new IssueIntake(service, search, gh, settingsConfig, () => now, tickets);
   return {
     activity,
@@ -698,7 +701,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
       new Promise<void>((resolve) => waiting.push({ kind, resolve }));
     return { ...made, tickets, lastRun, counts, recorded };
   };
-  const at = (ms: number) => new Date(1_000_000 + ms).toISOString();
+  const at = (ms: number) => new Date(CLOCK_START + ms).toISOString();
 
   it("種類ごとに、その種類の間隔で検索する（設定していない種類は既定の 300 秒）。再起動したら、すべての種類をすぐに検索する", async () => {
     const { activity, service, search, intake, advance, lastRun, counts, tickets, config } =
@@ -728,7 +731,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
       search,
       new FakeGh(),
       config,
-      () => 1_000_000 + 600_001,
+      () => CLOCK_START + 600_001,
       tickets,
     );
     await restarted.tick();
@@ -1205,7 +1208,7 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
       new FakeSearch([]),
       new FakeGh(),
       withPlatforms,
-      () => 1_000_000,
+      () => CLOCK_START,
       tickets,
     );
     return { activity, service, intake, tickets };
@@ -1321,7 +1324,7 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
       new FakeSearch([]),
       new FakeGh(),
       withPlatforms,
-      () => 1_000_000,
+      () => CLOCK_START,
       tickets,
     );
     await intake.tick(true);
@@ -1456,6 +1459,100 @@ describe("レビューの再依頼の確かめ（PBI-143）", () => {
     await intake.tick(true);
     expect(service.list().map((t) => t.source?.number)).toEqual([7]);
     expect(check).not.toHaveBeenCalled();
+    activity.close();
+  });
+});
+
+describe("GitHub の時刻のずれと検索の読んだ位置（PBI-270）", () => {
+  /**
+   * GitHub の検索の動き：開いている PR を更新日時の順に返し、since 以降に更新されたものだけを探す。読んだ位置は、
+   * 返した最後の更新日時（無ければ since のまま）。更新日時は、GitHub が付けたもの（この機械の時計とずれることがある）。
+   */
+  class UpdatedSearch implements IssueSearch {
+    sinces: (string | undefined)[] = [];
+    items: { issue: FoundIssue; updatedAt: string }[] = [];
+    async search(_host: string, _query: string, _token: string, since?: string) {
+      this.sinces.push(since);
+      const found = this.items
+        .filter((i) => since === undefined || Date.parse(i.updatedAt) >= Date.parse(since))
+        .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+      return { issues: found.map((i) => i.issue), cursor: found.at(-1)?.updatedAt ?? since };
+    }
+  }
+  const pr = (number: number): FoundIssue => ({
+    repo: "https://github.com/acme/payments",
+    number,
+    title: `PR ${number}`,
+    body: "",
+    url: `https://github.com/acme/payments/pull/${number}`,
+    labels: ["sacty-review"],
+    pullRequest: true,
+  });
+
+  function reviewIntake() {
+    const { activity, service, gh, config: cfg } = setup();
+    service.saveSettings({ reviewLabel: "sacty-review", reviewIntervalSec: 60 });
+    const search = new UpdatedSearch();
+    let now = Date.parse("2026-11-01T08:50:00Z");
+    const intake = new IssueIntake(service, search, gh, cfg, () => now);
+    const clock = (iso: string) => {
+      now = Date.parse(iso);
+    };
+    return { activity, service, search, intake, clock };
+  }
+
+  it("GitHub の時刻が1時間先に進んでいる間に読んだ位置が、時刻が戻った後にラベルを付けた PR を隠さない（#261 の約1時間の遅れ）", async () => {
+    const { activity, service, search, intake, clock } = reviewIntake();
+    // 08:51（この機械の時計）に、PR 260 への更新日時が、GitHub の時刻が1時間先なので 09:51 と付いている
+    search.items.push({ issue: pr(260), updatedAt: "2026-11-01T09:51:44Z" });
+    clock("2026-11-01T08:52:00Z");
+    await intake.tick();
+    expect(service.list().map((t) => t.source?.number)).toEqual([260]);
+
+    // 09:21（時刻はもう戻っている）に PR 261 にラベルを付けた。更新日時は 09:21:44 で、PR 260 の更新日時より前
+    search.items = [{ issue: pr(261), updatedAt: "2026-11-01T09:21:44Z" }];
+    clock("2026-11-01T09:22:00Z");
+    await intake.tick();
+    // 次の確認（間隔 60 秒）で取り込む。読んだ位置は、検索を始めた時刻（08:52:00）より先に進めていない
+    expect(search.sinces.at(-1)).toBe("2026-11-01T08:52:00Z");
+    expect(
+      service
+        .list()
+        .map((t) => t.source?.number)
+        .sort(),
+    ).toEqual([260, 261]);
+    activity.close();
+  });
+
+  it("GitHub の時刻がこの機械の時計と合っていれば、読んだ位置は GitHub の更新日時のまま進める", async () => {
+    const { activity, search, intake, clock } = reviewIntake();
+    search.items.push({ issue: pr(260), updatedAt: "2026-11-01T08:40:44Z" });
+    clock("2026-11-01T08:52:00Z");
+    await intake.tick();
+    clock("2026-11-01T08:53:00Z");
+    await intake.tick();
+    expect(search.sinces).toEqual([undefined, "2026-11-01T08:40:44Z"]);
+    activity.close();
+  });
+
+  it("GitHub の時刻が先に進んだままでも、その間の更新は拾い、取り込み済みのものは二重に取り込まない", async () => {
+    const { activity, service, search, intake, clock } = reviewIntake();
+    search.items.push({ issue: pr(260), updatedAt: "2026-11-01T09:51:44Z" });
+    clock("2026-11-01T08:52:00Z");
+    await intake.tick();
+    // まだ先に進んだまま（この機械の時計 08:53 に、GitHub の時刻は 09:53）に、PR 261 にラベルを付けた
+    search.items.push({ issue: pr(261), updatedAt: "2026-11-01T09:53:10Z" });
+    clock("2026-11-01T08:53:30Z");
+    await intake.tick();
+    expect(
+      service
+        .list()
+        .map((t) => t.source?.number)
+        .sort(),
+    ).toEqual([260, 261]);
+    clock("2026-11-01T08:55:00Z");
+    await intake.tick();
+    expect(service.list()).toHaveLength(2);
     activity.close();
   });
 });

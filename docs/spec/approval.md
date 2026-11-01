@@ -261,6 +261,9 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`）。
   - 最後のフィードバックから2分（`FEEDBACK_QUIET_MS`）待ってから取り込む。
+    各フィードバックの時刻は、GitHub の時刻と、デーモンが初めて見た時刻（メモリーだけ。`feedbackSeenAt`）の早い方にする。
+    GitHub の時刻がこの機械の時計より先に進んでいても、初めて見てから2分で取り込む（GitHub の時刻まで待ち続けない）。
+    GitHub の時刻が遅れているときは、見た時点で2分たっていれば待たない。
   - 古い順に最大50件（`REMARKS_MAX`）、1件 2000 文字（`REMARK_MAX`）まで。
   - 同じものは二度取り込まない。
   - 引き継いだ既存の PR では、実装の工程の指示に渡した指摘を取り込まない（実装に対応させたため。[既存の PR の引き継ぎ](tasks-and-steps.md#既存の-pr-の引き継ぎ)）。
@@ -291,7 +294,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 読み直しの間に、人が差し戻した・中止したなどで状態が変わっていれば、記録しない。読めなければ、次の確認でやり直す。
   - マージの後に届いた指摘を、続きのタスクにするなどはしない。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
 
 ## 差し戻し
 

@@ -9611,6 +9611,76 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("GitHub の時刻がこの機械の時計より先に進んでいても、初めて見た時刻から数えて待ち、その時刻の1時間後まで待ち続けない（PBI-270）", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at); // この機械の時計
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      // GitHub の時刻は1時間先なので、コメントの時刻は未来になっている
+      pulls.feedbackList = [
+        item("comment:20", { at: new Date(Date.parse(at) + 3_600_000).toISOString() }),
+      ];
+      const imported = () =>
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported") ?? [];
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(0);
+      // 初めて見てから2分たつまでは待つ
+      now = Date.parse(at) + 119_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(0);
+      // 2分たったら、GitHub の時刻がまだ先でも取り込む
+      now = Date.parse(at) + 121_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(1);
+      activity.close();
+    });
+
+    it("書き終わるのを待つ時間は、新しいコメントが見つかるたびに、そのコメントを見た時刻から数え直す（GitHub の時刻が先に進んでいるとき）", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at);
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      const ahead = (ms: number) => new Date(Date.parse(at) + 3_600_000 + ms).toISOString();
+      pulls.feedbackList = [item("comment:21", { at: ahead(0) })];
+      await service.checkPullRequests();
+      // 1分半後に2件目のコメントが付いたので、1件目から2分たっても取り込まない
+      now = Date.parse(at) + 90_000;
+      pulls.feedbackList = [
+        item("comment:21", { at: ahead(0) }),
+        item("comment:22", { at: ahead(90_000) }),
+      ];
+      await service.checkPullRequests();
+      now = Date.parse(at) + 130_000;
+      await service.checkPullRequests();
+      const imported = () =>
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported") ?? [];
+      expect(imported()).toHaveLength(0);
+      // 2件目を見てから2分たったら、2件まとめて取り込む
+      now = Date.parse(at) + 91_000 + 120_000;
+      await service.checkPullRequests();
+      expect(imported()).toHaveLength(1);
+      expect(service.get(id)?.task.importedFeedback).toEqual(["comment:21", "comment:22"]);
+      activity.close();
+    });
+
+    it("GitHub の時刻がこの機械の時計より遅れていても、取り込みを遅らせない（PBI-270）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => Date.parse(at) + 3_600_000 },
+      );
+      pulls.feedbackList = [item("comment:23")];
+      await service.checkPullRequests();
+      expect(
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported"),
+      ).toHaveLength(1);
+      activity.close();
+    });
+
     it("設計まで戻す判断なら、人間の確認を待たずに設計に差し戻し、作り直した設計を人間の承認に回す（PBI-58）", async () => {
       const pulls = new FakePulls();
       const { activity, service, executor, id } = await toImplementGate(
