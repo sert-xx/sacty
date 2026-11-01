@@ -80,6 +80,27 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     );
   });
 
+  it("クエリ・フラグメントも伏せる指定では、その中の引用符より後ろの値も残さない", () => {
+    // 架空の値
+    for (const url of [
+      "https://example.com/path?session='FAKE_WHOLE_789",
+      "https://example.com/path#'FAKE_WHOLE_789",
+      'https://example.com/path?a=1&session="FAKE_WHOLE_789',
+      "https://example.com/pa'th?session=FAKE_WHOLE_789",
+      "https://example.com/path?session=<FAKE_WHOLE_789>",
+    ]) {
+      const out = redactUrlCredentials(`GET ${url} done`, { queryAndFragment: true });
+      expect(out, url).not.toContain("FAKE_WHOLE_789");
+      expect(out, url).toContain("example.com/");
+      expect(out, url).toMatch(/ done$/);
+    }
+    // クエリ・フラグメントの無い URL は、引用符で終える（引用符の後ろを変えない）
+    const quoted = "see 'https://example.com/a','b' and 'https://example.org/x?k=v' ok";
+    expect(redactUrlCredentials(quoted, { queryAndFragment: true })).toBe(
+      "see 'https://example.com/a','b' and 'https://example.org/x?REDACTED ok",
+    );
+  });
+
   it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
     // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）
     for (const input of [
@@ -87,6 +108,7 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       "a+b-".repeat(500_000),
       "https://'".repeat(200_000),
       "x://".repeat(500_000),
+      "https://a?'".repeat(200_000),
     ]) {
       const started = performance.now();
       redactUrlCredentials(input, { queryAndFragment: true });
