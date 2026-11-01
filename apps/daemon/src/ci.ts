@@ -71,8 +71,53 @@ export function redactLog(text: string, secrets: readonly string[]): string {
   return result.replace(SECRET_ASSIGNMENTS, (_all, name: string) => `${name}[REDACTED]`);
 }
 
-/** スキーム（大文字・小文字は問わない）と `//` で始まる URL らしい文字列。 */
-const URL_LIKE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+/** スキームに使える文字（大文字・小文字は問わない）。 */
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+/** 単語の文字（正規表現の `\b` と同じ）。 */
+const WORD_CHAR = /\w/;
+/** 権限（ユーザー情報とホスト）の終わり（WHATWG URL の区切りと、ログの空白）。 */
+const AUTHORITY_END = /[\s/?#\\]/;
+/** ホストより後の、URL の終わり（ログの中の引用符・山括弧・バッククォート・空白）。 */
+const URL_END = /[\s"'<>`]/;
+
+/**
+ * 文章の中の、スキーム（大文字・小文字は問わない）と `//` で始まる URL らしい文字列の位置（PBI-158）。`://` の位置から
+ * 前へスキームを、後ろへ本体を調べる（文字列の長さに比例する時間で済ませる。URL の無い長いログで、候補ごとに残りを
+ * 探し直さない）。ユーザー情報は引用符を含みうる（`https://user:p'ss@host/`）ので、権限の終わりまでに `@` があれば
+ * そこまでを URL に含める（ログの引用符をまたいで伏せすぎることはあるが、認証情報の後半を残さない）。
+ */
+function urlRanges(text: string): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = [];
+  let from = 0;
+  for (let colon = text.indexOf("://"); colon !== -1; colon = text.indexOf("://", colon + 1)) {
+    let begin = colon;
+    while (begin > from && SCHEME_CHAR.test(text[begin - 1] as string)) begin--;
+    // スキームは英字で始まり、前が単語の文字でない（`\b[a-z]`）。条件に合う最も前の位置から
+    let start = -1;
+    for (let i = begin; i < colon; i++) {
+      const prev = i > 0 ? (text[i - 1] as string) : "";
+      if (/[a-z]/i.test(text[i] as string) && !WORD_CHAR.test(prev)) {
+        start = i;
+        break;
+      }
+    }
+    if (start === -1) continue;
+    const body = colon + 3;
+    // 権限は次の `://` の `/` までに終わるので、権限を調べる範囲は URL ごとに重ならない
+    let lastAt = -1;
+    for (let i = body; i < text.length && !AUTHORITY_END.test(text[i] as string); i++) {
+      if (text[i] === "@") lastAt = i;
+    }
+    let end = lastAt === -1 ? body : lastAt + 1;
+    while (end < text.length && !URL_END.test(text[end] as string)) end++;
+    if (end === body) continue;
+    ranges.push({ start, end });
+    from = end;
+    // URL の中の `://` は、次の候補にしない
+    colon = end - 1;
+  }
+  return ranges;
+}
 
 /**
  * 文章の中の URL から、認証情報を除く（PBI-158）。ユーザー名・パスワード（`https://user:pass@host/`）を `REDACTED` に置き換える。
@@ -84,30 +129,38 @@ export function redactUrlCredentials(
   text: string,
   options: { queryAndFragment?: boolean } = {},
 ): string {
-  return text.replace(URL_LIKE, (value) => {
-    try {
-      const url = new URL(value);
-      let changed = false;
-      if (url.username || url.password) {
-        url.username = "REDACTED";
-        url.password = "REDACTED";
+  let result = "";
+  let last = 0;
+  for (const { start, end } of urlRanges(text)) {
+    result += text.slice(last, start) + redactUrl(text.slice(start, end), options);
+    last = end;
+  }
+  return last === 0 ? text : result + text.slice(last);
+}
+
+function redactUrl(value: string, options: { queryAndFragment?: boolean }): string {
+  try {
+    const url = new URL(value);
+    let changed = false;
+    if (url.username || url.password) {
+      url.username = "REDACTED";
+      url.password = "REDACTED";
+      changed = true;
+    }
+    if (options.queryAndFragment) {
+      if (url.search) {
+        url.search = "?REDACTED";
         changed = true;
       }
-      if (options.queryAndFragment) {
-        if (url.search) {
-          url.search = "?REDACTED";
-          changed = true;
-        }
-        if (url.hash) {
-          url.hash = "#REDACTED";
-          changed = true;
-        }
+      if (url.hash) {
+        url.hash = "#REDACTED";
+        changed = true;
       }
-      return changed ? url.href : value;
-    } catch {
-      return "[REDACTED URL]";
     }
-  });
+    return changed ? url.href : value;
+  } catch {
+    return "[REDACTED URL]";
+  }
 }
 
 /** ログの行の先頭の時刻（GitHub Actions のログの形）。 */
