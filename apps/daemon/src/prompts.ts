@@ -1469,6 +1469,7 @@ function directImplementLines(
           `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_REPORT_LINE,
           "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
           `\`\`\`${TEST_COMMAND_FENCE}`,
           '{"command": "テストのコマンド"}',
@@ -1482,6 +1483,7 @@ function directImplementLines(
           testCommandLine(task),
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_REPORT_LINE,
           "- 実装の説明をMarkdownで書き、そのあとに、観点とテストの対応を次の形式で必ず付ける",
         ]),
     "```json",
@@ -1991,6 +1993,7 @@ export function buildPrompt(
           "- ほかのテストも通るようにする。必要なら、直した振る舞いを確かめるテストを足す",
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
+          IMPLEMENT_REPORT_LINE,
           `- 修正の説明をMarkdownで書き、そのあとに、観点 ${REPRODUCTION_VIEWPOINT}（再現のテストが通る）とテストの対応を次の形式で必ず付ける`,
           "```json",
           `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REPRODUCTION_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -2057,6 +2060,7 @@ export function buildPrompt(
               `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
+              IMPLEMENT_REPORT_LINE,
               "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
               `\`\`\`${TEST_COMMAND_FENCE}`,
               '{"command": "テストのコマンド"}',
@@ -2071,6 +2075,7 @@ export function buildPrompt(
               testCommandLine(task),
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
+              IMPLEMENT_REPORT_LINE,
               "- 実装の説明をMarkdownで書き、そのあとに、観点ごとのテストの対応を次の形式で必ず付ける",
               "```json",
               `{"${TEST_MAP_HEADING}": [{"viewpointId": "TV-1", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -3341,6 +3346,29 @@ export function extractIntegrationReview(
 /** 表のセルに入れられるよう、改行と縦棒を置き換える。 */
 const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
 
+/** 改行を空白にして1行にする。 */
+const flat = (value: string) => value.replace(/\s*\r?\n\s*/g, " ").trim();
+
+/** 1行にして、max 文字までにする（超えたら末尾に「…」）。 */
+function shortText(value: string, max: number): string {
+  const line = flat(value);
+  return line.length > max ? `${headOf(line, max)}…` : line;
+}
+
+/** 折りたたんだ節（GitHub の `<details>`）。 */
+function detailsBlock(summary: string, body: string): string {
+  return ["<details>", `<summary>${summary}</summary>`, "", body.trim(), "", "</details>"].join(
+    "\n",
+  );
+}
+
+/** PR の本文の表の、1セルのテスト名の長さの上限（文字）。 */
+const BODY_TEST_NAME_MAX = 70;
+/** PR の本文の表の、観点の題の長さの上限（文字）。 */
+const BODY_VIEWPOINT_TITLE_MAX = 60;
+/** PR の本文の冒頭に出す、変更の要約・要求要件の要点・最終レビューの所見の長さの上限（文字）。 */
+const BODY_LEAD_MAX = 240;
+
 /**
  * PR テンプレートに沿わせるときの、PR の本文に入れる sacty の内容（PBI-87）。テンプレートの見出しの種類ごとに入れる。
  * - summary：目的・概要、changes：変更、tests：テスト、issue：関係する Issue
@@ -3396,19 +3424,48 @@ function resultTableLines(task: Task): string[] {
   // ゴールガーディアンが最終レビューの中で実行したテスト（今の版）
   const guardianTests = review?.tests;
   const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m]));
-  const testCell = (id: string) => {
+  const testNames = (id: string): string[] => mapped.get(id)?.tests ?? [];
+  const judgedOf = (id: string) => review?.viewpoints.find((r) => r.viewpointId === id);
+  const mark = (id: string) => {
+    const judged = judgedOf(id);
+    return judged ? (judged.verified ? "✅" : "❌") : "（なし）";
+  };
+  // テストが無いときの言い方（表のセルは短く、理由は折りたたみの中に出す）
+  const noTestText = (id: string, withReason: boolean) => {
     const entry = mapped.get(id);
-    if (entry && entry.tests.length > 0) return entry.tests.join(" / ");
-    if (entry?.untested) return `（テストなし。差分で確認：${entry.untested}）`;
+    if (entry?.untested) {
+      return withReason
+        ? `（テストなし。差分で確認：${flat(entry.untested)}）`
+        : "（テストなし。差分で確認）";
+    }
     return task.noTestsReason ? "（テストなし。目的から判定）" : "（なし）";
   };
+  // 表のセルには、テスト名を1件目と残りの件数だけ入れる。全件は折りたたみに出す
+  const testCell = (id: string) => {
+    const names = testNames(id);
+    if (names.length === 0) return noTestText(id, false);
+    const first = shortText(names[0] ?? "", BODY_TEST_NAME_MAX);
+    return names.length > 1 ? `${first} ほか ${names.length - 1} 件` : first;
+  };
+  // 入力・期待結果・テストの全件・最終レビューの所見は、表の外の折りたたみに出す
+  const detailLines = viewpoints.flatMap((v) => {
+    const judged = judgedOf(v.id);
+    const names = testNames(v.id);
+    return [
+      `- **${v.id} ${flat(v.title)}**：${mark(v.id)}`,
+      `  - 入力：${flat(v.input)}`,
+      `  - 期待結果：${flat(v.expected)}`,
+      `  - テスト：${names.length > 0 ? names.map(flat).join(" / ") : noTestText(v.id, true)}`,
+      ...(judged ? [`  - 最終レビューの所見：${flat(ja(judged.reason))}`] : []),
+    ];
+  });
   return [
-    "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
-    "| --- | --- | --- | --- | --- |",
-    ...viewpoints.map((v) => {
-      const judged = review?.viewpoints.find((r) => r.viewpointId === v.id);
-      return `| ${v.id} ${cell(v.title)} | ${cell(v.input)} | ${cell(v.expected)} | ${cell(testCell(v.id))} | ${judged ? `${judged.verified ? "✅" : "❌"} ${cell(ja(judged.reason))}` : "（なし）"} |`;
-    }),
+    "| 観点 | テスト | 最終レビュー |",
+    "| --- | --- | --- |",
+    ...viewpoints.map(
+      (v) =>
+        `| ${v.id} ${cell(shortText(v.title, BODY_VIEWPOINT_TITLE_MAX))} | ${cell(testCell(v.id))} | ${mark(v.id)} |`,
+    ),
     "",
     guardianTests
       ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${guardianTests.environmentFailures ? "。環境による失敗だけ。下の「人が確かめること」" : ""}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
@@ -3426,6 +3483,15 @@ function resultTableLines(task: Task): string[] {
             : `テストの仕組みが無いと判断した根拠（オーケストレーター）：${cell(task.noTestsReason)}`,
         ]
       : []),
+    ...(detailLines.length > 0
+      ? [
+          "",
+          detailsBlock(
+            "観点ごとの詳細（入力・期待結果・テスト・最終レビューの所見）",
+            detailLines.join("\n"),
+          ),
+        ]
+      : []),
   ];
 }
 
@@ -3441,6 +3507,135 @@ function overriddenNow(task: Task): boolean {
   return override !== undefined && override.submission === (task.submissions.implement ?? 0) + 1;
 }
 
+/**
+ * 最終レビューの所見の頭の「合格。」「不合格。」を除く。PR の本文には判定を別に書くので、重ねて出さない
+ * （エージェントの所見が判定の語で始まると「合格。合格。」と重なる）。
+ */
+function withoutVerdictWord(text: string): string {
+  return text.replace(/^(?:\s*(?:不合格|合格)[。.．、,:：]+)+/, "").trim();
+}
+
+/** 長い文を、文の切れ目（。）か max 文字で切る（超えたら、切れ目が無ければ末尾に「…」）。 */
+function leadOf(text: string, max: number): string {
+  const line = flat(text);
+  if (line.length <= max) return line;
+  const cut = headOf(line, max);
+  const stop = cut.lastIndexOf("。");
+  return stop >= Math.floor(max / 3) ? cut.slice(0, stop + 1) : `${cut}…`;
+}
+
+/** 文章の最初の段落（見出し・表・コードブロックを除く）の頭。無ければ空。 */
+function leadParagraph(text: string, max = BODY_LEAD_MAX): string {
+  const found: string[] = [];
+  let fence: string | undefined;
+  for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const trimmed = line.trim();
+    const opened = trimmed.match(/^(`{3,}|~{3,})/);
+    if (fence) {
+      if (opened && trimmed.startsWith(fence)) fence = undefined;
+      continue;
+    }
+    if (opened) {
+      if (found.length > 0) break;
+      fence = opened[1]?.[0]?.repeat(3);
+      continue;
+    }
+    if (trimmed === "") {
+      if (found.length > 0) break;
+      continue;
+    }
+    if (/^#{1,6}\s/.test(trimmed) || trimmed.startsWith("|")) {
+      if (found.length > 0) break;
+      continue;
+    }
+    // 箇条書きの印は外す（結論の「- 変更：」の後ろに重ねない）
+    found.push(trimmed.replace(/^(?:[-*+]|\d+[.)])\s+/, ""));
+  }
+  return found.length > 0 ? leadOf(found.join(" "), max) : "";
+}
+
+/**
+ * 作業の経過の報告かを見分ける、話題の語（コミット・プッシュなど）。「プッシュ通知」「コミットメッセージ」のように、
+ * 機能や内容を指す語は話題にしない（助詞が続く、または「コミットしています」の形のものだけ）。
+ */
+const PROGRESS_SUBJECT =
+  /(?:コミット|プッシュ|GitHub への反映)(?:[・と、や]|は|も|まで)|(?:コミット|プッシュ)(?=し(?:て|ま))|\b(?:commit|push)(?:ted)?\b/i;
+/** 作業の経過の報告かを見分ける、状態の語（していません・未完了など）。 */
+const PROGRESS_STATE =
+  /していません|していない|しません|行っていません|行いません|未完了|未実施|未了|sacty が行|not (?:been )?(?:committed|pushed)/i;
+/** 作業の経過の報告として除く文の長さの上限（文字）。長い文は、中身のある説明かもしれないので残す。 */
+const PROGRESS_SENTENCE_MAX = 100;
+
+/**
+ * 実装のエージェントの説明から、PR の読み手に意味の無い作業の経過の報告（「コミット・プッシュはしていません」
+ * 「マージコミットと GitHub への反映は未完了です」など）の文を除く。コードブロックと表・見出しの行は触らない。
+ */
+export function withoutProgressReport(text: string): string {
+  const out: string[] = [];
+  let fence: string | undefined;
+  for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const trimmed = line.trim();
+    const opened = trimmed.match(/^(`{3,}|~{3,})/);
+    if (fence) {
+      if (opened && trimmed.startsWith(fence)) fence = undefined;
+      out.push(line);
+      continue;
+    }
+    if (opened) {
+      fence = opened[1]?.[0]?.repeat(3);
+      out.push(line);
+      continue;
+    }
+    if (trimmed === "" || trimmed.startsWith("|") || trimmed.startsWith("#")) {
+      out.push(line);
+      continue;
+    }
+    const sentences = line.match(/[^。]+。?/g) ?? [line];
+    const kept = sentences.filter((sentence) => {
+      const t = sentence.trim();
+      return !(
+        t.length <= PROGRESS_SENTENCE_MAX &&
+        PROGRESS_SUBJECT.test(t) &&
+        PROGRESS_STATE.test(t)
+      );
+    });
+    if (kept.length === sentences.length) out.push(line);
+    else if (kept.join("").trim() !== "") out.push(kept.join("").trimEnd());
+  }
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** PR の本文に載せる、実装のエージェントの説明（作業の経過の報告を除いたもの）。 */
+function implementReport(task: Task): string {
+  return withoutProgressReport((task.outputs.implement ?? "").trim());
+}
+
+/** PR の本文の冒頭に出す、最終レビューの結論（判定と所見の頭）。 */
+function finalReviewLead(task: Task, stage: PullRequestBodyStage = {}): string {
+  if (stage.verifying) return finalReviewLines(task, stage).join(" ");
+  const review = task.lastReview;
+  if (!review) return "（なし）";
+  const verdict = review.passed ? "合格" : "不合格";
+  const lead = leadOf(withoutVerdictWord(ja(review.summary)), BODY_LEAD_MAX);
+  return lead ? `${verdict}。${lead}` : `${verdict}。`;
+}
+
+/**
+ * 最終レビューの全文（結論に載せた頭より長いとき、または再発の確認があるとき）。本文では折りたたみに、
+ * テンプレートに沿わせるときは「sacty の記録」に出す。出す必要が無ければ空。
+ */
+function finalReviewFullLines(task: Task, stage: PullRequestBodyStage = {}): string[] {
+  if (stage.verifying) return [];
+  const review = task.lastReview;
+  if (!review) return [];
+  const full = withoutVerdictWord(ja(review.summary));
+  if (leadOf(full, BODY_LEAD_MAX) === flat(full) && review.remarks.length === 0) return [];
+  return finalReviewLines(task, stage);
+}
+
 /** PR の本文の、ゴールガーディアンの最終レビュー（見出しの下の行）。 */
 function finalReviewLines(task: Task, stage: PullRequestBodyStage = {}): string[] {
   if (stage.verifying) {
@@ -3450,7 +3645,9 @@ function finalReviewLines(task: Task, stage: PullRequestBodyStage = {}): string[
   }
   const review = task.lastReview;
   return [
-    review ? `${review.passed ? "合格" : "不合格"}。${ja(review.summary)}` : "（なし）",
+    review
+      ? `${review.passed ? "合格" : "不合格"}。${withoutVerdictWord(ja(review.summary))}`
+      : "（なし）",
     ...(review && review.remarks.length > 0
       ? [
           "",
@@ -3465,7 +3662,7 @@ function finalReviewLines(task: Task, stage: PullRequestBodyStage = {}): string[
 
 /**
  * PR の本文の、人がゴールガーディアンの不合格のままレビューへ進めた記録と、不合格の要点（不合格の観点・所見）。本文の長さの
- * 上限でも省かれないよう、footer に置く。所見は1行にし、HUMAN_CHECK_ITEM_MAX 文字までにする。
+ * 上限でも省かれないよう、テンプレートに沿わせる本文では footer に置き、決まった形の本文では冒頭の結論に置いて `keep` にする。所見は1行にし、HUMAN_CHECK_ITEM_MAX 文字までにする。
  */
 function overrideBodyLines(task: Task): string[] {
   if (!overriddenNow(task)) return [];
@@ -3490,14 +3687,10 @@ export const HUMAN_CHECK_ITEM_MAX = 1_000;
 /** PR の本文に出す、人が確かめることの一覧全体の上限（文字。PBI-155）。 */
 export const HUMAN_CHECKS_BODY_MAX = 6_000;
 
-/**
- * PR の本文の、人が最終承認で確かめること（PBI-155）。ゴールガーディアンが作業領域では確かめられないとしたことと、
- * 環境によると判断したテストの失敗。本文の長さの上限でも省かれないよう、footer の、承認の案内の前に置く。
- * footer を長くしすぎないよう、1項目と一覧全体に上限を設け、入りきらない項目は件数と確かめる場所を書く。
- */
-function humanCheckBodyLines(task: Task): string[] {
+/** 人が最終承認で確かめること（PBI-155）の項目。1項目は HUMAN_CHECK_ITEM_MAX 文字までにする。 */
+function humanCheckItems(task: Task): string[] {
   const review = task.lastReview;
-  const items = [
+  return [
     ...(review?.humanChecks ?? []),
     ...(review?.tests?.environmentFailures ?? []).map(
       (f) => `環境によると判断したテストの失敗：${f}`,
@@ -3508,6 +3701,16 @@ function humanCheckBodyLines(task: Task): string[] {
       ? `${headOf(line, HUMAN_CHECK_ITEM_MAX)}…（続きは sacty のタスクの画面で）`
       : line;
   });
+}
+
+/**
+ * PR の本文の、人が最終承認で確かめること（PBI-155）。ゴールガーディアンが作業領域では確かめられないとしたことと、
+ * 環境によると判断したテストの失敗。本文の長さの上限でも省かれないよう、テンプレートに沿わせる本文では footer の、
+ * 承認の案内の前に置き、決まった形の本文では冒頭の結論に置いて `keep` にする。
+ * 長くしすぎないよう、1項目と一覧全体に上限を設け、入りきらない項目は件数と確かめる場所を書く。
+ */
+function humanCheckBodyLines(task: Task): string[] {
+  const items = humanCheckItems(task);
   if (items.length === 0) return [];
   const shown: string[] = [];
   let used = 0;
@@ -3531,7 +3734,10 @@ function humanCheckBodyLines(task: Task): string[] {
   ];
 }
 
-/** 承認済みの要求要件（再現の工程のタスクは、不具合の再現）の見出しと中身。 */
+/**
+ * 承認済みの要求要件（再現の工程のタスクは、不具合の再現）の見出しと中身。全文は載せず、要点（最初の段落の頭）と、
+ * 全文のある場所（マージで承認した要求要件・設計の PR。無ければ sacty のタスクの画面）にする。
+ */
 function approvedBasisLines(task: Task, level: "##" | "bold"): string[] {
   const heading = (text: string) => (level === "##" ? `## ${text}` : `**${text}**`);
   if (isSecurityFix(task)) return securityScopeBodyLines(task, heading);
@@ -3539,7 +3745,7 @@ function approvedBasisLines(task: Task, level: "##" | "bold"): string[] {
     ? [
         heading("不具合の再現（失敗するテストで再現し、sacty が失敗を確かめた）"),
         "",
-        task.approved.reproduce?.output ?? "（なし）",
+        ...approvedBasisDigest(task, task.approved.reproduce?.output),
       ]
     : withoutRequirements(task)
       ? [
@@ -3550,8 +3756,21 @@ function approvedBasisLines(task: Task, level: "##" | "bold"): string[] {
       : [
           heading("要求要件（人間が承認済み）"),
           "",
-          task.approved.requirements?.output ?? "（なし）",
+          ...approvedBasisDigest(task, task.approved.requirements?.output),
         ];
+}
+
+/** 承認済みの成果物の要点と、全文のある場所。 */
+function approvedBasisDigest(task: Task, output: string | undefined): string[] {
+  if (output === undefined || output.trim() === "") return ["（なし）"];
+  const digest = leadParagraph(output);
+  const links = mergedStepPullRequests(task);
+  return [
+    ...(digest ? [digest, ""] : []),
+    ...(links.length > 0
+      ? ["全文は、マージで承認した次の PR にあります。", "", ...links]
+      : ["全文は sacty のタスクの画面で確かめてください。"]),
+  ];
 }
 
 /**
@@ -3610,66 +3829,79 @@ export function joinBodyText(text: BodyText): string {
   return text.footer ? `${text.main}\n\n${text.footer}` : text.main;
 }
 
-/** テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。 */
+/**
+ * テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。結論（変更の要約・最終レビュー・
+ * 人が確かめること）を冒頭に置き、承認済みの要求要件・設計は全文を載せずに要点とリンクにする（PBI-264）。
+ */
 export function buildPullRequestBodyText(task: Task, stage: PullRequestBodyStage = {}): BodyText {
   const intro = `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`;
-  const implement = (task.outputs.implement ?? "").trim();
+  const implement = implementReport(task);
+  const changeLead = implement ? leadParagraph(implement) : "";
+  // 結論に載せた要約と同じだけなら、「変更」の節で重ねて出さない
+  const showChanges = implement !== "" && flat(implement) !== changeLead;
+  // 人が不合格のまま進めた記録と人が確かめること（PBI-155）は、長さの上限で省かれないよう keep にする
+  const override = overrideBodyLines(task).join("\n").trim();
+  const human = humanCheckBodyLines(task).join("\n").trim();
+  const fullReview = finalReviewFullLines(task, stage);
   const main = [
     intro,
     "",
     ...(closesLines(task).length > 0 ? [...closesLines(task), ""] : []),
+    "## 結論",
+    "",
+    ...(changeLead ? [`- 変更：${changeLead}`] : []),
+    `- 最終レビュー：${finalReviewLead(task, stage)}`,
+    "",
+    ...(override ? [override, ""] : []),
+    ...(human ? [human, ""] : []),
     ...approvedBasisLines(task, "##"),
     "",
     // 実装のエージェントの説明（テンプレートに沿わせるときの「変更」と同じ中身。人が変更の中身を PR で読めるように）
-    ...(implement ? ["## 変更", "", implement, ""] : []),
+    ...(showChanges ? ["## 変更", "", implement, ""] : []),
     // 書き出した成果（要求要件・設計など）の URL（PBI-56）
     ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
-    // 要求要件・設計の PR（マージで承認済み。成果のファイルは、この PR にも含まれる。PBI-57）
-    ...(mergedStepPullRequests(task).length > 0
-      ? ["## 要求要件・設計の PR（マージで承認済み）", "", ...mergedStepPullRequests(task), ""]
-      : []),
     "## 観点 → テスト → 実行結果",
     "",
     ...resultTableLines(task),
-    "",
-    "## ゴールガーディアンの最終レビュー",
-    "",
-    ...finalReviewLines(task, stage),
+    ...(fullReview.length > 0
+      ? ["", detailsBlock("ゴールガーディアンの最終レビュー（全文）", fullReview.join("\n"))]
+      : []),
   ].join("\n");
   return {
     main,
-    // 人が確かめること（PBI-155）は、長さの上限で省かれないよう footer に置く
     footer: [
-      ...overrideBodyLines(task),
-      ...humanCheckBodyLines(task),
       "---\nこの PR は sacty が作成しました。",
       "",
       ...implementApprovalLines(task, stage),
     ].join("\n"),
-    // タスクの ID と、マージで Issue を閉じる行は、省いても残す
-    keep: [intro, ...closesLines(task)],
+    // タスクの ID と、マージで Issue を閉じる行、人が確かめること（PBI-155）は、省いても残す
+    keep: [intro, ...closesLines(task), ...(override ? [override] : []), ...(human ? [human] : [])],
   };
 }
 
 /**
- * PR テンプレートに沿わせるときの、実装の PR の本文の中身（PBI-87）。目的（承認済みの要求要件）・変更（実装の
- * エージェントの報告）・テスト（観点とテストの対応と結果）・関係する Issue（Closes）に分け、最終レビューなどは
+ * PR テンプレートに沿わせるときの、実装の PR の本文の中身（PBI-87）。目的（最終レビューの結論と承認済みの要求要件の要点）・
+ * 変更（実装のエージェントの説明）・テスト（観点とテストの対応と結果）・関係する Issue（Closes）に分け、最終レビューの全文などは
  * sacty の記録にする。タスクの ID は footer に必ず入れる。
  */
 export function buildPullRequestBodyParts(task: Task, stage: PullRequestBodyStage = {}): BodyParts {
-  const implement = (task.outputs.implement ?? "").trim();
+  const implement = implementReport(task);
+  const fullReview = finalReviewFullLines(task, stage);
+  const humanCount = humanCheckItems(task).length;
   const record = [
     ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
-    ...(mergedStepPullRequests(task).length > 0
-      ? ["**要求要件・設計の PR（マージで承認済み）**", "", ...mergedStepPullRequests(task), ""]
+    ...(fullReview.length > 0
+      ? ["**ゴールガーディアンの最終レビュー（全文）**", "", ...fullReview]
       : []),
-    "**ゴールガーディアンの最終レビュー**",
-    "",
-    ...finalReviewLines(task, stage),
   ];
   return {
     summary: [
       `sacty のタスク「${task.title}」の成果物です。`,
+      "",
+      `最終レビュー：${finalReviewLead(task, stage)}`,
+      ...(humanCount > 0
+        ? ["", `人が確かめること：${humanCount} 件（この PR の末尾にあります）`]
+        : []),
       "",
       ...approvedBasisLines(task, "bold"),
     ].join("\n"),
@@ -4545,6 +4777,13 @@ function documentsChoiceLines(rules: string | undefined): string[] {
  */
 const NO_CHANGE_LINE =
   "- すでに満たしていて変更が要らないとわかったら、ファイルを変えずに、変更が要らない理由と根拠（満たしている箇所・それを確かめているテスト）を説明に書く（何も変えなければ、sacty は PR を作らず、人間が確かめて変更なしで完了にする）";
+
+/**
+ * 実装の説明の書き方（PBI-264）。説明は sacty が PR の本文に載せる。PR を読む人に要るのは、何を変えたか・どう確かめたか・
+ * 人が確かめることなので、作業の経過の報告は書かせない。
+ */
+const IMPLEMENT_REPORT_LINE =
+  "- 実装の説明は、sacty がそのまま PR の本文に載せる。何を変えたか（結論を先頭の1〜2文）と、どう確かめたかを書き、作業の経過の報告（コミット・プッシュをしたかどうか、sacty が後で行う作業の状況など）は書かない";
 
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {

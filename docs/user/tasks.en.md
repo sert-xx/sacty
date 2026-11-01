@@ -358,7 +358,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
 
 - Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 
-These items appear in the 「人が確かめること」 checklist in the body of the implementation PR, and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
+These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
 The tests run by the Goal Guardian show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
 Check them before merging the PR.
 
@@ -486,7 +486,7 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 - Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
 - The form of the PR body
   - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
-  - If there is no template or it cannot be read, sacty uses its own format.
+  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, the conclusion of the final review, and what you should confirm in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs, expected results, and the final review's findings are in the collapsed section "観点ごとの詳細" (details per viewpoint). In a body that follows a template, what you should confirm is at the end of the body.
   - Which one was used appears in "Body" in the PR section of the task page.
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
 

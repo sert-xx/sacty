@@ -977,14 +977,15 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   前の提出のものは、見出しを「前の提出で、ゴールガーディアンが実行したテスト」（それより前の版の記録は「前の提出のテストの実行」）「前の提出の最終レビュー」にし、対応表の実行結果は「未実行」にする。
   今の提出ではまだ実行・判定していないことは、見出しの横の補足（ツールチップ）に出す。
   テストの仕組みが無いタスクのテストの無い観点も、今の提出の最終レビューがあるときだけ「目的から判定」にし、検証待ちの間（目的からの判定がまだ）は「未実行」にする（`judgedByGoalForCurrent`）。
-- PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`）。
+- PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`。表と全体の組み立ては[承認](approval.md#実装の-pr-の本文の組み立て)）。
   環境による失敗だけで合格にしたときは、終了コードの後ろに「環境による失敗だけ。下の「人が確かめること」」を添える。
   チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
 - 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155。差分が文書だけのときにツールが無くて実行できなかった検証の項目も `humanChecks` に入る）。
   - PR の本文：「人が確かめること」のチェックリスト（`- [ ]`）にする。改行は空白にして1項目1行にする（`humanCheckBodyLines`）。
     既存の PR を引き継いだタスクは PR の本文を変えないので、本文には出ない（タスクの画面の最終レビューで確かめる）。
-    本文の長さの上限で省かれないよう、テンプレートを使う本文・使わない本文のどちらでも footer の、承認の案内の前に置く。
-    footer を長くしすぎないよう、1項目は `HUMAN_CHECK_ITEM_MAX`（1,000 文字）、一覧は `HUMAN_CHECKS_BODY_MAX`（6,000 文字）までにし、入りきらない項目は残りの件数と、sacty のタスクの画面で確かめることを書く。
+    本文の長さの上限で省かれないよう、テンプレートを使う本文は footer の、承認の案内の前に置く。
+    テンプレートを使わない本文は、冒頭の「結論」に置き、省いても残す（`keep`）。テンプレートを使う本文の目的には、件数と「この PR の末尾にあります」を書く。
+    本文を長くしすぎないよう、1項目は `HUMAN_CHECK_ITEM_MAX`（1,000 文字）、一覧は `HUMAN_CHECKS_BODY_MAX`（6,000 文字）までにし、入りきらない項目は残りの件数と、sacty のタスクの画面で確かめることを書く。
   - 実装の成果物：最終レビューの欄に「人が確かめること」として出し、ゴールガーディアンが実行したテストには「環境による失敗だけ」を添える（`HumanChecks`）。どちらも無ければ出さない。
   - 環境による失敗だけで通ったテストは、対応表の実行結果を「テスト合格」にする（`verificationResults` の `passed`）。
 
@@ -1112,7 +1113,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   最終レビューはやり直さない。
 - 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする。
 - PR の本文には、人が最終レビューの不合格のままレビューへ進めたことと、不合格の観点・最終レビューの所見（1行にし、`HUMAN_CHECK_ITEM_MAX` 文字まで）を書く（`overrideBodyLines`）。
-  本文の長さの上限で省かれないよう、footer に置く。
+  本文の長さの上限で省かれないよう、テンプレートを使う本文は footer に、使わない本文は冒頭の「結論」に置いて省いても残す（`keep`）。
 - 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。
 
 コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）

@@ -307,7 +307,11 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(parts.footer.indexOf("人が確かめること")).toBeLessThan(
       parts.footer.indexOf("この PR をマージすると"),
     );
-    expect(buildPullRequestBodyText(reviewed).footer).toContain(checklist);
+    // 決まった形の本文は、冒頭の結論に置く（承認の案内の前の footer ではなく main）
+    const text = buildPullRequestBodyText(reviewed);
+    expect(text.main).toContain(checklist);
+    expect(text.footer).not.toContain("人が確かめること");
+    expect(text.keep).toContain(checklist);
     // 無ければ出さない
     const plain = buildPullRequestBody(
       task({
@@ -343,10 +347,11 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
 });
 
 describe("PR の本文の長さの上限と、人が確かめること（PR #215 レビュー指摘）", () => {
+  // 本文を省くほど長い、実装の説明（要求要件は全文を載せない）
   const long = (lastReview: FinalReview) =>
     task({
       lastReview,
-      approved: { requirements: { output: "あ".repeat(66_000), submission: 1 } },
+      outputs: { implement: "あ".repeat(66_000) },
     } as Partial<Task>);
   const TEMPLATE = "## 概要\n\n## テスト\n";
 
@@ -367,7 +372,11 @@ describe("PR の本文の長さの上限と、人が確かめること（PR #215
   it("一覧が上限を超えるときは、入る項目を出し、残りの件数と確かめる場所を書く", () => {
     const many = Array.from({ length: 30 }, (_, i) => `確認 ${i} ${"x".repeat(400)}`);
     const t = long(review({ humanChecks: many }));
-    const { footer } = buildPullRequestBodyText(t);
+    // 決まった形の本文は冒頭の結論に、テンプレートに沿わせる本文は footer に置く
+    const text = buildPullRequestBodyText(t);
+    expect(text.main).toContain("- [ ] 確認 0 ");
+    expect(text.footer).not.toContain("人が確かめること");
+    const { footer } = buildPullRequestBodyParts(t);
     const shown = footer.split("\n").filter((l) => l.startsWith("- [ ] 確認 "));
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.join("\n").length).toBeLessThanOrEqual(HUMAN_CHECKS_BODY_MAX);
@@ -382,13 +391,18 @@ describe("PR の本文の長さの上限と、人が確かめること（PR #215
 
   it("長すぎる1項目は、上限で切って、続きの場所を書く（サロゲートペアの途中で切らない）", () => {
     const item = `${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}😀tail`;
-    const { footer } = buildPullRequestBodyText(
-      task({ lastReview: review({ humanChecks: [item], tests: undefined }) } as Partial<Task>),
-    );
-    expect(footer).toContain(
-      `- [ ] ${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}…（続きは sacty のタスクの画面で）`,
-    );
-    expect(footer).not.toContain("tail");
+    const reviewed = task({
+      lastReview: review({ humanChecks: [item], tests: undefined }),
+    } as Partial<Task>);
+    for (const body of [
+      buildPullRequestBody(reviewed),
+      buildPullRequestBodyParts(reviewed).footer,
+    ]) {
+      expect(body).toContain(
+        `- [ ] ${"a".repeat(HUMAN_CHECK_ITEM_MAX - 1)}…（続きは sacty のタスクの画面で）`,
+      );
+      expect(body).not.toContain("😀tail");
+    }
   });
 });
 
@@ -406,11 +420,11 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
       lastReview: failedReview(summary),
       submissions: {},
       verificationOverride: { at: "2026-10-27T00:00:00Z", submission: 1 },
-      approved: { requirements: { output: "あ".repeat(66_000), submission: 1 } },
+      outputs: { implement: "あ".repeat(66_000) },
     } as Partial<Task>);
   const TEMPLATE = "## 概要\n\n## テスト\n";
 
-  it("要求要件が長くて本文を省いても、通常の本文・テンプレートの本文の両方で、覆した記録と不合格の要点を残す", () => {
+  it("本文が長くて省いても、通常の本文・テンプレートの本文の両方で、覆した記録と不合格の要点を残す", () => {
     const t = overridden();
     const text = buildPullRequestBodyText(t);
     const filled = fillTemplate(TEMPLATE, buildPullRequestBodyParts(t));
@@ -424,13 +438,14 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
   });
 
   it("長い所見は1行にして上限で切り、前の提出を覆した記録は出さない", () => {
-    const { footer } = buildPullRequestBodyText(
-      overridden(`a\n${"b".repeat(HUMAN_CHECK_ITEM_MAX)}`),
-    );
-    expect(footer).toContain(
-      `- 最終レビューの所見：a ${"b".repeat(HUMAN_CHECK_ITEM_MAX - 2)}…（続きは sacty のタスクの画面で）`,
-    );
+    const long = overridden(`a\n${"b".repeat(HUMAN_CHECK_ITEM_MAX)}`);
+    for (const body of [buildPullRequestBody(long), buildPullRequestBodyParts(long).footer]) {
+      expect(body).toContain(
+        `- 最終レビューの所見：a ${"b".repeat(HUMAN_CHECK_ITEM_MAX - 2)}…（続きは sacty のタスクの画面で）`,
+      );
+    }
     const later = { ...overridden(), submissions: { implement: 1 } } as Task;
-    expect(buildPullRequestBodyText(later).footer).not.toContain("不合格のまま");
+    expect(buildPullRequestBody(later)).not.toContain("不合格のまま");
+    expect(buildPullRequestBodyParts(later).footer).not.toContain("不合格のまま");
   });
 });

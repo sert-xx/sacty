@@ -8811,9 +8811,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       title: "決済API",
       number: undefined,
     });
-    expect(call?.body).toContain(
-      "| TV-1 同じキーの再送 | 同じキーで2回送る | 決済は1回 | pay.test.ts › 同じキーの再送 | ✅ TV-1の判定理由 |",
-    );
+    expect(call?.body).toContain("| TV-1 同じキーの再送 | pay.test.ts › 同じキーの再送 | ✅ |");
+    // 入力・期待結果・所見の全文は、表の外の折りたたみに出す
+    expect(call?.body).toContain("  - 入力：同じキーで2回送る");
+    expect(call?.body).toContain("  - 最終レビューの所見：TV-1の判定理由");
     expect(call?.body).toContain("requirements-1-1：再発なし");
 
     const task = service.get(id)?.task;
@@ -15697,8 +15698,9 @@ describe("再現の工程（PBI-29）", () => {
     // PR の本文には、再現の説明と、再現のテストの観点（REPRO）を載せる
     const body = pulls.calls[0]?.body ?? "";
     expect(body).toContain("## 不具合の再現");
-    expect(body).toContain("# 再現の説明");
-    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|.*✅/);
+    // 全文は載せない（再現の説明は見出しだけなので、要点は無く、全文のある場所だけを書く）
+    expect(body).toContain("全文は sacty のタスクの画面で確かめてください。");
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \| ✅ \|/);
     expect(body).not.toContain("## 要求要件");
     // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
     expect(reworkTargets(done as Task, "implement")).toEqual(["implement"]);
@@ -18447,7 +18449,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       baseBranch: "main",
       title: "決済API",
     });
-    expect(pulls.calls[2]?.body).toContain("## 要求要件・設計の PR（マージで承認済み）");
+    // 全文は載せず、マージで承認した PR へのリンクにする（PBI-264）
+    expect(pulls.calls[2]?.body).toContain("## 要求要件（人間が承認済み）");
+    expect(pulls.calls[2]?.body).toContain("全文は、マージで承認した次の PR にあります。");
+    expect(pulls.calls[2]?.body).toContain("- 要求要件：https://github.com/acme/app/pull/7");
     expect(pulls.calls[2]?.body).toContain("- 設計：https://github.com/acme/app/pull/8");
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
@@ -23379,14 +23384,16 @@ describe("PR テンプレート（PBI-87）", () => {
     expect(impl).toContain(
       "## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の成果物です。",
     );
-    expect(impl).toContain("**要求要件（人間が承認済み）**\n\n# 要求要件 v1");
-    expect(impl).toContain("## 変更内容\n\n# 実装の説明");
-    expect(impl).toContain("## テスト\n\n| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |");
+    expect(impl).toContain("最終レビュー：合格。所見");
     expect(impl).toContain(
-      "テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）\n\n- [ ] 単体テストを足した",
+      "**要求要件（人間が承認済み）**\n\n全文は、マージで承認した次の PR にあります。\n\n- 要求要件：https://github.com/acme/app/pull/7",
     );
-    expect(impl).toContain("<summary>sacty の記録</summary>");
-    expect(impl).toContain("**ゴールガーディアンの最終レビュー**\n\n合格。所見");
+    expect(impl).toContain("## 変更内容\n\n# 実装の説明");
+    expect(impl).toContain("## テスト\n\n| 観点 | テスト | 最終レビュー |");
+    expect(impl).toContain("テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）");
+    expect(impl).toContain("<summary>観点ごとの詳細");
+    expect(impl).toContain("- [ ] 単体テストを足した");
+    // 最終レビューが短ければ、全文の折りたたみ（sacty の記録）は出さない
     expect(impl).not.toMatch(/\[[xX]\]/);
     // 最後の部分に、タスクの ID と、マージが実装の承認になることの案内（PBI-110）
     expect(impl).toContain(
@@ -23480,8 +23487,7 @@ describe("PR テンプレート（PBI-87）", () => {
     ]) {
       const made = await toPullRequest(
         templates,
-        implement(),
-        `# 要求要件 v1\n\n${"長い要求要件。".repeat(20_000)}`,
+        implement(`# 実装の説明\n\n${"長い説明。".repeat(20_000)}`),
       );
       const body = made.pulls.calls[2]?.body ?? "";
       expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
