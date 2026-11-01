@@ -846,9 +846,35 @@ const SMALL_REMARK_REVIEW_ROUNDS_MAX = 2;
  */
 type ReworkMode = "partial" | "unreadable";
 
-function reworkMode(hasRemarks: boolean, previous: string | undefined): ReworkMode | undefined {
-  if (!hasRemarks) return undefined;
+function reworkMode(
+  task: Task,
+  step: "requirements" | "design",
+  previous: string | undefined,
+): ReworkMode | undefined {
+  if (currentRemarks(task, step).length === 0) return undefined;
   return previous?.trim() ? "partial" : "unreadable";
+}
+
+/**
+ * 今回の差し戻しの指摘（その工程の最新の差し戻しの回のうち、まだ対応していないもの）。対応済みの指摘しか無いのは、
+ * 上流の変更（要求要件の再承認など）で、前回の下書きを最新の上流に合わせ直す再実行のときで、差し戻しの直しではない。
+ */
+function currentRemarks(task: Task, step: StepKey) {
+  const remarks = humanRemarks(task).filter((r) => r.step === step);
+  const latest = Math.max(0, ...remarks.map((r) => r.round ?? 0));
+  return remarks.filter((r) => (r.round ?? 0) === latest && r.respondedIn === undefined);
+}
+
+/**
+ * 差し戻しの直しのセルフレビューを絞ってよいか。前回の下書きが前のセルフレビューを通っているとき（passed）に限る。
+ * 未合格・記録なし（人が文書を直した後を含む）は、前回の未解決が今回の差分の外に残りうるので、全体をレビューする。
+ */
+function reviewRework(
+  task: Task,
+  step: "requirements" | "design",
+  rework: ReworkMode | undefined,
+): ReworkMode | undefined {
+  return rework === "partial" && task.selfReviews?.[step]?.passed === true ? rework : undefined;
 }
 
 /**
@@ -864,8 +890,7 @@ function reworkLines(
 ): string[] {
   if (!mode) return [];
   const remarks = humanRemarks(task).filter((r) => r.step === step);
-  const latest = Math.max(...remarks.map((r) => r.round ?? 0));
-  const current = remarks.filter((r) => (r.round ?? 0) === latest);
+  const current = currentRemarks(task, step);
   const earlier = remarks.length - current.length;
   if (mode === "unreadable") {
     return [
@@ -1929,9 +1954,11 @@ export function buildPrompt(
       ];
       if (hasRemarks) lines.push("", "--- 前回の下書き ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "要求要件の本文"));
-      const rework = reworkMode(hasRemarks, previous);
+      const rework = reworkMode(task, "requirements", previous);
       lines.push(...reworkLines(task, "requirements", "要求要件", rework));
-      lines.push(...selfReviewLines("design-doc", "要求要件", rework));
+      lines.push(
+        ...selfReviewLines("design-doc", "要求要件", reviewRework(task, "requirements", rework)),
+      );
       if (extra.inputDir) lines.push(...provenanceLines("requirements", extra.inputDir));
       return lines.join("\n");
     }
@@ -1990,9 +2017,11 @@ export function buildPrompt(
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
-      const rework = reworkMode(hasRemarks, previous);
+      const rework = reworkMode(task, "design", previous);
       lines.push(...reworkLines(task, "design", "設計とテスト観点", rework));
-      lines.push(...selfReviewLines("design-doc", "設計とテスト観点", rework));
+      lines.push(
+        ...selfReviewLines("design-doc", "設計とテスト観点", reviewRework(task, "design", rework)),
+      );
       if (extra.inputDir) lines.push(...provenanceLines("design", extra.inputDir));
       return lines.join("\n");
     }

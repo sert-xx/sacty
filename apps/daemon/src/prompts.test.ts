@@ -2991,9 +2991,12 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
   });
   const PARTIAL =
     "--- 差し戻しの直し方（前回の要求要件を元に、指摘に関わる所だけを書き換える） ---";
+  // 前回の提出のセルフレビューは通っている（記録あり）
+  const PASSED = { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "" };
   const redo = (extra: Partial<Task> = {}) =>
     task({
       outputs: { requirements: "# 要求要件 v1\n\n- R-1 …\n- R-2 …" },
+      selfReviews: { requirements: PASSED },
       remarks: [remark("requirements-1-1", "requirements", 1, "R-2 の答えは 201 にする")],
       ...extra,
     } as Partial<Task>);
@@ -3102,10 +3105,52 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
     expect(buildPrompt(task(), "requirements")).not.toContain("初回のレビューで must が無ければ");
   });
 
+  it("前回のセルフレビューが未合格・記録なしなら、直し方は絞るが、セルフレビューは通常どおり全体を見る", () => {
+    for (const selfReviews of [
+      { requirements: { ...PASSED, passed: false, remaining: ["R-3 が曖昧"] } },
+      { requirements: null },
+      {},
+    ]) {
+      const prompt = buildPrompt(redo({ selfReviews } as Partial<Task>), "requirements");
+      expect(prompt).toContain(PARTIAL);
+      expect(prompt).not.toContain("初回のレビューで must が無ければ");
+      expect(prompt).not.toContain("前回の下書きとの差分と、その直しが直接必要にした既存の箇所");
+      expect(prompt).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+    }
+  });
+
+  it("対応済みの設計の指摘が残っていても、上流の変更による設計の再実行は差し戻しの直しにしない", () => {
+    const rerun = task({
+      outputs: { design: "# 設計 v1\n\n## 処理の流れ\n…" },
+      remarks: [
+        {
+          ...remark("design-1-1", "design", 1, "リトライの間隔を 5 秒にする"),
+          response: "5 秒にした",
+          respondedIn: 1,
+        },
+      ],
+      selfReviews: { design: PASSED },
+    } as Partial<Task>);
+    const prompt = buildPrompt(rerun, "design");
+    expect(prompt).not.toContain("--- 差し戻しの直し方");
+    expect(prompt).not.toContain("一字一句そのまま保つ");
+    expect(prompt).not.toContain("初回のレビューで must が無ければ");
+    // 前回の下書きは、最新の要求要件に合わせ直させるために渡す
+    expect(prompt).toContain("要求要件が変わった場合は、最新の要求要件に合わせてください");
+    // 同じ状態でも、未対応の新しい差し戻しがあれば、差し戻しの直しになる
+    const again = task({
+      ...rerun,
+      remarks: [...rerun.remarks, remark("design-2-1", "design", 2, "間隔を 3 秒にする")],
+    } as Partial<Task>);
+    const promptAgain = buildPrompt(again, "design");
+    expect(promptAgain).toContain("今回：design-2-1）");
+  });
+
   it("設計の差し戻しも同じ。テスト観点は全件を出し直させ、ID の付け直しは sacty に任せる", () => {
     const design = task({
       outputs: { design: "# 設計 v1\n\n## 処理の流れ\n…" },
       remarks: [remark("design-1-1", "design", 1, "リトライの間隔を 5 秒にする")],
+      selfReviews: { design: PASSED },
     } as Partial<Task>);
     const prompt = buildPrompt(design, "design");
     expect(prompt).toContain("# 設計 v1");

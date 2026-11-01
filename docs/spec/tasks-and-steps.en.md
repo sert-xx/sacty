@@ -145,8 +145,9 @@ Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `del
   - The quality bar is the same as the first draft: the "確認したいこと" and "既定で決めたこと" sections at the start, the required sections, and the target length, plus the EARS format and IDs for requirements (IDs are not reassigned, and a removed ID is not reused), and the choice of sections and how test viewpoints are written for designs. For a remark that answers a question, the agent reflects the answer where it applies, removes that item from "確認したいこと", and adds any new thing a person must decide that the change causes.
   - The agent outputs the whole deliverable again (not only the changed parts). The report of how each remark was handled is still required. For a design, all test viewpoints are output again as before (sacty reassigns the IDs).
 - When the previous draft is empty (unreadable), it cannot be the base, so the agent rewrites to handle every remark. The self-review is then the normal one (see "Self-review before submitting" below).
-- Instructions for a redo without remarks (for example, a design rebuilt because the requirements changed) do not get this section.
+- Instructions for a redo without remarks, or without current remarks (for example, a design rebuilt because the requirements changed, even when remarks from past rounds remain, as long as all of them were handled), do not get this section. The current remarks are the valid remarks of the latest round of changes requested for that step that have not been handled yet (no `respondedIn`) (`currentRemarks`).
 - The self-review of a revision (`partialReworkReviewLines`) narrows the scope and the number of rounds. The agent makes the judgment, and sacty records the number of rounds (`rounds`).
+  - When the self-review of the previous submission did not pass (`passed` is false) or has no record (including after a person edited the document), findings left from it may lie outside the current difference, so the way of fixing stays narrowed but the self-review is the normal one over the whole deliverable (`reviewRework`).
   - From the first review, the scope is the difference from the previous draft and the existing parts that difference directly requires (the previous draft passed self-review when it was submitted, and a person has read it). Only when a remark changes the direction is the scope the whole deliverable.
   - A small remark is one where the places to fix for the current remarks are at most 2 (`SMALL_REMARK_PLACES_MAX`; a question item in "確認したいこと" and the place that reflects its answer count as one place) and the direction does not change (for example, reflecting the answer to a question, or correcting the wording or value of one requirement). The round limit is 2 including the first (`SMALL_REMARK_REVIEW_ROUNDS_MAX`). If the first review has no `must`, the agent submits at that point.
   - For a remark that is not small (more than 2 places to fix, or the direction changes), and when in doubt, the round limit is the normal one (up to 5).
@@ -155,7 +156,7 @@ Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `del
 
 Related ADR: [要求要件・設計の差し戻しでは、前回の成果物を元に、指摘に関わる所だけを書き換える](../adr/20261101-1355-partial-rework-of-requirements-and-design.md)
 
-Code: `apps/daemon/src/prompts.ts` (`reworkMode`, `reworkLines`, `partialReworkReviewLines`, `SMALL_REMARK_PLACES_MAX`, `SMALL_REMARK_REVIEW_ROUNDS_MAX`)
+Code: `apps/daemon/src/prompts.ts` (`reworkMode`, `currentRemarks`, `reviewRework`, `reworkLines`, `partialReworkReviewLines`, `SMALL_REMARK_PLACES_MAX`, `SMALL_REMARK_REVIEW_ROUNDS_MAX`)
 
 ### Self-review before submitting
 

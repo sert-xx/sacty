@@ -567,7 +567,8 @@ The aim is that the less needs to change, the less a revision costs.
 
 In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
 
-When the agent revises after you request changes, it narrows the review to the difference from the previous deliverable and what that change directly requires.
+When the agent revises requirements or a design after you request changes, working from a non-empty previous deliverable, it narrows the review to the difference from the previous deliverable and what that change directly requires (this does not apply to changes requested on the implementation).
+However, the agent reviews the whole deliverable as usual when the self-review of the previous submission did not pass or has no record (including after a person edited the document), when the previous deliverable is empty, or when the remark changes the direction.
 When the remark is small (at most 2 places to fix, and no change of direction; for example, reflecting the answer to a question, or correcting the wording of one requirement), it is at most 2 rounds including the first.
 If the first review finds no `must` findings, the agent submits at that point.
 For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
