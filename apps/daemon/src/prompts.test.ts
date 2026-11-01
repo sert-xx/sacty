@@ -3309,6 +3309,21 @@ describe("差分が文書だけのとき、ツールが無くて実行できな�
     expect(item).toContain("REDACTED");
   });
 
+  it("クエリ・フラグメントの中に引用符がある URL も、出力とコマンドから値を除く", () => {
+    // 架空の値
+    for (const url of [
+      "https://example.com/path?session='FAKE_WHOLE_789",
+      "https://example.com/path#'FAKE_WHOLE_789",
+    ]) {
+      const item = itemOf(
+        { output: `fetch ${url} failed\ngo: command not found` },
+        `curl ${url} && go test ./...`,
+      );
+      expect(item, url).not.toContain("FAKE_WHOLE_789");
+      expect(item, url).toContain("example.com/path");
+    }
+  });
+
   it("ユーザー情報に引用符を含む URL も、出力とコマンドから認証情報とクエリを除く", () => {
     // 架空の値
     const url = "https://alice:p'FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123";
