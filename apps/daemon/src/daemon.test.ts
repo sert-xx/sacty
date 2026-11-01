@@ -9888,6 +9888,41 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("同じ確認の中の読み直しは1回だけ。開き・閉じ・開き・閉じと変わり続けても、読みは4回で終わり、判断を残して、次の確認で続ける", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await judgedThenStopped(pulls);
+      const changes = changeCount(service, id);
+      // 読むたびに、PR の状態が開き・閉じ・開き・閉じと変わる（5回目からは開いたまま）
+      const order: PullRequestStatus["state"][] = ["open", "closed", "open", "closed"];
+      const status = pulls.status.bind(pulls);
+      let reads = 0;
+      pulls.status = async (input) => {
+        pulls.state = { state: order[reads] ?? "open" };
+        reads += 1;
+        return status(input);
+      };
+      await service.checkPullRequests();
+      // 確認の1回と、読み直しの1回（それぞれが、差し戻す前の読み直しを含む）で、4回。それ以上は読まない
+      expect(reads).toBe(4);
+      expect(executor.calls).toHaveLength(0);
+      expect(changeCount(service, id)).toBe(changes);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      // 記録した判断は、差し戻しに反映されないまま残っている
+      expect(
+        service
+          .get(id)
+          ?.activity.slice(-1)
+          .map((e) => e.type),
+      ).toEqual(["ReworkJudged"]);
+      // 次の確認で続ける：開いたままなら、記録した判断のまま差し戻す（判断し直さない）
+      await service.checkPullRequests();
+      expect(executor.calls).toHaveLength(0);
+      expect(changeCount(service, id)).toBe(changes + 1);
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(service.get(id)?.task.prRework).toMatchObject({ target: "design", decided: true });
+      activity.close();
+    });
+
     it("取り込んだ指摘の判断を記録した後、再起動の前にマージされていたら、差し戻さずにマージとして記録する", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await judgedThenStopped(pulls);
