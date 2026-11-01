@@ -5669,7 +5669,7 @@ export class TaskService {
    * 履歴は書き換えない）。取り込んだら、提出するコミットは、その先頭を第2の親にしたマージコミットになる。
    * - 取り込むものが無ければ、何もしない（clean）
    * - 競合したファイルには目印が入る。目印が残っているうちは、さらに取り込まず、そのファイルを返す（conflicts。実装の
-   *   エージェントが解消する）
+   *   エージェントが解消する）。fresh は、この呼び出しで新しく競合したこと（前の取り込みの目印が残っているのではない）
    * - 取得・マージできなければ failed（呼び出し側が止める）
    * エージェントの実行中は呼ばない（作業領域を書き換えるため）。
    */
@@ -5677,7 +5677,7 @@ export class TaskService {
     task: Task,
   ): Promise<
     | { kind: "clean" }
-    | { kind: "conflicts"; files: string[] }
+    | { kind: "conflicts"; files: string[]; fresh: boolean }
     | { kind: "failed"; message: DaemonText }
   > {
     const repository = task.repository;
@@ -5690,7 +5690,7 @@ export class TaskService {
       const pending = task.baseMerge?.conflicts ?? [];
       if (pending.length > 0) {
         const remaining = await this.deps.repos.conflictMarkers(dir, pending);
-        if (remaining.length > 0) return { kind: "conflicts", files: remaining };
+        if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
       }
       const authEnv = await this.gitAuth(task, repository.url, usedSecrets);
       const base = workBaseCommit(repository, task.baseMerge);
@@ -5706,7 +5706,9 @@ export class TaskService {
           event: { type: "BaseBranchMerged", payload: { from: base, commit: tip, conflicts } },
         },
       ]);
-      return conflicts.length > 0 ? { kind: "conflicts", files: conflicts } : { kind: "clean" };
+      return conflicts.length > 0
+        ? { kind: "conflicts", files: conflicts, fresh: true }
+        : { kind: "clean" };
     } catch (error) {
       return {
         kind: "failed",
@@ -7439,13 +7441,18 @@ export class TaskService {
       ]);
       return false;
     }
+    // 実行の間にベースブランチが進んで新しく競合したのは、エージェントの誤りではないので、数えずにやり直す。
+    // 前の取り込みの目印が残っているときは、検証に通らなかったものとして数える
     const failed = this.append(this.mustGet(task.id), [
       {
         actor: "sacty",
-        event: { type: "BaseConflictsRemained", payload: { files: synced.files } },
+        event: {
+          type: "BaseConflictsRemained",
+          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
+        },
       },
     ]);
-    this.pauseIfVerificationKeepsFailing(failed);
+    if (!synced.fresh) this.pauseIfVerificationKeepsFailing(failed);
     return false;
   }
 
@@ -7776,6 +7783,8 @@ export class TaskService {
         commands: missingCommands,
         image: imageName ?? DEFAULT_IMAGE_NAME,
         step: "implement",
+        // 再開のときにテストの扱いを決め直せるか（testToolsMissing と同じ条件。PBI-158）
+        ...(task.testCommand && !task.noTestsReason ? { testsDecidable: true } : {}),
       });
       this.append(current, [
         {

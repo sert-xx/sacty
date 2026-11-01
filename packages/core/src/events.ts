@@ -1190,11 +1190,18 @@ const BaseBranchMerged = z.object({
 
 /**
  * 実装の提出の前に、ベースブランチとの競合の目印が作業領域に残っていた。検証（最終レビュー）に進まず、競合した
- * ファイルを渡して実装をやり直す（続けて通らなければ一時停止する）。
+ * ファイルを渡して実装をやり直す（続けて通らなければ一時停止する。fresh のときは数えない）。
  */
 const BaseConflictsRemained = z.object({
   type: z.literal("BaseConflictsRemained"),
-  payload: z.object({ files: z.array(z.string().min(1)).min(1).max(100) }),
+  payload: z.object({
+    files: z.array(z.string().min(1)).min(1).max(100),
+    /**
+     * この検証の前の取り込みで、新しく競合した（実装の実行の間にベースブランチが進んだ。エージェントが目印を消し忘れた
+     * のではない）。検証に通らなかった回数には数えず、競合したファイルを渡して実装をやり直す。
+     */
+    fresh: z.boolean().optional(),
+  }),
 });
 
 /**

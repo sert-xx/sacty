@@ -140,8 +140,10 @@ export interface RepositoryWorkspace {
     target: string;
   }): Promise<{ status: "unchanged" | "merged" | "conflicted"; conflicts: string[] }>;
   /**
-   * paths（リポジトリの根からの相対パス）のうち、競合の目印（<<<<<<< の行と >>>>>>> の行の両方）が作業領域のファイルに
-   * 残っているもの。通常のファイルだけを読む（シンボリックリンクや、作業領域の外を指すものは読まない）。
+   * paths（リポジトリの根からの相対パス）のうち、競合の目印（mergeBase が書く、ID のラベルの付いた <<<<<<< の行か
+   * >>>>>>> の行。どちらか1つでも）が作業領域のファイルに残っているもの。ディレクトリとファイルの名前の衝突で git が避けた
+   * 名前（`<名前>~<ID>`）のパスは、まだ存在するうちは残っているものとする。通常のファイルだけを読む（シンボリックリンクや、
+   * 作業領域の外を指すものは読まない）。
    */
   conflictMarkers(dir: string, paths: string[]): Promise<string[]>;
   /** 既にあるコミットを、ブランチにプッシュする（タスクブランチを作る。PBI-57）。強制プッシュはしない。 */
@@ -332,6 +334,12 @@ const COMMIT_RE = /^[0-9a-f]{40,64}$/;
 
 /** 競合の目印を探すファイルの大きさの上限（これより大きいファイルは読まない）。 */
 const MARKER_SCAN_LIMIT = 20 * 1024 * 1024;
+
+/** 競合の目印の行。git が書く、ツリーかコミットの ID のラベルが付いた始めの行と終わりの行。 */
+const CONFLICT_MARKER_RE = /^(<{7}|>{7}) [0-9a-f]{40,64}\r?$/m;
+
+/** ディレクトリとファイルの名前が衝突したときに、git が避けて付ける名前（`docs~<ID>`）。 */
+const RENAMED_CONFLICT_RE = /~[0-9a-f]{40,64}$/;
 
 /** コミットから読むファイルの大きさの上限（要求要件・設計の成果のファイル。PBI-63）。 */
 const FILE_LIMIT = 1024 * 1024;
@@ -742,6 +750,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   private async hasConflictMarkers(root: string, path: string): Promise<boolean> {
     const file = join(root, path);
     try {
+      // ディレクトリとファイルの名前が衝突したとき、git は片方を `<名前>~<ID>` に避けて置く。それが残っているうちは
+      // 解消していない（どちらを残すかを決め、内容を正しい名前に移して、避けた名前のものを消す）
+      if (RENAMED_CONFLICT_RE.test(path)) {
+        await lstat(file);
+        return true;
+      }
       // シンボリックリンクはたどらない。作業領域（エージェントが書き換えられる）の外のファイルを読まない
       if (!(await lstat(file)).isFile()) return false;
       const real = await realpath(file);
@@ -749,8 +763,10 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       const stat = await lstat(real);
       if (stat.size > MARKER_SCAN_LIMIT) return false;
       const text = (await readFile(real)).toString("utf8");
-      // 始めの行と終わりの行の両方がそろったときだけ、目印とする（Markdown の見出しの下線の ======= だけでは目印にしない）
-      return /^<{7}( |$)/m.test(text) && /^>{7}( |$)/m.test(text);
+      // sacty が書く目印は、始めの行（<<<<<<<）と終わりの行（>>>>>>>）にツリーかコミットの ID のラベルが付く。そのラベルの付いた
+      // 行が1つでも残っていれば、残っているとする（片方だけ消し忘れた場合も）。ラベルの無い似た行や、単独の =======（Markdown の
+      // 見出しの下線）は、目印にしない
+      return CONFLICT_MARKER_RE.test(text);
     } catch {
       return false;
     }
