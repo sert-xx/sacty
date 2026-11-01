@@ -6,6 +6,7 @@ import {
   deliveredWithoutChanges,
   gatePullRequest,
   MAX_CHANGE_REQUESTS,
+  pullRequestConflict,
   reworkTargets,
   stepAgentChangeable,
   type Task,
@@ -277,6 +278,7 @@ export function ReviewView({ task }: { task: Task }) {
                     ...(watched.url ? { url: watched.url } : {}),
                     closed: watched.state === "closed",
                     mergedOutdated: watched.state === "merged_outdated",
+                    conflicting: pullRequestConflict(task) !== undefined,
                   }
                 : undefined
             }

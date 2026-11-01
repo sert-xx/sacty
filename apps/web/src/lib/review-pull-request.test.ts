@@ -197,3 +197,54 @@ describe("導線のある場所で同じにする", () => {
     });
   });
 });
+
+describe("実装の PR がベースブランチと競合しているとき（画面に出す）", () => {
+  const conflicting = (patch: Partial<Task> = {}) =>
+    implementGate({
+      pullRequestConflict: { number: 12, commit: "abc", at: "2026-10-10T00:00:00.000Z" },
+      ...patch,
+    });
+  const projects: Project[] = [
+    { id: "p1", name: "決済", targets: [], createdAt: "", updatedAt: "" } as unknown as Project,
+  ];
+
+  it("あなたの出番・ヘッダーのお知らせの状態に競合していることを出し、あなたの出番の行には取り込む操作（差し戻す・指摘）を添える。行き先は PR のまま", async () => {
+    const rows = attentionRows(projects, [conflicting()], {}, ja);
+    expect(rows[0]).toMatchObject({ href: PR_URL, external: true });
+    expect(rows[0]?.status.text).toBe("実装の PR がベースブランチと競合");
+    expect(rows[0]?.status.tone).toBe("person");
+    // 行には、取り込む操作（差し戻す・指摘を書く）を添える
+    expect(rows[0]?.note).toBe("差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます");
+    expect(attentionRows(projects, [conflicting()], {}, labels.en)[0]?.note).toBe(
+      "Send it back or comment on the PR to merge the base branch in",
+    );
+    expect(attentionRows(projects, [implementGate()], {}, ja)[0]).not.toHaveProperty("note");
+    expect(attentionRows(projects, [conflicting()], {}, labels.en)[0]?.status.text).toBe(
+      "Implement PR conflicts with the base branch",
+    );
+    listTasks.mockResolvedValueOnce([conflicting()]);
+    const header = await loadHeaderData();
+    expect(header?.notices[0]?.status).toBe("実装の PR がベースブランチと競合");
+    // 競合の記録が無ければ、いつもの表示
+    expect(attentionRows(projects, [implementGate()], {}, ja)[0]?.status.text).toBe(
+      "実装の PR のマージ待ち",
+    );
+  });
+
+  it("競合の記録が古い（別の提出・別の PR・閉じた・ゴールガーディアンが判断中）ときは出さない", () => {
+    const text = (t: Task) => attentionRows(projects, [t], {}, ja)[0]?.status.text;
+    const normal = "実装の PR のマージ待ち";
+    expect(text(conflicting({ pullRequestConflict: { number: 12, commit: "old", at: "" } }))).toBe(
+      normal,
+    );
+    expect(text(conflicting({ pullRequestConflict: { number: 99, commit: "abc", at: "" } }))).toBe(
+      normal,
+    );
+    expect(text(conflicting({ pullRequestState: "closed" }))).toBe("PR が閉じられた・判断待ち");
+    expect(
+      text(
+        conflicting({ pendingReview: { keys: ["k"], remarks: ["r"] } as Task["pendingReview"] }),
+      ),
+    ).toBeUndefined();
+  });
+});

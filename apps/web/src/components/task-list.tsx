@@ -70,6 +70,11 @@ export function LiveTaskList({
                   {task.status}
                 </span>
                 <span className="text-[17px] font-semibold">{task.title}</span>
+                {task.note && (
+                  <span data-testid={`needs-you-note-${task.id}`} className="text-sm text-warn">
+                    {task.note}
+                  </span>
+                )}
                 <ActionLink
                   href={task.action.href}
                   external={task.action.external}

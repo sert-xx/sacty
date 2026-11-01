@@ -47,6 +47,7 @@ import {
   message,
   PULL_REQUEST_CI_GRACE_MS,
   PULL_REQUEST_CI_TIMEOUT_MS,
+  pullRequestConflict,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
   RESUME_NOTE_HEADING,
@@ -9031,6 +9032,156 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await service.checkPullRequests();
     expect(pulls.checked).toHaveLength(checks);
     activity.close();
+  });
+
+  describe("実装の承認待ちの間に PR がベースブランチと競合したら、画面に出す（取り込まない）", () => {
+    const conflictTypes = (service: TaskService, id: string) =>
+      types(service, id).filter(
+        (t) => t.startsWith("PullRequestConflict") || t === "PullRequestConflicted",
+      );
+
+    it("GitHub の mergeable が競合を示したら一度だけ記録し、解消されたら記録して消す。実行も取り込みも始めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, repos, id } = await toImplementGate([], { pulls });
+      const runs = executor.calls.length;
+      const before = types(service, id);
+      // 競合していなければ、何も記録しない
+      pulls.state = { state: "open", mergeable: true };
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual([]);
+
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      await service.checkPullRequests(); // 同じ状態は二重に記録しない
+      expect(conflictTypes(service, id)).toEqual(["PullRequestConflicted"]);
+      const conflicted = service.get(id)?.task;
+      expect(conflicted && pullRequestConflict(conflicted)).toMatchObject({ number: 7 });
+      expect(conflicted?.status).toBe("awaiting_approval");
+      // 自動で取り込まない・費用のかかる処理を走らせない（実行も、ベースブランチの取り込みも、PR の更新も無い）
+      expect(executor.calls).toHaveLength(runs);
+      expect(types(service, id).slice(before.length)).toEqual(["PullRequestConflicted"]);
+      expect(conflicted?.baseMerge).toBeUndefined();
+      expect(repos.published).toHaveLength(1);
+
+      // 解消された（人が GitHub で直した・ベースブランチが戻った）ら、記録して消す
+      pulls.state = { state: "open", mergeable: true };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual([
+        "PullRequestConflicted",
+        "PullRequestConflictResolved",
+      ]);
+      const resolved = service.get(id)?.task;
+      expect(resolved && pullRequestConflict(resolved)).toBeUndefined();
+
+      // また競合したら、また出す
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toHaveLength(3);
+      activity.close();
+    });
+
+    it("GitHub が mergeable を計算中（分からない）の間と、状態を読めない間は、前の記録のままにする", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      // 計算中（mergeable が無い）なら、競合していない PR に何も記録しない
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual([]);
+
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      // 計算中に戻っても、競合の表示を消さない（ちらつかせない）
+      pulls.state = { state: "open" };
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual(["PullRequestConflicted"]);
+      // 読めなくても同じ
+      pulls.statusFail = "network";
+      await service.checkPullRequests();
+      pulls.statusFail = undefined;
+      expect(conflictTypes(service, id)).toEqual(["PullRequestConflicted"]);
+      const task = service.get(id)?.task;
+      expect(task && pullRequestConflict(task)).toBeDefined();
+      activity.close();
+    });
+
+    it("競合のまま PR が閉じられたら競合の表示を消し、開き直されて競合のままなら、また出す。マージされたら完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      let task = service.get(id)?.task;
+      expect(task?.pullRequestState).toBe("closed");
+      expect(task && pullRequestConflict(task)).toBeUndefined();
+      // 開き直した次の確認で、競合のままなら出し直す
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual([
+        "PullRequestConflicted",
+        "PullRequestConflicted",
+      ]);
+      task = service.get(id)?.task;
+      expect(task && pullRequestConflict(task)).toBeDefined();
+      // 競合のまま人がマージしたら（GitHub が許す設定なら）、通常どおり承認として完了する
+      const commit = task?.pullRequest?.commit;
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: commit };
+      await service.checkPullRequests();
+      task = service.get(id)?.task;
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task && pullRequestConflict(task)).toBeUndefined();
+      activity.close();
+    });
+
+    it("差し戻して実装をやり直し、PR を更新すると、古い競合の記録は消える（次の確認で確かめ直す）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate(
+        [
+          out(
+            [
+              "# 実装の説明 v2",
+              block({
+                "sacty-test-map": [
+                  { viewpointId: "TV-1", tests: ["a"] },
+                  { viewpointId: "TV-2", tests: ["b"] },
+                ],
+              }),
+              block({
+                "sacty-responses": [
+                  { remarkId: "implement-1-1", text: "ベースブランチを取り込んだ" },
+                ],
+              }),
+            ].join("\n\n"),
+          ),
+          review(undefined, [
+            ["requirements-1-1", true],
+            ["implement-1-1", true],
+          ]),
+        ],
+        { pulls },
+      );
+      pulls.state = { state: "open", mergeable: false };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestConflict).toBeDefined();
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "implement",
+        comments: ["ベースブランチを取り込んで直して"],
+      });
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+      expect(task?.pullRequestConflict).toBeUndefined();
+      // 取り込んで直した PR は、GitHub が競合なしと答える
+      pulls.state = { state: "open", mergeable: true };
+      await service.checkPullRequests();
+      expect(conflictTypes(service, id)).toEqual(["PullRequestConflicted"]);
+      activity.close();
+    });
   });
 
   it("実装の承認待ちで差し戻すと見逃しを記録し、実装をやり直して同じPRを更新する（PBI-10b）", async () => {
@@ -18341,6 +18492,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(repos.changedCalls.at(-1)?.from).toBe(pushed);
     expect(repos.published).toHaveLength(2);
     made.activity.close();
+  });
+
+  it("要求要件・設計の PR（タスクブランチへの PR）は、競合を示されても記録しない（ベースブランチの取り込みは実装の工程だけ）", async () => {
+    const made = await start([out("# 要求要件 v1"), design(), implement(), review()]);
+    const { activity, service, pulls, id } = made;
+    const before = types(service, id);
+    pulls.states[7] = { state: "open", mergeable: false };
+    await service.checkPullRequests();
+    expect(types(service, id)).toEqual(before);
+    expect(taskOf(service, id).pullRequestConflict).toBeUndefined();
+    activity.close();
   });
 
   it("タスクブランチを作り、要求要件・設計の PR を成果のファイル入りでタスクブランチに向けて順に作り、マージで承認して進み、実装の PR はベースブランチに向ける（受け入れ条件 1・2・4）", async () => {

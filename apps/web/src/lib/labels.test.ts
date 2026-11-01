@@ -438,6 +438,45 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Implement PR awaiting merge");
   });
 
+  it("ベースブランチと競合しているときは、競合を状態に出す", () => {
+    const conflicting = (submission = 1) =>
+      task({
+        status: "awaiting_approval",
+        gate: { step: "implement", submission },
+        pullRequest: { branch: "b", commit: "c1", url: "u", number: 7 },
+        pullRequestState: "open",
+        pullRequestConflict: { number: 7, commit: "c1", at: "2026-10-10T00:00:00.000Z" },
+      });
+    expect(statusText(conflicting())).toBe("実装の PR がベースブランチと競合");
+    expect(statusText(conflicting(2))).toBe("実装の PR がベースブランチと競合（2回目）");
+    expect(statusTextIn(conflicting(), labels.en)).toBe(
+      "Implement PR conflicts with the base branch",
+    );
+    // 競合を出しても人の出番のまま
+    expect(statusTone(conflicting())).toBe("person");
+  });
+
+  it("作業履歴に、PR の競合と解消を表示する", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t",
+        projectId: "p",
+        at: "",
+        actor: "sacty",
+      }) as ActivityEvent;
+    expect(
+      describeEvent(event({ type: "PullRequestConflicted", payload: { number: 7 } } as never)),
+    ).toBe("PR #7 がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）");
+    expect(
+      describeEvent(
+        event({ type: "PullRequestConflictResolved", payload: { number: 7 } } as never),
+      ),
+    ).toBe("PR #7 の競合が解消された");
+  });
+
   it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
     const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({

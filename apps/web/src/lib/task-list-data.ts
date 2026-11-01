@@ -1,4 +1,4 @@
-import { isRepoless, type Task } from "@sacty/core";
+import { isRepoless, pullRequestConflict, type Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
 import { listProjects, listTasks } from "@/lib/daemon";
 
@@ -32,6 +32,8 @@ export type NeedsYouCard = {
   id: string;
   title: string;
   status: string;
+  /** カードに添える案内（実装の PR がベースブランチと競合しているとき、取り込む操作）。 */
+  note?: string;
   /** 人が判断する場所。external なら GitHub の PR（新しいタブで開く。PBI-136）。 */
   action: { href: string; label: string; external?: true };
 };
@@ -63,6 +65,7 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       id: t.id,
       title: t.title,
       status: statusText(t, labels),
+      ...(pullRequestConflict(t) ? { note: labels.state.prConflictNote } : {}),
       action: personAction(t, labels),
     })),
     rows: withSubtasks(mine).map(({ task, child }) => ({

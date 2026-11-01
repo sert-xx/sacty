@@ -5,6 +5,7 @@ import {
   isFinished,
   type PauseReason,
   type Project,
+  pullRequestConflict,
   type Task,
 } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
@@ -36,6 +37,8 @@ export type AttentionRow = OpenTaskRow & {
   external?: true;
   /** 待ち始めた時刻（その状態になった作業履歴の記録。無ければ updatedAt）。 */
   waitingSince: string;
+  /** 行に添える案内（実装の PR がベースブランチと競合しているとき、取り込む操作）。 */
+  note?: string;
 };
 
 /** 「止まっているタスクの理由」の1つの理由（PBI-118）。件数が 0 の理由は無い。 */
@@ -146,6 +149,7 @@ export function attentionRows(
       status: { text: statusText(t, labels), tone: statusTone(t) },
       ...personLink(t, labels),
       waitingSince: waitingSince[t.id] ?? t.updatedAt,
+      ...(pullRequestConflict(t) ? { note: labels.state.prConflictNote } : {}),
     }))
     .sort((a, b) => a.waitingSince.localeCompare(b.waitingSince) || a.id.localeCompare(b.id));
 }

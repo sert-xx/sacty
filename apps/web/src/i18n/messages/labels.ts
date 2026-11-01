@@ -145,6 +145,9 @@ const ja = {
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた・判断待ち",
+    prConflicting: (n: number) => `実装の PR がベースブランチと競合${n > 1 ? `（${n}回目）` : ""}`,
+    /** 競合している PR の行に添える、取り込む操作（「あなたの出番」）。 */
+    prConflictNote: "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
     prMergedOutdated: "別の内容でマージ・承認へ",
     notReproduced: "再現できなかった・判断待ち",
     integrationFailed: "統合レビュー不合格・判断待ち",
@@ -348,6 +351,9 @@ const ja = {
       `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、Sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、Sacty の版を承認済みにした" : ""}`,
     PullRequestClosed: (number: number) => `PR #${number} がマージされずに閉じられた・判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
+    PullRequestConflicted: (number: number) =>
+      `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
+    PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GitHubCommentsPosted: (step: string, results: string[]) =>
@@ -660,6 +666,9 @@ const en: LabelMessages = {
     stepPrAwaitingMerge: (step, n) =>
       `${step} PR awaiting merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed · needs you",
+    prConflicting: (n) =>
+      `Implement PR conflicts with the base branch${n > 1 ? ` (submission ${n})` : ""}`,
+    prConflictNote: "Send it back or comment on the PR to merge the base branch in",
     prMergedOutdated: "Merged with different content · approving",
     notReproduced: "Not reproduced · needs you",
     integrationFailed: "Integration review failed · needs you",
@@ -815,6 +824,9 @@ const en: LabelMessages = {
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
+    PullRequestConflicted: (number) =>
+      `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
+    PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,

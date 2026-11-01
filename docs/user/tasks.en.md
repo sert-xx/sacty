@@ -324,7 +324,13 @@ Even if another task or a person's PR is merged into the base branch (main and t
 
 - sacty merges the latest base branch into the implementation workspace before the implementation starts and before the final review.
   When the implementation is redone after a rejection or after PR comments, it merges before redoing it.
-  It does not merge while the task waits for approval. To fix a PR after the base branch moved, reject it or write a comment on the PR.
+  It does not merge on its own while the task waits for approval. To fix a PR after the base branch moved, reject it or write a comment on the PR.
+- If another PR is merged while the task waits for approval and the implementation PR conflicts with the base branch, sacty notices and shows it (when GitHub says it conflicts; the PR check that runs every minute finds out).
+  - The task details and the approval screen show that it conflicts and how to merge the base in (send the task back with a comment from this screen, or write a comment on the GitHub PR).
+  - The status in "Needs you" (the dashboard and the task list) and in the header notifications also becomes "Implement PR conflicts with the base branch". The rows in "Needs you" add "Send it back or comment on the PR to merge the base branch in".
+  - It only shows it. sacty does not merge the base in or start a run on its own, and waits until you send the task back or write a comment.
+  - You can also resolve the conflict yourself on GitHub. When it is resolved, the notice disappears at the next check. It also disappears when you send the task back and the implementation is redone.
+  - It is not shown for Requirements and Design PRs (PRs to the task branch).
 - If there is no conflict, it merges as is. The PR gets a merge commit that has the head of the base branch as a parent.
   The base branch's own changes do not appear in the PR's diff. History is not rewritten (no force push, no rebase).
 - If there is a conflict, the conflicting files keep markers (`<<<<<<<`, `=======`, `>>>>>>>`).

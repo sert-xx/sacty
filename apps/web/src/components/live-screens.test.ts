@@ -822,6 +822,49 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(external(link())).toEqual({ href: "/tasks/t1/review", target: null });
   });
 
+  it("実装の PR がベースブランチと競合したら、タスク詳細に競合と取り込む操作を出し、解消されたら消す（PR のまま開く）", async () => {
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    const notice = () => container.querySelector('[data-testid="gate-pr-conflict"]');
+    server = detail(implement);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(implement),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(text()).toContain("実装の PR のマージ待ち");
+    expect(notice()).toBeNull();
+    // 競合したら（操作しなくても間隔のうちに）出る
+    server = detail(
+      task({
+        ...implement,
+        pullRequestConflict: { number: 7, commit: "c1", at: "2026-10-10T00:00:00.000Z" },
+      }),
+    );
+    await wait();
+    expect(container.querySelector("#gate")?.textContent).toContain(
+      "実装の PR がベースブランチと競合",
+    );
+    expect(notice()?.textContent).toContain("差し戻");
+    expect(notice()?.textContent).toContain("指摘を書くと取り込みます");
+    const link = [...container.querySelectorAll("a")].find((a) =>
+      a.textContent?.includes("チェックする"),
+    );
+    expect(external(link)).toEqual({ href: PR, target: "_blank" });
+    // 解消されたら消える
+    server = detail(implement);
+    await wait();
+    expect(notice()).toBeNull();
+    expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
+  });
+
   it("タスク一覧の「あなたの出番」も PR を開く", () => {
     const list: TaskListData = {
       projectId: "p1",
@@ -841,8 +884,17 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
       ],
       rows: [],
     };
+    list.needsYou[0] = {
+      ...list.needsYou[0],
+      note: "差し戻すか、PR に指摘を書くと、ベースブランチを取り込みます",
+    } as TaskListData["needsYou"][number];
     server = list;
     render(h(LiveTaskList, { projectId: "p1", initial: list, initialVersion: liveVersion(list) }));
+    // 競合している PR のカードには、取り込む操作の案内を出す（ほかのカードには出さない）
+    expect(container.querySelector('[data-testid="needs-you-note-t1"]')?.textContent).toContain(
+      "ベースブランチを取り込みます",
+    );
+    expect(container.querySelector('[data-testid="needs-you-note-t2"]')).toBeNull();
     expect(external(container.querySelector(`a[href="${PR}"]`))).toEqual({
       href: PR,
       target: "_blank",

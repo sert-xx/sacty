@@ -1933,6 +1933,24 @@ const PullRequestReopened = z.object({
 });
 
 /**
+ * 実装の承認待ちの間に見守っている PR が、ベースブランチと競合した（GitHub の mergeable が false）。画面に出すだけで、
+ * ベースブランチは取り込まない（取り込みは、人が差し戻すか指摘を書いたときに行う）。PR を見守る確認が、状態が変わったときに
+ * 一度だけ記録する。
+ */
+const PullRequestConflicted = z.object({
+  type: z.literal("PullRequestConflicted"),
+  payload: z.object({ number: z.number().int().positive() }),
+});
+/**
+ * 競合が解消された（GitHub の mergeable が true に戻った。人が GitHub で直した・ベースブランチが戻った）。競合を出していた
+ * 表示を消す。PR を作り直した・更新したとき（取り込みの後など）と、マージ・クローズでも消えるが、その記録は残さない。
+ */
+const PullRequestConflictResolved = z.object({
+  type: z.literal("PullRequestConflictResolved"),
+  payload: z.object({ number: z.number().int().positive() }),
+});
+
+/**
  * PR へのフィードバックを、実装の指摘として取り込んだ（PBI-14b・PBI-110）。レビュー（Request changes・
  * コメント）の本文、行ごとのコメント、PR への通常のコメントを、まだ取り込んでいないものだけ取り込む
  * （同じものは二重に取り込まない）。指摘は1件ずつ。要求要件・設計の PR（PBI-57）の指摘も、その工程の指摘として取り込む。
@@ -2689,6 +2707,8 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestMerged,
   PullRequestClosed,
   PullRequestReopened,
+  PullRequestConflicted,
+  PullRequestConflictResolved,
   PullRequestReviewImported,
   ReworkJudged,
   IssueCommented,

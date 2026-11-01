@@ -78,6 +78,10 @@ const ja = {
       `${step}は、タスクブランチへの PR です。コメントを差し戻しとして取り込み、ゴールガーディアンが${step}のやり直し（同じ PR を更新）か、前の工程への差し戻しかを決めます。Sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。`,
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed: "PR はマージされずに閉じられました。GitHub で開き直すか、中止してください。",
+    prConflict:
+      "競合は自動では取り込みません。ここで指摘を入れて差し戻すか、PR に指摘を書くと取り込みます。",
+    prConflictHint:
+      "実装をやり直す前に、ベースブランチの最新を取り込みます。GitHub で自分で解消してもかまいません。",
     prRequestNote: "差し戻すときは、ここに指摘を入力してください。",
     reworkTitle: "PR の指摘の戻し先を確かめてください",
     reworkSuggestion: (step: string, note: string) =>
@@ -168,6 +172,10 @@ const en: ReviewMessages = {
       `The ${step} is a PR to the task branch. Comments are imported as change requests, and the Goal Guardian decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. Sacty checks every minute and imports two minutes after the last comment.`,
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
+    prConflict:
+      "The conflict is not merged in automatically. Send the task back with a comment here, or comment on the PR, to merge it in.",
+    prConflictHint:
+      "The latest base branch is merged in before the implementation is redone. You can also resolve the conflict yourself on GitHub.",
     prRequestNote: "To request changes, enter your comments here.",
     reworkTitle: "Confirm the step to redo for the PR comments",
     reworkSuggestion: (step, note) => `Goal Guardian's suggestion: redo from ${step} (${note})`,

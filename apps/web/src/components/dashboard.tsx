@@ -210,6 +210,7 @@ function TaskRow({
   external,
   title,
   projectName,
+  note,
   aside,
 }: {
   testId: string;
@@ -218,6 +219,8 @@ function TaskRow({
   external?: boolean;
   title: string;
   projectName: string;
+  /** 題の下に添える案内。 */
+  note?: string;
   aside?: ReactNode;
 }) {
   const m = useMessages().dashboard.openTasks;
@@ -241,6 +244,11 @@ function TaskRow({
           <span className="sr-only">{m.project}</span>
           {projectName}
         </span>
+        {note && (
+          <span data-testid={`${testId}-note`} className="text-xs text-warn">
+            {note}
+          </span>
+        )}
       </div>
       {aside && <div className="flex shrink-0 flex-col items-end gap-0.5 text-sm">{aside}</div>}
     </li>
@@ -278,6 +286,7 @@ export function AttentionCard({ data, now }: { data: DashboardData; now: number 
               external={task.external}
               title={task.title}
               projectName={task.projectName}
+              note={task.note}
               aside={
                 <>
                   <span className="sr-only">{t.openTasks.status}</span>

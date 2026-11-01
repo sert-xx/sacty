@@ -13,6 +13,7 @@ import {
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
+  pullRequestConflict,
   type StepKey,
   stepAgentChangeable,
   stepRunning,
@@ -57,6 +58,8 @@ export function statusText(task: Task, l: LabelMessages): string {
     if (task.pullRequestState === "closed") return l.state.prClosed;
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
     if (task.pullRequestState === "open") {
+      // ベースブランチと競合している（画面に出すだけ。取り込みは差し戻し・指摘のとき）
+      if (pullRequestConflict(task)) return l.state.prConflicting(task.gate.submission);
       return l.state.stepPrAwaitingMerge(l.step.implement, task.gate.submission);
     }
     return l.state.stepApproval(l.step.implement, task.gate.submission);
@@ -632,6 +635,10 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":
       return e.PullRequestReopened(event.payload.number);
+    case "PullRequestConflicted":
+      return e.PullRequestConflicted(event.payload.number);
+    case "PullRequestConflictResolved":
+      return e.PullRequestConflictResolved(event.payload.number);
     case "IssueCommented":
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":
