@@ -229,6 +229,36 @@ describe("最終レビューの、一覧の項目の読み方（項目名・伏�
       expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
       expect(review.tests).not.toHaveProperty("environmentFailures");
     }
+    // 名前と根拠の両方が「無い」を表す項目（連結すると「なし：なし」になって残っていた）
+    for (const environmentFailures of [
+      [{ name: "なし", reason: "なし" }],
+      [{ name: "none", reason: "none" }],
+      [{ name: "n/a", reason: "N/A" }],
+      [
+        { name: "なし", reason: "none" },
+        { test: "N/A", message: "なし" },
+      ],
+      [{ name: "なし", reason: "環境による失敗はありません" }],
+      [{ name: "ＮＯＮＥ", reason: "ｎ／ａ" }],
+      [{ name: "-", reason: "ー" }],
+      [{ name: "なし", reason: "なし" }, "なし", { reason: "none" }],
+    ]) {
+      const review = read(reported({ exitCode: 2, environmentFailures }));
+      expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
+      expect(review.tests).not.toHaveProperty("environmentFailures");
+    }
+    // 片方だけが「無い」を表すなら、有効な方だけ読む
+    const half = read(
+      reported({
+        exitCode: 2,
+        environmentFailures: [
+          { name: "make setup", reason: "なし" },
+          { name: "", reason: "ensurepip が無い" },
+        ],
+      }),
+    );
+    expect(half.passed).toBe(true);
+    expect(half.tests?.environmentFailures).toEqual(["make setup", "ensurepip が無い"]);
     // 本物の項目が混ざっていれば、その項目だけ読む
     const mixed = read(
       reported({ exitCode: 2, environmentFailures: ["なし", "make setup：ensurepip が無い"] }),
@@ -263,6 +293,47 @@ describe("最終レビューの、項目の URL と「環境によるもので�
     for (const value of ["pa55word", "abcd1234efgh", "zzzz9999yyyy", "s1g9n4tur3", "hunter22"]) {
       expect(shown, value).not.toContain(value);
     }
+  });
+
+  it("パラメーター名が符号化されていても、秘密らしい名前の値を伏せる（%5F・%74・二重の符号化・壊れた符号化・大小文字・全角）", () => {
+    const urls = [
+      "https://example.com/?api%5Fkey=FAKEVALUE1&%74oken=FAKEVALUE2",
+      "https://example.com/?%61pi%2Dkey=FAKEVALUE3&%50assword=FAKEVALUE4",
+      "https://example.com/?%2574oken=FAKEVALUE5",
+      "https://example.com/?%E3%81%82%74oken=FAKEVALUE6&%zz%50assword=FAKEVALUE6b&sign=FAKEVALUE6c",
+      "https://example.com/#access%5Ftoken=FAKEVALUE7&X-Amz-Signature=FAKEVALUE8",
+      "https://example.com/?apiKey=FAKEVALUE9&clientSecret=FAKEVALUE10&APIKey=FAKEVALUE11",
+      "https://example.com/?apikey=FAKEVALUE12&sessionid=FAKEVALUE13&auth_token=FAKEVALUE14",
+      "https://example.com/?ｔｏｋｅｎ=FAKEVALUE15&filter[token]=FAKEVALUE16",
+      "https://example.com/app;jsessionid=FAKEVALUE17?PHPSESSID=FAKEVALUE18",
+    ];
+    const review = read(
+      reported(
+        { exitCode: 2, environmentFailures: [{ name: "fetch", reason: urls[0] }] },
+        { humanChecks: [...urls.slice(1), { check: "開く", reason: urls[0] }] },
+      ),
+    );
+    const shown = JSON.stringify([review.tests?.environmentFailures, review.humanChecks]);
+    for (let n = 1; n <= 18; n++) expect(shown, `FAKEVALUE${n}`).not.toContain(`FAKEVALUE${n}=`);
+    expect(shown).not.toMatch(/FAKEVALUE\d+/);
+    expect(shown).toContain("[REDACTED]");
+  });
+
+  it("秘密らしい名前でも、通常の語の一部（author・design・keyword・signIn・monkey）は伏せず、表示条件の URL を残す", () => {
+    const url =
+      "https://example.com/articles?author=alice&design=mobile&keyword=cats&signIn=1&monkey=2&tab=3&sort_by=date";
+    const review = read(reported({ exitCode: 0 }, { humanChecks: [`${url} を開く`] }));
+    expect(review.humanChecks).toEqual([`${url} を開く`]);
+    // 同じ URL に秘密らしい名前が混ざれば、その値だけ伏せる
+    const mixed = read(
+      reported(
+        { exitCode: 0 },
+        { humanChecks: ["https://example.com/?author=alice&token=FAKEVALUE1&design=mobile"] },
+      ),
+    );
+    expect(mixed.humanChecks).toEqual([
+      "https://example.com/?author=alice&token=[REDACTED]&design=mobile",
+    ]);
   });
 
   it("環境による失敗の項目でも、URL は残し、認証情報を伏せる", () => {
