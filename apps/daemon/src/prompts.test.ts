@@ -3309,6 +3309,14 @@ describe("差分が文書だけのとき、ツールが無くて実行できな�
     expect(item).toContain("REDACTED");
   });
 
+  it("空白の無い長い URL の並びの出力も、長さに比例する時間で項目にする", () => {
+    const output = `${JSON.stringify(Array(200_000).fill("https://a"))}\ngo: command not found`;
+    const started = performance.now();
+    const item = itemOf({ output });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(item).toContain("go: command not found");
+  });
+
   it("クエリ・フラグメントの中に引用符がある URL も、出力とコマンドから値を除く", () => {
     // 架空の値
     for (const url of [

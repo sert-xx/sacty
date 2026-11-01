@@ -101,6 +101,30 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
     );
   });
 
+  it("スキームの前に単語の文字がある URL と、ユーザー情報に `\\` やエスケープした引用符がある URL も伏せる", () => {
+    // 架空の値
+    for (const text of [
+      "x _https://alice:FAKE_PW_321@example.com/p",
+      "x 1https://alice:FAKE_PW_321@example.com/p",
+      'x {"url":"https://alice:FAKE\\"PW_321@example.com/p"}',
+      "x https://alice:FAKE\\'PW_321@example.com/p",
+      "x https://alice:FAKE\\PW_321@example.com/p",
+      "x HTTPS://FAKE\\PW_321@example.com",
+      'x HTTPS://FAKE\\"PW_321@example.com',
+    ]) {
+      for (const out of [
+        redactLog(text, []),
+        redactUrlCredentials(text, { queryAndFragment: true }),
+      ]) {
+        expect(out, text).not.toContain("FAKE");
+        expect(out, text).not.toContain("PW_321");
+      }
+    }
+    // パスの `@` は、ユーザー情報と見なさない
+    const plain = "see https://registry.example.com/@acme/pkg and https://example.com/users/@alice";
+    expect(redactLog(plain, [])).toBe(plain);
+  });
+
   it("URL の無い長い文字列も、長さに比例する時間で処理する", () => {
     // 区切りの多い長い入力で、候補ごとに残りを探し直さない（2MB のログでもデーモンを止めない）
     for (const input of [
@@ -109,6 +133,11 @@ describe("CI のログの伏せ方と抜粋（PBI-89）", () => {
       "https://'".repeat(200_000),
       "x://".repeat(500_000),
       "https://a?'".repeat(200_000),
+      // 空白もクエリも無い URL の並び（JSON の配列など）
+      JSON.stringify(Array(200_000).fill("https://a")),
+      "https://a".repeat(200_000),
+      `https://${"@".repeat(2_000_000)}`,
+      `https://${"x'".repeat(1_000_000)}`,
     ]) {
       const started = performance.now();
       redactUrlCredentials(input, { queryAndFragment: true });
