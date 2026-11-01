@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-01（UTC）
 - タスク: PBI-263
-- PR: なし
+- PR: #263
 - ブランチ: feat/issue-263-artifact-readability
 - 関係する ADR: [要求要件・設計の本文から作業のメモを締め出し、依頼者に不利益な既定を「確認したいこと」に出させ、ID を欠番なく振らせる](../adr/20261101-1350-artifact-readability-for-decisions.md)
 
