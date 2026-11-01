@@ -145,6 +145,8 @@ npm には公開しません。
    - `apps/*/package.json`・`packages/*/package.json` の `version` と、ワークスペースの依存（`@sacty/core` など）の版
    - `package-lock.json`（`npm install --package-lock-only` で作り直す）
    - 既定のイメージの名前（`apps/daemon/src/config.ts` の `DEFAULT_IMAGE`。`sacty-agent:<版>`）と、それを書いている仕様書・ユーザードキュメント（日英）・テスト
+   - 既定の元のイメージのダイジェスト（`packages/cli/docker/Dockerfile` の `BASE_IMAGE`・`NODE_IMAGE`）を、`docker buildx imagetools inspect <タグ>` の `Digest`（マルチアーキのインデックス）に更新する
+   - エージェントの CLI の版を上げるときは、`packages/cli/docker/agent-cli/package.json` の版を変え、そのディレクトリで `npm install --package-lock-only --omit-lockfile-registry-resolved` を実行して `package-lock.json` を作り直す（取得元の URL を書かない。仕様書の版も直す）
 
    どの桁を上げるかは、変更の種類で決めます。
 

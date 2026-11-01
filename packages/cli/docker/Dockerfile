@@ -1,10 +1,12 @@
 # sacty のエージェント実行用イメージ。タスクごとにこのイメージからコンテナを作る。
 # 既定のイメージ：元のイメージは config.yaml の image_build.base_image で変えられる（プライベートのレジストリなど。PBI-33）。
 #   Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
+#   既定は、タグに加えて、マルチアーキのインデックスのダイジェストで固定する（タグが別のイメージに付け替わっても変わらない）。
+#   版を上げる・ダイジェストを更新するときは、`docker buildx imagetools inspect <タグ>` の Digest に変える（CONTRIBUTING.md）
 # 言語ごとのイメージ（config.yaml の images。PBI-41）：BASE_KIND=lang。元のイメージ（Debian・Ubuntu 系か、Rocky Linux
 #   などの RHEL 系。glibc のもの）に Node.js 18 以上と npm があればそれを使い、無ければ NODE_IMAGE から写して作る。
-ARG BASE_IMAGE=node:26-bookworm-slim
-ARG NODE_IMAGE=node:26-bookworm-slim
+ARG BASE_IMAGE=node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
+ARG NODE_IMAGE=node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
 # node：元のイメージをそのまま使う。lang：Node.js を写し、node ユーザーを作る
 ARG BASE_KIND=node
 
@@ -90,19 +92,25 @@ COPY --chmod=755 install-drawio.sh drawio-shim.cjs /opt/sacty/lib/
 RUN /opt/sacty/lib/install-drawio.sh
 
 # セキュリティの検査の道具（osv-scanner・gitleaks。進め方 security-check・security-fix が使う）。公式のリリースの単体の
-# バイナリを、版を固定して取り、同じリリースのハッシュのファイルで確かめて入れる。取得できないときは警告して続け、ハッシュが
-# 合わないときは止める（中身は install-security-tools.sh）
+# バイナリを、版とアーキテクチャごとのハッシュを固定して取り、そのハッシュで確かめて入れる。取得できないときは警告して続け、
+# ハッシュが合わないときは止める（中身は install-security-tools.sh）
 COPY --chmod=755 install-security-tools.sh /opt/sacty/lib/install-security-tools.sh
 RUN /opt/sacty/lib/install-security-tools.sh
 
-# エージェントのCLI。版を固定し、上げるときはこのファイルを変える。
+# エージェントのCLI（claude・codex）。版と推移依存は agent-cli/package.json・package-lock.json で固定し、npm ci で
+# ロックのとおりに入れる。上げるときは、agent-cli/package.json の版を変えて lockfile を作り直す（CONTRIBUTING.md）。
+# lockfile には取得元の URL（resolved）を書かず、設定したレジストリから取る（プライベートのレジストリでも同じ lockfile を
+# 使えるように。中身は integrity で確かめる）。コマンドは /opt/sacty/bin に置き、node ユーザーの PATH から使えるようにする。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
 # キャッシュは一時的な場所に置いて消す（HOME の下に root の持ち物を残すと、node ユーザーの npm が書けなくなるため）
+COPY agent-cli/package.json agent-cli/package-lock.json /opt/sacty/agent-cli/
 RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
-  NPM_CONFIG_USERCONFIG=/run/secrets/npmrc \
-  NPM_CONFIG_CACHE=/tmp/sacty-npm-cache \
-  npm install -g @anthropic-ai/claude-code@2.1.296 @openai/codex@0.160.0 \
-    ${NPM_VERSION:+npm@${NPM_VERSION}} \
+  export NPM_CONFIG_USERCONFIG=/run/secrets/npmrc NPM_CONFIG_CACHE=/tmp/sacty-npm-cache \
+  && (cd /opt/sacty/agent-cli && npm ci --omit=dev --no-audit --no-fund) \
+  && mkdir -p /opt/sacty/bin \
+  && ln -s ../agent-cli/node_modules/.bin/claude /opt/sacty/bin/claude \
+  && ln -s ../agent-cli/node_modules/.bin/codex /opt/sacty/bin/codex \
+  && if [ -n "$NPM_VERSION" ]; then npm install -g "npm@$NPM_VERSION" --no-audit --no-fund; fi \
   && rm -rf /tmp/sacty-npm-cache
 
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。

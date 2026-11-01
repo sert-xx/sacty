@@ -197,7 +197,11 @@
   名前を省くと既定と `images` のすべてを作る。
   設定ファイルが無ければ既定で作り、ほかの誤りがあれば作らない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
-    Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex（`@openai/codex@0.160.0`）を `npm install -g` で入れる。
+    既定は、タグに加えて、マルチアーキのインデックスのダイジェスト（`node:26-bookworm-slim@sha256:…`）で固定する（`NODE_IMAGE` の既定も同じ）。
+    Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex（`@openai/codex@0.160.0`）は、`packages/cli/docker/agent-cli` の `package.json`・`package-lock.json` を `/opt/sacty/agent-cli` に写し、`npm ci --omit=dev` で推移依存までロックのとおりに入れる。
+    `claude`・`codex` は `/opt/sacty/bin` からのリンクにする。
+    lockfile には取得元の URL（`resolved`）を書かず、設定したレジストリから取って `integrity` で確かめる（プライベートのレジストリでも同じ lockfile を使う）。
+    `NPM_VERSION`（`image_build.npm_version`）があれば、その後に `npm install -g npm@<版>` で入れる。
     最後に `USER node`・`WORKDIR /workspace`。
   - 言語ごとのイメージは、元のイメージに Node.js 18 以上と npm があればそれを使う。
     無ければ `node_image`（無ければ `image_build.base_image`、それも無ければ `node:26-bookworm-slim`）から写す。
@@ -230,8 +234,8 @@
     - 入れたら `/opt/drawio/chrome-sandbox` の setuid を外し（`0755`）、`/tmp/.X11-unix` を `1777` で作り、`/opt/sacty/bin/drawio` を `packages/cli/docker/drawio-shim.cjs` へのリンクにする。
   - セキュリティの検査の道具（`packages/cli/docker/install-security-tools.sh`）は、`osv-scanner`（`google/osv-scanner` の `v2.7.0`）と `gitleaks`（`gitleaks/gitleaks` の `v8.30.1`）。
     - 元のイメージに無いものだけを、公式のリリースの添付物（`osv-scanner_linux_<amd64|arm64>`・`gitleaks_<版>_linux_<x64|arm64>.tar.gz`）を `curl` で取り、`/usr/local/bin` に入れる（取り方の上限は draw.io と同じ）。
-    - 同じリリースのハッシュのファイル（`osv-scanner_SHA256SUMS`・`gitleaks_<版>_checksums.txt`）の SHA-256 で確かめ、合わなければ止める。
-      ほかの理由（取得できない・`curl` が無い・アーキテクチャが違う・ハッシュのファイルに行が無い・展開できない・`/usr/local/bin` に置けない）では警告して続ける（入れたとは出さない）。
+    - スクリプトに版・アーキテクチャごとに固定した SHA-256 で確かめ、合わなければ止める（取得元のリリースのハッシュのファイルは取らない）。
+      ほかの理由（取得できない・`curl` が無い・アーキテクチャが違う・展開できない・`/usr/local/bin` に置けない）では警告して続ける（入れたとは出さない）。
   - `drawio`（`drawio-shim.cjs`）は、`/opt/drawio/drawio` を `--no-sandbox --disable-gpu` と受けた引数で起動する。
     - `DISPLAY` が無ければ `Xvfb -displayfd` で空いている番号の仮想の画面を起動し、終わったら止めて、終わるまで待つ（3 秒で終わらなければ `SIGKILL`）。
       仮想の画面を起動できなければ、理由を示して終了コード 1 で終わる。
@@ -242,7 +246,7 @@
       その後、128 にシグナルの番号を足した終了コードで終わる。
 - イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
-コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/install-security-tools.sh`、`packages/cli/docker/drawio-shim.cjs`
+コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/agent-cli/package.json`、`packages/cli/docker/agent-cli/package-lock.json`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/install-security-tools.sh`、`packages/cli/docker/drawio-shim.cjs`
 
 ## テストの実行
 

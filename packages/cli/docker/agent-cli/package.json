@@ -1,0 +1,10 @@
+{
+  "name": "sacty-agent-cli",
+  "private": true,
+  "description": "The agent CLIs installed into the sacty agent image (packages/cli/docker/Dockerfile).",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.296",
+    "@openai/codex": "0.160.0"
+  }
+}
