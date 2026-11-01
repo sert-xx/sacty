@@ -336,6 +336,50 @@ describe("最終レビューの、項目の URL と「環境によるもので�
     ]);
   });
 
+  it("`;` で区切ったパラメーター・パスパラメーターの後ろの秘密値も伏せ、後ろのクエリ（?tab=2）は残す", () => {
+    const cases: [string, string][] = [
+      [
+        "https://example.com/?page=1;signature=FAKEVALUE1",
+        "https://example.com/?page=1;signature=[REDACTED]",
+      ],
+      [
+        "https://example.com/?page=1;signature=FAKEVALUE2&tab=2",
+        "https://example.com/?page=1;signature=[REDACTED]&tab=2",
+      ],
+      [
+        "https://example.com/app;jsessionid=FAKEVALUE3?tab=2",
+        "https://example.com/app;jsessionid=[REDACTED]?tab=2",
+      ],
+      [
+        "https://example.com/app;jsessionid=FAKEVALUE4?tab=2&sort=asc#access_token=FAKEVALUE5",
+        "https://example.com/app;jsessionid=[REDACTED]?tab=2&sort=asc#access_token=[REDACTED]",
+      ],
+      // 秘密でない名前の値が、後ろの秘密のパラメーターを飲み込まない（next の値の中の ?token= など）
+      [
+        "https://example.com/?next=https://a.example/x?token=FAKEVALUE7&tab=2",
+        "https://example.com/?next=https://a.example/x?token=[REDACTED]&tab=2",
+      ],
+      [
+        "https://example.com/?a=1;b=2;password=FAKEVALUE8;c=3",
+        "https://example.com/?a=1;b=2;password=[REDACTED];c=3",
+      ],
+      // HTML の `&amp;` で区切られていても伏せる
+      [
+        "https://example.com/?page=1&amp;token=FAKEVALUE9",
+        "https://example.com/?page=1&amp;token=[REDACTED]",
+      ],
+      // 秘密の値に `;`・`?` が入っていても（後ろに名前=が続かなければ）、続きまで伏せる
+      [
+        "https://example.com/?token=FAKE;VALUE10?x&tab=2",
+        "https://example.com/?token=[REDACTED]&tab=2",
+      ],
+    ];
+    const review = read(
+      reported({ exitCode: 0 }, { humanChecks: cases.map(([input]) => ({ check: input })) }),
+    );
+    expect(review.humanChecks).toEqual(cases.map(([, expected]) => expected));
+  });
+
   it("環境による失敗の項目でも、URL は残し、認証情報を伏せる", () => {
     const review = read(
       reported({
