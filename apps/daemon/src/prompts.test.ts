@@ -3253,6 +3253,19 @@ describe("差分が文書だけのとき、ツールが無くて実行できな�
     expect(item).toContain("REDACTED");
   });
 
+  it("ユーザー情報に引用符を含む URL も、出力とコマンドから認証情報とクエリを除く", () => {
+    // 架空の値
+    const url = "https://alice:p'FAKE_SUFFIX_123@example.com/path?session=FAKE_QUERY_123";
+    const item = itemOf(
+      { output: `fetch ${url} failed\ngo: command not found` },
+      `curl ${url} && go test ./...`,
+    );
+    for (const hidden of ["alice", "FAKE_SUFFIX_123", "FAKE_QUERY_123"]) {
+      expect(item, hidden).not.toContain(hidden);
+    }
+    expect(item).toContain("example.com/path");
+  });
+
   it("ゴールガーディアンがツール不足のほかの失敗を申告したら、文書だけの差分でも通ったものにしない（止めずに、ふつうの判定にする）", () => {
     const review = extractFinalReview(
       reported({

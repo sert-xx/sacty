@@ -372,6 +372,8 @@ const PARAMS = {
     commands: z.array(z.string()).min(1),
     image: z.string(),
     step: z.enum(["implement", "reproduce"]),
+    /** 再開のときにテストの扱いを決め直せるか（PBI-158。テストのコマンドが決まっていて、テストなしの理由が無いタスク）。 */
+    testsDecidable: z.boolean().optional(),
   }),
   "verify.diffUnavailable": z.object({ detail: TextParam }),
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
@@ -1123,15 +1125,16 @@ const ja: MessageDictionary = {
     `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
   "verify.workspaceMissing": "実装の作業領域が見つからないため、検証できません。",
-  "verify.commandMissing": ({ commands: names, image, step }) => {
+  "verify.commandMissing": ({ commands: names, image, step, testsDecidable }) => {
     const label = step === "reproduce" ? "再現" : "実装";
     const commands = names.join("・");
     const guide =
       image === "default"
         ? `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（既定のイメージ）に入っていません。既定のイメージは最低限のものです。config.yaml の images に、${commands} を入れたイメージ（packages に OS のパッケージを、無ければ run に導入のコマンドを書き、description にもそのツールを書く）を足し、npx sacty image build <名前> で作ってから、タスクの詳細の「工程のイメージ」で${label}の工程をそのイメージに変えて、再開してください（再開すると、テストを実行し直します）。`
         : `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（${image}）に入っていません。config.yaml の images.${image} の packages（OS のパッケージ）か run（導入のコマンド）で入れ、npx sacty image build ${image} で作り直してから、再開してください（再開すると、テストを実行し直します）。入っているイメージがほかにあれば、タスクの詳細の「工程のイメージ」で${label}の工程のイメージを変えてから再開してもかまいません。`;
-    // 変更が文書だけなど、このイメージで検証しなくてよいなら、再開のときにテストの扱いを決め直せる（PBI-158）
-    return step === "implement"
+    // 変更が文書だけなど、このイメージで検証しなくてよいなら、再開のときにテストの扱いを決め直せる（PBI-158）。
+    // 実装が申告したテストのコマンドで検証するタスク（テストなしの理由がある）は、決め直す欄が出ないので案内しない
+    return testsDecidable
       ? `${guide}検証をこのイメージで実行しなくてよいときは、再開のときの「テストの扱い」で、テストのコマンドを指定し直すか、テストなしで進めると決めることもできます。`
       : guide;
   },
@@ -1788,15 +1791,16 @@ const en: MessageDictionary = {
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
   "verify.workspaceMissing":
     "The implementation workspace was not found, so it cannot be verified.",
-  "verify.commandMissing": ({ commands: names, image, step }) => {
+  "verify.commandMissing": ({ commands: names, image, step, testsDecidable }) => {
     const label = step === "reproduce" ? "reproduction" : "implementation";
     const commands = names.join(", ");
     const guide =
       image === "default"
         ? `The test (verification) command uses ${commands}, which is not in the image that runs the tests (the default image). The default image is minimal. Add an image with ${commands} to images in config.yaml (list OS packages in packages, or the install commands in run, and name the tool in description), build it with npx sacty image build <name>, change the image of the ${label} step to it under "Step images" in the task details, and resume (resuming runs the tests again).`
         : `The test (verification) command uses ${commands}, which is not in the image that runs the tests (${image}). Install it with packages (OS packages) or run (install commands) of images.${image} in config.yaml, rebuild with npx sacty image build ${image}, and resume (resuming runs the tests again). If another image has it, you can instead change the image of the ${label} step under "Step images" in the task details and resume.`;
-    // If the image need not verify the change (for example, documents only), the test handling can be decided again on resume (PBI-158)
-    return step === "implement"
+    // If the image need not verify the change (for example, documents only), the test handling can be decided again on resume (PBI-158).
+    // A task verified with the command the implementation declared (it has a reason for no tests) has no such field, so it is not mentioned
+    return testsDecidable
       ? `${guide} If this image does not need to run the verification, you can instead choose "Tests" when resuming and specify a different test command or proceed without tests.`
       : guide;
   },

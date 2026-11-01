@@ -29,6 +29,7 @@ import {
   activeStep,
   awaitingTicketTriage,
   budgetState,
+  canDecideTests,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   DERIVE_RECORD_HEADING,
@@ -7717,9 +7718,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(paused?.status).toBe("paused");
     expect(paused?.pausedMessage).toEqual({
       code: "verify.commandMissing",
-      params: { commands: ["npm"], image: "default", step: "implement" },
+      params: { commands: ["npm"], image: "default", step: "implement", testsDecidable: true },
     });
     expect(ja(paused?.pausedMessage)).toContain("config.yaml の images に、npm を入れたイメージ");
+    // 決め直す欄が出るタスクなので、再開のときの「テストの扱い」を案内する（PBI-158）
+    expect(ja(paused?.pausedMessage)).toContain("「テストの扱い」");
     // 判定は記録せず（使った分の費用は記録する）、実装もやり直さない
     expect(types(service, id)).not.toContain("FinalReviewed");
     expect(types(service, id)).toContain("FinalReviewFailed");
@@ -7920,7 +7923,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         expect(task?.status).toBe("paused");
         expect(task?.pausedMessage).toEqual({
           code: "verify.commandMissing",
-          params: { commands: ["npm"], image: "default", step: "implement" },
+          params: { commands: ["npm"], image: "default", step: "implement", testsDecidable: true },
         });
         expect(types(service, id)).not.toContain("FinalReviewed");
         expect(types(service, id)).toContain("FinalReviewFailed");
@@ -24371,6 +24374,53 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(pulls.calls[0]?.body).toContain(
       "テスト：`make test` → 合格（ゴールガーディアンが実行。終了コード 0）（実装で用意したテスト）",
     );
+    activity.close();
+  });
+
+  it("実装が申告したテストのコマンドのツールがイメージに無くて止まったら、再開のときの「テストの扱い」を案内しない（PBI-158）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const missing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          tests: {
+            command: "make test",
+            exitCode: 127,
+            output: "sh: 1: make: not found",
+            missingCommands: ["make"],
+          },
+          summary: "テストを実行できない",
+        },
+      }),
+    );
+    const { service } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 要求要件\n\n- テストの仕組みを用意する"),
+        out(
+          `# 実装の説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command: "make test" })}\n\`\`\``,
+        ),
+        missing,
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストを用意する" });
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    expect(task.noTestsReason).toBe(NO_TESTS);
+    expect(task.status).toBe("paused");
+    expect(task.pausedMessage).toEqual({
+      code: "verify.commandMissing",
+      params: { commands: ["make"], image: "default", step: "implement" },
+    });
+    // 決め直す欄は出ないので、案内しない（イメージを直す案内だけ）
+    expect(canDecideTests(task)).toBe(false);
+    expect(ja(task.pausedMessage)).not.toContain("「テストの扱い」");
+    expect(ja(task.pausedMessage)).toContain("make");
     activity.close();
   });
 

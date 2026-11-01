@@ -7563,6 +7563,8 @@ export class TaskService {
         commands: missingCommands,
         image: imageName ?? DEFAULT_IMAGE_NAME,
         step: "implement",
+        // 再開のときにテストの扱いを決め直せるか（testToolsMissing と同じ条件。PBI-158）
+        ...(task.testCommand && !task.noTestsReason ? { testsDecidable: true } : {}),
       });
       this.append(current, [
         {
