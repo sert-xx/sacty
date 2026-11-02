@@ -25,6 +25,7 @@ import {
   guardianCodeLines,
   humanRemarks,
   NO_SETUP_LINES,
+  remarkSections,
   STEP_NAME,
 } from "./prompts.js";
 
@@ -57,7 +58,8 @@ const AUDIT_TEXT_IN_PROMPT = 3_000;
 
 const KIND_NAME: Record<AuditEvidenceKind, string> = {
   changesRequested: "人の差し戻し",
-  pullRequestRemark: "PR のレビューの指摘",
+  pullRequestRemark: "PR のレビューの指摘（人が書いたもの）",
+  aiReviewRemark: "sacty 自身の AI のレビューの指摘（人の指摘ではない）",
   pause: "一時停止",
   retry: "やり直し（実行の失敗・テストや最終レビューの不合格）",
   toolFailure: "ツール呼び出しの失敗（セッションログ）",
@@ -179,10 +181,14 @@ function ledgerLines(
     "--- 根拠になる出来事の件数（sacty が作業履歴とセッションログから数えた） ---",
     ...AUDIT_EVIDENCE_KINDS.map((k) => `- ${KIND_NAME[k]}：${counts[k]} 件`),
     "",
-    "--- 人の差し戻し・PR の指摘 ---",
-    ...(remarks.length > 0
-      ? remarks.map((r) => `- ${clip(r.text, 500).replace(/\n/g, " ")}`)
-      : ["（なし）"]),
+    ...remarkSections(
+      remarks,
+      {
+        human: "人の差し戻し・PR の指摘",
+        ai: "AI のレビューの指摘（sacty 自身のレビュー。人の指摘ではない）",
+      },
+      { line: (r) => `- ${clip(r.text, 500).replace(/\n/g, " ")}`, empty: true },
+    ),
     "",
     "--- 判定（テスト・最終レビュー・統合レビュー・再現・変更の申し出） ---",
     ...chatJudgementLines(task),

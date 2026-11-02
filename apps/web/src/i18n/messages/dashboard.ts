@@ -100,6 +100,9 @@ const ja = {
     changesRequestedHint: "承認の画面で、人が成果物を差し戻した回数です。",
     pullRequestRework: "PR の指摘の差し戻し",
     pullRequestReworkHint: "取り込んだ PR の指摘で、工程をやり直した回数です。",
+    aiReviewRework: "AI のレビューの差し戻し",
+    aiReviewReworkHint:
+      "sacty 自身のレビューのタスクが PR に投稿した指摘だけで、工程をやり直した回数です。人の差し戻しには数えません。",
     guardianMissed: "ゴールガーディアンの見逃し",
     guardianMissedHint:
       "最終レビューで合格にした成果物を、見逃しが原因として人が実装の承認で差し戻した回数です。競合や新しい要望による差し戻しは数えません。",
@@ -225,6 +228,9 @@ const en: DashboardMessages = {
     changesRequestedHint: "How many times a person sent a deliverable back on the review screen.",
     pullRequestRework: "Rework from PR feedback",
     pullRequestReworkHint: "How many times imported PR feedback sent a step back for rework.",
+    aiReviewRework: "Rework from AI review",
+    aiReviewReworkHint:
+      "How many times only remarks that sacty's own review task posted on a PR sent a step back for rework. Not counted as a person's changes.",
     guardianMissed: "Goal guardian misses",
     guardianMissedHint:
       "How many times a person sent back, at implementation approval, a deliverable the final review had passed, with a miss as the cause. Rework caused by conflicts or new requests is not counted.",

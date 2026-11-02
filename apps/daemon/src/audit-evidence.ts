@@ -48,7 +48,8 @@ export function countToolFailures(jsonl: string): number {
 }
 
 /**
- * 根拠の種類ごとの件数。人の差し戻しは人が差し戻した指摘の数、PR の指摘は取り込んだ PR のレビュー・コメントの数、やり直しは
+ * 根拠の種類ごとの件数。人の差し戻しは人が差し戻した指摘の数、PR の指摘は取り込んだ PR のレビュー・コメントの数（sacty 自身の
+ * AI のレビューの指摘は、人の指摘と分けて aiReviewRemark に数える。PBI-275）、やり直しは
  * エージェントの実行の失敗・テスト・最終レビュー・統合レビューの不合格の数。ツール呼び出しの失敗は、セッションログから数えた数。
  */
 export function auditCounts(
@@ -58,6 +59,7 @@ export function auditCounts(
   const counts: Record<AuditEvidenceKind, number> = {
     changesRequested: 0,
     pullRequestRemark: 0,
+    aiReviewRemark: 0,
     pause: 0,
     retry: 0,
     toolFailure: toolFailures,
@@ -66,10 +68,18 @@ export function auditCounts(
   for (const event of activity) {
     switch (event.type) {
       case "ChangesRequested":
-        if (event.actor === "person") counts.changesRequested += event.payload.remarks.length;
+        // 人の差し戻しは、人の指摘の数（AI のレビューの指摘は、aiReviewRemark に数える。PBI-275）
+        if (event.actor === "person") {
+          counts.changesRequested += event.payload.remarks.filter(
+            (r) => r.source !== "sacty_review",
+          ).length;
+        }
         break;
       case "PullRequestReviewImported":
-        counts.pullRequestRemark += event.payload.items.length;
+        for (const item of event.payload.items) {
+          if (item.source === "sacty_review") counts.aiReviewRemark++;
+          else counts.pullRequestRemark++;
+        }
         break;
       case "TaskPaused":
         counts.pause++;

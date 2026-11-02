@@ -38,6 +38,7 @@ const block = (value: unknown) => `前置き\n\`\`\`json\n${JSON.stringify(value
 const zero = {
   changesRequested: 0,
   pullRequestRemark: 0,
+  aiReviewRemark: 0,
   pause: 0,
   retry: 0,
   toolFailure: 0,
@@ -290,6 +291,10 @@ describe("根拠の件数（PBI-125）", () => {
         e("ChangesRequested", { remarks: [{}, {}] }, "person"),
         e("ChangesRequested", { remarks: [{}] }, "guardian"),
         e("PullRequestReviewImported", { items: [{}, {}, {}] }),
+        // sacty 自身の AI のレビューの指摘は、人の差し戻し・PR の指摘に数えず、別に数える（PBI-275）
+        e("PullRequestReviewImported", { items: [{ source: "sacty_review" }, {}] }),
+        e("ChangesRequested", { remarks: [{ source: "sacty_review" }, {}] }, "person"),
+        e("ChangesRequested", { remarks: [{ source: "sacty_review" }] }, "sacty"),
         e("TaskPaused", {}),
         e("AgentRunFailed", {}),
         e("TestsRun", { passed: false }),
@@ -301,8 +306,9 @@ describe("根拠の件数（PBI-125）", () => {
       5,
     );
     expect(counts).toEqual({
-      changesRequested: 2,
-      pullRequestRemark: 3,
+      changesRequested: 3,
+      pullRequestRemark: 4,
+      aiReviewRemark: 1,
       pause: 1,
       retry: 4,
       toolFailure: 5,

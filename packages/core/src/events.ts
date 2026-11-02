@@ -257,7 +257,18 @@ const AgentSetting = {
 const RunRef = { runId: z.string().optional() };
 
 /** 人間の指摘。id は作業履歴の中で一意（例：requirements-2-1 は要求要件の2回目の差し戻しの1件目）。 */
-export const Remark = z.object({ id: z.string().min(1), text: z.string().min(1) });
+/**
+ * 指摘の出どころ（PBI-275）。sacty_review は、sacty のレビューのタスクが PR に投稿した AI のレビューの指摘。
+ * 無ければ人の指摘（人が差し戻した・人が PR に書いた）。
+ */
+export const RemarkSource = z.literal("sacty_review");
+export type RemarkSource = z.infer<typeof RemarkSource>;
+
+export const Remark = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1),
+  source: RemarkSource.optional(),
+});
 export type Remark = z.infer<typeof Remark>;
 
 /** 工程エージェントの、指摘への対応。 */
@@ -452,12 +463,27 @@ const DeploymentFixKind = z.enum(["ci", "deployment"]);
 export const AUDIT_EVIDENCE_KINDS = [
   "changesRequested",
   "pullRequestRemark",
+  "aiReviewRemark",
   "pause",
   "retry",
   "toolFailure",
   "escalation",
 ] as const;
 export type AuditEvidenceKind = (typeof AUDIT_EVIDENCE_KINDS)[number];
+
+/**
+ * 根拠の種類ごとの件数。種類を足す前の作業履歴（足した種類のキーが無い）も読めるよう、無い種類は 0 にして読む
+ * （PBI-275 で aiReviewRemark を足した）。
+ */
+const AuditCounts = z
+  .partialRecord(z.enum(AUDIT_EVIDENCE_KINDS), z.number().int().nonnegative())
+  .transform(
+    (counts) =>
+      Object.fromEntries(AUDIT_EVIDENCE_KINDS.map((kind) => [kind, counts[kind] ?? 0])) as Record<
+        AuditEvidenceKind,
+        number
+      >,
+  );
 
 /**
  * 改修の提案の宛先（PBI-124）。対象リポジトリ・コンテキストのリポジトリ（depth はプロジェクトのコンテキストを 0 として、
@@ -2094,10 +2120,38 @@ const PullRequestReviewImported = z.object({
           author: z.string(),
           at: z.string(),
           url: z.string().optional(),
+          /** AI のレビュー（sacty のレビューのタスクの投稿）なら sacty_review。無ければ人の指摘（PBI-275）。 */
+          source: RemarkSource.optional(),
         }),
       )
       .min(1),
     remarks: z.array(z.string().min(1)).min(1),
+  }),
+});
+
+/**
+ * sacty のレビューのタスクの投稿を、取り込まずに捨てた（PBI-275）。stale_head：レビューが対象にした PR の head（commit）が、
+ * 今の PR の head（head）と違う（古い head へのレビューが遅れて届いた）。捨てたものは取り込み済みとして扱い、取り込み直さない。
+ */
+const PullRequestReviewDiscarded = z.object({
+  type: z.literal("PullRequestReviewDiscarded"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    reason: z.literal("stale_head"),
+    /** 捨てたときの PR の head のコミット。 */
+    head: z.string().min(1),
+    items: z
+      .array(
+        z.object({
+          key: z.string().min(1),
+          author: z.string(),
+          at: z.string(),
+          url: z.string().optional(),
+          /** レビューが対象にしたコミット。 */
+          commit: z.string().min(1),
+        }),
+      )
+      .min(1),
   }),
 });
 
@@ -2688,7 +2742,7 @@ const AuditSurveyed = z.object({
   payload: z.object({
     auditId: z.string().min(1),
     summary: z.string().max(AUDIT_TEXT_MAX),
-    counts: z.record(z.enum(AUDIT_EVIDENCE_KINDS), z.number().int().nonnegative()),
+    counts: AuditCounts,
     concerns: z
       .array(z.object({ step: StepKey, reason: z.string().min(1).max(500) }))
       .max(StepKey.options.length),
@@ -2865,6 +2919,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestConflicted,
   PullRequestConflictResolved,
   PullRequestReviewImported,
+  PullRequestReviewDiscarded,
   ReworkJudged,
   IssueCommented,
   IssueCommentFailed,

@@ -38,7 +38,7 @@ Completed tasks have an "Audit" tab in their details (if not audited yet, it say
 | --- | --- |
 | State | Waiting for audit, Surveying, Deep dive, Audited, Audit failed, or Paused by budget |
 | Cost | The cost and cap of the audit. Audits have their own budget, separate from the task's |
-| Survey | A summary and the counts of evidence (changes requested, PR remarks, pauses, retries, failed tool calls, escalations) |
+| Survey | A summary and the counts of evidence (changes requested, PR remarks, AI review remarks, pauses, retries, failed tool calls, escalations). Remarks from sacty's own AI review are counted separately from your remarks |
 | Steps of concern | The steps the survey flagged, and the deep-dive result for each |
 | Causes and proposals | Causes, evidence, and proposals. "Activity" and "Log" in the evidence move to that row and run log. A cause found again after its fix shows "Recurred" |
 

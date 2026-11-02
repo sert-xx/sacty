@@ -281,7 +281,10 @@ export function isPendingAuditProposal(proposal: AuditProposal): boolean {
   return proposal.decision === undefined;
 }
 
-/** 根拠の件数のうち、人の差し戻しと PR の指摘の件数。 */
+/**
+ * 根拠の件数のうち、人の差し戻しと PR の指摘の件数。sacty 自身の AI のレビューの指摘（aiReviewRemark）は、人の指摘ではないので
+ * 含めない（PBI-275）。
+ */
 export function auditRemarkCount(counts: Record<AuditEvidenceKind, number>): number {
   return counts.changesRequested + counts.pullRequestRemark;
 }

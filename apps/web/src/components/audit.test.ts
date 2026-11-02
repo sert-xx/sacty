@@ -20,6 +20,7 @@ const { AuditScreen } = await import("./audit-screen");
 const zero = {
   changesRequested: 0,
   pullRequestRemark: 0,
+  aiReviewRemark: 0,
   pause: 0,
   retry: 0,
   toolFailure: 0,
@@ -67,7 +68,10 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
     const html = render(
       audit({
         mock: true,
-        survey: { summary: "要約", counts: { ...zero, changesRequested: 2 } },
+        survey: {
+          summary: "要約",
+          counts: { ...zero, changesRequested: 2, pullRequestRemark: 1, aiReviewRemark: 3 },
+        },
         findings: [
           {
             causeId: "c1",
@@ -87,6 +91,10 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
     expect(html).toContain("モック");
     expect(html).toContain("費用 $0.2500 / $1.00");
     expect(html).toMatch(/data-testid="audit-count-changesRequested"[^>]*>2 件</);
+    // sacty 自身の AI のレビューの指摘は、人の指摘と別の行で数える（PBI-275）
+    expect(html).toMatch(/data-testid="audit-count-pullRequestRemark"[^>]*>1 件</);
+    expect(html).toMatch(/data-testid="audit-count-aiReviewRemark"[^>]*>3 件</);
+    expect(html).toContain("AI のレビューの指摘");
     expect(html).toContain("原因の題");
     expect(html).toContain("再発");
     expect(html).toContain('href="#event-e1"');

@@ -232,6 +232,7 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.counts).toEqual({
       changesRequested: 0,
       pullRequestRework: 0,
+      aiReviewRework: 0,
       guardianMissed: 0,
       integrationFailed: 0,
       fixTask: 0,
@@ -262,12 +263,30 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.counts).toEqual({
       changesRequested: 2,
       pullRequestRework: 0,
+      aiReviewRework: 0,
       guardianMissed: 1,
       integrationFailed: 1,
       fixTask: 1,
     });
     // 実装の PR から設計へ戻しても、差し戻された成果物は実装のもの（1 回）
     expect(s.quality.reworkBySteps).toEqual({ requirements: 1, implement: 1 });
+  });
+
+  it("AI のレビューの指摘だけの差し戻しは、人の差し戻しと分けて数える。人の指摘が混ざれば人の側に数える（PBI-275）", () => {
+    const stats = new DashboardStats();
+    const t = task();
+    const base = { step: "implement", target: "implement", round: 1 };
+    const ai = { id: "implement-1-1", text: "a", source: "sacty_review" };
+    const human = { id: "implement-1-2", text: "h" };
+    const add = (remarks: unknown[]) =>
+      stats.add(event("ChangesRequested", NOW, { ...base, remarks }), t, t);
+    add([ai]);
+    add([ai, { ...ai, id: "implement-1-3" }]);
+    add([human]);
+    add([ai, human]);
+    const s = summarize(stats);
+    expect(s.quality.counts).toMatchObject({ changesRequested: 2, aiReviewRework: 2 });
+    expect(s.quality.reworkBySteps).toEqual({ implement: 4 });
   });
 
   it("差し戻しは原因ごとにも数える。原因の無い記録（過去の作業履歴）は原因を決めていないものとし、見逃しは GuardianMissed だけで数える（PBI-268）", () => {

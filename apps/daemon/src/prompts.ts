@@ -28,6 +28,7 @@ import {
   RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
+  type RemarkSource,
   type ReviewComment,
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
@@ -517,9 +518,64 @@ function viewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
   );
 }
 
-/** 人間の差し戻しの指摘（全工程・無効にしたものを除く）。 */
+/**
+ * 差し戻しの指摘（全工程・無効にしたものを除く）。人の指摘と、AI のレビュー（sacty のレビューのタスクが PR に投稿したもの）の
+ * 指摘がある（`source`。PBI-275）。エージェントに渡すときは remarkSections で分ける。
+ */
 export function humanRemarks(task: Task) {
   return task.remarks.filter((r) => !r.voided);
+}
+
+/**
+ * 人の指摘にある「さっきの指摘」「前の指摘」などの参照先。AI のレビューの指摘が並んでいても、人の言う「さっき」は人の指摘を指す
+ * （人の「さっきの指摘は無しで」を、AI のレビューのことと読まないため。PBI-275）。
+ */
+const HUMAN_REMARK_REFERENCE_LINE =
+  "人間の指摘にある「さっきの指摘」「前の指摘」「前に言ったこと」などは、AI のレビューの指摘ではなく、人間の指摘（この節）を指します。";
+
+/** AI のレビューの指摘の節の説明。 */
+const AI_REMARK_EXPLANATION_LINE =
+  "sacty 自身のレビューのタスクが PR に投稿した、AI のレビューの指摘です。人間が書いた指摘ではありません。";
+
+/**
+ * 指摘を、人の指摘と AI のレビューの指摘に分けて並べる（PBI-275）。AI のレビューの指摘が無ければ、人の指摘の節だけ。指摘が
+ * 1件も無ければ何も返さない（empty を渡すと、人の指摘の節に「（なし）」を出す）。節の前に空行を入れる。
+ */
+export function remarkSections(
+  remarks: readonly { id: string; text: string; source?: RemarkSource }[],
+  headings: { human: string; ai: string },
+  options: {
+    line?: (remark: { id: string; text: string }) => string;
+    empty?: boolean;
+  } = {},
+): string[] {
+  const line = options.line ?? ((r) => `- [${r.id}] ${r.text}`);
+  const human = remarks.filter((r) => r.source !== "sacty_review");
+  const ai = remarks.filter((r) => r.source === "sacty_review");
+  if (human.length === 0 && ai.length === 0) {
+    return options.empty ? ["", `--- ${headings.human} ---`, "（なし）"] : [];
+  }
+  return [
+    ...(human.length > 0
+      ? [
+          "",
+          `--- ${headings.human} ---`,
+          ...human.map(line),
+          ...(ai.length > 0 ? [HUMAN_REMARK_REFERENCE_LINE] : []),
+        ]
+      : []),
+    ...(ai.length > 0
+      ? ["", `--- ${headings.ai} ---`, AI_REMARK_EXPLANATION_LINE, ...ai.map(line)]
+      : []),
+  ];
+}
+
+/** 実装の指示に載せる、これまでの指摘（人の指摘と AI のレビューの指摘を分ける。PBI-275）。 */
+function earlierRemarkSections(remarks: ReturnType<typeof humanRemarks>): string[] {
+  return remarkSections(remarks, {
+    human: "これまでの人間の指摘（再発させないでください）",
+    ai: "これまでの AI のレビューの指摘（再発させないでください）",
+  });
 }
 
 /** 競合したファイルを、指示に載せる件数の上限。 */
@@ -900,14 +956,14 @@ function reworkLines(
     return [
       "",
       `--- 差し戻しの直し方（前回の${deliverable}が読めません） ---`,
-      `- 前回の${deliverable}が空で、読めません。元にできないので、人間の指摘にすべて対応するように、${deliverable}を書き直す`,
+      `- 前回の${deliverable}が空で、読めません。元にできないので、今回の指摘にすべて対応するように、${deliverable}を書き直す`,
       "- 書き直しでも、上に書いた構成・形式・分量の決まりを守る",
     ];
   }
   return [
     "",
     `--- 差し戻しの直し方（前回の${deliverable}を元に、指摘に関わる所だけを書き換える） ---`,
-    `- 上の「前回の下書き」を元にして、最初から書き直さない。人間の指摘（今回：${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
+    `- 上の「前回の下書き」を元にして、最初から書き直さない。今回の指摘（${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
     "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない。ただし、上の「本文に書くもの」で書かないとしたもの（作業の報告など）が前回の下書きに残っていれば、関係の無い所でも取り除く",
     ...(earlier > 0
       ? [
@@ -969,9 +1025,10 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
   const remarks = task.remarks.filter((r) => r.step === step && !r.voided);
   if (remarks.length === 0) return [];
   return [
-    "",
-    "--- 人間の指摘（すべてに対応してください。過去の指摘が再発しないようにしてください） ---",
-    ...remarks.map((r) => `- [${r.id}] ${r.text}`),
+    ...remarkSections(remarks, {
+      human: "人間の指摘（すべてに対応してください。過去の指摘が再発しないようにしてください）",
+      ai: "AI のレビューの指摘（すべてに対応してください。過去の指摘が再発しないようにしてください）",
+    }),
     "",
     `${label}のあとに、指摘ごとの対応を次の形式で必ず付けてください。`,
     "```json",
@@ -1459,7 +1516,27 @@ export function provenanceInputs(
       ? [
           {
             name: "remarks.md",
-            text: ["# 人間の指摘", "", ...remarks.map((r) => `- [${r.id}] ${r.text}`)].join("\n"),
+            text: [
+              ...(remarks.some((r) => r.source !== "sacty_review")
+                ? [
+                    "# 人間の指摘",
+                    "",
+                    ...remarks
+                      .filter((r) => r.source !== "sacty_review")
+                      .map((r) => `- [${r.id}] ${r.text}`),
+                  ]
+                : []),
+              ...(remarks.some((r) => r.source === "sacty_review")
+                ? [
+                    ...(remarks.some((r) => r.source !== "sacty_review") ? [""] : []),
+                    "# AI のレビューの指摘（人間の指摘ではない）",
+                    "",
+                    ...remarks
+                      .filter((r) => r.source === "sacty_review")
+                      .map((r) => `- [${r.id}] ${r.text}`),
+                  ]
+                : []),
+            ].join("\n"),
           },
         ]
       : []),
@@ -1664,13 +1741,7 @@ function directImplementLines(
     ...(noTests ? ["", ...noTestsReasonLines(task, noTests)] : []),
     ...(isSecurityFix(task) ? securityFixImplementLines(task) : []),
   ];
-  if (remarks.length > 0) {
-    lines.push(
-      "",
-      "--- これまでの人間の指摘（再発させないでください） ---",
-      ...remarks.map((r) => `- [${r.id}] ${r.text}`),
-    );
-  }
+  lines.push(...earlierRemarkSections(remarks));
   if (previous) lines.push("", "--- 前回の実装の説明 ---", previous);
   lines.push(
     ...feedbackLines(task),
@@ -2181,13 +2252,7 @@ export function buildPrompt(
           ...reproductionLines(task),
         ];
         const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
-        if (remarks.length > 0) {
-          lines.push(
-            "",
-            "--- これまでの人間の指摘（再発させないでください） ---",
-            ...remarks.map((r) => `- [${r.id}] ${r.text}`),
-          );
-        }
+        lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
         lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
         lines.push(...selfReviewLines("code", "修正（コードとテスト）"));
@@ -2280,13 +2345,7 @@ export function buildPrompt(
           : [`- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件`]),
         ...(noTests ? ["", ...noTestsReasonLines(task, noTests)] : []),
       ];
-      if (remarks.length > 0) {
-        lines.push(
-          "",
-          "--- これまでの人間の指摘（再発させないでください） ---",
-          ...remarks.map((r) => `- [${r.id}] ${r.text}`),
-        );
-      }
+      lines.push(...earlierRemarkSections(remarks));
       if (previous) lines.push("", "--- 前回の実装の説明 ---", previous);
       lines.push(
         ...feedbackLines(task),
@@ -3028,9 +3087,11 @@ export function buildFinalReviewPrompt(
             : `- [${m.viewpointId}] テストなし・差分で確かめる（理由の申告：${JSON.stringify(m.untested ?? "")}）`,
         )
       : ["（なし）"]),
-    "",
-    "--- 人間の過去の指摘 ---",
-    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    ...remarkSections(
+      remarks,
+      { human: "人間の過去の指摘", ai: "AI のレビューの過去の指摘（人間の指摘ではない）" },
+      { empty: true },
+    ),
     "",
     "--- 差分 ---",
     diff || "（差分がありません）",
@@ -3628,9 +3689,11 @@ export function buildIntegrationReviewPrompt(
     "",
     "--- 子タスク ---",
     ...subtaskLines(subtasks),
-    "",
-    "--- 人間の過去の指摘 ---",
-    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    ...remarkSections(
+      remarks,
+      { human: "人間の過去の指摘", ai: "AI のレビューの過去の指摘（人間の指摘ではない）" },
+      { empty: true },
+    ),
     "",
     "--- タスク ---",
     `# ${task.title}`,
@@ -4430,7 +4493,10 @@ function stepApprovalLines(step: StepPullRequestKey): string[] {
 function respondedLines(task: Task, step: StepPullRequestKey): string[] {
   return task.remarks
     .filter((r) => r.step === step && !r.voided && r.response)
-    .map((r) => `- [${r.id}] ${r.text}\n  - 対応：${r.response}`);
+    .map(
+      (r) =>
+        `- [${r.id}] ${r.source === "sacty_review" ? "（AI のレビュー）" : ""}${r.text}\n  - 対応：${r.response}`,
+    );
 }
 
 /** 承認済みの前の工程の PR。 */
@@ -4484,6 +4550,35 @@ const REWORK_CAUSE_LINES = [
   "見逃しと決めつけず、新しい要望や競合が原因ではないかを先に確かめてください。",
 ];
 
+/**
+ * 戻し先の判断の指示に載せる、PR への指摘。人の指摘と AI のレビュー（aiReview の位置。sacty のレビューのタスクの投稿）の指摘を
+ * 分ける（PBI-275）。
+ */
+function reworkRemarkLines(remarks: readonly string[], aiReview: readonly number[] = []): string[] {
+  const ai = new Set(aiReview);
+  const human = remarks.filter((_, i) => !ai.has(i));
+  const review = remarks.filter((_, i) => ai.has(i));
+  return [
+    "",
+    ...(human.length > 0 || review.length === 0
+      ? [
+          "--- PR への人間の指摘 ---",
+          ...human.map((r) => `- ${r}`),
+          ...(review.length > 0 ? [HUMAN_REMARK_REFERENCE_LINE] : []),
+        ]
+      : []),
+    ...(review.length > 0
+      ? [
+          ...(human.length > 0 ? [""] : []),
+          "--- PR への AI のレビューの指摘 ---",
+          AI_REMARK_EXPLANATION_LINE,
+          "AI のレビューの指摘は、人間が新しく足した要望（new_request）ではありません。",
+          ...review.map((r) => `- ${r}`),
+        ]
+      : []),
+  ];
+}
+
 const REWORK_ANSWER_FORMAT = (targets: readonly StepKey[]) =>
   `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "cause": "guardian_missed または new_request または base_changed または undecidable", "reason": "決定を変えない／変える：承認済みの○○の△△（判断の理由）"}}`;
 
@@ -4531,8 +4626,12 @@ export function buildReworkPrompt(
   targets: StepKey[],
   /** 指摘が付いた PR の工程。実装の PR（PBI-110）か、要求要件・設計の PR（PBI-57）。 */
   gateStep: StepKey = "implement",
+  /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。 */
+  aiReview: readonly number[] = [],
 ): string {
-  if (gateStep !== "implement") return buildStepReworkPrompt(task, remarks, targets, gateStep);
+  if (gateStep !== "implement") {
+    return buildStepReworkPrompt(task, remarks, targets, gateStep, aiReview);
+  }
   const approved = (["requirements", "design"] as const)
     .filter((step) => task.approved[step])
     .flatMap((step) => [
@@ -4565,9 +4664,7 @@ export function buildReworkPrompt(
           ),
         ]
       : []),
-    "",
-    "--- PR への人間の指摘 ---",
-    ...remarks.map((r) => `- ${r}`),
+    ...reworkRemarkLines(remarks, aiReview),
     "",
     ...REWORK_CAUSE_LINES,
     "",
@@ -4588,6 +4685,7 @@ function buildStepReworkPrompt(
   remarks: string[],
   targets: StepKey[],
   gateStep: StepKey,
+  aiReview: readonly number[],
 ): string {
   const name = STEP_NAME[gateStep];
   const describe = (step: StepKey) =>
@@ -4629,9 +4727,7 @@ function buildStepReworkPrompt(
           ),
         ]
       : []),
-    "",
-    "--- PR への人間の指摘 ---",
-    ...remarks.map((r) => `- ${r}`),
+    ...reworkRemarkLines(remarks, aiReview),
     "",
     ...REWORK_CAUSE_LINES,
     "",
@@ -4861,12 +4957,19 @@ export function buildRerunBody(
     );
   }
   const remarks = previous.remarks.filter((r) => !r.voided);
-  if (remarks.length > 0) {
+  const rerunLine = (r: (typeof remarks)[number]) =>
+    `- ${STEP_NAME[r.step]}：${clip(r.text, RERUN_QUESTION_IN_BODY)}`;
+  const humanRemarkList = remarks.filter((r) => r.source !== "sacty_review");
+  const aiRemarkList = remarks.filter((r) => r.source === "sacty_review");
+  if (humanRemarkList.length > 0) {
+    record.push("", "### 人の差し戻しの指摘", "", ...humanRemarkList.map(rerunLine));
+  }
+  if (aiRemarkList.length > 0) {
     record.push(
       "",
-      "### 人の差し戻しの指摘",
+      "### AI のレビューの指摘（sacty 自身のレビュー。人の指摘ではない）",
       "",
-      ...remarks.map((r) => `- ${STEP_NAME[r.step]}：${clip(r.text, RERUN_QUESTION_IN_BODY)}`),
+      ...aiRemarkList.map(rerunLine),
     );
   }
   const answered = previous.questions.filter((q) => q.answer?.text);
@@ -5100,9 +5203,11 @@ export function buildChatPrompt(
     "",
     "--- 判定 ---",
     ...chatJudgementLines(task),
-    "",
-    "--- 人間の指摘 ---",
-    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    ...remarkSections(
+      remarks,
+      { human: "人間の指摘", ai: "AI のレビューの指摘（人間の指摘ではない）" },
+      { empty: true },
+    ),
     ...(history.length > 0 ? ["", "--- これまでの質問と答え ---", ...history] : []),
   ].join("\n");
   const tail = ["", "--- 質問 ---", question.text].join("\n");

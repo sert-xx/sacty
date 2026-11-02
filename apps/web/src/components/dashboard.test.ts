@@ -130,6 +130,7 @@ const empty = (): DashboardData => ({
     counts: {
       changesRequested: 0,
       pullRequestRework: 0,
+      aiReviewRework: 0,
       guardianMissed: 0,
       integrationFailed: 0,
       fixTask: 0,
@@ -497,6 +498,7 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
           counts: {
             changesRequested: 3,
             pullRequestRework: 1,
+            aiReviewRework: 0,
             guardianMissed: 2,
             integrationFailed: 0,
             fixTask: 1,

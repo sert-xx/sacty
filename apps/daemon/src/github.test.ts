@@ -1410,6 +1410,175 @@ describe("Bot のアカウントの sacty のレビュー（PBI-88 レビュー�
   });
 });
 
+describe("sacty 自身の AI のレビューの印と、対象にしたコミット（PBI-275）", () => {
+  const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
+  const me = { login: "sacty-bot", type: "User" };
+  const head = "a".repeat(40);
+  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
+
+  it("投稿の印で見分けて source を付け、レビューと行へのコメントの対象のコミットを添える。人のコメントには付けない（アカウントは同じ）", async () => {
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: me,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\n## sacty のレビュー",
+            commit_id: head,
+            submitted_at: at(1),
+          },
+          // 同じアカウントでも、印の無い人の指摘は人の指摘
+          {
+            id: 2,
+            user: me,
+            state: "CHANGES_REQUESTED",
+            body: "手で書いた",
+            commit_id: head,
+            submitted_at: at(2),
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          {
+            id: 3,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n上限が無い",
+            path: "src/retry.ts",
+            line: 3,
+            pull_request_review_id: 1,
+            commit_id: head,
+            created_at: at(3),
+          },
+          { id: 4, user: me, body: "手で書いた行", path: "a.ts", line: 1, created_at: at(4) },
+        ],
+      },
+      // 印を写した通常のコメントでも、タスクの回と一致して、アカウントが同じなら AI のレビュー（コミットは無い）
+      {
+        status: 200,
+        json: [
+          { id: 5, user: me, body: "<!-- sacty-review:r1 -->\n要約", created_at: at(5) },
+          { id: 6, user: me, body: "人のコメント", created_at: at(6) },
+        ],
+      },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+      sactyReviews: [{ key: "r1", account: "sacty-bot", allowed: true }],
+    });
+    expect(feedback.map((f) => [f.key, f.source, f.commit])).toEqual([
+      ["review:1", "sacty_review", head],
+      ["review:2", undefined, undefined],
+      ["review_comment:3", "sacty_review", head],
+      ["review_comment:4", undefined, undefined],
+      ["comment:5", "sacty_review", undefined],
+      ["comment:6", undefined, undefined],
+    ]);
+  });
+
+  it("行へのコメントの commit_id は後の push で今の head に付け替わるので、親レビューの commit_id（無ければ original_commit_id）を使う", async () => {
+    const reviewed = "b".repeat(40);
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: me,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\n## sacty のレビュー",
+            commit_id: reviewed,
+            submitted_at: at(1),
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          // レビューの後に push があり、commit_id は今の head、original_commit_id はレビューの時点
+          {
+            id: 3,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n上限が無い",
+            path: "src/retry.ts",
+            line: 3,
+            pull_request_review_id: 1,
+            commit_id: head,
+            original_commit_id: reviewed,
+            created_at: at(3),
+          },
+          // 親レビューが分からないときは original_commit_id
+          {
+            id: 4,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n別の指摘",
+            path: "src/retry.ts",
+            line: 4,
+            commit_id: head,
+            original_commit_id: reviewed,
+            created_at: at(4),
+          },
+          // どちらも無ければ、今の head を使わず、コミットは無し
+          {
+            id: 5,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\nコミット不明",
+            path: "src/retry.ts",
+            line: 5,
+            commit_id: head,
+            created_at: at(5),
+          },
+        ],
+      },
+      { status: 200, json: [] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+      sactyReviews: [{ key: "r1", account: "sacty-bot", allowed: true }],
+    });
+    expect(feedback.map((f) => [f.key, f.commit])).toEqual([
+      ["review:1", reviewed],
+      ["review_comment:3", reviewed],
+      ["review_comment:4", reviewed],
+      ["review_comment:5", undefined],
+    ]);
+  });
+
+  it("人が本文に印を写したものや、別のアカウントの投稿は AI のレビューにしない", async () => {
+    const human = { login: "alice", type: "User" };
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: human,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\nAI の指摘に同意",
+            commit_id: head,
+            submitted_at: at(1),
+          },
+        ],
+      },
+      { status: 200, json: [] },
+      { status: 200, json: [] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+      sactyReviews: [{ key: "r1", account: "sacty-bot", allowed: true }],
+    });
+    expect(feedback.map((f) => [f.key, f.source, f.commit])).toEqual([
+      ["review:1", undefined, undefined],
+    ]);
+  });
+});
+
 describe("元のタスクと違うアカウントの sacty のレビュー（PBI-88 再レビューの指摘）", () => {
   const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
   const reviews = (user: { login: string; type: string }) => [
