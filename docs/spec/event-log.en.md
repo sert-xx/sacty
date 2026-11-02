@@ -99,7 +99,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 - For a run stopped (for example by a timeout) before the usage of the whole run could be read, sacty adds the part it could read (a lower bound) to `costUsd` and marks the event with `costUnknown` (PBI-281).
   - The mark goes on the events that can record a failed run: `AgentRunFailed`, `OrchestratorFailed`, `StepsSkipped`, `ChangeJudged`, `ReworkJudged`, `FinalReviewFailed`, `QuestionAnswered`, `ErrorAnalyzed`, `OutputExported`, and `DeploymentChecked`.
   - If nothing could be read, `costUsd` stays 0, and this 0 means unknown, not that nothing was spent. How it is read is under output handling in [Agent execution](agent-execution.en.md).
-  - For a judgement redone with a fallback agent after a failure, the total is unknown if the earlier run was unknown.
+  - For a judgement redone with a fallback agent after a failure, or a run restarted in a new session after a resume was refused, the total is unknown if the earlier run was unknown. So the events that record a success (`AgentRunCompleted`, `StepsChosen`, `TicketTriaged`, `RepositoryChosen`, `InformationGathered`, and `FinalReviewed`) can carry `costUnknown` too.
   - `chargeBudget` counts the marked events in `budget.unknownRuns` (absent when none). The part that could be read counts toward the budget check.
   - The screen and the activity log show "or more" when some part could be read and "unknown" when none could, and never show $0.
 - The projection and the per-step cost table both add cost with the same rule (`chargeBudget`). If a kind not in the list carries `costUsd`, the type check fails and typecheck does not pass.

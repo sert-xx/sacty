@@ -164,10 +164,13 @@ export class ClaudeOutcomeReader extends OutcomeReader {
   /** 答えの読み方の知らせ（prefer に当たらず最後の result に戻ったとき。PR #213 レビュー指摘）。 */
   private noticeText: string | undefined;
   /**
-   * 発言（assistant）ごとの使用量（PBI-281）。result が出る前に止まった実行の、読めた分の使用量に使う。
-   * 同じ発言の内容ごとの出来事は、同じ id・同じ使用量を繰り返すので、id ごとに1つにする。
+   * 発言（assistant）ごとの使用量（PBI-281）。最後の result の後に始まった番や、result が出る前に止まった実行の、読めた分の
+   * 使用量に使う。同じ発言の内容ごとの出来事は、同じ id・同じ使用量を繰り返すので、id ごとに1つにする。settled は、
+   * result が出て、その使用量に入った発言（二重に数えない）。メモリを守るため、id の長さと件数に上限がある。
    */
-  private readonly messageUsage = new Map<string, TokenUsage>();
+  private readonly messages = new Map<string, { usage: TokenUsage; settled: boolean }>();
+  /** 上限のために、読まなかった発言がある（読めた分は下限）。 */
+  private messagesTruncated = false;
 
   private readonly prefer: string | undefined;
   private readonly resumed: boolean;
@@ -190,6 +193,10 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     if (event.type === "result") {
       this.result = event;
       this.results++;
+      // ここまでの発言の使用量は、この result の usage に入った
+      for (const message of this.messages.values()) message.settled = true;
+      // 上限で読まなかった発言があっても、ここまでの分は result の usage に入っている（この後の分だけを数え直す）
+      this.messagesTruncated = false;
       const u = claudeUsage(event.usage);
       this.summed = {
         input: this.summed.input + u.input,
@@ -221,27 +228,42 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     if (!message || typeof message !== "object") return;
     const { id, usage } = message as { id?: unknown; usage?: unknown };
     if (typeof id !== "string" || !id || !usage || typeof usage !== "object") return;
+    if (id.length > MESSAGE_ID_MAX) {
+      this.messagesTruncated = true;
+      return;
+    }
     const next = claudeUsage(usage);
-    const previous = this.messageUsage.get(id);
-    // 出力のトークン数は、発言の途中の出来事ほど小さい値で出ることがある。大きいほうを取る
-    this.messageUsage.set(id, previous ? larger(previous, next) : next);
+    const previous = this.messages.get(id);
+    if (previous) {
+      // 出力のトークン数は、発言の途中の出来事ほど小さい値で出ることがある。大きいほうを取る（result に入った発言は触らない）
+      if (!previous.settled) previous.usage = larger(previous.usage, next);
+      return;
+    }
+    if (this.messages.size >= MESSAGE_KEEP_MAX) {
+      this.messagesTruncated = true;
+      return;
+    }
+    this.messages.set(id, { usage: next, settled: false });
   }
 
   /**
-   * result が出る前に止まった実行の、読めた分の使用量（PBI-281）。発言（assistant）の usage を合計する。サブエージェントの
-   * 内側の使用量と、発言の途中の出力のトークン数は読めないので、実際より小さい（下限）。読めた発言が無ければ undefined。
+   * 最後の result の後に始まった発言（result が無ければ、すべての発言）の使用量の合計（PBI-281）。サブエージェントの内側の
+   * 使用量と、発言の途中の出力のトークン数は読めないので、実際より小さい（下限）。そのような発言が無ければ undefined。
    */
-  private assistantUsageTotal(): TokenUsage | undefined {
-    if (this.messageUsage.size === 0) return undefined;
-    return [...this.messageUsage.values()].reduce<TokenUsage>(
-      (sum, u) => ({
-        input: sum.input + u.input,
-        cacheRead: sum.cacheRead + u.cacheRead,
-        cacheWrite: sum.cacheWrite + u.cacheWrite,
-        output: sum.output + u.output,
-      }),
-      { ...ZERO },
-    );
+  private unsettledUsage(): TokenUsage | undefined {
+    let sum: TokenUsage | undefined;
+    for (const { usage, settled } of this.messages.values()) {
+      if (settled) continue;
+      sum = sum
+        ? {
+            input: sum.input + usage.input,
+            cacheRead: sum.cacheRead + usage.cacheRead,
+            cacheWrite: sum.cacheWrite + usage.cacheWrite,
+            output: sum.output + usage.output,
+          }
+        : { ...usage };
+    }
+    return sum;
   }
 
   private final(): Record<string, unknown> | undefined {
@@ -262,7 +284,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         .slice(0, 2000);
       // 出来事が届いていたのに result が無い（時間切れ・強制終了など）なら、使った分の全体は分からない。読めた分は残す
       // （PBI-281）。出来事が1つも届かなかった（起動できなかった）なら、何も使っていない
-      const usage = this.assistantUsageTotal();
+      const usage = this.unsettledUsage();
       return {
         kind: "failed",
         reason: classifyFailure(message),
@@ -288,11 +310,34 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       const message = (result || errors || stderr || subtype || `exit code ${exitCode}`)
         .trim()
         .slice(0, 2000);
+      // 最後の result の後に始まった番があれば（その後に強制終了・時間切れなど）、その分は result の usage に入っていない。
+      // 読めた分を足し、全体は不明にする（PBI-281）
+      const after = this.unsettledUsage();
+      if (after || this.messagesTruncated) {
+        return {
+          kind: "failed",
+          reason: classifyFailure(message),
+          message,
+          usage: after
+            ? {
+                input: usage.input + after.input,
+                cacheRead: usage.cacheRead + after.cacheRead,
+                cacheWrite: usage.cacheWrite + after.cacheWrite,
+                output: usage.output + after.output,
+              }
+            : usage,
+          costUnknown: true,
+        };
+      }
       return { kind: "failed", reason: classifyFailure(message), message, usage };
     }
     return { kind: "completed", output: this.preferred ?? result, usage };
   }
 }
+
+/** 発言の id の長さと、覚える件数の上限（PBI-281。コンテナから届く値なので、メモリを守る）。 */
+const MESSAGE_ID_MAX = 256;
+const MESSAGE_KEEP_MAX = 4096;
 
 /** Claude Code の result の usage（その番の分）。 */
 function claudeUsage(value: unknown): TokenUsage {

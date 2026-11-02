@@ -878,6 +878,11 @@ const StepsChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -953,6 +958,11 @@ const AgentRunCompleted = z.object({
     costUsd: z.number().nonnegative(),
     /** サブスクリプションなど、実際の請求ではなく換算した値か。 */
     estimated: z.boolean(),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
     output: z.string(),
     /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
@@ -1326,6 +1336,11 @@ const FinalReviewed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1503,6 +1518,11 @@ const InformationGathered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1524,6 +1544,11 @@ const TicketTriaged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1543,6 +1568,11 @@ const RepositoryChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 

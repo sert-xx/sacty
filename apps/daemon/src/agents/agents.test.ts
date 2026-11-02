@@ -2350,6 +2350,68 @@ describe("結果が出る前に止まった実行の使用量（PBI-281。S20 �
     expect(outcome).not.toHaveProperty("usage");
   });
 
+  it("Claude：最後の result の後に始まった番の使用量を足し、全体は不明とする（result の分を二重に数えない）", () => {
+    const result = JSON.stringify({
+      type: "result",
+      usage: { input_tokens: 10, cache_read_input_tokens: 0, output_tokens: 5 },
+    });
+    const outcome = read(
+      [
+        init,
+        // result に入った発言（result の後に同じ id の出来事が遅れて届いても、数え直さない）
+        ...assistant("msg_old", { input: 10, read: 0, write: 0, output: 5 }),
+        result,
+        ...assistant("msg_old", { input: 10, read: 0, write: 0, output: 5 }),
+        // result の後に始まった番の発言
+        ...assistant("msg_new", { input: 20_000, read: 100, write: 0, output: 7 }, 2),
+      ],
+      137,
+    );
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      usage: { input: 20_010, cacheRead: 100, output: 12 },
+      costUnknown: true,
+    });
+  });
+
+  it("Claude：result の後に何も始まっていなければ、不明にしない（0 の使用量の result でも）", () => {
+    const outcome = read(
+      [
+        init,
+        ...assistant("msg_old", { input: 10, read: 0, write: 0, output: 5 }),
+        JSON.stringify({ type: "result", is_error: true, result: "x", usage: {} }),
+      ],
+      1,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", usage: { input: 0, output: 0 } });
+    expect(outcome).not.toHaveProperty("costUnknown");
+  });
+
+  it("Claude：発言の id の件数と長さに上限がある。上限を超えた分は読まず、読めた分を下限として不明にする", () => {
+    const lines = [init];
+    for (let i = 0; i < 5000; i++) {
+      lines.push(
+        ...assistant(`msg_${i}`, { input: 1, read: 0, write: 0, output: 1 }),
+        // 同じ発言の繰り返しは、上限に達した後でも、覚えている発言なら足し直さない
+        ...(i === 0 ? assistant("msg_0", { input: 1, read: 0, write: 0, output: 1 }) : []),
+      );
+    }
+    const reader = new ClaudeOutcomeReader();
+    reader.push(lines.join("\n"));
+    expect(reader.finish(137)).toMatchObject({
+      kind: "failed",
+      usage: { input: 4096, output: 4096 },
+      costUnknown: true,
+    });
+    // 長すぎる id は覚えず、読めなかったことにする
+    const long = read([
+      init,
+      ...assistant("m".repeat(300), { input: 5, read: 0, write: 0, output: 5 }),
+    ]);
+    expect(long).toMatchObject({ kind: "failed", costUnknown: true });
+    expect(long).not.toHaveProperty("usage");
+  });
+
   const codexLine = (value: unknown) => JSON.stringify(value);
   const started = [
     codexLine({ type: "thread.started", thread_id: "t" }),

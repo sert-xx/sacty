@@ -316,6 +316,9 @@ export function dockerClientEnv(): Record<string, string> {
   return env;
 }
 
+/** 時間切れで止めた後、docker run の子プロセスが終わって出力を読み終えるのを待つ上限（ミリ秒。PBI-281）。 */
+const TIMEOUT_DRAIN_MS = 5_000;
+
 export class DockerExecutor implements AgentExecutor {
   private readonly containers: RunningContainers;
   private aborting = false;
@@ -455,6 +458,11 @@ export class DockerExecutor implements AgentExecutor {
     let outcome: AgentOutcome;
     // 時間切れで止めたときのエラー（止めるまでに読めた使用量を、後で添える。PBI-281）
     const timedOut: { error?: AgentTimeoutError } = {};
+    // docker run の子プロセスが終わり、残りの出力を読み終えた（時間切れで止めた後、使用量を確定する前に待つ。PBI-281）
+    let markClosed = () => {};
+    const childClosed = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
     // 標準出力は全体を持たず、行ごとに読んで最後の答えに要るものだけを持つ（PBI-62）
     const reader =
       invocation.parser === "codex-jsonl"
@@ -502,6 +510,7 @@ export class DockerExecutor implements AgentExecutor {
         }, timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
+          markClosed();
           reject(new MessageError(message("run.dockerUnavailable", { detail: error.message })));
         });
         child.on("close", (code) => {
@@ -512,6 +521,7 @@ export class DockerExecutor implements AgentExecutor {
           err.push(errRest);
           log?.stdout(outRest);
           log?.stderr(errRest);
+          markClosed();
           resolve({ exitCode: code ?? 1, stderr: err.toString() });
         });
       });
@@ -520,10 +530,14 @@ export class DockerExecutor implements AgentExecutor {
       for (const notice of forwardNotices(stderr))
         console.warn(`[daemon] ${containerName}：${notice}`);
       if (this.aborting) {
+        // デーモンを止めるために止めた実行も、止めるまでに読めた使用量は残す。全体は分からない（PBI-281）
+        const partial = reader.finish(exitCode, stderr);
         outcome = {
           kind: "failed",
           reason: "error",
           message: message("run.daemonStopped"),
+          ...(partial.usage ? { usage: partial.usage } : {}),
+          ...(reader.started ? { costUnknown: true as const } : {}),
         };
       } else if (/Unable to find image|No such image|pull access denied/i.test(stderr)) {
         outcome = {
@@ -552,6 +566,11 @@ export class DockerExecutor implements AgentExecutor {
       }
       // 時間切れで止めた実行も、それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない。PBI-281）
       if (timedOut.error) {
+        // docker run の子プロセスが終わって、残りの出力を読み終えるのを（上限を付けて）待ってから確定する
+        await Promise.race([
+          childClosed,
+          new Promise<void>((resolve) => setTimeout(resolve, TIMEOUT_DRAIN_MS).unref()),
+        ]);
         const partial = reader.finish(1);
         timedOut.error.usage = partial.usage;
         // 途中で止めたので、出力が1つでも届いていれば、読めた分は下限（最後の結果の後の分は分からない）

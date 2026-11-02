@@ -22089,6 +22089,27 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     activity.close();
   });
 
+  it("再開を断った実行の使用量が不明なら、始め直した実行が成功しても不明の印を残し、費用に数える（PBI-281）", async () => {
+    const rejected: AgentOutcome = {
+      kind: "failed",
+      reason: "error",
+      message: "No conversation found with session ID: x",
+      costUnknown: true,
+    };
+    const { activity, service, executor } = setup([unreadable, rejected, plan, completed(1_000)], {
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const before = service.get(task.id)?.task.budget.unknownRuns ?? 0;
+    await rerunOrchestrator(service, task.id);
+    const chosen = service.get(task.id)?.activity.findLast((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.costUnknown).toBe(true);
+    expect(service.get(task.id)?.task.budget.unknownRuns).toBe(before + 1);
+    activity.close();
+  });
+
   it("AI が再開を受け付けなかったら、新しいセッションで始め直し、理由と受け付けなかった実行を残す", async () => {
     const rejected: AgentOutcome = {
       kind: "failed",

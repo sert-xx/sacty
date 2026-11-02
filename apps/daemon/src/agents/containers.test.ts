@@ -227,6 +227,85 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     expect((error as AgentTimeoutError).costUnknown).toBe(true);
   });
 
+  it("時間切れの後、停止の確認より遅れて届いた出力も、子プロセスが終わるまで待って拾う", async () => {
+    const calls: string[][] = [];
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker kill / docker ps は、すぐ成功する（コンテナは消えている）。docker run だけが、出力を出し切ってから終わる
+      else setTimeout(() => child.emit("close", 0), 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    const running = executor
+      .run({
+        runId: "late",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation,
+        timeoutMs: 20,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    // 時間切れ（20ms）の後、停止の確認が済んだ後に、最後の出力と終了が届く
+    await new Promise((r) => setTimeout(r, 80));
+    run?.stdout.emit("data", assistantLine("m1", 8));
+    run?.stdout.emit("data", assistantLine("m2", 16).slice(0, 20));
+    run?.stdout.emit("data", assistantLine("m2", 16).slice(20));
+    run?.emit("close", 137);
+    const error = await running;
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 24 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("デーモンの停止（abortAll）で止めた実行も、停止の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
+    const docker = fakeDocker([0]);
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor.run({
+      runId: "abort",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    docker.run()?.stdout.emit("data", assistantLine("m1", 8));
+    executor.abortAll();
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.daemonStopped" },
+      usage: { output: 8 },
+      costUnknown: true,
+    });
+    // 何も出力が無ければ、使用量も不明の印も付けない
+    const quiet = fakeDocker([0]);
+    const second = new DockerExecutor(60_000, quiet.spawnImpl);
+    (second as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const secondRun = second.run({
+      runId: "abort2",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    second.abortAll();
+    const nothing = await secondRun;
+    expect(nothing).toMatchObject({ kind: "failed", message: { code: "run.daemonStopped" } });
+    expect(nothing).not.toHaveProperty("costUnknown");
+    expect(nothing).not.toHaveProperty("usage");
+  });
+
   it("Codex は番が終わるまで使用量を出さないので、使用量は無く、不明", async () => {
     const error = await timedOut(
       [

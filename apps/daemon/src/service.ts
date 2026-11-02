@@ -739,7 +739,7 @@ export type ProjectView = {
  * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
 /** 使った分の全体を読めなかった実行の印（イベントの costUnknown。読めたならイベントには持たせない。PBI-281）。 */
-function unknownCost(run: { costUnknown?: true | undefined }): { costUnknown?: true } {
+function unknownCost(run: { costUnknown?: boolean | undefined }): { costUnknown?: true } {
   return run.costUnknown ? { costUnknown: true } : {};
 }
 
@@ -2637,6 +2637,7 @@ export class TaskService {
       ...(choice.usage ? { usage: choice.usage } : {}),
       costUsd: choice.costUsd,
       estimated: choice.estimated,
+      ...unknownCost(choice),
     };
     const found = repo ? candidates.find((c) => sameGitHubUrl(c, repo)) : undefined;
     if (found) {
@@ -2726,6 +2727,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -3211,6 +3213,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -6246,6 +6249,7 @@ export class TaskService {
                 ...(chosen.usage ? { usage: chosen.usage } : {}),
                 costUsd: chosen.costUsd,
                 estimated: chosen.estimated,
+                ...unknownCost(chosen),
               },
             },
           },
