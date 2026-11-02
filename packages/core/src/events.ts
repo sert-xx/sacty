@@ -396,6 +396,12 @@ export type Verdict = z.infer<typeof Verdict>;
 export const MAX_VERIFY_ATTEMPTS = 3;
 
 /**
+ * 最終レビューの出力から判定を読み取れなかった（FinalReviewFailed の verdictUnreadable）回数が、続けてこの回数になったら止める。
+ * 読み取れなかった回は不合格にせず、最終レビューを出し直させる（実装には戻さない）。
+ */
+export const MAX_UNREADABLE_REVIEWS = 3;
+
+/**
  * 最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更（範囲外の変更）を見つけたときに、不合格にする観点の ID。
  * 設計のテスト観点ではないので、ゴールガーディアンが範囲外の変更を申告したときだけ、判定に足される。
  */
@@ -1693,6 +1699,11 @@ const FinalReviewFailed = z.object({
   payload: z.object({
     reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
+    /**
+     * 最終レビューは実行できたが、出力から判定を読み取れなかった。不合格にも再発にも数えず、出し直させる（続けて
+     * MAX_UNREADABLE_REVIEWS 回になったら止める）。
+     */
+    verdictUnreadable: z.literal(true).optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
