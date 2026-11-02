@@ -1141,6 +1141,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 中止：PR の作成が終わるのを待ってから、記録した PR を閉じ、タスクを中止する（下の「予算・一時停止・再開・中止」の片付け）。
 - 承認待ちの扱い（PR のマージでの承認・差し戻し・PR の指摘の取り込み）は、要求要件・設計と同じ（[承認と差し戻し](approval.md)）。
   PR のマージで実装を承認すると、マージの後の監視の工程へ進む（飛ばしていれば、タスクは完了する）。
+- 差し戻し・PR の指摘・最終レビューの不合格で実装を作り直している間に、人が実装の PR をマージしたら、作り直し（実行・最終レビュー・PR の更新）を止めて、マージを承認として進める。新しい PR は作らない（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
 
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`・`pause`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 

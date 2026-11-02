@@ -502,6 +502,39 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     ).toBe("PR #7 の競合が解消された");
   });
 
+  it("作業履歴に、実装の作り直しを PR のマージで止めたことを、段階・止めた実行・捨てた指摘とともに表示する（PBI-276）", () => {
+    const event = (payload: object): ActivityEvent =>
+      ({
+        type: "ReworkStoppedByMerge",
+        payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t",
+        projectId: "p",
+        at: "",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const running = event({
+      number: 7,
+      was: "running",
+      stoppedRuns: ["r1"],
+      discardedRemarks: [{ id: "implement-2-1", text: "ログを足して" }],
+      discardedFeedback: "review",
+    });
+    expect(describeEvent(running)).toBe(
+      "PR #7 がマージされたため、実装の作り直しを止めた（実行中・実行1件を停止）。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
+    );
+    expect(describeIn(running, labels.en)).toBe(
+      "PR #7 was merged, so the rework of the implementation was stopped (running, 1 run stopped). Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+    );
+    // 実行も指摘も無ければ、段階だけ
+    expect(
+      describeEvent(event({ number: 7, was: "queued", stoppedRuns: [], discardedRemarks: [] })),
+    ).toBe(
+      "PR #7 がマージされたため、実装の作り直しを止めた（実行待ち）。マージを承認として進める",
+    );
+  });
+
   it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
     const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({

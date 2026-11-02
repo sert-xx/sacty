@@ -698,6 +698,7 @@ Code: `apps/daemon/src/service.ts` (`verify`, `publish`, `draftsPullRequest`, `c
   - Pause: the task stays waiting for the Implement approval and is not paused. The pause operation reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
   - Cancel: after opening the PR finishes, the recorded PR is closed and the task is cancelled (the cleanup in "Budget, pause, resume, and cancel" below).
 - Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)). Approving the implementation by merging the PR moves on to the after-merge watch step (if it is skipped, the task is completed).
+- If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review), the rework (the run, the final review, and the PR update) is stopped and the merge is taken as the approval. No new PR is created ([Merging during a rework of the implementation](approval.en.md#merging-during-a-rework-of-the-implementation)).
 
 Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`, `pause`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
 

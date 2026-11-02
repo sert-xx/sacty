@@ -489,6 +489,12 @@ Once you merge the PR, the task moves on at the next check without returning to 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
 - When the PR was closed without merging, or does not exist yet.
 
+If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review), the merge is taken as the approval.
+sacty stops the running implementation, final review, and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
+The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
+To handle the discarded comments, create a follow-up task.
+While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
+
 Approval in PRs proceeds in this order.
 
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
