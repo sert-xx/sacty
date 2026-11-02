@@ -1,0 +1,16 @@
+{
+  "name": "library-api",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check .",
+    "generate": "npm run generate:types && npm run generate:docs",
+    "generate:types": "openapi-typescript openapi/library.yaml -o src/generated/schema.d.ts",
+    "generate:docs": "node scripts/generate-docs.mjs",
+    "check:generated": "node scripts/check-generated.mjs",
+    "ci": "npm run check:generated && npm run lint && npm run typecheck && npm test && npm run build"
+  }
+}

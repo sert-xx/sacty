@@ -1,0 +1,206 @@
+openapi: 3.1.0
+info:
+  title: Library API
+  version: 1.3.0
+  description: 蔵書の登録と貸出を扱う API
+servers:
+  - url: http://localhost:3000
+paths:
+  /books:
+    get:
+      operationId: listBooks
+      summary: 蔵書の一覧
+      parameters:
+        - name: author
+          in: query
+          description: 著者名（完全一致）
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: 貸出の状態
+          required: false
+          schema:
+            $ref: "#/components/schemas/BookStatus"
+      responses:
+        "200":
+          description: 蔵書の一覧（登録の新しい順）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Book"
+    post:
+      operationId: createBook
+      summary: 蔵書の登録
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBookRequest"
+      responses:
+        "201":
+          description: 登録した蔵書
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /books/{bookId}:
+    get:
+      operationId: getBook
+      summary: 蔵書の取得
+      parameters:
+        - $ref: "#/components/parameters/BookId"
+      responses:
+        "200":
+          description: 蔵書
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /books/{bookId}/loans:
+    post:
+      operationId: lendBook
+      summary: 蔵書を貸し出す
+      parameters:
+        - $ref: "#/components/parameters/BookId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LendBookRequest"
+      responses:
+        "200":
+          description: 貸出中になった蔵書
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /books/{bookId}/return:
+    post:
+      operationId: returnBook
+      summary: 蔵書を返却する
+      parameters:
+        - $ref: "#/components/parameters/BookId"
+      responses:
+        "200":
+          description: 返却済みになった蔵書
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Book"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  parameters:
+    BookId:
+      name: bookId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    BookStatus:
+      type: string
+      enum: [available, on_loan]
+    Book:
+      type: object
+      required: [id, title, author, isbn, status, borrower, dueDate, createdAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        author:
+          type: string
+        isbn:
+          type: [string, "null"]
+          description: ISBN（ハイフン無しの 13 桁）。未登録は null
+        status:
+          $ref: "#/components/schemas/BookStatus"
+        borrower:
+          type: [string, "null"]
+          description: 借りている人。貸出中のときだけ
+        dueDate:
+          type: [string, "null"]
+          format: date
+          description: 返却の期限。貸出中のときだけ
+        createdAt:
+          type: string
+          format: date-time
+    CreateBookRequest:
+      type: object
+      required: [title, author]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        author:
+          type: string
+          minLength: 1
+          maxLength: 100
+        isbn:
+          type: string
+          pattern: "^[0-9]{13}$"
+    LendBookRequest:
+      type: object
+      required: [borrower, dueDate]
+      properties:
+        borrower:
+          type: string
+          minLength: 1
+          maxLength: 50
+        dueDate:
+          type: string
+          format: date
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR, NOT_FOUND, CONFLICT]
+            message:
+              type: string
+  responses:
+    ValidationError:
+      description: 入力が不正
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 蔵書が無い
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: 状態が合わない、または重複
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
