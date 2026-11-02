@@ -386,6 +386,12 @@ export function describeEventParts(
 /**
  * 費用の文。unknown：使った分の全体を読めなかった実行（PBI-281）。読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す。
  */
+/** 実行の役割の表示名（工程ならその名前、最終レビューなどはその名前、知らない役割は役割のまま）。 */
+function runRoleLabel(l: LabelMessages, role: string): string {
+  if (Object.hasOwn(l.step, role)) return l.step[role as StepKey];
+  return Object.hasOwn(l.runRole, role) ? (l.runRole[role] ?? role) : role;
+}
+
 function costLabel(
   e: LabelMessages["event"],
   costUsd: number,
@@ -757,6 +763,17 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.files.length,
         event.payload.files.filter((f) => f.truncated).length,
       );
+    case "AgentRunTimedOut": {
+      const p = event.payload;
+      return e.AgentRunTimedOut(runRoleLabel(l, p.role), p.minutes);
+    }
+    case "AgentRunContinued": {
+      const p = event.payload;
+      const role = runRoleLabel(l, p.role);
+      return p.mode === "resumed"
+        ? e.AgentRunResumed(role, p.sessionId ?? "")
+        : e.AgentRunRestarted(role, l.agentRunContinuedReason[p.reason ?? "no_session"]);
+    }
     case "OrchestratorSessionUsed": {
       const p = event.payload;
       const os = l.orchestratorSession;

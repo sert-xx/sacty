@@ -193,8 +193,23 @@
   - 使ったセッションは `OrchestratorSessionUsed`（`resumed`・`forked`・`new`）に記録する。
 - 再開を断られた（AI が何も使わずに失敗し、セッションが見つからない旨の文を返した）ときは、新しい実行 ID で新しいセッションでやり直す。
   2回分の費用を合わせて記録する（`resumeRejected`）。
+- 時間切れで止めた実行は、次に同じ役割を実行するときに、同じエージェントのセッションの続きから進める（PBI-280。オーケストレーターと質問への答えは上の仕組みを使う）。
+  - 時間切れで止めた実行（`run.timeout`）は、`AgentRunTimedOut`（実行 ID・役割・エージェント・runtime・上限の分。状態は変えない）を残す。
+  - 次の実行の前に、作業履歴を新しいほうから見て、最初に出会う実行の記録で「直前の実行が時間切れか」を決める（`timedOutRunBefore`）。
+    - `AgentRunTimedOut` ならその実行。`AgentRunContinued`（続けた記録）なら、すでに続けたので対象なし。
+    - それ以外の実行のファイルの記録（`AgentSessionArchived`。質問への答え `chat` は除く）なら、時間切れの後に別の実行があったので対象なし。
+    - 工程の実行の開始・失敗（`AgentRunStarted`・`AgentRunFailed`）も別の実行として数える。ただし、時間切れで止めた実行自身のものと、いま実行する実行のものは数えない。続けた実行がデーモンの停止で中断されると、ファイルの記録も続けた記録も残らないので、この開始・失敗で見分ける（進捗を含まない古い会話を続けない）。
+  - 対象の実行と、これから実行する役割が同じなら、続けられるかを決める（`planTimeoutResume`）。役割が違えば何もしない。
+    - 続ける：同じエージェント（AI の種類と ID）で、止めた実行の `AgentSessionArchived` にセッション ID と本体のファイルがあり、省いたファイルが無く、写したファイルが記録のハッシュと一致する。
+      写したファイル（`runs/<タスク ID>/<止めた実行 ID>/agent/`）を設定の場所に戻して、Claude Code は `--resume <ID>`、Codex は `resume <ID>` で再開する。実行 ID は新しい（工程の記録はその実行 ID）。
+      指示の先頭に、時間切れで止めて再開したこと、止める前の作業領域のファイル（実装と再現だけ残る）とコンテナの中のファイル（残らない）の扱いを足す（`timeoutResumeLines`）。
+    - 続けない（最初から実行し直す）：理由は `no_session`（セッションの記録が無い・元のファイルを写せなかった）・`agent_changed`・`truncated`・`files_broken`（ファイルが無い・ハッシュが違う）。
+  - 続けたか、続けずに最初から実行し直したかは、`AgentRunContinued`（実行 ID・止めた実行 ID・`resumed` か `restarted`・セッション ID か理由。状態は変えない）に、**実行の前に**残す。実行の途中でデーモンが止まっても、この記録が残るので、開始の記録を残さない役割（最終レビュー・ゴールガーディアンなど）でも、次の実行は同じ古いセッションをもう一度続けない。
+    再開したつもりが別のセッションで始まった・AI が再開を断ったときは、実行の後に `restarted`（`resume_failed`）を記録し直す（新しい記録が優先される）。この場合は新しい実行 ID でやり直さず、失敗はそのまま返す（次の再開は最初から実行する）。
+  - 実装と再現の作業領域（タスクの clone）は、止めても消さない（完了したタスクだけを片付ける）。再開した実行は、止める前の変更が残る同じ作業領域で動く。
+    要求要件・設計などは、実行ごとに用意する写しなので、止める前に書いたファイルは残らない。
 
-コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`）
+コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`planTimeoutResume`・`timeoutResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）
 
 ## イメージ
 

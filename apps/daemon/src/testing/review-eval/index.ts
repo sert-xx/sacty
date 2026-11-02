@@ -257,7 +257,15 @@ export type AgentRun = { output: string; status: number | null };
  * 実際の AI（コマンド）にプロンプトを渡して実行する。既定は Claude Code の非対話の実行（読み取りと git の参照だけ許可）。
  * SACTY_REVIEW_EVAL_MODEL でモデルを指定できる。SACTY_REVIEW_EVAL_AGENT で、プロンプトを標準入力から読んで答えを標準出力に出すコマンドに差し替えられる。
  */
-export function runAgent(prompt: string, options: { cwd: string; addDirs?: string[] }): AgentRun {
+export function runAgent(
+  prompt: string,
+  options: {
+    cwd: string;
+    addDirs?: string[];
+    /** プロセスの起動（テストで、error と終了コードが同時に返る場合を作るために差し替える）。 */
+    spawn?: typeof spawnSync;
+  },
+): AgentRun {
   const custom = process.env.SACTY_REVIEW_EVAL_AGENT;
   const [command, ...args] = custom
     ? custom.split(/\s+/)
@@ -273,7 +281,7 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
         "Read,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git status:*)",
         ...(options.addDirs ?? []).flatMap((d) => ["--add-dir", d]),
       ];
-  const result = spawnSync(command ?? "claude", args, {
+  const result = (options.spawn ?? spawnSync)(command ?? "claude", args, {
     cwd: options.cwd,
     input: prompt,
     encoding: "utf8",
@@ -282,9 +290,17 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
   });
   // 起動に失敗・時間切れ・異常終了した実行を、「指摘なし」「申告なし」として評価に混ぜない
   if (result.error || result.status !== 0) {
-    const reason = result.error
-      ? result.error.message
-      : `終了コード ${result.status}${result.signal ? `（シグナル ${result.signal}）` : ""}`;
+    // 指示文を読まずに終わるコマンドは、書き込みの途中でパイプが閉じて EPIPE の error が付く（終了コードも付く）ので、両方を書く
+    const reason = [
+      result.error?.message,
+      result.status !== 0 && result.status !== null
+        ? `終了コード ${result.status}${result.signal ? `（シグナル ${result.signal}）` : ""}`
+        : result.signal
+          ? `シグナル ${result.signal}`
+          : undefined,
+    ]
+      .filter(Boolean)
+      .join("、");
     throw new Error(
       `AI の実行に失敗しました：${reason}\n${(result.stderr ?? "").toString().slice(-500)}`,
     );

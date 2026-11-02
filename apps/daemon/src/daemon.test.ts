@@ -4155,6 +4155,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       /** ベースブランチの最新を作業領域に取り込む。 */
       mergeBase?: boolean;
       ci?: CiStatusReader;
+      sessionLogs?: SessionLogStore;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -13757,6 +13758,120 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         url: "https://jira.example.com/browse/PAY-1?focusedCommentId=1",
       });
       expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+  });
+
+  describe("時間切れで止めた実装の再開（PBI-280）", () => {
+    const timeout: AgentOutcome = {
+      kind: "failed",
+      reason: "error",
+      message: message("run.timeout", { minutes: 3 }),
+    };
+    const argAfter = (inv: Invocation | undefined, name: string) => {
+      const i = inv?.command.indexOf(name) ?? -1;
+      return i >= 0 ? inv?.command[i + 1] : undefined;
+    };
+
+    it("実装が時間切れで止まっても作業領域の変更は残り、再開した実装は同じ作業領域で、同じセッションの続きから進む", async () => {
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const { activity, service, executor, repos, id } = await toImplement(
+        [timeout, implement("# 実装"), review()],
+        { sessionLogs },
+      );
+      const claudeId = (inv: Invocation, runId: string) =>
+        argAfter(inv, "--resume") ?? `session-${runId}`;
+      executor.appendSessionFiles = true;
+      executor.sessionIdOf = claudeId;
+      executor.sessionFiles = (inv, runId) => ({
+        [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ run: runId })}\n`,
+      });
+      // 1 回目の実装がクローンの作業領域に書いたまま、時間切れで止まる（未コミットの変更）
+      const workDir = repos.prepared[0]?.dir ?? "";
+      const run = executor.run.bind(executor);
+      let wrote = false;
+      executor.run = async (input) => {
+        if (!wrote && input.workspaceDir === workDir) {
+          writeFileSync(join(workDir, "partial.ts"), "export const wip = 1;\n");
+          wrote = true;
+        }
+        return run(input);
+      };
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 止めた後も、作業領域の変更はそのまま残っている（退避しなくてもよい）
+      expect(readFileSync(join(workDir, "partial.ts"), "utf8")).toBe("export const wip = 1;\n");
+      service.resume(id, {});
+      await drain(service);
+      const resumed = before + 1;
+      // 同じ作業領域で、止める前の変更を見て続け、同じセッションを再開する
+      expect(executor.dirs[resumed]).toBe(workDir);
+      expect(executor.dirs[before]).toBe(workDir);
+      expect(executor.workspaceFiles[resumed]).toContain("partial.ts");
+      const stopped = (service.get(id)?.activity ?? []).find((e) => e.type === "AgentRunTimedOut");
+      expect(stopped?.payload).toMatchObject({ role: "implement", minutes: 3 });
+      const stoppedRun = stopped && "runId" in stopped.payload ? stopped.payload.runId : "";
+      expect(argAfter(executor.calls[resumed], "--resume")).toBe(`session-${stoppedRun}`);
+      expect(executor.stdins[resumed]).toContain("【時間切れからの再開】");
+      expect(executor.stdins[resumed]).toContain("未コミットの変更も含む");
+      expect(
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "AgentRunContinued" ? [e.payload] : [],
+        ),
+      ).toMatchObject([{ role: "implement", mode: "resumed", stoppedRunId: stoppedRun }]);
+      // 最終レビュー（実装後の作業領域の写し）は、時間切れの後の実行ではないので、続けない
+      const last = executor.calls.length - 1;
+      expect(promptOf(executor, last)).toContain("sacty-final-review");
+      expect(argAfter(executor.calls[last], "--resume")).toBeUndefined();
+      expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+      activity.close();
+    });
+
+    it("再開した最終レビューの実行中にデーモンが止まっても、古いセッションをもう一度続けない（開始を残さない役割）", async () => {
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const claudeId = (inv: Invocation, runId: string) =>
+        argAfter(inv, "--resume") ?? `session-${runId}`;
+      const emulate = (executor: FakeExecutor) => {
+        executor.appendSessionFiles = true;
+        executor.sessionIdOf = claudeId;
+        executor.sessionFiles = (inv, runId) => ({
+          [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ run: runId })}\n`,
+        });
+      };
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), timeout, HOLD],
+        { sessionLogs },
+      );
+      emulate(executor);
+      const finalReviews = () =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "AgentRunTimedOut" && e.payload.role === "final-review"
+            ? [e.payload.runId]
+            : [],
+        );
+      // 最終レビューが時間切れで止まる
+      await drain(service);
+      const [stopped] = finalReviews();
+      expect(stopped).toBeTruthy();
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 再開した最終レビュー（開始の記録を残さない）の実行中に、デーモンが止まる
+      service.resume(id, {});
+      void service.runNext(id);
+      await executor.started.promise;
+      expect(argAfter(executor.calls.at(-1), "--resume")).toBe(`session-${stopped}`);
+      const { service: restarted, executor: next } = makeService(activity, [review()], {
+        sessionLogs,
+      });
+      emulate(next);
+      restarted.recoverInterrupted();
+      // 復旧した後、最終レビューをやり直しても、1 回目の古い会話は続けない
+      if (restarted.get(id)?.task.status === "paused") restarted.resume(id, {});
+      await drain(restarted);
+      expect(next.calls.length).toBeGreaterThan(0);
+      expect(promptOf(next, 0)).toContain("sacty-final-review");
+      expect(argAfter(next.calls[0], "--resume")).toBeUndefined();
+      expect(next.stdins[0]).not.toContain("【時間切れからの再開】");
       activity.close();
     });
   });
@@ -23815,6 +23930,341 @@ describe("エージェントの元のセッションのファイル（PBI-66）"
     expect(await statuses()).toEqual(paths.map(() => 404));
     // 記録そのものは残す
     expect(sessionLogs.read(task.id, runId)).toBeTruthy();
+    activity.close();
+  });
+});
+
+describe("時間切れで止めた実行の再開（PBI-280）", () => {
+  const timeout = (minutes = 3): AgentOutcome => ({
+    kind: "failed",
+    reason: "error",
+    message: message("run.timeout", { minutes }),
+  });
+  const argAfter = (inv: Invocation | undefined, name: string) => {
+    const i = inv?.command.indexOf(name) ?? -1;
+    return i >= 0 ? inv?.command[i + 1] : undefined;
+  };
+  /** Claude Code の振る舞いをまねる：--resume なら同じ ID のセッションに書き足し、なければ新しいセッション。 */
+  const claudeId = (inv: Invocation, runId: string) =>
+    argAfter(inv, "--resume") ?? `session-${runId}`;
+  const emulateClaude = (executor: FakeExecutor) => {
+    executor.appendSessionFiles = true;
+    executor.sessionIdOf = claudeId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ type: "user", run: runId })}\n`,
+    });
+  };
+  const codexAgent = agent({
+    id: "codex-key",
+    runtime: "codex",
+    auth: { mode: "api-key", secret: "openai-key" },
+  });
+  const emulateCodex = (executor: FakeExecutor) => {
+    const codexId = (inv: Invocation, runId: string) =>
+      argAfter(inv, "resume") ?? `thread-${runId}`;
+    executor.appendSessionFiles = true;
+    executor.sessionIdOf = codexId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`sessions/2026/11/02/rollout-2026-11-02T10-00-00-${codexId(inv, runId)}.jsonl`]: `${JSON.stringify({ run: runId })}\n`,
+    });
+  };
+  const setup = (outcomes: AgentOutcome[], options: Parameters<typeof makeService>[2] = {}) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const made = makeService(activity, outcomes, { sessionLogs, ...options });
+    return { activity, sessionLogs, ...made };
+  };
+  type Continued = Extract<EventInput, { type: "AgentRunContinued" }>["payload"];
+  const continuedOf = (service: TaskService, id: string): Continued[] =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentRunContinued" ? [e.payload] : [],
+    );
+  const timedOutOf = (service: TaskService, id: string) =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentRunTimedOut" ? [e.payload] : [],
+    );
+  const runIds = (service: TaskService, id: string) =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentRunStarted" ? [e.payload.runId] : [],
+    );
+  const NOTE = "【時間切れからの再開】";
+  /** 時間切れで止まった後、再開してもう一度実行する。 */
+  const retry = async (service: TaskService, id: string) => {
+    expect(service.get(id)?.task.status).toBe("paused");
+    service.resume(id, {});
+    await service.runNext(id);
+  };
+
+  it("Claude Code：時間切れで止めた実行は、再開したときに同じセッションの続きから進め、時間切れで再開したことを伝える", async () => {
+    const { activity, service, executor } = setup([timeout(), completed(1_000), completed(1_000)]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    expect(argAfter(executor.calls[0], "--resume")).toBeUndefined();
+    expect(executor.stdins[0]).not.toContain(NOTE);
+    expect(timedOutOf(service, task.id)).toEqual([
+      {
+        runId: first,
+        role: "requirements",
+        agentId: "claude-subscription",
+        runtime: "claude-code",
+        minutes: 3,
+      },
+    ]);
+    expect(continuedOf(service, task.id)).toEqual([]);
+
+    await retry(service, task.id);
+    // 止めた実行のセッションを、元のファイルごと戻して再開する
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+    expect(executor.calls[1]?.command).not.toContain("--fork-session");
+    expect(Object.keys(executor.restored[1] ?? {})).toEqual([
+      `projects/-workspace/session-${first}.jsonl`,
+    ]);
+    // 時間切れで止めて再開したことと、元の指示を渡す
+    expect(executor.stdins[1]).toContain(NOTE);
+    expect(executor.stdins[1]).toContain("上限の 3 分");
+    expect(executor.stdins[1]).toContain(executor.stdins[0] ?? "unreachable");
+    const [second] = runIds(service, task.id).slice(-1);
+    expect(continuedOf(service, task.id)).toEqual([
+      {
+        runId: second,
+        role: "requirements",
+        agentId: "claude-subscription",
+        runtime: "claude-code",
+        mode: "resumed",
+        stoppedRunId: first,
+        sessionId: `session-${first}`,
+      },
+    ]);
+    // 完了した後の次の工程は、前の続きではない（新しいセッション）
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(3);
+    expect(argAfter(executor.calls[2], "--resume")).toBeUndefined();
+    expect(executor.stdins[2]).not.toContain(NOTE);
+    expect(continuedOf(service, task.id)).toHaveLength(1);
+    activity.close();
+  });
+
+  it("何度か時間切れで止めても、そのたびに同じセッションの続きから進み、最後は完了まで進む", async () => {
+    const { activity, service, executor } = setup([
+      timeout(),
+      timeout(),
+      timeout(),
+      completed(1_000),
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    await retry(service, task.id);
+    await retry(service, task.id);
+    await retry(service, task.id);
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    expect(executor.calls).toHaveLength(4);
+    // 3 回とも最初のセッションを再開し、戻したファイルには、それまでの会話が積み重なっている
+    for (const i of [1, 2, 3])
+      expect(argAfter(executor.calls[i], "--resume")).toBe(`session-${first}`);
+    const path = `projects/-workspace/session-${first}.jsonl`;
+    expect(executor.restored[1]?.[path]?.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(executor.restored[2]?.[path]?.split("\n").filter(Boolean)).toHaveLength(2);
+    expect(executor.restored[3]?.[path]?.split("\n").filter(Boolean)).toHaveLength(3);
+    expect(timedOutOf(service, task.id)).toHaveLength(3);
+    const continued = continuedOf(service, task.id);
+    expect(continued.map((c) => c.mode)).toEqual(["resumed", "resumed", "resumed"]);
+    // 続けた先は、直前の実行（時間切れで止めた実行）
+    const ids = runIds(service, task.id);
+    expect(continued.map((c) => c.stoppedRunId)).toEqual(ids.slice(0, 3));
+    activity.close();
+  });
+
+  it("Codex：resume で同じスレッドの続きから進める", async () => {
+    const { activity, service, executor } = setup([timeout(), completed(1_000)], {
+      config: configOf(codexAgent),
+      secrets: { "openai-key": "sk-secret" },
+    });
+    emulateCodex(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    expect(executor.calls[0]?.command).not.toContain("resume");
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "resume")).toBe(`thread-${first}`);
+    expect(Object.keys(executor.restored[1] ?? {})[0]).toMatch(/^sessions\/.*thread-/);
+    expect(executor.stdins[1]).toContain(NOTE);
+    expect(continuedOf(service, task.id)[0]).toMatchObject({
+      mode: "resumed",
+      runtime: "codex",
+      sessionId: `thread-${first}`,
+      stoppedRunId: first,
+    });
+    activity.close();
+  });
+
+  it("時間切れ以外で止まった実行は、再開しても前のセッションを続けない（今までどおり）", async () => {
+    const { activity, service, executor } = setup([
+      { kind: "failed", reason: "error", message: "exit code 1" },
+      completed(1_000),
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+    expect(executor.stdins[1]).not.toContain(NOTE);
+    expect(timedOutOf(service, task.id)).toEqual([]);
+    expect(continuedOf(service, task.id)).toEqual([]);
+    activity.close();
+  });
+
+  it("セッションの記録が無いとき（元のファイルを写せなかった）は、最初から実行し直し、その理由を作業履歴に残す", async () => {
+    const { activity, service, executor } = setup([timeout(), completed(1_000)]);
+    // エージェントが元のファイルを残さない
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    expect(timedOutOf(service, task.id)).toHaveLength(1);
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+    expect(executor.stdins[1]).not.toContain(NOTE);
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "restarted", reason: "no_session", stoppedRunId: first },
+    ]);
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("コンテナの停止を確かめられず元のファイルを写さなかったときは、続けずに最初から実行し直す", async () => {
+    const { activity, service, executor } = setup([timeout(), completed(1_000)]);
+    emulateClaude(executor);
+    executor.containerUnconfirmed = true;
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    executor.containerUnconfirmed = false;
+    // 動いたままのコンテナがあるかもしれないので、確認してから再開する
+    service.resume(task.id, {}, { containersConfirmed: true });
+    await service.runNext(task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "restarted", reason: "no_session" },
+    ]);
+    activity.close();
+  });
+
+  it("エージェントを変えて再開したときは、続けずに最初から実行し直す", async () => {
+    const strong = agent({ id: "strong", model: "claude-opus-5-5" });
+    const base = (configOf(agent())() as { ok: true; config: SactyConfig }).config;
+    const { activity, service, executor } = setup([timeout(), completed(1_000)], {
+      config: () => ({
+        ok: true,
+        config: { ...base, agents: { [agent().id]: agent(), strong: strong } },
+      }),
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    service.changeStepAgent(task.id, { step: "requirements", agent: "strong" });
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+    expect(executor.stdins[1]).not.toContain(NOTE);
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "restarted", reason: "agent_changed", agentId: "strong" },
+    ]);
+    activity.close();
+  });
+
+  it("写したファイルが壊れていたら（記録したハッシュと違う）、続けずに最初から実行し直す", async () => {
+    const { activity, service, executor, sessionLogs } = setup([timeout(), completed(1_000)]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    const files = join(
+      sessionLogs.agentFilesDir(task.id, first ?? "") ?? "",
+      "projects",
+      "-workspace",
+    );
+    writeFileSync(join(files, `session-${first}.jsonl`), "tampered\n");
+    await retry(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBeUndefined();
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "restarted", reason: "files_broken" },
+    ]);
+    activity.close();
+  });
+
+  it("続けた実行の途中でデーモンが止まったら、進捗を含まない古い会話を続けず、最初から実行し直す", async () => {
+    const { activity, service, executor } = setup([timeout(), HOLD]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    service.resume(task.id, {});
+    // 続けた実行（2 回目）が動いている間に、デーモンが止まる（写した記録も続けた記録も残らない）
+    void service.runNext(task.id);
+    await executor.started.promise;
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+    const second = runIds(service, task.id)[1];
+    const { service: restarted, executor: restartedExecutor } = makeService(
+      activity,
+      [completed(1_000)],
+      { sessionLogs: new SessionLogStore(join(dir, "runs")) },
+    );
+    emulateClaude(restartedExecutor);
+    restarted.recoverInterrupted();
+    expect(restarted.get(task.id)?.task.status).toBe("paused");
+    expect(
+      restarted
+        .get(task.id)
+        ?.activity.some((e) => e.type === "AgentRunFailed" && e.payload.runId === second),
+    ).toBe(true);
+    restarted.resume(task.id, {});
+    await restarted.runNext(task.id);
+    // 1 回目の古い会話は続けない
+    expect(restartedExecutor.calls).toHaveLength(1);
+    expect(argAfter(restartedExecutor.calls[0], "--resume")).toBeUndefined();
+    expect(restartedExecutor.stdins[0]).not.toContain(NOTE);
+    expect(restarted.get(task.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("再開を指定したのに別のセッションで始めたときは、続けたとは記録せず、理由を残す", async () => {
+    const { activity, service, executor } = setup([timeout(), completed(1_000)]);
+    emulateClaude(executor);
+    // いつも新しいセッションで始めるエージェント
+    executor.sessionIdOf = (_inv, runId) => `session-${runId}`;
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    await retry(service, task.id);
+    // 実行の前に続ける判断を記録し、続きではなかったと分かった後に記録し直す（新しい記録が優先される）
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "resumed" },
+      { mode: "restarted", reason: "resume_failed" },
+    ]);
+    activity.close();
+  });
+
+  it("AI が再開を拒んで失敗したときも、次の再開は同じ拒否を繰り返さず最初から実行し直す", async () => {
+    const { activity, service, executor } = setup([
+      timeout(),
+      { kind: "failed", reason: "error", message: "No conversation found with session ID: x" },
+      completed(1_000),
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    await retry(service, task.id);
+    // 実行の前に続ける判断を記録し、続きではなかったと分かった後に記録し直す（新しい記録が優先される）
+    expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "resumed" },
+      { mode: "restarted", reason: "resume_failed" },
+    ]);
+    await retry(service, task.id);
+    expect(executor.calls).toHaveLength(3);
+    expect(argAfter(executor.calls[2], "--resume")).toBeUndefined();
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     activity.close();
   });
 });
