@@ -12394,6 +12394,80 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("戻し先の判断の間にデーモンを停止したら、停止による中断を判断の失敗として採用せず（実装へ差し戻さない）、費用だけを記録する。再起動の後に判断し直す", async () => {
+        const { activity, service, executor, pulls, id } = await pausedRework([HOLD]);
+        pulls.feedbackList = [item("comment:stop")];
+        await service.checkPullRequests();
+        service.resume(id, {});
+        const judging = service.runNext(id);
+        const runId = await executor.started.promise;
+        const requested = types(service, id).filter((t) => t === "ChangesRequested").length;
+        // デーモンを止め始め、実行中のコンテナを止めた
+        service.beginShutdown();
+        executor.finishHeld(runId, {
+          kind: "failed",
+          reason: "error",
+          message: "container stopped",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 },
+          costUnknown: true,
+        });
+        await judging;
+        const judged = (service.get(id)?.activity ?? []).filter((e) => e.type === "ReworkJudged");
+        expect(judged.map((e) => e.payload)).toMatchObject([
+          { runResult: "interrupted", costUnknown: true },
+        ]);
+        expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(requested);
+        const task = service.get(id)?.task as Task;
+        expect(heldReview(task)?.keys).toEqual(["comment:stop"]);
+        expect(heldReview(task)?.judgement).toBeUndefined();
+        // 再起動の後、作業履歴から復元して、判断し直して反映する
+        const { service: again, executor: next } = makeService(
+          activity,
+          [rework("implement", "実装で直せる")],
+          { pulls, now: later },
+        );
+        await again.runNext(id);
+        expect(next.calls).toHaveLength(1);
+        expect(
+          again
+            .get(id)
+            ?.activity.slice(-2)
+            .map((e) => e.type),
+        ).toEqual(["ReworkJudged", "ChangesRequested"]);
+        activity.close();
+      });
+
+      it("承認待ちの PR の指摘の判断の間にデーモンを停止したときも、停止による中断を判断の失敗として採用せず、実装へ差し戻さない", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, executor, id } = await toImplementGate([HOLD], {
+          pulls,
+          now: later,
+        });
+        pulls.feedbackList = [item("comment:gate-stop")];
+        const checking = service.checkPullRequests();
+        const runId = await executor.started.promise;
+        service.beginShutdown();
+        executor.finishHeld(runId, {
+          kind: "failed",
+          reason: "error",
+          message: "container stopped",
+        });
+        await checking;
+        const events = service.get(id)?.activity ?? [];
+        expect(events.filter((e) => e.type === "ReworkJudged").map((e) => e.payload)).toMatchObject(
+          [{ runResult: "interrupted" }],
+        );
+        // 実装へ差し戻さず、指摘は未判断のまま、承認待ちに残る
+        expect(
+          events.filter((e) => e.type === "ChangesRequested" && e.payload.step === "implement"),
+        ).toHaveLength(0);
+        const task = service.get(id)?.task as Task;
+        expect(task.status).toBe("awaiting_approval");
+        expect(task.pendingReview?.keys).toEqual(["comment:gate-stop"]);
+        expect(task.pendingReview?.judgement).toBeUndefined();
+        activity.close();
+      });
+
       it("戻し先の判断の間に PR がマージされたら、判断を記録しても差し戻さない（設計への戻しでも前の工程を実行しない）。作り直しの停止が残した指摘を捨てる", async () => {
         const { activity, service, executor, pulls, id } = await pausedRework([
           HOLD,

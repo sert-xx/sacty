@@ -1312,11 +1312,13 @@ export class TaskService {
         pending.aiReview ?? [],
         config.config,
       );
-      // 判断を採用できないとき（一時停止を求められて実行を止めた・中止された・指摘や状態が変わった）は、判断は残さず、
+      // 判断を採用できないとき（一時停止・作り直しの停止（PR のマージ）・デーモンの停止のために実行を止めた・中止された・
+      // 指摘や状態が変わった）は、判断は残さず、
       // 使った費用だけを記録する（runResult が interrupted の ReworkJudged は、指摘を未判断のまま保つ）。再開したら判断し直す
       const latest = this.tasks.get(taskId);
       if (
-        (this.pauseRequested.has(taskId) && judged.runResult !== "completed") ||
+        ((this.pauseRequested.has(taskId) || this.mergeStopping.has(taskId) || this.stopping) &&
+          judged.runResult !== "completed") ||
         !latest?.pendingReview ||
         latest.pendingReview.judgement ||
         latest.pendingReview.keys.join() !== pending.keys.join() ||
@@ -2452,6 +2454,19 @@ export class TaskService {
       );
       // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
       const latest = this.tasks.get(task.id);
+      // デーモンを止める・中止するために止めた実行は、判断の失敗として採用しない（採用すると、実装をやり直すことになる）。
+      // 使った費用だけを記録し、指摘は未判断のまま残す（次の確認で判断し直す）
+      if ((this.stopping || this.cancelling.has(task.id)) && judged.runResult !== "completed") {
+        if (latest) {
+          this.append(latest, [
+            {
+              actor: "guardian",
+              event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
+            },
+          ]);
+        }
+        return;
+      }
       if (
         !latest?.pendingReview ||
         latest.pendingReview.judgement ||
