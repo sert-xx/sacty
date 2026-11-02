@@ -129,6 +129,16 @@ npm run build       # すべてのパッケージのビルド
 
 - 振る舞いを変えたら、テストを足すか直してください。
   直したテストが、変更を戻すと失敗することも確かめてください。
+- レビューの観点・自己レビュー・最終レビューの指示（`apps/daemon/default-context/skills/review/`、`apps/daemon/src/prompts.ts` の `selfReviewLines`・`outOfScopeLines`）を変えたら、指示の文言のテストに加えて、実験で見つかった取りこぼしに近い例に実際の AI を当てて確かめてください。
+  変更の前後で同じ例を複数回流して比べます（Claude Code の `claude` コマンドが要ります）。
+
+  ```sh
+  SACTY_REVIEW_EVAL=1 SACTY_REVIEW_EVAL_RUNS=5 SACTY_REVIEW_EVAL_LOG=/tmp/review-eval.log \
+    npx vitest run apps/daemon/src/review-eval.test.ts
+  ```
+
+  例は `apps/daemon/src/testing/review-eval/fixtures/` にあります。`SACTY_REVIEW_EVAL_MODEL` でモデルを、`SACTY_REVIEW_EVAL_AGENT` で担当の AI のコマンドを変えられます。
+  新しい取りこぼしが見つかったら、その入力を縮めた例を足します。
 - 画面の文言を足す・変えるときは、[画面の文言と補足](docs/spec/ui-wording.md) の規則に従ってください。
   本文は短くし、仕組みは補足に書きます。
   辞書の文字列は `apps/web/src/i18n/wording-policy.test.ts` で確かめます。
