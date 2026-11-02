@@ -47,6 +47,8 @@ export type CostRun = {
   costUsd: number;
   /** 換算した値（サブスクリプションなど）で、実際の請求ではない。 */
   estimated: boolean;
+  /** 使った分の全体を読めなかった（時間切れなど）。costUsd は読めた分（下限）で、0 は費用が無かったのではなく不明（PBI-281）。 */
+  costUnknown?: true;
   /** running：開始の記録だけがある（実行中）。 */
   result: "completed" | "failed" | "interrupted" | "running";
 };
@@ -58,6 +60,8 @@ export type CostRow = {
   usage?: TokenUsage;
   costUsd: number;
   estimated: boolean;
+  /** 費用が不明（下限）な実行の数（PBI-281）。 */
+  unknownRuns: number;
 };
 
 function addUsage(a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined {
@@ -77,6 +81,7 @@ function summarize<T extends { runs: CostRun[] }>(row: T) {
     usage: row.runs.reduce<TokenUsage | undefined>((sum, r) => addUsage(sum, r.usage), undefined),
     costUsd: row.runs.reduce((sum, r) => addUsd(sum, r.costUsd), 0),
     estimated: row.runs.some((r) => r.estimated),
+    unknownRuns: row.runs.filter((r) => r.costUnknown).length,
   };
 }
 
@@ -91,6 +96,7 @@ function runOf(
     usage?: TokenUsage;
     costUsd: number;
     estimated: boolean;
+    costUnknown?: boolean | undefined;
   },
   result: CostRun["result"],
 ): CostRun {
@@ -104,6 +110,7 @@ function runOf(
     ...(payload.usage ? { usage: payload.usage } : {}),
     costUsd: payload.costUsd,
     estimated: payload.estimated,
+    ...(payload.costUnknown ? { costUnknown: true as const } : {}),
     result,
   };
 }
@@ -130,7 +137,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
   // 開始した実行（終わりの記録で、使用量と費用を埋める）
   const started = new Map<string, CostRun>();
   // タスクの費用と同じ規則で足した合計
-  let budget = { usedUsd: 0, estimated: false };
+  let budget: { usedUsd: number; estimated: boolean; unknownRuns?: number } = {
+    usedUsd: 0,
+    estimated: false,
+  };
 
   /** 費用を持つイベントを、行に振り分ける。費用を持つ種類を足したら、ここで行を決めないと typecheck で落ちる。 */
   const place = (event: ChargedEvent) => {
@@ -186,6 +196,7 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           ...(!run.authMode && "authMode" in p ? { authMode: p.authMode } : {}),
           costUsd: p.costUsd,
           estimated: p.estimated,
+          ...("costUnknown" in p && p.costUnknown ? { costUnknown: true } : {}),
           result,
         });
         return;
@@ -231,6 +242,7 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           agentId: p.agentId,
           costUsd: p.costUsd,
           estimated: p.estimated,
+          ...(p.costUnknown ? { costUnknown: true } : {}),
           result: p.runResult,
         });
         return;
@@ -280,7 +292,12 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
   const total = summarize({ runs: rows.flatMap((r) => r.runs) });
   return {
     rows,
-    total: { usage: total.usage, costUsd: budget.usedUsd, estimated: budget.estimated },
+    total: {
+      usage: total.usage,
+      costUsd: budget.usedUsd,
+      estimated: budget.estimated,
+      unknownRuns: budget.unknownRuns ?? 0,
+    },
   };
 }
 

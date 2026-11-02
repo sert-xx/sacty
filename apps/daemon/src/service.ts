@@ -219,7 +219,7 @@ import {
   findDeploymentSkill,
 } from "./deployment.js";
 import { buildErrorReport, type ReportLocale } from "./error-report.js";
-import { errorText, MessageError } from "./errors.js";
+import { AgentTimeoutError, errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
   type GitHubAccount,
@@ -744,8 +744,19 @@ export type ProjectView = {
  * タスクの読み書きの窓口。書き込みは必ず作業履歴への追記を通り、
  * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
+/** 使った分の全体を読めなかった実行の印（イベントの costUnknown。読めたならイベントには持たせない。PBI-281）。 */
+function unknownCost(run: { costUnknown?: boolean | undefined }): { costUnknown?: true } {
+  return run.costUnknown ? { costUnknown: true } : {};
+}
+
 /** エージェントの実行の結果（費用を含む）。 */
-type Executed = { outcome: AgentOutcome; costUsd: number; estimated: boolean };
+type Executed = {
+  outcome: AgentOutcome;
+  costUsd: number;
+  estimated: boolean;
+  /** 使った分の全体を読めなかった（costUsd は読めた分の下限で、無ければ 0。時間切れなど。PBI-281）。 */
+  costUnknown?: true;
+};
 
 /** エージェントの1回の実行（TaskService.execute）に渡すもの。 */
 type ExecuteRun = {
@@ -2005,6 +2016,7 @@ export class TaskService {
       ...(outcome.usage ? { usage: outcome.usage } : {}),
       costUsd,
       estimated,
+      ...unknownCost(executed),
     };
     if (stopped()) return interrupted(cost);
     if (outcome.kind === "failed") return fail(outcome.message, cost);
@@ -2216,6 +2228,8 @@ export class TaskService {
     let agent = this.usableAgent(config, selected, task.id, run.role);
     let executed = await this.runGuardian(task, { ...run, agent }, code);
     let spent = 0;
+    // 失敗して代わりのエージェントで判定し直したとき、先の実行の使用量が不明なら、合計も不明（PBI-281）
+    let unknown = false;
     const tried = new Set([agent.id]);
     for (;;) {
       if (executed.outcome.kind !== "failed") break;
@@ -2229,6 +2243,7 @@ export class TaskService {
       if (switched?.event.type !== "AgentFellBack") break;
       this.append(this.mustGet(task.id), [switched]);
       spent += executed.costUsd;
+      unknown ||= executed.costUnknown === true;
       const next = definedAgent(config, switched.event.payload.fallbackAgentId);
       if (!next) break;
       agent = next;
@@ -2237,7 +2252,12 @@ export class TaskService {
     }
     // 1回の判定の中で試し終えたので、次の判定は、選んだエージェントから試す
     this.forgetTried(task.id, run.role);
-    return { ...executed, costUsd: executed.costUsd + spent, agent };
+    return {
+      ...executed,
+      costUsd: executed.costUsd + spent,
+      ...(unknown ? { costUnknown: true as const } : {}),
+      agent,
+    };
   }
 
   private async runGuardian(
@@ -2837,6 +2857,7 @@ export class TaskService {
       ...(choice.usage ? { usage: choice.usage } : {}),
       costUsd: choice.costUsd,
       estimated: choice.estimated,
+      ...unknownCost(choice),
     };
     const found = repo ? candidates.find((c) => sameGitHubUrl(c, repo)) : undefined;
     if (found) {
@@ -2926,6 +2947,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -3411,6 +3433,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -3513,6 +3536,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost(ran),
     };
     if (outcome.kind === "failed") {
       return {
@@ -3744,17 +3768,18 @@ export class TaskService {
     const targets = reworkTargets(task, gateStep);
     // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる。失敗したら、代わりのエージェントで判定し直す
-    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
-      task,
-      {
-        agent: config.guardianAgent,
-        image: config.image,
-        prompt: buildReworkPrompt(task, remarks, targets, gateStep),
-        role: "rework",
-      },
-      gateStep === "implement" ? "implemented" : "base",
-      config,
-    );
+    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
+      await this.runGuardianWithFallback(
+        task,
+        {
+          agent: config.guardianAgent,
+          image: config.image,
+          prompt: buildReworkPrompt(task, remarks, targets, gateStep),
+          role: "rework",
+        },
+        gateStep === "implement" ? "implemented" : "base",
+        config,
+      );
     const judgement =
       outcome.kind === "completed"
         ? extractRework(outcome.output, targets)
@@ -3768,6 +3793,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
   }
 
@@ -4823,7 +4849,7 @@ export class TaskService {
     const selected = agentFor(config, "orchestrator");
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で読む
     const agent = this.usableAgent(config, selected, task.id, "orchestrator");
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+    const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
       task,
       {
         agent,
@@ -4850,6 +4876,7 @@ export class TaskService {
       ...(outcome.usage ? { usage: outcome.usage } : {}),
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
     const fail = (reason: "usage_limit" | "auth" | "error", detail: DaemonText) => {
       const text = message("ticket.triageFailed", { detail });
@@ -6460,6 +6487,7 @@ export class TaskService {
                 ...(chosen.usage ? { usage: chosen.usage } : {}),
                 costUsd: chosen.costUsd,
                 estimated: chosen.estimated,
+                ...unknownCost(chosen),
               },
             },
           },
@@ -6931,6 +6959,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -7436,7 +7465,7 @@ export class TaskService {
         },
       ]);
       attempted = true;
-      const { outcome, costUsd, estimated } = await this.execute({
+      const { outcome, costUsd, estimated, costUnknown } = await this.execute({
         agent,
         taskId: task.id,
         runId,
@@ -7480,6 +7509,7 @@ export class TaskService {
                     usage: outcome.usage,
                     costUsd,
                     estimated,
+                    ...unknownCost({ costUnknown }),
                   },
                 }
               : {
@@ -7679,7 +7709,12 @@ export class TaskService {
       await rm(workspaceDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
-    const cost = { ...(outcome.usage ? { usage: outcome.usage } : {}), costUsd, estimated };
+    const cost = {
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+      costUsd,
+      estimated,
+      ...unknownCost(executed),
+    };
     // 人間が止めた・中止したなら、書き出せたかが分からない。費用だけを記録し、再開すると目印で探して続ける
     if (this.pauseRequested.has(task.id) || this.cancelling.has(task.id)) {
       return record("sacty", {
@@ -8045,6 +8080,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -9513,6 +9549,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -9762,11 +9799,9 @@ export class TaskService {
    * 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。オーケストレーター（質問への答えも）
    * は、タスクのセッションを使い回す（PBI-67）。返す runId は、最後に実行したもの（再開できずに新しく始め直したら変わる）。
    */
-  private async execute(
-    original: ExecuteRun,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+  private async execute(original: ExecuteRun): Promise<Executed & { runId: string }> {
     const run = this.withMemory(original);
-    let executed: { outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string };
+    let executed: Executed & { runId: string };
     if (run.role === "orchestrator") {
       // 同じタスクで、オーケストレーターの実行は同時に1つだけ（並ぶ）
       executed = await this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
@@ -9811,9 +9846,7 @@ export class TaskService {
    * 保存したセッションを複製して答え、保存しない（元のセッションに、質問と答えが混ざらない）。指示はこれまでどおり台帳から
    * 作る（セッションは経緯の補い）。どちらも、使ったセッションを作業履歴に残す。
    */
-  private async executeWithSession(
-    run: ExecuteRun,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+  private async executeWithSession(run: ExecuteRun): Promise<Executed & { runId: string }> {
     const store = this.deps.orchestratorSessions;
     const runtime = run.agent.runtime;
     if (!store || !this.deps.sessionLogs || (runtime !== "claude-code" && runtime !== "codex")) {
@@ -9882,7 +9915,11 @@ export class TaskService {
       run.onRunId?.(runId);
       const first = executed;
       executed = await this.executeOnce({ ...run, runId });
-      executed = { ...executed, costUsd: executed.costUsd + first.costUsd };
+      executed = {
+        ...executed,
+        costUsd: executed.costUsd + first.costUsd,
+        ...(first.costUnknown ? { costUnknown: true as const } : {}),
+      };
     }
     const archived = executed.archived;
     // 再開を指定したのに、エージェントが別のセッションの ID を出した（再開せずに新しく始めた）なら、新規として記録する。
@@ -9968,12 +10005,7 @@ export class TaskService {
       /** 再開するセッション（PBI-67）。 */
       session?: OrchestratorSessionResume;
     },
-  ): Promise<{
-    outcome: AgentOutcome;
-    costUsd: number;
-    estimated: boolean;
-    archived: ArchivedAgentSession | undefined;
-  }> {
+  ): Promise<Executed & { archived: ArchivedAgentSession | undefined }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
     // セッションログ（PBI-62）。実行に渡した秘密情報は、書く前に伏せる（準備の間に増えた分も）
@@ -10045,7 +10077,7 @@ export class TaskService {
     run: ExecuteRun & { session?: OrchestratorSessionResume },
     usedSecrets: string[],
     log: SessionLogHandle | undefined,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
+  ): Promise<Executed> {
     let outcome: AgentOutcome;
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
@@ -10200,7 +10232,17 @@ export class TaskService {
       outcome = {
         kind: "failed",
         reason: error instanceof SecretNotFoundError ? "auth" : "error",
-        message: errorText(error),
+        // 時間切れで止めても、コンテナが止まったことを確かめられなかったなら、その結果にする（動いたままかもしれないので、
+        // 代わりのエージェントに切り替えず、同じ作業領域で操作が重ならないように止める）
+        message:
+          error instanceof AgentTimeoutError && error.unconfirmedContainer
+            ? message("run.containerNotConfirmed", { name: error.unconfirmedContainer })
+            : errorText(error),
+        // 時間切れで止めた実行は、止めるまでに読めた使用量を費用にする。読めなければ不明（0 とは記録しない。PBI-281）
+        ...(error instanceof AgentTimeoutError && error.usage ? { usage: error.usage } : {}),
+        ...(error instanceof AgentTimeoutError && error.costUnknown
+          ? { costUnknown: true as const }
+          : {}),
       };
     } finally {
       gatewayRun?.close();
@@ -10222,7 +10264,12 @@ export class TaskService {
       run.agent.auth.mode === "stub" ||
       run.estimateCost === true;
     const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
-    return { outcome, costUsd, estimated };
+    return {
+      outcome,
+      costUsd,
+      estimated,
+      ...(outcome.kind === "failed" && outcome.costUnknown ? { costUnknown: true as const } : {}),
+    };
   }
 
   /** ゲートウェイのリトライを、実行中のタスクの作業履歴に記録する（PBI-37）。 */
@@ -10288,17 +10335,18 @@ export class TaskService {
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる。失敗したら、代わりのエージェントで
     // 判定し直す
-    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
-      task,
-      {
-        agent: config.guardianAgent,
-        image: config.image,
-        prompt: buildGuardianPrompt(task, proposal),
-        role: "guardian",
-      },
-      "base",
-      config,
-    );
+    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
+      await this.runGuardianWithFallback(
+        task,
+        {
+          agent: config.guardianAgent,
+          image: config.image,
+          prompt: buildGuardianPrompt(task, proposal),
+          role: "guardian",
+        },
+        "base",
+        config,
+      );
     const judgement =
       outcome.kind === "completed"
         ? extractVerdict(outcome.output)
@@ -10316,6 +10364,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
   }
 
@@ -10647,7 +10696,7 @@ export class TaskService {
       // 実行中の工程のログも、いまの写しを読ませる（処理が長引いているときに、いまの様子を答えられるように）
       const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId, true);
       // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
-      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+      const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
         task,
         {
           agent,
@@ -10675,6 +10724,7 @@ export class TaskService {
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         costUsd,
         estimated,
+        ...unknownCost({ costUnknown }),
       };
       // 秘密情報は、execute が出力の全文から取り除いている（切り詰めるのは、その後）
       const answer = outcome.kind === "completed" ? outcome.output.trim() : "";
@@ -10834,7 +10884,7 @@ export class TaskService {
           reportFile = false;
         }
       }
-      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+      const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
         task,
         {
           agent,
@@ -10861,6 +10911,7 @@ export class TaskService {
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         costUsd,
         estimated,
+        ...unknownCost({ costUnknown }),
       };
       const text = outcome.kind === "completed" ? outcome.output.trim() : "";
       if (this.cancelling.has(task.id)) {

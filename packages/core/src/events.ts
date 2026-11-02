@@ -884,6 +884,11 @@ const StepsChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -905,6 +910,11 @@ const StepsSkipped = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -954,6 +964,11 @@ const AgentRunCompleted = z.object({
     costUsd: z.number().nonnegative(),
     /** サブスクリプションなど、実際の請求ではなく換算した値か。 */
     estimated: z.boolean(),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
     output: z.string(),
     /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
@@ -1005,6 +1020,11 @@ const AgentRunFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1156,6 +1176,11 @@ const ChangeJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1317,6 +1342,11 @@ const FinalReviewed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1494,6 +1524,11 @@ const InformationGathered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1515,6 +1550,11 @@ const TicketTriaged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1534,6 +1574,11 @@ const RepositoryChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1576,6 +1621,11 @@ const QuestionAnswered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1608,6 +1658,11 @@ const ErrorAnalyzed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1643,6 +1698,11 @@ const OutputExported = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1691,6 +1751,11 @@ const OrchestratorFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1710,6 +1775,11 @@ const FinalReviewFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2060,6 +2130,11 @@ const ReworkJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2437,6 +2512,11 @@ const DeploymentChecked = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { AgentTimeoutError } from "../errors.js";
 import { DockerExecutor, RunningContainers } from "./docker.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
@@ -159,6 +160,256 @@ describe("実行の上限（PBI-150）", () => {
         timeoutMs: 15,
       }),
     ).rejects.toThrow(`エージェントの実行が ${15 / 60_000} 分を超えたため止めました。`);
+  });
+});
+
+describe("時間切れで止めた実行の使用量（PBI-281）", () => {
+  const assistantLine = (id: string, output: number) =>
+    `${JSON.stringify({
+      type: "assistant",
+      message: {
+        id,
+        content: [{ type: "text", text: "..." }],
+        usage: { input_tokens: 2, cache_read_input_tokens: 1000, output_tokens: output },
+      },
+    })}\n`;
+
+  async function timedOut(
+    outputs: string[],
+    parser: "claude-json" | "codex-jsonl" = "claude-json",
+  ) {
+    const docker = fakeDocker([0]);
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor
+      .run({
+        runId: "t",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation: { command: ["sh", "-c", "sleep 9"], env: {}, parser },
+        timeoutMs: 30,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await new Promise((r) => setTimeout(r, 5));
+    for (const out of outputs) docker.run()?.stdout.emit("data", out);
+    return running;
+  }
+
+  it("時間切れまでに出力された発言の使用量を、エラーに添える（結果が出る前なので、全体は不明）", async () => {
+    const error = await timedOut([
+      assistantLine("m1", 8),
+      assistantLine("m1", 8),
+      assistantLine("m2", 16),
+    ]);
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toEqual({
+      input: 4,
+      cacheRead: 2000,
+      cacheWrite: 0,
+      output: 24,
+    });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("出力が1つも無ければ、使用量は無く、不明にもしない（何も使っていない）", async () => {
+    const error = await timedOut([]);
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toBeUndefined();
+    expect((error as AgentTimeoutError).costUnknown).toBe(false);
+  });
+
+  it("途中の行（改行まで届いていない）が壊れていても落ちない", async () => {
+    const error = await timedOut([assistantLine("m1", 8), '{"type":"assistant","mess']);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 8 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("時間切れの後、停止の確認より遅れて届いた出力も、子プロセスが終わるまで待って拾う", async () => {
+    const calls: string[][] = [];
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker kill / docker ps は、すぐ成功する（コンテナは消えている）。docker run だけが、出力を出し切ってから終わる
+      else setTimeout(() => child.emit("close", 0), 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    const running = executor
+      .run({
+        runId: "late",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation,
+        timeoutMs: 20,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    // 時間切れ（20ms）の後、停止の確認が済んだ後に、最後の出力と終了が届く
+    await new Promise((r) => setTimeout(r, 80));
+    run?.stdout.emit("data", assistantLine("m1", 8));
+    run?.stdout.emit("data", assistantLine("m2", 16).slice(0, 20));
+    run?.stdout.emit("data", assistantLine("m2", 16).slice(20));
+    run?.emit("close", 137);
+    const error = await running;
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 24 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("コンテナが止まったことを確かめられなくても、確認の失敗の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker ps は、止めた後もコンテナを返し続ける
+      else
+        setTimeout(() => {
+          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
+          child.emit("close", 0);
+        }, 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor.run({
+      runId: "unconfirmed",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    run?.stdout.emit("data", assistantLine("m1", 8));
+    executor.kill("unconfirmed");
+    run?.emit("close", 137);
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+      usage: { output: 8 },
+      costUnknown: true,
+    });
+  });
+
+  it("時間切れの後に停止の確認が失敗しても、分割されて遅れて届く出力を待ってから使用量を確定する", async () => {
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    // 停止の確認の完了そのもの（RunningContainers.finish が失敗を返した時点）を観測する
+    let stopCheckDone = false;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker ps は、止めた後もコンテナを返し続ける（停止の確認は失敗する）
+      else
+        setTimeout(() => {
+          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
+          child.emit("close", 0);
+        }, 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    const containers = (
+      executor as unknown as {
+        containers: { retryMs: number; finish(name: string): Promise<boolean> };
+      }
+    ).containers;
+    containers.retryMs = 1;
+    const finish = containers.finish.bind(containers);
+    containers.finish = async (name) => {
+      const stopped = await finish(name);
+      stopCheckDone = !stopped;
+      return stopped;
+    };
+    const running = executor
+      .run({ runId: "late2", image: "img", workspaceDir: "/tmp", invocation, timeoutMs: 20 })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await new Promise((r) => setTimeout(r, 5));
+    // assistant の行を前後に分ける。前半は時間切れの前に、後半は停止の確認が失敗した後に届く
+    const line = assistantLine("m1", 8);
+    run?.stdout.emit("data", line.slice(0, 30));
+    // 停止の確認が失敗で終わったことを観測してから（タイマーを 1 周待つので、実行側の続きは進んでいる）、後半を送る
+    await vi.waitFor(() => expect(stopCheckDone).toBe(true));
+    run?.stdout.emit("data", line.slice(30));
+    run?.emit("close", 137);
+    const error = await running;
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 8 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+    // 停止を確かめられなかったことも、エラーで伝える（呼ぶ側が代わりの実行を始めないため）
+    expect((error as AgentTimeoutError).unconfirmedContainer).toBe("sacty-run-late2");
+  });
+
+  it("デーモンの停止（abortAll）で止めた実行も、停止の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
+    const docker = fakeDocker([0]);
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor.run({
+      runId: "abort",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    docker.run()?.stdout.emit("data", assistantLine("m1", 8));
+    executor.abortAll();
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.daemonStopped" },
+      usage: { output: 8 },
+      costUnknown: true,
+    });
+    // 何も出力が無ければ、使用量も不明の印も付けない
+    const quiet = fakeDocker([0]);
+    const second = new DockerExecutor(60_000, quiet.spawnImpl);
+    (second as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const secondRun = second.run({
+      runId: "abort2",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    second.abortAll();
+    const nothing = await secondRun;
+    expect(nothing).toMatchObject({ kind: "failed", message: { code: "run.daemonStopped" } });
+    expect(nothing).not.toHaveProperty("costUnknown");
+    expect(nothing).not.toHaveProperty("usage");
+  });
+
+  it("Codex は番が終わるまで使用量を出さないので、使用量は無く、不明", async () => {
+    const error = await timedOut(
+      [
+        `${JSON.stringify({ type: "thread.started", thread_id: "t" })}\n`,
+        `${JSON.stringify({ type: "turn.started" })}\n`,
+      ],
+      "codex-jsonl",
+    );
+    expect((error as AgentTimeoutError).usage).toBeUndefined();
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
   });
 });
 

@@ -18,7 +18,7 @@ Related ADRs: none
 - `actor` is one of `person`, `sacty`, `orchestrator`, `gatherer` (information gathering at the start of a task; [Tasks and steps](tasks-and-steps.en.md#information-gathering)), `guardian`, `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
 - Most events that used AI carry the following.
   - Token counts (`usage`: `input`, `cacheRead`, `cacheWrite`, `output`)
-  - Cost (`costUsd`) and whether it is estimated (`estimated`)
+  - Cost (`costUsd`), whether it is estimated (`estimated`), and whether the usage of the whole run could not be read (`costUnknown`; only on events that can record a failure)
   - The AI settings used (`authMode`, `model`, `reasoningEffort`)
   - The run ID (`runId`)
 - Events have no version number. Older activity logs are read through schema defaults (`.default`), optional fields (`.optional`), and conversions (`.transform`).
@@ -96,6 +96,12 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `DeploymentChecked` | The after-merge watch step (`deployment`; [After-merge watch](deployment-watch.en.md)) |
   | `ChangeJudged`, `ReworkJudged`, `FinalReviewed`, `FinalReviewFailed` | Goal Guardian (`guardian`) |
 
+- For a run stopped (for example by a timeout) before the usage of the whole run could be read, sacty adds the part it could read (a lower bound) to `costUsd` and marks the event with `costUnknown` (PBI-281).
+  - The mark goes on the events that can record a failed run: `AgentRunFailed`, `OrchestratorFailed`, `StepsSkipped`, `ChangeJudged`, `ReworkJudged`, `FinalReviewFailed`, `QuestionAnswered`, `ErrorAnalyzed`, `OutputExported`, and `DeploymentChecked`.
+  - If nothing could be read, `costUsd` stays 0, and this 0 means unknown, not that nothing was spent. How it is read is under output handling in [Agent execution](agent-execution.en.md).
+  - For a judgement redone with a fallback agent after a failure, or a run restarted in a new session after a resume was refused, the total is unknown if the earlier run was unknown. So the events that record a success (`AgentRunCompleted`, `StepsChosen`, `TicketTriaged`, `RepositoryChosen`, `InformationGathered`, and `FinalReviewed`) can carry `costUnknown` too.
+  - `chargeBudget` counts the marked events in `budget.unknownRuns` (absent when none). The part that could be read counts toward the budget check.
+  - The screen and the activity log show "or more" when some part could be read and "unknown" when none could, and never show $0. Success records whose line does not show cost (`StepsChosen`, `InformationGathered`, `TicketTriaged`, and `RepositoryChosen`) show the mark at the end too.
 - The projection and the per-step cost table both add cost with the same rule (`chargeBudget`). If a kind not in the list carries `costUsd`, the type check fails and typecheck does not pass.
 - The cost of audits of completed tasks (`Audit…` events) is held in `auditCostUsd` and is not counted toward the task budget. It is added to the audit's own budget (`usedUsd` in the task's audit state; [Audit](audit.en.md)).
 - The budget state (`budgetState`) is as follows.
@@ -145,6 +151,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot
   3. Export, answers to questions, error analysis, and the Goal Guardian (only when recorded)
 - Ticket reading and repository selection decided by a person, and `StepsChosen` from the era of fixed steps (no agent, cost, or usage), are not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order. So they match the task's cost (`budget.usedUsd`, `budget.estimated`).
+- A run with `costUnknown` shows "or more" when some part could be read and "unknown" when none could, in the per-run breakdown, the step rows, and the total. Below the table, a note gives the number of unknown runs (`unknownRuns`; the total is the same as `budget.unknownRuns`). The "Cost" in the right column of the task detail shows the number too.
 - The table's cells carry no mark for whether a cost is estimated (a converted estimate), to keep the table readable. The hint on the table's heading explains that converted values are not actual charges.
 
 Code: `apps/web/src/lib/labels.ts` (`describeEvent`), `apps/web/src/lib/step-costs.ts` (`stepCosts`), `apps/web/src/components/step-costs.tsx` (`StepCosts`)

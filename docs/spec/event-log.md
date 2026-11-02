@@ -22,7 +22,7 @@
 - `actor` は `person`・`sacty`・`orchestrator`・`gatherer`（タスクの開始時の情報収集。[タスクと工程](tasks-and-steps.md#情報収集)）・`guardian`・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
 - AI を使ったイベントの多くは、次を持つ。
   - トークン数（`usage`：`input`・`cacheRead`・`cacheWrite`・`output`）
-  - 費用（`costUsd`）と、推定かどうか（`estimated`）
+  - 費用（`costUsd`）と、推定かどうか（`estimated`）、使った分の全体を読めなかったか（`costUnknown`。失敗しうるイベントだけ）
   - 使った AI の設定（`authMode`・`model`・`reasoningEffort`）
   - 実行の ID（`runId`）
 - イベントの版の番号は無い。
@@ -111,6 +111,12 @@
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。
   一覧に無い種類が `costUsd` を持つと、型の検査で typecheck が通らない。
+- 時間切れなどで使った分の全体を読めなかった実行は、読めた分（下限）を `costUsd` に足し、イベントに `costUnknown` を付ける（PBI-281）。
+  - 付けるのは、実行の失敗を記録しうる `AgentRunFailed`・`OrchestratorFailed`・`StepsSkipped`・`ChangeJudged`・`ReworkJudged`・`FinalReviewFailed`・`QuestionAnswered`・`ErrorAnalyzed`・`OutputExported`・`DeploymentChecked`。
+  - 読めなければ `costUsd` は 0 のままで、この 0 は費用が無かったのではなく不明を意味する。拾い方は[エージェントの実行](agent-execution.md)の出力の扱い。
+  - 失敗して代わりのエージェントで判定し直した判定や、再開を断られて新しいセッションで始め直した実行は、先の実行が不明なら合計も不明にする。そのため、成功を記録するイベント（`AgentRunCompleted`・`StepsChosen`・`TicketTriaged`・`RepositoryChosen`・`InformationGathered`・`FinalReviewed`）も `costUnknown` を持てる。
+  - `chargeBudget` は、印のあるイベントの回数を `budget.unknownRuns` に数える（無ければ持たない）。読めた分は予算の判定に入る。
+  - 画面と作業履歴は、読めた分があれば「以上」、読めなければ「不明」と出し、$0 とは見せない。費用を文に出さない成功の記録（`StepsChosen`・`InformationGathered`・`TicketTriaged`・`RepositoryChosen`）も、印があれば末尾に出す。
 - 完了したタスクの監査（`Audit…` のイベント）の費用は `auditCostUsd` に持ち、タスクの予算には入れない。
   監査の予算（タスクの監査の状態の `usedUsd`）に足す（[監査](audit.md)）。
 - 予算の状態（`budgetState`）は次のとおり。
@@ -169,6 +175,8 @@
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足す。
   そのため、タスクの費用（`budget.usedUsd`・`budget.estimated`）と一致する。
+- 不明な実行（`costUnknown`）は、実行ごとの内訳・工程の行・合計で、読めた分があれば「以上」、無ければ「不明」と出す。
+  表の下に、不明の回数（`unknownRuns`。合計は `budget.unknownRuns` と同じ）の注記を出す。タスクの詳細の右の列の「費用」にも、不明の回数を出す。
 - 表のセルには、推定（換算した概算）かどうかの印を出さない（表を読みにくくするため）。
   換算値で実際の請求ではないことは、表の見出しの補足で説明する。
 
