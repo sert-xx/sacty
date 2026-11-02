@@ -3193,7 +3193,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
     expect(prompt.indexOf("--- 要求要件の本文に書くもの ---")).toBeLessThan(
       prompt.indexOf(PARTIAL),
     );
-    expect(prompt).toContain("今回：requirements-1-1");
+    expect(prompt).toContain("今回の指摘（requirements-1-1）");
     // 成果物の全体を出し直す（直した所だけを返さない）
     expect(prompt).toContain("要求要件の全体を出し直す（直した所だけを返さない）");
     // 前回の下書きより後ろ（指摘のあと）に直し方が来る
@@ -3244,8 +3244,8 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       }),
       "requirements",
     );
-    expect(prompt).toContain("今回：requirements-2-1）");
-    expect(prompt).not.toContain("今回：requirements-1-1");
+    expect(prompt).toContain("今回の指摘（requirements-2-1）");
+    expect(prompt).not.toContain("今回の指摘（requirements-1-1");
     expect(prompt).toContain(
       "前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている",
     );
@@ -3260,7 +3260,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       "requirements",
     );
     expect(voided).not.toContain("前の差し戻しの指摘（今回の指摘より前のもの）");
-    expect(voided).toContain("今回：requirements-2-1）");
+    expect(voided).toContain("今回の指摘（requirements-2-1）");
   });
 
   it("セルフレビューは、範囲を直した所に絞り、小さい指摘なら回数を初回を含めて 2 回までにする", () => {
@@ -3329,7 +3329,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       remarks: [...rerun.remarks, remark("design-2-1", "design", 2, "間隔を 3 秒にする")],
     } as Partial<Task>);
     const promptAgain = buildPrompt(again, "design");
-    expect(promptAgain).toContain("今回：design-2-1）");
+    expect(promptAgain).toContain("今回の指摘（design-2-1）");
   });
 
   it("設計の差し戻しも同じ。テスト観点は全件を出し直させ、ID の付け直しは sacty に任せる", () => {
@@ -3344,13 +3344,33 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
     expect(prompt).toContain(
       "--- 差し戻しの直し方（前回の設計とテスト観点を元に、指摘に関わる所だけを書き換える） ---",
     );
-    expect(prompt).toContain("今回：design-1-1");
+    expect(prompt).toContain("今回の指摘（design-1-1）");
     expect(prompt).toContain("節の選び方・テスト観点の書き方");
     expect(prompt).toContain("テスト観点は、直さないものも含めて全件を出し直してください");
     expect(prompt).toContain("設計とテスト観点の全体を出し直す");
     expect(prompt).toContain("初回を含めて 2 回");
     // 設計に EARS の決まりは出さない
     expect(prompt).not.toContain("ID（R-n");
+  });
+
+  it("AI のレビューの指摘だけの差し戻しでも、直し方の指示は指摘の出どころを人間に限らない（PBI-275 レビュー指摘）", () => {
+    const aiOnly = {
+      remarks: [
+        {
+          ...remark("requirements-1-1", "requirements", 1, "R-2 の上限が無い"),
+          source: "sacty_review",
+        },
+      ],
+    } as unknown as Partial<Task>;
+    for (const output of ["# 要求要件 v1\n\n- R-1 …", ""]) {
+      const prompt = buildPrompt(
+        redo({ ...aiOnly, outputs: { requirements: output } } as Partial<Task>),
+        "requirements",
+      );
+      const rework = prompt.slice(prompt.indexOf("--- 差し戻しの直し方"));
+      expect(rework).toContain("今回の指摘");
+      expect(rework).not.toContain("人間の指摘");
+    }
   });
 
   it("前回の下書きが読めない（空）ときは、元にせず指摘に対応して書き直し、セルフレビューは通常どおりにする", () => {
@@ -3361,7 +3381,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       );
       expect(prompt).toContain("--- 差し戻しの直し方（前回の要求要件が読めません） ---");
       expect(prompt).toContain(
-        "元にできないので、人間の指摘にすべて対応するように、要求要件を書き直す",
+        "元にできないので、今回の指摘にすべて対応するように、要求要件を書き直す",
       );
       expect(prompt).not.toContain(PARTIAL);
       expect(prompt).not.toContain("一字一句そのまま保つ");

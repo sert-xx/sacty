@@ -287,11 +287,15 @@ export class GitHubPullRequests implements PullRequests {
       );
     };
     // sacty のレビューのタスクの投稿（AI のレビュー）は、人の指摘と見分けて渡す。対象にしたコミットも添える（PBI-275）
+    // 行へのコメントの commit_id は、後の push で PR の今の head に付け替わるので、レビューの時点のコミットとして使えない。
+    // 親レビューの commit_id（無ければ original_commit_id）を使う（PBI-275 レビュー指摘）
     const aiReview = (
       item: Record<string, unknown>,
+      reviewCommit?: (item: Record<string, unknown>) => unknown,
     ): Pick<PullRequestFeedback, "source" | "commit"> => {
       if (!sactyRound(item)?.allowed) return {};
-      const commit = typeof item.commit_id === "string" ? item.commit_id.trim() : "";
+      const raw = reviewCommit ? reviewCommit(item) : item.commit_id;
+      const commit = typeof raw === "string" ? raw.trim() : "";
       return { source: "sacty_review", ...(commit ? { commit } : {}) };
     };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
@@ -305,6 +309,9 @@ export class GitHubPullRequests implements PullRequests {
       await get(`/pulls/${n}/comments?per_page=100`),
       await get(`/issues/${n}/comments?per_page=100`),
     ];
+    const reviewCommits = new Map(reviews.map((r) => [r.id, r.commit_id]));
+    const commentCommit = (c: Record<string, unknown>) =>
+      reviewCommits.get(c.pull_request_review_id) ?? c.original_commit_id;
     const items: PullRequestFeedback[] = [];
     for (const r of reviews.filter(human)) {
       // 承認は指摘ではない（既存のレビューとして渡すときだけ、本文のある承認を含める）。コメントだけのレビューは本文があるときだけ
@@ -342,7 +349,7 @@ export class GitHubPullRequests implements PullRequests {
         body: body(c),
         path: String(c.path ?? ""),
         ...(typeof line === "number" ? { line } : {}),
-        ...aiReview(c),
+        ...aiReview(c, commentCommit),
       });
     }
     for (const c of comments.filter(human)) {

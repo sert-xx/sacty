@@ -427,6 +427,8 @@ const ja = {
     /** 人の指摘と AI のレビューの指摘が混ざった差し戻しの、内訳。 */
     humanAndAiRemarks: (human: number, ai: number) => `人間${human}件・AI のレビュー${ai}件`,
     changesRemark: (id: string, text: string) => `${id}：${text}`,
+    /** AI のレビューの指摘の1件（人の指摘と混ざった差し戻しの詳細で、出どころが分かるようにする）。 */
+    changesRemarkAi: (id: string, text: string) => `${id}（AI のレビュー）：${text}`,
     /** 差し戻しの原因を、作業履歴の行の後ろに足す（PBI-268）。 */
     changesCause: (cause: string) => `（原因：${cause}）`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
@@ -908,6 +910,7 @@ const en: LabelMessages = {
     aiReviewActor: "AI review",
     humanAndAiRemarks: (human, ai) => `${human} from a person, ${ai} from AI review`,
     changesRemark: (id, text) => `${id}: ${text}`,
+    changesRemarkAi: (id, text) => `${id} (AI review): ${text}`,
     changesCause: (cause) => ` (cause: ${cause})`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
     more: "Details",

@@ -5,6 +5,7 @@ import {
   changeRounds,
   deliveredWithoutChanges,
   gatePullRequest,
+  isAiReviewRemark,
   lastChangeRound,
   MAX_CHANGE_REQUESTS,
   pullRequestConflict,
@@ -172,6 +173,9 @@ export function ReviewView({ task }: { task: Task }) {
                     taskId={task.id}
                     submission={submission}
                     current={remark.round === latestRound}
+                    mixedRound={remarks.some(
+                      (other) => other.round === remark.round && !isAiReviewRemark(other),
+                    )}
                     t={t.remark}
                   />
                 ))}
@@ -305,12 +309,15 @@ export function RemarkItem({
   taskId,
   submission,
   current,
+  mixedRound = false,
   t,
 }: {
   remark: TaskRemark;
   taskId: string;
   submission: number;
   current: boolean;
+  /** 同じ工程・同じ回に人の指摘もある（その回は差し戻しの回数に数える）。 */
+  mixedRound?: boolean;
   t: Messages["review"]["remark"];
 }) {
   return (
@@ -334,7 +341,7 @@ export function RemarkItem({
               : "border-input text-muted-foreground",
           )}
         >
-          {remark.source === "sacty_review"
+          {isAiReviewRemark(remark) && !mixedRound
             ? t.aiRound(remark.round, current)
             : t.round(remark.round, current)}
         </span>

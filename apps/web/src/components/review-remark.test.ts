@@ -12,7 +12,7 @@ vi.mock("next/link", () => ({
 
 const { RemarkItem } = await import("./review");
 
-const render = (remark: Partial<TaskRemark>, lang: "ja" | "en" = "ja") =>
+const render = (remark: Partial<TaskRemark>, lang: "ja" | "en" = "ja", mixedRound = false) =>
   renderToStaticMarkup(
     createElement(RemarkItem, {
       remark: {
@@ -26,6 +26,7 @@ const render = (remark: Partial<TaskRemark>, lang: "ja" | "en" = "ja") =>
       taskId: "t1",
       submission: 3,
       current: true,
+      mixedRound,
       t: messagesFor(lang).review.remark,
     }),
   );
@@ -41,5 +42,13 @@ describe("承認の画面の指摘（PBI-275）", () => {
     expect(human).toContain("2回目の差し戻し");
     expect(human).not.toContain("AI のレビュー");
     expect(render({ source: "sacty_review" }, "en")).toContain("AI review");
+  });
+
+  it("人の指摘と混ざる回では、AI の指摘にも「数えない」と出さず、通常の回の表示にする（その回は上限に数える）", () => {
+    const mixed = render({ source: "sacty_review" }, "ja", true);
+    expect(mixed).toContain("AI のレビュー");
+    expect(mixed).toContain("2回目の差し戻し");
+    expect(mixed).not.toContain("数えない");
+    expect(render({ source: "sacty_review" }, "en", true)).not.toContain("not counted");
   });
 });

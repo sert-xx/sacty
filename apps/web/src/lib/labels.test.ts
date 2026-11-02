@@ -225,6 +225,13 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(describeEventParts(requested([human]), ja).text).toBe(
       "要求要件を差し戻し：指摘1件（人間）",
     );
+    // 展開した詳細にも、AI のレビューの指摘の印が付く（承認待ちを終えた後も、混ざった回の出どころが分かる）
+    expect(describeEventParts(requested([ai, human]), ja).detail).toBe(
+      "requirements-2-1（AI のレビュー）：AI の指摘\nrequirements-2-2：人の指摘",
+    );
+    expect(describeEventParts(requested([ai, human]), labels.en).detail).toBe(
+      "requirements-2-1 (AI review): AI の指摘\nrequirements-2-2: 人の指摘",
+    );
     const imported = (items: { source?: "sacty_review" }[]) =>
       describeEvent(
         event({

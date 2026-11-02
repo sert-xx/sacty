@@ -357,7 +357,14 @@ export function describeEventParts(
     // 差し戻しの指摘の本文。承認の画面は承認待ちの間しか読めないので、後から作業履歴で読み返せるようにする
     return {
       text: describeEventText(event, l),
-      detail: event.payload.remarks.map((r) => l.event.changesRemark(r.id, r.text)).join("\n"),
+      // 人の指摘と AI のレビューの指摘が混ざった回でも、各指摘の出どころが分かるように、AI の指摘に印を付ける（PBI-275）
+      detail: event.payload.remarks
+        .map((r) =>
+          r.source === "sacty_review"
+            ? l.event.changesRemarkAi(r.id, r.text)
+            : l.event.changesRemark(r.id, r.text),
+        )
+        .join("\n"),
     };
   }
   if (event.type === "TaskResumed" && event.payload.note) {

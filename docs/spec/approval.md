@@ -390,7 +390,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - 回の番号と指摘の ID（`<工程>-<回>-<番号>`）は、AI のレビューの回も含めて続ける（`lastChangeRound`）。
   - AI のレビューの指摘だけの差し戻しは、上限に達していてもエスカレーションにしない。
   - 費用の上限は、今までどおり効く。
-- 古い head へのレビュー：レビューが対象にした PR の head（レビュー・行へのコメントのコミット。`PullRequestFeedback.commit`）が、取り込むときの PR の今の head（`status` の `headSha`）と違えば、取り込まずに捨てる。
+- 古い head へのレビュー：レビューが対象にした PR の head（レビューのコミット。行へのコメントは、後の push で今の head に付け替わる `commit_id` ではなく、親レビューの `commit_id`（無ければ `original_commit_id`）。`PullRequestFeedback.commit`）が、取り込むときの PR の今の head（`status` の `headSha`）と違えば、取り込まずに捨てる。
   - 捨てたものは `PullRequestReviewDiscarded`（actor `sacty`。`reason: stale_head`・今の head・捨てた指摘と対象のコミット）に残し、取り込み済み（`importedFeedback`）にする。差し戻さず、ゴールガーディアンも動かさない。以降も取り込み直さない。
   - 対象のコミットが分からない投稿は、古いかどうか分からないので取り込む。短いコミットの表記は先頭の一致で比べる。
   - PR の head を読めないときは、AI のレビューだけ今回は取り込まず、次の確認で確かめ直す（人の指摘は取り込む）。
@@ -399,7 +399,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - 工程のエージェント（実装・要求要件・設計など）の指示、最終レビュー・統合レビュー・戻し先の判断・質問への答え・監査の指示で、「人間の指摘」の節と「AI のレビューの指摘（人間の指摘ではない）」の節に分ける（`remarkSections`・`reworkRemarkLines`）。
   - AI のレビューの指摘が並ぶときは、人の指摘にある「さっきの指摘」「前の指摘」などは、AI のレビューの指摘ではなく人の指摘を指す、と人の指摘の節に添える。
   - 戻し先の判断では、AI のレビューの指摘は人が新しく足した要望（`new_request`）ではない、と添える。
-- 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。
+- 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。作業履歴の差し戻しを展開した詳細にも、AI のレビューの指摘に印を付ける。承認の画面で「差し戻しの回数に数えない」と添えるのは、その回に人の指摘が無いときだけ。
   ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
 
 コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）

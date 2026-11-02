@@ -1449,6 +1449,7 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
             body: "<!-- sacty-review:r1 -->\n上限が無い",
             path: "src/retry.ts",
             line: 3,
+            pull_request_review_id: 1,
             commit_id: head,
             created_at: at(3),
           },
@@ -1476,6 +1477,75 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
       ["review_comment:4", undefined, undefined],
       ["comment:5", "sacty_review", undefined],
       ["comment:6", undefined, undefined],
+    ]);
+  });
+
+  it("行へのコメントの commit_id は後の push で今の head に付け替わるので、親レビューの commit_id（無ければ original_commit_id）を使う", async () => {
+    const reviewed = "b".repeat(40);
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: me,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\n## sacty のレビュー",
+            commit_id: reviewed,
+            submitted_at: at(1),
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          // レビューの後に push があり、commit_id は今の head、original_commit_id はレビューの時点
+          {
+            id: 3,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n上限が無い",
+            path: "src/retry.ts",
+            line: 3,
+            pull_request_review_id: 1,
+            commit_id: head,
+            original_commit_id: reviewed,
+            created_at: at(3),
+          },
+          // 親レビューが分からないときは original_commit_id
+          {
+            id: 4,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n別の指摘",
+            path: "src/retry.ts",
+            line: 4,
+            commit_id: head,
+            original_commit_id: reviewed,
+            created_at: at(4),
+          },
+          // どちらも無ければ、今の head を使わず、コミットは無し
+          {
+            id: 5,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\nコミット不明",
+            path: "src/retry.ts",
+            line: 5,
+            commit_id: head,
+            created_at: at(5),
+          },
+        ],
+      },
+      { status: 200, json: [] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+      sactyReviews: [{ key: "r1", account: "sacty-bot", allowed: true }],
+    });
+    expect(feedback.map((f) => [f.key, f.commit])).toEqual([
+      ["review:1", reviewed],
+      ["review_comment:3", reviewed],
+      ["review_comment:4", reviewed],
+      ["review_comment:5", undefined],
     ]);
   });
 

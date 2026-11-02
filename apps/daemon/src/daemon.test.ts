@@ -10332,6 +10332,64 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("人の差し戻しが上限（3回）に達した後も、AI のレビューの指摘だけなら取り込み、人の回数は増えない。続く人の指摘では上限が効く", async () => {
+        const pulls = new FakePulls();
+        const ids: string[] = [];
+        const humanCycle = () => {
+          ids.push(`implement-${ids.length + 1}-1`);
+          return [implement("# 実装"), passing([...ids])];
+        };
+        const { activity, service, id } = await toImplementGate(
+          [
+            // 人の差し戻し 3 回（上限）
+            ...humanCycle(),
+            ...humanCycle(),
+            ...humanCycle(),
+            // AI のレビューの指摘だけの差し戻し 1 回
+            rework("implement", "実装で直せる"),
+            ...humanCycle(),
+            // そのあとの人の指摘は、上限を超えるので判断だけして、エスカレーションになる
+            rework("implement", "実装で直せる"),
+          ],
+          { pulls, now: later },
+        );
+        for (let n = 1; n <= 3; n++) {
+          service.requestChanges(id, {
+            step: "implement",
+            submission: service.get(id)?.task.gate?.submission ?? 0,
+            comments: [`人の指摘${n}`],
+          });
+          await drain(service);
+          expect(service.get(id)?.task.gate?.step, `人 ${n}`).toBe("implement");
+        }
+        let task = service.get(id)?.task;
+        if (!task) throw new Error("no task");
+        expect(changeRounds(task, "implement")).toBe(3);
+        // 上限に達していても、AI のレビューの指摘だけならエスカレーションにならず、取り込んで作り直す
+        pulls.feedbackList = [aiItem(pulls, "review:1")];
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.status).toBe("queued");
+        await drain(service);
+        task = service.get(id)?.task;
+        if (!task) throw new Error("no task");
+        expect(task.gate?.step).toBe("implement");
+        expect(types(service, id)).not.toContain("TaskEscalated");
+        // 人の回数は 3 のまま（AI のレビューの回は数えない）
+        expect(changeRounds(task, "implement")).toBe(3);
+        expect(lastChangeRound(task, "implement")).toBe(4);
+        expect(task.remarks.find((r) => r.id === "implement-4-1")?.source).toBe("sacty_review");
+        // 続く人の指摘では、上限が効く
+        pulls.feedbackList = [...pulls.feedbackList, item("comment:901")];
+        await service.checkPullRequests();
+        task = service.get(id)?.task;
+        expect(task?.status).toBe("escalated");
+        expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
+        expect(task?.escalation?.pendingRemarks).toEqual([
+          { id: "implement-5-1", text: "全体として、失敗時のログが足りない" },
+        ]);
+        activity.close();
+      });
+
       it("人の指摘と AI のレビューの指摘が混ざった取り込みは、指摘の出どころを残し、判断とやり直しに分けて渡し、人の差し戻しに数える", async () => {
         const pulls = new FakePulls();
         const { activity, service, executor, id } = await toImplementGate(
