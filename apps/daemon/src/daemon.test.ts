@@ -12353,16 +12353,35 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         service.resume(id, {});
         const judging = service.runNext(id);
         const runId = await executor.started.promise;
-        await service.pause(id);
+        const before = service.get(id)?.task.budget as Task["budget"];
+        // 中断した実行は、使用量を読めた分（$0.30）と、全体は読めなかった印を持って終わる
+        const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 };
+        executor.finishHeld(runId, {
+          kind: "failed",
+          reason: "error",
+          message: "container stopped",
+          usage,
+          costUnknown: true,
+        });
+        const pausing = service.pause(id);
         await judging;
+        await pausing;
         expect(executor.killed).toEqual([runId]);
         let task = service.get(id)?.task as Task;
         expect(task.status).toBe("paused");
-        // 判断は採用せず、使った実行の記録だけを残す（費用・使用量が履歴から消えない）。指摘は未判断のまま
+        // 判断は採用せず、使った実行の記録だけを残す（費用・使用量・費用不明の印が履歴から消えない）。指摘は未判断のまま
         const interrupted = (service.get(id)?.activity ?? []).filter(
           (e) => e.type === "ReworkJudged",
         );
-        expect(interrupted.map((e) => e.payload)).toMatchObject([{ runResult: "interrupted" }]);
+        expect(interrupted.map((e) => e.payload)).toMatchObject([
+          { runResult: "interrupted", usage, costUnknown: true },
+        ]);
+        const charged =
+          interrupted[0]?.type === "ReworkJudged" ? interrupted[0].payload.costUsd : 0;
+        expect(charged).toBeGreaterThan(0);
+        // 投影後の集計：費用が予算に入り、全体を読めなかった実行として数える
+        expect(task.budget.usedUsd).toBeCloseTo(before.usedUsd + charged, 6);
+        expect(task.budget.unknownRuns).toBe((before.unknownRuns ?? 0) + 1);
         expect(heldReview(task)?.keys).toEqual(["comment:p"]);
         expect(heldReview(task)?.judgement).toBeUndefined();
         // 再開すると判断し直して、実装に差し戻す
