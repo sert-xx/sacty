@@ -309,6 +309,7 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
 
   it("時間切れの後に停止の確認が失敗しても、分割されて遅れて届く出力を待ってから使用量を確定する", async () => {
     let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    let psCalls = 0;
     const spawnImpl = ((_cmd: string, args: string[]) => {
       const child = Object.assign(new EventEmitter(), {
         stdout: new EventEmitter(),
@@ -320,7 +321,10 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
       // docker ps は、止めた後もコンテナを返し続ける（停止の確認は失敗する）
       else
         setTimeout(() => {
-          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
+          if (args[0] === "ps") {
+            psCalls++;
+            child.stdout.emit("data", "abc123\n");
+          }
           child.emit("close", 0);
         }, 0);
       return child;
@@ -337,13 +341,16 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     // assistant の行を前後に分ける。前半は時間切れの前に、後半は停止の確認が失敗した後に届く
     const line = assistantLine("m1", 8);
     run?.stdout.emit("data", line.slice(0, 30));
-    await new Promise((r) => setTimeout(r, 100));
+    // 停止の確認が最後まで失敗した（docker ps をリトライの上限まで呼んだ）ことを観測してから、後半を送る
+    await vi.waitFor(() => expect(psCalls).toBeGreaterThanOrEqual(11));
     run?.stdout.emit("data", line.slice(30));
     run?.emit("close", 137);
     const error = await running;
     expect(error).toBeInstanceOf(AgentTimeoutError);
     expect((error as AgentTimeoutError).usage).toMatchObject({ output: 8 });
     expect((error as AgentTimeoutError).costUnknown).toBe(true);
+    // 停止を確かめられなかったことも、エラーで伝える（呼ぶ側が代わりの実行を始めないため）
+    expect((error as AgentTimeoutError).unconfirmedContainer).toBe("sacty-run-late2");
   });
 
   it("デーモンの停止（abortAll）で止めた実行も、停止の理由を保ったまま、読めた使用量と不明の印を残す", async () => {

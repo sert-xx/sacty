@@ -30,7 +30,7 @@
   - 設定を読めなければ、ふつうの役割は 30 分、最終レビュー・再現・PR のレビューは 50 分（30 分に 20 分を足す）。
   - 実行ごとに読むので、次の実行から効く。
   - 過ぎたらコンテナを止め、時間切れ（`run.timeout`。その実行の上限の分を添える）にする。
-  - 止めるまでに標準出力へ出た分から使用量を拾い、時間切れのエラー（`AgentTimeoutError`）に添える。止めた後、docker run の子プロセスが終わって残りの出力を読み終えるのを、最大 5 秒待ってから確定する（`TIMEOUT_DRAIN_MS`）。拾い方は「出力の扱い」の結果が出る前に止まった実行。呼ぶ側は、拾えた分を費用に記録する（`executeLogged`）。
+  - 止めるまでに標準出力へ出た分から使用量を拾い、時間切れのエラー（`AgentTimeoutError`）に添える。止めた後、docker run の子プロセスが終わって残りの出力を読み終えるのを、最大 5 秒待ってから確定する（`TIMEOUT_DRAIN_MS`）。拾い方は「出力の扱い」の結果が出る前に止まった実行。呼ぶ側は、拾えた分を費用に記録する（`executeLogged`）。止めた後にコンテナが止まったことを確かめられなかったときは、エラーでそれを伝え（`unconfirmedContainer`）、呼ぶ側は結果を `run.containerNotConfirmed` にする（動いたままかもしれないので、代わりのエージェントに切り替えない）。
 - 止めるときは `docker kill` し、`docker ps -aq --filter name=^/<名前>$` が空になるまで、1秒おきに最大11回確かめる。
   止まったことを確かめられなければ、結果を `run.containerNotConfirmed` にし、認証ファイルの書き戻しとセッションのファイルの保存をしない。
 - 標準エラー出力に `Unable to find image`・`No such image`・`pull access denied` があれば、イメージが無い（`run.imageMissing`）とする。

@@ -2677,6 +2677,37 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("時間切れで止めた後にコンテナが止まったことを確かめられなかった実行も、代わりに切り替えずに止める（使用量は残す）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1_000)], {
+        config: withFallback(),
+        secrets,
+      });
+      let runs = 0;
+      executor.run = async () => {
+        runs++;
+        const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+        error.usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 };
+        error.costUnknown = true;
+        error.unconfirmedContainer = "sacty-run-x";
+        throw error;
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toEqual([]);
+      // 代わりの実行は始まらず（呼んだのは 1 回）、止めた理由は確認の失敗になり、読めた使用量は費用に残る
+      await service.runNext(task.id);
+      expect(runs).toBe(1);
+      const failed = service.get(task.id)?.activity.find((e) => e.type === "AgentRunFailed");
+      expect(failed?.payload).toMatchObject({
+        message: { code: "run.containerNotConfirmed", params: { name: "sacty-run-x" } },
+        costUsd: 0.3,
+        costUnknown: true,
+      });
+      activity.close();
+    });
+
     it("代わりのエージェントが無ければ、これまでどおり止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(

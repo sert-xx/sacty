@@ -17,6 +17,8 @@ export class MessageError extends Error {
 export class AgentTimeoutError extends MessageError {
   usage: TokenUsage | undefined;
   costUnknown = false;
+  /** 止めた後、コンテナが止まったことを確かめられなかったときの、コンテナの名前。動いたままかもしれないので、代わりの実行を始めない。 */
+  unconfirmedContainer: string | undefined;
 }
 
 /** エラーの理由。sacty のエラーはコードと引数、それ以外（外から来たエラー）はその文のまま。 */

@@ -9911,7 +9911,12 @@ export class TaskService {
       outcome = {
         kind: "failed",
         reason: error instanceof SecretNotFoundError ? "auth" : "error",
-        message: errorText(error),
+        // 時間切れで止めても、コンテナが止まったことを確かめられなかったなら、その結果にする（動いたままかもしれないので、
+        // 代わりのエージェントに切り替えず、同じ作業領域で操作が重ならないように止める）
+        message:
+          error instanceof AgentTimeoutError && error.unconfirmedContainer
+            ? message("run.containerNotConfirmed", { name: error.unconfirmedContainer })
+            : errorText(error),
         // 時間切れで止めた実行は、止めるまでに読めた使用量を費用にする。読めなければ不明（0 とは記録しない。PBI-281）
         ...(error instanceof AgentTimeoutError && error.usage ? { usage: error.usage } : {}),
         ...(error instanceof AgentTimeoutError && error.costUnknown

@@ -582,6 +582,8 @@ export class DockerExecutor implements AgentExecutor {
         timedOut.error.usage = partial.usage;
         // 途中で止めたので、出力が1つでも届いていれば、読めた分は下限（最後の結果の後の分は分からない）
         timedOut.error.costUnknown = reader.started;
+        // 時間切れで止めても、コンテナが止まったことを確かめられなければ、呼ぶ側に伝える（outcome は、投げるエラーを置き換えない）
+        if (!stopped) timedOut.error.unconfirmedContainer = containerName;
       }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       // コンテナが止まったことを確かめられなければ、認証ファイルを書き戻さない（動いたままのコンテナは、書き戻す途中の
