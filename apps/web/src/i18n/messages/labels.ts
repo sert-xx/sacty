@@ -578,8 +578,10 @@ const ja = {
         : `修正の連鎖が上限（${max}段）に達したため、修正のタスクを作らなかった`,
     SecurityFixRequested: (category: string, title: string) =>
       `セキュリティ対応のタスクを作った（${category}）：${title}`,
-    ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
-      `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
+    ReworkJudged: (target: string | undefined, reason: string, tail: string, discarded: boolean) =>
+      discarded
+        ? `戻し先の判断を採用しなかった（一時停止・中止などで。指摘は未判断のまま残し、再開したら判断し直す・${tail}）`
+        : `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
     // 完了したタスクの監査（PBI-125）
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
@@ -1061,8 +1063,10 @@ const en: LabelMessages = {
         : `Did not create a fix task because the chain reached the limit (${max})`,
     SecurityFixRequested: (category, title) =>
       `Created a security fix task (${category}): ${title}`,
-    ReworkJudged: (target, reason, tail) =>
-      `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
+    ReworkJudged: (target, reason, tail, discarded) =>
+      discarded
+        ? `The judgment of the step to redo was not adopted (a pause, a cancel, or a change; the comments stay unjudged and are judged again on resume · ${tail})`
+        : `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,

@@ -931,6 +931,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.target ? l.step[event.payload.target] : undefined,
         l.text(event.payload.reason),
         withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+        event.payload.runResult === "interrupted",
       );
     // マージの後の監視（PBI-89）
     case "DeploymentWatchStarted":

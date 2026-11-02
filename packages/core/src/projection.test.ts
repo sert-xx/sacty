@@ -4101,6 +4101,50 @@ describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
     expect(() => project([...stoppedAtReview("t"), judged("t"), changes("t")])).toThrow();
   });
 
+  it("判断を採用しなかった記録（interrupted）は、費用だけを足し、指摘は未判断のまま保つ。続けて判断を記録できる", () => {
+    const interrupted = () =>
+      ev(
+        "t",
+        {
+          type: "ReworkJudged",
+          payload: {
+            reason: { code: "run.guardianFailed", args: { detail: "x" } } as never,
+            agentId: "g",
+            runResult: "interrupted",
+            costUsd: 2,
+            estimated: false,
+          },
+        },
+        "guardian",
+      );
+    seq = 0;
+    const before = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+    ]).get("t");
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      interrupted(),
+    ]).get("t");
+    expect(task?.budget.usedUsd).toBeCloseTo((before?.budget.usedUsd ?? 0) + 2, 6);
+    expect(task && heldReview(task)?.judgement).toBeUndefined();
+    seq = 0;
+    const judgedAfter = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      interrupted(),
+      judged("t", "implement"),
+    ]).get("t");
+    expect(judgedAfter && heldReview(judgedAfter)?.judgement).toMatchObject({
+      target: "implement",
+    });
+  });
+
   it("実装の PR がマージされたら、残した指摘は捨てる（作り直しを止める記録が消す）", () => {
     seq = 0;
     const task = project([

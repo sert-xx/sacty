@@ -1748,6 +1748,9 @@ export function applyEvent(
     }
 
     case "ReworkJudged": {
+      // 判断を採用しなかった（一時停止を求められて実行を止めた・中止された・指摘や状態が変わった）。費用だけを残し
+      // （費用は下で足す）、指摘は未判断のまま保つ（PBI-279）
+      if (event.payload.runResult === "interrupted") break;
       if (!task.pendingReview || task.pendingReview.judgement) {
         throw new ActivityIntegrityError(event, "no review is waiting for a judgement");
       }

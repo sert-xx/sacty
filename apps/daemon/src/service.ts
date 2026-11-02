@@ -1250,7 +1250,7 @@ export class TaskService {
     const recheck = this.heldRecheck.has(taskId);
     if (!pr || (!recheck && !task.pendingReview)) return false;
     if (!pr.repo) this.heldRecheck.delete(taskId);
-    let state: PullRequestStatus["state"] | undefined;
+    let status: PullRequestStatus | undefined;
     if (pr.repo) {
       const usedSecrets: string[] = [];
       let token: string | undefined;
@@ -1268,86 +1268,118 @@ export class TaskService {
         );
         if (recheck) return true;
       }
-      // 残した指摘があるときだけ、マージ済みかを確かめる（マージ済みなら、作り直しの停止が捨てる。PBI-276）
+      // 残した指摘があるときだけ、マージ済みかを確かめる（読めなければ分からないので、そのまま進める）
       if (token !== undefined && this.tasks.get(taskId)?.pendingReview) {
-        state = await this.pullRequestState(pr.repo, token, pr.number);
+        status = await this.deps.pulls
+          .status({ repo: pr.repo, token, number: pr.number })
+          .catch(() => undefined);
       }
     }
     const held = this.tasks.get(taskId);
     const pending = held ? heldReview(held) : undefined;
     if (!held || !pending) return false;
-    if (this.cancelling.has(taskId) || (held.status !== "queued" && held.status !== "idle")) {
+    // 中止・作り直しの停止（PR のマージ）・一時停止の途中なら、反映しない（それぞれの処理が、残した指摘を扱う）
+    if (
+      this.cancelling.has(taskId) ||
+      this.mergeStopping.has(taskId) ||
+      (held.status !== "queued" && held.status !== "idle")
+    ) {
       return true;
     }
-    // マージされた PR の作り直しは、止めて承認として進める（その確認が、残した指摘も捨てる）。ここでは反映しない
-    if (state === "merged") return false;
+    // マージされた PR は、反映せずに、作り直しを止めてマージを承認として進める（残した指摘は捨てる。PBI-276）
+    if (status?.state === "merged") return this.endHeldByMerge(held, status);
     const config = this.deps.config();
     if (!config.ok) return true; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
-    let current = held;
     if (!pending.judgement) {
+      // 判断の実行は費用がかかる。予算の上限に達していれば、実行せずに止める（工程の実行の前の確認と同じ）
+      if (budgetState(held.budget) === "exceeded") {
+        this.append(held, [
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        ]);
+        return true;
+      }
       const judged = await this.judgeRework(
-        current,
+        held,
         "implement",
         pending.remarks,
         pending.aiReview ?? [],
         config.config,
       );
-      // 一時停止を求められて判断の実行を止めたなら、判断できなかったことは残さない（再開したら、判断し直す）
-      if (this.pauseRequested.has(taskId) && judged.runResult !== "completed") return true;
-      // 判断の間に、中止された・別の状態になったなら、判断だけを残す（反映は次の実行で）
+      // 判断を採用できないとき（一時停止を求められて実行を止めた・中止された・指摘や状態が変わった）は、判断は残さず、
+      // 使った費用だけを記録する（runResult が interrupted の ReworkJudged は、指摘を未判断のまま保つ）。再開したら判断し直す
       const latest = this.tasks.get(taskId);
       if (
+        (this.pauseRequested.has(taskId) && judged.runResult !== "completed") ||
         !latest?.pendingReview ||
         latest.pendingReview.judgement ||
         latest.pendingReview.keys.join() !== pending.keys.join() ||
         (latest.status !== "queued" && latest.status !== "idle") ||
         this.cancelling.has(taskId)
       ) {
+        if (latest) {
+          this.append(latest, [
+            {
+              actor: "guardian",
+              event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
+            },
+          ]);
+          this.warnIfNeeded(this.mustGet(taskId));
+        }
         return true;
       }
-      current = this.append(latest, [
-        { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
-      ]);
-      if (this.pauseRequested.has(taskId)) return true;
+      this.warnIfNeeded(
+        this.append(latest, [
+          { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
+        ]),
+      );
       // 判断の間（実行は長い）に、PR がマージされたかもしれない。差し戻す前に読み直し、マージ済みなら反映しない
       // （戻し先が設計・要求要件だと、作り直しの停止の対象外になり、マージ済みなのに前の工程を実行してしまうため）
       if (pr.repo) {
         const usedSecrets: string[] = [];
         try {
-          const token = await this.githubToken(current, pr.repo, usedSecrets);
-          if ((await this.pullRequestState(pr.repo, token, pr.number)) === "merged") return false;
+          const token = await this.githubToken(held, pr.repo, usedSecrets);
+          const reread = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+          const merging = this.tasks.get(taskId);
+          if (reread.state === "merged" && merging && !this.mergeStopping.has(taskId)) {
+            return this.endHeldByMerge(merging, reread);
+          }
         } catch (error) {
           console.warn(
             `[daemon] PR #${pr.number}（${pr.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
           );
         }
       }
-      // 読んでいる間に、中止された・別の状態になったなら、差し戻さない
-      const settling = this.tasks.get(taskId);
-      if (
-        !settling ||
-        this.cancelling.has(taskId) ||
-        (settling.status !== "queued" && settling.status !== "idle") ||
-        !heldReview(settling)?.judgement ||
-        // 状態を読んでいる間に、作り直しの停止（PR のマージ）が始まった・一時停止を求められたなら、古い応答で差し戻さない
-        this.mergeStopping.has(taskId) ||
-        this.pauseRequested.has(taskId)
-      ) {
-        return true;
-      }
-      current = settling;
     }
-    this.settleHeldReview(current);
+    // 差し戻す直前（判断済みの経路も含む）に、読んでいる間に変わっていないかを確かめる。中止された・別の状態になった・
+    // 作り直しの停止（PR のマージ）が始まった・一時停止を求められたなら、古い応答で差し戻さない
+    const settling = this.tasks.get(taskId);
+    if (
+      !settling ||
+      this.cancelling.has(taskId) ||
+      this.mergeStopping.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      (settling.status !== "queued" && settling.status !== "idle") ||
+      !heldReview(settling)?.judgement
+    ) {
+      return true;
+    }
+    this.settleHeldReview(settling);
     return true;
   }
 
-  /** PR の今の状態（実装の PR。読めなければ例外）。 */
-  private async pullRequestState(
-    repo: string,
-    token: string,
-    number: number,
-  ): Promise<PullRequestStatus["state"]> {
-    return (await this.deps.pulls.status({ repo, token, number })).state;
+  /**
+   * 再開したタスクで、反映する前に実装の PR がマージされていたので、反映せずに、作り直しを止めてマージを承認として進める
+   * （PBI-276 と同じ記録。実行中の処理はこの実行だけなので、止める実行は無い）。呼び出し元は反映の対象として扱い終える（true）。
+   */
+  private endHeldByMerge(task: Task, status: Extract<PullRequestStatus, { state: "merged" }>) {
+    const reworking = reworkingPullRequest(task);
+    if (reworking) {
+      this.endReworkByMerge(task.id, reworking.number, status, {
+        stoppedRuns: [],
+        stage: this.reworkStage(task),
+      });
+    }
+    return true;
   }
 
   /**
@@ -2469,7 +2501,11 @@ export class TaskService {
     let head: string | undefined;
     try {
       head = (await this.deps.pulls.status({ ...pr, token })).headSha?.trim() || undefined;
-    } catch {
+    } catch (error) {
+      // 原因は残す（確かめ直すまで AI のレビューを扱わないので、続くと止まっているように見える）。トークンは伏せる
+      console.warn(
+        `[daemon] タスク ${taskId.slice(0, 8)} の PR #${pr.number}（${pr.repo}）の head を確認できませんでした（AI のレビューは確認できるまで扱いません）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+      );
       head = undefined;
     }
     if (!head) {
