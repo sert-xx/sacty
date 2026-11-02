@@ -2832,6 +2832,44 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
     expect(back?.verification).toBe("pending");
   });
 
+  it("不合格のあとの実装で判定を読み取れなかった回があっても、前の判定（lastReview）と不合格の回数・やり直しの指示の元は消えない（PBI-277）", () => {
+    seq = 0;
+    const id = "v4";
+    const unreadableReview = () =>
+      ev(
+        id,
+        {
+          type: "FinalReviewFailed",
+          payload: {
+            reason: "error",
+            message: {
+              code: "verify.finalReviewUnreadable",
+              params: { count: 1, max: 3, path: "p" },
+            },
+            verdictUnreadable: true,
+            agentId: "g",
+          },
+        },
+        "guardian",
+      );
+    const events = [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ...implemented(id, "i1"),
+      reviewed(id, 1),
+      ...implemented(id, "i2"),
+    ];
+    const before = project(events).get(id);
+    expect(before?.verifyFailures).toBe(1);
+    expect(before?.lastReview?.tests?.exitCode).toBe(1);
+    const after = project([...events, unreadableReview(), unreadableReview()]).get(id);
+    expect(after?.verification).toBe("pending");
+    expect(after?.unreadableReviews).toBe(2);
+    expect(after?.verifyFailures).toBe(before?.verifyFailures);
+    expect(after?.lastReview).toEqual(before?.lastReview);
+    expect(after?.verifyFeedback).toEqual(before?.verifyFeedback);
+  });
+
   it("それより前の版の記録（sacty がテストを実行した TestsRun）も読め、次の実装でその結果を持ち越さない", () => {
     seq = 0;
     const id = "v2";

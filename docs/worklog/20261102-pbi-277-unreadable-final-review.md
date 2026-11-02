@@ -28,7 +28,7 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| （PR 前） | - |
+| projection のテストが lastReview 未設定・不合格0回の状態だけで、既存の判定や不合格回数を消す回帰を検出できない（Sacty のレビュー・提案） | 不合格の `FinalReviewed` → 次の実装完了 → 読み取れなかった回、の順に適用し、`lastReview`・`verifyFailures`・`verifyFeedback` が変わらないテストを足した。読み取れなかった回に `lastReview` と `verifyFailures` を消す変更を入れると、足したテストだけが落ちることを確かめた |
 
 ## 残したこと
 
