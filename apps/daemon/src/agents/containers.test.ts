@@ -309,7 +309,8 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
 
   it("時間切れの後に停止の確認が失敗しても、分割されて遅れて届く出力を待ってから使用量を確定する", async () => {
     let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
-    let psCalls = 0;
+    // 停止の確認の完了そのもの（RunningContainers.finish が失敗を返した時点）を観測する
+    let stopCheckDone = false;
     const spawnImpl = ((_cmd: string, args: string[]) => {
       const child = Object.assign(new EventEmitter(), {
         stdout: new EventEmitter(),
@@ -321,16 +322,24 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
       // docker ps は、止めた後もコンテナを返し続ける（停止の確認は失敗する）
       else
         setTimeout(() => {
-          if (args[0] === "ps") {
-            psCalls++;
-            child.stdout.emit("data", "abc123\n");
-          }
+          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
           child.emit("close", 0);
         }, 0);
       return child;
     }) as never;
     const executor = new DockerExecutor(60_000, spawnImpl);
-    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const containers = (
+      executor as unknown as {
+        containers: { retryMs: number; finish(name: string): Promise<boolean> };
+      }
+    ).containers;
+    containers.retryMs = 1;
+    const finish = containers.finish.bind(containers);
+    containers.finish = async (name) => {
+      const stopped = await finish(name);
+      stopCheckDone = !stopped;
+      return stopped;
+    };
     const running = executor
       .run({ runId: "late2", image: "img", workspaceDir: "/tmp", invocation, timeoutMs: 20 })
       .then(
@@ -341,8 +350,8 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     // assistant の行を前後に分ける。前半は時間切れの前に、後半は停止の確認が失敗した後に届く
     const line = assistantLine("m1", 8);
     run?.stdout.emit("data", line.slice(0, 30));
-    // 停止の確認が最後まで失敗した（docker ps をリトライの上限まで呼んだ）ことを観測してから、後半を送る
-    await vi.waitFor(() => expect(psCalls).toBeGreaterThanOrEqual(11));
+    // 停止の確認が失敗で終わったことを観測してから（タイマーを 1 周待つので、実行側の続きは進んでいる）、後半を送る
+    await vi.waitFor(() => expect(stopCheckDone).toBe(true));
     run?.stdout.emit("data", line.slice(30));
     run?.emit("close", 137);
     const error = await running;
