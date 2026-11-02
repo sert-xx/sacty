@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-02（UTC）
 - タスク: PBI-281
-- PR: なし
+- PR: #277
 - ブランチ: feat/issue-281-timeout-cost
 - 関係する ADR: [結果が出る前に止めた実行は、出力から読めた分を費用に入れ、読めなければ 0 ではなく不明と記録する](../adr/20261102-1730-record-cost-of-runs-stopped-before-result.md)
 
