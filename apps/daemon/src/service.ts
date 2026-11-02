@@ -7,6 +7,7 @@ import {
   type ActivityEvent,
   type Actor,
   AdoptAuditProposalInput,
+  type AgentRunContinuedReason,
   ANSWER_MAX,
   ApproveStepInput,
   AskQuestionInput,
@@ -9928,6 +9929,28 @@ export class TaskService {
       }
     }
     const resuming = plan?.mode === "resume" ? plan : undefined;
+    // 続ける・続けない判断は、実行の前に記録する。実行の途中でデーモンが止まると、実行の後の記録も写したファイルの記録も残らず、
+    // 開始を残さない役割（最終レビュー・ゴールガーディアンなど）は、次の実行が古い会話をもう一度続けてしまうため
+    const continued = (mode: "resumed" | "restarted", reason?: AgentRunContinuedReason) =>
+      plan && (runtime === "claude-code" || runtime === "codex")
+        ? this.recordTimeoutEvent(run.taskId, {
+            type: "AgentRunContinued",
+            payload: {
+              runId: run.runId,
+              role: run.role,
+              agentId: run.agent.id,
+              runtime,
+              stoppedRunId: plan.stopped.runId,
+              mode,
+              ...(mode === "resumed" && resuming ? { sessionId: resuming.sessionId } : {}),
+              ...(reason ? { reason } : {}),
+            },
+          })
+        : undefined;
+    if (plan) {
+      if (resuming) continued("resumed");
+      else if (plan.mode === "restart") continued("restarted", plan.reason);
+    }
     const { archived, ...executed } = await this.executeOnce(
       resuming
         ? {
@@ -9939,28 +9962,15 @@ export class TaskService {
           }
         : run,
     );
-    if ((runtime === "claude-code" || runtime === "codex") && plan) {
-      // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは記録しない
-      const rejected =
-        resuming &&
-        (resumeRejected(runtime, executed.outcome) ||
-          (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId));
-      this.recordTimeoutEvent(run.taskId, {
-        type: "AgentRunContinued",
-        payload: {
-          runId: run.runId,
-          role: run.role,
-          agentId: run.agent.id,
-          runtime,
-          stoppedRunId: plan.stopped.runId,
-          ...(resuming && !rejected
-            ? { mode: "resumed" as const, sessionId: resuming.sessionId }
-            : {
-                mode: "restarted" as const,
-                reason: plan.mode === "restart" ? plan.reason : ("resume_failed" as const),
-              }),
-        },
-      });
+    // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは言えないので、
+    // 理由を記録し直す（新しい記録が優先される）
+    if (
+      resuming &&
+      (runtime === "claude-code" || runtime === "codex") &&
+      (resumeRejected(runtime, executed.outcome) ||
+        (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
+    ) {
+      continued("restarted", "resume_failed");
     }
     const minutes =
       executed.outcome.kind === "failed" ? timeoutMinutes(executed.outcome.message) : undefined;

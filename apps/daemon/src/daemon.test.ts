@@ -12880,6 +12880,53 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.get(id)?.task.lastReview?.passed).toBe(true);
       activity.close();
     });
+
+    it("再開した最終レビューの実行中にデーモンが止まっても、古いセッションをもう一度続けない（開始を残さない役割）", async () => {
+      const sessionLogs = new SessionLogStore(join(dir, "runs"));
+      const claudeId = (inv: Invocation, runId: string) =>
+        argAfter(inv, "--resume") ?? `session-${runId}`;
+      const emulate = (executor: FakeExecutor) => {
+        executor.appendSessionFiles = true;
+        executor.sessionIdOf = claudeId;
+        executor.sessionFiles = (inv, runId) => ({
+          [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ run: runId })}\n`,
+        });
+      };
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), timeout, HOLD],
+        { sessionLogs },
+      );
+      emulate(executor);
+      const finalReviews = () =>
+        (service.get(id)?.activity ?? []).flatMap((e) =>
+          e.type === "AgentRunTimedOut" && e.payload.role === "final-review"
+            ? [e.payload.runId]
+            : [],
+        );
+      // 最終レビューが時間切れで止まる
+      await drain(service);
+      const [stopped] = finalReviews();
+      expect(stopped).toBeTruthy();
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 再開した最終レビュー（開始の記録を残さない）の実行中に、デーモンが止まる
+      service.resume(id, {});
+      void service.runNext(id);
+      await executor.started.promise;
+      expect(argAfter(executor.calls.at(-1), "--resume")).toBe(`session-${stopped}`);
+      const { service: restarted, executor: next } = makeService(activity, [review()], {
+        sessionLogs,
+      });
+      emulate(next);
+      restarted.recoverInterrupted();
+      // 復旧した後、最終レビューをやり直しても、1 回目の古い会話は続けない
+      if (restarted.get(id)?.task.status === "paused") restarted.resume(id, {});
+      await drain(restarted);
+      expect(next.calls.length).toBeGreaterThan(0);
+      expect(promptOf(next, 0)).toContain("sacty-final-review");
+      expect(argAfter(next.calls[0], "--resume")).toBeUndefined();
+      expect(next.stdins[0]).not.toContain("【時間切れからの再開】");
+      activity.close();
+    });
   });
 });
 
@@ -23244,7 +23291,9 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     await retry(service, task.id);
+    // 実行の前に続ける判断を記録し、続きではなかったと分かった後に記録し直す（新しい記録が優先される）
     expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "resumed" },
       { mode: "restarted", reason: "resume_failed" },
     ]);
     activity.close();
@@ -23260,7 +23309,9 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     await retry(service, task.id);
+    // 実行の前に続ける判断を記録し、続きではなかったと分かった後に記録し直す（新しい記録が優先される）
     expect(continuedOf(service, task.id)).toMatchObject([
+      { mode: "resumed" },
       { mode: "restarted", reason: "resume_failed" },
     ]);
     await retry(service, task.id);
