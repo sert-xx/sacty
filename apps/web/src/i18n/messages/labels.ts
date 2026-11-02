@@ -334,6 +334,8 @@ const ja = {
             : "PR の CI が時間内に終わらなかった。最終レビューへ",
     VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
+    WorkspaceFilesSkipped: (count: number) =>
+      `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
     BranchPushed: (branch: string, commit: string) =>
       `Sacty のブランチにプッシュ（${branch}・${commit}）`,
     TaskBranchCreated: (branch: string, commit: string) =>
@@ -825,6 +827,8 @@ const en: LabelMessages = {
     VerificationOverridden: "A person moved the task to review despite the failed final review",
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
+    WorkspaceFilesSkipped: (count) =>
+      `${count} unreadable file(s) were left out of the workspace copy (permissions; possibly tools the agent installed)`,
     BranchPushed: (branch, commit) => `Pushed to Sacty branch (${branch} · ${commit})`,
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>

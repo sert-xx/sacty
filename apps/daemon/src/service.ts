@@ -362,6 +362,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  skippedFilesLines,
   viewpointRename,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
@@ -2095,6 +2096,8 @@ export class TaskService {
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
     const runId = run.runId ?? randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    // 作業領域の写しに入れなかったファイル（読めないもの）を知らせる文を足した、実行の指示
+    let prompt = run.prompt;
     try {
       if (task.repository) {
         // 完了の後に作業領域を消したタスク（PBI-157）は、同じ起点で用意し直す（実装の変更は戻らない）
@@ -2117,12 +2120,18 @@ export class TaskService {
           } else {
             // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
             // 応答し続けるよう、非同期で写す（写しの途中で止められたら、execute が起動の前に止める。PBI-156）
-            await this.deps.repos.copyWorkingTree(
+            const copied = await this.deps.repos.copyWorkingTree(
               this.repoDir(task),
               workspaceDir,
               this.trustedGitDir(task),
               ...(run.include ? [run.include] : []),
             );
+            // 読めないファイル（エージェントが展開したツールの権限 0000 のファイルなど）は、写し全体を失敗にせず、
+            // 写さずに作業履歴に残して、エージェントに知らせる（PBI-278）
+            if (copied.skipped.count > 0) {
+              this.recordSkippedFiles(task.id, runId, run.role, copied.skipped);
+              prompt = [prompt, ...skippedFilesLines(copied.skipped)].join("\n");
+            }
           }
         } catch (error) {
           return {
@@ -2134,7 +2143,7 @@ export class TaskService {
         }
       }
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
-      return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
+      return await this.execute({ ...run, prompt, taskId: task.id, runId, workspaceDir });
     } finally {
       // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）。消せなくても、実行の結果
       // （判定・答え・分析と費用）を失わないよう、警告だけにする
@@ -2144,6 +2153,36 @@ export class TaskService {
           error instanceof Error ? error.message : error,
         );
       });
+    }
+  }
+
+  /**
+   * 実装の作業領域の写しで、読めないために写さなかったファイルを、作業履歴に残す（PBI-278）。残せなくても（写している間に
+   * 中止された、など）実行は続ける。
+   */
+  private recordSkippedFiles(
+    taskId: string,
+    runId: string,
+    role: AgentRole,
+    skipped: { count: number; paths: string[] },
+  ): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    try {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "WorkspaceFilesSkipped",
+            payload: { runId, role, count: skipped.count, paths: skipped.paths },
+          },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] 写さなかったファイルを作業履歴に残せませんでした（${taskId}）：`,
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 

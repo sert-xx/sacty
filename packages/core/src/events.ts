@@ -1803,6 +1803,21 @@ const ContinuedFeedbackPassed = z.object({
 });
 
 /**
+ * ゴールガーディアン・オーケストレーターの実行に、実装の作業領域を写すとき、読めないファイル・ディレクトリ（権限など。
+ * エージェントが作業領域に展開したツールにある）を写さなかった（PBI-278）。写し全体は失敗にしない。count は写さなかった
+ * 総数、paths はその最初の何件か（作業領域の根からの相対パス）。再開しても、同じ理由では止まらない。
+ */
+const WorkspaceFilesSkipped = z.object({
+  type: z.literal("WorkspaceFilesSkipped"),
+  payload: z.object({
+    runId: z.string(),
+    role: z.string(),
+    count: z.number().int().positive(),
+    paths: z.array(z.string().max(500)).max(50),
+  }),
+});
+
+/**
  * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
  * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
  * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
@@ -2721,6 +2736,7 @@ export const EventInput = z.discriminatedUnion("type", [
   VerificationOverridden,
   NoChangesFound,
   ContinuedFeedbackPassed,
+  WorkspaceFilesSkipped,
   PullRequestLabeled,
   PullRequestLabelFailed,
   TaskBranchCreated,

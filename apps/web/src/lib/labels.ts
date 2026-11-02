@@ -602,6 +602,8 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.VerificationOverridden;
     case "ContinuedFeedbackPassed":
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
+    case "WorkspaceFilesSkipped":
+      return e.WorkspaceFilesSkipped(event.payload.count);
     case "PullRequestLabeled":
       return e.PullRequestLabeled(event.payload.number, event.payload.label, event.payload.created);
     case "PullRequestLabelFailed":
