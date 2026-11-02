@@ -1316,6 +1316,20 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
     expect(describeIn(event("AgentRunTimedOut", { minutes: 3 }), labels.en)).toContain(
       "3-minute limit",
     );
+    // 工程以外の役割も内部の ID のままにしない
+    const finalReview = { role: "final-review", minutes: 3 };
+    expect(describeEvent(event("AgentRunTimedOut", finalReview))).toBe(
+      "最終レビューの実行が上限の3分を超えたため止めた",
+    );
+    expect(describeIn(event("AgentRunTimedOut", finalReview), labels.en)).toContain(
+      "The final review run",
+    );
+    expect(describeEvent(event("AgentRunTimedOut", { role: "guardian", minutes: 3 }))).toContain(
+      "ゴールガーディアンの実行",
+    );
+    expect(
+      describeEvent(event("AgentRunTimedOut", { role: "unknown-role", minutes: 3 })),
+    ).toContain("unknown-roleの実行");
     expect(
       describeIn(
         event("AgentRunContinued", { mode: "restarted", reason: "no_session", stoppedRunId: "x" }),

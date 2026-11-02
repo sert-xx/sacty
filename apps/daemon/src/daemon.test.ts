@@ -23201,6 +23201,41 @@ describe("時間切れで止めた実行の再開（PBI-280）", () => {
     activity.close();
   });
 
+  it("続けた実行の途中でデーモンが止まったら、進捗を含まない古い会話を続けず、最初から実行し直す", async () => {
+    const { activity, service, executor } = setup([timeout(), HOLD]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = runIds(service, task.id);
+    service.resume(task.id, {});
+    // 続けた実行（2 回目）が動いている間に、デーモンが止まる（写した記録も続けた記録も残らない）
+    void service.runNext(task.id);
+    await executor.started.promise;
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${first}`);
+    const second = runIds(service, task.id)[1];
+    const { service: restarted, executor: restartedExecutor } = makeService(
+      activity,
+      [completed(1_000)],
+      { sessionLogs: new SessionLogStore(join(dir, "runs")) },
+    );
+    emulateClaude(restartedExecutor);
+    restarted.recoverInterrupted();
+    expect(restarted.get(task.id)?.task.status).toBe("paused");
+    expect(
+      restarted
+        .get(task.id)
+        ?.activity.some((e) => e.type === "AgentRunFailed" && e.payload.runId === second),
+    ).toBe(true);
+    restarted.resume(task.id, {});
+    await restarted.runNext(task.id);
+    // 1 回目の古い会話は続けない
+    expect(restartedExecutor.calls).toHaveLength(1);
+    expect(argAfter(restartedExecutor.calls[0], "--resume")).toBeUndefined();
+    expect(restartedExecutor.stdins[0]).not.toContain(NOTE);
+    expect(restarted.get(task.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
   it("再開を指定したのに別のセッションで始めたときは、続けたとは記録せず、理由を残す", async () => {
     const { activity, service, executor } = setup([timeout(), completed(1_000)]);
     emulateClaude(executor);

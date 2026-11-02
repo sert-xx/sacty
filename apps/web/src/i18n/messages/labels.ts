@@ -139,6 +139,18 @@ const ja = {
     agent: "工程エージェント",
     auditor: "監査",
   } satisfies Record<Actor, string>,
+  /** 工程以外の実行の役割の表示名（PBI-280）。 */
+  runRole: {
+    guardian: "ゴールガーディアン",
+    "final-review": "最終レビュー",
+    rework: "差し戻しの判断",
+    orchestrator: "オーケストレーター",
+    gather: "情報収集",
+    chat: "質問への答え",
+    export: "書き出し",
+    audit: "監査",
+    "audit-dive": "監査の深掘り",
+  } as Record<string, string>,
   verdict: {
     approved: "承認",
     rejected: "却下",
@@ -725,6 +737,17 @@ const en: LabelMessages = {
     guardian: "Goal Guardian",
     agent: "step agent",
     auditor: "audit",
+  },
+  runRole: {
+    guardian: "Goal Guardian",
+    "final-review": "final review",
+    rework: "rework judgment",
+    orchestrator: "Orchestrator",
+    gather: "information gathering",
+    chat: "answer to a question",
+    export: "export",
+    audit: "audit",
+    "audit-dive": "audit deep dive",
   },
   verdict: {
     approved: "Approved",

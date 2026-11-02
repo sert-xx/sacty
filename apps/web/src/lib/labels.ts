@@ -380,9 +380,10 @@ export function describeEventParts(
 /**
  * 費用の文。unknown：使った分の全体を読めなかった実行（PBI-281）。読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す。
  */
-/** 実行の役割の表示名（工程ならその名前、それ以外は役割のまま）。 */
+/** 実行の役割の表示名（工程ならその名前、最終レビューなどはその名前、知らない役割は役割のまま）。 */
 function runRoleLabel(l: LabelMessages, role: string): string {
-  return Object.hasOwn(l.step, role) ? l.step[role as StepKey] : role;
+  if (Object.hasOwn(l.step, role)) return l.step[role as StepKey];
+  return Object.hasOwn(l.runRole, role) ? (l.runRole[role] ?? role) : role;
 }
 
 function costLabel(

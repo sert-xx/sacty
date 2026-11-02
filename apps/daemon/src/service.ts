@@ -9917,7 +9917,7 @@ export class TaskService {
       try {
         plan = await planTimeoutResume(
           this.deps.activity.forTask(run.taskId),
-          { role: run.role, agentId: run.agent.id, runtime },
+          { role: run.role, agentId: run.agent.id, runtime, runId: run.runId },
           (runId) => this.deps.sessionLogs?.agentFilesDir(run.taskId, runId),
         );
       } catch (error) {

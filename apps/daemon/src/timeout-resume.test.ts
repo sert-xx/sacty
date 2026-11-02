@@ -86,6 +86,22 @@ describe("時間切れで止めた実行の再開の判定（PBI-280）", () => 
       ).toBeUndefined();
     });
 
+    it("いま実行する実行の開始は無視し、続けた実行の開始・失敗（写した記録が無い）は別の実行として数える", () => {
+      const started = (runId: string) =>
+        ev("AgentRunStarted", { runId, step: "implement", agentId: "a" });
+      const failed = (runId: string) =>
+        ev("AgentRunFailed", { runId, step: "implement", agentId: "a", reason: "error" });
+      // 時間切れで止めた実行自身の開始・失敗は、時間切れの記録の前後にあっても数えない
+      const base = [started("r1"), archived("r1"), timedOut("r1"), failed("r1")];
+      expect(timedOutRunBefore(base, "r2")?.runId).toBe("r1");
+      expect(timedOutRunBefore([...base, started("r2")], "r2")?.runId).toBe("r1");
+      // 続けた実行 r2 がデーモンの停止で中断された（失敗だけが残る）。r3 は r1 を続けない
+      const interrupted = [...base, started("r2"), failed("r2")];
+      expect(timedOutRunBefore(interrupted, "r3")).toBeUndefined();
+      // 失敗が残る前（開始だけ）でも同じ
+      expect(timedOutRunBefore([...base, started("r2")], "r3")).toBeUndefined();
+    });
+
     it("時間切れの後に別の実行（写した記録がある）が挟まれば無し。質問への答え（chat）は数えない", () => {
       expect(timedOutRunBefore([timedOut("r1"), archived("r9", "design")])).toBeUndefined();
       expect(timedOutRunBefore([timedOut("r1"), archived("r9", "chat")])?.runId).toBe("r1");

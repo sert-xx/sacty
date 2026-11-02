@@ -26,14 +26,29 @@ export function timeoutMinutes(message: DaemonText): number | undefined {
  * 時間切れの記録 (AgentRunTimedOut) ならその実行、続けた記録 (AgentRunContinued) ならすでに続けたので無し、
  * それ以外の実行（エージェントのファイルを写した記録）なら、時間切れの後に別の実行があったので無し。
  * 質問への答え（chat）は、時間切れの後に挟まっても数えない。
+ * 続けた実行がデーモンの停止などで中断されると、写した記録も続けた記録も残らない。その実行の開始・失敗の記録（時間切れで止めた
+ * 実行自身と、いま実行する currentRunId のものを除く）も別の実行として数え、進捗を含まない古い会話を続けない。
  */
-export function timedOutRunBefore(events: readonly ActivityEvent[]): TimedOutRun | undefined {
+export function timedOutRunBefore(
+  events: readonly ActivityEvent[],
+  currentRunId?: string,
+): TimedOutRun | undefined {
+  const stoppedRuns = new Set<string>();
+  for (const event of events)
+    if (event.type === "AgentRunTimedOut") stoppedRuns.add(event.payload.runId);
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (!event) continue;
     if (event.type === "AgentRunTimedOut") return event.payload;
     if (event.type === "AgentRunContinued") return undefined;
     if (event.type === "AgentSessionArchived" && event.payload.role !== "chat") return undefined;
+    if (
+      (event.type === "AgentRunStarted" || event.type === "AgentRunFailed") &&
+      event.payload.runId !== currentRunId &&
+      !stoppedRuns.has(event.payload.runId)
+    ) {
+      return undefined;
+    }
   }
   return undefined;
 }
@@ -49,10 +64,10 @@ export type ContinuePlan =
  */
 export async function planTimeoutResume(
   events: readonly ActivityEvent[],
-  run: { role: string; agentId: string; runtime: string },
+  run: { role: string; agentId: string; runtime: string; runId?: string },
   filesDirOf: (runId: string) => string | undefined,
 ): Promise<ContinuePlan | undefined> {
-  const stopped = timedOutRunBefore(events);
+  const stopped = timedOutRunBefore(events, run.runId);
   if (!stopped || stopped.role !== run.role) return undefined;
   const restart = (reason: AgentRunContinuedReason): ContinuePlan => ({
     mode: "restart",
