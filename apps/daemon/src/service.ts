@@ -409,6 +409,12 @@ import {
 import { templateTask } from "./task-templates.js";
 import { findTestFiles, isDocumentsOnly, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
+import {
+  type ContinuePlan,
+  planTimeoutResume,
+  timeoutMinutes,
+  timeoutResumeLines,
+} from "./timeout-resume.js";
 import type { UpdateStatus } from "./update-check.js";
 import {
   idEntries,
@@ -9808,8 +9814,7 @@ export class TaskService {
     } else if (run.role === "chat") {
       executed = await this.executeWithSession(run);
     } else {
-      const { archived: _archived, ...rest } = await this.executeOnce(run);
-      executed = { ...rest, runId: run.runId };
+      executed = await this.executeResumable(run);
     }
     // 利用制限に達したエージェントは、しばらく使わない（代わりのエージェントがあれば、次からそれを使う）
     this.markLimited(run.agent, executed.outcome);
@@ -9818,6 +9823,97 @@ export class TaskService {
       this.unconfirmedRuns.add(executed.runId);
     }
     return executed;
+  }
+
+  /**
+   * 工程などの1回の実行（オーケストレーターと質問への答え以外）。直前の実行が時間切れで止まったものなら、同じエージェントの
+   * セッションの続きから進め、続けられなければ最初から実行し直す。どちらも作業履歴に残す。時間切れで止めた実行も、次に続けられる
+   * ように作業履歴に残す（PBI-280）。
+   */
+  private async executeResumable(run: ExecuteRun): Promise<Executed & { runId: string }> {
+    const runtime = run.agent.runtime;
+    let plan: ContinuePlan | undefined;
+    if (runtime === "claude-code" || runtime === "codex") {
+      try {
+        plan = await planTimeoutResume(
+          this.deps.activity.forTask(run.taskId),
+          { role: run.role, agentId: run.agent.id, runtime },
+          (runId) => this.deps.sessionLogs?.agentFilesDir(run.taskId, runId),
+        );
+      } catch (error) {
+        console.warn(
+          `[daemon] 時間切れで止めた実行のセッションを確かめられませんでした（${run.taskId}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    const resuming = plan?.mode === "resume" ? plan : undefined;
+    const { archived, ...executed } = await this.executeOnce(
+      resuming
+        ? {
+            ...run,
+            prompt: [...timeoutResumeLines(run.role, resuming.stopped.minutes), run.prompt].join(
+              "\n",
+            ),
+            session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
+          }
+        : run,
+    );
+    if ((runtime === "claude-code" || runtime === "codex") && plan) {
+      // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは記録しない
+      const rejected =
+        resuming &&
+        (resumeRejected(runtime, executed.outcome) ||
+          (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId));
+      this.recordTimeoutEvent(run.taskId, {
+        type: "AgentRunContinued",
+        payload: {
+          runId: run.runId,
+          role: run.role,
+          agentId: run.agent.id,
+          runtime,
+          stoppedRunId: plan.stopped.runId,
+          ...(resuming && !rejected
+            ? { mode: "resumed" as const, sessionId: resuming.sessionId }
+            : {
+                mode: "restarted" as const,
+                reason: plan.mode === "restart" ? plan.reason : ("resume_failed" as const),
+              }),
+        },
+      });
+    }
+    const minutes =
+      executed.outcome.kind === "failed" ? timeoutMinutes(executed.outcome.message) : undefined;
+    if ((runtime === "claude-code" || runtime === "codex") && minutes !== undefined) {
+      this.recordTimeoutEvent(run.taskId, {
+        type: "AgentRunTimedOut",
+        payload: {
+          runId: run.runId,
+          role: run.role,
+          agentId: run.agent.id,
+          runtime,
+          minutes,
+        },
+      });
+    }
+    return { ...executed, runId: run.runId };
+  }
+
+  /** 時間切れの実行と、その続きの記録を作業履歴に残す。記録できなくても、実行の結果は変えない（中止したタスクなど）。 */
+  private recordTimeoutEvent(
+    taskId: string,
+    event: Extract<EventInput, { type: "AgentRunTimedOut" | "AgentRunContinued" }>,
+  ): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    try {
+      this.append(task, [{ actor: "sacty", event }]);
+    } catch (error) {
+      console.warn(
+        `[daemon] 時間切れの実行の記録を作業履歴に残せませんでした（${event.payload.runId}）：`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   /** タスクごとの、オーケストレーターの実行の順番（PBI-67）。 */

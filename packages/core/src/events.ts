@@ -1418,6 +1418,59 @@ const AgentSessionArchived = z.object({
 });
 
 /**
+ * エージェントの実行が、上限の時間（config.yaml の run_timeout）を超えて止められた（PBI-280）。次に同じ役割を実行するとき、
+ * この実行のセッション（AgentSessionArchived に写した元のファイル）の続きから進めるための印。失敗の記録（AgentRunFailed など）と費用は、
+ * それぞれの記録に残す。状態は変えない。
+ */
+const AgentRunTimedOut = z.object({
+  type: z.literal("AgentRunTimedOut"),
+  payload: z.object({
+    runId: z.string().min(1),
+    /** 何として実行したか（工程・guardian・final-review など）。 */
+    role: z.string(),
+    agentId: z.string(),
+    runtime: z.enum(["claude-code", "codex"]),
+    /** 止めた上限（分）。 */
+    minutes: z.number().positive(),
+  }),
+});
+
+/**
+ * 時間切れで止めた実行の次の実行が、セッションを続けられなかった理由（PBI-280）。no_session：止めた実行のセッションの記録が無い
+ * （元のファイルを写せなかった・セッションの ID が分からない）、agent_changed：エージェント（AI の種類か ID）を変えた、
+ * truncated：写したファイルが上限で間を省かれている、files_broken：写したファイルが無い・壊れた（記録したハッシュと違う・
+ * セッションの本体が無い）、resume_failed：AI が再開を受け付けなかった（別のセッションで始めた）。
+ */
+export const AgentRunContinuedReason = z.enum([
+  "no_session",
+  "agent_changed",
+  "truncated",
+  "files_broken",
+  "resume_failed",
+]);
+export type AgentRunContinuedReason = z.infer<typeof AgentRunContinuedReason>;
+
+/**
+ * 時間切れで止めた実行（AgentRunTimedOut）の次に、同じ役割を実行した（PBI-280）。同じエージェントのセッションの続きから進めた
+ * （resumed）か、続けられずに最初から実行し直した（restarted。理由を残す）。stoppedRunId は、止めた実行。
+ */
+const AgentRunContinued = z.object({
+  type: z.literal("AgentRunContinued"),
+  payload: z.object({
+    runId: z.string().min(1),
+    role: z.string(),
+    agentId: z.string(),
+    runtime: z.enum(["claude-code", "codex"]),
+    mode: z.enum(["resumed", "restarted"]),
+    stoppedRunId: z.string().min(1),
+    /** 続けたセッションの ID（mode が resumed のとき）。 */
+    sessionId: z.string().optional(),
+    /** 最初から実行し直した理由（mode が restarted のとき）。 */
+    reason: AgentRunContinuedReason.optional(),
+  }),
+});
+
+/**
  * オーケストレーターのセッションを新しく始めた理由（PBI-67）。first：このタスクで初めて、agent_changed：エージェント
  * （AI の種類か ID）を変えた、truncated：保存したセッションのファイルが上限で間を省かれている、files_broken：保存した
  * ファイルが無い・壊れた（記録したハッシュと違う・セッションの本体が無い）、resume_failed：AI が再開を受け付けなかった。
@@ -2845,6 +2898,8 @@ export const EventInput = z.discriminatedUnion("type", [
   AiRequestsRetried,
   AgentFellBack,
   AgentSessionArchived,
+  AgentRunTimedOut,
+  AgentRunContinued,
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
