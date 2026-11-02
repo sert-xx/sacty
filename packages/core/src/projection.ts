@@ -1801,6 +1801,18 @@ export function applyEvent(
       if (task.status === "running") {
         throw new ActivityIntegrityError(event, "stop the run before stopping the rework");
       }
+      // 初めて提出する前に引き継いだ PR がマージされたときは、その PR を実装の PR として記録する（続く PullRequestMerged が見る）
+      const continued = task.continuedPullRequest;
+      if (!task.pullRequest && continued) {
+        task.pullRequest = {
+          branch: continued.branch,
+          commit: reworking.commit || continued.branch,
+          url: continued.url,
+          number: continued.number,
+          repo: continued.repo,
+        };
+        task.pullRequestState = "open";
+      }
       const submission = Math.max(task.submissions.implement ?? 0, 1);
       task.submissions = { ...task.submissions, implement: submission };
       task.status = "awaiting_approval";
@@ -2694,6 +2706,16 @@ export function reworkingPullRequest(
   }
   if (activeStep(task) !== "implement") return undefined;
   const pr = task.pullRequest;
+  // 引き継いだ既存の PR は、初めて提出するまで Task.pullRequest が無い。その間（最初の最終レビューに通らず作り直している間など）も、
+  // 引き継いだ PR を見守る（コミットは、引き継いだ時点の PR の先頭）
+  const continued = task.continuedPullRequest;
+  if (!pr && continued) {
+    return {
+      number: continued.number,
+      repo: continued.repo,
+      commit: task.repository?.baseCommit ?? "",
+    };
+  }
   // 閉じられた PR も含める（承認待ちで閉じられて差し戻した後、GitHub で開き直してマージされることがある）
   if (!pr?.number || (task.pullRequestState !== "open" && task.pullRequestState !== "closed")) {
     return undefined;

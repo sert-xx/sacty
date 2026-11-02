@@ -7895,6 +7895,76 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    /** 引き継いだ PR で、最初の最終レビューに通らず、まだ一度も提出していない状態まで進める。 */
+    async function continuedBeforeFirstSubmission() {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const tests = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", tests),
+          review([["REQ", true]], [], 1000, 1), // テストが通らない
+          implement("# 実装の説明 v2", tests),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.verifyFeedback; i++) {
+        await service.runNext(id);
+      }
+      const task = service.get(id)?.task;
+      expect(task?.verifyFeedback).toBeDefined();
+      expect(task?.status).toBe("queued");
+      expect(task?.pullRequest).toBeUndefined();
+      expect(task?.continuedPullRequest?.number).toBe(12);
+      return { activity, service, executor, pulls, repos, id };
+    }
+
+    it("引き継いだ PR の最初の最終レビューに通らず作り直している間に PR がマージされたら、プッシュせず、一時停止にもせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, executor, pulls, repos, id } =
+        await continuedBeforeFirstSubmission();
+      const calls = executor.calls.length;
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.at(-3)?.payload).toMatchObject({ number: 12, was: "queued" });
+      const task = service.get(id)?.task;
+      expect(task?.pullRequest).toMatchObject({ number: 12, branch: "feature/retry" });
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task?.approved.implement).toBeDefined();
+      expect(repos.published).toHaveLength(0);
+      expect(executor.calls).toHaveLength(calls);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      activity.close();
+    });
+
+    it("引き継いだ PR の初回の提出の前に、確認より先に PR の更新が始まっても、プッシュせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, repos, id } = await continuedBeforeFirstSubmission();
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      expect(repos.published).toHaveLength(0);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      activity.close();
+    });
+
     it("引き継げない PR（フォークの PR・マージ済み・ほかのタスクの PR）なら、新しい PR を作らないように、工程を決めずに止める", async () => {
       const cases: [Partial<PullRequestInfo>, string][] = [
         [

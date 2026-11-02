@@ -3299,6 +3299,67 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     expect(task?.resumeTo).toBeUndefined();
   });
 
+  it("引き継いだ PR は、初めて提出する前でも見守り、止める記録でその PR を実装の PR にして完了できる", () => {
+    seq = 0;
+    const chosenContinued = () =>
+      ev("t", {
+        type: "StepsChosen",
+        payload: {
+          steps: ["implement"],
+          testCommand: "npm test",
+          continuedPullRequest: {
+            repo: "https://github.com/acme/app",
+            number: 12,
+            url: "https://github.com/acme/app/pull/12",
+            branch: "feature/retry",
+            baseBranch: "main",
+          },
+        },
+      });
+    const ran = [
+      created("t"),
+      chosenContinued(),
+      ev("t", {
+        type: "RepositoryPrepared",
+        payload: {
+          url: "https://github.com/acme/app",
+          baseBranch: "feature/retry",
+          baseCommit: "h1",
+        },
+      }),
+    ];
+    const waiting = project(ran).get("t");
+    expect(waiting?.pullRequest).toBeUndefined();
+    expect(waiting && reworkingPullRequest(waiting)).toEqual({
+      number: 12,
+      repo: "https://github.com/acme/app",
+      commit: "h1",
+    });
+    const done = project([
+      ...ran,
+      ev("t", {
+        type: "ReworkStoppedByMerge",
+        payload: { number: 12, was: "queued", stoppedRuns: [], discardedRemarks: [] },
+      }),
+      ev("t", { type: "PullRequestMerged", payload: { number: 12, commit: "h2" } }, "person"),
+      ev("t", { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
+    ]).get("t");
+    expect(done?.pullRequest).toMatchObject({ number: 12, branch: "feature/retry", commit: "h1" });
+    expect(done?.pullRequestState).toBe("merged");
+    expect(done?.approved.implement?.submission).toBe(1);
+    expect(done && isCompleted(done)).toBe(true);
+    // 別の番号の PR は記録できない
+    expect(() =>
+      project([
+        ...ran,
+        ev("t", {
+          type: "ReworkStoppedByMerge",
+          payload: { number: 13, was: "queued", stoppedRuns: [], discardedRemarks: [] },
+        }),
+      ]),
+    ).toThrow(/not being reworked/);
+  });
+
   it("作り直しを止める記録の前に、実行の費用で一時停止していても、止めたと確かめられなかった実行を足せる", () => {
     seq = 0;
     const task = project([

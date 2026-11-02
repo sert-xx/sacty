@@ -143,6 +143,7 @@ If a person merges the implementation PR while the implementation is being rewor
 
 - Targets (`reworkingPullRequest`): tasks whose active step is Implement and whose status is queued (`queued`), running (`running`), waiting (`idle`, for example in the final review), or paused (`paused`), and whose PR in `Task.pullRequest` is open (`pullRequestState` is `open`) or was closed while waiting for approval and then sent back (`closed`; it may be reopened and merged on GitHub, and whether it is merged is decided by GitHub's state).
   - The same applies when a person takes the draft PR before the final review out of draft and merges it.
+  - A continued existing PR (`Task.continuedPullRequest`) has no `Task.pullRequest` until the first submission. During that time (for example while the implementation is reworked because the first final review failed), the continued PR is watched. The projection then records the continued PR as the implementation PR before recording the merge (the commit is the head of the PR when it was taken over).
   - While Requirements or Design is being redone (the active step is not Implement), nothing is watched. When the task reaches Implement and the PR is already merged, the rework is stopped in the same way.
   - Tasks waiting for approval or escalated are watched by the check above.
 - Check: the PR status is read (with the project's gh account; if it cannot be read, the next check tries again). Only when it is merged, the following is done. Nothing is done while it is open or closed.

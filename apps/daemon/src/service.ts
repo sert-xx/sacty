@@ -8506,7 +8506,8 @@ export class TaskService {
     // 実装の作り直しの間に、人が前の PR をマージしていたら、プッシュも PR の作成もせず、マージを承認として進める
     // （新しい PR を作らない。PBI-276。マージの確認は 60 秒ごとなので、確認の前に PR の更新が始まることがある。
     // 引き継いだ既存の PR も同じ）
-    const earlier = task.pullRequest;
+    // （引き継いだ PR は、初めて提出するまで task.pullRequest が無いので、引き継いだ PR を見る）
+    const earlier = task.pullRequest ?? task.continuedPullRequest;
     if (earlier?.number && earlier.repo) {
       try {
         const earlierToken = await this.githubToken(task, earlier.repo, usedSecrets);
