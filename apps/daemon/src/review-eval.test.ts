@@ -309,6 +309,8 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
       '{"findings": []}', // viewpoint・status が無い
       ok({ viewpoint: "D-3" }), // 別の観点
       ok({ status: 1 }),
+      ok({ status: "failed" }), // 観点を見られなかった判定は評価しない
+      ok({ status: "failed", findings: [] }),
       ok({ findings: [{}] }), // title・severity が無い
       ok({ findings: [{ title: "x", severity: "major" }] }),
       ok({ findings: [null] }),
@@ -316,6 +318,7 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
       expect(() => assertReviewerVerdict(bad, "D-10"), bad).toThrow("判定の JSON として読めません");
     }
     expect(() => assertReviewerVerdict(ok({}), "D-10")).not.toThrow();
+    expect(() => assertReviewerVerdict(ok({ status: "changes_required" }), "D-10")).not.toThrow();
     expect(() =>
       assertReviewerVerdict(ok({ findings: [{ title: "x", severity: "nit" }] }), "D-10"),
     ).not.toThrow();
@@ -353,6 +356,24 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
       );
     }
     expect(() => assertFinalReviewVerdict(block(good), ["TV-1", "TV-2"])).not.toThrow();
+    // sacty 本体が採るのは、見出しのオブジェクトを持つ最後のブロック。前に正しいブロックがあっても、最後が不正なら失敗する
+    const lastBad = [block(good), block({ viewpoints: [], summary: "訂正" })].join("\n");
+    expect(() => assertFinalReviewVerdict(lastBad, ["TV-1", "TV-2"])).toThrow(
+      "判定の JSON として読めません",
+    );
+    // 囲みが無い JSON も、本体は読む。囲みなしの最後が不正なら、前の囲み付きが正しくても失敗する
+    const unfencedBad = `${block(good)}\n{"sacty-final-review": {"viewpoints": [{"id": "TV-1", "verified": true}], "summary": "x"}}`;
+    expect(() => assertFinalReviewVerdict(unfencedBad, ["TV-1", "TV-2"])).toThrow();
+    // 最後が正しければ、前の不正なブロックがあっても成功する（本体と同じく最後を採る）
+    const lastGood = [block({ viewpoints: [], summary: "途中" }), block(good)].join("\n");
+    expect(() => assertFinalReviewVerdict(lastGood, ["TV-1", "TV-2"])).not.toThrow();
+    // 本体が採るブロックと同じものを検証している（同じ出力を extractFinalReview に渡して一致する）
+    expect(
+      extractFinalReview(lastBad, ["TV-1", "TV-2"], [], {}).viewpoints.every((v) => !v.verified),
+    ).toBe(true);
+    expect(
+      extractFinalReview(lastGood, ["TV-1", "TV-2"], [], {}).viewpoints.map((v) => v.verified),
+    ).toEqual([true, false]);
     expect(() => assertFinalReviewVerdict(block(good), [])).toThrow(); // 期待する観点が無いときも成功させない
   });
 

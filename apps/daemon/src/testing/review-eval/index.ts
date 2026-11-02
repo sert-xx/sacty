@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Task, TestViewpoint } from "@sacty/core";
+import { headedObject, lastJsonAnswer } from "../../agent-json.js";
 import { DEFAULT_CONTEXT_DIR } from "../../context.js";
 import { buildFinalReviewPrompt } from "../../prompts.js";
 
@@ -323,7 +324,7 @@ export function assertReviewerVerdict(output: string, viewpoint: string): void {
   const findings = v?.findings;
   const ok =
     v?.viewpoint === viewpoint &&
-    typeof v.status === "string" &&
+    (v.status === "passed" || v.status === "changes_required") && // failed（観点を見られなかった）は評価しない
     Array.isArray(findings) &&
     findings.every((f) => {
       const r = f as Record<string, unknown> | null;
@@ -339,26 +340,26 @@ export function assertReviewerVerdict(output: string, viewpoint: string): void {
 }
 
 /**
- * 最終レビューの出力が、見出し sacty-final-review の判定の JSON か。期待する観点（expectedIds）がすべて揃い、
- * それぞれ verified が真偽値、summary が文字列であることまで確かめる。読めなければ評価せず失敗させる。
+ * 最終レビューの出力が、見出し sacty-final-review の判定の JSON か。sacty 本体が判定として採る最後の見出しのブロック
+ * （`extractFinalReview` の `findBlock`。囲み方は問わない）を、期待する観点（expectedIds）がすべて揃い、それぞれ verified が
+ * 真偽値、summary が文字列であることまで確かめる。採られるブロックが読めなければ（前に正しいブロックがあっても）、
+ * 評価せず失敗させる。
  */
 export function assertFinalReviewVerdict(output: string, expectedIds: readonly string[]): void {
-  const blocks = [...output.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)].map((m) => m[1] ?? "");
-  const ok = blocks.some((b) => {
-    try {
-      const v = JSON.parse(b)?.["sacty-final-review"];
-      if (!v || typeof v !== "object" || !Array.isArray(v.viewpoints)) return false;
-      if (typeof v.summary !== "string") return false;
-      const byId = new Map<string, unknown>();
-      for (const vp of v.viewpoints) {
-        if (typeof vp?.id !== "string" || typeof vp.verified !== "boolean") return false;
-        byId.set(vp.id, vp);
-      }
-      return expectedIds.length > 0 && expectedIds.every((id) => byId.has(id));
-    } catch {
-      return false;
+  const adopted = lastJsonAnswer(output, (value) =>
+    headedObject(value, "sacty-final-review"),
+  )?.value;
+  const viewpoints = adopted?.viewpoints;
+  let ok = Array.isArray(viewpoints) && typeof adopted?.summary === "string";
+  const ids = new Set<string>();
+  if (ok) {
+    for (const vp of viewpoints as unknown[]) {
+      const r = vp as Record<string, unknown> | null;
+      if (typeof r?.id !== "string" || typeof r.verified !== "boolean") ok = false;
+      else ids.add(r.id);
     }
-  });
+  }
+  ok = ok && expectedIds.length > 0 && expectedIds.every((id) => ids.has(id));
   if (!ok)
     throw new Error(`最終レビューの出力が判定の JSON として読めません：\n${output.slice(-500)}`);
 }
