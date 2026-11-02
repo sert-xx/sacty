@@ -51,8 +51,9 @@ The audit flows as follows.
   - If the settings change while a deep dive waits for its turn, sacty redacts the values from both the settings used for the run and the current settings.
 - The instructions include the context versions used (repositories and commits).
 - sacty counts the evidence during the survey, and the deep dives reuse the recorded counts. The agent does not count, and session logs are read asynchronously. sacty counts these:
-  - Human change requests
-  - Imported PR remarks
+  - Human change requests (excluding AI review remarks)
+  - Imported PR remarks (written by a person)
+  - Imported remarks from sacty's own AI review (`aiReviewRemark`; counted separately from a person's remarks. [AI review comments](approval.en.md#ai-review-comments))
   - Pauses
   - Retries (failed runs, failed tests, final reviews, and integration reviews)
   - Failed tool calls (session logs)

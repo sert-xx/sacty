@@ -82,6 +82,7 @@ describe("監査のレポート（PBI-124）", () => {
   const zero = {
     changesRequested: 0,
     pullRequestRemark: 0,
+    aiReviewRemark: 0,
     pause: 0,
     retry: 0,
     toolFailure: 0,

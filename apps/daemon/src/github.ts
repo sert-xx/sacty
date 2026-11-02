@@ -189,6 +189,13 @@ export type PullRequestFeedback = {
   requestChanges?: boolean;
   /** 承認（APPROVED）のレビュー（本文のあるもの。`includeApprovals` のときだけ）。 */
   approved?: boolean;
+  /**
+   * sacty のレビューのタスクが投稿した AI のレビューなら sacty_review（`sactyReviews` の allowed の回。投稿の目印で見分ける。
+   * アカウントでは見分けない。PBI-275）。無ければ人の指摘。
+   */
+  source?: "sacty_review";
+  /** source が sacty_review のとき、そのレビュー・行へのコメントが対象にしたコミット（PR の head。読めなければ無い）。 */
+  commit?: string;
 };
 
 /**
@@ -279,6 +286,14 @@ export class GitHubPullRequests implements PullRequests {
         )
       );
     };
+    // sacty のレビューのタスクの投稿（AI のレビュー）は、人の指摘と見分けて渡す。対象にしたコミットも添える（PBI-275）
+    const aiReview = (
+      item: Record<string, unknown>,
+    ): Pick<PullRequestFeedback, "source" | "commit"> => {
+      if (!sactyRound(item)?.allowed) return {};
+      const commit = typeof item.commit_id === "string" ? item.commit_id.trim() : "";
+      return { source: "sacty_review", ...(commit ? { commit } : {}) };
+    };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};
@@ -312,6 +327,7 @@ export class GitHubPullRequests implements PullRequests {
         body: body(r),
         ...(requestChanges ? { requestChanges } : {}),
         ...(approved ? { approved: true } : {}),
+        ...aiReview(r),
       });
     }
     for (const c of reviewComments.filter(human)) {
@@ -326,6 +342,7 @@ export class GitHubPullRequests implements PullRequests {
         body: body(c),
         path: String(c.path ?? ""),
         ...(typeof line === "number" ? { line } : {}),
+        ...aiReview(c),
       });
     }
     for (const c of comments.filter(human)) {
@@ -337,6 +354,7 @@ export class GitHubPullRequests implements PullRequests {
         at: String(c.created_at ?? ""),
         ...url(c),
         body: body(c),
+        ...aiReview(c),
       });
     }
     return items.sort((a, b) => a.at.localeCompare(b.at));

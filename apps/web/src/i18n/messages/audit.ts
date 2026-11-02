@@ -28,6 +28,7 @@ const ja = {
   evidence: {
     changesRequested: "人の差し戻し",
     pullRequestRemark: "PR の指摘",
+    aiReviewRemark: "AI のレビューの指摘",
     pause: "一時停止",
     retry: "やり直し",
     toolFailure: "ツール呼び出しの失敗",
@@ -219,6 +220,7 @@ const en: AuditMessages = {
   evidence: {
     changesRequested: "Changes requested",
     pullRequestRemark: "PR remarks",
+    aiReviewRemark: "AI review remarks",
     pause: "Pauses",
     retry: "Retries",
     toolFailure: "Failed tool calls",

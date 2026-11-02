@@ -71,6 +71,7 @@ import {
   isFinished,
   isRepoless,
   isSecurityTask,
+  lastChangeRound,
   latestStepPullRequest,
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
@@ -1866,7 +1867,7 @@ export class TaskService {
     if (!pr?.number || !pr.repo) return;
     let current = task;
     if (!current.pendingReview) {
-      const fresh = (
+      const listed = (
         await this.deps.pulls.feedback({
           repo: pr.repo,
           token,
@@ -1877,6 +1878,13 @@ export class TaskService {
       )
         .filter((item) => !current.importedFeedback.includes(item.key))
         .filter((item) => !handedOverFeedback(current, pr, item));
+      // 古い head へのレビュー（sacty のレビューのタスクの投稿）は、取り込まずに捨てる（PBI-275）
+      const fresh = await this.withoutStaleReviews(
+        task.id,
+        { repo: pr.repo, number: pr.number },
+        token,
+        listed,
+      );
       if (fresh.length === 0) {
         this.feedbackSeenAt.delete(task.id);
         return;
@@ -1898,8 +1906,9 @@ export class TaskService {
       if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
       current = this.append(latest, [
         {
-          // レビューは人間の判断なので、人間の操作として記録する
-          actor: "person",
+          // レビューは人間の判断なので、人間の操作として記録する。AI のレビュー（sacty のレビューのタスクの投稿）だけの
+          // 回は、人間の操作にしない（PBI-275）
+          actor: batch.some((item) => item.source !== "sacty_review") ? "person" : "sacty",
           event: {
             type: "PullRequestReviewImported",
             payload: {
@@ -1909,6 +1918,7 @@ export class TaskService {
                 author: item.author,
                 at: item.at,
                 ...(item.url ? { url: item.url } : {}),
+                ...(item.source ? { source: item.source } : {}),
               })),
               remarks: feedbackRemarks(batch),
             },
@@ -1921,7 +1931,13 @@ export class TaskService {
     if (!pending.judgement) {
       const config = this.deps.config();
       if (!config.ok) return;
-      const judged = await this.judgeRework(current, pr.step, pending.remarks, config.config);
+      const judged = await this.judgeRework(
+        current,
+        pr.step,
+        pending.remarks,
+        pending.aiReview ?? [],
+        config.config,
+      );
       // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
       const latest = this.tasks.get(task.id);
       if (
@@ -1956,6 +1972,64 @@ export class TaskService {
     }
     if (status.state !== "open") return "pull_request_changed";
     this.settleReview(settling);
+  }
+
+  /**
+   * 取り込む指摘から、古い head へのレビューを除き、捨てたことを作業履歴に残す（PBI-275）。sacty のレビューのタスクの投稿
+   * （AI のレビュー）で、対象にしたコミットが今の PR の head と違うもの（レビューの間や、取り込みの前に PR が更新された）は、
+   * もう直された内容へのレビューなので、元のタスクに届けない。捨てたものは取り込み済みにして、取り込み直さない。
+   * PR の head を読めなければ、古いかどうか分からないので、AI のレビューは今回は取り込まず、次の確認で確かめ直す
+   * （人の指摘は、head によらず取り込む）。
+   */
+  private async withoutStaleReviews(
+    taskId: string,
+    pr: { repo: string; number: number },
+    token: string,
+    items: PullRequestFeedback[],
+  ): Promise<PullRequestFeedback[]> {
+    const reviewed = items.filter((item) => item.source === "sacty_review" && item.commit);
+    if (reviewed.length === 0) return items;
+    let head: string | undefined;
+    try {
+      head = (await this.deps.pulls.status({ ...pr, token })).headSha?.trim() || undefined;
+    } catch {
+      head = undefined;
+    }
+    if (!head) return items.filter((item) => !reviewed.includes(item));
+    const current = head;
+    const stale = reviewed.filter((item) => !sameCommit(item.commit ?? "", current));
+    if (stale.length === 0) return items;
+    const latest = this.tasks.get(taskId);
+    const watched = latest ? gatePullRequest(latest) : undefined;
+    // 見ている間に承認待ちでなくなった・指摘を取り込み中になった・見守る PR が変わったなら、記録しない（次の確認でやり直す）
+    if (
+      latest?.status !== "awaiting_approval" ||
+      latest.pendingReview ||
+      watched?.number !== pr.number
+    ) {
+      return items.filter((item) => !stale.includes(item));
+    }
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "PullRequestReviewDiscarded",
+          payload: {
+            number: pr.number,
+            reason: "stale_head",
+            head: current,
+            items: stale.map((item) => ({
+              key: item.key,
+              author: item.author,
+              at: item.at,
+              ...(item.url ? { url: item.url } : {}),
+              commit: item.commit ?? "",
+            })),
+          },
+        },
+      },
+    ]);
+    return items.filter((item) => !stale.includes(item));
   }
 
   /**
@@ -2004,14 +2078,19 @@ export class TaskService {
       judgement.target && targets.includes(judgement.target)
         ? judgement.target
         : (targets[0] ?? gate.step);
-    this.requestChanges(task.id, {
-      step: gate.step,
-      submission: gate.submission,
-      target,
-      comments: pending.remarks,
-      // ゴールガーディアンが判断した原因（判断できなければ、原因を決めない。見逃しにしない。PBI-268）
-      ...(judgement.cause ? { cause: judgement.cause } : {}),
-    });
+    this.requestChanges(
+      task.id,
+      {
+        step: gate.step,
+        submission: gate.submission,
+        target,
+        comments: pending.remarks,
+        // ゴールガーディアンが判断した原因（判断できなければ、原因を決めない。見逃しにしない。PBI-268）
+        ...(judgement.cause ? { cause: judgement.cause } : {}),
+      },
+      // AI のレビューの指摘は、人の差し戻しの回数に数えない（PBI-275）
+      { aiReview: pending.aiReview ?? [] },
+    );
   }
 
   /**
@@ -3519,6 +3598,7 @@ export class TaskService {
     task: Task,
     gateStep: StepKey,
     remarks: string[],
+    aiReview: readonly number[],
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
     const targets = reworkTargets(task, gateStep);
@@ -3529,7 +3609,7 @@ export class TaskService {
       {
         agent: config.guardianAgent,
         image: config.image,
-        prompt: buildReworkPrompt(task, remarks, targets, gateStep),
+        prompt: buildReworkPrompt(task, remarks, targets, gateStep, aiReview),
         role: "rework",
       },
       gateStep === "implement" ? "implemented" : "base",
@@ -12255,8 +12335,11 @@ export class TaskService {
    * やり直す工程には、承認ゲートの工程か、それより前の承認ゲートのある工程を選べる。
    * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
    * 同じ工程への差し戻しが上限を超える場合はエスカレーションにし、人間に続けるかを判断してもらう。
+   * options.aiReview は、comments のうち、AI のレビュー（sacty のレビューのタスクが PR に投稿したもの）の指摘の位置
+   * （PR の指摘の取り込みだけが渡す。PBI-275）。AI のレビューの指摘だけの差し戻しは、人の差し戻しの回数と上限に数えない
+   * （人の指摘が1件でも混ざれば数える）。
    */
-  requestChanges(id: string, raw: unknown): Task {
+  requestChanges(id: string, raw: unknown, options: { aiReview?: readonly number[] } = {}): Task {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
@@ -12266,7 +12349,14 @@ export class TaskService {
     if (!target || !targets.includes(target)) {
       throw new InvalidOperationError(message("gate.invalidTarget"));
     }
+    // 人が差し戻した回数（上限に数える）。AI のレビューの指摘だけの回は含めない（PBI-275）
     const rounds = changeRounds(task, target);
+    const aiIndexes = new Set(options.aiReview ?? []);
+    const comments = input.comments.map((text, i) => ({
+      text,
+      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+    }));
+    const onlyAiReview = comments.length > 0 && comments.every((c) => c.source === "sacty_review");
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
       throw new InvalidOperationError(message("gate.remarksRequired"));
@@ -12274,11 +12364,16 @@ export class TaskService {
     // 差し戻しと一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。差し戻しの前に同じ書き込みで
     // 記録し、やり直す工程から使う。上限でエスカレーションするときも記録する（人の指定を黙って失わないため）
     const settings = this.stepSettingChanges(task, input);
-    const round = rounds + 1;
-    const toRemarks = (texts: string[]) =>
-      texts.map((text, i) => ({ id: `${target}-${round}-${i + 1}`, text }));
+    // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
+    const round = lastChangeRound(task, target) + 1;
+    const toRemarks = (list: { text: string; source?: "sacty_review" }[]) =>
+      list.map(({ text, source }, i) => ({
+        id: `${target}-${round}-${i + 1}`,
+        text,
+        ...(source ? { source } : {}),
+      }));
 
-    if (task.status === "awaiting_approval" && rounds >= MAX_CHANGE_REQUESTS) {
+    if (task.status === "awaiting_approval" && !onlyAiReview && rounds >= MAX_CHANGE_REQUESTS) {
       return this.append(task, [
         ...settings,
         {
@@ -12289,14 +12384,14 @@ export class TaskService {
               step: input.step,
               target,
               reason: "too_many_changes",
-              pendingRemarks: toRemarks(input.comments),
+              pendingRemarks: toRemarks(comments),
             },
           },
         },
       ]);
     }
 
-    let remarks = toRemarks(input.comments);
+    let remarks = toRemarks(comments);
     // エスカレーションの後でも、上限に達していない別の工程に戻すのは通常の差し戻し
     const overLimit = task.status === "escalated" && rounds >= MAX_CHANGE_REQUESTS;
     if (overLimit && !input.continueOverLimit) {
@@ -12311,7 +12406,7 @@ export class TaskService {
         task.escalation &&
         (rework || task.escalation.target === target)
       ) {
-        remarks = toRemarks(task.escalation.pendingRemarks.map((r) => r.text));
+        remarks = toRemarks(task.escalation.pendingRemarks);
       }
       if (remarks.length === 0) {
         throw new InvalidOperationError(message("gate.remarksRequired"));
@@ -12344,7 +12439,11 @@ export class TaskService {
       ...settings,
       ...missed,
       {
-        actor: "person",
+        // AI のレビューの指摘だけの差し戻しは、人の操作にしない（作業履歴・監査で人の差し戻しと分けるため。PBI-275）
+        actor:
+          remarks.length > 0 && remarks.every((r) => r.source === "sacty_review")
+            ? "sacty"
+            : "person",
         event: {
           type: "ChangesRequested",
           payload: {
@@ -12566,6 +12665,14 @@ function handedOverFeedback(
   if (!continued || pr.number !== continued.number) return false;
   if (!pr.repo || !sameRepo(pr.repo, continued.repo)) return false;
   return (task.handedOverFeedback ?? []).includes(item.key);
+}
+
+/** 2つのコミットが同じか（長さが違っても、短い方が先頭に一致すれば同じ。大文字・小文字は区別しない）。 */
+function sameCommit(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  return x.length <= y.length ? y.startsWith(x) : x.startsWith(y);
 }
 
 /** PR をレビューした sacty のタスクの回を、指摘の有無にかかわらず含めるものにする（引き継いだ PR の指摘を工程に渡すため）。 */

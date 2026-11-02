@@ -1576,6 +1576,51 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(step).toContain("（設計をやり直します）");
   });
 
+  it("戻し先の判断に、人の指摘と AI のレビューの指摘を分けて渡す。AI のレビューの指摘は新しい要望ではない（PBI-275）", () => {
+    const task = {
+      id: "t1",
+      approved: { requirements: { output: "# 承認済みの要求要件" } },
+      outputs: {},
+      testViewpoints: [],
+    } as unknown as Task;
+    for (const [targets, gate] of [
+      [["implement", "requirements"], undefined],
+      [["design", "requirements"], "design"],
+    ] as const) {
+      const prompt = buildReworkPrompt(
+        task,
+        ["さっきの指摘は無しで", "AI: 上限の食い違い", "AI: 戻り値の確認"],
+        [...targets],
+        gate,
+        [1, 2],
+      );
+      const human = prompt.indexOf("--- PR への人間の指摘 ---");
+      const ai = prompt.indexOf("--- PR への AI のレビューの指摘 ---");
+      expect(human, gate).toBeGreaterThan(0);
+      expect(ai, gate).toBeGreaterThan(human);
+      expect(prompt.slice(human, ai), gate).toContain("- さっきの指摘は無しで");
+      expect(prompt.slice(human, ai), gate).toContain("人間の指摘（この節）を指します");
+      expect(prompt.slice(human, ai), gate).not.toContain("AI: 上限");
+      expect(prompt.slice(ai, ai + 500), gate).toContain("- AI: 上限の食い違い");
+      expect(prompt.slice(ai, ai + 500), gate).toContain("- AI: 戻り値の確認");
+      expect(prompt.slice(ai, ai + 500), gate).toContain("new_request）ではありません");
+    }
+    // AI のレビューの指摘が無ければ、これまでと同じ
+    const plain = buildReworkPrompt(task, ["x"], ["implement", "requirements"]);
+    expect(plain).toContain("--- PR への人間の指摘 ---\n- x");
+    expect(plain).not.toContain("AI のレビュー");
+    // AI のレビューの指摘だけなら、人の指摘の節は出さない
+    const only = buildReworkPrompt(
+      task,
+      ["AI: a"],
+      ["implement", "requirements"],
+      "implement",
+      [0],
+    );
+    expect(only).toContain("--- PR への AI のレビューの指摘 ---");
+    expect(only).not.toContain("--- PR への人間の指摘 ---");
+  });
+
   it("要求要件を省いたタスクは、原因の判断に元の依頼を渡す。要求要件があるタスクには渡さない（PBI-268）", () => {
     const base = { id: "t1", approved: {}, outputs: {}, testViewpoints: [] };
     const request = (title: string, body: string, approved: object = {}) =>
@@ -1857,6 +1902,120 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(extractBlocks("# 説明", new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
     const empty = `\`\`\`sacty-test-command\n${JSON.stringify({ command: "" })}\n\`\`\``;
     expect(extractBlocks(empty, new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
+  });
+
+  it("実装の指示に、人の指摘と AI のレビューの指摘を分けて渡し、人の「さっきの指摘」は人の指摘を指すと伝える（PBI-275）", () => {
+    const remark = (id: string, step: string, text: string, source?: "sacty_review") => ({
+      id,
+      step,
+      round: 1,
+      text,
+      voided: false,
+      ...(source ? { source } : {}),
+    });
+    const t = task(
+      {
+        remarks: [
+          remark("requirements-1-1", "requirements", "もっとシンプルにして"),
+          remark("requirements-1-2", "requirements", "AI: 上限の食い違い", "sacty_review"),
+          remark("implement-1-1", "implement", "さっきの指摘は無しで"),
+          remark("implement-1-2", "implement", "AI: 戻り値の確認が無い", "sacty_review"),
+        ],
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const prompt = buildPrompt(t, "implement");
+    const humanAt = prompt.indexOf("--- 人間の指摘（すべてに対応してください");
+    const aiAt = prompt.indexOf("--- AI のレビューの指摘（すべてに対応してください");
+    expect(humanAt).toBeGreaterThan(0);
+    expect(aiAt).toBeGreaterThan(humanAt);
+    // 人の指摘の節には人の指摘だけ、AI の節には AI の指摘だけ
+    const human = prompt.slice(humanAt, aiAt);
+    const ai = prompt.slice(aiAt);
+    expect(human).toContain("- [implement-1-1] さっきの指摘は無しで");
+    expect(human).not.toContain("implement-1-2");
+    expect(human).toContain(
+      "「さっきの指摘」「前の指摘」「前に言ったこと」などは、AI のレビューの指摘ではなく、人間の指摘（この節）を指します",
+    );
+    expect(ai).toContain("人間が書いた指摘ではありません");
+    expect(ai).toContain("- [implement-1-2] AI: 戻り値の確認が無い");
+    // ほかの工程のこれまでの指摘も分ける
+    expect(prompt).toContain("--- これまでの人間の指摘（再発させないでください） ---");
+    expect(prompt).toContain("--- これまでの AI のレビューの指摘（再発させないでください） ---");
+    const earlierHuman = prompt.indexOf("--- これまでの人間の指摘");
+    const earlierAi = prompt.indexOf("--- これまでの AI のレビューの指摘");
+    expect(prompt.slice(earlierHuman, earlierAi)).toContain("もっとシンプルにして");
+    expect(prompt.slice(earlierHuman, earlierAi)).not.toContain("AI: 上限の食い違い");
+    expect(prompt.slice(earlierAi, earlierAi + 400)).toContain("AI: 上限の食い違い");
+  });
+
+  it("AI のレビューの指摘が無ければ、これまでの人の指摘の節だけで、AI の節も注意も出さない（PBI-275）", () => {
+    const t = task(
+      {
+        remarks: [
+          { id: "implement-1-1", step: "implement", round: 1, text: "直して", voided: false },
+        ],
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const prompt = buildPrompt(t, "implement");
+    expect(prompt).toContain("--- 人間の指摘（すべてに対応してください");
+    expect(prompt).not.toContain("AI のレビューの指摘");
+    expect(prompt).not.toContain("さっきの指摘");
+  });
+
+  it("AI のレビューの指摘だけなら、人の指摘の節も注意も出さない（PBI-275）", () => {
+    const t = task(
+      {
+        remarks: [
+          {
+            id: "implement-1-1",
+            step: "implement",
+            round: 1,
+            text: "AI: 直して",
+            voided: false,
+            source: "sacty_review",
+          },
+        ],
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const prompt = buildPrompt(t, "implement");
+    expect(prompt).toContain("--- AI のレビューの指摘（すべてに対応してください");
+    expect(prompt).toContain("- [implement-1-1] AI: 直して");
+    expect(prompt).not.toContain("--- 人間の指摘");
+    expect(prompt).not.toContain("さっきの指摘");
+  });
+
+  it("最終レビューの過去の指摘も、人の指摘と AI のレビューの指摘を分ける（PBI-275）", () => {
+    const t = task(
+      {
+        remarks: [
+          { id: "implement-1-1", step: "implement", round: 1, text: "人の", voided: false },
+          {
+            id: "implement-1-2",
+            step: "implement",
+            round: 1,
+            text: "AIの",
+            voided: false,
+            source: "sacty_review",
+          },
+        ],
+      } as Partial<Task>,
+      ["requirements", "design", "implement"],
+    );
+    const review = buildFinalReviewPrompt(t, "diff");
+    const human = review.indexOf("--- 人間の過去の指摘 ---");
+    const ai = review.indexOf("--- AI のレビューの過去の指摘（人間の指摘ではない） ---");
+    expect(human).toBeGreaterThan(0);
+    expect(ai).toBeGreaterThan(human);
+    expect(review.slice(human, ai)).toContain("- [implement-1-1] 人の");
+    expect(review.slice(human, ai)).not.toContain("AIの");
+    expect(review.slice(ai, ai + 300)).toContain("- [implement-1-2] AIの");
+    // 指摘が無ければ「（なし）」
+    expect(
+      buildFinalReviewPrompt(task({}, ["requirements", "design", "implement"]), "diff"),
+    ).toContain("--- 人間の過去の指摘 ---\n（なし）");
   });
 
   it("設計のあるタスクの実装と最終レビューでも、テストではなく観点ごとに目的から判定させる", () => {

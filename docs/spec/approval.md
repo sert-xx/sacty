@@ -6,8 +6,9 @@
 人間は、sacty の画面か、対象のリポジトリへの PR のマージで承認する（承認＝マージ）。
 差し戻すと、選んだ工程からやり直す。
 同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
+上限に数えるのは人が差し戻した回数で、sacty 自身の AI のレビューの指摘だけの差し戻しは数えない（[AI のレビューの指摘](#ai-のレビューの指摘)）。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)
 
 ## 画面での承認
 
@@ -321,7 +322,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 
 ## PR の指摘の取り込み
 
-- PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`）。
+- PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む（`PullRequestReviewImported`、actor `person`。sacty 自身の AI のレビューの指摘だけの回は actor `sacty`）。
   - 最後のフィードバックから2分（`FEEDBACK_QUIET_MS`）待ってから取り込む。
     各フィードバックの時刻は、GitHub の時刻と、デーモンが初めて見た時刻（メモリーだけ。`feedbackSeenAt`）の早い方にする。
     GitHub の時刻がこの機械の時計より先に進んでいても、初めて見てから2分で取り込む（GitHub の時刻まで待ち続けない）。
@@ -345,6 +346,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     差し戻さず、ゴールガーディアンも動かさない。
   - 再レビューは回ごとに判定する。
     そのタスクのアカウントと違う人が目印を写したものは、人の指摘として扱う。
+  - 取り込んだ指摘は、AI のレビューの指摘として人の指摘と区別する（下の「AI のレビューの指摘」）。
 - それ以外では、次の投稿を取り込まない。
   - bot の投稿
   - 元のタスクのプロジェクトのアカウントが投稿した、sacty のレビューの目印で始まるレビュー・行へのコメント
@@ -368,7 +370,39 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 読み直しの間に、人が差し戻した・中止したなどで状態が変わっていれば、記録しない。読めなければ、次の確認でやり直す。
   - マージの後に届いた指摘を、続きのタスクにするなどはしない。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
+### AI のレビューの指摘
+
+関係する ADR: [sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+
+sacty のレビューのタスクが PR に投稿したレビュー・行へのコメント・通常のコメントは、元のタスクに今までどおり届ける。
+ただし、人の指摘とは区別する。
+
+- 見分け方：投稿の目印（`<!-- sacty-review:<タスク ID>[:<回>] -->`）で見分ける。上の「この PR をレビューした sacty のタスク」の判定で取り込む投稿が、AI のレビューの指摘（`PullRequestFeedback.source: "sacty_review"`）になる。
+  投稿したアカウントでは見分けない（レビューは、プロジェクトのアカウント＝人と同じアカウントで投稿される）。
+  アカウントが同じでも、目印の無い投稿は人の指摘のまま。
+- 記録：`PullRequestReviewImported` の `items[].source` に `sacty_review` を残す。
+  取り込んだ指摘のうち、AI のレビューのものの位置を `pendingReview.aiReview` に持つ。
+  差し戻し（`ChangesRequested`）の指摘（`remarks[].source`、`Task.remarks[].source`）に引き継ぐ。
+  - 取り込みが AI のレビューの指摘だけなら、actor は `sacty`（人の操作にしない）。人の指摘が1件でも混ざれば `person`。
+  - 差し戻しも同じで、指摘がすべて AI のレビューのものなら actor は `sacty`。
+- 回数と上限：AI のレビューの指摘だけの差し戻しは、人が差し戻した回数と、同じ工程への差し戻しの上限（`MAX_CHANGE_REQUESTS`）に数えない。
+  - 人の回数（`changeRounds`）は、人の指摘が1件でもある回の数。AI のレビューだけの回は数えない。
+  - 回の番号と指摘の ID（`<工程>-<回>-<番号>`）は、AI のレビューの回も含めて続ける（`lastChangeRound`）。
+  - AI のレビューの指摘だけの差し戻しは、上限に達していてもエスカレーションにしない。
+  - 費用の上限は、今までどおり効く。
+- 古い head へのレビュー：レビューが対象にした PR の head（レビュー・行へのコメントのコミット。`PullRequestFeedback.commit`）が、取り込むときの PR の今の head（`status` の `headSha`）と違えば、取り込まずに捨てる。
+  - 捨てたものは `PullRequestReviewDiscarded`（actor `sacty`。`reason: stale_head`・今の head・捨てた指摘と対象のコミット）に残し、取り込み済み（`importedFeedback`）にする。差し戻さず、ゴールガーディアンも動かさない。以降も取り込み直さない。
+  - 対象のコミットが分からない投稿は、古いかどうか分からないので取り込む。短いコミットの表記は先頭の一致で比べる。
+  - PR の head を読めないときは、AI のレビューだけ今回は取り込まず、次の確認で確かめ直す（人の指摘は取り込む）。
+  - 人の指摘は、head によらず取り込む。
+- エージェントへの渡し方：人の指摘と AI のレビューの指摘を分けて渡す。
+  - 工程のエージェント（実装・要求要件・設計など）の指示、最終レビュー・統合レビュー・戻し先の判断・質問への答え・監査の指示で、「人間の指摘」の節と「AI のレビューの指摘（人間の指摘ではない）」の節に分ける（`remarkSections`・`reworkRemarkLines`）。
+  - AI のレビューの指摘が並ぶときは、人の指摘にある「さっきの指摘」「前の指摘」などは、AI のレビューの指摘ではなく人の指摘を指す、と人の指摘の節に添える。
+  - 戻し先の判断では、AI のレビューの指摘は人が新しく足した要望（`new_request`）ではない、と添える。
+- 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。
+  ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
+
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
 
 ## 差し戻し
 
@@ -378,6 +412,8 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 戻し先を省くと先頭（実装の承認待ちなら `implement`）。
 - 承認待ちでの差し戻しには、指摘が1件以上要る（`gate.remarksRequired`）。
   人は指摘を無効にでき、無効にした指摘はエージェントに渡さない。
+- 指摘には出どころがある（`remarks[].source`）。sacty 自身の AI のレビューの指摘は `sacty_review`、無ければ人の指摘（[AI のレビューの指摘](#ai-のレビューの指摘)）。
+  上限の回数（`changeRounds`）は、人の指摘が1件でもある回の数。回の番号と指摘の ID は AI のレビューの回も含めて続ける（`lastChangeRound`）。
 - 前の工程に戻すと、その工程から後の承認を取り消し、検証の結果と失敗の回数を戻す。
   PR で承認したタスクでは、マージ済みの PR は戻さない。
 - 差し戻しには、原因（`ReworkCause`。`ChangesRequested` の `cause`）を付けられる。省略すると、原因を決めない差し戻しとして記録し、集計では「原因が分からない」差し戻しに数える。
@@ -408,8 +444,8 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 
 | 理由 | いつ |
 | --- | --- |
-| `too_many_changes` | 同じ工程への差し戻しが `MAX_CHANGE_REQUESTS`（3）回に達した後の差し戻し。書きかけの指摘は残す。上限を超えて続けるには、明示して差し戻す（`overLimit`） |
+| `too_many_changes` | 同じ工程への人の差し戻しが `MAX_CHANGE_REQUESTS`（3）回に達した後の差し戻し（AI のレビューの指摘だけの回は数えない）。書きかけの指摘は残す。上限を超えて続けるには、明示して差し戻す（`overLimit`） |
 | `change_undecidable` | ゴールガーディアンが変更の申し出を判定できなかった。人が判断する（`ChangeDecided`） |
 | `rework_confirmation` | 以前の版の記録（いまは記録しない） |
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`MAX_CHANGE_REQUESTS`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`MAX_CHANGE_REQUESTS`）、`packages/core/src/projection.ts`（`changeRounds`）

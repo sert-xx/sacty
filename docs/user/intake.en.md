@@ -75,6 +75,13 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
 - A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR.
   - If its verdict is changes required or suggestions only (OK to merge), the review reaches the creating task as PR findings. The Goal Guardian decides where to go back to and fixes them (the task's budget stops the cost of repetition).
   - A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
+  - The findings of this review are told apart as "AI review comments" from the comments you wrote.
+    The review is posted with the same GitHub account as yours, but it is recognized by the marker (`sacty-review:`) put in the post.
+    - The Activity, the approval screen, the dashboard, and the audit show them separately as "AI review".
+    - A request for changes made only of AI review comments is not counted in the number of requests for changes by you, or in the limit on requests for changes to the same step (3).
+    - They are passed to agents separately from your comments. "The previous comment" and similar words in your comments are treated as pointing to your comments.
+  - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), that review is discarded instead of delivered.
+    That it was discarded, and why, remain in the Activity.
 - Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an implementation task. Its findings reach the creating task in the same way.
 - sacty adds the label once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again, use "Review again" on the review task). sacty does not add back a label that someone removed either.
 - Even if "Import PRs with the review label" is Off, sacty still adds the label. While it is Off, the PRs are not imported; once you turn it back On, the PRs still open at that time are imported. Intake only searches open PRs, so PRs merged or closed while it was Off are not imported.

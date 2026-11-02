@@ -278,6 +278,7 @@ function scenarioAt(index: number): Scenario {
 const EVIDENCE_EVENTS: Record<AuditEvidenceKind, ActivityEvent["type"][]> = {
   changesRequested: ["ChangesRequested"],
   pullRequestRemark: ["PullRequestReviewImported", "ChangesRequested"],
+  aiReviewRemark: ["PullRequestReviewImported", "ChangesRequested"],
   pause: ["TaskPaused"],
   retry: ["AgentRunFailed", "TestsRun", "FinalReviewed"],
   toolFailure: ["AgentRunCompleted", "AgentRunFailed", "AgentRunStarted"],
@@ -287,6 +288,7 @@ const EVIDENCE_EVENTS: Record<AuditEvidenceKind, ActivityEvent["type"][]> = {
 const EVIDENCE_TEXT: Record<AuditEvidenceKind, string> = {
   changesRequested: "空のリストのときの表示が無い",
   pullRequestRemark: "import の並びが規約と違う",
+  aiReviewRemark: "AI のレビューが、エラー時の戻り値の確認が無いと指摘した",
   pause: "検証が 3 回通らず、一時停止した",
   retry: "テストが通らず、実装をやり直した",
   toolFailure: "存在しないファイルの読み込みに 4 回失敗した",
