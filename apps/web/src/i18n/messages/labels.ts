@@ -200,6 +200,8 @@ const ja = {
     costUnknown: "費用不明",
     /** 読めた分（下限）だけが入っている費用。 */
     costAtLeast: (usd: string) => `${usd}以上`,
+    /** 費用を文に出さない成功の記録に、先の実行の使用量が不明なことを足す。 */
+    costNote: (cost: string) => `（${cost}）`,
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
     TaskCreated: (actor: string, template?: string, rerun?: boolean, derived?: boolean) =>
       `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}${rerun ? "・中止したタスクの再実行" : ""}${derived ? "・完了したタスクの続き" : ""}）`,
@@ -731,6 +733,7 @@ const en: LabelMessages = {
     estimated: " · estimate",
     costUnknown: "cost unknown",
     costAtLeast: (usd) => `${usd} or more`,
+    costNote: (cost) => ` (${cost})`,
     withCost: (actor, cost) => `${actor} · ${cost}`,
     TaskCreated: (actor, template, rerun, derived) =>
       `Task created (${actor}${template ? ` · template: ${template}` : ""}${rerun ? " · rerun of a cancelled task" : ""}${derived ? " · follow-up of a completed task" : ""})`,

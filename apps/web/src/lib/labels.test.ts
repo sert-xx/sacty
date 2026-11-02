@@ -1075,6 +1075,41 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     );
   });
 
+  it("成功の記録も、先の実行の使用量が不明なら、不明と出す（再開を断られた後に成功したときなど）", () => {
+    const base = { costUsd: 0, estimated: true, costUnknown: true };
+    const steps = event("StepsChosen", { steps: ["requirements"], ...base });
+    expect(describeEvent(steps)).toMatch(/（費用不明）$/);
+    expect(describeIn(steps, labels.en)).toMatch(/ \(cost unknown\)$/);
+    expect(
+      describeEvent(event("StepsChosen", { steps: ["requirements"], ...base, costUsd: 0.3 })),
+    ).toMatch(/（\$0\.3000以上・概算）$/);
+    expect(describeEvent(event("InformationGathered", { sources: [], ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(describeEvent(event("TicketTriaged", { repo: "a/b", reason: "r", ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(describeEvent(event("RepositoryChosen", { repo: "a/b", reason: "r", ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(
+      describeEvent(
+        event("AgentRunCompleted", { step: "implement", output: "", responses: [], ...base }),
+      ),
+    ).toContain("費用不明");
+    expect(
+      describeEvent(
+        event("FinalReviewed", { passed: true, viewpoints: [], remarks: [], summary: "", ...base }),
+      ),
+    ).toContain("費用不明");
+    // 印が無い成功は、これまでどおり（印も費用も付けない）
+    const plain = describeEvent(
+      event("StepsChosen", { steps: ["requirements"], costUsd: 0, estimated: true }),
+    );
+    expect(plain).not.toContain("費用不明");
+    expect(plain).not.toContain("以上");
+  });
+
   it("判定の記録は、費用が 0 でも不明なら不明と出す", () => {
     const judged = event("ReworkJudged", {
       reason: "判定できなかった",

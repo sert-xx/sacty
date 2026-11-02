@@ -268,6 +268,45 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     expect((error as AgentTimeoutError).costUnknown).toBe(true);
   });
 
+  it("コンテナが止まったことを確かめられなくても、確認の失敗の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker ps は、止めた後もコンテナを返し続ける
+      else
+        setTimeout(() => {
+          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
+          child.emit("close", 0);
+        }, 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor.run({
+      runId: "unconfirmed",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    run?.stdout.emit("data", assistantLine("m1", 8));
+    executor.kill("unconfirmed");
+    run?.emit("close", 137);
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+      usage: { output: 8 },
+      costUnknown: true,
+    });
+  });
+
   it("デーモンの停止（abortAll）で止めた実行も、停止の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
     const docker = fakeDocker([0]);
     const executor = new DockerExecutor(60_000, docker.spawnImpl);

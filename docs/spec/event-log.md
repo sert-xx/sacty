@@ -116,7 +116,7 @@
   - 読めなければ `costUsd` は 0 のままで、この 0 は費用が無かったのではなく不明を意味する。拾い方は[エージェントの実行](agent-execution.md)の出力の扱い。
   - 失敗して代わりのエージェントで判定し直した判定や、再開を断られて新しいセッションで始め直した実行は、先の実行が不明なら合計も不明にする。そのため、成功を記録するイベント（`AgentRunCompleted`・`StepsChosen`・`TicketTriaged`・`RepositoryChosen`・`InformationGathered`・`FinalReviewed`）も `costUnknown` を持てる。
   - `chargeBudget` は、印のあるイベントの回数を `budget.unknownRuns` に数える（無ければ持たない）。読めた分は予算の判定に入る。
-  - 画面と作業履歴は、読めた分があれば「以上」、読めなければ「不明」と出し、$0 とは見せない。
+  - 画面と作業履歴は、読めた分があれば「以上」、読めなければ「不明」と出し、$0 とは見せない。費用を文に出さない成功の記録（`StepsChosen`・`InformationGathered`・`TicketTriaged`・`RepositoryChosen`）も、印があれば末尾に出す。
 - 完了したタスクの監査（`Audit…` のイベント）の費用は `auditCostUsd` に持ち、タスクの予算には入れない。
   監査の予算（タスクの監査の状態の `usedUsd`）に足す（[監査](audit.md)）。
 - 予算の状態（`budgetState`）は次のとおり。

@@ -370,16 +370,48 @@ export function describeEventParts(
   return { text: describeEventText(event, l) };
 }
 
+/**
+ * 費用の文。unknown：使った分の全体を読めなかった実行（PBI-281）。読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す。
+ */
+function costLabel(
+  e: LabelMessages["event"],
+  costUsd: number,
+  estimated: boolean,
+  unknown?: boolean,
+): string {
+  return unknown
+    ? costUsd > 0
+      ? `${e.costAtLeast(usd(costUsd))}${estimated ? e.estimated : ""}`
+      : e.costUnknown
+    : `${usd(costUsd)}${estimated ? e.estimated : ""}`;
+}
+
+/**
+ * 作業履歴の1行の文。費用を文に出さない成功の記録（工程の選択・情報収集・チケットの読み取り・リポジトリの選択）も、
+ * 先の実行の使用量が不明なら、その印を末尾に出す（再開を断られた実行の後に成功したときなど。PBI-281）。
+ */
 function describeEventText(event: ActivityEvent, l: LabelMessages): string {
+  const text = describeEventBody(event, l);
+  if (
+    (event.type === "StepsChosen" ||
+      event.type === "InformationGathered" ||
+      event.type === "TicketTriaged" ||
+      event.type === "RepositoryChosen") &&
+    event.payload.costUnknown
+  ) {
+    return (
+      text +
+      l.event.costNote(costLabel(l.event, event.payload.costUsd, event.payload.estimated, true))
+    );
+  }
+  return text;
+}
+
+function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
   const actor = l.actor[event.actor];
-  // unknown：使った分の全体を読めなかった実行（PBI-281）。読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す
   const cost = (costUsd: number, estimated: boolean, unknown?: boolean) =>
-    unknown
-      ? costUsd > 0
-        ? `${e.costAtLeast(usd(costUsd))}${estimated ? e.estimated : ""}`
-        : e.costUnknown
-      : `${usd(costUsd)}${estimated ? e.estimated : ""}`;
+    costLabel(e, costUsd, estimated, unknown);
   const withCost = (costUsd: number, estimated: boolean, unknown?: boolean) =>
     costUsd > 0 || unknown ? e.withCost(actor, cost(costUsd, estimated, unknown)) : actor;
   switch (event.type) {
@@ -495,7 +527,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     case "AgentRunCompleted":
       return e.AgentRunCompleted(
         l.step[event.payload.step],
-        cost(event.payload.costUsd, event.payload.estimated),
+        cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
         event.payload.step === "design" ? event.payload.testViewpoints.length : undefined,
         event.payload.selfReview,
       );
@@ -587,7 +619,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.FinalReviewed(
         event.payload.passed,
         failures,
-        withCost(event.payload.costUsd, event.payload.estimated),
+        withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     }
     case "PullRequestPublished":

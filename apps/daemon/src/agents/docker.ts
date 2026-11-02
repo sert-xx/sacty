@@ -558,10 +558,15 @@ export class DockerExecutor implements AgentExecutor {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
       const stopped = await this.containers.finish(containerName);
       if (!stopped) {
+        // 止まったことを確かめられなくても、それまでに読めた使用量と不明の印は残す（コンテナが動き続けていれば、この後の分は
+        // 分からない。PBI-281）
+        const partial = reader.finish(1);
         outcome = {
           kind: "failed",
           reason: "error",
           message: message("run.containerNotConfirmed", { name: containerName }),
+          ...(partial.usage ? { usage: partial.usage } : {}),
+          ...(reader.started ? { costUnknown: true as const } : {}),
         };
       }
       // 時間切れで止めた実行も、それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない。PBI-281）

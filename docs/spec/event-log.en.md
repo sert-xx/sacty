@@ -101,7 +101,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   - If nothing could be read, `costUsd` stays 0, and this 0 means unknown, not that nothing was spent. How it is read is under output handling in [Agent execution](agent-execution.en.md).
   - For a judgement redone with a fallback agent after a failure, or a run restarted in a new session after a resume was refused, the total is unknown if the earlier run was unknown. So the events that record a success (`AgentRunCompleted`, `StepsChosen`, `TicketTriaged`, `RepositoryChosen`, `InformationGathered`, and `FinalReviewed`) can carry `costUnknown` too.
   - `chargeBudget` counts the marked events in `budget.unknownRuns` (absent when none). The part that could be read counts toward the budget check.
-  - The screen and the activity log show "or more" when some part could be read and "unknown" when none could, and never show $0.
+  - The screen and the activity log show "or more" when some part could be read and "unknown" when none could, and never show $0. Success records whose line does not show cost (`StepsChosen`, `InformationGathered`, `TicketTriaged`, and `RepositoryChosen`) show the mark at the end too.
 - The projection and the per-step cost table both add cost with the same rule (`chargeBudget`). If a kind not in the list carries `costUsd`, the type check fails and typecheck does not pass.
 - The cost of audits of completed tasks (`Audit…` events) is held in `auditCostUsd` and is not counted toward the task budget. It is added to the audit's own budget (`usedUsd` in the task's audit state; [Audit](audit.en.md)).
 - The budget state (`budgetState`) is as follows.
