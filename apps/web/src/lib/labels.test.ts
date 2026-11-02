@@ -1032,6 +1032,63 @@ describe("オーケストレーターの失敗の表示（PBI-32）", () => {
   });
 });
 
+describe("使った分の全体を読めなかった実行の費用の表示（PBI-281）", () => {
+  const event = (type: string, payload: Record<string, unknown>) =>
+    ({ type, payload, actor: "agent" }) as unknown as ActivityEvent;
+  const timeout = { code: "run.timeout", params: { minutes: 3 } };
+
+  it("読めなければ 0 とは出さずに不明と出し、読めた分があれば「以上」と出す", () => {
+    const failed = (payload: Record<string, unknown>) =>
+      event("AgentRunFailed", {
+        runId: "r",
+        step: "implement",
+        agentId: "a",
+        reason: "error",
+        message: timeout,
+        costUsd: 0,
+        estimated: true,
+        ...payload,
+      });
+    expect(describeEvent(failed({ costUnknown: true }))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。（費用不明）",
+    );
+    expect(describeEvent(failed({ costUnknown: true, costUsd: 0.31 }))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。（$0.3100以上・概算）",
+    );
+    expect(describeIn(failed({ costUnknown: true }), labels.en)).toBe(
+      "Implement failed: Stopped the agent because it ran longer than 3 minutes. (cost unknown)",
+    );
+    // 費用を読めた失敗は、これまでどおり費用を出さない
+    expect(describeEvent(failed({}))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。",
+    );
+  });
+
+  it("オーケストレーター・最終レビューの失敗は、$0.0000 と出さずに不明と出す", () => {
+    const base = { message: timeout, reason: "error", costUsd: 0, estimated: false };
+    expect(describeEvent(event("OrchestratorFailed", { ...base, costUnknown: true }))).toContain(
+      "（費用不明）",
+    );
+    expect(describeEvent(event("OrchestratorFailed", { ...base }))).toContain("（$0.0000）");
+    expect(describeEvent(event("FinalReviewFailed", { ...base, costUnknown: true }))).toContain(
+      "（費用不明）",
+    );
+  });
+
+  it("判定の記録は、費用が 0 でも不明なら不明と出す", () => {
+    const judged = event("ReworkJudged", {
+      reason: "判定できなかった",
+      costUsd: 0,
+      estimated: true,
+      costUnknown: true,
+    });
+    expect(describeEvent(judged)).toContain("費用不明");
+    expect(
+      describeEvent(event("ReworkJudged", { reason: "x", costUsd: 0, estimated: true })),
+    ).not.toContain("費用不明");
+  });
+});
+
 describe("ゲートウェイのリトライの表示（PBI-37）", () => {
   it("リトライした回数・原因・待った時間と、あきらめたかを出す", () => {
     const event = (gaveUp: boolean) =>

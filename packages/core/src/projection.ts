@@ -535,6 +535,11 @@ export type Task = {
     warned: boolean;
     /** 換算値（サブスクリプションなど）を含むか。 */
     estimated: boolean;
+    /**
+     * 使った分の全体を読めなかった実行（時間切れなど）の回数（PBI-281）。その費用は、読めた分（下限）だけが usedUsd に入っている。
+     * 無ければ 0 回。
+     */
+    unknownRuns?: number;
     /** 人が上限を上げた（BudgetCapRaised）。工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上書きしない。 */
     raised?: true;
   };

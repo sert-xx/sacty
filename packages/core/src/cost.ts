@@ -81,18 +81,24 @@ export function addUsd(a: number, b: number): number {
   return Math.round((a + b) * 1e6) / 1e6;
 }
 
+/** 使った分の全体を読めなかった実行を記録したイベントか（時間切れなど。PBI-281）。 */
+export function hasUnknownCost(event: ChargedEvent): boolean {
+  return "costUnknown" in event.payload && event.payload.costUnknown === true;
+}
+
 /**
  * イベントの費用を、予算の使用済みに足す（PBI-86）。費用を持たないイベントなら、そのまま返す。作業履歴の順に
  * 足していけば、projection のタスクの費用（task.budget.usedUsd・estimated）と同じ値になる。
+ * 使った分の全体を読めなかった実行（PBI-281）は、読めた分（下限）を足し、その回数を unknownRuns に数える（0 回なら持たない）。
  */
-export function chargeBudget<B extends { usedUsd: number; estimated: boolean }>(
-  budget: B,
-  event: ActivityEvent,
-): B {
+export function chargeBudget<
+  B extends { usedUsd: number; estimated: boolean; unknownRuns?: number },
+>(budget: B, event: ActivityEvent): B {
   if (!isChargedEvent(event)) return budget;
   return {
     ...budget,
     usedUsd: addUsd(budget.usedUsd, event.payload.costUsd),
     estimated: budget.estimated || event.payload.estimated,
+    ...(hasUnknownCost(event) ? { unknownRuns: (budget.unknownRuns ?? 0) + 1 } : {}),
   };
 }

@@ -373,10 +373,15 @@ export function describeEventParts(
 function describeEventText(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
   const actor = l.actor[event.actor];
-  const cost = (costUsd: number, estimated: boolean) =>
-    `${usd(costUsd)}${estimated ? e.estimated : ""}`;
-  const withCost = (costUsd: number, estimated: boolean) =>
-    costUsd > 0 ? e.withCost(actor, cost(costUsd, estimated)) : actor;
+  // unknown：使った分の全体を読めなかった実行（PBI-281）。読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す
+  const cost = (costUsd: number, estimated: boolean, unknown?: boolean) =>
+    unknown
+      ? costUsd > 0
+        ? `${e.costAtLeast(usd(costUsd))}${estimated ? e.estimated : ""}`
+        : e.costUnknown
+      : `${usd(costUsd)}${estimated ? e.estimated : ""}`;
+  const withCost = (costUsd: number, estimated: boolean, unknown?: boolean) =>
+    costUsd > 0 || unknown ? e.withCost(actor, cost(costUsd, estimated, unknown)) : actor;
   switch (event.type) {
     case "TaskCreated":
       return (
@@ -436,6 +441,9 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         l.step[event.payload.after],
         event.payload.steps.map((s) => l.step[s]).join(e.imagesJoin),
         l.text(event.payload.reason),
+        event.payload.costUnknown
+          ? cost(event.payload.costUsd, event.payload.estimated, true)
+          : undefined,
       );
     case "InformationGathered":
       return e.InformationGathered(event.payload.sources.length);
@@ -492,7 +500,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         event.payload.selfReview,
       );
     case "AgentRunFailed":
-      return e.AgentRunFailed(l.step[event.payload.step], l.text(event.payload.message));
+      return e.AgentRunFailed(
+        l.step[event.payload.step],
+        l.text(event.payload.message),
+        event.payload.costUnknown
+          ? cost(event.payload.costUsd, event.payload.estimated, true)
+          : undefined,
+      );
     case "BudgetWarned":
       return e.BudgetWarned(usd(event.payload.usedUsd), usd(event.payload.capUsd));
     case "TaskPaused":
@@ -538,7 +552,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         event.payload.proposalId,
         l.verdict[event.payload.verdict],
         l.text(event.payload.reason),
-        withCost(event.payload.costUsd, event.payload.estimated),
+        withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     case "ChangeDecided":
       return e.ChangeDecided(event.payload.proposalId, event.payload.accept, actor);
@@ -718,12 +732,12 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     case "OrchestratorFailed":
       return e.OrchestratorFailed(
         l.text(event.payload.message),
-        cost(event.payload.costUsd, event.payload.estimated),
+        cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     case "FinalReviewFailed":
       return e.FinalReviewFailed(
         l.text(event.payload.message),
-        cost(event.payload.costUsd, event.payload.estimated),
+        cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     case "StepQueued":
       return e.StepQueued(l.step[event.payload.step]);
@@ -809,7 +823,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.ErrorAnalyzed(
         event.payload.analysisId,
         event.payload.failed === undefined ? undefined : l.text(event.payload.failed),
-        cost(event.payload.costUsd, event.payload.estimated),
+        cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     case "ExportStarted":
       return e.ExportStarted(l.step[event.payload.step]);
@@ -823,7 +837,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
           : p.runResult === "interrupted"
             ? { interrupted: l.text(p.failed ?? "") }
             : { failed: l.text(p.failed ?? "") },
-        cost(p.costUsd, p.estimated),
+        cost(p.costUsd, p.estimated, p.costUnknown),
       );
     }
     case "ExportRequested":
@@ -832,13 +846,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.QuestionAnswered(
         event.payload.questionId,
         event.payload.failed === undefined ? undefined : l.text(event.payload.failed),
-        cost(event.payload.costUsd, event.payload.estimated),
+        cost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     case "ReworkJudged":
       return e.ReworkJudged(
         event.payload.target ? l.step[event.payload.target] : undefined,
         l.text(event.payload.reason),
-        withCost(event.payload.costUsd, event.payload.estimated),
+        withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
       );
     // マージの後の監視（PBI-89）
     case "DeploymentWatchStarted":
@@ -856,9 +870,11 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       const p = event.payload;
       const detail = p.failed !== undefined ? l.text(p.failed) : p.summary;
       // 人が止めた・デーモンが止まった確認は、結果にせず確かめ直す（PBI-116）
-      if (p.retry) return e.DeploymentCheckStopped(detail, cost(p.costUsd, p.estimated));
+      if (p.retry) {
+        return e.DeploymentCheckStopped(detail, cost(p.costUsd, p.estimated, p.costUnknown));
+      }
       return (
-        e.DeploymentChecked(p.result, detail, cost(p.costUsd, p.estimated)) +
+        e.DeploymentChecked(p.result, detail, cost(p.costUsd, p.estimated, p.costUnknown)) +
         (p.ci ? e.deploymentPart("ci", p.ci.result, p.ci.reason) : "") +
         (p.deployment
           ? e.deploymentPart("deployment", p.deployment.result, p.deployment.reason)

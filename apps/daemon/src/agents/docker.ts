@@ -20,7 +20,7 @@ import { StringDecoder } from "node:string_decoder";
 import { message } from "@sacty/core";
 import { assertRealParents, NOFOLLOW_READ_FLAGS } from "../agent-sessions.js";
 import { AGENT_RUN_TIMEOUT_MS } from "../context.js";
-import { MessageError } from "../errors.js";
+import { AgentTimeoutError, MessageError } from "../errors.js";
 import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { SessionLogSink } from "../session-logs.js";
 import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.js";
@@ -453,6 +453,8 @@ export class DockerExecutor implements AgentExecutor {
     const containerName = `sacty-run-${runId}`;
     this.containers.register(containerName);
     let outcome: AgentOutcome;
+    // 時間切れで止めたときのエラー（止めるまでに読めた使用量を、後で添える。PBI-281）
+    const timedOut: { error?: AgentTimeoutError } = {};
     // 標準出力は全体を持たず、行ごとに読んで最後の答えに要るものだけを持つ（PBI-62）
     const reader =
       invocation.parser === "codex-jsonl"
@@ -493,7 +495,10 @@ export class DockerExecutor implements AgentExecutor {
         });
         const timer = setTimeout(() => {
           this.containers.stop(containerName);
-          reject(new MessageError(message("run.timeout", { minutes: timeoutMs / 60_000 })));
+          timedOut.error = new AgentTimeoutError(
+            message("run.timeout", { minutes: timeoutMs / 60_000 }),
+          );
+          reject(timedOut.error);
         }, timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
@@ -544,6 +549,13 @@ export class DockerExecutor implements AgentExecutor {
           reason: "error",
           message: message("run.containerNotConfirmed", { name: containerName }),
         };
+      }
+      // 時間切れで止めた実行も、それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない。PBI-281）
+      if (timedOut.error) {
+        const partial = reader.finish(1);
+        timedOut.error.usage = partial.usage;
+        // 途中で止めたので、出力が1つでも届いていれば、読めた分は下限（最後の結果の後の分は分からない）
+        timedOut.error.costUnknown = reader.started;
       }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       // コンテナが止まったことを確かめられなければ、認証ファイルを書き戻さない（動いたままのコンテナは、書き戻す途中の

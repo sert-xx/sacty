@@ -80,7 +80,7 @@ import {
   GitContextFetcher,
 } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
-import { MessageError } from "./errors.js";
+import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import {
   type PullRequestFeedback,
@@ -2809,6 +2809,81 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     activity.close();
   });
 
+  describe("時間切れで止めた実行の費用（PBI-281）", () => {
+    /** 時間切れで止められた実行（本物の実行器が投げるエラー）。usage は止めるまでに読めた分。 */
+    const timeoutAfter = (usage?: AgentOutcome extends { usage?: infer U } ? U : never) => {
+      const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+      error.usage = usage;
+      error.costUnknown = true;
+      return error;
+    };
+    const timedOutRun = async (error: Error) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1)]);
+      executor.run = async () => {
+        throw error;
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      const after = service.get(task.id);
+      const failed = after?.activity.find((e) => e.type === "AgentRunFailed");
+      return { activity, after, failed: failed?.type === "AgentRunFailed" ? failed : undefined };
+    };
+
+    it("止めるまでに読めた使用量を費用に記録し、予算に入れる（0 にしない）", async () => {
+      // 57,000 出力トークン = $0.855（予算の 80% を超える）
+      const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 57_000 };
+      const { activity, after, failed } = await timedOutRun(timeoutAfter(usage));
+      expect(failed?.payload).toMatchObject({ usage, costUsd: 0.855, costUnknown: true });
+      expect(after?.task.budget).toMatchObject({ usedUsd: 0.855, unknownRuns: 1, warned: true });
+      expect(after?.task.pausedReason).toBe("error");
+      activity.close();
+    });
+
+    it("読めなければ、0 の費用として記録せず、不明の印を付ける", async () => {
+      const { activity, after, failed } = await timedOutRun(timeoutAfter());
+      expect(failed?.payload.costUsd).toBe(0);
+      expect(failed?.payload.costUnknown).toBe(true);
+      expect(after?.task.budget.unknownRuns).toBe(1);
+      activity.close();
+    });
+
+    it("起動できなかったなど、何も使っていない失敗には、不明の印を付けない", async () => {
+      const { activity, after, failed } = await timedOutRun(new Error("docker failed"));
+      expect(failed?.payload.costUsd).toBe(0);
+      expect(failed?.payload).not.toHaveProperty("costUnknown");
+      expect(after?.task.budget).not.toHaveProperty("unknownRuns");
+      activity.close();
+    });
+
+    it("再開して時間切れが続けば、回ごとに記録して合計する（空・1件・複数件）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1)]);
+      const outputs = [100_000, undefined, 20_000];
+      executor.run = async () => {
+        const output = outputs.shift();
+        throw timeoutAfter(
+          output === undefined ? undefined : { input: 0, cacheRead: 0, cacheWrite: 0, output },
+        );
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      expect(service.get(task.id)?.task.budget).not.toHaveProperty("unknownRuns");
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.budget.unknownRuns).toBe(1);
+      // 1 回目で上限（$1）を超えて止まったので、上限を上げて再開する
+      service.resume(task.id, { capUsd: 50 });
+      await service.runNext(task.id);
+      service.resume(task.id, {});
+      await service.runNext(task.id);
+      const budget = service.get(task.id)?.task.budget;
+      expect(budget?.unknownRuns).toBe(3);
+      expect(budget?.usedUsd).toBeCloseTo(1.8, 6); // 1.5 + 0 + 0.3
+      const failures = service.get(task.id)?.activity.filter((e) => e.type === "AgentRunFailed");
+      expect(failures).toHaveLength(3);
+      activity.close();
+    });
+  });
+
   it("1回の実行で80%未満から上限を超えた場合も、通知を記録する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [completed(70_000)]); // $1.05
@@ -3583,6 +3658,46 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       authMode: "api-key",
     });
     expect(service.get(task.id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
+  it("代わりのエージェントで判定し直したとき、先の実行の使用量が不明なら、判定の費用も不明にして読めた分を足す（PBI-281）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
+        : base;
+    };
+    const { service } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        designWithProposal(),
+        {
+          kind: "failed",
+          reason: "usage_limit",
+          message: "429 Too Many Requests",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 }, // $0.30
+          costUnknown: true,
+        },
+        verdict("rejected", "代替手段がある"),
+      ],
+      {
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+      },
+    );
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    const judged = service.get(task.id)?.activity.find((e) => e.type === "ChangeJudged");
+    expect(judged?.payload).toMatchObject({ runResult: "completed", costUnknown: true });
+    // 先の実行の読めた分（$0.30）に、判定し直した実行の分が加わる
+    expect(judged?.type === "ChangeJudged" && judged.payload.costUsd).toBeGreaterThanOrEqual(0.3);
     activity.close();
   });
 
@@ -4710,6 +4825,31 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload.imageSource).toBe("project");
       expect(executor.images[1]).toEqual({ image: java.image, env: java.env });
+      activity.close();
+    });
+
+    it("オーケストレーターの実行が結果の前に止まったら、読めた分の費用と不明の印を記録する（PBI-281）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 }; // $0.30
+      const { service } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "error",
+            message: message("run.timeout", { minutes: 3 }),
+            usage,
+            costUnknown: true,
+          },
+        ],
+        { realPlanner: true },
+      );
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const latest = service.get(task.id);
+      const failed = latest?.activity.find((e) => e.type === "OrchestratorFailed");
+      expect(failed?.payload).toMatchObject({ usage, costUsd: 0.3, costUnknown: true });
+      expect(latest?.task.budget).toMatchObject({ usedUsd: 0.3, unknownRuns: 1 });
       activity.close();
     });
 

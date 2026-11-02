@@ -75,7 +75,11 @@ export function StepCosts({
                 </th>
                 <UsageCells usage={row.usage} count={count} m={m} />
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                  {row.runs.length > 0 ? <Cost usd={row.costUsd} /> : m.none}
+                  {row.runs.length > 0 ? (
+                    <Cost usd={row.costUsd} unknown={row.unknownRuns > 0} m={m} />
+                  ) : (
+                    m.none
+                  )}
                 </td>
                 <td className="py-2.5 pl-3 text-right whitespace-nowrap tabular-nums">
                   {m.runs(row.runs.length)}
@@ -90,7 +94,7 @@ export function StepCosts({
               </th>
               <UsageCells usage={total.usage} count={count} m={m} />
               <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                <Cost usd={total.costUsd} />
+                <Cost usd={total.costUsd} unknown={total.unknownRuns > 0} m={m} />
               </td>
               <td />
             </tr>
@@ -108,6 +112,9 @@ export function StepCosts({
           </tfoot>
         </table>
       </div>
+      {total.unknownRuns > 0 && (
+        <p className="text-xs text-muted-foreground">{m.unknownNote(total.unknownRuns)}</p>
+      )}
 
       {ran.length > 0 && (
         <details className="text-sm">
@@ -147,7 +154,7 @@ export function StepCosts({
                       </th>
                       <UsageCells usage={run.usage} count={count} m={m} />
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <Cost usd={run.costUsd} />
+                        <Cost usd={run.costUsd} unknown={run.costUnknown === true} m={m} />
                       </td>
                       <td
                         className={
@@ -218,9 +225,13 @@ function UsageCells({
   );
 }
 
-/** 費用。換算した概算かどうかはセルに出さず、見出しの補足で説明する（PBI-138。セルごとの印は表を読みにくくするため）。 */
-function Cost({ usd: value }: { usd: number }) {
-  return <span className="font-mono tabular-nums">{usd(value)}</span>;
+/**
+ * 費用。換算した概算かどうかはセルに出さず、見出しの補足で説明する（PBI-138。セルごとの印は表を読みにくくするため）。
+ * 使った分の全体を読めなかった実行（unknown。PBI-281）は、読めた分があれば「以上」、無ければ 0 とは出さずに不明と出す。
+ */
+function Cost({ usd: value, unknown, m }: { usd: number; unknown: boolean; m: CostMessages }) {
+  const text = !unknown ? usd(value) : value > 0 ? m.atLeast(usd(value)) : m.unknown;
+  return <span className="font-mono tabular-nums">{text}</span>;
 }
 
 /**

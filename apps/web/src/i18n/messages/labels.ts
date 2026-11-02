@@ -196,6 +196,10 @@ const ja = {
   /** 作業履歴の1行。 */
   event: {
     estimated: "・概算",
+    /** 使った分の全体を読めなかった実行（時間切れなど）の費用（PBI-281）。0 ではなく、不明と出す。 */
+    costUnknown: "費用不明",
+    /** 読めた分（下限）だけが入っている費用。 */
+    costAtLeast: (usd: string) => `${usd}以上`,
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
     TaskCreated: (actor: string, template?: string, rerun?: boolean, derived?: boolean) =>
       `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}${rerun ? "・中止したタスクの再実行" : ""}${derived ? "・完了したタスクの続き" : ""}）`,
@@ -220,10 +224,11 @@ const ja = {
     stepsDeployment: (skill: string) => ` / マージの後の監視：する（スキル ${skill}）`,
     stepsDeploymentSkipped: (reason: string) => ` / マージの後の監視：飛ばす（${reason}）`,
     /** 工程の見直しで、要らない工程を飛ばした（steps が空なら、飛ばさずに進める）。 */
-    StepsSkipped: (after: string, steps: string, reason: string) =>
-      steps
+    StepsSkipped: (after: string, steps: string, reason: string, unknownCost?: string) =>
+      (steps
         ? `「${after}」の後に工程を見直し、飛ばした：${steps}（${reason}）`
-        : `「${after}」の後に工程を見直し、飛ばさずに進める（${reason}）`,
+        : `「${after}」の後に工程を見直し、飛ばさずに進める（${reason}）`) +
+      (unknownCost ? `（${unknownCost}）` : ""),
     /** オーケストレーターが決めたサービス（PBI-47・PBI-70）。 */
     stepsServices: (names: string, source: string, steps: string, reason?: string) =>
       ` / サービス：${names || "すべて"}（${source}。${steps}で使う）${reason ? `：${reason}` : ""}`,
@@ -273,7 +278,8 @@ const ja = {
       selfReview?: { passed: boolean; rounds: number } | null,
     ) =>
       `${step}の実行が完了（${cost}${viewpoints === undefined ? "" : `・テスト観点${viewpoints}件`}${selfReview === undefined ? "" : selfReview === null ? "・セルフレビューの記録なし" : `・セルフレビュー${selfReview.passed ? "パス" : "未パス"}（${selfReview.rounds}回）`}）`,
-    AgentRunFailed: (step: string, message: string) => `${step}の実行が失敗：${message}`,
+    AgentRunFailed: (step: string, message: string, unknownCost?: string) =>
+      `${step}の実行が失敗：${message}${unknownCost ? `（${unknownCost}）` : ""}`,
     BudgetWarned: (used: string, cap: string) => `予算の80%に到達（${used} / ${cap}）`,
     BudgetCapRaised: (cap: string, actor: string) => `予算の上限を${cap}に変更（${actor}）`,
     /** 人が工程のイメージを変えた（PBI-106）。 */
@@ -723,6 +729,8 @@ const en: LabelMessages = {
   cleanupResult: { done: "Cleaned up", skipped: "Nothing to clean", failed: "Failed" },
   event: {
     estimated: " · estimate",
+    costUnknown: "cost unknown",
+    costAtLeast: (usd) => `${usd} or more`,
     withCost: (actor, cost) => `${actor} · ${cost}`,
     TaskCreated: (actor, template, rerun, derived) =>
       `Task created (${actor}${template ? ` · template: ${template}` : ""}${rerun ? " · rerun of a cancelled task" : ""}${derived ? " · follow-up of a completed task" : ""})`,
@@ -740,10 +748,11 @@ const en: LabelMessages = {
     stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,
     stepsDeployment: (skill) => ` / After-merge watch: yes (skill ${skill})`,
     stepsDeploymentSkipped: (reason) => ` / After-merge watch: skipped (${reason})`,
-    StepsSkipped: (after, steps, reason) =>
-      steps
+    StepsSkipped: (after, steps, reason, unknownCost) =>
+      (steps
         ? `Steps reviewed after "${after}", skipped: ${steps} (${reason})`
-        : `Steps reviewed after "${after}", none skipped (${reason})`,
+        : `Steps reviewed after "${after}", none skipped (${reason})`) +
+      (unknownCost ? ` (${unknownCost})` : ""),
     stepsServices: (names, source, steps, reason) =>
       ` / Services: ${names || "all"} (${source}; used in ${steps})${reason ? `: ${reason}` : ""}`,
     stepsNoServices: (shared, reason) =>
@@ -773,7 +782,8 @@ const en: LabelMessages = {
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
     AgentRunCompleted: (step, cost, viewpoints, selfReview) =>
       `${step} finished (${cost}${viewpoints === undefined ? "" : ` · ${viewpoints} test viewpoint${viewpoints === 1 ? "" : "s"}`}${selfReview === undefined ? "" : selfReview === null ? " · no self-review record" : ` · self-review ${selfReview.passed ? "passed" : "not passed"} (${selfReview.rounds} round${selfReview.rounds === 1 ? "" : "s"})`})`,
-    AgentRunFailed: (step, message) => `${step} failed: ${message}`,
+    AgentRunFailed: (step, message, unknownCost) =>
+      `${step} failed: ${message}${unknownCost ? ` (${unknownCost})` : ""}`,
     BudgetWarned: (used, cap) => `Reached 80% of budget (${used} / ${cap})`,
     BudgetCapRaised: (cap, actor) => `Budget cap changed to ${cap} (${actor})`,
     StepAgentChanged: (step, from, to, actor) =>

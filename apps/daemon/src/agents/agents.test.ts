@@ -2258,6 +2258,162 @@ echo '{"type":"result","is_error":false,"result":"ok","session_id":"abc-123","us
   });
 });
 
+describe("結果が出る前に止まった実行の使用量（PBI-281。S20 の時間切れの出力の形）", () => {
+  /** claude -p --output-format stream-json の assistant の出来事。内容ごとの出来事が、同じ id・同じ使用量を繰り返す。 */
+  const assistant = (
+    id: string,
+    usage: { input: number; read: number; write: number; output: number },
+    blocks = 1,
+  ) =>
+    Array.from({ length: blocks }, (_, i) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          id,
+          role: "assistant",
+          content: [
+            i === 0 ? { type: "thinking", thinking: "" } : { type: "tool_use", id: `t${i}` },
+          ],
+          usage: {
+            input_tokens: usage.input,
+            cache_read_input_tokens: usage.read,
+            cache_creation_input_tokens: usage.write,
+            output_tokens: usage.output,
+          },
+        },
+        session_id: "s",
+      }),
+    );
+  const init = JSON.stringify({ type: "system", subtype: "init", session_id: "s" });
+  const read = (lines: string[], exitCode = 137) => parseClaudeResult(lines.join("\n"), exitCode);
+
+  it("Claude：result が無くても、読めた発言の使用量を発言ごとに1回ずつ合計し、全体は不明とする", () => {
+    const outcome = read([
+      init,
+      // 3 つの内容に分かれた 1 つの発言は、1 回として数える（3 倍にしない）
+      ...assistant("msg_1", { input: 2, read: 31231, write: 0, output: 8 }, 3),
+      ...assistant("msg_2", { input: 2, read: 31231, write: 6544, output: 16 }, 2),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      usage: { input: 4, cacheRead: 62462, cacheWrite: 6544, output: 24 },
+      costUnknown: true,
+    });
+  });
+
+  it("Claude：同じ発言の出力のトークン数が途中の出来事ほど小さければ、大きいほうを取る", () => {
+    const outcome = read([
+      init,
+      ...assistant("msg_1", { input: 2, read: 100, write: 0, output: 4 }),
+      ...assistant("msg_1", { input: 2, read: 100, write: 0, output: 90 }),
+      ...assistant("msg_1", { input: 2, read: 100, write: 0, output: 30 }),
+    ]);
+    expect(outcome).toMatchObject({ usage: { input: 2, cacheRead: 100, output: 90 } });
+  });
+
+  it("Claude：状態の境界。出来事が無ければ何も使っていない（不明にしない）。起動だけなら使用量は無いが不明", () => {
+    const empty = parseClaudeResult("", 137);
+    expect(empty).toMatchObject({ kind: "failed" });
+    expect(empty).not.toHaveProperty("costUnknown");
+    expect(empty).not.toHaveProperty("usage");
+    const initOnly = read([init]);
+    expect(initOnly).toMatchObject({ kind: "failed", costUnknown: true });
+    expect(initOnly).not.toHaveProperty("usage");
+    // 1 件
+    expect(
+      read([init, ...assistant("msg_1", { input: 1, read: 0, write: 0, output: 2 })]),
+    ).toMatchObject({ usage: { input: 1, output: 2 }, costUnknown: true });
+  });
+
+  it("Claude：result が出ていれば、これまでどおり result の使用量で、不明にしない", () => {
+    const result = JSON.stringify({
+      type: "result",
+      is_error: true,
+      result: "boom",
+      usage: { input_tokens: 5, output_tokens: 7 },
+    });
+    const outcome = read(
+      [init, ...assistant("msg_1", { input: 99, read: 0, write: 0, output: 99 }), result],
+      1,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", usage: { input: 5, output: 7 } });
+    expect(outcome).not.toHaveProperty("costUnknown");
+  });
+
+  it("Claude：発言の id や usage が読めない出来事は数えない", () => {
+    const outcome = read([
+      init,
+      JSON.stringify({ type: "assistant", message: { content: [] } }),
+      JSON.stringify({ type: "assistant", message: { id: "m", usage: "x" } }),
+    ]);
+    expect(outcome).toMatchObject({ kind: "failed", costUnknown: true });
+    expect(outcome).not.toHaveProperty("usage");
+  });
+
+  const codexLine = (value: unknown) => JSON.stringify(value);
+  const started = [
+    codexLine({ type: "thread.started", thread_id: "t" }),
+    codexLine({ type: "turn.started" }),
+  ];
+
+  it("Codex：番が終わる前に止まれば、使用量は読めない（0 にしない）", () => {
+    const outcome = parseCodexEvents(
+      [
+        ...started,
+        codexLine({ type: "item.completed", item: { type: "command_execution", exit_code: 0 } }),
+      ].join("\n"),
+      137,
+    );
+    expect(outcome).toMatchObject({ kind: "failed", costUnknown: true });
+    expect(outcome).not.toHaveProperty("usage");
+  });
+
+  it("Codex：終わった番の使用量は残し、終わっていない番の分は不明とする", () => {
+    const outcome = parseCodexEvents(
+      [
+        ...started,
+        codexLine({
+          type: "turn.completed",
+          usage: { input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50 },
+        }),
+        codexLine({ type: "turn.started" }),
+      ].join("\n"),
+      137,
+    );
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      usage: { input: 200, cacheRead: 800, cacheWrite: 0, output: 50 },
+      costUnknown: true,
+    });
+  });
+
+  it("Codex：状態の境界。何も届かなければ不明にしない。番が終わっていれば不明にしない", () => {
+    const nothing = parseCodexEvents("", 1, "Error: stream disconnected\n");
+    expect(nothing).toMatchObject({ kind: "failed" });
+    expect(nothing).not.toHaveProperty("costUnknown");
+    const failedAfterTurn = parseCodexEvents(
+      [
+        ...started,
+        codexLine({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 1 } }),
+        codexLine({ type: "error", message: "boom" }),
+      ].join("\n"),
+      1,
+    );
+    expect(failedAfterTurn).toMatchObject({ kind: "failed", usage: { input: 10, output: 1 } });
+    expect(failedAfterTurn).not.toHaveProperty("costUnknown");
+    // 容量不足で始まってすぐ失敗した番（S20 試行 2）も、使った分は分からない
+    const capacity = parseCodexEvents(
+      [
+        ...started,
+        codexLine({ type: "error", message: "Selected model is at capacity." }),
+        codexLine({ type: "turn.failed", error: { message: "Selected model is at capacity." } }),
+      ].join("\n"),
+      1,
+    );
+    expect(capacity).toMatchObject({ kind: "failed", costUnknown: true });
+  });
+});
+
 describe("再開の拒否の判定（PBI-67 レビュー指摘。本物の出力）", () => {
   it("Claude Code 2.1.296・Codex 0.160.0 が、無いセッションの再開を断ったときの出力を、再開の拒否と読む", async () => {
     const { resumeRejected } = await import("../service.js");

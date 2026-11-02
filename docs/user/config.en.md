@@ -286,6 +286,9 @@ What happens when an agent's run fails depends on the kind of run.
 - The amount used and the limit appear under "Cost" in the properties in the right column of the task details and on the "Costs" tab. When it includes costs converted with the unit prices, such as subscription runs, it is marked "Estimate" (not an actual charge). The breakdown per step appears in "Cost per step" on the "Costs" tab of the task details.
 
   ![Cost per step (token usage and cost per step and setting, and the task total)](images/task-costs.en.png)
+
+  - When a run is stopped by a timeout or the like, sacty reads the usage from what had been written by then, records it as the cost, and counts it in the budget check. Usage inside subagents and the like cannot be read, so the value is a lower bound, shown as "$0.3100 or more" on the screen and in the activity log.
+  - A run for which nothing could be read (Codex gives usage only when a turn ends, so a timeout usually leaves nothing) is shown as "unknown", not 0. The number of runs with unknown cost appears in "Cost" and below "Cost per step".
 - The task is also paused on a subscription usage limit or an authentication error, and resuming runs the stopped step again. If you write a fallback agent, sacty switches to it and continues ([Switching agents on failure](#switching-agents-on-failure)). However, an Operation that has started cannot be resumed and stays paused.
 
 ## Related pages

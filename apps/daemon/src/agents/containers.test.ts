@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { AgentTimeoutError } from "../errors.js";
 import { DockerExecutor, RunningContainers } from "./docker.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
@@ -159,6 +160,83 @@ describe("実行の上限（PBI-150）", () => {
         timeoutMs: 15,
       }),
     ).rejects.toThrow(`エージェントの実行が ${15 / 60_000} 分を超えたため止めました。`);
+  });
+});
+
+describe("時間切れで止めた実行の使用量（PBI-281）", () => {
+  const assistantLine = (id: string, output: number) =>
+    `${JSON.stringify({
+      type: "assistant",
+      message: {
+        id,
+        content: [{ type: "text", text: "..." }],
+        usage: { input_tokens: 2, cache_read_input_tokens: 1000, output_tokens: output },
+      },
+    })}\n`;
+
+  async function timedOut(
+    outputs: string[],
+    parser: "claude-json" | "codex-jsonl" = "claude-json",
+  ) {
+    const docker = fakeDocker([0]);
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor
+      .run({
+        runId: "t",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation: { command: ["sh", "-c", "sleep 9"], env: {}, parser },
+        timeoutMs: 30,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await new Promise((r) => setTimeout(r, 5));
+    for (const out of outputs) docker.run()?.stdout.emit("data", out);
+    return running;
+  }
+
+  it("時間切れまでに出力された発言の使用量を、エラーに添える（結果が出る前なので、全体は不明）", async () => {
+    const error = await timedOut([
+      assistantLine("m1", 8),
+      assistantLine("m1", 8),
+      assistantLine("m2", 16),
+    ]);
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toEqual({
+      input: 4,
+      cacheRead: 2000,
+      cacheWrite: 0,
+      output: 24,
+    });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("出力が1つも無ければ、使用量は無く、不明にもしない（何も使っていない）", async () => {
+    const error = await timedOut([]);
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toBeUndefined();
+    expect((error as AgentTimeoutError).costUnknown).toBe(false);
+  });
+
+  it("途中の行（改行まで届いていない）が壊れていても落ちない", async () => {
+    const error = await timedOut([assistantLine("m1", 8), '{"type":"assistant","mess']);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 8 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
+  it("Codex は番が終わるまで使用量を出さないので、使用量は無く、不明", async () => {
+    const error = await timedOut(
+      [
+        `${JSON.stringify({ type: "thread.started", thread_id: "t" })}\n`,
+        `${JSON.stringify({ type: "turn.started" })}\n`,
+      ],
+      "codex-jsonl",
+    );
+    expect((error as AgentTimeoutError).usage).toBeUndefined();
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
   });
 });
 

@@ -899,6 +899,11 @@ const StepsSkipped = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -999,6 +1004,11 @@ const AgentRunFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1150,6 +1160,11 @@ const ChangeJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1570,6 +1585,11 @@ const QuestionAnswered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1602,6 +1622,11 @@ const ErrorAnalyzed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1637,6 +1662,11 @@ const OutputExported = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1685,6 +1715,11 @@ const OrchestratorFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1699,6 +1734,11 @@ const FinalReviewFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2009,6 +2049,11 @@ const ReworkJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2386,6 +2431,11 @@ const DeploymentChecked = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 

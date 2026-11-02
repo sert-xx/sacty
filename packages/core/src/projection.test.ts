@@ -165,6 +165,41 @@ describe("project", () => {
     expect(task?.currentRunId).toBeUndefined();
   });
 
+  it("時間切れなどで使った分の全体を読めなかった実行（PBI-281）は、読めた分を加算し、回数を数える", () => {
+    seq = 0;
+    const failed = (runId: string, costUsd: number, costUnknown?: boolean) =>
+      ev("t1", {
+        type: "AgentRunFailed",
+        payload: {
+          runId,
+          step: "requirements",
+          agentId: "a",
+          reason: "error",
+          message: "timeout",
+          costUsd,
+          ...(costUnknown ? { costUnknown } : {}),
+        },
+      });
+    const base = [created("t1"), steps("t1")];
+    // 空：回数を持たない
+    expect(project(base).get("t1")?.budget).not.toHaveProperty("unknownRuns");
+    // 1 件：読めた分を加算して 1 回、読めなければ 0 のまま 1 回
+    expect(
+      project([...base, started("t1", "r1"), failed("r1", 0.2, true)]).get("t1")?.budget,
+    ).toMatchObject({ usedUsd: 0.2, unknownRuns: 1 });
+    // 複数件：読めた実行は数えない
+    const many = project([
+      ...base,
+      started("t1", "r1"),
+      failed("r1", 0.2, true),
+      started("t1", "r2"),
+      failed("r2", 0, true),
+      started("t1", "r3"),
+      failed("r3", 0.1),
+    ]).get("t1");
+    expect(many?.budget).toMatchObject({ usedUsd: 0.3, unknownRuns: 2 });
+  });
+
   it("予算で止まり、新しい上限で再開すると待機に戻る", () => {
     seq = 0;
     const task = project([
