@@ -1179,7 +1179,11 @@ export class TaskService {
         const after = this.tasks.get(taskId);
         if (unstopped.length > 0) {
           // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので進めない。一時停止にして人が確かめる
-          if (after && (after.status === "queued" || after.status === "idle")) {
+          // 実行の費用で先に一時停止していた（予算など）場合も、確かめられなかった実行を残す
+          if (
+            after &&
+            (after.status === "queued" || after.status === "idle" || after.status === "paused")
+          ) {
             this.append(after, [
               {
                 actor: "sacty",

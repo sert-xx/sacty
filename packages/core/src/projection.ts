@@ -2163,6 +2163,14 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
+      // PR のマージで作り直しを止めるとき、実行の費用で先に一時停止していた（予算など）なら、止めたと確かめられなかった実行を
+      // 足す（PBI-276。一時停止の理由・説明はそのまま）
+      if (task.status === "paused" && event.payload.unstoppedRuns?.length) {
+        task.unstoppedRuns = [
+          ...new Set([...(task.unstoppedRuns ?? []), ...event.payload.unstoppedRuns]),
+        ];
+        break;
+      }
       if (
         task.status !== "queued" &&
         task.status !== "idle" &&
@@ -2668,7 +2676,7 @@ export function project(
 }
 
 /**
- * 実装の作り直しの間（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）に、開いたままの実装の PR
+ * 実装の作り直しの間（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）に、開いた（または閉じられた）実装の PR
  * （PBI-276）。人がこの PR をマージしたら、作り直しを止めて、マージを承認として進める（ReworkStoppedByMerge）。
  * 承認待ち・エスカレーション中は、ゲートの PR として見守る（gatePullRequest）ので、ここには含めない。実装より前の工程を
  * やり直している間（要求要件・設計への差し戻し）も含めない。
@@ -2686,7 +2694,10 @@ export function reworkingPullRequest(
   }
   if (activeStep(task) !== "implement") return undefined;
   const pr = task.pullRequest;
-  if (!pr?.number || task.pullRequestState !== "open") return undefined;
+  // 閉じられた PR も含める（承認待ちで閉じられて差し戻した後、GitHub で開き直してマージされることがある）
+  if (!pr?.number || (task.pullRequestState !== "open" && task.pullRequestState !== "closed")) {
+    return undefined;
+  }
   return { number: pr.number, ...(pr.repo ? { repo: pr.repo } : {}), commit: pr.commit };
 }
 

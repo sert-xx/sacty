@@ -171,7 +171,7 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 
 差し戻し・PR の指摘の取り込み・最終レビューの不合格で実装を作り直している間（承認待ちではない）に、人が実装の PR をマージしたら、マージを承認として扱い、作り直しを止める。新しい PR は作らない。
 
-- 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。最終レビューなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）もの。
+- 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。最終レビューなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）か、承認待ちで閉じられたまま差し戻したもの（`closed`。GitHub で開き直してマージされることがある。マージかどうかは GitHub の状態で決める）。
   - 最終レビューの前のドラフトの PR を、人がドラフトを外してマージしたときも同じ。
   - 要求要件・設計をやり直している間（実行対象の工程が実装でない）は見守らない。実装に進んだ時点で、PR がマージ済みなら同じく止める。
   - 承認待ち・エスカレーション中のタスクは、上の確認が見守る。
@@ -180,6 +180,7 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
      承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証をワーカーが始めない。`runNext` と `queuedTaskIds` が `mergeStopping` を見る）。
      デーモンが実装の実行中に止まって再起動したときは、復旧（`recoverInterrupted`）が、実装の作り直し（開いた PR がある）の実行を `unstoppedRuns` に残して一時停止にするので、停止を確かめるまで承認へ進まない。
      一時停止のときに止めたコンテナを確かめられなかった実行（`unstoppedRuns`）は、止めた実行に含めて残す。
+     止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときだけ受け付ける）。確かめるまで承認へ進まない。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
 - `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`）。理由はマージ。

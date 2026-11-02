@@ -9366,6 +9366,82 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("止めた実行が正常に終わった費用で予算を超えて一時停止しても、止めたコンテナを確かめるまで承認へ進めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      // 実装の実行は、15 ドルかかって正常に終わる（予算の上限を超える）
+      const costly = out(
+        [
+          "# v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+              { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+            ],
+          }),
+        ].join("\n\n"),
+        1_000_000,
+      );
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, costly);
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      executor.stops = false;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      let task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("budget");
+      // 一時停止の理由は予算のまま、確かめられなかった実行を残す
+      expect(task?.unstoppedRuns).toEqual([runId]);
+      expect(stopped(service, id)).toHaveLength(0);
+      // 次の確認でも、確かめられない間は進めない
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      executor.stops = true;
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      task = service.get(id)?.task;
+      expect(task?.unstoppedRuns).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("承認待ちで閉じられた PR を差し戻し、GitHub で開き直してマージしたら、新しい PR は作らず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("closed");
+      sendBack(service, id);
+      expect(service.get(id)?.task.status).toBe("queued");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ number: 7, was: "queued" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("閉じたままの PR を差し戻し、PR の更新の直前に開き直されてマージされていたら、新しい PR は作らず、承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      sendBack(service, id);
+      // マージの確認より前に、作り直しが PR の更新まで進む
+      mergePr(pulls, service, id);
+      await drain(service);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "publishing" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
     it("デーモンが実装の実行中に止まって再起動した後も、止めたコンテナを確かめるまで承認へ進めず、確かめたら止めた実行に残す", async () => {
       const pulls = new FakePulls();
       const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });

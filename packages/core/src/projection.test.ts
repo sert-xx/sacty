@@ -3210,14 +3210,29 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     ]).get("t");
     expect(paused?.status).toBe("paused");
     expect(paused && reworkingPullRequest(paused)).toBeDefined();
-    // PR が閉じられている（承認待ちの間に閉じられて差し戻した）ときは見守らない
+    // 承認待ちの間に閉じられて差し戻した PR も見守る（GitHub で開き直してマージされることがある）
     seq = 0;
     const closed = project([
       ...base("t"),
       ev("t", { type: "PullRequestClosed", payload: { number: 7 } }),
       sendBack("t"),
     ]).get("t");
-    expect(closed && reworkingPullRequest(closed)).toBeUndefined();
+    expect(closed?.pullRequestState).toBe("closed");
+    expect(closed && reworkingPullRequest(closed)).toMatchObject({ number: 7 });
+    seq = 0;
+    const stoppedClosed = project([
+      ...base("t"),
+      ev("t", { type: "PullRequestClosed", payload: { number: 7 } }),
+      sendBack("t"),
+      stopped("t"),
+      ...merged("t"),
+    ]).get("t");
+    expect(stoppedClosed?.pullRequestState).toBe("merged");
+    expect(stoppedClosed && isCompleted(stoppedClosed)).toBe(true);
+    // マージ済み・PR 無しは見守らない
+    seq = 0;
+    const done = project([...base("t"), ...merged("t")]).get("t");
+    expect(done && reworkingPullRequest(done)).toBeUndefined();
   });
 
   it("作り直しを止めて承認する記録で、実装の承認待ちに戻って PR のマージを承認として完了する。捨てた指摘は無効になる", () => {
@@ -3282,6 +3297,25 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     expect(task?.publishPending).toBeUndefined();
     expect(task?.pausedReason).toBeUndefined();
     expect(task?.resumeTo).toBeUndefined();
+  });
+
+  it("作り直しを止める記録の前に、実行の費用で一時停止していても、止めたと確かめられなかった実行を足せる", () => {
+    seq = 0;
+    const task = project([
+      ...base("t"),
+      sendBack("t"),
+      ev("t", { type: "TaskPaused", payload: { reason: "budget" } }),
+      ev("t", { type: "TaskPaused", payload: { reason: "manual", unstoppedRuns: ["r1"] } }),
+      ev("t", { type: "TaskPaused", payload: { reason: "manual", unstoppedRuns: ["r1", "r2"] } }),
+    ]).get("t");
+    expect(task?.status).toBe("paused");
+    expect(task?.pausedReason).toBe("budget");
+    expect(task?.unstoppedRuns).toEqual(["r1", "r2"]);
+    // 一時停止していなければ、実行の確認の記録を足せない
+    seq = 0;
+    expect(() =>
+      project([...base("t"), ev("t", { type: "TaskPaused", payload: { reason: "manual" } })]),
+    ).toThrow(/pause while/);
   });
 
   it("作り直しの間でなければ、記録できない（承認待ち・別の PR・実行中・マージ済み）", () => {
