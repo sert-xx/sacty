@@ -1290,6 +1290,55 @@ describe("オーケストレーターのセッションの記録の表示（PBI-
   });
 });
 
+describe("時間切れで止めた実行の記録の表示（PBI-280）", () => {
+  const event = (type: string, payload: Record<string, unknown>) =>
+    ({
+      type,
+      payload: { runId: "r", role: "implement", agentId: "a", runtime: "claude-code", ...payload },
+      actor: "sacty",
+    }) as unknown as ActivityEvent;
+  it("止めた上限・続けたセッション・続けられなかった理由を出す", () => {
+    expect(describeEvent(event("AgentRunTimedOut", { minutes: 3 }))).toContain("上限の3分");
+    expect(
+      describeEvent(
+        event("AgentRunContinued", { mode: "resumed", sessionId: "s1", stoppedRunId: "x" }),
+      ),
+    ).toContain("セッション（s1）を続けた");
+    expect(
+      describeEvent(
+        event("AgentRunContinued", {
+          mode: "restarted",
+          reason: "agent_changed",
+          stoppedRunId: "x",
+        }),
+      ),
+    ).toContain("最初から実行し直した（エージェントを変えたため）");
+    expect(describeIn(event("AgentRunTimedOut", { minutes: 3 }), labels.en)).toContain(
+      "3-minute limit",
+    );
+    // 工程以外の役割も内部の ID のままにしない
+    const finalReview = { role: "final-review", minutes: 3 };
+    expect(describeEvent(event("AgentRunTimedOut", finalReview))).toBe(
+      "最終レビューの実行が上限の3分を超えたため止めた",
+    );
+    expect(describeIn(event("AgentRunTimedOut", finalReview), labels.en)).toContain(
+      "The final review run",
+    );
+    expect(describeEvent(event("AgentRunTimedOut", { role: "guardian", minutes: 3 }))).toContain(
+      "ゴールガーディアンの実行",
+    );
+    expect(
+      describeEvent(event("AgentRunTimedOut", { role: "unknown-role", minutes: 3 })),
+    ).toContain("unknown-roleの実行");
+    expect(
+      describeIn(
+        event("AgentRunContinued", { mode: "restarted", reason: "no_session", stoppedRunId: "x" }),
+        labels.en,
+      ),
+    ).toContain("ran it again from the start (the stopped run's session was not recorded)");
+  });
+});
+
 describe("エージェントの元のファイルを写した記録の表示（PBI-66）", () => {
   it("写したファイルの数と、上限で間を省いたファイルの数を出す", () => {
     const file = (truncated: boolean) => ({

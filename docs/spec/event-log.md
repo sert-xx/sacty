@@ -57,7 +57,7 @@
   3. メモリーの状態に適用する。
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` は受け付ける。
-- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`WorkspaceFilesSkipped`）。
+- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`）。
 - 費用を持つイベント（[費用](#費用)の16種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目

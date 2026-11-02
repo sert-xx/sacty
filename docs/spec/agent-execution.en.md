@@ -138,8 +138,23 @@ Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited
   - "Ask the Orchestrator" answers by forking the saved session (Claude Code uses `--fork-session`; Codex resumes in a throwaway location), and does not save it. Cancelled tasks are not saved either.
   - sacty records the session used in `OrchestratorSessionUsed` (`resumed`, `forked`, `new`).
 - When a resume is refused (the AI failed without using anything and returned text saying the session was not found), sacty retries the run with a new run ID and a new session. It records the cost of both attempts together (`resumeRejected`).
+- A run stopped by the timeout continues the same agent session the next time the same role runs (PBI-280; the Orchestrator and answers to questions use the mechanism above).
+  - For a run stopped by the timeout (`run.timeout`), sacty records `AgentRunTimedOut` (run ID, role, agent, runtime, the limit in minutes; it does not change state).
+  - Before the next run, sacty looks through the activity from the newest and decides from the first run record it meets whether the previous run timed out (`timedOutRunBefore`).
+    - `AgentRunTimedOut` means that run. `AgentRunContinued` (the record of continuing) means it was already continued, so there is nothing to do.
+    - Any other run's file record (`AgentSessionArchived`, except answers to questions, `chat`) means another run came after the timeout, so there is nothing to do.
+    - The start and failure of a step run (`AgentRunStarted`, `AgentRunFailed`) also count as another run, except those of the run stopped by the timeout itself and of the run about to start. If a continued run is interrupted by the daemon stopping, neither a file record nor a continued record remains, so sacty tells by this start and failure (it does not continue an old conversation without that run's progress).
+  - If the run found and the role about to run are the same, sacty decides whether it can continue (`planTimeoutResume`). If the roles differ, it does nothing.
+    - Continue: the agent (AI type and ID) is the same, the stopped run's `AgentSessionArchived` has the session ID and the main file, no file was omitted, and the copied files match the recorded hashes.
+      sacty puts the copied files (`runs/<task ID>/<stopped run ID>/agent/`) back in the config location and resumes with `--resume <ID>` for Claude Code or `resume <ID>` for Codex. The run ID is new (the step records use that run ID).
+      It adds to the start of the instructions that the run was stopped by the timeout and resumed, and how files are treated: those in the workspace (kept only for implementation and reproduction) and those inside the container (not kept) (`timeoutResumeLines`).
+    - Do not continue (run again from the start): the reason is `no_session` (no session record, or the original files could not be copied), `agent_changed`, `truncated`, or `files_broken` (files missing or hashes differ).
+  - sacty records whether it continued or ran again from the start in `AgentRunContinued` (run ID, stopped run ID, `resumed` or `restarted`, the session ID or the reason; it does not change state) **before the run**. If the daemon stops during the run, this record remains, so even for roles that leave no start record (the final review, the Goal Guardian, and so on) the next run does not continue the same old session again.
+    If the run was meant to resume but started another session, or the AI refused the resume, sacty records `restarted` (`resume_failed`) again after the run (the newer record takes precedence). In that case sacty does not retry with a new run ID and returns the failure as it is (the next resume runs from the start).
+  - The workspace for implementation and reproduction (the task's clone) is not deleted by the stop (only completed tasks are cleaned up). The resumed run works in the same workspace, with the changes made before the stop.
+    Requirements, design, and the like use a copy prepared for each run, so files written before the stop are not kept.
 
-Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`, `AGENT_FILES_LIMIT`), `apps/daemon/src/orchestrator-sessions.ts` (`OrchestratorSessionStore`, `plan`, `save`), `apps/daemon/src/orchestrator-handoff.ts` (`sessionTranscript`, `stageHandoff`), `apps/daemon/src/service.ts` (`resumeRejected`, `RESUME_REJECTED`, `executeWithSession`)
+Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`, `AGENT_FILES_LIMIT`), `apps/daemon/src/orchestrator-sessions.ts` (`OrchestratorSessionStore`, `plan`, `save`), `apps/daemon/src/orchestrator-handoff.ts` (`sessionTranscript`, `stageHandoff`), `apps/daemon/src/timeout-resume.ts` (`timedOutRunBefore`, `planTimeoutResume`, `timeoutResumeLines`), `apps/daemon/src/service.ts` (`resumeRejected`, `RESUME_REJECTED`, `executeWithSession`, `executeResumable`)
 
 ## Images
 

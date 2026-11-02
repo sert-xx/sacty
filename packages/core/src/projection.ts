@@ -1975,6 +1975,11 @@ export function applyEvent(
       if (current.status === "cancelled") return next;
       break;
 
+    case "AgentRunTimedOut":
+    case "AgentRunContinued":
+      // 記録だけ（時間切れで止めた実行と、その次の実行がセッションを続けたか。PBI-280）
+      break;
+
     case "OrchestratorSessionUsed": {
       // 中止したタスクの状態は変えない（記録だけ）。質問への答え（複製）は、元のセッションを変えない
       if (current.status === "cancelled") return next;

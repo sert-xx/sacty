@@ -1,5 +1,6 @@
 import {
   type Actor,
+  type AgentRunContinuedReason,
   type AuthMode,
   type CleanupTarget,
   type DaemonText,
@@ -138,6 +139,18 @@ const ja = {
     agent: "工程エージェント",
     auditor: "監査",
   } satisfies Record<Actor, string>,
+  /** 工程以外の実行の役割の表示名（PBI-280）。 */
+  runRole: {
+    guardian: "ゴールガーディアン",
+    "final-review": "最終レビュー",
+    rework: "差し戻しの判断",
+    orchestrator: "オーケストレーター",
+    gather: "情報収集",
+    chat: "質問への答え",
+    export: "書き出し",
+    audit: "監査",
+    "audit-dive": "監査の深掘り",
+  } as Record<string, string>,
   verdict: {
     approved: "承認",
     rejected: "却下",
@@ -206,6 +219,14 @@ const ja = {
       copy_failed: "保存の場所に書けなかった",
     },
   },
+  /** 時間切れで止めた実行の次の実行が、セッションを続けられなかった理由（PBI-280）。 */
+  agentRunContinuedReason: {
+    no_session: "止めた実行のセッションの記録が無かったため",
+    agent_changed: "エージェントを変えたため",
+    truncated: "写したセッションが上限で省かれていたため",
+    files_broken: "写したセッションのファイルが無い・壊れていたため",
+    resume_failed: "AI が再開を受け付けなかったため",
+  } satisfies Record<AgentRunContinuedReason, string>,
   cleanupResult: { done: "片付けた", skipped: "対象なし", failed: "失敗" },
   /** 作業履歴の1行。 */
   event: {
@@ -417,6 +438,12 @@ const ja = {
       `エージェントの元のファイル${files}件を写した${truncated > 0 ? `（${truncated}件は間を省いた）` : ""}`,
     AgentSessionNotArchived:
       "コンテナの停止を確かめられず、エージェントの元のファイルを写さなかった",
+    AgentRunTimedOut: (role: string, minutes: number) =>
+      `${role}の実行が上限の${minutes}分を超えたため止めた`,
+    AgentRunResumed: (role: string, id: string) =>
+      `時間切れで止めた${role}の実行のセッション（${id}）を続けた`,
+    AgentRunRestarted: (role: string, reason: string) =>
+      `時間切れで止めた${role}の実行のセッションを続けられず、最初から実行し直した（${reason}）`,
     OrchestratorSessionResumed: (id: string) => `オーケストレーターのセッション（${id}）を再開した`,
     OrchestratorSessionStarted: (reason: string, id?: string) =>
       `オーケストレーターのセッションを新しく始めた（${reason}）${id ? `：${id}` : ""}`,
@@ -711,6 +738,17 @@ const en: LabelMessages = {
     agent: "step agent",
     auditor: "audit",
   },
+  runRole: {
+    guardian: "Goal Guardian",
+    "final-review": "final review",
+    rework: "rework judgment",
+    orchestrator: "Orchestrator",
+    gather: "information gathering",
+    chat: "answer to a question",
+    export: "export",
+    audit: "audit",
+    "audit-dive": "audit deep dive",
+  },
   verdict: {
     approved: "Approved",
     rejected: "Rejected",
@@ -775,6 +813,13 @@ const en: LabelMessages = {
       session_missing: "the session file is missing",
       copy_failed: "could not write to the session store",
     },
+  },
+  agentRunContinuedReason: {
+    no_session: "the stopped run's session was not recorded",
+    agent_changed: "the agent was changed",
+    truncated: "the copied session was cut at the size limit",
+    files_broken: "the copied session files were missing or broken",
+    resume_failed: "the AI did not accept the resume",
   },
   cleanupResult: { done: "Cleaned up", skipped: "Nothing to clean", failed: "Failed" },
   event: {
@@ -931,6 +976,12 @@ const en: LabelMessages = {
       `Copied ${files} original file${files === 1 ? "" : "s"} written by the agent${truncated > 0 ? ` (${truncated} with the middle omitted)` : ""}`,
     AgentSessionNotArchived:
       "Did not copy the agent's original files; the container could not be confirmed to have stopped",
+    AgentRunTimedOut: (role, minutes) =>
+      `The ${role} run was stopped after exceeding the ${minutes}-minute limit`,
+    AgentRunResumed: (role, id) =>
+      `Continued the session (${id}) of the ${role} run stopped by the timeout`,
+    AgentRunRestarted: (role, reason) =>
+      `Could not continue the session of the ${role} run stopped by the timeout; ran it again from the start (${reason})`,
     OrchestratorSessionResumed: (id) => `Resumed the orchestrator session (${id})`,
     OrchestratorSessionStarted: (reason, id) =>
       `Started a new orchestrator session (${reason})${id ? `: ${id}` : ""}`,
