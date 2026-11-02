@@ -300,20 +300,25 @@ const SAFE_CONFIG = [
   "diff.external=",
 ];
 
-/** PR・コミットに入れない、エージェントが入れたツールの置き場所（.gitignore の書き方。PBI-278）。 */
-const TOOL_EXCLUDES = [`/${WORKSPACE_TOOLS_DIR}/`, "node_modules/"];
-
-/** `git add --ignore-errors` の標準エラー出力が、読めないファイルを載せられなかったことだけを言っているか。 */
-function onlyUnreadable(stderr: string): boolean {
-  const lines = stderr.split("\n").filter((line) => line.trim() !== "");
-  return (
-    lines.length > 0 &&
-    lines.every((line) =>
-      /^(?:error: open\(.*\): Permission denied|error: unable to index file .*|fatal: adding files failed)$/.test(
-        line.trim(),
-      ),
-    )
-  );
+/**
+ * `git add --ignore-errors` の標準エラー出力が、読めないファイルを載せられなかったことだけを言っているときの、そのファイルの
+ * パス（根からの相対）。ほかの内容が混ざっている・パスを読めないときは undefined。
+ */
+function unreadablePaths(stderr: string): string[] | undefined {
+  const paths: string[] = [];
+  for (const raw of stderr.split("\n")) {
+    const line = raw.trim();
+    if (
+      line === "" ||
+      /^(?:error: unable to index file .*|fatal: adding files failed)$/.test(line)
+    ) {
+      continue;
+    }
+    const opened = /^error: open\("(.*)"\): Permission denied$/.exec(line);
+    if (!opened?.[1]) return undefined;
+    paths.push(opened[1]);
+  }
+  return paths.length > 0 ? paths : undefined;
 }
 
 /**
@@ -457,33 +462,56 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
     try {
       const env = isolatedEnv(join(temp, "index"));
-      // リポジトリの .gitignore のほかに、エージェントが作業領域に入れたツールの置き場所は、必ず PR・コミットから外す
-      // （起点で追跡しているファイルには効かない。PBI-278）
-      const excludes = join(temp, "exclude");
-      writeFileSync(excludes, `${TOOL_EXCLUDES.join("\n")}\n`);
-      const base = [
-        "--git-dir",
-        gitDir,
-        "--work-tree",
-        dir,
-        ...SAFE_CONFIG,
-        "-c",
-        `core.excludesFile=${excludes}`,
-      ];
+      const base = ["--git-dir", gitDir, "--work-tree", dir, ...SAFE_CONFIG];
       const run = (label: string, args: string[]) => git(label, [...base, ...args], env);
       await run("read-tree", ["read-tree", baseCommit]);
-      // 新しく作ったファイルも含めるため、すべてインデックスに載せる。読めないファイル（権限 0000 のツールのファイルなど）は
-      // コミットにできないので、載せずに進める（ほかの失敗は、これまでどおり失敗にする。PBI-278）
-      const added = await gitResult([...base, "add", "--all", "--ignore-errors"], env);
-      if (added.code !== 0 && !onlyUnreadable(added.err)) {
-        throw new MessageError(
-          message("git.failed", { command: "add", detail: added.err || `exit ${added.code}` }),
-        );
+      // 新しく作ったファイルも含めるため、すべてインデックスに載せる。エージェントが作業領域に入れたツールの置き場所
+      // （根の .sacty-tools/）は、リポジトリの .gitignore の否定パターンでも戻らないよう、パス指定で必ず外す（起点で追跡している
+      // ファイルは、インデックスに起点のまま残る。PBI-278）
+      const added = await gitResult(
+        [
+          ...base,
+          "add",
+          "--all",
+          "--ignore-errors",
+          "--",
+          ":/",
+          `:(top,exclude)${WORKSPACE_TOOLS_DIR}`,
+        ],
+        env,
+      );
+      if (added.code !== 0) {
+        // 読めないために載せられなかったのが、起点で追跡していない新しいファイル（権限 0000 のツールのファイルなど）だけなら
+        // 進める。起点で追跡しているファイルを読めないと、その変更が黙って落ちるので、ほかの失敗と同じく失敗にする
+        const unreadable = unreadablePaths(added.err);
+        if (!unreadable || (await this.trackedAtBase(run, baseCommit, unreadable))) {
+          throw new MessageError(
+            message("git.failed", { command: "add", detail: added.err || `exit ${added.code}` }),
+          );
+        }
       }
       return await then(run);
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
+  }
+
+  /** paths のどれかが、起点のコミットで追跡しているファイルか（パスは文字どおりに照合する）。 */
+  private async trackedAtBase(
+    run: (label: string, args: string[]) => Promise<string>,
+    baseCommit: string,
+    paths: string[],
+  ): Promise<boolean> {
+    const listed = await run("ls-tree", [
+      "ls-tree",
+      "-r",
+      "--name-only",
+      "-z",
+      baseCommit,
+      "--",
+      ...paths.map((path) => `:(literal)${path}`),
+    ]);
+    return listed.split("\0").some(Boolean);
   }
 
   async prepare(

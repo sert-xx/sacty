@@ -679,13 +679,8 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
   });
 
-  it("エージェントが作業領域に入れたツールの置き場所（.sacty-tools・node_modules）は、リポジトリの .gitignore が無くても、差分にもコミットにも入れない。追跡しているファイルは対象（PBI-278）", async () => {
+  it("エージェントが作業領域に入れたツールの置き場所（根の .sacty-tools）は、.gitignore が無くても、否定パターンで戻されても、差分にもコミットにも入れない。node_modules はリポジトリの .gitignore に従う（PBI-278）", async () => {
     const origin = makeOrigin();
-    // node_modules を追跡しているリポジトリ（除外は、追跡しているファイルには効かない）
-    mkdirSync(join(origin, "node_modules/tracked"), { recursive: true });
-    writeFileSync(join(origin, "node_modules/tracked/index.js"), "v1\n");
-    git(origin, "add", "--all");
-    git(origin, "commit", "-m", "vendor");
     git(origin, "config", "receive.denyCurrentBranch", "ignore");
     const workspace = new GitRepositoryWorkspace();
     const clone = join(dir, "task", "repo");
@@ -694,26 +689,39 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
 
     mkdirSync(join(clone, WORKSPACE_TOOLS_DIR, "chromium"), { recursive: true });
     writeFileSync(join(clone, WORKSPACE_TOOLS_DIR, "chromium", "chrome"), "binary\n");
-    mkdirSync(join(clone, "node_modules/.browser"), { recursive: true });
-    writeFileSync(join(clone, "node_modules/.browser/chrome"), "binary\n");
-    mkdirSync(join(clone, "apps/web/node_modules/pkg"), { recursive: true });
-    writeFileSync(join(clone, "apps/web/node_modules/pkg/index.js"), "dep\n");
-    writeFileSync(join(clone, "node_modules/tracked/index.js"), "v2\n");
     writeFileSync(join(clone, "pay.test.ts"), "test\n");
     // 名前の似た別のディレクトリは対象外（入れる）
     mkdirSync(join(clone, "docs", WORKSPACE_TOOLS_DIR), { recursive: true });
     writeFileSync(join(clone, "docs", WORKSPACE_TOOLS_DIR, "note.md"), "note\n");
+    // node_modules は、リポジトリの .gitignore に任せる（否定パターンで含めるリポジトリの意図を尊重する）
+    mkdirSync(join(clone, "node_modules/pkg"), { recursive: true });
+    writeFileSync(join(clone, "node_modules/pkg/index.js"), "dep\n");
 
-    const stats = (await workspace.diffStats(clone, gitDir, baseCommit)).map((f) => f.path).sort();
-    expect(stats).toEqual([
+    const paths = async () =>
+      (await workspace.diffStats(clone, gitDir, baseCommit)).map((f) => f.path).sort();
+    const expectedWithoutIgnore = [
       `docs/${WORKSPACE_TOOLS_DIR}/note.md`,
-      "node_modules/tracked/index.js",
+      "node_modules/pkg/index.js",
       "pay.test.ts",
-    ]);
+    ];
+    // .gitignore が無い
+    expect(await paths()).toEqual(expectedWithoutIgnore);
+    // .gitignore の否定パターンで、ツールの置き場所を再び含めようとしても入れない
+    writeFileSync(
+      join(clone, ".gitignore"),
+      `!${WORKSPACE_TOOLS_DIR}/\n!${WORKSPACE_TOOLS_DIR}/**\n!/${WORKSPACE_TOOLS_DIR}/**\n`,
+    );
+    expect(await paths()).toEqual([".gitignore", ...expectedWithoutIgnore].sort());
+    // node_modules を無視するリポジトリでは入らない。否定すれば入る
+    writeFileSync(join(clone, ".gitignore"), "node_modules/\n");
+    expect(await paths()).toEqual(
+      [".gitignore", `docs/${WORKSPACE_TOOLS_DIR}/note.md`, "pay.test.ts"].sort(),
+    );
+    writeFileSync(join(clone, ".gitignore"), "node_modules/\n!node_modules/\n");
+    expect(await paths()).toContain("node_modules/pkg/index.js");
+
     const diff = await workspace.diff(clone, gitDir, baseCommit);
     expect(diff).not.toContain("binary");
-    expect(diff).not.toContain("dep");
-
     const { commit } = await workspace.publish({
       dir: clone,
       gitDir,
@@ -725,11 +733,26 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     });
     const files = git(origin, "ls-tree", "-r", "--name-only", commit).split("\n");
     expect(files).toContain("pay.test.ts");
-    expect(files).toContain("node_modules/tracked/index.js");
     expect(files.filter((f) => f.includes("chrome") || f.startsWith(WORKSPACE_TOOLS_DIR))).toEqual(
       [],
     );
-    expect(files.some((f) => f.startsWith("apps/web/node_modules"))).toBe(false);
+  });
+
+  it("起点で追跡しているツールの置き場所のファイルは、起点のまま残る（消えた変更にもならない）（PBI-278）", async () => {
+    const origin = makeOrigin();
+    mkdirSync(join(origin, WORKSPACE_TOOLS_DIR));
+    writeFileSync(join(origin, WORKSPACE_TOOLS_DIR, "keep.txt"), "v1\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "tracked");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    writeFileSync(join(clone, WORKSPACE_TOOLS_DIR, "keep.txt"), "v2\n");
+    writeFileSync(join(clone, "pay.test.ts"), "test\n");
+    expect((await workspace.diffStats(clone, gitDir, baseCommit)).map((f) => f.path)).toEqual([
+      "pay.test.ts",
+    ]);
   });
 
   itUnreadable(
@@ -764,6 +787,51 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       }
     },
   );
+
+  itUnreadable(
+    "起点で追跡しているファイルを読めないときは、ほかの読めるファイルがあっても、変更が黙って落ちずに失敗にする（PBI-278）",
+    async () => {
+      const origin = makeOrigin();
+      git(origin, "config", "receive.denyCurrentBranch", "ignore");
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "task", "repo");
+      const gitDir = join(dir, "_git", "task.git");
+      const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+      writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+      chmodSync(join(clone, "pay.ts"), 0o000);
+      writeFileSync(join(clone, "other.ts"), "other\n");
+      try {
+        await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow(/pay\.ts/);
+        await expect(workspace.diff(clone, gitDir, baseCommit)).rejects.toThrow();
+        await expect(
+          workspace.publish({
+            dir: clone,
+            gitDir,
+            baseCommit,
+            parent: baseCommit,
+            branch: "sacty/tracked-unreadable",
+            message: "m",
+            date: "2026-10-10T01:00:00.000Z",
+          }),
+        ).rejects.toThrow(/pay\.ts/);
+      } finally {
+        chmodSync(join(clone, "pay.ts"), 0o644);
+      }
+    },
+  );
+
+  it("読めないこと以外の git add の失敗は、読めない未追跡のファイルが混ざっていても、これまでどおり失敗にする（PBI-278）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    // コミットの無い入れ子のリポジトリは、git add が失敗する
+    mkdirSync(join(clone, "nested"));
+    git(join(clone, "nested"), "init", "--initial-branch=main");
+    writeFileSync(join(clone, "nested", "a.txt"), "a\n");
+    await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow();
+  });
 
   it("ファイルごとの変更は、差分の上限で切り詰めず、名前の変更を変更元の削除と変更先の追加に分ける", async () => {
     const origin = makeOrigin();
