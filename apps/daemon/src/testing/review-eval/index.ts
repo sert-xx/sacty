@@ -257,7 +257,15 @@ export type AgentRun = { output: string; status: number | null };
  * 実際の AI（コマンド）にプロンプトを渡して実行する。既定は Claude Code の非対話の実行（読み取りと git の参照だけ許可）。
  * SACTY_REVIEW_EVAL_MODEL でモデルを指定できる。SACTY_REVIEW_EVAL_AGENT で、プロンプトを標準入力から読んで答えを標準出力に出すコマンドに差し替えられる。
  */
-export function runAgent(prompt: string, options: { cwd: string; addDirs?: string[] }): AgentRun {
+export function runAgent(
+  prompt: string,
+  options: {
+    cwd: string;
+    addDirs?: string[];
+    /** プロセスの起動（テストで、error と終了コードが同時に返る場合を作るために差し替える）。 */
+    spawn?: typeof spawnSync;
+  },
+): AgentRun {
   const custom = process.env.SACTY_REVIEW_EVAL_AGENT;
   const [command, ...args] = custom
     ? custom.split(/\s+/)
@@ -273,7 +281,7 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
         "Read,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git status:*)",
         ...(options.addDirs ?? []).flatMap((d) => ["--add-dir", d]),
       ];
-  const result = spawnSync(command ?? "claude", args, {
+  const result = (options.spawn ?? spawnSync)(command ?? "claude", args, {
     cwd: options.cwd,
     input: prompt,
     encoding: "utf8",

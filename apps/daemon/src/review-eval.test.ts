@@ -303,6 +303,40 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
     }
   });
 
+  it("error と終了コードが同時に返ったとき（EPIPE など）、失敗の理由に両方を併記する（片方が消えると落ちる）", () => {
+    const spawned = (r: Record<string, unknown>) =>
+      (() => r) as unknown as typeof import("node:child_process").spawnSync;
+    const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-agent-"));
+    const message = (r: Record<string, unknown>) => {
+      try {
+        runAgent("x", { cwd: dir, spawn: spawned(r) });
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return "";
+    };
+    const both = message({
+      error: new Error("spawnSync false EPIPE"),
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "",
+    });
+    expect(both).toContain("AI の実行に失敗しました：spawnSync false EPIPE、終了コード 1");
+    // error だけ（終了コードが無い：起動失敗・時間切れ）、終了コードだけ、シグナル
+    expect(
+      message({ error: new Error("spawnSync x ETIMEDOUT"), status: null, signal: "SIGTERM" }),
+    ).toContain("AI の実行に失敗しました：spawnSync x ETIMEDOUT、シグナル SIGTERM");
+    expect(message({ status: 2, signal: null })).toContain("AI の実行に失敗しました：終了コード 2");
+    // 成功（error なし・終了コード 0）は例外にしない
+    expect(
+      runAgent("x", { cwd: dir, spawn: spawned({ status: 0, stdout: "ok", stderr: "" }) }),
+    ).toEqual({
+      output: "ok",
+      status: 0,
+    });
+  });
+
   it("環境変数が設定されていても、引数が省略（undefined）なら既定の挙動になる（環境変数を読まない）", () => {
     const keep = { e: process.env.SACTY_REVIEW_EVAL, r: process.env.SACTY_REVIEW_EVAL_RUNS };
     process.env.SACTY_REVIEW_EVAL = "1";

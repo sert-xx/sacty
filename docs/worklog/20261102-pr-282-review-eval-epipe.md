@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-02（UTC）
 - タスク: なし
-- PR: なし
+- PR: #282
 - ブランチ: feat/issue-282-review-eval-epipe
 - 関係する ADR: なし
 
