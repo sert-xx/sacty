@@ -13,6 +13,7 @@ import {
   deliveredWithoutChanges,
   exportDue,
   gatePullRequest,
+  heldReview,
   investigationIsGoal,
   isRepoless,
   isSecurityTask,
@@ -20,6 +21,7 @@ import {
   pullRequestConflict,
   rerunEditableBody,
   resumeNoteRoom,
+  reworkingPullRequest,
   type StepKey,
   type Task,
   testToolsMissing,
@@ -276,6 +278,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
 
       {/* 人の対応が要るとき（承認・判断・再開）は、どのタブでも見えるよう、タブの上に出す */}
       <GateNotice task={task} />
+      <HeldReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm
           taskId={task.id}
@@ -492,6 +495,26 @@ function TabPanel({ tab, open, children }: { tab: TabKey; open: TabKey; children
 }
 
 /** 人の承認・判断を待っているときの案内と、判断する場所への操作。 */
+/** 一時停止の間に PR に届いた指摘があることを出す（PBI-279）。再開したあと、止まった工程を走り直す前に反映する。 */
+function HeldReviewNotice({ task }: { task: Task }) {
+  const { task: m } = useMessages();
+  const held = task.status === "paused" ? heldReview(task) : undefined;
+  const pr = reworkingPullRequest(task);
+  if (!held || !pr) return null;
+  return (
+    <section
+      aria-labelledby="held-review"
+      data-testid="held-review"
+      className="flex flex-col gap-1 rounded-xl border border-warn-line bg-warn-soft px-5 py-4"
+    >
+      <h2 id="held-review" className="text-[15px] font-semibold text-warn">
+        {m.heldReview.title(held.remarks.length)}
+      </h2>
+      <p className="text-sm">{m.heldReview.help(pr.number, held.aiReview?.length ?? 0)}</p>
+    </section>
+  );
+}
+
 function GateNotice({ task }: { task: Task }) {
   const { task: m, labels } = useMessages();
   if (task.status !== "awaiting_approval" && task.status !== "escalated") return null;

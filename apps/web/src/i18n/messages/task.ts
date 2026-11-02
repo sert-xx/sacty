@@ -39,6 +39,12 @@ const ja = {
     change: "変更内容",
     verification: "確認方法",
   },
+  /** 一時停止の間に PR に届いた指摘（PBI-279）。再開したあと、止まった工程を走り直す前に反映する。 */
+  heldReview: {
+    title: (count: number) => `一時停止の間に、PR の指摘が${count}件届いています`,
+    help: (number: number, ai: number) =>
+      `PR #${number} に届いた指摘${ai > 0 ? `（うち AI のレビューの指摘 ${ai}件）` : ""}は、再開すると、止まった工程を走り直す前にゴールガーディアンが読み、戻し先を判断して差し戻します。`,
+  },
   gate: {
     undecidable: "変更の申し出の判断待ち",
     tooMany: "差し戻しが上限に達しました",
@@ -495,6 +501,12 @@ const en: TaskMessages = {
     target: "Target",
     change: "Change",
     verification: "Verification",
+  },
+  heldReview: {
+    title: (count: number) =>
+      `${count} PR comment${count === 1 ? "" : "s"} arrived while the task was paused`,
+    help: (number: number, ai: number) =>
+      `When you resume, the Goal Guardian reads the comments on PR #${number}${ai > 0 ? ` (${ai} of them from the AI review)` : ""} and sends the task back to the step it decides, before the step that stopped runs again.`,
   },
   gate: {
     undecidable: "Change request needs your decision",

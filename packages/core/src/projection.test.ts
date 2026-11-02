@@ -32,6 +32,7 @@ import {
   errorAnalysisBlocked,
   exportDue,
   gatePullRequest,
+  heldReview,
   isCompleted,
   isFinished,
   isRepoless,
@@ -3870,5 +3871,316 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     expect(second && unreflectedImplementRemarks(second).map((r) => r.id)).toEqual([
       "implement-2-1",
     ]);
+  });
+});
+
+describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
+  const repo = "https://github.com/acme/app";
+  const base = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: repo, baseBranch: "main", baseCommit: "b1" },
+    }),
+    ...verifiedImplementation(id),
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: { branch: "sacty/t", commit: "c1", url: `${repo}/pull/7`, repo, number: 7 },
+    }),
+  ];
+  const pause = (id: string) =>
+    ev(id, { type: "TaskPaused", payload: { reason: "error" } }, "sacty");
+  const held = (
+    id: string,
+    keys: string[],
+    sources: ("sacty_review" | undefined)[] = [],
+    patch: Record<string, unknown> = {},
+  ) =>
+    ev(
+      id,
+      {
+        type: "PullRequestReviewImported",
+        payload: {
+          number: 7,
+          items: keys.map((key, i) => ({
+            key,
+            author: "reviewer",
+            at: "2026-10-10T00:00:00.000Z",
+            ...(sources[i] ? { source: sources[i] } : {}),
+          })),
+          remarks: keys.map((key) => `指摘 ${key}`),
+          held: true,
+          ...patch,
+        },
+      },
+      "person",
+    );
+  const judged = (id: string, target?: "implement" | "design") =>
+    ev(
+      id,
+      {
+        type: "ReworkJudged",
+        payload: {
+          ...(target ? { target } : {}),
+          reason: { code: "run.guardianFailed", args: { detail: "x" } } as never,
+          agentId: "g",
+          costUsd: 0,
+          estimated: false,
+        },
+      },
+      "guardian",
+    );
+  /** 差し戻した実装の作り直しが、実装を終えて最終レビューの前（検証の待ち）で、エラーで止まった（S16）。 */
+  const stoppedAtReview = (id: string) => [
+    ...base(id),
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+    ev(
+      id,
+      {
+        type: "ChangesRequested",
+        payload: {
+          step: "implement",
+          target: "implement",
+          round: 1,
+          remarks: [{ id: "implement-1-1", text: "最初の指摘" }],
+        },
+      },
+      "person",
+    ),
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: "r2", step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "r2",
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装 v2",
+      },
+    }),
+    pause(id),
+  ];
+  const changes = (id: string, target: "implement" | "design" = "implement") =>
+    ev(
+      id,
+      {
+        type: "ChangesRequested",
+        payload: {
+          step: "implement",
+          target,
+          round: 2,
+          remarks: [{ id: `${target}-2-1`, text: "指摘 comment:1" }],
+        },
+      },
+      "person",
+    );
+
+  it("一時停止の間に届いた指摘は、未反映として残し、足していける。AI のレビューの指摘の位置も残す", () => {
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      held("t", ["comment:1"]),
+      held("t", ["review:2", "comment:3"], ["sacty_review", undefined]),
+    ]).get("t");
+    expect(task?.status).toBe("paused");
+    expect(task?.importedFeedback).toEqual(["comment:1", "review:2", "comment:3"]);
+    expect(task && heldReview(task)).toEqual({
+      keys: ["comment:1", "review:2", "comment:3"],
+      remarks: ["指摘 comment:1", "指摘 review:2", "指摘 comment:3"],
+      aiReview: [1],
+    });
+    // 差し戻しにはなっていない（指摘は最初の差し戻しの 1 件のまま）
+    expect(task?.remarks.map((r) => r.id)).toEqual(["implement-1-1"]);
+    expect(task?.gate).toBeUndefined();
+  });
+
+  it("届いていなければ、未反映の指摘は無い。承認待ちの取り込みの指摘（承認ゲートがある）は、一時停止の間の指摘とは見ない", () => {
+    seq = 0;
+    expect(heldReview(project(stoppedAtReview("t")).get("t") as Task)).toBeUndefined();
+    seq = 0;
+    const waiting = project([
+      ...base("t"),
+      ev("t", { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+      held("t", ["comment:1"], [], { held: undefined }),
+    ]).get("t");
+    expect(waiting?.pendingReview).toBeDefined();
+    expect(waiting && heldReview(waiting)).toBeUndefined();
+  });
+
+  it("残せるのは、実装の作り直しを待っている間の、作り直しの PR の指摘だけ（別の PR・実行中・承認待ち・判断が済んだあと）", () => {
+    seq = 0;
+    expect(() => project([...stoppedAtReview("t"), held("t", ["c"], [], { number: 8 })])).toThrow(
+      /not the pull request/,
+    );
+    // 承認待ちでは、承認待ちの取り込み（held なし）で取り込む
+    seq = 0;
+    expect(() =>
+      project([
+        ...base("t"),
+        ev("t", { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+        held("t", ["c"]),
+      ]),
+    ).toThrow(/not waiting to be reworked/);
+    // 実行中
+    seq = 0;
+    expect(() =>
+      project([
+        ...stoppedAtReview("t"),
+        ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+        ev("t", {
+          type: "AgentRunStarted",
+          payload: { runId: "r3", step: "implement", agentId: "a", authMode: "subscription" },
+        }),
+        held("t", ["c"]),
+      ]),
+    ).toThrow(/not waiting to be reworked/);
+    // 同じ指摘は二重に残さない
+    seq = 0;
+    expect(() => project([...stoppedAtReview("t"), held("t", ["c"]), held("t", ["c"])])).toThrow(
+      /already imported/,
+    );
+    // ゴールガーディアンの判断が済んだあとは足せない
+    seq = 0;
+    expect(() =>
+      project([
+        ...stoppedAtReview("t"),
+        ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+        held("t", ["c"]),
+        judged("t"),
+        held("t", ["d"]),
+      ]),
+    ).toThrow(/already judged/);
+  });
+
+  it("判断した指摘は、止まった工程を走り直す前に差し戻す。止まった工程の途中経過（検証・PR の更新待ち）は持ち越さない", () => {
+    seq = 0;
+    const before = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      judged("t", "implement"),
+    ]).get("t");
+    expect(before?.verification).toBe("pending");
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      judged("t", "implement"),
+      changes("t"),
+    ]).get("t");
+    expect(task?.status).toBe("queued");
+    expect(task?.verification).toBeUndefined();
+    expect(task?.pendingReview).toBeUndefined();
+    expect(task?.remarks.map((r) => [r.id, r.step, r.round])).toEqual([
+      ["implement-1-1", "implement", 1],
+      ["implement-2-1", "implement", 2],
+    ]);
+    expect(task?.prRework).toMatchObject({ target: "implement", decided: true });
+    expect(task && changeRounds(task, "implement")).toBe(2);
+  });
+
+  it("判断が済んでいなければ、差し戻せない。ゲートの無い別の状態（実行待ちでない）でも差し戻せない", () => {
+    seq = 0;
+    expect(() =>
+      project([
+        ...stoppedAtReview("t"),
+        ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+        held("t", ["comment:1"]),
+        changes("t"),
+      ]),
+    ).toThrow(/status queued/);
+    seq = 0;
+    expect(() => project([...stoppedAtReview("t"), judged("t"), changes("t")])).toThrow();
+  });
+
+  it("判断を採用しなかった記録（interrupted）は、費用だけを足し、指摘は未判断のまま保つ。続けて判断を記録できる", () => {
+    const interrupted = () =>
+      ev(
+        "t",
+        {
+          type: "ReworkJudged",
+          payload: {
+            reason: { code: "run.guardianFailed", args: { detail: "x" } } as never,
+            agentId: "g",
+            runResult: "interrupted",
+            costUsd: 2,
+            estimated: false,
+          },
+        },
+        "guardian",
+      );
+    seq = 0;
+    const before = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+    ]).get("t");
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      interrupted(),
+    ]).get("t");
+    expect(task?.budget.usedUsd).toBeCloseTo((before?.budget.usedUsd ?? 0) + 2, 6);
+    expect(task && heldReview(task)?.judgement).toBeUndefined();
+    seq = 0;
+    const judgedAfter = project([
+      ...stoppedAtReview("t"),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      held("t", ["comment:1"]),
+      interrupted(),
+      judged("t", "implement"),
+    ]).get("t");
+    expect(judgedAfter && heldReview(judgedAfter)?.judgement).toMatchObject({
+      target: "implement",
+    });
+  });
+
+  it("実装の PR がマージされたら、残した指摘は捨てる（作り直しを止める記録が消す）", () => {
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      held("t", ["comment:1"]),
+      ev("t", {
+        type: "ReworkStoppedByMerge",
+        payload: {
+          number: 7,
+          was: "paused",
+          stoppedRuns: [],
+          discardedRemarks: [],
+          discardedReview: 1,
+        },
+      }),
+    ]).get("t");
+    expect(task?.pendingReview).toBeUndefined();
+    expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+    expect(task?.status).toBe("awaiting_approval");
+  });
+
+  it("古い head へのレビューを捨てる記録は、一時停止の間の PR にも付けられる", () => {
+    seq = 0;
+    const task = project([
+      ...stoppedAtReview("t"),
+      ev("t", {
+        type: "PullRequestReviewDiscarded",
+        payload: {
+          number: 7,
+          reason: "stale_head",
+          head: "h2",
+          items: [{ key: "review:9", author: "me", at: "2026-10-10T00:00:00.000Z", commit: "h1" }],
+        },
+      }),
+    ]).get("t");
+    expect(task?.importedFeedback).toEqual(["review:9"]);
+    expect(task?.pendingReview).toBeUndefined();
   });
 });

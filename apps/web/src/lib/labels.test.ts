@@ -250,6 +250,20 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(imported([{ source: "sacty_review" }, {}])).toBe(
       "PR #7 の指摘（sert-xx）を2件取り込んだ（うち AI のレビューの指摘 1件）",
     );
+    // 一時停止の間に届いて、未反映として残した指摘（PBI-279）
+    const heldImport = event({
+      type: "PullRequestReviewImported",
+      payload: {
+        number: 7,
+        items: [{ key: "k0", author: "sert-xx", at: "x" }],
+        remarks: ["r"],
+        held: true,
+      },
+    });
+    expect(describeEvent(heldImport)).toBe(
+      "PR #7 の指摘（sert-xx）を1件取り込んだ。一時停止の間に届いたので、未反映として残し、再開のときにゴールガーディアンが戻し先を判断する",
+    );
+    expect(describeIn(heldImport, labels.en)).toContain("kept unapplied");
     const discarded = event({
       type: "PullRequestReviewDiscarded",
       payload: {
@@ -590,6 +604,20 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     );
     expect(describeIn(running, labels.en)).toBe(
       "PR #7 was merged, so the rework of the implementation was stopped (running, 1 run stopped). Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+    );
+    // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘も捨てる（PBI-279）
+    const heldDiscarded = event({
+      number: 7,
+      was: "paused",
+      stoppedRuns: [],
+      discardedRemarks: [],
+      discardedReview: 2,
+    });
+    expect(describeEvent(heldDiscarded)).toBe(
+      "PR #7 がマージされたため、実装の作り直しを止めた（一時停止中）。一時停止の間に届いて未反映だった PR の指摘2件を捨てた。マージを承認として進める",
+    );
+    expect(describeIn(heldDiscarded, labels.en)).toContain(
+      "Discarded 2 PR comments that arrived while paused and were not yet applied",
     );
     // 実行も指摘も無ければ、段階だけ
     expect(
@@ -1428,6 +1456,28 @@ describe("状態の表示の種類（PBI-42）", () => {
     expect(
       statusTone(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
     ).toBe("person");
+  });
+
+  it("再開したあと、一時停止の間に届いた PR の指摘の戻し先を判断している間は、実行待ち・待機でも working（PBI-279）", () => {
+    const held = {
+      steps: [{ key: "implement" as const, state: "active" as const }],
+      pullRequest: { branch: "b", commit: "c", url: "u", number: 7, repo: "r" },
+      pullRequestState: "open" as const,
+      pendingReview: { keys: ["comment:1"], remarks: ["x"] },
+    };
+    for (const status of ["queued", "idle"] as const) {
+      const judging = task({ ...held, status });
+      expect(statusText(judging)).toBe("ゴールガーディアンが PR の指摘を判断中");
+      expect(statusTone(judging)).toBe("working");
+    }
+    // 一時停止中は、一時停止の理由のまま（人の出番）
+    const paused = task({ ...held, status: "paused", pausedReason: "error" });
+    expect(statusText(paused)).not.toBe("ゴールガーディアンが PR の指摘を判断中");
+    expect(statusTone(paused)).toBe("person");
+    // 指摘が無ければ、これまでどおり
+    expect(statusText(task({ ...held, status: "queued", pendingReview: undefined }))).not.toBe(
+      "ゴールガーディアンが PR の指摘を判断中",
+    );
   });
 
   it("ゴールガーディアンが PR の指摘を判断している間は、承認待ちでも working", () => {

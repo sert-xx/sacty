@@ -882,6 +882,45 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
   });
 
+  it("一時停止の間に PR に指摘が届いたら、タスク詳細に件数と再開の扱いを出し、再開したら消す（PBI-279）", async () => {
+    const paused = task({
+      status: "paused",
+      pausedReason: "error",
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    const notice = () => container.querySelector('[data-testid="held-review"]');
+    server = detail(paused);
+    render(
+      h(LiveTaskDetail, { id: "t1", initial: detail(paused), initialVersion: liveVersion(server) }),
+    );
+    expect(notice()).toBeNull();
+    // 指摘が届いたら（操作しなくても間隔のうちに）出る。AI のレビューの指摘は内訳を添える
+    server = detail(
+      task({
+        ...paused,
+        pendingReview: { keys: ["comment:1", "review:2"], remarks: ["a", "b"], aiReview: [1] },
+      }),
+    );
+    await wait();
+    expect(notice()?.textContent).toContain("一時停止の間に、PR の指摘が2件届いています");
+    expect(notice()?.textContent).toContain("PR #7");
+    expect(notice()?.textContent).toContain("うち AI のレビューの指摘 1件");
+    expect(notice()?.textContent).toContain("ゴールガーディアンが読み、戻し先を判断");
+    // 再開したら（実行待ち）、お知らせは消える
+    server = detail(
+      task({
+        ...paused,
+        status: "queued",
+        pausedReason: undefined,
+        pendingReview: { keys: ["comment:1"], remarks: ["a"] },
+      }),
+    );
+    await wait();
+    expect(notice()).toBeNull();
+  });
+
   it("タスク一覧の「あなたの出番」も PR を開く", () => {
     const list: TaskListData = {
       projectId: "p1",

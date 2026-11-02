@@ -10,6 +10,7 @@ import {
   GATED_STEPS,
   gatePullRequest,
   guardianTestsPassed,
+  heldReview,
   isCompleted,
   MAX_FIX_CHAIN,
   openProposal,
@@ -60,6 +61,10 @@ export function statusText(task: Task, l: LabelMessages): string {
     return l.state.reworkConfirmation;
   }
   if (task.status === "awaiting_approval" && task.pendingReview) return l.state.reworkJudging;
+  // 再開したあと、一時停止の間に届いた PR の指摘の戻し先を判断している（PBI-279）
+  if ((task.status === "queued" || task.status === "idle") && heldReview(task)) {
+    return l.state.reworkJudging;
+  }
   if (task.status === "awaiting_approval" && task.gate?.step === "implement") {
     // 実装に変更が無く、PR を作らなかった（PBI-90）。画面で、変更なしで完了にするかを判断する
     if (deliveredWithoutChanges(task)) return l.state.noChangesReview(task.gate.submission);
@@ -110,6 +115,7 @@ export function statusTone(task: Task): StatusTone {
   if (task.status === "idle" && isCompleted(task)) return "completed";
   // ゴールガーディアンが PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
   if (task.status === "awaiting_approval" && task.pendingReview) return "working";
+  if ((task.status === "queued" || task.status === "idle") && heldReview(task)) return "working";
   if (needsPerson(task)) return "person";
   if (task.status === "queued" || task.status === "blocked") return "waiting";
   // 実行中・子タスクの進行中に加え、テスト・最終レビュー・判定など、完了していない idle も sacty が進めている
@@ -714,6 +720,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.discardedFeedback
           ? l.discardedFeedback[event.payload.discardedFeedback]
           : undefined,
+        event.payload.discardedReview ?? 0,
       );
     case "PullRequestConflicted":
       return e.PullRequestConflicted(event.payload.number);
@@ -894,6 +901,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         [...new Set(event.payload.items.map((item) => item.author))].join(", "),
         event.payload.remarks.length,
         event.payload.items.filter((item) => item.source === "sacty_review").length,
+        event.payload.held === true,
       );
     case "PullRequestReviewDiscarded":
       return e.PullRequestReviewDiscarded(
@@ -940,6 +948,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.target ? l.step[event.payload.target] : undefined,
         l.text(event.payload.reason),
         withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+        event.payload.runResult === "interrupted",
       );
     // マージの後の監視（PBI-89）
     case "DeploymentWatchStarted":

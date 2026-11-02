@@ -1299,7 +1299,14 @@ export function applyEvent(
       break;
 
     case "ChangesRequested": {
-      if (task.status !== "awaiting_approval" && task.status !== "escalated") {
+      // 一時停止の間に届いた指摘（PBI-279）を、再開のあと、止まった工程を走り直す前に反映する差し戻し。承認ゲートは無く、
+      // ゴールガーディアンが戻し先を判断し終えた指摘（pendingReview）を、実装の作り直しに渡す
+      const fromHeld =
+        (task.status === "queued" || task.status === "idle") &&
+        event.payload.step === "implement" &&
+        task.pendingReview?.judgement !== undefined &&
+        reworkingPullRequest(task) !== undefined;
+      if (!fromHeld && task.status !== "awaiting_approval" && task.status !== "escalated") {
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       const target = event.payload.target ?? event.payload.step;
@@ -1325,6 +1332,16 @@ export function applyEvent(
       task.status = "queued";
       task.gate = undefined;
       task.escalation = undefined;
+      // 止まった工程の途中経過（検証・PR の更新の待ち）は、作り直しに持ち越さない
+      if (fromHeld) {
+        task.stepReview = undefined;
+        task.verification = undefined;
+        task.verifyFeedback = undefined;
+        task.verifyFailures = 0;
+        task.unreadableReviews = undefined;
+        task.publishPending = undefined;
+        task.pullRequestCi = undefined;
+      }
       // 統合レビューの承認待ちで差し戻したら、修正の子タスクを追加して、統合レビューの回数を数え直す（PBI-31）
       if (event.payload.step === "integrate") task.integrationFailures = 0;
       // PR の指摘は、この差し戻しに反映した。ゴールガーディアンの判断で戻したなら、戻し先と理由を残す（PBI-58）。
@@ -1655,6 +1672,41 @@ export function applyEvent(
     }
 
     case "PullRequestReviewImported": {
+      // 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いた指摘は、未反映として残す（PBI-279）。
+      // 差し戻しにはしない。何回かに分けて届いた指摘は続けて足す
+      if (event.payload.held) {
+        const reworking = reworkingPullRequest(task);
+        if (!reworking || task.status === "running") {
+          throw new ActivityIntegrityError(
+            event,
+            "the implementation is not waiting to be reworked",
+          );
+        }
+        if (reworking.number !== event.payload.number) {
+          throw new ActivityIntegrityError(event, "not the pull request of the task");
+        }
+        if (task.pendingReview?.judgement) {
+          throw new ActivityIntegrityError(event, "the pending review is already judged");
+        }
+        const heldKeys = event.payload.items.map((i) => i.key);
+        if (heldKeys.some((key) => task.importedFeedback.includes(key))) {
+          throw new ActivityIntegrityError(event, "the feedback is already imported");
+        }
+        task.importedFeedback = [...task.importedFeedback, ...heldKeys];
+        const before = task.pendingReview?.remarks.length ?? 0;
+        const heldAi = [
+          ...(task.pendingReview?.aiReview ?? []),
+          ...event.payload.items.flatMap((item, i) =>
+            item.source === "sacty_review" ? [before + i] : [],
+          ),
+        ];
+        task.pendingReview = {
+          keys: [...(task.pendingReview?.keys ?? []), ...heldKeys],
+          remarks: [...(task.pendingReview?.remarks ?? []), ...event.payload.remarks],
+          ...(heldAi.length > 0 ? { aiReview: heldAi } : {}),
+        };
+        break;
+      }
       // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
       const watched = gatePullRequest(task);
       if (!watched || task.status !== "awaiting_approval") {
@@ -1682,7 +1734,8 @@ export function applyEvent(
 
     // 古い head へのレビューを捨てた。取り込み済みにして、取り込み直さない（指摘にも差し戻しにもならない）
     case "PullRequestReviewDiscarded": {
-      const watched = gatePullRequest(task);
+      // 承認待ちの PR のほか、一時停止の間に指摘を残している実装の PR（PBI-279）も対象
+      const watched = gatePullRequest(task) ?? reworkingPullRequest(task);
       if (!watched || watched.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
@@ -1695,6 +1748,9 @@ export function applyEvent(
     }
 
     case "ReworkJudged": {
+      // 判断を採用しなかった（一時停止を求められて実行を止めた・中止された・指摘や状態が変わった）。費用だけを残し
+      // （費用は下で足す）、指摘は未判断のまま保つ（PBI-279）
+      if (event.payload.runResult === "interrupted") break;
       if (!task.pendingReview || task.pendingReview.judgement) {
         throw new ActivityIntegrityError(event, "no review is waiting for a judgement");
       }
@@ -2773,6 +2829,18 @@ export function reworkingPullRequest(
     return undefined;
   }
   return { number: pr.number, ...(pr.repo ? { repo: pr.repo } : {}), commit: pr.commit };
+}
+
+/**
+ * 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いて、まだ反映していない実装の PR の指摘（PBI-279）。
+ * 承認待ちで取り込んだ指摘（pendingReview）とは、承認ゲートが無いことで区別する。再開したあと、止まった工程を走り直す前に、
+ * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す。
+ */
+export function heldReview(task: Task): NonNullable<Task["pendingReview"]> | undefined {
+  if (task.status !== "paused" && task.status !== "queued" && task.status !== "idle") {
+    return undefined;
+  }
+  return reworkingPullRequest(task) ? task.pendingReview : undefined;
 }
 
 /**
