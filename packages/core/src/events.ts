@@ -2082,6 +2082,8 @@ const ReworkStoppedByMerge = z.object({
     discardedRemarks: z.array(z.object({ id: z.string(), text: z.string() })),
     /** 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印）の種類。 */
     discardedFeedback: z.enum(["tests", "review", "merge"]).optional(),
+    /** 捨てた、一時停止の間に届いて、まだ作り直しに渡していない PR の指摘の件数（PBI-279）。 */
+    discardedReview: z.number().int().positive().optional(),
   }),
 });
 
@@ -2126,6 +2128,12 @@ const PullRequestReviewImported = z.object({
       )
       .min(1),
     remarks: z.array(z.string().min(1)).min(1),
+    /**
+     * 一時停止の間（と、再開した直後の、止まった工程を走り直す前）に届いた指摘を、未反映として残した（PBI-279）。
+     * 差し戻しにはせず、再開したあと、止まった工程を走り直す前に、ゴールガーディアンに戻し先を判断させて反映する。
+     * 何回かに分けて残せる（指摘は続けて足す）。
+     */
+    held: z.literal(true).optional(),
   }),
 });
 

@@ -503,7 +503,7 @@ Once you merge the PR, the task moves on at the next check without returning to 
 If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review), the merge is taken as the approval.
 sacty stops the running implementation, final review, and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
 The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
-To handle the discarded comments, create a follow-up task.
+To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task.
 While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
 
 Approval in PRs proceeds in this order.
@@ -676,6 +676,14 @@ The details of a task stopped by the budget limit show a field for the new cumul
 - In the resume section, you can change the following along with the resume.
   - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the Orchestrator and the steps still to run read them. When the task description is long and only a little can be added, the length of notes you can add is shown below the field (to stay within what can be edited when rerunning). If no notes can be added, the field is disabled; resume without notes, or cancel and fix the description in a rerun.
   - **Change step images and agents** (open it to use): for each step not finished yet, you can choose the image and the agent again. The current settings are selected first, only the changed steps are recorded, and each change is used from the next run of that step. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
+- If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task's details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
+  When you resume, before redoing the step that stopped (the final review, for example), the Goal Guardian reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
+  If no comments have arrived, the step that stopped is redone as before.
+  - Comments you wrote just before resuming are read again after the resume and applied.
+  - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.
+  - Even if the limit on send-backs to the same step has been reached, the resume is treated as the decision to continue and does not escalate.
+  - A task that was paused while Requirements or Design was being redone is not covered. Its comments are imported once the task waits for approval of Implement.
+  - If the implementation PR is merged while the task is paused, the kept comments are discarded and the merge is taken as the approval (it stays in the activity).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched). A cancelled task cannot be resumed.
 - A cancelled task can be started over from "Rerun" on its detail page.
   - In the dialog, you can change the repository to work in (empty means no repository), the image, the title, and the description, and add notes.

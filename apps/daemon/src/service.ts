@@ -64,6 +64,7 @@ import {
   fixTaskOpen,
   GATED_STEPS,
   gatePullRequest,
+  heldReview,
   type IntakeKind,
   investigationIsGoal,
   isAuditTarget,
@@ -873,6 +874,11 @@ export class TaskService {
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
+   * 人が再開したタスク（メモリーだけ）。止まった工程を走り直す前に、PR に届いた指摘をもう一度読む（PBI-279。一時停止の間の
+   * 確認は一定の間隔なので、再開の直前に書かれた指摘も拾う）。デーモンの再起動で消えても、残しておいた指摘は作業履歴にある。
+   */
+  private readonly heldRecheck = new Set<string>();
+  /**
    * PR のフィードバックを、このデーモンが初めて見た時刻（タスクの ID → フィードバックの key → 時刻。メモリーだけ）。
    * 書き終わるのを待つ時間は、GitHub の時刻だけでなく、これも使って数える（PBI-270）。
    */
@@ -996,6 +1002,8 @@ export class TaskService {
   async checkPullRequests(): Promise<void> {
     // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
     await this.checkReworkMerges();
+    // 一時停止の間に実装の PR に届いた指摘を、未反映として残す（PBI-279）
+    await this.checkHeldFeedback();
     // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
@@ -1115,6 +1123,208 @@ export class TaskService {
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+  }
+
+  /**
+   * 一時停止中のタスクの実装の PR に届いた指摘（人の指摘と、sacty 自身の AI のレビューの指摘）を、未反映として残す（PBI-279）。
+   * 差し戻しにはしない。再開したあと、止まった工程を走り直す前に、ゴールガーディアンに戻し先を判断させて反映する
+   * （reworkHeldReview）。予算の上限で止まったタスクも、エラーで止まったタスクも、人が止めたタスクも同じに扱う。
+   * PR は、プロジェクトの gh のアカウントで確かめる。確かめられないタスクは、次の確認でやり直す。
+   */
+  private async checkHeldFeedback(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      if (task.status !== "paused" || task.pendingReview?.judgement) continue;
+      const pr = reworkingPullRequest(task);
+      if (!pr?.repo || this.cancelling.has(task.id) || this.mergeStopping.has(task.id)) continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, pr.repo, usedSecrets);
+        await this.holdFeedback(task.id, token);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${pr.number}（${pr.repo}）に届いた指摘を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * 実装の PR にまだ取り込んでいない指摘を読み、未反映として残す（PBI-279）。承認待ちの取り込み（importFeedback）と同じく、
+   * 古い head への AI のレビューは捨て、取り込み済みの指摘は読み直さない。書き終わるのを待たない（反映は再開のときなので、
+   * 続きの指摘は続けて足す）。残せる件数は、承認待ちの取り込みと同じ上限まで（超えた分は残して、次の確認で足す）。
+   */
+  private async holdFeedback(taskId: string, token: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const pr = task ? reworkingPullRequest(task) : undefined;
+    if (!task || !pr?.repo || this.cancelling.has(taskId) || task.pendingReview?.judgement) return;
+    const listed = (
+      await this.deps.pulls.feedback({
+        repo: pr.repo,
+        token,
+        number: pr.number,
+        ...this.githubAccountOf(task, pr.repo),
+        ...this.sactyReviewsOf(pr.repo, pr.number),
+      })
+    )
+      .filter((item) => !task.importedFeedback.includes(item.key))
+      .filter((item) => !handedOverFeedback(task, pr, item));
+    const fresh = await this.withoutStaleReviews(
+      taskId,
+      { repo: pr.repo, number: pr.number },
+      token,
+      listed,
+      "held",
+    );
+    // 読んでいる間に、実行が始まった・別の状態になった・人が反映の判断を始めたなら、残さない（次の確認でやり直す）
+    const latest = this.tasks.get(taskId);
+    if (
+      !latest ||
+      this.cancelling.has(taskId) ||
+      latest.status === "running" ||
+      latest.pendingReview?.judgement ||
+      reworkingPullRequest(latest)?.number !== pr.number
+    ) {
+      return;
+    }
+    const room = Math.max(REMARKS_MAX - (latest.pendingReview?.remarks.length ?? 0), 0);
+    const batch = fresh
+      .filter((item) => !latest.importedFeedback.includes(item.key))
+      .slice(0, room);
+    if (batch.length === 0) return;
+    this.append(latest, [
+      {
+        // AI のレビューの指摘だけの回は、人間の操作にしない（PBI-275）
+        actor: batch.some((item) => item.source !== "sacty_review") ? "person" : "sacty",
+        event: {
+          type: "PullRequestReviewImported",
+          payload: {
+            number: pr.number,
+            items: batch.map((item) => ({
+              key: item.key,
+              author: item.author,
+              at: item.at,
+              ...(item.url ? { url: item.url } : {}),
+              ...(item.source ? { source: item.source } : {}),
+            })),
+            remarks: feedbackRemarks(batch),
+            held: true,
+          },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * 再開したタスクの、止まった工程を走り直す前に、一時停止の間に届いた PR の指摘を反映する（PBI-279）。再開の直前に書かれた
+   * 指摘もあるので、再開した直後にもう一度読む。未反映の指摘があれば、ゴールガーディアンに戻し先を判断させ（承認待ちの
+   * PR の指摘と同じ判断。PBI-58・PBI-265）、その工程に差し戻す。差し戻したか、反映を待つ（設定の問題・一時停止の求め）なら
+   * true を返し、呼び出し元は止まった工程を走り直さない。指摘が無ければ false（今までどおり止まった工程を走り直す）。
+   * 判断の途中で止まっても、次の実行で残りから続ける（指摘と判断は作業履歴にある）。
+   * 人の差し戻しの上限は、人の再開を、続ける判断として扱い、止めない（承認ゲートが無く、エスカレーションを置く場所が無い）。
+   */
+  private async reworkHeldReview(task: Task): Promise<boolean> {
+    const taskId = task.id;
+    const recheck = this.heldRecheck.delete(taskId);
+    if (task.status !== "queued" && task.status !== "idle") return false;
+    const pr = reworkingPullRequest(task);
+    if (!pr || (!recheck && !task.pendingReview)) return false;
+    let state: PullRequestStatus["state"] | undefined;
+    if (pr.repo) {
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, pr.repo, usedSecrets);
+        if (recheck) await this.holdFeedback(taskId, token);
+        // 残した指摘があるときだけ、マージ済みかを確かめる（マージ済みなら、作り直しの停止が捨てる。PBI-276）
+        if (this.tasks.get(taskId)?.pendingReview) {
+          state = (await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number })).state;
+        }
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${pr.number}（${pr.repo}）に届いた指摘を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+    const held = this.tasks.get(taskId);
+    const pending = held ? heldReview(held) : undefined;
+    if (!held || !pending) return false;
+    if (this.cancelling.has(taskId) || (held.status !== "queued" && held.status !== "idle")) {
+      return true;
+    }
+    // マージされた PR の作り直しは、止めて承認として進める（その確認が、残した指摘も捨てる）。ここでは反映しない
+    if (state === "merged") return false;
+    const config = this.deps.config();
+    if (!config.ok) return true; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
+    let current = held;
+    if (!pending.judgement) {
+      const judged = await this.judgeRework(
+        current,
+        "implement",
+        pending.remarks,
+        pending.aiReview ?? [],
+        config.config,
+      );
+      // 一時停止を求められて判断の実行を止めたなら、判断できなかったことは残さない（再開したら、判断し直す）
+      if (this.pauseRequested.has(taskId) && judged.runResult !== "completed") return true;
+      // 判断の間に、中止された・別の状態になったなら、判断だけを残す（反映は次の実行で）
+      const latest = this.tasks.get(taskId);
+      if (
+        !latest?.pendingReview ||
+        latest.pendingReview.judgement ||
+        latest.pendingReview.keys.join() !== pending.keys.join() ||
+        (latest.status !== "queued" && latest.status !== "idle") ||
+        this.cancelling.has(taskId)
+      ) {
+        return true;
+      }
+      current = this.append(latest, [
+        { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
+      ]);
+      if (this.pauseRequested.has(taskId)) return true;
+    }
+    this.settleHeldReview(current);
+    return true;
+  }
+
+  /**
+   * ゴールガーディアンの判断に従って、一時停止の間に届いた PR の指摘を、判断した工程に差し戻す（PBI-279）。settleReview の
+   * 承認ゲートが無い版。判断できなければ実装をやり直す。ゴールガーディアンの見逃しとしては記録しない（止まった工程の実装は、
+   * 最終レビューで合格にしていないため）。
+   */
+  private settleHeldReview(task: Task): void {
+    const pending = heldReview(task);
+    const judgement = pending?.judgement;
+    if (!pending || !judgement) return;
+    if (task.status !== "queued" && task.status !== "idle") return;
+    const targets = reworkTargets(task, "implement");
+    const target =
+      judgement.target && targets.includes(judgement.target)
+        ? judgement.target
+        : (targets[0] ?? "implement");
+    // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける。人の差し戻しの回数に数えるのは人の指摘だけ（PBI-275）
+    const round = lastChangeRound(task, target) + 1;
+    const aiIndexes = new Set(pending.aiReview ?? []);
+    const remarks = pending.remarks.map((text, i) => ({
+      id: `${target}-${round}-${i + 1}`,
+      text,
+      ...(aiIndexes.has(i) ? { source: "sacty_review" as const } : {}),
+    }));
+    const onlyAiReview = remarks.every((r) => r.source === "sacty_review");
+    this.append(task, [
+      {
+        actor: onlyAiReview ? "sacty" : "person",
+        event: {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target,
+            round,
+            remarks,
+            overLimit: !onlyAiReview && changeRounds(task, target) >= MAX_CHANGE_REQUESTS,
+            ...(judgement.cause ? { cause: judgement.cause } : {}),
+          },
+        },
+      },
+    ]);
   }
 
   /**
@@ -1252,6 +1462,10 @@ export class TaskService {
               text: r.text,
             })),
             ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
+            // 一時停止の間に届いて、まだ作り直しに渡していない PR の指摘（PBI-279）
+            ...(heldReview(latest)?.remarks.length
+              ? { discardedReview: heldReview(latest)?.remarks.length }
+              : {}),
           },
         },
       },
@@ -2180,6 +2394,8 @@ export class TaskService {
     pr: { repo: string; number: number },
     token: string,
     items: PullRequestFeedback[],
+    /** gate：承認待ちの取り込み。held：一時停止の間に届いた指摘を残すとき（PBI-279）。 */
+    where: "gate" | "held" = "gate",
   ): Promise<PullRequestFeedback[]> {
     const reviewed = items.filter((item) => item.source === "sacty_review" && item.commit);
     if (reviewed.length === 0) return items;
@@ -2195,15 +2411,21 @@ export class TaskService {
     if (stale.length === 0) return items;
     const latest = this.tasks.get(taskId);
     const watched = latest ? gatePullRequest(latest) : undefined;
-    // 見ている間に承認待ちでなくなった・指摘を取り込み中になった・見守る PR が変わったなら、記録しない（次の確認でやり直す）
-    if (
-      latest?.status !== "awaiting_approval" ||
-      latest.pendingReview ||
-      watched?.number !== pr.number
-    ) {
+    // 見ている間に承認待ちでなくなった・指摘を取り込み中になった・見守る PR が変わったなら、記録しない（次の確認でやり直す）。
+    // 一時停止の間に残すときは、作り直しの PR が変わった・実行が始まった・判断が済んだなら、記録しない
+    const watching =
+      where === "held"
+        ? latest !== undefined &&
+          latest.status !== "running" &&
+          !latest.pendingReview?.judgement &&
+          reworkingPullRequest(latest)?.number === pr.number
+        : latest?.status === "awaiting_approval" &&
+          !latest.pendingReview &&
+          watched?.number === pr.number;
+    if (!watching) {
       return items.filter((item) => !stale.includes(item));
     }
-    this.append(latest, [
+    this.append(latest as Task, [
       {
         actor: "sacty",
         event: {
@@ -6391,6 +6613,9 @@ export class TaskService {
   }
 
   private async runNextInner(taskId: string): Promise<void> {
+    // 一時停止の間に届いた PR の指摘は、止まった工程を走り直す前に反映する（PBI-279）
+    const held = this.tasks.get(taskId);
+    if (held && (await this.reworkHeldReview(held))) return;
     const initial = this.tasks.get(taskId);
     // 承認した成果の書き出しは、次の工程と取り込み元へのコメントの前に行う（コメントに URL を添えるため。PBI-56）
     const exporting = initial && awaitingExport(initial);
@@ -12638,7 +12863,10 @@ export class TaskService {
     });
     // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
     this.fallbackTried.delete(id);
-    return this.append(task, events);
+    const resumed = this.append(task, events);
+    // 実装の作り直しの途中で止まっていたなら、走り直す前に、PR に届いた指摘をもう一度読む（PBI-279）
+    if (reworkingPullRequest(resumed)) this.heldRecheck.add(id);
+    return resumed;
   }
 
   /**

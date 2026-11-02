@@ -390,8 +390,9 @@ const ja = {
       runs: number,
       remarks: string[],
       feedback: string | undefined,
+      held: number,
     ) =>
-      `PR #${number} がマージされたため、実装の作り直しを止めた（${stage}${runs > 0 ? `・実行${runs}件を停止` : ""}）${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}。マージを承認として進める`,
+      `PR #${number} がマージされたため、実装の作り直しを止めた（${stage}${runs > 0 ? `・実行${runs}件を停止` : ""}）${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}${held > 0 ? `。一時停止の間に届いて未反映だった PR の指摘${held}件を捨てた` : ""}。マージを承認として進める`,
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
@@ -488,12 +489,20 @@ const ja = {
       `エスカレーション：${id ?? "変更の申し出"}を判定できなかった`,
     escalatedTooMany: (step: string) => `エスカレーション：${step}への差し戻しが上限`,
     escalatedRework: (step: string) => `エスカレーション：PR の指摘で${step}まで戻すかの確認`,
-    PullRequestReviewImported: (number: number, authors: string, count: number, ai: number) =>
-      ai === 0
-        ? `PR #${number} の指摘（${authors}）を${count}件取り込んだ`
-        : ai === count
-          ? `PR #${number} の AI のレビューの指摘（${authors}）を${count}件取り込んだ`
-          : `PR #${number} の指摘（${authors}）を${count}件取り込んだ（うち AI のレビューの指摘 ${ai}件）`,
+    PullRequestReviewImported: (
+      number: number,
+      authors: string,
+      count: number,
+      ai: number,
+      held: boolean,
+    ) =>
+      `${
+        ai === 0
+          ? `PR #${number} の指摘（${authors}）を${count}件取り込んだ`
+          : ai === count
+            ? `PR #${number} の AI のレビューの指摘（${authors}）を${count}件取り込んだ`
+            : `PR #${number} の指摘（${authors}）を${count}件取り込んだ（うち AI のレビューの指摘 ${ai}件）`
+      }${held ? "。一時停止の間に届いたので、未反映として残し、再開のときにゴールガーディアンが戻し先を判断する" : ""}`,
     PullRequestReviewDiscarded: (number: number, count: number, reviewed: string, head: string) =>
       `PR #${number} への AI のレビューの指摘${count}件を取り込まずに捨てた：レビューの対象は古い head（${reviewed}）で、PR の今の head は ${head}`,
     QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
@@ -905,8 +914,8 @@ const en: LabelMessages = {
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
-    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback) =>
-      `PR #${number} was merged, so the rework of the implementation was stopped (${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""})${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}. The merge is taken as the approval`,
+    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback, held) =>
+      `PR #${number} was merged, so the rework of the implementation was stopped (${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""})${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}${held > 0 ? `. Discarded ${held} PR comment${held === 1 ? "" : "s"} that arrived while paused and were not yet applied` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
@@ -984,12 +993,14 @@ const en: LabelMessages = {
     escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
     escalatedRework: (step) =>
       `Escalated: confirm whether to redo from ${step} for the PR comments`,
-    PullRequestReviewImported: (number, authors, count, ai) =>
-      ai === 0
-        ? `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
-        : ai === count
-          ? `Imported ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
-          : `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors}); ${ai} of them from AI review`,
+    PullRequestReviewImported: (number, authors, count, ai, held) =>
+      `${
+        ai === 0
+          ? `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
+          : ai === count
+            ? `Imported ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
+            : `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors}); ${ai} of them from AI review`
+      }${held ? ". They arrived while the task was paused, so they are kept unapplied; the Goal Guardian decides where to send the task back when it resumes" : ""}`,
     PullRequestReviewDiscarded: (number, count, reviewed, head) =>
       `Discarded ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} without importing: the review was for an old head (${reviewed}); the PR's head is now ${head}`,
     QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
