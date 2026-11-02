@@ -42,11 +42,11 @@ function run(cwd: string, args: string[]): string {
 }
 
 /** 観点カタログ（viewpoints.md）の、観点 ID の行（親が担当への依頼文に写す「見るもの」「見ないもの」を含む）。 */
-export function viewpointRow(id: string): { see: string; notSee: string; name: string } {
-  const text = readFileSync(
-    join(REVIEW_SKILLS_DIR, "review-dispatch/references/viewpoints.md"),
-    "utf8",
-  );
+export function viewpointRow(
+  id: string,
+  skillsDir = REVIEW_SKILLS_DIR,
+): { see: string; notSee: string; name: string } {
+  const text = readFileSync(join(skillsDir, "review-dispatch/references/viewpoints.md"), "utf8");
   const row = text.split("\n").find((line) => line.startsWith(`| ${id} |`));
   if (!row) throw new Error(`観点 ${id} の行がありません`);
   // 必須の観点の表：| ID | 観点 | 見るもの | 見ないもの |
@@ -74,7 +74,7 @@ export function s18Workspace(skillsDir = REVIEW_SKILLS_DIR): {
   writeFileSync(draft, readFixture("s18/draft.md"));
   writeFileSync(task, readFixture("s18/task.md"));
   writeFileSync(context, readFixture("s18/context.md"));
-  const d10 = viewpointRow("D-10");
+  const d10 = viewpointRow("D-10", skillsDir);
   // review-dispatch が観点担当に渡す依頼文の形（実験の実行の記録にあったものと同じ項目）
   const prompt = [
     `あなたはレビューの観点担当です。最初にスキル review-execution（${join(skillsDir, "review-execution/SKILL.md")}）を読み、その手順と出力形式に従ってください。`,
@@ -279,5 +279,52 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
     timeout: 20 * 60_000,
     maxBuffer: 64 * 1024 * 1024,
   });
+  // 起動に失敗・時間切れ・異常終了した実行を、「指摘なし」「申告なし」として評価に混ぜない
+  if (result.error || result.status !== 0) {
+    const reason = result.error
+      ? result.error.message
+      : `終了コード ${result.status}${result.signal ? `（シグナル ${result.signal}）` : ""}`;
+    throw new Error(
+      `AI の実行に失敗しました：${reason}\n${(result.stderr ?? "").toString().slice(-500)}`,
+    );
+  }
   return { output: result.stdout ?? "", status: result.status };
+}
+
+/** SACTY_REVIEW_EVAL_RUNS（1 以上の整数）。省略は 1。数でない・0・負・小数はエラーにする（ループが回らず合格するのを防ぐ）。 */
+export function evalRuns(raw = process.env.SACTY_REVIEW_EVAL_RUNS): number {
+  if (raw === undefined || raw === "") return 1;
+  if (!/^[1-9][0-9]*$/.test(raw.trim())) {
+    throw new Error(
+      `SACTY_REVIEW_EVAL_RUNS は 1 以上の整数で指定してください：${JSON.stringify(raw)}`,
+    );
+  }
+  return Number(raw.trim());
+}
+
+/** AI の実際の評価（SACTY_REVIEW_EVAL）が有効か。文書どおり "1" のときだけ。 */
+export function evalEnabled(raw = process.env.SACTY_REVIEW_EVAL): boolean {
+  return raw === "1";
+}
+
+/** 観点担当の出力が、指摘の一覧（findings の配列）を持つ判定の JSON か。読めなければ評価せず失敗させる。 */
+export function assertReviewerVerdict(output: string): void {
+  if (!Array.isArray(parseObject(output)?.findings)) {
+    throw new Error(`観点担当の出力が判定の JSON として読めません：\n${output.slice(-500)}`);
+  }
+}
+
+/** 最終レビューの出力が、見出し sacty-final-review の判定の JSON（観点の配列つき）を持つか。読めなければ評価せず失敗させる。 */
+export function assertFinalReviewVerdict(output: string): void {
+  const blocks = [...output.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)].map((m) => m[1] ?? "");
+  const ok = blocks.some((b) => {
+    try {
+      const v = JSON.parse(b)?.["sacty-final-review"];
+      return v && typeof v === "object" && Array.isArray(v.viewpoints);
+    } catch {
+      return false;
+    }
+  });
+  if (!ok)
+    throw new Error(`最終レビューの出力が判定の JSON として読めません：\n${output.slice(-500)}`);
 }

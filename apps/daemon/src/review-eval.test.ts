@@ -1,8 +1,13 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildFinalReviewPrompt, buildPrompt, extractFinalReview } from "./prompts.js";
 import {
+  assertFinalReviewVerdict,
+  assertReviewerVerdict,
+  evalEnabled,
+  evalRuns,
   findingsOf,
   flagsOtherOverwriting,
   REVIEW_SKILLS_DIR,
@@ -230,6 +235,76 @@ describe("判定の読み取り（固定の確認）", () => {
   });
 });
 
+describe("実際の AI に当てる確認の入口（固定の確認）", () => {
+  it("SACTY_REVIEW_EVAL は 1 のときだけ有効（0・false・空・true は無効）", () => {
+    expect(evalEnabled("1")).toBe(true);
+    for (const v of [undefined, "", "0", "false", "true", "yes", " 1"]) {
+      expect(evalEnabled(v), String(v)).toBe(false);
+    }
+  });
+
+  it("SACTY_REVIEW_EVAL_RUNS は 1 以上の整数。数でない・0・負・小数は明示的に失敗する（ループが回らず合格しない）", () => {
+    expect(evalRuns(undefined)).toBe(1);
+    expect(evalRuns("")).toBe(1);
+    expect(evalRuns("1")).toBe(1);
+    expect(evalRuns("5")).toBe(5);
+    for (const v of ["abc", "0", "-1", "1.5", "NaN", "1e3", "Infinity"]) {
+      expect(() => evalRuns(v), v).toThrow("1 以上の整数");
+    }
+  });
+
+  it("AI の実行が失敗した（起動できない・異常終了）ときは、評価せず失敗する。正常に終われば出力を返す", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-agent-"));
+    const before = process.env.SACTY_REVIEW_EVAL_AGENT;
+    const withAgent = (agent: string) => {
+      process.env.SACTY_REVIEW_EVAL_AGENT = agent;
+      return runAgent("x", { cwd: dir });
+    };
+    try {
+      expect(() => withAgent("sacty-no-such-command-xyz")).toThrow("AI の実行に失敗しました");
+      expect(() => withAgent("false")).toThrow("終了コード 1");
+      expect(withAgent("cat")).toMatchObject({ output: "x", status: 0 });
+    } finally {
+      if (before === undefined) delete process.env.SACTY_REVIEW_EVAL_AGENT;
+      else process.env.SACTY_REVIEW_EVAL_AGENT = before;
+    }
+  });
+
+  it("判定の JSON として読めない出力は、評価せず失敗する（空・文章だけ・別の形）", () => {
+    for (const bad of ["", "判定なし", '{"findings": "なし"}', "```json\n{\n```"]) {
+      expect(() => assertReviewerVerdict(bad), bad).toThrow("判定の JSON として読めません");
+    }
+    expect(() => assertReviewerVerdict('{"findings": []}')).not.toThrow();
+    for (const bad of [
+      "",
+      "判定なし",
+      '```json\n{"x": 1}\n```',
+      '```json\n{"sacty-final-review": {}}\n```',
+    ]) {
+      expect(() => assertFinalReviewVerdict(bad), bad).toThrow("判定の JSON として読めません");
+    }
+    expect(() =>
+      assertFinalReviewVerdict('説明\n```json\n{"sacty-final-review": {"viewpoints": []}}\n```'),
+    ).not.toThrow();
+  });
+
+  it("skillsDir を指定すると、依頼文の観点の「見るもの」「見ないもの」は、その版のカタログから取る（変更前の版の評価に新しい文言が混ざらない）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-skills-"));
+    mkdirSync(join(dir, "review-dispatch/references"), { recursive: true });
+    writeFileSync(
+      join(dir, "review-dispatch/references/viewpoints.md"),
+      "| D-10 | 簡潔さ・範囲 | 旧版の見るもの | 旧版の見ないもの |\n",
+    );
+    const old = s18Workspace(dir).prompt;
+    expect(old).toContain("見るもの：旧版の見るもの");
+    expect(old).toContain("見ないもの：旧版の見ないもの");
+    expect(old).toContain(join(dir, "review-execution/SKILL.md"));
+    expect(old).not.toContain("決まりを引ける条件は消す指摘にしない");
+    expect(s18Workspace().prompt).toContain("決まりを引ける条件は消す指摘にしない");
+    expect(viewpointRow("D-10", dir).see).toBe("旧版の見るもの");
+  });
+});
+
 describe("観点の指示の文言（PBI-282）", () => {
   const skill = (path: string) => readFileSync(join(REVIEW_SKILLS_DIR, path), "utf8");
 
@@ -317,8 +392,8 @@ describe("観点の指示の文言（PBI-282）", () => {
 });
 
 // ここから先は、実際の AI を呼ぶ確認。SACTY_REVIEW_EVAL=1 のときだけ走る。
-const live = process.env.SACTY_REVIEW_EVAL ? describe : describe.skip;
-const RUNS = Math.max(1, Number(process.env.SACTY_REVIEW_EVAL_RUNS ?? 1));
+const live = evalEnabled() ? describe : describe.skip;
+const RUNS = evalEnabled() ? evalRuns() : 1;
 const MINUTES = 25 * 60_000;
 /** 結果を標準出力に出し、SACTY_REVIEW_EVAL_LOG があればそのファイルにも追記する（指示の変更の前後を並べて読むため）。 */
 function record(text: string) {
@@ -336,6 +411,7 @@ live(`実際の AI に当てる（${RUNS} 回ずつ）`, () => {
       for (let run = 1; run <= RUNS; run++) {
         const ws = s18Workspace(SKILLS);
         const { output } = runAgent(ws.prompt, { cwd: ws.repo, addDirs: [SKILLS, ws.dir] });
+        assertReviewerVerdict(output);
         const findings = findingsOf(output);
         record(`[s18 run ${run}] 指摘 ${findings.length} 件\n${JSON.stringify(findings, null, 2)}`);
         const removed = removesRepositoryRuleCondition(findings);
@@ -357,6 +433,7 @@ live(`実際の AI に当てる（${RUNS} 回ずつ）`, () => {
     const task = s12Task();
     const ids = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
     const { output } = runAgent(s12FinalReviewPrompt(ws.diff), { cwd: ws.dir, addDirs: [] });
+    assertFinalReviewVerdict(output);
     const review = extractFinalReview(output, ids, [], {});
     const scope = review.viewpoints.find((v) => v.viewpointId === "SCOPE");
     const reported = scope && !scope.verified ? JSON.stringify(scope.reason) : "";
