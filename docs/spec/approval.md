@@ -177,12 +177,16 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
   - 承認待ち・エスカレーション中のタスクは、上の確認が見守る。
 - 確認：PR の状態を読み（プロジェクトの gh のアカウント。読めなければ次の確認でやり直す）、マージされていたら次を行う。開いたまま・閉じられたときは何もしない。
   1. 実行中の処理があれば、コンテナを止めて終わりを待つ（一時停止・中止と同じ。止めた実行は、人の一時停止としては記録しない）。止めたコンテナが無くなったと確かめられなければ、一時停止にして進めない（次の確認で確かめ直す）。
+     承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証をワーカーが始めない。`runNext` と `queuedTaskIds` が `mergeStopping` を見る）。
+     デーモンが実装の実行中に止まって再起動したときは、復旧（`recoverInterrupted`）が、実装の作り直し（開いた PR がある）の実行を `unstoppedRuns` に残して一時停止にするので、停止を確かめるまで承認へ進まない。
+     一時停止のときに止めたコンテナを確かめられなかった実行（`unstoppedRuns`）は、止めた実行に含めて残す。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
 - `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`）。理由はマージ。
   - projection は、実装の承認待ち（ゲートの提出回は、これまでの提出の回数。提出が無ければ 1）に戻し、捨てた指摘を無効にし、検証・PR の作成の待ち・一時停止の状態を消す。続く `PullRequestMerged`・`StepApproved` が承認として進める。
   - 承認した成果の本文（`approved.implement.output`）は、記録している最新の実装の報告。マージされた内容は PR のコミットが正。
-- PR の更新の直前（`publish`）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
+- PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
+  プッシュの後の確認（新しい PR を作るかの確認、引き継いだ PR の確認）でマージされていたときも、新しい PR は作らず、一時停止にもせず、同じ記録で承認として進める（プッシュの間にマージされた場合）。
 - 続きの確認では、承認済みのタスクなので、重ねて記録しない。
 
 コード: `apps/daemon/src/service.ts`（`checkReworkMerges`・`stopReworkForMerge`・`endReworkByMerge`・`mergeApprovalItems`・`publish`・`pauseIfRequested`）、`packages/core/src/projection.ts`（`reworkingPullRequest`・`unreflectedImplementRemarks`・`ReworkStoppedByMerge`）

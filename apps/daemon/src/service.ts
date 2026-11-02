@@ -1151,51 +1151,57 @@ export class TaskService {
     };
     const before = same();
     if (!before) return;
-    // 一時停止のときに止めたコンテナが残っているかもしれないタスクは、止めて確かめる
-    if (before.status === "paused" && (before.unstoppedRuns?.length ?? 0) > 0) {
-      if (!(await this.confirmPausedContainers(taskId))) return;
-    }
-    const stage = this.reworkStage(before);
-    let stoppedRuns: string[] = [];
-    const inflight = this.inflight.get(taskId);
-    if (inflight) {
-      // 実行中の処理を止める。止めた実行は、一時停止にしない（止めた理由は、この後の記録に残す）
-      // （人の一時停止・中止が同時に求められていれば、その印は消さない）
-      const humanStop = this.pauseRequested.has(taskId);
-      this.mergeStopping.add(taskId);
-      this.pauseRequested.add(taskId);
-      stoppedRuns = [...inflight.runIds];
-      try {
-        this.stopRuns(inflight.runIds);
-        await inflight.done.catch(() => {});
-      } finally {
-        this.mergeStopping.delete(taskId);
-        if (!humanStop) this.pauseRequested.delete(taskId);
+    // 承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証を
+    // ワーカーが始めないように。runNext と queuedTaskIds が見る）
+    this.mergeStopping.add(taskId);
+    try {
+      // 一時停止のときに止めたコンテナが残っているかもしれないタスクは、止めて確かめる
+      if (before.status === "paused" && (before.unstoppedRuns?.length ?? 0) > 0) {
+        if (!(await this.confirmPausedContainers(taskId))) return;
       }
-      const unstopped = await this.unstopped(stoppedRuns);
-      const after = this.tasks.get(taskId);
-      if (unstopped.length > 0) {
-        // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので進めない。一時停止にして人が確かめる
-        if (after && (after.status === "queued" || after.status === "idle")) {
-          this.append(after, [
-            {
-              actor: "sacty",
-              event: {
-                type: "TaskPaused",
-                payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
-              },
-            },
-          ]);
+      const stage = this.reworkStage(before);
+      // 前の確認で止めたコンテナを確かめられず、一時停止にしていたなら、その実行も止めた実行に含める
+      let stoppedRuns = [...(before.unstoppedRuns ?? [])];
+      const inflight = this.inflight.get(taskId);
+      if (inflight) {
+        // 実行中の処理を止める。止めた実行は、一時停止にしない（止めた理由は、この後の記録に残す）
+        // （人の一時停止・中止が同時に求められていれば、その印は消さない）
+        const humanStop = this.pauseRequested.has(taskId);
+        this.pauseRequested.add(taskId);
+        stoppedRuns = [...new Set([...stoppedRuns, ...inflight.runIds])];
+        try {
+          this.stopRuns(inflight.runIds);
+          await inflight.done.catch(() => {});
+        } finally {
+          if (!humanStop) this.pauseRequested.delete(taskId);
         }
-        return;
+        const unstopped = await this.unstopped(stoppedRuns);
+        const after = this.tasks.get(taskId);
+        if (unstopped.length > 0) {
+          // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので進めない。一時停止にして人が確かめる
+          if (after && (after.status === "queued" || after.status === "idle")) {
+            this.append(after, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+                },
+              },
+            ]);
+          }
+          return;
+        }
       }
+      // 止めている間に、承認待ちになった（PR の更新を終えた）・中止されたなら、ここでは記録しない（承認待ちのマージは、
+      // 次の確認で確かめる）
+      this.endReworkByMerge(taskId, reworking.number, status, {
+        stoppedRuns,
+        stage: inflight && stage === "queued" ? "running" : stage,
+      });
+    } finally {
+      this.mergeStopping.delete(taskId);
     }
-    // 止めている間に、承認待ちになった（PR の更新を終えた）・中止されたなら、ここでは記録しない（承認待ちのマージは、
-    // 次の確認で確かめる）
-    this.endReworkByMerge(taskId, reworking.number, status, {
-      stoppedRuns,
-      stage: inflight && stage === "queued" ? "running" : stage,
-    });
   }
 
   /**
@@ -5526,7 +5532,13 @@ export class TaskService {
               // 完了したタスクの監査（PBI-125）
               this.awaitingAudit(t),
         )
-        .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
+        .filter(
+          (t) =>
+            !this.cancelling.has(t.id) &&
+            !this.pauseRequested.has(t.id) &&
+            // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
+            !this.mergeStopping.has(t.id),
+        )
         // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
         .sort(
           (a, b) =>
@@ -5659,7 +5671,11 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              ...(step === "operation" ? this.unstoppedPayload([task.currentRunId]) : {}),
+              // 作業を止めたコンテナが残っているかもしれない実装の作り直し（開いた PR がある）も、実行を残す。PR のマージで
+              // 作り直しを止めるとき（PBI-276）、停止を確かめてから承認へ進むため
+              ...(step === "operation" || reworkingPullRequest(task)
+                ? this.unstoppedPayload([task.currentRunId])
+                : {}),
             },
           },
         },
@@ -6127,7 +6143,13 @@ export class TaskService {
    * 実行中に人間が一時停止を求めたら、終わったところで一時停止として記録する。
    */
   async runNext(taskId: string): Promise<void> {
-    if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    if (
+      this.cancelling.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      this.mergeStopping.has(taskId)
+    ) {
+      return;
+    }
     const task = this.tasks.get(taskId);
     if (task && this.parentCancelled(task)) {
       if (task.status === "cancelled" || isCompleted(task)) return;
@@ -8477,6 +8499,28 @@ export class TaskService {
       return fail(message("pr.workspaceMissing"));
     }
     const repo = target.repo;
+    // 実装の作り直しの間に、人が前の PR をマージしていたら、プッシュも PR の作成もせず、マージを承認として進める
+    // （新しい PR を作らない。PBI-276。マージの確認は 60 秒ごとなので、確認の前に PR の更新が始まることがある。
+    // 引き継いだ既存の PR も同じ）
+    const earlier = task.pullRequest;
+    if (earlier?.number && earlier.repo) {
+      try {
+        const earlierToken = await this.githubToken(task, earlier.repo, usedSecrets);
+        const now = await this.deps.pulls.status({
+          repo: earlier.repo,
+          token: earlierToken,
+          number: earlier.number,
+        });
+        if (
+          now.state === "merged" &&
+          this.endReworkByMerge(task.id, earlier.number, now, { stoppedRuns: [] })
+        ) {
+          return "stopped";
+        }
+      } catch (error) {
+        return fail(message("pr.failed", { detail: errorText(error) }));
+      }
+    }
     // 既存の PR を引き継ぐタスクは、その PR の元のブランチに実装を積み、新しい PR を作らない
     const continued = task.continuedPullRequest;
     if (continued) {
@@ -8489,23 +8533,6 @@ export class TaskService {
     // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
     if (this.stopRequested(task.id)) return "stopped";
     try {
-      // 実装の作り直しの間に、人が前の PR をマージしていたら、プッシュも PR の作成もせず、マージを承認として進める
-      // （新しい PR を作らない。PBI-276。マージの確認は 60 秒ごとなので、確認の前に PR の更新が始まることがある）
-      const earlier = task.pullRequest;
-      if (earlier?.number && sameRepo(earlier.repo ?? "", repo.pullRequest.repo)) {
-        const earlierToken = await this.githubToken(task, repo.pullRequest.repo, usedSecrets);
-        const now = await this.deps.pulls.status({
-          repo: repo.pullRequest.repo,
-          token: earlierToken,
-          number: earlier.number,
-        });
-        if (
-          now.state === "merged" &&
-          this.endReworkByMerge(task.id, earlier.number, now, { stoppedRuns: [] })
-        ) {
-          return "stopped";
-        }
-      }
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
@@ -8570,7 +8597,13 @@ export class TaskService {
       let number = task.pullRequest?.number;
       if (number && task.pullRequest?.repo === prRepo) {
         const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
-        if (previous.state === "merged") number = undefined;
+        if (previous.state === "merged") {
+          // プッシュの間にマージされた（PBI-276）：新しい PR は作らず、マージを承認として進める
+          if (this.endReworkByMerge(task.id, number, previous, { stoppedRuns: [] })) {
+            return "stopped";
+          }
+          number = undefined;
+        }
       }
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -8751,6 +8784,13 @@ export class TaskService {
         token,
         number: continued.number,
       });
+      // プッシュの間にマージされた（PBI-276）：マージを承認として進める
+      if (
+        now.state === "merged" &&
+        this.endReworkByMerge(task.id, continued.number, now, { stoppedRuns: [] })
+      ) {
+        return;
+      }
       if (now.state !== "open") {
         fail(message("pr.continuedNotOpen", { number: continued.number }));
         return;
