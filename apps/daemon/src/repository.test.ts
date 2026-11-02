@@ -833,6 +833,34 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow();
   });
 
+  itUnreadable(
+    "読めない未追跡のファイルと、読めないこと以外の git add の失敗が混ざっていても、失敗にする（PBI-278）",
+    async () => {
+      const origin = makeOrigin();
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "task", "repo");
+      const gitDir = join(dir, "_git", "task.git");
+      const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+      mkdirSync(join(clone, "nested"));
+      git(join(clone, "nested"), "init", "--initial-branch=main");
+      writeFileSync(join(clone, "nested", "a.txt"), "a\n");
+      writeFileSync(join(clone, "locked.png"), "png");
+      chmodSync(join(clone, "locked.png"), 0o000);
+      try {
+        // 読めないファイルだけなら進む（前提）
+        rmSync(join(clone, "nested"), { recursive: true, force: true });
+        expect(await workspace.diffStats(clone, gitDir, baseCommit)).toEqual([]);
+        // 入れ子のリポジトリ（別種の失敗）が混ざると、読めないファイルがあっても失敗にする
+        mkdirSync(join(clone, "nested"));
+        git(join(clone, "nested"), "init", "--initial-branch=main");
+        writeFileSync(join(clone, "nested", "a.txt"), "a\n");
+        await expect(workspace.diffStats(clone, gitDir, baseCommit)).rejects.toThrow(/nested/);
+      } finally {
+        chmodSync(join(clone, "locked.png"), 0o644);
+      }
+    },
+  );
+
   it("ファイルごとの変更は、差分の上限で切り詰めず、名前の変更を変更元の削除と変更先の追加に分ける", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();
