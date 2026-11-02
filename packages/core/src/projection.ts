@@ -1888,6 +1888,10 @@ export function applyEvent(
       // 記録だけ（代わりのエージェントでやり直す。状態は、失敗の記録が戻している）
       break;
 
+    case "WorkspaceFilesSkipped":
+      // 記録だけ（作業領域の写しで、読めないファイルを写さなかった。PBI-278）
+      break;
+
     case "AgentSessionArchived":
       // 記録だけ（写したファイルのハッシュを、画面と API で確かめる。PBI-66）。中止したタスクの状態は変えない
       if (current.status === "cancelled") return next;

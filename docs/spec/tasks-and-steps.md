@@ -906,6 +906,15 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   要求要件・設計の成果物を PR に足すタスクでは、写しに成果物のファイルも入れる（下の、成果物を PR に足すタスクの項）。
   そのイメージが `images` から消えていれば、実行せずに一時停止する（`verify.testsUnavailable`）。
   実装の工程がサービスを使うなら、テストの前に起動してつなぐ（[サービス](services.md#いつ起動するか)）。
+- 実装後の作業領域の写しは、読めないファイル・ディレクトリ（権限 0000 など。エージェントが作業領域に展開したツールにある）があっても、全体を失敗にしない（PBI-278。`copyWorkingTree`）。
+  読めないものは写さず（ディレクトリはその下も）、リンクはたどらずそのまま写す。写さなかったものは、総数と最初の `SKIPPED_PATHS_MAX`（20）件のパスを `WorkspaceFilesSkipped`（実行・役割・件数・パス。状態は変えない）に記録する。
+  実行の指示には「作業領域の写しに入れなかったファイル」を足し（`skippedFilesLines`。パスはデータとして渡す）、写しに無いことが原因の検証の失敗を環境による失敗として扱わせる。
+  読めないファイルが無ければ、記録も指示も足さない。止まったタスクを再開すると、写し直して最終レビューを進める。
+- エージェントが環境（イメージ）に無いツールを作業領域に入れて検証を通すことは止めず、後始末と申告で扱う（PBI-278）。
+  - 実装の工程の指示（`WORKSPACE_TOOL_LINES`。設計のあるタスク・設計を省いたタスク・テストの仕組みが無いタスク・不具合の修正のどれも）と既定の規則（`rules.md`）で、入れる場所を作業領域の `.sacty-tools/`（`WORKSPACE_TOOLS_DIR`）の下にさせ、入れたときは実装の説明に「## この環境だけの結果」の節（入れたもの・それで通した検証・入れていない環境では確かめていないこと）を作らせる。実装の説明は PR の本文にそのまま載る。
+  - PR・コミット・差分には、根の `.sacty-tools/` を入れない（`stage`。`git add` のパス指定で外すので、リポジトリの `.gitignore` の否定パターンでも戻らない。起点で追跡しているファイルは、起点のまま残る）。`node_modules/` など、ほかの場所は `.gitignore` に任せる（あえて含めるリポジトリの意図を尊重する）。
+  - `git add` が、読めないために載せられなかったのが、起点で追跡していない新しいファイル（権限 0000 のツールのファイルなど）だけのときは、それを載せずに進める。起点で追跡しているファイルを読めないとき、またはほかの失敗のときは、これまでどおり失敗にする（読めない変更が黙って落ちないように）。
+  - 最終レビューの指示（`environmentOnlyLines`）で、実装の説明の「この環境だけの結果」の節（`environmentOnlyReport`。データとして渡す）、写しに入れなかったファイル、作業領域の `.sacty-tools/`、実行環境に無いはずの実行ファイルのどれかがあるとき、通った検証を「入れたものがある環境だけの結果」として扱わせる。`humanChecks` に「この環境だけの結果：…」を1件、所見の最後に同じ趣旨を1文書かせる（PR の本文の「人が確かめること」と所見に出る）。入れたことだけを理由に不合格にはしない。
 - テスト（検証）のコマンド（オーケストレーターの `testCommand`。テストの仕組みが無いタスクでは実装が申告したコマンド）があれば、指示（`testRunLines`）で、判定の前にそのコマンドを作業領域で実行させる。
   セットアップ（依存関係の取得など）はしてよいこと、出力は末尾だけでなく全体（コマンドが実行するすべての種類のテスト）を確かめること、終了コードが 0 で失敗・エラーのテストが無いときだけ通ったものとすること（失敗がすべて環境によるときは下の「人が確かめること」）、テストやコマンドを変えて通さないことを指示する。
   観点に対応するテストが実行されて通っているか（スキップ・除外されていないか）も確かめさせ、判断の根拠は、差分と、作業領域の実装後のコード・ゴールガーディアンが実行したテストの結果にする。
@@ -961,7 +970,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
   合格なら、実装の工程のまま、sacty が実装の PR のドラフトを外し、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
-  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`outOfScopeLines`・`pullRequestContentLines`・`extractFinalReview`・`feedbackLines`）、`apps/daemon/src/service.ts`（`stepDocumentsForReview`・`runGuardian`）、`apps/daemon/src/repository.ts`（`copyWorkingTree`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`・`SCOPE_VIEWPOINT`）、`apps/web/src/components/implementation.tsx`
+  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`environmentOnlyLines`・`environmentOnlyReport`・`skippedFilesLines`・`WORKSPACE_TOOL_LINES`・`outOfScopeLines`・`pullRequestContentLines`・`extractFinalReview`・`feedbackLines`）、`apps/daemon/src/service.ts`（`stepDocumentsForReview`・`runGuardian`）、`apps/daemon/src/repository.ts`（`copyWorkingTree`・`stage`・`WORKSPACE_TOOLS_DIR`）、`packages/core/src/events.ts`（`WorkspaceFilesSkipped`・`GuardianTests`・`guardianTestsPassed`・`SCOPE_VIEWPOINT`）、`apps/web/src/components/implementation.tsx`
 
   関係する ADR: [最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更と、既存のテストの期待を変える変更を、観点 SCOPE の不合格にする](../adr/20261101-1348-fail-out-of-scope-changes-in-final-review.md)
 - 最終レビューに通らなければ、実装をやり直す。
@@ -1057,7 +1066,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 取り込み方：
   1. ベースブランチ（`repository.baseBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
      作業領域が今ベースにしているコミット（`workBaseCommit`。取り込み前は起点のコミット、取り込み後は最後に取り込んだ先頭）と同じなら、何もしない。
-  2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものは除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree --merge-base`。ホストの git は 2.40 以上が必要で、古ければ `git.mergeTreeUnsupported` を示す）。
+  2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものと、ツールの置き場所は除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree --merge-base`。ホストの git は 2.40 以上が必要で、古ければ `git.mergeTreeUnsupported` を示す）。
      競合したファイルが `MAX_BASE_CONFLICTS`（1000）件を超えるときは、作業領域を書き換えずに、件数と上限を示して止める（`git.tooManyConflicts`。`merge.failed` で一時停止）。
      作業領域の git の設定・フィルター・フックは使わず、コミットも作らない。
   3. 結果を作業領域に書く（`git read-tree -m -u`）。競合したファイルには、目印（`<<<<<<<`・`=======`・`>>>>>>>`）を残す。上が実装の側、下がベースブランチの側。

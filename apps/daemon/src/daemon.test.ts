@@ -434,6 +434,8 @@ class FakeRepos implements RepositoryWorkspace {
     include?: { commit: string; paths: string[] };
   }[] = [];
   copyFail?: string;
+  /** 読めないために写さなかったファイル（権限 0000 のツールのファイルなど。PBI-278）。 */
+  copySkipped: { count: number; paths: string[] } = { count: 0, paths: [] };
   /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
   copyStarted = Promise.withResolvers<void>();
   copyGate?: Promise<void>;
@@ -462,6 +464,7 @@ class FakeRepos implements RepositoryWorkspace {
       ...(gitDir ? { gitDir } : {}),
       ...(include ? { include } : {}),
     });
+    return { skipped: this.copySkipped };
   }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
   snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
@@ -10936,6 +10939,70 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // ゴールガーディアン（最終レビュー）は実行しない
     expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
       "sacty-final-review",
+    );
+    activity.close();
+  });
+
+  it("実装後のコードの写しで読めないファイルを写さなかったときは、最終レビューを止めず、作業履歴に残して指示で知らせる（PBI-278）", async () => {
+    const repos = new FakeRepos();
+    repos.copySkipped = {
+      count: 2,
+      paths: ["node_modules/.browser/usr/share/pixmaps/chromium.png", "`x`"],
+    };
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
+      repos,
+    });
+    await drain(service);
+    const task = service.get(id)?.task;
+    // 写しの失敗にはならず、最終レビューが合格まで進む
+    expect(task?.pausedReason).toBeUndefined();
+    expect(task?.lastReview?.passed).toBe(true);
+    const skipped = (service.get(id)?.activity ?? []).filter(
+      (e) => e.type === "WorkspaceFilesSkipped",
+    );
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.payload).toMatchObject({
+      role: "final-review",
+      count: 2,
+      paths: ["node_modules/.browser/usr/share/pixmaps/chromium.png", "`x`"],
+    });
+    const prompt = promptOf(executor, executor.calls.length - 1);
+    expect(prompt).toContain("sacty-final-review");
+    expect(prompt).toContain("--- 作業領域の写しに入れなかったファイル ---");
+    expect(prompt).toContain("chromium.png");
+    // パスのバッククォートで、指示のコードブロックを閉じさせない
+    expect(prompt).toContain("\\u0060x\\u0060");
+    activity.close();
+  });
+
+  it("読めないファイルで写しに失敗して止まったタスク（古い版）は、再開すると、読めないものを除いて写し、最終レビューが進む（PBI-278）", async () => {
+    const repos = new FakeRepos();
+    repos.copyFail = "EACCES: permission denied, copyfile '.../chromium.png'";
+    const { activity, service, id } = await toImplement([implement("# v1"), review()], { repos });
+    await drain(service);
+    expect(service.get(id)?.task.pausedReason).toBe("error");
+    // 修正後の写し（読めないものを除く）で再開する
+    repos.copyFail = undefined;
+    repos.copySkipped = { count: 1, paths: ["node_modules/.browser/chromium.png"] };
+    service.resume(id, {});
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.pausedReason).toBeUndefined();
+    expect(task?.lastReview?.passed).toBe(true);
+    expect(
+      (service.get(id)?.activity ?? []).filter((e) => e.type === "WorkspaceFilesSkipped"),
+    ).toHaveLength(1);
+    activity.close();
+  });
+
+  it("読めないファイルが無ければ、作業履歴にも指示にも足さない（PBI-278）", async () => {
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()]);
+    await drain(service);
+    expect((service.get(id)?.activity ?? []).some((e) => e.type === "WorkspaceFilesSkipped")).toBe(
+      false,
+    );
+    expect(promptOf(executor, executor.calls.length - 1)).not.toContain(
+      "--- 作業領域の写しに入れなかったファイル ---",
     );
     activity.close();
   });

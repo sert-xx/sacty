@@ -1,6 +1,17 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { chmod, cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  constants,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -48,6 +59,23 @@ function lineCount(text: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
+/**
+ * 作業領域の写しで、読めないために写さなかったファイル・ディレクトリ（権限など。PBI-278）。paths は作業領域の根からの
+ * 相対パスで、最初の SKIPPED_PATHS_MAX 件まで。count は写さなかった総数（ディレクトリは、その下を数えず1件）。
+ */
+export type WorkingTreeCopy = { skipped: { count: number; paths: string[] } };
+
+/** 写さなかったファイルのうち、記録に残すパスの数の上限。 */
+export const SKIPPED_PATHS_MAX = 20;
+/** 記録に残す、パス1件の長さの上限（文字。作業履歴のイベントの形に合わせる）。 */
+const SKIPPED_PATH_LENGTH_MAX = 500;
+
+/**
+ * エージェントが作業領域に入れたツール（環境に無いブラウザなど）の置き場所。リポジトリの .gitignore に頼らず、
+ * PR・コミットには入れない（stage の除外。追跡しているファイルには効かない）。PBI-278。
+ */
+export const WORKSPACE_TOOLS_DIR = ".sacty-tools";
+
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
 export interface RepositoryWorkspace {
   /**
@@ -87,13 +115,15 @@ export interface RepositoryWorkspace {
    * include を渡すと、写した後に、そのパス（リポジトリの根からの相対パス）のファイルを、gitDir の commit にある内容で
    * 置き換える（commit に無いパスは、写しからも消す）。実装の PR に sacty が足す成果物のファイル（要求要件・設計）を、
    * PR と同じ中身で写しに入れるため（`publish` の keep と同じ扱い）。include には gitDir が要る。
+   * 読めないファイル・ディレクトリ（権限 0000 のファイルなど。エージェントが展開したツールにある。PBI-278）は、全体を失敗に
+   * せず、写さずに skipped で返す。
    */
   copyWorkingTree(
     dir: string,
     outDir: string,
     gitDir?: string,
     include?: { commit: string; paths: string[] },
-  ): Promise<void>;
+  ): Promise<WorkingTreeCopy>;
   /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
@@ -270,6 +300,41 @@ const SAFE_CONFIG = [
   "diff.external=",
 ];
 
+/**
+ * `git add --ignore-errors` の標準エラー出力が、読めないファイルを載せられなかったことだけを言っているときの、そのファイルの
+ * パス（根からの相対）。ほかの内容が混ざっている・パスを読めないときは undefined。
+ */
+function unreadablePaths(stderr: string): string[] | undefined {
+  const paths: string[] = [];
+  for (const raw of stderr.split("\n")) {
+    const line = raw.trim();
+    if (
+      line === "" ||
+      /^(?:error: unable to index file .*|fatal: adding files failed)$/.test(line)
+    ) {
+      continue;
+    }
+    const opened = /^error: open\("(.*)"\): Permission denied$/.exec(line);
+    if (!opened?.[1]) return undefined;
+    paths.push(opened[1]);
+  }
+  return paths.length > 0 ? paths : undefined;
+}
+
+/**
+ * 写せるか（このプロセスの権限で読めるか）。ファイルは読み取り、ディレクトリは中身の一覧と辿り（読み取りと実行）が要る。
+ * リンクは先をたどらず、そのまま写すので、常に写せる。調べる間に消えたものは、写す側の扱いに任せる。
+ */
+async function readable(path: string): Promise<boolean> {
+  const stat = await lstat(path).catch(() => undefined);
+  if (!stat || stat.isSymbolicLink()) return true;
+  const mode = stat.isDirectory() ? constants.R_OK | constants.X_OK : constants.R_OK;
+  return access(path, mode).then(
+    () => true,
+    () => false,
+  );
+}
+
 function git(
   label: string,
   args: string[],
@@ -400,12 +465,53 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       const base = ["--git-dir", gitDir, "--work-tree", dir, ...SAFE_CONFIG];
       const run = (label: string, args: string[]) => git(label, [...base, ...args], env);
       await run("read-tree", ["read-tree", baseCommit]);
-      // 新しく作ったファイルも含めるため、すべてインデックスに載せる
-      await run("add", ["add", "--all"]);
+      // 新しく作ったファイルも含めるため、すべてインデックスに載せる。エージェントが作業領域に入れたツールの置き場所
+      // （根の .sacty-tools/）は、リポジトリの .gitignore の否定パターンでも戻らないよう、パス指定で必ず外す（起点で追跡している
+      // ファイルは、インデックスに起点のまま残る。PBI-278）
+      const added = await gitResult(
+        [
+          ...base,
+          "add",
+          "--all",
+          "--ignore-errors",
+          "--",
+          ":/",
+          `:(top,exclude)${WORKSPACE_TOOLS_DIR}`,
+        ],
+        env,
+      );
+      if (added.code !== 0) {
+        // 読めないために載せられなかったのが、起点で追跡していない新しいファイル（権限 0000 のツールのファイルなど）だけなら
+        // 進める。起点で追跡しているファイルを読めないと、その変更が黙って落ちるので、ほかの失敗と同じく失敗にする
+        const unreadable = unreadablePaths(added.err);
+        if (!unreadable || (await this.trackedAtBase(run, baseCommit, unreadable))) {
+          throw new MessageError(
+            message("git.failed", { command: "add", detail: added.err || `exit ${added.code}` }),
+          );
+        }
+      }
       return await then(run);
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
+  }
+
+  /** paths のどれかが、起点のコミットで追跡しているファイルか（パスは文字どおりに照合する）。 */
+  private async trackedAtBase(
+    run: (label: string, args: string[]) => Promise<string>,
+    baseCommit: string,
+    paths: string[],
+  ): Promise<boolean> {
+    const listed = await run("ls-tree", [
+      "ls-tree",
+      "-r",
+      "--name-only",
+      "-z",
+      baseCommit,
+      "--",
+      ...paths.map((path) => `:(literal)${path}`),
+    ]);
+    return listed.split("\0").some(Boolean);
   }
 
   async prepare(
@@ -485,12 +591,22 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     if (!existsSync(dir)) throw new MessageError(message("verify.workspaceMissing"));
     if (include && !gitDir) throw new MessageError(message("git.invalidPath"));
     mkdirSync(dirname(outDir), { recursive: true });
+    const skipped = { count: 0, paths: [] as string[] };
     // 数 GB・数万ファイルになりうるので、非同期で写す（写す間もデーモンが応答し続ける。PBI-156）
     await cp(dir, outDir, {
       recursive: true,
       // リンクの先は写さない（ホストのファイルを取り込まない）。作業領域の .git は渡さない
       verbatimSymlinks: true,
-      filter: (src) => relative(dir, src).split(sep)[0] !== ".git",
+      filter: async (src) => {
+        const path = relative(dir, src);
+        if (path.split(sep)[0] === ".git") return false;
+        // 読めないもの（エージェントが展開したツールの権限 0000 のファイルなど）で、写し全体を失敗にしない（PBI-278）
+        if (path === "" || (await readable(src))) return true;
+        skipped.count++;
+        if (skipped.paths.length < SKIPPED_PATHS_MAX)
+          skipped.paths.push(path.split(sep).join("/").slice(0, SKIPPED_PATH_LENGTH_MAX));
+        return false;
+      },
     });
     // 退避したメタデータ（エージェントが触る前のもの）の写しを .git にする。写しなので、退避したものは書き換えられない
     if (gitDir) await cp(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
@@ -525,6 +641,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         ]);
       }
     }
+    return { skipped };
   }
 
   /**
