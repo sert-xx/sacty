@@ -2777,7 +2777,7 @@ export function reworkingPullRequest(
  */
 export function unreflectedImplementRemarks(task: Task): TaskRemark[] {
   const submitted = task.submissions.implement ?? 0;
-  const latest = changeRounds(task, "implement");
+  const latest = lastChangeRound(task, "implement");
   return task.remarks.filter(
     (r) =>
       r.step === "implement" &&

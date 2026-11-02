@@ -3758,6 +3758,55 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     ).toThrow(/not being reworked/);
   });
 
+  it("まだ反映していない指摘は、AI のレビューの指摘だけの回でも、人の回が続いても、最後の回（回の番号）で決まる（PBI-275）", () => {
+    const aiRound = (id: string, round: number, source: "sacty_review" | undefined) =>
+      ev(
+        id,
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round,
+            remarks: [
+              { id: `implement-${round}-1`, text: `指摘${round}`, ...(source ? { source } : {}) },
+            ],
+          },
+        },
+        source ? "sacty" : "person",
+      );
+    // 最初の回が AI のレビューの指摘だけ（人の差し戻しの回数は 0）でも、その回の指摘が未反映
+    seq = 0;
+    const aiOnly = project([...base("t"), aiRound("t", 1, "sacty_review")]).get("t");
+    expect(aiOnly && changeRounds(aiOnly, "implement")).toBe(0);
+    expect(aiOnly && unreflectedImplementRemarks(aiOnly).map((r) => r.id)).toEqual([
+      "implement-1-1",
+    ]);
+    // AI の回（1）の後に人の回（2）が続けば、最後の回の指摘だけが未反映（人の回数は 1 だが、回の番号は 2）
+    seq = 0;
+    const humanAfterAi = project([
+      ...base("t"),
+      aiRound("t", 1, "sacty_review"),
+      ...verifiedImplementation("t", "impl-2"),
+      ev("t", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit: "c2",
+          url: "https://github.com/acme/app/pull/7",
+          repo: "https://github.com/acme/app",
+          number: 7,
+        },
+      }),
+      ev("t", { type: "StepSubmitted", payload: { step: "implement", submission: 2 } }),
+      aiRound("t", 2, undefined),
+    ]).get("t");
+    expect(humanAfterAi && changeRounds(humanAfterAi, "implement")).toBe(1);
+    expect(humanAfterAi && unreflectedImplementRemarks(humanAfterAi).map((r) => r.id)).toEqual([
+      "implement-2-1",
+    ]);
+  });
+
   it("まだ反映していない指摘は、最後の差し戻しの指摘のうち、提出済みの PR に渡していないものだけ", () => {
     seq = 0;
     // 1回目の提出（指摘なし）→ 2回目の差し戻し → 作り直しの実行が終わる前
