@@ -1155,11 +1155,15 @@ export class TaskService {
    * 読んでも足さず、超えた分は取り込み済みにしない（反映した後、通常の取り込みが取り込む）。
    * 一時停止中の確認（resumed が false）は、読んでいる間に再開された（実行待ち・待機になった）なら足さない
    * （再開した後の判断と食い違わないよう、再開した後は反映の側（reworkHeldReview）だけが足す）。
+   * PR の head を確かめられず、AI のレビューを今回は扱えなかったときは false を返す（呼び出し元は、確かめ直すまで待つ）。
    */
-  private async holdFeedback(taskId: string, token: string, resumed = false): Promise<void> {
+  private async holdFeedback(taskId: string, token: string, resumed = false): Promise<boolean> {
     const task = this.tasks.get(taskId);
     const pr = task ? reworkingPullRequest(task) : undefined;
-    if (!task || !pr?.repo || this.cancelling.has(taskId) || task.pendingReview?.judgement) return;
+    if (!task || !pr?.repo || this.cancelling.has(taskId) || task.pendingReview?.judgement) {
+      return true;
+    }
+    let headUnknown = false;
     const listed = (
       await this.deps.pulls.feedback({
         repo: pr.repo,
@@ -1177,6 +1181,9 @@ export class TaskService {
       token,
       listed,
       "held",
+      () => {
+        headUnknown = true;
+      },
     );
     // 読んでいる間に、実行が始まった・別の状態になった・人が反映の判断を始めたなら、残さない（次の確認でやり直す）
     const latest = this.tasks.get(taskId);
@@ -1188,13 +1195,13 @@ export class TaskService {
       latest.pendingReview?.judgement ||
       reworkingPullRequest(latest)?.number !== pr.number
     ) {
-      return;
+      return !headUnknown;
     }
     const room = Math.max(REMARKS_MAX - (latest.pendingReview?.remarks.length ?? 0), 0);
     const batch = fresh
       .filter((item) => !latest.importedFeedback.includes(item.key))
       .slice(0, room);
-    if (batch.length === 0) return;
+    if (batch.length === 0) return !headUnknown;
     this.append(latest, [
       {
         // AI のレビューの指摘だけの回は、人間の操作にしない（PBI-275）
@@ -1216,6 +1223,7 @@ export class TaskService {
         },
       },
     ]);
+    return !headUnknown;
   }
 
   /** 再開したタスクに、反映する指摘がある・再開の直後に読み直す必要があるか（PBI-279）。 */
@@ -1249,8 +1257,9 @@ export class TaskService {
       try {
         token = await this.githubToken(task, pr.repo, usedSecrets);
         if (recheck) {
-          await this.holdFeedback(taskId, token, true);
-          // 読めた。読めなかったときは印を残し、読めるまで止まった工程を走り直さない（直前の指摘を落として走り直さないため）
+          // 読めなかった（例外）・AI のレビューの head を確かめられなかったときは、印を残し、確かめられるまで止まった工程を
+          // 走り直さない（直前の指摘を落として走り直さないため）
+          if (!(await this.holdFeedback(taskId, token, true))) return true;
           this.heldRecheck.delete(taskId);
         }
       } catch (error) {
@@ -1319,7 +1328,10 @@ export class TaskService {
         !settling ||
         this.cancelling.has(taskId) ||
         (settling.status !== "queued" && settling.status !== "idle") ||
-        !heldReview(settling)?.judgement
+        !heldReview(settling)?.judgement ||
+        // 状態を読んでいる間に、作り直しの停止（PR のマージ）が始まった・一時停止を求められたなら、古い応答で差し戻さない
+        this.mergeStopping.has(taskId) ||
+        this.pauseRequested.has(taskId)
       ) {
         return true;
       }
@@ -2449,6 +2461,8 @@ export class TaskService {
     items: PullRequestFeedback[],
     /** gate：承認待ちの取り込み。held：一時停止の間に届いた指摘を残すとき（PBI-279）。 */
     where: "gate" | "held" = "gate",
+    /** PR の head を確かめられず、AI のレビューを今回は扱わなかったときに呼ぶ（呼び出し元が、確かめ直すまで待つため）。 */
+    onHeadUnknown?: () => void,
   ): Promise<PullRequestFeedback[]> {
     const reviewed = items.filter((item) => item.source === "sacty_review" && item.commit);
     if (reviewed.length === 0) return items;
@@ -2458,7 +2472,10 @@ export class TaskService {
     } catch {
       head = undefined;
     }
-    if (!head) return items.filter((item) => !reviewed.includes(item));
+    if (!head) {
+      onHeadUnknown?.();
+      return items.filter((item) => !reviewed.includes(item));
+    }
     const current = head;
     const stale = reviewed.filter((item) => !sameCommit(item.commit ?? "", current));
     if (stale.length === 0) return items;

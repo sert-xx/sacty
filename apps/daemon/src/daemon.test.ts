@@ -12553,6 +12553,103 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         }
       });
 
+      it("判断の後の状態の読み取りの間に、定期の確認が作り直しの停止（PR のマージ）を始めたら、古い応答（開いたまま）で差し戻さず、マージを承認として進める", async () => {
+        const { activity, service, executor, pulls, id } = await pausedRework([
+          HOLD,
+          rework("design", "方針の変更なので設計から"),
+        ]);
+        pulls.feedbackList = [item("comment:race")];
+        await service.checkPullRequests();
+        service.resume(id, {});
+        const running = service.runNext(id);
+        const runId = await executor.started.promise;
+        // 判断の後の状態の読み取りを、開いたままと答えた後で止める
+        const original = pulls.status.bind(pulls);
+        let armed = true;
+        const entered = Promise.withResolvers<void>();
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        pulls.status = async (input) => {
+          const result = await original(input);
+          if (!armed) return result;
+          armed = false;
+          entered.resolve();
+          await gate;
+          return result;
+        };
+        const requested = types(service, id).filter((t) => t === "ChangesRequested").length;
+        executor.finishHeld(runId, rework("design", "方針の変更なので設計から"));
+        await entered.promise;
+        // 読み取りの間に、人がマージし、定期の確認が作り直しの停止を始めた
+        pulls.state = {
+          state: "merged",
+          mergedBy: "reviewer",
+          headSha: service.get(id)?.task.pullRequest?.commit,
+        };
+        const periodic = service.checkPullRequests();
+        await vi.waitFor(() =>
+          expect((service as unknown as { mergeStopping: Set<string> }).mergeStopping.has(id)).toBe(
+            true,
+          ),
+        );
+        release();
+        await running;
+        await periodic;
+        expect(types(service, id).filter((t) => t === "ChangesRequested")).toHaveLength(requested);
+        const stopped = (service.get(id)?.activity ?? []).find(
+          (e) => e.type === "ReworkStoppedByMerge",
+        );
+        expect(stopped?.payload).toMatchObject({ discardedReview: 1 });
+        const task = service.get(id)?.task as Task;
+        expect(task.pullRequestState).toBe("merged");
+        expect(task.steps.every((st) => st.state === "done")).toBe(true);
+        activity.close();
+      });
+
+      it("再開直後に指摘は読めたが、AI のレビューの head を確かめられなければ、印を残して止まった工程を走り直さずに待ち、確かめられたら AI のレビューも残して反映する", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const { activity, service, executor, pulls, id } = await pausedRework([
+            rework("implement", "実装で直せる"),
+            implement("# v2"),
+            passing("implement-1-1", "implement-2-1"),
+          ]);
+          pulls.feedbackList = [aiItem(pulls, "review:ai-head")];
+          const original = pulls.status.bind(pulls);
+          pulls.status = async () => {
+            throw new Error("GitHub に接続できません");
+          };
+          service.resume(id, {});
+          const calls = executor.calls.length;
+          await service.runNext(id);
+          await service.runNext(id);
+          // 指摘は読めたが、head を確かめられない間は、実装も判断も走らない。対象のまま
+          expect(executor.calls).toHaveLength(calls);
+          expect(service.queuedTaskIds()).toEqual([id]);
+          expect(types(service, id)).not.toContain("ReworkJudged");
+          expect(heldReview(service.get(id)?.task as Task)).toBeUndefined();
+          // 確かめられたら、AI のレビューを残して、判断し、反映する
+          pulls.status = original;
+          await service.runNext(id);
+          expect(types(service, id).slice(-3)).toEqual([
+            "PullRequestReviewImported",
+            "ReworkJudged",
+            "ChangesRequested",
+          ]);
+          expect(service.get(id)?.task.remarks.at(-1)).toMatchObject({
+            id: "implement-2-1",
+            source: "sacty_review",
+          });
+          await drain(service);
+          expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+          activity.close();
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
       it("人の差し戻しが上限（3回）に達していても、人の再開を続ける判断として反映し、エスカレーションにしない", async () => {
         const pulls = new FakePulls();
         const ids: string[] = [];
