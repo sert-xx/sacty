@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-02（UTC）
 - タスク: PBI-278
-- PR: なし
+- PR: #276
 - ブランチ: feat/issue-278-workspace-tools
 - 関係する ADR: なし
 
