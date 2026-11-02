@@ -25,4 +25,22 @@ describe("タスクの予算に入れる費用を持つイベント（PBI-86）"
     expect(chargeBudget(budget, other)).toBe(budget);
     expect(addUsd(0.1, 0.2)).toBe(0.3);
   });
+
+  it("使った分の全体を読めなかった実行（PBI-281）は、読めた分を足し、回数を数える。読めた実行は数えない", () => {
+    const budget = { usedUsd: 0.1, capUsd: 5, warned: false, estimated: false };
+    const event = (payload: Record<string, unknown>) =>
+      ({
+        type: "AgentRunFailed",
+        payload: { costUsd: 0.2, estimated: false, ...payload },
+      }) as unknown as ActivityEvent;
+    // 回数を持たない予算（空）は、1 回目で 1 になり、2 回目で 2 になる
+    const once = chargeBudget(budget, event({ costUnknown: true }));
+    expect(once).toEqual({ ...budget, usedUsd: 0.3, unknownRuns: 1 });
+    const twice = chargeBudget(once, event({ costUnknown: true, costUsd: 0 }));
+    expect(twice).toEqual({ ...budget, usedUsd: 0.3, unknownRuns: 2 });
+    // 読めた実行・印が false の実行は、回数に入れず、持たないままにする
+    expect(chargeBudget(budget, event({}))).not.toHaveProperty("unknownRuns");
+    expect(chargeBudget(budget, event({ costUnknown: false }))).not.toHaveProperty("unknownRuns");
+    expect(chargeBudget(twice, event({}))).toHaveProperty("unknownRuns", 2);
+  });
 });

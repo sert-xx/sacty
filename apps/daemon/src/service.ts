@@ -77,6 +77,7 @@ import {
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
+  MAX_UNREADABLE_REVIEWS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
   MEMORY_SUMMARY_MAX,
@@ -115,6 +116,7 @@ import {
   responsibleProject,
   responsibleTicketProject,
   resumeNoteRoom,
+  reworkingPullRequest,
   reworkTargets,
   SactySettings,
   type ScheduledTaskSettings,
@@ -142,6 +144,7 @@ import {
   targetImageOf,
   taskPlan,
   exportProject as toProjectExport,
+  unreflectedImplementRemarks,
   workBaseCommit,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -217,7 +220,7 @@ import {
   findDeploymentSkill,
 } from "./deployment.js";
 import { buildErrorReport, type ReportLocale } from "./error-report.js";
-import { errorText, MessageError } from "./errors.js";
+import { AgentTimeoutError, errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
   type GitHubAccount,
@@ -363,6 +366,7 @@ import {
   type SubtaskSummary,
   selectablePlans,
   servicePromptLines,
+  skippedFilesLines,
   viewpointRename,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
@@ -478,6 +482,8 @@ function clipText(text: DaemonText, max: number): DaemonText {
 }
 
 type ActivityItem = { actor: Actor; event: EventInput };
+/** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge。PBI-276）。 */
+type ReworkStage = Extract<EventInput, { type: "ReworkStoppedByMerge" }>["payload"]["was"];
 
 /** 情報収集のまとめと、読んで関係があると判断した情報源。 */
 export type GatheredInformation = { brief: string; sources: { title: string; url?: string }[] };
@@ -739,8 +745,19 @@ export type ProjectView = {
  * タスクの読み書きの窓口。書き込みは必ず作業履歴への追記を通り、
  * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
+/** 使った分の全体を読めなかった実行の印（イベントの costUnknown。読めたならイベントには持たせない。PBI-281）。 */
+function unknownCost(run: { costUnknown?: boolean | undefined }): { costUnknown?: true } {
+  return run.costUnknown ? { costUnknown: true } : {};
+}
+
 /** エージェントの実行の結果（費用を含む）。 */
-type Executed = { outcome: AgentOutcome; costUsd: number; estimated: boolean };
+type Executed = {
+  outcome: AgentOutcome;
+  costUsd: number;
+  estimated: boolean;
+  /** 使った分の全体を読めなかった（costUsd は読めた分の下限で、無ければ 0。時間切れなど。PBI-281）。 */
+  costUnknown?: true;
+};
 
 /** エージェントの1回の実行（TaskService.execute）に渡すもの。 */
 type ExecuteRun = {
@@ -853,6 +870,8 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
+  private readonly mergeStopping = new Set<string>();
   /**
    * PR のフィードバックを、このデーモンが初めて見た時刻（タスクの ID → フィードバックの key → 時刻。メモリーだけ）。
    * 書き終わるのを待つ時間は、GitHub の時刻だけでなく、これも使って数える（PBI-270）。
@@ -975,6 +994,8 @@ export class TaskService {
    * 確かめられないタスク（ネットワークやアカウントの問題）は、次の確認でやり直す。
    */
   async checkPullRequests(): Promise<void> {
+    // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
+    await this.checkReworkMerges();
     // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
@@ -1068,37 +1089,10 @@ export class TaskService {
         }
         // マージは人間の承認なので、承認者は人間として記録する。要求要件・設計の PR（PBI-57）は、その工程の承認として
         // 次の工程に進める（承認した成果の書き出し（PBI-56）は、この承認の後に行う）
-        const head = edited ? status.headSha : pr.commit;
-        this.append(latest, [
-          {
-            actor: "person",
-            event: {
-              type: "PullRequestMerged",
-              payload: {
-                number: pr.number,
-                ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                ...(head ? { commit: head } : {}),
-                outdated: false,
-                submitted: pr.commit,
-                ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
-                edited,
-                ...(document ? { document } : {}),
-              },
-            },
-          },
-          {
-            actor: "person",
-            event: {
-              type: "StepApproved",
-              payload: {
-                step: pr.step,
-                next: this.nextAfterApproval(latest, pr.step),
-              },
-            },
-          },
-          // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
-          ...this.deploymentWatchEvents(latest, pr.step, pr.number, pr.repo, status.mergeCommit),
-        ]);
+        this.append(
+          latest,
+          this.mergeApprovalItems(latest, { ...pr, repo: pr.repo }, status, document),
+        );
       } else if (status.state === "closed") {
         this.append(latest, [
           { actor: "sacty", event: { type: "PullRequestClosed", payload: { number: pr.number } } },
@@ -1121,6 +1115,205 @@ export class TaskService {
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+  }
+
+  /**
+   * 実装の作り直し（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）の間に、人が実装の PR を
+   * マージしたタスクを探して、作り直しを止める（PBI-276）。承認待ちのタスクは、checkPullRequests が見守る。
+   * PR の状態は、プロジェクトの gh のアカウントで確かめる。確かめられないタスクは、次の確認でやり直す。
+   */
+  private async checkReworkMerges(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      const reworking = reworkingPullRequest(task);
+      if (!reworking?.repo || this.cancelling.has(task.id)) continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, reworking.repo, usedSecrets);
+        const status = await this.deps.pulls.status({
+          repo: reworking.repo,
+          token,
+          number: reworking.number,
+        });
+        if (status.state === "merged") await this.stopReworkForMerge(task.id, reworking, status);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${reworking.number}（${reworking.repo}）のマージの確認と作り直しの停止ができませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * 実装の作り直しの間に実装の PR がマージされたので、作り直しを止めて、マージを承認として進める（PBI-276）。
+   * 実行中ならコンテナを止めて終わりを待ち、止めたコンテナが無くなったことを確かめてから、作業履歴に残す。
+   * - ReworkStoppedByMerge：止めた実行と、作り直しに渡す前に捨てた指摘（理由はマージ）
+   * - 続けて PullRequestMerged・StepApproved（承認待ちのマージと同じ記録）。新しい PR は作らない
+   * 止めている間に、人が中止した・別の状態になったなら、何も記録しない。止めたコンテナを確かめられなければ、一時停止にして
+   * 人の確認を待つ（再開の前に確かめる。次の確認で、確かめ直して続ける）。
+   */
+  private async stopReworkForMerge(
+    taskId: string,
+    reworking: NonNullable<ReturnType<typeof reworkingPullRequest>>,
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+  ): Promise<void> {
+    const same = () => {
+      const task = this.tasks.get(taskId);
+      const now = task ? reworkingPullRequest(task) : undefined;
+      return task && now?.number === reworking.number && !this.cancelling.has(taskId)
+        ? task
+        : undefined;
+    };
+    const before = same();
+    if (!before) return;
+    // 承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証を
+    // ワーカーが始めないように。runNext と queuedTaskIds が見る）
+    this.mergeStopping.add(taskId);
+    try {
+      // 一時停止のときに止めたコンテナが残っているかもしれないタスクは、止めて確かめる
+      if (before.status === "paused" && (before.unstoppedRuns?.length ?? 0) > 0) {
+        if (!(await this.confirmPausedContainers(taskId))) return;
+      }
+      const stage = this.reworkStage(before);
+      // 前の確認で止めたコンテナを確かめられず、一時停止にしていたなら、その実行も止めた実行に含める
+      let stoppedRuns = [...(before.unstoppedRuns ?? [])];
+      const inflight = this.inflight.get(taskId);
+      if (inflight) {
+        // 実行中の処理を止める。止めた実行は、一時停止にしない（止めた理由は、この後の記録に残す）
+        // （人の一時停止・中止が同時に求められていれば、その印は消さない）
+        const humanStop = this.pauseRequested.has(taskId);
+        this.pauseRequested.add(taskId);
+        stoppedRuns = [...new Set([...stoppedRuns, ...inflight.runIds])];
+        try {
+          this.stopRuns(inflight.runIds);
+          await inflight.done.catch(() => {});
+        } finally {
+          if (!humanStop) this.pauseRequested.delete(taskId);
+        }
+        const unstopped = await this.unstopped(stoppedRuns);
+        const after = this.tasks.get(taskId);
+        if (unstopped.length > 0) {
+          // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので進めない。一時停止にして人が確かめる
+          // 実行の費用で先に一時停止していた（予算など）場合も、確かめられなかった実行を残す
+          if (
+            after &&
+            (after.status === "queued" || after.status === "idle" || after.status === "paused")
+          ) {
+            this.append(after, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+                },
+              },
+            ]);
+          }
+          return;
+        }
+      }
+      // 止めている間に、承認待ちになった（PR の更新を終えた）・中止されたなら、ここでは記録しない（承認待ちのマージは、
+      // 次の確認で確かめる）
+      this.endReworkByMerge(taskId, reworking.number, status, {
+        stoppedRuns,
+        stage: inflight && stage === "queued" ? "running" : stage,
+      });
+    } finally {
+      this.mergeStopping.delete(taskId);
+    }
+  }
+
+  /**
+   * 実装の作り直しを止めた記録と、マージの承認の記録を、同じ追記で行う（PBI-276）。作り直しの途中でなくなっていれば（承認待ちに
+   * なった・中止された・別の PR になった）何も記録せず、false を返す。実行は止めてから呼ぶ（実行中は記録できない）。
+   */
+  private endReworkByMerge(
+    taskId: string,
+    number: number,
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+    stopped: { stoppedRuns: string[]; stage?: ReworkStage },
+  ): boolean {
+    const latest = this.tasks.get(taskId);
+    const reworking = latest ? reworkingPullRequest(latest) : undefined;
+    if (!latest || !reworking || reworking.number !== number || latest.status === "running") {
+      return false;
+    }
+    if (this.cancelling.has(taskId)) return false;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ReworkStoppedByMerge",
+          payload: {
+            number,
+            was: stopped.stage ?? this.reworkStage(latest),
+            stoppedRuns: stopped.stoppedRuns,
+            discardedRemarks: unreflectedImplementRemarks(latest).map((r) => ({
+              id: r.id,
+              text: r.text,
+            })),
+            ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
+          },
+        },
+      },
+      ...this.mergeApprovalItems(
+        latest,
+        { step: "implement", number, repo: reworking.repo ?? "", commit: reworking.commit },
+        status,
+      ),
+    ]);
+    return true;
+  }
+
+  /** 実装の作り直しが、いまどの段階か（ReworkStoppedByMerge に残す）。 */
+  private reworkStage(task: Task): ReworkStage {
+    if (task.status === "paused") return "paused";
+    if (task.status === "running") return "running";
+    if (task.publishPending) return "publishing";
+    if (task.verification !== undefined) return "verifying";
+    return "queued";
+  }
+
+  /**
+   * 人が PR をマージした記録（PullRequestMerged と、その工程の承認 StepApproved。実装の PR なら、マージのコミットの
+   * CI/CD とデプロイの監視の開始も）。承認待ちの PR のマージ（checkPullRequests）と、実装の作り直しの間のマージ
+   * （stopReworkForMerge。PBI-276）が同じ記録を作る。人が PR の中で直してからマージした（PR の先頭が sacty の出した
+   * コミットと違う）なら、人が直した最終のコミットも残す（PBI-63）。
+   */
+  private mergeApprovalItems(
+    task: Task,
+    pr: { step: StepKey; number: number; repo: string; commit: string },
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+    document?: PullRequestMerge["document"],
+  ): ActivityItem[] {
+    const edited = status.headSha !== pr.commit;
+    const head = edited ? status.headSha : pr.commit;
+    return [
+      {
+        actor: "person",
+        event: {
+          type: "PullRequestMerged",
+          payload: {
+            number: pr.number,
+            ...(status.mergedBy ? { by: status.mergedBy } : {}),
+            ...(head ? { commit: head } : {}),
+            outdated: false,
+            submitted: pr.commit,
+            ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
+            edited,
+            ...(document ? { document } : {}),
+          },
+        },
+      },
+      {
+        actor: "person",
+        event: {
+          type: "StepApproved",
+          payload: { step: pr.step, next: this.nextAfterApproval(task, pr.step) },
+        },
+      },
+      // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
+      ...this.deploymentWatchEvents(task, pr.step, pr.number, pr.repo, status.mergeCommit),
+    ];
   }
 
   /**
@@ -1824,6 +2017,7 @@ export class TaskService {
       ...(outcome.usage ? { usage: outcome.usage } : {}),
       costUsd,
       estimated,
+      ...unknownCost(executed),
     };
     if (stopped()) return interrupted(cost);
     if (outcome.kind === "failed") return fail(outcome.message, cost);
@@ -2113,6 +2307,8 @@ export class TaskService {
     let agent = this.usableAgent(config, selected, task.id, run.role);
     let executed = await this.runGuardian(task, { ...run, agent }, code);
     let spent = 0;
+    // 失敗して代わりのエージェントで判定し直したとき、先の実行の使用量が不明なら、合計も不明（PBI-281）
+    let unknown = false;
     const tried = new Set([agent.id]);
     for (;;) {
       if (executed.outcome.kind !== "failed") break;
@@ -2126,6 +2322,7 @@ export class TaskService {
       if (switched?.event.type !== "AgentFellBack") break;
       this.append(this.mustGet(task.id), [switched]);
       spent += executed.costUsd;
+      unknown ||= executed.costUnknown === true;
       const next = definedAgent(config, switched.event.payload.fallbackAgentId);
       if (!next) break;
       agent = next;
@@ -2134,7 +2331,12 @@ export class TaskService {
     }
     // 1回の判定の中で試し終えたので、次の判定は、選んだエージェントから試す
     this.forgetTried(task.id, run.role);
-    return { ...executed, costUsd: executed.costUsd + spent, agent };
+    return {
+      ...executed,
+      costUsd: executed.costUsd + spent,
+      ...(unknown ? { costUnknown: true as const } : {}),
+      agent,
+    };
   }
 
   private async runGuardian(
@@ -2174,6 +2376,8 @@ export class TaskService {
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
     const runId = run.runId ?? randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    // 作業領域の写しに入れなかったファイル（読めないもの）を知らせる文を足した、実行の指示
+    let prompt = run.prompt;
     try {
       if (task.repository) {
         // 完了の後に作業領域を消したタスク（PBI-157）は、同じ起点で用意し直す（実装の変更は戻らない）
@@ -2196,12 +2400,18 @@ export class TaskService {
           } else {
             // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
             // 応答し続けるよう、非同期で写す（写しの途中で止められたら、execute が起動の前に止める。PBI-156）
-            await this.deps.repos.copyWorkingTree(
+            const copied = await this.deps.repos.copyWorkingTree(
               this.repoDir(task),
               workspaceDir,
               this.trustedGitDir(task),
               ...(run.include ? [run.include] : []),
             );
+            // 読めないファイル（エージェントが展開したツールの権限 0000 のファイルなど）は、写し全体を失敗にせず、
+            // 写さずに作業履歴に残して、エージェントに知らせる（PBI-278）
+            if (copied.skipped.count > 0) {
+              this.recordSkippedFiles(task.id, runId, run.role, copied.skipped);
+              prompt = [prompt, ...skippedFilesLines(copied.skipped)].join("\n");
+            }
           }
         } catch (error) {
           return {
@@ -2213,7 +2423,7 @@ export class TaskService {
         }
       }
       // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
-      return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
+      return await this.execute({ ...run, prompt, taskId: task.id, runId, workspaceDir });
     } finally {
       // 写しは数 GB になりうるので、非同期で消す（消す間もデーモンが応答し続ける。PBI-156）。消せなくても、実行の結果
       // （判定・答え・分析と費用）を失わないよう、警告だけにする
@@ -2223,6 +2433,36 @@ export class TaskService {
           error instanceof Error ? error.message : error,
         );
       });
+    }
+  }
+
+  /**
+   * 実装の作業領域の写しで、読めないために写さなかったファイルを、作業履歴に残す（PBI-278）。残せなくても（写している間に
+   * 中止された、など）実行は続ける。
+   */
+  private recordSkippedFiles(
+    taskId: string,
+    runId: string,
+    role: AgentRole,
+    skipped: { count: number; paths: string[] },
+  ): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    try {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "WorkspaceFilesSkipped",
+            payload: { runId, role, count: skipped.count, paths: skipped.paths },
+          },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] 写さなかったファイルを作業履歴に残せませんでした（${taskId}）：`,
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 
@@ -2696,6 +2936,7 @@ export class TaskService {
       ...(choice.usage ? { usage: choice.usage } : {}),
       costUsd: choice.costUsd,
       estimated: choice.estimated,
+      ...unknownCost(choice),
     };
     const found = repo ? candidates.find((c) => sameGitHubUrl(c, repo)) : undefined;
     if (found) {
@@ -2785,6 +3026,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -3270,6 +3512,7 @@ export class TaskService {
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
+          ...unknownCost(choice),
         },
       };
     }
@@ -3372,6 +3615,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost(ran),
     };
     if (outcome.kind === "failed") {
       return {
@@ -3604,17 +3848,18 @@ export class TaskService {
     const targets = reworkTargets(task, gateStep);
     // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる。失敗したら、代わりのエージェントで判定し直す
-    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
-      task,
-      {
-        agent: config.guardianAgent,
-        image: config.image,
-        prompt: buildReworkPrompt(task, remarks, targets, gateStep, aiReview),
-        role: "rework",
-      },
-      gateStep === "implement" ? "implemented" : "base",
-      config,
-    );
+    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
+      await this.runGuardianWithFallback(
+        task,
+        {
+          agent: config.guardianAgent,
+          image: config.image,
+          prompt: buildReworkPrompt(task, remarks, targets, gateStep, aiReview),
+          role: "rework",
+        },
+        gateStep === "implement" ? "implemented" : "base",
+        config,
+      );
     const judgement =
       outcome.kind === "completed"
         ? extractRework(outcome.output, targets)
@@ -3628,6 +3873,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
   }
 
@@ -4683,7 +4929,7 @@ export class TaskService {
     const selected = agentFor(config, "orchestrator");
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で読む
     const agent = this.usableAgent(config, selected, task.id, "orchestrator");
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+    const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
       task,
       {
         agent,
@@ -4710,6 +4956,7 @@ export class TaskService {
       ...(outcome.usage ? { usage: outcome.usage } : {}),
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
     const fail = (reason: "usage_limit" | "auth" | "error", detail: DaemonText) => {
       const text = message("ticket.triageFailed", { detail });
@@ -5436,7 +5683,13 @@ export class TaskService {
               // 完了したタスクの監査（PBI-125）
               this.awaitingAudit(t),
         )
-        .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
+        .filter(
+          (t) =>
+            !this.cancelling.has(t.id) &&
+            !this.pauseRequested.has(t.id) &&
+            // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
+            !this.mergeStopping.has(t.id),
+        )
         // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
         .sort(
           (a, b) =>
@@ -5569,7 +5822,11 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              ...(step === "operation" ? this.unstoppedPayload([task.currentRunId]) : {}),
+              // 作業を止めたコンテナが残っているかもしれない実装の作り直し（開いた PR がある）も、実行を残す。PR のマージで
+              // 作り直しを止めるとき（PBI-276）、停止を確かめてから承認へ進むため
+              ...(step === "operation" || reworkingPullRequest(task)
+                ? this.unstoppedPayload([task.currentRunId])
+                : {}),
             },
           },
         },
@@ -6037,7 +6294,13 @@ export class TaskService {
    * 実行中に人間が一時停止を求めたら、終わったところで一時停止として記録する。
    */
   async runNext(taskId: string): Promise<void> {
-    if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    if (
+      this.cancelling.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      this.mergeStopping.has(taskId)
+    ) {
+      return;
+    }
     const task = this.tasks.get(taskId);
     if (task && this.parentCancelled(task)) {
       if (task.status === "cancelled" || isCompleted(task)) return;
@@ -6091,6 +6354,8 @@ export class TaskService {
   private pauseIfRequested(taskId: string, unstoppedRuns: string[] = []): void {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
+    // PR のマージで止めた実行（PBI-276）は、人の一時停止にしない（stopReworkForMerge が、止めた理由とともに承認として進める）
+    if (this.mergeStopping.has(taskId)) return;
     const task = this.tasks.get(taskId);
     if (task?.status !== "queued" && task?.status !== "idle") return;
     this.append(task, [
@@ -6302,6 +6567,7 @@ export class TaskService {
                 ...(chosen.usage ? { usage: chosen.usage } : {}),
                 costUsd: chosen.costUsd,
                 estimated: chosen.estimated,
+                ...unknownCost(chosen),
               },
             },
           },
@@ -6773,6 +7039,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -7278,7 +7545,7 @@ export class TaskService {
         },
       ]);
       attempted = true;
-      const { outcome, costUsd, estimated } = await this.execute({
+      const { outcome, costUsd, estimated, costUnknown } = await this.execute({
         agent,
         taskId: task.id,
         runId,
@@ -7322,6 +7589,7 @@ export class TaskService {
                     usage: outcome.usage,
                     costUsd,
                     estimated,
+                    ...unknownCost({ costUnknown }),
                   },
                 }
               : {
@@ -7521,7 +7789,12 @@ export class TaskService {
       await rm(workspaceDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
-    const cost = { ...(outcome.usage ? { usage: outcome.usage } : {}), costUsd, estimated };
+    const cost = {
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+      costUsd,
+      estimated,
+      ...unknownCost(executed),
+    };
     // 人間が止めた・中止したなら、書き出せたかが分からない。費用だけを記録し、再開すると目印で探して続ける
     if (this.pauseRequested.has(task.id) || this.cancelling.has(task.id)) {
       return record("sacty", {
@@ -7887,6 +8160,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -7930,7 +8204,54 @@ export class TaskService {
           ...(documentsOnly ? { documentsOnly } : {}),
         },
       );
-    let { missingCommands, ...review } = extractReview(false);
+    let { missingCommands, unreadable, ...review } = extractReview(false);
+    // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
+    // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
+    // 実装の問題ではないので、止めて人に知らせる（再開すると最終レビューからやり直す）
+    if (unreadable) {
+      const count = (this.mustGet(task.id).unreadableReviews ?? 0) + 1;
+      const path = `runs/${task.id}/${runId}.jsonl`;
+      const stop = count >= MAX_UNREADABLE_REVIEWS;
+      const failure = stop
+        ? message("verify.finalReviewUnreadableStopped", { max: MAX_UNREADABLE_REVIEWS, path })
+        : message("verify.finalReviewUnreadable", { count, max: MAX_UNREADABLE_REVIEWS, path });
+      this.append(current, [
+        {
+          actor: "guardian",
+          event: {
+            type: "FinalReviewFailed",
+            payload: {
+              reason: "error",
+              message: failure,
+              verdictUnreadable: true,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              runId,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+        ...(stop
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: {
+                    reason: this.stopReason(task.id, "error"),
+                    message: failure,
+                    ...(await this.manualPauseInfo(task.id)),
+                  },
+                },
+              },
+            ]
+          : []),
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // 差分が文書のファイルだけなら、ツールが無くて実行できなかった検証を止めずに人の確認へ回す（PBI-158）。実行される
     // 振る舞いの無い変更で、イメージを直しても検証の結果は変わらないため。コードなど文書でないファイルが1つでもあれば止める
     if (missingCommands.length > 0) {
@@ -7958,7 +8279,7 @@ export class TaskService {
         ]);
         return;
       }
-      if (documentsOnly) ({ missingCommands, ...review } = extractReview(true));
+      if (documentsOnly) ({ missingCommands, unreadable, ...review } = extractReview(true));
     }
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
     // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
@@ -8385,6 +8706,29 @@ export class TaskService {
       return fail(message("pr.workspaceMissing"));
     }
     const repo = target.repo;
+    // 実装の作り直しの間に、人が前の PR をマージしていたら、プッシュも PR の作成もせず、マージを承認として進める
+    // （新しい PR を作らない。PBI-276。マージの確認は 60 秒ごとなので、確認の前に PR の更新が始まることがある。
+    // 引き継いだ既存の PR も同じ）
+    // （引き継いだ PR は、初めて提出するまで task.pullRequest が無いので、引き継いだ PR を見る）
+    const earlier = task.pullRequest ?? task.continuedPullRequest;
+    if (earlier?.number && earlier.repo) {
+      try {
+        const earlierToken = await this.githubToken(task, earlier.repo, usedSecrets);
+        const now = await this.deps.pulls.status({
+          repo: earlier.repo,
+          token: earlierToken,
+          number: earlier.number,
+        });
+        if (
+          now.state === "merged" &&
+          this.endReworkByMerge(task.id, earlier.number, now, { stoppedRuns: [] })
+        ) {
+          return "stopped";
+        }
+      } catch (error) {
+        return fail(message("pr.failed", { detail: errorText(error) }));
+      }
+    }
     // 既存の PR を引き継ぐタスクは、その PR の元のブランチに実装を積み、新しい PR を作らない
     const continued = task.continuedPullRequest;
     if (continued) {
@@ -8461,7 +8805,13 @@ export class TaskService {
       let number = task.pullRequest?.number;
       if (number && task.pullRequest?.repo === prRepo) {
         const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
-        if (previous.state === "merged") number = undefined;
+        if (previous.state === "merged") {
+          // プッシュの間にマージされた（PBI-276）：新しい PR は作らず、マージを承認として進める
+          if (this.endReworkByMerge(task.id, number, previous, { stoppedRuns: [] })) {
+            return "stopped";
+          }
+          number = undefined;
+        }
       }
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -8642,6 +8992,13 @@ export class TaskService {
         token,
         number: continued.number,
       });
+      // プッシュの間にマージされた（PBI-276）：マージを承認として進める
+      if (
+        now.state === "merged" &&
+        this.endReworkByMerge(task.id, continued.number, now, { stoppedRuns: [] })
+      ) {
+        return;
+      }
       if (now.state !== "open") {
         fail(message("pr.continuedNotOpen", { number: continued.number }));
         return;
@@ -9272,6 +9629,7 @@ export class TaskService {
               usage: outcome.usage,
               costUsd,
               estimated,
+              ...unknownCost(executed),
             },
           },
         },
@@ -9521,11 +9879,9 @@ export class TaskService {
    * 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。オーケストレーター（質問への答えも）
    * は、タスクのセッションを使い回す（PBI-67）。返す runId は、最後に実行したもの（再開できずに新しく始め直したら変わる）。
    */
-  private async execute(
-    original: ExecuteRun,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+  private async execute(original: ExecuteRun): Promise<Executed & { runId: string }> {
     const run = this.withMemory(original);
-    let executed: { outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string };
+    let executed: Executed & { runId: string };
     if (run.role === "orchestrator") {
       // 同じタスクで、オーケストレーターの実行は同時に1つだけ（並ぶ）
       executed = await this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
@@ -9570,9 +9926,7 @@ export class TaskService {
    * 保存したセッションを複製して答え、保存しない（元のセッションに、質問と答えが混ざらない）。指示はこれまでどおり台帳から
    * 作る（セッションは経緯の補い）。どちらも、使ったセッションを作業履歴に残す。
    */
-  private async executeWithSession(
-    run: ExecuteRun,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+  private async executeWithSession(run: ExecuteRun): Promise<Executed & { runId: string }> {
     const store = this.deps.orchestratorSessions;
     const runtime = run.agent.runtime;
     if (!store || !this.deps.sessionLogs || (runtime !== "claude-code" && runtime !== "codex")) {
@@ -9641,7 +9995,11 @@ export class TaskService {
       run.onRunId?.(runId);
       const first = executed;
       executed = await this.executeOnce({ ...run, runId });
-      executed = { ...executed, costUsd: executed.costUsd + first.costUsd };
+      executed = {
+        ...executed,
+        costUsd: executed.costUsd + first.costUsd,
+        ...(first.costUnknown ? { costUnknown: true as const } : {}),
+      };
     }
     const archived = executed.archived;
     // 再開を指定したのに、エージェントが別のセッションの ID を出した（再開せずに新しく始めた）なら、新規として記録する。
@@ -9727,12 +10085,7 @@ export class TaskService {
       /** 再開するセッション（PBI-67）。 */
       session?: OrchestratorSessionResume;
     },
-  ): Promise<{
-    outcome: AgentOutcome;
-    costUsd: number;
-    estimated: boolean;
-    archived: ArchivedAgentSession | undefined;
-  }> {
+  ): Promise<Executed & { archived: ArchivedAgentSession | undefined }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
     // セッションログ（PBI-62）。実行に渡した秘密情報は、書く前に伏せる（準備の間に増えた分も）
@@ -9804,7 +10157,7 @@ export class TaskService {
     run: ExecuteRun & { session?: OrchestratorSessionResume },
     usedSecrets: string[],
     log: SessionLogHandle | undefined,
-  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
+  ): Promise<Executed> {
     let outcome: AgentOutcome;
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
@@ -9959,7 +10312,17 @@ export class TaskService {
       outcome = {
         kind: "failed",
         reason: error instanceof SecretNotFoundError ? "auth" : "error",
-        message: errorText(error),
+        // 時間切れで止めても、コンテナが止まったことを確かめられなかったなら、その結果にする（動いたままかもしれないので、
+        // 代わりのエージェントに切り替えず、同じ作業領域で操作が重ならないように止める）
+        message:
+          error instanceof AgentTimeoutError && error.unconfirmedContainer
+            ? message("run.containerNotConfirmed", { name: error.unconfirmedContainer })
+            : errorText(error),
+        // 時間切れで止めた実行は、止めるまでに読めた使用量を費用にする。読めなければ不明（0 とは記録しない。PBI-281）
+        ...(error instanceof AgentTimeoutError && error.usage ? { usage: error.usage } : {}),
+        ...(error instanceof AgentTimeoutError && error.costUnknown
+          ? { costUnknown: true as const }
+          : {}),
       };
     } finally {
       gatewayRun?.close();
@@ -9981,7 +10344,12 @@ export class TaskService {
       run.agent.auth.mode === "stub" ||
       run.estimateCost === true;
     const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
-    return { outcome, costUsd, estimated };
+    return {
+      outcome,
+      costUsd,
+      estimated,
+      ...(outcome.kind === "failed" && outcome.costUnknown ? { costUnknown: true as const } : {}),
+    };
   }
 
   /** ゲートウェイのリトライを、実行中のタスクの作業履歴に記録する（PBI-37）。 */
@@ -10047,17 +10415,18 @@ export class TaskService {
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる。失敗したら、代わりのエージェントで
     // 判定し直す
-    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
-      task,
-      {
-        agent: config.guardianAgent,
-        image: config.image,
-        prompt: buildGuardianPrompt(task, proposal),
-        role: "guardian",
-      },
-      "base",
-      config,
-    );
+    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
+      await this.runGuardianWithFallback(
+        task,
+        {
+          agent: config.guardianAgent,
+          image: config.image,
+          prompt: buildGuardianPrompt(task, proposal),
+          role: "guardian",
+        },
+        "base",
+        config,
+      );
     const judgement =
       outcome.kind === "completed"
         ? extractVerdict(outcome.output)
@@ -10075,6 +10444,7 @@ export class TaskService {
       usage: outcome.usage,
       costUsd,
       estimated,
+      ...unknownCost({ costUnknown }),
     };
   }
 
@@ -10406,7 +10776,7 @@ export class TaskService {
       // 実行中の工程のログも、いまの写しを読ませる（処理が長引いているときに、いまの様子を答えられるように）
       const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId, true);
       // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
-      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+      const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
         task,
         {
           agent,
@@ -10434,6 +10804,7 @@ export class TaskService {
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         costUsd,
         estimated,
+        ...unknownCost({ costUnknown }),
       };
       // 秘密情報は、execute が出力の全文から取り除いている（切り詰めるのは、その後）
       const answer = outcome.kind === "completed" ? outcome.output.trim() : "";
@@ -10593,7 +10964,7 @@ export class TaskService {
           reportFile = false;
         }
       }
-      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+      const { outcome, costUsd, estimated, costUnknown, runId } = await this.runGuardian(
         task,
         {
           agent,
@@ -10620,6 +10991,7 @@ export class TaskService {
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         costUsd,
         estimated,
+        ...unknownCost({ costUnknown }),
       };
       const text = outcome.kind === "completed" ? outcome.output.trim() : "";
       if (this.cancelling.has(task.id)) {

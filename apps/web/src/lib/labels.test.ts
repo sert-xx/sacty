@@ -566,6 +566,39 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     ).toBe("PR #7 の競合が解消された");
   });
 
+  it("作業履歴に、実装の作り直しを PR のマージで止めたことを、段階・止めた実行・捨てた指摘とともに表示する（PBI-276）", () => {
+    const event = (payload: object): ActivityEvent =>
+      ({
+        type: "ReworkStoppedByMerge",
+        payload,
+        seq: 1,
+        id: "e1",
+        taskId: "t",
+        projectId: "p",
+        at: "",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const running = event({
+      number: 7,
+      was: "running",
+      stoppedRuns: ["r1"],
+      discardedRemarks: [{ id: "implement-2-1", text: "ログを足して" }],
+      discardedFeedback: "review",
+    });
+    expect(describeEvent(running)).toBe(
+      "PR #7 がマージされたため、実装の作り直しを止めた（実行中・実行1件を停止）。作り直しに渡す前の指摘1件を捨てた（implement-2-1）。やり直しに渡すはずだった最終レビューの結果を捨てた。マージを承認として進める",
+    );
+    expect(describeIn(running, labels.en)).toBe(
+      "PR #7 was merged, so the rework of the implementation was stopped (running, 1 run stopped). Discarded 1 comment not yet passed to the rework (implement-2-1). Discarded the final review result meant for the next attempt. The merge is taken as the approval",
+    );
+    // 実行も指摘も無ければ、段階だけ
+    expect(
+      describeEvent(event({ number: 7, was: "queued", stoppedRuns: [], discardedRemarks: [] })),
+    ).toBe(
+      "PR #7 がマージされたため、実装の作り直しを止めた（実行待ち）。マージを承認として進める",
+    );
+  });
+
   it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
     const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({
@@ -1093,6 +1126,98 @@ describe("オーケストレーターの失敗の表示（PBI-32）", () => {
     expect(describeEvent(event)).toBe(
       "オーケストレーターを実行できませんでした：ThrottlingException。再開すると、工程の選択からやり直します。（$0.3000）",
     );
+  });
+});
+
+describe("使った分の全体を読めなかった実行の費用の表示（PBI-281）", () => {
+  const event = (type: string, payload: Record<string, unknown>) =>
+    ({ type, payload, actor: "agent" }) as unknown as ActivityEvent;
+  const timeout = { code: "run.timeout", params: { minutes: 3 } };
+
+  it("読めなければ 0 とは出さずに不明と出し、読めた分があれば「以上」と出す", () => {
+    const failed = (payload: Record<string, unknown>) =>
+      event("AgentRunFailed", {
+        runId: "r",
+        step: "implement",
+        agentId: "a",
+        reason: "error",
+        message: timeout,
+        costUsd: 0,
+        estimated: true,
+        ...payload,
+      });
+    expect(describeEvent(failed({ costUnknown: true }))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。（費用不明）",
+    );
+    expect(describeEvent(failed({ costUnknown: true, costUsd: 0.31 }))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。（$0.3100以上・概算）",
+    );
+    expect(describeIn(failed({ costUnknown: true }), labels.en)).toBe(
+      "Implement failed: Stopped the agent because it ran longer than 3 minutes. (cost unknown)",
+    );
+    // 費用を読めた失敗は、これまでどおり費用を出さない
+    expect(describeEvent(failed({}))).toBe(
+      "実装の実行が失敗：エージェントの実行が 3 分を超えたため止めました。",
+    );
+  });
+
+  it("オーケストレーター・最終レビューの失敗は、$0.0000 と出さずに不明と出す", () => {
+    const base = { message: timeout, reason: "error", costUsd: 0, estimated: false };
+    expect(describeEvent(event("OrchestratorFailed", { ...base, costUnknown: true }))).toContain(
+      "（費用不明）",
+    );
+    expect(describeEvent(event("OrchestratorFailed", { ...base }))).toContain("（$0.0000）");
+    expect(describeEvent(event("FinalReviewFailed", { ...base, costUnknown: true }))).toContain(
+      "（費用不明）",
+    );
+  });
+
+  it("成功の記録も、先の実行の使用量が不明なら、不明と出す（再開を断られた後に成功したときなど）", () => {
+    const base = { costUsd: 0, estimated: true, costUnknown: true };
+    const steps = event("StepsChosen", { steps: ["requirements"], ...base });
+    expect(describeEvent(steps)).toMatch(/（費用不明）$/);
+    expect(describeIn(steps, labels.en)).toMatch(/ \(cost unknown\)$/);
+    expect(
+      describeEvent(event("StepsChosen", { steps: ["requirements"], ...base, costUsd: 0.3 })),
+    ).toMatch(/（\$0\.3000以上・概算）$/);
+    expect(describeEvent(event("InformationGathered", { sources: [], ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(describeEvent(event("TicketTriaged", { repo: "a/b", reason: "r", ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(describeEvent(event("RepositoryChosen", { repo: "a/b", reason: "r", ...base }))).toMatch(
+      /（費用不明）$/,
+    );
+    expect(
+      describeEvent(
+        event("AgentRunCompleted", { step: "implement", output: "", responses: [], ...base }),
+      ),
+    ).toContain("費用不明");
+    expect(
+      describeEvent(
+        event("FinalReviewed", { passed: true, viewpoints: [], remarks: [], summary: "", ...base }),
+      ),
+    ).toContain("費用不明");
+    // 印が無い成功は、これまでどおり（印も費用も付けない）
+    const plain = describeEvent(
+      event("StepsChosen", { steps: ["requirements"], costUsd: 0, estimated: true }),
+    );
+    expect(plain).not.toContain("費用不明");
+    expect(plain).not.toContain("以上");
+  });
+
+  it("判定の記録は、費用が 0 でも不明なら不明と出す", () => {
+    const judged = event("ReworkJudged", {
+      reason: "判定できなかった",
+      costUsd: 0,
+      estimated: true,
+      costUnknown: true,
+    });
+    expect(describeEvent(judged)).toContain("費用不明");
+    expect(
+      describeEvent(event("ReworkJudged", { reason: "x", costUsd: 0, estimated: true })),
+    ).not.toContain("費用不明");
   });
 });
 

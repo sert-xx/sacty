@@ -407,6 +407,12 @@ export type Verdict = z.infer<typeof Verdict>;
 export const MAX_VERIFY_ATTEMPTS = 3;
 
 /**
+ * 最終レビューの出力から判定を読み取れなかった（FinalReviewFailed の verdictUnreadable）回数が、続けてこの回数になったら止める。
+ * 読み取れなかった回は不合格にせず、最終レビューを出し直させる（実装には戻さない）。
+ */
+export const MAX_UNREADABLE_REVIEWS = 3;
+
+/**
  * 最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更（範囲外の変更）を見つけたときに、不合格にする観点の ID。
  * 設計のテスト観点ではないので、ゴールガーディアンが範囲外の変更を申告したときだけ、判定に足される。
  */
@@ -904,6 +910,11 @@ const StepsChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -925,6 +936,11 @@ const StepsSkipped = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -974,6 +990,11 @@ const AgentRunCompleted = z.object({
     costUsd: z.number().nonnegative(),
     /** サブスクリプションなど、実際の請求ではなく換算した値か。 */
     estimated: z.boolean(),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
     output: z.string(),
     /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
@@ -1025,6 +1046,11 @@ const AgentRunFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1176,6 +1202,11 @@ const ChangeJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1337,6 +1368,11 @@ const FinalReviewed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1514,6 +1550,11 @@ const InformationGathered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1535,6 +1576,11 @@ const TicketTriaged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1554,6 +1600,11 @@ const RepositoryChosen = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。成功の記録にも持つのは、先に読めなかった実行（再開を断られた実行・失敗して
+     * 切り替えた前のエージェント）の費用を合算して、新しい実行の記録にするため。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1596,6 +1647,11 @@ const QuestionAnswered = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1628,6 +1684,11 @@ const ErrorAnalyzed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1663,6 +1724,11 @@ const OutputExported = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1711,6 +1777,11 @@ const OrchestratorFailed = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1719,12 +1790,22 @@ const FinalReviewFailed = z.object({
   payload: z.object({
     reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
+    /**
+     * 最終レビューは実行できたが、出力から判定を読み取れなかった。不合格にも再発にも数えず、出し直させる（続けて
+     * MAX_UNREADABLE_REVIEWS 回になったら止める）。
+     */
+    verdictUnreadable: z.literal(true).optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -1826,6 +1907,21 @@ const NoChangesFound = z.object({
 const ContinuedFeedbackPassed = z.object({
   type: z.literal("ContinuedFeedbackPassed"),
   payload: z.object({ runId: z.string(), keys: z.array(z.string().min(1)) }),
+});
+
+/**
+ * ゴールガーディアン・オーケストレーターの実行に、実装の作業領域を写すとき、読めないファイル・ディレクトリ（権限など。
+ * エージェントが作業領域に展開したツールにある）を写さなかった（PBI-278）。写し全体は失敗にしない。count は写さなかった
+ * 総数、paths はその最初の何件か（作業領域の根からの相対パス）。再開しても、同じ理由では止まらない。
+ */
+const WorkspaceFilesSkipped = z.object({
+  type: z.literal("WorkspaceFilesSkipped"),
+  payload: z.object({
+    runId: z.string(),
+    role: z.string(),
+    count: z.number().int().positive(),
+    paths: z.array(z.string().max(500)).max(50),
+  }),
 });
 
 /**
@@ -1965,6 +2061,31 @@ const PullRequestReopened = z.object({
 });
 
 /**
+ * 実装の作り直し（差し戻し・PR の指摘の取り込み・最終レビューの不合格のやり直しで、実装・最終レビュー・PR の更新が
+ * 走っている・待っている間）に、人が実装の PR をマージした（PBI-276）。マージは承認なので、作り直しを止める。この記録は、
+ * 止めた実行と、作り直しに渡す前に捨てた指摘を残し、タスクを実装の承認待ちに戻す。同じ追記で、続けて
+ * PullRequestMerged・StepApproved を記録して次へ進む。新しい PR は作らない。
+ */
+const ReworkStoppedByMerge = z.object({
+  type: z.literal("ReworkStoppedByMerge"),
+  payload: z.object({
+    /** マージされた実装の PR。 */
+    number: z.number().int().positive(),
+    /**
+     * 止めたときの作り直しの段階。queued：実行を待っていた。running：エージェントの実行中。verifying：最終レビュー
+     * （とその前の PR の CI）の途中。publishing：PR の更新の待ち・途中。paused：一時停止していた。
+     */
+    was: z.enum(["queued", "running", "verifying", "publishing", "paused"]),
+    /** 止めた実行（コンテナ）の ID。実行していなければ空。 */
+    stoppedRuns: z.array(z.string()),
+    /** 作り直しに渡す前に捨てた、PR の指摘（まだ提出に反映していないもの）。 */
+    discardedRemarks: z.array(z.object({ id: z.string(), text: z.string() })),
+    /** 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印）の種類。 */
+    discardedFeedback: z.enum(["tests", "review", "merge"]).optional(),
+  }),
+});
+
+/**
  * 実装の承認待ちの間に見守っている PR が、ベースブランチと競合した（GitHub の mergeable が false）。画面に出すだけで、
  * ベースブランチは取り込まない（取り込みは、人が差し戻すか指摘を書いたときに行う）。PR を見守る確認が、状態が変わったときに
  * 一度だけ記録する。
@@ -2063,6 +2184,11 @@ const ReworkJudged = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2440,6 +2566,11 @@ const DeploymentChecked = z.object({
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
+    /**
+     * 使った分の全体を読めなかった（PBI-281）。時間切れなどで、エージェントの結果（使用量の合計）が出る前に止まった実行。
+     * costUsd は、出力から読めた分（下限）で、何も読めなければ 0 になる（0 は費用が無かったのではなく、不明）。
+     */
+    costUnknown: z.boolean().optional(),
   }),
 });
 
@@ -2775,6 +2906,7 @@ export const EventInput = z.discriminatedUnion("type", [
   VerificationOverridden,
   NoChangesFound,
   ContinuedFeedbackPassed,
+  WorkspaceFilesSkipped,
   PullRequestLabeled,
   PullRequestLabelFailed,
   TaskBranchCreated,
@@ -2783,6 +2915,7 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestMerged,
   PullRequestClosed,
   PullRequestReopened,
+  ReworkStoppedByMerge,
   PullRequestConflicted,
   PullRequestConflictResolved,
   PullRequestReviewImported,

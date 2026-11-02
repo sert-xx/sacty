@@ -86,9 +86,10 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
 設計書・要求要件（`design-doc`）の必須の観点には、書きすぎを探す D-10（簡潔さ・範囲）がある。
 依頼に無い要求、読む人がすでに知っていること（依頼の言い直し・背景・一般論・既存のコードの説明）、既存の仕組みが保証する振る舞いの書き直し、今回の変更で起こりえない異常系、当てはまらない観点の「対象外」、採らなかった案、重複、人間が判断することが冒頭で分かるか、分量が最小限かを見る。
 人間が差し戻しで求めて足した記述は、削る指摘にしない。
+リポジトリの決まり（README・CONTRIBUTING・AGENTS.md・CHANGELOG の方針・PR テンプレート・CI の設定など）が、この種の変更に求める条件（版・変更履歴・生成物・ドキュメントの更新など）と、その確かめ方も、削る指摘にしない。決まりは変更する人が守って成り立つもので、既存の仕組みが保証する振る舞いではないため。決まりの出典（ファイルと節）を引ける条件は残させ、条件の中身が誤っている・確かめられないときは、消さずに直す指摘にする。
 欠落を探す観点だけでは、自己レビューを回すほど文書が長くなるため。
 D-3（完全性）は、今回の変更で起こりうる欠落だけを見て、関係しない観点に「対象外」の記載を求めない。
-自己レビューでは、`design-doc` の記述を足す指摘は `must` だけを直し、`should` は直さない（足りない所は、読む人が求めたときに足す）。D-10 は `should` も直す。
+自己レビューでは、`design-doc` の記述を足す指摘は `must` だけを直し、`should` は直さない（足りない所は、読む人が求めたときに足す）。D-10 は `should` も直す（ただし、決まりから導いた条件は消さず、消すときは理由を総評に残す）。
 `design-doc` の D-6（形式・明確さ）は、（要求要件・設計など、人が承認する成果物のとき）本文に残った作業の経過・指摘への対応の報告・エージェント向けのメモ、本文で振る ID（要求の `R-n` など。sacty が振るテスト観点の `TV-n` は除く）の理由の分からない欠番、別の文書を参照するだけの項目も見る。ID を持たない文書や、経緯を書く節がある文書（ADR・CHANGELOG など）では見ない。
 D-10 は、「確認したいこと」「既定で決めたこと」の節がある文書で、依頼の目的に関わる判断や依頼者に不利益が出うる既定が「既定で決めたこと」に紛れていないか、「確認したいこと」が依頼者が一番決めたいことから並んでいるかも見る。
 本文に残ったメモ、参照だけの項目、目的に関わる判断・不利益な既定の紛れ込みは `must`、本文で振る ID の理由の分からない欠番は `should` の指摘にする。
@@ -110,6 +111,12 @@ Playwright やブラウザを新たに入れない。
 担当を起動するサブエージェントの段階（`lite`・`entry`・`standard`・`advanced`・`ultimate`）は、観点カタログの「観点ごとの段階」で観点ごとに決める。
 親は、その段階の名前のサブエージェント（設定の場所の `agents/` に sacty が置く定義。下の「実行のときに置くファイル」）を指定して起動する。
 定義が無い段階は親と同じモデルで起動し、起動表の「段階」に「親と同じ」と書く。
+
+観点の指示を人が手で変えるときは、実験で見つかった取りこぼしに近い固定の例に実際の AI を当てて、効き目を測れる（任意の手動の測定手順。`review-eval.test.ts`。工程のエージェントに求めるものではない）。
+例は、リポジトリの決まりから導いた条件を D-10 が消す（S18）、共通化のリファクタリングで 422 のメッセージが変わるのを最終レビューが見逃す（S12）の 2 つで、実験の入力を縮めて `testing/review-eval/fixtures/` に置く。
+固定の確認（例が問題の形になっていること・指示の文言・判定の読み取り）は、テストの実行で常に走る。
+AI を呼ぶ確認は `SACTY_REVIEW_EVAL=1` のときだけ走り、指示の変更の前後で同じ例を複数回（`SACTY_REVIEW_EVAL_RUNS`）流して比べる。
+D-10 は決まりから導いた条件を消す・縮める指摘を出さず、ほかの書きすぎは指摘すること、最終レビューは検査の順番が変わった例を範囲外として申告し、順番を保った対照は申告しないことを確かめる。
 
 ### PR のレビューと投稿
 
@@ -137,7 +144,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
     主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`s12Workspace`・`runAgent`）
 
 ## 既定の文章用スキル
 

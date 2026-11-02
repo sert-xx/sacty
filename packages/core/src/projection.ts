@@ -538,6 +538,11 @@ export type Task = {
     warned: boolean;
     /** 換算値（サブスクリプションなど）を含むか。 */
     estimated: boolean;
+    /**
+     * 使った分の全体を読めなかった実行（時間切れなど）の回数（PBI-281）。その費用は、読めた分（下限）だけが usedUsd に入っている。
+     * 無ければ 0 回。
+     */
+    unknownRuns?: number;
     /** 人が上限を上げた（BudgetCapRaised）。工程の組み合わせの予算（StepsChosen の budgetCapUsd）で上書きしない。 */
     raised?: true;
   };
@@ -583,6 +588,11 @@ export type Task = {
   verificationOverride?: { at: string; submission: number };
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
+  /**
+   * 最終レビューの出力から判定を読み取れなかった回数（続けて。FinalReviewFailed の verdictUnreadable）。不合格ではないので
+   * verifyFailures には数えない。最終レビューの判定が記録される・人間が再開する・前の工程からやり直すと0に戻る。
+   */
+  unreadableReviews?: number;
   /**
    * 最新の、sacty がテストのコンテナで実行したテストの結果（それより前の版の記録だけ。今の版は、最終レビューの tests に
    * ゴールガーディアンが実行したテストがある）と、最終レビュー。
@@ -792,6 +802,7 @@ function reopen(task: Task, target: StepKey) {
   task.verification = undefined;
   task.verifyFeedback = undefined;
   task.verifyFailures = 0;
+  task.unreadableReviews = undefined;
   task.publishPending = undefined;
   task.pullRequestCi = undefined;
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
@@ -1482,6 +1493,7 @@ export function applyEvent(
       }
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
+      task.unreadableReviews = undefined;
       if (!event.payload.passed) {
         failVerification(task, { kind: "review", review });
         break;
@@ -1818,6 +1830,52 @@ export function applyEvent(
       break;
     }
 
+    case "ReworkStoppedByMerge": {
+      // 実装の作り直しの間に、実装の PR がマージされた（PBI-276）。作り直しの途中経過を捨てて、実装の承認待ちに戻す
+      // （同じ追記で、続けて PullRequestMerged・StepApproved を記録する）
+      const reworking = reworkingPullRequest(task);
+      if (!reworking || reworking.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "the implementation is not being reworked");
+      }
+      if (task.status === "running") {
+        throw new ActivityIntegrityError(event, "stop the run before stopping the rework");
+      }
+      // 初めて提出する前に引き継いだ PR がマージされたときは、その PR を実装の PR として記録する（続く PullRequestMerged が見る）
+      const continued = task.continuedPullRequest;
+      if (!task.pullRequest && continued) {
+        task.pullRequest = {
+          branch: continued.branch,
+          commit: reworking.commit || continued.branch,
+          url: continued.url,
+          number: continued.number,
+          repo: continued.repo,
+        };
+        task.pullRequestState = "open";
+      }
+      const submission = Math.max(task.submissions.implement ?? 0, 1);
+      task.submissions = { ...task.submissions, implement: submission };
+      task.status = "awaiting_approval";
+      task.gate = { step: "implement", submission };
+      const discarded = new Set(event.payload.discardedRemarks.map((r) => r.id));
+      task.remarks = task.remarks.map((r) => (discarded.has(r.id) ? { ...r, voided: true } : r));
+      task.currentRunId = undefined;
+      task.verification = undefined;
+      task.verifyFailures = 0;
+      task.verifyFeedback = undefined;
+      task.publishPending = undefined;
+      task.pullRequestCi = undefined;
+      task.pullRequestConflict = undefined;
+      task.stepReview = undefined;
+      task.pendingReview = undefined;
+      task.escalation = undefined;
+      task.pausedReason = undefined;
+      task.pausedMessage = undefined;
+      task.unstoppedRuns = undefined;
+      task.resumeTo = undefined;
+      task.pausedCancelledChildren = undefined;
+      break;
+    }
+
     case "PullRequestConflicted":
     case "PullRequestConflictResolved": {
       // 競合を出すのは、承認待ちで見守っている実装の PR だけ（要求要件・設計の PR は、タスクブランチへの PR）
@@ -1906,6 +1964,10 @@ export function applyEvent(
 
     case "AgentFellBack":
       // 記録だけ（代わりのエージェントでやり直す。状態は、失敗の記録が戻している）
+      break;
+
+    case "WorkspaceFilesSkipped":
+      // 記録だけ（作業領域の写しで、読めないファイルを写さなかった。PBI-278）
       break;
 
     case "AgentSessionArchived":
@@ -2123,6 +2185,9 @@ export function applyEvent(
       if (task.status !== "idle" || task.verification === undefined) {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
+      // 判定を読み取れなかった回は、不合格にも再発にも数えない（lastReview も変えない）。続けた回数だけ数える
+      if (event.payload.verdictUnreadable)
+        task.unreadableReviews = (task.unreadableReviews ?? 0) + 1;
       break;
 
     case "TaskEscalated":
@@ -2156,6 +2221,14 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
+      // PR のマージで作り直しを止めるとき、実行の費用で先に一時停止していた（予算など）なら、止めたと確かめられなかった実行を
+      // 足す（PBI-276。一時停止の理由・説明はそのまま）
+      if (task.status === "paused" && event.payload.unstoppedRuns?.length) {
+        task.unstoppedRuns = [
+          ...new Set([...(task.unstoppedRuns ?? []), ...event.payload.unstoppedRuns]),
+        ];
+        break;
+      }
       if (
         task.status !== "queued" &&
         task.status !== "idle" &&
@@ -2476,6 +2549,7 @@ export function applyEvent(
             : "idle";
       // 人間が再開したら、検証の失敗の回数を数え直す
       if (task.pausedReason === "verification") task.verifyFailures = 0;
+      task.unreadableReviews = undefined;
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
       if (task.split && task.pausedCancelledChildren?.length) {
         task.split = {
@@ -2658,6 +2732,59 @@ export function project(
     if (applied && after) applied(event, before, after);
   }
   return tasks;
+}
+
+/**
+ * 実装の作り直しの間（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）に、開いた（または閉じられた）実装の PR
+ * （PBI-276）。人がこの PR をマージしたら、作り直しを止めて、マージを承認として進める（ReworkStoppedByMerge）。
+ * 承認待ち・エスカレーション中は、ゲートの PR として見守る（gatePullRequest）ので、ここには含めない。実装より前の工程を
+ * やり直している間（要求要件・設計への差し戻し）も含めない。
+ */
+export function reworkingPullRequest(
+  task: Task,
+): { number: number; repo?: string; commit: string } | undefined {
+  if (
+    task.status !== "queued" &&
+    task.status !== "running" &&
+    task.status !== "idle" &&
+    task.status !== "paused"
+  ) {
+    return undefined;
+  }
+  if (activeStep(task) !== "implement") return undefined;
+  const pr = task.pullRequest;
+  // 引き継いだ既存の PR は、初めて提出するまで Task.pullRequest が無い。その間（最初の最終レビューに通らず作り直している間など）も、
+  // 引き継いだ PR を見守る（コミットは、引き継いだ時点の PR の先頭）
+  const continued = task.continuedPullRequest;
+  if (!pr && continued) {
+    return {
+      number: continued.number,
+      repo: continued.repo,
+      commit: task.repository?.baseCommit ?? "",
+    };
+  }
+  // 閉じられた PR も含める（承認待ちで閉じられて差し戻した後、GitHub で開き直してマージされることがある）
+  if (!pr?.number || (task.pullRequestState !== "open" && task.pullRequestState !== "closed")) {
+    return undefined;
+  }
+  return { number: pr.number, ...(pr.repo ? { repo: pr.repo } : {}), commit: pr.commit };
+}
+
+/**
+ * 実装の PR にまだ反映していない指摘（PBI-276）。最後の差し戻し（実装の PR の指摘の取り込みを含む）で足された指摘のうち、
+ * 無効にしておらず、提出済みの PR の内容に渡していないもの（作り直しの実行が見たが、まだ提出していないものを含む）。
+ * 前の差し戻しの指摘は、前の提出に反映済みなので含めない。
+ */
+export function unreflectedImplementRemarks(task: Task): TaskRemark[] {
+  const submitted = task.submissions.implement ?? 0;
+  const latest = changeRounds(task, "implement");
+  return task.remarks.filter(
+    (r) =>
+      r.step === "implement" &&
+      !r.voided &&
+      r.round === latest &&
+      (r.submittedIn === undefined || r.submittedIn > submitted),
+  );
 }
 
 /**

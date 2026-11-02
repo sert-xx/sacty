@@ -353,7 +353,7 @@ describe("工程ごとの費用（PBI-46）", () => {
       estimated: false,
       result: "completed",
     });
-    expect(total).toEqual({ usage: undefined, costUsd: 0, estimated: false });
+    expect(total).toEqual({ usage: undefined, costUsd: 0, estimated: false, unknownRuns: 0 });
   });
 
   it("ゴールガーディアンの実行の失敗・中断は、判定の記録でも「完了」にしない（以前の記録は理由の文言で判別する）", () => {
@@ -598,5 +598,73 @@ describe("マージの後の監視の工程の費用（PBI-116）", () => {
       ["completed", 0.2, "luna"],
     ]);
     expect(done.total.costUsd).toBeCloseTo(0.3, 6);
+  });
+});
+
+describe("使った分の全体を読めなかった実行の費用（PBI-281）", () => {
+  const failed = (runId: string, costUsd: number, unknown: boolean, withUsage = true) =>
+    ev({
+      type: "AgentRunFailed",
+      payload: {
+        runId,
+        step: "requirements",
+        agentId: "a",
+        reason: "error",
+        message: { code: "run.timeout", params: { minutes: 3 } },
+        ...(withUsage ? { usage: usage(10, 5, 1000) } : {}),
+        costUsd,
+        ...(unknown ? { costUnknown: true } : {}),
+      },
+    });
+  const started = (runId: string) =>
+    ev({
+      type: "AgentRunStarted",
+      payload: { runId, step: "requirements", agentId: "a", authMode: "subscription" },
+    });
+
+  it("読めた分は費用に入れ、読めなければ 0 のままで不明の印を持つ。合計は不明の回数を数える", () => {
+    seq = 0;
+    const events = [
+      created(),
+      ev({ type: "StepsChosen", payload: { steps: ["requirements"] } }),
+      started("r1"),
+      failed("r1", 0.3, true),
+      started("r2"),
+      failed("r2", 0, true, false),
+      started("r3"),
+      failed("r3", 0.1, false),
+    ];
+    const { rows, total } = stepCosts(taskOf(events), events);
+    const row = rows.find((r) => r.role === "requirements");
+    expect(row?.runs.map((r) => [r.costUsd, r.costUnknown, r.result])).toEqual([
+      [0.3, true, "failed"],
+      [0, true, "failed"],
+      [0.1, undefined, "failed"],
+    ]);
+    expect(row?.unknownRuns).toBe(2);
+    expect(row?.costUsd).toBeCloseTo(0.4, 6);
+    // 合計はタスクの費用（予算）と同じ値で、不明の回数も予算と同じ
+    expect(total).toMatchObject({ costUsd: 0.4, unknownRuns: 2 });
+    expect(taskOf(events).budget).toMatchObject({ usedUsd: 0.4, unknownRuns: 2 });
+  });
+
+  it("開始の記録が無い失敗も、不明の印を落とさない。不明が無ければ 0 回", () => {
+    seq = 0;
+    const full = [
+      created(),
+      ev({ type: "StepsChosen", payload: { steps: ["requirements"] } }),
+      started("x"),
+      failed("x", 0, true, false),
+    ];
+    // 開始の記録だけを欠いた作業履歴（古い記録）
+    const lone = full.filter((e) => e.type !== "AgentRunStarted");
+    const { rows, total } = stepCosts(taskOf(full), lone);
+    expect(rows.find((r) => r.role === "requirements")?.runs[0]).toMatchObject({
+      costUnknown: true,
+    });
+    expect(total.unknownRuns).toBe(1);
+    seq = 0;
+    const none = [created(), ev({ type: "StepsChosen", payload: { steps: ["requirements"] } })];
+    expect(stepCosts(taskOf(none), none).total.unknownRuns).toBe(0);
   });
 });

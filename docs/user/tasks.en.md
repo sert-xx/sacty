@@ -347,6 +347,13 @@ Even if another task or a person's PR is merged into the base branch (main and t
 - Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.
 - A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) pushes to a person's PR branch, so it does not merge the base branch.
 
+### When the final review verdict cannot be read
+
+When the verdicts cannot be read from the final review output, the task is not failed and the implementation is not redone. Past comments are not counted as having recurred either.
+Only the final review is run again.
+If the verdicts cannot be read three times in a row, the task pauses and shows where the output is (the daemon's `runs/<task ID>/<run ID>.jsonl`; it can also be read in the run log on the screen).
+After you check the output, "Resume" redoes the final review.
+
 ### When verification keeps failing
 
 If the implementation fails the tests or the final review three times in a row, the task pauses.
@@ -364,11 +371,12 @@ A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Securit
 
 - A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
 - A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
+- A change to existing behavior (the kind of error, the status code, the message, the order of checks, the shape and fields of a response, a default value) that the requirements and design do not call for. This includes one caused by refactoring that merges, splits, or moves code. The Goal Guardian reads the code before and after the change, and for a function with several checks it traces which check fires first for an input that breaks several rules at once. It is out of scope even if the existing tests pass.
 
 Treated as in scope:
 
 - Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
-- Formatting or refactoring that does not change behavior
+- Formatting or refactoring that does not change behavior (that it does not is checked by the comparison above)
 - Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The Goal Guardian reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
 - Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
 
@@ -389,6 +397,9 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
   The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
 
+- Verification passed with tools the agent installed itself: when something the tests need, such as a browser, is not in the run environment (image), the implementing agent may install it under `.sacty-tools/` in the workspace and verify with it. When it does, it writes what it installed, the verification it passed, and what it did not check in an environment without it, in the 「この環境だけの結果」 ("results only in this environment") section of the implementation description (which goes into the PR body).
+  The Goal Guardian leaves this as an item for a person, "この環境だけの結果: …", and also writes it in the final review summary. Installing alone is not a reason to fail.
+  Tools installed under `.sacty-tools/` do not go into the PR or the commit (anything installed elsewhere goes into the PR unless the repository's `.gitignore` ignores it). Check with an image that has the tools, or, if needed, change to an image that includes them ([Container images](images.en.md)).
 - Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
@@ -489,6 +500,12 @@ Once you merge the PR, the task moves on at the next check without returning to 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
 - When the PR was closed without merging, or does not exist yet.
 
+If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review), the merge is taken as the approval.
+sacty stops the running implementation, final review, and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
+The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
+To handle the discarded comments, create a follow-up task.
+While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
+
 Approval in PRs proceeds in this order.
 
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
@@ -568,7 +585,7 @@ Requirements and designs start (right after the summary, if there is one) with t
 | 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer and its reason, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
 | 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
 
-The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it.
+The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it. However, a condition that the repository's rules (README, CONTRIBUTING, AGENTS.md, the CHANGELOG policy, the PR template, and so on) call for in this kind of change, such as updating a version, the change history, generated files, or documentation, is not removed as a "rewrite of the rules". The rules hold only because the person making the change follows them, so they are not behavior that an existing mechanism guarantees.
 
 Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 20 lines for a small change and about 60 lines even for a large change.
 

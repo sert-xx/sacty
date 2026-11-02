@@ -82,7 +82,7 @@ import {
   GitContextFetcher,
 } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
-import { MessageError } from "./errors.js";
+import { AgentTimeoutError, MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import {
   type PullRequestFeedback,
@@ -436,6 +436,8 @@ class FakeRepos implements RepositoryWorkspace {
     include?: { commit: string; paths: string[] };
   }[] = [];
   copyFail?: string;
+  /** 読めないために写さなかったファイル（権限 0000 のツールのファイルなど。PBI-278）。 */
+  copySkipped: { count: number; paths: string[] } = { count: 0, paths: [] };
   /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
   copyStarted = Promise.withResolvers<void>();
   copyGate?: Promise<void>;
@@ -464,6 +466,7 @@ class FakeRepos implements RepositoryWorkspace {
       ...(gitDir ? { gitDir } : {}),
       ...(include ? { include } : {}),
     });
+    return { skipped: this.copySkipped };
   }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
   snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
@@ -2680,6 +2683,37 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("時間切れで止めた後にコンテナが止まったことを確かめられなかった実行も、代わりに切り替えずに止める（使用量は残す）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1_000)], {
+        config: withFallback(),
+        secrets,
+      });
+      let runs = 0;
+      executor.run = async () => {
+        runs++;
+        const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+        error.usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 };
+        error.costUnknown = true;
+        error.unconfirmedContainer = "sacty-run-x";
+        throw error;
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toEqual([]);
+      // 代わりの実行は始まらず（呼んだのは 1 回）、止めた理由は確認の失敗になり、読めた使用量は費用に残る
+      await service.runNext(task.id);
+      expect(runs).toBe(1);
+      const failed = service.get(task.id)?.activity.find((e) => e.type === "AgentRunFailed");
+      expect(failed?.payload).toMatchObject({
+        message: { code: "run.containerNotConfirmed", params: { name: "sacty-run-x" } },
+        costUsd: 0.3,
+        costUnknown: true,
+      });
+      activity.close();
+    });
+
     it("代わりのエージェントが無ければ、これまでどおり止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
@@ -2810,6 +2844,81 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       "BudgetWarned",
     ]);
     activity.close();
+  });
+
+  describe("時間切れで止めた実行の費用（PBI-281）", () => {
+    /** 時間切れで止められた実行（本物の実行器が投げるエラー）。usage は止めるまでに読めた分。 */
+    const timeoutAfter = (usage?: AgentOutcome extends { usage?: infer U } ? U : never) => {
+      const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+      error.usage = usage;
+      error.costUnknown = true;
+      return error;
+    };
+    const timedOutRun = async (error: Error) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1)]);
+      executor.run = async () => {
+        throw error;
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      const after = service.get(task.id);
+      const failed = after?.activity.find((e) => e.type === "AgentRunFailed");
+      return { activity, after, failed: failed?.type === "AgentRunFailed" ? failed : undefined };
+    };
+
+    it("止めるまでに読めた使用量を費用に記録し、予算に入れる（0 にしない）", async () => {
+      // 57,000 出力トークン = $0.855（予算の 80% を超える）
+      const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 57_000 };
+      const { activity, after, failed } = await timedOutRun(timeoutAfter(usage));
+      expect(failed?.payload).toMatchObject({ usage, costUsd: 0.855, costUnknown: true });
+      expect(after?.task.budget).toMatchObject({ usedUsd: 0.855, unknownRuns: 1, warned: true });
+      expect(after?.task.pausedReason).toBe("error");
+      activity.close();
+    });
+
+    it("読めなければ、0 の費用として記録せず、不明の印を付ける", async () => {
+      const { activity, after, failed } = await timedOutRun(timeoutAfter());
+      expect(failed?.payload.costUsd).toBe(0);
+      expect(failed?.payload.costUnknown).toBe(true);
+      expect(after?.task.budget.unknownRuns).toBe(1);
+      activity.close();
+    });
+
+    it("起動できなかったなど、何も使っていない失敗には、不明の印を付けない", async () => {
+      const { activity, after, failed } = await timedOutRun(new Error("docker failed"));
+      expect(failed?.payload.costUsd).toBe(0);
+      expect(failed?.payload).not.toHaveProperty("costUnknown");
+      expect(after?.task.budget).not.toHaveProperty("unknownRuns");
+      activity.close();
+    });
+
+    it("再開して時間切れが続けば、回ごとに記録して合計する（空・1件・複数件）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [completed(1)]);
+      const outputs = [100_000, undefined, 20_000];
+      executor.run = async () => {
+        const output = outputs.shift();
+        throw timeoutAfter(
+          output === undefined ? undefined : { input: 0, cacheRead: 0, cacheWrite: 0, output },
+        );
+      };
+      const task = service.createTask({ projectId: "default", title: "A" });
+      expect(service.get(task.id)?.task.budget).not.toHaveProperty("unknownRuns");
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.budget.unknownRuns).toBe(1);
+      // 1 回目で上限（$1）を超えて止まったので、上限を上げて再開する
+      service.resume(task.id, { capUsd: 50 });
+      await service.runNext(task.id);
+      service.resume(task.id, {});
+      await service.runNext(task.id);
+      const budget = service.get(task.id)?.task.budget;
+      expect(budget?.unknownRuns).toBe(3);
+      expect(budget?.usedUsd).toBeCloseTo(1.8, 6); // 1.5 + 0 + 0.3
+      const failures = service.get(task.id)?.activity.filter((e) => e.type === "AgentRunFailed");
+      expect(failures).toHaveLength(3);
+      activity.close();
+    });
   });
 
   it("1回の実行で80%未満から上限を超えた場合も、通知を記録する", async () => {
@@ -3586,6 +3695,46 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       authMode: "api-key",
     });
     expect(service.get(task.id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
+  it("代わりのエージェントで判定し直したとき、先の実行の使用量が不明なら、判定の費用も不明にして読めた分を足す（PBI-281）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
+        : base;
+    };
+    const { service } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        designWithProposal(),
+        {
+          kind: "failed",
+          reason: "usage_limit",
+          message: "429 Too Many Requests",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 }, // $0.30
+          costUnknown: true,
+        },
+        verdict("rejected", "代替手段がある"),
+      ],
+      {
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+      },
+    );
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    const judged = service.get(task.id)?.activity.find((e) => e.type === "ChangeJudged");
+    expect(judged?.payload).toMatchObject({ runResult: "completed", costUnknown: true });
+    // 先の実行の読めた分（$0.30）に、判定し直した実行の分が加わる
+    expect(judged?.type === "ChangeJudged" && judged.payload.costUsd).toBeGreaterThanOrEqual(0.3);
     activity.close();
   });
 
@@ -4713,6 +4862,31 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload.imageSource).toBe("project");
       expect(executor.images[1]).toEqual({ image: java.image, env: java.env });
+      activity.close();
+    });
+
+    it("オーケストレーターの実行が結果の前に止まったら、読めた分の費用と不明の印を記録する（PBI-281）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 }; // $0.30
+      const { service } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "error",
+            message: message("run.timeout", { minutes: 3 }),
+            usage,
+            costUnknown: true,
+          },
+        ],
+        { realPlanner: true },
+      );
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const latest = service.get(task.id);
+      const failed = latest?.activity.find((e) => e.type === "OrchestratorFailed");
+      expect(failed?.payload).toMatchObject({ usage, costUsd: 0.3, costUnknown: true });
+      expect(latest?.task.budget).toMatchObject({ usedUsd: 0.3, unknownRuns: 1 });
       activity.close();
     });
 
@@ -7822,6 +7996,152 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    /** 引き継いだ PR で実装の承認待ちまで進め、PR の指摘で実装に差し戻す。 */
+    async function continuedThenSentBack() {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const reviewing = (remarks: [string, boolean][]) => review([["REQ", true]], remarks);
+      const tests = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", tests),
+          reviewing([]),
+          implement("# 実装の説明 v2", tests),
+          reviewing([["implement-1-1", true]]),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      const pushes = repos.published.length;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["回数の上限も書いてください"],
+      });
+      return { activity, service, executor, pulls, repos, id, pushes };
+    }
+
+    it("引き継いだ PR を差し戻して作り直している間に PR がマージされたら、元のブランチにプッシュせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, repos, id, pushes } = await continuedThenSentBack();
+      pulls.state = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: service.get(id)?.task.pullRequest?.commit,
+      };
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      expect(repos.published).toHaveLength(pushes);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(service.get(id)?.task.approved.implement).toBeDefined();
+      expect(pulls.calls).toEqual([]);
+      activity.close();
+    });
+
+    it("引き継いだ PR で、確認では開いていたが、プッシュの間にマージされたら、一時停止にせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, id } = await continuedThenSentBack();
+      const commit = service.get(id)?.task.pullRequest?.commit;
+      let reads = 0;
+      pulls.status = async () => ({
+        headSha: commit,
+        ...(++reads === 1
+          ? { state: "open" as const }
+          : { state: "merged" as const, mergedBy: "reviewer" }),
+      });
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      expect(reads).toBe(2);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      activity.close();
+    });
+
+    /** 引き継いだ PR で、最初の最終レビューに通らず、まだ一度も提出していない状態まで進める。 */
+    async function continuedBeforeFirstSubmission() {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const tests = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", tests),
+          review([["REQ", true]], [], 1000, 1), // テストが通らない
+          implement("# 実装の説明 v2", tests),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.verifyFeedback; i++) {
+        await service.runNext(id);
+      }
+      const task = service.get(id)?.task;
+      expect(task?.verifyFeedback).toBeDefined();
+      expect(task?.status).toBe("queued");
+      expect(task?.pullRequest).toBeUndefined();
+      expect(task?.continuedPullRequest?.number).toBe(12);
+      return { activity, service, executor, pulls, repos, id };
+    }
+
+    it("引き継いだ PR の最初の最終レビューに通らず作り直している間に PR がマージされたら、プッシュせず、一時停止にもせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, executor, pulls, repos, id } =
+        await continuedBeforeFirstSubmission();
+      const calls = executor.calls.length;
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.at(-3)?.payload).toMatchObject({ number: 12, was: "queued" });
+      const task = service.get(id)?.task;
+      expect(task?.pullRequest).toMatchObject({ number: 12, branch: "feature/retry" });
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task?.approved.implement).toBeDefined();
+      expect(repos.published).toHaveLength(0);
+      expect(executor.calls).toHaveLength(calls);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      activity.close();
+    });
+
+    it("引き継いだ PR の初回の提出の前に、確認より先に PR の更新が始まっても、プッシュせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, repos, id } = await continuedBeforeFirstSubmission();
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      expect(repos.published).toHaveLength(0);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      activity.close();
+    });
+
     it("引き継げない PR（フォークの PR・マージ済み・ほかのタスクの PR）なら、新しい PR を作らないように、工程を決めずに止める", async () => {
       const cases: [Partial<PullRequestInfo>, string][] = [
         [
@@ -8161,6 +8481,155 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 最終レビューの指示に、範囲外の変更の判定が入っている
     expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
     activity.close();
+  });
+
+  describe("最終レビューの出力から判定を読み取れないとき（PBI-277）", () => {
+    // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
+    const unreadable = () =>
+      out(
+        `説明の文\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"満たす"},"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"summary":"合格"}}\n\`\`\``,
+        700,
+      );
+    const failures = (svc: TaskService, id: string) =>
+      svc.get(id)?.activity.filter((e) => e.type === "FinalReviewFailed") ?? [];
+    const implementRuns = (executor: FakeExecutor) =>
+      executor.calls.filter((c) => c.command.join(" ").includes("sacty-test-map")).length;
+
+    it("1回目に読み取れなくても、不合格にも再発にも数えず、実装に戻さずに最終レビューを出し直させ、合格する", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task;
+      // 判定は、出し直した1回だけが記録される（読み取れなかった回は FinalReviewed にならない）
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const [only] = reviewed;
+      expect(only?.type === "FinalReviewed" && only.payload.passed).toBe(true);
+      // 過去の指摘は、再発と数えられていない
+      expect(only?.type === "FinalReviewed" && only.payload.remarks).toEqual([
+        { remarkId: "requirements-1-1", notRecurred: true, reason: "requirements-1-1の判定理由" },
+      ]);
+      expect(task?.verifyFailures).toBe(0);
+      expect(task?.unreadableReviews).toBeUndefined();
+      expect(task?.status).not.toBe("paused");
+      // 実装は1回だけ（やり直していない）。費用は記録する
+      expect(executor.calls.length).toBe(2 + 1 + 1 + 1 + 1);
+      const [failed] = failures(service, id);
+      expect(failed?.type === "FinalReviewFailed" && failed.payload).toMatchObject({
+        reason: "error",
+        verdictUnreadable: true,
+        message: { code: "verify.finalReviewUnreadable", params: { count: 1, max: 3 } },
+      });
+      expect(failed?.type === "FinalReviewFailed" && failed.payload.costUsd).toBeGreaterThan(0);
+      expect(implementRuns(executor)).toBe(1);
+      activity.close();
+    });
+
+    it("出力が空でも、読み取れなかったものとして出し直させる", async () => {
+      const { activity, service, id } = await toImplement([implement("# v1"), out(""), review()]);
+      await drain(service);
+      expect(failures(service, id)).toHaveLength(1);
+      const task = service.get(id)?.task;
+      expect(task?.lastReview?.passed).toBe(true);
+      expect(task?.verifyFailures).toBe(0);
+      activity.close();
+    });
+
+    it("続けて3回読み取れなければ、実装には戻さずに一時停止し、出力の場所を作業履歴に残す。再開すると最終レビューからやり直す", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        unreadable(),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("error");
+      expect(paused?.pausedMessage).toMatchObject({
+        code: "verify.finalReviewUnreadableStopped",
+        params: { max: 3 },
+      });
+      expect(ja(paused?.pausedMessage)).toMatch(/runs\/.+\.jsonl/);
+      // 不合格の記録も、実装のやり直しも無い
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      expect(paused?.lastReview).toBeUndefined();
+      expect(paused?.verifyFailures).toBe(0);
+      expect(implementRuns(executor)).toBe(1);
+      const all = failures(service, id);
+      expect(all).toHaveLength(3);
+      // 3件とも出力の場所（実行の ID）を持つ
+      expect(all.map((e) => e.type === "FinalReviewFailed" && Boolean(e.payload.runId))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(paused?.unreadableReviews).toBe(3);
+      const calls = executor.calls.length;
+
+      service.resume(id, {});
+      await drain(service);
+      // 再開すると、数え直して最終レビューからやり直す（実装は1回のまま）
+      expect(executor.calls.length).toBe(calls + 1);
+      expect(implementRuns(executor)).toBe(1);
+      expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+      expect(service.get(id)?.task.unreadableReviews).toBeUndefined();
+      activity.close();
+    });
+
+    it("2回読み取れなくても止まらず、その後に判定が記録されれば回数は0に戻る（不合格のあとに、また2回読めなくても止まらない）", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        unreadable(),
+        review([["TV-1", false]], [["requirements-1-1", true]]),
+        implement("# v2"),
+        unreadable(),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service, 20);
+      const task = service.get(id)?.task;
+      expect(task?.status).not.toBe("paused");
+      expect(failures(service, id)).toHaveLength(4);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      // 判定は、不合格と合格の2件だけ。読み取れなかった回は、不合格にも数えない
+      expect(reviewed.map((e) => e.type === "FinalReviewed" && e.payload.passed)).toEqual([
+        false,
+        true,
+      ]);
+      expect(task?.verifyFailures).toBe(0);
+      expect(implementRuns(executor)).toBe(2);
+      activity.close();
+    });
+
+    it("判定のオブジェクトは読めて、観点が足りないときは、これまでどおり不合格にする（読み取れなかったとは扱わない）", async () => {
+      const partial = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [{ id: "TV-1", verified: true, reason: "満たす" }],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: { command: "npm test", exitCode: 0, output: "ok" },
+            summary: "所見",
+          },
+        }),
+      );
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        partial,
+        implement("# v2"),
+        review(),
+      ]);
+      await drain(service);
+      expect(failures(service, id)).toHaveLength(0);
+      const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+      activity.close();
+    });
   });
 
   it("ゴールガーディアンがテストの結果を申告しなければ、不合格にする", async () => {
@@ -8931,6 +9400,512 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("実装の作り直しの間に実装の PR がマージされたら、作り直しを止めて承認として進める（PBI-276）", () => {
+    const remark = "失敗時のログを足してください";
+    /** 差し戻しの指摘（implement-1-1）にも答える最終レビュー。 */
+    const reviewed = (testsExitCode = 0) =>
+      review(
+        undefined,
+        [
+          ["requirements-1-1", true],
+          ["implement-1-1", true],
+        ],
+        1000,
+        testsExitCode,
+      );
+    /** 実装の承認待ちから、PR の指摘で実装に差し戻す（作り直しの始まり）。 */
+    const sendBack = (
+      service: TaskService,
+      id: string,
+      target: "implement" | "design" = "implement",
+    ) =>
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target,
+        comments: [remark],
+      });
+    /** 人が GitHub で実装の PR をマージした。 */
+    const mergePr = (pulls: FakePulls, service: TaskService, id: string, headSha?: string) => {
+      pulls.state = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: headSha ?? service.get(id)?.task.pullRequest?.commit,
+        mergeCommit: "m".repeat(40),
+      };
+    };
+    const tail = (service: TaskService, id: string, n: number) =>
+      (service.get(id)?.activity ?? []).slice(-n).map((e) => [e.type, e.actor]);
+    const stopped = (service: TaskService, id: string) =>
+      service.get(id)?.activity.filter((e) => e.type === "ReworkStoppedByMerge") ?? [];
+    /** 完了（承認して次へ進んだ）か。新しい PR を作っていないか。 */
+    const expectDone = (service: TaskService, id: string, pulls: FakePulls) => {
+      const task = service.get(id)?.task;
+      expect(task?.steps.every((st) => st.state === "done")).toBe(true);
+      expect(task?.status).toBe("idle");
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task?.gate).toBeUndefined();
+      expect(service.queuedTaskIds()).toEqual([]);
+      // 新しい PR を作らず、マージした PR を更新もしていない
+      expect(pulls.calls).toHaveLength(1);
+      expect(
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestPublished"),
+      ).toHaveLength(1);
+    };
+
+    it("実行を待っている作り直しは、実行せずに止め、捨てた指摘を理由とともに残して、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([], { pulls });
+      const calls = executor.calls.length;
+      sendBack(service, id);
+      expect(service.get(id)?.task.status).toBe("queued");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(tail(service, id, 3)).toEqual([
+        ["ReworkStoppedByMerge", "sacty"],
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      expect(stopped(service, id)[0]?.payload).toEqual({
+        number: 7,
+        was: "queued",
+        stoppedRuns: [],
+        discardedRemarks: [{ id: "implement-1-1", text: remark }],
+      });
+      const task = service.get(id)?.task;
+      // 捨てた指摘は無効になる（エージェントに渡さない）
+      expect(task?.remarks.find((r) => r.id === "implement-1-1")?.voided).toBe(true);
+      expect(task?.pullRequestMerge).toMatchObject({ by: "reviewer", edited: false });
+      expect(executor.calls).toHaveLength(calls);
+      expectDone(service, id, pulls);
+      // 続きの確認で、記録を重ねない
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(1);
+      expect(service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged")).toHaveLength(
+        1,
+      );
+      activity.close();
+    });
+
+    it("PR の中で人が直してからマージしたなら、直した最終のコミットも残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      const submitted = service.get(id)?.task.pullRequest?.commit;
+      sendBack(service, id);
+      mergePr(pulls, service, id, "f".repeat(40));
+      await service.checkPullRequests();
+      const merged = service.get(id)?.activity.find((e) => e.type === "PullRequestMerged");
+      expect(merged?.payload).toMatchObject({
+        commit: "f".repeat(40),
+        submitted,
+        edited: true,
+      });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("実装のエージェントの実行中なら、コンテナを止め、止めた実行を残して、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      const calls = executor.calls.length;
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      expect(service.get(id)?.task.status).toBe("running");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toEqual([runId]);
+      expect(types(service, id).slice(-5)).toEqual([
+        "AgentRunFailed",
+        "TaskPaused",
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "running",
+        stoppedRuns: [runId],
+        discardedRemarks: [{ id: "implement-1-1" }],
+      });
+      // 一時停止の記録は残るが、いまは一時停止ではない
+      expect(service.get(id)?.task.pausedReason).toBeUndefined();
+      expect(executor.calls).toHaveLength(calls + 1);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止める前に実行が正常に終わっていても、一時停止を記録せず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD, implement("# v2")], {
+        pulls,
+      });
+      // コンテナを止める合図の時点で、実行はちょうど正常に終わった
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, implement("# v2"));
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toEqual([runId]);
+      const names = types(service, id);
+      expect(names.slice(names.lastIndexOf("ChangesRequested"))).not.toContain("TaskPaused");
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("最終レビューの途中なら、最終レビューを止め、判定を記録せず、やり直しに渡すはずだった結果も捨てる", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [implement("# v2"), HOLD, reviewed()],
+        { pulls },
+      );
+      sendBack(service, id);
+      await service.runNext(id); // 実装
+      expect(service.get(id)?.task.verification).toBe("pending");
+      const verifying = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await verifying;
+      expect(executor.killed).toEqual([runId]);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "verifying" });
+      expect(service.get(id)?.activity.filter((e) => e.type === "FinalReviewed")).toHaveLength(1); // 最初の提出の分だけ
+      expect(service.get(id)?.task.verification).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("最終レビューに通らず、やり直しの実装を待っている間にマージされたら、渡すはずだった結果を捨てたと残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed(1)], {
+        pulls,
+      });
+      sendBack(service, id);
+      await service.runNext(id); // 実装
+      await service.runNext(id); // 最終レビューで、テストが通らない
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(service.get(id)?.task.verifyFeedback?.kind).toBeDefined();
+      const kind = service.get(id)?.task.verifyFeedback?.kind;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "queued",
+        discardedFeedback: kind,
+      });
+      expect(service.get(id)?.task.verifyFeedback).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("PR の更新の直前にマージされていたら（確認の前）、プッシュも PR の作成もせず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, repos, id } = await toImplementGate(
+        [implement("# v2"), reviewed()],
+        { pulls },
+      );
+      const pushes = repos.published.length;
+      sendBack(service, id);
+      // マージの確認（60 秒ごと）より前に、作り直しが PR の更新まで進む
+      mergePr(pulls, service, id);
+      await drain(service);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "publishing",
+        stoppedRuns: [],
+      });
+      expect(repos.published).toHaveLength(pushes);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("一時停止中の作り直しも、マージされたら止めて承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id);
+      await service.pause(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "paused" });
+      const task = service.get(id)?.task;
+      expect(task?.pausedReason).toBeUndefined();
+      expect(task?.resumeTo).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("マージされていない PR（開いたまま・閉じられた）では、作り直しを止めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      sendBack(service, id);
+      await service.checkPullRequests();
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("queued");
+      // 作り直しはそのまま進み、新しい実装の承認待ちになる
+      pulls.state = { state: "open" };
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+      expect(stopped(service, id)).toHaveLength(0);
+      activity.close();
+    });
+
+    it("要求要件・設計をやり直している間は、実装の PR のマージで作り直しを止めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      expect(service.get(id)?.task.steps.find((st) => st.state === "active")?.key).toBe("design");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("PR の状態を読めなければ何も記録せず、次の確認で止める", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate([], { pulls });
+        sendBack(service, id);
+        mergePr(pulls, service, id);
+        pulls.statusFail = "GitHub に接続できません";
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(0);
+        expect(service.get(id)?.task.status).toBe("queued");
+        pulls.statusFail = undefined;
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(1);
+        expectDone(service, id, pulls);
+        activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("止めたコンテナが無くなったと確かめられない間は進めず、確かめられたら完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      executor.stops = false;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      let task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.unstoppedRuns).toEqual([runId]);
+      expect(stopped(service, id)).toHaveLength(0);
+      executor.stops = true;
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(1);
+      // 前の確認で止めたコンテナを確かめられなかった実行も、止めた実行に残す
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      task = service.get(id)?.task;
+      expect(task?.unstoppedRuns).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止めた実行が正常に終わっても、停止の確認を待つ間は、ワーカーが続きの検証を始めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, implement("# v2"));
+      };
+      // 停止の確認（1回目は実行の後始末、2回目は PR のマージによる停止）の2回目を、止めておく
+      const gate = Promise.withResolvers<void>();
+      let confirms = 0;
+      executor.ensureStopped = async () => {
+        confirms += 1;
+        if (confirms === 2) await gate.promise;
+        return true;
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      await executor.started.promise;
+      mergePr(pulls, service, id);
+      const checking = service.checkPullRequests();
+      await vi.waitFor(() => expect(confirms).toBe(2));
+      // 実行は idle・検証待ちで終わっているが、承認か一時停止を記録するまで、実行を始めさせない
+      expect(service.get(id)?.task.verification).toBe("pending");
+      const calls = executor.calls.length;
+      expect(service.queuedTaskIds()).toEqual([]);
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(calls);
+      gate.resolve();
+      await checking;
+      await running;
+      expect(executor.calls).toHaveLength(calls);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止めた実行が正常に終わった費用で予算を超えて一時停止しても、止めたコンテナを確かめるまで承認へ進めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      // 実装の実行は、15 ドルかかって正常に終わる（予算の上限を超える）
+      const costly = out(
+        [
+          "# v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+              { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+            ],
+          }),
+        ].join("\n\n"),
+        1_000_000,
+      );
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, costly);
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      executor.stops = false;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      let task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("budget");
+      // 一時停止の理由は予算のまま、確かめられなかった実行を残す
+      expect(task?.unstoppedRuns).toEqual([runId]);
+      expect(stopped(service, id)).toHaveLength(0);
+      // 次の確認でも、確かめられない間は進めない
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      executor.stops = true;
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      task = service.get(id)?.task;
+      expect(task?.unstoppedRuns).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("承認待ちで閉じられた PR を差し戻し、GitHub で開き直してマージしたら、新しい PR は作らず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("closed");
+      sendBack(service, id);
+      expect(service.get(id)?.task.status).toBe("queued");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ number: 7, was: "queued" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("閉じたままの PR を差し戻し、PR の更新の直前に開き直されてマージされていたら、新しい PR は作らず、承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      sendBack(service, id);
+      // マージの確認より前に、作り直しが PR の更新まで進む
+      mergePr(pulls, service, id);
+      await drain(service);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "publishing" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("デーモンが実装の実行中に止まって再起動した後も、止めたコンテナを確かめるまで承認へ進めず、確かめたら止めた実行に残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      sendBack(service, id);
+      void service.runNext(id);
+      const runId = await executor.started.promise;
+      // ここでデーモンが止まった（実行はそのまま。コンテナが残っている）。再起動して復旧する
+      const restarted = makeService(activity, [], { pulls });
+      restarted.service.recoverInterrupted();
+      const paused = restarted.service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.unstoppedRuns).toEqual([runId]);
+      mergePr(pulls, restarted.service, id);
+      restarted.executor.stops = false;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)).toHaveLength(0);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      restarted.executor.stops = true;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)[0]?.payload).toMatchObject({
+        was: "paused",
+        stoppedRuns: [runId],
+      });
+      expectDone(restarted.service, id, pulls);
+      activity.close();
+    });
+
+    it("PR の更新で、確認では開いていたが、プッシュの間にマージされたら、新しい PR は作らず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      const commit = service.get(id)?.task.pullRequest?.commit;
+      sendBack(service, id);
+      // PR の更新の直前の確認では開いていて、プッシュの後の確認ではマージされている
+      let reads = 0;
+      pulls.status = async () => ({
+        headSha: commit,
+        ...(++reads === 1
+          ? { state: "open" as const }
+          : { state: "merged" as const, mergedBy: "reviewer" }),
+      });
+      await drain(service);
+      expect(reads).toBe(2);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "publishing" });
+      expect(
+        service
+          .get(id)
+          ?.activity.filter((e) => e.type === "StepSubmitted" && e.payload.step === "implement"),
+      ).toHaveLength(1);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("実装の承認待ちの間のマージは、これまでどおり承認として完了する（作り直しの記録は残さない）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(tail(service, id, 2)).toEqual([
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      activity.close();
+    });
+  });
+
   describe("実装の工程の中で PR を作って承認を待つ（PBI-110）", () => {
     it("工程に「PR作成」は無く、検証に通った実装の工程のまま PR を作って実装の承認待ちになり、マージで完了する", async () => {
       const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()]);
@@ -9312,7 +10287,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("差し戻しの間に前の PR がマージされたら、作り直した内容は新しい PR で出し、古い内容のマージでは承認しない（PBI-14a レビュー指摘）", async () => {
+  it("差し戻しの間に前の PR がマージされたら、新しい PR は作らず、マージを承認として完了する（PBI-14a レビュー指摘・PBI-276）", async () => {
     const { activity, service, pulls, id } = await toImplementGate([
       out(
         [
@@ -9340,15 +10315,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 作り直している間に、前の PR（1回目の提出）が GitHub でマージされた
     pulls.state = { state: "merged", mergedBy: "reviewer", headSha: first };
     await drain(service);
-    // マージ済みの PR は更新せず、新しい PR を作る
-    expect(pulls.calls[1]?.number).toBeUndefined();
+    // マージ済みの PR は更新せず、新しい PR も作らない（作り直した内容は捨て、マージを承認とする。PBI-276）
+    expect(pulls.calls).toHaveLength(1);
     const task = service.get(id)?.task;
-    expect(task?.pullRequest?.number).toBe(8);
-    expect(task?.gate).toEqual({ step: "implement", submission: 2 });
-    // 新しい PR はまだ開いている。見守っても、古い PR のマージで承認にはならない
-    pulls.state = { state: "open", headSha: task?.pullRequest?.commit };
-    await service.checkPullRequests();
-    expect(service.get(id)?.task.steps.at(-1)?.state).not.toBe("done");
+    expect(task?.pullRequest?.number).toBe(7);
+    expect(task?.pullRequestState).toBe("merged");
+    expect(task?.steps.at(-1)?.state).toBe("done");
+    expect(types(service, id).slice(-3)).toEqual([
+      "ReworkStoppedByMerge",
+      "PullRequestMerged",
+      "StepApproved",
+    ]);
     activity.close();
   });
 
@@ -11145,6 +12122,70 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // ゴールガーディアン（最終レビュー）は実行しない
     expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
       "sacty-final-review",
+    );
+    activity.close();
+  });
+
+  it("実装後のコードの写しで読めないファイルを写さなかったときは、最終レビューを止めず、作業履歴に残して指示で知らせる（PBI-278）", async () => {
+    const repos = new FakeRepos();
+    repos.copySkipped = {
+      count: 2,
+      paths: ["node_modules/.browser/usr/share/pixmaps/chromium.png", "`x`"],
+    };
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
+      repos,
+    });
+    await drain(service);
+    const task = service.get(id)?.task;
+    // 写しの失敗にはならず、最終レビューが合格まで進む
+    expect(task?.pausedReason).toBeUndefined();
+    expect(task?.lastReview?.passed).toBe(true);
+    const skipped = (service.get(id)?.activity ?? []).filter(
+      (e) => e.type === "WorkspaceFilesSkipped",
+    );
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.payload).toMatchObject({
+      role: "final-review",
+      count: 2,
+      paths: ["node_modules/.browser/usr/share/pixmaps/chromium.png", "`x`"],
+    });
+    const prompt = promptOf(executor, executor.calls.length - 1);
+    expect(prompt).toContain("sacty-final-review");
+    expect(prompt).toContain("--- 作業領域の写しに入れなかったファイル ---");
+    expect(prompt).toContain("chromium.png");
+    // パスのバッククォートで、指示のコードブロックを閉じさせない
+    expect(prompt).toContain("\\u0060x\\u0060");
+    activity.close();
+  });
+
+  it("読めないファイルで写しに失敗して止まったタスク（古い版）は、再開すると、読めないものを除いて写し、最終レビューが進む（PBI-278）", async () => {
+    const repos = new FakeRepos();
+    repos.copyFail = "EACCES: permission denied, copyfile '.../chromium.png'";
+    const { activity, service, id } = await toImplement([implement("# v1"), review()], { repos });
+    await drain(service);
+    expect(service.get(id)?.task.pausedReason).toBe("error");
+    // 修正後の写し（読めないものを除く）で再開する
+    repos.copyFail = undefined;
+    repos.copySkipped = { count: 1, paths: ["node_modules/.browser/chromium.png"] };
+    service.resume(id, {});
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.pausedReason).toBeUndefined();
+    expect(task?.lastReview?.passed).toBe(true);
+    expect(
+      (service.get(id)?.activity ?? []).filter((e) => e.type === "WorkspaceFilesSkipped"),
+    ).toHaveLength(1);
+    activity.close();
+  });
+
+  it("読めないファイルが無ければ、作業履歴にも指示にも足さない（PBI-278）", async () => {
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()]);
+    await drain(service);
+    expect((service.get(id)?.activity ?? []).some((e) => e.type === "WorkspaceFilesSkipped")).toBe(
+      false,
+    );
+    expect(promptOf(executor, executor.calls.length - 1)).not.toContain(
+      "--- 作業領域の写しに入れなかったファイル ---",
     );
     activity.close();
   });
@@ -22314,6 +23355,27 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     await rerunOrchestrator(service, task.id);
     expect(executor.calls[1]?.command).not.toContain("--resume");
     expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "new", reason: "truncated" });
+    activity.close();
+  });
+
+  it("再開を断った実行の使用量が不明なら、始め直した実行が成功しても不明の印を残し、費用に数える（PBI-281）", async () => {
+    const rejected: AgentOutcome = {
+      kind: "failed",
+      reason: "error",
+      message: "No conversation found with session ID: x",
+      costUnknown: true,
+    };
+    const { activity, service, executor } = setup([unreadable, rejected, plan, completed(1_000)], {
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const before = service.get(task.id)?.task.budget.unknownRuns ?? 0;
+    await rerunOrchestrator(service, task.id);
+    const chosen = service.get(task.id)?.activity.findLast((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.costUnknown).toBe(true);
+    expect(service.get(task.id)?.task.budget.unknownRuns).toBe(before + 1);
     activity.close();
   });
 

@@ -321,6 +321,11 @@ const ja = {
     },
     runs: (n: number) => `${n}回`,
     none: "—",
+    /** 使った分の全体を読めなかった実行（時間切れなど。PBI-281）。0 ではなく、不明と出す。読めた分があれば「以上」。 */
+    unknown: "不明",
+    atLeast: (usd: string) => `${usd}以上`,
+    unknownNote: (n: number) =>
+      `${n}回の実行は、時間切れなどで使った分を全部は読めませんでした。その費用は、読めた分だけが合計に入っています（読めなければ 0 ではなく不明）。`,
     setting: (agent: string, auth: string, model: string, effort: string) =>
       `${agent}・${auth}・${model}・${effort}`,
     gather: "情報収集",
@@ -437,6 +442,8 @@ const ja = {
     fixOrigin: "修正の元",
     securityReport: "元のレポート",
     cost: "費用",
+    /** 使った分の全体を読めなかった実行がある（時間切れなど。PBI-281）。 */
+    costUnknown: (n: number) => `${n}回の実行は読めた分のみ（不明）`,
     created: "作成",
     updated: "最終更新",
     none: "なし",
@@ -764,6 +771,10 @@ const en: TaskMessages = {
     },
     runs: (n) => `${n} run${n === 1 ? "" : "s"}`,
     none: "—",
+    unknown: "Unknown",
+    atLeast: (usd) => `${usd} or more`,
+    unknownNote: (n) =>
+      `${n} run${n === 1 ? " was" : "s were"} stopped (for example by a timeout) before all of their usage could be read. Only the part that could be read is in the total; a run with nothing readable is shown as unknown, not $0.`,
     setting: (agent, auth, model, effort) => `${agent} · ${auth} · ${model} · ${effort}`,
     gather: "Information gathering",
     triage: "Reading the ticket",
@@ -878,6 +889,7 @@ const en: TaskMessages = {
     fixOrigin: "Fix of",
     securityReport: "Report",
     cost: "Cost",
+    costUnknown: (n) => `${n} run${n === 1 ? "" : "s"}: only the readable part (unknown)`,
     created: "Created",
     updated: "Updated",
     none: "None",

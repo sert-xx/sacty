@@ -1030,6 +1030,11 @@ function Properties({ data }: { data: TaskDetailData }) {
               style={{ width: `${Math.min(1, task.budget.usedUsd / task.budget.capUsd) * 100}%` }}
             />
           </span>
+          {(task.budget.unknownRuns ?? 0) > 0 && (
+            <span className="mt-1 block text-xs text-muted-foreground">
+              {l.costUnknown(task.budget.unknownRuns ?? 0)}
+            </span>
+          )}
         </Prop>
         <Prop label={l.project}>
           <Link
