@@ -8160,6 +8160,155 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("最終レビューの出力から判定を読み取れないとき（PBI-277）", () => {
+    // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
+    const unreadable = () =>
+      out(
+        `説明の文\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"満たす"},"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"summary":"合格"}}\n\`\`\``,
+        700,
+      );
+    const failures = (svc: TaskService, id: string) =>
+      svc.get(id)?.activity.filter((e) => e.type === "FinalReviewFailed") ?? [];
+    const implementRuns = (executor: FakeExecutor) =>
+      executor.calls.filter((c) => c.command.join(" ").includes("sacty-test-map")).length;
+
+    it("1回目に読み取れなくても、不合格にも再発にも数えず、実装に戻さずに最終レビューを出し直させ、合格する", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task;
+      // 判定は、出し直した1回だけが記録される（読み取れなかった回は FinalReviewed にならない）
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const [only] = reviewed;
+      expect(only?.type === "FinalReviewed" && only.payload.passed).toBe(true);
+      // 過去の指摘は、再発と数えられていない
+      expect(only?.type === "FinalReviewed" && only.payload.remarks).toEqual([
+        { remarkId: "requirements-1-1", notRecurred: true, reason: "requirements-1-1の判定理由" },
+      ]);
+      expect(task?.verifyFailures).toBe(0);
+      expect(task?.unreadableReviews).toBeUndefined();
+      expect(task?.status).not.toBe("paused");
+      // 実装は1回だけ（やり直していない）。費用は記録する
+      expect(executor.calls.length).toBe(2 + 1 + 1 + 1 + 1);
+      const [failed] = failures(service, id);
+      expect(failed?.type === "FinalReviewFailed" && failed.payload).toMatchObject({
+        reason: "error",
+        verdictUnreadable: true,
+        message: { code: "verify.finalReviewUnreadable", params: { count: 1, max: 3 } },
+      });
+      expect(failed?.type === "FinalReviewFailed" && failed.payload.costUsd).toBeGreaterThan(0);
+      expect(implementRuns(executor)).toBe(1);
+      activity.close();
+    });
+
+    it("出力が空でも、読み取れなかったものとして出し直させる", async () => {
+      const { activity, service, id } = await toImplement([implement("# v1"), out(""), review()]);
+      await drain(service);
+      expect(failures(service, id)).toHaveLength(1);
+      const task = service.get(id)?.task;
+      expect(task?.lastReview?.passed).toBe(true);
+      expect(task?.verifyFailures).toBe(0);
+      activity.close();
+    });
+
+    it("続けて3回読み取れなければ、実装には戻さずに一時停止し、出力の場所を作業履歴に残す。再開すると最終レビューからやり直す", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        unreadable(),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("error");
+      expect(paused?.pausedMessage).toMatchObject({
+        code: "verify.finalReviewUnreadableStopped",
+        params: { max: 3 },
+      });
+      expect(ja(paused?.pausedMessage)).toMatch(/runs\/.+\.jsonl/);
+      // 不合格の記録も、実装のやり直しも無い
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      expect(paused?.lastReview).toBeUndefined();
+      expect(paused?.verifyFailures).toBe(0);
+      expect(implementRuns(executor)).toBe(1);
+      const all = failures(service, id);
+      expect(all).toHaveLength(3);
+      // 3件とも出力の場所（実行の ID）を持つ
+      expect(all.map((e) => e.type === "FinalReviewFailed" && Boolean(e.payload.runId))).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(paused?.unreadableReviews).toBe(3);
+      const calls = executor.calls.length;
+
+      service.resume(id, {});
+      await drain(service);
+      // 再開すると、数え直して最終レビューからやり直す（実装は1回のまま）
+      expect(executor.calls.length).toBe(calls + 1);
+      expect(implementRuns(executor)).toBe(1);
+      expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+      expect(service.get(id)?.task.unreadableReviews).toBeUndefined();
+      activity.close();
+    });
+
+    it("2回読み取れなくても止まらず、その後に判定が記録されれば回数は0に戻る（不合格のあとに、また2回読めなくても止まらない）", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        unreadable(),
+        review([["TV-1", false]], [["requirements-1-1", true]]),
+        implement("# v2"),
+        unreadable(),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service, 20);
+      const task = service.get(id)?.task;
+      expect(task?.status).not.toBe("paused");
+      expect(failures(service, id)).toHaveLength(4);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      // 判定は、不合格と合格の2件だけ。読み取れなかった回は、不合格にも数えない
+      expect(reviewed.map((e) => e.type === "FinalReviewed" && e.payload.passed)).toEqual([
+        false,
+        true,
+      ]);
+      expect(task?.verifyFailures).toBe(0);
+      expect(implementRuns(executor)).toBe(2);
+      activity.close();
+    });
+
+    it("判定のオブジェクトは読めて、観点が足りないときは、これまでどおり不合格にする（読み取れなかったとは扱わない）", async () => {
+      const partial = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [{ id: "TV-1", verified: true, reason: "満たす" }],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: { command: "npm test", exitCode: 0, output: "ok" },
+            summary: "所見",
+          },
+        }),
+      );
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        partial,
+        implement("# v2"),
+        review(),
+      ]);
+      await drain(service);
+      expect(failures(service, id)).toHaveLength(0);
+      const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+      activity.close();
+    });
+  });
+
   it("ゴールガーディアンがテストの結果を申告しなければ、不合格にする", async () => {
     const silent = out(
       block({

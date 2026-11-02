@@ -3239,6 +3239,11 @@ export function extractFinalReview(
    * ただし documentsOnly のときは、止めずに進めるので空にして、`tests.missingCommands` に記録する。
    */
   missingCommands: string[];
+  /**
+   * 出力から判定のオブジェクトを読み取れなかった（見つからない・JSON として読めない）。このとき viewpoints・remarks は
+   * すべて不合格の形になっているが、ゴールガーディアンの判定ではないので、呼び出し元は記録せず、最終レビューを出し直させる。
+   */
+  unreadable: boolean;
 } {
   const found = findBlock(output, FINAL_REVIEW_HEADING);
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
@@ -3277,6 +3282,7 @@ export function extractFinalReview(
       ...(humanChecks.length > 0 ? { humanChecks } : {}),
       passed: verdicts.passed && viewpoints.every((v) => v.verified),
       missingCommands: [],
+      unreadable: found === undefined,
     };
   }
   const reported = found?.raw.tests;
@@ -3327,6 +3333,7 @@ export function extractFinalReview(
     passed: verdicts.passed && viewpoints.every((v) => v.verified) && guardianTestsPassed(tests),
     tests,
     missingCommands,
+    unreadable: found === undefined,
   };
 }
 

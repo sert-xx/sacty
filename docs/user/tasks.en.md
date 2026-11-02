@@ -347,6 +347,13 @@ Even if another task or a person's PR is merged into the base branch (main and t
 - Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.
 - A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) pushes to a person's PR branch, so it does not merge the base branch.
 
+### When the final review verdict cannot be read
+
+When the verdicts cannot be read from the final review output, the task is not failed and the implementation is not redone. Past comments are not counted as having recurred either.
+Only the final review is run again.
+If the verdicts cannot be read three times in a row, the task pauses and shows where the output is (the daemon's `runs/<task ID>/<run ID>.jsonl`; it can also be read in the run log on the screen).
+After you check the output, "Resume" redoes the final review.
+
 ### When verification keeps failing
 
 If the implementation fails the tests or the final review three times in a row, the task pauses.

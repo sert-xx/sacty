@@ -76,6 +76,7 @@ import {
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
+  MAX_UNREADABLE_REVIEWS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
   MEMORY_SUMMARY_MAX,
@@ -7850,7 +7851,54 @@ export class TaskService {
           ...(documentsOnly ? { documentsOnly } : {}),
         },
       );
-    let { missingCommands, ...review } = extractReview(false);
+    let { missingCommands, unreadable, ...review } = extractReview(false);
+    // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
+    // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
+    // 実装の問題ではないので、止めて人に知らせる（再開すると最終レビューからやり直す）
+    if (unreadable) {
+      const count = (this.mustGet(task.id).unreadableReviews ?? 0) + 1;
+      const path = `runs/${task.id}/${runId}.jsonl`;
+      const stop = count >= MAX_UNREADABLE_REVIEWS;
+      const failure = stop
+        ? message("verify.finalReviewUnreadableStopped", { max: MAX_UNREADABLE_REVIEWS, path })
+        : message("verify.finalReviewUnreadable", { count, max: MAX_UNREADABLE_REVIEWS, path });
+      this.append(current, [
+        {
+          actor: "guardian",
+          event: {
+            type: "FinalReviewFailed",
+            payload: {
+              reason: "error",
+              message: failure,
+              verdictUnreadable: true,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              runId,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+        ...(stop
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: {
+                    reason: this.stopReason(task.id, "error"),
+                    message: failure,
+                    ...(await this.manualPauseInfo(task.id)),
+                  },
+                },
+              },
+            ]
+          : []),
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // 差分が文書のファイルだけなら、ツールが無くて実行できなかった検証を止めずに人の確認へ回す（PBI-158）。実行される
     // 振る舞いの無い変更で、イメージを直しても検証の結果は変わらないため。コードなど文書でないファイルが1つでもあれば止める
     if (missingCommands.length > 0) {
@@ -7878,7 +7926,7 @@ export class TaskService {
         ]);
         return;
       }
-      if (documentsOnly) ({ missingCommands, ...review } = extractReview(true));
+      if (documentsOnly) ({ missingCommands, unreadable, ...review } = extractReview(true));
     }
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
     // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）

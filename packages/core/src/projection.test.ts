@@ -2764,6 +2764,74 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
     expect(passed?.lastTests).toBeUndefined();
   });
 
+  it("最終レビューの判定を読み取れなかった回（PBI-277）は、不合格にも数えず、前の判定も変えず、続けた回数だけ数える。判定が記録される・再開すると0に戻る", () => {
+    seq = 0;
+    const id = "v3";
+    const unreadableReview = () =>
+      ev(
+        id,
+        {
+          type: "FinalReviewFailed",
+          payload: {
+            reason: "error",
+            message: {
+              code: "verify.finalReviewUnreadable",
+              params: { count: 1, max: 3, path: "p" },
+            },
+            verdictUnreadable: true,
+            agentId: "g",
+          },
+        },
+        "guardian",
+      );
+    const events = [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ...implemented(id, "i1"),
+    ];
+    // 0件・1件・2件（空・1件・複数件）
+    expect(project(events).get(id)?.unreadableReviews).toBeUndefined();
+    const one = project([...events, unreadableReview()]).get(id);
+    expect(one).toMatchObject({ verification: "pending", status: "idle", verifyFailures: 0 });
+    expect(one?.unreadableReviews).toBe(1);
+    expect(one?.lastReview).toBeUndefined();
+    expect(one?.verifyFeedback).toBeUndefined();
+    const two = project([...events, unreadableReview(), unreadableReview()]).get(id);
+    expect(two?.unreadableReviews).toBe(2);
+    expect(two?.verifyFailures).toBe(0);
+    // 判定が記録されたら（不合格でも）数え直す。不合格の回数は判定の分だけ
+    const failed = project([
+      ...events,
+      unreadableReview(),
+      unreadableReview(),
+      reviewed(id, 1),
+    ]).get(id);
+    expect(failed?.unreadableReviews).toBeUndefined();
+    expect(failed?.verifyFailures).toBe(1);
+    // 読み取れなかった回の後の判定が、前の判定を置き換える
+    expect(failed?.lastReview?.tests?.exitCode).toBe(1);
+    // 一時停止から再開すると数え直す
+    const resumed = project([
+      ...events,
+      unreadableReview(),
+      unreadableReview(),
+      unreadableReview(),
+      ev(id, { type: "TaskPaused", payload: { reason: "error" } }, "sacty"),
+    ]).get(id);
+    expect(resumed?.status).toBe("paused");
+    expect(resumed?.unreadableReviews).toBe(3);
+    const back = project([
+      ...events,
+      unreadableReview(),
+      unreadableReview(),
+      unreadableReview(),
+      ev(id, { type: "TaskPaused", payload: { reason: "error" } }, "sacty"),
+      ev(id, { type: "TaskResumed", payload: { retry: true } }, "sacty"),
+    ]).get(id);
+    expect(back?.unreadableReviews).toBeUndefined();
+    expect(back?.verification).toBe("pending");
+  });
+
   it("それより前の版の記録（sacty がテストを実行した TestsRun）も読め、次の実装でその結果を持ち越さない", () => {
     seq = 0;
     const id = "v2";

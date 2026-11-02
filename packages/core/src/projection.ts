@@ -581,6 +581,11 @@ export type Task = {
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
+   * 最終レビューの出力から判定を読み取れなかった回数（続けて。FinalReviewFailed の verdictUnreadable）。不合格ではないので
+   * verifyFailures には数えない。最終レビューの判定が記録される・人間が再開する・前の工程からやり直すと0に戻る。
+   */
+  unreadableReviews?: number;
+  /**
    * 最新の、sacty がテストのコンテナで実行したテストの結果（それより前の版の記録だけ。今の版は、最終レビューの tests に
    * ゴールガーディアンが実行したテストがある）と、最終レビュー。
    */
@@ -787,6 +792,7 @@ function reopen(task: Task, target: StepKey) {
   task.verification = undefined;
   task.verifyFeedback = undefined;
   task.verifyFailures = 0;
+  task.unreadableReviews = undefined;
   task.publishPending = undefined;
   task.pullRequestCi = undefined;
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
@@ -1476,6 +1482,7 @@ export function applyEvent(
       }
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
+      task.unreadableReviews = undefined;
       if (!event.payload.passed) {
         failVerification(task, { kind: "review", review });
         break;
@@ -2096,6 +2103,9 @@ export function applyEvent(
       if (task.status !== "idle" || task.verification === undefined) {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
+      // 判定を読み取れなかった回は、不合格にも再発にも数えない（lastReview も変えない）。続けた回数だけ数える
+      if (event.payload.verdictUnreadable)
+        task.unreadableReviews = (task.unreadableReviews ?? 0) + 1;
       break;
 
     case "TaskEscalated":
@@ -2449,6 +2459,7 @@ export function applyEvent(
             : "idle";
       // 人間が再開したら、検証の失敗の回数を数え直す
       if (task.pausedReason === "verification") task.verifyFailures = 0;
+      task.unreadableReviews = undefined;
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
       if (task.split && task.pausedCancelledChildren?.length) {
         task.split = {
