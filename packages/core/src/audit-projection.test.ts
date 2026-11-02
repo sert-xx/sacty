@@ -72,6 +72,28 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
     expect(auditOpen(task as never)).toBe(true);
   });
 
+  it("AI のレビューの指摘の件数（aiReviewRemark）を足す前の作業履歴の件数も読める（無い種類は 0）", () => {
+    const task = project([
+      ...completed(),
+      ev("AuditQueued", { auditId: "a1", capUsd: 1 }),
+      surveyed([]),
+    ]).get("t1");
+    expect(task?.audit?.survey?.counts).toEqual({ ...counts, aiReviewRemark: 0 });
+    // 足した種類を数えた記録も読める
+    const withAi = project([
+      ...completed(),
+      ev("AuditQueued", { auditId: "a1", capUsd: 1 }),
+      ev("AuditSurveyed", {
+        auditId: "a1",
+        summary: "s",
+        counts: { ...counts, aiReviewRemark: 4 },
+        concerns: [],
+        ...run,
+      }),
+    ]).get("t1");
+    expect(withAi?.audit?.survey?.counts.aiReviewRemark).toBe(4);
+  });
+
   it("並びの合わない記録は受け付けない", () => {
     const base = [...completed(), ev("AuditQueued", { auditId: "a1", capUsd: 1 })];
     const cases: ActivityEvent[][] = [

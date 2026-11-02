@@ -664,6 +664,7 @@ export function QualityCard({ data }: { data: DashboardData }) {
   const signals = [
     ["changesRequested", m.changesRequested, m.changesRequestedHint, counts.changesRequested],
     ["pullRequestRework", m.pullRequestRework, m.pullRequestReworkHint, counts.pullRequestRework],
+    ["aiReviewRework", m.aiReviewRework, m.aiReviewReworkHint, counts.aiReviewRework],
     ["guardianMissed", m.guardianMissed, m.guardianMissedHint, counts.guardianMissed],
     ["reworkUnspecified", m.reworkUnspecified, m.reworkUnspecifiedHint, reworkByCause.unspecified],
     ["integrationFailed", m.integrationFailed, m.integrationFailedHint, counts.integrationFailed],

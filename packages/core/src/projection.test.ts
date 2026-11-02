@@ -26,6 +26,7 @@ import {
   canRechooseSteps,
   canRerun,
   canRetryExport,
+  changeRounds,
   deliveredWithoutChanges,
   documentOutput,
   errorAnalysisBlocked,
@@ -34,6 +35,7 @@ import {
   isCompleted,
   isFinished,
   isRepoless,
+  lastChangeRound,
   pendingErrorAnalysis,
   pendingQuestion,
   project,
@@ -761,6 +763,213 @@ describe("PR のレビューの取り込み（PBI-14b）", () => {
         }),
       ]),
     ).toThrow(/deliverable review is not open/);
+  });
+});
+
+describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別（PBI-275）", () => {
+  const prepared = (id: string) =>
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    });
+  const waiting = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    prepared(id),
+    ...verifiedImplementation(id),
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/t",
+        commit: "c1",
+        url: "https://github.com/acme/app/pull/7",
+        repo: "https://github.com/acme/app",
+        number: 7,
+      },
+    }),
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+  ];
+  const imported = (id: string, items: { key: string; source?: "sacty_review" }[]) =>
+    ev(
+      id,
+      {
+        type: "PullRequestReviewImported",
+        payload: {
+          number: 7,
+          items: items.map((i) => ({ ...i, author: "me", at: "2026-10-10T00:00:00Z" })),
+          remarks: items.map((i) => `指摘 ${i.key}`),
+        },
+      },
+      items.every((i) => i.source) ? "sacty" : "person",
+    );
+  const changes = (
+    id: string,
+    round: number,
+    remarks: { id: string; text: string; source?: "sacty_review" }[],
+  ) =>
+    ev(
+      id,
+      {
+        type: "ChangesRequested",
+        payload: { step: "implement", target: "implement", round, remarks },
+      },
+      remarks.every((r) => r.source) ? "sacty" : "person",
+    );
+  const resubmitted = (id: string, n: number) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: `impl-${n}`, step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: `impl-${n}`,
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装",
+      },
+    }),
+    ev(id, {
+      type: "TestsRun",
+      payload: {
+        command: "npm test",
+        exitCode: 0,
+        unmappedViewpoints: [],
+        passed: true,
+        output: "",
+        durationMs: 1,
+      },
+    }),
+    ev(
+      id,
+      {
+        type: "FinalReviewed",
+        payload: { passed: true, viewpoints: [], remarks: [], summary: "ok", agentId: "g" },
+      },
+      "guardian",
+    ),
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/t",
+        commit: `c${n}`,
+        url: "https://github.com/acme/app/pull/7",
+        repo: "https://github.com/acme/app",
+        number: 7,
+      },
+    }),
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: n } }),
+  ];
+
+  it("取り込んだ指摘のうち、AI のレビューの位置を覚え、差し戻した指摘に出どころを残す", () => {
+    seq = 0;
+    const pending = project([
+      ...waiting("t"),
+      imported("t", [{ key: "comment:1" }, { key: "review:2", source: "sacty_review" }]),
+    ]).get("t");
+    expect(pending?.pendingReview).toMatchObject({ remarks: ["指摘 comment:1", "指摘 review:2"] });
+    expect(pending?.pendingReview?.aiReview).toEqual([1]);
+    // 人の指摘だけなら、位置は持たない
+    seq = 0;
+    expect(
+      project([...waiting("t"), imported("t", [{ key: "comment:1" }])]).get("t")?.pendingReview
+        ?.aiReview,
+    ).toBeUndefined();
+    seq = 0;
+    const reworked = project([
+      ...waiting("t"),
+      imported("t", [{ key: "comment:1" }, { key: "review:2", source: "sacty_review" }]),
+      changes("t", 1, [
+        { id: "implement-1-1", text: "指摘 comment:1" },
+        { id: "implement-1-2", text: "指摘 review:2", source: "sacty_review" },
+      ]),
+    ]).get("t");
+    expect(reworked?.remarks.map((r) => [r.id, r.source])).toEqual([
+      ["implement-1-1", undefined],
+      ["implement-1-2", "sacty_review"],
+    ]);
+  });
+
+  it("AI のレビューだけの回は、人が差し戻した回数に数えない（回の番号は続ける）。人の指摘が混ざれば数える", () => {
+    seq = 0;
+    const events = [
+      ...waiting("t"),
+      changes("t", 1, [{ id: "implement-1-1", text: "人 1" }]),
+      ...resubmitted("t", 2),
+      changes("t", 2, [{ id: "implement-2-1", text: "AI 1", source: "sacty_review" }]),
+      ...resubmitted("t", 3),
+      changes("t", 3, [{ id: "implement-3-1", text: "AI 2", source: "sacty_review" }]),
+      ...resubmitted("t", 4),
+    ];
+    const task = project(events).get("t");
+    if (!task) throw new Error("no task");
+    expect(changeRounds(task, "implement")).toBe(1);
+    expect(lastChangeRound(task, "implement")).toBe(3);
+    // 人の指摘が混ざった回は、人の差し戻しの回に数える
+    const mixed = project([
+      ...events,
+      changes("t", 4, [
+        { id: "implement-4-1", text: "AI 3", source: "sacty_review" },
+        { id: "implement-4-2", text: "人 2" },
+      ]),
+    ]).get("t");
+    if (!mixed) throw new Error("no task");
+    expect(changeRounds(mixed, "implement")).toBe(2);
+    expect(lastChangeRound(mixed, "implement")).toBe(4);
+    // 差し戻しが無ければ 0
+    seq = 0;
+    const none = project(waiting("t")).get("t");
+    if (!none) throw new Error("no task");
+    expect(changeRounds(none, "implement")).toBe(0);
+    expect(lastChangeRound(none, "implement")).toBe(0);
+  });
+
+  it("古い head へのレビューを捨てた記録は、取り込み済みにするだけで、指摘にも差し戻しにもならない", () => {
+    seq = 0;
+    const discarded = (keys: string[]) =>
+      ev("t", {
+        type: "PullRequestReviewDiscarded",
+        payload: {
+          number: 7,
+          reason: "stale_head",
+          head: "d".repeat(40),
+          items: keys.map((key) => ({
+            key,
+            author: "me",
+            at: "2026-10-10T00:00:00Z",
+            commit: "c".repeat(40),
+          })),
+        },
+      });
+    const task = project([...waiting("t"), discarded(["review:1", "review_comment:2"])]).get("t");
+    expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2"]);
+    expect(task?.pendingReview).toBeUndefined();
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.remarks).toEqual([]);
+    // 取り込み済みを二重に捨てない・見守っていない PR の番号は拒否する
+    seq = 0;
+    expect(() =>
+      project([...waiting("t"), discarded(["review:1"]), discarded(["review:1"])]),
+    ).toThrow(/already imported/);
+    seq = 0;
+    expect(() =>
+      project([
+        ...waiting("t"),
+        ev("t", {
+          type: "PullRequestReviewDiscarded",
+          payload: {
+            number: 8,
+            reason: "stale_head",
+            head: "d".repeat(40),
+            items: [{ key: "review:1", author: "me", at: "x", commit: "c".repeat(40) }],
+          },
+        }),
+      ]),
+    ).toThrow(/not the pull request/);
   });
 });
 
@@ -3547,6 +3756,55 @@ describe("実装の作り直しの間の PR のマージ（PBI-276）", () => {
     expect(() =>
       project([...base("t"), sendBack("t"), stopped("t"), ...merged("t"), stopped("t")]),
     ).toThrow(/not being reworked/);
+  });
+
+  it("まだ反映していない指摘は、AI のレビューの指摘だけの回でも、人の回が続いても、最後の回（回の番号）で決まる（PBI-275）", () => {
+    const aiRound = (id: string, round: number, source: "sacty_review" | undefined) =>
+      ev(
+        id,
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round,
+            remarks: [
+              { id: `implement-${round}-1`, text: `指摘${round}`, ...(source ? { source } : {}) },
+            ],
+          },
+        },
+        source ? "sacty" : "person",
+      );
+    // 最初の回が AI のレビューの指摘だけ（人の差し戻しの回数は 0）でも、その回の指摘が未反映
+    seq = 0;
+    const aiOnly = project([...base("t"), aiRound("t", 1, "sacty_review")]).get("t");
+    expect(aiOnly && changeRounds(aiOnly, "implement")).toBe(0);
+    expect(aiOnly && unreflectedImplementRemarks(aiOnly).map((r) => r.id)).toEqual([
+      "implement-1-1",
+    ]);
+    // AI の回（1）の後に人の回（2）が続けば、最後の回の指摘だけが未反映（人の回数は 1 だが、回の番号は 2）
+    seq = 0;
+    const humanAfterAi = project([
+      ...base("t"),
+      aiRound("t", 1, "sacty_review"),
+      ...verifiedImplementation("t", "impl-2"),
+      ev("t", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit: "c2",
+          url: "https://github.com/acme/app/pull/7",
+          repo: "https://github.com/acme/app",
+          number: 7,
+        },
+      }),
+      ev("t", { type: "StepSubmitted", payload: { step: "implement", submission: 2 } }),
+      aiRound("t", 2, undefined),
+    ]).get("t");
+    expect(humanAfterAi && changeRounds(humanAfterAi, "implement")).toBe(1);
+    expect(humanAfterAi && unreflectedImplementRemarks(humanAfterAi).map((r) => r.id)).toEqual([
+      "implement-2-1",
+    ]);
   });
 
   it("まだ反映していない指摘は、最後の差し戻しの指摘のうち、提出済みの PR に渡していないものだけ", () => {

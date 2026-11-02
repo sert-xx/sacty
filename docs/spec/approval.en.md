@@ -5,8 +5,9 @@
 At a step with an approval gate, the task moves to the next step when a person approves it. A person approves in sacty's web UI or by merging a PR to the target repository (approval = merge).
 
 Requesting changes redoes the work from the chosen step. When requests for changes to the same step exceed the limit, the task goes to Escalation (waiting for a person's decision).
+What counts toward the limit is the requests for changes by a person; a request for changes made only of comments from sacty's own AI review is not counted ([AI review comments](#ai-review-comments)).
 
-Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md), [Open the implementation PR as a draft before the final review, let the Goal Guardian judge after waiting for CI, and on a pass mark it ready for review](../adr/20261027-2330-draft-pull-request-before-final-review.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md), [Open the implementation PR as a draft before the final review, let the Goal Guardian judge after waiting for CI, and on a pass mark it ready for review](../adr/20261027-2330-draft-pull-request-before-final-review.md), [Treat comments from sacty's own AI review separately from a person's comments](../adr/20261102-0843-distinguish-ai-review-remarks.md)
 
 ## Approval in the web UI
 
@@ -290,7 +291,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
 
 ## Importing PR comments
 
-- While a PR is open and waiting for approval, its reviews, line comments, and ordinary comments are imported as comments (`PullRequestReviewImported`, actor `person`).
+- While a PR is open and waiting for approval, its reviews, line comments, and ordinary comments are imported as comments (`PullRequestReviewImported`, actor `person`; actor `sacty` for a round of sacty's own AI review comments only).
   - They are imported after waiting 2 minutes from the last feedback (`FEEDBACK_QUIET_MS`).
     The time of each feedback is the earlier of its GitHub time and the time the daemon first saw it (memory only; `feedbackSeenAt`).
     Even if GitHub's time is ahead of this machine's clock, the feedback is imported 2 minutes after it was first seen (it does not keep waiting for GitHub's time).
@@ -305,6 +306,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
     This delivers a review by a task separate from the one that opened the PR to the original task so that it addresses them. Rounds with suggestions only are imported too, and the budget stops the cost of repetition. How the verdict is decided is in [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks).
   - Other rounds (rounds with no findings, and rounds with no recorded verdict: rounds not yet run, or rounds of a task that only refers to the PR and has no review step) are not imported, even if the account differs from the original task's. There is no Request changes, and the Goal Guardian does not run either.
   - Re-reviews are judged per round. A marker copied by someone other than that task's account is treated as a person's comment.
+  - The imported comments are told apart from a person's comments as AI review comments ("AI review comments" below).
 - Otherwise, the following posts are not imported.
   - Posts by bots
   - Reviews and line comments posted by the original task's project account that start with sacty's review marker
@@ -325,7 +327,39 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - If the status changed during the re-read (a person requested changes, the task was cancelled, and so on), nothing is recorded. If it cannot be read, the next check tries again.
   - Comments that arrive after a merge are not turned into a follow-up task or the like.
 
-Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`)
+### AI review comments
+
+Related ADR: [Treat comments from sacty's own AI review separately from a person's comments](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+
+The reviews, line comments, and ordinary comments that sacty's review task posts on a PR still reach the original task as before.
+They are, however, told apart from a person's comments.
+
+- How they are told apart: by the marker of the post (`<!-- sacty-review:<task ID>[:<round>] -->`). The posts imported by the judgment of "a sacty task that reviewed this PR" above become AI review comments (`PullRequestFeedback.source: "sacty_review"`).
+  The account that posted them is not used to tell them apart (the review is posted with the project's account, the same account as a person's).
+  Even with the same account, a post without the marker stays a person's comment.
+- Record: `PullRequestReviewImported` keeps `sacty_review` in `items[].source`.
+  The positions of the AI review comments among the imported comments are kept in `pendingReview.aiReview`.
+  They are carried over to the comments of the request for changes (`ChangesRequested`) (`remarks[].source`, `Task.remarks[].source`).
+  - If an import has only AI review comments, the actor is `sacty` (not a person's action). If even one person's comment is mixed in, it is `person`.
+  - The same goes for the request for changes: if all the comments are AI review comments, the actor is `sacty`.
+- Counts and limit: a request for changes made only of AI review comments is not counted in the number of requests for changes by a person, or in the limit on requests for changes to the same step (`MAX_CHANGE_REQUESTS`).
+  - The count for a person (`changeRounds`) is the number of rounds that have at least one person's comment. Rounds of AI review comments only are not counted.
+  - The round number and the comment IDs (`<step>-<round>-<number>`) continue through the AI review rounds as well (`lastChangeRound`).
+  - A request for changes made only of AI review comments does not escalate, even when the limit has been reached.
+  - The cost limit works as before.
+- Reviews of an old head: if the head of the PR the review targeted (the review's commit; for a line comment, the parent review's `commit_id` (or else `original_commit_id`), not its own `commit_id`, which GitHub re-points to the current head after later pushes; `PullRequestFeedback.commit`) differs from the PR's current head at import time (`headSha` of `status`), it is discarded without being imported.
+  - What is discarded is kept in `PullRequestReviewDiscarded` (actor `sacty`; `reason: stale_head`, the current head, and the discarded comments with their target commits) and marked as imported (`importedFeedback`). Changes are not requested and the Goal Guardian does not run. It is never imported again.
+  - A post whose target commit is unknown is imported, because it cannot be told whether it is old. A short commit is compared by prefix.
+  - When the PR's head cannot be read, only the AI reviews are left out this time and checked again at the next check (a person's comments are imported).
+  - A person's comments are imported whatever the head.
+- How they are passed to agents: a person's comments and AI review comments are passed separately.
+  - In the instructions to step agents (Implementation, Requirements, Design, and so on), the final review, the integration review, the judgment of where to send back to, answers to questions, and the audit instructions, they are split into a "comments from a person" section and an "AI review comments (not from a person)" section (`remarkSections`, `reworkRemarkLines`).
+  - When AI review comments are listed, a note is added to the person's section: "the previous comment" or "the earlier comment" in a person's comment refers to a person's comment, not an AI review comment.
+  - In the judgment of where to send back to, a note says AI review comments are not a new request added by a person (`new_request`).
+- Display: the request-for-changes and import rows in the Activity show AI review comments separately ("3 comments (AI review)", "1 from a person, 2 from AI review"), and the comments on the approval screen carry an "AI review" mark. The expanded details of a request for changes in the Activity also mark the AI review comments. The approval screen adds "not counted" only when the round has no person's comment.
+  The dashboard's quality signals count "Rework from AI review", and the audit's evidence counts "AI review remarks" (`aiReviewRemark`), separately from changes requested by a person and PR remarks ([Architecture](architecture.en.md), [Audit](audit.en.md)).
+
+Code: `apps/daemon/src/service.ts` (`importFeedback`, `withoutStaleReviews`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`, `remarkSections`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`), `packages/core/src/projection.ts` (`changeRounds`, `lastChangeRound`, `isAiReviewRemark`)
 
 ## Request changes
 
@@ -334,6 +368,8 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbac
   - When Integration review is waiting for approval, only `split`.
   - If the target is omitted, the first one (`implement` when Implementation is waiting for approval).
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
+- A comment has a source (`remarks[].source`). Comments from sacty's own AI review are `sacty_review`; without it, it is a person's comment ([AI review comments](#ai-review-comments)).
+  The count for the limit (`changeRounds`) is the number of rounds that have at least one person's comment. The round number and comment IDs continue through the AI review rounds as well (`lastChangeRound`).
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.
 - A request for changes can carry a cause (`ReworkCause`; `cause` of `ChangesRequested`). If omitted, it is recorded as a request for changes with no cause decided and counted as rework with an "unknown cause" in the summary.
   - A person chooses it with "Cause of the rework" on the approval screen (initially "Don't choose"). When a person requests changes on the approval screen (the `request-changes` API), the person chooses where to send it back, so it does not go through the Goal Guardian's judgment (`judgeRework`). If no cause is chosen, the cause is not judged and the rework has an unknown cause (no extra run is made just for the judgment).
@@ -360,8 +396,8 @@ Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voi
 
 | Reason | When |
 | --- | --- |
-| `too_many_changes` | A Request changes after requests for changes to the same step reached `MAX_CHANGE_REQUESTS` (3). Comments in progress are kept. To continue beyond the limit, request changes explicitly (`overLimit`) |
+| `too_many_changes` | A Request changes after requests for changes by a person to the same step reached `MAX_CHANGE_REQUESTS` (3) (rounds of AI review comments only are not counted). Comments in progress are kept. To continue beyond the limit, request changes explicitly (`overLimit`) |
 | `change_undecidable` | The Goal Guardian could not judge a change request. A person decides (`ChangeDecided`) |
 | `rework_confirmation` | A record from an earlier version (no longer recorded) |
 
-Code: `apps/daemon/src/service.ts` (`requestChanges`, `decideChange`), `packages/core/src/events.ts` (`TaskEscalated`, `MAX_CHANGE_REQUESTS`)
+Code: `apps/daemon/src/service.ts` (`requestChanges`, `decideChange`), `packages/core/src/events.ts` (`TaskEscalated`, `MAX_CHANGE_REQUESTS`), `packages/core/src/projection.ts` (`changeRounds`)

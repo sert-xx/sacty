@@ -5,6 +5,8 @@ import {
   changeRounds,
   deliveredWithoutChanges,
   gatePullRequest,
+  isAiReviewRemark,
+  lastChangeRound,
   MAX_CHANGE_REQUESTS,
   pullRequestConflict,
   reworkTargets,
@@ -89,7 +91,8 @@ export function ReviewView({ task }: { task: Task }) {
   }
 
   const rounds = changeRounds(task, reworkTargets(task, step)[0] ?? step);
-  const latestRound = rounds;
+  // 今回の差し戻しの回（AI のレビューだけの回も含む）。差し戻しの回数（rounds）は人が差し戻した回数
+  const latestRound = lastChangeRound(task, reworkTargets(task, step)[0] ?? step);
   // 差し戻し先：この工程か、それより前の工程エージェントが作る工程（ゲートに近い順）
   const targets = reworkTargets(task, step);
   // 統合レビューのゲートでは、タスク分割への指摘を出す（ほかの工程は、その工程への指摘）
@@ -170,6 +173,9 @@ export function ReviewView({ task }: { task: Task }) {
                     taskId={task.id}
                     submission={submission}
                     current={remark.round === latestRound}
+                    mixedRound={remarks.some(
+                      (other) => other.round === remark.round && !isAiReviewRemark(other),
+                    )}
                     t={t.remark}
                   />
                 ))}
@@ -298,17 +304,20 @@ export function ReviewView({ task }: { task: Task }) {
   );
 }
 
-function RemarkItem({
+export function RemarkItem({
   remark,
   taskId,
   submission,
   current,
+  mixedRound = false,
   t,
 }: {
   remark: TaskRemark;
   taskId: string;
   submission: number;
   current: boolean;
+  /** 同じ工程・同じ回に人の指摘もある（その回は差し戻しの回数に数える）。 */
+  mixedRound?: boolean;
   t: Messages["review"]["remark"];
 }) {
   return (
@@ -319,7 +328,9 @@ function RemarkItem({
         remark.voided && "opacity-60",
       )}
     >
-      <span className="pt-0.5 text-xs text-muted-foreground">{t.label}</span>
+      <span className="pt-0.5 text-xs text-muted-foreground">
+        {remark.source === "sacty_review" ? t.aiLabel : t.label}
+      </span>
       <span className="flex flex-wrap items-center gap-2">
         <span className={cn(remark.voided && "line-through")}>{remark.text}</span>
         <span
@@ -330,7 +341,9 @@ function RemarkItem({
               : "border-input text-muted-foreground",
           )}
         >
-          {t.round(remark.round, current)}
+          {isAiReviewRemark(remark) && !mixedRound
+            ? t.aiRound(remark.round, current)
+            : t.round(remark.round, current)}
         </span>
         {remark.voided && (
           <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">

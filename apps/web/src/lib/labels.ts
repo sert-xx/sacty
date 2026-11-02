@@ -357,7 +357,14 @@ export function describeEventParts(
     // 差し戻しの指摘の本文。承認の画面は承認待ちの間しか読めないので、後から作業履歴で読み返せるようにする
     return {
       text: describeEventText(event, l),
-      detail: event.payload.remarks.map((r) => l.event.changesRemark(r.id, r.text)).join("\n"),
+      // 人の指摘と AI のレビューの指摘が混ざった回でも、各指摘の出どころが分かるように、AI の指摘に印を付ける（PBI-275）
+      detail: event.payload.remarks
+        .map((r) =>
+          r.source === "sacty_review"
+            ? l.event.changesRemarkAi(r.id, r.text)
+            : l.event.changesRemark(r.id, r.text),
+        )
+        .join("\n"),
     };
   }
   if (event.type === "TaskResumed" && event.payload.note) {
@@ -831,7 +838,18 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           );
     case "ChangesRequested": {
       const where = e.changesAtStep(l.step[event.payload.step]);
-      const tail = e.changesTail(event.payload.remarks.length, event.payload.overLimit, actor);
+      // AI のレビュー（sacty のレビューのタスクの投稿）の指摘は、人の指摘と分けて数える（PBI-275）
+      const aiCount = event.payload.remarks.filter((r) => r.source === "sacty_review").length;
+      const total = event.payload.remarks.length;
+      const tail = e.changesTail(
+        total,
+        event.payload.overLimit,
+        aiCount === 0
+          ? actor
+          : aiCount === total
+            ? e.aiReviewActor
+            : e.humanAndAiRemarks(total - aiCount, aiCount),
+      );
       const target = event.payload.target;
       // 原因を決めた差し戻しだけ、原因を添える（PBI-268）。見逃しとそれ以外が、作業履歴で区別できる
       const cause = event.payload.cause ? e.changesCause(l.reworkCause[event.payload.cause]) : "";
@@ -874,6 +892,14 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.number,
         [...new Set(event.payload.items.map((item) => item.author))].join(", "),
         event.payload.remarks.length,
+        event.payload.items.filter((item) => item.source === "sacty_review").length,
+      );
+    case "PullRequestReviewDiscarded":
+      return e.PullRequestReviewDiscarded(
+        event.payload.number,
+        event.payload.items.length,
+        [...new Set(event.payload.items.map((item) => item.commit.slice(0, 7)))].join(", "),
+        event.payload.head.slice(0, 7),
       );
     case "QuestionAsked":
       return e.QuestionAsked(event.payload.questionId, actor);

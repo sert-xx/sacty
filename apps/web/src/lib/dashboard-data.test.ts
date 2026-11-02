@@ -93,6 +93,7 @@ const summary = (patch: Partial<DashboardSummary> = {}): DashboardSummary => ({
     counts: {
       changesRequested: 2,
       pullRequestRework: 1,
+      aiReviewRework: 0,
       guardianMissed: 0,
       integrationFailed: 0,
       fixTask: 1,

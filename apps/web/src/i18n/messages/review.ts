@@ -29,6 +29,10 @@ const ja = {
   decision: "判断",
   remark: {
     label: "指摘",
+    /** sacty 自身のレビューのタスクが PR に投稿した、AI のレビューの指摘（人の指摘ではない。PBI-275）。 */
+    aiLabel: "AI のレビュー",
+    aiRound: (n: number, current: boolean) =>
+      `${n}回目（差し戻しの回数に数えない）${current ? " ・ 今回" : ""}`,
     round: (n: number, current: boolean) => `${n}回目の差し戻し${current ? " ・ 今回" : ""}`,
     voided: "無効",
     response: "対応",
@@ -133,6 +137,9 @@ const en: ReviewMessages = {
   decision: "Decision",
   remark: {
     label: "Comment",
+    aiLabel: "AI review",
+    aiRound: (n, current) =>
+      `Round ${n} (not counted as changes requested)${current ? " · this round" : ""}`,
     round: (n, current) => `Changes requested, round ${n}${current ? " · this round" : ""}`,
     voided: "Voided",
     response: "Response",

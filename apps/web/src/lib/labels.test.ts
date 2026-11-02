@@ -204,6 +204,70 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     );
   });
 
+  it("sacty 自身の AI のレビューの指摘は、人の指摘と分けて出す（差し戻し・取り込み・捨てた記録。日英。PBI-275）", () => {
+    const requested = (remarks: { id: string; text: string; source?: "sacty_review" }[]) =>
+      event({
+        type: "ChangesRequested",
+        payload: { step: "requirements", round: 2, remarks, overLimit: false },
+      });
+    const ai = { id: "requirements-2-1", text: "AI の指摘", source: "sacty_review" as const };
+    const human = { id: "requirements-2-2", text: "人の指摘" };
+    // 人の指摘が無ければ「AI のレビュー」、混ざれば内訳
+    expect(describeEventParts(requested([ai]), ja).text).toBe(
+      "要求要件を差し戻し：指摘1件（AI のレビュー）",
+    );
+    expect(describeEventParts(requested([ai, human, { ...ai, id: "x" }]), ja).text).toBe(
+      "要求要件を差し戻し：指摘3件（人間1件・AI のレビュー2件）",
+    );
+    expect(describeEventParts(requested([ai]), labels.en).text).toBe(
+      "Changes requested on Requirements: 1 comment (AI review)",
+    );
+    expect(describeEventParts(requested([human]), ja).text).toBe(
+      "要求要件を差し戻し：指摘1件（人間）",
+    );
+    // 展開した詳細にも、AI のレビューの指摘の印が付く（承認待ちを終えた後も、混ざった回の出どころが分かる）
+    expect(describeEventParts(requested([ai, human]), ja).detail).toBe(
+      "requirements-2-1（AI のレビュー）：AI の指摘\nrequirements-2-2：人の指摘",
+    );
+    expect(describeEventParts(requested([ai, human]), labels.en).detail).toBe(
+      "requirements-2-1 (AI review): AI の指摘\nrequirements-2-2: 人の指摘",
+    );
+    const imported = (items: { source?: "sacty_review" }[]) =>
+      describeEvent(
+        event({
+          type: "PullRequestReviewImported",
+          payload: {
+            number: 7,
+            items: items.map((i, n) => ({ key: `k${n}`, author: "sert-xx", at: "x", ...i })),
+            remarks: items.map(() => "r"),
+          },
+        }),
+      );
+    expect(imported([{}, {}])).toBe("PR #7 の指摘（sert-xx）を2件取り込んだ");
+    expect(imported([{ source: "sacty_review" }, { source: "sacty_review" }])).toBe(
+      "PR #7 の AI のレビューの指摘（sert-xx）を2件取り込んだ",
+    );
+    expect(imported([{ source: "sacty_review" }, {}])).toBe(
+      "PR #7 の指摘（sert-xx）を2件取り込んだ（うち AI のレビューの指摘 1件）",
+    );
+    const discarded = event({
+      type: "PullRequestReviewDiscarded",
+      payload: {
+        number: 7,
+        reason: "stale_head",
+        head: "d".repeat(40),
+        items: [
+          { key: "review:1", author: "sert-xx", at: "x", commit: "c".repeat(40) },
+          { key: "review_comment:2", author: "sert-xx", at: "x", commit: "c".repeat(40) },
+        ],
+      },
+    });
+    expect(describeEvent(discarded)).toBe(
+      "PR #7 への AI のレビューの指摘2件を取り込まずに捨てた：レビューの対象は古い head（ccccccc）で、PR の今の head は ddddddd",
+    );
+    expect(describeIn(discarded, labels.en)).toContain("old head (ccccccc)");
+  });
+
   it("再開で足した補足は、再開の行に「補足あり」を付け、本文を詳細に出す（日英）", () => {
     const resumed = event({
       type: "TaskResumed",

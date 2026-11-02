@@ -17,6 +17,11 @@ export type QualityKind =
   | "changesRequested"
   /** PR の指摘で差し戻した（ChangesRequested のうち、ゴールガーディアンの判断で戻したもの。Task の prRework）。 */
   | "pullRequestRework"
+  /**
+   * sacty 自身の AI のレビューの指摘だけで差し戻した（ChangesRequested の指摘がすべて AI のレビューのもの。人の指摘が
+   * 1件でも混ざれば pullRequestRework。PBI-275）。
+   */
+  | "aiReviewRework"
   /** ゴールガーディアンの見逃し（GuardianMissed）。 */
   | "guardianMissed"
   /** 統合レビューの不合格（IntegrationReviewed の passed が偽）。 */
@@ -134,6 +139,7 @@ type QualityEntry = {
 const QUALITY_KINDS: readonly QualityKind[] = [
   "changesRequested",
   "pullRequestRework",
+  "aiReviewRework",
   "guardianMissed",
   "integrationFailed",
   "fixTask",
@@ -171,14 +177,20 @@ export class DashboardStats {
         // 再現できなかったら、提出を記録せずに人の判断を待つ（PBI-29）
         if (!event.payload.reproduced) this.waiting.set(event.taskId, event.at);
         break;
-      case "ChangesRequested":
+      case "ChangesRequested": {
         // 差し戻しは、実際に差し戻した記録（ChangesRequested）を1回として数える。PR の指摘でゴールガーディアンが戻したものは、
         // 投影がこの記録の時刻で prRework に残す（PBI-58）。判断（ReworkJudged）だけで差し戻されなかった（上限で
         // エスカレーションした）ものは数えない
+        const remarks = event.payload.remarks ?? [];
+        const aiOnly = remarks.length > 0 && remarks.every((r) => r.source === "sacty_review");
         this.quality.push({
           at,
           projectId: event.projectId,
-          kind: after.prRework?.at === event.at ? "pullRequestRework" : "changesRequested",
+          kind: aiOnly
+            ? "aiReviewRework"
+            : after.prRework?.at === event.at
+              ? "pullRequestRework"
+              : "changesRequested",
           step: event.payload.step,
           // 原因を記録する前の作業履歴は、見逃しの記録（GuardianMissed）が差し戻しの直前にあれば、見逃しの差し戻しとして数える
           cause:
@@ -186,6 +198,7 @@ export class DashboardStats {
             (this.afterMissed.has(event.taskId) ? "guardian_missed" : "unspecified"),
         });
         break;
+      }
       case "GuardianMissed":
         this.quality.push({ at, projectId: event.projectId, kind: "guardianMissed" });
         break;

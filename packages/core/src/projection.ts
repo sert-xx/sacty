@@ -13,6 +13,7 @@ import type {
   PauseReason,
   Provenance,
   Remark,
+  RemarkSource,
   ReviewComment,
   ReviewVerdict,
   ReworkCause,
@@ -174,6 +175,8 @@ export type TaskRemark = {
   /** 何回目の差し戻しで出た指摘か。 */
   round: number;
   text: string;
+  /** AI のレビュー（sacty のレビューのタスクの投稿）の指摘なら sacty_review。無ければ人の指摘（PBI-275）。 */
+  source?: RemarkSource;
   /** 工程エージェントの、最新の提出での対応。最新の提出で回答がなければ未回答（undefined）。 */
   response?: string;
   /** 対応を書いた提出回。 */
@@ -766,6 +769,8 @@ export type Task = {
     keys: string[];
     remarks: string[];
     judgement?: { target?: StepKey; cause?: ReworkCause; reason: DaemonText };
+    /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
+    aiReview?: number[];
   };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
@@ -1313,6 +1318,7 @@ export function applyEvent(
           step: target,
           round: event.payload.round,
           text: r.text,
+          ...(r.source ? { source: r.source } : {}),
           voided: false,
         })),
       ];
@@ -1663,7 +1669,28 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the feedback is already imported");
       }
       task.importedFeedback = [...task.importedFeedback, ...keys];
-      task.pendingReview = { keys, remarks: event.payload.remarks };
+      const aiReview = event.payload.items.flatMap((item, i) =>
+        item.source === "sacty_review" ? [i] : [],
+      );
+      task.pendingReview = {
+        keys,
+        remarks: event.payload.remarks,
+        ...(aiReview.length > 0 ? { aiReview } : {}),
+      };
+      break;
+    }
+
+    // 古い head へのレビューを捨てた。取り込み済みにして、取り込み直さない（指摘にも差し戻しにもならない）
+    case "PullRequestReviewDiscarded": {
+      const watched = gatePullRequest(task);
+      if (!watched || watched.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      const keys = event.payload.items.map((i) => i.key);
+      if (keys.some((key) => task.importedFeedback.includes(key))) {
+        throw new ActivityIntegrityError(event, "the feedback is already imported");
+      }
+      task.importedFeedback = [...task.importedFeedback, ...keys];
       break;
     }
 
@@ -2755,7 +2782,7 @@ export function reworkingPullRequest(
  */
 export function unreflectedImplementRemarks(task: Task): TaskRemark[] {
   const submitted = task.submissions.implement ?? 0;
-  const latest = changeRounds(task, "implement");
+  const latest = lastChangeRound(task, "implement");
   return task.remarks.filter(
     (r) =>
       r.step === "implement" &&
@@ -2944,8 +2971,25 @@ export function activeStep(task: Task): StepKey | undefined {
   return task.steps.find((s) => s.state === "active")?.key;
 }
 
-/** その工程で、これまでに何回差し戻されたか。 */
+/** AI のレビュー（sacty のレビューのタスクの投稿）の指摘か（PBI-275）。 */
+export function isAiReviewRemark(remark: { source?: RemarkSource }): boolean {
+  return remark.source === "sacty_review";
+}
+
+/**
+ * その工程で、人が差し戻した回数（同じ工程への差し戻しの上限 MAX_CHANGE_REQUESTS に数える回数）。AI のレビューの指摘だけの
+ * 回は数えない（人の指摘が1件でもあれば数える。PBI-275）。
+ */
 export function changeRounds(task: Task, step: StepKey): number {
+  const rounds = new Set<number>();
+  for (const r of task.remarks) {
+    if (r.step === step && !isAiReviewRemark(r)) rounds.add(r.round);
+  }
+  return rounds.size;
+}
+
+/** その工程への、最後の差し戻しの回（AI のレビューだけの回も含む。次の回の番号と、指摘の ID に使う）。 */
+export function lastChangeRound(task: Task, step: StepKey): number {
   return task.remarks.filter((r) => r.step === step).reduce((max, r) => Math.max(max, r.round), 0);
 }
 

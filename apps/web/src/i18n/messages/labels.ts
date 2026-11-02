@@ -469,7 +469,13 @@ const ja = {
     changesTail: (count: number, overLimit: boolean, actor: string) =>
       `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
     /** 差し戻しの詳細（展開）に出す、指摘の1件。 */
+    /** 差し戻しの指摘がすべて AI のレビュー（sacty のレビューのタスクの投稿）のときの、誰の指摘か（PBI-275）。 */
+    aiReviewActor: "AI のレビュー",
+    /** 人の指摘と AI のレビューの指摘が混ざった差し戻しの、内訳。 */
+    humanAndAiRemarks: (human: number, ai: number) => `人間${human}件・AI のレビュー${ai}件`,
     changesRemark: (id: string, text: string) => `${id}：${text}`,
+    /** AI のレビューの指摘の1件（人の指摘と混ざった差し戻しの詳細で、出どころが分かるようにする）。 */
+    changesRemarkAi: (id: string, text: string) => `${id}（AI のレビュー）：${text}`,
     /** 差し戻しの原因を、作業履歴の行の後ろに足す（PBI-268）。 */
     changesCause: (cause: string) => `（原因：${cause}）`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
@@ -497,8 +503,14 @@ const ja = {
       `エスカレーション：${id ?? "変更の申し出"}を判定できなかった`,
     escalatedTooMany: (step: string) => `エスカレーション：${step}への差し戻しが上限`,
     escalatedRework: (step: string) => `エスカレーション：PR の指摘で${step}まで戻すかの確認`,
-    PullRequestReviewImported: (number: number, authors: string, count: number) =>
-      `PR #${number} の指摘（${authors}）を${count}件取り込んだ`,
+    PullRequestReviewImported: (number: number, authors: string, count: number, ai: number) =>
+      ai === 0
+        ? `PR #${number} の指摘（${authors}）を${count}件取り込んだ`
+        : ai === count
+          ? `PR #${number} の AI のレビューの指摘（${authors}）を${count}件取り込んだ`
+          : `PR #${number} の指摘（${authors}）を${count}件取り込んだ（うち AI のレビューの指摘 ${ai}件）`,
+    PullRequestReviewDiscarded: (number: number, count: number, reviewed: string, head: string) =>
+      `PR #${number} への AI のレビューの指摘${count}件を取り込まずに捨てた：レビューの対象は古い head（${reviewed}）で、PR の今の head は ${head}`,
     QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
     ErrorAnalysisRequested: (id: string, actor: string) =>
       `オーケストレーターにエラーの分析を求めた（${id}・${actor}）`,
@@ -976,7 +988,10 @@ const en: LabelMessages = {
       `${where}; redo from ${target}${revoke ? ` (${target} approval revoked)` : ""}`,
     changesTail: (count, overLimit, actor) =>
       `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
+    aiReviewActor: "AI review",
+    humanAndAiRemarks: (human, ai) => `${human} from a person, ${ai} from AI review`,
     changesRemark: (id, text) => `${id}: ${text}`,
+    changesRemarkAi: (id, text) => `${id} (AI review): ${text}`,
     changesCause: (cause) => ` (cause: ${cause})`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
     more: "Details",
@@ -997,8 +1012,14 @@ const en: LabelMessages = {
     escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
     escalatedRework: (step) =>
       `Escalated: confirm whether to redo from ${step} for the PR comments`,
-    PullRequestReviewImported: (number, authors, count) =>
-      `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`,
+    PullRequestReviewImported: (number, authors, count, ai) =>
+      ai === 0
+        ? `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
+        : ai === count
+          ? `Imported ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
+          : `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors}); ${ai} of them from AI review`,
+    PullRequestReviewDiscarded: (number, count, reviewed, head) =>
+      `Discarded ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} without importing: the review was for an old head (${reviewed}); the PR's head is now ${head}`,
     QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
     ErrorAnalysisRequested: (id, actor) =>
       `Asked the Orchestrator to analyze the errors (${id}, ${actor})`,
