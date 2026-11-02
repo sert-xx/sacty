@@ -307,6 +307,45 @@ describe("時間切れで止めた実行の使用量（PBI-281）", () => {
     });
   });
 
+  it("時間切れの後に停止の確認が失敗しても、分割されて遅れて届く出力を待ってから使用量を確定する", async () => {
+    let run: (EventEmitter & { stdout: EventEmitter }) | undefined;
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") run = child;
+      // docker ps は、止めた後もコンテナを返し続ける（停止の確認は失敗する）
+      else
+        setTimeout(() => {
+          if (args[0] === "ps") child.stdout.emit("data", "abc123\n");
+          child.emit("close", 0);
+        }, 0);
+      return child;
+    }) as never;
+    const executor = new DockerExecutor(60_000, spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const running = executor
+      .run({ runId: "late2", image: "img", workspaceDir: "/tmp", invocation, timeoutMs: 20 })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await new Promise((r) => setTimeout(r, 5));
+    // assistant の行を前後に分ける。前半は時間切れの前に、後半は停止の確認が失敗した後に届く
+    const line = assistantLine("m1", 8);
+    run?.stdout.emit("data", line.slice(0, 30));
+    await new Promise((r) => setTimeout(r, 100));
+    run?.stdout.emit("data", line.slice(30));
+    run?.emit("close", 137);
+    const error = await running;
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as AgentTimeoutError).usage).toMatchObject({ output: 8 });
+    expect((error as AgentTimeoutError).costUnknown).toBe(true);
+  });
+
   it("デーモンの停止（abortAll）で止めた実行も、停止の理由を保ったまま、読めた使用量と不明の印を残す", async () => {
     const docker = fakeDocker([0]);
     const executor = new DockerExecutor(60_000, docker.spawnImpl);

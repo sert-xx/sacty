@@ -557,26 +557,28 @@ export class DockerExecutor implements AgentExecutor {
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
       const stopped = await this.containers.finish(containerName);
-      if (!stopped) {
-        // 止まったことを確かめられなくても、それまでに読めた使用量と不明の印は残す（コンテナが動き続けていれば、この後の分は
-        // 分からない。PBI-281）
-        const partial = reader.finish(1);
-        outcome = {
-          kind: "failed",
-          reason: "error",
-          message: message("run.containerNotConfirmed", { name: containerName }),
-          ...(partial.usage ? { usage: partial.usage } : {}),
-          ...(reader.started ? { costUnknown: true as const } : {}),
-        };
-      }
-      // 時間切れで止めた実行も、それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない。PBI-281）
+      // 時間切れで止めた実行は、docker run の子プロセスが終わって、残りの出力を読み終えるのを（上限を付けて）待ってから
+      // 使用量を確定する（受信の途中の行は、確定すると読み捨てられるため。停止の確認に失敗した場合も、この後に確定する。PBI-281）
       if (timedOut.error) {
-        // docker run の子プロセスが終わって、残りの出力を読み終えるのを（上限を付けて）待ってから確定する
         await Promise.race([
           childClosed,
           new Promise<void>((resolve) => setTimeout(resolve, TIMEOUT_DRAIN_MS).unref()),
         ]);
-        const partial = reader.finish(1);
+      }
+      // それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない）。時間切れと停止の確認の失敗で共有する
+      const partial = timedOut.error || !stopped ? reader.finish(1) : undefined;
+      if (!stopped) {
+        // 止まったことを確かめられなくても、それまでに読めた使用量と不明の印は残す（コンテナが動き続けていれば、この後の分は
+        // 分からない）
+        outcome = {
+          kind: "failed",
+          reason: "error",
+          message: message("run.containerNotConfirmed", { name: containerName }),
+          ...(partial?.usage ? { usage: partial.usage } : {}),
+          ...(reader.started ? { costUnknown: true as const } : {}),
+        };
+      }
+      if (timedOut.error && partial) {
         timedOut.error.usage = partial.usage;
         // 途中で止めたので、出力が1つでも届いていれば、読めた分は下限（最後の結果の後の分は分からない）
         timedOut.error.costUnknown = reader.started;
