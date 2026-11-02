@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-02（UTC）
 - タスク: PBI-280
-- PR: なし
+- PR: #281
 - ブランチ: feat/issue-280-timeout-resume-session
 - 関係する ADR: [時間切れで止めた実行は、再開のときに同じエージェントのセッションの続きから進める](../adr/20261102-1320-continue-session-of-run-stopped-by-timeout.md)
 
@@ -35,7 +35,7 @@
     積み重なって完了、Codex の `resume`、時間切れ以外の失敗は続けない、記録なし／コンテナ停止の未確認／エージェントを変えた／ファイルが壊れた／別のセッションで始まった／AI が再開を断った場合の
     最初からの実行し直しと理由、実装が時間切れで止まっても同じ作業領域に変更が残り、同じセッションで続く。
   - 修正を戻すと落ちることを確かめた（再開しない・続けた記録で打ち切らない・別の実行で打ち切らない）。
-- `npm run lint`・`npm run typecheck`・`npx vitest run tests/docs`・全体の vitest：下の「PR 前の確認」に書く。
+- `npm run lint`・`npm run typecheck`・`npx vitest run tests/docs`・全体の vitest：通過（全体は 185 ファイル・3528 件）。
 
 ## 残したこと
 
