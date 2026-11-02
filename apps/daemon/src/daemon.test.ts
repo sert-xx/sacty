@@ -7822,6 +7822,152 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    /** 引き継いだ PR で実装の承認待ちまで進め、PR の指摘で実装に差し戻す。 */
+    async function continuedThenSentBack() {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const reviewing = (remarks: [string, boolean][]) => review([["REQ", true]], remarks);
+      const tests = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", tests),
+          reviewing([]),
+          implement("# 実装の説明 v2", tests),
+          reviewing([["implement-1-1", true]]),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.gate; i++) await service.runNext(id);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      const pushes = repos.published.length;
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["回数の上限も書いてください"],
+      });
+      return { activity, service, executor, pulls, repos, id, pushes };
+    }
+
+    it("引き継いだ PR を差し戻して作り直している間に PR がマージされたら、元のブランチにプッシュせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, repos, id, pushes } = await continuedThenSentBack();
+      pulls.state = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: service.get(id)?.task.pullRequest?.commit,
+      };
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      expect(repos.published).toHaveLength(pushes);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      expect(service.get(id)?.task.approved.implement).toBeDefined();
+      expect(pulls.calls).toEqual([]);
+      activity.close();
+    });
+
+    it("引き継いだ PR で、確認では開いていたが、プッシュの間にマージされたら、一時停止にせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, id } = await continuedThenSentBack();
+      const commit = service.get(id)?.task.pullRequest?.commit;
+      let reads = 0;
+      pulls.status = async () => ({
+        headSha: commit,
+        ...(++reads === 1
+          ? { state: "open" as const }
+          : { state: "merged" as const, mergedBy: "reviewer" }),
+      });
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      expect(reads).toBe(2);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      activity.close();
+    });
+
+    /** 引き継いだ PR で、最初の最終レビューに通らず、まだ一度も提出していない状態まで進める。 */
+    async function continuedBeforeFirstSubmission() {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const repos = new FakeRepos();
+      repos.branchHeads["feature/retry"] = head;
+      humanPullRequest(pulls);
+      const tests = [{ viewpointId: "REQ", tests: ["retry.test.ts › 定数"] }];
+      const { service, executor } = makeService(
+        activity,
+        [
+          steps(),
+          implement("# 実装の説明", tests),
+          review([["REQ", true]], [], 1000, 1), // テストが通らない
+          implement("# 実装の説明 v2", tests),
+          review([["REQ", true]], []),
+        ],
+        { realPlanner: true, pulls, repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "PR #12 の指摘", body });
+      for (let i = 0; i < 6 && !service.get(id)?.task.verifyFeedback; i++) {
+        await service.runNext(id);
+      }
+      const task = service.get(id)?.task;
+      expect(task?.verifyFeedback).toBeDefined();
+      expect(task?.status).toBe("queued");
+      expect(task?.pullRequest).toBeUndefined();
+      expect(task?.continuedPullRequest?.number).toBe(12);
+      return { activity, service, executor, pulls, repos, id };
+    }
+
+    it("引き継いだ PR の最初の最終レビューに通らず作り直している間に PR がマージされたら、プッシュせず、一時停止にもせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, executor, pulls, repos, id } =
+        await continuedBeforeFirstSubmission();
+      const calls = executor.calls.length;
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.at(-3)?.payload).toMatchObject({ number: 12, was: "queued" });
+      const task = service.get(id)?.task;
+      expect(task?.pullRequest).toMatchObject({ number: 12, branch: "feature/retry" });
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task?.approved.implement).toBeDefined();
+      expect(repos.published).toHaveLength(0);
+      expect(executor.calls).toHaveLength(calls);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      activity.close();
+    });
+
+    it("引き継いだ PR の初回の提出の前に、確認より先に PR の更新が始まっても、プッシュせず、マージを承認として完了する（PBI-276）", async () => {
+      const { activity, service, pulls, repos, id } = await continuedBeforeFirstSubmission();
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: head };
+      for (let i = 0; i < 6 && service.queuedTaskIds().length > 0; i++) await service.runNext(id);
+      const events = service.get(id)?.activity ?? [];
+      expect(events.slice(-3).map((e) => e.type)).toEqual([
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(events.some((e) => e.type === "TaskPaused")).toBe(false);
+      expect(repos.published).toHaveLength(0);
+      expect(service.get(id)?.task.pullRequestState).toBe("merged");
+      activity.close();
+    });
+
     it("引き継げない PR（フォークの PR・マージ済み・ほかのタスクの PR）なら、新しい PR を作らないように、工程を決めずに止める", async () => {
       const cases: [Partial<PullRequestInfo>, string][] = [
         [
@@ -9080,6 +9226,512 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("実装の作り直しの間に実装の PR がマージされたら、作り直しを止めて承認として進める（PBI-276）", () => {
+    const remark = "失敗時のログを足してください";
+    /** 差し戻しの指摘（implement-1-1）にも答える最終レビュー。 */
+    const reviewed = (testsExitCode = 0) =>
+      review(
+        undefined,
+        [
+          ["requirements-1-1", true],
+          ["implement-1-1", true],
+        ],
+        1000,
+        testsExitCode,
+      );
+    /** 実装の承認待ちから、PR の指摘で実装に差し戻す（作り直しの始まり）。 */
+    const sendBack = (
+      service: TaskService,
+      id: string,
+      target: "implement" | "design" = "implement",
+    ) =>
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target,
+        comments: [remark],
+      });
+    /** 人が GitHub で実装の PR をマージした。 */
+    const mergePr = (pulls: FakePulls, service: TaskService, id: string, headSha?: string) => {
+      pulls.state = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: headSha ?? service.get(id)?.task.pullRequest?.commit,
+        mergeCommit: "m".repeat(40),
+      };
+    };
+    const tail = (service: TaskService, id: string, n: number) =>
+      (service.get(id)?.activity ?? []).slice(-n).map((e) => [e.type, e.actor]);
+    const stopped = (service: TaskService, id: string) =>
+      service.get(id)?.activity.filter((e) => e.type === "ReworkStoppedByMerge") ?? [];
+    /** 完了（承認して次へ進んだ）か。新しい PR を作っていないか。 */
+    const expectDone = (service: TaskService, id: string, pulls: FakePulls) => {
+      const task = service.get(id)?.task;
+      expect(task?.steps.every((st) => st.state === "done")).toBe(true);
+      expect(task?.status).toBe("idle");
+      expect(task?.pullRequestState).toBe("merged");
+      expect(task?.gate).toBeUndefined();
+      expect(service.queuedTaskIds()).toEqual([]);
+      // 新しい PR を作らず、マージした PR を更新もしていない
+      expect(pulls.calls).toHaveLength(1);
+      expect(
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestPublished"),
+      ).toHaveLength(1);
+    };
+
+    it("実行を待っている作り直しは、実行せずに止め、捨てた指摘を理由とともに残して、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([], { pulls });
+      const calls = executor.calls.length;
+      sendBack(service, id);
+      expect(service.get(id)?.task.status).toBe("queued");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(tail(service, id, 3)).toEqual([
+        ["ReworkStoppedByMerge", "sacty"],
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      expect(stopped(service, id)[0]?.payload).toEqual({
+        number: 7,
+        was: "queued",
+        stoppedRuns: [],
+        discardedRemarks: [{ id: "implement-1-1", text: remark }],
+      });
+      const task = service.get(id)?.task;
+      // 捨てた指摘は無効になる（エージェントに渡さない）
+      expect(task?.remarks.find((r) => r.id === "implement-1-1")?.voided).toBe(true);
+      expect(task?.pullRequestMerge).toMatchObject({ by: "reviewer", edited: false });
+      expect(executor.calls).toHaveLength(calls);
+      expectDone(service, id, pulls);
+      // 続きの確認で、記録を重ねない
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(1);
+      expect(service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged")).toHaveLength(
+        1,
+      );
+      activity.close();
+    });
+
+    it("PR の中で人が直してからマージしたなら、直した最終のコミットも残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      const submitted = service.get(id)?.task.pullRequest?.commit;
+      sendBack(service, id);
+      mergePr(pulls, service, id, "f".repeat(40));
+      await service.checkPullRequests();
+      const merged = service.get(id)?.activity.find((e) => e.type === "PullRequestMerged");
+      expect(merged?.payload).toMatchObject({
+        commit: "f".repeat(40),
+        submitted,
+        edited: true,
+      });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("実装のエージェントの実行中なら、コンテナを止め、止めた実行を残して、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      const calls = executor.calls.length;
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      expect(service.get(id)?.task.status).toBe("running");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toEqual([runId]);
+      expect(types(service, id).slice(-5)).toEqual([
+        "AgentRunFailed",
+        "TaskPaused",
+        "ReworkStoppedByMerge",
+        "PullRequestMerged",
+        "StepApproved",
+      ]);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "running",
+        stoppedRuns: [runId],
+        discardedRemarks: [{ id: "implement-1-1" }],
+      });
+      // 一時停止の記録は残るが、いまは一時停止ではない
+      expect(service.get(id)?.task.pausedReason).toBeUndefined();
+      expect(executor.calls).toHaveLength(calls + 1);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止める前に実行が正常に終わっていても、一時停止を記録せず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD, implement("# v2")], {
+        pulls,
+      });
+      // コンテナを止める合図の時点で、実行はちょうど正常に終わった
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, implement("# v2"));
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      expect(executor.killed).toEqual([runId]);
+      const names = types(service, id);
+      expect(names.slice(names.lastIndexOf("ChangesRequested"))).not.toContain("TaskPaused");
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("最終レビューの途中なら、最終レビューを止め、判定を記録せず、やり直しに渡すはずだった結果も捨てる", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [implement("# v2"), HOLD, reviewed()],
+        { pulls },
+      );
+      sendBack(service, id);
+      await service.runNext(id); // 実装
+      expect(service.get(id)?.task.verification).toBe("pending");
+      const verifying = service.runNext(id);
+      const runId = await executor.started.promise;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await verifying;
+      expect(executor.killed).toEqual([runId]);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "verifying" });
+      expect(service.get(id)?.activity.filter((e) => e.type === "FinalReviewed")).toHaveLength(1); // 最初の提出の分だけ
+      expect(service.get(id)?.task.verification).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("最終レビューに通らず、やり直しの実装を待っている間にマージされたら、渡すはずだった結果を捨てたと残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed(1)], {
+        pulls,
+      });
+      sendBack(service, id);
+      await service.runNext(id); // 実装
+      await service.runNext(id); // 最終レビューで、テストが通らない
+      expect(service.get(id)?.task.status).toBe("queued");
+      expect(service.get(id)?.task.verifyFeedback?.kind).toBeDefined();
+      const kind = service.get(id)?.task.verifyFeedback?.kind;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "queued",
+        discardedFeedback: kind,
+      });
+      expect(service.get(id)?.task.verifyFeedback).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("PR の更新の直前にマージされていたら（確認の前）、プッシュも PR の作成もせず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, repos, id } = await toImplementGate(
+        [implement("# v2"), reviewed()],
+        { pulls },
+      );
+      const pushes = repos.published.length;
+      sendBack(service, id);
+      // マージの確認（60 秒ごと）より前に、作り直しが PR の更新まで進む
+      mergePr(pulls, service, id);
+      await drain(service);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({
+        was: "publishing",
+        stoppedRuns: [],
+      });
+      expect(repos.published).toHaveLength(pushes);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("一時停止中の作り直しも、マージされたら止めて承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id);
+      await service.pause(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "paused" });
+      const task = service.get(id)?.task;
+      expect(task?.pausedReason).toBeUndefined();
+      expect(task?.resumeTo).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("マージされていない PR（開いたまま・閉じられた）では、作り直しを止めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      sendBack(service, id);
+      await service.checkPullRequests();
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("queued");
+      // 作り直しはそのまま進み、新しい実装の承認待ちになる
+      pulls.state = { state: "open" };
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+      expect(stopped(service, id)).toHaveLength(0);
+      activity.close();
+    });
+
+    it("要求要件・設計をやり直している間は、実装の PR のマージで作り直しを止めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      sendBack(service, id, "design");
+      expect(service.get(id)?.task.steps.find((st) => st.state === "active")?.key).toBe("design");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("PR の状態を読めなければ何も記録せず、次の確認で止める", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate([], { pulls });
+        sendBack(service, id);
+        mergePr(pulls, service, id);
+        pulls.statusFail = "GitHub に接続できません";
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(0);
+        expect(service.get(id)?.task.status).toBe("queued");
+        pulls.statusFail = undefined;
+        await service.checkPullRequests();
+        expect(stopped(service, id)).toHaveLength(1);
+        expectDone(service, id, pulls);
+        activity.close();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("止めたコンテナが無くなったと確かめられない間は進めず、確かめられたら完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      executor.stops = false;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      let task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.unstoppedRuns).toEqual([runId]);
+      expect(stopped(service, id)).toHaveLength(0);
+      executor.stops = true;
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(1);
+      // 前の確認で止めたコンテナを確かめられなかった実行も、止めた実行に残す
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      task = service.get(id)?.task;
+      expect(task?.unstoppedRuns).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止めた実行が正常に終わっても、停止の確認を待つ間は、ワーカーが続きの検証を始めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [HOLD, implement("# v2"), reviewed()],
+        { pulls },
+      );
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, implement("# v2"));
+      };
+      // 停止の確認（1回目は実行の後始末、2回目は PR のマージによる停止）の2回目を、止めておく
+      const gate = Promise.withResolvers<void>();
+      let confirms = 0;
+      executor.ensureStopped = async () => {
+        confirms += 1;
+        if (confirms === 2) await gate.promise;
+        return true;
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      await executor.started.promise;
+      mergePr(pulls, service, id);
+      const checking = service.checkPullRequests();
+      await vi.waitFor(() => expect(confirms).toBe(2));
+      // 実行は idle・検証待ちで終わっているが、承認か一時停止を記録するまで、実行を始めさせない
+      expect(service.get(id)?.task.verification).toBe("pending");
+      const calls = executor.calls.length;
+      expect(service.queuedTaskIds()).toEqual([]);
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(calls);
+      gate.resolve();
+      await checking;
+      await running;
+      expect(executor.calls).toHaveLength(calls);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("止めた実行が正常に終わった費用で予算を超えて一時停止しても、止めたコンテナを確かめるまで承認へ進めない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      // 実装の実行は、15 ドルかかって正常に終わる（予算の上限を超える）
+      const costly = out(
+        [
+          "# v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+              { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+            ],
+          }),
+        ].join("\n\n"),
+        1_000_000,
+      );
+      executor.kill = (runId: string) => {
+        executor.killed.push(runId);
+        executor.finishHeld(runId, costly);
+      };
+      sendBack(service, id);
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      executor.stops = false;
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      await running;
+      let task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("budget");
+      // 一時停止の理由は予算のまま、確かめられなかった実行を残す
+      expect(task?.unstoppedRuns).toEqual([runId]);
+      expect(stopped(service, id)).toHaveLength(0);
+      // 次の確認でも、確かめられない間は進めない
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      executor.stops = true;
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ stoppedRuns: [runId] });
+      task = service.get(id)?.task;
+      expect(task?.unstoppedRuns).toBeUndefined();
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("承認待ちで閉じられた PR を差し戻し、GitHub で開き直してマージしたら、新しい PR は作らず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.pullRequestState).toBe("closed");
+      sendBack(service, id);
+      expect(service.get(id)?.task.status).toBe("queued");
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ number: 7, was: "queued" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("閉じたままの PR を差し戻し、PR の更新の直前に開き直されてマージされていたら、新しい PR は作らず、承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      pulls.state = { state: "closed" };
+      await service.checkPullRequests();
+      sendBack(service, id);
+      // マージの確認より前に、作り直しが PR の更新まで進む
+      mergePr(pulls, service, id);
+      await drain(service);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "publishing" });
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("デーモンが実装の実行中に止まって再起動した後も、止めたコンテナを確かめるまで承認へ進めず、確かめたら止めた実行に残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate([HOLD], { pulls });
+      sendBack(service, id);
+      void service.runNext(id);
+      const runId = await executor.started.promise;
+      // ここでデーモンが止まった（実行はそのまま。コンテナが残っている）。再起動して復旧する
+      const restarted = makeService(activity, [], { pulls });
+      restarted.service.recoverInterrupted();
+      const paused = restarted.service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.unstoppedRuns).toEqual([runId]);
+      mergePr(pulls, restarted.service, id);
+      restarted.executor.stops = false;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)).toHaveLength(0);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      restarted.executor.stops = true;
+      await restarted.service.checkPullRequests();
+      expect(stopped(restarted.service, id)[0]?.payload).toMatchObject({
+        was: "paused",
+        stoppedRuns: [runId],
+      });
+      expectDone(restarted.service, id, pulls);
+      activity.close();
+    });
+
+    it("PR の更新で、確認では開いていたが、プッシュの間にマージされたら、新しい PR は作らず、マージを承認として完了する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([implement("# v2"), reviewed()], {
+        pulls,
+      });
+      const commit = service.get(id)?.task.pullRequest?.commit;
+      sendBack(service, id);
+      // PR の更新の直前の確認では開いていて、プッシュの後の確認ではマージされている
+      let reads = 0;
+      pulls.status = async () => ({
+        headSha: commit,
+        ...(++reads === 1
+          ? { state: "open" as const }
+          : { state: "merged" as const, mergedBy: "reviewer" }),
+      });
+      await drain(service);
+      expect(reads).toBe(2);
+      expect(stopped(service, id)[0]?.payload).toMatchObject({ was: "publishing" });
+      expect(
+        service
+          .get(id)
+          ?.activity.filter((e) => e.type === "StepSubmitted" && e.payload.step === "implement"),
+      ).toHaveLength(1);
+      expectDone(service, id, pulls);
+      activity.close();
+    });
+
+    it("実装の承認待ちの間のマージは、これまでどおり承認として完了する（作り直しの記録は残さない）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplementGate([], { pulls });
+      mergePr(pulls, service, id);
+      await service.checkPullRequests();
+      expect(stopped(service, id)).toHaveLength(0);
+      expect(tail(service, id, 2)).toEqual([
+        ["PullRequestMerged", "person"],
+        ["StepApproved", "person"],
+      ]);
+      activity.close();
+    });
+  });
+
   describe("実装の工程の中で PR を作って承認を待つ（PBI-110）", () => {
     it("工程に「PR作成」は無く、検証に通った実装の工程のまま PR を作って実装の承認待ちになり、マージで完了する", async () => {
       const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()]);
@@ -9461,7 +10113,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("差し戻しの間に前の PR がマージされたら、作り直した内容は新しい PR で出し、古い内容のマージでは承認しない（PBI-14a レビュー指摘）", async () => {
+  it("差し戻しの間に前の PR がマージされたら、新しい PR は作らず、マージを承認として完了する（PBI-14a レビュー指摘・PBI-276）", async () => {
     const { activity, service, pulls, id } = await toImplementGate([
       out(
         [
@@ -9489,15 +10141,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 作り直している間に、前の PR（1回目の提出）が GitHub でマージされた
     pulls.state = { state: "merged", mergedBy: "reviewer", headSha: first };
     await drain(service);
-    // マージ済みの PR は更新せず、新しい PR を作る
-    expect(pulls.calls[1]?.number).toBeUndefined();
+    // マージ済みの PR は更新せず、新しい PR も作らない（作り直した内容は捨て、マージを承認とする。PBI-276）
+    expect(pulls.calls).toHaveLength(1);
     const task = service.get(id)?.task;
-    expect(task?.pullRequest?.number).toBe(8);
-    expect(task?.gate).toEqual({ step: "implement", submission: 2 });
-    // 新しい PR はまだ開いている。見守っても、古い PR のマージで承認にはならない
-    pulls.state = { state: "open", headSha: task?.pullRequest?.commit };
-    await service.checkPullRequests();
-    expect(service.get(id)?.task.steps.at(-1)?.state).not.toBe("done");
+    expect(task?.pullRequest?.number).toBe(7);
+    expect(task?.pullRequestState).toBe("merged");
+    expect(task?.steps.at(-1)?.state).toBe("done");
+    expect(types(service, id).slice(-3)).toEqual([
+      "ReworkStoppedByMerge",
+      "PullRequestMerged",
+      "StepApproved",
+    ]);
     activity.close();
   });
 

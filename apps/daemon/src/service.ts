@@ -115,6 +115,7 @@ import {
   responsibleProject,
   responsibleTicketProject,
   resumeNoteRoom,
+  reworkingPullRequest,
   reworkTargets,
   SactySettings,
   type ScheduledTaskSettings,
@@ -142,6 +143,7 @@ import {
   targetImageOf,
   taskPlan,
   exportProject as toProjectExport,
+  unreflectedImplementRemarks,
   workBaseCommit,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -479,6 +481,8 @@ function clipText(text: DaemonText, max: number): DaemonText {
 }
 
 type ActivityItem = { actor: Actor; event: EventInput };
+/** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge。PBI-276）。 */
+type ReworkStage = Extract<EventInput, { type: "ReworkStoppedByMerge" }>["payload"]["was"];
 
 /** 情報収集のまとめと、読んで関係があると判断した情報源。 */
 export type GatheredInformation = { brief: string; sources: { title: string; url?: string }[] };
@@ -854,6 +858,8 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
+  private readonly mergeStopping = new Set<string>();
   /**
    * PR のフィードバックを、このデーモンが初めて見た時刻（タスクの ID → フィードバックの key → 時刻。メモリーだけ）。
    * 書き終わるのを待つ時間は、GitHub の時刻だけでなく、これも使って数える（PBI-270）。
@@ -976,6 +982,8 @@ export class TaskService {
    * 確かめられないタスク（ネットワークやアカウントの問題）は、次の確認でやり直す。
    */
   async checkPullRequests(): Promise<void> {
+    // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
+    await this.checkReworkMerges();
     // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
@@ -1069,37 +1077,10 @@ export class TaskService {
         }
         // マージは人間の承認なので、承認者は人間として記録する。要求要件・設計の PR（PBI-57）は、その工程の承認として
         // 次の工程に進める（承認した成果の書き出し（PBI-56）は、この承認の後に行う）
-        const head = edited ? status.headSha : pr.commit;
-        this.append(latest, [
-          {
-            actor: "person",
-            event: {
-              type: "PullRequestMerged",
-              payload: {
-                number: pr.number,
-                ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                ...(head ? { commit: head } : {}),
-                outdated: false,
-                submitted: pr.commit,
-                ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
-                edited,
-                ...(document ? { document } : {}),
-              },
-            },
-          },
-          {
-            actor: "person",
-            event: {
-              type: "StepApproved",
-              payload: {
-                step: pr.step,
-                next: this.nextAfterApproval(latest, pr.step),
-              },
-            },
-          },
-          // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
-          ...this.deploymentWatchEvents(latest, pr.step, pr.number, pr.repo, status.mergeCommit),
-        ]);
+        this.append(
+          latest,
+          this.mergeApprovalItems(latest, { ...pr, repo: pr.repo }, status, document),
+        );
       } else if (status.state === "closed") {
         this.append(latest, [
           { actor: "sacty", event: { type: "PullRequestClosed", payload: { number: pr.number } } },
@@ -1122,6 +1103,205 @@ export class TaskService {
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
+  }
+
+  /**
+   * 実装の作り直し（実装・最終レビュー・PR の更新が走っている・待っている。一時停止中も）の間に、人が実装の PR を
+   * マージしたタスクを探して、作り直しを止める（PBI-276）。承認待ちのタスクは、checkPullRequests が見守る。
+   * PR の状態は、プロジェクトの gh のアカウントで確かめる。確かめられないタスクは、次の確認でやり直す。
+   */
+  private async checkReworkMerges(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      const reworking = reworkingPullRequest(task);
+      if (!reworking?.repo || this.cancelling.has(task.id)) continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, reworking.repo, usedSecrets);
+        const status = await this.deps.pulls.status({
+          repo: reworking.repo,
+          token,
+          number: reworking.number,
+        });
+        if (status.state === "merged") await this.stopReworkForMerge(task.id, reworking, status);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${reworking.number}（${reworking.repo}）のマージの確認と作り直しの停止ができませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * 実装の作り直しの間に実装の PR がマージされたので、作り直しを止めて、マージを承認として進める（PBI-276）。
+   * 実行中ならコンテナを止めて終わりを待ち、止めたコンテナが無くなったことを確かめてから、作業履歴に残す。
+   * - ReworkStoppedByMerge：止めた実行と、作り直しに渡す前に捨てた指摘（理由はマージ）
+   * - 続けて PullRequestMerged・StepApproved（承認待ちのマージと同じ記録）。新しい PR は作らない
+   * 止めている間に、人が中止した・別の状態になったなら、何も記録しない。止めたコンテナを確かめられなければ、一時停止にして
+   * 人の確認を待つ（再開の前に確かめる。次の確認で、確かめ直して続ける）。
+   */
+  private async stopReworkForMerge(
+    taskId: string,
+    reworking: NonNullable<ReturnType<typeof reworkingPullRequest>>,
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+  ): Promise<void> {
+    const same = () => {
+      const task = this.tasks.get(taskId);
+      const now = task ? reworkingPullRequest(task) : undefined;
+      return task && now?.number === reworking.number && !this.cancelling.has(taskId)
+        ? task
+        : undefined;
+    };
+    const before = same();
+    if (!before) return;
+    // 承認か一時停止を記録するまで、このタスクの実行を始めさせない（止めた実行が正常に終わっていても、続きの検証を
+    // ワーカーが始めないように。runNext と queuedTaskIds が見る）
+    this.mergeStopping.add(taskId);
+    try {
+      // 一時停止のときに止めたコンテナが残っているかもしれないタスクは、止めて確かめる
+      if (before.status === "paused" && (before.unstoppedRuns?.length ?? 0) > 0) {
+        if (!(await this.confirmPausedContainers(taskId))) return;
+      }
+      const stage = this.reworkStage(before);
+      // 前の確認で止めたコンテナを確かめられず、一時停止にしていたなら、その実行も止めた実行に含める
+      let stoppedRuns = [...(before.unstoppedRuns ?? [])];
+      const inflight = this.inflight.get(taskId);
+      if (inflight) {
+        // 実行中の処理を止める。止めた実行は、一時停止にしない（止めた理由は、この後の記録に残す）
+        // （人の一時停止・中止が同時に求められていれば、その印は消さない）
+        const humanStop = this.pauseRequested.has(taskId);
+        this.pauseRequested.add(taskId);
+        stoppedRuns = [...new Set([...stoppedRuns, ...inflight.runIds])];
+        try {
+          this.stopRuns(inflight.runIds);
+          await inflight.done.catch(() => {});
+        } finally {
+          if (!humanStop) this.pauseRequested.delete(taskId);
+        }
+        const unstopped = await this.unstopped(stoppedRuns);
+        const after = this.tasks.get(taskId);
+        if (unstopped.length > 0) {
+          // 止めたコンテナを確かめられない間は、作業領域が書き換わりうるので進めない。一時停止にして人が確かめる
+          // 実行の費用で先に一時停止していた（予算など）場合も、確かめられなかった実行を残す
+          if (
+            after &&
+            (after.status === "queued" || after.status === "idle" || after.status === "paused")
+          ) {
+            this.append(after, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: "manual", ...this.unstoppedPayload(unstopped) },
+                },
+              },
+            ]);
+          }
+          return;
+        }
+      }
+      // 止めている間に、承認待ちになった（PR の更新を終えた）・中止されたなら、ここでは記録しない（承認待ちのマージは、
+      // 次の確認で確かめる）
+      this.endReworkByMerge(taskId, reworking.number, status, {
+        stoppedRuns,
+        stage: inflight && stage === "queued" ? "running" : stage,
+      });
+    } finally {
+      this.mergeStopping.delete(taskId);
+    }
+  }
+
+  /**
+   * 実装の作り直しを止めた記録と、マージの承認の記録を、同じ追記で行う（PBI-276）。作り直しの途中でなくなっていれば（承認待ちに
+   * なった・中止された・別の PR になった）何も記録せず、false を返す。実行は止めてから呼ぶ（実行中は記録できない）。
+   */
+  private endReworkByMerge(
+    taskId: string,
+    number: number,
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+    stopped: { stoppedRuns: string[]; stage?: ReworkStage },
+  ): boolean {
+    const latest = this.tasks.get(taskId);
+    const reworking = latest ? reworkingPullRequest(latest) : undefined;
+    if (!latest || !reworking || reworking.number !== number || latest.status === "running") {
+      return false;
+    }
+    if (this.cancelling.has(taskId)) return false;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ReworkStoppedByMerge",
+          payload: {
+            number,
+            was: stopped.stage ?? this.reworkStage(latest),
+            stoppedRuns: stopped.stoppedRuns,
+            discardedRemarks: unreflectedImplementRemarks(latest).map((r) => ({
+              id: r.id,
+              text: r.text,
+            })),
+            ...(latest.verifyFeedback ? { discardedFeedback: latest.verifyFeedback.kind } : {}),
+          },
+        },
+      },
+      ...this.mergeApprovalItems(
+        latest,
+        { step: "implement", number, repo: reworking.repo ?? "", commit: reworking.commit },
+        status,
+      ),
+    ]);
+    return true;
+  }
+
+  /** 実装の作り直しが、いまどの段階か（ReworkStoppedByMerge に残す）。 */
+  private reworkStage(task: Task): ReworkStage {
+    if (task.status === "paused") return "paused";
+    if (task.status === "running") return "running";
+    if (task.publishPending) return "publishing";
+    if (task.verification !== undefined) return "verifying";
+    return "queued";
+  }
+
+  /**
+   * 人が PR をマージした記録（PullRequestMerged と、その工程の承認 StepApproved。実装の PR なら、マージのコミットの
+   * CI/CD とデプロイの監視の開始も）。承認待ちの PR のマージ（checkPullRequests）と、実装の作り直しの間のマージ
+   * （stopReworkForMerge。PBI-276）が同じ記録を作る。人が PR の中で直してからマージした（PR の先頭が sacty の出した
+   * コミットと違う）なら、人が直した最終のコミットも残す（PBI-63）。
+   */
+  private mergeApprovalItems(
+    task: Task,
+    pr: { step: StepKey; number: number; repo: string; commit: string },
+    status: Extract<PullRequestStatus, { state: "merged" }>,
+    document?: PullRequestMerge["document"],
+  ): ActivityItem[] {
+    const edited = status.headSha !== pr.commit;
+    const head = edited ? status.headSha : pr.commit;
+    return [
+      {
+        actor: "person",
+        event: {
+          type: "PullRequestMerged",
+          payload: {
+            number: pr.number,
+            ...(status.mergedBy ? { by: status.mergedBy } : {}),
+            ...(head ? { commit: head } : {}),
+            outdated: false,
+            submitted: pr.commit,
+            ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
+            edited,
+            ...(document ? { document } : {}),
+          },
+        },
+      },
+      {
+        actor: "person",
+        event: {
+          type: "StepApproved",
+          payload: { step: pr.step, next: this.nextAfterApproval(task, pr.step) },
+        },
+      },
+      // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
+      ...this.deploymentWatchEvents(task, pr.step, pr.number, pr.repo, status.mergeCommit),
+    ];
   }
 
   /**
@@ -5396,7 +5576,13 @@ export class TaskService {
               // 完了したタスクの監査（PBI-125）
               this.awaitingAudit(t),
         )
-        .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
+        .filter(
+          (t) =>
+            !this.cancelling.has(t.id) &&
+            !this.pauseRequested.has(t.id) &&
+            // PR のマージで作り直しを止めている間は、実行を始めさせない（PBI-276）
+            !this.mergeStopping.has(t.id),
+        )
         // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
         .sort(
           (a, b) =>
@@ -5529,7 +5715,11 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              ...(step === "operation" ? this.unstoppedPayload([task.currentRunId]) : {}),
+              // 作業を止めたコンテナが残っているかもしれない実装の作り直し（開いた PR がある）も、実行を残す。PR のマージで
+              // 作り直しを止めるとき（PBI-276）、停止を確かめてから承認へ進むため
+              ...(step === "operation" || reworkingPullRequest(task)
+                ? this.unstoppedPayload([task.currentRunId])
+                : {}),
             },
           },
         },
@@ -5997,7 +6187,13 @@ export class TaskService {
    * 実行中に人間が一時停止を求めたら、終わったところで一時停止として記録する。
    */
   async runNext(taskId: string): Promise<void> {
-    if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    if (
+      this.cancelling.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      this.mergeStopping.has(taskId)
+    ) {
+      return;
+    }
     const task = this.tasks.get(taskId);
     if (task && this.parentCancelled(task)) {
       if (task.status === "cancelled" || isCompleted(task)) return;
@@ -6051,6 +6247,8 @@ export class TaskService {
   private pauseIfRequested(taskId: string, unstoppedRuns: string[] = []): void {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
+    // PR のマージで止めた実行（PBI-276）は、人の一時停止にしない（stopReworkForMerge が、止めた理由とともに承認として進める）
+    if (this.mergeStopping.has(taskId)) return;
     const task = this.tasks.get(taskId);
     if (task?.status !== "queued" && task?.status !== "idle") return;
     this.append(task, [
@@ -8392,6 +8590,29 @@ export class TaskService {
       return fail(message("pr.workspaceMissing"));
     }
     const repo = target.repo;
+    // 実装の作り直しの間に、人が前の PR をマージしていたら、プッシュも PR の作成もせず、マージを承認として進める
+    // （新しい PR を作らない。PBI-276。マージの確認は 60 秒ごとなので、確認の前に PR の更新が始まることがある。
+    // 引き継いだ既存の PR も同じ）
+    // （引き継いだ PR は、初めて提出するまで task.pullRequest が無いので、引き継いだ PR を見る）
+    const earlier = task.pullRequest ?? task.continuedPullRequest;
+    if (earlier?.number && earlier.repo) {
+      try {
+        const earlierToken = await this.githubToken(task, earlier.repo, usedSecrets);
+        const now = await this.deps.pulls.status({
+          repo: earlier.repo,
+          token: earlierToken,
+          number: earlier.number,
+        });
+        if (
+          now.state === "merged" &&
+          this.endReworkByMerge(task.id, earlier.number, now, { stoppedRuns: [] })
+        ) {
+          return "stopped";
+        }
+      } catch (error) {
+        return fail(message("pr.failed", { detail: errorText(error) }));
+      }
+    }
     // 既存の PR を引き継ぐタスクは、その PR の元のブランチに実装を積み、新しい PR を作らない
     const continued = task.continuedPullRequest;
     if (continued) {
@@ -8468,7 +8689,13 @@ export class TaskService {
       let number = task.pullRequest?.number;
       if (number && task.pullRequest?.repo === prRepo) {
         const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
-        if (previous.state === "merged") number = undefined;
+        if (previous.state === "merged") {
+          // プッシュの間にマージされた（PBI-276）：新しい PR は作らず、マージを承認として進める
+          if (this.endReworkByMerge(task.id, number, previous, { stoppedRuns: [] })) {
+            return "stopped";
+          }
+          number = undefined;
+        }
       }
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -8649,6 +8876,13 @@ export class TaskService {
         token,
         number: continued.number,
       });
+      // プッシュの間にマージされた（PBI-276）：マージを承認として進める
+      if (
+        now.state === "merged" &&
+        this.endReworkByMerge(task.id, continued.number, now, { stoppedRuns: [] })
+      ) {
+        return;
+      }
       if (now.state !== "open") {
         fail(message("pr.continuedNotOpen", { number: continued.number }));
         return;

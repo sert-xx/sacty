@@ -108,6 +108,20 @@ const ja = {
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
   } satisfies Record<PauseReason, string>,
+  /** 実装の作り直しを、PR のマージで止めたときの段階（ReworkStoppedByMerge）。 */
+  reworkStage: {
+    queued: "実行待ち",
+    running: "実行中",
+    verifying: "最終レビューの途中",
+    publishing: "PR の更新の途中",
+    paused: "一時停止中",
+  },
+  /** 捨てた、やり直しに渡すはずだった検証の結果の種類。 */
+  discardedFeedback: {
+    tests: "テスト",
+    review: "最終レビュー",
+    merge: "競合の目印",
+  },
   auth: {
     subscription: "サブスクリプション",
     "api-key": "APIキー",
@@ -362,6 +376,14 @@ const ja = {
       `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、Sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、Sacty の版を承認済みにした" : ""}`,
     PullRequestClosed: (number: number) => `PR #${number} がマージされずに閉じられた・判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
+    ReworkStoppedByMerge: (
+      number: number,
+      stage: string,
+      runs: number,
+      remarks: string[],
+      feedback: string | undefined,
+    ) =>
+      `PR #${number} がマージされたため、実装の作り直しを止めた（${stage}${runs > 0 ? `・実行${runs}件を停止` : ""}）${remarks.length > 0 ? `。作り直しに渡す前の指摘${remarks.length}件を捨てた（${remarks.join("、")}）` : ""}${feedback ? `。やり直しに渡すはずだった${feedback}の結果を捨てた` : ""}。マージを承認として進める`,
     PullRequestConflicted: (number: number) =>
       `PR #${number} がベースブランチと競合している（取り込みは、差し戻しか指摘のときに行う）`,
     PullRequestConflictResolved: (number: number) => `PR #${number} の競合が解消された`,
@@ -641,6 +663,18 @@ const en: LabelMessages = {
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
   },
+  reworkStage: {
+    queued: "queued",
+    running: "running",
+    verifying: "in the final review",
+    publishing: "updating the PR",
+    paused: "paused",
+  },
+  discardedFeedback: {
+    tests: "tests",
+    review: "final review",
+    merge: "conflict markers",
+  },
   auth: {
     subscription: "Subscription",
     "api-key": "API key",
@@ -846,6 +880,8 @@ const en: LabelMessages = {
       `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
+    ReworkStoppedByMerge: (number, stage, runs, remarks, feedback) =>
+      `PR #${number} was merged, so the rework of the implementation was stopped (${stage}${runs > 0 ? `, ${runs} run${runs === 1 ? "" : "s"} stopped` : ""})${remarks.length > 0 ? `. Discarded ${remarks.length} comment${remarks.length === 1 ? "" : "s"} not yet passed to the rework (${remarks.join(", ")})` : ""}${feedback ? `. Discarded the ${feedback} result meant for the next attempt` : ""}. The merge is taken as the approval`,
     PullRequestConflicted: (number) =>
       `PR #${number} conflicts with the base branch (it is merged in when you send it back or comment)`,
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,

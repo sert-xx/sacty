@@ -646,6 +646,16 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":
       return e.PullRequestReopened(event.payload.number);
+    case "ReworkStoppedByMerge":
+      return e.ReworkStoppedByMerge(
+        event.payload.number,
+        l.reworkStage[event.payload.was],
+        event.payload.stoppedRuns.length,
+        event.payload.discardedRemarks.map((r) => r.id),
+        event.payload.discardedFeedback
+          ? l.discardedFeedback[event.payload.discardedFeedback]
+          : undefined,
+      );
     case "PullRequestConflicted":
       return e.PullRequestConflicted(event.payload.number);
     case "PullRequestConflictResolved":

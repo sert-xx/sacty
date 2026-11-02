@@ -103,7 +103,7 @@ While it is a draft before the final review, the label is not added (the record 
 - The label is attached only once per PR (repository and number).
   - A PR with a record does not get the label again when the same PR is updated. There are no duplicate labels, no re-adding a label a person removed, and no retry after failure.
   - A PR without a record (for example, one opened before the setting was configured) gets the label the next time it is updated.
-  - When the PR is recreated (the earlier PR was merged or closed and a PR with a new number was opened), the new PR gets the label.
+  - When the PR is recreated (the earlier PR was closed and a PR with a new number was opened), the new PR gets the label.
 - If cancel or pause was requested and the requirements or design PR was not recorded, the label is not attached.
 - The plan to attach is kept in the PR's publish record (`label` in `PullRequestPublished` and `StepPullRequestPublished`) before attaching.
   - A PR that stopped (shutdown or crash) after the publish was recorded but before the label was attached gets the label from the PR check (every 60 seconds, also after restart). The check attaches it when there is a plan, there is no record of attaching or failing, and the PR is open.
@@ -129,12 +129,39 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - If the status, PR, or commit changes during the check, nothing is recorded.
 - If the PR is merged, or closed without merging, while comments are being imported (for example while the Goal Guardian is judging), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
 - When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
+- At the start of the check, the implementation PR of a task that is reworking the implementation (not waiting for approval) is also checked ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)).
 - At the end of the check, the following are done in order.
   1. Memories whose PR promoting them to context was merged are deleted (`cleanupPromotedMemories`; [Memory](memory.en.md#promotion-to-context)).
   2. For PR review intake tasks that have not finished, the PR is checked, and the task is cancelled if the PR was merged or closed without merging (`checkReviewPullRequests`).
   3. PRs that stopped after the publish but before the label was attached get the label (`resumePullRequestLabels`; [The review label on PRs](#the-review-label-on-prs)).
   4. The CI of tasks waiting for the CI of the implementation PR opened before the final review is checked (`checkVerificationCi`; [Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)).
   5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
+
+### Merging during a rework of the implementation
+
+If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review; the task is not waiting for approval), the merge is taken as the approval and the rework is stopped. No new PR is created.
+
+- Targets (`reworkingPullRequest`): tasks whose active step is Implement and whose status is queued (`queued`), running (`running`), waiting (`idle`, for example in the final review), or paused (`paused`), and whose PR in `Task.pullRequest` is open (`pullRequestState` is `open`) or was closed while waiting for approval and then sent back (`closed`; it may be reopened and merged on GitHub, and whether it is merged is decided by GitHub's state).
+  - The same applies when a person takes the draft PR before the final review out of draft and merges it.
+  - A continued existing PR (`Task.continuedPullRequest`) has no `Task.pullRequest` until the first submission. During that time (for example while the implementation is reworked because the first final review failed), the continued PR is watched. The projection then records the continued PR as the implementation PR before recording the merge (the commit is the head of the PR when it was taken over).
+  - While Requirements or Design is being redone (the active step is not Implement), nothing is watched. When the task reaches Implement and the PR is already merged, the rework is stopped in the same way.
+  - Tasks waiting for approval or escalated are watched by the check above.
+- Check: the PR status is read (with the project's gh account; if it cannot be read, the next check tries again). Only when it is merged, the following is done. Nothing is done while it is open or closed.
+  1. If something is running, its containers are stopped and the task waits for it to end (the same as pause and cancel; the stopped run is not recorded as a person's pause). If it cannot be confirmed that the stopped containers are gone, the task is paused and does not move on (the next check confirms again).
+     Until the approval or the pause is recorded, no run of the task is started (even if the stopped run ended normally, the worker does not start the next verification; `runNext` and `queuedTaskIds` look at `mergeStopping`).
+     If the daemon stopped during an implementation run and was restarted, recovery (`recoverInterrupted`) keeps the run of an implementation rework (one with an open PR) in `unstoppedRuns` and pauses the task, so it does not move on to approval until the stop is confirmed.
+     Runs whose containers could not be confirmed stopped when the task was paused (`unstoppedRuns`) are included in the stopped runs that are recorded.
+     Even if the task had already paused because of the cost of the stopped run that ended normally (the budget, for example), the runs that could not be confirmed stopped are added to `unstoppedRuns` (the pause reason stays as it is; a `TaskPaused` for a task that is already paused is accepted only when it adds `unstoppedRuns`). The task does not move on to approval until they are confirmed.
+  2. If, meanwhile, the task reached approval, was cancelled, or changed to another state, nothing is recorded here (a task that reached approval is handled by the check above).
+  3. `ReworkStoppedByMerge` (actor `sacty`) is recorded, followed in the same append by `PullRequestMerged` and `StepApproved` (actor `person`; starting the after-merge watch is the same as in "Merged" above).
+- Content of `ReworkStoppedByMerge`: the number of the merged PR, the stage when stopped (`was`: `queued`, `running`, `verifying`, `publishing`, `paused`), the stopped runs (`stoppedRuns`), the comments discarded before being passed to the rework (`discardedRemarks`: id and text; the comments of the last rejection that were not passed to a submitted PR), and the kind of the discarded verification result (`discardedFeedback`: `tests`, `review`, `merge`). The reason is the merge.
+  - The projection returns the task to waiting for the Implement approval (the gate's submission is the number of submissions so far, or 1 if there is none), voids the discarded comments, and clears the verification, the wait for PR creation, and the pause state. The following `PullRequestMerged` and `StepApproved` then approve it.
+  - The body of the approved result (`approved.implement.output`) is the latest implementation report on record. The commit of the PR is the truth for what was merged.
+- Just before the PR is updated (`publish`, including updating a continued existing PR), it is also checked whether the earlier PR has been merged. If it has, nothing is pushed and no PR is created; the same records approve it (for when the PR update starts before the check).
+  If it is found merged by the check after the push (the check for whether to create a new PR, or the check of a continued PR), no new PR is created and the task is not paused either; the same records approve it (for when the PR is merged during the push).
+- Later checks do not record again, because the task is already approved.
+
+Code: `apps/daemon/src/service.ts` (`checkReworkMerges`, `stopReworkForMerge`, `endReworkByMerge`, `mergeApprovalItems`, `publish`, `pauseIfRequested`), `packages/core/src/projection.ts` (`reworkingPullRequest`, `unreflectedImplementRemarks`, `ReworkStoppedByMerge`)
 
 ### Showing a conflict with the base branch
 
