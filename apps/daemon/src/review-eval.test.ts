@@ -248,7 +248,17 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
     expect(evalRuns("")).toBe(1);
     expect(evalRuns("1")).toBe(1);
     expect(evalRuns("5")).toBe(5);
-    for (const v of ["abc", "0", "-1", "1.5", "NaN", "1e3", "Infinity"]) {
+    for (const v of [
+      "abc",
+      "0",
+      "-1",
+      "1.5",
+      "NaN",
+      "1e3",
+      "Infinity",
+      "9".repeat(400),
+      "9007199254740993",
+    ]) {
       expect(() => evalRuns(v), v).toThrow("1 以上の整数");
     }
   });
@@ -270,22 +280,80 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
     }
   });
 
-  it("判定の JSON として読めない出力は、評価せず失敗する（空・文章だけ・別の形）", () => {
-    for (const bad of ["", "判定なし", '{"findings": "なし"}', "```json\n{\n```"]) {
-      expect(() => assertReviewerVerdict(bad), bad).toThrow("判定の JSON として読めません");
+  it("環境変数が設定されていても、引数が省略（undefined）なら既定の挙動になる（環境変数を読まない）", () => {
+    const keep = { e: process.env.SACTY_REVIEW_EVAL, r: process.env.SACTY_REVIEW_EVAL_RUNS };
+    process.env.SACTY_REVIEW_EVAL = "1";
+    process.env.SACTY_REVIEW_EVAL_RUNS = "5";
+    try {
+      expect(evalEnabled(undefined)).toBe(false);
+      expect(evalRuns(undefined)).toBe(1);
+    } finally {
+      for (const [k, v] of [
+        ["SACTY_REVIEW_EVAL", keep.e],
+        ["SACTY_REVIEW_EVAL_RUNS", keep.r],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
-    expect(() => assertReviewerVerdict('{"findings": []}')).not.toThrow();
+  });
+
+  it("観点担当の判定は、観点・status・指摘の形まで確かめ、読めなければ評価せず失敗する", () => {
+    const ok = (o: Record<string, unknown>) =>
+      JSON.stringify({ viewpoint: "D-10", status: "passed", findings: [], ...o });
+    for (const bad of [
+      "",
+      "判定なし",
+      '{"findings": "なし"}',
+      "```json\n{\n```",
+      '{"findings": []}', // viewpoint・status が無い
+      ok({ viewpoint: "D-3" }), // 別の観点
+      ok({ status: 1 }),
+      ok({ findings: [{}] }), // title・severity が無い
+      ok({ findings: [{ title: "x", severity: "major" }] }),
+      ok({ findings: [null] }),
+    ]) {
+      expect(() => assertReviewerVerdict(bad, "D-10"), bad).toThrow("判定の JSON として読めません");
+    }
+    expect(() => assertReviewerVerdict(ok({}), "D-10")).not.toThrow();
+    expect(() =>
+      assertReviewerVerdict(ok({ findings: [{ title: "x", severity: "nit" }] }), "D-10"),
+    ).not.toThrow();
+  });
+
+  it("最終レビューの判定は、期待する観点がすべて揃い、各観点の verified と summary まで確かめる（空の viewpoints では成功しない）", () => {
+    const block = (v: Record<string, unknown>) =>
+      `説明\n\`\`\`json\n${JSON.stringify({ "sacty-final-review": v })}\n\`\`\``;
+    const good = {
+      viewpoints: [
+        { id: "TV-1", verified: true },
+        { id: "TV-2", verified: false },
+      ],
+      summary: "ok",
+    };
     for (const bad of [
       "",
       "判定なし",
       '```json\n{"x": 1}\n```',
-      '```json\n{"sacty-final-review": {}}\n```',
+      block({}),
+      block({ viewpoints: [], summary: "ok" }), // 空の配列
+      block({ ...good, viewpoints: [{ id: "TV-1", verified: true }] }), // 観点が足りない
+      block({
+        ...good,
+        viewpoints: [
+          { id: "TV-1", verified: "yes" },
+          { id: "TV-2", verified: true },
+        ],
+      }),
+      block({ ...good, viewpoints: [{ verified: true }, { id: "TV-2", verified: true }] }),
+      block({ viewpoints: good.viewpoints }), // summary が無い
     ]) {
-      expect(() => assertFinalReviewVerdict(bad), bad).toThrow("判定の JSON として読めません");
+      expect(() => assertFinalReviewVerdict(bad, ["TV-1", "TV-2"]), bad).toThrow(
+        "判定の JSON として読めません",
+      );
     }
-    expect(() =>
-      assertFinalReviewVerdict('説明\n```json\n{"sacty-final-review": {"viewpoints": []}}\n```'),
-    ).not.toThrow();
+    expect(() => assertFinalReviewVerdict(block(good), ["TV-1", "TV-2"])).not.toThrow();
+    expect(() => assertFinalReviewVerdict(block(good), [])).toThrow(); // 期待する観点が無いときも成功させない
   });
 
   it("skillsDir を指定すると、依頼文の観点の「見るもの」「見ないもの」は、その版のカタログから取る（変更前の版の評価に新しい文言が混ざらない）", () => {
@@ -392,8 +460,10 @@ describe("観点の指示の文言（PBI-282）", () => {
 });
 
 // ここから先は、実際の AI を呼ぶ確認。SACTY_REVIEW_EVAL=1 のときだけ走る。
-const live = evalEnabled() ? describe : describe.skip;
-const RUNS = evalEnabled() ? evalRuns() : 1;
+const live = evalEnabled(process.env.SACTY_REVIEW_EVAL) ? describe : describe.skip;
+const RUNS = evalEnabled(process.env.SACTY_REVIEW_EVAL)
+  ? evalRuns(process.env.SACTY_REVIEW_EVAL_RUNS)
+  : 1;
 const MINUTES = 25 * 60_000;
 /** 結果を標準出力に出し、SACTY_REVIEW_EVAL_LOG があればそのファイルにも追記する（指示の変更の前後を並べて読むため）。 */
 function record(text: string) {
@@ -411,7 +481,7 @@ live(`実際の AI に当てる（${RUNS} 回ずつ）`, () => {
       for (let run = 1; run <= RUNS; run++) {
         const ws = s18Workspace(SKILLS);
         const { output } = runAgent(ws.prompt, { cwd: ws.repo, addDirs: [SKILLS, ws.dir] });
-        assertReviewerVerdict(output);
+        assertReviewerVerdict(output, "D-10");
         const findings = findingsOf(output);
         record(`[s18 run ${run}] 指摘 ${findings.length} 件\n${JSON.stringify(findings, null, 2)}`);
         const removed = removesRepositoryRuleCondition(findings);
@@ -433,7 +503,7 @@ live(`実際の AI に当てる（${RUNS} 回ずつ）`, () => {
     const task = s12Task();
     const ids = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
     const { output } = runAgent(s12FinalReviewPrompt(ws.diff), { cwd: ws.dir, addDirs: [] });
-    assertFinalReviewVerdict(output);
+    assertFinalReviewVerdict(output, ids);
     const review = extractFinalReview(output, ids, [], {});
     const scope = review.viewpoints.find((v) => v.viewpointId === "SCOPE");
     const reported = scope && !scope.verified ? JSON.stringify(scope.reason) : "";

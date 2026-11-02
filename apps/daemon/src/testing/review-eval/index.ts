@@ -292,35 +292,69 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
 }
 
 /** SACTY_REVIEW_EVAL_RUNS（1 以上の整数）。省略は 1。数でない・0・負・小数はエラーにする（ループが回らず合格するのを防ぐ）。 */
-export function evalRuns(raw = process.env.SACTY_REVIEW_EVAL_RUNS): number {
+export function evalRuns(raw: string | undefined): number {
   if (raw === undefined || raw === "") return 1;
   if (!/^[1-9][0-9]*$/.test(raw.trim())) {
     throw new Error(
       `SACTY_REVIEW_EVAL_RUNS は 1 以上の整数で指定してください：${JSON.stringify(raw)}`,
     );
   }
-  return Number(raw.trim());
+  const runs = Number(raw.trim());
+  // 長い数字列は Infinity や丸められた値になるので、変換後も確かめる
+  if (!Number.isSafeInteger(runs)) {
+    throw new Error(
+      `SACTY_REVIEW_EVAL_RUNS は 1 以上の整数で指定してください：${JSON.stringify(raw)}`,
+    );
+  }
+  return runs;
 }
 
 /** AI の実際の評価（SACTY_REVIEW_EVAL）が有効か。文書どおり "1" のときだけ。 */
-export function evalEnabled(raw = process.env.SACTY_REVIEW_EVAL): boolean {
+export function evalEnabled(raw: string | undefined): boolean {
   return raw === "1";
 }
 
-/** 観点担当の出力が、指摘の一覧（findings の配列）を持つ判定の JSON か。読めなければ評価せず失敗させる。 */
-export function assertReviewerVerdict(output: string): void {
-  if (!Array.isArray(parseObject(output)?.findings)) {
-    throw new Error(`観点担当の出力が判定の JSON として読めません：\n${output.slice(-500)}`);
+/**
+ * 観点担当の出力が、期待する観点（viewpoint）の判定の JSON か。観点・status・指摘の形（severity・title）まで確かめる。
+ * 読めなければ評価せず失敗させる。
+ */
+export function assertReviewerVerdict(output: string, viewpoint: string): void {
+  const v = parseObject(output);
+  const findings = v?.findings;
+  const ok =
+    v?.viewpoint === viewpoint &&
+    typeof v.status === "string" &&
+    Array.isArray(findings) &&
+    findings.every((f) => {
+      const r = f as Record<string, unknown> | null;
+      return (
+        typeof r?.title === "string" &&
+        r.title !== "" &&
+        ["must", "should", "nit"].includes(String(r.severity))
+      );
+    });
+  if (!ok) {
+    throw new Error(`観点 ${viewpoint} の判定の JSON として読めません：\n${output.slice(-500)}`);
   }
 }
 
-/** 最終レビューの出力が、見出し sacty-final-review の判定の JSON（観点の配列つき）を持つか。読めなければ評価せず失敗させる。 */
-export function assertFinalReviewVerdict(output: string): void {
+/**
+ * 最終レビューの出力が、見出し sacty-final-review の判定の JSON か。期待する観点（expectedIds）がすべて揃い、
+ * それぞれ verified が真偽値、summary が文字列であることまで確かめる。読めなければ評価せず失敗させる。
+ */
+export function assertFinalReviewVerdict(output: string, expectedIds: readonly string[]): void {
   const blocks = [...output.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)].map((m) => m[1] ?? "");
   const ok = blocks.some((b) => {
     try {
       const v = JSON.parse(b)?.["sacty-final-review"];
-      return v && typeof v === "object" && Array.isArray(v.viewpoints);
+      if (!v || typeof v !== "object" || !Array.isArray(v.viewpoints)) return false;
+      if (typeof v.summary !== "string") return false;
+      const byId = new Map<string, unknown>();
+      for (const vp of v.viewpoints) {
+        if (typeof vp?.id !== "string" || typeof vp.verified !== "boolean") return false;
+        byId.set(vp.id, vp);
+      }
+      return expectedIds.length > 0 && expectedIds.every((id) => byId.has(id));
     } catch {
       return false;
     }

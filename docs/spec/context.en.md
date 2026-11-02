@@ -68,7 +68,7 @@ In the default Codex settings, the limit on reviewers open at the same time is `
 
 The tier of the subagent that runs a reviewer (`lite`, `entry`, `standard`, `advanced`, `ultimate`) is decided per viewpoint in "Tier per viewpoint" of the viewpoint catalog. The parent starts the reviewer by naming the subagent of that tier (the definition sacty places under `agents/` in the config location; see "Files placed for a run" below). For a tier without a definition, the parent starts the reviewer with its own model and writes "same as the parent" in the "tier" column of the launch table.
 
-When you change the instructions for a viewpoint, check the change by giving a real AI a fixed example close to a miss found in the experiments (`review-eval.test.ts`).
+When a person changes the instructions for a viewpoint by hand, they can measure the effect by giving a real AI a fixed example close to a miss found in the experiments (an optional, manual measuring procedure in `review-eval.test.ts`; it is not asked of the agents in the steps).
 There are two examples, with the experiment's input shortened and kept under `testing/review-eval/fixtures/`: D-10 removing a condition derived from the repository's rules (S18), and the final review missing a changed 422 message after a refactoring that merged checks (S12).
 The fixed checks (the example really has the problem's shape, the wording of the instructions, and how a verdict is read) always run with the tests.
 The checks that call an AI run only with `SACTY_REVIEW_EVAL=1`; run the same example several times (`SACTY_REVIEW_EVAL_RUNS`) before and after the change to the instructions and compare.
