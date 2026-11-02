@@ -265,15 +265,38 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
 
   it("AI の実行が失敗した（起動できない・異常終了）ときは、評価せず失敗する。正常に終われば出力を返す", () => {
     const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-agent-"));
+    // 指示文を標準入力から読み切ってから終わる模擬の AI（読まずに終わると、書き込みの途中でパイプが閉じて EPIPE になりうる）
+    const script = (name: string, body: string) => {
+      const path = join(dir, name);
+      writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      return path;
+    };
     const before = process.env.SACTY_REVIEW_EVAL_AGENT;
-    const withAgent = (agent: string) => {
+    const withAgent = (agent: string, prompt = "x") => {
       process.env.SACTY_REVIEW_EVAL_AGENT = agent;
-      return runAgent("x", { cwd: dir });
+      return runAgent(prompt, { cwd: dir });
     };
     try {
       expect(() => withAgent("sacty-no-such-command-xyz")).toThrow("AI の実行に失敗しました");
-      expect(() => withAgent("false")).toThrow("終了コード 1");
+      expect(() => withAgent(script("fail.sh", "cat >/dev/null\nexit 1"))).toThrow("終了コード 1");
       expect(withAgent("cat")).toMatchObject({ output: "x", status: 0 });
+    } finally {
+      if (before === undefined) delete process.env.SACTY_REVIEW_EVAL_AGENT;
+      else process.env.SACTY_REVIEW_EVAL_AGENT = before;
+    }
+  });
+
+  it("指示文を読まずに終わる AI（大きな入力で EPIPE になる）でも、実行の失敗として終了コードつきで失敗する（成功にも別の失敗にもならない）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-agent-"));
+    const before = process.env.SACTY_REVIEW_EVAL_AGENT;
+    process.env.SACTY_REVIEW_EVAL_AGENT = "false";
+    try {
+      // 小さい入力は、書き終えてから終わるか EPIPE かが揺れる。どちらでも同じ形で失敗する
+      for (const prompt of ["x", "y".repeat(2_000_000)]) {
+        expect(() => runAgent(prompt, { cwd: dir }), String(prompt.length)).toThrow(
+          /AI の実行に失敗しました：.*終了コード 1/,
+        );
+      }
     } finally {
       if (before === undefined) delete process.env.SACTY_REVIEW_EVAL_AGENT;
       else process.env.SACTY_REVIEW_EVAL_AGENT = before;

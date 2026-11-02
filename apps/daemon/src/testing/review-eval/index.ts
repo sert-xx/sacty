@@ -282,9 +282,17 @@ export function runAgent(prompt: string, options: { cwd: string; addDirs?: strin
   });
   // 起動に失敗・時間切れ・異常終了した実行を、「指摘なし」「申告なし」として評価に混ぜない
   if (result.error || result.status !== 0) {
-    const reason = result.error
-      ? result.error.message
-      : `終了コード ${result.status}${result.signal ? `（シグナル ${result.signal}）` : ""}`;
+    // 指示文を読まずに終わるコマンドは、書き込みの途中でパイプが閉じて EPIPE の error が付く（終了コードも付く）ので、両方を書く
+    const reason = [
+      result.error?.message,
+      result.status !== 0 && result.status !== null
+        ? `終了コード ${result.status}${result.signal ? `（シグナル ${result.signal}）` : ""}`
+        : result.signal
+          ? `シグナル ${result.signal}`
+          : undefined,
+    ]
+      .filter(Boolean)
+      .join("、");
     throw new Error(
       `AI の実行に失敗しました：${reason}\n${(result.stderr ?? "").toString().slice(-500)}`,
     );
