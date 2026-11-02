@@ -1214,6 +1214,15 @@ export class TaskService {
     ]);
   }
 
+  /** 再開したタスクに、反映する指摘がある・再開の直後に読み直す必要があるか（PBI-279）。 */
+  private heldReviewDue(task: Task): boolean {
+    return (
+      (task.status === "queued" || task.status === "idle") &&
+      reworkingPullRequest(task) !== undefined &&
+      (this.heldRecheck.has(task.id) || task.pendingReview !== undefined)
+    );
+  }
+
   /**
    * 再開したタスクの、止まった工程を走り直す前に、一時停止の間に届いた PR の指摘を反映する（PBI-279）。再開の直前に書かれた
    * 指摘もあるので、再開した直後にもう一度読む。未反映の指摘があれば、ゴールガーディアンに戻し先を判断させ（承認待ちの
@@ -6615,7 +6624,8 @@ export class TaskService {
   private async runNextInner(taskId: string): Promise<void> {
     // 一時停止の間に届いた PR の指摘は、止まった工程を走り直す前に反映する（PBI-279）
     const held = this.tasks.get(taskId);
-    if (held && (await this.reworkHeldReview(held))) return;
+    // （反映の対象でなければ、待たずに先へ進む。待つと、ほかの処理との順番が変わる）
+    if (held && this.heldReviewDue(held) && (await this.reworkHeldReview(held))) return;
     const initial = this.tasks.get(taskId);
     // 承認した成果の書き出しは、次の工程と取り込み元へのコメントの前に行う（コメントに URL を添えるため。PBI-56）
     const exporting = initial && awaitingExport(initial);
