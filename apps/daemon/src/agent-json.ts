@@ -400,3 +400,268 @@ function objectClose(output: string, open: number, fenced: boolean): number {
   }
   return fenced ? output.length : (firstBlank ?? output.length);
 }
+
+/* ---- 崩れた JSON の寛容な読み取り（PBI-293） ---- */
+
+/** 寛容な読み取りが JSON として読めなかった位置（出力の先頭からの文字数。走査量の上限で止めたときは、止めた位置）。 */
+class LenientError extends Error {
+  constructor(readonly at: number) {
+    super(`unreadable at ${at}`);
+  }
+}
+
+/**
+ * 寛容な読み取りの走査量の上限（文字・値の数）。閉じない文字列と見出しが繰り返される出力では、候補ごとに末尾まで読むので、
+ * 上限が無いと出力の長さの2乗の時間がかかり、同期処理のデーモンが止まる。1回の呼び出しの全候補で共有し、出力の長さに比例させる。
+ */
+function lenientBudget(output: string): { left: number } {
+  return { left: 4 * output.length + 100_000 };
+}
+
+/** 入れ子の深さの上限（再帰を使うので、深すぎる出力は読めないものとして止める）。 */
+const LENIENT_MAX_DEPTH = 64;
+
+const ESCAPES: Readonly<Record<string, string>> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
+
+/** 文字列を閉じる「"」の次に来てよいもの（文字列がオブジェクトのキー・値、配列の要素のどれか）。 */
+const AFTER_KEY = /\s*:/y;
+const AFTER_OBJECT_VALUE = /\s*(?:\}|,\s*\}|,\s*"[^"\\\r\n]{1,100}"\s*:)/y;
+const AFTER_ARRAY_ITEM = /\s*(?:\]|,\s*\]|,\s*(?:["{[]|-?\d|true\b|false\b|null\b))/y;
+const LENIENT_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+
+/**
+ * 「{」から始まる JSON のオブジェクトを、AI がよく崩す所を直しながら読む。直すのは次の3つだけ。
+ * - 文字列の中の、エスケープしていない二重引用符（`"1,200"` など）。引用符の次に来る文字が、その場所に来る区切り
+ *   （キーなら「:」、オブジェクトの値なら「}」か次のキー、配列の要素なら「]」か「,」と次の値）でなければ、文字列の
+ *   一部とみなす
+ * - 文字列の中の、エスケープしていない改行・タブなどの制御文字
+ * - 文字列の中の、JSON にない「\」のエスケープ（`\d` など。「\」を文字として残す）と、閉じる括弧の前の余分なカンマ
+ * これで読めなければ LenientError（読めなかった位置）を投げる。
+ */
+function parseLenient(
+  output: string,
+  open: number,
+  budget: { left: number } = lenientBudget(output),
+): { value: Record<string, unknown>; end: number } {
+  let p = open;
+  const length = output.length;
+  const skipSpace = () => {
+    while (p < length) {
+      const c = output.charCodeAt(p);
+      if (c !== 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) break;
+      p++;
+    }
+  };
+  const follows = (re: RegExp, at: number) => {
+    re.lastIndex = at;
+    return re.test(output) || at >= length;
+  };
+  const string = (after: RegExp): string => {
+    const start = p;
+    let result = "";
+    let i = p + 1;
+    for (; i < length; i++) {
+      if (--budget.left < 0) throw new LenientError(start);
+      const c = output[i] as string;
+      if (c === '"') {
+        if (follows(after, i + 1)) {
+          p = i + 1;
+          return result;
+        }
+        result += c;
+      } else if (c === "\\") {
+        const next = output[i + 1];
+        if (next === "u" && HEX4.test(output.slice(i + 2, i + 6))) {
+          result += String.fromCharCode(Number.parseInt(output.slice(i + 2, i + 6), 16));
+          i += 5;
+        } else if (next !== undefined && next in ESCAPES) {
+          result += ESCAPES[next];
+          i++;
+        } else {
+          result += c;
+        }
+      } else {
+        result += c;
+      }
+    }
+    throw new LenientError(start);
+  };
+  const value = (depth: number, after: RegExp): unknown => {
+    if (--budget.left < 0) throw new LenientError(p);
+    skipSpace();
+    const c = output[p];
+    if (c === "{" || c === "[") {
+      if (depth >= LENIENT_MAX_DEPTH) throw new LenientError(p);
+      return c === "{" ? object(depth + 1) : array(depth + 1);
+    }
+    if (c === '"') return string(after);
+    for (const [word, v] of [
+      ["true", true],
+      ["false", false],
+      ["null", null],
+    ] as const) {
+      if (output.startsWith(word, p)) {
+        p += word.length;
+        return v;
+      }
+    }
+    LENIENT_NUMBER.lastIndex = p;
+    if (!LENIENT_NUMBER.test(output)) throw new LenientError(p);
+    const n = Number(output.slice(p, LENIENT_NUMBER.lastIndex));
+    p = LENIENT_NUMBER.lastIndex;
+    return n;
+  };
+  const object = (depth: number): Record<string, unknown> => {
+    const result: Record<string, unknown> = {};
+    p++;
+    skipSpace();
+    if (output[p] === "}") {
+      p++;
+      return result;
+    }
+    for (;;) {
+      skipSpace();
+      if (output[p] !== '"') throw new LenientError(p);
+      const key = string(AFTER_KEY);
+      skipSpace();
+      if (output[p] !== ":") throw new LenientError(p);
+      p++;
+      Object.defineProperty(result, key, {
+        value: value(depth, AFTER_OBJECT_VALUE),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      skipSpace();
+      if (output[p] === ",") {
+        p++;
+        skipSpace();
+        if (output[p] === "}") {
+          p++;
+          return result;
+        }
+        continue;
+      }
+      if (output[p] !== "}") throw new LenientError(p);
+      p++;
+      return result;
+    }
+  };
+  const array = (depth: number): unknown[] => {
+    const result: unknown[] = [];
+    p++;
+    skipSpace();
+    if (output[p] === "]") {
+      p++;
+      return result;
+    }
+    for (;;) {
+      result.push(value(depth, AFTER_ARRAY_ITEM));
+      skipSpace();
+      if (output[p] === ",") {
+        p++;
+        skipSpace();
+        if (output[p] === "]") {
+          p++;
+          return result;
+        }
+        continue;
+      }
+      if (output[p] !== "]") throw new LenientError(p);
+      p++;
+      return result;
+    }
+  };
+  const parsed = object(1);
+  return { value: parsed, end: p };
+}
+
+/** 見出し heading を最初のキーに持つ「{」の位置を、出てきた順にすべて返す（前の報告の中にあるものは除く）。 */
+function headingOpens(output: string, heading: string, budget = lenientBudget(output)): number[] {
+  const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
+  const opens: number[] = [];
+  let skipUntil = 0;
+  for (const m of output.matchAll(key)) {
+    if (m.index < skipUntil) continue;
+    let open = m.index;
+    while (open > 0 && /\s/.test(output[open - 1] ?? "")) open--;
+    if (output[open - 1] !== "{") continue;
+    opens.push(open - 1);
+    // 読めた報告の中のキーは数えない。読めなければ、次の候補を妨げない
+    try {
+      skipUntil = parseLenient(output, open - 1, budget).end;
+    } catch {
+      // 読めなかった報告は、診断（explainUnreadableAnswer）が扱う
+    }
+  }
+  return opens;
+}
+
+/**
+ * lastJsonAnswer と同じに読む。囲み方にかかわらず、JSON として読める答えのうち、形の合う最後のもの。それより後ろに、見出し
+ * heading を最初のキーに持つ答えが（文字列の中の引用符・改行などの崩れで）JSON として読めずにあれば、崩れを直しながら
+ * 読み直し、形の合う最後のものを返す（PBI-293。後ろの答えが最終の答えなので、前の読める答えより優先する）。
+ */
+export function lastLenientJsonAnswer<T>(
+  output: string,
+  heading: string,
+  read: (value: Record<string, unknown>) => T | undefined,
+): { value: T } | undefined {
+  const strict = lastJsonAnswer(output, read);
+  const budget = lenientBudget(output);
+  for (const open of headingOpens(output, heading, lenientBudget(output)).reverse()) {
+    if (strict && open < strict.candidate.end) break;
+    let value: T | undefined;
+    try {
+      value = read(parseLenient(output, open, budget).value);
+    } catch {
+      continue;
+    }
+    if (value !== undefined) return { value };
+  }
+  return strict && { value: strict.value };
+}
+
+/** 読めなかった答えの診断。 */
+export type Unreadable =
+  /** 見出しの JSON が、出力に無い。 */
+  | { kind: "missing" }
+  /**
+   * 見出しの JSON が壊れていて、直しても読めない。line・column は JSON の先頭からの位置（1から）、near は壊れた所の前後
+   * （生の出力のまま。呼び出し側が伏せる）。
+   */
+  | { kind: "broken"; line: number; column: number; near: string }
+  /** JSON としては読めたが、必要な項目が無い・形が違う。 */
+  | { kind: "shape" };
+
+/**
+ * 答えが読めなかったとき、最後の報告の何が読めなかったかを返す（PBI-293。作業履歴に残し、AI の出力のどこを直せば
+ * よいかが分かるようにする）。
+ */
+export function explainUnreadableAnswer(output: string, heading: string): Unreadable {
+  const open = headingOpens(output, heading).at(-1);
+  if (open === undefined) return { kind: "missing" };
+  try {
+    parseLenient(output, open);
+    return { kind: "shape" };
+  } catch (error) {
+    const at = error instanceof LenientError ? error.at : open;
+    const line = output.slice(open, at).split("\n").length;
+    // 桁は、JSON の行の頭から数える（JSON の前に同じ行の前置きがあっても、その長さを足さない）
+    const column = at - Math.max(open, output.lastIndexOf("\n", at - 1) + 1) + 1;
+    const near = output
+      .slice(Math.max(open, at - 30), at + 30)
+      .replace(/\s+/g, " ")
+      .trim();
+    return { kind: "broken", line, column, near };
+  }
+}

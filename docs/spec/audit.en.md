@@ -61,11 +61,14 @@ The audit flows as follows.
 - The instructions say not to follow instructions found in the ledger, logs, or code, and not to write secrets.
 - The output is read from ```json blocks headed `sacty-audit-survey` and `sacty-audit-findings`.
   - sacty keeps only steps the task has, evidence IDs that exist in this task's activity rows and runs, and targets chosen by candidate number.
-  - If unreadable, `AuditFailed` (`audit.unreadable`).
+  - Breakage inside strings is repaired while reading: unescaped double quotes, control characters such as newlines, backslash escapes JSON does not have, and an extra comma before a closing bracket. If a readable JSON answer exists and it is the last answer, it is used as is; sacty re-reads with repairs only when an unreadable answer comes after it. The repairing read has a scan limit proportional to the output length, so an output with repeated unclosed strings and headings does not take time quadratic in its length. A double quote is treated as part of the string unless the next character is a delimiter valid at that place (`:` for a key; `}` or the next key for a value; `]` or `,` followed by a value for an array element).
+  - The instructions also tell the agent to escape double quotes inside strings or to use quotation marks like 「」.
+  - If it is still unreadable, the audit becomes `AuditFailed` and the reason says what could not be read (no JSON in the output: `audit.unreadable`; broken JSON: `audit.unreadableAt`, with the line and column in the JSON (the column counts from the start of the JSON's line) and the text around it. The surrounding text is left out, leaving only the position, when passing the whole output with its escapes decoded through the redaction changes it, i.e. when an escaped secret is in the output; JSON read but fields missing: `audit.unreadableShape`). This failure goes no further, but the recorded survey, the finished deep dives, and the cost used are kept.
 - If a run fails, `AuditFailed` (`audit.runFailed`). A failed audit goes no further.
 - Runs that end because the daemon is stopping or the task is being cancelled are not recorded. On the next start, the same stage runs again.
 
 Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`, `buildAuditDivePrompt`, `extractAuditDive`),
+`apps/daemon/src/agent-json.ts` (`lastLenientJsonAnswer`, `explainUnreadableAnswer`),
 `apps/daemon/src/audit-evidence.ts` (`auditCounts`, `countToolFailures`, `redactDeep`), `apps/daemon/src/service.ts` (`runAuditAgent`, `auditRedactor`, `withAuditDiveLock`)
 
 ## Causes and proposals

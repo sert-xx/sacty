@@ -9092,6 +9092,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("最終レビューをやり直したとき、前の回が人が確かめることに挙げた項目を、2回目の判定が空でも引き継ぐ。理由を書いて外した項目だけ外す（PBI-294）", async () => {
+    const RATE = "率の検査が Number() で読むので 1e1・0x10 も整数として受ける";
+    const QUEUE = "範囲内か判断できない：queue.ts の直列化のキュー（設計に無い）";
+    const verdict = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      // 1回目：範囲外の別の1件で不合格。人が確かめることを2件挙げる
+      verdict({ outOfScope: ["a.ts の変更：どの要求要件にも無い"], humanChecks: [RATE, QUEUE] }),
+      implement("# v2"),
+      // 2回目：人が確かめることが空。キューは範囲内と確かめて外す理由を書く
+      verdict({ humanChecks: [], droppedHumanChecks: ["P2：設計の節で範囲内と確かめた"] }),
+    ]);
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload).toMatchObject({
+      passed: false,
+      humanChecks: [RATE, QUEUE],
+    });
+    expect(first?.type === "FinalReviewed" && first.payload).not.toHaveProperty(
+      "droppedHumanChecks",
+    );
+    // 1回目の指示には、引き継ぎの節が無い。やり直しの指示には、前の回の項目が番号つきで入る
+    expect(promptOf(executor, 4)).not.toContain("前の回の最終レビューが挙げた");
+    expect(promptOf(executor, 6)).toContain(`- [P1] ${RATE}`);
+    expect(promptOf(executor, 6)).toContain(`- [P2] ${QUEUE}`);
+    // 2回目の判定：外さなかった項目が残り、外した項目と理由は記録に残る
+    expect(second?.type === "FinalReviewed" && second.payload).toMatchObject({
+      passed: true,
+      humanChecks: [RATE],
+      droppedHumanChecks: [`${QUEUE} → 外した理由：設計の節で範囲内と確かめた`],
+    });
+    // 最新の判定が、次の回の引き継ぎ元になる
+    expect(service.get(id)?.task.lastReview?.humanChecks).toEqual([RATE]);
+    activity.close();
+  });
+
   describe("最終レビューの出力から判定を読み取れないとき（PBI-277）", () => {
     // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
     const unreadable = () =>
@@ -31724,6 +31775,112 @@ describe("完了したタスクの監査（PBI-125）", () => {
     await service.runNext(id);
     expect(service.get(id)?.task.audit?.failed?.reason).toEqual({ code: "audit.unreadable" });
     expect(service.queuedTaskIds()).not.toContain(id);
+  });
+
+  it("深掘りの出力の文字列に二重引用符があっても、読んで深掘りの結果を記録する（S16 r3。PBI-293）", async () => {
+    const broken = [
+      "```json",
+      "{",
+      '  "sacty-audit-findings": {',
+      '    "summary": "入力が "1,200" や "abc" のときの扱いが決まっていない",',
+      '    "findings": []',
+      "  }",
+      "}",
+      "```",
+    ].join("\n");
+    const { service, id } = await completedTask((invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "差し戻しが多い" }])
+        : isDive(invocation)
+          ? out(broken)
+          : undefined,
+    );
+    await service.runNext(id);
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(auditEvents(service, id).map((e) => e.type)).toEqual([
+      "AuditQueued",
+      "AuditSurveyed",
+      "AuditDeepDived",
+      "AuditCompleted",
+    ]);
+    expect(service.get(id)?.task.audit?.dives[0]?.summary).toBe(
+      '入力が "1,200" や "abc" のときの扱いが決まっていない',
+    );
+  });
+
+  it("2つ目の深掘りの出力が直しても読めなければ、読めなかった所を作業履歴に残し、記録済みの大まかな監査・1つ目の深掘り・費用は残す（PBI-293）", async () => {
+    const twoSteps = async () => ({
+      steps: ["requirements" as const, "design" as const],
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+    });
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [], { audit: true, planner: twoSteps });
+    const { service, executor } = made;
+    const brokenSecond = out(
+      '```json\n{\n  "sacty-audit-findings": {\n    "summary": "x",\n    "findings": [ { "title": \n```',
+      3000,
+    );
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        return survey(
+          [
+            { step: "requirements", reason: "差し戻しが多い" },
+            { step: "design", reason: "やり直しが多い" },
+          ],
+          1000,
+        );
+      }
+      if (isDive(invocation)) {
+        return prompt(invocation).includes("深掘りする工程：要求要件")
+          ? dive(
+              [
+                {
+                  title: "受け入れ条件の書き方が決まっていない",
+                  detail: "説明",
+                  evidence: [],
+                  proposals: [{ title: "規約に書く", body: "本文", target: 0 }],
+                },
+              ],
+              2000,
+            )
+          : brokenSecond;
+      }
+      return out("# 本文");
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API", body: "冪等にする" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "design", submission: 1 });
+    await service.runNext(task.id); // 大まかな監査
+    await service.runNext(task.id); // 1つ目の深掘り（成功）
+    await service.runNext(task.id); // 2つ目の深掘り（読めない）
+    const events = auditEvents(service, task.id);
+    expect(events.map((e) => e.type)).toEqual([
+      "AuditQueued",
+      "AuditSurveyed",
+      "AuditDeepDived",
+      "AuditFailed",
+    ]);
+    const audit = service.get(task.id)?.task.audit;
+    expect(audit?.failed?.step).toBe("design");
+    expect(audit?.failed?.reason).toMatchObject({
+      code: "audit.unreadableAt",
+      params: { line: 5 },
+    });
+    // 大まかな監査の結果・1つ目の深掘りとその原因は残る
+    expect(audit?.survey?.concerns.map((c) => c.step)).toEqual(["requirements", "design"]);
+    expect(audit?.dives).toHaveLength(1);
+    expect(audit?.dives[0]).toMatchObject({ step: "requirements" });
+    expect(audit?.findings.map((f) => f.title)).toEqual(["受け入れ条件の書き方が決まっていない"]);
+    // 費用は、3回の実行の合計（出力トークン 1000 + 2000 + 3000。1000 出力トークン = $0.015）
+    expect(audit?.usedUsd).toBeCloseTo(0.09, 6);
+    const costs = events.map((e) => (e.payload as { auditCostUsd?: number }).auditCostUsd ?? 0);
+    expect(costs.reduce((sum, c) => sum + c, 0)).toBeCloseTo(0.09, 6);
+    expect(costs.at(-1)).toBeCloseTo(0.045, 6);
   });
 
   it("実行に失敗したら、監査の失敗として理由を記録する", async () => {
