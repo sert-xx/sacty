@@ -1246,6 +1246,28 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4"]);
     });
 
+    it("中断の印（signal）を通信に渡す：中断された一覧の取得・投稿・書き換えは、リクエストの途中で止まる", async () => {
+      const seen: (AbortSignal | undefined)[] = [];
+      const impl = (async (_url: string, init: RequestInit) => {
+        seen.push(init.signal ?? undefined);
+        if (init.signal?.aborted) throw init.signal.reason;
+        return new Response("[]", { status: 200 });
+      }) as unknown as typeof fetch;
+      const client = new GitHubPullRequests(impl);
+      const controller = new AbortController();
+      const base = { repo: pr.repo, token: pr.token, signal: controller.signal };
+      await client.listIssueComments({ ...base, number: 7, prefix: "x" });
+      await client.commentIssue({ ...base, number: 7, body: "b" });
+      await client.editIssueComment({ ...base, id: 1, body: "b" });
+      expect(seen).toEqual([controller.signal, controller.signal, controller.signal]);
+      controller.abort(new Error("期限"));
+      await expect(client.listIssueComments({ ...base, number: 7, prefix: "x" })).rejects.toThrow(
+        "期限",
+      );
+      await expect(client.commentIssue({ ...base, number: 7, body: "b" })).rejects.toThrow("期限");
+      await expect(client.editIssueComment({ ...base, id: 1, body: "b" })).rejects.toThrow("期限");
+    });
+
     it("ほかに知っている sacty のアカウント（noticeAccounts）の止まったことの投稿も除く（それ以外のコメントは除かない）", async () => {
       const comments = [
         comment(1, "other-project-bot", notice("t3")),

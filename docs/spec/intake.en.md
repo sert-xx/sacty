@@ -166,6 +166,10 @@ The person who asked for the review watches only the PR and would not notice fro
   Comments that start with the marker and were posted by that task's account or by the account of a sacty task that reviewed the PR are excluded when sacty imports PR remarks (`feedback`).
   For the existing comments passed to the review step, sacty also excludes those of accounts chosen for the same host in other projects (`noticeAccounts`).
   Comments that other accounts wrote imitating the marker are not excluded.
+- Deadline: posting a notice and rewriting it as resolved each have a deadline for the whole operation (getting the token, listing, posting, rewriting, and, for the rewrite, waiting for a notice being posted): 30 seconds (`stopNoticeTimeoutMs`).
+  When it passes, sacty also aborts the requests, logs a warning, and ends. Cutting only the wait would let a late notice be posted afterwards and stay unresolved.
+  If the rewrite cannot wait past its deadline, sacty also stops the requests of the same task's notices that have not finished.
+  So even if a notice's request never finishes, the review-posting step returns and releases its execution slot.
 - When it cannot write: sacty logs a warning in the daemon log. It does not change whether the task is paused or completed.
   After a daemon restart, sacty does not rewrite a notice that failed.
   The same holds when rewriting it as resolved fails (the old comment stays).

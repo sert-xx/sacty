@@ -663,6 +663,11 @@ export type ServiceDeps = {
    */
   webUrl?: string;
   /**
+   * レビューが止まったことの PR への知らせ（投稿・解消済みへの書き換え）の、処理全体の期限（ミリ秒。PBI-292）。既定は 30 秒。
+   * 超えたら通信も止めて、警告にして終える（実行の枠を放す）。
+   */
+  stopNoticeTimeoutMs?: number;
+  /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
    */
@@ -5587,6 +5592,13 @@ export class TaskService {
    * できた知らせを取りこぼさない）。
    */
   private readonly stopNotices = new Map<string, Promise<void>>();
+  /** タスクごとの、知らせの通信を止める印（解消が期限を超えたとき、まだ終わっていない知らせの通信を止めて、後から投稿させない）。 */
+  private readonly stopNoticeAborts = new Map<string, AbortController>();
+
+  /** 知らせの処理全体の期限（PBI-292）。 */
+  private stopNoticeDeadline(): AbortSignal {
+    return AbortSignal.timeout(this.deps.stopNoticeTimeoutMs ?? 30_000);
+  }
 
   /**
    * Sacty のレビューが止まったことを PR に知らせる処理を、そのタスクの順番の最後に足す。止まった時点の理由と説明は、ここで
@@ -5603,6 +5615,8 @@ export class TaskService {
       text: this.stopReasonText(task),
       target,
     };
+    const abort = this.stopNoticeAborts.get(task.id) ?? new AbortController();
+    this.stopNoticeAborts.set(task.id, abort);
     // 前の処理が無ければすぐ始める（一時停止の状態を読むのを、遅らせない）
     const previous = this.stopNotices.get(task.id);
     const run = previous
@@ -5610,7 +5624,9 @@ export class TaskService {
       : this.postReviewStopNotice(stop);
     this.stopNotices.set(task.id, run);
     void run.finally(() => {
-      if (this.stopNotices.get(task.id) === run) this.stopNotices.delete(task.id);
+      if (this.stopNotices.get(task.id) !== run) return;
+      this.stopNotices.delete(task.id);
+      this.stopNoticeAborts.delete(task.id);
     });
   }
 
@@ -5627,6 +5643,9 @@ export class TaskService {
   }): Promise<void> {
     const { taskId, reason, target } = stop;
     const usedSecrets: string[] = [];
+    // 処理全体の期限か、解消が期限を超えて待てなくなったとき、通信ごと止める（止めずに待ちだけ切ると、遅れて投稿される）
+    const abort = this.stopNoticeAborts.get(taskId);
+    const signal = AbortSignal.any([this.stopNoticeDeadline(), ...(abort ? [abort.signal] : [])]);
     try {
       // 待っている間に再開・中止された（今は止まっていない）なら、書かない
       if (this.tasks.get(taskId)?.status !== "paused") return;
@@ -5634,28 +5653,39 @@ export class TaskService {
       const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
       // GitHub のアカウントを選んでいないプロジェクトでは、PR に書けない（画面と Slack で知らせる）
       if (!account) return;
-      const token = await this.githubToken(stop, target.repo, usedSecrets, project);
+      const token = await untilAborted(
+        signal,
+        this.githubToken(stop, target.repo, usedSecrets, project),
+      );
       const summary = stopSummary(stop.text, usedSecrets);
       const key = stopKey(reason, summary);
       const pr = { repo: target.repo, token, number: target.number };
-      const same = await this.deps.pulls.listIssueComments({
-        ...pr,
-        prefix: stopMarker(taskId, key),
-        account,
-      });
+      const same = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({
+          ...pr,
+          prefix: stopMarker(taskId, key),
+          account,
+          signal,
+        }),
+      );
       if (same.length > 0) return;
       // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
       if (this.tasks.get(taskId)?.status !== "paused") return;
       const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
-      await this.deps.pulls.commentIssue({
-        ...pr,
-        body: buildStopNotice({
-          taskId,
-          reason,
-          summary,
-          taskUrl: `${base}/tasks/${taskId}`,
+      await untilAborted(
+        signal,
+        this.deps.pulls.commentIssue({
+          ...pr,
+          body: buildStopNotice({
+            taskId,
+            reason,
+            summary,
+            taskUrl: `${base}/tasks/${taskId}`,
+          }),
+          signal,
         }),
-      });
+      );
     } catch (error) {
       console.warn(
         `[daemon] タスク ${taskId} のレビューが止まったことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -5674,28 +5704,43 @@ export class TaskService {
   ): Promise<void> {
     const { taskId, target } = posted;
     const usedSecrets: string[] = [];
-    // 投稿の最中の知らせがあれば、できあがるのを待ってから、解消する対象を取る
-    await this.stopNotices.get(taskId);
+    // 待ちも通信も、1つの期限の中で行う。超えたら、まだ終わっていない知らせの通信も止める（後から投稿させない）
+    const signal = this.stopNoticeDeadline();
     try {
+      // 投稿の最中の知らせがあれば、できあがるのを待ってから、解消する対象を取る
+      await untilAborted(signal, this.stopNotices.get(taskId) ?? Promise.resolve());
       const project = this.deps.projects.get(posted.projectId);
       const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
       if (!account) return;
-      const token = await this.githubToken(posted, target.repo, usedSecrets, project);
+      const token = await untilAborted(
+        signal,
+        this.githubToken(posted, target.repo, usedSecrets, project),
+      );
       const pr = { repo: target.repo, token, number: target.number };
-      const notices = await this.deps.pulls.listIssueComments({
-        ...pr,
-        prefix: stopMarkerOfTask(taskId),
-        account,
-      });
+      const notices = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({
+          ...pr,
+          prefix: stopMarkerOfTask(taskId),
+          account,
+          signal,
+        }),
+      );
       for (const notice of notices.filter((n) => isOpenStopNotice(n.body))) {
-        await this.deps.pulls.editIssueComment({
-          repo: target.repo,
-          token,
-          id: notice.id,
-          body: buildResolvedNotice(notice.body, reviewUrl),
-        });
+        await untilAborted(
+          signal,
+          this.deps.pulls.editIssueComment({
+            repo: target.repo,
+            token,
+            id: notice.id,
+            body: buildResolvedNotice(notice.body, reviewUrl),
+            signal,
+          }),
+        );
       }
     } catch (error) {
+      // 期限を超えて待てなかったなら、まだ終わっていない知らせの通信も止める（後から投稿されて、解消されないまま残らないように）
+      if (signal.aborted) this.stopNoticeAborts.get(taskId)?.abort();
       console.warn(
         `[daemon] タスク ${taskId} のレビューが止まったことの投稿を解消済みにできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
@@ -13957,4 +14002,20 @@ function notConfirmed(outcome: AgentOutcome): boolean {
     typeof outcome.message === "object" &&
     outcome.message.code === "run.containerNotConfirmed"
   );
+}
+
+/**
+ * signal が中断されたら、work の結果を待たずに、中断の理由で失敗する（PBI-292。通信が signal を無視しても、待ちから戻れるように）。
+ * 中断した後の work の失敗は、ここでは扱わない（呼ぶ側が、signal を通信に渡して止める）。
+ */
+function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
+  if (signal.aborted) {
+    work.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }

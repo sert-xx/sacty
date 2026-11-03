@@ -87,6 +87,8 @@ export interface PullRequests {
     token: string;
     number: number;
     body: string;
+    /** 中断（PBI-292。レビューが止まったことの知らせが、処理全体の期限を超えたとき）。 */
+    signal?: AbortSignal;
   }): Promise<{ url: string }>;
   /**
    * Issue・PR のコメントのうち、本文が prefix で始まるもの（PBI-292。レビューが止まったことの投稿を探す）。account があれば、
@@ -98,9 +100,18 @@ export interface PullRequests {
     number: number;
     prefix: string;
     account?: string;
+    /** 中断（読み込み中のリクエストも止める）。 */
+    signal?: AbortSignal;
   }): Promise<{ id: number; url: string; body: string }[]>;
   /** Issue・PR のコメントの本文を直す（PBI-292。レビューが止まったことの投稿を、解消済みにする）。id は listIssueComments の答え。 */
-  editIssueComment(input: { repo: string; token: string; id: number; body: string }): Promise<void>;
+  editIssueComment(input: {
+    repo: string;
+    token: string;
+    id: number;
+    body: string;
+    /** 中断。 */
+    signal?: AbortSignal;
+  }): Promise<void>;
   /**
    * Org（またはユーザー）の URL の、リポジトリの URL（アーカイブしたものは除く）。プロジェクトの対象の
    * Org から、タスクの対象リポジトリを選ぶため（PBI-25）。
@@ -420,9 +431,10 @@ export class GitHubPullRequests implements PullRequests {
     path: string,
     token: string,
     action: "getReviews" | "listIssueComments" | "listEvents",
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>[]> {
     const { api, base } = repoApi(repo);
-    return this.listAt(api, `${base}${path}`, token, action);
+    return this.listAt(api, `${base}${path}`, token, action, signal);
   }
 
   /** API の URL の一覧を、すべてのページから読む。 */
@@ -431,6 +443,7 @@ export class GitHubPullRequests implements PullRequests {
     first: string,
     token: string,
     action: "getReviews" | "listIssueComments" | "listRepositories" | "listEvents",
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -440,7 +453,7 @@ export class GitHubPullRequests implements PullRequests {
     const all: Record<string, unknown>[] = [];
     let url: string | undefined = first;
     for (let page = 0; url && page < MAX_PAGES; page++) {
-      const res = await this.fetchImpl(url, { headers });
+      const res = await this.fetchImpl(url, { headers, ...(signal ? { signal } : {}) });
       const json = (await res.json().catch(() => ({}))) as unknown;
       if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
@@ -477,6 +490,7 @@ export class GitHubPullRequests implements PullRequests {
           "content-type": "application/json",
         },
         body: JSON.stringify({ body: input.body }),
+        ...(input.signal ? { signal: input.signal } : {}),
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -490,6 +504,7 @@ export class GitHubPullRequests implements PullRequests {
       `/issues/${input.number}/comments?per_page=100`,
       input.token,
       "listIssueComments",
+      input.signal,
     );
     return comments.flatMap((c) => {
       const login = (c.user as { login?: unknown } | null)?.login;
@@ -516,6 +531,7 @@ export class GitHubPullRequests implements PullRequests {
         "content-type": "application/json",
       },
       body: JSON.stringify({ body: input.body }),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     if (!res.ok) {
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;

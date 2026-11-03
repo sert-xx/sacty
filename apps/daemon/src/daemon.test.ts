@@ -753,7 +753,15 @@ class FakePulls implements PullRequests {
   /** Issue へのコメント（調査の結果。PBI-18）。 */
   issueComments: { repo: string; token: string; number: number; body: string }[] = [];
   commentFail?: string;
-  async commentIssue(input: { repo: string; token: string; number: number; body: string }) {
+  async commentIssue(input: {
+    repo: string;
+    token: string;
+    number: number;
+    body: string;
+    signal?: AbortSignal;
+  }) {
+    // 本物の fetch と同じく、中断された通信は終わる（遅れて投稿されない。PBI-292）
+    if (input.signal?.aborted) throw input.signal.reason;
     if (this.commentFail) throw new Error(this.commentFail);
     this.issueComments.push(input);
     return {
@@ -778,7 +786,9 @@ class FakePulls implements PullRequests {
     number: number;
     prefix: string;
     account?: string;
+    signal?: AbortSignal;
   }) {
+    if (input.signal?.aborted) throw input.signal.reason;
     this.listedAccounts.push(input.account);
     if (this.listFail) throw new Error(this.listFail);
     return this.issueComments.flatMap((c, i) =>
@@ -797,7 +807,8 @@ class FakePulls implements PullRequests {
   }
   editFail?: string;
   editAttempts = 0;
-  async editIssueComment(input: { id: number; body: string }) {
+  async editIssueComment(input: { id: number; body: string; signal?: AbortSignal }) {
+    if (input.signal?.aborted) throw input.signal.reason;
     this.editAttempts++;
     if (this.editFail) throw new Error(this.editFail);
     const comment = this.issueComments[input.id - 1];
@@ -1187,6 +1198,8 @@ function makeService(
     secrets?: Record<string, string>;
     repos?: FakeRepos;
     pulls?: FakePulls;
+    /** レビューが止まったことの PR への知らせの期限（PBI-292）。 */
+    stopNoticeTimeoutMs?: number;
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
@@ -1260,6 +1273,7 @@ function makeService(
     defaultContext: options.defaultContext,
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.stopNoticeTimeoutMs ? { stopNoticeTimeoutMs: options.stopNoticeTimeoutMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
@@ -7087,6 +7101,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         });
         const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
         await service.runNext(id);
+        await settle();
         service.resume(id, {});
         await service.runNext(id);
         await service.runNext(id);
@@ -7334,6 +7349,130 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         expect(bodies[0]).toContain("Selected model is at capacity");
         expect(bodies[1]).toContain("disk full");
         expect(bodies[2]).toContain("network down");
+        activity.close();
+      });
+
+      /** 終わらない通信を、期限で諦める（諦めないと、テストが終わらない）。 */
+      const within = <T>(work: Promise<T>) =>
+        Promise.race([
+          work,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("期限を超えても戻らない")), 3_000),
+          ),
+        ]);
+
+      it("知らせの投稿の通信が終わらなくても、期限で通信を止めて警告にし、レビューの投稿の処理を終える", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const release = Promise.withResolvers<void>();
+        const entered = Promise.withResolvers<AbortSignal | undefined>();
+        class HangingPost extends FakePulls {
+          override async commentIssue(input: {
+            repo: string;
+            token: string;
+            number: number;
+            body: string;
+            signal?: AbortSignal;
+          }) {
+            entered.resolve(input.signal);
+            await release.promise;
+            return super.commentIssue(input);
+          }
+        }
+        const pulls = new HangingPost();
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+          stopNoticeTimeoutMs: 50,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        const signal = await entered.promise;
+        service.resume(id, {});
+        await service.runNext(id);
+        // 知らせの通信が終わらないまま、レビューの投稿の処理は期限で終わる
+        await within(service.runNext(id));
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(pulls.reviews).toHaveLength(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
+        // 待ちだけでなく通信も止める。遅れて終わっても、投稿されない
+        expect(signal?.aborted).toBe(true);
+        release.resolve();
+        await settle();
+        expect(pulls.issueComments).toEqual([]);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("解消済みへの書き換えの通信が終わらなくても、期限で通信を止めて警告にし、完了のまま終える", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const entered = Promise.withResolvers<AbortSignal | undefined>();
+        class HangingEdit extends FakePulls {
+          override async editIssueComment(input: {
+            id: number;
+            body: string;
+            signal?: AbortSignal;
+          }) {
+            entered.resolve(input.signal);
+            await new Promise(() => {});
+          }
+        }
+        const pulls = new HangingEdit();
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+          stopNoticeTimeoutMs: 50,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(1);
+        service.resume(id, {});
+        await service.runNext(id);
+        await within(service.runNext(id));
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
+        expect((await entered.promise)?.aborted).toBe(true);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("知らせの一覧の取得が終わらなくても、期限で警告にして終わり、次の知らせの処理を塞がない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        class HangingList extends FakePulls {
+          hang = true;
+          override async listIssueComments(input: {
+            repo: string;
+            number: number;
+            prefix: string;
+            account?: string;
+            signal?: AbortSignal;
+          }) {
+            if (this.hang) await new Promise(() => {});
+            return super.listIssueComments(input);
+          }
+        }
+        const pulls = new HangingList();
+        const { service } = makeService(activity, [capacity, capacity], {
+          pulls,
+          planner: reviewPlanner,
+          stopNoticeTimeoutMs: 50,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
+        // 期限で終わったので、次に止まったときの知らせは、前の待ちに塞がれずに書ける
+        pulls.hang = false;
+        service.resume(id, {});
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(1);
+        warn.mockRestore();
         activity.close();
       });
 
