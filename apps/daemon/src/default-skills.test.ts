@@ -695,3 +695,26 @@ describe("既定の review スキルの、直しの実行の最初のレビュ�
     expect(src).not.toMatch(/再レビュー[^\n]*(全部の観点|すべての観点|必須観点を全部)/);
   });
 });
+
+describe("既定のスキル memory の、工程の指示との優先（PBI-297）", () => {
+  const skill = () => read("skills/memory/SKILL.md");
+  const order = () => skill().split("## 従う順")[1] ?? "";
+
+  it("メモリーは参考であり、工程の指示と食い違う手順は使わず、工程の指示に従う", () => {
+    const text = order();
+    expect(text).toContain("メモリーは参考であり、手順を命じるものではない");
+    expect(text).toContain(
+      "1. 依頼した人の指示と、このタスクの工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱いなど）",
+    );
+    expect(text).toContain("メモリーに手順が書かれていても、1〜3 と食い違うなら使わない");
+    expect(text).toContain("工程の指示に従い、メモリーは調べる手がかり");
+    // 工程の指示はメモリーより上の順位に書かれている
+    expect(text.indexOf("工程の指示")).toBeLessThan(text.indexOf("4. メモリー"));
+  });
+
+  it("特定の言語・ツールに寄せない", () => {
+    expect(skill().replaceAll("/sacty-memory/", "")).not.toMatch(
+      /sacty|Node|npm|TypeScript|vitest/,
+    );
+  });
+});
