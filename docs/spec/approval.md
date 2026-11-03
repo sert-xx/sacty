@@ -224,6 +224,25 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 
 コード: `apps/daemon/src/service.ts`（`checkHeldFeedback`・`holdFeedback`・`reworkHeldReview`・`settleHeldReview`・`withoutStaleReviews`・`resume`・`heldRecheck`）、`packages/core/src/projection.ts`（`heldReview`・`PullRequestReviewImported`・`ChangesRequested`）、`apps/web/src/components/task-detail.tsx`（`HeldReviewNotice`）、`apps/web/src/lib/labels.ts`（`statusText`）
 
+### 承認待ちでの一時停止
+
+関係する ADR: [承認待ち（PR のマージ待ち）でも一時停止できるようにする](../adr/20261104-0600-pause-while-awaiting-approval.md)
+
+承認待ち（`awaiting_approval`）のタスクも、人が一時停止できる。マージを待っている間に、PR の取り込みを止めたいときに使う。エスカレーション（`escalated`）は止められない。
+
+- 一時停止：エージェントの実行が無いので、その場で `TaskPaused`（actor `person`、理由 `manual`）を記録する。承認ゲート（`gate`）と PR の記録はそのまま残し、再開の先として `resumeTo: awaiting_approval` を持つ。
+  ゴールガーディアンが変更の申し出を判定している間は、これまでどおり止められない。
+- 止めている間は、承認も差し戻しもできない（状態が `paused`）。PR の取り込みと見守りは、PR の種類で次のとおり。
+  - 実装の PR：実装を作り直している間の PR と同じ扱い（`reworkingPullRequest`）。マージされたら、`ReworkStoppedByMerge`（`was: paused`）に続けて `PullRequestMerged`・`StepApproved` を記録して承認として進める（[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。再開は要らない。届いた指摘は未反映として残す（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。ゴールガーディアンは動かさない。
+  - 要求要件・設計の PR：止めている間は見守らない。マージも指摘も、再開したあとの確認で扱う。
+- 再開：`TaskResumed` が承認待ちに戻す（承認ゲートは残っているので、承認の画面がそのまま使える）。エージェントは動かさない。
+  止めていた間に起きたことは、再開のあとの PR の確認（60秒ごと）が取り込む。
+  - マージされていれば、承認として進める（[PR の確認](#pr-の確認)）。
+  - 残した指摘（実装の PR）は、そのまま承認待ちの取り込みが引き継ぐ。ゴールガーディアンが戻し先を判断して差し戻す。止めている間に書かれた指摘も、同じ確認で取り込む。
+- 通知：人が止めたので、Slack には送らない。再開して同じ承認ゲートに戻ったときも、承認待ちの通知はし直さない（`notificationFor`）。
+
+コード: `apps/daemon/src/service.ts`（`pause`）、`apps/daemon/src/notifier.ts`（`notificationFor`）、`packages/core/src/projection.ts`（`TaskPaused`・`TaskResumed`・`resumeTo`・`reworkingPullRequest`）、`apps/web/src/components/task-detail.tsx`（`canPause`）
+
 ### ベースブランチとの競合の表示
 
 承認待ちの間に先の PR がマージされて、実装の PR がベースブランチと競合したら、タスクの画面と「あなたの出番」に出す。
@@ -481,6 +500,35 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
 
 コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
+
+### 人に確かめてほしいこと
+
+関係する ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261104-0610-surface-human-asks.md)
+
+PR の指摘を受けた作り直しで、指摘の意図が合っているかを人が確かめないと分からないことがある。承認の画面の隅や作業履歴にしか出ないと、PR を見ている人は気づけない。次の2つを「人に確かめてほしいこと」（`humanAsks`）として、PR のコメントと、承認の画面・タスクの詳細の目立つ所に出す。
+
+- 判断できなかった理由（`undecided`）：ゴールガーディアンが戻し先を判断できず（`prRework.decided` が偽）、実装などをやり直したとき。理由は、ゴールガーディアンが書いた文（何が読み取れなかったか）。理由が sacty の文言のとき（ゴールガーディアンの実行の失敗・出力を読めなかった）は、指摘の読み方ではないので出さない。
+- 実行の聞き返し・推測で決めたこと（`confirms`）：作り直しの実行が、指摘への対応（`sacty-responses`）に `confirm` を添えたもの。指摘の意図を読み取れず推測で直したとき、元の値や文言が手元に無く作り直したとき、指摘が求めていない範囲を変えたとき、指摘を直さずにおいたときなどに書かせる（`confirmLines`）。確かめたいことが無い対応には書かせない。1,000文字で切る。`RemarkResponse.confirm` に残し、`Task.remarks[].confirm` に、対応と同じ提出回のものだけ持つ（次の提出で対応が無ければ消える）。
+
+- 出す条件：状態が承認待ちで、今の承認ゲートの提出（`gate.submission`）が受けた、無効にしていない指摘について。判断できなかった理由は、`prRework` の戻し先がゲートの工程で、指摘の回（`round`）がその工程の最新の回のときだけ（その後に別の差し戻しがあれば、古い判断は出さない）。承認待ちでなければ（作り直している間・一時停止中）出さない。
+- 画面（`HumanAskNotice`）：承認の画面の上と、タスクの詳細の承認の案内の下（どのタブでも見える所）に、「人に確かめてほしいことがN件あります」として出す。判断できなかった理由は、要点（先頭の1〜2文）を先に出し、全文は開いて読める（下の「戻し先の判断の文の見せ方」）。
+- PR のコメント：作り直した成果物が承認待ちに戻ったとき（`StepSubmitted` で、承認ゲートの工程か提出回が新しくなったとき。一時停止からの再開では書き直さない）、そのゲートの PR（実装の PR・要求要件の PR・設計の PR）に1件コメントする（`announceHumanAsks`・`buildHumanAskNotice`）。
+  - 先頭に目印（`<!-- sacty-human-ask:<タスク ID>:<工程>:<提出回> -->`）を置く。同じ提出に目印のコメントがあれば書かない。
+  - 本文は、判断できなかった理由と実行の確かめたいことを、引用にして載せる。外から来た文なので、秘密情報を伏せてから600文字で切り、`@名前` で他人に通知が飛ばないよう `@` の後ろに幅の無い空白を挟む。末尾に、意図と違うときは PR にコメントするか、タスクの画面で差し戻すよう案内する。
+  - 投稿するのは、プロジェクトの gh のアカウント（GitHub のアカウントを選んでいないプロジェクトでは書かない。画面には出る）。送るのは待たず、通信には30秒の期限を付ける。投稿できなくても、タスクの状態は変えない（警告を残す）。
+  - このコメントは、次の PR の確認で人間の指摘として取り込まない（目印で始まり、タスクのアカウントのコメントは除く。他人が目印をまねたものは、人間の指摘として取り込む）。
+
+コード: `apps/daemon/src/service.ts`（`announceHumanAsks`・`humanAskDue`）、`apps/daemon/src/human-ask-notice.ts`、`apps/daemon/src/github.ts`（`isHumanAskNotice`・`GitHubPullRequests.feedback`）、`apps/daemon/src/prompts.ts`（`confirmLines`・`extractBlocks`）、`packages/core/src/projection.ts`（`humanAsks`）、`apps/web/src/components/human-ask.tsx`（`HumanAskNotice`）
+
+### 戻し先の判断の文の見せ方
+
+ゴールガーディアンの戻し先の判断の文（`ReworkJudged` の `reason`）は、600〜1,000文字になることがあり、画面にそのまま出すと読みにくい。画面では要点を先に出し、全文は開いて読めるようにする（`summarizeDecision`）。
+
+- 要点：先頭の2文まで（句点・英語の終止符と空白・改行で区切る。括弧の中の句点では区切らない）。160文字を超えるときは、160文字で切って「…」を付ける。全文が要点と同じなら、折りたたまない。
+- 出す所：作業履歴の戻し先の行（行に要点、詳細に全文）、PR の欄の戻し先（`prRework`。要点の下に、開いて読める全文）、人に確かめてほしいことの判断できなかった理由。
+- 変えないもの：作業履歴の記録（`ReworkJudged` の `reason`）と、作り直しの実行に渡す判断文（[ゴールガーディアンの判断文の渡し方](#ai-のレビューの指摘)）は全文のまま。
+
+コード: `apps/web/src/lib/decision-summary.ts`、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/pull-request.tsx`（`PullRequestCard`）
 
 ## 差し戻し
 

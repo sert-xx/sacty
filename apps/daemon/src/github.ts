@@ -209,6 +209,17 @@ export function isSactyGitHubComment(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(GITHUB_COMMENT_MARKER_PREFIX);
 }
 
+/**
+ * 人に確かめてほしいことを PR に知らせる投稿の目印（PBI-301）。`<!-- sacty-human-ask:<タスク ID>:<工程>:<提出回> -->`。
+ * 人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const HUMAN_ASK_MARKER_PREFIX = "<!-- sacty-human-ask:";
+
+/** 本文が、人に確かめてほしいことの投稿の目印で始まるか（PBI-301）。 */
+export function isHumanAskNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(HUMAN_ASK_MARKER_PREFIX);
+}
+
 /** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
 export function sactyReviewKey(taskId: string, round = 1): string {
   return round > 1 ? `${taskId}:${round}` : taskId;
@@ -343,7 +354,7 @@ export class GitHubPullRequests implements PullRequests {
           isSactyReview(item.body)
         ) &&
         !(
-          isReviewStopNotice(item.body) &&
+          (isReviewStopNotice(item.body) || isHumanAskNotice(item.body)) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
         ) &&

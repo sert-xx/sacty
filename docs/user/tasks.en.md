@@ -573,6 +573,8 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - The Goal Guardian's judgment (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
     The judgment is the Goal Guardian's interpretation, so when it disagrees with the original text of your comment, the original text wins.
     When the target could not be decided, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
+  - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text. The record in the Activity and the judgment passed to the redo stay in full.
+  - When there is something for a person to check, the approval screen and the task details show it in a prominent place as "N things for you to check", and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
   - If requests for changes to the same step exceed the limit, it becomes an Escalation.
     What counts toward the limit is the requests for changes by you. A request for changes made only of comments from sacty's own AI review is not counted ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 - When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
@@ -594,6 +596,21 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - When the repository defines the Conventional Commits form (a Commitizen or commitlint configuration exists, or the rules in AGENTS.md or CONTRIBUTING describe it), the first line of the commits sacty makes takes the form `feat: <task title>`.
   - The type is `docs` for the commit of a documents-only request and of a Requirements or Design PR, `fix` for a bug fix, and `feat` otherwise. A title that already has the form `feat: …` is not prefixed again.
   - For a repository with no definition, or one whose definition cannot be read, the task title is used as is, as before.
+
+### Things for a person to check
+
+In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
+In the cases below, the approval screen and the task details show "N things for you to check" under the approval notice.
+
+- The Goal Guardian could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
+- The redo run listed something it wants you to check along with its response to the comment: it guessed because it could not read what the comment meant, it recreated a value or wording it no longer had, it changed something the comment did not ask for, or it left a comment unaddressed. The comment it concerns is also shown.
+
+So that the people looking at the PR notice it, the same content is commented on the PR of the redone deliverable (implementation, requirements, or design) when it is back to waiting for approval. One comment per submission.
+
+- The comment starts with "Sacty：人に確かめてほしいことがあります". If it is not what you meant, comment on the PR or send the task back on the task screen.
+- This comment is not imported as a comment.
+- For a project with no GitHub account chosen, nothing is commented on the PR (the screen still shows it). If commenting fails, the task does not stop.
+- Secret values are hidden and long text is cut.
 
 ## Cause of a request for changes
 
@@ -737,6 +754,11 @@ The details of a task stopped by the budget limit show a field for the new cumul
 - In the resume section, you can change the following along with the resume.
   - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the Orchestrator and the steps still to run read them. When the task description is long and only a little can be added, the length of notes you can add is shown below the field (to stay within what can be edited when rerunning). If no notes can be added, the field is disabled; resume without notes, or cancel and fix the description in a rerun.
   - **Change step images and agents** (open it to use): for each step not finished yet, you can choose the image and the agent again. The current settings are selected first, only the changed steps are recorded, and each change is used from the next run of that step. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
+- A task waiting for approval (waiting for a PR merge) can also be paused with "Pause". The approval screen and the task details stay as they are. A task in escalation cannot be paused.
+  - While paused, you cannot approve or send it back. When you resume, it returns to waiting for approval and you can use the approval screen again.
+  - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume has the Goal Guardian decide where to send the task back.
+  - A Requirements or Design PR is not watched while paused. If it is merged or comments arrive, the check after the resume (every minute) takes them in as an approval or a send-back.
+  - A person paused it, so nothing is sent to Slack. When it is resumed and returns to the same wait for approval, the approval notice is not sent again.
 - If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task's details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
   When you resume, before redoing the step that stopped (the final review, for example), the Goal Guardian reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
   If no comments have arrived, the step that stopped is redone as before.

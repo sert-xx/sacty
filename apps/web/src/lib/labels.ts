@@ -22,6 +22,7 @@ import {
 } from "@sacty/core";
 import type { LabelMessages } from "@/i18n/messages/labels";
 import type { TaskMessages } from "@/i18n/messages/task";
+import { summarizeDecision } from "@/lib/decision-summary";
 
 /** 画面の表示ラベル。文言は画面の言語の辞書（i18n/messages/labels）から取る。 */
 export const usd = formatUsd;
@@ -372,6 +373,11 @@ export function describeEventParts(
         )
         .join("\n"),
     };
+  }
+  if (event.type === "ReworkJudged" && event.payload.runResult !== "interrupted") {
+    // 戻し先の判断の文。要点を行に出し、長いときは全文を開いて読めるようにする（作業履歴の記録は全文のまま。PBI-301）
+    const { full } = summarizeDecision(l.text(event.payload.reason));
+    return { text: describeEventText(event, l), ...(full ? { detail: full } : {}) };
   }
   if (event.type === "TaskResumed" && event.payload.note) {
     // 再開のときに人が足した補足（説明の後にも足すが、どの再開で足したかを作業履歴で読み返せるようにする）
@@ -964,7 +970,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "ReworkJudged":
       return e.ReworkJudged(
         event.payload.target ? l.step[event.payload.target] : undefined,
-        l.text(event.payload.reason),
+        // 判断の文は長いので、行には要点（先頭の 1〜2 文）を出し、全文は詳細に出す（describeEventParts。PBI-301）
+        summarizeDecision(l.text(event.payload.reason)).summary,
         withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
         event.payload.runResult === "interrupted",
       );

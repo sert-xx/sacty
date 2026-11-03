@@ -64,3 +64,37 @@ describe("PR の欄の差し戻しの原因（PBI-268）", () => {
     expect(html).toContain("ゴールガーディアンの見逃し 1件");
   });
 });
+
+describe("PR の欄の戻し先の判断の文（PBI-301）", () => {
+  const long = `決定を変えない指摘なので、実装に戻す。指摘の行は R-8 と合っている。${"詳しい理由が続く。".repeat(80)}`;
+
+  it("長い判断の文は、要点（先頭の 2 文）を先に出し、全文は開いて読める（折りたたみの中）", () => {
+    const html = renderToStaticMarkup(
+      h(PullRequestCard, { task: task({ prRework: { ...rework(), reason: long } }) }),
+    );
+    // 要点は折りたたみの外、全文は折りたたみの中
+    const outside = html.slice(0, html.indexOf("<details"));
+    expect(outside).toContain(
+      "実装からやり直し：決定を変えない指摘なので、実装に戻す。指摘の行は R-8 と合っている。",
+    );
+    expect(outside).not.toContain("詳しい理由が続く");
+    expect(html).toContain('data-testid="rework-reason-full"');
+    expect(html.slice(html.indexOf("<details"))).toContain("詳しい理由が続く");
+  });
+
+  it("短い判断の文は、折りたたまない", () => {
+    const html = renderToStaticMarkup(h(PullRequestCard, { task: task({ prRework: rework() }) }));
+    expect(html).toContain("実装からやり直し：実装で直せる");
+    expect(html).not.toContain("<details");
+  });
+
+  it("戻し先を判断できなかったときも、長い理由は要点だけを先に出す", () => {
+    const html = renderToStaticMarkup(
+      h(PullRequestCard, {
+        task: task({ prRework: { ...rework(), decided: false, reason: long } }),
+      }),
+    );
+    expect(html).toContain("戻し先を判断できず：決定を変えない指摘なので");
+    expect(html.slice(0, html.indexOf("<details"))).not.toContain("詳しい理由が続く");
+  });
+});

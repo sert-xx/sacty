@@ -1097,6 +1097,9 @@ function proposalLines(task: Task, step: StepKey): string[] {
   ];
 }
 
+/** 指摘への対応の「人に確かめたいこと」の文字数の上限（PBI-301）。 */
+const CONFIRM_MAX = 1_000;
+
 /** ゴールガーディアンの判断文を、指示に入れる文字数の上限。 */
 const GUARDIAN_JUDGMENT_IN_PROMPT = 3_000;
 
@@ -1167,8 +1170,19 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
     "",
     `${label}のあとに、指摘ごとの対応を次の形式で必ず付けてください。`,
     "```json",
-    `{"${RESPONSES_HEADING}": [{"remarkId": "指摘のID", "text": "どう対応したか"}]}`,
+    `{"${RESPONSES_HEADING}": [{"remarkId": "指摘のID", "text": "どう対応したか", "confirm": "人に確かめたいこと（あるときだけ）"}]}`,
     "```",
+    ...confirmLines(),
+  ];
+}
+
+/**
+ * 指摘への対応の `confirm`（人に確かめたいこと）の書き方（PBI-301）。聞き返し・推測で決めたことを、対応の文に埋もれさせずに、
+ * 承認の画面と PR のコメントで人に知らせるための欄。
+ */
+function confirmLines(): string[] {
+  return [
+    `指摘の意図を読み取れず推測で直したとき、元の値や文言が手元に無く作り直したとき、指摘が求めていない範囲を変えたとき、指摘を直さずにおいたときなど、人に確かめたいことがあれば、その対応に "confirm" を足してください。何を推測した（決めた）のか、何を確かめたいのかを、1〜2文で書きます。確かめたいことが無い対応には、"confirm" を書かないでください（対応の文（"text"）には、どう対応したかを書きます。確かめたいことは "text" だけに書かず、"confirm" にも書いてください）。`,
   ];
 }
 
@@ -2901,7 +2915,14 @@ export function extractBlocks(
     if (Array.isArray(list)) {
       read = true;
       responses ??= list
-        .map((r) => ({ remarkId: text(r?.remarkId), text: text(r?.text) }))
+        .map((r) => {
+          const confirm = text(r?.confirm).slice(0, CONFIRM_MAX);
+          return {
+            remarkId: text(r?.remarkId),
+            text: text(r?.text),
+            ...(confirm ? { confirm } : {}),
+          };
+        })
         .filter((r) => r.text && validRemarkIds.has(r.remarkId));
     }
     if (Array.isArray(viewpoints)) {
