@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-300
-- PR: #0
+- PR: #299
 - ブランチ: feat/issue-300-guardian-judgment-to-run
 - 関係する ADR: [ゴールガーディアンの判断文を、その判断で始まった作り直しの実行に渡す](../adr/20261103-1530-pass-guardian-judgment-to-rework-run.md)
 
