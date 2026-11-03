@@ -1369,6 +1369,12 @@ const FinalReviewed = z.object({
      * （実機・特定の OS・入力方式など）。それより前の版の記録には無い。
      */
     humanChecks: z.array(z.string()).optional(),
+    /**
+     * 前の回の最終レビューが挙げた人が確かめること（PBI-294）のうち、この回で外したものと、外した理由
+     * （「<外した項目> → 外した理由：<理由>」）。外さなかった項目は sacty が humanChecks に引き継ぐ。前の回が無い、
+     * または外していなければ無い。
+     */
+    droppedHumanChecks: z.array(z.string()).optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
