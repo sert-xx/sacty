@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-02（UTC）
 - タスク: PBI-283
-- PR: なし
+- PR: #285
 - ブランチ: feat/issue-283-pbi-283
 - 関係する ADR: [受け入れ条件が詳しく、人に確かめることが無い依頼では、要求要件を省く](../adr/20261102-2357-skip-requirements-for-detailed-acceptance.md)
 
