@@ -1,4 +1,4 @@
-import type { DaemonText, TokenUsage } from "@sacty/core";
+import { type DaemonText, message, type TokenUsage } from "@sacty/core";
 
 export type FailureReason = "usage_limit" | "auth" | "error";
 
@@ -152,17 +152,24 @@ export abstract class OutcomeReader {
  * セッションを再開・複製した実行（resumed）は、modelUsage に前の実行の分も入るので、各 result の usage を合計する。
  * modelUsage は、項目ごとに各 result の usage の合計と大きいほうを取る（実行の全体が各番の合計より小さいことはない。
  * キーの名前が変わって読めなくても、0 にしない。PR #213 レビュー指摘）。
+ * 最後の result が空（空白だけ）でも、その前に中身のある result があれば、その最後のものを答えにする（PBI-290。バックグラウンドの
+ * 処理の完了通知に起きた番が、本文を出さずに終わると、空の result が最後に来る）。中身のある result がどこにも無ければ、
+ * 空の成果物にせず、失敗にする（run.emptyResult）。
  */
 export class ClaudeOutcomeReader extends OutcomeReader {
   private result: Record<string, unknown> | undefined;
   /** prefer を含む最後の result の文。 */
   private preferred: string | undefined;
+  /** 中身のある（空白だけでない）最後の成功の result の文（PBI-290）。最後の result が空のときの代わり。 */
+  private content: string | undefined;
   /** 各 result の usage の合計。 */
   private summed: TokenUsage = { ...ZERO };
   /** result の数。 */
   private results = 0;
   /** 答えの読み方の知らせ（prefer に当たらず最後の result に戻ったとき。PR #213 レビュー指摘）。 */
   private noticeText: string | undefined;
+  /** 最後の result が空で、その前の中身のある result を答えにした知らせ（PBI-290）。 */
+  private emptyNoticeText: string | undefined;
   /**
    * 発言（assistant）ごとの使用量（PBI-281）。最後の result の後に始まった番や、result が出る前に止まった実行の、読めた分の
    * 使用量に使う。同じ発言の内容ごとの出来事は、同じ id・同じ使用量を繰り返すので、id ごとに1つにする。settled は、
@@ -207,6 +214,13 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       if (this.prefer && typeof event.result === "string" && event.result.includes(this.prefer)) {
         this.preferred = event.result;
       }
+      if (
+        event.is_error !== true &&
+        typeof event.result === "string" &&
+        event.result.trim() !== ""
+      ) {
+        this.content = event.result;
+      }
     } else if (event.type === "assistant") {
       this.keepMessageUsage(event.message);
       const content = (event.message as { content?: unknown } | undefined)?.content;
@@ -221,7 +235,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
 
   /** 答えの読み方の知らせ（finish の後。デーモンのログとセッションログに残す）。 */
   get notice(): string | undefined {
-    return this.noticeText;
+    const notices = [this.noticeText, this.emptyNoticeText].filter(Boolean);
+    return notices.length > 0 ? notices.join(" / ") : undefined;
   }
 
   private keepMessageUsage(message: unknown): void {
@@ -331,7 +346,32 @@ export class ClaudeOutcomeReader extends OutcomeReader {
       }
       return { kind: "failed", reason: classifyFailure(message), message, usage };
     }
-    return { kind: "completed", output: this.preferred ?? result, usage };
+    // 最後の result が空なら、その前の中身のある result を使う（PBI-290）。json の形（result が1つ）では、前の result は無い
+    const usedEarlier = result.trim() === "" && json === this.result && this.content !== undefined;
+    const output = this.preferred ?? (usedEarlier ? (this.content ?? result) : result);
+    if (output.trim() === "") {
+      // 中身のある result がどこにも無い。空の成果物を提出せず、失敗にする（PBI-290）。使った分は残す
+      const after = this.unsettledUsage();
+      const unknown = Boolean(after) || this.messagesTruncated;
+      return {
+        kind: "failed",
+        reason: "error",
+        message: message("run.emptyResult"),
+        usage: after
+          ? {
+              input: usage.input + after.input,
+              cacheRead: usage.cacheRead + after.cacheRead,
+              cacheWrite: usage.cacheWrite + after.cacheWrite,
+              output: usage.output + after.output,
+            }
+          : usage,
+        ...(unknown ? { costUnknown: true as const } : {}),
+      };
+    }
+    if (usedEarlier && this.preferred === undefined) {
+      this.emptyNoticeText = `最後の result が空だったので、その前の中身のある result を答えにしました（result は ${this.results} 回）`;
+    }
+    return { kind: "completed", output, usage };
   }
 }
 
@@ -425,7 +465,10 @@ export class CodexOutcomeReader extends OutcomeReader {
     } else if (event.type === "item.completed") {
       const item = (event.item ?? {}) as Record<string, unknown>;
       const kind = item.type ?? item.item_type;
-      if (kind === "agent_message" && typeof item.text === "string") this.output = item.text;
+      // 空の発言は、その前の中身のある発言を置き換えない（PBI-290）
+      if (kind === "agent_message" && typeof item.text === "string" && item.text.trim() !== "") {
+        this.output = item.text;
+      }
     } else if (event.type === "turn.failed" || event.type === "error") {
       const err = event.error as Record<string, unknown> | undefined;
       const message = typeof err?.message === "string" ? err.message : event.message;
@@ -445,6 +488,17 @@ export class CodexOutcomeReader extends OutcomeReader {
         reason: classifyFailure(message),
         message,
         // 読めた使用量が無いのに 0 を入れない（不明を 0 と見せない）
+        ...(unfinished && this.turnsCompleted === 0 ? {} : { usage: this.usage }),
+        ...(unfinished ? { costUnknown: true as const } : {}),
+      };
+    }
+    if (this.output.trim() === "") {
+      // 中身のある発言がどこにも無い。空の成果物を提出せず、失敗にする（PBI-290）
+      const unfinished = this.turnsStarted > this.turnsCompleted;
+      return {
+        kind: "failed",
+        reason: "error",
+        message: message("run.emptyResult"),
         ...(unfinished && this.turnsCompleted === 0 ? {} : { usage: this.usage }),
         ...(unfinished ? { costUnknown: true as const } : {}),
       };
