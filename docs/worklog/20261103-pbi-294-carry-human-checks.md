@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-294
-- PR: なし
+- PR: #296
 - ブランチ: feat/issue-294-pbi-294
 - 関係する ADR: [最終レビューのやり直しで、前の回が挙げた「人が確かめること」を、理由なしに落とさない](../adr/20261103-1100-carry-human-checks-across-final-reviews.md)
 
