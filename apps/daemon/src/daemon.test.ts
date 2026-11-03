@@ -7440,6 +7440,77 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("解消が期限を超えて知らせを待てなかったとき、投稿の最中の知らせの通信も止め、その後に止まったときの知らせは書ける", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const release = Promise.withResolvers<void>();
+        const posts: { signal?: AbortSignal; at: number; body: string }[] = [];
+        class HangingFirstTwo extends FakePulls {
+          override async commentIssue(input: {
+            repo: string;
+            token: string;
+            number: number;
+            body: string;
+            signal?: AbortSignal;
+          }) {
+            posts.push({
+              ...(input.signal ? { signal: input.signal } : {}),
+              at: performance.now(),
+              body: input.body,
+            });
+            // 最初の2件の通信は終わらない（解放されるまで）。3件目からは普通に投稿できる
+            if (posts.length <= 2) await release.promise;
+            return super.commentIssue(input);
+          }
+        }
+        const pulls = new HangingFirstTwo();
+        const timeoutMs = 800;
+        const fail = (text: string): AgentOutcome => ({
+          kind: "failed",
+          reason: "error",
+          message: text,
+        });
+        const { service } = makeService(
+          activity,
+          [capacity, fail("disk full"), review(), fail("network down")],
+          { pulls, planner: reviewPlanner, stopNoticeTimeoutMs: timeoutMs },
+        );
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        // 知らせ1（終わらない）の後ろに、知らせ2を順番待ちにする
+        await service.runNext(id);
+        await settle();
+        expect(posts).toHaveLength(1);
+        service.resume(id, {});
+        await service.runNext(id);
+        await settle();
+        // 再開してレビューを投稿する。解消は、順番待ちの最後（知らせ2）を待つ
+        service.resume(id, {});
+        await service.runNext(id);
+        const posting = service.runNext(id);
+        await settle();
+        expect(service.get(id)?.task.reviewPost).toBeDefined();
+        // 解消を待っている間に再レビューを始め、もう一度止める（知らせ3）
+        service.rereview(id);
+        await service.runNext(id);
+        expect(service.get(id)?.task.status).toBe("paused");
+        // 知らせ1が自分の期限で終わると、知らせ2が（止まっているので）投稿に進み、終わらない。
+        // 知らせ2自身の期限より先に、解消の期限が切れて、解消の処理は戻る
+        await within(posting);
+        const second = posts[1];
+        expect(second?.body).toContain("disk full");
+        expect(second?.signal?.aborted).toBe(true);
+        expect(performance.now() - (second?.at ?? 0)).toBeLessThan(timeoutMs - 200);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
+        // 通信を後から放しても、止めた知らせは投稿されない。その後に止まった知らせ3は書かれる
+        release.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(posts).toHaveLength(3);
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(pulls.issueComments[0]?.body).toContain("network down");
+        warn.mockRestore();
+        activity.close();
+      });
+
       it("知らせの一覧の取得が終わらなくても、期限で警告にして終わり、次の知らせの処理を塞がない", async () => {
         const activity = new SqliteActivityStore(dbPath);
         class HangingList extends FakePulls {

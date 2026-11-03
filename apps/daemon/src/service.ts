@@ -5740,7 +5740,12 @@ export class TaskService {
       }
     } catch (error) {
       // 期限を超えて待てなかったなら、まだ終わっていない知らせの通信も止める（後から投稿されて、解消されないまま残らないように）
-      if (signal.aborted) this.stopNoticeAborts.get(taskId)?.abort();
+      if (signal.aborted) {
+        // 止めるのは今ある知らせの通信だけ。このあと止まったときの知らせは、新しい印で書けるようにする
+        const pending = this.stopNoticeAborts.get(taskId);
+        if (pending) this.stopNoticeAborts.set(taskId, new AbortController());
+        pending?.abort();
+      }
       console.warn(
         `[daemon] タスク ${taskId} のレビューが止まったことの投稿を解消済みにできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
