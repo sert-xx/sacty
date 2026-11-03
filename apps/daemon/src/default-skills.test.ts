@@ -400,3 +400,79 @@ describe("既定の review スキルの、コードの簡潔さと UX の観点"
     );
   });
 });
+
+describe("既定の review スキルの、セルフレビューの再レビューで起動する観点（PBI-286）", () => {
+  const selfReview = () => read("skills/review/review-dispatch/references/self-review.md");
+  const dispatch = () => read("skills/review/review-dispatch/SKILL.md");
+  const rereview = () =>
+    selfReview().split("## 再レビュー（2回目以降）")[1]?.split("## ループの上限")[0] ?? "";
+
+  it("再レビュー（2回目以降）は、前回の回で must を出した観点と X-1 だけを起動し、must が無ければ X-1 だけにする", () => {
+    const text = rereview();
+    expect(text).toContain("**前回の回で `must` を出した観点と、横断の X-1 だけ**");
+    expect(text).toContain("前回の回の結果が `must` 1 件以上の観点を、初回と同じ段階で起動する");
+    expect(text).toContain(
+      "`should`・`nit` だけを直して再レビューに進むときは、X-1 だけを起動する",
+    );
+    expect(text).toContain("前回の回の結果だけで決める");
+    // 初回の規則（必須は全部・条件付きの判定し直し）を、再レビューでは使わない
+    expect(text).not.toContain("必須観点は全部（対象が修正箇所に絞られるので");
+    expect(text).toContain("再レビューでは決め直さない");
+  });
+
+  it("起動しなかった観点を起動表に残し、成果の説明の「起動した観点」でも分かるようにする", () => {
+    expect(rereview()).toContain("再レビュー：前回の回で must なし");
+    expect(selfReview()).toContain("再レビューで起動しなかった観点は、前回の回で must なし");
+    const text = dispatch();
+    expect(text).toContain(
+      "起動しなかった観点は、起動表に「起動しない」と理由（前回の回で `must` なし）を残す",
+    );
+    expect(text).toContain(
+      "| C-2 堅牢性・エラー処理 | 起動しない | | 再レビュー：前回の回で must なし | |",
+    );
+  });
+
+  it("起動した担当には前回の指摘と修正の内容を渡し、直ったかと新しい問題の両方を見させる。X-1 には採用した指摘のすべてを渡す", () => {
+    const text = rereview();
+    expect(text).toContain(
+      "担当には「指摘が直ったか」と「修正が新しい問題を持ち込んでいないか」の両方を見させる",
+    );
+    expect(text).toContain(
+      "X-1 には、前回の回で採用した指摘のすべてと、それぞれの修正の内容を渡す",
+    );
+    expect(text).toContain("前回の指摘が直っていなければ、同じ指摘として");
+  });
+
+  it("修正が検証を壊したときは、X-2 を起動する", () => {
+    expect(rereview()).toContain(
+      "修正後に実行し直した検証が失敗・警告を出したときは、X-2 も起動する",
+    );
+  });
+
+  it("初回と pr-review の再レビューの規則は変えない", () => {
+    const text = dispatch();
+    expect(text).toContain("`pr-review` の再レビューは、初回と同じ規則で決め直す");
+    // 再レビューの X-2 の起動条件は SKILL.md の規則 5 でも一意に決め、既存の起動の条件より優先する
+    expect(text).toContain(
+      "X-2 も同じ扱いで、前回の回で `must` を出したとき、または修正後に実行し直した検証が失敗・警告を出したときだけ起動する",
+    );
+    expect(text).toContain("再レビューでは、この規則を、規則 1〜3 や");
+    expect(text).toContain(
+      "の起動の条件（必須観点を全部起動する・条件付き観点の判定・X-2 を検証の結果があれば起動する）より優先する",
+    );
+    expect(text).toContain("1. 主対象の種類の **必須観点は、対象の大小にかかわらず全部起動する**");
+    expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
+      "起動する観点は初回と同じ規則で決め直す（前回「指摘なし」でも、必須は全部起動する）",
+    );
+    const first = selfReview().split("## 初回")[1]?.split("## 再レビュー（2回目以降）")[0] ?? "";
+    expect(first).toContain(
+      "主対象の種類の必須観点を全部、条件付き観点を判定して、横断（X-1、検証の結果があれば X-2）を起動する",
+    );
+  });
+
+  it("工程の指示（selfReviewLines）は、再レビューの観点の選び方をスキルの規則に任せ、食い違う指示を書かない", () => {
+    const src = readFileSync(join(import.meta.dirname, "prompts.ts"), "utf8");
+    expect(src).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+    expect(src).not.toMatch(/再レビュー[^\n]*(全部の観点|すべての観点|必須観点を全部)/);
+  });
+});
