@@ -103,7 +103,8 @@ When a deep dive finds knowledge that will help later tasks (how to run the test
   - They live in the data directory (default `~/.sacty`) under `memory/projects/<project ID>/` and `memory/repos/<host>/<owner>/<name>/`.
   - Repository memories stay in use for tasks on the same repository even after you change project settings.
 - In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository, and open only the relevant ones. They never read other projects' memories. The Goal Guardian gets none.
-- Memories rank below your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when they conflict, those win.
+- A memory is a reference. It ranks below the step instructions (the scope of the rework, what to write and not to write, how decided judgements are handled, and so on), your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when a procedure written in a memory conflicts with those, the procedure is not used and those win.
+  The audit also avoids registering procedures that change the step instructions.
 - The last useful date is the last day the memory helped.
   - When a task opens a memory and that task's audit judges it helpful, sacty updates the date from that task's completion date (a newer date stays as it is).
   - The Audit tab's "Memories that helped" lists the ones that helped in that task.

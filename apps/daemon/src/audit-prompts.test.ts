@@ -428,6 +428,11 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
     expect(withRepo).toContain("このリポジトリ（https://github.com/a/app）そのものに関すること");
     expect(withRepo).toContain("プロジェクト・組織・コンテキストに固有の名前や事情を書かない");
     expect(withRepo).toContain('"memories"');
+    // 工程の指示を変える手順は、メモリーに登録させない（PBI-297）
+    expect(withRepo).toContain(
+      "工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱い）を変える手順",
+    );
+    expect(withRepo).toContain("食い違うなら使わないことを添える");
     const noRepo = buildAuditDivePrompt(task, [], zero, { runs: [] }, { ...base, memories: [] });
     expect(noRepo).toContain("scope は project だけにする");
     expect(noRepo).toContain("--- 既存のメモリー");
@@ -435,6 +440,7 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
     const disabled = buildAuditDivePrompt(task, [], zero, { runs: [] }, base);
     expect(disabled).not.toContain("memories");
     expect(disabled).not.toContain("既存のメモリー");
+    expect(disabled).not.toContain("工程の指示を変える手順");
   });
 });
 

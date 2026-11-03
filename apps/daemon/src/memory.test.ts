@@ -191,6 +191,21 @@ describe("書き出し（PBI-126）", () => {
     expect(lines).toContain("関係しないものは開かないでください");
     expect(lines).toContain("優先度が低い");
   });
+
+  it("工程の指示と食い違うメモリーの手順は使わず、工程の指示に従うことを、指示と索引に書く（PBI-297）", () => {
+    const lines = memoryPromptLines(["/sacty-memory/project"]).join("\n");
+    expect(lines).toContain("メモリーは参考であり");
+    expect(lines).toContain("工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱いなど）");
+    expect(lines).toContain("メモリーの手順を使わず、そちらに従ってください");
+    // 指示は、特定の言語・ツールに寄せない
+    expect(lines.replaceAll("/sacty-memory/", "")).not.toMatch(/sacty|Node|npm|TypeScript/);
+    const index = renderMemoryIndex(layer, []);
+    expect(index).toContain("メモリーは参考です");
+    expect(index).toContain(
+      "このタスクの工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱い）",
+    );
+    expect(index).toContain("食い違うときは、そちらに従って");
+  });
 });
 
 describe("有効な最終利用日と掃除（PBI-127）", () => {
