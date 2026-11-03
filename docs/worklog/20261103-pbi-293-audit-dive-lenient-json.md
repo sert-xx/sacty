@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-293
-- PR: なし
+- PR: #298
 - ブランチ: feat/issue-293-pbi-293
 - 関係する ADR: [監査の出力の JSON が文字列の中で崩れていても、直して読み、読めなければ何が読めなかったかを残す](../adr/20261103-0900-read-broken-audit-json-leniently.md)
 
