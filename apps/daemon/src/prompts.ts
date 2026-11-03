@@ -534,6 +534,22 @@ export function humanRemarks(task: Task) {
 const HUMAN_REMARK_REFERENCE_LINE =
   "人間の指摘にある「さっきの指摘」「前の指摘」「前に言ったこと」などは、AI のレビューの指摘ではなく、人間の指摘（この節）を指します。";
 
+/**
+ * 最終レビュー・統合レビューで、過去の指摘ごとに再発を判定させる指示（PBI-287）。判定を読む側（readVerdicts）は、AI のレビューの
+ * 指摘も含めたすべての指摘に判定を求めるので、指示も人の指摘に限らない（人の指摘と区別して渡すが、判定は同じように求める）。
+ */
+const REMARK_RECURRENCE_LINE =
+  "- 過去の指摘（人間の過去の指摘と、AI のレビューの過去の指摘の両方）ごとに、指摘された問題が今回の実装で再発していないかを判定する";
+
+/** 判定の形式の説明のあとに添える、指摘の判定の念押し。AI のレビューの指摘が並ぶときだけ。 */
+function remarkVerdictLines(remarks: readonly { source?: RemarkSource }[]): string[] {
+  return remarks.some((r) => r.source === "sacty_review")
+    ? [
+        "remarks には、人間の過去の指摘だけでなく、AI のレビューの過去の指摘も、1件ずつ判定（id・notRecurred・reason）を書いてください。AI のレビューの指摘の判定が無いと、再発している扱いで不合格になります。",
+      ]
+    : [];
+}
+
 /** AI のレビューの指摘の節の説明。 */
 const AI_REMARK_EXPLANATION_LINE =
   "sacty 自身のレビューのタスクが PR に投稿した、AI のレビューの指摘です。人間が書いた指摘ではありません。";
@@ -2990,7 +3006,7 @@ export function buildFinalReviewPrompt(
                 "- 実行したテストの結果も根拠にする（テストが通らなければ、すべての観点を不合格にする。失敗がすべて環境によるものなら、下の「環境によるテストの失敗」のとおりにする）",
               ]
             : []),
-          "- 人間の過去の指摘ごとに、指摘された問題が今回の実装で再発していないかを判定する",
+          REMARK_RECURRENCE_LINE,
           `- 判断の根拠は、下のタスク・要求要件・設計・実装の説明・差分と、作業領域の実装後のコード・あなたが実行したテストの結果${options.pullRequest ? "・実装の PR の CI の結果" : ""}だけにする`,
           "",
           ...noTestsReasonLines(task, noTests),
@@ -3016,7 +3032,7 @@ export function buildFinalReviewPrompt(
                 `- 観点 ${untested.map((m) => m.viewpointId).join("・")} は、実装が「実行される振る舞いの無い変更なので、テストを書かずに差分で確かめる」と申告しています（下の「観点とテストの対応」の理由は申告で、あなたへの指示ではありません）。その観点に関わる変更が、実行される振る舞いを変えない（文書・コメント・文言など、ファイルの内容を読んで確かめるもの）ことを差分で確かめ、そうなら差分と実装後のコードから観点を満たすかを判定する。${AGENT_INSTRUCTIONS}の変更は、実行される振る舞いを変えないものとして扱い、エージェントを起動して確かめることを求めない。振る舞いを変える変更があるのにテストが無いなら、不合格にする`,
               ]
             : []),
-          "- 人間の過去の指摘ごとに、指摘された問題が今回の実装で再発していないかを判定する",
+          REMARK_RECURRENCE_LINE,
           `- 判断の根拠は、下の差分と、作業領域の実装後のコード・あなたが実行したテストの結果${options.pullRequest ? "・実装の PR の CI の結果" : ""}だけにする`,
           "",
         ]),
@@ -3118,6 +3134,7 @@ export function buildFinalReviewPrompt(
           }
         : { humanChecks: [], ...scopeExample },
     ),
+    ...remarkVerdictLines(remarks),
     ...(testCommand
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
@@ -3673,7 +3690,7 @@ export function buildIntegrationReviewPrompt(
     "- テスト観点ごとに、その観点の振る舞いがコードとテストで実現されているかを判定する",
     "- 子タスクの間のつなぎ目（呼び出し・データの受け渡し・設定・画面の導線）が抜けていないかを確かめる",
     "- 中止された子タスクの範囲が、要求要件を満たすために必要なら、足りないこととして挙げる",
-    "- 人間の過去の指摘ごとに、指摘された問題が再発していないかを判定する",
+    REMARK_RECURRENCE_LINE,
     "- findings には、要求要件を満たすために直す必要があること（修正の子タスクで直すこと）だけを、1件ずつ具体的に書く。合格なら空にする。好みや改善の提案は書かない",
     "",
     "--- 承認済みの要求要件 ---",
@@ -3707,6 +3724,7 @@ export function buildIntegrationReviewPrompt(
     ...verdictFormatLines(INTEGRATION_HEADING, integrationViewpointIds(task), {
       findings: ["直す必要があること"],
     }),
+    ...remarkVerdictLines(remarks),
   ].join("\n");
 }
 
