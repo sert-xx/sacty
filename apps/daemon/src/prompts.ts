@@ -47,6 +47,7 @@ import {
   type StepPullRequestKey,
   sameGitHubUrl,
   splitLastFix,
+  stepDocumentPath,
   type Task,
   type TaskProposal,
   type TaskQuestion,
@@ -2261,6 +2262,7 @@ export function buildPrompt(
       lines.push(...reworkLines(task, "requirements", "要求要件", rework));
       const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
+        ...documentVerificationLines(task, "requirements"),
         ...selfReviewLines(
           "design-doc",
           "要求要件",
@@ -2330,6 +2332,7 @@ export function buildPrompt(
       lines.push(...reworkLines(task, "design", "設計とテスト観点", rework));
       const narrowed = reviewRework(task, "design", rework);
       lines.push(
+        ...documentVerificationLines(task, "design"),
         ...selfReviewLines(
           "design-doc",
           "設計とテスト観点",
@@ -3558,6 +3561,25 @@ function verificationScopeLines(task: Task, included: boolean): string[] {
     "- 検証が失敗し、変更によるものなら、観点を不合格にして、失敗した検証と理由を指摘に書く",
     "- イメージにツールが無いなどで実行できなかった検証は、実行できなかった検証とその理由を humanChecks に書く（理由を書かずに省かない）",
     "",
+  ];
+}
+
+/**
+ * 要求要件・設計の工程の、提出の前の検証の指示（PBI-301 A3）。成果物は、sacty がリポジトリのファイルとして置いて PR に入れる
+ * ので、リポジトリが定める文書に効く検証（フォーマッターなど）に掛かる。下書きは作業領域の外の一時ファイルなので、置かれる
+ * 場所のパスで実行させる。実行するのは文書に効く検証だけで、文書が主対象のときの決まり（テスト・ビルド・型チェックは実行しない。
+ * PBI-285）と食い違わせない。既存の PR を引き継ぐタスクは、成果物を PR に足さないので、入れない。
+ */
+function documentVerificationLines(task: Task, step: "requirements" | "design"): string[] {
+  if (task.continuedPullRequest || !task.id) return [];
+  return [
+    "",
+    "--- 提出の前の検証（成果物のファイル） ---",
+    `- 成果物は、sacty が ${stepDocumentPath(task, step)} に置いて PR に入れる。下書きは作業領域の外の一時ファイルなので、そのままではリポジトリの検証に掛からない`,
+    "- リポジトリが定める、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など。AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定で探す）を、その成果物に対して実行し、通してから提出する。下書きは置かれる場所とは別のパスにあるので、置かれる場所のパスとして検査できる方法（ファイルのパスを指定して、内容を標準入力から渡す指定など）で実行する。リポジトリには書かない",
+    "- 実行するのは文書に効く検証だけにする。テスト・ビルド・型チェック・コードのリンターは実行しない（文書が主対象のときの決まり）",
+    "- 実行しなかった検証、実行できなかった検証（文書に効く検証が無い・ツールが環境に無いなど）は、その検証と理由を、セルフレビューの報告の summary に書く。理由を書かずに省かない",
+    "- 検証を通すために、検証の設定を弱めない",
   ];
 }
 

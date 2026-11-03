@@ -187,6 +187,41 @@ describe("A3 リポジトリが定める検証を、PR に入る変更すべて�
     );
   });
 
+  it("要求要件・設計の工程も、PR に入る成果物のファイルに、文書に効く検証を実行させ、実行しなかった理由を残させる（S18 r4）", () => {
+    const steps = ["requirements", "design", "implement"];
+    const requirements = buildPrompt(task({}, steps), "requirements");
+    expect(requirements).toContain("--- 提出の前の検証（成果物のファイル） ---");
+    expect(requirements).toContain("sacty が docs/sacty/t-1/requirements.md に置いて PR に入れる");
+    expect(requirements).toContain(
+      "文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査",
+    );
+    expect(requirements).toContain("その成果物に対して実行し、通してから提出する");
+    expect(requirements).toContain("置かれる場所のパスとして検査できる方法");
+    expect(requirements).toContain(
+      "その検証と理由を、セルフレビューの報告の summary に書く。理由を書かずに省かない",
+    );
+    // 文書が主対象の決まり（コードの検証は実行しない）と食い違わせない
+    expect(requirements).toContain(
+      "テスト・ビルド・型チェック・コードのリンターは実行しない（文書が主対象のときの決まり）",
+    );
+    // 設計は設計のファイル。置き場所を人が決めていれば、その下
+    const design = buildPrompt(
+      task({ documentsDir: "documents/sacty" } as Partial<Task>, steps),
+      "design",
+    );
+    expect(design).toContain("sacty が documents/sacty/t-1/design.md に置いて PR に入れる");
+    // 成果物を PR に足さないタスク（既存の PR を引き継ぐ）には入れない。実装の指示には入らない
+    expect(
+      buildPrompt(
+        task({ continuedPullRequest: { repo: "r", number: 1 } } as unknown as Partial<Task>, steps),
+        "requirements",
+      ),
+    ).not.toContain("提出の前の検証（成果物のファイル）");
+    expect(buildPrompt(task({}, steps), "implement")).not.toContain(
+      "提出の前の検証（成果物のファイル）",
+    );
+  });
+
   it("セルフレビューの検証の手順は、一部の行だけを読んで進めない（全種類の主対象）", () => {
     const prompt = buildPrompt(task(), "implement");
     expect(prompt).toContain("references/verification-run.md の手順の全体（0〜5）に従う");

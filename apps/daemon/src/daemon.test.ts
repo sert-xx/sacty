@@ -18258,7 +18258,8 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
     expect(registered.map((r) => r.platforms)).toEqual([[]]);
     const prompt = executor.calls[0]?.command.join(" ") ?? "";
     expect(prompt).toContain("$SACTY_PF_URL/jira");
-    expect(prompt).not.toContain("docs");
+    // PF の名前（docs）は出さない。成果物の置き場所（docs/sacty/…）は PF ではない
+    expect(prompt.replaceAll("docs/sacty/", "")).not.toContain("docs");
     activity.close();
   });
 
