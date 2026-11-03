@@ -1445,7 +1445,7 @@ function splitRepositoryFields(task: Task): string {
  * 成果物の本文から取り除く。
  */
 function selfReviewLines(
-  kind: "design-doc" | "code",
+  kind: "design-doc" | "user-doc" | "code",
   deliverable: string,
   rework?: ReworkMode,
 ): string[] {
@@ -1471,6 +1471,17 @@ function selfReviewLines(
     `{"${SELF_REVIEW_HEADING}": {"rounds": 2, "passed": true, "remaining": ["残った must の指摘の要約（無ければ空）"], "notReviewed": ["見られなかった観点（無ければ空）"], "summary": "短い総評"}}`,
     "```",
   ];
+}
+
+/**
+ * 実装・修正の工程のセルフレビュー。成果物が文書のファイルだけの依頼（documentsOnly。PBI-284 の判定を、そのまま使う）
+ * では、主対象の種類を文書向け（user-doc）にして、コード向けの観点を起動させない（PBI-295）。それ以外は code。
+ * 文書は作業領域のファイルを直接直すので、要求要件・設計の下書きのための指示（design-doc）は付けない。
+ */
+function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string[] {
+  return task.documentsOnly === true
+    ? selfReviewLines("user-doc", `${verb}（文書）`)
+    : selfReviewLines("code", `${verb}（コードとテスト）`);
 }
 
 /**
@@ -1765,7 +1776,7 @@ function directImplementLines(
     ...feedbackLines(task),
     ...remarkLines(task, step, "観点ごとのテストの対応"),
     ...proposalLines(task, step),
-    ...selfReviewLines("code", "実装（コードとテスト）"),
+    ...implementSelfReviewLines(task, "実装"),
   );
   return lines;
 }
@@ -2273,7 +2284,7 @@ export function buildPrompt(
         lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
         lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
-        lines.push(...selfReviewLines("code", "修正（コードとテスト）"));
+        lines.push(...implementSelfReviewLines(task, "修正"));
         return lines.join("\n");
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
@@ -2370,7 +2381,7 @@ export function buildPrompt(
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
-        ...selfReviewLines("code", "実装（コードとテスト）"),
+        ...implementSelfReviewLines(task, "実装"),
       );
       return lines.join("\n");
     }

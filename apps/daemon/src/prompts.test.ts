@@ -3164,6 +3164,63 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     }
   });
 
+  it("文書だけの依頼（documentsOnly）の実装・修正は user-doc で、コードを含む依頼は今までどおり code（PBI-295）", () => {
+    const docsOnly = { documentsOnly: true } as Partial<Task>;
+    const reproduction = {
+      reproduction: {
+        reproduced: true,
+        tests: ["t › x"],
+        command: "npm test",
+        exitCode: 1,
+        output: "1 failed",
+      },
+    } as Partial<Task>;
+    const kindOf = (prompt: string) =>
+      /流れは self-review、主対象の種類は ([a-z-]+)）で(.+)をセルフレビューする/
+        .exec(prompt)
+        ?.slice(1);
+    // 文書だけの依頼：標準・direct（要求要件・設計を経ない）・テストの仕組みが無い・不具合の修正のどれでも user-doc
+    for (const [prompt, label] of [
+      [buildPrompt(task(steps, docsOnly), "implement"), "標準"],
+      [buildPrompt(task(["implement"], docsOnly), "implement"), "direct"],
+      [
+        buildPrompt(task(steps, { ...docsOnly, noTestsReason: "テストが無い" }), "implement"),
+        "noTests",
+      ],
+    ] as const) {
+      expect(kindOf(prompt), label).toEqual(["user-doc", "実装（文書）"]);
+      expect(prompt, label).not.toContain("実装（コードとテスト）");
+      // 要求要件・設計の下書きのための指示（作業領域の外の一時ファイル）は付けない
+      expect(prompt, label).not.toContain("/tmp/sacty-self-review/draft.md");
+      expect(prompt, label).toContain(HEADING);
+    }
+    expect(
+      kindOf(
+        buildPrompt(
+          task(["investigate", "reproduce", "implement"], { ...docsOnly, ...reproduction }),
+          "implement",
+        ),
+      ),
+    ).toEqual(["user-doc", "修正（文書）"]);
+    // コードを含む依頼（documentsOnly が無い）は、どの組み合わせでも code のまま
+    expect(kindOf(buildPrompt(task(steps), "implement"))).toEqual([
+      "code",
+      "実装（コードとテスト）",
+    ]);
+    expect(kindOf(buildPrompt(task(["implement"]), "implement"))).toEqual([
+      "code",
+      "実装（コードとテスト）",
+    ]);
+    expect(
+      kindOf(
+        buildPrompt(task(["investigate", "reproduce", "implement"], reproduction), "implement"),
+      ),
+    ).toEqual(["code", "修正（コードとテスト）"]);
+    // 要求要件・設計は、documentsOnly でも design-doc のまま
+    expect(kindOf(buildPrompt(task(steps, docsOnly), "requirements"))?.[0]).toBe("design-doc");
+    expect(kindOf(buildPrompt(task(steps, docsOnly), "design"))?.[0]).toBe("design-doc");
+  });
+
   it("差し戻しのやり直しでも、同じ指示を付ける", () => {
     const redo = task(steps, {
       outputs: { requirements: "# 前回" },
