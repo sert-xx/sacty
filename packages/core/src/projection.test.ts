@@ -4511,6 +4511,44 @@ describe("実装の直しの提出：説明の履歴とテストの対応（PBI-
     expect(task?.implementHistory?.[0]).toBe("# v14");
     expect(task?.implementHistory?.at(-1)).toBe("# v23");
   });
+
+  it("履歴の上限を超えても、PR 全体の説明の土台は消えない（最初の提出だけが全体で、節の無い提出が続く場合）", () => {
+    seq = 0;
+    const events = [...base("t")];
+    for (let n = 1; n <= 12; n++) {
+      events.push(
+        ...implRun("t", n, n === 1 ? "# 全体の説明" : `直し ${n}`, [
+          { viewpointId: "TV-1", tests: [`t${n}`] },
+        ]),
+      );
+      events.push(failed("t"));
+    }
+    const task = project(events).get("t");
+    expect(task?.implementHistory).toHaveLength(10);
+    expect(task?.implementHistory).not.toContain("# 全体の説明");
+    expect(task?.implementBase).toBe("# 全体の説明");
+    // 節のある提出（全体を書き直した）が来たら、その節以外の部分に土台が移る
+    seq = 0;
+    const rewritten = project([
+      ...base("t"),
+      ...implRun("t", 1, "# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
+      failed("t"),
+      ...implRun("t", 2, "# v2 全体\n\n## 最後の直し\n\n直し", [
+        { viewpointId: "TV-1", tests: ["a"] },
+      ]),
+      failed("t"),
+      ...implRun("t", 3, "直しだけ", [{ viewpointId: "TV-1", tests: ["a"] }]),
+    ]).get("t");
+    expect(rewritten?.implementBase).toBe("# v2 全体");
+    // 最初の提出では、土台は無い
+    seq = 0;
+    expect(
+      project([
+        ...base("t"),
+        ...implRun("t", 1, "# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
+      ]).get("t")?.implementBase,
+    ).toBeUndefined();
+  });
 });
 
 describe("上流の成果物が変わったら、前の実装の説明・テストの対応を引き継がない（PBI-299）", () => {
@@ -4557,31 +4595,49 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
   ];
 
   it("設計の変更を認めたら、実装の説明の履歴は空に戻る。認める前（申し出と判定の後、適用の前）は引き継ぐ", () => {
+    const proposalEvents = (apply: boolean) => [
+      ev("t1", {
+        type: "ChangeProposed",
+        payload: {
+          proposalId: "CP-1",
+          fromStep: "implement",
+          target: "design",
+          reason: "r",
+          facts: ["f"],
+          proposed: "# 設計 v2",
+          testViewpoints: [{ id: "TV-1", title: "新", input: "i", expected: "e" }],
+        },
+      }),
+      ev("t1", {
+        type: "ChangeJudged",
+        payload: { proposalId: "CP-1", verdict: "approved", reason: "ok", agentId: "g" },
+      }),
+      ...(apply ? [ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } })] : []),
+    ];
     const flow = (apply: boolean) => {
       seq = 0;
-      return project([
-        ...upstream(),
-        ev("t1", {
-          type: "ChangeProposed",
-          payload: {
-            proposalId: "CP-1",
-            fromStep: "implement",
-            target: "design",
-            reason: "r",
-            facts: ["f"],
-            proposed: "# 設計 v2",
-            testViewpoints: [{ id: "TV-1", title: "新", input: "i", expected: "e" }],
-          },
-        }),
-        ev("t1", {
-          type: "ChangeJudged",
-          payload: { proposalId: "CP-1", verdict: "approved", reason: "ok", agentId: "g" },
-        }),
-        ...(apply ? [ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } })] : []),
-      ]).get("t1");
+      return project([...upstream(), ...proposalEvents(apply)]).get("t1");
     };
     expect(flow(false)?.implementHistory).toEqual(["v1"]);
     expect(flow(true)?.implementHistory).toBeUndefined();
+    // 適用の後の実装の提出は最初の提出で、同じ観点 ID の古いテストを引き継がない
+    seq = 0;
+    const again = project([
+      ...upstream(),
+      ...proposalEvents(true),
+      ev(
+        "t1",
+        {
+          type: "FinalReviewed",
+          payload: { passed: false, viewpoints: [], remarks: [], summary: "不合格", agentId: "g" },
+        },
+        "guardian",
+      ),
+      ...run("impl-2", "implement", "v2"),
+    ]).get("t1");
+    expect(again?.implementHistory).toEqual(["v2"]);
+    expect(again?.implementBase).toBeUndefined();
+    expect(again?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v2.test.ts › 1"] }]);
   });
 
   it("要求要件への差し戻しで承認し直したら、実装の説明の履歴は空に戻り、次の実装の提出が最初の提出になる", () => {
@@ -4639,6 +4695,15 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
       "t1",
     );
     expect(reapproved?.implementHistory).toBeUndefined();
+    expect(reapproved?.implementBase).toBeUndefined();
     expect(reapproved?.approved.requirements?.output).toBe("# 要求要件 v2");
+    // 承認し直した後の実装の提出は最初の提出で、同じ観点 ID の古いテストを引き継がない
+    const next = project([
+      ...sentBack(),
+      ...run("r3", "requirements", "# 要求要件 v2"),
+      ...run("impl-2", "implement", "v2"),
+    ]).get("t1");
+    expect(next?.implementHistory).toEqual(["v2"]);
+    expect(next?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v2.test.ts › 1"] }]);
   });
 });

@@ -1,5 +1,8 @@
 import {
   type ActivityEvent,
+  advanceImplementBase,
+  type CodeFence,
+  closesFence,
   type DaemonText,
   DEFAULT_DOCUMENTS_DIR,
   DERIVE_RECORD_HEADING,
@@ -14,11 +17,13 @@ import {
   isDocumentsDir,
   isRepoless,
   isSecurityTask,
+  LAST_FIX_HEADING,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
   needsCheck,
   OperationSettings,
+  openingFence,
   PROVENANCE_EXCERPT_MAX,
   PROVENANCE_ITEMS_MAX,
   PROVENANCE_KINDS,
@@ -41,6 +46,7 @@ import {
   StepPlan,
   type StepPullRequestKey,
   sameGitHubUrl,
+  splitLastFix,
   type Task,
   type TaskProposal,
   type TaskQuestion,
@@ -3601,11 +3607,12 @@ export function extractFinalReview(
     ...carried,
     ...reportedItems(found?.raw.humanChecks),
   ]);
-  const humanChecks = uniqueChecks(environment.items);
+  const unique = uniqueChecks(environment.items);
+  const humanChecks = unique.items;
   const droppedChecks = {
     ...(dropped.length > 0 ? { droppedHumanChecks: dropped } : {}),
-    ...(merged.length + environment.merged.length > 0
-      ? { mergedHumanChecks: [...merged, ...environment.merged] }
+    ...(merged.length + environment.merged.length + unique.merged.length > 0
+      ? { mergedHumanChecks: [...merged, ...environment.merged, ...unique.merged] }
       : {}),
   };
   const command = options.testCommand;
@@ -3711,9 +3718,22 @@ function mergeEnvironmentOnlyChecks(items: readonly string[]): {
   };
 }
 
-/** 同じ項目（`sameCheck`）を1件にする（最初のものを残す）。 */
-const uniqueChecks = (items: readonly string[]) =>
-  items.filter((item, i) => items.findIndex((other) => sameCheck(other, item)) === i);
+/**
+ * 同じ項目（`sameCheck`）を1件にする（最初のものを残す）。書き方が違う（文字列として同じでない）項目をまとめたときは、
+ * 「<まとめた項目> → 同じ項目：<残した項目>」を merged に返す（文字列として同じ項目は、情報が減らないので記録しない）。
+ */
+function uniqueChecks(items: readonly string[]): { items: string[]; merged: string[] } {
+  const kept: string[] = [];
+  const merged: string[] = [];
+  for (const item of items) {
+    const same = kept.find((k) => sameCheck(k, item));
+    if (same === undefined) kept.push(item);
+    else if (oneLine(same).trim() !== oneLine(item).trim()) {
+      merged.push(`${oneLine(item)} → 同じ項目：${oneLine(same)}`);
+    }
+  }
+  return { items: kept, merged };
+}
 
 /**
  * ゴールガーディアンが、前の回の項目の番号つきで申告したもの（droppedHumanChecks の「P<番号>：<外す理由>」、
@@ -4224,19 +4244,6 @@ function leadOf(text: string, max: number): string {
  * フェンスではない）。開始は ``` か ~~~ を3つ以上（``` の行の後ろに ` は置けない）。終了は開始と同じ文字だけで
  * 開始以上の長さ、後ろは空白だけ（4文字で開いたコードの中の3文字は、終わりではない）。
  */
-type CodeFence = { char: string; size: number };
-
-function openingFence(line: string): CodeFence | undefined {
-  const opened = line.match(/^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
-  return opened?.[1] ? { char: opened[1].charAt(0), size: opened[1].length } : undefined;
-}
-
-function closesFence(line: string, fence: CodeFence): boolean {
-  const closed = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
-  const marks = closed?.[1] ?? "";
-  return marks.length >= fence.size && marks.charAt(0) === fence.char;
-}
-
 /**
  * 行頭が空白（字下げ）か。字下げした行は、字下げしたコード・リストの中のコードブロックなど、Markdown の規則を
  * 一つずつ読まないと見分けられないものなので、PR の本文の整形では触らない（報告の文を除かない・要約に使わない）。
@@ -4349,50 +4356,6 @@ export function withoutProgressReport(text: string): string {
 }
 
 /**
- * 直しの実行（前の実装の説明がある）で、実装のエージェントが説明の中に分けて書く節の見出し（PBI-299）。説明の残りは PR 全体の説明にし、
- * この節には、今回の直しで何を指摘され何を変えたかだけを書かせる。sacty は PR の本文で、全体の説明と分けて載せる。
- */
-export const LAST_FIX_HEADING = "最後の直し";
-
-/**
- * 実装の説明から、「## 最後の直し」の節（見出しの行は含めない。次の同じかより上の階層の見出しまで）を分ける。コードブロックの中の
- * 行は見出しとして読まない。節が無ければ fix は undefined で、whole は text のまま。節だけが空のときは fix が空文字。
- */
-export function splitLastFix(text: string): { whole: string; fix?: string } {
-  const rest: string[] = [];
-  const body: string[] = [];
-  let state: "before" | "in" | "after" = "before";
-  let level = 0;
-  let fence: CodeFence | undefined;
-  for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
-    const target = state === "in" ? body : rest;
-    if (fence) {
-      if (closesFence(line, fence)) fence = undefined;
-      target.push(line);
-      continue;
-    }
-    const opened = openingFence(line);
-    if (opened) {
-      fence = opened;
-      target.push(line);
-      continue;
-    }
-    const heading = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
-    if (heading?.[1]) {
-      if (state === "in" && heading[1].length <= level) state = "after";
-      else if (state === "before" && (heading[2] ?? "").startsWith(LAST_FIX_HEADING)) {
-        state = "in";
-        level = heading[1].length;
-        continue;
-      }
-    }
-    (state === "in" ? body : rest).push(line);
-  }
-  if (state === "before") return { whole: text };
-  return { whole: trimBlankLines(rest.join("\n")), fix: body.join("\n").trim() };
-}
-
-/**
  * PR の本文に載せる、実装のエージェントの説明（作業の経過の報告を除いたもの）。whole は PR 全体の説明、fix は最後の直しの説明
  * （直しの実行でないときは空）。直しの実行の説明は、指示で PR 全体の説明に「## 最後の直し」の節を分けて書かせる（PBI-299）。
  * 節が無い（最後の直しだけを書いた）ときは、前の提出までの全体の説明（最後に全体の説明として書かれた提出。無ければ最初の提出）に、
@@ -4400,14 +4363,15 @@ export function splitLastFix(text: string): { whole: string; fix?: string } {
  */
 function implementDescription(task: Task): { whole: string; fix: string } {
   const latest = task.outputs.implement ?? "";
-  const history = task.implementHistory ?? [];
-  const earlier = history.at(-1) === latest ? history.slice(0, -1) : history;
-  let base: string | undefined;
-  for (const raw of earlier) {
-    const split = splitLastFix(withoutProgressReport(raw));
-    const whole = split.fix !== undefined ? split.whole : withoutProgressReport(raw);
-    if (base === undefined || (split.fix !== undefined && whole.trim() !== "")) base = whole;
+  // 前の提出までの土台は projection が持つ（履歴の上限を超えても消えない）。持たない記録は、履歴から求める
+  let base = task.implementBase;
+  if (base === undefined) {
+    const history = task.implementHistory ?? [];
+    for (const raw of history.at(-1) === latest ? history.slice(0, -1) : history) {
+      base = advanceImplementBase(base, raw);
+    }
   }
+  if (base !== undefined) base = withoutProgressReport(base);
   const report = withoutProgressReport(latest);
   // 前の提出が無い（最初の実装）なら、直す対象が無い。説明をそのまま全体の説明にする（作り直しが無いタスクの本文は変えない）
   if (!base?.trim()) return { whole: report, fix: "" };

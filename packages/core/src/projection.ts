@@ -44,6 +44,7 @@ import {
   TASK_BODY_MAX,
   withoutResumeNoteHeadings,
 } from "./events.js";
+import { advanceImplementBase } from "./implement-description.js";
 import { type DaemonText, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
 
@@ -584,6 +585,12 @@ export type Task = {
    * 持たない記録（テストが作る不完全なタスクなど）は、`outputs.implement` だけを使う。
    */
   implementHistory?: string[];
+  /**
+   * 前の提出までの、PR 全体の説明の土台（最新の提出を除く。PBI-299）。最初の提出の前は無い。最後に「最後の直し」の節を付けて
+   * 全体の説明を書き直した提出の、節以外の部分（そういう提出が無ければ最初の提出）。節を書かずに直しだけを書いた提出が
+   * 続いても、履歴の上限を超えても、土台を失わないよう、履歴とは別に持つ。
+   */
+  implementBase?: string;
   /**
    * 実装の検証の進み具合。pending：最終レビュー（ゴールガーディアンがテストを実行して判定する）待ち。tests_passed は、それより
    * 前の版の記録だけ（sacty がテストのコンテナで実行したテストに通り、最終レビュー待ち）。
@@ -1182,6 +1189,11 @@ export function applyEvent(
             (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
             event.payload.testMap,
           );
+          const previousOutput = task.implementHistory?.at(-1);
+          task.implementBase =
+            previousOutput === undefined
+              ? undefined
+              : advanceImplementBase(task.implementBase, previousOutput);
           task.implementHistory = [...(task.implementHistory ?? []), event.payload.output].slice(
             -IMPLEMENT_HISTORY_MAX,
           );
@@ -1292,7 +1304,10 @@ export function applyEvent(
       task.gate = undefined;
       task.escalation = undefined;
       // 上流の工程を承認し直したら、前の実装の説明・テストの対応は引き継がない（PBI-299）
-      if (step !== "implement") task.implementHistory = undefined;
+      if (step !== "implement") {
+        task.implementHistory = undefined;
+        task.implementBase = undefined;
+      }
       break;
     }
 
@@ -1316,7 +1331,10 @@ export function applyEvent(
         },
       };
       task.status = event.payload.next;
-      if (event.payload.step !== "implement") task.implementHistory = undefined;
+      if (event.payload.step !== "implement") {
+        task.implementHistory = undefined;
+        task.implementBase = undefined;
+      }
       break;
     }
 
@@ -1494,6 +1512,7 @@ export function applyEvent(
       voidSubmissionChecks(task, proposal.target);
       // 承認済みの上流の成果物が変わったら、前の実装の説明・テストの対応は引き継がない（PBI-299）
       task.implementHistory = undefined;
+      task.implementBase = undefined;
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }

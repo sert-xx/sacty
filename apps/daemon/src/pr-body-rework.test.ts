@@ -1,4 +1,4 @@
-import type { FinalReview, Task } from "@sacty/core";
+import { type FinalReview, LAST_FIX_HEADING, splitLastFix, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
   buildFinalReviewPrompt,
@@ -8,8 +8,6 @@ import {
   carriedHumanChecks,
   extractFinalReview,
   joinBodyText,
-  LAST_FIX_HEADING,
-  splitLastFix,
 } from "./prompts.js";
 
 /*
@@ -179,6 +177,20 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
     const body = bodyOf(task({ outputs: { implement: text }, implementHistory: [text] }));
     expect(body).toBe(bodyOf(task({ outputs: { implement: text } })));
     expect(body).not.toContain(`- ${LAST_FIX_HEADING}：`);
+  });
+
+  it("履歴が上限で古い提出を捨てていても、持っている土台（implementBase）を全体の説明に使う", () => {
+    const fixes = Array.from({ length: 10 }, (_, i) => `直し ${i + 2}`);
+    const body = bodyOf(
+      task({
+        outputs: { implement: "直し 12" },
+        implementBase: FEATURE,
+        implementHistory: [...fixes.slice(0, 9), "直し 12"],
+      }),
+    );
+    expect(section(body, "変更")).toContain("- Web：注文一覧に配送先の列を足した");
+    expect(section(body, LAST_FIX_HEADING)).toContain("直し 12");
+    expect(body).not.toContain("直し 5");
   });
 
   it("履歴の最後が現在の説明と食い違っても（人が直した等）、現在の説明を最後の直しとして扱い、落とさない", () => {
@@ -351,6 +363,25 @@ describe("回をまたいだ「人が確かめること」は同じ趣旨を1件
     );
     // 書き直した文と、全角半角・文末の句点・大文字小文字だけが違う項目は重ねない
     expect(result.humanChecks).toEqual([rewritten, "別の確認"]);
+    // 書き方の違いでまとめたことも記録する
+    expect(result.mergedHumanChecks).toEqual([
+      `${WEB} → 書き直し：${rewritten}`,
+      `web の注文一覧の「配送先」の列を、ブラウザで確かめる。 → 同じ項目：${rewritten}`,
+    ]);
+  });
+
+  it("書き方の違いだけの項目をまとめたら、前の回の項目と新しい項目のどちらの場合も記録する。文字列として同じ項目は記録しない", () => {
+    const a = "Web の表示を確かめる";
+    const b = "web の表示を確かめる。";
+    const carried = read(verdict({ humanChecks: [b] }), [a]);
+    expect(carried.humanChecks).toEqual([a]);
+    expect(carried.mergedHumanChecks).toEqual([`${b} → 同じ項目：${a}`]);
+    const within = read(verdict({ humanChecks: [a, b] }));
+    expect(within.humanChecks).toEqual([a]);
+    expect(within.mergedHumanChecks).toEqual([`${b} → 同じ項目：${a}`]);
+    // 同じ文は、情報が減らないので記録しない（空・1件・複数件の境界）
+    expect(read(verdict({ humanChecks: [a] }), [a]).mergedHumanChecks).toBeUndefined();
+    expect(read(verdict({ humanChecks: [a, a] })).mergedHumanChecks).toBeUndefined();
   });
 
   it("記号だけが違う別の項目（版の番号・パス）は、同じ項目として落とさない", () => {
