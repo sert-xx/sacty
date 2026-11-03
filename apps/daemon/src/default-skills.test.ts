@@ -410,7 +410,7 @@ describe("既定のスキル review-dispatch の、文書が主対象のレビ�
     expect(text).toContain("`self-review`・`pr-review` のどちらでも実行する");
     expect(text).toContain("## 0. 実行する範囲を決める");
     expect(text).toMatch(
-      /^\| `design-doc`・`user-doc` \| 変えた文書に効く検証だけ \| テスト・ビルド・型チェック・コードのリンターとフォーマッター \|$/m,
+      /^\| `design-doc`・`user-doc`（差分にコードの変更が無い） \| 変えた文書に効く検証だけ（`scope` は `docs`） \| コードのテスト・ビルド・型チェック・コードのリンターとフォーマッター \|$/m,
     );
     // 文書とコードの両方を変える PR（主対象が code）は、今までどおり全部
     expect(text).toMatch(
@@ -427,8 +427,10 @@ describe("既定のスキル review-dispatch の、文書が主対象のレビ�
 
   it("主対象を文書にしても、差分にコードの変更が含まれるときは、全部実行する", () => {
     expect(section0()).toContain(
-      "レビューの範囲の差分にコード（ソース・テスト・manifest・ビルドや CI の設定・スクリプト）の変更が含まれるときは、`code` と同じに全部実行する",
+      "レビューの範囲の差分にコード（ソース・テスト・manifest・ビルドや CI の設定・スクリプト）の変更が含まれるときは、`scope` を `all` にして、`code` と同じに全部実行する。X-2 も `code` と同じに起動する（5）",
     );
+    // 文書だけを検査するものは、実行の手段（テストランナー）にかかわらず対象に含める
+    expect(section0()).toContain("テストランナーで書かれた文書だけの検査も、これに含める");
   });
 
   it("summary.json に範囲（scope）を残し、X-2 はそれを見て意図して実行していない検証を指摘しない", () => {
@@ -454,10 +456,10 @@ describe("既定のスキル review-dispatch の、文書が主対象のレビ�
     );
     // SKILL.md・観点カタログの X-2 の起動の規則も同じ
     expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
-      "主対象が文書のときは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない。",
+      "`scope` が `docs`（主対象が文書で、差分にコードの変更が無い）のときだけは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない）。`scope` が `all` なら、主対象が文書でも上のとおり起動する",
     );
     expect(read("skills/review/review-dispatch/references/viewpoints.md")).toContain(
-      "主対象が文書（`design-doc`・`user-doc`）のときは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない）",
+      "主対象が文書で差分にコードの変更が無い（`summary.json` の `scope` が `docs`）ときは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない）。主対象が文書でも差分にコードの変更があれば（`scope` が `all`）、上のとおり起動する",
     );
   });
 
