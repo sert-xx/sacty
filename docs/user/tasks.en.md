@@ -44,7 +44,7 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Automatic | The Orchestrator chooses | Default |
 | Standard | Requirements → Design → Implement → After-merge watch | Changes with several behaviors or a wide impact |
 | Skip design | Requirements → Implement → After-merge watch | Small, local changes |
-| Implement directly | Implement → After-merge watch | Changes whose request is itself the acceptance criteria |
+| Implement directly | Implement → After-merge watch | Changes whose request is itself the acceptance criteria (including requests with verifiable acceptance criteria in place and nothing for you to confirm) |
 | Bug fix | Reproduce → Implement → After-merge watch | Bugs that tests can reproduce |
 | Split | Requirements → Design → Task split → Integration review | Changes that do not fit in one PR |
 | Investigate only | Investigate | Questions, cause analysis, estimates |
@@ -58,6 +58,10 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 - When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual (you can also set the images and agents in "Set the image and agent for each step" below).
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
+- With "Auto", when the request has verifiable acceptance criteria in place and there is nothing for you to confirm, the Orchestrator skips Requirements and chooses "Implement directly". The reason for skipping is written in the reason for the plan.
+  Fine defaults such as whitespace, limits, ordering, and column positions are decided by the implementation agent and written under "既定で決めたこと" (decided by default) in the PR body, so check them in the PR.
+  When the request is ambiguous, conflicts with a document or the code, or has something you should confirm, Requirements is kept even if the acceptance criteria look detailed.
+  The number of self-review rounds, the model, and the effort do not change.
 - The specified plan appears on the "Step settings" tab of the task details.
 - Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
 - For an "Investigate only" task, if you write the form of the result (a table, sections, items, and so on) in the description, it reports in that form. Otherwise, it reports the conclusion, the evidence, the related places, and the open questions, in that order.

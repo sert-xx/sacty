@@ -720,6 +720,46 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).toContain("テストや観点を決めるために要求要件・設計の工程を足さないでください");
   });
 
+  it("受け入れ条件が詳しく、人に確かめることが無い依頼は、要求要件を省く direct を選ばせ、省いた理由を reason に書かせる（PBI-283）", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    expect(prompt).toContain(
+      "依頼に、確かめられる受け入れ条件（入力と期待する結果・振る舞い・エラーのときの扱い・対象の範囲）がそろっていて、人に確かめることが無く",
+    );
+    expect(prompt).toContain("局所的でなくてもdirectを選び、要求要件を省いてください");
+    expect(prompt).toContain(
+      "reasonには、省いた理由（どの受け入れ条件がそろっていて、人に確かめることが何も無いか）を書きます",
+    );
+    expect(prompt).toContain("実装の説明の「既定で決めたこと」に書き、PRで人が確かめます");
+  });
+
+  it("曖昧・食い違い・人に確かめたいこと・書き忘れや衝突・設計の判断があるときは、受け入れ条件が詳しく見えても要求要件を残させる（PBI-283）", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    for (const keep of [
+      "依頼が曖昧（目標や基準が無い・何をどこまでか決まらない）",
+      "依頼と文書・コード・既存の方針が食い違う",
+      "依頼に書かれていない判断（互換・削除の仕方・対象の範囲など）を人に確かめたい",
+      "書き忘れていそうなことやほかのタスク・PRと同じ所を変える衝突が見える",
+      "既存の共有の状態・項目（フラグ・列・状態の種類）に新しい意味を載せる・状態を増やす、または外に公開している API・項目の名前や形を変える（ほかの機能や、使っている側と食い違いうる）",
+    ]) {
+      expect(prompt, keep).toContain(keep);
+    }
+    expect(prompt).toContain("受け入れ条件が詳しく見えても要求要件を残し（skip-designかstandard）");
+    expect(prompt).toContain("判断しきれないときは、要求要件を残します");
+    expect(prompt).toContain(
+      "設計の判断（新しい仕組み・層をまたぐ作りの選択）が要るならstandardです",
+    );
+  });
+
+  it("要求要件を省く組み合わせ direct の説明に、受け入れ条件が詳しい依頼と、選ばない場合を書く（PBI-283）", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    expect(prompt).toContain(
+      "依頼に確かめられる受け入れ条件がそろい、人に確かめることが無く細かい既定を決めるだけで済む変更も、局所的でなくてよい（曖昧・食い違い・人に確かめたいことがあるなら選ばない）",
+    );
+    expect(prompt).toContain(
+      "要求要件で決めるのが細かい既定だけ（受け入れ条件がすでに詳しい）なら direct",
+    );
+  });
+
   it("調査だけのタスクは、結果の形を依頼の指定に合わせさせ、決まった形は指定が無いときの既定にする", () => {
     const prompt = buildPrompt(task(["investigate"], "content"), "investigate");
     expect(prompt).toContain(
@@ -1755,6 +1795,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     });
     expect(prompt).toContain("このタスクには対象リポジトリがありません");
     expect(prompt).toContain("- https://github.com/acme/api");
+    // 受け入れ条件が詳しい依頼で要求要件を省く決まり（PBI-283）も、リポジトリの無いタスクの指示に入る
+    expect(prompt).toContain("局所的でなくてもdirectを選び、要求要件を省いてください");
     expect(prompt).toContain("プロジェクトのコンテキストリポジトリ：https://github.com/acme/ctx");
     expect(prompt).toContain("# 規約");
     expect(prompt).toContain('"repo": "作業するリポジトリの URL');
@@ -3684,6 +3726,31 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
     const child = { ...direct, gathered: undefined };
     expect(buildPrompt(child, "implement")).toContain(
       "下のタスクの内容（依頼）に従って実装してください",
+    );
+  });
+
+  it("要求要件を省いた実装は、細かい既定を「既定で決めたこと」に分けて実装の説明に書かせ、受け入れ条件を1つずつ確かめさせる（PBI-283）", () => {
+    seq = 0;
+    const direct = project([
+      ev(
+        { type: "TaskCreated", payload: { title: "管理者リンク", body: BODY, start: "sacty" } },
+        "person",
+      ),
+      ev({
+        type: "StepsChosen",
+        payload: { steps: [...STEP_PLANS.direct], plan: "direct", testCommand: "npm test" },
+      }),
+      ev({
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+      }),
+    ]).get("t1") as Task;
+    const implement = buildPrompt(direct, "implement");
+    expect(implement).toContain("空白・上限・並び・列の位置のような細かい既定など");
+    expect(implement).toContain("実装の説明に「既定で決めたこと」の節を分けて、1件1行で書く");
+    expect(implement).toContain("人は PR のここで確かめる");
+    expect(implement).toContain(
+      "依頼に受け入れ条件が列挙されていれば、1つずつ満たすことを確かめる",
     );
   });
 
