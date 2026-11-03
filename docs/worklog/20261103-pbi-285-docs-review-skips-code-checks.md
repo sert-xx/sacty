@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-285
-- PR: #286
+- PR: #287
 - ブランチ: feat/issue-285-pbi-285
 - 関係する ADR: [文書が主対象のレビューでは、文書に効く検証だけを実行し、コードの検証を実行しない](../adr/20261103-0300-docs-main-target-skips-code-checks-in-review.md)
 
