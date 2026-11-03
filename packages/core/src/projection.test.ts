@@ -4399,3 +4399,246 @@ describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
     expect(discardedAiReviews(task)?.items.map((i) => i.key)).toEqual(["review:9"]);
   });
 });
+
+describe("実装の直しの提出：説明の履歴とテストの対応（PBI-299）", () => {
+  const implRun = (
+    id: string,
+    n: number,
+    output: string,
+    testMap: { viewpointId: string; tests: string[]; untested?: string }[],
+  ) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: `impl-${n}`, step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: `impl-${n}`,
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output,
+        testMap,
+      },
+    }),
+  ];
+  const failed = (id: string) =>
+    ev(
+      id,
+      {
+        type: "FinalReviewed",
+        payload: { passed: false, viewpoints: [], remarks: [], summary: "不合格", agentId: "g" },
+      },
+      "guardian",
+    );
+  const base = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+  ];
+
+  it("提出ごとの説明を古い順に持ち、直しの提出は、前の提出までのテストを、今回の申告の観点に残す（PR 全体の対応）", () => {
+    seq = 0;
+    const task = project([
+      ...base("t"),
+      ...implRun("t", 1, "# v1", [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 1", "a.test.ts › 2"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      failed("t"),
+      // 直しだけのテストを申告した提出（S5 r4：18 件が 3 件になった）
+      ...implRun("t", 2, "# v2", [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 2", "a.test.ts › 3"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      failed("t"),
+      ...implRun("t", 3, "# v3", [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 4"] },
+        { viewpointId: "TV-2", tests: [], untested: "文言だけの変更" },
+      ]),
+    ]).get("t");
+    expect(task?.implementHistory).toEqual(["# v1", "# v2", "# v3"]);
+    expect(task?.outputs.implement).toBe("# v3");
+    expect(task?.testMap).toEqual([
+      {
+        viewpointId: "TV-1",
+        tests: ["a.test.ts › 1", "a.test.ts › 2", "a.test.ts › 3", "a.test.ts › 4"],
+      },
+      // テストを外して差分の確認に変えた、という申告は、前のテストで打ち消さない
+      { viewpointId: "TV-2", tests: [], untested: "文言だけの変更" },
+    ]);
+  });
+
+  it("最初の提出は、申告のとおり。今回の申告に出てこない観点は、前の対応を残さない（対応させていない観点のまま）", () => {
+    seq = 0;
+    const first = project([
+      ...base("t"),
+      ...implRun("t", 1, "# v1", [{ viewpointId: "TV-1", tests: ["a.test.ts › 1"] }]),
+    ]).get("t");
+    expect(first?.implementHistory).toEqual(["# v1"]);
+    expect(first?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["a.test.ts › 1"] }]);
+    seq = 0;
+    const second = project([
+      ...base("t"),
+      ...implRun("t", 1, "# v1", [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 1"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      failed("t"),
+      ...implRun("t", 2, "# v2", [{ viewpointId: "TV-1", tests: ["a.test.ts › 2"] }]),
+    ]).get("t");
+    expect(second?.testMap).toEqual([
+      { viewpointId: "TV-1", tests: ["a.test.ts › 1", "a.test.ts › 2"] },
+    ]);
+  });
+
+  it("履歴は上限を超えたら古いものから捨てる", () => {
+    seq = 0;
+    const events = [...base("t")];
+    for (let n = 1; n <= 23; n++) {
+      events.push(...implRun("t", n, `# v${n}`, [{ viewpointId: "TV-1", tests: [`t${n}`] }]));
+      events.push(failed("t"));
+    }
+    const task = project(events).get("t");
+    expect(task?.implementHistory).toHaveLength(10);
+    expect(task?.implementHistory?.[0]).toBe("# v14");
+    expect(task?.implementHistory?.at(-1)).toBe("# v23");
+  });
+});
+
+describe("上流の成果物が変わったら、前の実装の説明・テストの対応を引き継がない（PBI-299）", () => {
+  const run = (runId: string, step: "requirements" | "design" | "implement", output: string) => [
+    ev("t1", {
+      type: "AgentRunStarted",
+      payload: { runId, step, agentId: "a", authMode: "subscription" },
+    }),
+    ev("t1", {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step,
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output,
+        testViewpoints:
+          step === "design" ? [{ id: "TV-1", title: "旧", input: "i", expected: "e" }] : [],
+        ...(step === "implement"
+          ? { testMap: [{ viewpointId: "TV-1", tests: [`${output}.test.ts › 1`] }] }
+          : {}),
+      },
+    }),
+    ...(step === "implement"
+      ? []
+      : [
+          ev("t1", { type: "StepSubmitted", payload: { step, submission: 1 } }),
+          ev("t1", { type: "StepApproved", payload: { step, next: "queued" } }, "person"),
+        ]),
+  ];
+  const upstream = () => [
+    created("t1"),
+    steps("t1"),
+    ev("t1", {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+    ...run("r1", "requirements", "# 要求要件"),
+    ...run("r2", "design", "# 設計"),
+    ...run("impl-1", "implement", "v1"),
+  ];
+
+  it("設計の変更を認めたら、実装の説明の履歴は空に戻る。認める前（申し出と判定の後、適用の前）は引き継ぐ", () => {
+    const flow = (apply: boolean) => {
+      seq = 0;
+      return project([
+        ...upstream(),
+        ev("t1", {
+          type: "ChangeProposed",
+          payload: {
+            proposalId: "CP-1",
+            fromStep: "implement",
+            target: "design",
+            reason: "r",
+            facts: ["f"],
+            proposed: "# 設計 v2",
+            testViewpoints: [{ id: "TV-1", title: "新", input: "i", expected: "e" }],
+          },
+        }),
+        ev("t1", {
+          type: "ChangeJudged",
+          payload: { proposalId: "CP-1", verdict: "approved", reason: "ok", agentId: "g" },
+        }),
+        ...(apply ? [ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } })] : []),
+      ]).get("t1");
+    };
+    expect(flow(false)?.implementHistory).toEqual(["v1"]);
+    expect(flow(true)?.implementHistory).toBeUndefined();
+  });
+
+  it("要求要件への差し戻しで承認し直したら、実装の説明の履歴は空に戻り、次の実装の提出が最初の提出になる", () => {
+    const sentBack = () => {
+      seq = 0;
+      return [
+        ...upstream(),
+        ev("t1", {
+          type: "TestsRun",
+          payload: {
+            command: "npm test",
+            exitCode: 0,
+            unmappedViewpoints: [],
+            passed: true,
+            output: "",
+            durationMs: 1,
+          },
+        }),
+        ev(
+          "t1",
+          {
+            type: "FinalReviewed",
+            payload: { passed: true, viewpoints: [], remarks: [], summary: "ok", agentId: "g" },
+          },
+          "guardian",
+        ),
+        ev("t1", {
+          type: "PullRequestPublished",
+          payload: {
+            branch: "sacty/t",
+            commit: "c1",
+            url: "https://github.com/acme/app/pull/7",
+            repo: "https://github.com/acme/app",
+            number: 7,
+          },
+        }),
+        ev("t1", { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+        ev(
+          "t1",
+          {
+            type: "ChangesRequested",
+            payload: {
+              step: "implement",
+              target: "requirements",
+              round: 1,
+              remarks: [{ id: "requirements-1-1", text: "要求要件を直す" }],
+            },
+          },
+          "person",
+        ),
+      ];
+    };
+    expect(project(sentBack()).get("t1")?.implementHistory).toEqual(["v1"]);
+    const reapproved = project([...sentBack(), ...run("r3", "requirements", "# 要求要件 v2")]).get(
+      "t1",
+    );
+    expect(reapproved?.implementHistory).toBeUndefined();
+    expect(reapproved?.approved.requirements?.output).toBe("# 要求要件 v2");
+  });
+});

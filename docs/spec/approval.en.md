@@ -237,25 +237,33 @@ The implementation PR body is written to be read short, conclusion first. The fu
 
 1. The task ID line, and `Closes #<number>` (for a task taken in from an Issue)
 2. "結論" (Conclusion)
-   - Summary of the change: the head of the first paragraph (only lines without indentation; excluding headings, tables, code blocks, and indented lines) of the Implementation step's output. When there is no output, the line is left out.
+   - Summary of the change: the head of the first paragraph (only lines without indentation; excluding headings, tables, code blocks, and indented lines) of the Implementation step's output. When there is no output, the line is left out. After a redo, the head of the description of the whole PR (see "Body after a redo" below).
+   - The last fix: only after a redo, the head of the description of the last fix.
    - The final review's verdict and the head of its summary. "（なし）" when there is no final review yet, and a note when it is being verified.
    - The record that a person moved the task on despite the failed final review, and the failed points (if any; `overrideBodyLines`)
    - What a person should confirm (if any; `humanCheckBodyLines`)
 3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
    - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
    - A task that skipped the requirements step, and the fix scope of a security fix, are short, so they stay as before.
-4. "変更" (Changes): the Implementation step's output. Left out when it is the same as the change summary in the conclusion. When there is no output, the heading is left out too.
-5. The exported results
-6. Viewpoint → test → result
+4. "変更" (Changes): the Implementation step's output (after a redo, the description of the whole PR). Left out when it is the same as the change summary in the conclusion. When there is no output, the heading is left out too.
+5. "最後の直し" (The last fix): only after a redo. The description of the last fix (see "Body after a redo" below).
+6. The exported results
+7. Viewpoint → test → result
    - The table columns are "観点", "テスト", and "最終レビュー". The viewpoint is the ID and title (up to 60 characters), the test is the name of the first test (up to 70 characters) and "ほか N 件", and the final review is only ✅ or ❌.
    - Below the table is the test line (the "テスト：" line above).
    - Each viewpoint's input, expected result, all tests, and the final review's findings go into the collapsed section "観点ごとの詳細" outside the table.
-7. The full text of the final review (collapsed). Shown only when it is longer than the head shown in the conclusion, or when there is a recurrence check of earlier remarks.
+8. The full text of the final review (collapsed). Shown only when it is longer than the head shown in the conclusion, or when there is a recurrence check of earlier remarks.
 
 The common rules are as follows.
 
 - Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Only sentences in lines that are outside a code fence and do not start with whitespace are touched. Lines of code blocks (CommonMark fences: indentation of 0 to 3 spaces, closed by the same character at least as long as the opening), tables, and headings, and every indented line (code inside a list, indented code, and so on), are left alone. The rule does not parse Markdown piece by piece and errs on the side of keeping: one leftover progress sentence does less harm than broken code. The summary of the change (`leadParagraph`) also uses only lines without indentation. The Implementation step's output is saved with the indentation of its first line kept (only blank lines before and after and trailing whitespace are removed; `keepIndent` of `extractBlocks`; other steps still trim as before). The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
 - The leading "合格。" or "不合格。" of the final review's summary is removed (the verdict is written separately, so it is not repeated as "合格。合格。").
+- Body after a redo (PBI-299; experiment S5 r4, F44, where after two redos the conclusion, the changes, the verification, and the viewpoint table of the last body described only the last fix, and it was no longer clear what the PR was): however the redo started (a failed final review, a person's send-back, or the remarks of an AI review), the body written when the PR is updated describes the whole PR at that time.
+  - The output of each implementation submission is kept in `Task.implementHistory`, oldest first (built from `AgentRunCompleted` of the implementation; up to 10; it is emptied when an upstream step such as the requirements or the design is approved again, and when a proposal that changes an approved upstream output is applied).
+  - The instructions for implementation (`implementReworkLines`; when the previous description is attached) tell the agent that the description is a description of everything the PR adds (rewrite the previous description with this fix reflected, and fold the content of an earlier "最後の直し" section into the whole), that this fix goes only once in a separate section "## 最後の直し" (`LAST_FIX_HEADING`) at the end of the description, and that the viewpoint-test mapping is also the mapping for the whole PR.
+  - The body splits the description into the "## 最後の直し" section (`splitLastFix`; headings inside code blocks are not read; the section runs to the next heading of the same or a higher level) and the rest. The rest is the description of the whole PR (the summary of the change in the conclusion, and "変更"), and the section is the last fix (the "最後の直し" line of the conclusion and the "最後の直し" section) (`implementDescription`). The body that follows a template puts the description of the whole PR in "変更", followed by a bold "最後の直し" and its text.
+  - A submission that wrote only the last fix, without the section, is not taken as the description of the whole PR. Among the earlier submissions, the one last written as a description of the whole (the part of a submission with a section other than the section, or the first submission if none has a section) is used as the whole, and the entire description of the last submission becomes the last fix. When there is no earlier submission (the first implementation), the description is left as it is even if it has the section. The body of a task with no redo is the same as before.
+  - The viewpoint-test mapping (`Task.testMap`), when there is an earlier submission, lists for each viewpoint in this report the tests mapped up to the earlier submissions first and this submission's tests after them (the same test once; `mergeTestMaps`). A viewpoint to be checked in the diff without tests (`tests` is empty) uses this report as it is. A viewpoint that does not appear in this report keeps no earlier mapping (it stays an unmapped viewpoint and fails the verification as before).
 - A long sentence in the conclusion is cut at a sentence break ("。") within `BODY_LEAD_MAX` (240 characters). If there is no break, "…" is added.
 
 ### Finding the template
@@ -288,7 +296,7 @@ A template is judged absent or unusable as follows.
 - Headings with no content or that do not apply get "該当なし（sacty は記入していません）" (Not applicable; sacty did not fill this in) (`NOT_APPLICABLE`). Headings with checkboxes do not get it (only the unchecked checkboxes remain). Before the first heading, only comments and checkboxes remain.
 - Content of the implementation PR (`buildPullRequestBodyParts`)
   - Purpose: the final review's verdict and the head of its summary, the number of items for a person to confirm (if any, "この PR の末尾にあります" (it is at the end of this PR)), and the head and the location of the full text of the approved requirements (the bug reproduction for a reproduce task)
-  - Changes: the Implementation step's output (without progress reports)
+  - Changes: the Implementation step's output (without progress reports; after a redo, the description of the whole PR followed by a bold "最後の直し" and the description of the last fix)
   - Tests: the viewpoint → test → result table and the test results (6 in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
   - Related Issue: `Closes #<number>` (for a task taken in from an Issue)
   - The exported results and the full text of the Goal Guardian's final review go into "the sacty record".

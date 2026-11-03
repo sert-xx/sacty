@@ -573,8 +573,17 @@ export type Task = {
    * 第2の親にしたマージコミットになる（まだ親に含まれていなければ）。
    */
   baseMerge?: PayloadOf<"BaseBranchMerged"> & { at: string };
-  /** 実装の最新の提出が申告した、観点とテストの対応。 */
+  /**
+   * 実装の観点とテストの対応。最新の提出が申告したもの。直しの提出（前に実装の提出がある）は、PR 全体の対応にするため、
+   * 前の提出までに対応させたテストも、今回の申告に出てくる観点に残す（PBI-299）。
+   */
   testMap: TestMapping[];
+  /**
+   * 実装の提出ごとの出力（古い順。PBI-299）。直しの後の PR の本文を、最後の直しの説明だけにせず、PR 全体の説明にするために
+   * 持つ。要求要件・設計などの上流の工程を承認し直したら、実装をやり直す前提が変わるので、空に戻す。上限を超えたら古いものを捨てる。
+   * 持たない記録（テストが作る不完全なタスクなど）は、`outputs.implement` だけを使う。
+   */
+  implementHistory?: string[];
   /**
    * 実装の検証の進み具合。pending：最終レビュー（ゴールガーディアンがテストを実行して判定する）待ち。tests_passed は、それより
    * 前の版の記録だけ（sacty がテストのコンテナで実行したテストに通り、最終レビュー待ち）。
@@ -885,6 +894,23 @@ class ActivityIntegrityError extends Error {
 }
 
 /** 検証に通らなかった。失敗の内容を渡して、実装をやり直す（実行待ちに戻す）。 */
+/** 実装の提出ごとの出力（`implementHistory`）を持つ件数の上限。直しが続いても、記録が際限なく大きくならないようにする。 */
+const IMPLEMENT_HISTORY_MAX = 10;
+
+/**
+ * 直しの提出の、観点とテストの対応を、PR 全体の対応にする（PBI-299）。今回の申告に出てくる観点は、前の提出までのテストを先に、
+ * 今回のテストを後に並べる（同じテストは1件）。テストを書かずに差分で確かめる観点（tests が空）は、今回の申告をそのまま使う
+ * （テストを外して差分の確認に変えた、という申告を、前のテストで打ち消さない）。今回の申告に出てこない観点は、前の対応を残さない
+ * （対応させていない観点として、これまでどおり検証で不合格になる）。
+ */
+function mergeTestMaps(previous: TestMapping[], next: TestMapping[]): TestMapping[] {
+  return next.map((m) => {
+    if (m.tests.length === 0) return m;
+    const earlier = previous.find((p) => p.viewpointId === m.viewpointId)?.tests ?? [];
+    return { ...m, tests: [...new Set([...earlier, ...m.tests])] };
+  });
+}
+
 function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback"]>) {
   task.verification = undefined;
   task.verifyFailures += 1;
@@ -1151,7 +1177,14 @@ export function applyEvent(
           task.reproductionPending = true;
         }
         if (event.payload.step === "implement") {
-          task.testMap = event.payload.testMap;
+          // 直しの提出は、PR 全体の対応にする：前の提出までに対応させたテストを、今回の申告に出てくる観点に残す（PBI-299）
+          task.testMap = mergeTestMaps(
+            (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
+            event.payload.testMap,
+          );
+          task.implementHistory = [...(task.implementHistory ?? []), event.payload.output].slice(
+            -IMPLEMENT_HISTORY_MAX,
+          );
           task.addedTestCommand = event.payload.testCommand;
           task.verification = "pending";
           // やり直した実装は、PR を更新して CI を待ち直す
@@ -1258,6 +1291,8 @@ export function applyEvent(
       task.pendingReview = undefined;
       task.gate = undefined;
       task.escalation = undefined;
+      // 上流の工程を承認し直したら、前の実装の説明・テストの対応は引き継がない（PBI-299）
+      if (step !== "implement") task.implementHistory = undefined;
       break;
     }
 
@@ -1281,6 +1316,7 @@ export function applyEvent(
         },
       };
       task.status = event.payload.next;
+      if (event.payload.step !== "implement") task.implementHistory = undefined;
       break;
     }
 
@@ -1456,6 +1492,8 @@ export function applyEvent(
       }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
       voidSubmissionChecks(task, proposal.target);
+      // 承認済みの上流の成果物が変わったら、前の実装の説明・テストの対応は引き継がない（PBI-299）
+      task.implementHistory = undefined;
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }
