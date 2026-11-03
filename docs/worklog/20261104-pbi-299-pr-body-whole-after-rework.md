@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-04（UTC）
 - タスク: PBI-299
-- PR: なし
+- PR: #301
 - ブランチ: feat/issue-299-pr-body-whole
 - 関係する ADR: [作り直しの後の PR の本文を PR 全体の説明にし、回をまたぐ「人が確かめること」を1件にまとめる](../adr/20261103-1800-pr-body-whole-after-rework.md)
 
