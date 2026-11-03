@@ -454,3 +454,61 @@ describe("直して読んだ文字列の、復号した秘密情報を保存し�
     expect(review.findings).toEqual(["足りない\n[伏せた値]"]);
   });
 });
+
+describe("前の回の人が確かめること（PBI-299）の項目も、直して読み、伏せ、上書きさせない（PBI-298）", () => {
+  const previous = [
+    "この環境だけの結果：Go 1.22.12 は入っていない",
+    "Web の注文一覧は実機で確かめる",
+  ];
+  const secret = "sk-fiction-0123456789abcdef";
+  const hide = (t: string) => t.split(secret).join("[伏せた値]");
+  const leak = secret.replace("s", "\\u0073");
+  const options = { ...OPTIONS, previousHumanChecks: previous, hide };
+  /** tests を閉じずに、humanChecks・droppedHumanChecks・updatedHumanChecks が続く出力。 */
+  const output = (rest: string, close = false) =>
+    `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":0,"output":"ok"${close ? "}," : ","}${rest},"summary":"ok"}}\n\`\`\``;
+  const rest = (updated: string) =>
+    `"humanChecks":[],"droppedHumanChecks":["P2：実機で確かめた"],"updatedHumanChecks":[${updated}]`;
+
+  it("tests を閉じ忘れても、updatedHumanChecks は tests の外に読み、前の回の項目を書き直した文に置き換える", () => {
+    const updated = '"P1：この環境だけの結果：Go 1.22.12 の venv を複写して通した"';
+    const broken = extractFinalReview(output(rest(updated)), ["REQ"], [], options);
+    const fixed = extractFinalReview(output(rest(updated), true), ["REQ"], [], options);
+    expect(broken.unreadable).toBe(false);
+    expect(broken.outputRepaired).toMatchObject({ params: { repairs: [{ kind: "brace" }] } });
+    expect(broken.humanChecks).toHaveLength(1);
+    expect(broken.humanChecks?.[0]).toContain("venv を複写して通した");
+    expect(broken.droppedHumanChecks).toEqual([`${previous[1]} → 外した理由：実機で確かめた`]);
+    expect(broken.mergedHumanChecks?.length).toBeGreaterThan(0);
+    // 閉じ括弧を補った正しい出力を読んだ結果と同じ（作業履歴の注記だけが違う）
+    const { outputRepaired, ...same } = broken;
+    expect(outputRepaired).toBeDefined();
+    expect(same).toEqual(fixed);
+  });
+
+  it("updatedHumanChecks が tests の直後に来る並びでも補う。配列でなければ、直した結果を読まない", () => {
+    const direct = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":0,"output":"ok","updatedHumanChecks":["P1：確かめ直した"],"summary":"ok"}}\n\`\`\``;
+    const review = extractFinalReview(direct, ["REQ"], [], options);
+    expect(review.unreadable).toBe(false);
+    expect(review.humanChecks).toContain("確かめ直した");
+    const notArray = direct.replace('["P1：確かめ直した"]', '"P1：確かめ直した"');
+    expect(extractFinalReview(notArray, ["REQ"], [], options).unreadable).toBe(true);
+  });
+
+  it("書き直しの申告が重なって、前の回の項目や判定を上書きする出力は読まない", () => {
+    const dup = output(`${rest('"P1：a"')},"updatedHumanChecks":["P1：b"]`);
+    expect(extractFinalReview(dup, ["REQ"], [], options).unreadable).toBe(true);
+  });
+
+  it("書き直した文・外した理由に、エスケープした秘密情報が生の改行と並んでいても、残さない", () => {
+    const updated = `"P1：この環境だけの結果：確かめた\n${leak}"`;
+    const out = output(
+      `"humanChecks":["追加\n${leak}"],"droppedHumanChecks":["P2：理由\n${leak}"],"updatedHumanChecks":[${updated}]`,
+    );
+    expect(hide(out)).toBe(out);
+    const review = extractFinalReview(out, ["REQ"], [], options);
+    expect(review.unreadable).toBe(false);
+    expect(JSON.stringify(review)).not.toContain("fiction-0123");
+    expect(JSON.stringify(review)).toContain("[伏せた値]");
+  });
+});
