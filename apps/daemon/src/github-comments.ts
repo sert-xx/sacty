@@ -109,7 +109,10 @@ export function githubCommentMarker(
   return `<!-- sacty-comment:${taskId}:${step}:${approvedAt}:${index} -->`;
 }
 
-/** 投稿するコメントの本文。AI が書き、人間が承認したことを添える。 */
+/**
+ * 投稿するコメントの本文。AI が書き、人間が承認したことを添える。承認を待つ間に投稿するもの（awaitingApproval）は、
+ * 承認はまだで、PR のマージで承認されることを添える（PBI-301）。
+ */
 export function buildGitHubComment(input: {
   taskId: string;
   step: string;
@@ -117,13 +120,16 @@ export function buildGitHubComment(input: {
   approvedAt: string;
   index: number;
   body: string;
+  awaitingApproval?: boolean;
 }): string {
   return [
     githubCommentMarker(input.taskId, input.step, input.approvedAt, input.index),
     input.body,
     "",
     "---",
-    `sacty のタスク ${input.taskId} の${input.stepName}の工程で AI が書き、人間が承認しました。`,
+    input.awaitingApproval
+      ? `sacty のタスク ${input.taskId} の${input.stepName}の工程で AI が書きました。この工程の成果は、PR のマージで承認されます。`
+      : `sacty のタスク ${input.taskId} の${input.stepName}の工程で AI が書き、人間が承認しました。`,
   ].join("\n");
 }
 

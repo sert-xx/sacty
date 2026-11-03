@@ -2,9 +2,24 @@ import { type DaemonText, message, type TokenUsage } from "@sacty/core";
 
 export type FailureReason = "usage_limit" | "auth" | "error";
 
+/** モデルごとの使用量（Claude Code の result の modelUsage。サブエージェントのモデルも入る。PBI-301）。 */
+export type ModelUsage = { model: string; usage: TokenUsage };
+
+/**
+ * エージェントの CLI が報告した実行の費用と、モデルごとの使用量（PBI-301）。どちらも、報告があったときだけ持つ。
+ * - reportedCostUsd：CLI が報告した実行の費用（Claude Code の result の total_cost_usd。実行の全体）。
+ * - modelUsages：モデルごとの使用量。報告が無いとき、モデルごとの単価で換算するのに使う。
+ * - unreportedUsage：報告した費用に入っていない使用量（最後の result の後に始まった番など。換算して足す）。
+ */
+export type CostReport = {
+  reportedCostUsd?: number;
+  modelUsages?: ModelUsage[];
+  unreportedUsage?: TokenUsage;
+};
+
 export type AgentOutcome =
-  | { kind: "completed"; output: string; usage: TokenUsage }
-  | {
+  | ({ kind: "completed"; output: string; usage: TokenUsage } & CostReport)
+  | ({
       kind: "failed";
       reason: FailureReason;
       /** エージェントや外から来た文はそのまま、sacty の文言はコードと引数（PBI-11）。 */
@@ -15,7 +30,7 @@ export type AgentOutcome =
        * 止まった実行。usage があれば、読めた分（下限）で、無ければ何も読めなかった。
        */
       costUnknown?: true;
-    };
+    } & CostReport);
 
 const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
@@ -311,6 +326,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     const turns = json === this.result ? this.summed : claudeUsage(json.usage);
     const total = this.resumed ? undefined : modelUsageTotal(json.modelUsage);
     const usage = total ? larger(total, turns) : turns;
+    // CLI が報告した費用とモデルごとの使用量（PBI-301）。セッションを再開・複製した実行は、前の実行の分も入るので使わない
+    const report: CostReport = this.resumed ? {} : costReport(json);
     if (this.prefer && this.preferred === undefined && this.results >= 2) {
       this.noticeText = `result が ${this.results} 回出ましたが、${this.prefer} を含むものが無いので、最後の result を答えにしました（使用量：${total ? "modelUsage" : "各 result の usage の合計"}）`;
     }
@@ -333,6 +350,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
           kind: "failed",
           reason: classifyFailure(message),
           message,
+          ...report,
+          ...(after ? { unreportedUsage: after } : {}),
           usage: after
             ? {
                 input: usage.input + after.input,
@@ -344,7 +363,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
           costUnknown: true,
         };
       }
-      return { kind: "failed", reason: classifyFailure(message), message, usage };
+      return { kind: "failed", reason: classifyFailure(message), message, usage, ...report };
     }
     // 最後の result が空なら、その前の中身のある result を使う（PBI-290）。json の形（result が1つ）では、前の result は無い
     const usedEarlier = result.trim() === "" && json === this.result && this.content !== undefined;
@@ -357,6 +376,8 @@ export class ClaudeOutcomeReader extends OutcomeReader {
         kind: "failed",
         reason: "error",
         message: message("run.emptyResult"),
+        ...report,
+        ...(after ? { unreportedUsage: after } : {}),
         usage: after
           ? {
               input: usage.input + after.input,
@@ -371,7 +392,7 @@ export class ClaudeOutcomeReader extends OutcomeReader {
     if (usedEarlier && this.preferred === undefined) {
       this.emptyNoticeText = `最後の result が空だったので、その前の中身のある result を答えにしました（result は ${this.results} 回）`;
     }
-    return { kind: "completed", output, usage };
+    return { kind: "completed", output, usage, ...report };
   }
 }
 
@@ -398,6 +419,44 @@ function larger(a: TokenUsage, b: TokenUsage): TokenUsage {
     cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
     output: Math.max(a.output, b.output),
   };
+}
+
+/**
+ * Claude Code の result が報告した、実行の費用（total_cost_usd）とモデルごとの使用量（modelUsage）。読めないものは持たない
+ * （PBI-301）。費用は 0 以上の有限の数だけ。0 の報告は、使用量があるのに 0 なら報告とせず、換算に任せる（呼び出し側で判断する）。
+ */
+function costReport(json: Record<string, unknown>): CostReport {
+  const cost = json.total_cost_usd;
+  const reported =
+    typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+  const modelUsages = modelUsageList(json.modelUsage);
+  return {
+    ...(reported !== undefined ? { reportedCostUsd: reported } : {}),
+    ...(modelUsages.length > 0 ? { modelUsages } : {}),
+  };
+}
+
+/** modelUsage のモデルごとの使用量（読める項目を持つモデルだけ）。 */
+function modelUsageList(value: unknown): ModelUsage[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value).flatMap(([model, m]) =>
+    m &&
+    typeof m === "object" &&
+    !Array.isArray(m) &&
+    MODEL_USAGE_KEYS.some((k) => typeof (m as Record<string, unknown>)[k] === "number")
+      ? [
+          {
+            model,
+            usage: {
+              input: nonNegInt((m as Record<string, unknown>).inputTokens),
+              cacheRead: nonNegInt((m as Record<string, unknown>).cacheReadInputTokens),
+              cacheWrite: nonNegInt((m as Record<string, unknown>).cacheCreationInputTokens),
+              output: nonNegInt((m as Record<string, unknown>).outputTokens),
+            },
+          },
+        ]
+      : [],
+  );
 }
 
 const MODEL_USAGE_KEYS = [

@@ -76,7 +76,7 @@
 | --- | --- | --- |
 | `auth` | （必須） | 認証（下の表） |
 | `via_gateway` | `false` | AI の呼び出しをホストのゲートウェイ経由にする。`true` にできるのは `codex` の `auth.mode` が `bedrock`・`openai-compatible` のときだけ（`config.gatewayUnsupported`） |
-| `available_models` | `{}` | モデルの名前ごとの単価（100万トークンあたりの米ドル）。`input`・`cached_input`・`output`（必須）・`cache_write`（既定 0） |
+| `available_models` | `{}` | モデルの名前ごとの単価（100万トークンあたりの米ドル）。`input`・`cached_input`・`output`（必須）・`cache_write`（既定 0）。同じ接続先のエージェントは、これをすべて `modelPrices` として持ち、実行の中で別のモデル（サブエージェントなど）が使われたとき、そのモデルの単価で換算する（[エージェントの実行](agent-execution.md#出力の扱い)） |
 
 `auth.mode` ごとの項目と使える接続先は、次のとおり。
 

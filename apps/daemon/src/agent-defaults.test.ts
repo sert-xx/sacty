@@ -98,6 +98,25 @@ describe("リポジトリの既定（config/agents.yaml）", () => {
 });
 
 describe("接続先と単価だけの config.yaml", () => {
+  it("エージェントは、同じ接続先で使えるモデルすべての単価を持つ（実行の中で別のモデルが使われたとき、そのモデルの単価で換算する。PBI-301）", () => {
+    const config = loaded(`providers:\n${claude()}`);
+    expect(config.defaultAgent.id).toBe("claude_standard");
+    expect(Object.keys(config.defaultAgent.modelPrices ?? {}).sort()).toEqual([
+      "claude-haiku-5-5",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+    ]);
+    expect(config.defaultAgent.modelPrices?.["claude-opus-5-5"]).toEqual({
+      input: 15,
+      cachedInput: 1.5,
+      cacheWrite: 18.75,
+      output: 75,
+    });
+    // ほかの接続先のモデルは持たない
+    const both = loaded(`providers:\n${codex()}${claude()}`);
+    expect(Object.keys(both.defaultAgent.modelPrices ?? {})).toEqual(["gpt-6-luna", "gpt-6.1-sol"]);
+  });
+
   it("providers.codex だけ：既定の codex の段階がすべて使え、工程の AI は codex_standard。警告は無い", () => {
     const config = loaded(`providers:\n${codex()}`);
     expect(config.defaultAgent).toMatchObject({

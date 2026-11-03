@@ -50,6 +50,17 @@ describe("既定のスキル（git・review）の、PR のレビューの投稿�
     );
   });
 
+  it("既存の指摘の未対応は、確かめてから書き、総評と判定を食い違わせない（解決済みでないことを根拠にしない。PBI-301）", () => {
+    const text = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(text).toContain("解決済みにされていないことを、未対応の根拠にしない");
+    expect(text).toContain("自分が前回の指摘の確認で「対応を確認した」と書いた指摘");
+    expect(text).toContain("確かめて未対応だった既存の指摘があるときだけ");
+    expect(text).toContain("このときの判定は「指摘なし」にしない");
+    expect(text).toContain("総評に「未対応」と書かない。総評と判定が食い違わないようにする");
+    // 判定の根拠の規則も、未対応の既存の指摘を含める
+    expect(text).toContain("確かめて未対応だった既存の指摘があるときは、「指摘なし」にしない");
+  });
+
   it("あらゆるリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない", () => {
     const files = [
       ...markdownUnder(join(DEFAULT_CONTEXT_DIR, "skills/git")),

@@ -118,3 +118,25 @@ describe("設定の画面は、読み込んだ版を保存に添える（PBI-274
     expect(container.textContent).not.toContain(t.reloadLatestNote);
   });
 });
+
+describe("読み込んだ後にほかの保存があって、併合して保存したとき（PBI-301）", () => {
+  it("併合したことと再読み込みのボタンを出し、版は進めない（続けて保存しても、元の版との差で併合し直される）", async () => {
+    results = [{ saved: true, merged: true }, {}];
+    render();
+    expect(reloadButton()).toBeUndefined();
+    await submit();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(t.savedMerged);
+    expect(reloadButton()).toBeDefined();
+    await submit();
+    // 併合した保存の後も、読み込んだ版のまま送る（画面は、ほかの保存の変更を見ていないため）
+    expect(sent).toEqual(["2026-10-30T00:00:01.000Z", "2026-10-30T00:00:01.000Z"]);
+  });
+
+  it("併合しない保存では、これまでどおり「保存しました」で、再読み込みのボタンは出ない", async () => {
+    results = [{ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" }];
+    render();
+    await submit();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(t.saved);
+    expect(reloadButton()).toBeUndefined();
+  });
+});

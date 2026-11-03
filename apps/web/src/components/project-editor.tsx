@@ -794,8 +794,20 @@ export function ProjectEditor({
       )}
       {state.saved && !state.message && !state.contextError && (
         <p role="status" className="text-sm text-accent-foreground">
-          {t.saved}
+          {state.merged ? t.savedMerged : t.saved}
         </p>
+      )}
+      {/* 併合して保存した。画面はほかの保存の変更を見ていないので、読み込み直して確かめる（PBI-301） */}
+      {state.saved && state.merged && (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => window.location.reload()}
+          className="w-fit"
+        >
+          <RefreshCwIcon aria-hidden="true" />
+          {t.reloadLatest}
+        </Button>
       )}
       {/* 保存したが、コンテキストに誤りがある（PBI-76） */}
       {state.saved && state.contextError && (

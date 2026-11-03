@@ -233,10 +233,21 @@ Sacty のレビューのタスクが、レビューを投稿する前に止ま�
 - 書けなかったとき：警告をデーモンのログに出す。タスクの一時停止・完了は変えない。
   デーモンを再起動しても、書けなかった知らせは書き直さない。
   解消済みへの書き換えに失敗しても同じ（投稿は古いまま残る）。
-- 自動のやり直しはしない：一時的な失敗（モデルの混雑など）でも、同じエージェントで間を置いてやり直す処理は無い。
+- 止める前の自動のやり直し：レビューのタスクが GitHub に問い合わせて一時的な失敗になったときは、止めずに、間を置いてやり直す（`retryTransient`）。
+  - やり直す処理は、レビューの対象の PR の確認（`resolveReviewTarget`）とレビューの投稿（`postReview`）。
+    投稿のやり直しでは、前に投稿したレビューを目印で見つけて使うので、二度投稿しない。
+  - 一時的な失敗は、GitHub の 5xx・429・レート制限と説明する 403・接続の失敗（`fetch failed`・ECONNRESET・ETIMEDOUT など）。
+    権限が無い・見つからない・トークンが無効（401・403・404）や入力の誤り（422）は待っても変わらないので、一時的としない（`isTransientGitHubFailure`）。
+  - 待ち時間と回数の上限：既定は 15 秒・1 分・3 分・5 分の 4 回（約 9 分。`reviewRetryDelaysMs`）。
+    やり直す前に、処理・何回目か・待つ時間・理由（秘密の値は伏せる）を `ReviewGitHubRetried` に記録する（状態は変えない）。
+  - やり直している間はタスクを止めないので、PR に「止まりました」は書かない。上限まで失敗したら、これまでどおり一時停止して、上の知らせを書く。
+    止まった後に人が再開しても、同じようにやり直す。
+  - 待つ間に一時停止を求められた・中止された・デーモンが止まったときは、やり直しをやめる（何も記録せず、一時停止の理由も上書きしない）。
+    デーモンが止まったときは、投稿待ちのまま残り、起動し直すと続ける。
+- モデルの混雑など、エージェントの実行の一時的な失敗は、同じエージェントで間を置いてやり直す処理は無い。
   代わりのエージェントを書いていれば、止めずに切り替える（[失敗したときの代わりのエージェント](agent-execution.md#失敗したときの代わりのエージェント)）。
 
-コード: `apps/daemon/src/review-stop-notice.ts`（`notifiesReviewStop`・`stopSummary`・`stopKey`・`buildStopNotice`・`buildResolvedNotice`）、`apps/daemon/src/service.ts`（`append`・`reviewStopTarget`・`announceReviewStop`・`resolveReviewStops`・`postReview`）、`apps/daemon/src/github.ts`（`listIssueComments`・`editIssueComment`・`isReviewStopNotice`・`feedback`）
+コード: `apps/daemon/src/review-stop-notice.ts`（`notifiesReviewStop`・`stopSummary`・`stopKey`・`buildStopNotice`・`buildResolvedNotice`）、`apps/daemon/src/service.ts`（`append`・`reviewStopTarget`・`announceReviewStop`・`resolveReviewStops`・`postReview`・`resolveReviewTarget`・`retryTransient`）、`apps/daemon/src/github.ts`（`listIssueComments`・`editIssueComment`・`isReviewStopNotice`・`feedback`・`isTransientGitHubFailure`）、`packages/core/src/events.ts`（`ReviewGitHubRetried`）
 
 ## GitHub のアカウントと API
 

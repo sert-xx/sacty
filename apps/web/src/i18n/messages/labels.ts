@@ -426,6 +426,14 @@ const ja = {
       `${target} に投稿できなかった（${message}）`,
     ReviewTargetResolved: (url: string, commit: string) =>
       `レビューの対象の PR を確認（${url}・${commit}）`,
+    ReviewGitHubRetried: (
+      where: "reviewTarget" | "reviewPost",
+      attempt: number,
+      maxAttempts: number,
+      seconds: number,
+      message: string,
+    ) =>
+      `GitHub の一時的な失敗のため、${seconds}秒後に${where === "reviewTarget" ? "レビューの対象の PR の確認" : "レビューの投稿"}を自動でやり直す（${attempt}/${maxAttempts}回目。${message}）`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
     ReviewRestartedByRequest: (actor: string) =>
@@ -462,6 +470,15 @@ const ja = {
       reason: "usage_limit" | "auth" | "error",
     ) =>
       `${from} が${{ usage_limit: "利用制限に達した", auth: "認証に失敗した", error: "失敗した" }[reason]}ので、${to} に切り替えてやり直す（${role}。${until.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} まで${reason === "usage_limit" ? "" : "このタスクでは"} ${from} を使わない）`,
+    RunCostRecorded: (
+      source: "reported" | "converted",
+      cost: string,
+      converted: string,
+      unpriced: string[],
+    ) =>
+      source === "reported"
+        ? `費用 ${cost} は、エージェントの CLI が報告した額（設定の単価で換算すると ${converted}）`
+        : `費用 ${cost} は、使用量を単価で換算した額${unpriced.length > 0 ? `（単価が設定に無いモデル ${unpriced.join("・")} は、工程のエージェントの単価）` : ""}`,
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・計${seconds}秒）${gaveUp ? "・上限であきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした`,
@@ -974,6 +991,8 @@ const en: LabelMessages = {
     PullRequestConflictResolved: (number) => `The conflict on PR #${number} is resolved`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
+    ReviewGitHubRetried: (where, attempt, maxAttempts, seconds, message) =>
+      `Because of a temporary GitHub failure, retrying ${where === "reviewTarget" ? "the check of the PR to review" : "posting the review"} automatically in ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
     ReviewRestartedByRequest: (actor) =>
@@ -1010,6 +1029,10 @@ const en: LabelMessages = {
       `. Handed over the conversation of the previous agent's (${from}) session (${id})${truncated ? " (older parts omitted)" : ""}`,
     AgentFellBack: (from, to, role, until, reason) =>
       `${from} ${{ usage_limit: "reached its usage limit", auth: "failed to authenticate", error: "failed" }[reason]}, so retrying with ${to} (${role}; ${from} is not used${reason === "usage_limit" ? "" : " for this task"} until ${until.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })})`,
+    RunCostRecorded: (source, cost, converted, unpriced) =>
+      source === "reported"
+        ? `Cost ${cost} is the amount reported by the agent CLI (${converted} when converted with the configured prices)`
+        : `Cost ${cost} was converted from token usage${unpriced.length > 0 ? ` (models without a configured price, ${unpriced.join(", ")}, use the step agent's price)` : ""}`,
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; ${seconds}s in total)${gaveUp ? " · gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued`,

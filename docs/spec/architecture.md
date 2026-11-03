@@ -403,11 +403,19 @@ sacty は、5つのパッケージでできている。
   設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば、消して書き直す。
   消すものが無ければ書かない。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
-  - 変更（`PUT /api/projects/:id`）は、読み込んだときの `updatedAt` を `If-Match` ヘッダーで受け取り、保存の時点の `updatedAt` と一致するときだけ保存する。
-    ヘッダーが無ければ 428（`precondition_required`。保存しない）。読み込んだ後にほかの保存で変わっていれば、上書きせずに 409（`project.changedElsewhere`）を返し、設定も `updatedAt` も変えない。
-    照合と保存は同じ同期の処理（`saveProject`）で行うので、同時に保存しても、先に保存した変更を後の保存が消さない。項目ごとの併合はしない（別の項目だけを変えていても 409）。作成（`POST`）・インポートは版を要らない。
-    `updatedAt` は、保存するたびに前の値より後の時刻になる（同じミリ秒に2回保存しても、時計が戻っても変わる。`SqliteProjectStore.put`）。
+  - 変更（`PUT /api/projects/:id`）は、読み込んだときの `updatedAt` を `If-Match` ヘッダーで受け取る。ヘッダーが無ければ 428（`precondition_required`。保存しない）。
+    保存の時点の `updatedAt` と一致すれば、そのまま保存する。読み込んだ後にほかの保存があれば、上書きせずに、互いの変更を併合して保存する（PBI-301）。
+    併合できなければ（同じ項目を違うように変えた・読み込んだ版の定義が残っていないなど）、409（`project.changedElsewhere`）を返し、設定も `updatedAt` も変えない。
+    照合・併合・保存は同じ同期の処理（`saveProjectMerging`）で行うので、同時に保存しても、先に保存した変更を後の保存が消さない。作成（`POST`）・インポートは版を要らない。
+  - 併合は、読み込んだ版の定義（元）・今の定義・保存しようとする定義の3つで行う（`mergeProjectDefinitions`）。
+    元の定義は、保存のたびに版ごとに残す（`project_revisions`。プロジェクトごとに新しい 50 版まで。`SqliteProjectStore.revision`）。古くなって消えた版からの保存は併合できない。
+    - 対象（`targets`）は1件ずつ併合する。どちらかが足した対象、どちらかが消した対象、一方だけが変えた対象は残す。同じ対象を両方が違うように変えた・一方が消して一方が変えたときは併合できない。順序は今の定義のままで、足した対象は後ろ。
+    - ほかの項目（名前・コンテキスト・チケット・共用の compose・GitHub のアカウント）は項目ごとに、一方だけが変えたならその変更を採る。両方が違うように変えたら併合できない。
+    - 併合した結果は、通常の保存と同じ検査（項目の形・対象の重複）に通す。
+    - 併合して保存したときは、応答に `merged: true` を付ける。
+  - `updatedAt` は、保存するたびに前の値より後の時刻になる（同じミリ秒に2回保存しても、時計が戻っても変わる。`SqliteProjectStore.put`）。
   - 画面（`ProjectEditor`）は、設定を読み込んだ版を保存に添え（`baseUpdatedAt`）、自分が保存したら返ってきた `updatedAt` に進める。画面の取り直しで届いた版には進めない（ほかの保存の内容を見ていないため）。
+    併合して保存したときは、画面がほかの保存の変更を見ていないので、版に進めず、併合したことと「再読み込みして最新の設定を見る」ボタンを出す。進めずに続けて保存しても、元の版との差で併合し直されるので、ほかの保存の変更は消えない。
     409（`project.changedElsewhere`）のときは、理由と「再読み込みして最新の設定を見る」ボタンを出す。編集中の入力は、再読み込みするまで残す。
   - 削除（`DELETE /api/projects/:id`）は、プロジェクトの定義と、そのプロジェクトのスケジュールタスク（`schedules.deleteForProject`。[スケジュールタスク](scheduled-tasks.md)）を消す。タスク（スケジュールタスクが作ったものを含む）と作業履歴は消さない（消したプロジェクトのタスクは、画面に出さず、数えない）。
     プロジェクトが無ければ 404。そのプロジェクトに終わっていないタスク、または完了したタスクでも実行中・実行待ちの処理（監査・デプロイの確認など）・
@@ -419,5 +427,5 @@ sacty は、5つのパッケージでできている。
   - 画面では、プロジェクトの設定の最後の「危険な操作」から削除する。確認のダイアログでプロジェクトの名前を入力したときだけ削除でき（サーバーアクションでも一致を確かめる）、
     消したらプロジェクトの一覧へ移る。表示しているプロジェクト（cookie）が消えたら、最初のプロジェクトを表示する。
 
-コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`、
-`apps/daemon/src/service.ts`（`saveProject`・`deleteProject`・`visibleTask`・`adoptAuditProposal`・`createAuditFixTask`）、`apps/daemon/src/server.ts`、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`saveProjectAction`・`deleteProjectAction`）、`apps/web/src/components/project-editor.tsx`（`ProjectEditor`）、`apps/web/src/lib/daemon.ts`（`saveProject`）
+コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`・`mergeProjectDefinitions`）、`apps/daemon/src/projects.ts`、
+`apps/daemon/src/service.ts`（`saveProject`・`saveProjectMerging`・`deleteProject`・`visibleTask`・`adoptAuditProposal`・`createAuditFixTask`）、`apps/daemon/src/server.ts`、`apps/web/src/components/delete-project.tsx`（`DeleteProjectSection`）、`apps/web/src/app/actions.ts`（`saveProjectAction`・`deleteProjectAction`）、`apps/web/src/components/project-editor.tsx`（`ProjectEditor`）、`apps/web/src/lib/daemon.ts`（`saveProject`）

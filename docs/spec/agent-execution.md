@@ -84,7 +84,8 @@
 - 次の実行の費用は推定（`estimated`）として記録する。
   - サブスクリプションとスタブの実行。
   - 段階のサブエージェントの定義を置いた実行（`estimateCost`）。
-    担当が親と違うモデルで動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないためである（[コンテキストの合成](context.md#実行のときに置くファイル)）。
+    担当が親と違うモデルで動きうるためである（[コンテキストの合成](context.md#実行のときに置くファイル)）。
+    費用の決め方は、下の「出力の扱い」。
 
 コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`・`CLAUDE_DISALLOWED_TOOLS`）、`apps/daemon/src/agents/docker.ts`（`syncBackIfChanged`）、`apps/daemon/src/service.ts`（`executeLogged`・`bedrockOrigin`）
 
@@ -99,6 +100,16 @@
   項目ごとに、各 `result` の `usage` の合計と大きいほうを取る。読める項目を持つモデルが無い `modelUsage` は使わない。
   `modelUsage` が無いか、保存したセッションを再開・複製した実行（`modelUsage` に前の実行の分も入る）なら、各 `result` の `usage`（その番の分）の `input_tokens`・`cache_read_input_tokens`・`cache_creation_input_tokens`・`output_tokens` の合計にする（`resumed`）。
   `is_error` か終了コードが 0 でなければ失敗。
+- 実行の費用（`runCost`）：CLI が報告した費用があれば、それを実行の費用にする。無ければ、使用量を単価で換算する（PBI-301）。
+  - Claude Code は、最後の `result` の `total_cost_usd`（実行の全体。サブエージェントの分も含む）を報告した費用とする。
+    読めない値（数でない・負・有限でない）は報告とせず、使用量があるのに 0 の報告も報告とせず（CLI が単価を知らないなどで、費用を出せなかったもの）、換算する。
+    保存したセッションを再開・複製した実行（`resumed`）は、前の実行の分も入るので、報告もモデルごとの使用量も使わない。
+    最後の `result` の後に始まった番の使用量など、報告に入っていない分（`unreportedUsage`）は、工程のエージェントの単価で換算して足す。
+  - 報告が無いとき（Codex など）は、使用量を換算する。`modelUsage` があれば、モデルごとの使用量を、そのモデルの単価で換算して足す。
+    モデルの単価は、工程のエージェントと同じ接続先の `available_models`（`AgentConfig.modelPrices`）から引く（完全一致、無ければ `[1m]` のような接尾辞を除いた名前。継承したプロパティの名前は使わない）。
+    単価が設定に無いモデルと、モデルごとの使用量に入っていない分は、工程のエージェントの単価で換算する。`modelUsage` が無ければ、全体の使用量を工程のエージェントの単価で換算する。
+  - CLI の報告を使った実行と、モデルごとの使用量で換算した実行は、費用の出どころを `RunCostRecorded`（実行・エージェント・`reported` か `converted`・実行の費用・設定の単価で換算した額・単価が設定に無かったモデル）に記録する（記録だけで、費用は実行の結果のイベントが持つ）。
+    使用量を工程のエージェントの単価で換算しただけの実行（Codex など）は、記録しない。
 - 結果が出る前に止まった実行（時間切れ・強制終了）は、使った分の全体が分からない（PBI-281）。
   - Claude Code：`result` が無いまま出来事が1つでも届いていれば、読めた分を使用量として残し、不明の印（`costUnknown`）を付ける。
     読めた分は、`assistant` の出来事の `message.usage` を `message.id` ごとに1つにして合計する（内容ごとの出来事が同じ id・同じ使用量を繰り返すため。同じ id の中は項目ごとに大きいほう）。
@@ -133,7 +144,7 @@
   sacty は出力の中の JSON のオブジェクトを後ろから順に試し、読めた最初のものを使う。
 - 実行の結果の文と出力は、その実行で使った秘密情報（取り出した値・ゲートウェイのトークン・認証ファイルの中の値など）を `[REDACTED]` に置き換えてから記録する。
 
-コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/prompts.ts`（`answerMarker`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
+コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agents/cost.ts`（`runCost`・`priceOfModel`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/prompts.ts`（`answerMarker`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
 
 ## 失敗したときの代わりのエージェント
 
@@ -170,9 +181,10 @@
 - 次のときは、これまでどおり止める。
   - 人が止めた・中止した。
   - 代わりが無い・すべて使えない（試し終えたものを含む）。
-- 一時的な失敗（モデルの混雑など）でも、同じエージェントで間を置いてやり直す処理は無い。
+- エージェントの実行の一時的な失敗（モデルの混雑など）でも、同じエージェントで間を置いてやり直す処理は無い。
   代わりが無ければ止まり、人が再開するまで待つ。
   Sacty のレビューのタスクが止まったことは、レビューを頼んだ PR にも知らせる（[レビューが止まったときの PR への知らせ](intake.md#レビューが止まったときの-pr-への知らせ)）。
+  ただし、レビューのタスクの GitHub への問い合わせ（レビューの対象の PR の確認・レビューの投稿）の一時的な失敗は、止める前に、間を置いて自動でやり直す（同じ節）。
 - 書き出し・マージの後の監視・監査・質問への答えは、失敗をこれまでどおり扱い、次の実行から代わりのエージェントを使う（利用制限のときだけ）。
 - 代わりのエージェントの秘密情報も、起動のときにまとめて取り出す（`secretUses`）。
 

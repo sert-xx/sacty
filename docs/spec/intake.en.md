@@ -173,10 +173,21 @@ The person who asked for the review watches only the PR and would not notice fro
 - When it cannot write: sacty logs a warning in the daemon log. It does not change whether the task is paused or completed.
   After a daemon restart, sacty does not rewrite a notice that failed.
   The same holds when rewriting it as resolved fails (the old comment stays).
-- No automatic retry: even for a temporary failure such as a busy model, sacty has no process that waits and retries with the same agent.
+- Automatic retry before stopping: when a review task fails on a GitHub request in a temporary way, sacty does not stop. It waits and retries (`retryTransient`).
+  - What it retries: checking the PR to review (`resolveReviewTarget`) and posting the review (`postReview`).
+    When retrying a post, sacty finds the review it posted before by its marker and uses it, so it never posts twice.
+  - A temporary failure is a GitHub 5xx, 429, a 403 that explains a rate limit, or a connection failure (`fetch failed`, ECONNRESET, ETIMEDOUT, and so on).
+    Missing permission, not found, an invalid token (401, 403, 404), and invalid input (422) do not change by waiting, so sacty does not treat them as temporary (`isTransientGitHubFailure`).
+  - Waits and the retry limit: by default 15 seconds, 1 minute, 3 minutes, and 5 minutes, 4 retries in all (about 9 minutes; `reviewRetryDelaysMs`).
+    Before each retry, sacty records the operation, which retry it is, the wait, and the reason (secrets hidden) in `ReviewGitHubRetried` (it does not change the state).
+  - While it retries, the task is not paused, so sacty writes no "stopped" comment to the PR. If every retry fails, the task pauses as before and sacty writes the comment above.
+    If a person resumes it after that, it retries in the same way.
+  - If a pause is requested, the task is cancelled, or the daemon stops during a wait, sacty gives up retrying (it records nothing and does not overwrite the pause reason).
+    When the daemon stops, the task stays waiting to post and continues after a restart.
+- For a temporary failure of an agent run (such as a busy model), sacty has no process that waits and retries with the same agent.
   If a fallback agent is configured, sacty switches to it instead of stopping ([Fallback agents on failure](agent-execution.en.md#fallback-agents-on-failure)).
 
-Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummary`, `stopKey`, `buildStopNotice`, `buildResolvedNotice`), `apps/daemon/src/service.ts` (`append`, `reviewStopTarget`, `announceReviewStop`, `resolveReviewStops`, `postReview`), `apps/daemon/src/github.ts` (`listIssueComments`, `editIssueComment`, `isReviewStopNotice`, `feedback`)
+Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummary`, `stopKey`, `buildStopNotice`, `buildResolvedNotice`), `apps/daemon/src/service.ts` (`append`, `reviewStopTarget`, `announceReviewStop`, `resolveReviewStops`, `postReview`, `resolveReviewTarget`, `retryTransient`), `apps/daemon/src/github.ts` (`listIssueComments`, `editIssueComment`, `isReviewStopNotice`, `feedback`, `isTransientGitHubFailure`), `packages/core/src/events.ts` (`ReviewGitHubRetried`)
 
 ## GitHub accounts and APIs
 
