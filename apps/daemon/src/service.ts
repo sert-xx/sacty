@@ -8854,8 +8854,33 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
-    // 崩れを直して読んだ判定の文字列から、秘密情報を伏せる（PBI-298）
+    // 人間が止めたときに、判定を記録せず、使った分の費用だけ記録する（再開すると最終レビューからやり直す）
+    const recordStopped = () =>
+      this.append(current, [
+        {
+          actor: "guardian",
+          event: {
+            type: "FinalReviewFailed",
+            payload: {
+              reason: "error",
+              message: message("verify.stoppedByPerson"),
+              agentId: agent.id,
+              ...agentSetting(agent),
+              runId,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+      ]);
+    // 崩れを直して読んだ判定の文字列から、秘密情報を伏せる（PBI-298）。秘密情報の取り出しを待つ間に人間が止めたなら、
+    // 判定を記録しない（合格を記録すると、再開したときに最終レビューをやり直さずに公開へ進んでしまう）
     const hide = await this.reviewRedactor(task, config.config);
+    if (this.stopRequested(task.id)) {
+      recordStopped();
+      return;
+    }
     const extractReview = (documentsOnly: boolean) =>
       extractFinalReview(
         outcome.output,
@@ -8938,24 +8963,7 @@ export class TaskService {
       // 差分を取る間に人間が止めたら、判定を記録しない（使った分の費用だけ記録する。一時停止は runNext の後始末で
       // 記録し、再開すると最終レビューからやり直す）
       if (this.stopRequested(task.id)) {
-        this.append(current, [
-          {
-            actor: "guardian",
-            event: {
-              type: "FinalReviewFailed",
-              payload: {
-                reason: "error",
-                message: message("verify.stoppedByPerson"),
-                agentId: agent.id,
-                ...agentSetting(agent),
-                runId,
-                usage: outcome.usage,
-                costUsd,
-                estimated,
-              },
-            },
-          },
-        ]);
+        recordStopped();
         return;
       }
       if (documentsOnly) ({ missingCommands, unreadable, ...review } = extractReview(true));
@@ -10347,11 +10355,36 @@ export class TaskService {
       return;
     }
     const latest = this.mustGet(task.id);
+    // 判定に当てる、秘密情報を伏せる関数（PBI-298）。取り出しを待つ間に人間が止めたなら、判定を記録しない（使った分の
+    // 費用だけ記録する。一時停止・中止は runNext の後始末が記録し、再開すると統合レビューからやり直す）
+    const hide = await this.reviewRedactor(latest, config);
+    if (this.stopRequested(task.id)) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: "error",
+              message: message("run.stoppedByPerson"),
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+              ...unknownCost(executed),
+            },
+          },
+        },
+      ]);
+      return;
+    }
     const { output, ...review } = extractIntegrationReview(
       outcome.output,
       integrationViewpointIds(latest),
       latest.remarks.filter((r) => !r.voided).map((r) => r.id),
-      await this.reviewRedactor(latest, config),
+      hide,
     );
     const events: ActivityItem[] = [
       {

@@ -43,3 +43,9 @@
 ### main の取り込み（#301、PBI-299）
 
 `prompts.ts`（`extractFinalReview` の戻り値の型）と `events.ts`（`FinalReviewed` の項目）が衝突した。両方の項目（`mergedHumanChecks` と `outputRepaired`）を残した。PBI-299 が足した最終レビューの出力の項目 `updatedHumanChecks` を、補う処理の形（`FINAL_REVIEW_SHAPE`）と配列の確認（`VERDICT_ARRAYS`）に足した。足さないと、`tests` の直後に `updatedHumanChecks` が続く出力で閉じ括弧を補えない。`updatedHumanChecks` が、補って読んだ出力でも `tests` の外に読め、前の回の項目を書き直した文に置き換え、秘密情報を伏せる処理を通り、重なりを拒否されるテストを足した。
+
+### 再レビュー（review 5755832736）
+
+| 指摘 | 対応 |
+| --- | --- |
+| [要修正] 判定を読む前の `await`（`reviewRedactor` の秘密情報の取り出し）の間に一時停止・中止を求められても、停止を確かめずに判定を記録する。合格なら再開したときに最終レビューをやり直さず公開へ進む。統合レビューも同じ | 両方の `await` の直後で `stopRequested` を確かめ、停止なら判定を記録せず、使った分の費用だけ記録して戻る（最終レビューは既存の停止の記録と同じ `FinalReviewFailed`（`verify.stoppedByPerson`）、統合レビューは `AgentRunFailed`（`run.stoppedByPerson`）。一時停止・中止は `runNext` の後始末が記録する）。取り出しを止めるテスト用の秘密情報の置き場を使い、最終レビュー・統合レビューの一時停止・中止の4つのテストと、再開でやり直すことを足した。確かめを外すと4つとも落ちる。この窓は、main では最終レビューの後始末（サービスの停止）・統合レビューの作業領域の削除の `await` だけだったが、PBI-298 の取り出しの待ちで広がっていた。確かめは、それらの `await` もすべて過ぎた後に置いた |
