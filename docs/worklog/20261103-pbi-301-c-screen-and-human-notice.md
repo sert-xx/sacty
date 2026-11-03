@@ -2,8 +2,8 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-301
-- PR: なし
-- ブランチ: feat/issue-301-r4-followups-c
+- PR: #302
+- ブランチ: feat/issue-301-r4-followups
 - 関係する ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261103-2302-surface-human-asks.md)、[承認待ち（PR のマージ待ち）でも一時停止できるようにする](../adr/20261103-2300-pause-while-awaiting-approval.md)
 
 ## 目的

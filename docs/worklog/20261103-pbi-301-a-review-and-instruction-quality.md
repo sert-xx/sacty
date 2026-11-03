@@ -2,8 +2,8 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-301
-- PR: なし
-- ブランチ: feat/issue-301-r4-followups-a
+- PR: #302
+- ブランチ: feat/issue-301-r4-followups
 - 関係する ADR: [sacty が作るコミットのメッセージは、リポジトリが Conventional Commits の形を定めているときだけ、その形にする](../adr/20261103-2240-commit-message-follows-repository-convention.md)、[受け入れの確かめを縮めさせず、最終レビューの出力の言語を決め、作業領域の内部のパスを人の目に出さない](../adr/20261103-2245-review-and-instruction-quality-after-r4.md)
 
 ## 目的
