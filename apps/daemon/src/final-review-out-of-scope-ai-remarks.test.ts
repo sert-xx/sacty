@@ -84,6 +84,29 @@ describe("最終レビューの範囲外の変更の判定と、AI のレビュ�
     );
   });
 
+  it("例外は、後ろの「既存の振る舞い」の項目と、工程を省いたタスクの観点 REQ の「依頼に無いもの」の判定にも優先すると書く（レビューの指摘）", () => {
+    const direct = task([remark("design-1-1", "sacty_review")], {
+      steps: [{ key: "implement", state: "active" }],
+    });
+    const prompt = buildFinalReviewPrompt(direct, "diff");
+    const lines = prompt.split("\n");
+    const precedence = lines.find((l) => l.includes(AI_LINE));
+    expect(precedence).toContain(
+      "後ろの「既存の振る舞い」の変化を outOfScope に書いて不合格にする項目と、観点 REQ の「依頼に無いものを作っていないか」の判定（要求要件・設計の工程を省いたタスク）よりも優先する",
+    );
+    // 優先する先の判定が、実際に指示に並んでいる
+    expect(lines.some((l) => l.startsWith("- 既存の振る舞い（エラーの種類"))).toBe(true);
+    expect(prompt).toContain("依頼に無いものを作っていないかを、この観点で判定する");
+    // 優先を、既存のテストの期待を変える変更には及ぼさない
+    expect(scopeSection(prompt)).toContain(TEST_LINE);
+    // 既存の振る舞いの項目は、これまでどおり不合格にさせる（AI の指摘が無いタスクでは変わらない）
+    const plain = buildFinalReviewPrompt(
+      task([], { steps: [{ key: "implement", state: "active" }] }),
+      "diff",
+    );
+    expect(scopeSection(plain)).toContain("求められていない変化は、outOfScope に");
+  });
+
   it("既存のテストの期待を弱める・逆にする変更は、AI の指摘だけでは範囲内にせず、不合格にする（今と同じ）", () => {
     const section = scopeSection(
       buildFinalReviewPrompt(task([remark("design-1-1", "sacty_review")]), "diff"),
