@@ -440,7 +440,7 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
     const disabled = buildAuditDivePrompt(task, [], zero, { runs: [] }, base);
     expect(disabled).not.toContain("memories");
     expect(disabled).not.toContain("既存のメモリー");
-    expect(disabled).not.toContain("工程の指示を変える手順");
+    expect(disabled).not.toContain("食い違うなら使わないことを添える");
   });
 });
 
