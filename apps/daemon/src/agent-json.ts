@@ -713,17 +713,22 @@ function locateMany(
   open: number,
   ats: readonly number[],
 ): { line: number; column: number }[] {
+  if (ats.length === 0) return [];
   const order = ats.map((_, i) => i).sort((a, b) => (ats[a] as number) - (ats[b] as number));
   const result = new Array<{ line: number; column: number }>(ats.length);
+  // 改行は、JSON の範囲（最後の位置まで）の中だけで探す。出力の末尾まで探すと、改行の無い短い候補が多数並ぶ出力で、
+  // 候補ごとに出力の全体を読んで2乗の時間になる
+  const last = ats[order[order.length - 1] as number] as number;
+  const span = output.slice(open, last);
   let line = 1;
   let lineStart = open;
-  let newline = output.indexOf("\n", open);
+  let newline = span.indexOf("\n");
   for (const i of order) {
     const at = ats[i] as number;
-    while (newline !== -1 && newline < at) {
+    while (newline !== -1 && open + newline < at) {
       line++;
-      lineStart = newline + 1;
-      newline = output.indexOf("\n", lineStart);
+      lineStart = open + newline + 1;
+      newline = span.indexOf("\n", lineStart - open);
     }
     result[i] = { line, column: at - lineStart + 1 };
   }
@@ -732,9 +737,9 @@ function locateMany(
 
 /** JSON（open の「{」から始まる）の中の、at の位置の行と桁（1から）。桁は、JSON の行の頭から数える。 */
 function locate(output: string, open: number, at: number): { line: number; column: number } {
-  const line = output.slice(open, at).split("\n").length;
-  const column = at - Math.max(open, output.lastIndexOf("\n", at - 1) + 1) + 1;
-  return { line, column };
+  // JSON の範囲の中だけを見る（出力の先頭まで戻って改行を探さない）
+  const span = output.slice(open, at);
+  return { line: span.split("\n").length, column: span.length - span.lastIndexOf("\n") };
 }
 
 /**

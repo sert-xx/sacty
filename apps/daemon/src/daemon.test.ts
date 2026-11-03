@@ -9234,6 +9234,26 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("生の改行を含む文字列の中のエスケープした秘密情報は、直して読んでも作業履歴に残さない（PBI-298 レビュー指摘）", async () => {
+      // 実行に使った秘密情報（oauth-secret）の一部をエスケープ（\u0073）し、同じ文字列に生の改行を置く。出力を伏せる処理は、
+      // 生の改行を含む文字列を JSON の文字列として読まないので伏せられず、直して読むときに元の値に戻る
+      const leaking = out(
+        `説明\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"鍵は\noauth-\\u0073ecret です"},{"id":"TV-2","verified":true,"reason":"満たす"}],"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"tests":{"command":"npm test","exitCode":0,"output":"ok"},"humanChecks":["oauth-\\u0073ecret を確かめる\n"],"summary":"所見\noauth-\\u0073ecret"}}\n\`\`\``,
+        700,
+      );
+      const { activity, service, id } = await toImplement([implement("# v1"), leaking]);
+      await drain(service);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const stored = JSON.stringify(activity.all());
+      expect(stored).not.toContain("oauth-secret");
+      expect(stored).toContain("[REDACTED]");
+      const payload = reviewed[0]?.type === "FinalReviewed" ? reviewed[0].payload : undefined;
+      expect(payload?.outputRepaired).toBeDefined();
+      expect(payload?.summary).toBe("所見\n[REDACTED]");
+      activity.close();
+    });
+
     it("出力が空でも、読み取れなかったものとして出し直させる", async () => {
       const { activity, service, id } = await toImplement([implement("# v1"), out(""), review()]);
       await drain(service);

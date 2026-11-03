@@ -8854,6 +8854,8 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
+    // 崩れを直して読んだ判定の文字列から、秘密情報を伏せる（PBI-298）
+    const hide = await this.reviewRedactor(task, config.config);
     const extractReview = (documentsOnly: boolean) =>
       extractFinalReview(
         outcome.output,
@@ -8865,6 +8867,7 @@ export class TaskService {
           unmappedViewpoints,
           // 前の回が人が確かめることに挙げた項目は、理由なしには落とさず、次の回へ引き継ぐ（PBI-294）
           previousHumanChecks: carriedHumanChecks(current),
+          hide,
           ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
           ...(documentsOnly ? { documentsOnly } : {}),
         },
@@ -8878,10 +8881,7 @@ export class TaskService {
       const path = `runs/${task.id}/${runId}.jsonl`;
       const stop = count >= MAX_UNREADABLE_REVIEWS;
       // 何が読めなかったか（JSON の何行目の何文字目で壊れているか。PBI-298）。秘密情報は伏せる
-      const detail = finalReviewUnreadableDetail(
-        outcome.output,
-        await this.auditRedactor(task, config.config).catch(() => undefined),
-      );
+      const detail = finalReviewUnreadableDetail(outcome.output, hide);
       const failure = stop
         ? message("verify.finalReviewUnreadableStopped", {
             max: MAX_UNREADABLE_REVIEWS,
@@ -10351,7 +10351,7 @@ export class TaskService {
       outcome.output,
       integrationViewpointIds(latest),
       latest.remarks.filter((r) => !r.voided).map((r) => r.id),
-      await this.auditRedactor(latest, config).catch(() => undefined),
+      await this.reviewRedactor(latest, config),
     );
     const events: ActivityItem[] = [
       {
@@ -12750,6 +12750,18 @@ export class TaskService {
       }
     }
     return (text: string) => redactLog(text, values);
+  }
+
+  /**
+   * 最終レビュー・統合レビューの出力から読んだ文字列に当てる、秘密情報を伏せる関数（PBI-298）。崩れを直して読んだ判定の
+   * 復号した文字列と、読めなかった理由の前後の文字に使う。設定の秘密情報を取り出せなくても、よくある秘密情報の形は伏せる。
+   */
+  private async reviewRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
+    try {
+      return await this.auditRedactor(task, config);
+    } catch {
+      return (text) => redactLog(text, []);
+    }
   }
 
   /**

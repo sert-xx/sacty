@@ -3590,6 +3590,11 @@ export function extractFinalReview(
      * （droppedHumanChecks）もの以外は、判定の humanChecks に先頭から足して、次の回へ引き継ぐ。
      */
     previousHumanChecks?: readonly string[];
+    /**
+     * 秘密情報を伏せる関数。崩れを直して読んだ判定の、復号した文字列に当てる（直さずに読めたときは、出力を伏せる処理が
+     * JSON の文字列のエスケープも伏せているので当てない）。読めなかった理由の、壊れた所の前後の文字にも使う。
+     */
+    hide?: (text: string) => string;
   } = {},
 ): Pick<
   FinalReview,
@@ -3613,7 +3618,7 @@ export function extractFinalReview(
    */
   unreadable: boolean;
 } {
-  const found = findBlock(output, FINAL_REVIEW_HEADING, FINAL_REVIEW_SHAPE);
+  const found = findBlock(output, FINAL_REVIEW_HEADING, FINAL_REVIEW_SHAPE, options.hide);
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
   // 崩れを直して読んだことは、作業履歴に残す（実タスクで直しが効いたかを後から確かめられるように。PBI-298）
   const repaired =
@@ -3924,6 +3929,7 @@ function findBlock(
   output: string,
   heading: string,
   shape: LenientShape,
+  hide?: (text: string) => string,
 ):
   | {
       raw: Record<string, unknown>;
@@ -3941,7 +3947,12 @@ function findBlock(
     },
     shape,
   );
-  return found && { raw: found.value, candidate: found.candidate, repairs: found.repairs };
+  if (!found) return undefined;
+  // 直して読んだ文字列は、出力を伏せたときの生の文字列の一致では伏せられていないことがある（生の改行を含む文字列の中の
+  // エスケープ `\u0073…` は、先に伏せる処理が JSON の文字列として読まないので残り、直して読むときに元の値に戻る）。
+  // 復号したあとのすべての文字列に、秘密情報を伏せる処理をかけてから、判定として使う・記録する（PBI-298 レビュー指摘）
+  const raw = found.repairs.length > 0 && hide ? redactDeep(found.value, hide) : found.value;
+  return { raw, candidate: found.candidate, repairs: found.repairs };
 }
 
 /** 判定の出力を読めなかったときの、何が読めなかったか（PBI-298）。JSON が出力に無いときは undefined。 */
@@ -4139,7 +4150,7 @@ export function extractIntegrationReview(
 > & {
   output: string;
 } {
-  const found = findBlock(output, INTEGRATION_HEADING, INTEGRATION_REVIEW_SHAPE);
+  const found = findBlock(output, INTEGRATION_HEADING, INTEGRATION_REVIEW_SHAPE, hide);
   const verdicts = readVerdicts(
     found?.raw,
     viewpointIds,

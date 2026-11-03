@@ -387,4 +387,70 @@ describe("直した箇所が多い出力でも、時間が出力の長さに比�
     expect(Date.now() - started).toBeLessThan(3000);
     expect(review.unreadable).toBe(false);
   });
+
+  it("改行の無い短い候補（直せるが形の合わないもの）が16万個並んでも、時間が出力の長さに比例する", () => {
+    // 候補ごとに出力の末尾まで改行を探すと、2乗の時間になる（16万個で約12秒）
+    const output = '{"sacty-final-review":{"viewpoints":[],},} '.repeat(160_000);
+    const started = Date.now();
+    const review = extractFinalReview(output, ["REQ"], []);
+    const detail = finalReviewUnreadableDetail(output, (t) => t);
+    const integration = extractIntegrationReview(output, ["REQ"], []);
+    expect(Date.now() - started).toBeLessThan(4000);
+    // 形の合わない（summary が無い）候補は、直しても読まない
+    expect(review.unreadable).toBe(true);
+    expect(review.passed).toBe(false);
+    expect(detail).toBeDefined();
+    expect(integration.passed).toBe(false);
+  });
+
+  it("閉じ括弧の欠けや引用符の崩れを持つ短い候補が多数並んでも、時間が出力の長さに比例する", () => {
+    const unclosed =
+      '{"sacty-final-review":{"viewpoints":[],"tests":{"exitCode":0,"humanChecks":[],"summary":"s"}} '.repeat(
+        60_000,
+      );
+    const quoted = '{"sacty-final-review":{"viewpoints":[],"summary":"a "b" c"}} '.repeat(60_000);
+    const open = '{"sacty-final-review":{"viewpoints":[ '.repeat(60_000);
+    const started = Date.now();
+    for (const output of [unclosed, quoted, open]) extractFinalReview(output, ["REQ"], []);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
+describe("直して読んだ文字列の、復号した秘密情報を保存しない（PBI-298 レビュー指摘）", () => {
+  // 生の改行を含む文字列の中の `\u0073`（s）は、先に出力を伏せる処理が JSON の文字列として読まないので残り、
+  // 直して読むときに元の値に戻る。復号したすべての文字列に hide をかけてから、判定として使う
+  const secret = "sk-fiction-0123456789abcdef";
+  const hide = (t: string) => t.split(secret).join("[伏せた値]");
+  const leak = secret.replace("s", "\\u0073");
+
+  it("最終レビュー：観点の理由・指摘の理由・人が確かめること・所見・テストの出力のどれにも残らない", () => {
+    const output = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"理由\n${leak}"}],"remarks":[{"id":"r-1","notRecurred":true,"reason":"再発なし\n${leak}"}],"tests":{"command":"${COMMAND}","exitCode":0,"output":"出力\n${leak}"},"humanChecks":["確かめる\n${leak}"],"droppedHumanChecks":[],"outOfScope":["範囲外\n${leak}"],"summary":"所見\n${leak}"}}\n\`\`\``;
+    expect(hide(output)).toBe(output); // 出力を生の文字列で伏せただけでは、残る
+    const review = extractFinalReview(output, ["REQ"], ["r-1"], { ...OPTIONS, hide });
+    expect(review.unreadable).toBe(false);
+    expect(review.outputRepaired).toBeDefined();
+    expect(JSON.stringify(review)).not.toContain("fiction-0123");
+    expect(review.summary).toBe("所見\n[伏せた値]");
+    expect(review.humanChecks).toEqual(["確かめる\n[伏せた値]"]);
+    expect(review.tests?.output).toBe("出力\n[伏せた値]");
+    // hide が無いときは、これまでどおり（呼び出し側が渡す）
+    expect(JSON.stringify(extractFinalReview(output, ["REQ"], ["r-1"], OPTIONS))).toContain(
+      "fiction-0123",
+    );
+  });
+
+  it("最終レビュー：閉じ括弧を補って読んだ文字列にも、同じく残らない", () => {
+    const output = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":0,"humanChecks":["確かめる\n${leak}"],"summary":"所見\n${leak}"}}\n\`\`\``;
+    const review = extractFinalReview(output, ["REQ"], [], { ...OPTIONS, hide });
+    expect(review.unreadable).toBe(false);
+    expect(JSON.stringify(review)).not.toContain("fiction-0123");
+  });
+
+  it("統合レビュー：観点の理由・指摘・所見のどれにも残らない", () => {
+    const output = `\`\`\`json\n{"sacty-integration-review":{"viewpoints":[{"id":"REQ","verified":false,"reason":"理由\n${leak}"}],"remarks":[],"findings":["足りない\n${leak}"],"summary":"所見\n${leak}"}}\n\`\`\``;
+    const review = extractIntegrationReview(output, ["REQ"], [], hide);
+    expect(review.outputRepaired).toBeDefined();
+    expect(JSON.stringify(review)).not.toContain("fiction-0123");
+    expect(review.findings).toEqual(["足りない\n[伏せた値]"]);
+  });
 });
