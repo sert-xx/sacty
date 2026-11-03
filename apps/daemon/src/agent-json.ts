@@ -572,7 +572,8 @@ function parseLenient(
     if (!shape || path.length !== 2 || path[0] !== shape.heading) return false;
     const own = shape.objects[path[1] as string];
     if (!own || own.includes(key) || !shape.keys.includes(key)) return false;
-    if (!holder || Object.hasOwn(holder, key)) throw new LenientError(at);
+    // 読み取り中の入れ子のオブジェクト自身（tests の中の tests）や、既にあるキーは、holder にまだ無い・上書きになるので読まない
+    if (!holder || key === path[1] || Object.hasOwn(holder, key)) throw new LenientError(at);
     return true;
   };
   const object = (
@@ -592,6 +593,8 @@ function parseLenient(
       if (output[p] !== '"') throw new LenientError(p);
       const keyAt = p;
       const key = string(AFTER_KEY);
+      // 形を渡したとき（判定の出力）は、同じキーの重複を読まない。後のキーが前の値を上書きして、判定が変わることを防ぐ
+      if (shape && Object.hasOwn(result, key)) throw new LenientError(keyAt);
       if (closesBefore(path, key, keyAt, holder)) {
         repairs.push({ kind: "brace", at: keyAt, key });
         braced = true;
@@ -701,6 +704,32 @@ function headingOpens(
 /** 直しながら読んだ箇所（line・column は JSON の先頭からの位置。1から）。 */
 export type RepairNote = { kind: RepairKind; line: number; column: number; key?: string };
 
+/**
+ * JSON（open の「{」から始まる）の中の、ats の各位置の行と桁（1から）。桁は、JSON の行の頭から数える。位置ごとに先頭から
+ * 数えると、直した箇所が多い出力で出力の長さの2乗の時間になるので、位置の順に1回だけ前へ走査する。
+ */
+function locateMany(
+  output: string,
+  open: number,
+  ats: readonly number[],
+): { line: number; column: number }[] {
+  const order = ats.map((_, i) => i).sort((a, b) => (ats[a] as number) - (ats[b] as number));
+  const result = new Array<{ line: number; column: number }>(ats.length);
+  let line = 1;
+  let lineStart = open;
+  let newline = output.indexOf("\n", open);
+  for (const i of order) {
+    const at = ats[i] as number;
+    while (newline !== -1 && newline < at) {
+      line++;
+      lineStart = newline + 1;
+      newline = output.indexOf("\n", lineStart);
+    }
+    result[i] = { line, column: at - lineStart + 1 };
+  }
+  return result;
+}
+
 /** JSON（open の「{」から始まる）の中の、at の位置の行と桁（1から）。桁は、JSON の行の頭から数える。 */
 function locate(output: string, open: number, at: number): { line: number; column: number } {
   const line = output.slice(open, at).split("\n").length;
@@ -736,9 +765,14 @@ export function lastLenientJsonAnswer<T>(
     let repairs: RepairNote[];
     try {
       parsed = parseLenient(output, open, budget, shape);
-      repairs = parsed.repairs.map((r) => ({
+      const places = locateMany(
+        output,
+        open,
+        parsed.repairs.map((r) => r.at),
+      );
+      repairs = parsed.repairs.map((r, i) => ({
         kind: r.kind,
-        ...locate(output, open, r.at),
+        ...(places[i] as { line: number; column: number }),
         ...(r.key === undefined ? {} : { key: r.key }),
       }));
       value = read(parsed.value, repairs);

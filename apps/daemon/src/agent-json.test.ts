@@ -551,6 +551,17 @@ describe("入れ子のオブジェクトの閉じ括弧の欠けを補って読�
     expect(seen).toEqual([0, 1]);
   });
 
+  it("直した箇所の行と桁は、箇所の数によらず1回の走査で求める（順序・改行をまたぐ位置も正しい）", () => {
+    const found = read('{"h":{"a":["x\ny","p\nq\nr"],\n"t":{"x":"u\nv","b":[],"s":"end"}}');
+    expect(found?.repairs).toEqual([
+      { kind: "control", line: 1, column: 14 },
+      { kind: "control", line: 2, column: 6 },
+      { kind: "control", line: 3, column: 2 },
+      { kind: "control", line: 5, column: 12 },
+      { kind: "brace", line: 6, column: 4, key: "b" },
+    ]);
+  });
+
   it("本文から取り除く範囲は、囲みの行を含む", () => {
     const around = (json: string) => `説明\n\`\`\`json\n${json}\n\`\`\`\n後ろ`;
     const broken = around('{"h":{"a":[],"t":{"x":0,"b":[],"s":"end"}}');

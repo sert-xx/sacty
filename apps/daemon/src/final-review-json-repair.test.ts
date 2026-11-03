@@ -230,6 +230,26 @@ describe("直し方が決まらない・直した結果が期待する形でな�
     expect(read(output).unreadable).toBe(true);
   });
 
+  it("tests の中の tests で、不合格の結果を上書きして合格にさせない（終了コード 1 を 0 で上書きする出力は読まない）", () => {
+    const output = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":1,"output":"failed","tests":{"command":"${COMMAND}","exitCode":0,"output":"ok"},"humanChecks":[],"summary":"ok"}}\n\`\`\``;
+    const review = read(output);
+    expect(review.unreadable).toBe(true);
+    expect(review.passed).toBe(false);
+  });
+
+  it("補った直後の項目のあとに、同じキーが重なって前の値を上書きする出力は読まない（verified:false を true にさせない）", () => {
+    const output = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":false,"reason":"足りない"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":0,"output":"ok","humanChecks":[],"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"summary":"ok"}}\n\`\`\``;
+    const review = read(output);
+    expect(review.unreadable).toBe(true);
+    expect(review.passed).toBe(false);
+    // 補う処理が無い、ただの引用符の崩れ（形のある出力）でも、同じキーの重なりは読まない
+    const dup = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":false,"reason":"上限 "1,200" に届かない"}],"remarks":[],"summary":"a","summary":"b"}}\n\`\`\``;
+    expect(read(dup).unreadable).toBe(true);
+    // tests の中の同じキーの重なり（exitCode）も読まない
+    const exit = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":1,"exitCode":0,"output":"ok","humanChecks":[],"summary":"ok"}}\n\`\`\``;
+    expect(read(exit).unreadable).toBe(true);
+  });
+
   it("直した結果に summary が無い・観点が配列でないなら、読まない（合格にしない）", () => {
     const noSummary = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"ok"}],"remarks":[],"tests":{"command":"${COMMAND}","exitCode":0,"output":"ok","humanChecks":[]}}\n\`\`\``;
     expect(read(noSummary).unreadable).toBe(true);
@@ -340,5 +360,31 @@ describe("統合レビューの出力", () => {
     expect(extractIntegrationReview("判定なし", ids, []).summary).toMatchObject({
       code: "integrate.unreadable",
     });
+  });
+});
+
+describe("直した箇所が多い出力でも、時間が出力の長さに比例する（PBI-298）", () => {
+  it("文字列の中の生の改行が8万個あっても、直して読み、位置が分かる", () => {
+    const reason = "行\n".repeat(80_000);
+    const output = `\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":${JSON.stringify(reason).replaceAll("\\n", "\n")}}],"remarks":[],"humanChecks":[],"summary":"ok"}}\n\`\`\``;
+    const started = Date.now();
+    const review = extractFinalReview(output, ["REQ"], []);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(review.unreadable).toBe(false);
+    expect(review.passed).toBe(true);
+    expect(review.outputRepaired).toMatchObject({
+      params: {
+        repairs: [{ kind: "control", count: 80_000, line: 1, column: expect.any(Number) }],
+      },
+    });
+  });
+
+  it("引用符・改行の崩れと、閉じ括弧の欠けが重なって数万か所あっても止まらない", () => {
+    const body = 'a "b" \n'.repeat(30_000);
+    const output = `{"sacty-final-review":{"viewpoints":[{"id":"REQ","verified":true,"reason":"${body}"}],"remarks":[],"tests":{"exitCode":0,"humanChecks":[],"summary":"ok"}}`;
+    const started = Date.now();
+    const review = extractFinalReview(output, ["REQ"], []);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(review.unreadable).toBe(false);
   });
 });
