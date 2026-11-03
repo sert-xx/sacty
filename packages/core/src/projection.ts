@@ -205,6 +205,13 @@ export type ApprovedOutput = {
   edited?: { sacty?: string; fallback?: "deleted" | "unreadable" };
 };
 
+/** 古い head へのレビューとして捨てた、AI のレビューの指摘（PullRequestReviewDiscarded。PBI-291）。 */
+export type DiscardedReview = Pick<PayloadOf<"PullRequestReviewDiscarded">, "number" | "head"> & {
+  /** 捨てた時刻。 */
+  at: string;
+  items: PayloadOf<"PullRequestReviewDiscarded">["items"];
+};
+
 /**
  * PR のマージの記録（PBI-63。監査のため）。submitted は sacty が PR に出した最後のコミット、commit は PR の先頭の
  * コミット（人が直した最終のコミット）、mergeCommit はマージのコミット（取れれば）。edited は人が直してマージした。
@@ -765,6 +772,11 @@ export type Task = {
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
   importedFeedback: string[];
+  /**
+   * 古い head へのレビューとして取り込まずに捨てた、AI のレビューの指摘（古い順。PBI-291）。人に届けるため、承認の画面に出す
+   * （今の PR のものか・いつまで出すかは `discardedAiReviews` で決める）。
+   */
+  discardedReviews?: DiscardedReview[];
   /** オーケストレーターへの質問と答え（古い順。PBI-54）。 */
   questions: TaskQuestion[];
   /** エラーレポートのための、オーケストレーターのエラーの分析（古い順）。 */
@@ -1750,6 +1762,15 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the feedback is already imported");
       }
       task.importedFeedback = [...task.importedFeedback, ...keys];
+      task.discardedReviews = [
+        ...(task.discardedReviews ?? []),
+        {
+          number: event.payload.number,
+          head: event.payload.head,
+          at: event.at,
+          items: event.payload.items,
+        },
+      ];
       break;
     }
 
@@ -2934,6 +2955,36 @@ export function pullRequestConflict(
     return undefined;
   }
   return conflict;
+}
+
+/**
+ * 古い head へのレビューとして取り込まずに捨てた、AI のレビューの指摘のうち、いま見守っている PR（承認ゲートの PR、または
+ * 実装の作り直しの間の実装の PR）へのもの（PBI-291）。人が PR を承認・マージする前に、捨てた指摘に気づけるよう、画面に出す。
+ * 古い順に並べる。無ければ undefined。マージされた PR のものは出さない（承認はもう済んでいる）。
+ * 捨てた指摘を作り直しに取り込むことはしない。新しい head に当てはまると人が判断したら、差し戻しの指摘として伝える。
+ */
+export function discardedAiReviews(task: Task):
+  | {
+      number: number;
+      /** 捨てたときの PR の head のうち、最後のもの。 */
+      head: string;
+      items: (DiscardedReview["items"][number] & { head: string })[];
+    }
+  | undefined {
+  const discarded = task.discardedReviews;
+  if (!discarded?.length) return undefined;
+  const gate = gatePullRequest(task);
+  if (gate && (gate.state === "merged" || gate.state === "merged_outdated")) return undefined;
+  const number = (gate ?? reworkingPullRequest(task))?.number;
+  if (number === undefined) return undefined;
+  const mine = discarded.filter((d) => d.number === number);
+  const last = mine.at(-1);
+  if (!last) return undefined;
+  return {
+    number,
+    head: last.head,
+    items: mine.flatMap((d) => d.items.map((item) => ({ ...item, head: d.head }))),
+  };
 }
 
 /** 承認ゲートで見守っている PR の、マージの記録（PBI-63）。マージされていなければ undefined。 */

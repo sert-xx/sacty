@@ -1794,6 +1794,7 @@ while true; do sleep 0.05; done`,
     const { hostAuth } = await fakeDocker(
       `rm -f "$host/auth.json"
 ln -s "$here/../other-host-file" "$host/auth.json"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
 echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'`,
     );
     writeFileSync(join(dir, "other-host-file"), "contents of another host file");

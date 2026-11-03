@@ -267,6 +267,7 @@ const PARAMS = {
   "run.daemonStopped": null,
   "run.guardianInterrupted": null,
   "run.stoppedByPerson": null,
+  "run.emptyResult": null,
   "run.timeout": z.object({ minutes: z.number() }),
   "run.testTimeout": z.object({ minutes: z.number() }),
   "run.dockerUnavailable": z.object({ detail: TextParam }),
@@ -1008,6 +1009,8 @@ const ja: MessageDictionary = {
   "run.daemonStopped": "デーモンが停止したため、実行が中断されました。",
   "run.guardianInterrupted": "デーモンが停止したため、ゴールガーディアンの判定が中断されました。",
   "run.stoppedByPerson": "人間が止めたため、実行しませんでした。",
+  "run.emptyResult":
+    "エージェントの最後の結果が空で、その前にも中身のある結果がありませんでした。成果物がないため、失敗として扱います。再開すると、同じ工程をやり直します。",
   "run.timeout": ({ minutes }) => `エージェントの実行が ${minutes} 分を超えたため止めました。`,
   "run.testTimeout": ({ minutes }) => `テストの実行が ${minutes} 分を超えたため止めました。`,
   "run.dockerUnavailable": ({ detail }, text) =>
@@ -1691,6 +1694,8 @@ const en: MessageDictionary = {
   "run.guardianInterrupted":
     "The daemon stopped, so the Goal Guardian's judgement was interrupted.",
   "run.stoppedByPerson": "Not run because it was stopped by a person.",
+  "run.emptyResult":
+    "The agent's final result was empty, and no earlier result had any content. There is no deliverable, so the run is treated as failed. Resuming runs the same step again.",
   "run.timeout": ({ minutes }) =>
     `Stopped the agent because it ran longer than ${minutesEn(minutes)}.`,
   "run.testTimeout": ({ minutes }) =>

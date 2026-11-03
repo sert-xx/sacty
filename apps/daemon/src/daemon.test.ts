@@ -36,6 +36,7 @@ import {
   DEPLOYMENT_CI_TIMEOUT_MS,
   DERIVE_RECORD_HEADING,
   deliveredWithoutChanges,
+  discardedAiReviews,
   exportDue,
   heldReview,
   isCompleted,
@@ -11856,6 +11857,85 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
             ?.activity.filter((e) => e.type === "PullRequestReviewImported")
             .map((e) => e.type === "PullRequestReviewImported" && e.payload.items[0]?.key),
         ).toEqual(["comment:4", "review:5"]);
+        activity.close();
+      });
+
+      it("捨てた AI のレビューの指摘は、要点とリンクを残して人に届ける（0・1・複数件）。作り直しには取り込まず、人が今の head に当てはまると判断して差し戻せば、人の指摘として届く（PBI-291）", async () => {
+        const pulls = new FakePulls();
+        const old = "o".repeat(40);
+        const { activity, service, executor, id } = await toImplementGate(
+          [implement("# 実装 v2"), passing(["implement-1-1"])],
+          { pulls, now: later },
+        );
+        const shown = () => {
+          const task = service.get(id)?.task;
+          if (!task) throw new Error("no task");
+          return discardedAiReviews(task);
+        };
+        const before = executor.calls.length;
+        // 0件：古い head のレビューが無ければ、届けるものは無い（今の head のレビューは取り込むので、捨てない）
+        expect(shown()).toBeUndefined();
+        // 1件：理由（古い head と今の head）と、指摘の要点・リンクが届く。目印と見出しは要点に入れない
+        pulls.feedbackList = [
+          aiItem(pulls, "review:1", {
+            commit: old,
+            url: "https://github.com/acme/app/pull/7#pullrequestreview-1",
+            body: "<!-- note -->\n## sacty のレビュー\n\n@me 判定：提案あり\n\nREADME の API の表に新しい API を足す",
+          }),
+        ];
+        await service.checkPullRequests();
+        expect(shown()).toMatchObject({
+          number: 7,
+          head: pulls.prInfo.headSha,
+          items: [
+            {
+              key: "review:1",
+              commit: old,
+              url: "https://github.com/acme/app/pull/7#pullrequestreview-1",
+              summary: "@me 判定：提案あり README の API の表に新しい API を足す",
+            },
+          ],
+        });
+        // 複数件：行へのコメントにはファイルと行が付き、長い本文は切る。次の確認で重ねて数えない
+        pulls.feedbackList = [
+          ...pulls.feedbackList,
+          aiItem(pulls, "review_comment:2", {
+            kind: "review_comment",
+            path: "src/a.ts",
+            line: 3,
+            commit: old,
+            body: "長い指摘 ".repeat(200),
+          }),
+        ];
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        const items = shown()?.items ?? [];
+        expect(items.map((i) => i.key)).toEqual(["review:1", "review_comment:2"]);
+        expect(items[1]?.summary?.startsWith("src/a.ts:3：長い指摘")).toBe(true);
+        expect(items[1]?.summary?.length).toBeLessThanOrEqual(400);
+        expect(items[1]?.summary?.endsWith("…")).toBe(true);
+        // 捨てた指摘を、自動で作り直しに取り込まない（最初の確認の前に数えた実行の回数から、増えていない）
+        expect(executor.calls.length).toBe(before);
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(service.get(id)?.task.remarks.filter((r) => r.step === "implement")).toEqual([]);
+        // 人が今の head に当てはまると判断して、差し戻す：人の指摘として届き、差し戻しの回数に数える
+        service.requestChanges(id, {
+          step: "implement",
+          submission: service.get(id)?.task.gate?.submission ?? 0,
+          comments: ["README の API の表に新しい API を足してください"],
+        });
+        await drain(service);
+        const task = service.get(id)?.task;
+        if (!task) throw new Error("no task");
+        const remark = task.remarks.findLast((r) => r.step === "implement");
+        expect(remark?.text).toBe("README の API の表に新しい API を足してください");
+        expect(remark?.source).toBeUndefined();
+        expect(changeRounds(task, "implement")).toBe(1);
+        const change = service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested");
+        expect(change?.actor).toBe("person");
+        const rerun = promptOf(executor, before);
+        expect(rerun).toContain("README の API の表に新しい API を足してください");
+        expect(rerun).not.toContain("--- AI のレビューの指摘");
         activity.close();
       });
 

@@ -45,6 +45,13 @@ const ja = {
     help: (number: number, ai: number) =>
       `PR #${number} に届いた指摘${ai > 0 ? `（うち AI のレビューの指摘 ${ai}件）` : ""}は、再開すると、止まった工程を走り直す前にゴールガーディアンが読み、戻し先を判断して差し戻します。`,
   },
+  discardedReview: {
+    title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
+    help: (number: number, head: string) =>
+      `PR #${number} への AI のレビューの指摘は、対象が古い head だったので、作り直しには取り込んでいません（最後に捨てた時点の PR の head は ${head}。そのあと PR が更新されていれば、今の head は変わっています）。今の head にも当てはまる指摘があれば、差し戻しで指摘として伝えてください。承認・マージする前に確かめてください。`,
+    reviewed: (commit: string) => `対象：${commit}`,
+    open: "指摘を開く",
+  },
   gate: {
     undecidable: "変更の申し出の判断待ち",
     tooMany: "差し戻しが上限に達しました",
@@ -507,6 +514,14 @@ const en: TaskMessages = {
       `${count} PR comment${count === 1 ? "" : "s"} arrived while the task was paused`,
     help: (number: number, ai: number) =>
       `When you resume, the Goal Guardian reads the comments on PR #${number}${ai > 0 ? ` (${ai} of them from the AI review)` : ""} and sends the task back to the step it decides, before the step that stopped runs again.`,
+  },
+  discardedReview: {
+    title: (count: number) =>
+      `${count} AI review comment${count === 1 ? " was" : "s were"} not taken in`,
+    help: (number: number, head: string) =>
+      `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework (the PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed). If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
+    reviewed: (commit: string) => `For: ${commit}`,
+    open: "Open comment",
   },
   gate: {
     undecidable: "Change request needs your decision",
