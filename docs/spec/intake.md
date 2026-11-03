@@ -195,6 +195,41 @@ JIRA の接続先は、組織内 PF（`gateway.platforms`、無ければプロ�
 
 コード: `apps/daemon/src/service.ts`（`commentInvestigation`・`awaitingIssueComment`・`awaitingTicketPrComment`）、`apps/daemon/src/prompts.ts`（`investigationMarker`・`buildInvestigationComment`・`buildTicketPullRequestComment`）、`apps/daemon/src/tickets.ts`（`JiraTickets.comment`）
 
+## レビューが止まったときの PR への知らせ
+
+Sacty のレビューのタスクが、レビューを投稿する前に止まったとき、レビューを頼んだ PR にもコメントで知らせる。
+レビューを頼んだ人は PR だけを見ていて、タスクの画面や Slack では気づけないため。
+
+- 対象
+  - レビューのタスク：PR のレビューの取り込み（`source.review` のあるタスク）と、レビューの対象を決めたタスク（`reviewTarget`）。
+    レビューを投稿した後のタスクと、対象の PR が分からないタスク（本文に PR の URL の無い手動のタスクなど）は対象外。
+  - 止まり方：`error`・`usage_limit`・`auth`・`budget` の一時停止（`notifiesReviewStop`）。
+    人が止めたとき（`manual`）は知らせない。
+  - プロジェクトでその PR のホストの GitHub のアカウントを選んでいなければ書かない。
+- 書くとき：タスクが一時停止に変わった記録を書いたとき（`append`）に、書き終えるのを待たずに通常のコメント（Issue のコメント）を1件書く（`announceReviewStop`）。
+  - 本文：止まったこと、理由（種類と要点）、再開のしかた（タスクの画面へのリンク。リンクの元は、起動した画面の URL（`SACTY_WEB_URL`）で、無ければ `http://127.0.0.1:4700`）。
+  - 理由の要点：一時停止の説明。無ければ、直前に失敗した実行（`AgentRunFailed`）かオーケストレーター（`OrchestratorFailed`）の説明。
+    使った秘密情報を**伏せてから**、1行にして 300 文字で切り詰める（切り詰めてから伏せると、切り口にかかった秘密情報の前半が残る）。
+    外から来た文なので、コードにして載せる（`@` メンションを本文に出さない）。
+  - 投稿は、プロジェクトで選んだアカウントで行う。
+- 二重に書かない：本文の先頭に目印 `<!-- sacty-review-stopped:<タスク ID>:<止まり方> -->` を入れる。
+  止まり方は、理由の種類と要点から決める（要点の数・ID・時刻のように止まるたびに変わる部分は無視する）。
+  同じ目印で、まだ解消していない自分のアカウントの投稿が PR にあれば、書かない。
+  再開して同じ理由で止まっても、解消するまでは増えない。違う理由で止まれば、別の投稿を書く。
+- 解消済みにする：再開してレビューを投稿したとき（`postReview`）、そのタスクの解消していない投稿を、すべて書き換える（`resolveReviewStops`）。
+  目印の末尾を `:resolved -->` にし、見出しを「（解消済み）」にして、投稿したレビューの URL と、止まったときの理由を残す。
+  再開の案内は外す。解消済みの投稿は、同じ止まり方で次に止まったときの「解消していない投稿」に数えない。
+- PR の指摘に取り込まない：この投稿は人間の指摘ではない。
+  そのタスクのアカウントと、その PR をレビューした sacty のタスクのアカウントが投稿した、目印で始まるコメントは、PR の指摘の取り込みから除く（`feedback`）。
+  ほかのアカウントが目印をまねて書いたコメントは、除かない。
+- 書けなかったとき：警告をデーモンのログに出す。タスクの一時停止・完了は変えない。
+  デーモンを再起動しても、書けなかった知らせは書き直さない。
+  解消済みへの書き換えに失敗しても同じ（投稿は古いまま残る）。
+- 自動のやり直しはしない：一時的な失敗（モデルの混雑など）でも、同じエージェントで間を置いてやり直す処理は無い。
+  代わりのエージェントを書いていれば、止めずに切り替える（[失敗したときの代わりのエージェント](agent-execution.md#失敗したときの代わりのエージェント)）。
+
+コード: `apps/daemon/src/review-stop-notice.ts`（`notifiesReviewStop`・`stopSummary`・`stopKey`・`buildStopNotice`・`buildResolvedNotice`）、`apps/daemon/src/service.ts`（`append`・`reviewStopTarget`・`announceReviewStop`・`resolveReviewStops`・`postReview`）、`apps/daemon/src/github.ts`（`listIssueComments`・`editIssueComment`・`isReviewStopNotice`・`feedback`）
+
 ## GitHub のアカウントと API
 
 - 使うアカウントは、プロジェクトの `githubAccounts`（ホストごと）で選ぶ。

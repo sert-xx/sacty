@@ -104,6 +104,7 @@ import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.
 import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
 import { type FileChange, NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { isOpenStopNotice } from "./review-stop-notice.js";
 import {
   MemorySecretStore,
   OnePasswordSecretStore,
@@ -767,6 +768,37 @@ class FakePulls implements PullRequests {
       : {
           url: `${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
         };
+  }
+  /** 本文が prefix で始まるコメント（PBI-292）。id は issueComments の位置 + 1。 */
+  listedAccounts: (string | undefined)[] = [];
+  listFail?: string;
+  async listIssueComments(input: {
+    repo: string;
+    number: number;
+    prefix: string;
+    account?: string;
+  }) {
+    this.listedAccounts.push(input.account);
+    if (this.listFail) throw new Error(this.listFail);
+    return this.issueComments.flatMap((c, i) =>
+      c.repo === input.repo &&
+      c.number === input.number &&
+      c.body.trimStart().startsWith(input.prefix)
+        ? [
+            {
+              id: i + 1,
+              url: `${input.repo}/issues/${input.number}#issuecomment-${i + 1}`,
+              body: c.body,
+            },
+          ]
+        : [],
+    );
+  }
+  editFail?: string;
+  async editIssueComment(input: { id: number; body: string }) {
+    if (this.editFail) throw new Error(this.editFail);
+    const comment = this.issueComments[input.id - 1];
+    if (comment) comment.body = input.body;
   }
   /** Org（ユーザー）ごとのリポジトリ（PBI-25）。 */
   ownerRepos: Record<string, string[]> = {};
@@ -6957,6 +6989,196 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews).toHaveLength(1);
       expect(executor.calls).toHaveLength(1);
       activity.close();
+    });
+
+    describe("レビューが止まったことを、レビューを頼んだ PR で知らせる（PBI-292）", () => {
+      const capacity: AgentOutcome = {
+        kind: "failed",
+        reason: "error",
+        message: "Selected model is at capacity. Please try a different model.",
+      };
+      const review = (text = "# 評価"): AgentOutcome => ({
+        kind: "completed",
+        output: text,
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      });
+      /** 送るのを待たない処理（PR への知らせ）が終わるまで待つ。 */
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+      it("モデルの混雑で止まったら、PR に止まったこと・理由・タスクの画面へのリンクを1回書く", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [capacity], { pulls, planner: reviewPlanner });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await settle();
+        expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "error" });
+        expect(pulls.issueComments).toHaveLength(1);
+        const comment = pulls.issueComments[0];
+        expect(comment).toMatchObject({
+          repo: "https://github.com/acme/app",
+          number: 12,
+          token: "ghp_secret",
+        });
+        expect(comment?.body).toContain("Sacty のレビューが止まりました");
+        expect(comment?.body).toContain("Selected model is at capacity");
+        expect(comment?.body).toContain(`](http://127.0.0.1:4700/tasks/${id})`);
+        // 自分のアカウントの投稿だけを、同じ止まり方の投稿として探す
+        expect(pulls.listedAccounts).toEqual(["me"]);
+        activity.close();
+      });
+
+      it("同じ止まり方で何度止まっても、同じ PR に何度も書かない。違う止まり方なら別に書く", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(
+          activity,
+          [
+            capacity,
+            capacity,
+            { kind: "failed", reason: "error", message: "disk full" },
+            review("# 評価\n\n- src/retry.ts:1 上限が無い"),
+          ],
+          { pulls, planner: reviewPlanner },
+        );
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await settle();
+        service.resume(id, {});
+        await service.runNext(id);
+        await settle();
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(pulls.issueComments).toHaveLength(1);
+        // 違う止まり方
+        service.resume(id, {});
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(2);
+        expect(pulls.issueComments[1]?.body).toContain("disk full");
+        // 再開してレビューを投稿すると、止まったことの投稿はどちらも解消済みになる
+        service.resume(id, {});
+        await service.runNext(id);
+        await service.runNext(id);
+        await settle();
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(pulls.reviews).toHaveLength(1);
+        for (const comment of pulls.issueComments) {
+          expect(isOpenStopNotice(comment.body)).toBe(false);
+          expect(comment.body).toContain("解消済み");
+          expect(comment.body).toContain(done?.reviewPost?.url ?? "(none)");
+        }
+        activity.close();
+      });
+
+      it("解消済みにした後で、同じ止まり方で止まったら、また書く（再レビューの回）", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [capacity, review(), capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        service.resume(id, {});
+        await service.runNext(id);
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
+        service.rereview(id);
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(2);
+        expect(isOpenStopNotice(pulls.issueComments[1]?.body ?? "")).toBe(true);
+        activity.close();
+      });
+
+      it("レビューを投稿できずに止まったときも知らせる。投稿のトークンは載せない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        pulls.reviewFail = "403 Resource not accessible ghp_secret";
+        const { service } = makeService(activity, [review()], { pulls, planner: reviewPlanner });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await service.runNext(id);
+        await settle();
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(pulls.issueComments[0]?.body).toContain("403");
+        expect(pulls.issueComments[0]?.body).not.toContain("ghp_secret");
+        activity.close();
+      });
+
+      it("レビュー用のラベルで取り込んだ PR は、レビューの対象を決める前に止まっても知らせる", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        pulls.prInfoFail = "502 Bad Gateway";
+        const { service } = makeService(activity, [], { pulls });
+        const [task] = service.importIssues([
+          {
+            repo: "https://github.com/acme/app",
+            number: 30,
+            title: "PR 30",
+            body: "本文",
+            url: "https://github.com/acme/app/pull/30",
+            labels: ["sacty-review"],
+            pullRequest: true,
+            review: "label",
+          },
+        ]);
+        await service.runNext(task?.id ?? "");
+        await settle();
+        expect(service.get(task?.id ?? "")?.task.reviewTarget).toBeUndefined();
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(pulls.issueComments[0]).toMatchObject({ number: 30 });
+        expect(pulls.issueComments[0]?.body).toContain("502 Bad Gateway");
+        activity.close();
+      });
+
+      it("人が止めたときと、レビューの対象の PR が無いタスクが止まったときは、PR に書かない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [review()], { pulls, planner: reviewPlanner });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await service.pause(id);
+        await settle();
+        expect(service.get(id)?.task.status).toBe("paused");
+        // 対象の PR が無く、レビューを頼まれた PR が分からないタスク
+        const other = service.createTask({ projectId: "default", title: "ほかの作業" });
+        await service.runNext(other.id);
+        await settle();
+        expect(service.get(other.id)?.task.status).toBe("paused");
+        expect(pulls.issueComments).toEqual([]);
+        activity.close();
+      });
+
+      it("PR に書けなくても、タスクは止まったままで、ほかの操作は止めない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        pulls.commentFail = "500 boom";
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await settle();
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
+        // 解消済みにできなくても、レビューの投稿と完了は変わらない
+        pulls.commentFail = undefined;
+        service.resume(id, {});
+        await service.runNext(id);
+        pulls.editFail = "500 boom";
+        await service.runNext(id);
+        await settle();
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        warn.mockRestore();
+        activity.close();
+      });
     });
 
     it("オーケストレーターには、タスクに対象リポジトリの PR があるときだけ、レビューを候補に出す", async () => {

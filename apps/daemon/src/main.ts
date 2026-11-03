@@ -221,6 +221,8 @@ const service = new TaskService({
   }),
   // 画面のデスクトップ通知のための、最近の通知（メモリーに持つ）
   feed: new NotificationFeed(),
+  // レビューが止まったことを PR に知らせる投稿の、タスクの画面へのリンク（PBI-292）
+  webUrl: process.env.SACTY_WEB_URL ?? "http://127.0.0.1:4700",
 });
 service.recoverInterrupted();
 // 前回、片付ける前にデーモンが終わって残った実行ごとの一時領域と、もう使わない完了したタスク・どのタスクのものでもない

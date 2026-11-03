@@ -373,6 +373,16 @@ import {
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import {
+  buildResolvedNotice,
+  buildStopNotice,
+  isOpenStopNotice,
+  notifiesReviewStop,
+  stopKey,
+  stopMarker,
+  stopMarkerOfTask,
+  stopSummary,
+} from "./review-stop-notice.js";
 import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
@@ -647,6 +657,11 @@ export type ServiceDeps = {
     Partial<Pick<SlackNotifier, "settingsChanged">>;
   /** 画面のデスクトップ通知のための、最近の通知の一覧。無ければ持たない。 */
   feed?: Pick<NotificationFeed, "add" | "since">;
+  /**
+   * 起動した画面の URL（PBI-292。レビューが止まったことを PR に知らせる投稿に、タスクの画面へのリンクとして入れる）。
+   * 無ければ http://127.0.0.1:4700。
+   */
+  webUrl?: string;
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -3173,6 +3188,10 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
     this.append(latest, [{ actor: "sacty", event }]);
+    // 前に止まったときの、PR の知らせの投稿を解消済みにする（PBI-292）
+    if (event.type === "PullRequestReviewPosted") {
+      await this.resolveReviewStops(task.id, event.payload.url);
+    }
   }
 
   /**
@@ -5512,7 +5531,131 @@ export class TaskService {
       // 画面のデスクトップ通知（画面が取り直す）。Slack の On/Off によらず持つ
       this.deps.feed?.add(updated, kind);
     }
+    // Sacty のレビューが止まったら、レビューを頼んだ PR にも知らせる（PBI-292。送るのは待たない）
+    if (
+      updated.status === "paused" &&
+      before?.status !== "paused" &&
+      notifiesReviewStop(updated.pausedReason)
+    ) {
+      void this.announceReviewStop(updated.id);
+    }
     return updated;
+  }
+
+  /**
+   * Sacty のレビューのタスク（PR のレビューの取り込みと、レビューの対象を決めたタスク）が、レビューを投稿する前に止まったときの、
+   * レビューを頼んだ PR。それ以外は undefined（PBI-292）。
+   */
+  private reviewStopTarget(task: Task): { repo: string; number: number } | undefined {
+    if (task.reviewPost) return undefined;
+    if (task.reviewTarget)
+      return { repo: task.reviewTarget.repo, number: task.reviewTarget.number };
+    const source = task.source;
+    return source?.kind === "github_pull_request" && source.review
+      ? { repo: source.repo, number: source.number }
+      : undefined;
+  }
+
+  /** 止まった理由の元の文（一時停止の説明。無ければ、直前に失敗した実行・オーケストレーターの説明）。 */
+  private stopReasonText(task: Task): DaemonText | undefined {
+    if (task.pausedMessage !== undefined) return task.pausedMessage;
+    const events = this.deps.activity.forTask(task.id);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (!event) continue;
+      if (event.type === "AgentRunFailed" || event.type === "OrchestratorFailed") {
+        return event.payload.message;
+      }
+      if (event.type === "TaskResumed" || event.type === "AgentRunStarted") return undefined;
+    }
+    return undefined;
+  }
+
+  /** 同じタスクの、止まったことの知らせの投稿を同時に二つ進めないための印。 */
+  private readonly stopNotices = new Set<string>();
+
+  /**
+   * Sacty のレビューが止まったことを、レビューを頼んだ PR にコメントする（PBI-292）。同じ止まり方（理由と要点が同じ）で、
+   * まだ解消していない投稿が PR にあれば、書かない。投稿できなくても、タスクの一時停止は変えない。
+   */
+  private async announceReviewStop(taskId: string): Promise<void> {
+    if (this.stopNotices.has(taskId)) return;
+    this.stopNotices.add(taskId);
+    const usedSecrets: string[] = [];
+    try {
+      const task = this.tasks.get(taskId);
+      const reason = task?.pausedReason;
+      const target = task ? this.reviewStopTarget(task) : undefined;
+      if (task?.status !== "paused" || !notifiesReviewStop(reason) || !reason || !target) return;
+      const project = this.deps.projects.get(task.projectId);
+      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
+      // GitHub のアカウントを選んでいないプロジェクトでは、PR に書けない（画面と Slack で知らせる）
+      if (!account) return;
+      const token = await this.githubToken(task, target.repo, usedSecrets, project);
+      const summary = stopSummary(this.stopReasonText(task), usedSecrets);
+      const key = stopKey(reason, summary);
+      const pr = { repo: target.repo, token, number: target.number };
+      const same = await this.deps.pulls.listIssueComments({
+        ...pr,
+        prefix: stopMarker(task.id, key),
+        account,
+      });
+      if (same.length > 0) return;
+      // 止まっている間に再開・中止された（今は別の状態の）なら、書かない
+      const latest = this.tasks.get(taskId);
+      if (latest?.status !== "paused") return;
+      const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+      await this.deps.pulls.commentIssue({
+        ...pr,
+        body: buildStopNotice({
+          taskId: task.id,
+          reason,
+          summary,
+          taskUrl: `${base}/tasks/${task.id}`,
+        }),
+      });
+    } catch (error) {
+      console.warn(
+        `[daemon] タスク ${taskId} のレビューが止まったことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    } finally {
+      this.stopNotices.delete(taskId);
+    }
+  }
+
+  /**
+   * レビューを投稿したら、そのタスクの、止まったことの投稿（解消前のもの）を解消済みに直す（PBI-292）。直せなくても、
+   * タスクの完了は変えない。
+   */
+  private async resolveReviewStops(taskId: string, reviewUrl: string): Promise<void> {
+    const usedSecrets: string[] = [];
+    try {
+      const task = this.tasks.get(taskId);
+      const target = task?.reviewTarget;
+      if (!task || !target) return;
+      const project = this.deps.projects.get(task.projectId);
+      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
+      if (!account) return;
+      const token = await this.githubToken(task, target.repo, usedSecrets, project);
+      const pr = { repo: target.repo, token, number: target.number };
+      const notices = await this.deps.pulls.listIssueComments({
+        ...pr,
+        prefix: stopMarkerOfTask(task.id),
+        account,
+      });
+      for (const notice of notices.filter((n) => isOpenStopNotice(n.body))) {
+        await this.deps.pulls.editIssueComment({
+          repo: target.repo,
+          token,
+          id: notice.id,
+          body: buildResolvedNotice(notice.body, reviewUrl),
+        });
+      }
+    } catch (error) {
+      console.warn(
+        `[daemon] タスク ${taskId} のレビューが止まったことの投稿を解消済みにできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
   }
 
   /**

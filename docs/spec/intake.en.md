@@ -135,6 +135,41 @@ Code: `apps/daemon/src/tickets.ts` (`JiraTickets`, `ticketJql`), `apps/daemon/sr
 
 Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueComment`, `awaitingTicketPrComment`), `apps/daemon/src/prompts.ts` (`investigationMarker`, `buildInvestigationComment`, `buildTicketPullRequestComment`), `apps/daemon/src/tickets.ts` (`JiraTickets.comment`)
 
+## Telling the PR when a review stops
+
+When a Sacty review task stops before it posts the review, sacty also tells the PR that asked for it, with a comment.
+The person who asked for the review watches only the PR and would not notice from the task screen or Slack.
+
+- Which tasks
+  - Review tasks: tasks from PR review intake (with `source.review`) and tasks whose review target was resolved (`reviewTarget`).
+    Tasks that already posted the review, and tasks whose PR is unknown (such as a manual task with no PR URL in its text), are excluded.
+  - Which stops: pauses with `error`, `usage_limit`, `auth`, or `budget` (`notifiesReviewStop`).
+    sacty does not tell the PR when a person paused the task (`manual`).
+  - sacty does not write the comment if the project has no GitHub account chosen for the PR's host.
+- When it writes: when sacty writes the record that the task became paused (`append`), it writes one normal comment (an issue comment) without waiting for the write to finish (`announceReviewStop`).
+  - Body: that the review stopped, the reason (kind and gist), and how to resume (a link to the task screen; the link is built from the URL of the screen that was started (`SACTY_WEB_URL`), or `http://127.0.0.1:4700` if unset).
+  - Gist of the reason: the pause explanation. If there is none, the explanation of the run (`AgentRunFailed`) or Orchestrator (`OrchestratorFailed`) that failed just before.
+    sacty hides the secrets it used **first**, then puts it on one line and truncates it to 300 characters (truncating first would leave the front half of a secret that straddles the cut).
+    Because the text comes from outside, sacty shows it as code (so an `@` mention does not appear in the body).
+  - sacty posts with the account chosen in the project.
+- No duplicates: the body starts with the marker `<!-- sacty-review-stopped:<task ID>:<way of stopping> -->`.
+  The way of stopping is decided from the kind of reason and the gist (parts of the gist that change every time, such as numbers, IDs, and times, are ignored).
+  If the PR already has an unresolved comment of this account with the same marker, sacty does not write another.
+  Even if the task is resumed and stops for the same reason, no comment is added until the first one is resolved. If it stops for a different reason, sacty writes a separate comment.
+- Marking it resolved: when the review is posted after a resume (`postReview`), sacty rewrites all unresolved comments of that task (`resolveReviewStops`).
+  It ends the marker with `:resolved -->`, changes the heading to "(resolved)", and keeps the URL of the posted review and the reason it stopped.
+  It removes the instruction to resume. A resolved comment does not count as an "unresolved comment" the next time the task stops in the same way.
+- Not imported as PR remarks: this comment is not a human remark.
+  Comments that start with the marker and were posted by that task's account or by the account of a sacty task that reviewed the PR are excluded when sacty imports PR remarks (`feedback`).
+  Comments that other accounts wrote imitating the marker are not excluded.
+- When it cannot write: sacty logs a warning in the daemon log. It does not change whether the task is paused or completed.
+  After a daemon restart, sacty does not rewrite a notice that failed.
+  The same holds when rewriting it as resolved fails (the old comment stays).
+- No automatic retry: even for a temporary failure such as a busy model, sacty has no process that waits and retries with the same agent.
+  If a fallback agent is configured, sacty switches to it instead of stopping ([Fallback agents on failure](agent-execution.en.md#fallback-agents-on-failure)).
+
+Code: `apps/daemon/src/review-stop-notice.ts` (`notifiesReviewStop`, `stopSummary`, `stopKey`, `buildStopNotice`, `buildResolvedNotice`), `apps/daemon/src/service.ts` (`append`, `reviewStopTarget`, `announceReviewStop`, `resolveReviewStops`, `postReview`), `apps/daemon/src/github.ts` (`listIssueComments`, `editIssueComment`, `isReviewStopNotice`, `feedback`)
+
 ## GitHub accounts and APIs
 
 - The project's `githubAccounts` (per host) chooses the account to use. sacty does not use the active account of gh. If none is chosen, the work stops.

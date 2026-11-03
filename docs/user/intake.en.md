@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/review-stop-notice.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
 
 [日本語](intake.md) | **English**
 
@@ -55,6 +55,12 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   - If you turn on "Mention me instead of the PR author in posted reviews" in "Sacty settings", the @ mention goes to the GitHub account chosen in the project (you, the poster) instead of the author (Off by default). Only the @ mention in the body changes. The review is still posted publicly on the PR, and the author, who usually follows the PR, may still get GitHub's usual review notification.
   - Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
   - The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
+- When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment: that it stopped, the gist of the reason, and how to resume (a link to the task screen).
+  - Open the task on the screen and press "Resume" to redo the review from the start.
+  - If it stops for the same reason again, sacty does not write to the same PR again and again. If it stops for a different reason, it writes a separate comment.
+  - When you resume and the review is posted, the stopped comment is rewritten as "resolved".
+  - sacty does not write when you paused the task yourself. If sacty cannot write to the PR, the task stays paused (the screen and Slack notifications arrive separately).
+  - Even for a temporary failure such as a busy model, sacty does not retry on its own. If you write a fallback agent, sacty switches to it instead of stopping ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
 - If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the body which commit was reviewed.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
   - For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes Sacty find it at the next intake and create a new review task in the same project. The original completed task keeps its status, post, activity, and cost, while the new task reviews in a new execution session.
