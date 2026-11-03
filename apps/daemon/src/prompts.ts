@@ -1054,10 +1054,19 @@ const GUARDIAN_JUDGMENT_IN_PROMPT = 3_000;
  */
 function guardianJudgmentLines(task: Task, step: StepKey): string[] {
   const rework = task.prRework;
-  if (!rework || rework.target !== step || rework.round === undefined) return [];
+  if (!rework || rework.target !== step) return [];
   if (typeof rework.reason !== "string" || rework.reason.trim() === "") return [];
+  // 判断した指摘の集合と、今回の指摘の集合が一致するときだけ渡す。判断の後に指摘を1件でも無効にしていれば（今回の指摘が
+  // 判断した集合より減る）、無効にした指摘を解釈した判断文が実行に戻らないよう、渡さない
   const current = currentRemarks(task, step);
-  if (current.length === 0 || current.some((r) => (r.round ?? 0) !== rework.round)) return [];
+  const judged = new Set(rework.remarkIds);
+  if (
+    current.length === 0 ||
+    current.length !== judged.size ||
+    current.some((r) => r.round !== rework.round || !judged.has(r.id))
+  ) {
+    return [];
+  }
   const reason = headOf(hideItem(rework.reason), GUARDIAN_JUDGMENT_IN_PROMPT);
   const data = rework.decided
     ? { target: step, decided: true, reason }

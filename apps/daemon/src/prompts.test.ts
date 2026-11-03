@@ -5263,15 +5263,17 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
   });
   const rework = (
     target: Step,
-    round: number | undefined,
+    round: number,
     decided: boolean,
     reason: unknown = "決定を変えない：前の指摘で簡単にするため削った R-2・R-3 を元に戻せという意味に読める",
+    remarkIds: string[] = [`${target}-${round}-1`],
   ) => ({
     target,
     decided,
     reason,
     at: "2026-11-04T00:00:00Z",
-    ...(round !== undefined ? { round } : {}),
+    round,
+    remarkIds,
   });
   const HEADING = "--- ゴールガーディアンの判断";
   const withJudgment = (step: Step, prRework: unknown, remarks = [remark(step, 1)]) =>
@@ -5370,8 +5372,6 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
       // 別の工程の差し戻しの判断
       const other = step === "design" ? "implement" : "design";
       sameAsWithout(withJudgment(step, rework(other, 1, true)), step);
-      // 回を持たない判断（PBI-300 より前の作業履歴）
-      sameAsWithout(withJudgment(step, rework(step, undefined, true)), step);
       // 判断が無い
       expect(buildPrompt(withJudgment(step, undefined), step)).not.toContain(HEADING);
       expect(buildPrompt(withJudgment(step, undefined), step)).not.toContain("guardianJudgment");
@@ -5381,11 +5381,15 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
   it("判断の回の指摘に、別の回の指摘が混ざる実行には渡さない。前の回の指摘が残っていても、最新の回で決める", () => {
     // 前の回（1）は提出済み、最新の回（2）が判断の回。前の回の指摘は渡す判断に関係しない
     const prompt = buildPrompt(
-      withJudgment("implement", rework("implement", 2, true), [
-        remark("implement", 1, 1, { submittedIn: 1 }),
-        remark("implement", 2, 1),
-        remark("implement", 2, 2),
-      ]),
+      withJudgment(
+        "implement",
+        rework("implement", 2, true, undefined, ["implement-2-1", "implement-2-2"]),
+        [
+          remark("implement", 1, 1, { submittedIn: 1 }),
+          remark("implement", 2, 1),
+          remark("implement", 2, 2),
+        ],
+      ),
       "implement",
     );
     expect(prompt).toContain("今回の指摘 implement-2-1・implement-2-2 の読み方");
@@ -5406,6 +5410,41 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
       "implement",
     );
     expect(voided).not.toContain(HEADING);
+  });
+
+  it("判断した指摘の集合と今回の指摘が一致しないときは渡さない（判断の後に1件でも無効にした・指摘が増えた）", () => {
+    const ids = ["implement-1-1", "implement-1-2", "implement-1-3"];
+    const judged = rework("implement", 1, true, "決定を変えない：3件とも反映漏れ", ids);
+    const three = [remark("implement", 1, 1), remark("implement", 1, 2), remark("implement", 1, 3)];
+    // 一致：3件とも有効なら渡す
+    expect(buildPrompt(withJudgment("implement", judged, three), "implement")).toContain(HEADING);
+    // 1件だけ無効にした（残りの回は一致する）：無効にした指摘を解釈した判断文を戻さない
+    for (const voidedAt of [0, 1, 2]) {
+      const some = three.map((r, i) => (i === voidedAt ? { ...r, voided: true } : r));
+      const prompt = buildPrompt(withJudgment("implement", judged, some), "implement");
+      expect(prompt, String(voidedAt)).not.toContain(HEADING);
+      expect(prompt, String(voidedAt)).not.toContain("guardianJudgment");
+      // 残った指摘の原文は今までどおり渡す
+      expect(prompt, String(voidedAt)).toContain("人間の指摘");
+    }
+    // 全件を無効にした
+    const none = three.map((r) => ({ ...r, voided: true }));
+    expect(buildPrompt(withJudgment("implement", judged, none), "implement")).not.toContain(
+      HEADING,
+    );
+    // 判断した集合に無い指摘が同じ回に増えた
+    const extra = [...three, remark("implement", 1, 4)];
+    expect(buildPrompt(withJudgment("implement", judged, extra), "implement")).not.toContain(
+      HEADING,
+    );
+    // 1件の判断で、その1件を無効にした
+    const one = rework("implement", 1, true);
+    expect(
+      buildPrompt(
+        withJudgment("implement", one, [remark("implement", 1, 1, { voided: true })]),
+        "implement",
+      ),
+    ).not.toContain(HEADING);
   });
 
   it("ゴールガーディアンの実行が失敗した・出力を読めなかったとき（理由が sacty の文言）は渡さない", () => {
@@ -5457,12 +5496,23 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
     );
     expect(long).not.toContain(secret);
     expect(long).not.toContain(`token=${secret.slice(0, 8)}`);
-    expect(Array.from(dataOf(long).reason as string).length).toBeLessThanOrEqual(3_100);
+    expect((dataOf(long).reason as string).length).toBe(3_000);
+    // 上限ちょうどはそのまま、上限を1文字超えると上限まで切る
+    const exact = buildPrompt(
+      withJudgment("implement", rework("implement", 1, true, "い".repeat(3_000))),
+      "implement",
+    );
+    expect(dataOf(exact).reason).toBe("い".repeat(3_000));
+    const over = buildPrompt(
+      withJudgment("implement", rework("implement", 1, true, "い".repeat(3_001))),
+      "implement",
+    );
+    expect(dataOf(over).reason).toBe("い".repeat(3_000));
     const huge = buildPrompt(
       withJudgment("implement", rework("implement", 1, true, "い".repeat(50_000))),
       "implement",
     );
-    expect(huge.length).toBeLessThan(40_000);
+    expect((dataOf(huge).reason as string).length).toBe(3_000);
   });
 
   it("AI のレビューの指摘だけの回でも、その判断文を渡す。原文は指摘の節のまま", () => {
