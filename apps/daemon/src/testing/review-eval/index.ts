@@ -357,7 +357,8 @@ export function assertReviewerVerdict(output: string, viewpoint: string): void {
 
 /**
  * 最終レビューの出力が、見出し sacty-final-review の判定の JSON か。sacty 本体が判定として採る最後の見出しのブロック
- * （`extractFinalReview` の `findBlock`。囲み方は問わない）を、期待する観点（expectedIds）がすべて揃い、それぞれ verified が
+ * （`extractFinalReview` の `findBlock`。囲み方は問わない。sacty 本体は崩れを直して読むが、評価では出力が正しい JSON であることを
+ * 求めるので、直さずに読む）を、期待する観点（expectedIds）がすべて揃い、それぞれ verified が
  * 真偽値、summary が文字列であることまで確かめる。採られるブロックが読めなければ（前に正しいブロックがあっても）、
  * 評価せず失敗させる。
  */

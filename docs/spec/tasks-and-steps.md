@@ -1022,7 +1022,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
   合格なら、実装の工程のまま、sacty が実装の PR のドラフトを外し、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 
-  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`environmentOnlyLines`・`environmentOnlyReport`・`skippedFilesLines`・`WORKSPACE_TOOL_LINES`・`outOfScopeLines`・`pullRequestContentLines`・`extractFinalReview`・`feedbackLines`）、`apps/daemon/src/service.ts`（`stepDocumentsForReview`・`runGuardian`）、`apps/daemon/src/repository.ts`（`copyWorkingTree`・`stage`・`WORKSPACE_TOOLS_DIR`）、`packages/core/src/events.ts`（`WorkspaceFilesSkipped`・`GuardianTests`・`guardianTestsPassed`・`SCOPE_VIEWPOINT`）、`apps/web/src/components/implementation.tsx`
+  コード: `apps/daemon/src/prompts.ts`（`finalReviewViewpointIds`・`buildFinalReviewPrompt`・`testRunLines`・`humanCheckLines`・`environmentOnlyLines`・`environmentOnlyReport`・`skippedFilesLines`・`WORKSPACE_TOOL_LINES`・`outOfScopeLines`・`pullRequestContentLines`・`extractFinalReview`・`finalReviewUnreadableDetail`・`feedbackLines`）、`apps/daemon/src/service.ts`（`stepDocumentsForReview`・`runGuardian`）、`apps/daemon/src/repository.ts`（`copyWorkingTree`・`stage`・`WORKSPACE_TOOLS_DIR`）、`packages/core/src/events.ts`（`WorkspaceFilesSkipped`・`GuardianTests`・`guardianTestsPassed`・`SCOPE_VIEWPOINT`）、`apps/web/src/components/implementation.tsx`
 
   関係する ADR: [最終レビューで、依頼にも承認済みの要求要件・設計にも無い変更と、既存のテストの期待を変える変更を、観点 SCOPE の不合格にする](../adr/20261101-1348-fail-out-of-scope-changes-in-final-review.md)
 - 最終レビューに通らなければ、実装をやり直す。
@@ -1036,13 +1036,21 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   再開すると数え直す。
   人の判断で、不合格のままレビューへ進めることもできる（下の「人がレビューへ進める」）。ただし、既存の PR を引き継ぐタスクは進められない（`canOverrideVerification`）。観点 `SCOPE` の判定はそのタスクにも働くので、誤判定のときは、「再開する」の補足に範囲内の理由を書いて、やり直す。
   最終レビューの前に、ベースブランチとの競合の目印が作業領域に残っていたときも、同じ上限で数える（[ベースブランチの取り込み](#ベースブランチの取り込み)）。
-- 最終レビューの出力から、判定のオブジェクト（`sacty-final-review`）を読み取れないとき（見つからない・JSON として読めない。`extractFinalReview` の `unreadable`）は、ゴールガーディアンの判定ではないので、不合格として記録しない。
+- 最終レビューの出力の JSON が崩れていても、直しながら読む（PBI-298。実験 S5 r4 で、`tests` の閉じ括弧 `}` が欠けた出力が6回中3回あり、読めずに最終レビューをやり直した）。読み取りは、監査の出力と同じ寛容な読み取り（`lastLenientJsonAnswer`。[監査](audit.md)）に、次を足したもの。
+  - 直すもの：文字列の中のエスケープしていない二重引用符・制御文字、JSON にないバックスラッシュのエスケープ、閉じる括弧の前の余分なカンマ（監査と同じ）に加え、入れ子のオブジェクト `tests` の閉じ括弧 `}` の欠け。`tests` の中に、判定のオブジェクトの項目（`viewpoints`・`remarks`・`humanChecks`・`droppedHumanChecks`・`updatedHumanChecks`・`outOfScope`・`summary`）が現れたら、`tests` を閉じ忘れたとみなし、その項目の前に `}` を補う。括弧の数だけでは閉じる位置が決まらない（`humanChecks` が `tests` の中に入って読めてしまう）ので、項目の名前で決める。
+  - 読むのは、JSON として読める答えがないとき、または後ろに読めない答えがあるときだけ。読める答えが最後なら、直さずそのまま使う。
+  - 推測で読まない（`repairedVerdictShapeOk`）：同じキーが重なる（どちらが本物か決まらず、後のキーが前の値を上書きして不合格が合格に変わりうる。直して読むときは、どの階層でも同じキーの重なりを読まない）・補ったあとに `tests` の項目が判定のオブジェクトの直下に現れる・括弧が足りないが閉じる位置を決める項目がない、のときは読めないものとする。直した結果に、観点の配列と文字列の `summary` がない・配列であるべき項目が配列でない・`tests` がオブジェクトでないときも読まない。直しても判定は甘くならない（観点や指摘の判定、テストの終了コードは、読めたとおりに使う）。
+  - 直して読んだ判定の復号した文字列のすべてに、秘密情報を伏せる関数（`reviewRedactor`。設定の秘密情報・GitHub のトークン・よくある秘密情報の形）をかけてから、判定として使い、記録する。生の改行を含む文字列の中のエスケープ（`\u0073` など）は、出力を先に伏せる処理（`redactEscaped`）が JSON の文字列として読まないので伏せられず、直して読むときに元の値に戻るため。直さずに読めたときは、先の処理が伏せている。監査（`extractAuditSurvey`・`extractAuditDive`）は、読んだ文字列のそれぞれに伏せる関数をかけているので、同じ漏れはない。この関数を作る（秘密情報を取り出す）間に人間が一時停止・中止を求めたら、判定を記録せず、使った分の費用だけ記録する（最終レビューは `FinalReviewFailed`、統合レビューは `AgentRunFailed`）。一時停止なら、再開するとやり直す。
+  - 直した箇所の行と桁は、JSON の範囲の中だけを1回走査して求める。直した箇所が多い出力や、形の合わない短い候補が多数並ぶ出力でも、時間は出力の長さに比例する。
+  - 直して読んだときは、その箇所（種類ごとの数と最初の位置、`}` を補った直後の項目）を `FinalReviewed` の `outputRepaired`（`review.outputRepaired`）に記録する。作業履歴の「最終レビュー」の行にも出る。直さずに読めたときは無い。
+- 最終レビューの出力から、判定のオブジェクト（`sacty-final-review`）を読み取れないとき（見つからない・直しても JSON として読めない。`extractFinalReview` の `unreadable`）は、ゴールガーディアンの判定ではないので、不合格として記録しない。
   実装には戻さず、過去の指摘も再発と数えない（`FinalReviewed` を記録しないので、`lastReview` も `verifyFailures` も変わらない）。
   使った分の費用と、出力の場所（`runs/<タスク ID>/<実行 ID>.jsonl`）を `FinalReviewFailed`（`verdictUnreadable`・`verify.finalReviewUnreadable`）に記録し、最終レビューを新しい実行で出し直させる。
+  理由には、何が読めなかったかも残す（`detail`。`finalReviewUnreadableDetail`）：JSON が壊れている位置（`review.unreadableAt`：JSON の何行目の何文字目か。桁は JSON の行の頭から数える。前後の文字は、秘密情報を伏せる関数（`auditRedactor`）にエスケープを戻した出力の全体をかけて変わらないときだけ残し、変わる（エスケープされた秘密情報がある）か伏せる関数を作れないときは位置だけにする）、JSON は読めたが項目が足りない・形が違う（`review.unreadableShape`）。出力に JSON がないときは、理由を足さない。
   続けて `MAX_UNREADABLE_REVIEWS`（3）回読み取れなければ、実装の不合格ではないので、実装には戻さずに一時停止する（`error`・`verify.finalReviewUnreadableStopped`。出力の場所を示す）。
   数えるのは `unreadableReviews`。判定が記録される・再開する・前の工程からやり直すと数え直す。再開すると、最終レビューからやり直す。
   判定のオブジェクトは読めて、観点や指摘の判定が足りないだけのときは、これまでどおり、判定の無い項目を不合格にする。
-  統合レビューには、この扱いは無い。
+  統合レビューには、読めないときの出し直しは無い。崩れを直して読むこと（ただし、統合レビューの出力には入れ子のオブジェクトがないので、閉じ括弧の欠けは補わない）と、読めなかったときの位置（`integrate.unreadableAt`・`integrate.unreadableShape`）を所見に残すこと、直して読んだことを `IntegrationReviewed` の `outputRepaired` に残すことは、最終レビューと同じ。
 - オーケストレーターが依頼を文書だけと判断した（`Task.documentsOnly`）タスクは、テストのコマンドにコードの検証が入っていない（文書向けの検証だけか、空）。
   そのため、最終レビューを始める前（差分を取った後）に、タスクの差分（起点からの変更。名前の変更は変更元と変更先に分けて見る）を調べ、文書のファイル（`isDocumentsOnly` と同じ拡張子の一覧）でないものが1つでもあれば、ゴールガーディアンを実行せず、判定も記録せずに一時停止する（`error`・`verify.documentsOnlyContradicted`。文書でないファイルを5件まで、全件数とあわせて示す）。
   コードの変更を検証なしで通さないための歯止めで、上の「ツールがイメージに無いとき」の差分による判定と同じ文書の一覧を使うので、依頼の段階の判断と差分の判定は食い違わない。

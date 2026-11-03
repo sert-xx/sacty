@@ -1376,6 +1376,11 @@ const FinalReviewed = z.object({
      */
     droppedHumanChecks: z.array(z.string()).optional(),
     /**
+     * 最終レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298。何をどこで直したか）。直さずに読めたときは無い。
+     * 実タスクで直しが効いたかを、後から確かめるために残す。
+     */
+    outputRepaired: DaemonText.optional(),
+    /**
      * 回をまたいで同じ趣旨の人が確かめること（PBI-299）を1件にまとめたもの（「<前の回の項目> → 書き直し：<1件にまとめた項目>」）。
      * ゴールガーディアンが前の回の項目を書き直した（updatedHumanChecks）か、同じ見出し（この環境だけの結果）の項目が重なった。
      * まとめた後の項目は humanChecks に入る。まとめたものが無ければ無い。
@@ -1907,6 +1912,8 @@ const IntegrationReviewed = z.object({
     findings: z.array(z.string()),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
+    /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */
+    outputRepaired: DaemonText.optional(),
   }),
 });
 

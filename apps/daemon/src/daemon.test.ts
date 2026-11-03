@@ -978,6 +978,27 @@ function withPromptArg(invocation: Invocation): Invocation {
   return invocation;
 }
 
+/**
+ * 秘密情報の取り出しを、合図のあとの最初の1回だけ止める（最終レビュー・統合レビューの判定を読む前の待ちの間に、一時停止・
+ * 中止を求めるため。PBI-298）。arm() のあとの最初の get が entered を解決し、gate が解けるまで返さない。
+ */
+class GatedSecretStore extends MemorySecretStore {
+  armed = false;
+  entered = Promise.withResolvers<void>();
+  gate = Promise.withResolvers<void>();
+  arm() {
+    this.armed = true;
+  }
+  override async get(name: string): Promise<string> {
+    if (this.armed) {
+      this.armed = false;
+      this.entered.resolve();
+      await this.gate.promise;
+    }
+    return super.get(name);
+  }
+}
+
 class FakeExecutor implements AgentExecutor {
   calls: Invocation[] = [];
   /** 実行ごとに標準入力で渡された指示（PBI-149）。 */
@@ -4209,6 +4230,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       mergeBase?: boolean;
       ci?: CiStatusReader;
       sessionLogs?: SessionLogStore;
+      secretStore?: ServiceDeps["secrets"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -9259,6 +9281,117 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(implementRuns(executor)).toBe(1);
       activity.close();
     });
+
+    it("読み取れなかった理由に、JSON の何行目の何文字目で壊れているかを残す（PBI-298）", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const [failed] = failures(service, id);
+      const message = failed?.type === "FinalReviewFailed" ? failed.payload.message : undefined;
+      expect(message).toMatchObject({
+        code: "verify.finalReviewUnreadable",
+        params: { count: 1, max: 3, detail: { code: "review.unreadableAt", params: { line: 1 } } },
+      });
+      expect(ja(message)).toContain("JSON の 1 行目の");
+      // 出力が空（JSON が無い）なら、位置は付けない
+      activity.close();
+    });
+
+    it("tests の閉じ括弧が欠けた出力は、読み直しを求めずに補って読み、直したことを判定の記録に残す（PBI-298。S5 r4 の形）", async () => {
+      // 実際の出力の形：tests の閉じ括弧 } が欠けて、humanChecks と summary が tests の中に入って見える
+      const repaired = out(
+        `説明の文\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"満たす"},{"id":"TV-2","verified":true,"reason":"満たす"}],"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"tests":{"command":"npm test","exitCode":0,"output":"2 passed","missingCommands":[],"environmentFailures":[],"otherFailures":[],"humanChecks":["実機で確かめる"],"outOfScope":[],"summary":"合格"}}\n\`\`\``,
+        700,
+      );
+      const { activity, service, executor, id } = await toImplement([implement("# v1"), repaired]);
+      await drain(service);
+      // 読み直し（FinalReviewFailed）も、実装のやり直しもなく、1回で判定が記録される
+      expect(failures(service, id)).toHaveLength(0);
+      expect(implementRuns(executor)).toBe(1);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const payload = reviewed[0]?.type === "FinalReviewed" ? reviewed[0].payload : undefined;
+      expect(payload).toMatchObject({
+        passed: true,
+        summary: "合格",
+        humanChecks: ["実機で確かめる"],
+        tests: { command: "npm test", exitCode: 0 },
+        outputRepaired: {
+          code: "review.outputRepaired",
+          params: { repairs: [{ kind: "brace", count: 1, key: "humanChecks" }] },
+        },
+      });
+      expect(ja(payload?.outputRepaired)).toContain("humanChecks の前に補った");
+      activity.close();
+    });
+
+    it("生の改行を含む文字列の中のエスケープした秘密情報は、直して読んでも作業履歴に残さない（PBI-298 レビュー指摘）", async () => {
+      // 実行に使った秘密情報（oauth-secret）の一部をエスケープ（\u0073）し、同じ文字列に生の改行を置く。出力を伏せる処理は、
+      // 生の改行を含む文字列を JSON の文字列として読まないので伏せられず、直して読むときに元の値に戻る
+      const leaking = out(
+        `説明\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"鍵は\noauth-\\u0073ecret です"},{"id":"TV-2","verified":true,"reason":"満たす"}],"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"tests":{"command":"npm test","exitCode":0,"output":"ok"},"humanChecks":["oauth-\\u0073ecret を確かめる\n"],"summary":"所見\noauth-\\u0073ecret"}}\n\`\`\``,
+        700,
+      );
+      const { activity, service, id } = await toImplement([implement("# v1"), leaking]);
+      await drain(service);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const stored = JSON.stringify(activity.all());
+      expect(stored).not.toContain("oauth-secret");
+      expect(stored).toContain("[REDACTED]");
+      const payload = reviewed[0]?.type === "FinalReviewed" ? reviewed[0].payload : undefined;
+      expect(payload?.outputRepaired).toBeDefined();
+      expect(payload?.summary).toBe("所見\n[REDACTED]");
+      activity.close();
+    });
+
+    for (const mode of ["pause", "cancel"] as const) {
+      const label = mode === "pause" ? "一時停止" : "中止";
+      it(`判定を読む前の秘密情報の取り出しを待つ間に${label}されたら、判定を記録せず、費用だけ記録する${mode === "pause" ? "。再開すると最終レビューをやり直す" : ""}（PBI-298 レビュー指摘）`, async () => {
+        const secrets = new GatedSecretStore({
+          "claude-oauth-token": "oauth-secret",
+          "github-token": "ghp_secret",
+        });
+        const { activity, service, executor, id } = await toImplement(
+          [implement("# v1"), review(), review()],
+          { secretStore: secrets },
+        );
+        // 最終レビューの実行が始まったら、次の秘密情報の取り出し（判定を読む前）で止める
+        executor.respond = (invocation) => {
+          if (invocation.command.join(" ").includes("実装を最終レビュー")) secrets.arm();
+          return undefined;
+        };
+        const running = drain(service);
+        await secrets.entered.promise;
+        const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+        secrets.gate.resolve();
+        await stopping;
+        await running;
+        // 合格の判定を記録していない。使った分の費用は記録する
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        const [stopped] = failures(service, id);
+        expect(stopped?.type === "FinalReviewFailed" && stopped.payload).toMatchObject({
+          reason: "error",
+          message: { code: "verify.stoppedByPerson" },
+        });
+        expect(stopped?.type === "FinalReviewFailed" && stopped.payload.costUsd).toBeGreaterThan(0);
+        expect(service.get(id)?.task.lastReview).toBeUndefined();
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        if (mode === "pause") {
+          const calls = executor.calls.length;
+          service.resume(id, {});
+          await drain(service);
+          // 再開すると、最終レビューからやり直す（実装は1回のまま）
+          expect(executor.calls.length).toBe(calls + 1);
+          expect(implementRuns(executor)).toBe(1);
+          expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+        }
+        activity.close();
+      });
+    }
 
     it("出力が空でも、読み取れなかったものとして出し直させる", async () => {
       const { activity, service, id } = await toImplement([implement("# v1"), out(""), review()]);
@@ -19114,10 +19247,15 @@ describe("統合レビュー（PBI-31）", () => {
   async function splitParent(
     outcomes: AgentOutcome[],
     repos = new FakeRepos(),
-    options: { config?: () => ConfigResult; images?: Record<string, string> } = {},
+    options: {
+      config?: () => ConfigResult;
+      images?: Record<string, string>;
+      secretStore?: ServiceDeps["secrets"];
+    } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], {
+      ...(options.secretStore ? { secretStore: options.secretStore } : {}),
       // 工程ごとのイメージ（PBI-41）は、親の工程の選択に足す
       planner: async (task) => ({
         ...(await planner(task)),
@@ -19320,6 +19458,57 @@ describe("統合レビュー（PBI-31）", () => {
     ]);
     activity.close();
   });
+
+  for (const mode of ["pause", "cancel"] as const) {
+    const label = mode === "pause" ? "一時停止" : "中止";
+    it(`判定を読む前の秘密情報の取り出しを待つ間に${label}されたら、統合レビューの判定を記録せず、費用だけ記録する${mode === "pause" ? "。再開すると統合レビューをやり直す" : ""}（PBI-298 レビュー指摘）`, async () => {
+      const secrets = new GatedSecretStore({
+        "claude-oauth-token": "oauth-secret",
+        "github-token": "ghp_secret",
+      });
+      const { service, executor, activity, id } = await splitParent(
+        [
+          splitOutput(twoChildren),
+          out("# A の調査"),
+          out("# B の調査"),
+          integration(true),
+          integration(true),
+        ],
+        new FakeRepos(),
+        { secretStore: secrets },
+      );
+      executor.respond = (invocation) => {
+        if (invocation.command.join(" ").includes("統合の観点で最終レビュー")) secrets.arm();
+        return undefined;
+      };
+      const running = drain(service, id);
+      await secrets.entered.promise;
+      const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+      secrets.gate.resolve();
+      await stopping;
+      await running;
+      const events = service.get(id)?.activity ?? [];
+      expect(events.some((e) => e.type === "IntegrationReviewed")).toBe(false);
+      const failed = events.find(
+        (e) => e.type === "AgentRunFailed" && e.payload.step === "integrate",
+      );
+      expect(failed?.type === "AgentRunFailed" && failed.payload).toMatchObject({
+        message: { code: "run.stoppedByPerson" },
+      });
+      expect(failed?.type === "AgentRunFailed" && failed.payload.costUsd).toBeGreaterThan(0);
+      expect(integrationOf(service, id)).toBeUndefined();
+      expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+      if (mode === "pause") {
+        const calls = executor.calls.length;
+        service.resume(id, {});
+        await drain(service, id);
+        expect(executor.calls.length).toBe(calls + 1);
+        expect(integrationOf(service, id)?.passed).toBe(true);
+        expect(service.get(id)?.task.gate).toEqual({ step: "integrate", submission: 1 });
+      }
+      activity.close();
+    });
+  }
 
   it("統合レビューの実行中にイメージを変えても今のレビューは変えず、次の統合レビューから使う（PBI-106・PR #116 レビュー指摘）", async () => {
     const image = (name: string) => ({

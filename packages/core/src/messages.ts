@@ -27,6 +27,29 @@ const TextParam = DaemonText;
  * 合わなければ（版の違いなど）コードを出す。
  * 外から来た文（git や GitHub のエラーなど）は、引数としてそのまま渡し、翻訳しない。
  */
+/** 判定の出力の JSON が壊れていて読めなかった位置（JSON の先頭からの位置。1から）と、壊れた所の前後（秘密情報が出力にあるときは空）。 */
+const UnreadableAt = z.object({
+  line: z.number().int().positive(),
+  column: z.number().int().positive(),
+  near: TextParam,
+});
+
+/** 判定の出力の JSON を、直して読んだ箇所（種類ごとに、数と最初の位置）。 */
+const OutputRepaired = z.object({
+  repairs: z
+    .array(
+      z.object({
+        kind: z.enum(["quote", "control", "escape", "comma", "brace"]),
+        count: z.number().int().positive(),
+        line: z.number().int().positive(),
+        column: z.number().int().positive(),
+        /** brace：「}」を補った直後のキー。 */
+        key: z.string().optional(),
+      }),
+    )
+    .min(1),
+});
+
 const PARAMS = {
   "task.notFound": null,
   "task.repositoryMissing": z.object({ project: z.string() }),
@@ -337,6 +360,9 @@ const PARAMS = {
   // 統合レビュー（PBI-31）
   "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "integrate.unreadable": null,
+  "integrate.unreadableAt": UnreadableAt,
+  "integrate.unreadableShape": z.object({ heading: z.string() }),
+  "integrate.outputRepaired": OutputRepaired,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   // PR のレビューだけを行う取り込み（PBI-44）
   "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
@@ -358,6 +384,9 @@ const PARAMS = {
   "review.verdictMissing": null,
   "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
+  "review.unreadableAt": UnreadableAt,
+  "review.unreadableShape": z.object({ heading: z.string() }),
+  "review.outputRepaired": OutputRepaired,
   "review.viewpointUnmapped": null,
   "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
   "review.scopeViolated": z.object({
@@ -387,8 +416,18 @@ const PARAMS = {
   "verify.diffUnavailable": z.object({ detail: TextParam }),
   "verify.stoppedByPerson": null,
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
-  "verify.finalReviewUnreadable": z.object({ count: Count, max: Count, path: z.string() }),
-  "verify.finalReviewUnreadableStopped": z.object({ max: Count, path: z.string() }),
+  "verify.finalReviewUnreadable": z.object({
+    count: Count,
+    max: Count,
+    path: z.string(),
+    /** 何が読めなかったか（PBI-298）。それより前の版の記録には無い。 */
+    detail: TextParam.optional(),
+  }),
+  "verify.finalReviewUnreadableStopped": z.object({
+    max: Count,
+    path: z.string(),
+    detail: TextParam.optional(),
+  }),
   "verify.tooManyAttempts": z.object({ count: Count }),
   "verify.mergeConflictsRemain": z.object({
     count: Count,
@@ -689,6 +728,40 @@ const contextKindEn = {
   mcp: "MCP server",
   platforms: "external platform",
 } as const;
+
+type RepairParams = z.infer<typeof OutputRepaired>["repairs"];
+
+/** 判定の出力の JSON を直して読んだ箇所の文言（日本語）。 */
+const repairedJa = (repairs: RepairParams) =>
+  repairs
+    .slice(0, 3)
+    .map(({ kind, count, line, column, key }) => {
+      const what = {
+        quote: "文字列の中の二重引用符のエスケープ漏れ",
+        control: "文字列の中の改行などの制御文字",
+        escape: "JSON にないバックスラッシュのエスケープ",
+        comma: "閉じる括弧の前の余分なカンマ",
+        brace: `入れ子のオブジェクトの閉じ括弧 } の欠け（${key ?? ""} の前に補った）`,
+      }[kind];
+      return `${what}${count > 1 ? `${count}か所` : ""}：JSON の ${line} 行目の ${column} 文字目${count > 1 ? "が最初" : ""}`;
+    })
+    .join("、") + (repairs.length > 3 ? `、ほか${repairs.length - 3}種類` : "");
+
+/** 判定の出力の JSON を直して読んだ箇所の文言（英語）。 */
+const repairedEn = (repairs: RepairParams) =>
+  repairs
+    .slice(0, 3)
+    .map(({ kind, count, line, column, key }) => {
+      const what = {
+        quote: "unescaped double quotes inside strings",
+        control: "control characters such as newlines inside strings",
+        escape: "backslash escapes JSON does not have",
+        comma: "an extra comma before a closing bracket",
+        brace: `a missing closing } of a nested object (added before ${key ?? ""})`,
+      }[kind];
+      return `${what}${count > 1 ? ` x${count}` : ""}: line ${line}, column ${column} of the JSON${count > 1 ? " (first)" : ""}`;
+    })
+    .join("; ") + (repairs.length > 3 ? `; and ${repairs.length - 3} more kinds` : "");
 
 const ja: MessageDictionary = {
   "task.notFound": "タスクが見つかりません。",
@@ -1085,6 +1158,12 @@ const ja: MessageDictionary = {
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
   "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
+  "integrate.unreadableAt": ({ line, column, near }, text) =>
+    `統合レビューの出力の JSON を読み取れませんでした（JSON の ${line} 行目の ${column} 文字目の付近で壊れています${text(near) ? `：${text(near)}` : ""}）。`,
+  "integrate.unreadableShape": ({ heading }) =>
+    `統合レビューの出力の JSON（${heading}）は、必要な項目が無い、または形が違うため、読み取れませんでした。`,
+  "integrate.outputRepaired": ({ repairs }) =>
+    `統合レビューの出力の JSON が崩れていたので、直して読みました（${repairedJa(repairs)}）。`,
   "orchestrator.failed": ({ detail }, text) =>
     `オーケストレーターを実行できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
@@ -1142,6 +1221,12 @@ const ja: MessageDictionary = {
   "review.verdictIdMismatch": ({ expected, answered }) =>
     `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
+  "review.unreadableAt": ({ line, column, near }, text) =>
+    `最終レビューの出力の JSON を読み取れませんでした（JSON の ${line} 行目の ${column} 文字目の付近で壊れています${text(near) ? `：${text(near)}` : ""}）。`,
+  "review.unreadableShape": ({ heading }) =>
+    `最終レビューの出力の JSON（${heading}）は、必要な項目が無い、または形が違うため、読み取れませんでした。`,
+  "review.outputRepaired": ({ repairs }) =>
+    `最終レビューの出力の JSON が崩れていたので、直して読みました（${repairedJa(repairs)}）。`,
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
   "review.outOfScope": ({ items }) =>
     `依頼にも承認済みの要求要件・設計にも無い変更、または既存のテストの期待を変える変更があります：${items.join(" / ")}`,
@@ -1182,10 +1267,10 @@ const ja: MessageDictionary = {
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
     `ゴールガーディアンの最終レビューを実行できませんでした：${text(detail)}`,
-  "verify.finalReviewUnreadable": ({ count, max, path }) =>
-    `最終レビューの出力から、判定を読み取れませんでした（${count}/${max}回目）。不合格にはせず、過去の指摘も再発と数えずに、最終レビューをやり直します。出力：${path}`,
-  "verify.finalReviewUnreadableStopped": ({ max, path }) =>
-    `最終レビューの出力から、判定を${max}回続けて読み取れませんでした。実装の不合格ではないので、実装には戻さず、一時停止しました。出力（${path}）を確かめてください。再開すると、最終レビューからやり直します。`,
+  "verify.finalReviewUnreadable": ({ count, max, path, detail }, text) =>
+    `最終レビューの出力から、判定を読み取れませんでした（${count}/${max}回目）。${detail === undefined ? "" : text(detail)}不合格にはせず、過去の指摘も再発と数えずに、最終レビューをやり直します。出力：${path}`,
+  "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
+    `最終レビューの出力から、判定を${max}回続けて読み取れませんでした。${detail === undefined ? "" : text(detail)}実装の不合格ではないので、実装には戻さず、一時停止しました。出力（${path}）を確かめてください。再開すると、最終レビューからやり直します。`,
   "verify.tooManyAttempts": ({ count }) =>
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
@@ -1776,6 +1861,12 @@ const en: MessageDictionary = {
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
   "integrate.unreadable": "Could not read the verdicts from the integration review output.",
+  "integrate.unreadableAt": ({ line, column, near }, text) =>
+    `The JSON in the integration review output could not be read (it is broken near line ${line}, column ${column} of the JSON${text(near) ? `: ${text(near)}` : ""}).`,
+  "integrate.unreadableShape": ({ heading }) =>
+    `The JSON in the integration review output (${heading}) is missing required fields or has the wrong shape, so it could not be read.`,
+  "integrate.outputRepaired": ({ repairs }) =>
+    `The JSON in the integration review output was broken, so it was repaired and read (${repairedEn(repairs)}).`,
   "orchestrator.failed": ({ detail }, text) =>
     `Could not run the Orchestrator: ${text(detail).replace(/[。.]\s*$/, "")}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
@@ -1832,6 +1923,12 @@ const en: MessageDictionary = {
   "review.verdictIdMismatch": ({ expected, answered }) =>
     `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
+  "review.unreadableAt": ({ line, column, near }, text) =>
+    `The JSON in the final review output could not be read (it is broken near line ${line}, column ${column} of the JSON${text(near) ? `: ${text(near)}` : ""}).`,
+  "review.unreadableShape": ({ heading }) =>
+    `The JSON in the final review output (${heading}) is missing required fields or has the wrong shape, so it could not be read.`,
+  "review.outputRepaired": ({ repairs }) =>
+    `The JSON in the final review output was broken, so it was repaired and read (${repairedEn(repairs)}).`,
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
   "review.outOfScope": ({ items }) =>
     `The diff has changes that neither the request nor the approved requirements and design call for, or that change what an existing test expects: ${items.join(" / ")}`,
@@ -1874,10 +1971,10 @@ const en: MessageDictionary = {
     `Could not get the diff, so the final review was not done: ${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
     `Could not run the Goal Guardian's final review: ${text(detail)}`,
-  "verify.finalReviewUnreadable": ({ count, max, path }) =>
-    `Could not read the verdicts from the final review output (attempt ${count} of ${max}). It is not counted as a failure, and no past remark is counted as recurring; the final review is run again. Output: ${path}`,
-  "verify.finalReviewUnreadableStopped": ({ max, path }) =>
-    `Could not read the verdicts from the final review output ${max} times in a row. This is not a failure of the implementation, so it was not sent back; the task is paused. Check the output (${path}). Resuming redoes the final review.`,
+  "verify.finalReviewUnreadable": ({ count, max, path, detail }, text) =>
+    `Could not read the verdicts from the final review output (attempt ${count} of ${max}). ${detail === undefined ? "" : `${text(detail)} `}It is not counted as a failure, and no past remark is counted as recurring; the final review is run again. Output: ${path}`,
+  "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
+    `Could not read the verdicts from the final review output ${max} times in a row. ${detail === undefined ? "" : `${text(detail)} `}This is not a failure of the implementation, so it was not sent back; the task is paused. Check the output (${path}). Resuming redoes the final review.`,
   "verify.tooManyAttempts": ({ count }) =>
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>

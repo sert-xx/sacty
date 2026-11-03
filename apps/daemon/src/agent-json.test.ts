@@ -2,9 +2,12 @@ import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
   explainUnreadableAnswer,
+  headedObject,
   jsonCandidates,
+  type LenientShape,
   lastJsonAnswer,
   lastLenientJsonAnswer,
+  safeNear,
   withoutCandidates,
 } from "./agent-json.js";
 import {
@@ -462,5 +465,126 @@ describe("崩れた JSON の寛容な読み取り（PBI-293）", () => {
       column: 11,
       near: '{ "h": { "a": [1 2]}}',
     });
+  });
+});
+
+describe("入れ子のオブジェクトの閉じ括弧の欠けを補って読む（PBI-298）", () => {
+  // 最終レビューと同じ形：見出し h のオブジェクトの項目 a・t・b・s と、入れ子のオブジェクト t（項目 x・y）
+  const shape: LenientShape = {
+    heading: "h",
+    keys: ["a", "t", "b", "s"],
+    objects: { t: ["x", "y"] },
+  };
+  // 実際の呼び出しと同じに、見出しのオブジェクトを持つ答えだけを採る
+  const head = (v: Record<string, unknown>) => (headedObject(v, "h") ? v : undefined);
+  const read = (output: string) => lastLenientJsonAnswer(output, "h", head, shape);
+
+  it("入れ子のオブジェクトの中に見出しのオブジェクトの項目が現れたら、「}」を補って、その項目を外に出す", () => {
+    const found = read('{"h":{"a":[1],"t":{"x":0,"y":[],"b":["p"],"s":"end"}}');
+    expect(found?.value).toEqual({ h: { a: [1], t: { x: 0, y: [] }, b: ["p"], s: "end" } });
+    expect(found?.repairs).toEqual([{ kind: "brace", line: 1, column: 33, key: "b" }]);
+  });
+
+  it("入れ子のオブジェクトが空のときも補う。補った「}」の位置は、行と桁で分かる", () => {
+    const found = read('{"h":{"a":[],\n"t":{\n  "b":[],"s":"end"}}');
+    expect(found?.value).toEqual({ h: { a: [], t: {}, b: [], s: "end" } });
+    expect(found?.repairs).toEqual([{ kind: "brace", line: 3, column: 3, key: "b" }]);
+  });
+
+  it("正しい JSON は、補わずにそのまま読む（repairs は空）", () => {
+    const found = read('```json\n{"h":{"a":[],"t":{"x":0,"y":[]},"b":[],"s":"end"}}\n```');
+    expect(found?.value).toEqual({ h: { a: [], t: { x: 0, y: [] }, b: [], s: "end" } });
+    expect(found?.repairs).toEqual([]);
+    // 入れ子のオブジェクトが最後のキーでも、入れ子の外のキーが無くても、補わない
+    expect(read('{"h":{"a":[],"t":{"x":0}}}')?.repairs).toEqual([]);
+  });
+
+  it("文字列の中の引用符の崩れと、閉じ括弧の欠けが重なっても読む。種類ごとに位置が分かる", () => {
+    const found = read('{"h":{"a":[],"t":{"x":"v "q" w","y":[]},"s":"end"}}');
+    expect(found?.value).toEqual({ h: { a: [], t: { x: 'v "q" w', y: [] }, s: "end" } });
+    expect(found?.repairs.map((r) => r.kind)).toEqual(["quote", "quote"]);
+    const both = read('{"h":{"a":[],"t":{"x":"v "q" w","y":[],"s":"end"}}');
+    expect(both?.value).toEqual({ h: { a: [], t: { x: 'v "q" w', y: [] }, s: "end" } });
+    expect(both?.repairs.map((r) => r.kind)).toEqual(["quote", "quote", "brace"]);
+  });
+
+  it("入れ子のオブジェクトに属する項目しか現れなければ、補わない（括弧の数が合わなくても推測しない）", () => {
+    // 「}」が1つ足りないが、どこで閉じるか決まらない（入れ子の外の項目が無い）
+    expect(read('{"h":{"a":[],"t":{"x":0,"y":[]}')).toBeUndefined();
+    expect(explainUnreadableAnswer('{"h":{"a":[],"t":{"x":0,"y":[]}', "h", shape).kind).toBe(
+      "broken",
+    );
+  });
+
+  it("直し方が決まらないときは読まない：見出しのオブジェクトが同じ項目を既に持つ・補ったあとに入れ子の項目が現れる", () => {
+    // b が、入れ子の外にも既にある（どちらが本物か決まらない）
+    expect(read('{"h":{"a":[],"b":["外"],"t":{"x":0,"b":["中"],"s":"end"}}')).toBeUndefined();
+    // 補ったあとの見出しのオブジェクトに、入れ子の項目 y が現れる（入れ子をどこで閉じるか決まらない）
+    expect(read('{"h":{"a":[],"t":{"x":0,"b":[],"y":[],"s":"end"}}')).toBeUndefined();
+    expect(explainUnreadableAnswer('{"h":{"a":[],"t":{"x":0,"b":[],"y":[]}}', "h", shape)).toEqual(
+      expect.objectContaining({ kind: "broken", line: 1 }),
+    );
+  });
+
+  it("入れ子のオブジェクトが見出しのオブジェクトの項目でないとき・形が無いときは、補わない", () => {
+    // t が配列の要素の中にあるオブジェクトのとき（見出しのオブジェクトの直下の t ではない）
+    expect(read('{"h":{"a":[{"t":{"x":0,"b":[]}],"s":"end"}}')).toBeUndefined();
+    // shape を渡さなければ、補わない（監査など）
+    expect(
+      lastLenientJsonAnswer('{"h":{"a":[],"t":{"x":0,"b":[],"s":"end"}}', "h", head),
+    ).toBeUndefined();
+  });
+
+  it("read が形を認めなければ、直した結果を読まない。直さずに読めたものには、repairs は空で渡る", () => {
+    const seen: number[] = [];
+    const answer = lastLenientJsonAnswer(
+      '{"h":{"a":[],"t":{"x":0,"b":[],"s":"end"}}',
+      "h",
+      (v, repairs) => {
+        seen.push(repairs.length);
+        return repairs.length > 0 ? undefined : head(v);
+      },
+      shape,
+    );
+    expect(answer).toBeUndefined();
+    // 直さずに読めるかの確かめ（repairs は空）のあとに、直して読んだ（repairs は1件）ものを渡している
+    expect(seen).toEqual([0, 1]);
+  });
+
+  it("直した箇所の行と桁は、箇所の数によらず1回の走査で求める（順序・改行をまたぐ位置も正しい）", () => {
+    const found = read('{"h":{"a":["x\ny","p\nq\nr"],\n"t":{"x":"u\nv","b":[],"s":"end"}}');
+    expect(found?.repairs).toEqual([
+      { kind: "control", line: 1, column: 14 },
+      { kind: "control", line: 2, column: 6 },
+      { kind: "control", line: 3, column: 2 },
+      { kind: "control", line: 5, column: 12 },
+      { kind: "brace", line: 6, column: 4, key: "b" },
+    ]);
+  });
+
+  it("本文から取り除く範囲は、囲みの行を含む", () => {
+    const around = (json: string) => `説明\n\`\`\`json\n${json}\n\`\`\`\n後ろ`;
+    const broken = around('{"h":{"a":[],"t":{"x":0,"b":[],"s":"end"}}');
+    const found = read(broken);
+    expect(found?.repairs).toHaveLength(1);
+    const range = found?.candidate;
+    // 正しい JSON のときと同じ範囲を取り除く
+    const strict = read(around('{"h":{"a":[],"t":{"x":0},"b":[],"s":"end"}}'));
+    expect(strict?.repairs).toEqual([]);
+    const text = (o: string, c?: { start: number; end: number }) =>
+      c ? withoutCandidates(o, [c]) : undefined;
+    expect(text(broken, range)).toBe(
+      text(around('{"h":{"a":[],"t":{"x":0},"b":[],"s":"end"}}'), strict?.candidate),
+    );
+    expect(text(broken, range)).not.toContain("json");
+  });
+
+  it("壊れた所の前後は、出力に秘密情報があれば残さず、伏せる関数が無ければ残さない", () => {
+    const hide = (t: string) => t.replaceAll("sk-secret", "[REDACTED]");
+    expect(safeNear("a", "x y", hide)).toBe("x y");
+    expect(safeNear("a", "x y", undefined)).toBe("");
+    // エスケープされた秘密情報（"sk-sec\u0072et" の形）が出力のどこかにあれば、残さない
+    expect(safeNear('{"k":"sk-sec\\u0072et"}', "x y", hide)).toBe("");
+    expect(safeNear("sk-secret", "x y", hide)).toBe("");
   });
 });

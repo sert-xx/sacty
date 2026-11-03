@@ -348,6 +348,31 @@ describe("深掘りの出力の崩れ（PBI-293）", () => {
     expect(column(`結果です。長い前置き\n${broken}`)).toBe(column(broken));
   });
 
+  describe("直して読んだ文字列の、復号した秘密情報を保存しない（PBI-298 レビュー指摘）", () => {
+    // 生の改行を含む文字列の中の `\u0073`（s）は、先に出力を伏せる処理が JSON の文字列として読まないので残り、
+    // 直して読むときに元の値に戻る。監査は、復号した文字列のすべてに hide をかけてから保存する
+    const secret = "sk-fiction-0123456789abcdef";
+    const hide = (t: string) => t.split(secret).join("[伏せた値]");
+    const leak = "sk-fiction-0123456789abcdef".replace("s", "\\u0073");
+
+    it("大まかな監査：要約・理由・メモリーの本文のどれにも、秘密情報が残らない", () => {
+      const output = `{"sacty-audit-survey": {"summary": "要約\n${leak}", "concerns": [{"step": "implement", "reason": "理由\n${leak}"}], "promotions": []}}`;
+      expect(hide(output)).toBe(output);
+      const read = extractAuditSurvey(output, task, hide);
+      expect(read.ok).toBe(true);
+      expect(JSON.stringify(read)).not.toContain("fiction-0123");
+      expect(JSON.stringify(read)).toContain("[伏せた値]");
+    });
+
+    it("深掘り：題・詳細・提案の本文・メモリーのどれにも、秘密情報が残らない", () => {
+      const output = `{"sacty-audit-findings": {"summary": "要約\n${leak}", "findings": [{"title": "題\n${leak}", "detail": "詳細\n${leak}", "evidence": [], "proposals": [{"target": 0, "title": "案\n${leak}", "body": "本文\n${leak}"}]}]}}`;
+      const read = extractAuditDive(output, context, hide);
+      expect(JSON.stringify(read)).not.toContain("fiction-0123");
+      expect(read.ok).toBe(true);
+      if (read.ok) expect(read.summary).toContain("[伏せた値]");
+    });
+  });
+
   describe("壊れた所の前後に、エスケープされた秘密情報を残さない", () => {
     // 呼び出し側（service）の hide と同じ：既知の秘密情報の値を、生の文字列で伏せる
     const secret = 'sk"live\\key\nvalue-with-quote"and-more';

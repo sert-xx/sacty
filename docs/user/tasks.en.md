@@ -354,7 +354,12 @@ Even if another task or a person's PR is merged into the base branch (main and t
 
 ### When the final review verdict cannot be read
 
-When the verdicts cannot be read from the final review output, the task is not failed and the implementation is not redone. Past comments are not counted as having recurred either.
+Common breakage in the final review's JSON output, such as double quotes inside strings or a missing closing `}` of the nested `tests`, is repaired when reading.
+When the output was read with repairs, the "Final review" line of the activity history says what was repaired and where.
+When there is more than one way to repair it, or the repaired result does not have the expected shape, sacty does not guess.
+
+When the verdicts still cannot be read from the final review output, the task is not failed and the implementation is not redone. Past comments are not counted as having recurred either.
+The reason says at which line and column of the JSON the output is broken.
 Only the final review is run again.
 If the verdicts cannot be read three times in a row, the task pauses and shows where the output is (the daemon's `runs/<task ID>/<run ID>.jsonl`; it can also be read in the run log on the screen).
 After you check the output, "Resume" redoes the final review.
