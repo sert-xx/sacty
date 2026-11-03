@@ -377,6 +377,12 @@ const PARAMS = {
     /** 再開のときにテストの扱いを決め直せるか（PBI-158。テストのコマンドが決まっていて、テストなしの理由が無いタスク）。 */
     testsDecidable: z.boolean().optional(),
   }),
+  "verify.documentsOnlyContradicted": z.object({
+    /** 文書でないファイル（先頭の数件）。 */
+    files: TextParam,
+    /** 文書でないファイルの件数。 */
+    total: z.number().int().positive(),
+  }),
   "verify.diffUnavailable": z.object({ detail: TextParam }),
   "verify.stoppedByPerson": null,
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
@@ -726,7 +732,7 @@ const ja: MessageDictionary = {
   "override.notAllowed":
     "実装の検証が続けて通らずに止まったタスクではないため、レビューへ進められません。",
   "resume.testsNotUndecided":
-    "このタスクは、テストのコマンドが決まらずに止まった・テストのコマンドのツールがイメージに無くて止まったタスクではありません。テストの扱いを指定せずに再開してください。",
+    "このタスクは、テストのコマンドが決まらずに止まった・テストのコマンドのツールがイメージに無くて止まった・文書だけの依頼と判断したのに差分に文書でないファイルがあって止まったタスクではありません。テストの扱いを指定せずに再開してください。",
   "resume.bugfixNeedsTestCommand":
     "不具合の修正（再現の工程がある）は、テストなしでは進められません。テストのコマンドを指定してください。",
   "operation.incomplete":
@@ -1157,6 +1163,8 @@ const ja: MessageDictionary = {
   },
   "verify.stoppedByPerson":
     "人間が止めたため、最終レビューの判定を記録しませんでした。再開すると、最終レビューからやり直します。",
+  "verify.documentsOnlyContradicted": ({ files, total }, text) =>
+    `オーケストレーターは、この依頼を文書だけの変更と判断し、コードの検証（テスト・lint・型の検査・ビルド）をテストのコマンドに入れませんでした。しかし、実装の差分に文書でないファイルがあります（${text(files)}${total > 5 ? ` ほか、全${total}件` : ""}）。このままではコードの変更が検証されないため、最終レビューをせずに止めました。再開のときの「テストの扱い」で、変更が及ぶ範囲の検証のコマンドを指定するか、テストなしで進めると決めてください（決めずに再開すると、同じ理由でまた止まります）。`,
   "verify.diffUnavailable": ({ detail }, text) =>
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
@@ -1407,7 +1415,7 @@ const en: MessageDictionary = {
   "override.notAllowed":
     "The task did not stop because verification of the implementation kept failing, so it cannot be moved to review.",
   "resume.testsNotUndecided":
-    "This task did not stop because its test command was undetermined or because a tool of its test command is missing from the image. Resume without specifying how to handle tests.",
+    "This task did not stop because its test command was undetermined, because a tool of its test command is missing from the image, or because the request was judged documents only but the diff has files that are not documents. Resume without specifying how to handle tests.",
   "resume.bugfixNeedsTestCommand":
     "A bug fix (with a reproduce step) cannot proceed without tests. Specify the test command.",
   "operation.incomplete":
@@ -1841,6 +1849,8 @@ const en: MessageDictionary = {
   },
   "verify.stoppedByPerson":
     "The final review verdict was not recorded because a person stopped the task. Resuming redoes the final review.",
+  "verify.documentsOnlyContradicted": ({ files, total }, text) =>
+    `The orchestrator judged this request to change documents only, so it left code verification (tests, lint, type checks, build) out of the test command. But the implementation's diff has files that are not documents (${text(files)}${total > 5 ? ` and more, ${total} in total` : ""}). Because the code changes would go unverified, the final review was not run and the task was paused. Choose "Tests" when resuming to specify a command that verifies the changed code, or to proceed without tests (resuming without deciding stops again for the same reason).`,
   "verify.diffUnavailable": ({ detail }, text) =>
     `Could not get the diff, so the final review was not done: ${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>

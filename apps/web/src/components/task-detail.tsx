@@ -11,6 +11,7 @@ import {
   canRerun,
   canRetryExport,
   deliveredWithoutChanges,
+  documentsOnlyContradicted,
   exportDue,
   gatePullRequest,
   heldReview,
@@ -291,8 +292,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 tests: {
                   bugfix: task.steps.some((s) => s.key === "reproduce"),
                   rechoose: canRechooseSteps(task),
-                  // ツールがイメージに無くて止まったタスクは、いまのテストのコマンドを直せるよう、入力欄に初期値として出す
-                  ...(testToolsMissing(task) && task.testCommand
+                  // ツールがイメージに無くて止まったタスク・文書だけの依頼と差分が食い違って止まったタスクは、いまのテストの
+                  // コマンドを直せるよう、入力欄に初期値として出す
+                  ...((testToolsMissing(task) || documentsOnlyContradicted(task)) &&
+                  task.testCommand
                     ? { current: task.testCommand }
                     : {}),
                 },

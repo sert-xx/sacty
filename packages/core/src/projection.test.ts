@@ -29,6 +29,7 @@ import {
   changeRounds,
   deliveredWithoutChanges,
   documentOutput,
+  documentsOnlyContradicted,
   errorAnalysisBlocked,
   exportDue,
   gatePullRequest,
@@ -1965,6 +1966,117 @@ describe("テストのコマンドのツールがイメージに無くて止ま�
     expect(
       project([...events, decide("t1", { testCommand: "make check" })]).get("t1")?.testCommand,
     ).toBe("make check");
+  });
+});
+
+describe("文書だけの依頼と差分が食い違って止まったタスク（PBI-284）", () => {
+  const contradicted = {
+    code: "verify.documentsOnlyContradicted",
+    params: { files: "src/pay.js", total: 1 },
+  };
+  const chosen = (taskId: string, extra: Record<string, unknown> = {}) =>
+    ev(taskId, {
+      type: "StepsChosen",
+      payload: {
+        steps: [...STEP_PLANS.direct],
+        plan: "direct",
+        reason: "文書だけ",
+        noTestsReason: "文書向けの検証が無い",
+        documentsOnly: true,
+        ...extra,
+      },
+    } as EventInput);
+  const paused = (taskId: string, message: unknown = contradicted) =>
+    ev(taskId, { type: "TaskPaused", payload: { reason: "error", message } } as EventInput);
+
+  it("文書だけの依頼であることを持ち、差分が食い違って止まったら、テストの扱いを決められる（工程の選択からのやり直しはできない）", () => {
+    seq = 0;
+    const running = project([created("t1"), chosen("t1")]).get("t1") as Task;
+    expect(running.documentsOnly).toBe(true);
+    const task = project([created("t1"), chosen("t1"), paused("t1")]).get("t1") as Task;
+    expect(documentsOnlyContradicted(task)).toBe(true);
+    expect(canDecideTests(task)).toBe(true);
+    expect(canRechooseSteps(task)).toBe(false);
+  });
+
+  it("テストの扱いを決めると、文書だけの依頼の判断は使わない（決めた扱いで検証する）", () => {
+    seq = 0;
+    for (const payload of [{ testCommand: "make test" }, { noTestsReason: "人が確かめる" }]) {
+      const task = project([
+        created("t1"),
+        chosen("t1"),
+        paused("t1"),
+        ev("t1", { type: "TestsDecided", payload }, "person"),
+        ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      ]).get("t1") as Task;
+      expect(task.documentsOnly).toBeUndefined();
+      expect(task.testsDecidedBy).toBe("person");
+    }
+  });
+
+  it("テストのコマンドを指定したら、noTests の理由は消す。そのコマンドのツール不足で止まっても、テストの扱いを決め直せる", () => {
+    seq = 0;
+    const missingStop = {
+      code: "verify.commandMissing",
+      params: { commands: ["make"], image: "default", step: "implement", testsDecidable: true },
+    };
+    const events = [
+      created("t1"),
+      chosen("t1"),
+      paused("t1"),
+      ev("t1", { type: "TestsDecided", payload: { testCommand: "make test" } }, "person"),
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ];
+    const resumed = project(events).get("t1") as Task;
+    expect(resumed.testCommand).toBe("make test");
+    expect(resumed.noTestsReason).toBeUndefined();
+    // 指定したコマンドのツールがイメージに無くて止まったら、テストの扱いをまた決められる
+    const stopped = project([...events, paused("t1", missingStop)]).get("t1") as Task;
+    expect(testToolsMissing(stopped)).toBe(true);
+    expect(canDecideTests(stopped)).toBe(true);
+    const redecided = project([
+      ...events,
+      paused("t1", missingStop),
+      ev("t1", { type: "TestsDecided", payload: { testCommand: "npm test" } }, "person"),
+    ]).get("t1") as Task;
+    expect(redecided.testCommand).toBe("npm test");
+  });
+
+  it("ほかの理由で止まった・文書だけの依頼でないタスクは、この理由では決められない。工程の選択からやり直すと、判断を消す", () => {
+    seq = 0;
+    const other = project([
+      created("t1"),
+      chosen("t1"),
+      paused("t1", { code: "verify.testsUnavailable", params: { detail: "x" } }),
+    ]).get("t1") as Task;
+    expect(documentsOnlyContradicted(other)).toBe(false);
+    expect(canDecideTests(other)).toBe(false);
+    // 文書だけの依頼でなければ、同じ止まり方でも当てない
+    const notDocs = project([
+      created("t2"),
+      chosen("t2", { documentsOnly: undefined }),
+      paused("t2"),
+    ]).get("t2") as Task;
+    expect(notDocs.documentsOnly).toBeUndefined();
+    expect(documentsOnlyContradicted(notDocs)).toBe(false);
+    // 止まっていない（再開後の）タスクは当てない
+    const resumed = project([
+      created("t3"),
+      chosen("t3"),
+      paused("t3"),
+      ev("t3", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ]).get("t3") as Task;
+    expect(documentsOnlyContradicted(resumed)).toBe(false);
+    // 工程を選び直すと、前の選択の判断は残らない（選び直した選択に documentsOnly が無ければ使わない）
+    const rechosen = project([
+      created("t4"),
+      // テストのコマンドも noTests も答えず、工程を選んだ直後に止まった（工程の選択からやり直せる）
+      chosen("t4", { noTestsReason: undefined }),
+      paused("t4", { code: "orchestrator.testCommandUnknown" }),
+      ev("t4", { type: "TaskResumed", payload: { retry: true, rechooseSteps: true } }, "person"),
+    ]);
+    expect(rechosen.get("t4")?.steps).toEqual([]);
+    expect(rechosen.get("t4")?.documentsOnly).toBeUndefined();
   });
 });
 
