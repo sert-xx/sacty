@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-289
-- PR: なし
+- PR: #290
 - ブランチ: feat/issue-289-pbi-289
 - 関係する ADR: [範囲外の変更の判定で、AI のレビューの指摘に応えた変更を人の確認に回す](../adr/20261103-0620-ai-review-remarks-in-out-of-scope-judgment.md)
 
