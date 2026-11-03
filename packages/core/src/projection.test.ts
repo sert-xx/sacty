@@ -4597,7 +4597,17 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
     }),
     ...run("r1", "requirements", "# 要求要件"),
     ...run("r2", "design", "# 設計"),
+    // 実装を2回提出して、履歴と土台がある状態にする（1回だけでは、土台はまだ無い）
     ...run("impl-1", "implement", "v1"),
+    ev(
+      "t1",
+      {
+        type: "FinalReviewed",
+        payload: { passed: false, viewpoints: [], remarks: [], summary: "不合格", agentId: "g" },
+      },
+      "guardian",
+    ),
+    ...run("impl-2", "implement", "v2"),
   ];
 
   it("設計の変更を認めたら、実装の説明の履歴は空に戻る。認める前（申し出と判定の後、適用の前）は引き継ぐ", () => {
@@ -4624,8 +4634,15 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
       seq = 0;
       return project([...upstream(), ...proposalEvents(apply)]).get("t1");
     };
-    expect(flow(false)?.implementHistory).toEqual(["v1"]);
-    expect(flow(true)?.implementHistory).toBeUndefined();
+    const before = flow(false);
+    expect(before?.implementHistory).toEqual(["v1", "v2"]);
+    expect(before?.implementBase).toBe("v1");
+    expect(before?.testMap).toEqual([
+      { viewpointId: "TV-1", tests: ["v1.test.ts › 1", "v2.test.ts › 1"] },
+    ]);
+    const applied = flow(true);
+    expect(applied?.implementHistory).toBeUndefined();
+    expect(applied?.implementBase).toBeUndefined();
     // 適用の後の実装の提出は最初の提出で、同じ観点 ID の古いテストを引き継がない
     seq = 0;
     const again = project([
@@ -4639,11 +4656,11 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
         },
         "guardian",
       ),
-      ...run("impl-2", "implement", "v2"),
+      ...run("impl-3", "implement", "v3"),
     ]).get("t1");
-    expect(again?.implementHistory).toEqual(["v2"]);
+    expect(again?.implementHistory).toEqual(["v3"]);
     expect(again?.implementBase).toBeUndefined();
-    expect(again?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v2.test.ts › 1"] }]);
+    expect(again?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v3.test.ts › 1"] }]);
   });
 
   it("要求要件への差し戻しで承認し直したら、実装の説明の履歴は空に戻り、次の実装の提出が最初の提出になる", () => {
@@ -4696,7 +4713,9 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
         ),
       ];
     };
-    expect(project(sentBack()).get("t1")?.implementHistory).toEqual(["v1"]);
+    const gated = project(sentBack()).get("t1");
+    expect(gated?.implementHistory).toEqual(["v1", "v2"]);
+    expect(gated?.implementBase).toBe("v1");
     const reapproved = project([...sentBack(), ...run("r3", "requirements", "# 要求要件 v2")]).get(
       "t1",
     );
@@ -4707,9 +4726,10 @@ describe("上流の成果物が変わったら、前の実装の説明・テス�
     const next = project([
       ...sentBack(),
       ...run("r3", "requirements", "# 要求要件 v2"),
-      ...run("impl-2", "implement", "v2"),
+      ...run("impl-3", "implement", "v3"),
     ]).get("t1");
-    expect(next?.implementHistory).toEqual(["v2"]);
-    expect(next?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v2.test.ts › 1"] }]);
+    expect(next?.implementHistory).toEqual(["v3"]);
+    expect(next?.implementBase).toBeUndefined();
+    expect(next?.testMap).toEqual([{ viewpointId: "TV-1", tests: ["v3.test.ts › 1"] }]);
   });
 });
