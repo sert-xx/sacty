@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-286
-- PR: なし
+- PR: #286
 - ブランチ: feat/issue-286-pbi-286
 - 関係する ADR: [セルフレビューの再レビューは、前回 must を出した観点と X-1 だけを起動する](../adr/20261103-0302-self-review-rereview-launches-must-viewpoints-only.md)
 
