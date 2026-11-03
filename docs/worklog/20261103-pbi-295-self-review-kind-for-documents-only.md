@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-295
-- PR: #0
+- PR: #295
 - ブランチ: feat/issue-295-pbi-295
 - 関係する ADR: [文書だけの依頼の実装のセルフレビューは、文書向けの観点で走らせる](../adr/20261103-0830-self-review-kind-for-documents-only.md)
 
