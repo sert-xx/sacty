@@ -433,6 +433,62 @@ describe("成果物のレビュー：タスクだけを取り直し、書きか�
   });
 });
 
+describe("成果物のレビュー：捨てた AI のレビューの指摘を出す（PBI-291）", () => {
+  it("承認の画面に、古い head への指摘の理由と要点・リンクを出す。無ければ出さない", async () => {
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: {
+        branch: "b",
+        commit: "c1",
+        url: "https://github.com/acme/web/pull/7",
+        number: 7,
+        repo: "acme/web",
+      },
+      pullRequestState: "open",
+    });
+    const notice = () => document.querySelector('[data-testid="discarded-review"]');
+    let server: Task = implement;
+    handler = (_url, headers) => {
+      const version = liveVersion(server);
+      return headers["x-sacty-live-version"] === version
+        ? { unchanged: true }
+        : { data: server, version };
+    };
+    render(h(LiveReview, { id: "t1", initial: server, initialVersion: liveVersion(server) }));
+    expect(notice()).toBeNull();
+    server = task({
+      ...implement,
+      discardedReviews: [
+        {
+          number: 7,
+          head: "d".repeat(40),
+          at: "2026-10-10T00:00:00.000Z",
+          items: [
+            {
+              key: "review:1",
+              author: "me",
+              at: "2026-10-10T00:00:00.000Z",
+              url: "https://github.com/acme/web/pull/7#review-1",
+              commit: "o".repeat(40),
+              summary: "README の表に API を足す",
+            },
+          ],
+        },
+      ],
+    });
+    await wait();
+    expect(notice()?.textContent).toContain("取り込んでいない AI のレビューの指摘が1件あります");
+    expect(notice()?.textContent).toContain("README の表に API を足す");
+    expect(notice()?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/acme/web/pull/7#review-1",
+    );
+    // 承認・差し戻しのフォームは、そのまま使える
+    expect(document.getElementById("gate-comments")).not.toBeNull();
+  });
+});
+
 describe("プロジェクトの一覧：取り込みの状況を取り直す（PBI-108）", () => {
   it("取り込みが動くと、直近の取り込みが操作しなくても変わる", async () => {
     const at = (iso: string, imported: number): ProjectListData => ({

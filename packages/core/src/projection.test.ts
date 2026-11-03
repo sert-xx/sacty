@@ -28,6 +28,7 @@ import {
   canRetryExport,
   changeRounds,
   deliveredWithoutChanges,
+  discardedAiReviews,
   documentOutput,
   documentsOnlyContradicted,
   errorAnalysisBlocked,
@@ -972,6 +973,105 @@ describe("sacty 自身の AI のレビューの指摘と、人の指摘の区別
         }),
       ]),
     ).toThrow(/not the pull request/);
+  });
+
+  describe("捨てた AI のレビューの指摘を人に届ける（PBI-291）", () => {
+    const old = "o".repeat(40);
+    const discard = (
+      number: number,
+      head: string,
+      items: { key: string; summary?: string; url?: string }[],
+    ) =>
+      ev("t", {
+        type: "PullRequestReviewDiscarded",
+        payload: {
+          number,
+          reason: "stale_head",
+          head,
+          items: items.map((i) => ({
+            ...i,
+            author: "me",
+            at: "2026-10-10T00:00:00Z",
+            commit: old,
+          })),
+        },
+      });
+
+    it("0件：捨てていなければ、届けるものは無い", () => {
+      seq = 0;
+      const task = project(waiting("t")).get("t");
+      if (!task) throw new Error("no task");
+      expect(task.discardedReviews).toBeUndefined();
+      expect(discardedAiReviews(task)).toBeUndefined();
+    });
+
+    it("1件：捨てた理由の head と指摘の要点・リンクを、承認待ちの間、見守っている PR のものとして返す", () => {
+      seq = 0;
+      const task = project([
+        ...waiting("t"),
+        discard(7, "d".repeat(40), [
+          { key: "review:1", summary: "README の表に API を足す", url: "https://x/1" },
+        ]),
+      ]).get("t");
+      if (!task) throw new Error("no task");
+      expect(task.status).toBe("awaiting_approval");
+      expect(discardedAiReviews(task)).toEqual({
+        number: 7,
+        head: "d".repeat(40),
+        items: [
+          {
+            key: "review:1",
+            author: "me",
+            at: "2026-10-10T00:00:00Z",
+            commit: old,
+            summary: "README の表に API を足す",
+            url: "https://x/1",
+            head: "d".repeat(40),
+          },
+        ],
+      });
+    });
+
+    it("複数件：回をまたいで古い順に並べ、最後の head を返す。以前の記録（要点なし）も読める", () => {
+      seq = 0;
+      const task = project([
+        ...waiting("t"),
+        discard(7, "d".repeat(40), [
+          { key: "review:1" },
+          { key: "review_comment:2", summary: "b" },
+        ]),
+        discard(7, "e".repeat(40), [{ key: "review:3", summary: "c" }]),
+      ]).get("t");
+      if (!task) throw new Error("no task");
+      const shown = discardedAiReviews(task);
+      expect(shown?.items.map((i) => [i.key, i.head[0]])).toEqual([
+        ["review:1", "d"],
+        ["review_comment:2", "d"],
+        ["review:3", "e"],
+      ]);
+      expect(shown?.head).toBe("e".repeat(40));
+      expect(shown?.items[0]?.summary).toBeUndefined();
+    });
+
+    it("記録は残り、見守っていない PR のものや、マージされた後は出さない。捨てたものは指摘にも差し戻しにもならない", () => {
+      seq = 0;
+      const discarded = [...waiting("t"), discard(7, "d".repeat(40), [{ key: "review:1" }])];
+      const merged = project([
+        ...discarded,
+        ev("t", { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+      ]).get("t");
+      if (!merged) throw new Error("no task");
+      expect(merged.discardedReviews).toHaveLength(1);
+      expect(discardedAiReviews(merged)).toBeUndefined();
+      const open = project(discarded).get("t");
+      if (!open) throw new Error("no task");
+      expect(open.remarks).toEqual([]);
+      expect(open.pendingReview).toBeUndefined();
+      // 見守る PR の番号が変われば（別の PR のものは）出さない
+      expect(
+        discardedAiReviews({ ...open, pullRequest: { ...open.pullRequest, number: 8 } as never }),
+      ).toBeUndefined();
+    });
   });
 });
 
@@ -4294,5 +4394,8 @@ describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
     ]).get("t");
     expect(task?.importedFeedback).toEqual(["review:9"]);
     expect(task?.pendingReview).toBeUndefined();
+    // 一時停止の間に捨てた指摘も、見守っている実装の PR のものとして人に届ける（PBI-291）
+    if (!task) throw new Error("no task");
+    expect(discardedAiReviews(task)?.items.map((i) => i.key)).toEqual(["review:9"]);
   });
 });

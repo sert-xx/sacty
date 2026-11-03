@@ -37,6 +37,7 @@ import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeploymentWatchCard } from "@/components/deployment";
 import { DerivedTasksCard } from "@/components/derive-dialog";
+import { DiscardedReviewNotice } from "@/components/discarded-review";
 import { ErrorReportCard, showErrorReport } from "@/components/error-report";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
@@ -280,6 +281,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       {/* 人の対応が要るとき（承認・判断・再開）は、どのタブでも見えるよう、タブの上に出す */}
       <GateNotice task={task} />
       <HeldReviewNotice task={task} />
+      <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm
           taskId={task.id}

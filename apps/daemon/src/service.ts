@@ -2573,6 +2573,7 @@ export class TaskService {
               at: item.at,
               ...(item.url ? { url: item.url } : {}),
               commit: item.commit ?? "",
+              summary: discardedSummary(item),
             })),
           },
         },
@@ -13397,6 +13398,25 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
     }
     return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
   });
+}
+
+/** 捨てた AI のレビューの指摘の要点として、承認の画面に出す本文の長さ（文字数）。 */
+const DISCARDED_SUMMARY_MAX = 400;
+
+/**
+ * 古い head へのレビューとして捨てた AI のレビューの指摘の、要点（PBI-291）。取り込む指摘と同じ文（行へのコメントはファイルと
+ * 行つき）の先頭を、目印と見出しを除き、空白をそろえて切る。人に届けるための表示用で、作り直しには渡さない。
+ */
+function discardedSummary(item: PullRequestFeedback): string {
+  // 投稿の先頭の目印（HTML のコメント）と見出しは、人が読む要点に要らない
+  const text = (feedbackRemarks([item])[0] ?? "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/^\s*#+\s*sacty のレビュー\s*$/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > DISCARDED_SUMMARY_MAX
+    ? `${text.slice(0, DISCARDED_SUMMARY_MAX - 1)}…`
+    : text;
 }
 
 /**
