@@ -921,6 +921,89 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(notice()).toBeNull();
   });
 
+  it("古い head へのレビューとして捨てた AI のレビューの指摘（0・1・複数件）を、タスク詳細に理由・要点・リンクつきで出し、マージされたら消す（PBI-291）", async () => {
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    const discarded = (keys: string[], head = "d".repeat(40)) => ({
+      number: 7,
+      head,
+      at: "2026-10-10T00:00:00.000Z",
+      items: keys.map((key) => ({
+        key,
+        author: "me",
+        at: "2026-10-10T00:00:00.000Z",
+        url: `${PR}#${key}`,
+        commit: "o".repeat(40),
+        summary: `要点 ${key}`,
+      })),
+    });
+    const notice = () => container.querySelector('[data-testid="discarded-review"]');
+    server = detail(implement);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(implement),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    // 0件：出さない
+    expect(notice()).toBeNull();
+    // 1件：理由（古い head と今の head）、要点、リンク、差し戻しで伝える案内
+    server = detail(task({ ...implement, discardedReviews: [discarded(["review:1"])] }));
+    await wait();
+    expect(notice()?.textContent).toContain("取り込んでいない AI のレビューの指摘が1件あります");
+    expect(notice()?.textContent).toContain("PR #7");
+    expect(notice()?.textContent).toContain("古い head");
+    expect(notice()?.textContent).toContain("今の head は ddddddd");
+    expect(notice()?.textContent).toContain("対象：ooooooo");
+    expect(notice()?.textContent).toContain("要点 review:1");
+    expect(notice()?.textContent).toContain("差し戻しで指摘として伝えてください");
+    expect(external(notice()?.querySelector("a") ?? undefined)).toEqual({
+      href: `${PR}#review:1`,
+      target: "_blank",
+    });
+    // 複数件（回をまたぐ）：すべて古い順に出す。以前の記録（要点・リンクなし）も出せる
+    server = detail(
+      task({
+        ...implement,
+        discardedReviews: [
+          discarded(["review:1", "review_comment:2"]),
+          {
+            ...discarded(["review:3"], "e".repeat(40)),
+            items: [
+              {
+                key: "review:3",
+                author: "me",
+                at: "2026-10-10T00:00:00.000Z",
+                commit: "o".repeat(40),
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await wait();
+    expect(notice()?.textContent).toContain("3件あります");
+    expect(notice()?.textContent).toContain("今の head は eeeeeee");
+    expect(notice()?.querySelectorAll("li")).toHaveLength(3);
+    expect(notice()?.querySelectorAll("a")).toHaveLength(2);
+    // PR がマージされたら（承認は済んだので）消える
+    server = detail(
+      task({
+        ...implement,
+        pullRequestState: "merged",
+        discardedReviews: [discarded(["review:1"])],
+      }),
+    );
+    await wait();
+    expect(notice()).toBeNull();
+  });
+
   it("タスク一覧の「あなたの出番」も PR を開く", () => {
     const list: TaskListData = {
       projectId: "p1",

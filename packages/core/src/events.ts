@@ -2217,6 +2217,8 @@ const PullRequestReviewDiscarded = z.object({
           url: z.string().optional(),
           /** レビューが対象にしたコミット。 */
           commit: z.string().min(1),
+          /** 指摘の要点（本文の先頭）。承認の画面で、捨てた指摘を人に届ける（PBI-291）。以前の記録には無い。 */
+          summary: z.string().optional(),
         }),
       )
       .min(1),
