@@ -400,3 +400,71 @@ describe("既定の review スキルの、コードの簡潔さと UX の観点"
     );
   });
 });
+
+describe("既定のスキル review-dispatch の、文書が主対象のレビューでは文書に効く検証だけを実行する（PBI-285）", () => {
+  const verification = () => read("skills/review/review-dispatch/references/verification-run.md");
+  const section0 = () => verification().split("## 1. 検証コマンドを見つける")[0] ?? "";
+
+  it("主対象が文書（design-doc・user-doc）のときは、self-review・pr-review のどちらでも、変えた文書に効く検証だけを実行する", () => {
+    const text = section0();
+    expect(text).toContain("`self-review`・`pr-review` のどちらでも実行する");
+    expect(text).toContain("## 0. 実行する範囲を決める");
+    expect(text).toMatch(
+      /^\| `design-doc`・`user-doc` \| 変えた文書に効く検証だけ \| テスト・ビルド・型チェック・コードのリンターとフォーマッター \|$/m,
+    );
+    // 文書とコードの両方を変える PR（主対象が code）は、今までどおり全部
+    expect(text).toMatch(
+      /^\| `code`（文書とコードの両方を変える PR を含む） \| 1 で見つけたもの全部 \|/m,
+    );
+    // 文書に効く検証が無ければ、何も実行しない
+    expect(text).toContain("文書に効く検証が見つからなければ、検証は何も実行しない");
+    // 引数で絞れず、コードも検査してしまうものは実行しない
+    expect(text).toContain("リポジトリ全体を検査するコマンドを、そのまま実行しない");
+    expect(text).toContain("絞れず、コードも検査してしまうものは実行せず");
+    // 以前の「文書だけでも、文書向けのリンターがあれば実行する」だけの書き方に戻さない
+    expect(verification()).not.toContain("文書だけの変更（`design-doc`・`user-doc`）でも");
+  });
+
+  it("主対象を文書にしても、差分にコードの変更が含まれるときは、全部実行する", () => {
+    expect(section0()).toContain(
+      "レビューの範囲の差分にコード（ソース・テスト・manifest・ビルドや CI の設定・スクリプト）の変更が含まれるときは、`code` と同じに全部実行する",
+    );
+  });
+
+  it("summary.json に範囲（scope）を残し、X-2 はそれを見て意図して実行していない検証を指摘しない", () => {
+    const text = verification();
+    expect(text).toContain('"scope": "all | docs"');
+    expect(read("skills/review/review-execution/references/X-2.md")).toContain(
+      "`scope` が `docs` のときは、親が文書に効く検証だけを実行している",
+    );
+  });
+
+  it("X-2 は、文書が主対象のときは文書に効く検証を実行したときだけ起動する。CI の結果だけでは起動せず、失敗したチェックは範囲に1行書く", () => {
+    const text = verification();
+    const x2 = text.slice(text.indexOf("## 5. 担当へ渡す"));
+    expect(x2).toContain("- `all`：検証コマンドか CI の結果が 1 つでもあれば起動する。");
+    expect(x2).toContain("- `docs`：文書に効く検証を実行したときだけ起動する。");
+    expect(x2).toContain("CI の結果があっても起動せず");
+    expect(text).toContain("`ci` は `null` にして渡さない");
+    expect(x2).toContain(
+      "CI で <チェックの名前> が失敗している（文書が主対象のため分析していない）",
+    );
+    expect(x2).toContain(
+      "コードの検証（テスト・ビルド・型チェック）は、文書が主対象のため実行していない",
+    );
+    // SKILL.md・観点カタログの X-2 の起動の規則も同じ
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "主対象が文書のときは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない。",
+    );
+    expect(read("skills/review/review-dispatch/references/viewpoints.md")).toContain(
+      "主対象が文書（`design-doc`・`user-doc`）のときは、文書に効く検証を実行したときだけ起動する（CI の結果だけでは起動しない）",
+    );
+  });
+
+  it("文書の検証の規則に、特定の言語・ツールの名前を出さない", () => {
+    const text = section0();
+    expect(text).not.toMatch(
+      /npm|pnpm|yarn|node|prettier|pip|poetry|cargo|gradle|maven|bundle|composer|sacty/i,
+    );
+  });
+});
