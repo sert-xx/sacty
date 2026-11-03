@@ -139,6 +139,25 @@ describe("最後の result が空のとき（Claude Code）", () => {
     ).toMatchObject({ kind: "failed", message: "boom" });
   });
 
+  it("代わりの候補は成功の result だけ。本文のある is_error の result は、空の最後の result の代わりにしない", () => {
+    const lines = [
+      result(design, 1),
+      result("API Error: 本文のある失敗の result", 2, {}, true),
+      result("", 3, notification),
+    ];
+    expect(parseClaudeResult(lines.join("\n"), 0)).toMatchObject({
+      kind: "completed",
+      output: design,
+    });
+    // 成功の本文が無く、本文のある is_error の result だけなら、それを答えにせず失敗にする
+    expect(
+      parseClaudeResult(
+        [result("API Error: 失敗", 1, {}, true), result("", 2, notification)].join("\n"),
+        0,
+      ),
+    ).toMatchObject({ kind: "failed", message: { code: "run.emptyResult" } });
+  });
+
   it("中身のある result が1つだけなら、これまでどおり（置き換えも知らせもしない）", () => {
     const reader = new ClaudeOutcomeReader();
     reader.push(result(design, 1));
