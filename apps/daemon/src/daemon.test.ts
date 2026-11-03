@@ -9143,6 +9143,78 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("2回作り直しても、PR の本文は全体の説明のままで、最後の直しは別の節になる。回ごとに言い換えた「この環境だけの結果」は1件になる（PBI-299）", async () => {
+    const ENV1 =
+      "この環境だけの結果：Go 1.22 を入れて make test を通した。入れていない環境では確かめていない";
+    const ENV2 =
+      "この環境だけの結果：Go 1.22 と pytest を入れて make test を通した（make setup は失敗）。入れていない環境では確かめていない";
+    const ENV3 =
+      "この環境だけの結果：Go 1.22 と pytest 9 を入れて make test を通した（make setup は失敗）。入れていない環境では確かめていない";
+    const WEB = "Web の注文一覧の配送先の列を、ブラウザで目で見て確かめる";
+    const WHOLE =
+      "# 配送先の国コードを足した\n\n- API・ワーカー・Web に通した\n\n## 検証\n\nmake test が成功した";
+    const withFix = (fix: string) => `${WHOLE}\n\n## 最後の直し\n\n${fix}`;
+    const verdict = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, id } = await toImplement([
+      implement(WHOLE, [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 1", "a.test.ts › 2"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      verdict({ outOfScope: ["a.ts の変更：どの要求要件にも無い"], humanChecks: [ENV1, WEB] }),
+      implement(withFix("最終レビューの指摘で a.ts の変更を外した"), [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 3"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      verdict({ outOfScope: ["c.ts の変更：どの要求要件にも無い"], humanChecks: [ENV2] }),
+      implement(withFix("c.ts の変更を外した"), [
+        { viewpointId: "TV-1", tests: ["a.test.ts › 3"] },
+        { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+      ]),
+      verdict({ humanChecks: [ENV3] }),
+    ]);
+    await drain(service);
+    const task = service.get(id)?.task;
+    if (!task) throw new Error("no task");
+    // 人が確かめること：環境だけの結果は1件。ほかの項目は残る。まとめた記録は判定に残る
+    expect(task.lastReview?.humanChecks).toEqual([ENV3, WEB]);
+    const reviews = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(reviews).toHaveLength(3);
+    const last = reviews[2];
+    expect(last?.type === "FinalReviewed" && last.payload.mergedHumanChecks).toEqual([
+      `${ENV2} → 書き直し：${ENV3}`,
+    ]);
+    // 提出ごとの説明が残り、観点とテストの対応は PR 全体になる
+    expect(task.implementHistory).toHaveLength(3);
+    expect(task.testMap).toEqual([
+      { viewpointId: "TV-1", tests: ["a.test.ts › 1", "a.test.ts › 2", "a.test.ts › 3"] },
+      { viewpointId: "TV-2", tests: ["b.test.ts › 1"] },
+    ]);
+    // PR の本文：全体の説明と最後の直しが分かれる。前の直しは残らない
+    const body = buildPullRequestBody(task);
+    expect(body).toContain("- 変更：API・ワーカー・Web に通した");
+    expect(body).toContain("## 変更\n\n# 配送先の国コードを足した");
+    expect(body).toContain("- 最後の直し：c.ts の変更を外した");
+    expect(body).toContain("- API・ワーカー・Web に通した");
+    expect(body).toContain("## 最後の直し\n\nc.ts の変更を外した");
+    expect(body).not.toContain("最終レビューの指摘で a.ts の変更を外した");
+    expect(body.match(/この環境だけの結果：/g)).toHaveLength(1);
+    activity.close();
+  });
+
   describe("最終レビューの出力から判定を読み取れないとき（PBI-277）", () => {
     // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
     const unreadable = () =>

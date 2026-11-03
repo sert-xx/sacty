@@ -1375,6 +1375,12 @@ const FinalReviewed = z.object({
      * または外していなければ無い。
      */
     droppedHumanChecks: z.array(z.string()).optional(),
+    /**
+     * 回をまたいで同じ趣旨の人が確かめること（PBI-299）を1件にまとめたもの（「<前の回の項目> → 書き直し：<1件にまとめた項目>」）。
+     * ゴールガーディアンが前の回の項目を書き直した（updatedHumanChecks）か、同じ見出し（この環境だけの結果）の項目が重なった。
+     * まとめた後の項目は humanChecks に入る。まとめたものが無ければ無い。
+     */
+    mergedHumanChecks: z.array(z.string()).optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
