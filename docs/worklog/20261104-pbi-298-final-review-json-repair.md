@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-04（UTC）
 - タスク: PBI-298
-- PR: なし
+- PR: #300
 - ブランチ: feat/issue-298-final-review-json-repair
 - 関係する ADR: [最終レビューの出力の JSON が崩れていても、直して読み、読めなければ何が読めなかったかを残す](../adr/20261104-0100-repair-broken-final-review-json.md)
 
