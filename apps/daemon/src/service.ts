@@ -2906,10 +2906,21 @@ export class TaskService {
    * when が approved なら承認した成果の頼み。submitted なら、PR のマージで承認する工程の、承認を待つ提出の頼み
    * （指摘への返信を、PR を見ている人がその場で読めるように。PBI-301）。
    */
-  private async postGitHubComments(
+  private postGitHubComments(
     task: Task,
     step: StepKey,
     when: "approved" | "submitted" = "approved",
+  ): Promise<void> {
+    // 同じタスク・工程の投稿は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない。PBI-301）
+    return this.serialized(`gh-comments:${task.id}:${step}`, () =>
+      this.postGitHubCommentsNow(task, step, when),
+    );
+  }
+
+  private async postGitHubCommentsNow(
+    task: Task,
+    step: StepKey,
+    when: "approved" | "submitted",
   ): Promise<void> {
     // 頼みを読む成果と、その版の目印（承認の日時。承認の前の投稿は、提出の回）
     const submission = when === "submitted" ? task.gate?.submission : undefined;
@@ -5713,6 +5724,27 @@ export class TaskService {
     return updated;
   }
 
+  /** 通知など、同じ対象（タスク・工程・提出回）では順に処理する処理の、最後の処理（キーごと）。 */
+  private readonly serialTails = new Map<string, Promise<void>>();
+
+  /**
+   * 同じキーの処理を、前の処理が終わってから始める（PBI-301）。先の処理が検索や通信の最中のまま、一時停止と再開などでもう1本
+   * 始まると、どちらも「まだ書いていない」と見て二重に投稿するため。後の処理は、先の処理の終了後に目印を探し直す。
+   */
+  private serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.serialTails.get(key) ?? Promise.resolve();
+    const run = previous.then(work);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.serialTails.set(key, tail);
+    void tail.then(() => {
+      if (this.serialTails.get(key) === tail) this.serialTails.delete(key);
+    });
+    return run;
+  }
+
   /**
    * 人に確かめてほしいこと（`humanAsks`）を、承認待ちの成果物の PR にコメントする（PBI-301）。PR を見ている人は sacty の
    * 画面を開かないので、承認の画面に出すだけでは気づかれない。1 回の提出につき 1 件（目印で見つけたものがあれば書かない）。
@@ -5732,8 +5764,9 @@ export class TaskService {
     if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
     const usedSecrets: string[] = [];
     const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
-    const signal = this.stopNoticeDeadline();
-    void (async () => {
+    void this.serialized(`human-ask:${task.id}:${gate.step}:${gate.submission}`, async () => {
+      // 期限は、順番を待った後の処理の始まりから数える
+      const signal = this.stopNoticeDeadline();
       try {
         const token = await untilAborted(
           signal,
@@ -5776,7 +5809,7 @@ export class TaskService {
           `[daemon] タスク ${task.id} の、人に確かめてほしいことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
         );
       }
-    })();
+    });
   }
 
   /**

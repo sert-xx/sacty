@@ -84,7 +84,7 @@ When several people (or agents) open and save the settings of the same project, 
 
 - Even if another save changed the project's settings after you opened the settings page, sacty keeps both sets of changes and saves, as long as the changes do not overlap.
   - For example, you each added a different target (a repository or an org), one of you added a target and another removed a different one, or you changed different items (such as the name and the context).
-  - When sacty saved by merging, the page says so and shows a "Reload to see the latest settings" button. This page has not seen the other save's changes, so reload to check them.
+  - When sacty saved by merging, the page says so and shows a "Reload to see the latest settings" button. This page has not seen the other save's changes, so reload to check them. Until you reload, you cannot save again (a change such as removing a target you just added would not take effect).
 - If you changed the same item or the same target in different ways, your save is not applied.
   The page shows the reason and a "Reload to see the latest settings" button.
   Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page. Reloading discards it, so copy any change you want to keep first (the page also says this next to the button).

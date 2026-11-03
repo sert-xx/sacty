@@ -173,6 +173,24 @@ describe("プロジェクトの保存の照合", () => {
     activity.close();
   });
 
+  it("併合した後に、古い版のまま再保存しても、自分が足した対象は消せない（画面は併合した後の保存を止め、最新を読み込み直させる）。読み込み直した版からなら消せる", () => {
+    const { activity, service, load } = setup();
+    const p = service.saveProject(undefined, definition("a"));
+    const mine = load(p.id);
+    // ほかの人が b を足し、自分が c を足して、併合して保存した
+    service.saveProject(p.id, definition("a", "b"), load(p.id).base);
+    const merged = service.saveProjectMerging(p.id, definition("a", "c"), mine.base);
+    expect(merged.merged).toBe(true);
+    // 画面が止めなかったとして、同じ古い版のまま c を消して保存しても、元の版には c が無いので、c は残る
+    const again = service.saveProjectMerging(p.id, definition("a"), mine.base);
+    expect(again.project.targets.map((t) => t.target.split("/").pop())).toEqual(["a", "b", "c"]);
+    // 読み込み直した版からなら、消せる
+    const fresh = load(p.id);
+    const removed = service.saveProject(p.id, definition("a", "b"), fresh.base);
+    expect(removed.targets.map((t) => t.target.split("/").pop())).toEqual(["a", "b"]);
+    activity.close();
+  });
+
   it("古い版から消した対象は消え、ほかが足した対象は残る。ほかが変えた対象を消す保存は拒否する", () => {
     const { activity, service, load } = setup();
     const p = service.saveProject(undefined, definition("a", "b"));

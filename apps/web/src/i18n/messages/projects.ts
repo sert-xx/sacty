@@ -211,7 +211,8 @@ const ja = {
     githubStateFailed: (state: string) => `確認できず（${state}）`,
     githubRequired: "対象のホストごとに、GitHub アカウントを選んでください。",
     saved: "保存しました。",
-    savedMerged: "保存しました。ほかの保存の変更と併合したので、再読み込みして確かめてください。",
+    savedMerged:
+      "保存しました。ほかの保存の変更と併合しました。再読み込みするまで、続けては保存できません。",
     createdContextError: (detail: string) =>
       `作成しましたが、コンテキストに誤りがあります。工程の実行で止まります：${detail}`,
     savedContextError: (detail: string) =>
@@ -436,7 +437,7 @@ const en: ProjectsMessages = {
     githubRequired: "Choose a GitHub account for each target host.",
     saved: "Saved.",
     savedMerged:
-      "Saved. Your changes were merged with another save made after you loaded this page. Reload to check.",
+      "Saved. Your changes were merged with another save. You cannot save again until you reload this page.",
     createdContextError: (detail) =>
       `Created, but the context has an error. Steps will stop: ${detail}`,
     savedContextError: (detail) =>

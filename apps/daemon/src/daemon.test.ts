@@ -10721,6 +10721,39 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("同じ提出の返信の投稿処理が重なって始まっても（先の処理が既存のコメントを探している最中）、二重に投稿しない", async () => {
+      const entered = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      let hold = true;
+      class SlowFindFirst extends FakePulls {
+        override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+          const found = await super.findIssueComment(input);
+          if (hold && input.marker.includes("sacty-comment")) {
+            hold = false;
+            entered.resolve();
+            await gate.promise;
+          }
+          return found;
+        }
+      }
+      const pulls = new SlowFindFirst();
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      while (service.get(id)?.task.status !== "awaiting_approval") await service.runNext(id);
+      const first = service.runNext(id);
+      await entered.promise;
+      // 先の処理が検索の最中のまま、同じ提出の処理がもう1本始まる
+      const second = service.runNext(id);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(pulls.issueComments).toHaveLength(0);
+      gate.resolve();
+      await Promise.all([first, second]);
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(1);
+      activity.close();
+    });
+
     it("投稿している途中で一時停止されたら、記録せずに止まり、再開すると目印で見つけて記録する（二重に投稿しない）", async () => {
       const gate = Promise.withResolvers<void>();
       const entered = Promise.withResolvers<void>();
@@ -12892,6 +12925,51 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await service.pause(id);
         service.resume(id, {});
         await settleAsks();
+        expect(asks(pulls)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("先の通知がコメントを探している最中に、一時停止して再開しても、同じ提出の通知が二重に投稿されない（通知は提出ごとに順に処理する）", async () => {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        let hold = true;
+        class SlowFindFirst extends FakePulls {
+          override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+            // 最初の検索の結果だけ、保留する（その時点では「まだ無い」）
+            const found = await super.findIssueComment(input);
+            if (hold && input.marker.includes("sacty-human-ask")) {
+              hold = false;
+              entered.resolve();
+              await gate.promise;
+            }
+            return found;
+          }
+        }
+        const pulls = new SlowFindFirst();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            redone([{ remarkId: "implement-1-1", text: "直した", confirm: "確かめたい" }]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:412")];
+        await service.checkPullRequests();
+        await drain(service);
+        await entered.promise;
+        // 先の検索が終わる前に、一時停止して再開する（同じ提出の通知処理がもう1本始まる）
+        await service.pause(id);
+        service.resume(id, {});
+        await settleAsks();
+        expect(asks(pulls)).toHaveLength(0);
+        gate.resolve();
+        await settleAsks();
+        await settleAsks();
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         expect(asks(pulls)).toHaveLength(1);
         activity.close();
       });

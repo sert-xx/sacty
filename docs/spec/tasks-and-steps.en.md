@@ -345,6 +345,7 @@ A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#rel
   The next submission, after a send-back and rework, posts its own request once. After approval, sacty does not post the same submission's request again.
   As after approval, nothing is posted for the review step, a security task, a cancelled task, a paused task, or a running task. A step approved in the web UI (no PR) posts after approval as before.
   Unreadable requests, the limits on count and length, the limits on targets, the check right before posting, and the marker are the same as after approval.
+  Posting for the same task and step is processed one after another (`serialized`). Even if another run starts while the first is still searching or posting, the later one looks for the marker again after the first finishes.
   The post after approval also looks for the marker of the same submission that was used while awaiting approval, and uses that comment if it finds one. So if the PR was merged while the post was in flight and nothing could be recorded, sacty does not post twice.
   Paths inside sacty's workspace in the body are replaced with a name a person can follow (`withoutInternalPaths`).
 - If the request cannot be read (two or more, not JSON, a wrong shape, an empty body), there are more than 10 comments (`GITHUB_COMMENTS_MAX`), or a body is longer than 60000 characters (`GITHUB_COMMENT_BODY_MAX`), nothing is posted and the reason is recorded.
