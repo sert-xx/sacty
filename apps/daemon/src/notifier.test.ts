@@ -66,6 +66,16 @@ describe("Slack の通知（PBI-38）", () => {
     // 差し戻して出し直したら、もう一度知らせる
     expect(notificationFor(gate(1), gate(2))).toBe("approval");
     expect(notificationFor(gate(1), task({ status: "escalated" }))).toBe("escalation");
+    // 承認待ちで一時停止して、同じ承認ゲートに再開しただけなら、もう一度は知らせない。別の提出なら知らせる（PBI-301）
+    const pausedAtGate = task({
+      status: "paused",
+      pausedReason: "manual",
+      resumeTo: "awaiting_approval",
+      gate: { step: "requirements", submission: 1 },
+    });
+    expect(notificationFor(gate(1), pausedAtGate)).toBeUndefined();
+    expect(notificationFor(pausedAtGate, gate(1))).toBeUndefined();
+    expect(notificationFor(pausedAtGate, gate(2))).toBe("approval");
     expect(notificationFor(task(), task({ status: "paused", pausedReason: "budget" }))).toBe(
       "paused",
     );

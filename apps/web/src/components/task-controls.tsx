@@ -31,7 +31,7 @@ export function TaskControls({
 }: {
   taskId: string;
   title: string;
-  /** 一時停止できる状態か（実行待ち・実行中・検証中）。 */
+  /** 一時停止できる状態か（実行待ち・実行中・検証中・承認待ち）。 */
   canPause: boolean;
   /** 中止したときに片付けるもの。 */
   plan: CleanupItem[];

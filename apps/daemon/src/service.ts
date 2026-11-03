@@ -66,6 +66,7 @@ import {
   GATED_STEPS,
   gatePullRequest,
   heldReview,
+  humanAsks,
   type IntakeKind,
   investigationIsGoal,
   isAuditTarget,
@@ -249,6 +250,7 @@ import {
   requestedGitHubComments,
 } from "./github-comments.js";
 import { githubPromptLines, githubRelayEnv } from "./github-relay.js";
+import { buildHumanAskNotice, humanAskMarker } from "./human-ask-notice.js";
 import {
   CONTAINER_PROJECT_MEMORY_DIR,
   CONTAINER_REPOSITORY_MEMORY_DIR,
@@ -5556,7 +5558,74 @@ export class TaskService {
     ) {
       this.announceReviewStop(updated);
     }
+    // 作り直した成果物が承認待ちになったとき、人に確かめてほしいこと（ゴールガーディアンが指摘の意図を判断できなかった理由・
+    // 実行が挙げた聞き返し）があれば、その PR にも知らせる（PBI-301。送るのは待たない）
+    if (humanAskDue(before, updated)) this.announceHumanAsks(updated);
     return updated;
+  }
+
+  /**
+   * 人に確かめてほしいこと（`humanAsks`）を、承認待ちの成果物の PR にコメントする（PBI-301）。PR を見ている人は sacty の
+   * 画面を開かないので、承認の画面に出すだけでは気づかれない。1 回の提出につき 1 件（目印で見つけたものがあれば書かない）。
+   * GitHub のアカウントを選んでいないプロジェクト・PR が無い成果物には書かない（画面には出る）。投稿できなくても、タスクは
+   * 変えない（例外は投げない）。
+   */
+  private announceHumanAsks(task: Task): void {
+    const asks = humanAsks(task);
+    const watched = gatePullRequest(task);
+    const gate = task.gate;
+    if ((!asks.undecided && asks.confirms.length === 0) || !watched?.repo || !gate) return;
+    const repo = watched.repo;
+    const number = watched.number;
+    const project = this.deps.projects.get(task.projectId);
+    if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
+    const usedSecrets: string[] = [];
+    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    const signal = this.stopNoticeDeadline();
+    void (async () => {
+      try {
+        const token = await untilAborted(
+          signal,
+          this.githubToken(task, repo, usedSecrets, project),
+        );
+        const body = buildHumanAskNotice({
+          taskId: task.id,
+          step: gate.step,
+          stepName: STEP_NAME[gate.step],
+          submission: gate.submission,
+          ...(asks.undecided
+            ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
+            : {}),
+          confirms: asks.confirms.map((c) => ({ remarkId: c.remarkId, text: c.text })),
+          taskUrl: `${base}/tasks/${task.id}`,
+          secrets: usedSecrets,
+        });
+        if (!body) return;
+        const pr = { repo, token, number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({
+            ...pr,
+            marker: humanAskMarker(task.id, gate.step, gate.submission),
+          }),
+        );
+        if (existing) return;
+        // 確かめている間に、承認された・差し戻された・別の提出になったなら、書かない
+        const latest = this.tasks.get(task.id);
+        if (
+          latest?.status !== "awaiting_approval" ||
+          latest.gate?.step !== gate.step ||
+          latest.gate.submission !== gate.submission
+        ) {
+          return;
+        }
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body, signal }));
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、人に確かめてほしいことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    })();
   }
 
   /**
@@ -9907,7 +9976,8 @@ export class TaskService {
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
     if (task.status === "paused") throw new InvalidOperationError(message("pause.alreadyPaused"));
-    if (task.status === "awaiting_approval" || task.status === "escalated") {
+    // エスカレーション（人の判断待ち）は、止める作業が無いので止めない。承認待ち（マージ待ち）は止められる（PBI-301）
+    if (task.status === "escalated") {
       throw new InvalidOperationError(message("pause.awaitingPerson"));
     }
     if (task.status === "blocked" || task.status === "waiting_children") {
@@ -9916,6 +9986,17 @@ export class TaskService {
     const judging = openProposal(task);
     if (judging && !judging.judgement) {
       throw new InvalidOperationError(message("pause.guardianJudging"));
+    }
+    if (task.status === "awaiting_approval") {
+      // 実行中の処理は無いので、その場で一時停止を記録する。承認ゲートと PR の見守りは、再開するまで止まる。実装の PR は
+      // 作り直しの間と同じ扱いで、一時停止の間のマージは承認として進め、届いた指摘は残して再開のあとに反映する
+      if (this.cancelling.has(id) || this.mergeStopping.has(id)) {
+        throw new InvalidOperationError(message("pause.awaitingPerson"));
+      }
+      this.append(task, [
+        { actor: "person", event: { type: "TaskPaused", payload: { reason: "manual" } } },
+      ]);
+      return this.mustGet(id);
     }
     this.pauseRequested.add(id);
     this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
@@ -13900,6 +13981,17 @@ function handedOverFeedback(
   if (!continued || pr.number !== continued.number) return false;
   if (!pr.repo || !sameRepo(pr.repo, continued.repo)) return false;
   return (task.handedOverFeedback ?? []).includes(item.key);
+}
+
+/**
+ * 承認待ちの成果物の提出が新しくなったか（PBI-301）。同じ提出の承認待ちに戻っただけ（一時停止からの再開など）は、知らせ直さない。
+ */
+function humanAskDue(before: Task | undefined, after: Task): boolean {
+  if (after.status !== "awaiting_approval" || !after.gate) return false;
+  const resumed = before?.status === "paused" && before.resumeTo === "awaiting_approval";
+  const same =
+    before?.gate?.step === after.gate.step && before.gate.submission === after.gate.submission;
+  return !(resumed && same) && !(before?.status === "awaiting_approval" && same);
 }
 
 /** 2つのコミットが同じか（長さが違っても、短い方が先頭に一致すれば同じ。大文字・小文字は区別しない）。 */

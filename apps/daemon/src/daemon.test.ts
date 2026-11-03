@@ -12023,6 +12023,151 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    describe("人に確かめてほしいことを PR に知らせる（PBI-301）", () => {
+      const reason = "「前と言ってること」が何を指すか読み取れない";
+      const redone = (responses: unknown[]) =>
+        out(
+          [
+            "# 直した",
+            block({ "sacty-responses": responses }),
+            block({
+              "sacty-test-map": [
+                { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+              ],
+            }),
+          ].join("\n\n"),
+        );
+      const settleAsks = () => new Promise((resolve) => setTimeout(resolve, 5));
+      const asks = (pulls: FakePulls) =>
+        pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-human-ask:"));
+
+      it("判断できなかった理由と、実行の聞き返し（推測で決めたこと）を、作り直した実装が承認待ちに戻ったときに、実装の PR へ1回コメントする。承認の画面の元になる記録にも残る", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            redone([
+              {
+                remarkId: "implement-1-1",
+                text: "上限の値を作り直しました",
+                confirm: "消えていた上限は 31 日と推測しました。元の値と違えば教えてください",
+              },
+            ]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:401", { body: "ここ前と言ってること違わない？" })];
+        await service.checkPullRequests();
+        // 作り直している間は、まだ書かない（作り直した成果物が承認待ちに戻ったときに書く）
+        await settleAsks();
+        expect(asks(pulls)).toHaveLength(0);
+        await drain(service);
+        await settleAsks();
+        const task = service.get(id)?.task;
+        expect(task?.status).toBe("awaiting_approval");
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        expect(task?.remarks.at(-1)).toMatchObject({
+          id: "implement-1-1",
+          confirm: "消えていた上限は 31 日と推測しました。元の値と違えば教えてください",
+        });
+        const posted = asks(pulls);
+        expect(posted).toHaveLength(1);
+        expect(posted[0]).toMatchObject({ repo: "https://github.com/acme/app", number: 7 });
+        const body = posted[0]?.body ?? "";
+        expect(body).toContain("<!-- sacty-human-ask:");
+        expect(body).toContain(`> ${reason}`);
+        expect(body).toContain("消えていた上限は 31 日と推測しました");
+        expect(body).toContain(
+          "指摘（implement-1-1）の意図を、ゴールガーディアンが判断できませんでした",
+        );
+        // 自分の投稿は、次の PR の確認で人間の指摘として取り込まない（取り込み済みの目印の対象外にして、差し戻しの連鎖を作らない）
+        pulls.feedbackList = [];
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(asks(pulls)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("判断できて、聞き返しも無ければ、PR には何も書かない（空）。判断できなかった理由だけのときは、その1件だけ書く", async () => {
+        const pulls = new FakePulls();
+        const decided = await toImplementGate(
+          [
+            rework("implement", "実装で直せる"),
+            redone([{ remarkId: "implement-1-1", text: "直した" }]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:402")];
+        await decided.service.checkPullRequests();
+        await drain(decided.service);
+        await settleAsks();
+        expect(decided.service.get(decided.id)?.task.gate).toEqual({
+          step: "implement",
+          submission: 2,
+        });
+        expect(asks(pulls)).toHaveLength(0);
+        decided.activity.close();
+      });
+
+      it("判断できなかった理由だけ（実行の聞き返しが無い）でも、PR に書く", async () => {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            redone([{ remarkId: "implement-1-1", text: "直した" }]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:403")];
+        await service.checkPullRequests();
+        await drain(service);
+        await settleAsks();
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(asks(pulls)).toHaveLength(1);
+        expect(asks(pulls)[0]?.body).not.toContain("作り直しの実行が確かめたいこと");
+        activity.close();
+      });
+
+      it("PR に書けなくても（GitHub の失敗）、タスクは承認待ちのまま進み、例外にしない。書き直しもしない", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const pulls = new FakePulls();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            redone([{ remarkId: "implement-1-1", text: "直した", confirm: "確かめたい" }]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:404")];
+        await service.checkPullRequests();
+        pulls.commentFail = "403 forbidden";
+        await drain(service);
+        await settleAsks();
+        expect(service.get(id)?.task.status).toBe("awaiting_approval");
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
+        expect(asks(pulls)).toHaveLength(0);
+        warn.mockRestore();
+        activity.close();
+      });
+    });
+
     it("ゴールガーディアンの判断文（戻し先と指摘の読み方）を、その判断で始まった作り直しの実行の指示に渡す。人の指摘の原文も渡す（PBI-300。S14）", async () => {
       const pulls = new FakePulls();
       const reason =
@@ -12962,6 +13107,105 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 人間が選んだ戻し先なので、ゴールガーディアンの判断としては残さない
       expect(sent.prRework).toBeUndefined();
       activity.close();
+    });
+
+    describe("承認待ち（PR のマージ待ち）での一時停止（PBI-301）", () => {
+      /** 実装の承認待ちで止める。 */
+      const pausedAtGate = async (outcomes: AgentOutcome[] = []) => {
+        const pulls = new FakePulls();
+        const made = await toImplementGate(outcomes, { pulls, now: later });
+        const calls = made.executor.calls.length;
+        const paused = await made.service.pause(made.id);
+        return { ...made, pulls, paused, calls };
+      };
+
+      it("実装の PR のマージ待ちで一時停止できる。承認ゲートと PR はそのままで、エージェントは動かさず、二重には止められない", async () => {
+        const { activity, service, executor, paused, calls, id } = await pausedAtGate();
+        expect(paused.status).toBe("paused");
+        expect(paused.pausedReason).toBe("manual");
+        expect(paused.gate).toEqual({ step: "implement", submission: 1 });
+        expect(paused.pullRequestState).toBe("open");
+        expect(types(service, id).at(-1)).toBe("TaskPaused");
+        expect(executor.calls).toHaveLength(calls);
+        await expect(service.pause(id)).rejects.toMatchObject({
+          messages: [{ code: "pause.alreadyPaused" }],
+        });
+        activity.close();
+      });
+
+      it("止めている間に届いた指摘は未反映として残し、再開すると承認待ちに戻って、通常の取り込みで戻し先を判断して差し戻す", async () => {
+        const { activity, service, executor, pulls, id } = await pausedAtGate([
+          rework("implement", "実装で直せる"),
+        ]);
+        pulls.feedbackList = [item("comment:p1")];
+        await service.checkPullRequests();
+        const held = service.get(id)?.task;
+        expect(held?.status).toBe("paused");
+        expect(held && heldReview(held)?.keys).toEqual(["comment:p1"]);
+        // 止めている間は、判断も差し戻しもしない
+        expect(types(service, id)).not.toContain("ReworkJudged");
+        const resumed = service.resume(id, {});
+        expect(resumed.status).toBe("awaiting_approval");
+        expect(resumed.gate).toEqual({ step: "implement", submission: 1 });
+        const calls = executor.calls.length;
+        // 再開したあとの確認が、残した指摘を反映する（止めていた間に起きたことを取り込む）
+        await service.checkPullRequests();
+        expect(executor.calls.length).toBe(calls + 1);
+        expect(types(service, id).slice(-2)).toEqual(["ReworkJudged", "ChangesRequested"]);
+        const task = service.get(id)?.task;
+        expect(task?.status).toBe("queued");
+        expect(task?.remarks.at(-1)).toMatchObject({
+          step: "implement",
+          text: "全体として、失敗時のログが足りない",
+        });
+        activity.close();
+      });
+
+      it("止めている間に PR がマージされたら、作り直しの間と同じ記録でマージを承認として進める。再開は要らない", async () => {
+        const { activity, service, executor, pulls, calls, id } = await pausedAtGate();
+        pulls.state = {
+          state: "merged",
+          mergedBy: "reviewer",
+          headSha: service.get(id)?.task.pullRequest?.commit,
+        };
+        await service.checkPullRequests();
+        const stopped = (service.get(id)?.activity ?? []).find(
+          (e) => e.type === "ReworkStoppedByMerge",
+        );
+        expect(stopped?.payload).toMatchObject({ was: "paused" });
+        const task = service.get(id)?.task as Task;
+        expect(task.pullRequestState).toBe("merged");
+        expect(task.approved.implement?.submission).toBe(1);
+        expect(task.pausedReason).toBeUndefined();
+        expect(executor.calls).toHaveLength(calls);
+        activity.close();
+      });
+
+      it("止めている間は、承認も差し戻しもできない。再開してから行う", async () => {
+        const { activity, service, id } = await pausedAtGate();
+        expect(() => service.approve(id, { step: "implement", submission: 1 })).toThrow();
+        expect(() =>
+          service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] }),
+        ).toThrow();
+        service.resume(id, {});
+        expect(
+          service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] })
+            .status,
+        ).toBe("queued");
+        activity.close();
+      });
+
+      it("止めている間の PR を、60 秒ごとの確認が承認待ちの PR として二重に扱わない（マージも指摘も1回だけ）", async () => {
+        const { activity, service, pulls, id } = await pausedAtGate();
+        pulls.feedbackList = [item("comment:q1")];
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        const imported = (service.get(id)?.activity ?? []).filter(
+          (e) => e.type === "PullRequestReviewImported",
+        );
+        expect(imported).toHaveLength(1);
+        activity.close();
+      });
     });
 
     describe("一時停止の間に届いた PR の指摘を、再開のときに取り込む（PBI-279）", () => {
@@ -14490,9 +14734,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("人間の判断待ち・中止済みのタスクは一時停止しない（PBI-3）", async () => {
+  it("中止済みのタスクは一時停止しない（PBI-3）。承認待ちは一時停止できる（PBI-301）", async () => {
     const { activity, service, id } = await toImplementGate();
-    await expect(service.pause(id)).rejects.toThrow(/人間の判断待ち/);
+    expect((await service.pause(id)).status).toBe("paused");
+    await service.cancel(id);
+    await expect(service.pause(id)).rejects.toMatchObject({
+      messages: [{ code: "task.cancelled" }],
+    });
     activity.close();
   });
 
@@ -22419,6 +22667,25 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     repos.remote[taskBranchOf(id)] = `m${pr.number}`.padEnd(40, "0");
     await service.checkPullRequests();
   }
+
+  it("要求要件の PR のマージ待ちで一時停止すると、止めている間のマージは見守らず、再開したあとの確認で承認として進む（PBI-301）", async () => {
+    const made = await start([out("# 要求要件"), design()]);
+    const { service, id } = made;
+    expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    await service.pause(id);
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    // 止めている間にマージされても、承認として進めない（実装の PR と違い、作り直しの間の見守りの対象ではない）
+    await merge(made, "requirements");
+    expect(taskOf(service, id).status).toBe("paused");
+    expect(taskOf(service, id).approved.requirements).toBeUndefined();
+    // 再開すると承認待ちに戻り、次の確認が、止めていた間のマージを承認として取り込む
+    expect(service.resume(id, {}).status).toBe("awaiting_approval");
+    await service.checkPullRequests();
+    expect(taskOf(service, id).approved.requirements?.submission).toBe(1);
+    expect(taskOf(service, id).stepPullRequests[0]?.state).toBe("merged");
+    made.activity.close();
+  });
 
   it("タスクブランチに sacty が積んでいない変更があれば、実装で消さないよう、実装の PR を出さずに止める（レビュー指摘）", async () => {
     const made = await start([

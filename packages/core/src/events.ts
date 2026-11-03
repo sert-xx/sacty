@@ -272,7 +272,15 @@ export const Remark = z.object({
 export type Remark = z.infer<typeof Remark>;
 
 /** 工程エージェントの、指摘への対応。 */
-export const RemarkResponse = z.object({ remarkId: z.string(), text: z.string() });
+export const RemarkResponse = z.object({
+  remarkId: z.string(),
+  text: z.string(),
+  /**
+   * 人に確かめたいこと（PBI-301）。指摘の意図を読み取れず推測で直した・消えた値を作り直した・求められていない範囲を変えた、
+   * など。承認の画面と PR のコメントで人に知らせる。無ければ確かめたいことは無い。以前の作業履歴には無い。
+   */
+  confirm: z.string().optional(),
+});
 
 /**
  * 工程エージェントが提出の前に行ったセルフレビュー（既定のスキル review-dispatch の self-review。PBI-120）の報告。

@@ -228,8 +228,15 @@ export function notificationFor(
   after: Task,
 ): NotificationKind | undefined {
   if (after.status === "escalated" && before?.status !== "escalated") return "escalation";
+  // 承認待ちで一時停止して再開しただけ（同じ承認ゲートに戻った）なら、もう一度は知らせない（PBI-301）
+  const resumedToGate =
+    before?.status === "paused" &&
+    before.resumeTo === "awaiting_approval" &&
+    before.gate?.step === after.gate?.step &&
+    before.gate?.submission === after.gate?.submission;
   if (
     after.status === "awaiting_approval" &&
+    !resumedToGate &&
     (before?.status !== "awaiting_approval" ||
       before.gate?.step !== after.gate?.step ||
       before.gate?.submission !== after.gate?.submission)

@@ -921,6 +921,111 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(notice()).toBeNull();
   });
 
+  it("承認待ち（PR のマージ待ち）にも一時停止のボタンを出し、エスカレーション・一時停止中・完了には出さない（PBI-301）", async () => {
+    const pauseButton = () =>
+      [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "一時停止");
+    const implement = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 1 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c1", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+    });
+    server = detail(implement);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(implement),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(container.querySelector("#gate")?.textContent).toContain("実装の PR のマージ待ち");
+    expect(pauseButton()).toBeDefined();
+    // 一時停止した（承認待ちから止めた）ら、ボタンは再開の欄に替わる
+    server = detail(
+      task({
+        ...implement,
+        status: "paused",
+        pausedReason: "manual",
+        resumeTo: "awaiting_approval",
+      }),
+    );
+    await wait();
+    expect(pauseButton()).toBeUndefined();
+    expect(container.querySelector("form input[name=taskId]")).not.toBeNull();
+    // エスカレーション（差し戻しの上限）には、止める作業が無いので出さない
+    server = detail(
+      task({
+        ...implement,
+        status: "escalated",
+        gate: undefined,
+        escalation: { step: "implement", target: "implement", pendingRemarks: [] },
+      }),
+    );
+    await wait();
+    expect(pauseButton()).toBeUndefined();
+  });
+
+  it("人に確かめてほしいこと（判断できなかった理由・実行の聞き返し）を、承認待ちのタスク詳細の目印の上に出し、承認や差し戻しで消す（PBI-301）", async () => {
+    const reworked = task({
+      status: "awaiting_approval",
+      gate: { step: "implement", submission: 2 } as Task["gate"],
+      steps: [{ key: "implement", state: "active" }],
+      pullRequest: { branch: "b", commit: "c2", url: PR, number: 7, repo: "acme/web" },
+      pullRequestState: "open",
+      remarks: [
+        {
+          id: "implement-1-1",
+          step: "implement",
+          round: 1,
+          text: "ここ前と言ってること違わない？",
+          voided: false,
+          submittedIn: 2,
+          response: "直した",
+          respondedIn: 2,
+          confirm: "上限の値は 31 日と推測しました",
+        },
+      ],
+      prRework: {
+        target: "implement",
+        decided: false,
+        reason: "「前と言ってること」が何を指すか読み取れない。",
+        at: "2026-11-04T00:00:00.000Z",
+        round: 1,
+        remarkIds: ["implement-1-1"],
+      },
+    });
+    const ask = () => container.querySelector('[data-testid="human-ask"]');
+    server = detail(reworked);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(reworked),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(ask()?.textContent).toContain("人に確かめてほしいことが2件あります");
+    expect(ask()?.textContent).toContain("ゴールガーディアンが判断できませんでした");
+    expect(ask()?.textContent).toContain("上限の値は 31 日と推測しました");
+    // 目立つ所：承認の案内（#gate）のすぐ後ろ、タブの中身の前に出る（どのタブを開いていても見える）
+    const gate = container.querySelector("#gate");
+    expect(gate).not.toBeNull();
+    expect(
+      (gate?.compareDocumentPosition(ask() as Element) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 聞き返しが無い提出なら、判断できなかった理由だけ
+    server = detail(
+      task({ ...reworked, remarks: reworked.remarks.map((r) => ({ ...r, confirm: undefined })) }),
+    );
+    await wait();
+    expect(ask()?.textContent).toContain("人に確かめてほしいことが1件あります");
+    expect(ask()?.textContent).not.toContain("上限の値は 31 日");
+    // 差し戻して作り直している間は出さない
+    server = detail(task({ ...reworked, status: "queued", gate: undefined }));
+    await wait();
+    expect(ask()).toBeNull();
+  });
+
   it("古い head へのレビューとして捨てた AI のレビューの指摘（0・1・複数件）を、タスク詳細に理由・要点・リンクつきで出し、マージされたら消す（PBI-291）", async () => {
     const implement = task({
       status: "awaiting_approval",

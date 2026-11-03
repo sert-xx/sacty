@@ -45,6 +45,15 @@ const ja = {
     help: (number: number, ai: number) =>
       `PR #${number} に届いた指摘${ai > 0 ? `（うち AI のレビューの指摘 ${ai}件）` : ""}は、再開すると、止まった工程を走り直す前にゴールガーディアンが読み、戻し先を判断して差し戻します。`,
   },
+  /** 人に確かめてほしいこと（PBI-301）。指摘の意図を判断できなかった理由と、実行が挙げた聞き返し・推測で決めたこと。 */
+  humanAsk: {
+    title: (count: number) => `人に確かめてほしいことが${count}件あります`,
+    help: "承認・マージの前に、次を確かめてください。",
+    undecided: (ids: string) => `指摘（${ids}）の意図を、ゴールガーディアンが判断できませんでした`,
+    undecidedHelp:
+      "読み取れた範囲の最小限で直しています。意図と合うか、指摘した方が確かめてください。",
+    confirm: (id: string) => `実行が確かめたいこと（指摘 ${id}）`,
+  },
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
@@ -514,6 +523,14 @@ const en: TaskMessages = {
       `${count} PR comment${count === 1 ? "" : "s"} arrived while the task was paused`,
     help: (number: number, ai: number) =>
       `When you resume, the Goal Guardian reads the comments on PR #${number}${ai > 0 ? ` (${ai} of them from the AI review)` : ""} and sends the task back to the step it decides, before the step that stopped runs again.`,
+  },
+  humanAsk: {
+    title: (count: number) => `${count} thing${count === 1 ? "" : "s"} for you to check`,
+    help: "Check these before you approve or merge.",
+    undecided: (ids: string) => `The Goal Guardian could not tell what comment ${ids} meant`,
+    undecidedHelp:
+      "It made the smallest change it could read. Whoever commented should check it matches what they meant.",
+    confirm: (id: string) => `What the run wants you to check (comment ${id})`,
   },
   discardedReview: {
     title: (count: number) =>

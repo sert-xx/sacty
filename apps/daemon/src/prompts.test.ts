@@ -5527,3 +5527,75 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
     expect(dataOf(prompt).reason).toBe("決定を変えない：表の整形だけ");
   });
 });
+
+describe("指摘への対応の「人に確かめたいこと」（PBI-301）", () => {
+  const block = (responses: unknown) =>
+    `# 実装の説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": responses })}\n\`\`\`\n`;
+  const ids = new Set(["implement-1-1", "implement-1-2", "implement-1-3"]);
+
+  it("対応の confirm を読み取り、本文からは取り除く。確かめたいことが無い対応は、confirm を持たない", () => {
+    const read = extractBlocks(
+      block([
+        { remarkId: "implement-1-1", text: "直した", confirm: "  上限は 31 日と推測しました  " },
+        { remarkId: "implement-1-2", text: "直した" },
+        { remarkId: "implement-1-3", text: "直した", confirm: "   " },
+      ]),
+      ids,
+      [],
+    );
+    expect(read.responses).toEqual([
+      { remarkId: "implement-1-1", text: "直した", confirm: "上限は 31 日と推測しました" },
+      { remarkId: "implement-1-2", text: "直した" },
+      { remarkId: "implement-1-3", text: "直した" },
+    ]);
+    expect(read.output).not.toContain("confirm");
+    expect(read.output).not.toContain("sacty-responses");
+  });
+
+  it("confirm が文字列でない・長すぎるときは、文字でなければ捨て、長ければ上限で切る。対応の文が無い対応は読まない", () => {
+    const read = extractBlocks(
+      block([
+        { remarkId: "implement-1-1", text: "直した", confirm: { a: 1 } },
+        { remarkId: "implement-1-2", text: "直した", confirm: "あ".repeat(1500) },
+        { remarkId: "implement-1-3", text: "", confirm: "確かめたい" },
+      ]),
+      ids,
+      [],
+    );
+    expect(read.responses).toEqual([
+      { remarkId: "implement-1-1", text: "直した" },
+      { remarkId: "implement-1-2", text: "直した", confirm: "あ".repeat(1000) },
+    ]);
+  });
+
+  it("指摘のある実行の指示に、confirm の書き方（推測・作り直し・範囲を超えた変更・直さなかったとき）と、無いときは書かないことを書く", () => {
+    const prompt = buildPrompt(
+      {
+        id: "t-1",
+        title: "予約",
+        body: "本文",
+        steps: [{ key: "implement", state: "active" }],
+        remarks: [
+          {
+            id: "implement-1-1",
+            step: "implement",
+            round: 1,
+            text: "直して",
+            voided: false,
+          },
+        ],
+        outputs: { implement: "# 前回" },
+        approved: {},
+        testViewpoints: [],
+        reproductionTests: [],
+        proposals: [],
+      } as unknown as Task,
+      "implement",
+    );
+    expect(prompt).toContain('"confirm": "人に確かめたいこと（あるときだけ）"');
+    expect(prompt).toContain("指摘の意図を読み取れず推測で直したとき");
+    expect(prompt).toContain("元の値や文言が手元に無く作り直したとき");
+    expect(prompt).toContain("指摘が求めていない範囲を変えたとき");
+    expect(prompt).toContain('確かめたいことが無い対応には、"confirm" を書かないでください');
+  });
+});
