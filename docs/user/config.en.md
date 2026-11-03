@@ -248,6 +248,7 @@ What happens when an agent's run fails depends on the kind of run.
 | Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks) | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
 | Exports, the post-merge watch, audits, and answers to questions | The failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on). At a usage limit, the fallback agent is used from the next run |
 
+- If the agent's final result is empty but an earlier result has content, that result is used as the answer. If no result has any content, sacty treats the run as failed instead of producing an empty deliverable (a switch to a fallback agent or a pause, as in the table above).
 - Whether a run failed is judged from the agent's exit code and output, not from logs on standard error.
 - Switching when the run ended normally but its answer was not in the right form applies only to information gathering, the Orchestrator's choice of steps, and reading tickets.
 - sacty records the switch in the activity log with the reason, such as "reached its usage limit", "failed to authenticate", or "failed".
