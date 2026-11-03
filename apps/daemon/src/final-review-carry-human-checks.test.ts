@@ -259,6 +259,13 @@ describe("前の回の人が確かめることの引き継ぎ（PBI-294）", () 
     );
     expect(twice.humanChecks).toEqual([QUEUE]);
     expect(twice.droppedHumanChecks).toEqual([`${RATE} → 外した理由：理由A`]);
+    // 先の申告が無効（理由が無い）なら、後の有効な申告で外す
+    const laterValid = read(
+      verdict({ ...PASSED, droppedHumanChecks: ["P1：", "P1：理由B"] }),
+      previous,
+    );
+    expect(laterValid.humanChecks).toEqual([QUEUE]);
+    expect(laterValid.droppedHumanChecks).toEqual([`${RATE} → 外した理由：理由B`]);
   });
 
   it("外す申告が、オブジェクトや全角の番号・区切りでも読める", () => {
