@@ -349,7 +349,14 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     const reworkAt = new Date(NOW).toISOString();
     const reworked = task({
       status: "queued",
-      prRework: { target: "design", decided: true, reason: "", at: reworkAt },
+      prRework: {
+        target: "design",
+        decided: true,
+        reason: "",
+        at: reworkAt,
+        round: 1,
+        remarkIds: [],
+      },
     } as Partial<Task>);
     stats.add(
       {

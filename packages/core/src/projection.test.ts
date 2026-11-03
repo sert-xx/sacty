@@ -4295,7 +4295,13 @@ describe("一時停止の間に届いた PR の指摘（PBI-279）", () => {
       ["implement-1-1", "implement", 1],
       ["implement-2-1", "implement", 2],
     ]);
-    expect(task?.prRework).toMatchObject({ target: "implement", decided: true });
+    // 判断を渡す作り直しの実行を見分けるため、判断の回（差し戻しの回）を残す（PBI-300）
+    expect(task?.prRework).toMatchObject({
+      target: "implement",
+      decided: true,
+      round: 2,
+      remarkIds: ["implement-2-1"],
+    });
     expect(task && changeRounds(task, "implement")).toBe(2);
   });
 
