@@ -1136,6 +1136,53 @@ describe("統合レビューの表示（PBI-31）", () => {
       "Integration review (main · ccccccc): failed (2)",
     );
   });
+
+  it("出力の JSON を直して読んだことを、作業履歴に出す（PBI-298）", () => {
+    const repaired = {
+      code: "integrate.outputRepaired",
+      params: { repairs: [{ kind: "quote", count: 2, line: 3, column: 14 }] },
+    };
+    const event = {
+      type: "IntegrationReviewed",
+      payload: { ...review(true), outputRepaired: repaired },
+      actor: "guardian",
+    } as unknown as ActivityEvent;
+    expect(describeEvent(event)).toBe(
+      "統合レビュー（main・ccccccc）：合格・承認待ち。統合レビューの出力の JSON が崩れていたので、直して読みました（文字列の中の二重引用符のエスケープ漏れ2か所：JSON の 3 行目の 14 文字目が最初）。",
+    );
+    expect(describeIn(event, labels.en)).toContain("was broken, so it was repaired and read");
+  });
+});
+
+describe("最終レビューの表示：出力の JSON を直して読んだとき（PBI-298）", () => {
+  const reviewed = (outputRepaired?: unknown) =>
+    ({
+      type: "FinalReviewed",
+      payload: {
+        passed: true,
+        viewpoints: [],
+        remarks: [],
+        summary: "",
+        costUsd: 0.5,
+        estimated: false,
+        ...(outputRepaired ? { outputRepaired } : {}),
+      },
+      actor: "guardian",
+    }) as unknown as ActivityEvent;
+
+  it("直して読んだ箇所を、合格の表示に添える。直さずに読めたときは、これまでどおり", () => {
+    expect(describeEvent(reviewed())).toBe("最終レビュー：合格（ゴールガーディアン・$0.5000）");
+    const repaired = {
+      code: "review.outputRepaired",
+      params: { repairs: [{ kind: "brace", count: 1, line: 1, column: 2556, key: "humanChecks" }] },
+    };
+    expect(describeEvent(reviewed(repaired))).toBe(
+      "最終レビュー：合格（ゴールガーディアン・$0.5000）。最終レビューの出力の JSON が崩れていたので、直して読みました（入れ子のオブジェクトの閉じ括弧 } の欠け（humanChecks の前に補った）：JSON の 1 行目の 2556 文字目）。",
+    );
+    expect(describeIn(reviewed(repaired), labels.en)).toContain(
+      "a missing closing } of a nested object (added before humanChecks): line 1, column 2556 of the JSON",
+    );
+  });
 });
 
 describe("オーケストレーターの失敗の表示（PBI-32）", () => {

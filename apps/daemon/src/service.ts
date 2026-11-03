@@ -349,6 +349,7 @@ import {
   extractStepReview,
   extractTicketTriage,
   extractVerdict,
+  finalReviewUnreadableDetail,
   finalReviewVerdictIds,
   finalReviewViewpointIds,
   integrationViewpointIds,
@@ -8876,9 +8877,23 @@ export class TaskService {
       const count = (this.mustGet(task.id).unreadableReviews ?? 0) + 1;
       const path = `runs/${task.id}/${runId}.jsonl`;
       const stop = count >= MAX_UNREADABLE_REVIEWS;
+      // 何が読めなかったか（JSON の何行目の何文字目で壊れているか。PBI-298）。秘密情報は伏せる
+      const detail = finalReviewUnreadableDetail(
+        outcome.output,
+        await this.auditRedactor(task, config.config).catch(() => undefined),
+      );
       const failure = stop
-        ? message("verify.finalReviewUnreadableStopped", { max: MAX_UNREADABLE_REVIEWS, path })
-        : message("verify.finalReviewUnreadable", { count, max: MAX_UNREADABLE_REVIEWS, path });
+        ? message("verify.finalReviewUnreadableStopped", {
+            max: MAX_UNREADABLE_REVIEWS,
+            path,
+            ...(detail ? { detail } : {}),
+          })
+        : message("verify.finalReviewUnreadable", {
+            count,
+            max: MAX_UNREADABLE_REVIEWS,
+            path,
+            ...(detail ? { detail } : {}),
+          });
       this.append(current, [
         {
           actor: "guardian",
@@ -10336,6 +10351,7 @@ export class TaskService {
       outcome.output,
       integrationViewpointIds(latest),
       latest.remarks.filter((r) => !r.voided).map((r) => r.id),
+      await this.auditRedactor(latest, config).catch(() => undefined),
     );
     const events: ActivityItem[] = [
       {

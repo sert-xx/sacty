@@ -1375,6 +1375,11 @@ const FinalReviewed = z.object({
      * または外していなければ無い。
      */
     droppedHumanChecks: z.array(z.string()).optional(),
+    /**
+     * 最終レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298。何をどこで直したか）。直さずに読めたときは無い。
+     * 実タスクで直しが効いたかを、後から確かめるために残す。
+     */
+    outputRepaired: DaemonText.optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
@@ -1901,6 +1906,8 @@ const IntegrationReviewed = z.object({
     findings: z.array(z.string()),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
+    /** 統合レビューの出力の JSON が崩れていて、直して読んだこと（PBI-298）。直さずに読めたときは無い。 */
+    outputRepaired: DaemonText.optional(),
   }),
 });
 

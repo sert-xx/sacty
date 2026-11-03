@@ -410,6 +410,36 @@ class LenientError extends Error {
   }
 }
 
+/** 直して読んだ箇所の種類。 */
+export type RepairKind =
+  /** 文字列の中の、エスケープしていない二重引用符。 */
+  | "quote"
+  /** 文字列の中の、エスケープしていない改行・タブなどの制御文字。 */
+  | "control"
+  /** 文字列の中の、JSON にない「\」のエスケープ。 */
+  | "escape"
+  /** 閉じる括弧の前の余分なカンマ。 */
+  | "comma"
+  /** 入れ子のオブジェクトの閉じ括弧「}」の欠け（PBI-298）。 */
+  | "brace";
+
+/** 直しながら読んだ箇所（at は、出力の先頭からの文字数）。brace は、「}」を補った次のキーも持つ。 */
+type Repair = { kind: RepairKind; at: number; key?: string };
+
+/**
+ * 見出しのオブジェクトの形（PBI-298）。入れ子のオブジェクトの中に、見出しのオブジェクトのキーが現れたら、入れ子のオブジェクトの
+ * 閉じ括弧「}」が欠けているとみなして補う。AI は、入れ子のオブジェクト（最終レビューの tests）を閉じ忘れることがある。
+ * 括弧の数だけでは、どこで閉じるかが決まらない（humanChecks が tests の中に入って読めてしまう）ので、キーで決める。
+ */
+export type LenientShape = {
+  /** 見出し。見出しのオブジェクトは、{"見出し": {…}} の値。 */
+  heading: string;
+  /** 見出しのオブジェクトのキー。 */
+  keys: readonly string[];
+  /** 見出しのオブジェクトのキーのうち、値がオブジェクトのもの → そのオブジェクトのキー。 */
+  objects: Readonly<Record<string, readonly string[]>>;
+};
+
 /**
  * 寛容な読み取りの走査量の上限（文字・値の数）。閉じない文字列と見出しが繰り返される出力では、候補ごとに末尾まで読むので、
  * 上限が無いと出力の長さの2乗の時間がかかり、同期処理のデーモンが止まる。1回の呼び出しの全候補で共有し、出力の長さに比例させる。
@@ -451,8 +481,14 @@ function parseLenient(
   output: string,
   open: number,
   budget: { left: number } = lenientBudget(output),
-): { value: Record<string, unknown>; end: number } {
+  shape?: LenientShape,
+): { value: Record<string, unknown>; end: number; repairs: Repair[] } {
   let p = open;
+  const repairs: Repair[] = [];
+  /** 入れ子のオブジェクトの「}」を補って閉じた直後（次に読むキーは、囲んでいるオブジェクトのキー）。 */
+  let resumed = false;
+  /** 「}」を補ったか。補ったあとの見出しのオブジェクトに、入れ子のオブジェクトのキーが現れたら、直し方が決まらない。 */
+  let braced = false;
   const length = output.length;
   const skipSpace = () => {
     while (p < length) {
@@ -477,6 +513,7 @@ function parseLenient(
           p = i + 1;
           return result;
         }
+        repairs.push({ kind: "quote", at: i });
         result += c;
       } else if (c === "\\") {
         const next = output[i + 1];
@@ -487,21 +524,28 @@ function parseLenient(
           result += ESCAPES[next];
           i++;
         } else {
+          repairs.push({ kind: "escape", at: i });
           result += c;
         }
       } else {
+        if (c < " ") repairs.push({ kind: "control", at: i });
         result += c;
       }
     }
     throw new LenientError(start);
   };
-  const value = (depth: number, after: RegExp): unknown => {
+  const value = (
+    depth: number,
+    after: RegExp,
+    path: readonly string[],
+    holder?: Record<string, unknown>,
+  ): unknown => {
     if (--budget.left < 0) throw new LenientError(p);
     skipSpace();
     const c = output[p];
     if (c === "{" || c === "[") {
       if (depth >= LENIENT_MAX_DEPTH) throw new LenientError(p);
-      return c === "{" ? object(depth + 1) : array(depth + 1);
+      return c === "{" ? object(depth + 1, path, holder) : array(depth + 1, path);
     }
     if (c === '"') return string(after);
     for (const [word, v] of [
@@ -520,7 +564,22 @@ function parseLenient(
     p = LENIENT_NUMBER.lastIndex;
     return n;
   };
-  const object = (depth: number): Record<string, unknown> => {
+  /**
+   * 入れ子のオブジェクトの中に、見出しのオブジェクトのキーが現れたか。現れたら、入れ子のオブジェクトの「}」が欠けている。
+   * 見出しのオブジェクトが同じキーを既に持つ・見出しのオブジェクトの外のキーなど、直し方が決まらないときは読まない。
+   */
+  const closesBefore = (path: readonly string[], key: string, at: number, holder?: object) => {
+    if (!shape || path.length !== 2 || path[0] !== shape.heading) return false;
+    const own = shape.objects[path[1] as string];
+    if (!own || own.includes(key) || !shape.keys.includes(key)) return false;
+    if (!holder || Object.hasOwn(holder, key)) throw new LenientError(at);
+    return true;
+  };
+  const object = (
+    depth: number,
+    path: readonly string[],
+    holder?: Record<string, unknown>,
+  ): Record<string, unknown> => {
     const result: Record<string, unknown> = {};
     p++;
     skipSpace();
@@ -531,21 +590,47 @@ function parseLenient(
     for (;;) {
       skipSpace();
       if (output[p] !== '"') throw new LenientError(p);
+      const keyAt = p;
       const key = string(AFTER_KEY);
+      if (closesBefore(path, key, keyAt, holder)) {
+        repairs.push({ kind: "brace", at: keyAt, key });
+        braced = true;
+        resumed = true;
+        p = keyAt;
+        return result;
+      }
+      // 「}」を補ったあとの見出しのオブジェクトに、入れ子のオブジェクトのキーが現れたら、どこで閉じるか決まらない
+      if (
+        braced &&
+        shape &&
+        path.length === 1 &&
+        path[0] === shape.heading &&
+        !shape.keys.includes(key) &&
+        Object.values(shape.objects).some((own) => own.includes(key))
+      ) {
+        throw new LenientError(keyAt);
+      }
       skipSpace();
       if (output[p] !== ":") throw new LenientError(p);
       p++;
       Object.defineProperty(result, key, {
-        value: value(depth, AFTER_OBJECT_VALUE),
+        value: value(depth, AFTER_OBJECT_VALUE, [...path, key], result),
         enumerable: true,
         writable: true,
         configurable: true,
       });
+      if (resumed) {
+        // 入れ子のオブジェクトを補って閉じた。次は、このオブジェクトのキー（区切りのカンマは読み終えている）
+        resumed = false;
+        continue;
+      }
       skipSpace();
       if (output[p] === ",") {
+        const commaAt = p;
         p++;
         skipSpace();
         if (output[p] === "}") {
+          repairs.push({ kind: "comma", at: commaAt });
           p++;
           return result;
         }
@@ -556,7 +641,7 @@ function parseLenient(
       return result;
     }
   };
-  const array = (depth: number): unknown[] => {
+  const array = (depth: number, path: readonly string[]): unknown[] => {
     const result: unknown[] = [];
     p++;
     skipSpace();
@@ -565,12 +650,14 @@ function parseLenient(
       return result;
     }
     for (;;) {
-      result.push(value(depth, AFTER_ARRAY_ITEM));
+      result.push(value(depth, AFTER_ARRAY_ITEM, [...path, "[]"]));
       skipSpace();
       if (output[p] === ",") {
+        const commaAt = p;
         p++;
         skipSpace();
         if (output[p] === "]") {
+          repairs.push({ kind: "comma", at: commaAt });
           p++;
           return result;
         }
@@ -581,12 +668,17 @@ function parseLenient(
       return result;
     }
   };
-  const parsed = object(1);
-  return { value: parsed, end: p };
+  const parsed = object(1, []);
+  return { value: parsed, end: p, repairs };
 }
 
 /** 見出し heading を最初のキーに持つ「{」の位置を、出てきた順にすべて返す（前の報告の中にあるものは除く）。 */
-function headingOpens(output: string, heading: string, budget = lenientBudget(output)): number[] {
+function headingOpens(
+  output: string,
+  heading: string,
+  budget = lenientBudget(output),
+  shape?: LenientShape,
+): number[] {
   const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
   const opens: number[] = [];
   let skipUntil = 0;
@@ -598,7 +690,7 @@ function headingOpens(output: string, heading: string, budget = lenientBudget(ou
     opens.push(open - 1);
     // 読めた報告の中のキーは数えない。読めなければ、次の候補を妨げない
     try {
-      skipUntil = parseLenient(output, open - 1, budget).end;
+      skipUntil = parseLenient(output, open - 1, budget, shape).end;
     } catch {
       // 読めなかった報告は、診断（explainUnreadableAnswer）が扱う
     }
@@ -606,29 +698,59 @@ function headingOpens(output: string, heading: string, budget = lenientBudget(ou
   return opens;
 }
 
+/** 直しながら読んだ箇所（line・column は JSON の先頭からの位置。1から）。 */
+export type RepairNote = { kind: RepairKind; line: number; column: number; key?: string };
+
+/** JSON（open の「{」から始まる）の中の、at の位置の行と桁（1から）。桁は、JSON の行の頭から数える。 */
+function locate(output: string, open: number, at: number): { line: number; column: number } {
+  const line = output.slice(open, at).split("\n").length;
+  const column = at - Math.max(open, output.lastIndexOf("\n", at - 1) + 1) + 1;
+  return { line, column };
+}
+
 /**
  * lastJsonAnswer と同じに読む。囲み方にかかわらず、JSON として読める答えのうち、形の合う最後のもの。それより後ろに、見出し
  * heading を最初のキーに持つ答えが（文字列の中の引用符・改行などの崩れで）JSON として読めずにあれば、崩れを直しながら
  * 読み直し、形の合う最後のものを返す（PBI-293。後ろの答えが最終の答えなので、前の読める答えより優先する）。
+ *
+ * shape を渡すと、入れ子のオブジェクトの閉じ括弧の欠けも直す（PBI-298）。read は、直して読んだ箇所（repairs。直さずに読めた
+ * ときは空）も受け取る。直した結果が期待する形でなければ、undefined を返して読まない（推測で読まない）。
+ *
+ * 戻り値の candidate は、本文から取り除く範囲（囲みがあれば囲みの行も含む）。repairs は、直して読んだ箇所。
  */
 export function lastLenientJsonAnswer<T>(
   output: string,
   heading: string,
-  read: (value: Record<string, unknown>) => T | undefined,
-): { value: T } | undefined {
-  const strict = lastJsonAnswer(output, read);
+  read: (value: Record<string, unknown>, repairs: readonly RepairNote[]) => T | undefined,
+  shape?: LenientShape,
+):
+  | { value: T; candidate: Pick<JsonCandidate, "start" | "end">; repairs: RepairNote[] }
+  | undefined {
+  const strict = lastJsonAnswer(output, (value) => read(value, []));
   const budget = lenientBudget(output);
-  for (const open of headingOpens(output, heading, lenientBudget(output)).reverse()) {
+  let fences: ReturnType<typeof fenceLines> | undefined;
+  for (const open of headingOpens(output, heading, lenientBudget(output), shape).reverse()) {
     if (strict && open < strict.candidate.end) break;
     let value: T | undefined;
+    let parsed: ReturnType<typeof parseLenient>;
+    let repairs: RepairNote[];
     try {
-      value = read(parseLenient(output, open, budget).value);
+      parsed = parseLenient(output, open, budget, shape);
+      repairs = parsed.repairs.map((r) => ({
+        kind: r.kind,
+        ...locate(output, open, r.at),
+        ...(r.key === undefined ? {} : { key: r.key }),
+      }));
+      value = read(parsed.value, repairs);
     } catch {
       continue;
     }
-    if (value !== undefined) return { value };
+    if (value !== undefined) {
+      fences ??= fenceLines(output);
+      return { value, candidate: withFence(output, fences, open, parsed.end), repairs };
+    }
   }
-  return strict && { value: strict.value };
+  return strict && { value: strict.value, candidate: strict.candidate, repairs: [] };
 }
 
 /** 読めなかった答えの診断。 */
@@ -647,21 +769,63 @@ export type Unreadable =
  * 答えが読めなかったとき、最後の報告の何が読めなかったかを返す（PBI-293。作業履歴に残し、AI の出力のどこを直せば
  * よいかが分かるようにする）。
  */
-export function explainUnreadableAnswer(output: string, heading: string): Unreadable {
-  const open = headingOpens(output, heading).at(-1);
+export function explainUnreadableAnswer(
+  output: string,
+  heading: string,
+  shape?: LenientShape,
+): Unreadable {
+  const open = headingOpens(output, heading, undefined, shape).at(-1);
   if (open === undefined) return { kind: "missing" };
   try {
-    parseLenient(output, open);
+    parseLenient(output, open, undefined, shape);
     return { kind: "shape" };
   } catch (error) {
     const at = error instanceof LenientError ? error.at : open;
-    const line = output.slice(open, at).split("\n").length;
     // 桁は、JSON の行の頭から数える（JSON の前に同じ行の前置きがあっても、その長さを足さない）
-    const column = at - Math.max(open, output.lastIndexOf("\n", at - 1) + 1) + 1;
+    const { line, column } = locate(output, open, at);
     const near = output
       .slice(Math.max(open, at - 30), at + 30)
       .replace(/\s+/g, " ")
       .trim();
     return { kind: "broken", line, column, near };
   }
+}
+
+/** JSON のエスケープ（`\\"`・`\\n`・`\\uXXXX` など）を文字に戻す。JSON にないエスケープと、壊れた `\\u` はそのまま残す。 */
+export function unescapeJson(text: string): string {
+  return text.replace(/\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/g, (_m, hex?: string, ch?: string) =>
+    hex ? String.fromCharCode(Number.parseInt(hex, 16)) : (ESCAPES[ch as string] as string),
+  );
+}
+
+/**
+ * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
+ * （PR #135 レビュー指摘）。
+ */
+export function cut(v: string, max: number): string {
+  if (v.length <= max) return v;
+  let end = max - 1;
+  const last = v.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${v.slice(0, end)}…`;
+}
+
+/**
+ * 壊れた JSON の壊れた所の前後（near）を、失敗の理由に残してよい形にする（PBI-293・298）。
+ *
+ * near は出力から切り取る。呼び出し側は出力の秘密情報を伏せる関数（hide）を持つが、JSON の中の値は引用符・改行などが
+ * エスケープされていて一致しないことがある。そこで、エスケープを戻した出力の全体を hide にかけ、伏せる所があれば（エスケープ
+ * された秘密情報が出力にある）、前後の文字は残さず空にする（位置だけを残す）。全体で確かめてから切るので、切り取りの境界を
+ * またぐ値も漏れない。hide が無ければ、前後の文字は残さない。
+ */
+export function safeNear(
+  output: string,
+  near: string,
+  hide: ((text: string) => string) | undefined,
+  max = 80,
+): string {
+  if (!hide) return "";
+  const decoded = unescapeJson(output);
+  if (hide(decoded) !== decoded || hide(output) !== output) return "";
+  return cut(hide(near), max);
 }

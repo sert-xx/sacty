@@ -49,12 +49,17 @@ import {
   type Verdict,
 } from "@sacty/core";
 import {
+  explainUnreadableAnswer,
   headedObject,
   headingMentions,
   headingSpans,
   type JsonCandidate,
   jsonCandidates,
+  type LenientShape,
   lastJsonAnswer,
+  lastLenientJsonAnswer,
+  type RepairNote,
+  safeNear,
   withoutCandidates,
 } from "./agent-json.js";
 import { redact } from "./agents/redact.js";
@@ -3529,7 +3534,14 @@ export function extractFinalReview(
   } = {},
 ): Pick<
   FinalReview,
-  "passed" | "viewpoints" | "remarks" | "summary" | "tests" | "humanChecks" | "droppedHumanChecks"
+  | "passed"
+  | "viewpoints"
+  | "remarks"
+  | "summary"
+  | "tests"
+  | "humanChecks"
+  | "droppedHumanChecks"
+  | "outputRepaired"
 > & {
   /**
    * テストのコマンドに書いたツールのうち、イメージに無かったとゴールガーディアンが申告したもの。呼び出し元は、あれば止める。
@@ -3542,8 +3554,17 @@ export function extractFinalReview(
    */
   unreadable: boolean;
 } {
-  const found = findBlock(output, FINAL_REVIEW_HEADING);
+  const found = findBlock(output, FINAL_REVIEW_HEADING, FINAL_REVIEW_SHAPE);
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
+  // 崩れを直して読んだことは、作業履歴に残す（実タスクで直しが効いたかを後から確かめられるように。PBI-298）
+  const repaired =
+    found && found.repairs.length > 0
+      ? {
+          outputRepaired: message("review.outputRepaired", {
+            repairs: repairSummary(found.repairs),
+          }),
+        }
+      : {};
   const unmapped = new Set(options.unmappedViewpoints ?? []);
   const violation = options.scopeViolation;
   // 範囲外の変更（依頼にも承認済みの要求要件・設計にも無い変更）をゴールガーディアンが申告したら、観点 SCOPE を足して不合格にする。
@@ -3587,6 +3608,7 @@ export function extractFinalReview(
       ...verdicts,
       viewpoints,
       ...droppedChecks,
+      ...repaired,
       ...(humanChecks.length > 0 ? { humanChecks } : {}),
       passed: verdicts.passed && viewpoints.every((v) => v.verified),
       missingCommands: [],
@@ -3638,6 +3660,7 @@ export function extractFinalReview(
     viewpoints,
     ...checks,
     ...droppedChecks,
+    ...repaired,
     // テストが通った（終了コード 0、または環境による失敗だけ。PBI-155）と申告していなければ、観点の判定にかかわらず不合格
     passed: verdicts.passed && viewpoints.every((v) => v.verified) && guardianTestsPassed(tests),
     tests,
@@ -3752,13 +3775,152 @@ function tailOf(text: string, limit: number): string {
 /** ゴールガーディアンが写したテストの結果の抜粋のうち、記録する文字数。 */
 const GUARDIAN_TESTS_OUTPUT_MAX = 8_000;
 
-/** 出力の JSON のうち、見出しのオブジェクトを持つ最後のもの（囲み方は問わない。PBI-72）。 */
+/**
+ * 最終レビューの出力の JSON の形（PBI-298）。AI は、入れ子のオブジェクト tests の閉じ括弧「}」を欠かすことがあり、そのまま
+ * では読めない（S5 r4：最終レビュー6回のうち3回）。tests の中に見出しのオブジェクトのキー（humanChecks など）が現れたら、
+ * tests を閉じ忘れたとみなして補う。
+ */
+const FINAL_REVIEW_SHAPE: LenientShape = {
+  heading: FINAL_REVIEW_HEADING,
+  keys: [
+    "viewpoints",
+    "remarks",
+    "tests",
+    "humanChecks",
+    "droppedHumanChecks",
+    "outOfScope",
+    "summary",
+  ],
+  objects: {
+    tests: [
+      "command",
+      "exitCode",
+      "output",
+      "missingCommands",
+      "environmentFailures",
+      "otherFailures",
+    ],
+  },
+};
+
+/** 統合レビューの出力の JSON の形（入れ子のオブジェクトは無いので、閉じ括弧は補わない）。 */
+const INTEGRATION_REVIEW_SHAPE: LenientShape = {
+  heading: INTEGRATION_HEADING,
+  keys: ["viewpoints", "remarks", "findings", "summary"],
+  objects: {},
+};
+
+/** 判定のオブジェクトの項目のうち、配列であるべきもの。 */
+const VERDICT_ARRAYS = [
+  "viewpoints",
+  "remarks",
+  "findings",
+  "humanChecks",
+  "droppedHumanChecks",
+  "outOfScope",
+];
+
+/**
+ * 直して読んだ判定のオブジェクトが、期待する形か（PBI-298）。観点の配列と所見の文字列があり、ほかの配列の項目は配列、
+ * tests はオブジェクトであること。直した結果が期待する形でなければ、推測で読まない（誤って合格にしない）。
+ */
+function repairedVerdictShapeOk(raw: Record<string, unknown>): boolean {
+  if (!Array.isArray(raw.viewpoints) || typeof raw.summary !== "string") return false;
+  if (VERDICT_ARRAYS.some((key) => raw[key] !== undefined && !Array.isArray(raw[key])))
+    return false;
+  return (
+    raw.tests === undefined ||
+    (typeof raw.tests === "object" && raw.tests !== null && !Array.isArray(raw.tests))
+  );
+}
+
+/** 直して読んだ箇所を、種類ごとに数と最初の位置にまとめる。 */
+function repairSummary(repairs: readonly RepairNote[]) {
+  const groups = new Map<
+    string,
+    { kind: RepairNote["kind"]; count: number; line: number; column: number; key?: string }
+  >();
+  for (const r of repairs) {
+    const id = `${r.kind}:${r.key ?? ""}`;
+    const group = groups.get(id);
+    if (group) group.count++;
+    else {
+      groups.set(id, {
+        kind: r.kind,
+        count: 1,
+        line: r.line,
+        column: r.column,
+        ...(r.key === undefined ? {} : { key: r.key }),
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
+/**
+ * 出力の JSON のうち、見出しのオブジェクトを持つ最後のもの（囲み方は問わない。PBI-72）。JSON として読めなければ、崩れを
+ * 直しながら読む（PBI-293・298）。直して読んだときは repaired に、何をどこで直したかを持つ（作業履歴に残す）。
+ */
 function findBlock(
   output: string,
   heading: string,
-): { raw: Record<string, unknown>; candidate: JsonCandidate } | undefined {
-  const found = lastJsonAnswer(output, (value) => headedObject(value, heading));
-  return found && { raw: found.value, candidate: found.candidate };
+  shape: LenientShape,
+):
+  | {
+      raw: Record<string, unknown>;
+      candidate: Pick<JsonCandidate, "start" | "end">;
+      repairs: RepairNote[];
+    }
+  | undefined {
+  const found = lastLenientJsonAnswer(
+    output,
+    heading,
+    (value, repairs) => {
+      const raw = headedObject(value, heading);
+      if (!raw) return undefined;
+      return repairs.length === 0 || repairedVerdictShapeOk(raw) ? raw : undefined;
+    },
+    shape,
+  );
+  return found && { raw: found.value, candidate: found.candidate, repairs: found.repairs };
+}
+
+/** 判定の出力を読めなかったときの、何が読めなかったか（PBI-298）。JSON が出力に無いときは undefined。 */
+function verdictUnreadableDetail(
+  output: string,
+  heading: string,
+  shape: LenientShape,
+  hide: ((text: string) => string) | undefined,
+  kind: "review" | "integrate",
+): DaemonText | undefined {
+  const why = explainUnreadableAnswer(output, heading, shape);
+  switch (why.kind) {
+    case "missing":
+      return undefined;
+    case "shape":
+      return message(kind === "review" ? "review.unreadableShape" : "integrate.unreadableShape", {
+        heading,
+      });
+    case "broken": {
+      const params = {
+        line: why.line,
+        column: why.column,
+        near: safeNear(output, why.near, hide),
+      };
+      return message(kind === "review" ? "review.unreadableAt" : "integrate.unreadableAt", params);
+    }
+  }
+}
+
+/**
+ * 最終レビューの出力を読めなかったとき、JSON のどこで壊れていたか（PBI-298。FinalReviewFailed の理由に添える）。hide は、
+ * 秘密情報を伏せる関数（出力にエスケープされた秘密情報があるときは、前後の文字を残さず位置だけにする）。
+ */
+export function finalReviewUnreadableDetail(
+  output: string,
+  hide?: (text: string) => string,
+): DaemonText | undefined {
+  return verdictUnreadableDetail(output, FINAL_REVIEW_HEADING, FINAL_REVIEW_SHAPE, hide, "review");
 }
 
 /**
@@ -3910,15 +4072,28 @@ export function extractIntegrationReview(
   output: string,
   viewpointIds: readonly string[],
   remarkIds: readonly string[],
-): Pick<IntegrationReview, "passed" | "viewpoints" | "remarks" | "findings" | "summary"> & {
+  /** 秘密情報を伏せる関数。読めなかった理由に残す、壊れた所の前後の文字に使う（無ければ位置だけを残す。PBI-298）。 */
+  hide?: (text: string) => string,
+): Pick<
+  IntegrationReview,
+  "passed" | "viewpoints" | "remarks" | "findings" | "summary" | "outputRepaired"
+> & {
   output: string;
 } {
-  const found = findBlock(output, INTEGRATION_HEADING);
+  const found = findBlock(output, INTEGRATION_HEADING, INTEGRATION_REVIEW_SHAPE);
   const verdicts = readVerdicts(
     found?.raw,
     viewpointIds,
     remarkIds,
-    message("integrate.unreadable"),
+    found
+      ? message("integrate.unreadable")
+      : (verdictUnreadableDetail(
+          output,
+          INTEGRATION_HEADING,
+          INTEGRATION_REVIEW_SHAPE,
+          hide,
+          "integrate",
+        ) ?? message("integrate.unreadable")),
   );
   const list = found?.raw.findings;
   const findings = Array.isArray(list) ? list.map(text).filter(Boolean) : [];
@@ -3926,6 +4101,13 @@ export function extractIntegrationReview(
     ...verdicts,
     passed: verdicts.passed && findings.length === 0,
     findings,
+    ...(found && found.repairs.length > 0
+      ? {
+          outputRepaired: message("integrate.outputRepaired", {
+            repairs: repairSummary(found.repairs),
+          }),
+        }
+      : {}),
     output: found ? withoutCandidates(output, [found.candidate]).trim() : output,
   };
 }

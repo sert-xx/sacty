@@ -9188,6 +9188,52 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("読み取れなかった理由に、JSON の何行目の何文字目で壊れているかを残す（PBI-298）", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        unreadable(),
+        review(),
+      ]);
+      await drain(service);
+      const [failed] = failures(service, id);
+      const message = failed?.type === "FinalReviewFailed" ? failed.payload.message : undefined;
+      expect(message).toMatchObject({
+        code: "verify.finalReviewUnreadable",
+        params: { count: 1, max: 3, detail: { code: "review.unreadableAt", params: { line: 1 } } },
+      });
+      expect(ja(message)).toContain("JSON の 1 行目の");
+      // 出力が空（JSON が無い）なら、位置は付けない
+      activity.close();
+    });
+
+    it("tests の閉じ括弧が欠けた出力は、読み直しを求めずに補って読み、直したことを判定の記録に残す（PBI-298。S5 r4 の形）", async () => {
+      // 実際の出力の形：tests の閉じ括弧 } が欠けて、humanChecks と summary が tests の中に入って見える
+      const repaired = out(
+        `説明の文\n\`\`\`json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"満たす"},{"id":"TV-2","verified":true,"reason":"満たす"}],"remarks":[{"id":"requirements-1-1","notRecurred":true,"reason":"再発なし"}],"tests":{"command":"npm test","exitCode":0,"output":"2 passed","missingCommands":[],"environmentFailures":[],"otherFailures":[],"humanChecks":["実機で確かめる"],"outOfScope":[],"summary":"合格"}}\n\`\`\``,
+        700,
+      );
+      const { activity, service, executor, id } = await toImplement([implement("# v1"), repaired]);
+      await drain(service);
+      // 読み直し（FinalReviewFailed）も、実装のやり直しもなく、1回で判定が記録される
+      expect(failures(service, id)).toHaveLength(0);
+      expect(implementRuns(executor)).toBe(1);
+      const reviewed = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      expect(reviewed).toHaveLength(1);
+      const payload = reviewed[0]?.type === "FinalReviewed" ? reviewed[0].payload : undefined;
+      expect(payload).toMatchObject({
+        passed: true,
+        summary: "合格",
+        humanChecks: ["実機で確かめる"],
+        tests: { command: "npm test", exitCode: 0 },
+        outputRepaired: {
+          code: "review.outputRepaired",
+          params: { repairs: [{ kind: "brace", count: 1, key: "humanChecks" }] },
+        },
+      });
+      expect(ja(payload?.outputRepaired)).toContain("humanChecks の前に補った");
+      activity.close();
+    });
+
     it("出力が空でも、読み取れなかったものとして出し直させる", async () => {
       const { activity, service, id } = await toImplement([implement("# v1"), out(""), review()]);
       await drain(service);

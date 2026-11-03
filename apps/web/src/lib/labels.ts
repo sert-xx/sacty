@@ -639,6 +639,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.passed,
         failures,
         withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+        // 出力の JSON を直して読んだことも出す（実タスクで効いたかを確かめられるように。PBI-298）
+        event.payload.outputRepaired ? l.text(event.payload.outputRepaired) : "",
       );
     }
     case "PullRequestPublished":
@@ -835,6 +837,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           : event.payload.baseBranch,
         event.payload.repositories ? "" : event.payload.commit.slice(0, 7),
         event.payload.findings.length,
+        event.payload.outputRepaired ? l.text(event.payload.outputRepaired) : "",
       );
     case "StepCompleted":
       return e.StepCompleted(l.step[event.payload.step]);

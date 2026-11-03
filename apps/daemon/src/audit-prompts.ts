@@ -15,7 +15,16 @@ import {
   StepKey,
   type Task,
 } from "@sacty/core";
-import { explainUnreadableAnswer, headedObject, lastLenientJsonAnswer } from "./agent-json.js";
+import {
+  cut,
+  explainUnreadableAnswer,
+  headedObject,
+  lastLenientJsonAnswer,
+  safeNear,
+} from "./agent-json.js";
+
+export { cut };
+
 import {
   type ChatLogs,
   chatEventLine,
@@ -384,23 +393,6 @@ function openedMemoryLines(opened: readonly OpenedMemory[]): string[] {
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
-/** JSON のエスケープ（`\\"`・`\\n`・`\\uXXXX` など）を文字に戻す。JSON にないエスケープと、壊れた `\\u` はそのまま残す。 */
-function unescapeJson(text: string): string {
-  const simple: Record<string, string> = {
-    '"': '"',
-    "\\": "\\",
-    "/": "/",
-    b: "\b",
-    f: "\f",
-    n: "\n",
-    r: "\r",
-    t: "\t",
-  };
-  return text.replace(/\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/g, (_m, hex?: string, ch?: string) =>
-    hex ? String.fromCharCode(Number.parseInt(hex, 16)) : (simple[ch as string] as string),
-  );
-}
-
 /**
  * 出力を読めなかった理由（PBI-293）。何が読めなかったか（JSON が無い・JSON の何行目の何文字目で壊れている・形が合わない）を
  * 作業履歴に残し、AI の出力のどこが悪かったか分かるようにする。
@@ -418,12 +410,10 @@ function unreadableReason(output: string, heading: string, hide: OutputRedactor)
     case "shape":
       return message("audit.unreadableShape", { heading });
     case "broken": {
-      const decoded = unescapeJson(output);
-      const safe = hide(decoded) === decoded && hide(output) === output;
       return message("audit.unreadableAt", {
         line: why.line,
         column: why.column,
-        near: safe ? cut(hide(why.near), 80) : "",
+        near: safeNear(output, why.near, hide),
       });
     }
   }
@@ -443,18 +433,6 @@ const keep: OutputRedactor = (t) => t;
 function redacted(hide: OutputRedactor): (v: unknown) => string {
   return (v) => (typeof v === "string" ? hide(v).trim() : "");
 }
-/**
- * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
- * （PR #135 レビュー指摘）。
- */
-export function cut(v: string, max: number): string {
-  if (v.length <= max) return v;
-  let end = max - 1;
-  const last = v.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) end--;
-  return `${v.slice(0, end)}…`;
-}
-
 /** 大まかな監査の出力を読む。挙げた工程は、タスクの工程にあるものだけ（重なりは1つにし、上限まで）。 */
 export function extractAuditSurvey(
   output: string,

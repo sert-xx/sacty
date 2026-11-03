@@ -355,8 +355,8 @@ const ja = {
     TestsRun: (passed: boolean, exitCode: number, unmapped: string[]) =>
       `テストを実行：${passed ? "合格" : "不合格"}（終了コード ${exitCode}${unmapped.length > 0 ? `・テストの無い観点 ${unmapped.join(", ")}` : ""}）`,
     TestsSkipped: "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
-    FinalReviewed: (passed: boolean, failures: number, tail: string) =>
-      `最終レビュー：${passed ? "合格" : `不合格（${failures}件）`}（${tail}）`,
+    FinalReviewed: (passed: boolean, failures: number, tail: string, repaired = "") =>
+      `最終レビュー：${passed ? "合格" : `不合格（${failures}件）`}（${tail}）${repaired ? `。${repaired}` : ""}`,
     prPublished: (number: number | undefined, branch: string, commit: string) =>
       `PR を作成・更新（#${number}・${branch}・${commit}）`,
     branchPushed: (branch: string, commit: string) =>
@@ -469,8 +469,14 @@ const ja = {
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}${repos.length > 0 ? `・リポジトリ：${repos.join("・")}` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
     SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
-    IntegrationReviewed: (passed: boolean, branch: string, commit: string, findings: number) =>
-      `統合レビュー（${branch}・${commit}）：${passed ? "合格・承認待ち" : `不合格（${findings}件）`}`,
+    IntegrationReviewed: (
+      passed: boolean,
+      branch: string,
+      commit: string,
+      findings: number,
+      repaired = "",
+    ) =>
+      `統合レビュー（${branch}・${commit}）：${passed ? "合格・承認待ち" : `不合格（${findings}件）`}${repaired ? `。${repaired}` : ""}`,
     StepCompleted: (step: string) => `${step}を完了（承認なし）`,
     reproduced: (exitCode: number | undefined) =>
       `再現を確認（終了コード ${exitCode ?? "?"}）・実装へ`,
@@ -923,8 +929,8 @@ const en: LabelMessages = {
     TestsRun: (passed, exitCode, unmapped) =>
       `Tests run: ${passed ? "passed" : "failed"} (exit code ${exitCode}${unmapped.length > 0 ? ` · viewpoints without tests: ${unmapped.join(", ")}` : ""})`,
     TestsSkipped: "No test command, so the tests were skipped; on to the final review",
-    FinalReviewed: (passed, failures, tail) =>
-      `Final review: ${passed ? "passed" : `failed (${failures})`} (${tail})`,
+    FinalReviewed: (passed, failures, tail, repaired = "") =>
+      `Final review: ${passed ? "passed" : `failed (${failures})`} (${tail})${repaired ? `. ${repaired}` : ""}`,
     prPublished: (number, branch, commit) =>
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
@@ -1011,8 +1017,8 @@ const en: LabelMessages = {
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}${repos.length > 0 ? `; repositories: ${repos.join(", ")}` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
     SplitCompleted: "All subtasks are done, so the task split is complete",
-    IntegrationReviewed: (passed, branch, commit, findings) =>
-      `Integration review (${branch} · ${commit}): ${passed ? "passed · awaiting approval" : `failed (${findings})`}`,
+    IntegrationReviewed: (passed, branch, commit, findings, repaired = "") =>
+      `Integration review (${branch} · ${commit}): ${passed ? "passed · awaiting approval" : `failed (${findings})`}${repaired ? `. ${repaired}` : ""}`,
     StepCompleted: (step) => `${step} done (no approval)`,
     reproduced: (exitCode) => `Reproduced (exit code ${exitCode ?? "?"}) · on to Implement`,
     notReproduced: (detail) => `Not reproduced (${detail}) · needs you`,
