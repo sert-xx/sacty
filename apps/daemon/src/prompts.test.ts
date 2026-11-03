@@ -1518,8 +1518,14 @@ describe("成果の書き出し（PBI-56）", () => {
       exports: {},
     } as unknown as Task;
     const body = buildPullRequestBody(task);
-    expect(body).toContain(`## 変更\n\n${report}\n`);
-    // テンプレートに沿わせるときの「変更」と同じ中身
+    // 結論に載せた最初の段落（箇条書きの質問）は「変更」の節に重ねない。中身の無くなった見出しも残さない（PBI-301 A7）
+    expect(body).toContain("- 変更：決済の再試行は3回まででよいですか？");
+    expect(body).toContain(
+      "## 変更\n\n## 棚卸し\n\n| 場所 | 扱い |\n| --- | --- |\n| README.md | そのまま参照する |\n",
+    );
+    expect(body.match(/決済の再試行は3回まででよいですか？/g)).toHaveLength(1);
+    expect(body).not.toContain("## 人に確かめること");
+    // テンプレートに沿わせるときの「変更」は、全文
     expect(buildPullRequestBodyParts(task).changes).toBe(report);
     expect(buildPullRequestBody({ ...task, outputs: {} } as Task)).not.toContain("## 変更");
   });

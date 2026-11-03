@@ -183,6 +183,12 @@ import {
 import { auditTargetCandidates } from "./audit-targets.js";
 import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
 import {
+  COMMIT_CONVENTION_FILES,
+  type CommitKind,
+  commitSubject,
+  detectCommitConvention,
+} from "./commit-message.js";
+import {
   type AgentConfig,
   agentFor,
   agentSetting,
@@ -371,6 +377,7 @@ import {
   selectablePlans,
   servicePromptLines,
   skippedFilesLines,
+  verificationBasis,
   viewpointRename,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
@@ -6616,6 +6623,46 @@ export class TaskService {
     return join(this.deps.workspaceRoot, task.id, "repo");
   }
 
+  /** 起点のコミットごとの、コミットメッセージの形の定め（commitSubjectFor が読んだもの）。 */
+  private readonly commitConventions = new Map<string, boolean>();
+
+  /**
+   * sacty が作るコミットの1行目（PBI-301 A8）。リポジトリが Conventional Commits の形（Commitizen・commitlint の設定、
+   * AGENTS.md・CONTRIBUTING などの決まり）を定めているときだけ、題に種類（feat・fix・docs）を付ける。定めは起点のコミットから
+   * 読む（エージェントが書き換えた作業領域は読まない。再開しても同じコミットになる）。読めなければ、定めが無いものとして題のまま。
+   */
+  private async commitSubjectFor(task: Task, kind: CommitKind, title: string): Promise<string> {
+    const baseCommit = task.repository?.baseCommit;
+    if (!baseCommit) return title;
+    const gitDir = this.trustedGitDir(task);
+    const key = `${gitDir}@${baseCommit}`;
+    let conventional = this.commitConventions.get(key);
+    if (conventional === undefined) {
+      const files: Record<string, string | undefined> = {};
+      let unreadable = false;
+      await Promise.all(
+        COMMIT_CONVENTION_FILES.map(async (path) => {
+          try {
+            files[path] = await this.deps.repos.readFile(gitDir, baseCommit, path);
+          } catch {
+            // 読めない（大きすぎる・文字でない・git を実行できない）ものは、定めを探す材料にしない
+            unreadable = true;
+          }
+        }),
+      );
+      conventional = detectCommitConvention(files);
+      // 起点のコミットの内容は変わらないので覚える。読めないものがあった回は、覚えずに次に読み直す
+      if (!unreadable) this.commitConventions.set(key, conventional);
+    }
+    return commitSubject(title, kind, conventional);
+  }
+
+  /** 実装のコミットの種類。文書だけの依頼は docs、不具合の修正は fix、それ以外は feat。 */
+  private implementCommitKind(task: Task): CommitKind {
+    if (task.documentsOnly === true) return "docs";
+    return verificationBasis(task) === "reproduce" ? "fix" : "feat";
+  }
+
   /**
    * clone した直後の git のメタデータを退避する場所。どのコンテナにもマウントしない
    * （エージェントやテストが書き換えた git の設定を、差分を作るときに読まないため）。
@@ -9233,7 +9280,7 @@ export class TaskService {
         parent,
         files: { [path]: buildStepDocument(current, step) },
         branch,
-        message: `${buildStepPullRequestTitle(current, step)}\n\nsacty task ${current.id}`,
+        message: `${await this.commitSubjectFor(current, "docs", buildStepPullRequestTitle(current, step))}\n\nsacty task ${current.id}`,
         date: this.outputAt(current, step),
         // 新しい PR には、内容が同じでもコミットが要る（差分のコミットが無いと PR を作れない）
         allowEmpty: !reuse,
@@ -9485,7 +9532,7 @@ export class TaskService {
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        message: `${task.title}\n\nsacty task ${task.id}`,
+        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), task.title)}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
         // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
         // 内容が同じなので、そのコミットのままになる
@@ -9651,6 +9698,7 @@ export class TaskService {
     if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      const subject = await this.commitSubjectFor(task, this.implementCommitKind(task), task.title);
       const push = () =>
         this.deps.repos.publish({
           dir,
@@ -9658,7 +9706,7 @@ export class TaskService {
           baseCommit: task.repository?.baseCommit ?? parent,
           parent,
           branch,
-          message: `${task.title}\n\nsacty task ${task.id}`,
+          message: `${subject}\n\nsacty task ${task.id}`,
           // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
           date: task.lastReview?.at ?? task.createdAt,
           authEnv,

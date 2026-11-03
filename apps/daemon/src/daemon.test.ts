@@ -70,6 +70,7 @@ import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
+import { COMMIT_CONVENTION_FILES } from "./commit-message.js";
 import {
   type AgentConfig,
   agentFor,
@@ -556,7 +557,8 @@ class FakeRepos implements RepositoryWorkspace {
   readError?: string;
   readCalls: { gitDir: string; commit: string; path: string }[] = [];
   async readFile(gitDir: string, commit: string, path: string) {
-    this.readCalls.push({ gitDir, commit, path });
+    // コミットメッセージの形の定めを探す読み取り（PBI-301 A8）は、成果のファイルの読み取りの記録に入れない
+    if (!COMMIT_CONVENTION_FILES.includes(path)) this.readCalls.push({ gitDir, commit, path });
     if (this.readFail) throw new MessageError(message("git.fileNotText", { path }));
     if (this.readError) throw new Error(this.readError);
     const at = this.files[commit];
@@ -9230,7 +9232,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(body).toContain("- 変更：API・ワーカー・Web に通した");
     expect(body).toContain("## 変更\n\n# 配送先の国コードを足した");
     expect(body).toContain("- 最後の直し：c.ts の変更を外した");
-    expect(body).toContain("- API・ワーカー・Web に通した");
+    // 結論に載せた最初の段落は、「変更」の節に重ねない（PBI-301 A7）
+    expect(body.match(/API・ワーカー・Web に通した/g)).toHaveLength(1);
+    expect(body).toContain(
+      "## 変更\n\n# 配送先の国コードを足した\n\n## 検証\n\nmake test が成功した",
+    );
     expect(body).toContain("## 最後の直し\n\nc.ts の変更を外した");
     expect(body).not.toContain("最終レビューの指摘で a.ts の変更を外した");
     expect(body.match(/この環境だけの結果：/g)).toHaveLength(1);
@@ -10263,6 +10269,35 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(done?.status).toBe("idle");
     expect(service.queuedTaskIds()).toEqual([]);
     activity.close();
+  });
+
+  describe("sacty が作るコミットのメッセージを、リポジトリが定める形にする（PBI-301 A8）", () => {
+    const commitMessage = (repos: FakeRepos, id: string) =>
+      repos.published[0]?.message ?? `(${id})`;
+
+    it("Commitizen の設定があるリポジトリでは、1行目に種類を付ける。本文の sacty task の行は変えない", async () => {
+      const repos = new FakeRepos();
+      repos.files.base123 = { ".czrc": '{ "path": "cz-conventional-changelog" }' };
+      const { id } = await toImplementGate([], { repos });
+      expect(repos.published[0]?.message).toBe(`feat: 決済API\n\nsacty task ${id}`);
+    });
+
+    it("AGENTS.md が Conventional Commits を定めているときも付ける（起点のコミットの内容で決める）", async () => {
+      const repos = new FakeRepos();
+      repos.files.base123 = { "AGENTS.md": "コミットは Conventional Commits に従う" };
+      const { id } = await toImplementGate([], { repos });
+      expect(commitMessage(repos, id)).toBe(`feat: 決済API\n\nsacty task ${id}`);
+    });
+
+    it("定めが無いリポジトリ、定めを読めないリポジトリでは、今までどおり題のまま", async () => {
+      const none = new FakeRepos();
+      const a = await toImplementGate([], { repos: none });
+      expect(commitMessage(none, a.id)).toBe(`決済API\n\nsacty task ${a.id}`);
+      const unreadable = new FakeRepos();
+      unreadable.readError = "git を実行できません";
+      const b = await toImplementGate([], { repos: unreadable });
+      expect(commitMessage(unreadable, b.id)).toBe(`決済API\n\nsacty task ${b.id}`);
+    });
   });
 
   describe("実装の作り直しの間に実装の PR がマージされたら、作り直しを止めて承認として進める（PBI-276）", () => {
