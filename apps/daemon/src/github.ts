@@ -56,6 +56,11 @@ export interface PullRequests {
      * 含めない（PR の指摘の取り込み）。
      */
     includeApprovals?: boolean;
+    /**
+     * レビューが止まったことの投稿（PBI-292）を除くための、ほかに知っている sacty のアカウント（ほかのプロジェクトで選んだもの）。
+     * account と sactyReviews のアカウントに加えて、この投稿の除外にだけ使う（sacty のレビューの判定には使わない）。
+     */
+    noticeAccounts?: readonly string[];
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -82,7 +87,31 @@ export interface PullRequests {
     token: string;
     number: number;
     body: string;
+    /** 中断（PBI-292。レビューが止まったことの知らせが、処理全体の期限を超えたとき）。 */
+    signal?: AbortSignal;
   }): Promise<{ url: string }>;
+  /**
+   * Issue・PR のコメントのうち、本文が prefix で始まるもの（PBI-292。レビューが止まったことの投稿を探す）。account があれば、
+   * そのアカウントが投稿したものだけ（他人が目印を書いても、自分の投稿と見なさない）。
+   */
+  listIssueComments(input: {
+    repo: string;
+    token: string;
+    number: number;
+    prefix: string;
+    account?: string;
+    /** 中断（読み込み中のリクエストも止める）。 */
+    signal?: AbortSignal;
+  }): Promise<{ id: number; url: string; body: string }[]>;
+  /** Issue・PR のコメントの本文を直す（PBI-292。レビューが止まったことの投稿を、解消済みにする）。id は listIssueComments の答え。 */
+  editIssueComment(input: {
+    repo: string;
+    token: string;
+    id: number;
+    body: string;
+    /** 中断。 */
+    signal?: AbortSignal;
+  }): Promise<void>;
   /**
    * Org（またはユーザー）の URL の、リポジトリの URL（アーカイブしたものは除く）。プロジェクトの対象の
    * Org から、タスクの対象リポジトリを選ぶため（PBI-25）。
@@ -159,6 +188,17 @@ export const REVIEW_MARKER_PREFIX = "<!-- sacty-review:";
 /** 本文が、sacty のレビューの目印で始まるか。 */
 function isSactyReview(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_MARKER_PREFIX);
+}
+
+/**
+ * sacty のレビューが止まったことを PR に知らせる投稿の目印（PBI-292）。`<!-- sacty-review-stopped:<タスク ID>:<止まり方> -->`、
+ * 解消済みにした後は末尾が `:resolved -->`。レビューの目印（`sacty-review:`）とは別で、人間の指摘ではないので PR の指摘に取り込まない。
+ */
+export const REVIEW_STOP_MARKER_PREFIX = "<!-- sacty-review-stopped:";
+
+/** 本文が、レビューが止まったことの投稿の目印で始まるか（PBI-292）。 */
+export function isReviewStopNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(REVIEW_STOP_MARKER_PREFIX);
 }
 
 /** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
@@ -274,15 +314,30 @@ export class GitHubPullRequests implements PullRequests {
         ? round
         : undefined;
     };
+    // レビューが止まったことの投稿（PBI-292）は、sacty のタスクのアカウントが投稿した、人間の指摘ではない投稿。
+    // このタスクのアカウントと、この PR をレビューした sacty のタスクのアカウントのものだけ除く
+    const noticeAccounts = new Set(
+      [
+        input.account,
+        ...(input.sactyReviews ?? []).map((r) => r.account),
+        ...(input.noticeAccounts ?? []),
+      ].flatMap((a) => (a ? [a.toLowerCase()] : [])),
+    );
     const human = (item: Record<string, unknown>) => {
       const round = sactyRound(item);
       if (round) return round.allowed;
+      const login = user(item).login;
       return (
         user(item).type !== "Bot" &&
         !(
           input.account !== undefined &&
           user(item).login === input.account &&
           isSactyReview(item.body)
+        ) &&
+        !(
+          isReviewStopNotice(item.body) &&
+          typeof login === "string" &&
+          noticeAccounts.has(login.toLowerCase())
         )
       );
     };
@@ -376,9 +431,10 @@ export class GitHubPullRequests implements PullRequests {
     path: string,
     token: string,
     action: "getReviews" | "listIssueComments" | "listEvents",
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>[]> {
     const { api, base } = repoApi(repo);
-    return this.listAt(api, `${base}${path}`, token, action);
+    return this.listAt(api, `${base}${path}`, token, action, signal);
   }
 
   /** API の URL の一覧を、すべてのページから読む。 */
@@ -387,6 +443,7 @@ export class GitHubPullRequests implements PullRequests {
     first: string,
     token: string,
     action: "getReviews" | "listIssueComments" | "listRepositories" | "listEvents",
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -396,7 +453,7 @@ export class GitHubPullRequests implements PullRequests {
     const all: Record<string, unknown>[] = [];
     let url: string | undefined = first;
     for (let page = 0; url && page < MAX_PAGES; page++) {
-      const res = await this.fetchImpl(url, { headers });
+      const res = await this.fetchImpl(url, { headers, ...(signal ? { signal } : {}) });
       const json = (await res.json().catch(() => ({}))) as unknown;
       if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
@@ -433,11 +490,53 @@ export class GitHubPullRequests implements PullRequests {
           "content-type": "application/json",
         },
         body: JSON.stringify({ body: input.body }),
+        ...(input.signal ? { signal: input.signal } : {}),
       },
     );
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("commentIssue", res.status, json);
     return { url: String(json.html_url ?? "") };
+  }
+
+  async listIssueComments(input: Parameters<PullRequests["listIssueComments"]>[0]) {
+    const comments = await this.list(
+      input.repo,
+      `/issues/${input.number}/comments?per_page=100`,
+      input.token,
+      "listIssueComments",
+      input.signal,
+    );
+    return comments.flatMap((c) => {
+      const login = (c.user as { login?: unknown } | null)?.login;
+      if (
+        typeof c.body !== "string" ||
+        typeof c.id !== "number" ||
+        !c.body.trimStart().startsWith(input.prefix) ||
+        (input.account !== undefined &&
+          (typeof login !== "string" || login.toLowerCase() !== input.account.toLowerCase()))
+      ) {
+        return [];
+      }
+      return [{ id: c.id, url: String(c.html_url ?? ""), body: c.body }];
+    });
+  }
+
+  async editIssueComment(input: Parameters<PullRequests["editIssueComment"]>[0]) {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/issues/comments/${input.id}`, {
+      method: "PATCH",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ body: input.body }),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (!res.ok) {
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      throw apiError("editIssueComment", res.status, json);
+    }
   }
 
   async repositories(input: Parameters<PullRequests["repositories"]>[0]): Promise<string[]> {
@@ -812,6 +911,7 @@ export function apiError(
     | "getPr"
     | "getReviews"
     | "commentIssue"
+    | "editIssueComment"
     | "listIssueComments"
     | "listRepositories"
     | "postReview"

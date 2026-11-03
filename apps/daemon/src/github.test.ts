@@ -1159,6 +1159,142 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
 describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
   const pr = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
 
+  describe("レビューが止まったことの投稿（PBI-292）", () => {
+    const notice = (task: string, key = "k1", state = "") =>
+      `<!-- sacty-review-stopped:${task}:${key}${state} -->\n## Sacty のレビューが止まりました`;
+    const comment = (id: number, login: string, body: string) => ({
+      id,
+      user: { login, type: "User" },
+      body,
+      html_url: `https://github.com/acme/app/pull/7#issuecomment-${id}`,
+      created_at: `2026-11-03T03:18:0${id}Z`,
+    });
+
+    it("目印で始まる、自分のアカウントのコメントだけを探す（他人が目印を書いても、引用しても対象にしない）", async () => {
+      const { impl, calls } = fakeFetch([
+        {
+          status: 200,
+          json: [
+            comment(1, "Sacty-Bot", notice("t1")),
+            comment(2, "someone", notice("t1")),
+            comment(3, "sacty-bot", `> ${notice("t1")}\n引用`),
+            comment(4, "sacty-bot", notice("t10")),
+            comment(5, "sacty-bot", notice("t1", "k1", ":resolved")),
+            comment(6, "sacty-bot", "ふつうのコメント"),
+          ],
+        },
+      ]);
+      const found = await new GitHubPullRequests(impl).listIssueComments({
+        ...pr,
+        prefix: "<!-- sacty-review-stopped:t1:",
+        account: "sacty-bot",
+      });
+      expect(found.map((c) => c.id)).toEqual([1, 5]);
+      expect(found[0]).toMatchObject({
+        url: "https://github.com/acme/app/pull/7#issuecomment-1",
+        body: notice("t1"),
+      });
+      expect(calls[0]?.url).toBe(
+        "https://api.github.com/repos/acme/app/issues/7/comments?per_page=100",
+      );
+    });
+
+    it("コメントの本文を直す（失敗したら理由を返す）", async () => {
+      const { impl, calls } = fakeFetch([
+        { status: 200, json: {} },
+        { status: 403, json: { message: "Resource not accessible" } },
+      ]);
+      const client = new GitHubPullRequests(impl);
+      await client.editIssueComment({ repo: pr.repo, token: pr.token, id: 31, body: "解消済み" });
+      expect(calls).toEqual([
+        {
+          url: "https://api.github.com/repos/acme/app/issues/comments/31",
+          method: "PATCH",
+          body: { body: "解消済み" },
+          auth: "Bearer ghp_secret",
+        },
+      ]);
+      const error = await client
+        .editIssueComment({ repo: pr.repo, token: pr.token, id: 31, body: "x" })
+        .catch((e: unknown) => e);
+      expect(errorText(error)).toMatchObject({
+        code: "github.failed",
+        params: { action: "editIssueComment", status: 403 },
+      });
+    });
+
+    it("sacty のタスクのアカウントが投稿した止まったことの投稿は、PR の指摘に取り込まない（人間のコメントは取り込む）", async () => {
+      const { impl } = fakeFetch([
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", notice("t1")),
+            comment(2, "Review-Bot", notice("t2", "k", ":resolved")),
+            comment(3, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(4, "mallory", notice("t1")),
+          ],
+        },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+        sactyReviews: [{ key: "t2", account: "review-bot", allowed: false }],
+      });
+      expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4"]);
+    });
+
+    it("中断の印（signal）を通信に渡す：中断された一覧の取得・投稿・書き換えは、リクエストの途中で止まる", async () => {
+      const seen: (AbortSignal | undefined)[] = [];
+      const impl = (async (_url: string, init: RequestInit) => {
+        seen.push(init.signal ?? undefined);
+        if (init.signal?.aborted) throw init.signal.reason;
+        return new Response("[]", { status: 200 });
+      }) as unknown as typeof fetch;
+      const client = new GitHubPullRequests(impl);
+      const controller = new AbortController();
+      const base = { repo: pr.repo, token: pr.token, signal: controller.signal };
+      await client.listIssueComments({ ...base, number: 7, prefix: "x" });
+      await client.commentIssue({ ...base, number: 7, body: "b" });
+      await client.editIssueComment({ ...base, id: 1, body: "b" });
+      expect(seen).toEqual([controller.signal, controller.signal, controller.signal]);
+      controller.abort(new Error("期限"));
+      await expect(client.listIssueComments({ ...base, number: 7, prefix: "x" })).rejects.toThrow(
+        "期限",
+      );
+      await expect(client.commentIssue({ ...base, number: 7, body: "b" })).rejects.toThrow("期限");
+      await expect(client.editIssueComment({ ...base, id: 1, body: "b" })).rejects.toThrow("期限");
+    });
+
+    it("ほかに知っている sacty のアカウント（noticeAccounts）の止まったことの投稿も除く（それ以外のコメントは除かない）", async () => {
+      const comments = [
+        comment(1, "other-project-bot", notice("t3")),
+        comment(2, "alice", "人間のコメント"),
+        comment(3, "other-project-bot", "同じアカウントの、目印の無いコメント"),
+      ];
+      const read = (extra?: string[]) =>
+        new GitHubPullRequests(
+          fakeFetch([
+            { status: 200, json: [] },
+            { status: 200, json: [] },
+            { status: 200, json: comments },
+          ]).impl,
+        ).feedback({
+          ...pr,
+          account: "sacty-bot",
+          ...(extra ? { noticeAccounts: extra } : {}),
+        });
+      expect((await read(["Other-Project-Bot"])).map((f) => f.key)).toEqual([
+        "comment:2",
+        "comment:3",
+      ]);
+      // 渡さなければ、知らない人のコメントとして取り込む
+      expect((await read()).map((f) => f.key)).toEqual(["comment:1", "comment:2", "comment:3"]);
+    });
+  });
+
   it("取り込むラベルを付けたレビューのタスクの、sacty のレビューと行へのコメントは、PR の指摘として取り込む（ほかのタスクのものは除く）", async () => {
     const me = { login: "sacty-bot", type: "User" };
     const at = (n: number) => `2026-10-11T00:00:0${n}Z`;

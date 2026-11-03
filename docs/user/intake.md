@@ -1,4 +1,4 @@
-<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/review-stop-notice.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
 
 **日本語** | [English](intake.en.md)
 
@@ -88,6 +88,12 @@ PR は、レビューだけを任せる形で取り込みます（「Sacty の�
   - 指摘の頭には、マージの前に直すべきものは `[要修正]`、直すとよいものは `[提案]` が付きます。
   - sacty が付ける見出し・判定・頭は日本語です。
     指摘の文は、リポジトリの文章の決まりに合わせます（決まりが無ければ日本語です）。
+- レビューが止まったとき（エラー・AI の利用上限・認証エラー・予算の上限）は、レビューを頼んだ PR にも、止まったこと・理由の要点・再開のしかた（タスクの画面へのリンク）をコメントで知らせます。
+  - 画面でそのタスクを開いて「再開する」を押すと、止まった処理から続けます（レビューの実行で止まっていれば実行し直し、投稿で止まっていれば書いたレビューを投稿し直します）。
+  - 同じ理由で止まっても、同じ PR に何度もは書きません。違う理由で止まったときは、別のコメントを書きます。
+  - 再開してレビューを投稿すると、止まったことのコメントは「解消済み」に書き換わります。
+  - あなたが一時停止したときは書きません。PR に書けなかったときも、タスクは止まったままです（画面と Slack の通知は、これとは別に届きます）。
+  - モデルの混雑のような一時的な失敗でも、自動ではやり直しません。代わりのエージェントを書いておくと、止めずに切り替えます（[失敗したときの切り替え](config.md#失敗したときの切り替え)）。
 - レビューしている間に PR に push されたときは、レビューしたコミットに対して投稿し、どのコミットのレビューかを本文に書きます。
 - 新しいコミットが積まれたら、タスクの詳細の「再レビュー」で、最新のコミットをもう一度レビューして投稿します。
   - レビューの依頼で取り込んだ PR は、GitHub でレビューを再依頼（Re-request review）すると、Sacty が次の取り込みで見つけて、同じプロジェクトに新しいレビュータスクを作ります。

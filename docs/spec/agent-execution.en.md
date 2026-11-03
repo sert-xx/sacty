@@ -119,6 +119,9 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - In the following cases, the task stops as before.
   - A person paused or cancelled the task.
   - There is no fallback, or none is usable (including those already tried).
+- Even for a temporary failure (such as a busy model), sacty has no process that waits and retries with the same agent.
+  With no fallback, the task stops and waits until a person resumes it.
+  When a Sacty review task stops, sacty also tells the PR that asked for the review ([Telling the PR when a review stops](intake.en.md#telling-the-pr-when-a-review-stops)).
 - Exports, the post-merge watch, audits, and answers to questions handle the failure as before and use the fallback agent from the next run (only at a usage limit).
 - sacty also retrieves the secrets of fallback agents together at startup (`secretUses`).
 

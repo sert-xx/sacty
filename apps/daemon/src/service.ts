@@ -373,6 +373,16 @@ import {
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import {
+  buildResolvedNotice,
+  buildStopNotice,
+  isOpenStopNotice,
+  notifiesReviewStop,
+  stopKey,
+  stopMarker,
+  stopMarkerOfTask,
+  stopSummary,
+} from "./review-stop-notice.js";
 import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
@@ -647,6 +657,16 @@ export type ServiceDeps = {
     Partial<Pick<SlackNotifier, "settingsChanged">>;
   /** 画面のデスクトップ通知のための、最近の通知の一覧。無ければ持たない。 */
   feed?: Pick<NotificationFeed, "add" | "since">;
+  /**
+   * 起動した画面の URL（PBI-292。レビューが止まったことを PR に知らせる投稿に、タスクの画面へのリンクとして入れる）。
+   * 無ければ http://127.0.0.1:4700。
+   */
+  webUrl?: string;
+  /**
+   * レビューが止まったことの PR への知らせ（投稿・解消済みへの書き換え）の、処理全体の期限（ミリ秒。PBI-292）。既定は 30 秒。
+   * 超えたら通信も止めて、警告にして終える（実行の枠を放す）。
+   */
+  stopNoticeTimeoutMs?: number;
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -3089,6 +3109,8 @@ export class TaskService {
       token,
       number: target.number,
       ...(account ? { account } : {}),
+      // レビューが止まったことの投稿（PBI-292）を除くために、ほかのプロジェクトで選んだ同じホストのアカウントも渡す
+      noticeAccounts: this.githubAccountsOnHost(target.repo),
       // 本文のある承認（「承認するが、ここは直してほしい」）も、既存の指摘として渡す（PR #161 レビュー指摘）
       includeApprovals: true,
     });
@@ -3174,6 +3196,17 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
     this.append(latest, [{ actor: "sacty", event }]);
+    // 前に止まったときの、PR の知らせの投稿を解消済みにする（PBI-292）
+    if (event.type === "PullRequestReviewPosted") {
+      await this.resolveReviewStops(
+        {
+          taskId: task.id,
+          projectId: task.projectId,
+          target: { repo: target.repo, number: target.number },
+        },
+        event.payload.url,
+      );
+    }
   }
 
   /**
@@ -5513,7 +5546,210 @@ export class TaskService {
       // 画面のデスクトップ通知（画面が取り直す）。Slack の On/Off によらず持つ
       this.deps.feed?.add(updated, kind);
     }
+    // Sacty のレビューが止まったら、レビューを頼んだ PR にも知らせる（PBI-292。送るのは待たない）
+    if (
+      updated.status === "paused" &&
+      before?.status !== "paused" &&
+      notifiesReviewStop(updated.pausedReason)
+    ) {
+      this.announceReviewStop(updated);
+    }
     return updated;
+  }
+
+  /**
+   * Sacty のレビューのタスク（PR のレビューの取り込みと、レビューの対象を決めたタスク）が、レビューを投稿する前に止まったときの、
+   * レビューを頼んだ PR。それ以外は undefined（PBI-292）。
+   */
+  private reviewStopTarget(task: Task): { repo: string; number: number } | undefined {
+    if (task.reviewPost) return undefined;
+    if (task.reviewTarget)
+      return { repo: task.reviewTarget.repo, number: task.reviewTarget.number };
+    const source = task.source;
+    return source?.kind === "github_pull_request" && source.review
+      ? { repo: source.repo, number: source.number }
+      : undefined;
+  }
+
+  /** 止まった理由の元の文（一時停止の説明。無ければ、直前に失敗した実行・オーケストレーターの説明）。 */
+  private stopReasonText(task: Task): DaemonText | undefined {
+    if (task.pausedMessage !== undefined) return task.pausedMessage;
+    const events = this.deps.activity.forTask(task.id);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (!event) continue;
+      if (event.type === "AgentRunFailed" || event.type === "OrchestratorFailed") {
+        return event.payload.message;
+      }
+      if (event.type === "TaskResumed" || event.type === "AgentRunStarted") return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * タスクごとの、止まったことの知らせの投稿の最後の処理（PBI-292）。知らせは同じタスクで順に処理する（同時に二つ進めない）。
+   * 解消済みへの書き換えは、これが終わるのを待ってから対象を取る（投稿の最中に再開・レビューの投稿が終わっても、後から
+   * できた知らせを取りこぼさない）。
+   */
+  private readonly stopNotices = new Map<string, Promise<void>>();
+  /** タスクごとの、知らせの通信を止める印（解消が期限を超えたとき、まだ終わっていない知らせの通信を止めて、後から投稿させない）。 */
+  private readonly stopNoticeAborts = new Map<string, AbortController>();
+
+  /** 知らせの処理全体の期限（PBI-292）。 */
+  private stopNoticeDeadline(): AbortSignal {
+    return AbortSignal.timeout(this.deps.stopNoticeTimeoutMs ?? 30_000);
+  }
+
+  /**
+   * Sacty のレビューが止まったことを PR に知らせる処理を、そのタスクの順番の最後に足す。止まった時点の理由と説明は、ここで
+   * 持つ（待っている間にまた止まっても、それぞれの停止の理由を知らせる）。知らせる対象でなければ何もしない。
+   */
+  private announceReviewStop(task: Task): void {
+    const target = this.reviewStopTarget(task);
+    const reason = task.pausedReason;
+    if (!target || !reason || !notifiesReviewStop(reason)) return;
+    const stop = {
+      taskId: task.id,
+      projectId: task.projectId,
+      reason,
+      text: this.stopReasonText(task),
+      target,
+    };
+    const abort = this.stopNoticeAborts.get(task.id) ?? new AbortController();
+    this.stopNoticeAborts.set(task.id, abort);
+    // 前の処理が無ければすぐ始める（一時停止の状態を読むのを、遅らせない）
+    const previous = this.stopNotices.get(task.id);
+    const run = previous
+      ? previous.then(() => this.postReviewStopNotice(stop))
+      : this.postReviewStopNotice(stop);
+    this.stopNotices.set(task.id, run);
+    void run.finally(() => {
+      if (this.stopNotices.get(task.id) !== run) return;
+      this.stopNotices.delete(task.id);
+      this.stopNoticeAborts.delete(task.id);
+    });
+  }
+
+  /**
+   * Sacty のレビューが止まったことを、レビューを頼んだ PR にコメントする（PBI-292）。同じ止まり方（理由と要点が同じ）で、
+   * まだ解消していない投稿が PR にあれば、書かない。投稿できなくても、タスクの一時停止は変えない（例外は投げない）。
+   */
+  private async postReviewStopNotice(stop: {
+    taskId: string;
+    projectId: string;
+    reason: PauseReason;
+    text: DaemonText | undefined;
+    target: { repo: string; number: number };
+  }): Promise<void> {
+    const { taskId, reason, target } = stop;
+    const usedSecrets: string[] = [];
+    // 処理全体の期限か、解消が期限を超えて待てなくなったとき、通信ごと止める（止めずに待ちだけ切ると、遅れて投稿される）
+    const abort = this.stopNoticeAborts.get(taskId);
+    const signal = AbortSignal.any([this.stopNoticeDeadline(), ...(abort ? [abort.signal] : [])]);
+    try {
+      // 待っている間に再開・中止された（今は止まっていない）なら、書かない
+      if (this.tasks.get(taskId)?.status !== "paused") return;
+      const project = this.deps.projects.get(stop.projectId);
+      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
+      // GitHub のアカウントを選んでいないプロジェクトでは、PR に書けない（画面と Slack で知らせる）
+      if (!account) return;
+      const token = await untilAborted(
+        signal,
+        this.githubToken(stop, target.repo, usedSecrets, project),
+      );
+      const summary = stopSummary(stop.text, usedSecrets);
+      const key = stopKey(reason, summary);
+      const pr = { repo: target.repo, token, number: target.number };
+      const same = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({
+          ...pr,
+          prefix: stopMarker(taskId, key),
+          account,
+          signal,
+        }),
+      );
+      if (same.length > 0) return;
+      // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
+      if (this.tasks.get(taskId)?.status !== "paused") return;
+      const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+      await untilAborted(
+        signal,
+        this.deps.pulls.commentIssue({
+          ...pr,
+          body: buildStopNotice({
+            taskId,
+            reason,
+            summary,
+            taskUrl: `${base}/tasks/${taskId}`,
+          }),
+          signal,
+        }),
+      );
+    } catch (error) {
+      console.warn(
+        `[daemon] タスク ${taskId} のレビューが止まったことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+  }
+
+  /**
+   * レビューを投稿したら、そのタスクの、止まったことの投稿（解消前のもの）を解消済みに直す（PBI-292）。直せなくても、
+   * タスクの完了は変えない。対象のタスクと PR は呼ぶ側が持つ（投稿の最中の知らせを待つ間に「再レビュー」が始まると、
+   * タスクの状態から対象の PR が消えるため）。
+   */
+  private async resolveReviewStops(
+    posted: { taskId: string; projectId: string; target: { repo: string; number: number } },
+    reviewUrl: string,
+  ): Promise<void> {
+    const { taskId, target } = posted;
+    const usedSecrets: string[] = [];
+    // 待ちも通信も、1つの期限の中で行う。超えたら、まだ終わっていない知らせの通信も止める（後から投稿させない）
+    const signal = this.stopNoticeDeadline();
+    try {
+      // 投稿の最中の知らせがあれば、できあがるのを待ってから、解消する対象を取る
+      await untilAborted(signal, this.stopNotices.get(taskId) ?? Promise.resolve());
+      const project = this.deps.projects.get(posted.projectId);
+      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
+      if (!account) return;
+      const token = await untilAborted(
+        signal,
+        this.githubToken(posted, target.repo, usedSecrets, project),
+      );
+      const pr = { repo: target.repo, token, number: target.number };
+      const notices = await untilAborted(
+        signal,
+        this.deps.pulls.listIssueComments({
+          ...pr,
+          prefix: stopMarkerOfTask(taskId),
+          account,
+          signal,
+        }),
+      );
+      for (const notice of notices.filter((n) => isOpenStopNotice(n.body))) {
+        await untilAborted(
+          signal,
+          this.deps.pulls.editIssueComment({
+            repo: target.repo,
+            token,
+            id: notice.id,
+            body: buildResolvedNotice(notice.body, reviewUrl),
+            signal,
+          }),
+        );
+      }
+    } catch (error) {
+      // 期限を超えて待てなかったなら、まだ終わっていない知らせの通信も止める（後から投稿されて、解消されないまま残らないように）
+      if (signal.aborted) {
+        // 止めるのは今ある知らせの通信だけ。このあと止まったときの知らせは、新しい印で書けるようにする
+        const pending = this.stopNoticeAborts.get(taskId);
+        if (pending) this.stopNoticeAborts.set(taskId, new AbortController());
+        pending?.abort();
+      }
+      console.warn(
+        `[daemon] タスク ${taskId} のレビューが止まったことの投稿を解消済みにできませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
   }
 
   /**
@@ -6618,6 +6854,19 @@ export class TaskService {
     const bound = new Set(hosts);
     if (host && bound.has(host)) return host;
     return bound.has("github.com") ? "github.com" : (hosts[0] ?? "github.com");
+  }
+
+  /** すべてのプロジェクトで、url のホストに選んだ gh のアカウント（重複なし）。 */
+  private githubAccountsOnHost(url: string): string[] {
+    const host = httpsHost(`${url}/`) ?? "";
+    return [
+      ...new Set(
+        this.deps.projects.all().flatMap((p) => {
+          const account = p.githubAccounts?.[host];
+          return account ? [account] : [];
+        }),
+      ),
+    ];
   }
 
   /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */
@@ -13758,4 +14007,20 @@ function notConfirmed(outcome: AgentOutcome): boolean {
     typeof outcome.message === "object" &&
     outcome.message.code === "run.containerNotConfirmed"
   );
+}
+
+/**
+ * signal が中断されたら、work の結果を待たずに、中断の理由で失敗する（PBI-292。通信が signal を無視しても、待ちから戻れるように）。
+ * 中断した後の work の失敗は、ここでは扱わない（呼ぶ側が、signal を通信に渡して止める）。
+ */
+function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
+  if (signal.aborted) {
+    work.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
