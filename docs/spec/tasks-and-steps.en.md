@@ -305,7 +305,16 @@ When any of the following applies, Requirements is kept (`skip-design` or `stand
 - The request conflicts with a document, the code, or an existing policy.
 - There is a judgment the request does not state (compatibility, how to delete, the scope, and so on) that a person should confirm.
 - Something the requester may have forgotten to write, or a collision with another task or PR that changes the same place, is visible (from the gathered information, and so on).
-- The change puts a new meaning on an existing shared state or field (a flag, a column, the kinds of a state), adds a state, or changes the name or shape of a published API or field (it may conflict with other features or with the side that uses it).
+- The change puts a new meaning on an existing shared state or field (a flag, a column, the kinds of a state) or adds a state. This applies even when the request tells it to use an existing flag, if the flag would carry a different meaning (another task may use the same flag for another meaning).
+- The change needs a change to the name or shape of a published API or field that the acceptance criteria do not state, or a person should confirm a conflict with the side that uses it (it may conflict with other features or with that side).
+
+The following do not count as reasons to keep it.
+
+- The acceptance criteria clearly state the change to a published API or field (the new name, shape, whether it is required, how errors are handled), and nothing is left for a person to confirm about a conflict with the side that uses it. "Changes the name or shape of a published API or field" is not a reason to keep Requirements, because the request itself decides the change.
+  - A change such as a rename, where the request does not settle what happens to the existing side that uses it (keep the old name, or migrate), is not clearly stated.
+  - When the gathered information says the side that uses it may stop working because of the change and the acceptance criteria do not settle how to handle it, there is something for a person to confirm, so Requirements is kept.
+  - When any other condition for keeping Requirements applies (such as a new meaning on a shared state), it is kept.
+- Fine defaults remaining (whitespace, limits, ordering, the position of a column or field, what the tests for error cases contain, how empty input is handled, and so on). The implementation decides them and a person confirms them in the PR under "既定で決めたこと".
 
 When it chooses `direct`, `reason` is to state why Requirements was skipped (which acceptance criteria are in place and why nothing is left for a person to confirm). It stays in the work history (`StepsChosen`) as the reason for the plan.
 An implementation without Requirements decides fine defaults the request does not settle by following the existing implementation and conventions, and writes them one per line in a separate "既定で決めたこと" (decided by default) section of the implementation notes (put in the PR body, so a person confirms them in the PR). When the request lists acceptance criteria, it checks that each is met (`directImplementLines`).
