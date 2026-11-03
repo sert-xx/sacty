@@ -335,6 +335,65 @@ describe("深掘りの出力の崩れ（PBI-293）", () => {
     const read = extractAuditDive(long, context);
     const params = !read.ok && typeof read.reason === "object" ? read.reason.params : undefined;
     expect(typeof params?.near === "string" && params.near.length <= 80).toBe(true);
+    expect(params?.near).not.toBe("");
+  });
+
+  it("桁は JSON の行の頭から数える：同じ行に前置きがあっても足さない", () => {
+    const broken = '{"sacty-audit-findings": {"summary": "x" "findings": []}}';
+    const column = (output: string) => {
+      const read = extractAuditDive(output, context);
+      return !read.ok && typeof read.reason === "object" ? read.reason.params?.column : undefined;
+    };
+    expect(column(broken)).toBe(column(`結果: ${broken}`));
+    expect(column(`結果です。長い前置き\n${broken}`)).toBe(column(broken));
+  });
+
+  describe("壊れた所の前後に、エスケープされた秘密情報を残さない", () => {
+    // 呼び出し側（service）の hide と同じ：既知の秘密情報の値を、生の文字列で伏せる
+    const secret = 'sk"live\\key\nvalue-with-quote"and-more';
+    const hide = (t: string) => t.split(secret).join("[伏せた値]");
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    const near = (output: string) => {
+      const read = extractAuditDive(hide(output), context, hide);
+      return !read.ok && typeof read.reason === "object" ? read.reason.params : undefined;
+    };
+
+    it("JSON の中でエスケープされた値は、生の文字列では伏せられないので、前後の文字を残さず位置だけにする", () => {
+      const output = `{"sacty-audit-findings": {"summary": "鍵は ${escaped} です" "findings": []}}`;
+      expect(hide(output)).toBe(output); // 呼び出し側の hide は、エスケープされた値を伏せられない
+      const params = near(output);
+      expect(params).toMatchObject({ near: "" });
+      expect(params?.line).toBe(1);
+      expect(JSON.stringify(params)).not.toContain("live");
+      expect(JSON.stringify(params)).not.toContain("value-with-quote");
+    });
+
+    it("切り取りの境界をまたぐ値でも、断片を残さない（全体で確かめてから切る）", () => {
+      // 壊れた所から 30 文字より離れた所に値があり、切り取りの窓が値の途中で終わる
+      const output = `{"sacty-audit-findings": {"summary": "鍵 ${escaped}${"あ".repeat(20)}" "findings": []}}`;
+      const params = near(output);
+      expect(params).toMatchObject({ near: "" });
+      expect(JSON.stringify(params)).not.toContain("live");
+      expect(JSON.stringify(params)).not.toContain("value-with");
+    });
+
+    it("生の文字列の値は伏せたうえで、前後を残す。値が無ければ前後も残す", () => {
+      const raw = `{"sacty-audit-findings": {"summary": "鍵 ${secret} です" "findings": []}}`;
+      const params = near(raw);
+      expect(JSON.stringify(params)).not.toContain("live");
+      expect(params?.near).toContain("[伏せた値]");
+      expect(near('{"sacty-audit-findings": {"summary": "x" "findings": []}}')?.near).toContain(
+        '"summary": "x"',
+      );
+    });
+
+    it("大まかな監査の出力でも同じ", () => {
+      const output = `{"sacty-audit-survey": {"summary": "鍵 ${escaped}" "concerns": []}}`;
+      const read = extractAuditSurvey(hide(output), task, hide);
+      expect(read.ok).toBe(false);
+      expect(JSON.stringify(read)).not.toContain("live");
+      expect(!read.ok && read.reason).toMatchObject({ params: { near: "" } });
+    });
   });
 
   it("答えが2つあれば、後ろの答えを使う：後ろが壊れていれば直して読み、前が壊れていて後ろが正しければ後ろ", () => {

@@ -384,23 +384,48 @@ function openedMemoryLines(opened: readonly OpenedMemory[]): string[] {
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
+/** JSON のエスケープ（`\\"`・`\\n`・`\\uXXXX` など）を文字に戻す。JSON にないエスケープと、壊れた `\\u` はそのまま残す。 */
+function unescapeJson(text: string): string {
+  const simple: Record<string, string> = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+  };
+  return text.replace(/\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/g, (_m, hex?: string, ch?: string) =>
+    hex ? String.fromCharCode(Number.parseInt(hex, 16)) : (simple[ch as string] as string),
+  );
+}
+
 /**
  * 出力を読めなかった理由（PBI-293）。何が読めなかったか（JSON が無い・JSON の何行目の何文字目で壊れている・形が合わない）を
- * 作業履歴に残し、AI の出力のどこが悪かったか分かるようにする。壊れた所の前後は、呼び出し側が伏せた出力から取る。
+ * 作業履歴に残し、AI の出力のどこが悪かったか分かるようにする。
+ *
+ * 壊れた所の前後（near）は、出力から切り取る。呼び出し側は出力を、秘密情報の値を生の文字列で伏せているが、JSON の中の値は
+ * 引用符・改行などがエスケープされていて一致しないことがある。そこで、エスケープを戻した出力の全体を hide にかけ、
+ * 伏せる所があれば（エスケープされた秘密情報が出力にある）、前後の文字は残さず、位置だけにする。全体で確かめてから切るので、
+ * 切り取りの境界をまたぐ値も漏れない。
  */
-function unreadableReason(output: string, heading: string): DaemonText {
+function unreadableReason(output: string, heading: string, hide: OutputRedactor): DaemonText {
   const why = explainUnreadableAnswer(output, heading);
   switch (why.kind) {
     case "missing":
       return message("audit.unreadable");
     case "shape":
       return message("audit.unreadableShape", { heading });
-    case "broken":
+    case "broken": {
+      const decoded = unescapeJson(output);
+      const safe = hide(decoded) === decoded && hide(output) === output;
       return message("audit.unreadableAt", {
         line: why.line,
         column: why.column,
-        near: cut(why.near, 80),
+        near: safe ? cut(hide(why.near), 80) : "",
       });
+    }
   }
 }
 
@@ -464,7 +489,7 @@ export function extractAuditSurvey(
       ...surveyPromotions(v, promotion, str),
     };
   });
-  if (!found) return { ok: false, reason: unreadableReason(output, AUDIT_SURVEY_HEADING) };
+  if (!found) return { ok: false, reason: unreadableReason(output, AUDIT_SURVEY_HEADING, hide) };
   return { ok: true, ...found.value, concerns: found.value.concerns.slice(0, AUDIT_MAX_CONCERNS) };
 }
 
@@ -683,7 +708,7 @@ export function extractAuditDive(
       memories: diveMemories(v.memories, context, str),
     };
   });
-  if (!found) return { ok: false, reason: unreadableReason(output, AUDIT_FINDINGS_HEADING) };
+  if (!found) return { ok: false, reason: unreadableReason(output, AUDIT_FINDINGS_HEADING, hide) };
   return { ok: true, ...found.value, findings: found.value.findings.slice(0, AUDIT_MAX_FINDINGS) };
 }
 

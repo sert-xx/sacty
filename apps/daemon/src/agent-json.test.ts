@@ -435,6 +435,24 @@ describe("崩れた JSON の寛容な読み取り（PBI-293）", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
+  it("閉じない文字列と見出しが繰り返される出力でも、時間が出力の長さに比例する", () => {
+    // 候補ごとに末尾まで読み直すと、出力の長さの2乗の時間がかかる（136,000 文字で数秒）
+    const output = '{"h": {"a": "'.repeat(10_000);
+    const started = Date.now();
+    expect(read(output)).toBeUndefined();
+    expect(explainUnreadableAnswer(output, "h").kind).toBe("broken");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("桁は JSON の行の頭から数える：同じ行の前置きの長さを足さない", () => {
+    expect(explainUnreadableAnswer('{\n"h": {"a": [1 2]}}', "h")).toMatchObject({
+      line: 2,
+      column: 15,
+    });
+    const plain = explainUnreadableAnswer('{"h": {"a": [1 2]}}', "h");
+    expect(explainUnreadableAnswer('結果: {"h": {"a": [1 2]}}', "h")).toEqual(plain);
+  });
+
   it("読めなかった理由：JSON が無い・壊れている位置・形", () => {
     expect(explainUnreadableAnswer("なし", "h")).toEqual({ kind: "missing" });
     expect(explainUnreadableAnswer('{"h": {"a": 1}}', "h")).toEqual({ kind: "shape" });

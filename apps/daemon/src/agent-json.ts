@@ -403,11 +403,19 @@ function objectClose(output: string, open: number, fenced: boolean): number {
 
 /* ---- 崩れた JSON の寛容な読み取り（PBI-293） ---- */
 
-/** 寛容な読み取りが JSON として読めなかった位置（出力の先頭からの文字数）。 */
+/** 寛容な読み取りが JSON として読めなかった位置（出力の先頭からの文字数。走査量の上限で止めたときは、止めた位置）。 */
 class LenientError extends Error {
   constructor(readonly at: number) {
     super(`unreadable at ${at}`);
   }
+}
+
+/**
+ * 寛容な読み取りの走査量の上限（文字・値の数）。閉じない文字列と見出しが繰り返される出力では、候補ごとに末尾まで読むので、
+ * 上限が無いと出力の長さの2乗の時間がかかり、同期処理のデーモンが止まる。1回の呼び出しの全候補で共有し、出力の長さに比例させる。
+ */
+function lenientBudget(output: string): { left: number } {
+  return { left: 4 * output.length + 100_000 };
 }
 
 /** 入れ子の深さの上限（再帰を使うので、深すぎる出力は読めないものとして止める）。 */
@@ -442,6 +450,7 @@ const LENIENT_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 function parseLenient(
   output: string,
   open: number,
+  budget: { left: number } = lenientBudget(output),
 ): { value: Record<string, unknown>; end: number } {
   let p = open;
   const length = output.length;
@@ -461,6 +470,7 @@ function parseLenient(
     let result = "";
     let i = p + 1;
     for (; i < length; i++) {
+      if (--budget.left < 0) throw new LenientError(start);
       const c = output[i] as string;
       if (c === '"') {
         if (follows(after, i + 1)) {
@@ -486,6 +496,7 @@ function parseLenient(
     throw new LenientError(start);
   };
   const value = (depth: number, after: RegExp): unknown => {
+    if (--budget.left < 0) throw new LenientError(p);
     skipSpace();
     const c = output[p];
     if (c === "{" || c === "[") {
@@ -575,7 +586,7 @@ function parseLenient(
 }
 
 /** 見出し heading を最初のキーに持つ「{」の位置を、出てきた順にすべて返す（前の報告の中にあるものは除く）。 */
-function headingOpens(output: string, heading: string): number[] {
+function headingOpens(output: string, heading: string, budget = lenientBudget(output)): number[] {
   const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
   const opens: number[] = [];
   let skipUntil = 0;
@@ -587,7 +598,7 @@ function headingOpens(output: string, heading: string): number[] {
     opens.push(open - 1);
     // 読めた報告の中のキーは数えない。読めなければ、次の候補を妨げない
     try {
-      skipUntil = parseLenient(output, open - 1).end;
+      skipUntil = parseLenient(output, open - 1, budget).end;
     } catch {
       // 読めなかった報告は、診断（explainUnreadableAnswer）が扱う
     }
@@ -606,11 +617,12 @@ export function lastLenientJsonAnswer<T>(
   read: (value: Record<string, unknown>) => T | undefined,
 ): { value: T } | undefined {
   const strict = lastJsonAnswer(output, read);
-  for (const open of headingOpens(output, heading).reverse()) {
+  const budget = lenientBudget(output);
+  for (const open of headingOpens(output, heading, lenientBudget(output)).reverse()) {
     if (strict && open < strict.candidate.end) break;
     let value: T | undefined;
     try {
-      value = read(parseLenient(output, open).value);
+      value = read(parseLenient(output, open, budget).value);
     } catch {
       continue;
     }
@@ -623,7 +635,10 @@ export function lastLenientJsonAnswer<T>(
 export type Unreadable =
   /** 見出しの JSON が、出力に無い。 */
   | { kind: "missing" }
-  /** 見出しの JSON が壊れていて、直しても読めない。line・column は JSON の先頭からの位置（1から）、near は壊れた所の前後。 */
+  /**
+   * 見出しの JSON が壊れていて、直しても読めない。line・column は JSON の先頭からの位置（1から）、near は壊れた所の前後
+   * （生の出力のまま。呼び出し側が伏せる）。
+   */
   | { kind: "broken"; line: number; column: number; near: string }
   /** JSON としては読めたが、必要な項目が無い・形が違う。 */
   | { kind: "shape" };
@@ -641,7 +656,8 @@ export function explainUnreadableAnswer(output: string, heading: string): Unread
   } catch (error) {
     const at = error instanceof LenientError ? error.at : open;
     const line = output.slice(open, at).split("\n").length;
-    const column = at - (output.lastIndexOf("\n", at - 1) + 1) + 1;
+    // 桁は、JSON の行の頭から数える（JSON の前に同じ行の前置きがあっても、その長さを足さない）
+    const column = at - Math.max(open, output.lastIndexOf("\n", at - 1) + 1) + 1;
     const near = output
       .slice(Math.max(open, at - 30), at + 30)
       .replace(/\s+/g, " ")
