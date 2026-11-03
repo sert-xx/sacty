@@ -2014,6 +2014,34 @@ describe("文書だけの依頼と差分が食い違って止まったタスク�
     }
   });
 
+  it("テストのコマンドを指定したら、noTests の理由は消す。そのコマンドのツール不足で止まっても、テストの扱いを決め直せる", () => {
+    seq = 0;
+    const missingStop = {
+      code: "verify.commandMissing",
+      params: { commands: ["make"], image: "default", step: "implement", testsDecidable: true },
+    };
+    const events = [
+      created("t1"),
+      chosen("t1"),
+      paused("t1"),
+      ev("t1", { type: "TestsDecided", payload: { testCommand: "make test" } }, "person"),
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ];
+    const resumed = project(events).get("t1") as Task;
+    expect(resumed.testCommand).toBe("make test");
+    expect(resumed.noTestsReason).toBeUndefined();
+    // 指定したコマンドのツールがイメージに無くて止まったら、テストの扱いをまた決められる
+    const stopped = project([...events, paused("t1", missingStop)]).get("t1") as Task;
+    expect(testToolsMissing(stopped)).toBe(true);
+    expect(canDecideTests(stopped)).toBe(true);
+    const redecided = project([
+      ...events,
+      paused("t1", missingStop),
+      ev("t1", { type: "TestsDecided", payload: { testCommand: "npm test" } }, "person"),
+    ]).get("t1") as Task;
+    expect(redecided.testCommand).toBe("npm test");
+  });
+
   it("ほかの理由で止まった・文書だけの依頼でないタスクは、この理由では決められない。工程の選択からやり直すと、判断を消す", () => {
     seq = 0;
     const other = project([

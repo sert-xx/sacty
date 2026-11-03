@@ -46,6 +46,9 @@ PBI-158 で、文書だけの差分ならツール不足で止めなくなった
 | DA：不具合の修正（再現がある）で `documentsOnly` を答えたとき | 受け付けず捨て、今までどおり `orchestrator.bugfixNeedsTests` で止まる |
 | DA：人がテストの扱いを決めて再開した後、同じ理由でまた止まらないか | `TestsDecided` で `documentsOnly` を消すので止まらない（テストで確かめた） |
 
+| Sacty のレビュー（1回目）：テストのコマンドを指定して再開すると、`documentsOnly` と `noTests` からの再開で `testCommand` と `noTestsReason` が共存する | `TestsDecided` でテストのコマンドを指定したときも `noTestsReason` を消す。指定後の状態と、そのコマンドのツール不足で止まってもテストの扱いを決め直せることをテストで確かめた（修正を戻すと落ちる） |
+| Sacty のレビュー（1回目）[提案]：仕様書の `tests` を受け付ける条件に `verify.documentsOnlyContradicted` を足す | 仕様書（日英）と `resume.testsNotUndecided` の文言に足した |
+
 ## 残したこと
 
 - 案C（必要なツールがイメージに無いことを、実装の前に申告させて止める）は、人の判断で見送った。

@@ -28508,11 +28508,14 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
       service.resume(id, { tests: { testCommand: "make test" } });
       expect(taskOf(service, id).documentsOnly).toBeUndefined();
       expect(taskOf(service, id).testCommand).toBe("make test");
+      // 指定したコマンドがあるので、テストなしの理由は残さない（残すと、テストなしの扱いで最終レビューをしてしまう）
+      expect(taskOf(service, id).noTestsReason).toBeUndefined();
       await drain(service);
-      const task = taskOf(service, id);
       expect(typesOf(service, id)).toContain("FinalReviewed");
-      expect(executor.calls).toHaveLength(4);
-      expect(task.gate).toEqual({ step: "implement", submission: 1 });
+      // 最終レビューは、指定したテストのコマンドを実行させる（テストなしの指示ではない）
+      const guardian = promptOf(executor, 3);
+      expect(guardian).toContain("make test");
+      expect(guardian).not.toContain("テストのコマンドが無いので、テストは実行しません");
       activity.close();
     });
 

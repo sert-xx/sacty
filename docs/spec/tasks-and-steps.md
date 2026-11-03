@@ -1254,7 +1254,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   人の判断なので、テストのファイルを探す歯止め（`checkNoTests`）は当てない。
   不具合の修正（再現の工程がある）は、テストなしにできない（`resume.bugfixNeedsTestCommand`）。
 - どちらか1つだけを渡せる。
-  テストが決まらずに止まったのでも、ツールが無くて止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
+  テストが決まらずに止まったのでも、ツールが無くて止まったのでも、文書だけの依頼と差分が食い違って止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
   画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
 - 決めずに再開したとき、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
@@ -1282,7 +1282,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 決めずに再開すると、最終レビューの前でまた同じ理由で止まる（工程の選択からはやり直さない。`canRechooseSteps` は当てない）。
 
 - テストのコマンドを指定する・テストなしで進める：`TestsDecided` を記録する。内容は「ツールが無くて止まったタスクの再開」と同じ。
-- 人がテストの扱いを決めたら、`Task.documentsOnly` を消す（決めた扱いで検証する。依頼を文書だけとした判断は使わない）。
+- 人がテストの扱いを決めたら、`Task.documentsOnly` を消す（決めた扱いで検証する。依頼を文書だけとした判断は使わない）。テストのコマンドを指定したときは、止まる前の `Task.noTestsReason` も消す（残すと、指定したコマンドがあるのにテストなしの扱いになる）。
 - 画面の再開の欄で、止まる前のテストのコマンドがあれば、入力欄の初期値に出す。
 
 コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`testToolsMissing`・`documentsOnlyContradicted`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）

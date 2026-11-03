@@ -732,7 +732,7 @@ const ja: MessageDictionary = {
   "override.notAllowed":
     "実装の検証が続けて通らずに止まったタスクではないため、レビューへ進められません。",
   "resume.testsNotUndecided":
-    "このタスクは、テストのコマンドが決まらずに止まった・テストのコマンドのツールがイメージに無くて止まったタスクではありません。テストの扱いを指定せずに再開してください。",
+    "このタスクは、テストのコマンドが決まらずに止まった・テストのコマンドのツールがイメージに無くて止まった・文書だけの依頼と判断したのに差分に文書でないファイルがあって止まったタスクではありません。テストの扱いを指定せずに再開してください。",
   "resume.bugfixNeedsTestCommand":
     "不具合の修正（再現の工程がある）は、テストなしでは進められません。テストのコマンドを指定してください。",
   "operation.incomplete":
@@ -1415,7 +1415,7 @@ const en: MessageDictionary = {
   "override.notAllowed":
     "The task did not stop because verification of the implementation kept failing, so it cannot be moved to review.",
   "resume.testsNotUndecided":
-    "This task did not stop because its test command was undetermined or because a tool of its test command is missing from the image. Resume without specifying how to handle tests.",
+    "This task did not stop because its test command was undetermined, because a tool of its test command is missing from the image, or because the request was judged documents only but the diff has files that are not documents. Resume without specifying how to handle tests.",
   "resume.bugfixNeedsTestCommand":
     "A bug fix (with a reproduce step) cannot proceed without tests. Specify the test command.",
   "operation.incomplete":

@@ -2587,6 +2587,9 @@ export function applyEvent(
       }
       if (event.payload.testCommand !== undefined) {
         task.testCommand = event.payload.testCommand;
+        // 文書だけの依頼（PBI-284）で noTests を答えていたタスクの、テストなしの理由は使わない（残すと、指定したコマンドが
+        // あるのにテストなしの扱いになり、そのコマンドのツール不足で止まっても、テストの扱いを決め直せない）
+        task.noTestsReason = undefined;
       } else {
         if (task.steps.some((s) => s.key === "reproduce")) {
           throw new ActivityIntegrityError(event, "a bug fix needs a test command");
