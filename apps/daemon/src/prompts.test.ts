@@ -4896,3 +4896,225 @@ describe("チケットのトリアージに渡す再開の補足", () => {
     expect(prompt).not.toContain("チケットの文");
   });
 });
+
+describe("指摘を受けた直しの実行では、セルフレビューを再レビューとして扱わせる（PBI-296）", () => {
+  const task = (extra: Partial<Task> = {}): Task =>
+    ({
+      id: "t-1",
+      title: "予約",
+      body: "名前を変える",
+      steps: ["requirements", "design", "implement"].map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: {
+        requirements: { output: "# 承認済みの要求要件", submission: 1 },
+        design: {
+          output: "# 承認済みの設計",
+          submission: 1,
+          testViewpoints: [{ id: "TV-1", title: "再試行", input: "失敗", expected: "再試行" }],
+        },
+      },
+      testViewpoints: [],
+      reproductionTests: [],
+      testCommand: "npm test",
+      proposals: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const remark = (
+    id: string,
+    step: "requirements" | "design" | "implement",
+    round: number,
+    source?: "sacty_review",
+  ) => ({ id, step, round, text: "指摘の本文", voided: false, ...(source ? { source } : {}) });
+  const PASSED = { rounds: 1, passed: true, remaining: [], notReviewed: [], summary: "" };
+  const MARK =
+    "この実行の最初のセルフレビューを、スキルの「直しの実行の最初のレビュー」の規則で行う";
+  const FAILED_REVIEW = {
+    kind: "review",
+    review: { passed: false, summary: "満たしていない", viewpoints: [], remarks: [] },
+  };
+
+  it("人の差し戻しの直しは、要求要件・設計・実装のどの工程でも、最初のセルフレビューを再レビューとして扱わせる", () => {
+    for (const step of ["requirements", "design", "implement"] as const) {
+      const prompt = buildPrompt(
+        task({
+          outputs: { [step]: "# 前回\n\n- 内容" },
+          selfReviews: { [step]: PASSED },
+          remarks: [remark(`${step}-1-1`, step, 1)],
+        } as Partial<Task>),
+        step,
+      );
+      expect(prompt, step).toContain(
+        `- この実行は、人の差し戻し（${step}-1-1）を受けた直しである。${MARK}`,
+      );
+      expect(prompt, step).toContain(
+        "起動する観点は、スキルの規則どおり、今回の指摘に関わる観点と X-1 だけにする",
+      );
+      expect(prompt, step).toContain(
+        "「指摘が直ったか」と「直しが新しい問題を持ち込んでいないか」を見させる",
+      );
+      expect(prompt, step).toContain("起動しなかった観点は、起動表に理由を残し");
+      // 報告の形と回数の上限は変えない
+      expect(prompt, step).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");
+      expect(prompt, step).toContain('{"sacty-self-review": {"rounds": 2, "passed": true');
+    }
+  });
+
+  it("AI のレビューの指摘と、人の差し戻しが両方あるときは、両方を原因に書く", () => {
+    const ai = buildPrompt(
+      task({
+        outputs: { requirements: "# 前回" },
+        selfReviews: { requirements: PASSED },
+        remarks: [remark("requirements-1-1", "requirements", 1, "sacty_review")],
+      } as Partial<Task>),
+      "requirements",
+    );
+    expect(ai).toContain(
+      `- この実行は、AI のレビューの指摘（requirements-1-1）を受けた直しである。${MARK}`,
+    );
+    const both = buildPrompt(
+      task({
+        outputs: { requirements: "# 前回" },
+        selfReviews: { requirements: PASSED },
+        remarks: [
+          remark("requirements-1-1", "requirements", 1),
+          remark("requirements-1-2", "requirements", 1, "sacty_review"),
+        ],
+      } as Partial<Task>),
+      "requirements",
+    );
+    expect(both).toContain(
+      "- この実行は、人の差し戻し（requirements-1-1）とAI のレビューの指摘（requirements-1-2）を受けた直しである。",
+    );
+  });
+
+  it("最終レビューの不合格で始まった実装の実行も、再レビューとして扱わせる。テストが通らなかっただけ・競合の目印だけでは扱わない", () => {
+    const base = { selfReviews: { implement: PASSED } } as Partial<Task>;
+    const prompt = buildPrompt(
+      task({ ...base, verifyFeedback: FAILED_REVIEW } as Partial<Task>),
+      "implement",
+    );
+    expect(prompt).toContain(
+      `- この実行は、ゴールガーディアンの最終レビューの不合格を受けた直しである。${MARK}`,
+    );
+    for (const verifyFeedback of [
+      {
+        kind: "tests",
+        tests: { command: "npm test", exitCode: 1, output: "x", unmappedViewpoints: [] },
+      },
+      { kind: "merge", files: ["a.ts"] },
+    ]) {
+      expect(
+        buildPrompt(task({ ...base, verifyFeedback } as Partial<Task>), "implement"),
+      ).not.toContain(MARK);
+    }
+  });
+
+  it("不具合の修正・テストの仕組みが無いタスクの実装でも当てる", () => {
+    const withRemark = {
+      selfReviews: { implement: PASSED },
+      remarks: [remark("implement-1-1", "implement", 1)],
+    } as Partial<Task>;
+    const reproduced = {
+      ...withRemark,
+      steps: ["investigate", "reproduce", "implement"].map((key) => ({ key, state: "todo" })),
+      reproduction: {
+        reproduced: true,
+        tests: ["t › x"],
+        command: "npm test",
+        exitCode: 1,
+        output: "1 failed",
+      },
+    } as Partial<Task>;
+    expect(buildPrompt(task(reproduced), "implement")).toContain(MARK);
+    // 要求要件・設計を省いたタスク（直接の実装）
+    const direct = {
+      ...withRemark,
+      steps: [{ key: "implement", state: "todo" }],
+    } as Partial<Task>;
+    expect(buildPrompt(task(direct), "implement")).toContain(MARK);
+    expect(
+      buildPrompt(
+        task({ ...withRemark, noTestsReason: "テストが無い" } as Partial<Task>),
+        "implement",
+      ),
+    ).toContain(MARK);
+  });
+
+  it("タスクの最初の実行・上流の変更だけのやり直しには出さない（初回のレビューの規則は変えない）", () => {
+    for (const step of ["requirements", "design", "implement"] as const) {
+      expect(
+        buildPrompt(task({ selfReviews: { [step]: PASSED } } as Partial<Task>), step),
+        step,
+      ).not.toContain(MARK);
+    }
+    // 提出済みの指摘（回答の有無を問わない）しか無い再実行は、直しの実行ではない
+    const rerun = task({
+      outputs: { design: "# 設計 v1" },
+      selfReviews: { design: PASSED },
+      remarks: [{ ...remark("design-1-1", "design", 1), submittedIn: 1 }],
+    } as Partial<Task>);
+    expect(buildPrompt(rerun, "design")).not.toContain(MARK);
+    // 無効にした指摘は数えない
+    const voided = task({
+      outputs: { requirements: "# 前回" },
+      selfReviews: { requirements: PASSED },
+      remarks: [{ ...remark("requirements-1-1", "requirements", 1), voided: true }],
+    } as Partial<Task>);
+    expect(buildPrompt(voided, "requirements")).not.toContain(MARK);
+  });
+
+  it("前回のセルフレビューが合格していない・記録が無いときは、観点を絞らず初回と同じにする", () => {
+    for (const selfReviews of [
+      { requirements: { ...PASSED, passed: false, remaining: ["R-3 が曖昧"] } },
+      { requirements: null },
+      {},
+    ]) {
+      const prompt = buildPrompt(
+        task({
+          outputs: { requirements: "# 前回" },
+          selfReviews,
+          remarks: [remark("requirements-1-1", "requirements", 1)],
+        } as Partial<Task>),
+        "requirements",
+      );
+      expect(prompt).not.toContain(MARK);
+    }
+    // 前回の下書きが読めず書き直すときも、観点は絞らない
+    const unreadable = task({
+      outputs: { requirements: "" },
+      selfReviews: { requirements: PASSED },
+      remarks: [remark("requirements-1-1", "requirements", 1)],
+    } as Partial<Task>);
+    expect(buildPrompt(unreadable, "requirements")).not.toContain(MARK);
+  });
+
+  it("別の工程の指摘は、その工程の実行を直しの実行にしない", () => {
+    const prompt = buildPrompt(
+      task({
+        selfReviews: { implement: PASSED },
+        remarks: [remark("requirements-1-1", "requirements", 1)],
+      } as Partial<Task>),
+      "implement",
+    );
+    expect(prompt).not.toContain(MARK);
+  });
+
+  it("観点の選び方は決めず、スキルの規則に任せる", () => {
+    const prompt = buildPrompt(
+      task({
+        outputs: { requirements: "# 前回" },
+        selfReviews: { requirements: PASSED },
+        remarks: [remark("requirements-1-1", "requirements", 1)],
+      } as Partial<Task>),
+      "requirements",
+    );
+    const fixRun = prompt.slice(prompt.indexOf("- この実行は、"));
+    expect(fixRun).not.toMatch(/C-\d|D-\d|U-\d|X-2/);
+  });
+});

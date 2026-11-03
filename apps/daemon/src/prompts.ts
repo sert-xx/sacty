@@ -1448,6 +1448,7 @@ function selfReviewLines(
   kind: "design-doc" | "code",
   deliverable: string,
   rework?: ReworkMode,
+  fixCauses: readonly string[] = [],
 ): string[] {
   return [
     "",
@@ -1465,11 +1466,46 @@ function selfReviewLines(
     "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
     "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
     ...(rework === "partial" ? partialReworkReviewLines(deliverable) : []),
+    ...fixRunReviewLines(fixCauses),
     "- スキルが成果の説明の末尾に書く「自己レビュー」の節は書かない。代わりに、結果を次の形式で必ず付ける（sacty が読み、成果物の本文からは取り除く）",
     "- このプロンプトが求めるほかの出力の形（ほかの JSON のブロック）は変えない",
     "```json",
     `{"${SELF_REVIEW_HEADING}": {"rounds": 2, "passed": true, "remaining": ["残った must の指摘の要約（無ければ空）"], "notReviewed": ["見られなかった観点（無ければ空）"], "summary": "短い総評"}}`,
     "```",
+  ];
+}
+
+/**
+ * 指摘を受けた直しの実行か（PBI-296）。受けた原因の一覧を返す。直しの実行ではない（タスクの最初の実行・上流の変更だけの
+ * やり直し）なら空。原因は、今回の人の差し戻し・AI のレビューの指摘（その工程の最新の回のうち、まだ提出に渡していないもの）と、
+ * 実装なら最終レビューの不合格。
+ * 前の実行のセルフレビューが合格（passed）のときに限る。未合格・記録なしは、前の実行の未解決がこの実行の指摘の外に残りうるので、
+ * 初回と同じに全部の観点で見る。
+ */
+function fixRunCauses(task: Task, step: StepKey): string[] {
+  if (task.selfReviews?.[step]?.passed !== true) return [];
+  const current = currentRemarks(task, step);
+  const human = current.filter((r) => r.source !== "sacty_review");
+  const ai = current.filter((r) => r.source === "sacty_review");
+  return [
+    ...(human.length > 0 ? [`人の差し戻し（${human.map((r) => r.id).join("・")}）`] : []),
+    ...(ai.length > 0 ? [`AI のレビューの指摘（${ai.map((r) => r.id).join("・")}）`] : []),
+    ...(step === "implement" && task.verifyFeedback?.kind === "review"
+      ? ["ゴールガーディアンの最終レビューの不合格"]
+      : []),
+  ];
+}
+
+/**
+ * 指摘を受けた直しの実行の、セルフレビューの指示（PBI-296）。この実行の最初のセルフレビューを、スキルの再レビュー（2回目以降）
+ * として扱わせる。起動する観点の選び方（指摘に関わる観点と X-1）は、スキルの規則に任せる。
+ */
+function fixRunReviewLines(causes: readonly string[]): string[] {
+  if (causes.length === 0) return [];
+  return [
+    `- この実行は、${causes.join("と")}を受けた直しである。この実行の最初のセルフレビューを、スキルの「直しの実行の最初のレビュー」の規則で行う（初回ではなく、再レビュー（2回目以降）として扱う）。起動する観点は、スキルの規則どおり、今回の指摘に関わる観点と X-1 だけにする`,
+    "  - 担当には、今回の指摘と、この実行での直しの内容を渡し、「指摘が直ったか」と「直しが新しい問題を持ち込んでいないか」を見させる",
+    "  - 起動しなかった観点は、起動表に理由を残し、報告の summary でも、起動した観点と起動しなかった観点が分かるように書く",
   ];
 }
 
@@ -1765,7 +1801,12 @@ function directImplementLines(
     ...feedbackLines(task),
     ...remarkLines(task, step, "観点ごとのテストの対応"),
     ...proposalLines(task, step),
-    ...selfReviewLines("code", "実装（コードとテスト）"),
+    ...selfReviewLines(
+      "code",
+      "実装（コードとテスト）",
+      undefined,
+      fixRunCauses(task, "implement"),
+    ),
   );
   return lines;
 }
@@ -2054,8 +2095,14 @@ export function buildPrompt(
       lines.push(...remarkLines(task, step, "要求要件の本文"));
       const rework = reworkMode(task, "requirements", previous);
       lines.push(...reworkLines(task, "requirements", "要求要件", rework));
+      const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
-        ...selfReviewLines("design-doc", "要求要件", reviewRework(task, "requirements", rework)),
+        ...selfReviewLines(
+          "design-doc",
+          "要求要件",
+          narrowed,
+          narrowed ? fixRunCauses(task, "requirements") : [],
+        ),
       );
       if (extra.inputDir) lines.push(...provenanceLines("requirements", extra.inputDir));
       return lines.join("\n");
@@ -2117,8 +2164,14 @@ export function buildPrompt(
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
       const rework = reworkMode(task, "design", previous);
       lines.push(...reworkLines(task, "design", "設計とテスト観点", rework));
+      const narrowed = reviewRework(task, "design", rework);
       lines.push(
-        ...selfReviewLines("design-doc", "設計とテスト観点", reviewRework(task, "design", rework)),
+        ...selfReviewLines(
+          "design-doc",
+          "設計とテスト観点",
+          narrowed,
+          narrowed ? fixRunCauses(task, "design") : [],
+        ),
       );
       if (extra.inputDir) lines.push(...provenanceLines("design", extra.inputDir));
       return lines.join("\n");
@@ -2273,7 +2326,14 @@ export function buildPrompt(
         lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
         lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
-        lines.push(...selfReviewLines("code", "修正（コードとテスト）"));
+        lines.push(
+          ...selfReviewLines(
+            "code",
+            "修正（コードとテスト）",
+            undefined,
+            fixRunCauses(task, "implement"),
+          ),
+        );
         return lines.join("\n");
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
@@ -2370,7 +2430,12 @@ export function buildPrompt(
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
-        ...selfReviewLines("code", "実装（コードとテスト）"),
+        ...selfReviewLines(
+          "code",
+          "実装（コードとテスト）",
+          undefined,
+          fixRunCauses(task, "implement"),
+        ),
       );
       return lines.join("\n");
     }

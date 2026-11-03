@@ -563,3 +563,98 @@ describe("既定の review スキルの、セルフレビューの再レビュ�
     expect(src).not.toMatch(/再レビュー[^\n]*(全部の観点|すべての観点|必須観点を全部)/);
   });
 });
+
+describe("既定の review スキルの、直しの実行の最初のレビュー（PBI-296）", () => {
+  const selfReview = () => read("skills/review/review-dispatch/references/self-review.md");
+  const dispatch = () => read("skills/review/review-dispatch/SKILL.md");
+  const fixRun = () =>
+    selfReview().split("## 直しの実行の最初のレビュー")[1]?.split("## ループの上限")[0] ?? "";
+
+  it("人の差し戻し・AI のレビューの指摘・最終レビューの不合格を受けた実行の最初のレビューを、再レビューとして扱う", () => {
+    const text = fixRun();
+    expect(text).toContain(
+      "人の差し戻し・AI のレビューの指摘・最終レビューの不合格を受けた直しである」と示しているとき",
+    );
+    expect(text).toContain("最初のセルフレビューは、初回ではなく再レビュー（2回目以降）として扱う");
+    expect(text).toContain("成果物の種類（要求要件・設計・実装）は問わない");
+    // 最初の実行は、初回の規則のまま
+    expect(text).toContain("タスクの最初の実行");
+    expect(text).toContain("全部の観点で見る");
+  });
+
+  it("起動するのは指摘に関わる観点と X-1 だけ。関わる観点の決め方をスキルに書く", () => {
+    const text = fixRun();
+    expect(text).toContain("**今回の指摘に関わる観点と、横断の X-1 だけ**");
+    expect(text).toContain("指摘が観点の ID を示しているときは、その観点");
+    expect(text).toContain(
+      "観点カタログ（[viewpoints.md](viewpoints.md)）の「見るもの」に当てはめ",
+    );
+    expect(text).toContain("最終レビューの不合格は、不合格の理由");
+    expect(text).toContain("当てはまりうる観点をすべて起動する（迷ったら起動する）");
+    // 初回の規則（必須は全部・条件付きの判定し直し）を使わない
+    expect(text).toContain("初回の規則であって、ここでは決め直さない");
+    expect(text).toContain("1 人の担当にまとめたりしない");
+  });
+
+  it("X-2 は、指摘が検証の失敗に関わるとき、または実行し直した検証が失敗・警告を出したときだけ起動する", () => {
+    const text = fixRun();
+    expect(text).toContain("指摘が検証の失敗");
+    expect(text).toContain("実行し直した検証が失敗・警告を出したときだけ起動する");
+  });
+
+  it("担当に指摘と直しの内容を渡し、直ったかと新しい問題の両方を見させる。起動しなかった観点を起動表と報告に残す", () => {
+    const text = fixRun();
+    expect(text).toContain("今回の指摘（原文と ID）と、この実行での直しの内容を渡し");
+    expect(text).toContain(
+      "「指摘が直ったか」と「直しが新しい問題を持ち込んでいないか」の両方を見させる",
+    );
+    expect(text).toContain("X-1 には、今回の指摘のすべてと、それぞれの直しの内容を渡す");
+    expect(text).toContain("直しの実行：今回の指摘に関わらない");
+    expect(text).toContain("成果の説明の「起動した観点」でも分かるようにする");
+    const skill = dispatch();
+    expect(skill).toContain(
+      "| C-2 堅牢性・エラー処理 | 起動しない | | 直しの実行：今回の指摘に関わらない | |",
+    );
+    expect(selfReview()).toContain("1 回目は指摘に関わる C-1・X-1");
+  });
+
+  it("SKILL.md の規則 1・5 と親の手順も、直しの実行の最初のレビューを再レビューとして扱う", () => {
+    const text = dispatch();
+    expect(text).toContain(
+      "`self-review` の再レビュー（2回目以降）と、直しの実行の最初のレビューは除く。規則 5",
+    );
+    expect(text).toContain(
+      "その実行の最初のレビューも再レビューとして扱う。起動するのは、今回の指摘に関わる観点と X-1 だけ",
+    );
+    expect(text).toContain("指示が示していない実行（タスクの最初の実行）は、初回の規則どおり");
+    expect(text).toContain("作業の指示が直しの実行と示していれば、最初のレビューも再レビュー");
+  });
+
+  it("初回・実行の中の再レビュー・pr-review の規則は変えない", () => {
+    const first = selfReview().split("## 初回")[1]?.split("## 再レビュー（2回目以降）")[0] ?? "";
+    expect(first).toContain(
+      "主対象の種類の必須観点を全部、条件付き観点を判定して、横断（X-1、検証の結果があれば X-2）を起動する",
+    );
+    expect(selfReview()).toContain("**前回の回で `must` を出した観点と、横断の X-1 だけ**");
+    expect(fixRun()).toContain(
+      "この実行の中の次の回からは、上の「再レビュー（2回目以降）」の規則どおり",
+    );
+    expect(dispatch()).toContain("`pr-review` の再レビューは、初回と同じ規則で決め直す");
+    expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
+      "起動する観点は初回と同じ規則で決め直す（前回「指摘なし」でも、必須は全部起動する）",
+    );
+  });
+
+  it("特定の言語・ツールに寄せた書き方にしない", () => {
+    expect(fixRun()).not.toMatch(
+      /npm|pnpm|yarn|node|vitest|biome|prettier|pip|cargo|gradle|maven|sacty|\.ts\b/i,
+    );
+  });
+
+  it("工程の指示（prompts.ts）は観点の選び方をスキルの規則に任せ、スキルの節の名前と一致する", () => {
+    const src = readFileSync(join(import.meta.dirname, "prompts.ts"), "utf8");
+    expect(src).toContain("スキルの「直しの実行の最初のレビュー」の規則で行う");
+    expect(selfReview()).toContain("## 直しの実行の最初のレビュー");
+    expect(src).not.toMatch(/再レビュー[^\n]*(全部の観点|すべての観点|必須観点を全部)/);
+  });
+});
