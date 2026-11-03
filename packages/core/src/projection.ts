@@ -816,6 +816,13 @@ export type Task = {
     cause?: ReworkCause;
     reason: DaemonText;
     at: string;
+    /**
+     * 戻し先の工程への、何回目の差し戻しか（その差し戻しの指摘の回。Remark.round と同じ）と、その差し戻しの指摘の ID。
+     * 判断文を、判断した指摘の集合そのもので始まった作り直しの実行にだけ渡すために残す（PBI-300）。作業履歴の差し戻しの記録
+     * （ChangesRequested）から投影するので、以前の作業履歴を読み直したときも設定される。
+     */
+    round: number;
+    remarkIds: string[];
   };
   createdAt: string;
   updatedAt: string;
@@ -1433,6 +1440,8 @@ export function applyEvent(
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
           reason: judged.reason,
           at: event.at,
+          round: event.payload.round,
+          remarkIds: event.payload.remarks.map((r) => r.id),
         };
       }
       task.pendingReview = undefined;

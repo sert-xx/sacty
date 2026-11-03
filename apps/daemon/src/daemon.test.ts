@@ -11890,6 +11890,73 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("ゴールガーディアンの判断文（戻し先と指摘の読み方）を、その判断で始まった作り直しの実行の指示に渡す。人の指摘の原文も渡す（PBI-300。S14）", async () => {
+      const pulls = new FakePulls();
+      const reason =
+        "決定を変える：前の指摘で簡単にするため削った R-2・R-3 を元に戻せという意味に読める";
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("requirements", reason), out("# 要求要件 v3")],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:300", { body: "さっきの指摘は無しにしてください" })];
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("[requirements-2-1] さっきの指摘は無しにしてください");
+      expect(prompt).toContain(
+        "--- ゴールガーディアンの判断（今回の指摘 requirements-2-1 の読み方",
+      );
+      expect(prompt).toContain(
+        `{"guardianJudgment":{"target":"requirements","decided":true,"reason":"${reason}"}}`,
+      );
+      expect(prompt).toContain("ゴールガーディアンの解釈で、人間が書いたものではありません");
+      expect(prompt).toContain("指摘の原文（人間の指摘を最優先）に従う");
+      // 判断を渡した実行が提出されたあとの再実行（最終レビューの不合格など）には、判断を渡さない
+      expect(service.get(id)?.task.remarks.at(-1)?.submittedIn).toBeDefined();
+      activity.close();
+    });
+
+    it("戻し先を判断できなかったときも、判断できなかった理由を実装の実行の指示に渡す。判断できたときの文は出さない（PBI-300。S14 の台本3）", async () => {
+      const pulls = new FakePulls();
+      const reason = "付け先の候補が2つあり、どちらを指すのか読み取れない";
+      const { activity, service, executor, id } = await toImplementGate(
+        [rework("undecidable", reason), implement("# 直した")],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:301", { body: "ここに部品を置いてください" })];
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("[implement-1-1] ここに部品を置いてください");
+      expect(prompt).toContain(`{"guardianJudgment":{"decided":false,"reason":"${reason}"}}`);
+      expect(prompt).toContain("読み取れなかった点を、推測で大きく変えない");
+      expect(prompt).toContain("読み取れなかったことは、変更が要らない理由にならない");
+      expect(prompt).not.toContain("この判断で、この工程");
+      activity.close();
+    });
+
+    it("ゴールガーディアンの実行が失敗したときは、判断文を渡さない。実装の実行の指示は今までと同じ（PBI-300）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [
+          { kind: "failed", reason: "usage_limit", message: "session limit" },
+          implement("# 直した"),
+        ],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:302")];
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("[implement-1-1] 全体として、失敗時のログが足りない");
+      expect(prompt).not.toContain("guardianJudgment");
+      expect(prompt).not.toContain("--- ゴールガーディアンの判断");
+      activity.close();
+    });
+
     it("一度に取り込むのは50件まで。残りは取り込み済みにせず、次の取り込みに残す（レビュー指摘）", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await toImplementGate(

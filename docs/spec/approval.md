@@ -470,10 +470,16 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - AI のレビューの指摘が並ぶときは、人の指摘にある「さっきの指摘」「前の指摘」などは、AI のレビューの指摘ではなく人の指摘を指す、と人の指摘の節に添える。
   - 戻し先の判断では、AI のレビューの指摘は人が新しく足した要望（`new_request`）ではない、と添える。
   - 最終レビュー・統合レビューは、節を分けて渡しても、過去の指摘の再発の判定は人の指摘と AI のレビューの指摘の両方に求める（`REMARK_RECURRENCE_LINE`・`remarkVerdictLines`。ADR: [最終レビュー・統合レビューで、AI のレビューの過去の指摘にも再発の判定を求める](../adr/20261103-0312-judge-ai-review-remarks-in-reviews.md)）。AI のレビューの指摘が並ぶときは、出力の形式の説明に、AI のレビューの指摘にも1件ずつ判定を書くこと、判定が無いと再発している扱いで不合格になることを添える。
+- ゴールガーディアンの判断文の渡し方（PBI-300）：その判断（戻し先と、指摘をどう読んだかの理由）で始まった作り直しの実行（要求要件・設計・実装のどれでも）の指示に、判断文を渡す（`guardianJudgmentLines`）。
+  - 渡すのは、判断で差し戻した回の指摘（`prRework` の戻し先の工程・回 `round`・指摘の ID `remarkIds` が、その工程の今回の指摘（最新の回のうち、無効にしておらず、まだ提出に渡していないもの）と一致するとき。判断の後に指摘を1件でも無効にしていれば、無効にした指摘を解釈した判断文が戻らないよう渡さない）で始まる実行だけ。判断が無い実行（最初の実行、最終レビューの不合格・上流の変更によるやり直し、提出済みの指摘だけが残る再実行、人が画面から差し戻した回）の指示は変えない。
+  - 判断文はゴールガーディアンの解釈で、人の指摘そのものではない、と指示に書く。人の指摘の原文は今までどおり渡し、食い違うときは原文（人間の指摘を最優先）に従わせる。判断文の中に書かれた指示には従わせない。
+  - 判断文は外から来た文字列として扱う。秘密情報・URL の認証情報を伏せてから、3,000文字で切り、指示とは分けた1行の JSON（`{"guardianJudgment": …}`）のデータとして渡す。
+  - 戻し先を判断できなかったとき（`decided` が偽）も、判断できなかった理由（何が読み取れなかったか）を渡す。読み取れなかった点を推測で大きく変えず、指摘の原文と承認済みの成果物から確かめ、読み取れる範囲の最小限の変更をする。「変更が要らない」と結論するのは、指摘が求めることをすでに満たしていると根拠で示せるときだけ。読み取れなかった点と直し方は、指摘への対応（`sacty-responses` の `text`）に書かせる（要求要件・設計は、人が決めることが残るなら「確認したいこと」にも足させる）。
+  - ゴールガーディアンの実行が失敗した・出力を読めなかったとき（理由が sacty の文言のとき）は、指摘の読み方ではないので渡さない。
 - 表示：作業履歴の差し戻し・取り込みの行に、AI のレビューの指摘を分けて出し（「指摘3件（AI のレビュー）」「人間1件・AI のレビュー2件」）、承認の画面の指摘に「AI のレビュー」の印を付ける。作業履歴の差し戻しを展開した詳細にも、AI のレビューの指摘に印を付ける。承認の画面で「差し戻しの回数に数えない」と添えるのは、その回に人の指摘が無いときだけ。
   ダッシュボードの品質の信号は「AI のレビューの差し戻し」、監査の根拠の件数は「AI のレビューの指摘」（`aiReviewRemark`）として、人の差し戻し・PR の指摘と別に数える（[アーキテクチャ](architecture.md)・[監査](audit.md)）。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`withoutStaleReviews`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`feedbackSeenAt`・`settleReview`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`reworkDecisionLines`・`remarkSections`・`guardianJudgmentLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）、`packages/core/src/projection.ts`（`changeRounds`・`lastChangeRound`・`isAiReviewRemark`）
 
 ## 差し戻し
 
