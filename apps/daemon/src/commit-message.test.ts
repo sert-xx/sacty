@@ -76,6 +76,37 @@ describe("リポジトリがコミットメッセージの形を定めている�
       }),
     ).toBe(false);
   });
+
+  it("commitlint の依存と独自の1行目の設定が別のファイルに両方あるときは、独自の形を優先し、種類を付けない", () => {
+    const custom = "module.exports = { parserPreset: { parserOpts: { headerPattern: /x/ } } }";
+    const deps = JSON.stringify({ devDependencies: { "@commitlint/cli": "^19.0.0" } });
+    expect(detectCommitConvention({ "package.json": deps, "commitlint.config.js": custom })).toBe(
+      false,
+    );
+    // 設定のファイルの順に関係なく（Commitizen の設定が先にあっても）独自の形を優先する
+    expect(
+      detectCommitConvention({
+        ".czrc": '{ "path": "cz-conventional-changelog" }',
+        ".commitlintrc.js": custom,
+      }),
+    ).toBe(false);
+    // package.json の commitlint の項目に独自の形があるときも
+    expect(
+      detectCommitConvention({
+        "package.json": JSON.stringify({
+          commitlint: { parserPreset: { parserOpts: { headerPattern: "^(\\w+-\\d+) (.*)$" } } },
+        }),
+      }),
+    ).toBe(false);
+    // 独自の形が無ければ、依存だけでも定めている
+    expect(detectCommitConvention({ "package.json": deps })).toBe(true);
+    expect(
+      detectCommitConvention({
+        "package.json": deps,
+        "commitlint.config.js": "module.exports = {}",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("コミットの1行目", () => {

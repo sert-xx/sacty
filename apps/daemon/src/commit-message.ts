@@ -76,19 +76,27 @@ function packageJsonUsesConvention(text: string): boolean {
  * リポジトリが Conventional Commits の形のコミットメッセージを定めているか。files は、探すファイルのうち読めたもの
  * （パス → 内容）。設定のファイル（Commitizen・commitlint。package.json は項目と依存で判断する）があるか、決まりの文書が
  * Conventional Commits・Commitizen・commitlint に触れるか、`feat:` と `fix:` の両方を例に挙げていれば、定めているとする。
- * commitlint が1行目の形を独自に決めているとき（headerPattern・parserPreset）は、読み解けないので定めていないものとして扱う。
+ * commitlint が1行目の形を独自に決めているとき（headerPattern・parserPreset）は、ほかのファイルに依存や設定があっても、読み解けないので定めていないものとして扱う（独自の形を優先し、種類を付けない）。
  */
 export function detectCommitConvention(
   files: Readonly<Record<string, string | undefined>>,
 ): boolean {
+  // 1行目の形を独自に決めている設定（headerPattern・parserPreset）が、どのファイルにでもあれば、依存や別のファイルの設定の
+  // 有無によらず、読み解けないものとして定めていない扱いにする（独自の形を優先し、種類を付けない）
+  const custom = COMMIT_CONFIG_FILES.some((path) => {
+    const text = files[path];
+    if (text === undefined || !CUSTOM_HEADER.test(text)) return false;
+    return path !== "package.json" || packageJsonUsesConvention(text);
+  });
+  if (custom) return false;
   for (const path of COMMIT_CONFIG_FILES) {
     const text = files[path];
     if (text === undefined) continue;
     if (path === "package.json") {
-      if (packageJsonUsesConvention(text)) return !CUSTOM_HEADER.test(text);
+      if (packageJsonUsesConvention(text)) return true;
       continue;
     }
-    return !CUSTOM_HEADER.test(text);
+    return true;
   }
   for (const path of COMMIT_RULE_DOCS) {
     const text = files[path];

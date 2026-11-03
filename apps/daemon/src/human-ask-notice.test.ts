@@ -35,6 +35,24 @@ describe("人に確かめてほしいことの PR のコメント（PBI-301）",
     expect(isHumanAskNotice(body)).toBe(true);
   });
 
+  it("作業領域の内部のパス（/sacty-input/task.md:77 など）は、人が辿れる呼び方に置き換えて書く", () => {
+    const body = buildHumanAskNotice({
+      ...base,
+      undecided: {
+        remarkIds: ["implement-1-1"],
+        reason: "/sacty-input/task.md:77 の記述が読めない",
+      },
+      confirms: [
+        { remarkId: "implement-1-1", text: "/sacty-input/task.md:12 のとおりに直しました" },
+      ],
+    });
+    expect(body).not.toContain("/sacty-input");
+    expect(body).not.toContain("task.md:");
+    expect(body).toContain("タスクの依頼");
+    // リポジトリのパスは変えない
+    expect(askQuote("src/pay.ts:12 を直した", [])).toBe("> src/pay.ts:12 を直した");
+  });
+
   it("確かめることが無ければ書かない（判断できなかった理由も、確かめたいことも無い）", () => {
     expect(buildHumanAskNotice({ ...base, confirms: [] })).toBeUndefined();
   });

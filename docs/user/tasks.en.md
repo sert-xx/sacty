@@ -590,12 +590,13 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, the conclusion of the final review, and what you should confirm in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs, expected results, and the final review's findings are in the collapsed section "観点ごとの詳細" (details per viewpoint). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a failed final review, a send-back, or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
   - Which one was used appears in "Body" in the PR section of the task page.
   - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
-  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments. They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
+  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments (the investigation result, the comments a step requests, and the comment that tells you what to check). They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
 - The form of the commit message
   - When the repository defines the Conventional Commits form (a Commitizen or commitlint configuration exists, or the rules in AGENTS.md or CONTRIBUTING describe it), the first line of the commits sacty makes takes the form `feat: <task title>`.
   - The type is `docs` for the commit of a documents-only request and of a Requirements or Design PR, `fix` for a bug fix, and `feat` otherwise. A title that already has the form `feat: …` is not prefixed again.
   - For a repository with no definition, or one whose definition cannot be read, the task title is used as is, as before.
+  - When a commitlint configuration sets the form of the first line itself (for example, it requires a ticket number first), the custom form takes priority even if there is also a commitlint dependency, and no type is added.
 
 ### Things for a person to check
 
@@ -610,7 +611,9 @@ So that the people looking at the PR notice it, the same content is commented on
 - The comment starts with "Sacty：人に確かめてほしいことがあります". If it is not what you meant, comment on the PR or send the task back on the task screen.
 - This comment is not imported as a comment.
 - For a project with no GitHub account chosen, nothing is commented on the PR (the screen still shows it). If commenting fails, the task does not stop.
-- Secret values are hidden and long text is cut.
+- For security check and security fix tasks, nothing is commented on the PR (so details of a vulnerability or the fix scope are not put in a public place; the screen still shows it).
+- If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
+- Secret values are hidden and long text is cut. Paths inside sacty's workspace are replaced with names a person can follow.
 
 ## Cause of a request for changes
 

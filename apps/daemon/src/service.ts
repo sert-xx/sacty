@@ -383,6 +383,7 @@ import {
   skippedFilesLines,
   verificationBasis,
   viewpointRename,
+  withoutInternalPaths,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -2953,10 +2954,26 @@ export class TaskService {
         try {
           const token = await this.githubToken(task, comment.repo, usedSecrets);
           const where = { repo: comment.repo, token, number: comment.number };
-          const existing = await this.deps.pulls.findIssueComment({
-            ...where,
-            marker: githubCommentMarker(task.id, step, source.at, index),
-          });
+          // 承認の後の投稿は、承認を待つ間に投稿済みの同じ提出の頼み（目印の承認の日時の所が提出の回のもの）も探す。
+          // 承認を待つ間の投稿の最中にマージされて記録できなかったときも、二重に投稿しない
+          const submitted =
+            when === "approved" && approved
+              ? await this.deps.pulls.findIssueComment({
+                  ...where,
+                  marker: githubCommentMarker(
+                    task.id,
+                    step,
+                    `submission-${approved.submission}`,
+                    index,
+                  ),
+                })
+              : undefined;
+          const existing =
+            submitted ??
+            (await this.deps.pulls.findIssueComment({
+              ...where,
+              marker: githubCommentMarker(task.id, step, source.at, index),
+            }));
           if (!existing && !valid()) return;
           const { url } =
             existing ??
@@ -2968,7 +2985,8 @@ export class TaskService {
                 stepName: STEP_NAME[step],
                 approvedAt: source.at,
                 index,
-                body: comment.body,
+                // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
+                body: withoutInternalPaths(comment.body),
                 ...(when === "submitted" ? { awaitingApproval: true } : {}),
               }),
             }));
@@ -5705,6 +5723,8 @@ export class TaskService {
     const asks = humanAsks(task);
     const watched = gatePullRequest(task);
     const gate = task.gate;
+    // セキュリティのタスクは、確かめたいこと（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない（承認の画面には出る）
+    if (isSecurityTask(task)) return;
     if ((!asks.undecided && asks.confirms.length === 0) || !watched?.repo || !gate) return;
     const repo = watched.repo;
     const number = watched.number;
@@ -14194,14 +14214,15 @@ function handedOverFeedback(
 }
 
 /**
- * 承認待ちの成果物の提出が新しくなったか（PBI-301）。同じ提出の承認待ちに戻っただけ（一時停止からの再開など）は、知らせ直さない。
+ * 人に確かめてほしいことを、PR に知らせる機会か（PBI-301）。承認待ちに入ったとき、または一時停止から同じ提出の承認待ちに
+ * 戻ったとき。承認待ちの間に別の記録が増えただけの変化では知らせ直さない。一時停止のあいだに知らせを書けなかった提出は、
+ * 再開のときにもう一度試す（書く前に目印で見つけたコメントを確かめるので、書き直さない）。
  */
 function humanAskDue(before: Task | undefined, after: Task): boolean {
   if (after.status !== "awaiting_approval" || !after.gate) return false;
-  const resumed = before?.status === "paused" && before.resumeTo === "awaiting_approval";
   const same =
     before?.gate?.step === after.gate.step && before.gate.submission === after.gate.submission;
-  return !(resumed && same) && !(before?.status === "awaiting_approval" && same);
+  return !(before?.status === "awaiting_approval" && same);
 }
 
 /** 2つのコミットが同じか（長さが違っても、短い方が先頭に一致すれば同じ。大文字・小文字は区別しない）。 */

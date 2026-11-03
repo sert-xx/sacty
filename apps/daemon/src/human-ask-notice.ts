@@ -1,6 +1,7 @@
 import type { StepKey } from "@sacty/core";
 import { redact } from "./agents/redact.js";
 import { HUMAN_ASK_MARKER_PREFIX } from "./github.js";
+import { withoutInternalPaths } from "./prompts.js";
 
 /*
  * 人に確かめてほしいことを、sacty が作った PR に知らせるコメント（PBI-301）。
@@ -22,7 +23,8 @@ export function humanAskMarker(taskId: string, step: StepKey, submission: number
  * 通知が飛ばないよう、@ の直後に見えない文字を挟み、引用にして、本文の記法（見出し・リンクなど）として解釈させない。
  */
 export function askQuote(text: string, secrets: readonly string[]): string {
-  const hidden = redact(text, secrets).trim();
+  // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
+  const hidden = withoutInternalPaths(redact(text, secrets)).trim();
   const cut = hidden.length > ASK_TEXT_MAX ? `${hidden.slice(0, ASK_TEXT_MAX)}…` : hidden;
   return cut
     .replace(/@(?=[A-Za-z0-9_-])/g, "@​")

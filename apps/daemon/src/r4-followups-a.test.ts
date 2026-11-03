@@ -177,6 +177,21 @@ describe("A3 リポジトリが定める検証を、PR に入る変更すべて�
     );
   });
 
+  it("文書だけの依頼の実装は、文書に効く検証に限り、型チェックを命じない（文書向けのセルフレビューの規則と食い違わせない）", () => {
+    const docs = buildPrompt(task({ documentsOnly: true }), "implement");
+    const section = docs.slice(docs.indexOf("--- 提出の前の検証 ---"));
+    expect(section).toContain("文書に効く検証（文書のフォーマッター・文書の lint");
+    expect(section).toContain("テスト・ビルド・型チェック・コードのリンターは実行しない");
+    expect(section).not.toContain("フォーマッター・リンター・型チェックなどの検証");
+    expect(section).not.toContain("コード・テスト・文書・設定");
+    // 実行しなかった理由を書かせる決まりは同じ
+    expect(section).toContain("理由を書かずに省かない");
+    // 文書だけでない依頼は、これまでどおり
+    expect(buildPrompt(task(), "implement")).toContain(
+      "フォーマッター・リンター・型チェックなどの検証",
+    );
+  });
+
   it("sacty が PR に足す成果物のファイルがあるタスクでは、そのファイルも検査の対象になることを伝える", () => {
     const prompt = buildPrompt(withStepDocuments(), "implement");
     expect(prompt).toContain("docs/sacty/abcd1234/");

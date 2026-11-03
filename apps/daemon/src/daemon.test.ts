@@ -10763,6 +10763,63 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("承認待ちの返信を投稿している間にマージされても、承認の後に二重に投稿せず、投稿済みのものを記録する", async () => {
+      const gate = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      class SlowPost extends FakePulls {
+        override async commentIssue(input: Parameters<FakePulls["commentIssue"]>[0]) {
+          entered.resolve();
+          await gate.promise;
+          return super.commentIssue(input);
+        }
+      }
+      const pulls = new SlowPost();
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      while (service.get(id)?.task.status !== "awaiting_approval") await service.runNext(id);
+      const posting = service.runNext(id);
+      await entered.promise;
+      // 投稿の最中に、PR がマージされて承認された
+      pulls.state = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: service.get(id)?.task.pullRequest?.commit,
+      };
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.approved.implement).toBeDefined();
+      gate.resolve();
+      await posting;
+      // 承認の後の投稿が、承認を待つ間の投稿の目印を見つけて使う
+      await drain(service);
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(1);
+      expect(service.get(id)?.task.githubComments?.implement?.results[0]?.url).toContain(
+        "issuecomment",
+      );
+      expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+
+    it("返信の中の作業領域の内部のパスは、人が辿れる呼び方に置き換えて投稿する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service } = await toImplement(
+        [
+          implement(
+            reply("/sacty-input/task.md:77 のとおりに直しました。src/pay.ts:12 を見てください。"),
+          ),
+          review(),
+        ],
+        { pulls },
+      );
+      await drain(service);
+      const body = pulls.issueComments[0]?.body ?? "";
+      expect(body).not.toContain("/sacty-input");
+      expect(body).toContain("タスクの依頼");
+      expect(body).toContain("src/pay.ts:12");
+      activity.close();
+    });
+
     it("投稿できなかったら、理由を作業履歴に残し、タスクは承認待ちのまま進める（そのあとは投稿し直さない）", async () => {
       const pulls = new FakePulls();
       pulls.commentFail = "403 Resource not accessible ghp_secret";
@@ -12725,6 +12782,117 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
         expect(asks(pulls)).toHaveLength(1);
         expect(replies()).toHaveLength(1);
+        activity.close();
+      });
+
+      it("セキュリティ対応（security-fix）のタスクでは、確かめてほしいことを PR に書かない（承認の画面には出る）", async () => {
+        const pulls = new FakePulls();
+        const securityPlanner = async () => ({
+          steps: [...MVP_STEPS],
+          plan: "security-fix" as const,
+          reason: "セキュリティ対応",
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        });
+        const map = [
+          { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+          { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+          { viewpointId: "SEC-MIN", tests: ["pay.test.ts › 最小権限"] },
+        ];
+        const viewpoints: [string, boolean][] = [
+          ["TV-1", true],
+          ["TV-2", true],
+          ["SEC-MIN", true],
+        ];
+        const made = await toImplement(
+          [
+            implement("# 実装の説明", map),
+            review(viewpoints),
+            rework("undecidable", reason),
+            out(
+              [
+                "# 直した",
+                block({
+                  "sacty-responses": [
+                    {
+                      remarkId: "implement-1-1",
+                      text: "直した",
+                      confirm: "脆弱性の範囲を推測しました",
+                    },
+                  ],
+                }),
+                block({ "sacty-test-map": map }),
+              ].join("\n\n"),
+            ),
+            review(viewpoints, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later, planner: securityPlanner },
+        );
+        const { activity, service, id } = made;
+        await drain(service);
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+        pulls.feedbackList = [item("comment:410", { body: "ここ前と言ってること違わない？" })];
+        await service.checkPullRequests();
+        await drain(service);
+        await settleAsks();
+        const task = service.get(id)?.task;
+        expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+        // 確かめたいことは、承認の画面の元になる記録には残るが、PR には書かない
+        expect(task?.remarks.at(-1)?.confirm).toBe("脆弱性の範囲を推測しました");
+        expect(asks(pulls)).toHaveLength(0);
+        activity.close();
+      });
+
+      it("確かめてほしいことの通知を書く前に一時停止したら、書かずに止まり、再開した後に1回だけ書く（目印で重複を防ぐ）", async () => {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        let hold = true;
+        class SlowFind extends FakePulls {
+          override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+            if (hold && input.marker.includes("sacty-human-ask")) {
+              hold = false;
+              entered.resolve();
+              await gate.promise;
+            }
+            return super.findIssueComment(input);
+          }
+        }
+        const pulls = new SlowFind();
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            redone([{ remarkId: "implement-1-1", text: "直した", confirm: "確かめたい" }]),
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:411")];
+        await service.checkPullRequests();
+        await drain(service);
+        // 既存のコメントを探している最中に、一時停止する
+        await entered.promise;
+        await service.pause(id);
+        gate.resolve();
+        await settleAsks();
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(asks(pulls)).toHaveLength(0);
+        // 再開すると、同じ提出の承認待ちに戻り、通知を書く。もう一度再開しても増えない
+        service.resume(id, {});
+        await settleAsks();
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(asks(pulls)).toHaveLength(1);
+        await service.pause(id);
+        service.resume(id, {});
+        await settleAsks();
+        expect(asks(pulls)).toHaveLength(1);
         activity.close();
       });
 
