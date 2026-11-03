@@ -9092,6 +9092,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("最終レビューをやり直したとき、前の回が人が確かめることに挙げた項目を、2回目の判定が空でも引き継ぐ。理由を書いて外した項目だけ外す（PBI-294）", async () => {
+    const RATE = "率の検査が Number() で読むので 1e1・0x10 も整数として受ける";
+    const QUEUE = "範囲内か判断できない：queue.ts の直列化のキュー（設計に無い）";
+    const verdict = (extra: Record<string, unknown>) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "ok" },
+              { id: "TV-2", verified: true, reason: "ok" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+            tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+            summary: "所見",
+            ...extra,
+          },
+        }),
+      );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      // 1回目：範囲外の別の1件で不合格。人が確かめることを2件挙げる
+      verdict({ outOfScope: ["a.ts の変更：どの要求要件にも無い"], humanChecks: [RATE, QUEUE] }),
+      implement("# v2"),
+      // 2回目：人が確かめることが空。キューは範囲内と確かめて外す理由を書く
+      verdict({ humanChecks: [], droppedHumanChecks: ["P2：設計の節で範囲内と確かめた"] }),
+    ]);
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload).toMatchObject({
+      passed: false,
+      humanChecks: [RATE, QUEUE],
+    });
+    expect(first?.type === "FinalReviewed" && first.payload).not.toHaveProperty(
+      "droppedHumanChecks",
+    );
+    // 1回目の指示には、引き継ぎの節が無い。やり直しの指示には、前の回の項目が番号つきで入る
+    expect(promptOf(executor, 4)).not.toContain("前の回の最終レビューが挙げた");
+    expect(promptOf(executor, 6)).toContain(`- [P1] ${RATE}`);
+    expect(promptOf(executor, 6)).toContain(`- [P2] ${QUEUE}`);
+    // 2回目の判定：外さなかった項目が残り、外した項目と理由は記録に残る
+    expect(second?.type === "FinalReviewed" && second.payload).toMatchObject({
+      passed: true,
+      humanChecks: [RATE],
+      droppedHumanChecks: [`${QUEUE} → 外した理由：設計の節で範囲内と確かめた`],
+    });
+    // 最新の判定が、次の回の引き継ぎ元になる
+    expect(service.get(id)?.task.lastReview?.humanChecks).toEqual([RATE]);
+    activity.close();
+  });
+
   describe("最終レビューの出力から判定を読み取れないとき（PBI-277）", () => {
     // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
     const unreadable = () =>

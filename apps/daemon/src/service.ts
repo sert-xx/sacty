@@ -324,6 +324,7 @@ import {
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
   type ChatLogs,
+  carriedHumanChecks,
   changeableSteps,
   checkProvenance,
   continuablePullRequest,
@@ -8861,6 +8862,8 @@ export class TaskService {
         {
           ...(testCommand ? { testCommand } : {}),
           unmappedViewpoints,
+          // 前の回が人が確かめることに挙げた項目は、理由なしには落とさず、次の回へ引き継ぐ（PBI-294）
+          previousHumanChecks: carriedHumanChecks(current),
           ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
           ...(documentsOnly ? { documentsOnly } : {}),
         },
