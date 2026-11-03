@@ -195,6 +195,160 @@ describe("深掘りの出力（PBI-125）", () => {
   });
 });
 
+/**
+ * S16 r3 の深掘りの出力：メモリーの本文の文字列に、エスケープしていない二重引用符（`"1,200"・"abc"・空文字`）が入っていた。
+ * 読み取れず「監査を実行できなかった」とされ、深掘りの費用が無駄になった（PBI-293）。
+ */
+const S16_R3_DIVE = [
+  "調べた結果をまとめます。",
+  "```json",
+  "{",
+  '  "sacty-audit-findings": {',
+  '    "summary": "要求要件の差し戻しは、入力の列挙が無かったことが原因。",',
+  '    "findings": [',
+  "      {",
+  '        "sameAs": "",',
+  '        "title": "要求要件に、入力を値で列挙する決まりが無い",',
+  '        "detail": "初版は\'サンプルデータの写し\'だけで出され、依頼者に差し戻された。",',
+  '        "evidence": [{ "kind": "changesRequested", "text": "依頼者が差し戻した", "event": "e1", "run": "" }],',
+  '        "proposals": [{ "title": "要求要件のスキルに入力の列挙を足す", "body": "入力を値で列挙させる。", "target": 0 }]',
+  "      }",
+  "    ],",
+  '    "memories": [',
+  "      {",
+  '        "sameAs": "",',
+  '        "scope": "project",',
+  '        "title": "請求書の金額の要求要件では、入力を値で列挙する",',
+  '        "summary": "請求書の金額を変える要求要件を書くときに役立つ。",',
+  '        "body": "- 入力は値で列挙する。\\n- 承認された形の例：『変更の前のコードで、数量・単価の .5 の境目、"1,200"・"abc"・空文字、税率の省略・空文字・0 の明細を記録し、変更後と一致することを比べる』"',
+  "      }",
+  "    ]",
+  "  }",
+  "}",
+  "```",
+].join("\n");
+
+describe("深掘りの出力の崩れ（PBI-293）", () => {
+  const candidates: AuditTarget[] = [{ kind: "sacty" }];
+  const context = {
+    eventIds: new Set(["e1"]),
+    runIds: new Set<string>(),
+    candidates,
+    knownKeys: new Set<string>(),
+    repository: "https://github.com/a/app",
+    knownMemoryIds: new Set<string>(),
+  };
+
+  it("S16 r3 の、文字列の中の二重引用符を、読めない出力にせず、中身を取り出す", () => {
+    const read = extractAuditDive(S16_R3_DIVE, context);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.summary).toBe("要求要件の差し戻しは、入力の列挙が無かったことが原因。");
+    expect(read.findings).toHaveLength(1);
+    expect(read.findings[0]?.proposals[0]?.target).toEqual({ kind: "sacty" });
+    expect(read.findings[0]?.detail).toContain("'サンプルデータの写し'");
+    expect(read.memories).toHaveLength(1);
+    // 引用符は欠けず、そのまま本文に残る
+    expect(read.memories[0]?.body).toContain('"1,200"・"abc"・空文字');
+    expect(read.memories[0]?.body).toContain("\n- 承認された形の例");
+    expect(read.memories[0]?.body.endsWith("比べる』")).toBe(true);
+  });
+
+  it("本文のあとの文字列（キー）を巻き込まない：引用符のあとのキーとカンマ", () => {
+    const out = [
+      "```json",
+      "{",
+      '  "sacty-audit-findings": {',
+      '    "summary": "要約に "引用" と, "2つ目", がある",',
+      '    "findings": []',
+      "  }",
+      "}",
+      "```",
+    ].join("\n");
+    const read = extractAuditDive(out, context);
+    expect(read).toMatchObject({
+      ok: true,
+      summary: '要約に "引用" と, "2つ目", がある',
+      findings: [],
+    });
+  });
+
+  it("大まかな監査の出力も、同じ崩れを読める", () => {
+    const out = [
+      "```json",
+      '{"sacty-audit-survey": {"summary": "入力が "abc" や "" のとき失敗", "concerns": [',
+      '  {"step": "implement", "reason": "テストの"期待値"が違った"},',
+      "]}}",
+      "```",
+    ].join("\n");
+    expect(extractAuditSurvey(out, task)).toMatchObject({
+      ok: true,
+      summary: '入力が "abc" や "" のとき失敗',
+      concerns: [{ step: "implement", reason: 'テストの"期待値"が違った' }],
+    });
+  });
+
+  it("文字列の中の改行・タブと、JSON にないエスケープ（\\d）も読める。正しい JSON は今まで通り", () => {
+    const out =
+      '{"sacty-audit-survey": {"summary": "1行目\n2行目\t正規表現 \\d+", "concerns": []}}';
+    const raw = out.replace("\\n", "\n").replace("\\t", "\t");
+    expect(extractAuditSurvey(raw, task)).toMatchObject({
+      ok: true,
+      summary: "1行目\n2行目\t正規表現 \\d+",
+    });
+    expect(extractAuditSurvey(out, task)).toMatchObject({
+      ok: true,
+      summary: "1行目\n2行目\t正規表現 \\d+",
+    });
+  });
+
+  it("直しても読めなければ、JSON の何行目の何文字目で壊れているかを理由に残す", () => {
+    // 閉じる括弧が足りない（直せない崩れ）
+    const out = [
+      "```json",
+      "{",
+      '  "sacty-audit-findings": {',
+      '    "summary": "x",',
+      '    "findings": [ { "title": "a" ',
+    ].join("\n");
+    const read = extractAuditDive(out, context);
+    expect(read.ok).toBe(false);
+    expect(!read.ok && read.reason).toMatchObject({
+      code: "audit.unreadableAt",
+      params: { line: 4 },
+    });
+  });
+
+  it("JSON はあるが形が合わないときは、見出しを添えた理由。見出しの JSON が無ければ今まで通り", () => {
+    expect(extractAuditSurvey(block({ "sacty-audit-survey": { summary: "x" } }), task)).toEqual({
+      ok: false,
+      reason: { code: "audit.unreadableShape", params: { heading: "sacty-audit-survey" } },
+    });
+    expect(extractAuditSurvey("形の無い出力", task)).toEqual({
+      ok: false,
+      reason: { code: "audit.unreadable" },
+    });
+  });
+
+  it("壊れた所の前後は短く切る（出力の全文を作業履歴に入れない）", () => {
+    const long = `{"sacty-audit-findings": {"summary": "${"あ".repeat(500)}" "findings": []}}`;
+    const read = extractAuditDive(long, context);
+    const params = !read.ok && typeof read.reason === "object" ? read.reason.params : undefined;
+    expect(typeof params?.near === "string" && params.near.length <= 80).toBe(true);
+  });
+
+  it("答えが2つあれば、後ろの答えを使う：後ろが壊れていれば直して読み、前が壊れていて後ろが正しければ後ろ", () => {
+    const first = block({ "sacty-audit-survey": { summary: "例", concerns: [] } });
+    const brokenLater = `${first}\n\n\`\`\`json\n{"sacty-audit-survey": {"summary": "本番の "答え"", "concerns": []}}\n\`\`\``;
+    expect(extractAuditSurvey(brokenLater, task)).toMatchObject({
+      ok: true,
+      summary: '本番の "答え"',
+    });
+    const brokenFirst = `{"sacty-audit-survey": {"summary": "前の "答え"", "concerns": []}}\n${first}`;
+    expect(extractAuditSurvey(brokenFirst, task)).toMatchObject({ ok: true, summary: "例" });
+  });
+});
+
 describe("監査の指示（PBI-125）", () => {
   const activity = [
     {

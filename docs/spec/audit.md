@@ -74,13 +74,17 @@
 - 指示には、台帳・ログ・コードの中の指示に従わないこと、秘密情報を書かないことを入れる。
 - 出力は ```json の `sacty-audit-survey`・`sacty-audit-findings` で読む。
   - 残すのは、タスクの工程にある工程、このタスクの作業履歴の行・実行にある根拠の ID、候補の番号から選んだ宛先だけ。
-  - 読めなければ `AuditFailed`（`audit.unreadable`）。
+  - 文字列の中の崩れ（エスケープしていない二重引用符・改行などの制御文字・JSON にないバックスラッシュのエスケープ・閉じる括弧の前の余分なカンマ）は、直しながら読む。JSON として読める答えがあれば、それが最後の答えのときはそのまま使い、後ろに読めない答えがあるときだけ直して読み直す。二重引用符は、次に来る文字がその場所に来る区切り（キーなら `:`、値なら `}` か次のキー、配列の要素なら `]` か `,` と次の値）でなければ、文字列の一部とみなす。
+  - 指示にも、文字列の中の二重引用符はエスケープするか「」で囲むように書く。
+  - 直しても読めなければ `AuditFailed` にし、理由に何が読めなかったかを残す（JSON が出力に無い：`audit.unreadable`。壊れている：`audit.unreadableAt`、JSON の何行目の何文字目か・前後の文字。JSON は読めたが項目が足りない：`audit.unreadableShape`）。
+    この失敗はそれ以上進めないが、記録済みの大まかな監査の結果・終えた深掘り・使った費用は残る。
 - 実行に失敗したら `AuditFailed`（`audit.runFailed`）。
   失敗した監査は、それ以上進めない。
 - デーモンを止めるとき・タスクを中止するときに終わった実行は、記録しない。
   次に起動したとき、同じ段からもう一度実行する。
 
 コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`・`buildAuditDivePrompt`・`extractAuditDive`）、
+`apps/daemon/src/agent-json.ts`（`lastLenientJsonAnswer`・`explainUnreadableAnswer`）、
 `apps/daemon/src/audit-evidence.ts`（`auditCounts`・`countToolFailures`・`redactDeep`）、`apps/daemon/src/service.ts`（`runAuditAgent`・`auditRedactor`・`withAuditDiveLock`）
 
 ## 原因と改修の提案

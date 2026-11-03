@@ -1,6 +1,12 @@
 import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { jsonCandidates, lastJsonAnswer, withoutCandidates } from "./agent-json.js";
+import {
+  explainUnreadableAnswer,
+  jsonCandidates,
+  lastJsonAnswer,
+  lastLenientJsonAnswer,
+  withoutCandidates,
+} from "./agent-json.js";
 import {
   extractBlocks,
   extractExport,
@@ -387,5 +393,56 @@ describe("エージェントの JSON の答えを、囲み方が揺らいでも�
     // 読める・読めないの両方を試している
     expect(accepted).toBeGreaterThan(5_000);
     expect(accepted).toBeLessThan(15_000);
+  });
+});
+
+describe("崩れた JSON の寛容な読み取り（PBI-293）", () => {
+  const read = (output: string) => lastLenientJsonAnswer(output, "h", (v) => v)?.value;
+
+  it("文字列の中の引用符・改行・JSON にないエスケープ・末尾のカンマを直して読む", () => {
+    expect(read('{"h": {"a": "x "y" z", "b": ["p "q" r", "s"], "c": 1,}}')).toEqual({
+      h: { a: 'x "y" z', b: ['p "q" r', "s"], c: 1 },
+    });
+    expect(read('{"h": {"a": "1行目\n2行目\t\\d+ \\u3042"}}')).toEqual({
+      h: { a: "1行目\n2行目\t\\d+ あ" },
+    });
+  });
+
+  it("正しい JSON は、そのまま読む。空のオブジェクト・配列も", () => {
+    expect(
+      read('前置き\n```json\n{"h": {"a": [], "b": {}, "c": null, "d": true, "e": -1.5e2}}\n```'),
+    ).toEqual({
+      h: { a: [], b: {}, c: null, d: true, e: -150 },
+    });
+  });
+
+  it("引用符のあとにカンマと次のキーが続く文字列は、そこで閉じる", () => {
+    expect(read('{"h": {"a": "x", "b": "y"}}')).toEqual({ h: { a: "x", b: "y" } });
+    expect(read('{"h": {"a": "x"\n}}')).toEqual({ h: { a: "x" } });
+  });
+
+  it("最後の答えを選ぶ。見出しの無い JSON・読めないものだけなら undefined", () => {
+    expect(read('{"h": {"n": 1}}\n{"h": {"n": "a "b" c"}}')).toEqual({ h: { n: 'a "b" c' } });
+    expect(read('{"x": {"a": "b "c" d"}}')).toBeUndefined();
+    expect(read('{"h": {"a": "閉じない')).toBeUndefined();
+  });
+
+  it("深すぎる入れ子・長い出力でも止まらず、時間が出力の長さに比例する", () => {
+    expect(read(`{"h": ${"[".repeat(500)}"a "b" c"${"]".repeat(500)}}`)).toBeUndefined();
+    const body = "あ ".repeat(200_000);
+    const started = Date.now();
+    expect(read(`{"h": {"a": "${body} "x" ${body}"}}`)).toBeDefined();
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("読めなかった理由：JSON が無い・壊れている位置・形", () => {
+    expect(explainUnreadableAnswer("なし", "h")).toEqual({ kind: "missing" });
+    expect(explainUnreadableAnswer('{"h": {"a": 1}}', "h")).toEqual({ kind: "shape" });
+    expect(explainUnreadableAnswer('{\n"h": {\n  "a": [1 2]}}', "h")).toEqual({
+      kind: "broken",
+      line: 3,
+      column: 11,
+      near: '{ "h": { "a": [1 2]}}',
+    });
   });
 });

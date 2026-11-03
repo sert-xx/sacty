@@ -31726,6 +31726,64 @@ describe("完了したタスクの監査（PBI-125）", () => {
     expect(service.queuedTaskIds()).not.toContain(id);
   });
 
+  it("深掘りの出力の文字列に二重引用符があっても、読んで深掘りの結果を記録する（S16 r3。PBI-293）", async () => {
+    const broken = [
+      "```json",
+      "{",
+      '  "sacty-audit-findings": {',
+      '    "summary": "入力が "1,200" や "abc" のときの扱いが決まっていない",',
+      '    "findings": []',
+      "  }",
+      "}",
+      "```",
+    ].join("\n");
+    const { service, id } = await completedTask((invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "差し戻しが多い" }])
+        : isDive(invocation)
+          ? out(broken)
+          : undefined,
+    );
+    await service.runNext(id);
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(auditEvents(service, id).map((e) => e.type)).toEqual([
+      "AuditQueued",
+      "AuditSurveyed",
+      "AuditDeepDived",
+      "AuditCompleted",
+    ]);
+    expect(service.get(id)?.task.audit?.dives[0]?.summary).toBe(
+      '入力が "1,200" や "abc" のときの扱いが決まっていない',
+    );
+  });
+
+  it("深掘りの出力が直しても読めなければ、読めなかった所を作業履歴に残し、大まかな監査の結果は残す（PBI-293）", async () => {
+    const { service, id } = await completedTask((invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "差し戻しが多い" }])
+        : isDive(invocation)
+          ? out(
+              '```json\n{\n  "sacty-audit-findings": {\n    "summary": "x",\n    "findings": [ { "title": \n```',
+            )
+          : undefined,
+    );
+    await service.runNext(id);
+    await service.runNext(id);
+    const audit = service.get(id)?.task.audit;
+    expect(audit?.failed?.step).toBe("requirements");
+    expect(audit?.failed?.reason).toMatchObject({
+      code: "audit.unreadableAt",
+      params: { line: 5 },
+    });
+    // 大まかな監査の結果と、その費用は残る
+    expect(audit?.survey?.concerns).toEqual([{ step: "requirements", reason: "差し戻しが多い" }]);
+    expect(audit?.usedUsd).toBeGreaterThan(0);
+    const failed = auditEvents(service, id).at(-1);
+    expect(failed?.type).toBe("AuditFailed");
+    expect(failed?.payload).toMatchObject({ step: "requirements" });
+  });
+
   it("実行に失敗したら、監査の失敗として理由を記録する", async () => {
     const { service, id } = await completedTask((invocation) =>
       isSurvey(invocation)
