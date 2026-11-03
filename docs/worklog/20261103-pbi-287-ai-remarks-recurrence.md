@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-03（UTC）
 - タスク: PBI-287
-- PR: なし
+- PR: #288
 - ブランチ: feat/issue-287-pbi-287
 - 関係する ADR: [最終レビュー・統合レビューで、AI のレビューの過去の指摘にも再発の判定を求める](../adr/20261103-0312-judge-ai-review-remarks-in-reviews.md)
 
