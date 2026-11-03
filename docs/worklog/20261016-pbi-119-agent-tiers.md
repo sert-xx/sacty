@@ -4,7 +4,7 @@
 - タスク: PBI-119
 - PR: #129
 - ブランチ: feat/issue-119-agent-tiers
-- 関係する ADR: [エージェントを段階で固定し、sacty が接頭辞を外した名前でサブエージェントの定義を置き、スキルは段階の名前で担当を起動する](../adr/20261016-1455-agent-tiers-for-subagents.md)
+- 関係する ADR: [エージェントを段階で固定し、sacty が接頭辞を外した名前でサブエージェントの定義を置き、スキルは段階の名前で担当を起動する](../adr/20261016-1455-superseded-agent-tiers-for-subagents.md)
 
 ## 目的
 

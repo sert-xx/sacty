@@ -641,3 +641,85 @@ export function exportProject(project: Project): ProjectExport {
     },
   };
 }
+
+/** キーの順によらず同じ文字列になる JSON（値の同一判定に使う）。 */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+const same = (a: unknown, b: unknown) => canonical(a) === canonical(b);
+
+/** 対象の同一性（Org かリポジトリか、URL の大文字小文字を除いて同じか）。 */
+const targetKey = (t: ProjectTarget) => `${t.scope}:${t.target.toLowerCase()}`;
+
+/**
+ * 同じ版から別々に変えて保存した2つの定義（base から incoming、base から current）を、互いの変更を残して併合する
+ * （PBI-301。読み込んだ後にほかの保存があった保存を、拒否せずに受けるため）。
+ * - 対象（targets）は、1件ずつ併合する。どちらかが足した対象と、どちらかが消した対象と、どちらか一方だけが変えた対象は残す。
+ *   同じ対象を両方が違うように変えた・片方が消してもう片方が変えたときは併合できない。順序は current のまま、足した対象は後ろ。
+ * - ほかの項目（名前・コンテキスト・チケット・共用の compose・GitHub のアカウント）は、項目ごとに、片方だけが変えた
+ *   ならその変更を採る。両方が違うように変えたら併合できない。
+ * 併合できなければ undefined。
+ */
+export function mergeProjectDefinitions(
+  base: ProjectDefinition,
+  current: ProjectDefinition,
+  incoming: ProjectDefinition,
+): ProjectDefinition | undefined {
+  const pick = <K extends keyof ProjectDefinition>(
+    key: K,
+  ): { ok: true; value: ProjectDefinition[K] } | { ok: false } => {
+    if (same(incoming[key], base[key])) return { ok: true, value: current[key] };
+    if (same(current[key], base[key]) || same(current[key], incoming[key])) {
+      return { ok: true, value: incoming[key] };
+    }
+    return { ok: false };
+  };
+
+  const targets = mergeTargets(base.targets, current.targets, incoming.targets);
+  if (!targets) return undefined;
+  const merged: Record<string, unknown> = { targets };
+  for (const key of ["name", "context", "tickets", "sharedComposes", "githubAccounts"] as const) {
+    const picked = pick(key);
+    if (!picked.ok) return undefined;
+    if (picked.value !== undefined) merged[key] = picked.value;
+  }
+  return merged as ProjectDefinition;
+}
+
+function mergeTargets(
+  base: readonly ProjectTarget[],
+  current: readonly ProjectTarget[],
+  incoming: readonly ProjectTarget[],
+): ProjectTarget[] | undefined {
+  const byKey = (list: readonly ProjectTarget[]) => new Map(list.map((t) => [targetKey(t), t]));
+  const baseMap = byKey(base);
+  const currentMap = byKey(current);
+  const incomingMap = byKey(incoming);
+  const result = new Map(currentMap);
+  // incoming が消した対象（base にあって incoming に無い）。current が変えていたら併合できない
+  for (const [key, item] of baseMap) {
+    if (incomingMap.has(key)) continue;
+    const now = currentMap.get(key);
+    if (now && !same(now, item)) return undefined;
+    result.delete(key);
+  }
+  // incoming が足した・変えた対象
+  for (const [key, item] of incomingMap) {
+    const before = baseMap.get(key);
+    if (before && same(item, before)) continue;
+    const now = currentMap.get(key);
+    if (now && !same(now, item) && !(before && same(now, before))) return undefined;
+    if (before && !now) return undefined;
+    result.set(key, item);
+  }
+  return [...result.values()];
+}

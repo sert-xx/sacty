@@ -280,11 +280,17 @@ Besides creating it from a report, you can create one in "Create task" by choosi
 A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue is needed, the agent writes the comment in the step's output. After a person approves the step's output, sacty posts it with the project's GitHub account.
 
 Nothing is posted unless you approve.
+The exception is a step that is approved by merging its PR (implementation, requirements, and design): sacty posts without waiting for the merge, as soon as the output is awaiting approval (see the list below).
 
 - Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, sacty posts the revised version.
 - Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. sacty does not post to other URLs and shows the reason in the activity history.
+- For a step approved by merging its PR, sacty posts the requested comments to that PR as soon as the output is awaiting approval.
+  This lets the people watching the PR read a reply to a review comment right away.
+  After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
+  The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
+- sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
 - The end of the comment notes that AI wrote it in a sacty task and a person approved it.
-- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop.
+- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop. If it could not be posted, read the record in the activity history and, if needed, write to the PR yourself.
 - The review step, as before, has sacty post the written review to the PR.
 
 ## Test (verification) commands

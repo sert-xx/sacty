@@ -747,10 +747,25 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     }
     case "ReviewTargetResolved":
       return e.ReviewTargetResolved(event.payload.url, event.payload.headCommit.slice(0, 7));
+    case "ReviewGitHubRetried":
+      return e.ReviewGitHubRetried(
+        event.payload.where,
+        event.payload.attempt,
+        event.payload.maxAttempts,
+        Math.round(event.payload.waitMs / 1000),
+        l.text(event.payload.message),
+      );
     case "PullRequestReviewPosted":
       return e.PullRequestReviewPosted(event.payload.url);
     case "GuardianMissed":
       return e.GuardianMissed;
+    case "RunCostRecorded":
+      return e.RunCostRecorded(
+        event.payload.source,
+        formatUsd(event.payload.amountUsd),
+        formatUsd(event.payload.convertedUsd),
+        event.payload.unpricedModels ?? [],
+      );
     case "AiRequestsRetried":
       return e.AiRequestsRetried(
         event.payload.retries,

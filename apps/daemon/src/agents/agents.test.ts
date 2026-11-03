@@ -613,11 +613,23 @@ describe("出力の読み取り", () => {
       ),
     ].join("\n");
     const total = { input: 330, cacheRead: 9900, cacheWrite: 770, output: 880 };
+    // モデルごとの使用量も持つ（報告が無いとき、モデルごとの単価で換算するため。PBI-301）
+    const modelUsages = [
+      {
+        model: "claude-opus-5-5",
+        usage: { input: 300, cacheRead: 9000, cacheWrite: 700, output: 800 },
+      },
+      {
+        model: "claude-sonnet-5-5",
+        usage: { input: 30, cacheRead: 900, cacheWrite: 70, output: 80 },
+      },
+    ];
     // 目印が無ければ、これまでどおり最後の result。使用量は modelUsage の合計
     expect(parseClaudeResult(lines, 0)).toEqual({
       kind: "completed",
       output: "レビューは終わっています。判定の sacty-review-verdict は前のメッセージにあります。",
       usage: total,
+      modelUsages,
     });
     const reader = new ClaudeOutcomeReader(undefined, { prefer: '"sacty-review-verdict"' });
     reader.push(lines);
@@ -625,6 +637,7 @@ describe("出力の読み取り", () => {
       kind: "completed",
       output: `**総評**\n\n本文\n\n${verdict}`,
       usage: total,
+      modelUsages,
     });
     // セッションを再開・複製した実行は、modelUsage に前の実行の分も入るので、各 result の usage を合計する
     const resumed = new ClaudeOutcomeReader(undefined, { resumed: true });
@@ -718,6 +731,7 @@ describe("出力の読み取り", () => {
       reason: "error",
       message: "API Error: 500",
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+      modelUsages: [{ model: "m", usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 } }],
     });
     // modelUsage が無ければ、各 result の usage の合計
     expect(parseClaudeResult(lines.replace(/,"modelUsage":\{[^}]*\}\}/, ""), 1)).toMatchObject({

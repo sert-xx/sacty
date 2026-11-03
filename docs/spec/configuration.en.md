@@ -63,7 +63,7 @@ There is one entry in `providers` per runtime: `codex` (`runtime: codex`) and `c
 | --- | --- | --- |
 | `auth` | (required) | Authentication (table below) |
 | `via_gateway` | `false` | Route AI calls through the host gateway. It can be `true` only when `auth.mode` of `codex` is `bedrock` or `openai-compatible` (`config.gatewayUnsupported`) |
-| `available_models` | `{}` | Prices per model name (US dollars per million tokens). `input`, `cached_input`, `output` (required), and `cache_write` (default 0) |
+| `available_models` | `{}` | Prices per model name (US dollars per million tokens). `input`, `cached_input`, `output` (required), and `cache_write` (default 0). Every agent of the same provider carries all of them as `modelPrices`, and when another model (such as a subagent) is used in a run, sacty converts that model's usage with its price ([Agent execution](agent-execution.en.md#output-handling)) |
 
 The items for each `auth.mode` and the allowed providers are as follows.
 

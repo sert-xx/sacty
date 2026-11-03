@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は95（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は106（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -57,7 +57,7 @@
   3. メモリーの状態に適用する。
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` は受け付ける。
-- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`）。
+- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`）。
 - 費用を持つイベント（[費用](#費用)の16種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目
@@ -92,6 +92,9 @@
 - 単価（`PricePerMTok`）は100万トークンあたりの米ドルで、`input`・`cachedInput`・`cacheWrite`（既定 0）・`output`。
 - 費用 = (`input`×`input` の単価 + `cacheRead`×`cachedInput` の単価 + `cacheWrite`×`cacheWrite` の単価 + `output`×`output` の単価) ÷ 10^6（分子を整数に丸めてから割る）。
 - サブスクリプションとスタブの実行は、同じ単価で換算した推定の費用（`estimated`）として扱い、予算の判定に使う。
+- 実行の費用は、CLI が報告した額（Claude Code の `total_cost_usd`）があればそれ、無ければモデルごとの使用量をそのモデルの単価で換算した額（単価が設定に無いモデルは、工程のエージェントの単価）にする
+  （[エージェントの実行](agent-execution.md#出力の扱い)）。
+  CLI の報告を使った実行と、モデルごとに換算した実行は、どちらにしたかを `RunCostRecorded`（`reported`・`converted`。設定の単価で換算した額も持つ）に記録する。予算には、実行の結果のイベントの `costUsd` だけを足す。
 - タスクの予算に入れる費用を持つイベントは、次の16種類（`CHARGED_EVENT_TYPES`）。
   `costUsd` を持つイベントはこれですべて。
   統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する。

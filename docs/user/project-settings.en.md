@@ -82,10 +82,13 @@ When you save, sacty reads and checks the context, and tells you if `mcp.yaml`, 
 
 When several people (or agents) open and save the settings of the same project, sacty does not silently erase a change that was saved first with a later save.
 
-- If another save changed the project's settings after you opened the settings page, your save is not applied.
+- Even if another save changed the project's settings after you opened the settings page, sacty keeps both sets of changes and saves, as long as the changes do not overlap.
+  - For example, you each added a different target (a repository or an org), one of you added a target and another removed a different one, or you changed different items (such as the name and the context).
+  - When sacty saved by merging, the page says so and shows a "Reload to see the latest settings" button. This page has not seen the other save's changes, so reload to check them.
+- If you changed the same item or the same target in different ways, your save is not applied.
   The page shows the reason and a "Reload to see the latest settings" button.
-- Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page. Reloading discards it, so copy any change you want to keep first (the page also says this next to the button).
-- A save that changed only another field is also not applied (changes are not merged per field).
+  Click it to reload the page, check the latest settings, then make your change again. Until you reload, the input you were editing stays on the page. Reloading discards it, so copy any change you want to keep first (the page also says this next to the button).
+- If the version you opened is too old (50 or more saves have happened since), your save is not applied either. Reload in the same way.
 - After you save, you can save again.
 
 ## Export and import

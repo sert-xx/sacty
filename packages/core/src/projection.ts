@@ -1866,6 +1866,10 @@ export function applyEvent(
       task.reviewTarget = event.payload;
       break;
 
+    case "ReviewGitHubRetried":
+      // 記録だけ（GitHub の一時的な失敗で、間を置いてやり直した。PBI-301）
+      break;
+
     case "PullRequestReviewPosted": {
       // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する。
       // 行へのコメントだけのレビューもあるので、本文が空でも書き終えたものとして扱う
@@ -1931,11 +1935,21 @@ export function applyEvent(
 
     case "GitHubCommentsPosted": {
       const p = event.payload;
-      if (task.approved[p.step]?.at !== p.approvedAt) {
-        throw new ActivityIntegrityError(event, "not the approved output of the step");
-      }
-      if (task.githubComments?.[p.step]?.approvedAt === p.approvedAt) {
-        throw new ActivityIntegrityError(event, "already posted");
+      if (p.submission !== undefined) {
+        // 承認を待つ提出の頼みを、承認の前に投稿した（PBI-301）
+        if (task.gate?.step !== p.step || task.gate.submission !== p.submission) {
+          throw new ActivityIntegrityError(event, "not the submission awaiting approval");
+        }
+        if (task.githubComments?.[p.step]?.submission === p.submission) {
+          throw new ActivityIntegrityError(event, "already posted");
+        }
+      } else {
+        if (task.approved[p.step]?.at !== p.approvedAt) {
+          throw new ActivityIntegrityError(event, "not the approved output of the step");
+        }
+        if (task.githubComments?.[p.step]?.approvedAt === p.approvedAt) {
+          throw new ActivityIntegrityError(event, "already posted");
+        }
       }
       task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
       break;
@@ -2109,6 +2123,10 @@ export function applyEvent(
 
     case "AiRequestsRetried":
       // 記録だけ（作業履歴で確かめる。PBI-37）
+      break;
+
+    case "RunCostRecorded":
+      // 記録だけ（費用の出どころ。費用そのものは、実行の結果のイベントが持つ。PBI-301）
       break;
 
     case "AgentFellBack":

@@ -499,6 +499,11 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   承認し直したら（承認の日時が変わる）、その版の頼みを投稿する。
   中止・一時停止中・実行中のタスクでは投稿しない。
   次の工程の前に投稿する（`awaitingGitHubComments`）。
+- PR のマージで承認する工程（実装・要求要件・設計）の頼みは、承認（マージ）を待たずに投稿する。承認の後では、指摘への返信が、PR を見ている人に届かないため。
+  成果が承認待ち（`awaiting_approval`）で、対象の PR が開いているとき、その提出の頼みを1回投稿する（`awaitingSubmittedGitHubComments`）。
+  差し戻して作り直した次の提出は、その提出の頼みを、また1回投稿する。承認した後は、同じ提出の頼みを重ねて投稿しない。
+  レビューの工程・セキュリティのタスク・中止・一時停止中・実行中は、承認の後と同じく投稿しない。画面で承認する工程（PR が無い）は、これまでどおり承認の後に投稿する。
+  読めない頼み・件数と長さの上限・投稿先の制限・投稿直前の確かめ・目印は、承認の後と同じ。
 - 頼みを読めない（2つ以上ある・JSON として読めない・形が違う・本文が空）、コメントが 10 件（`GITHUB_COMMENTS_MAX`）より多い、本文が 60000 文字（`GITHUB_COMMENT_BODY_MAX`）より長いときは、どれも投稿せずに理由を記録する。
 - 投稿先は、PR（`/pull/<番号>`）か Issue（`/issues/<番号>`）の URL で、プロジェクトの対象（リポジトリか、その Org）か、タスクの取り込み元・作業するリポジトリのものだけ。
   ほかは、そのコメントだけを投稿せずに理由を記録する。
@@ -506,11 +511,15 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   変わっていれば、新しく投稿せず、記録もしない（再開したら、目印で投稿済みのものを見つけて続ける）。
 - 本文の頭に目印（`<!-- sacty-comment:<タスク>:<工程>:<承認の日時>:<番号> -->`）を、末尾に AI が書き人間が承認した旨を付け、Issue のコメントの API で投稿する。
   投稿の前に目印のあるコメントを探し、あれば使う（投稿の後・記録の前に止まっても、二度投稿しない）。
+  承認を待つ間の投稿は、目印の承認の日時の所を `submission-<提出の回>` にし、末尾の添え書きを「AI が書いた。この工程の成果は PR のマージで承認される」旨にする。
 - 結果は `GitHubCommentsPosted`（工程・承認の日時・コメントごとの URL か理由・読めなかった理由）に記録する。
-  投稿できなくても、タスクは止めない。
+  承認を待つ間の投稿は、`submission`（提出の回）を持ち、承認の日時は空にする。
+  投稿できなくても、タスクは止めない。投稿できなかったコメントの理由は、画面の作業履歴にこの記録として出る。
+- この投稿は PR の指摘に取り込まない：そのタスクのアカウントが投稿した、目印 `<!-- sacty-comment:` で始まるコメントは、PR の指摘の取り込みから除く（`feedback`・`isSactyGitHubComment`）。
+  返信が新しい指摘になって差し戻しが続かないようにするため。ほかのアカウントが目印をまねて書いたコメントは、除かない。
 - 取り込み元の Issue に返す調査の結果（`buildInvestigationComment`）からは、頼みの JSON を取り除く。
 
-コード: `apps/daemon/src/github-comments.ts`（`requestedGitHubComments`・`commentTarget`・`commentAllowed`・`buildGitHubComment`・`githubCommentMarker`・`withoutGitHubComments`）、`apps/daemon/src/github-relay.ts`（`GITHUB_COMMENTS_MAX`・`GITHUB_COMMENT_BODY_MAX`）、`apps/daemon/src/service.ts`（`postGitHubComments`・`awaitingGitHubComments`）、`packages/core/src/events.ts`（`GitHubCommentsPosted`・`OperationVia`）、`packages/core/src/projection.ts`
+コード: `apps/daemon/src/github-comments.ts`（`requestedGitHubComments`・`commentTarget`・`commentAllowed`・`buildGitHubComment`・`githubCommentMarker`・`withoutGitHubComments`）、`apps/daemon/src/github-relay.ts`（`GITHUB_COMMENTS_MAX`・`GITHUB_COMMENT_BODY_MAX`）、`apps/daemon/src/service.ts`（`postGitHubComments`・`awaitingGitHubComments`・`awaitingSubmittedGitHubComments`）、`apps/daemon/src/github.ts`（`feedback`・`isSactyGitHubComment`）、`packages/core/src/events.ts`（`GitHubCommentsPosted`・`OperationVia`）、`packages/core/src/projection.ts`
 
 ## 既存の PR の引き継ぎ
 
@@ -1595,7 +1604,11 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   読むのは、他のレビュアーの指摘と作者の返答で、bot の投稿と、このタスクのアカウントの目印付きの投稿（前回の投稿）は除く。
   本文のある承認のレビューも含める（`includeApprovals`。PR の指摘の取り込みでは含めない）。
   読んだものは、指示とは分けた JSON のデータ（`existingReviews`。古い順。新しい 30 件（`EXISTING_IN_PROMPT`）、1 件 2000 文字）で渡す（初回も再レビューも）。
-  指示には、レビューの前に既存の指摘の状況を確かめること、既存の指摘と同じ箇所・同じ問題を繰り返さないこと、判定は繰り返さなかった指摘を除いて決めること、省いた件数を総評に短く書くこと（本文は写さない）を書く。
+  指示には、レビューの前に既存の指摘の状況を確かめること、既存の指摘と同じ箇所・同じ問題を繰り返さないこと、判定は繰り返さなかった指摘と未対応の既存の指摘で決めること、省いた件数を総評に短く書くこと（本文は写さない）を書く。
+  既存の指摘が未対応かは、PR の先頭のコードと作者の返答・後の発言で確かめさせる。データにはスレッドが解決済みかどうかが無いので、解決済みにされていないことは未対応の根拠にしない。
+  コードが直っている指摘・作者の返答でコードに照らして対応が確かめられた指摘・前回の指摘の確認で対応を確かめた指摘は、未対応に数えない。
+  確かめて未対応だった既存の指摘があるときだけ、総評に「既存の指摘に未対応のものがある」と、どの指摘かを1行で添え、判定を「指摘なし」にしない。無いときは、総評に「未対応」と書かない（総評と判定を食い違わせない）。
+  既定のスキル `review-dispatch` の `pr-review` にも、同じ規則を書く。
   無ければ「まだ無い」と渡す。
   読めなければ、そう指示に書いてレビューは止めず、理由をデーモンのログに残す（秘密の値は伏せる）。
   再レビューの作者の返答（下）は、同じ読み出しから選ぶ（作者を読めなければ、返答だけ読めなかったものにする）。

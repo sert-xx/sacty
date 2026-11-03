@@ -1223,6 +1223,8 @@ function makeService(
     pulls?: FakePulls;
     /** レビューが止まったことの PR への知らせの期限（PBI-292）。 */
     stopNoticeTimeoutMs?: number;
+    /** レビューのタスクが GitHub の一時的な失敗を自動でやり直すまでの待ち（ミリ秒。PBI-301）。 */
+    reviewRetryDelaysMs?: readonly number[];
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
@@ -1297,6 +1299,7 @@ function makeService(
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
     ...(options.stopNoticeTimeoutMs ? { stopNoticeTimeoutMs: options.stopNoticeTimeoutMs } : {}),
+    ...(options.reviewRetryDelaysMs ? { reviewRetryDelaysMs: options.reviewRetryDelaysMs } : {}),
     // 情報収集は、既定では集めずに進める（情報収集のテストでは差し替える）
     ...(options.realGatherer ? {} : { gatherer: options.gatherer ?? (async () => undefined) }),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
@@ -1558,6 +1561,134 @@ describe("工程の実行と費用", () => {
     );
     expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(0.2);
     activity.close();
+  });
+
+  describe("実行の費用は、CLI の報告額を使い、報告が無ければモデルごとの単価で換算する（PBI-301）", () => {
+    const opus = { input: 5, cachedInput: 0.25, cacheWrite: 6.25, output: 25 };
+    const sonnet = { input: 2, cachedInput: 0.1, cacheWrite: 2.5, output: 10 };
+    /** 実行のログにあった値（Opus と Sonnet のサブエージェントを使った実行）。 */
+    const modelUsages = [
+      {
+        model: "claude-opus-5-5",
+        usage: { input: 104, output: 42590, cacheRead: 1500292, cacheWrite: 292045 },
+      },
+      {
+        model: "claude-sonnet-5-5",
+        usage: { input: 6, output: 866, cacheRead: 42459, cacheWrite: 19603 },
+      },
+    ];
+    const usage = { input: 110, output: 43456, cacheRead: 1542751, cacheWrite: 311648 };
+    const strong = agent({
+      id: "claude_advanced",
+      model: "claude-opus-5-5",
+      price: opus,
+      modelPrices: { "claude-opus-5-5": opus, "claude-sonnet-5-5": sonnet },
+    });
+    const run = async (outcome: AgentOutcome) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [outcome], { config: configOf(strong, 100) });
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const got = service.get(task.id);
+      const done = got?.activity.find((e) => e.type === "AgentRunCompleted");
+      const recorded = got?.activity.filter((e) => e.type === "RunCostRecorded") ?? [];
+      const result = { task: got?.task, done, recorded };
+      activity.close();
+      return result;
+    };
+
+    it("報告があれば、それを実行の費用にし、予算に入れる。出どころ（報告）と換算した額を作業履歴に残す", async () => {
+      const { task, done, recorded } = await run({
+        kind: "completed",
+        output: "# 要求要件",
+        usage,
+        modelUsages,
+        reportedCostUsd: 2.8945018,
+      });
+      expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBeCloseTo(2.894502, 6);
+      expect(task?.budget.usedUsd).toBeCloseTo(2.894502, 6);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.payload).toMatchObject({
+        agentId: "claude_advanced",
+        source: "reported",
+        amountUsd: 2.894502,
+      });
+      // 設定の単価で換算した額は、報告と近い（設定の単価が実勢に近い）
+      const converted =
+        (recorded[0]?.payload as { convertedUsd: number } | undefined)?.convertedUsd ?? 0;
+      expect(converted / 2.8945018).toBeGreaterThan(0.9);
+      expect(converted / 2.8945018).toBeLessThan(1.3);
+    });
+
+    it("報告が無ければ、モデルごとの使用量を、そのモデルの単価で換算する（以前は全部を工程のエージェントの単価で換算した）", async () => {
+      const { done, recorded } = await run({
+        kind: "completed",
+        output: "# 要求要件",
+        usage,
+        modelUsages,
+      });
+      // Opus は 3.265624、Sonnet は 0.0619254（Sonnet を Opus の単価で換算すると 0.1548135）
+      expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBeCloseTo(3.327549, 5);
+      expect(recorded[0]?.payload).toMatchObject({ source: "converted" });
+      expect(recorded[0]?.payload).not.toHaveProperty("unpricedModels");
+    });
+
+    it("単価が設定に無いモデルは工程のエージェントの単価で換算し、そのモデルを作業履歴に残す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const noSonnet = { ...strong, modelPrices: { "claude-opus-5-5": opus } };
+      const { service } = makeService(
+        activity,
+        [{ kind: "completed", output: "# 要求要件", usage, modelUsages }],
+        { config: configOf(noSonnet, 100) },
+      );
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const recorded = service.get(task.id)?.activity.find((e) => e.type === "RunCostRecorded");
+      expect(recorded?.payload).toMatchObject({
+        source: "converted",
+        unpricedModels: ["claude-sonnet-5-5"],
+      });
+      activity.close();
+    });
+
+    it("報告もモデルごとの使用量も無ければ（Codex など）、これまでどおり、エージェントの単価で換算し、出どころは記録しない", async () => {
+      const { done, recorded } = await run({
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1_000_000 },
+      });
+      expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(25);
+      expect(recorded).toEqual([]);
+    });
+
+    it("失敗した実行も、CLI の報告があればそれを費用にする", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "error",
+            message: "API Error: 500",
+            usage,
+            modelUsages,
+            reportedCostUsd: 2.5,
+          },
+        ],
+        { config: configOf(strong, 100) },
+      );
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const got = service.get(task.id);
+      const failed = got?.activity.find((e) => e.type === "AgentRunFailed");
+      expect(failed?.type === "AgentRunFailed" && failed.payload.costUsd).toBe(2.5);
+      expect(got?.task.budget.usedUsd).toBe(2.5);
+      expect(got?.activity.find((e) => e.type === "RunCostRecorded")?.payload).toMatchObject({
+        source: "reported",
+        amountUsd: 2.5,
+      });
+      activity.close();
+    });
   });
 
   it("実行に使った AI の接続先・モデル・リーズニングエフォートを記録する。書いていない設定は記録しない（PBI-46）", async () => {
@@ -7036,6 +7167,204 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    describe("GitHub の一時的な失敗は、間を置いて自動でやり直す（PBI-301）", () => {
+      const github = (status: number, detail = "Service Unavailable") =>
+        new MessageError(
+          message("github.failed", { action: "getPr", status, detail, hint: "none" }),
+        );
+      /** 最初の N 回だけ、PR の状態・PR の情報の読み取りを失敗させる。 */
+      class FlakyPulls extends FakePulls {
+        statusFailures = 0;
+        prInfoFailures = 0;
+        failWith: Error = github(503);
+        override async status(input: { repo: string; token: string; number: number }) {
+          if (this.statusFailures > 0) {
+            this.statusFailures--;
+            this.checked.push(input);
+            throw this.failWith;
+          }
+          return super.status(input);
+        }
+        override async pullRequest(input: { repo: string; token: string; number: number }) {
+          if (this.prInfoFailures > 0) {
+            this.prInfoFailures--;
+            this.prInfoRequests.push(input);
+            throw this.failWith;
+          }
+          return super.pullRequest(input);
+        }
+      }
+      const retried = (service: TaskService, id: string) =>
+        service
+          .get(id)
+          ?.activity.filter((e) => e.type === "ReviewGitHubRetried")
+          .map((e) => e.payload) ?? [];
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+      it("レビューの投稿の直前の PR の確認が 503 で失敗しても、待ってやり直して投稿し、止まらず、PR に知らせも出さない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        const { service, executor } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1, 1, 1],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        pulls.statusFailures = 2;
+        await service.runNext(id);
+        await settle();
+        const task = service.get(id)?.task;
+        expect(task && isCompleted(task)).toBe(true);
+        expect(pulls.reviews).toHaveLength(1);
+        expect(executor.calls).toHaveLength(1);
+        // 止まっていないので、PR に「止まりました」の知らせは出ない
+        expect(pulls.issueComments).toEqual([]);
+        // やり直したことは作業履歴に残る
+        expect(retried(service, id)).toMatchObject([
+          { where: "reviewPost", attempt: 1, maxAttempts: 3 },
+          { where: "reviewPost", attempt: 2, maxAttempts: 3 },
+        ]);
+        expect(ja(retried(service, id)[0]?.message)).toContain("503");
+        activity.close();
+      });
+
+      it("回数の上限まで失敗したら、今までどおり理由を記録して止まり、PR に知らせる。再開すると投稿する", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        const { service } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1, 1],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        pulls.statusFailures = 100;
+        await service.runNext(id);
+        await settle();
+        const paused = service.get(id)?.task;
+        expect(paused?.status).toBe("paused");
+        expect(paused?.pausedReason).toBe("error");
+        expect(ja(paused?.pausedMessage)).toContain("503");
+        // 最初の1回 + やり直し 2 回
+        expect(pulls.checked.filter((c) => c.number === 12)).toHaveLength(3);
+        expect(retried(service, id)).toHaveLength(2);
+        expect(pulls.reviews).toHaveLength(0);
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(pulls.issueComments[0]?.body).toContain("503");
+        // 再開して成功すれば、知らせは解消済みになる
+        pulls.statusFailures = 0;
+        service.resume(id, {});
+        await service.runNext(id);
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
+        activity.close();
+      });
+
+      it.each([
+        ["429", () => github(429, "rate limit")],
+        ["403 のレート制限", () => github(403, "You have exceeded a secondary rate limit")],
+        [
+          "接続の失敗",
+          () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }),
+        ],
+      ])("一時的な失敗（%s）もやり直す", async (_name, failure) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        pulls.failWith = failure();
+        const { service } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        pulls.statusFailures = 1;
+        await service.runNext(id);
+        const task = service.get(id)?.task;
+        expect(task && isCompleted(task)).toBe(true);
+        expect(retried(service, id)).toHaveLength(1);
+        activity.close();
+      });
+
+      it.each([
+        ["403 の権限", () => github(403, "Resource not accessible by personal access token")],
+        ["404", () => github(404, "Not Found")],
+        ["401", () => github(401, "Bad credentials")],
+        ["422", () => github(422, "Validation Failed")],
+        ["GitHub の失敗でないエラー", () => new Error("GitHub API 502")],
+      ])("待っても変わらない失敗（%s）は、やり直さずにすぐ止まる", async (_name, failure) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        pulls.failWith = failure();
+        const { service } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1, 1],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        pulls.statusFailures = 1;
+        await service.runNext(id);
+        expect(service.get(id)?.task.status).toBe("paused");
+        expect(retried(service, id)).toEqual([]);
+        expect(pulls.checked.filter((c) => c.number === 12)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("レビューの対象の PR の確認が 503 で失敗しても、やり直して進める。上限まで失敗したら止まる", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        pulls.prInfoFailures = 1;
+        const { service } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1, 1],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        expect(service.get(id)?.task.reviewTarget?.number).toBe(12);
+        expect(retried(service, id)).toMatchObject([{ where: "reviewTarget", attempt: 1 }]);
+        activity.close();
+
+        const second = new SqliteActivityStore(join(dir, "second.db"));
+        const stuck = new FlakyPulls();
+        stuck.prInfoFailures = 100;
+        const again = makeService(second, [], {
+          pulls: stuck,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [1, 1],
+        });
+        const otherId = importReviewIssue(again.service, "https://github.com/acme/app/pull/12");
+        await again.service.runNext(otherId);
+        expect(again.service.get(otherId)?.task.status).toBe("paused");
+        expect(stuck.prInfoRequests).toHaveLength(3);
+        second.close();
+      });
+
+      it("待っている間に一時停止を求められたら、やり直しをやめ、止まった理由を上書きしない", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FlakyPulls();
+        const { service } = makeService(activity, [out("# 評価")], {
+          pulls,
+          planner: reviewPlanner,
+          reviewRetryDelaysMs: [60_000],
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        pulls.statusFailures = 100;
+        const running = service.runNext(id);
+        await settle();
+        await service.pause(id);
+        await running;
+        expect(pulls.reviews).toHaveLength(0);
+        expect(pulls.checked.filter((c) => c.number === 12)).toHaveLength(1);
+        expect(service.get(id)?.task.pausedReason).toBe("manual");
+        activity.close();
+      });
+    });
+
     describe("レビューが止まったことを、レビューを頼んだ PR で知らせる（PBI-292）", () => {
       const capacity: AgentOutcome = {
         kind: "failed",
@@ -10297,6 +10626,131 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       unreadable.readError = "git を実行できません";
       const b = await toImplementGate([], { repos: unreadable });
       expect(commitMessage(unreadable, b.id)).toBe(`決済API\n\nsacty task ${b.id}`);
+    });
+  });
+
+  describe("PR のマージで承認する工程が頼んだコメントは、承認を待たずに PR に投稿する（PBI-301）", () => {
+    const reply = (body = "ご指摘の件は、この位置に置いています。") =>
+      [
+        "# 実装の説明",
+        block({
+          "sacty-github-comments": {
+            comments: [{ url: "https://github.com/acme/app/pull/7", body }],
+          },
+        }),
+      ].join("\n\n");
+    const commentsOf = (service: TaskService, id: string) =>
+      service.get(id)?.activity.filter((e) => e.type === "GitHubCommentsPosted") ?? [];
+
+    it("実装の PR が承認待ちになったら、頼まれたコメントを PR に1回だけ投稿し、マージの後にも重ねて投稿しない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+      // 承認（マージ）を待たずに、PR のコメントとして投稿されている
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(pulls.issueComments[0]).toMatchObject({
+        repo: "https://github.com/acme/app",
+        number: 7,
+        token: "ghp_secret",
+      });
+      const body = pulls.issueComments[0]?.body ?? "";
+      expect(body).toContain("ご指摘の件は、この位置に置いています。");
+      expect(body).toContain(`sacty-comment:${id}:implement:submission-1:0`);
+      expect(body).toContain("PR のマージで承認されます");
+      expect(body).not.toContain("人間が承認しました");
+      expect(commentsOf(service, id)).toHaveLength(1);
+      expect(commentsOf(service, id)[0]?.payload).toMatchObject({
+        step: "implement",
+        submission: 1,
+        results: [{ url: expect.stringContaining("issuecomment") }],
+      });
+      // 投稿後は、また実行しなくてよい
+      expect(service.queuedTaskIds()).toEqual([]);
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(1);
+      // マージして承認しても、同じ提出の頼みを重ねて投稿しない
+      pulls.state = { state: "merged", mergedBy: "reviewer", headSha: task?.pullRequest?.commit };
+      await service.checkPullRequests();
+      await drain(service);
+      expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("投稿できなかったら、理由を作業履歴に残し、タスクは承認待ちのまま進める（そのあとは投稿し直さない）", async () => {
+      const pulls = new FakePulls();
+      pulls.commentFail = "403 Resource not accessible ghp_secret";
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.issueComments).toHaveLength(0);
+      const posted = commentsOf(service, id);
+      expect(posted).toHaveLength(1);
+      const payload = posted[0]?.payload as { results: { failed?: DaemonText }[] } | undefined;
+      expect(ja(payload?.results[0]?.failed)).toContain("403");
+      expect(JSON.stringify(posted)).not.toContain("ghp_secret");
+      expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+
+    it("頼みを読めなければ、どれも投稿せず、読めなかったことを作業履歴に残す", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement(
+        [
+          implement('# 実装の説明\n\n```json\n{"sacty-github-comments": {"comments": "x"}}\n```'),
+          review(),
+        ],
+        { pulls },
+      );
+      await drain(service);
+      expect(pulls.issueComments).toHaveLength(0);
+      const posted = commentsOf(service, id);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]?.payload).toMatchObject({ submission: 1, results: [] });
+      const payload = posted[0]?.payload as { failed?: DaemonText } | undefined;
+      expect(ja(payload?.failed)).toContain("読めません");
+      activity.close();
+    });
+
+    it("実装の作り直しで次の提出になったら、その提出の頼みを、また1回だけ投稿する", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement(
+        [
+          implement(reply("1回目の返信")),
+          review(),
+          implement(reply("2回目の返信")),
+          // 差し戻しの指摘（implement-1-1）にも答える
+          review(undefined, [
+            ["requirements-1-1", true],
+            ["implement-1-1", true],
+          ]),
+        ],
+        { pulls },
+      );
+      await drain(service);
+      expect(pulls.issueComments).toHaveLength(1);
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        target: "implement",
+        comments: ["もう1点直してください"],
+      });
+      await drain(service);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      expect(pulls.issueComments.map((c) => c.body.split("\n")[1])).toEqual([
+        "1回目の返信",
+        "2回目の返信",
+      ]);
+      expect(commentsOf(service, id)).toHaveLength(2);
+      activity.close();
     });
   });
 

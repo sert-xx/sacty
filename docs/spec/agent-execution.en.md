@@ -67,13 +67,24 @@ The container receives only the variables for the chosen authentication method (
 - If a secret is not found, the run fails (reason `auth`) and sacty pauses the task.
 - sacty records the cost of the following runs as estimated (`estimated`).
   - Subscription and stub runs.
-  - Runs that placed tier subagent definitions (`estimateCost`). A reviewer may run with a model other than the parent's, while the cost can only be computed from the parent's usage and unit prices ([Context composition](context.en.md#files-placed-for-a-run)).
+  - Runs that placed tier subagent definitions (`estimateCost`). A reviewer may run with a model other than the parent's ([Context composition](context.en.md#files-placed-for-a-run)).
+    How the cost is decided is in "Output handling" below.
 
 Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`, `CLAUDE_DISALLOWED_TOOLS`), `apps/daemon/src/agents/docker.ts` (`syncBackIfChanged`), `apps/daemon/src/service.ts` (`executeLogged`, `bedrockOrigin`)
 
 ## Output handling
 
 - For Claude Code output (stream-json), the last `type: "result"` is the answer. Each notification from background work (subagents, background commands) starts another turn, so `result` appears many times. A role whose answer must contain a block with a fixed heading uses the last `result` that contains the key of that block (the heading in quotes) as the answer (the last `result` if none does), so that a reply to a notification after the final answer does not become the answer or the posted body (`preferResult`). The roles are review (`"sacty-review-verdict"`), final review (`"sacty-final-review"`), reproduce (`"sacty-reproduction"`), split (`"sacty-split"`), integration review (`"sacty-integration-review"`), and gathering (`"sacty-gathered"`) (`answerMarker`). When no `result` contains the marker and there are two or more of them, one line with the number of `result`s and the source of the usage is left in the daemon log and the session log (stderr). The token counts are the sum of `inputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, and `outputTokens` for each model in `modelUsage` of the last `result` (the whole run, including subagents). Each count takes the larger of that and the sum of `usage` of every `result`. A `modelUsage` with no model that has a readable field is not used. Without `modelUsage`, or for a run that resumes or forks a saved session (its `modelUsage` also includes the earlier runs; `resumed`), they are the sum of `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, and `output_tokens` of `usage` (that turn only) of every `result`. The run fails if `is_error` is set or the exit code is not 0.
+- Run cost (`runCost`): when the CLI reports a cost, that is the run's cost. Otherwise sacty converts the usage with unit prices (PBI-301).
+  - For Claude Code, the reported cost is `total_cost_usd` of the last `result` (the whole run, including subagents).
+    An unreadable value (not a number, negative, or not finite) is not a report, and a report of 0 although there is usage is not a report either (the CLI could not price it, for example because it does not know the price), so sacty converts instead.
+    A run that resumes or forks a saved session (`resumed`) uses neither the report nor the per-model usage, because they include the earlier runs.
+    Usage the report does not cover (`unreportedUsage`), such as a turn that started after the last `result`, is converted with the step agent's price and added.
+  - With no report (Codex and so on), sacty converts the usage. If there is `modelUsage`, it converts each model's usage with that model's price and adds them.
+    A model's price is looked up in `available_models` of the same provider as the step agent (`AgentConfig.modelPrices`; an exact match, otherwise the name without a suffix such as `[1m]`; inherited property names are not used).
+    A model with no price in the config, and any usage the per-model usage does not cover, is converted with the step agent's price. Without `modelUsage`, the whole usage is converted with the step agent's price.
+  - For a run that used the CLI's report, and for a run converted per model, sacty records where the cost came from in `RunCostRecorded` (the run, the agent, `reported` or `converted`, the run's cost, the amount converted with the configured prices, and any models with no configured price). It only records; the cost itself is carried by the run's result event.
+    A run whose usage was simply converted with the step agent's price (Codex and so on) is not recorded.
 - For a run that stopped before a result (a timeout or a forced stop), the usage of the whole run is not known (PBI-281).
   - Claude Code: if no `result` came but at least one event did, the part that could be read is kept as the usage, and it is marked unknown (`costUnknown`). The part is the sum of `message.usage` of `assistant` events, counted once per `message.id` (events for each content block repeat the same id and usage; within one id, each field takes the larger value). Usage inside subagents and the output tokens partway through a message cannot be read, so the sum is smaller than the real usage (a lower bound). With no readable message, no usage is kept. If no event came at all (it never started), nothing was used, so it is not marked unknown. Message ids are kept up to 256 characters and 4096 entries (the values come from the container, so memory is protected). Messages beyond the limit are not read; what was read is kept as a lower bound and marked unknown.
   - Messages of a turn that started after the last `result` (and then stopped by a forced stop or a timeout) are not in that `result`'s `usage`, so their `message.usage` is added and the run is marked unknown. Messages already in a `result` are not counted again.
@@ -96,7 +107,7 @@ Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`, `CLAUDE_DISALLO
 - Structured answers from an agent are JSON with a heading (`sacty-steps`, `sacty-verdict`, `sacty-final-review`, `sacty-split`, `sacty-export`, and so on). sacty tries the JSON objects in the output from the end and uses the first one that parses.
 - Before recording the run's result text and output, sacty replaces the secrets used in the run (retrieved values, gateway tokens, values in auth files, and so on) with `[REDACTED]`.
 
-Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeReader`, `classifyFailure`, `MAX_LINE`), `apps/daemon/src/agent-json.ts` (`jsonCandidates`, `lastJsonAnswer`), `apps/daemon/src/prompts.ts` (`answerMarker`), `apps/daemon/src/agents/redact.ts` (`redact`, `redactText`)
+Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeReader`, `classifyFailure`, `MAX_LINE`), `apps/daemon/src/agents/cost.ts` (`runCost`, `priceOfModel`), `apps/daemon/src/agent-json.ts` (`jsonCandidates`, `lastJsonAnswer`), `apps/daemon/src/prompts.ts` (`answerMarker`), `apps/daemon/src/agents/redact.ts` (`redact`, `redactText`)
 
 ## Fallback agents on failure
 
@@ -119,9 +130,10 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - In the following cases, the task stops as before.
   - A person paused or cancelled the task.
   - There is no fallback, or none is usable (including those already tried).
-- Even for a temporary failure (such as a busy model), sacty has no process that waits and retries with the same agent.
+- Even for a temporary failure of an agent run (such as a busy model), sacty has no process that waits and retries with the same agent.
   With no fallback, the task stops and waits until a person resumes it.
   When a Sacty review task stops, sacty also tells the PR that asked for the review ([Telling the PR when a review stops](intake.en.md#telling-the-pr-when-a-review-stops)).
+  However, for a temporary failure of a review task's GitHub requests (checking the PR to review and posting the review), sacty waits and retries automatically before it stops (same section).
 - Exports, the post-merge watch, audits, and answers to questions handle the failure as before and use the fallback agent from the next run (only at a usage limit).
 - sacty also retrieves the secrets of fallback agents together at startup (`secretUses`).
 

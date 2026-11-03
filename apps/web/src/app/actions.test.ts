@@ -364,6 +364,23 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
     expect(state).toMatchObject({ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" });
   });
 
+  it("併合して保存したときは、併合したと返し、更新の版は返さない（画面は最新ではないので、版を進めさせない。PBI-301）", async () => {
+    saveProject.mockResolvedValue({
+      ok: true,
+      merged: true,
+      project: { id: "p-a", name: "A", updatedAt: "2026-10-30T00:00:03.000Z" },
+    });
+    const state = await saveProjectAction(
+      {},
+      form({
+        id: "p-a",
+        baseUpdatedAt: "2026-10-30T00:00:01.000Z",
+        definition: JSON.stringify({ name: "A" }),
+      }),
+    );
+    expect(state).toEqual({ saved: true, merged: true });
+  });
+
   it("読み込んだ後にほかの保存で変わっていたら、保存せず、衝突として返す。更新の版は返さない", async () => {
     saveProject.mockResolvedValue({ ok: false, message: "変わりました", conflict: true });
     const state = await saveProjectAction(

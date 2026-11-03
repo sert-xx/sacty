@@ -35,6 +35,13 @@ describe("プロジェクトの保存に、読み込んだ版を添える（PBI-
     expect(fetchMock.mock.calls[1]?.[1].headers).not.toHaveProperty("if-match");
   });
 
+  it("デーモンが併合して保存したら、そのことを返す（PBI-301）", async () => {
+    fetchMock.mockImplementation(async () => Response.json({ project: { id: "p" }, merged: true }));
+    expect(await saveProject("p", { name: "A" }, "old")).toMatchObject({ ok: true, merged: true });
+    fetchMock.mockImplementation(async () => Response.json({ project: { id: "p" } }));
+    expect(await saveProject("p", { name: "A" }, "old")).not.toHaveProperty("merged");
+  });
+
   it("ほかの保存で変わっていた（409）なら、衝突として理由を返す。ほかの 409 は衝突にしない", async () => {
     fetchMock.mockImplementation(async () =>
       Response.json(
