@@ -31777,6 +31777,112 @@ describe("完了したタスクの監査（PBI-125）", () => {
     expect(service.queuedTaskIds()).not.toContain(id);
   });
 
+  it("深掘りの出力の文字列に二重引用符があっても、読んで深掘りの結果を記録する（S16 r3。PBI-293）", async () => {
+    const broken = [
+      "```json",
+      "{",
+      '  "sacty-audit-findings": {',
+      '    "summary": "入力が "1,200" や "abc" のときの扱いが決まっていない",',
+      '    "findings": []',
+      "  }",
+      "}",
+      "```",
+    ].join("\n");
+    const { service, id } = await completedTask((invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "差し戻しが多い" }])
+        : isDive(invocation)
+          ? out(broken)
+          : undefined,
+    );
+    await service.runNext(id);
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(auditEvents(service, id).map((e) => e.type)).toEqual([
+      "AuditQueued",
+      "AuditSurveyed",
+      "AuditDeepDived",
+      "AuditCompleted",
+    ]);
+    expect(service.get(id)?.task.audit?.dives[0]?.summary).toBe(
+      '入力が "1,200" や "abc" のときの扱いが決まっていない',
+    );
+  });
+
+  it("2つ目の深掘りの出力が直しても読めなければ、読めなかった所を作業履歴に残し、記録済みの大まかな監査・1つ目の深掘り・費用は残す（PBI-293）", async () => {
+    const twoSteps = async () => ({
+      steps: ["requirements" as const, "design" as const],
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+    });
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [], { audit: true, planner: twoSteps });
+    const { service, executor } = made;
+    const brokenSecond = out(
+      '```json\n{\n  "sacty-audit-findings": {\n    "summary": "x",\n    "findings": [ { "title": \n```',
+      3000,
+    );
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        return survey(
+          [
+            { step: "requirements", reason: "差し戻しが多い" },
+            { step: "design", reason: "やり直しが多い" },
+          ],
+          1000,
+        );
+      }
+      if (isDive(invocation)) {
+        return prompt(invocation).includes("深掘りする工程：要求要件")
+          ? dive(
+              [
+                {
+                  title: "受け入れ条件の書き方が決まっていない",
+                  detail: "説明",
+                  evidence: [],
+                  proposals: [{ title: "規約に書く", body: "本文", target: 0 }],
+                },
+              ],
+              2000,
+            )
+          : brokenSecond;
+      }
+      return out("# 本文");
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API", body: "冪等にする" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "design", submission: 1 });
+    await service.runNext(task.id); // 大まかな監査
+    await service.runNext(task.id); // 1つ目の深掘り（成功）
+    await service.runNext(task.id); // 2つ目の深掘り（読めない）
+    const events = auditEvents(service, task.id);
+    expect(events.map((e) => e.type)).toEqual([
+      "AuditQueued",
+      "AuditSurveyed",
+      "AuditDeepDived",
+      "AuditFailed",
+    ]);
+    const audit = service.get(task.id)?.task.audit;
+    expect(audit?.failed?.step).toBe("design");
+    expect(audit?.failed?.reason).toMatchObject({
+      code: "audit.unreadableAt",
+      params: { line: 5 },
+    });
+    // 大まかな監査の結果・1つ目の深掘りとその原因は残る
+    expect(audit?.survey?.concerns.map((c) => c.step)).toEqual(["requirements", "design"]);
+    expect(audit?.dives).toHaveLength(1);
+    expect(audit?.dives[0]).toMatchObject({ step: "requirements" });
+    expect(audit?.findings.map((f) => f.title)).toEqual(["受け入れ条件の書き方が決まっていない"]);
+    // 費用は、3回の実行の合計（出力トークン 1000 + 2000 + 3000。1000 出力トークン = $0.015）
+    expect(audit?.usedUsd).toBeCloseTo(0.09, 6);
+    const costs = events.map((e) => (e.payload as { auditCostUsd?: number }).auditCostUsd ?? 0);
+    expect(costs.reduce((sum, c) => sum + c, 0)).toBeCloseTo(0.09, 6);
+    expect(costs.at(-1)).toBeCloseTo(0.045, 6);
+  });
+
   it("実行に失敗したら、監査の失敗として理由を記録する", async () => {
     const { service, id } = await completedTask((invocation) =>
       isSurvey(invocation)

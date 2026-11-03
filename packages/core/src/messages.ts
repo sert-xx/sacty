@@ -583,6 +583,13 @@ const PARAMS = {
   "audit.notPaused": null,
   "audit.runFailed": z.object({ detail: TextParam }),
   "audit.unreadable": null,
+  "audit.unreadableAt": z.object({
+    line: z.number().int().positive(),
+    column: z.number().int().positive(),
+    /** 壊れた所の前後。秘密情報が出力にあるときは空（位置だけを残す）。 */
+    near: TextParam,
+  }),
+  "audit.unreadableShape": z.object({ heading: z.string() }),
   "audit.interrupted": null,
   "audit.notAdoptable": null,
   // エージェントの段階（PBI-119）
@@ -1352,6 +1359,10 @@ const ja: MessageDictionary = {
   "audit.notPaused": "予算で一時停止している監査ではありません。",
   "audit.runFailed": ({ detail }, text) => `監査を実行できませんでした：${text(detail)}`,
   "audit.unreadable": "監査のエージェントの出力を、決まった形で読めませんでした。",
+  "audit.unreadableAt": ({ line, column, near }, text) =>
+    `監査のエージェントの出力の JSON を読めませんでした（JSON の ${line} 行目の ${column} 文字目の付近で壊れています${text(near) ? `：${text(near)}` : ""}）。`,
+  "audit.unreadableShape": ({ heading }) =>
+    `監査のエージェントの出力の JSON（${heading}）は、必要な項目が無い、または形が違うため、読めませんでした。`,
   "audit.interrupted": "デーモンが止まったため、監査が途中で終わりました。",
   "audit.notAdoptable": "このタスクは中止されたため、提案を採用・却下できません。",
   "agent.configUnavailable": ({ detail }, text) =>
@@ -2039,6 +2050,10 @@ const en: MessageDictionary = {
   "audit.notPaused": "The audit is not paused by its budget.",
   "audit.runFailed": ({ detail }, text) => `The audit could not run: ${text(detail)}`,
   "audit.unreadable": "The audit agent's output could not be read in the expected form.",
+  "audit.unreadableAt": ({ line, column, near }, text) =>
+    `The JSON in the audit agent's output could not be read (it is broken near line ${line}, column ${column} of the JSON${text(near) ? `: ${text(near)}` : ""}).`,
+  "audit.unreadableShape": ({ heading }) =>
+    `The JSON in the audit agent's output (${heading}) is missing required fields or has the wrong shape, so it could not be read.`,
   "audit.interrupted": "The audit stopped partway because the daemon stopped.",
   "audit.notAdoptable": "This task was cancelled, so its proposals cannot be adopted or rejected.",
   "agent.configUnavailable": ({ detail }, text) =>

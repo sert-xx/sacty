@@ -21,7 +21,7 @@ An audit proceeds as follows.
 - Audits run one by one in the same queue as other runs (they count toward the limit on parallel runs).
 - Choose the AI for audits with `audit_agent` in config.yaml. If omitted, the Goal Guardian's AI is used ([config.yaml settings](config.en.md)).
 - Tasks that completed before audits were added are not audited.
-- If an audit cannot run, it becomes "Audit failed" with the reason.
+- If an audit cannot run, it becomes "Audit failed" with the reason. If the AI's JSON output is broken and cannot be read, the reason says at which line and column of the JSON it breaks. Common breakage such as double quotes inside strings is repaired when reading, so it alone does not fail the audit. Even when an audit fails, the survey and finished deep dives so far and the cost used are kept.
 - An audit in progress when sacty stops continues at the next start.
 
 To check only the screens, start sacty with `SACTY_AUDIT_MOCK=1`. sacty runs no real audits and shows mock data. Adopting, rejecting, and resuming are kept only in the daemon's memory and reset when you restart sacty.
