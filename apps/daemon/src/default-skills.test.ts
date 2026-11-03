@@ -452,6 +452,14 @@ describe("既定の review スキルの、セルフレビューの再レビュ�
   it("初回と pr-review の再レビューの規則は変えない", () => {
     const text = dispatch();
     expect(text).toContain("`pr-review` の再レビューは、初回と同じ規則で決め直す");
+    // 再レビューの X-2 の起動条件は SKILL.md の規則 5 でも一意に決め、既存の起動の条件より優先する
+    expect(text).toContain(
+      "X-2 も同じ扱いで、前回の回で `must` を出したとき、または修正後に実行し直した検証が失敗・警告を出したときだけ起動する",
+    );
+    expect(text).toContain("再レビューでは、この規則を、規則 1〜3 や");
+    expect(text).toContain(
+      "の起動の条件（必須観点を全部起動する・条件付き観点の判定・X-2 を検証の結果があれば起動する）より優先する",
+    );
     expect(text).toContain("1. 主対象の種類の **必須観点は、対象の大小にかかわらず全部起動する**");
     expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
       "起動する観点は初回と同じ規則で決め直す（前回「指摘なし」でも、必須は全部起動する）",
