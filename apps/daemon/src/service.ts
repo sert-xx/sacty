@@ -3193,7 +3193,14 @@ export class TaskService {
     this.append(latest, [{ actor: "sacty", event }]);
     // 前に止まったときの、PR の知らせの投稿を解消済みにする（PBI-292）
     if (event.type === "PullRequestReviewPosted") {
-      await this.resolveReviewStops(task.id, event.payload.url);
+      await this.resolveReviewStops(
+        {
+          taskId: task.id,
+          projectId: task.projectId,
+          target: { repo: target.repo, number: target.number },
+        },
+        event.payload.url,
+      );
     }
   }
 
@@ -5540,7 +5547,7 @@ export class TaskService {
       before?.status !== "paused" &&
       notifiesReviewStop(updated.pausedReason)
     ) {
-      void this.announceReviewStop(updated.id);
+      this.announceReviewStop(updated);
     }
     return updated;
   }
@@ -5581,56 +5588,72 @@ export class TaskService {
    */
   private readonly stopNotices = new Map<string, Promise<void>>();
 
-  /** Sacty のレビューが止まったことを PR に知らせる処理を、そのタスクの順番の最後に足す。 */
-  private announceReviewStop(taskId: string): Promise<void> {
+  /**
+   * Sacty のレビューが止まったことを PR に知らせる処理を、そのタスクの順番の最後に足す。止まった時点の理由と説明は、ここで
+   * 持つ（待っている間にまた止まっても、それぞれの停止の理由を知らせる）。知らせる対象でなければ何もしない。
+   */
+  private announceReviewStop(task: Task): void {
+    const target = this.reviewStopTarget(task);
+    const reason = task.pausedReason;
+    if (!target || !reason || !notifiesReviewStop(reason)) return;
+    const stop = {
+      taskId: task.id,
+      projectId: task.projectId,
+      reason,
+      text: this.stopReasonText(task),
+      target,
+    };
     // 前の処理が無ければすぐ始める（一時停止の状態を読むのを、遅らせない）
-    const previous = this.stopNotices.get(taskId);
+    const previous = this.stopNotices.get(task.id);
     const run = previous
-      ? previous.then(() => this.postReviewStopNotice(taskId))
-      : this.postReviewStopNotice(taskId);
-    this.stopNotices.set(taskId, run);
+      ? previous.then(() => this.postReviewStopNotice(stop))
+      : this.postReviewStopNotice(stop);
+    this.stopNotices.set(task.id, run);
     void run.finally(() => {
-      if (this.stopNotices.get(taskId) === run) this.stopNotices.delete(taskId);
+      if (this.stopNotices.get(task.id) === run) this.stopNotices.delete(task.id);
     });
-    return run;
   }
 
   /**
    * Sacty のレビューが止まったことを、レビューを頼んだ PR にコメントする（PBI-292）。同じ止まり方（理由と要点が同じ）で、
    * まだ解消していない投稿が PR にあれば、書かない。投稿できなくても、タスクの一時停止は変えない（例外は投げない）。
    */
-  private async postReviewStopNotice(taskId: string): Promise<void> {
+  private async postReviewStopNotice(stop: {
+    taskId: string;
+    projectId: string;
+    reason: PauseReason;
+    text: DaemonText | undefined;
+    target: { repo: string; number: number };
+  }): Promise<void> {
+    const { taskId, reason, target } = stop;
     const usedSecrets: string[] = [];
     try {
-      const task = this.tasks.get(taskId);
-      const reason = task?.pausedReason;
-      const target = task ? this.reviewStopTarget(task) : undefined;
-      if (task?.status !== "paused" || !notifiesReviewStop(reason) || !reason || !target) return;
-      const project = this.deps.projects.get(task.projectId);
+      // 待っている間に再開・中止された（今は止まっていない）なら、書かない
+      if (this.tasks.get(taskId)?.status !== "paused") return;
+      const project = this.deps.projects.get(stop.projectId);
       const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
       // GitHub のアカウントを選んでいないプロジェクトでは、PR に書けない（画面と Slack で知らせる）
       if (!account) return;
-      const token = await this.githubToken(task, target.repo, usedSecrets, project);
-      const summary = stopSummary(this.stopReasonText(task), usedSecrets);
+      const token = await this.githubToken(stop, target.repo, usedSecrets, project);
+      const summary = stopSummary(stop.text, usedSecrets);
       const key = stopKey(reason, summary);
       const pr = { repo: target.repo, token, number: target.number };
       const same = await this.deps.pulls.listIssueComments({
         ...pr,
-        prefix: stopMarker(task.id, key),
+        prefix: stopMarker(taskId, key),
         account,
       });
       if (same.length > 0) return;
-      // 止まっている間に再開・中止された（今は別の状態の）なら、書かない
-      const latest = this.tasks.get(taskId);
-      if (latest?.status !== "paused") return;
+      // 確かめている間に再開・中止された（今は別の状態の）なら、書かない
+      if (this.tasks.get(taskId)?.status !== "paused") return;
       const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
       await this.deps.pulls.commentIssue({
         ...pr,
         body: buildStopNotice({
-          taskId: task.id,
+          taskId,
           reason,
           summary,
-          taskUrl: `${base}/tasks/${task.id}`,
+          taskUrl: `${base}/tasks/${taskId}`,
         }),
       });
     } catch (error) {
@@ -5642,24 +5665,26 @@ export class TaskService {
 
   /**
    * レビューを投稿したら、そのタスクの、止まったことの投稿（解消前のもの）を解消済みに直す（PBI-292）。直せなくても、
-   * タスクの完了は変えない。
+   * タスクの完了は変えない。対象のタスクと PR は呼ぶ側が持つ（投稿の最中の知らせを待つ間に「再レビュー」が始まると、
+   * タスクの状態から対象の PR が消えるため）。
    */
-  private async resolveReviewStops(taskId: string, reviewUrl: string): Promise<void> {
+  private async resolveReviewStops(
+    posted: { taskId: string; projectId: string; target: { repo: string; number: number } },
+    reviewUrl: string,
+  ): Promise<void> {
+    const { taskId, target } = posted;
     const usedSecrets: string[] = [];
     // 投稿の最中の知らせがあれば、できあがるのを待ってから、解消する対象を取る
     await this.stopNotices.get(taskId);
     try {
-      const task = this.tasks.get(taskId);
-      const target = task?.reviewTarget;
-      if (!task || !target) return;
-      const project = this.deps.projects.get(task.projectId);
+      const project = this.deps.projects.get(posted.projectId);
       const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""];
       if (!account) return;
-      const token = await this.githubToken(task, target.repo, usedSecrets, project);
+      const token = await this.githubToken(posted, target.repo, usedSecrets, project);
       const pr = { repo: target.repo, token, number: target.number };
       const notices = await this.deps.pulls.listIssueComments({
         ...pr,
-        prefix: stopMarkerOfTask(task.id),
+        prefix: stopMarkerOfTask(taskId),
         account,
       });
       for (const notice of notices.filter((n) => isOpenStopNotice(n.body))) {

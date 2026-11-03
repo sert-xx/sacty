@@ -158,6 +158,8 @@ The person who asked for the review watches only the PR and would not notice fro
   Even if the task is resumed and stops for the same reason, no comment is added until the first one is resolved. If it stops for a different reason, sacty writes a separate comment.
 - Marking it resolved: when the review is posted after a resume (`postReview`), sacty rewrites all unresolved comments of that task (`resolveReviewStops`).
   If a notice is being posted, sacty waits for it to finish before it collects the comments to rewrite (notices of one task are handled in order; `stopNotices`).
+  sacty holds the task and PR to rewrite before it waits, so the rewrite still works if a "review again" starts during the wait and the task loses its target PR.
+  If the task stops again for a different reason during the wait, sacty reports each stop's own reason, because it holds the reason and explanation from the time of the stop when it adds the notice to the queue.
   It ends the marker with `:resolved -->`, changes the heading to "(resolved)", and keeps the URL of the posted review and the reason it stopped.
   It removes the instruction to resume. A resolved comment does not count as an "unresolved comment" the next time the task stops in the same way.
 - Not imported as PR remarks: this comment is not a human remark.

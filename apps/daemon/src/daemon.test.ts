@@ -7256,6 +7256,87 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      /** 最初の知らせの投稿だけ、gate が開くまで終わらせない偽物。 */
+      const slowFirstNotice = () => {
+        const gate = Promise.withResolvers<void>();
+        const entered = Promise.withResolvers<void>();
+        class SlowFirst extends FakePulls {
+          slow = true;
+          override async commentIssue(input: {
+            repo: string;
+            token: string;
+            number: number;
+            body: string;
+          }) {
+            if (this.slow) {
+              this.slow = false;
+              entered.resolve();
+              await gate.promise;
+            }
+            return super.commentIssue(input);
+          }
+        }
+        return { pulls: new SlowFirst(), gate, entered };
+      };
+
+      it("知らせの投稿を待っている間に「再レビュー」が始まっても、できた知らせを解消済みにする", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const { pulls, gate, entered } = slowFirstNotice();
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await entered.promise;
+        service.resume(id, {});
+        await service.runNext(id);
+        const posting = service.runNext(id);
+        await settle();
+        // レビューを投稿した記録の後、解消の処理が知らせを待っている間に、再レビューが始まる（対象の PR が消える）
+        expect(service.get(id)?.task.reviewPost).toBeDefined();
+        service.rereview(id);
+        expect(service.get(id)?.task.reviewTarget).toBeUndefined();
+        gate.resolve();
+        await posting;
+        await settle();
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
+        expect(pulls.issueComments[0]?.body).toContain("解消済み");
+        activity.close();
+      });
+
+      it("先の知らせの投稿を待っている間に、違う理由で続けて止まっても、それぞれの理由を知らせる", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const { pulls, gate, entered } = slowFirstNotice();
+        const fail = (text: string): AgentOutcome => ({
+          kind: "failed",
+          reason: "error",
+          message: text,
+        });
+        const { service } = makeService(
+          activity,
+          [capacity, fail("disk full"), fail("network down")],
+          { pulls, planner: reviewPlanner },
+        );
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await entered.promise;
+        for (const _ of [1, 2]) {
+          service.resume(id, {});
+          await service.runNext(id);
+        }
+        expect(service.get(id)?.task.status).toBe("paused");
+        gate.resolve();
+        await settle();
+        expect(pulls.issueComments).toHaveLength(3);
+        const bodies = pulls.issueComments.map((c) => c.body);
+        expect(bodies[0]).toContain("Selected model is at capacity");
+        expect(bodies[1]).toContain("disk full");
+        expect(bodies[2]).toContain("network down");
+        activity.close();
+      });
+
       it("レビューの工程に渡す既存のコメントでは、ほかのプロジェクトで選んだ同じホストのアカウントの知らせも除く", async () => {
         const activity = new SqliteActivityStore(dbPath);
         const pulls = new FakePulls();
