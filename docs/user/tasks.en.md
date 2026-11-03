@@ -386,6 +386,8 @@ Treated as in scope:
 
 What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
 
+A past comment from the AI review has not been approved by a person, so it is not treated like a person's comment. A change that answers an AI comment is in scope if it fixes a defect against the requirements and design (for a task that skips them, the request), meaning something they ask for that is not met or is broken. A change beyond that which alters behavior (adding a feature or operation the requirements and design do not have, or changing existing behavior) does not fail the review; it stays in "For a person to check", with a note on which AI comment it answers. A change that weakens or reverses what an existing test expects is in scope only when the requirements or design ask for it, even if it answers an AI comment.
+
 The reason for the failure and the out-of-scope changes appear in the final review of the implementation deliverable.
 The redo is told to remove only the out-of-scope changes and keep every other change. It puts them back to the current comparison base (after the base branch has been merged in, the merged head, so the base branch's changes stay).
 If the review does not pass three times in a row, the task pauses, like any other failure.
