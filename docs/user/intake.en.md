@@ -83,7 +83,7 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
     - They are passed to agents separately from your comments. "The previous comment" and similar words in your comments are treated as pointing to your comments.
   - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), that review is discarded instead of delivered.
     That it was discarded, and why, remain in the Activity.
-    The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the target commit, the gist of each comment, and a link to GitHub). They stay until the PR is merged, so check them before you approve or merge.
+    The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub). They stay until the PR is merged, so check them before you approve or merge.
     sacty does not import them into the rework automatically, and does not run the review again on the new commit (it would add cost). If a comment still applies to the current PR, convey it by requesting changes; it is treated as your comment.
 - Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an implementation task. Its findings reach the creating task in the same way.
 - sacty adds the label once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again, use "Review again" on the review task). sacty does not add back a label that someone removed either.

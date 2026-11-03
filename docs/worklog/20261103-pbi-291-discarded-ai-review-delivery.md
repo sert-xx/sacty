@@ -15,7 +15,7 @@
 
 - 記録：`PullRequestReviewDiscarded` の `items[].summary`（任意）に、指摘の要点を残す。取り込む指摘と同じ文の先頭400文字で、投稿の目印（HTML のコメント）と「sacty のレビュー」の見出しを除き、空白をそろえる（`discardedSummary`）。
 - 状態（`packages/core`）：`Task.discardedReviews` に積み、`discardedAiReviews` が、見守っている PR（承認ゲートの PR、または実装の作り直しの間の実装の PR）へのものを古い順に返す。マージされた PR のものは返さない。
-- 画面（`apps/web`）：`DiscardedReviewNotice` を、承認の画面とタスクの詳細の上に出す。理由（古い head と今の head）・対象の commit・要点・GitHub へのリンク・差し戻しで伝える案内（日英）。
+- 画面（`apps/web`）：`DiscardedReviewNotice` を、承認の画面とタスクの詳細の上に出す。理由（古い head と、捨てた時点の PR の head）・対象の commit・要点・GitHub へのリンク・差し戻しで伝える案内（日英）。
 - 届け方：画面に出すだけにした（理由は ADR）。PR への投稿と、新しい head へのレビューのかけ直しはしない。費用は増えない。
 - docs：仕様書（approval。日英）、ユーザードキュメント（intake。日英）、ADR。
 

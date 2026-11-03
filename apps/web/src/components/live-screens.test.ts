@@ -953,13 +953,13 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     );
     // 0件：出さない
     expect(notice()).toBeNull();
-    // 1件：理由（古い head と今の head）、要点、リンク、差し戻しで伝える案内
+    // 1件：理由（古い head と、捨てた時点の PR の head）、要点、リンク、差し戻しで伝える案内
     server = detail(task({ ...implement, discardedReviews: [discarded(["review:1"])] }));
     await wait();
     expect(notice()?.textContent).toContain("取り込んでいない AI のレビューの指摘が1件あります");
     expect(notice()?.textContent).toContain("PR #7");
     expect(notice()?.textContent).toContain("古い head");
-    expect(notice()?.textContent).toContain("今の head は ddddddd");
+    expect(notice()?.textContent).toContain("捨てた時点の PR の head は ddddddd");
     expect(notice()?.textContent).toContain("対象：ooooooo");
     expect(notice()?.textContent).toContain("要点 review:1");
     expect(notice()?.textContent).toContain("差し戻しで指摘として伝えてください");
@@ -989,7 +989,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     );
     await wait();
     expect(notice()?.textContent).toContain("3件あります");
-    expect(notice()?.textContent).toContain("今の head は eeeeeee");
+    expect(notice()?.textContent).toContain("捨てた時点の PR の head は eeeeeee");
     expect(notice()?.querySelectorAll("li")).toHaveLength(3);
     expect(notice()?.querySelectorAll("a")).toHaveLength(2);
     // PR がマージされたら（承認は済んだので）消える

@@ -11557,6 +11557,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           if (!task) throw new Error("no task");
           return discardedAiReviews(task);
         };
+        const before = executor.calls.length;
         // 0件：古い head のレビューが無ければ、届けるものは無い（今の head のレビューは取り込むので、捨てない）
         expect(shown()).toBeUndefined();
         // 1件：理由（古い head と今の head）と、指摘の要点・リンクが届く。目印と見出しは要点に入れない
@@ -11598,11 +11599,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         expect(items[1]?.summary?.startsWith("src/a.ts:3：長い指摘")).toBe(true);
         expect(items[1]?.summary?.length).toBeLessThanOrEqual(400);
         expect(items[1]?.summary?.endsWith("…")).toBe(true);
-        // 捨てた指摘を、自動で作り直しに取り込まない
-        const before = executor.calls.length;
+        // 捨てた指摘を、自動で作り直しに取り込まない（最初の確認の前に数えた実行の回数から、増えていない）
+        expect(executor.calls.length).toBe(before);
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(service.get(id)?.task.remarks.filter((r) => r.step === "implement")).toEqual([]);
-        expect(executor.calls.length).toBe(before);
         // 人が今の head に当てはまると判断して、差し戻す：人の指摘として届き、差し戻しの回数に数える
         service.requestChanges(id, {
           step: "implement",

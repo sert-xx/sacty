@@ -48,7 +48,7 @@ const ja = {
   discardedReview: {
     title: (count: number) => `取り込んでいない AI のレビューの指摘が${count}件あります`,
     help: (number: number, head: string) =>
-      `PR #${number} への AI のレビューの指摘は、対象が古い head だったので、作り直しには取り込んでいません（今の head は ${head}）。今の head にも当てはまる指摘があれば、差し戻しで指摘として伝えてください。承認・マージする前に確かめてください。`,
+      `PR #${number} への AI のレビューの指摘は、対象が古い head だったので、作り直しには取り込んでいません（最後に捨てた時点の PR の head は ${head}。そのあと PR が更新されていれば、今の head は変わっています）。今の head にも当てはまる指摘があれば、差し戻しで指摘として伝えてください。承認・マージする前に確かめてください。`,
     reviewed: (commit: string) => `対象：${commit}`,
     open: "指摘を開く",
   },
@@ -519,7 +519,7 @@ const en: TaskMessages = {
     title: (count: number) =>
       `${count} AI review comment${count === 1 ? " was" : "s were"} not taken in`,
     help: (number: number, head: string) =>
-      `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework (the head is now ${head}). If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
+      `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework (the PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed). If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
     reviewed: (commit: string) => `For: ${commit}`,
     open: "Open comment",
   },
