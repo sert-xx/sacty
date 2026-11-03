@@ -60,7 +60,7 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
 - With "Auto", when the request has verifiable acceptance criteria in place and there is nothing for you to confirm, the Orchestrator skips Requirements and chooses "Implement directly". The reason for skipping is written in the reason for the plan.
   Fine defaults such as whitespace, limits, ordering, and column positions are decided by the implementation agent and written under "既定で決めたこと" (decided by default) in the PR body, so check them in the PR.
-  When the request is ambiguous, conflicts with a document or the code, or has something you should confirm, Requirements is kept even if the acceptance criteria look detailed.
+  When the request is ambiguous, conflicts with a document or the code, has something you should confirm, needs a design decision, puts a new meaning on an existing shared state or field (or adds a state), or changes the name or shape of a published API or field, Requirements is kept even if the acceptance criteria look detailed.
   The number of self-review rounds, the model, and the effort do not change.
 - The specified plan appears on the "Step settings" tab of the task details.
 - Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
