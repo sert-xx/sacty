@@ -157,10 +157,12 @@ The person who asked for the review watches only the PR and would not notice fro
   If the PR already has an unresolved comment of this account with the same marker, sacty does not write another.
   Even if the task is resumed and stops for the same reason, no comment is added until the first one is resolved. If it stops for a different reason, sacty writes a separate comment.
 - Marking it resolved: when the review is posted after a resume (`postReview`), sacty rewrites all unresolved comments of that task (`resolveReviewStops`).
+  If a notice is being posted, sacty waits for it to finish before it collects the comments to rewrite (notices of one task are handled in order; `stopNotices`).
   It ends the marker with `:resolved -->`, changes the heading to "(resolved)", and keeps the URL of the posted review and the reason it stopped.
   It removes the instruction to resume. A resolved comment does not count as an "unresolved comment" the next time the task stops in the same way.
 - Not imported as PR remarks: this comment is not a human remark.
   Comments that start with the marker and were posted by that task's account or by the account of a sacty task that reviewed the PR are excluded when sacty imports PR remarks (`feedback`).
+  For the existing comments passed to the review step, sacty also excludes those of accounts chosen for the same host in other projects (`noticeAccounts`).
   Comments that other accounts wrote imitating the marker are not excluded.
 - When it cannot write: sacty logs a warning in the daemon log. It does not change whether the task is paused or completed.
   After a daemon restart, sacty does not rewrite a notice that failed.

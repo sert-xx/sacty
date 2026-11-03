@@ -3103,6 +3103,8 @@ export class TaskService {
       token,
       number: target.number,
       ...(account ? { account } : {}),
+      // レビューが止まったことの投稿（PBI-292）を除くために、ほかのプロジェクトで選んだ同じホストのアカウントも渡す
+      noticeAccounts: this.githubAccountsOnHost(target.repo),
       // 本文のある承認（「承認するが、ここは直してほしい」）も、既存の指摘として渡す（PR #161 レビュー指摘）
       includeApprovals: true,
     });
@@ -5571,16 +5573,32 @@ export class TaskService {
     return undefined;
   }
 
-  /** 同じタスクの、止まったことの知らせの投稿を同時に二つ進めないための印。 */
-  private readonly stopNotices = new Set<string>();
+  /**
+   * タスクごとの、止まったことの知らせの投稿の最後の処理（PBI-292）。知らせは同じタスクで順に処理する（同時に二つ進めない）。
+   * 解消済みへの書き換えは、これが終わるのを待ってから対象を取る（投稿の最中に再開・レビューの投稿が終わっても、後から
+   * できた知らせを取りこぼさない）。
+   */
+  private readonly stopNotices = new Map<string, Promise<void>>();
+
+  /** Sacty のレビューが止まったことを PR に知らせる処理を、そのタスクの順番の最後に足す。 */
+  private announceReviewStop(taskId: string): Promise<void> {
+    // 前の処理が無ければすぐ始める（一時停止の状態を読むのを、遅らせない）
+    const previous = this.stopNotices.get(taskId);
+    const run = previous
+      ? previous.then(() => this.postReviewStopNotice(taskId))
+      : this.postReviewStopNotice(taskId);
+    this.stopNotices.set(taskId, run);
+    void run.finally(() => {
+      if (this.stopNotices.get(taskId) === run) this.stopNotices.delete(taskId);
+    });
+    return run;
+  }
 
   /**
    * Sacty のレビューが止まったことを、レビューを頼んだ PR にコメントする（PBI-292）。同じ止まり方（理由と要点が同じ）で、
-   * まだ解消していない投稿が PR にあれば、書かない。投稿できなくても、タスクの一時停止は変えない。
+   * まだ解消していない投稿が PR にあれば、書かない。投稿できなくても、タスクの一時停止は変えない（例外は投げない）。
    */
-  private async announceReviewStop(taskId: string): Promise<void> {
-    if (this.stopNotices.has(taskId)) return;
-    this.stopNotices.add(taskId);
+  private async postReviewStopNotice(taskId: string): Promise<void> {
     const usedSecrets: string[] = [];
     try {
       const task = this.tasks.get(taskId);
@@ -5618,8 +5636,6 @@ export class TaskService {
       console.warn(
         `[daemon] タスク ${taskId} のレビューが止まったことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
-    } finally {
-      this.stopNotices.delete(taskId);
     }
   }
 
@@ -5629,6 +5645,8 @@ export class TaskService {
    */
   private async resolveReviewStops(taskId: string, reviewUrl: string): Promise<void> {
     const usedSecrets: string[] = [];
+    // 投稿の最中の知らせがあれば、できあがるのを待ってから、解消する対象を取る
+    await this.stopNotices.get(taskId);
     try {
       const task = this.tasks.get(taskId);
       const target = task?.reviewTarget;
@@ -6760,6 +6778,19 @@ export class TaskService {
     const bound = new Set(hosts);
     if (host && bound.has(host)) return host;
     return bound.has("github.com") ? "github.com" : (hosts[0] ?? "github.com");
+  }
+
+  /** すべてのプロジェクトで、url のホストに選んだ gh のアカウント（重複なし）。 */
+  private githubAccountsOnHost(url: string): string[] {
+    const host = httpsHost(`${url}/`) ?? "";
+    return [
+      ...new Set(
+        this.deps.projects.all().flatMap((p) => {
+          const account = p.githubAccounts?.[host];
+          return account ? [account] : [];
+        }),
+      ),
+    ];
   }
 
   /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */

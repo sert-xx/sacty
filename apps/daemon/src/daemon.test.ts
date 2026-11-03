@@ -795,7 +795,9 @@ class FakePulls implements PullRequests {
     );
   }
   editFail?: string;
+  editAttempts = 0;
   async editIssueComment(input: { id: number; body: string }) {
+    this.editAttempts++;
     if (this.editFail) throw new Error(this.editFail);
     const comment = this.issueComments[input.id - 1];
     if (comment) comment.body = input.body;
@@ -916,12 +918,16 @@ class FakePulls implements PullRequests {
   feedbackSactyRounds: (readonly SactyReviewRound[] | undefined)[] = [];
   /** 本文のある承認のレビューも含めるか（レビューの工程に渡す既存のレビューだけ true。PBI-144）。 */
   feedbackIncludeApprovals: (boolean | undefined)[] = [];
+  /** 渡された、レビューが止まったことの投稿を除くための既知のアカウント（PBI-292）。 */
+  feedbackNoticeAccounts: (readonly string[] | undefined)[] = [];
   async feedback(input: {
     account?: string;
     number: number;
     sactyReviews?: readonly SactyReviewRound[];
     includeApprovals?: boolean;
+    noticeAccounts?: readonly string[];
   }) {
+    this.feedbackNoticeAccounts.push(input.noticeAccounts);
     const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
     this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
     this.feedbackIncludeApprovals.push(input.includeApprovals);
@@ -7167,16 +7173,103 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await settle();
         expect(service.get(id)?.task.status).toBe("paused");
         expect(warn).toHaveBeenCalledWith(expect.stringContaining("PR に知らせられませんでした"));
-        // 解消済みにできなくても、レビューの投稿と完了は変わらない
+        // 知らせが無くても、再開してレビューを投稿すれば完了する（解消する対象は無い）
         pulls.commentFail = undefined;
         service.resume(id, {});
         await service.runNext(id);
-        pulls.editFail = "500 boom";
         await service.runNext(id);
         await settle();
         const done = service.get(id)?.task;
         expect(done && isCompleted(done)).toBe(true);
+        expect(pulls.editAttempts).toBe(0);
         warn.mockRestore();
+        activity.close();
+      });
+
+      it("解消済みへの書き換えに失敗しても、レビューの投稿と完了は変わらず、警告を出す", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+        });
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await settle();
+        // 解消していない知らせが正常にできている
+        expect(pulls.issueComments).toHaveLength(1);
+        pulls.editFail = "500 boom";
+        service.resume(id, {});
+        await service.runNext(id);
+        await service.runNext(id);
+        await settle();
+        expect(pulls.editAttempts).toBe(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("解消済みにできませんでした"));
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(pulls.reviews).toHaveLength(1);
+        // 書き換えられなかった知らせは、解消していないまま残る
+        expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(true);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("知らせを投稿している最中に、再開してレビューの投稿が終わっても、できた知らせを解消済みにする", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const gate = Promise.withResolvers<void>();
+        const entered = Promise.withResolvers<void>();
+        class SlowPulls extends FakePulls {
+          override async commentIssue(input: {
+            repo: string;
+            token: string;
+            number: number;
+            body: string;
+          }) {
+            entered.resolve();
+            await gate.promise;
+            return super.commentIssue(input);
+          }
+        }
+        const pulls = new SlowPulls();
+        const { service } = makeService(activity, [capacity, review()], {
+          pulls,
+          planner: reviewPlanner,
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        await entered.promise;
+        // 知らせの投稿が終わらないうちに、再開してレビューを書き、投稿に進む
+        service.resume(id, {});
+        await service.runNext(id);
+        const posting = service.runNext(id);
+        await settle();
+        gate.resolve();
+        await posting;
+        await settle();
+        const done = service.get(id)?.task;
+        expect(done && isCompleted(done)).toBe(true);
+        expect(pulls.issueComments).toHaveLength(1);
+        expect(isOpenStopNotice(pulls.issueComments[0]?.body ?? "")).toBe(false);
+        expect(pulls.issueComments[0]?.body).toContain("解消済み");
+        activity.close();
+      });
+
+      it("レビューの工程に渡す既存のコメントでは、ほかのプロジェクトで選んだ同じホストのアカウントの知らせも除く", async () => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [review()], { pulls, planner: reviewPlanner });
+        service.saveProject(undefined, {
+          name: "別",
+          targets: [{ scope: "repo", target: "https://github.com/acme/other" }],
+          githubAccounts: { "github.com": "alice" },
+        });
+        const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+        await service.runNext(id);
+        expect(pulls.feedbackAccounts).toContain("me");
+        expect(pulls.feedbackNoticeAccounts.at(-1)).toEqual(
+          expect.arrayContaining(["me", "alice"]),
+        );
         activity.close();
       });
     });

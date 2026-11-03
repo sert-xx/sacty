@@ -56,7 +56,7 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   - Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
   - The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
 - When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment: that it stopped, the gist of the reason, and how to resume (a link to the task screen).
-  - Open the task on the screen and press "Resume" to redo the review from the start.
+  - Open the task on the screen and press "Resume" to continue from the step that stopped (if the review run stopped, sacty runs it again; if posting stopped, sacty posts the review it already wrote).
   - If it stops for the same reason again, sacty does not write to the same PR again and again. If it stops for a different reason, it writes a separate comment.
   - When you resume and the review is posted, the stopped comment is rewritten as "resolved".
   - sacty does not write when you paused the task yourself. If sacty cannot write to the PR, the task stays paused (the screen and Slack notifications arrive separately).

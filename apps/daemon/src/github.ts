@@ -56,6 +56,11 @@ export interface PullRequests {
      * 含めない（PR の指摘の取り込み）。
      */
     includeApprovals?: boolean;
+    /**
+     * レビューが止まったことの投稿（PBI-292）を除くための、ほかに知っている sacty のアカウント（ほかのプロジェクトで選んだもの）。
+     * account と sactyReviews のアカウントに加えて、この投稿の除外にだけ使う（sacty のレビューの判定には使わない）。
+     */
+    noticeAccounts?: readonly string[];
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -301,9 +306,11 @@ export class GitHubPullRequests implements PullRequests {
     // レビューが止まったことの投稿（PBI-292）は、sacty のタスクのアカウントが投稿した、人間の指摘ではない投稿。
     // このタスクのアカウントと、この PR をレビューした sacty のタスクのアカウントのものだけ除く
     const noticeAccounts = new Set(
-      [input.account, ...(input.sactyReviews ?? []).map((r) => r.account)].flatMap((a) =>
-        a ? [a.toLowerCase()] : [],
-      ),
+      [
+        input.account,
+        ...(input.sactyReviews ?? []).map((r) => r.account),
+        ...(input.noticeAccounts ?? []),
+      ].flatMap((a) => (a ? [a.toLowerCase()] : [])),
     );
     const human = (item: Record<string, unknown>) => {
       const round = sactyRound(item);

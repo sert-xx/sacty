@@ -1245,6 +1245,32 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       });
       expect(feedback.map((f) => f.key)).toEqual(["comment:3", "comment:4"]);
     });
+
+    it("ほかに知っている sacty のアカウント（noticeAccounts）の止まったことの投稿も除く（それ以外のコメントは除かない）", async () => {
+      const comments = [
+        comment(1, "other-project-bot", notice("t3")),
+        comment(2, "alice", "人間のコメント"),
+        comment(3, "other-project-bot", "同じアカウントの、目印の無いコメント"),
+      ];
+      const read = (extra?: string[]) =>
+        new GitHubPullRequests(
+          fakeFetch([
+            { status: 200, json: [] },
+            { status: 200, json: [] },
+            { status: 200, json: comments },
+          ]).impl,
+        ).feedback({
+          ...pr,
+          account: "sacty-bot",
+          ...(extra ? { noticeAccounts: extra } : {}),
+        });
+      expect((await read(["Other-Project-Bot"])).map((f) => f.key)).toEqual([
+        "comment:2",
+        "comment:3",
+      ]);
+      // 渡さなければ、知らない人のコメントとして取り込む
+      expect((await read()).map((f) => f.key)).toEqual(["comment:1", "comment:2", "comment:3"]);
+    });
   });
 
   it("取り込むラベルを付けたレビューのタスクの、sacty のレビューと行へのコメントは、PR の指摘として取り込む（ほかのタスクのものは除く）", async () => {
