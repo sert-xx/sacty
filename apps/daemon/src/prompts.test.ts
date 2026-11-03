@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   type ActivityEvent,
   EventInput,
@@ -847,11 +848,12 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).not.toContain("書かない工程は default");
     // 最後の手段として、中身のとおりに説明する
     expect(prompt).toContain(
-      "既定のイメージ（default）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの",
+      "既定のイメージ（default）は、images のどれも合わないときの最後の手段。汎用の最低限のもの",
     );
-    expect(prompt).toContain(
-      "テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない",
-    );
+    // 実際の中身（作業用の CLI なども入る）と、入っていないもの
+    expect(prompt).toContain("作業用の CLI（jq・rg・fd");
+    expect(prompt).toContain("Go・Java・pnpm・yarn");
+    expect(prompt).toContain("DB のクライアント（sqlite3 を除く）");
     expect(prompt).toContain("リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ");
     // 工程それぞれに images から選ばせ、default を使う工程には理由を書かせる
     expect(prompt).toContain(
@@ -1869,11 +1871,127 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(prompt).toContain("このリポジトリのテスト（検証）を実行するコマンド");
     expect(prompt).toContain("kustomize build・helm lint・kubeconform");
     expect(prompt).toContain("kustomization.yaml があれば kustomize build");
-    // ツールがイメージに無くても空にしない（sacty が実行して、イメージを直す案内で止める）
+    // ツールを持つイメージを優先して選び、どのイメージにも無いときだけ、書いたうえで理由を imageReason に書く
+    // （sacty が実行して、イメージを直す案内で止める）
+    expect(prompt).toContain("そのツールを持つものを優先して選ぶ");
     expect(prompt).toContain(
-      "選べるイメージのどれにも入っていなくても、testCommand は書く（空にしない）",
+      "どのイメージにも入っていないときだけ、それでも testCommand は書き（空にしない）、imageReason に、そのツールを持つイメージが無いことを書く",
     );
     expect(prompt).toContain("上の検証のコマンドも見つからなければ");
+  });
+
+  it("オーケストレーターに、イメージの選び方と testCommand の関係を、順序をつけて伝える（ツールを持つイメージを優先し、無いときだけ理由を書く）", () => {
+    const prompt = buildOrchestratorPrompt(task(), {
+      images: [{ name: "go", description: "Go 1.27・golangci-lint" }],
+    });
+    // 「ツールが無くても書く」と「そのイメージで動くコマンドにする」が、順序なく並んでいない
+    expect(prompt).not.toContain("testCommand は、そのイメージで動くコマンドにする");
+    expect(prompt).toContain(
+      "testCommand のツールを持つイメージがあれば、それを優先して選ぶ。どのイメージにも無いときだけ、testCommand は書いたうえで（上のとおり）、imageReason にその理由を書く",
+    );
+    // 書いたうえで理由を imageReason に書く指示は、imageReason の項目の指示と同じ名前
+    expect(prompt).toContain("- imageReason：イメージをそう選んだ理由");
+  });
+
+  it("オーケストレーターに、成果物が文書のファイルだけの依頼では、コードの検証を testCommand に入れず、文書向けの検証だけか testCommand なし（noTests）にさせる（PBI-284）", () => {
+    const prompt = buildOrchestratorPrompt(task());
+    expect(prompt).toContain("成果物が文書のファイルだけの依頼（documentsOnly）");
+    expect(prompt).toContain(
+      "文書の変更が及ばないコードの検証（テスト・lint・型の検査・ビルド）を testCommand に入れない",
+    );
+    // 文書向けの検証があればそれだけ、無ければ testCommand なし（起点にテストのファイルがあっても noTests にしてよい）
+    expect(prompt).toContain("リンクの検査・markdown の lint・文書のフォーマットなど");
+    expect(prompt).toContain("その検証だけを testCommand に書く");
+    expect(prompt).toContain(
+      "起点のコードにテストのファイルがあっても、文書だけの依頼なら noTests にしてよい",
+    );
+    expect(prompt).toContain("答えに documentsOnly: true を書く");
+    // 答えの形に documentsOnly を示す（testCommand の答えの形と、noTests の答えの形の両方）
+    expect(prompt.match(/"documentsOnly": true/g)).toHaveLength(2);
+    // 文書のファイルは、sacty が差分を文書だけと見なす拡張子（コード中のコメント・.txt・画像は含まない）
+    expect(prompt).toContain("拡張子が .md・.markdown・.rst・.adoc・.asciidoc・.org のファイル");
+    expect(prompt).toContain(
+      "コード・コード中のコメント・設定・テキストファイル（.txt）・画像の変更を含むなら、文書だけの依頼ではない",
+    );
+    expect(prompt).toContain("迷うときも、文書だけの依頼にしない");
+    // 差分に文書以外があれば sacty が止める。コードも変える依頼には書かない
+    expect(prompt).toContain("コードも変える依頼には、documentsOnly を書かない");
+    // コードも変える依頼では、今までどおり変更が及ぶ範囲の検証のすべてを入れる
+    expect(prompt).toContain(
+      "コードも変える依頼では、変更が及ぶ範囲の検証のすべてを testCommand に入れる",
+    );
+    expect(prompt).toContain("代表の1つだけを選ばない");
+    // noTests の説明にも、文書だけの依頼は止めないことを書く
+    expect(prompt).toContain("（文書だけの依頼（documentsOnly）は除く）");
+    // リポジトリの無いタスクには、documentsOnly の答えを求めない
+    const repoless = buildOrchestratorPrompt({
+      title: "x",
+      body: "",
+      steps: [],
+    } as unknown as Task);
+    expect(repoless).not.toContain('"documentsOnly": true');
+  });
+
+  it("出力からは、documentsOnly: true のときだけ文書だけの依頼として読む（PBI-284）", () => {
+    expect(extractStepPlan(plan({ noTests: NO_TESTS, documentsOnly: true }))).toMatchObject({
+      noTests: NO_TESTS,
+      documentsOnly: true,
+    });
+    // true 以外（文字列・false・数）や、書かない答えは、文書だけの依頼にしない
+    for (const value of ["true", false, 1, null]) {
+      expect(extractStepPlan(plan({ noTests: NO_TESTS, documentsOnly: value }))).not.toHaveProperty(
+        "documentsOnly",
+      );
+    }
+    expect(extractStepPlan(plan({ noTests: NO_TESTS }))).not.toHaveProperty("documentsOnly");
+    // 文書向けの検証を testCommand に書いたときも読む
+    expect(
+      extractStepPlan(plan({ testCommand: "npx markdownlint .", documentsOnly: true })),
+    ).toMatchObject({ testCommand: "npx markdownlint .", documentsOnly: true });
+  });
+
+  it("オーケストレーターに説明する既定のイメージの中身は、イメージを作る手順（Dockerfile・install-tools.sh・install-security-tools.sh）と合っている（PBI-284）", () => {
+    const docker = (name: string) =>
+      readFileSync(new URL(`../../../packages/cli/docker/${name}`, import.meta.url), "utf8");
+    const prompt = buildOrchestratorPrompt(task(), {
+      images: [{ name: "node-pw", description: "Node.js 26・Playwright" }],
+    });
+    // レビューのイメージの選択にも、同じ説明を出す
+    expect(buildReviewImagePrompt(task(), [{ name: "java", description: "Java 17" }])).toContain(
+      "汎用の最低限のもの（Node.js・npm・git・Claude Code・Codex と、作業用の CLI（",
+    );
+    const listed = (prompt.match(/作業用の CLI（([^）]+)）/)?.[1] ?? "").split("・");
+    expect(listed.length).toBeGreaterThan(3);
+    // 示した作業用の CLI は、install-tools.sh が入れるコマンドに挙がっている（末尾の「ほか」を除く）
+    const tools = docker("install-tools.sh");
+    for (const command of listed.map((c) => c.replace(/ ほか$/, ""))) {
+      expect(tools).toMatch(new RegExp(`^${command}:`, "m"));
+    }
+    // drawio・osv-scanner・gitleaks・Claude Code・Codex も、イメージを作る手順で入れる
+    expect(docker("Dockerfile")).toContain("install-drawio.sh");
+    expect(docker("Dockerfile")).toContain("install-security-tools.sh");
+    expect(docker("install-security-tools.sh")).toContain("osv-scanner");
+    expect(docker("install-security-tools.sh")).toContain("gitleaks");
+    expect(docker("agent-cli/package.json")).toContain("claude-code");
+    expect(docker("agent-cli/package.json")).toContain("codex");
+    // 入っていないと説明したものは、どの手順でも入れない
+    const all = [
+      docker("Dockerfile"),
+      tools,
+      docker("install-security-tools.sh"),
+      docker("install-drawio.sh"),
+    ].join("\n");
+    for (const absent of [
+      "golang",
+      "openjdk",
+      "pnpm",
+      "yarn",
+      "golangci-lint",
+      "kustomize",
+      "helm",
+    ]) {
+      expect(all).not.toMatch(new RegExp(`(^|[\\s:'"])${absent}([\\s:'"]|$)`, "m"));
+    }
   });
 
   it("オーケストレーターに、複数の検証は && でつないで1つの testCommand にさせる", () => {

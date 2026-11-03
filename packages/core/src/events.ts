@@ -823,6 +823,13 @@ const StepsChosen = z.object({
      * sacty がテストのファイルを見つけた・不具合の修正を選んだときは、持たせずに止める。
      */
     noTestsReason: z.string().trim().min(1).max(2000).optional(),
+    /**
+     * オーケストレーターが、この依頼の成果物は文書のファイルだけ（Markdown など）と判断した（PBI-284）。持つタスクは、
+     * テストのコマンドに文書の変更が及ばないコードの検証を入れず、noTestsReason を答えたときは、起点のコードにテストの
+     * ファイルがあっても止めない。実装の差分に文書でないファイルがあれば、検証されないコードの変更を通さないよう、
+     * 最終レビューをせずに止める。実装を含み、不具合の修正でない組み合わせのときだけ持つ。
+     */
+    documentsOnly: z.literal(true).optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**

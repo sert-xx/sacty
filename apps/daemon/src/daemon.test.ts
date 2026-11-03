@@ -28388,6 +28388,202 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
+  describe("文書だけの依頼（PBI-284）", () => {
+    const DOCS_ONLY = "文書だけの依頼で、文書向けの検証（リンクの検査・markdown の lint）が無い";
+    const docsPlan = (extra: Record<string, unknown> = {}) =>
+      plan({ noTests: DOCS_ONLY, documentsOnly: true, ...extra });
+    /** 起点のコードにテストのファイルがあるリポジトリ。差分は、指定したパスにする。 */
+    const reposWith = (changed: string[]) => {
+      const repos = new FilesRepos({ "README.md": "# app", "src/pay.test.js": "test()" });
+      repos.changes = changed.map((path) => ({ path, added: 1, removed: 0 }));
+      return repos;
+    };
+    const implemented = out("# 実装の説明\n\n- 文書を足した");
+
+    it("テストのファイルがあるリポジトリでも、noTests と documentsOnly を答えれば止まらず、差分が文書だけなら最終レビューを通って承認待ちへ進む", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [docsPlan(), out("# 要求要件\n\n- 文書を足す"), implemented, review()],
+        { realPlanner: true, repos: reposWith(["docs/guide.md", "README.md"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      const task = taskOf(service, id);
+      // 矛盾の判定で止まらず、テストなしの理由と、文書だけの依頼であることを記録する
+      expect(task.status).not.toBe("paused");
+      expect(task.noTestsReason).toBe(DOCS_ONLY);
+      expect(task.documentsOnly).toBe(true);
+      expect(task.testCommand).toBeUndefined();
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.documentsOnly).toBe(true);
+      // オーケストレーターには、文書だけの依頼の答え方を伝える
+      const prompt = promptOf(executor, 0);
+      expect(prompt).toContain("documentsOnly");
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      const done = taskOf(service, id);
+      expect(typesOf(service, id)).not.toContain("TestsRun");
+      expect(typesOf(service, id)).toContain("FinalReviewed");
+      expect(done.lastReview?.passed).toBe(true);
+      expect(done.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("documentsOnly が無ければ、同じ答えでもテストのファイルがあれば今までどおり止まる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [plan({ noTests: DOCS_ONLY })], {
+        realPlanner: true,
+        repos: reposWith(["README.md"]),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      const task = taskOf(service, id);
+      expect(task.status).toBe("paused");
+      expect(task.pausedMessage).toMatchObject({ code: "orchestrator.noTestsContradicted" });
+      expect(task.documentsOnly).toBeUndefined();
+      activity.close();
+    });
+
+    it("不具合の修正（再現の工程がある）では documentsOnly を使わず、今までどおりテストなしにせずに止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [plan({ noTests: DOCS_ONLY, documentsOnly: true, investigation: "bug" }, "bugfix")],
+        { realPlanner: true, repos: reposWith(["README.md"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "不具合" });
+      await service.runNext(id);
+      const task = taskOf(service, id);
+      expect(task.status).toBe("paused");
+      expect(task.pausedMessage).toMatchObject({ code: "orchestrator.bugfixNeedsTests" });
+      expect(task.documentsOnly).toBeUndefined();
+      activity.close();
+    });
+
+    it("実装の差分にコードがあれば、最終レビューをせずに止め、決めずに再開しても同じ理由で止まる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [docsPlan(), out("# 要求要件\n\n- 文書を足す"), implemented, review()],
+        { realPlanner: true, repos: reposWith(["docs/guide.md", "src/pay.js", "src/db.js"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      const task = taskOf(service, id);
+      expect(task.status).toBe("paused");
+      // 文書でないファイルだけを挙げる。判定は記録せず、ゴールガーディアンも実行しない
+      expect(task.pausedMessage).toEqual({
+        code: "verify.documentsOnlyContradicted",
+        params: { files: "src/pay.js、src/db.js", total: 2 },
+      });
+      expect(typesOf(service, id)).not.toContain("FinalReviewed");
+      expect(executor.calls).toHaveLength(3);
+      expect(canDecideTests(task)).toBe(true);
+      // テストの扱いを決めずに再開しても、同じ理由で止まる
+      service.resume(id, {});
+      await drain(service);
+      expect(taskOf(service, id).pausedMessage?.code).toBe("verify.documentsOnlyContradicted");
+      expect(executor.calls).toHaveLength(3);
+      activity.close();
+    });
+
+    it("止まったタスクは、再開のときにテストの扱いを決めれば、その扱いで最終レビューに進む（文書だけの判断は使わない）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [docsPlan(), out("# 要求要件\n\n- 文書を足す"), implemented, review()],
+        { realPlanner: true, repos: reposWith(["docs/guide.md", "src/pay.js"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      expect(taskOf(service, id).pausedMessage?.code).toBe("verify.documentsOnlyContradicted");
+      service.resume(id, { tests: { testCommand: "make test" } });
+      expect(taskOf(service, id).documentsOnly).toBeUndefined();
+      expect(taskOf(service, id).testCommand).toBe("make test");
+      await drain(service);
+      const task = taskOf(service, id);
+      expect(typesOf(service, id)).toContain("FinalReviewed");
+      expect(executor.calls).toHaveLength(4);
+      expect(task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("文書向けの検証を testCommand に書いた文書だけの依頼でも、差分にコードがあれば止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          plan({
+            testCommand: "npx markdown-link-check README.md",
+            documentsOnly: true,
+            noTests: undefined,
+          }),
+          out("# 要求要件\n\n- 文書を足す"),
+          implemented,
+          review(),
+        ],
+        { realPlanner: true, repos: reposWith(["README.md", "src/pay.js"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      expect(taskOf(service, id).testCommand).toBe("npx markdown-link-check README.md");
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      expect(taskOf(service, id).pausedMessage).toMatchObject({
+        code: "verify.documentsOnlyContradicted",
+        params: { files: "src/pay.js", total: 1 },
+      });
+      activity.close();
+    });
+
+    it("差分が空のときは、食い違いとして止めない（検証されないコードの変更が無い）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [docsPlan(), out("# 要求要件\n\n- 文書を足す"), implemented, review()],
+        { realPlanner: true, repos: reposWith([]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "文書を足す" });
+      await service.runNext(id);
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      expect(taskOf(service, id).pausedMessage?.code).not.toBe("verify.documentsOnlyContradicted");
+      activity.close();
+    });
+
+    it("コードも変える依頼（documentsOnly が無い）は、差分にコードがあっても、今までどおり最終レビューに進む", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          plan({ testCommand: "make test", noTests: undefined }),
+          out("# 要求要件\n\n- 実装する"),
+          implemented,
+          review(),
+        ],
+        { realPlanner: true, repos: reposWith(["README.md", "src/pay.js"]) },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "実装する" });
+      await service.runNext(id);
+      await drain(service);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      expect(typesOf(service, id)).toContain("FinalReviewed");
+      expect(taskOf(service, id).pausedMessage).toBeUndefined();
+      activity.close();
+    });
+  });
+
   it("テストのコマンドを決められずに止まったら、決めずに再開すると選び直し、オーケストレーターがテストの仕組みが無いと答えれば進む", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(

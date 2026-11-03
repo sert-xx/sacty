@@ -711,6 +711,11 @@ export type Task = {
    */
   noTestsReason?: string;
   /**
+   * オーケストレーターが、この依頼の成果物は文書のファイルだけと判断した（StepsChosen の documentsOnly。PBI-284）。
+   * 人がテストの扱いを決め直したら（TestsDecided）、この判断は使わない。
+   */
+  documentsOnly?: true;
+  /**
    * テストのコマンドかテストなしの理由（noTestsReason）を、人が再開のときに決めた（TestsDecided）。無ければ
    * オーケストレーターが決めたもの。
    */
@@ -1042,6 +1047,7 @@ export function applyEvent(
       if (event.payload.noTestsReason && !event.payload.testCommand) {
         task.noTestsReason = event.payload.noTestsReason;
       }
+      if (event.payload.documentsOnly) task.documentsOnly = true;
       if (event.payload.steps.includes("operation")) task.operation = event.payload.operation;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       {
@@ -2591,6 +2597,8 @@ export function applyEvent(
         task.testCommand = undefined;
       }
       task.testsDecidedBy = "person";
+      // 人がテストの扱いを決めたので、依頼を文書だけとしたオーケストレーターの判断は使わない（決めた扱いで検証する）
+      task.documentsOnly = undefined;
       break;
 
     case "TaskResumed":
@@ -3277,11 +3285,32 @@ export function testToolsMissing(task: Task): boolean {
 }
 
 /**
+ * 最終レビューの前に、オーケストレーターが文書だけの依頼と判断した（documentsOnly。PBI-284）のに、実装の差分に文書でない
+ * ファイルがあって止まったタスクか（`verify.documentsOnlyContradicted`）。コードの検証がテストのコマンドに入っていないので、
+ * 人がテストの扱いを決めるまでは、再開しても同じ理由で止まる。
+ */
+export function documentsOnlyContradicted(task: Task): boolean {
+  const stopped = task.pausedMessage;
+  return (
+    task.status === "paused" &&
+    task.pausedReason === "error" &&
+    typeof stopped === "object" &&
+    stopped.code === "verify.documentsOnlyContradicted" &&
+    task.documentsOnly === true &&
+    task.steps.some((s) => s.key === "implement")
+  );
+}
+
+/**
  * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらずに止まったタスクと、
- * 決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）。
+ * 決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）、文書だけの依頼と判断したのに差分に
+ * 文書でないファイルがあって止まったタスク（PBI-284）。
  */
 export function canDecideTests(task: Task): boolean {
-  return task.status === "paused" && (testsUndecided(task) || testToolsMissing(task));
+  return (
+    task.status === "paused" &&
+    (testsUndecided(task) || testToolsMissing(task) || documentsOnlyContradicted(task))
+  );
 }
 
 /**
@@ -3293,6 +3322,7 @@ export function canRechooseSteps(task: Task): boolean {
     canDecideTests(task) &&
     // ツールが無くて止まったタスク（PBI-158）は、工程の選択をやり直しても同じテストのコマンドになりうる。決め直すか、そのまま再開する
     !testToolsMissing(task) &&
+    !documentsOnlyContradicted(task) &&
     task.resumeTo === "queued" &&
     task.currentRunId === undefined &&
     !task.operationAttempted &&
@@ -3309,6 +3339,7 @@ function clearChosenSteps(task: Task): void {
   task.deploymentChoice = undefined;
   task.testCommand = undefined;
   task.noTestsReason = undefined;
+  task.documentsOnly = undefined;
   task.testsDecidedBy = undefined;
   task.operation = undefined;
   task.investigation = undefined;

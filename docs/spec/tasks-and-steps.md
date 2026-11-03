@@ -718,8 +718,9 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 | --- | --- |
 | `plan`・`reason` | 組み合わせと理由 |
 | `baseBranch` | ベースブランチ。既定のブランチと違えば、そのブランチで用意し直す（用意できなければ既定のブランチのまま進め、理由を置き換える） |
-| `testCommand` | テスト（検証）のコマンド（ゴールガーディアンが最終レビューの中で実行し、終了コード 0 で合格。1〜1000 文字）。テストのコードが無くても、成果物を機械的に確かめる検証（`kustomize build`・`helm lint`・`kubeconform`・`terraform validate`・`yamllint` など）を CI・Makefile・pre-commit が実行しているか、リポジトリの形から決まる（`kustomization.yaml`・`Chart.yaml` など）なら、それを書かせる。実行する検証が複数ある（テストの種類が複数・lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて `&&` でつないで1つにさせる（`;` ではつながせない。代表の1つだけを選ばせない）。使うツールがどのイメージにも無くても空にさせない（下の「実装の検証」）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
+| `testCommand` | テスト（検証）のコマンド（ゴールガーディアンが最終レビューの中で実行し、終了コード 0 で合格。1〜1000 文字）。テストのコードが無くても、成果物を機械的に確かめる検証（`kustomize build`・`helm lint`・`kubeconform`・`terraform validate`・`yamllint` など）を CI・Makefile・pre-commit が実行しているか、リポジトリの形から決まる（`kustomization.yaml`・`Chart.yaml` など）なら、それを書かせる。実行する検証が複数ある（テストの種類が複数・lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて `&&` でつないで1つにさせる（`;` ではつながせない。代表の1つだけを選ばせない）。コードも変える依頼では、変更が及ぶ範囲の検証のすべてを入れさせる。成果物が文書のファイルだけの依頼（下の `documentsOnly`）では、文書の変更が及ばないコードの検証（テスト・lint・型の検査・ビルド）を入れさせず、リポジトリに文書向けの検証（リンクの検査・markdown の lint・文書のフォーマットなど）があればそれだけを書かせ、無ければ空にして `noTests` に根拠を書かせる。使うツールは、選べるイメージのうちそのツールを持つものを優先して選ばせ、どのイメージにも無いときだけ、空にせず `imageReason` にその理由を書かせる（下の「実装の検証」）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
 | `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みも検証のコマンドも無いと判断した根拠（1〜2000 文字）。実装する組み合わせでは、`testCommand` か `noTests` のどちらかを必ず書かせる（パッケージの設定・Makefile・CI の設定・README などの開発の手順・テストのファイルを調べさせ、見つからなければ根拠を書かせる。スキルやドキュメントを置くだけのリポジトリもこれに当たる）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
+| `documentsOnly` | `true` のときだけ読む。依頼の成果物が文書のファイルだけ（拡張子が `md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org`。コード・コード中のコメント・設定・`txt`・画像の変更を含むなら文書だけではない。迷うときは書かせない）。実装を含み、不具合の修正でない組み合わせのときだけ `StepsChosen` の `documentsOnly` に記録する（それ以外は捨てる）。持つタスクは、`noTests` を答えたときに起点のコードにテストのファイルがあっても止めず（下の「テストの仕組みが無いタスク」）、実装の差分に文書のファイル以外があれば最終レビューの前に止める（下の「実装の検証」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
 | `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |
 | `defaultReasons` | 既定のイメージ（`default`）を使う工程ごとの、`images` のどれも合わない理由（下の「工程のイメージ」） |
@@ -731,8 +732,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 - 工程のイメージ（`images` を設定していて、プロジェクトの対象でイメージを指定していないとき）
   - 指示では、選んだ組み合わせの工程それぞれに `images` から選ばせる。
-    既定のイメージは候補に並べず、`images` のどれも合わないときの最後の手段（Claude Code・Codex を動かす Node.js と git だけで、テストのブラウザ・DB のクライアント・ほかの言語のツールは無い）と説明し、使う工程には `defaultReasons` に理由を書かせる。
-    テストを実行するイメージ（実装、不具合の修正では再現も）は、`testCommand` とリポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせる。
+    既定のイメージは候補に並べず、`images` のどれも合わないときの最後の手段（Node.js・npm・git・Claude Code・Codex と、作業用の CLI（`jq`・`rg`・`fd`・`tree`・`curl`・`zip`・`make`・`python3`・`sqlite3`・`shellcheck` ほか）、`drawio`・`osv-scanner`・`gitleaks` が入り、Go・Java・pnpm・yarn・C のコンパイラ・`golangci-lint` などのほかの言語のツール、テストのブラウザ、DB のクライアント（`sqlite3` を除く）、`kustomize`・`helm` などの検証のツールは無い。中身は `packages/cli/docker/` のイメージを作る手順と一致させる）と説明し、使う工程には `defaultReasons` に理由を書かせる。
+    テストを実行するイメージ（実装、不具合の修正では再現も）は、`testCommand` とリポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせ、`testCommand` のツールを持つイメージを優先させる。どのイメージにも無いときだけ、`testCommand` は書いたうえで、`imageReason` にその理由を書かせる。
   - 既定のイメージで動く工程（選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば `StepsChosen` の `defaultImageReasons` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imagesUnexplained` に記録する。
     理由が無くても止めずに既定のイメージで進め、作業履歴（タスクの画面）に理由が無いことを出す。
   - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスクでは、どちらも記録しない。
@@ -993,6 +994,11 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   数えるのは `unreadableReviews`。判定が記録される・再開する・前の工程からやり直すと数え直す。再開すると、最終レビューからやり直す。
   判定のオブジェクトは読めて、観点や指摘の判定が足りないだけのときは、これまでどおり、判定の無い項目を不合格にする。
   統合レビューには、この扱いは無い。
+- オーケストレーターが依頼を文書だけと判断した（`Task.documentsOnly`）タスクは、テストのコマンドにコードの検証が入っていない（文書向けの検証だけか、空）。
+  そのため、最終レビューを始める前（差分を取った後）に、タスクの差分（起点からの変更。名前の変更は変更元と変更先に分けて見る）を調べ、文書のファイル（`isDocumentsOnly` と同じ拡張子の一覧）でないものが1つでもあれば、ゴールガーディアンを実行せず、判定も記録せずに一時停止する（`error`・`verify.documentsOnlyContradicted`。文書でないファイルを5件まで、全件数とあわせて示す）。
+  コードの変更を検証なしで通さないための歯止めで、上の「ツールがイメージに無いとき」の差分による判定と同じ文書の一覧を使うので、依頼の段階の判断と差分の判定は食い違わない。
+  差分が空のときは止めない。ファイルごとの変更を取れないときは、`verify.diffUnavailable` で止める。
+  人が再開のときにテストの扱いを決めれば（下の「文書だけの依頼と差分が食い違って止まったタスクの再開」）、その扱いで進む。決めずに再開すると、最終レビューの前でまた同じ理由で止まる。
 - テスト（検証）のコマンドに書いたツールがイメージに無いときは、実装をやり直しても直らない。
   ゴールガーディアンが `missingCommands` に書いた名前のうち、テストのコマンドの中に語として書いてあり、`/` を含まないものがあれば、次のとおりにする。
   テストのコマンドに書いていない名前（`npm test` の中のスクリプトが使うツールなど）と、`/` を含む名前（`./scripts/check.sh` など）はリポジトリの問題として当てず、ふつうの判定にする。
@@ -1021,7 +1027,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - ゴールガーディアンの指示（`buildFinalReviewPrompt`）には、ツールが無くても、実行できる検証と観点・指摘の判定を最後まで行うよう書く。
 
   - 差分を取る間に人間が一時停止・中止を求めたとき：判定もツール不足の停止も記録せずに、使った分の費用を `FinalReviewFailed`（`verify.stoppedByPerson`）に記録し、一時停止・中止する。再開すると、最終レビューからやり直す。
-  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`）、`apps/daemon/src/ci.ts`（`redactLog`・`redactUrlCredentials`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
+  コード: `apps/daemon/src/prompts.ts`（`extractFinalReview`・`missingToolsCheck`）、`apps/daemon/src/service.ts`（`verify`・`changesOnlyDocuments`・`changesOutsideDocuments`）、`apps/daemon/src/test-files.ts`（`isDocumentsOnly`・`CHANGE_DOCUMENT_EXTENSION_LIST`）、`apps/daemon/src/ci.ts`（`redactLog`・`redactUrlCredentials`）、`packages/core/src/events.ts`（`GuardianTests`・`guardianTestsPassed`）
 - 再現の工程の後（PBI-29）：sacty は再現のテストを実行しない。
   再現のエージェントへの指示で、書いたテストをテストのコマンドで自分で実行し、不具合のために失敗することを確かめさせ、`sacty-reproduction` に `tests`・`reproduced`・`command`・`exitCode`・`output`（結果の抜粋）を書かせる（`extractReproduction`）。
   sacty は、工程の完了と同じ追記で `ReproductionChecked` を記録する（`reproductionChecked`）。
@@ -1191,6 +1197,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     `noTests` が無く `testCommand` も空なら、今どおり止める（`orchestrator.testCommandUnknown`）。
   - 不具合の修正（`bugfix`）を選んだら止める（`orchestrator.bugfixNeedsTests`）。
     再現はテストで確かめるため、テストの無いタスクには選ばせない（オーケストレーターへの指示でも選ばないよう求める）。
+  - 文書だけの依頼（`documentsOnly`）なら、次の3つのテストのファイルの確かめは行わず、止めない（テストのファイルがあっても、確かめきれなくても進める）。実装の差分が文書だけでなかったときは、最終レビューの前に止める（下の「実装の検証」）。
   - 対象リポジトリの起点のコード（作業領域。`.git` を除く）に、テストのファイルの名付けの慣習に当たるファイルがあれば止める（`orchestrator.noTestsContradicted`。見つけたファイルを5件まで示す）。
     当たるのは、`test`・`tests`・`__tests__` のディレクトリの中のファイルと、拡張子を除いた名前が `test`・`tests`・`test_*`・`test-*`・`*_test`・`*-test`・`*.test`・`*_spec`・`*.spec`（と複数形）・`*Test`・`*Tests`・`Test*`（キャメルケース）のファイル（`looksLikeTestFile`）。
     文書のファイル（拡張子が `md`・`markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org`）は、テストのディレクトリの中でも当てない。
@@ -1235,7 +1242,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 作業履歴（`StepsChosen`。それより前の版の記録では `TestsSkipped` も）
 - 実装の人の承認は、テストのあるタスクと同じく要る。
 
-コード: `apps/daemon/src/service.ts`（`checkNoTests`・`runNextInner`・`verify`）、`apps/daemon/src/test-files.ts`（`findTestFiles`・`looksLikeTestFile`・`noTestsStop`・`TEST_FILE_SCAN_LIMIT`）、`apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`・`extractStepPlan`・`buildPrompt`・`extractBlocks`・`extractTestCommandFences`・`buildFinalReviewPrompt`・`noTestsReasonLines`・`resultTableLines`）、`packages/core/src/events.ts`（`StepsChosen`・`AgentRunCompleted`・`TestsSkipped`）、`packages/core/src/projection.ts`（`noTestsReason`・`addedTestCommand`・`testsSkippedAt`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`addedTestsResult`・`testCommandOfNoTests`）
+コード: `apps/daemon/src/service.ts`（`checkNoTests`・`runNextInner`・`verify`）、`apps/daemon/src/test-files.ts`（`findTestFiles`・`looksLikeTestFile`・`noTestsStop`・`TEST_FILE_SCAN_LIMIT`）、`apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`・`extractStepPlan`・`buildPrompt`・`extractBlocks`・`extractTestCommandFences`・`buildFinalReviewPrompt`・`noTestsReasonLines`・`resultTableLines`）、`packages/core/src/events.ts`（`StepsChosen`・`AgentRunCompleted`・`TestsSkipped`）、`packages/core/src/projection.ts`（`noTestsReason`・`documentsOnly`・`addedTestCommand`・`testsSkippedAt`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`addedTestsResult`・`testCommandOfNoTests`）
 
 ### テストが決まらずに止まったタスクの再開
 
@@ -1269,7 +1276,16 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 渡し方・人が決めたことの示し方・どちらか1つだけを渡せることは、上と同じ。
 
-コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`testToolsMissing`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
+#### 文書だけの依頼と差分が食い違って止まったタスクの再開
+
+オーケストレーターが依頼を文書だけと判断した（`documentsOnly`）のに、実装の差分に文書のファイル以外があって、最終レビューの前に止まったタスク（`documentsOnlyContradicted`。一時停止の理由が `verify.documentsOnlyContradicted` で、`documentsOnly` が `true`）も、同じ `tests` でテストの扱いを決め直せる（`canDecideTests`）。
+決めずに再開すると、最終レビューの前でまた同じ理由で止まる（工程の選択からはやり直さない。`canRechooseSteps` は当てない）。
+
+- テストのコマンドを指定する・テストなしで進める：`TestsDecided` を記録する。内容は「ツールが無くて止まったタスクの再開」と同じ。
+- 人がテストの扱いを決めたら、`Task.documentsOnly` を消す（決めた扱いで検証する。依頼を文書だけとした判断は使わない）。
+- 画面の再開の欄で、止まる前のテストのコマンドがあれば、入力欄の初期値に出す。
+
+コード: `apps/daemon/src/service.ts`（`resume`）、`packages/core/src/events.ts`（`TestsDecided`・`TaskResumed`・`ResumeTaskInput`）、`packages/core/src/projection.ts`（`testsUndecided`・`testToolsMissing`・`documentsOnlyContradicted`・`canDecideTests`・`canRechooseSteps`・`clearChosenSteps`・`testsDecidedBy`）、`apps/daemon/src/prompts.ts`（`noTestsReasonLines`・`noTestsJudge`・`personTestCommand`・`testCommandLine`・`testRunLines`）、`apps/web/src/components/resume-form.tsx`、`apps/web/src/app/actions.ts`（`resumeTaskAction`）、`apps/web/src/lib/daemon.ts`（`resumeTask`）
 
 ## ゴールガーディアン
 

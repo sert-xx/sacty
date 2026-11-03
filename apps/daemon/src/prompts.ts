@@ -81,6 +81,7 @@ import {
   securityScope,
 } from "./security.js";
 import { localForwards, type StartedService } from "./services.js";
+import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
 const ja = (value: DaemonText) => renderMessage(value, "ja");
@@ -5422,6 +5423,19 @@ function operationDestinationLines(
 }
 
 /**
+ * 既定のイメージ（packages/cli/docker/Dockerfile・install-tools.sh・install-security-tools.sh で作る）に入っているものと、
+ * 入っていないもの。オーケストレーターがイメージを選ぶ根拠なので、イメージの中身を変えたら、ここも合わせる（PBI-284。
+ * 作ったイメージで、コマンドの有無を確かめた）。
+ */
+const DEFAULT_IMAGE_CONTENTS =
+  "Node.js・npm・git・Claude Code・Codex と、作業用の CLI（jq・rg・fd・tree・curl・zip・make・python3・sqlite3・shellcheck ほか）、drawio、osv-scanner、gitleaks が入っている";
+const DEFAULT_IMAGE_MISSING =
+  "Go・Java・pnpm・yarn・C のコンパイラ・golangci-lint などのほかの言語のツール、テストのブラウザ、DB のクライアント（sqlite3 を除く）、kustomize・helm などの検証のツールは入っていない";
+
+/** 文書のファイル（sacty が差分を文書だけと見なす拡張子。`isDocumentsOnly`）。 */
+const DOCUMENT_FILES_LABEL = `拡張子が ${CHANGE_DOCUMENT_EXTENSION_LIST.map((e) => `.${e}`).join("・")} のファイル（Markdown・reStructuredText・AsciiDoc・Org の文書）`;
+
+/**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。タスクのオーケストレーターのセッションを再開して実行する（PBI-67。指示は毎回台帳から作る）。
  */
@@ -5476,6 +5490,9 @@ export function buildOrchestratorPrompt(
   const continueAnswer = continuable
     ? ', "continuePullRequest": true（タスクにある PR そのものを直すときだけ）'
     : "";
+  const documentsOnlyAnswer = task.repository
+    ? ', "documentsOnly": true（成果物が文書のファイルだけの依頼のときだけ）'
+    : "";
   return [
     "あなたはオーケストレーターです。タスクの内容と対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
@@ -5491,16 +5508,20 @@ export function buildOrchestratorPrompt(
     "- testCommand：このリポジトリのテスト（検証）を実行するコマンド（例：npm ci && npm test）。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める（ここでは実行しない）。パッケージの設定（package.json の scripts など）・Makefile・justfile・Taskfile・CI の設定（.github/workflows・.gitlab-ci.yml など）・pre-commit の設定・README・CONTRIBUTING・AGENTS.md・CLAUDE.md の開発の手順・テストのディレクトリやファイルを調べて、リポジトリが実際に使っているコマンドを書く。リポジトリに根拠の無いコマンドを推測で作らない",
     "  - テストのコードが無くても、リポジトリの成果物を機械的に確かめる検証（Kubernetes のマニフェストの kustomize build・helm lint・kubeconform、Terraform の terraform validate、YAML の yamllint など）を CI・Makefile・pre-commit の設定が実行しているなら、それを testCommand にする。そうした設定が無くても、リポジトリの形からその検証のツールが決まる（kustomization.yaml があれば kustomize build、Chart.yaml があれば helm lint など）なら、それを testCommand にしてよい",
     "  - 実行する検証が複数ある（テストの種類が複数・テストのほかに lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて && でつないで1つの testCommand にする（例：npm ci && npm run lint && npm test）。; ではつながない（前の検証の失敗が終了コードに残らないため）。代表の1つだけを選ばない",
-    "  - testCommand に使うツールが、選べるイメージのどれにも入っていなくても、testCommand は書く（空にしない）。ゴールガーディアンが最終レビューの中でテストを実行し、ツールがイメージに無ければ、イメージにパッケージを足すよう人に案内して止める",
-    "- noTests：実装する組み合わせを選ぶときは、testCommand か noTests のどちらかを必ず書く（両方を空にしない。PBI-94）。上の場所を調べても、テストの仕組み（テストのコード・テストを実行する設定やスクリプト・CI のテストの工程など）も上の検証のコマンドも見つからなければ、testCommand を書かずに、noTests にその根拠（どこを見て、何が無かったか）を書く。エージェントのスキル（SKILL.md など）を集めたリポジトリ・ドキュメントを置くだけのリポジトリのように、テストを書く種類でないリポジトリもこれに当たる。noTests のタスクは、sacty がテストを実行せず、ゴールガーディアンがタスクの目的から受け入れを判定する。テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない（再現をテストで確かめられないため）。sacty は、noTests と答えたリポジトリにテストのファイルらしいもの（tests のディレクトリの中・*.test.*・*_test.* など）があれば止めるので、見つけたテストは testCommand にする",
+    "  - コードも変える依頼では、変更が及ぶ範囲の検証のすべてを testCommand に入れる（上のとおり。代表の1つだけを選ばない）",
+    `  - 成果物が文書のファイルだけの依頼（documentsOnly）では、文書の変更が及ばないコードの検証（テスト・lint・型の検査・ビルド）を testCommand に入れない。文書のファイルは、${DOCUMENT_FILES_LABEL}。依頼が文書を書く・直すことだけで、変更するファイルがすべてこの文書のファイルのときが、文書だけの依頼（コード・コード中のコメント・設定・テキストファイル（.txt）・画像の変更を含むなら、文書だけの依頼ではない。迷うときも、文書だけの依頼にしない）`,
+    "    - リポジトリが文書向けの検証（リンクの検査・markdown の lint・文書のフォーマットなど。CI・Makefile・pre-commit が実行しているもの）を持っていれば、その検証だけを testCommand に書く。無ければ testCommand を書かず、noTests に「文書だけの依頼で、文書向けの検証が無い」ことと根拠を書く（起点のコードにテストのファイルがあっても、文書だけの依頼なら noTests にしてよい）。どちらの場合も、答えに documentsOnly: true を書く",
+    "    - sacty は、実装の差分に文書のファイル以外が1つでもあると、コードの変更が検証されないので、最終レビューをせずに止める。コードも変える依頼には、documentsOnly を書かない",
+    "  - testCommand に使うツールは、選べるイメージ（下の images）のうち、そのツールを持つものを優先して選ぶ。どのイメージにも入っていないときだけ、それでも testCommand は書き（空にしない）、imageReason に、そのツールを持つイメージが無いことを書く。ゴールガーディアンが最終レビューの中でテストを実行し、ツールがイメージに無ければ、イメージにパッケージを足すよう人に案内して止める（差分が文書のファイルだけなら、止めずに人の確認へ回す）",
+    "- noTests：実装する組み合わせを選ぶときは、testCommand か noTests のどちらかを必ず書く（両方を空にしない。PBI-94）。上の場所を調べても、テストの仕組み（テストのコード・テストを実行する設定やスクリプト・CI のテストの工程など）も上の検証のコマンドも見つからなければ、testCommand を書かずに、noTests にその根拠（どこを見て、何が無かったか）を書く。エージェントのスキル（SKILL.md など）を集めたリポジトリ・ドキュメントを置くだけのリポジトリのように、テストを書く種類でないリポジトリもこれに当たる。noTests のタスクは、sacty がテストを実行せず、ゴールガーディアンがタスクの目的から受け入れを判定する。テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない（再現をテストで確かめられないため）。sacty は、noTests と答えたリポジトリにテストのファイルらしいもの（tests のディレクトリの中・*.test.*・*_test.* など）があれば止めるので、見つけたテストは testCommand にする（文書だけの依頼（documentsOnly）は除く）",
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
     ...(continuable ? continuePullRequestLines(task, continuable) : []),
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41・PBI-105）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、選んだ組み合わせの工程（investigate・requirements・design・implement・reproduce・split・integrate・deployment など）それぞれに、次のイメージから合うものの名前を書く。工程を書き漏らさない。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
           ...images.map((image) => `  - ${image.name}：${image.description}`),
-          "- テストを実行するイメージ（実装の工程。不具合の修正では再現の工程も）は、testCommand と、リポジトリの依存（package.json・requirements.txt・Gemfile などの開発用の依存も）から選ぶ。テストに要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール、kustomize・helm・kubeconform などの検証のツール）が入っているイメージにする。testCommand は、そのイメージで動くコマンドにする",
-          `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの（Claude Code・Codex を動かす Node.js と git だけ）で、テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使う工程には images に ${DEFAULT_IMAGE_NAME} と書き、defaultReasons に、その工程で images のどれも合わない理由を書く`,
+          "- テストを実行するイメージ（実装の工程。不具合の修正では再現の工程も）は、testCommand と、リポジトリの依存（package.json・requirements.txt・Gemfile などの開発用の依存も）から選ぶ。テストに要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール、kustomize・helm・kubeconform などの検証のツール）が入っているイメージにする。testCommand のツールを持つイメージがあれば、それを優先して選ぶ。どのイメージにも無いときだけ、testCommand は書いたうえで（上のとおり）、imageReason にその理由を書く",
+          `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。汎用の最低限のもの（${DEFAULT_IMAGE_CONTENTS}）で、${DEFAULT_IMAGE_MISSING}。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使う工程には images に ${DEFAULT_IMAGE_NAME} と書き、defaultReasons に、その工程で images のどれも合わない理由を書く`,
           "- マージの後の監視の工程（deployment）のイメージは、デプロイの確認のスキル（deployment-observer）が使うツール（CLI・ブラウザなど）が入っているものにする",
           "- imageReason：イメージをそう選んだ理由（根拠にしたファイル）",
         ]
@@ -5550,7 +5571,7 @@ export function buildOrchestratorPrompt(
     ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${continueAnswer}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド", "investigation": "content または bug"${operation ? `, "operation": ${OPERATION_ANSWER}（operation のときだけ）` : ""}${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}${documentsOnlyAnswer}${continueAnswer}}}`,
     "```",
     "",
     "調べてもテストの仕組みが見つからないときは、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。実装する組み合わせでは、両方を空にしないでください（sacty が検証できずに止まります）。",
@@ -5559,7 +5580,7 @@ export function buildOrchestratorPrompt(
       .filter((plan) => plan !== "bugfix")
       .join(
         " または ",
-      )}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "noTests": "テストの仕組みが無いと判断した根拠（どこを見て、何が無かったか）", "investigation": "content または bug"}}`,
+      )}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "noTests": "テストの仕組みが無いと判断した根拠（どこを見て、何が無かったか）", "investigation": "content または bug"${documentsOnlyAnswer}}}`,
     "```",
   ].join("\n");
 }
@@ -5671,7 +5692,7 @@ function buildRepolessOrchestratorPrompt(
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
-          "  - default：既定のイメージ（Claude Code・Codex を動かす Node.js と git だけの最低限のもの。言語のツールは入っていない）",
+          `  - default：既定のイメージ（汎用の最低限のもの。${DEFAULT_IMAGE_CONTENTS}。${DEFAULT_IMAGE_MISSING}）`,
           ...images.map((image) => `  - ${image.name}：${image.description}`),
         ]
       : []),
@@ -5837,6 +5858,8 @@ export function extractStepPlan(
       testCommand?: string;
       /** テストの仕組みが無いと判断した根拠（PBI-94）。testCommand が無いときだけ。 */
       noTests?: string;
+      /** 成果物が文書のファイルだけの依頼（PBI-284）。 */
+      documentsOnly?: true;
       investigation?: InvestigationKind;
       /** 工程ごとのイメージの名前（PBI-41）。名前が images にあるかは、呼び出し側が確かめる。 */
       images?: Partial<Record<StepKey, string>>;
@@ -5915,6 +5938,7 @@ export function extractStepPlan(
       const repoReason = text(v.repoReason).slice(0, 2000);
       const continuePullRequest =
         v.continuePullRequest === true && CONTINUABLE_PLANS.includes(plan.data);
+      const documentsOnly = v.documentsOnly === true;
       return {
         ...(repo ? { repo } : {}),
         ...(repoReason ? { repoReason } : {}),
@@ -5926,6 +5950,7 @@ export function extractStepPlan(
         ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
         ...(testCommand ? { testCommand } : {}),
         ...(noTests ? { noTests } : {}),
+        ...(documentsOnly ? { documentsOnly: true as const } : {}),
         ...(investigation.success ? { investigation: investigation.data } : {}),
         ...(Object.keys(images).length > 0 ? { images } : {}),
         ...(imageReason ? { imageReason } : {}),
@@ -6628,7 +6653,7 @@ export function buildReviewImagePrompt(
     "レビューの工程は、選んだイメージのコンテナで、PR のコードを読み、対象のプロジェクトで定められた検証コマンド（テスト・lint・型検査など）を実行します。",
     "- PR が触るコード（モノレポなら、そのディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、検証に要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール）が入っているイメージを、次の images から選ぶ",
     ...images.map((image) => `  - ${image.name}：${image.description}`),
-    `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの（Claude Code・Codex を動かす Node.js と git だけ）で、テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使うときは image に ${DEFAULT_IMAGE_NAME} と書き、defaultReason に images のどれも合わない理由を書く`,
+    `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。汎用の最低限のもの（${DEFAULT_IMAGE_CONTENTS}）で、${DEFAULT_IMAGE_MISSING}。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使うときは image に ${DEFAULT_IMAGE_NAME} と書き、defaultReason に images のどれも合わない理由を書く`,
     "",
     "--- タスク ---",
     `# ${task.title}`,
