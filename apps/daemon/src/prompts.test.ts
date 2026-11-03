@@ -3164,6 +3164,63 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     }
   });
 
+  it("文書だけの依頼（documentsOnly）の実装・修正は user-doc で、コードを含む依頼は今までどおり code（PBI-295）", () => {
+    const docsOnly = { documentsOnly: true } as Partial<Task>;
+    const reproduction = {
+      reproduction: {
+        reproduced: true,
+        tests: ["t › x"],
+        command: "npm test",
+        exitCode: 1,
+        output: "1 failed",
+      },
+    } as Partial<Task>;
+    const kindOf = (prompt: string) =>
+      /流れは self-review、主対象の種類は ([a-z-]+)）で(.+)をセルフレビューする/
+        .exec(prompt)
+        ?.slice(1);
+    // 文書だけの依頼：標準・direct（要求要件・設計を経ない）・テストの仕組みが無い・不具合の修正のどれでも user-doc
+    for (const [prompt, label] of [
+      [buildPrompt(task(steps, docsOnly), "implement"), "標準"],
+      [buildPrompt(task(["implement"], docsOnly), "implement"), "direct"],
+      [
+        buildPrompt(task(steps, { ...docsOnly, noTestsReason: "テストが無い" }), "implement"),
+        "noTests",
+      ],
+    ] as const) {
+      expect(kindOf(prompt), label).toEqual(["user-doc", "実装（文書）"]);
+      expect(prompt, label).not.toContain("実装（コードとテスト）");
+      // 要求要件・設計の下書きのための指示（作業領域の外の一時ファイル）は付けない
+      expect(prompt, label).not.toContain("/tmp/sacty-self-review/draft.md");
+      expect(prompt, label).toContain(HEADING);
+    }
+    expect(
+      kindOf(
+        buildPrompt(
+          task(["investigate", "reproduce", "implement"], { ...docsOnly, ...reproduction }),
+          "implement",
+        ),
+      ),
+    ).toEqual(["user-doc", "修正（文書）"]);
+    // コードを含む依頼（documentsOnly が無い）は、どの組み合わせでも code のまま
+    expect(kindOf(buildPrompt(task(steps), "implement"))).toEqual([
+      "code",
+      "実装（コードとテスト）",
+    ]);
+    expect(kindOf(buildPrompt(task(["implement"]), "implement"))).toEqual([
+      "code",
+      "実装（コードとテスト）",
+    ]);
+    expect(
+      kindOf(
+        buildPrompt(task(["investigate", "reproduce", "implement"], reproduction), "implement"),
+      ),
+    ).toEqual(["code", "修正（コードとテスト）"]);
+    // 要求要件・設計は、documentsOnly でも design-doc のまま
+    expect(kindOf(buildPrompt(task(steps, docsOnly), "requirements"))?.[0]).toBe("design-doc");
+    expect(kindOf(buildPrompt(task(steps, docsOnly), "design"))?.[0]).toBe("design-doc");
+  });
+
   it("差し戻しのやり直しでも、同じ指示を付ける", () => {
     const redo = task(steps, {
       outputs: { requirements: "# 前回" },
@@ -5044,6 +5101,49 @@ describe("指摘を受けた直しの実行では、セルフレビューを再�
         "implement",
       ),
     ).toContain(MARK);
+  });
+
+  it("文書だけの依頼（user-doc）の実装・修正の直しの実行でも、直しの実行の指示を渡す（PBI-295 との整合）", () => {
+    const base = {
+      documentsOnly: true,
+      selfReviews: { implement: PASSED },
+      remarks: [remark("implement-1-1", "implement", 1)],
+    } as Partial<Task>;
+    const reproduced = {
+      steps: ["investigate", "reproduce", "implement"].map((key) => ({ key, state: "todo" })),
+      reproduction: {
+        reproduced: true,
+        tests: ["t › x"],
+        command: "npm test",
+        exitCode: 1,
+        output: "1 failed",
+      },
+    } as Partial<Task>;
+    const cases: [string, Partial<Task>][] = [
+      ["標準", base],
+      ["直接の実装", { ...base, steps: [{ key: "implement", state: "todo" }] } as Partial<Task>],
+      [
+        "最終レビューの不合格",
+        { ...base, remarks: [], verifyFeedback: FAILED_REVIEW } as Partial<Task>,
+      ],
+      ["修正", { ...base, ...reproduced } as Partial<Task>],
+    ];
+    for (const [name, extra] of cases) {
+      const prompt = buildPrompt(task(extra), "implement");
+      expect(prompt, name).toContain("主対象の種類は user-doc）");
+      expect(prompt, name).toContain(MARK);
+    }
+    // 文書だけの依頼でも、最初の実行には出さない
+    const first = buildPrompt(
+      task({ documentsOnly: true, selfReviews: { implement: PASSED } } as Partial<Task>),
+      "implement",
+    );
+    expect(first).toContain("主対象の種類は user-doc）");
+    expect(first).not.toContain(MARK);
+    // コードを含む依頼（documentsOnly でない）は、これまでどおり code で渡す
+    const code = buildPrompt(task({ ...base, documentsOnly: false } as Partial<Task>), "implement");
+    expect(code).toContain("主対象の種類は code）");
+    expect(code).toContain(MARK);
   });
 
   it("タスクの最初の実行・上流の変更だけのやり直しには出さない（初回のレビューの規則は変えない）", () => {

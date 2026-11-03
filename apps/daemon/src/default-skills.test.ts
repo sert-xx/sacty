@@ -557,6 +557,19 @@ describe("既定の review スキルの、セルフレビューの再レビュ�
     );
   });
 
+  it("主対象が user-doc のセルフレビューでは、コード向けの観点（C-n）を起動しない（PBI-295）", () => {
+    const catalog = read("skills/review/review-dispatch/references/viewpoints.md");
+    const section = (title: string) => catalog.split(`## ${title}`)[1]?.split(/\n## /)[0] ?? "";
+    const userDoc = section("利用者向け文書・運用手順（`user-doc`）");
+    const ids = [...userDoc.matchAll(/^\| ([A-Z]-\d+) \|/gm)].map((m) => m[1]);
+    // 文書の観点は U-n だけで、コードの観点（C-n）・設計書の観点（D-n）を含まない
+    expect(ids).toEqual(["U-1", "U-2", "U-3", "U-4", "U-5", "U-6"]);
+    // 起動するのは主対象の種類の必須観点・条件に当てはまる条件付き観点・横断（X-n）。ほかの種類の観点を足すのは、種類が混在するときだけ
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    expect(skill).toContain("1. 主対象の種類の **必須観点は、対象の大小にかかわらず全部起動する**");
+    expect(skill).toContain("種類が本質的に混在するときは主対象を1つ決め");
+  });
+
   it("工程の指示（selfReviewLines）は、再レビューの観点の選び方をスキルの規則に任せ、食い違う指示を書かない", () => {
     const src = readFileSync(join(import.meta.dirname, "prompts.ts"), "utf8");
     expect(src).toContain("回数の上限はスキルの規則（初回を含めて最大 5 回）");

@@ -1445,7 +1445,7 @@ function splitRepositoryFields(task: Task): string {
  * 成果物の本文から取り除く。
  */
 function selfReviewLines(
-  kind: "design-doc" | "code",
+  kind: "design-doc" | "user-doc" | "code",
   deliverable: string,
   rework?: ReworkMode,
   fixCauses: readonly string[] = [],
@@ -1507,6 +1507,19 @@ function fixRunReviewLines(causes: readonly string[]): string[] {
     "  - 担当には、今回の指摘と、この実行での直しの内容を渡し、「指摘が直ったか」と「直しが新しい問題を持ち込んでいないか」を見させる",
     "  - 起動しなかった観点は、起動表に理由を残し、報告の summary でも、起動した観点と起動しなかった観点が分かるように書く",
   ];
+}
+
+/**
+ * 実装・修正の工程のセルフレビュー。成果物が文書のファイルだけの依頼（documentsOnly。PBI-284 の判定を、そのまま使う）
+ * では、主対象の種類を文書向け（user-doc）にして、コード向けの観点を起動させない（PBI-295）。それ以外は code。
+ * 文書は作業領域のファイルを直接直すので、要求要件・設計の下書きのための指示（design-doc）は付けない。
+ */
+function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string[] {
+  // 指摘を受けた直しの実行（PBI-296）の指示は、主対象の種類にかかわらず渡す
+  const fixCauses = fixRunCauses(task, "implement");
+  return task.documentsOnly === true
+    ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
+    : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses);
 }
 
 /**
@@ -1801,12 +1814,7 @@ function directImplementLines(
     ...feedbackLines(task),
     ...remarkLines(task, step, "観点ごとのテストの対応"),
     ...proposalLines(task, step),
-    ...selfReviewLines(
-      "code",
-      "実装（コードとテスト）",
-      undefined,
-      fixRunCauses(task, "implement"),
-    ),
+    ...implementSelfReviewLines(task, "実装"),
   );
   return lines;
 }
@@ -2326,14 +2334,7 @@ export function buildPrompt(
         lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
         lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
-        lines.push(
-          ...selfReviewLines(
-            "code",
-            "修正（コードとテスト）",
-            undefined,
-            fixRunCauses(task, "implement"),
-          ),
-        );
+        lines.push(...implementSelfReviewLines(task, "修正"));
         return lines.join("\n");
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
@@ -2430,12 +2431,7 @@ export function buildPrompt(
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ...proposalLines(task, step),
-        ...selfReviewLines(
-          "code",
-          "実装（コードとテスト）",
-          undefined,
-          fixRunCauses(task, "implement"),
-        ),
+        ...implementSelfReviewLines(task, "実装"),
       );
       return lines.join("\n");
     }
