@@ -196,7 +196,7 @@ Code: `apps/daemon/src/service.ts` (`checkHeldFeedback`, `holdFeedback`, `rework
 
 ### Pausing while waiting for approval
 
-Related ADR: [承認待ち（PR のマージ待ち）でも一時停止できるようにする](../adr/20261104-0600-pause-while-awaiting-approval.md)
+Related ADR: [承認待ち（PR のマージ待ち）でも一時停止できるようにする](../adr/20261103-2300-pause-while-awaiting-approval.md)
 
 A person can also pause a task that is waiting for approval (`awaiting_approval`). Use it when you want to stop PR imports while you wait for the merge. A task in escalation (`escalated`) cannot be paused.
 
@@ -433,7 +433,7 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `withoutStaleReviews`, `sa
 
 ### Things for a person to check
 
-Related ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261104-0610-surface-human-asks.md)
+Related ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261103-2302-surface-human-asks.md)
 
 In a rework started by PR comments, there can be things only a person can check: whether the comments were read as meant. If they appear only in a corner of the approval screen or in the activity, the people looking at the PR do not notice them. The following two are collected as "things for a person to check" (`humanAsks`) and shown in the PR comment and in a prominent place on the approval screen and the task details.
 

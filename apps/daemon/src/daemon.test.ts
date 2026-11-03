@@ -10611,6 +10611,22 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(repos.published[0]?.message).toBe(`feat: 決済API\n\nsacty task ${id}`);
     });
 
+    it("費用の記録（B5）と同じ実行で起きても、互いに影響しない：コミットのメッセージは種類付きで、費用は報告額になる", async () => {
+      const repos = new FakeRepos();
+      repos.files.base123 = { ".czrc": '{ "path": "cz-conventional-changelog" }' };
+      const reported = { ...implement("# 実装の説明"), reportedCostUsd: 0.5 };
+      const made = await toImplement([reported, review()], { repos });
+      await drain(made.service);
+      expect(repos.published[0]?.message).toBe(`feat: 決済API\n\nsacty task ${made.id}`);
+      const events = made.service.get(made.id)?.activity ?? [];
+      const run = events.find(
+        (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
+      );
+      expect(run?.type === "AgentRunCompleted" && run.payload.costUsd).toBe(0.5);
+      expect(events.filter((e) => e.type === "RunCostRecorded")).toHaveLength(1);
+      made.activity.close();
+    });
+
     it("AGENTS.md が Conventional Commits を定めているときも付ける（起点のコミットの内容で決める）", async () => {
       const repos = new FakeRepos();
       repos.files.base123 = { "AGENTS.md": "コミットは Conventional Commits に従う" };
@@ -10678,6 +10694,70 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       await drain(service);
       expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("承認待ちで一時停止している間は投稿せず（C3）、再開すると1回だけ投稿する。投稿の途中で止められても二重にならない", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      // 承認待ちになった直後（返信を投稿する前）に、一時停止する
+      while (service.get(id)?.task.status !== "awaiting_approval") await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(0);
+      await service.pause(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.queuedTaskIds()).toEqual([]);
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(0);
+      expect(commentsOf(service, id)).toHaveLength(0);
+      service.resume(id, {});
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("投稿している途中で一時停止されたら、記録せずに止まり、再開すると目印で見つけて記録する（二重に投稿しない）", async () => {
+      const gate = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      class SlowPost extends FakePulls {
+        override async commentIssue(input: Parameters<FakePulls["commentIssue"]>[0]) {
+          entered.resolve();
+          await gate.promise;
+          return super.commentIssue(input);
+        }
+        override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+          const found = this.issueComments.findIndex(
+            (c) => c.number === input.number && c.body.includes(input.marker),
+          );
+          return found < 0
+            ? undefined
+            : {
+                id: found + 1,
+                url: `${input.repo}/issues/${input.number}#issuecomment-${found + 1}`,
+              };
+        }
+      }
+      const pulls = new SlowPost();
+      const { activity, service, id } = await toImplement([implement(reply()), review()], {
+        pulls,
+      });
+      while (service.get(id)?.task.status !== "awaiting_approval") await service.runNext(id);
+      const posting = service.runNext(id);
+      await entered.promise;
+      await service.pause(id);
+      gate.resolve();
+      await posting;
+      expect(service.get(id)?.task.status).toBe("paused");
+      // 投稿はされたが、一時停止の間なので記録されない
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(commentsOf(service, id)).toHaveLength(0);
+      service.resume(id, {});
+      await drain(service);
       expect(pulls.issueComments).toHaveLength(1);
       expect(commentsOf(service, id)).toHaveLength(1);
       activity.close();
@@ -12579,6 +12659,72 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await service.checkPullRequests();
         expect(service.get(id)?.task.status).toBe("awaiting_approval");
         expect(asks(pulls)).toHaveLength(1);
+        activity.close();
+      });
+
+      it("返信の投稿（B2）と、人に確かめてほしいこと（C1）が同じ承認待ちで両方出るとき、別々のコメントを1回ずつ書き、どちらも人の指摘として取り込まない", async () => {
+        const pulls = new FakePulls();
+        const withReply = out(
+          [
+            "# 直した",
+            block({
+              "sacty-responses": [
+                {
+                  remarkId: "implement-1-1",
+                  text: "上限の値を作り直しました",
+                  confirm: "消えていた上限は 31 日と推測しました",
+                },
+              ],
+            }),
+            block({
+              "sacty-github-comments": {
+                comments: [
+                  {
+                    url: "https://github.com/acme/app/pull/7",
+                    body: "ご指摘の件は、こう直しました。",
+                  },
+                ],
+              },
+            }),
+            block({
+              "sacty-test-map": [
+                { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+              ],
+            }),
+          ].join("\n\n"),
+        );
+        const { activity, service, id } = await toImplementGate(
+          [
+            rework("undecidable", reason),
+            withReply,
+            review(undefined, [
+              ["requirements-1-1", true],
+              ["implement-1-1", true],
+            ]),
+          ],
+          { pulls, now: later },
+        );
+        pulls.feedbackList = [item("comment:405", { body: "ここ前と言ってること違わない？" })];
+        await service.checkPullRequests();
+        await drain(service);
+        await settleAsks();
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        const replies = () =>
+          pulls.issueComments.filter((c) => c.body.includes("<!-- sacty-comment:"));
+        expect(asks(pulls)).toHaveLength(1);
+        expect(replies()).toHaveLength(1);
+        expect(replies()[0]?.body).toContain(`sacty-comment:${id}:implement:submission-2:0`);
+        expect(replies()[0]?.body).toContain("ご指摘の件は、こう直しました。");
+        expect(asks(pulls)[0]?.body).not.toContain("<!-- sacty-comment:");
+        // 続けて確認しても、どちらも増えず、差し戻しの連鎖にならない
+        pulls.feedbackList = [];
+        await service.checkPullRequests();
+        await drain(service);
+        await settleAsks();
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+        expect(asks(pulls)).toHaveLength(1);
+        expect(replies()).toHaveLength(1);
         activity.close();
       });
 

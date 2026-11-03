@@ -1,10 +1,10 @@
 # r4 までの試行で残った、レビューと指示の質の問題を直す（PBI-301 の A 群）
 
-- 日付: 2026-11-04（UTC）
+- 日付: 2026-11-03（UTC）
 - タスク: PBI-301
 - PR: なし
 - ブランチ: feat/issue-301-r4-followups-a
-- 関係する ADR: [sacty が作るコミットのメッセージは、リポジトリが Conventional Commits の形を定めているときだけ、その形にする](../adr/20261104-0200-commit-message-follows-repository-convention.md)、[受け入れの確かめを縮めさせず、最終レビューの出力の言語を決め、作業領域の内部のパスを人の目に出さない](../adr/20261104-0205-review-and-instruction-quality-after-r4.md)
+- 関係する ADR: [sacty が作るコミットのメッセージは、リポジトリが Conventional Commits の形を定めているときだけ、その形にする](../adr/20261103-2240-commit-message-follows-repository-convention.md)、[受け入れの確かめを縮めさせず、最終レビューの出力の言語を決め、作業領域の内部のパスを人の目に出さない](../adr/20261103-2245-review-and-instruction-quality-after-r4.md)
 
 ## 目的
 
