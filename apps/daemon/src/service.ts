@@ -4168,6 +4168,7 @@ export class TaskService {
         fallback: false,
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
         ...(chosen.noTests ? { noTestsReason: chosen.noTests } : {}),
+        ...(chosen.documentsOnly ? { documentsOnly: true as const } : {}),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.images ? { images: chosen.images } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
@@ -6883,6 +6884,13 @@ export class TaskService {
         return;
       }
       const { baseBranch, continuePullRequest, ...chosen } = choice;
+      // 文書だけの依頼（PBI-284）は、実装を含み、不具合の修正でない組み合わせのときだけ使う（検証するコードの変更の話なので）
+      if (
+        chosen.documentsOnly &&
+        (!chosen.steps.includes("implement") || chosen.steps.includes("reproduce"))
+      ) {
+        delete chosen.documentsOnly;
+      }
       // タスクにある既存の PR を引き継いで直す（オーケストレーターの判断）なら、PR を確かめ、PR の元のブランチの先頭で
       // 用意し直す（ベースブランチの選択は使わない）。引き継げなければ、新しい PR を作らないように、工程を決めずに止める
       const continuing =
@@ -8426,6 +8434,47 @@ export class TaskService {
         return;
       }
     }
+    // オーケストレーターが依頼を文書だけと判断した（PBI-284）なら、テストのコマンドにコードの検証が入っていない。差分に文書の
+    // ファイル以外が1つでもあれば、コードの変更が検証されないので、最終レビューをせずに止める（判断と差分が食い違ったとき。
+    // 人がテストの扱いを決めるまで、再開しても同じ理由で止まる）
+    if (task.documentsOnly) {
+      let outside: string[];
+      try {
+        outside = await this.changesOutsideDocuments(task, dir);
+      } catch (error) {
+        this.append(current, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("verify.diffUnavailable", { detail: errorText(error) }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      if (outside.length > 0) {
+        this.append(current, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("verify.documentsOnlyContradicted", {
+                  files: outside.slice(0, 5).join("、"),
+                  total: outside.length,
+                }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+    }
     // 人間が止めたなら、最終レビューを始めない（再開すると最終レビューからやり直す）
     if (this.pauseRequested.has(task.id)) return;
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする
@@ -8717,6 +8766,20 @@ export class TaskService {
   }
 
   /**
+   * タスクの差分（起点からの変更）にある、文書のファイルでないもののパス（PBI-284）。名前の変更は変更元と変更先に分けて見る。
+   * 差分を取れなければ throw する（呼び出し側が、差分を取れないものとして止める）。
+   */
+  private async changesOutsideDocuments(task: Task, dir: string): Promise<string[]> {
+    if (!task.repository) return [];
+    const changes = await this.deps.repos.diffStats(
+      dir,
+      this.trustedGitDir(task),
+      workBaseCommit(task.repository, task.baseMerge),
+    );
+    return changes.map((c) => c.path).filter((path) => !isDocumentsOnly([path]));
+  }
+
+  /**
    * オーケストレーターの「テストの仕組みが無い」という判断（PBI-94）を確かめる。判断が無い・テストのコマンドがある・
    * 実装を含まない組み合わせなら確かめない。不具合の修正を選んだ（再現はテストで確かめる）・起点のコードにテストのファイルが
    * 見つかった・確かめきれなかったなら、止める理由を返す（黙ってテストなしで通さないための歯止め）。
@@ -8727,6 +8790,9 @@ export class TaskService {
     if (chosen.steps.includes("reproduce")) {
       return { stop: message("orchestrator.bugfixNeedsTests", { reason }) };
     }
+    // 文書だけの依頼（PBI-284）は、テストのファイルがあっても、テストなしで進めてよい。実装の差分に文書でないファイルが
+    // あれば、最終レビューの前に止める（コードの変更を検証なしで通さない）ので、ここでテストのファイルを探さない
+    if (chosen.documentsOnly) return {};
     // 工程を選ぶ前なので、作業領域は起点のコードのまま
     const stop = noTestsStop(reason, findTestFiles(this.repoDir(task)));
     return stop ? { stop } : {};

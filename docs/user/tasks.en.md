@@ -435,6 +435,15 @@ A task in a repository without tests that verifies with the test command the imp
 
 If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
 
+### Documents-only requests
+
+When a request's artifacts are only document files (such as `.md`, `.rst`, or `.adoc`), the orchestrator does not put code checks (tests, lint, type checking, build) that the document changes do not reach into the test command. For a request that also changes code, it still includes all the checks that cover the changes, as before.
+
+- If the repository has a document check such as link checking, markdown lint, or document formatting, only that becomes the test command.
+- If there is no such check, the test command is left empty and the task goes on without tests (the basis is kept as in [Repositories without tests](#repositories-without-tests)). In this case the task does not stop even if the repository has test files.
+- Document files are those with the extension `.md`, `.markdown`, `.rst`, `.adoc`, `.asciidoc`, or `.org`. A request that changes code, comments in code, configuration files, `.txt`, or images is not treated as documents only.
+- When the orchestrator judged a request to be documents only but the implementation's diff has files that are not documents, the code changes would go unverified, so the task pauses before the final review. The task details show "The orchestrator judged this request to change documents only…" and the files that are not documents. In "Tests" in the resume section, specify a command that verifies the changed code, or choose to proceed without tests, and resume (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding stops it again).
+
 ## Repositories without tests
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.

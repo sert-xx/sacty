@@ -26,6 +26,9 @@ const CHANGE_DOCUMENT_EXTENSIONS = new Set(
   [...DOCUMENT_EXTENSIONS].filter((extension) => extension !== "txt"),
 );
 
+/** 差分が文書だけかを判断するときの、文書の拡張子の一覧（オーケストレーターへの指示に、同じ一覧を示すため）。 */
+export const CHANGE_DOCUMENT_EXTENSION_LIST: readonly string[] = [...CHANGE_DOCUMENT_EXTENSIONS];
+
 /**
  * タスクの差分（起点からの変更のパス。名前の変更は変更元と変更先に分けたもの）が、文書のファイルだけか（PBI-158）。
  * 実行される振る舞いの無い変更なら、テストのコマンドのツールがイメージに無くても、検証を人の確認へ回して止めずに進める判断に使う。
