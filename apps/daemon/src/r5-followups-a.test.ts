@@ -410,13 +410,55 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
           tests: {
             exitCode: 1,
             output: "",
-            environmentFailures: ["a.test.ts：起点でも失敗する", "x：.sacty-tools/a.md"],
+            environmentFailures: [
+              "a.test.ts：起点でも失敗する",
+              "x：.sacty-tools/a.md が lint に拾われた",
+            ],
           },
         }),
       );
       expect(humanVisibleEnvironmentFailures(mixed.tests?.environmentFailures)).toEqual([
         "a.test.ts：起点でも失敗する",
       ]);
+    });
+
+    it("タイムアウト・中断・終了コードなど実行の失敗は、記録のファイルのパスやログがあっても道具の失敗として残す", () => {
+      const timeout =
+        "e2e：タイムアウトで失敗した（ログは .sacty-tools/logs/e2e.log）。画面の操作を確かめられなかった";
+      for (const failure of [
+        timeout,
+        "e2e：/tmp/sacty-run/review.log を見ると、120 秒で timed out した",
+        "e2e：中断された（/tmp/agent-scratch/run.log）",
+        "e2e：終了コード 137 で終わった（.sacty-tools/logs/e2e.log）",
+      ]) {
+        const review = readReview(
+          verdict({
+            tests: { exitCode: 1, output: "", environmentFailures: [failure] },
+            humanChecks: [`環境によると判断したテストの失敗：${failure}`],
+          }),
+        );
+        const failures = review.tests?.environmentFailures ?? [];
+        expect(humanVisibleEnvironmentFailures(failures), failure).toHaveLength(1);
+        expect(failures.join("\n"), failure).not.toContain(".sacty-tools");
+        expect(failures.join("\n"), failure).not.toContain("/tmp/");
+        expect(review.humanChecks, failure).toHaveLength(1);
+        expect(review.droppedHumanChecks, failure).toBeUndefined();
+      }
+      const review = readReview(
+        verdict({ tests: { exitCode: 1, output: "", environmentFailures: [timeout] } }),
+      );
+      expect(review.tests?.environmentFailures?.[0]).toContain("タイムアウトで失敗した");
+      expect(review.tests?.environmentFailures?.[0]).toContain("画面の操作を確かめられなかった");
+    });
+
+    it("記録のファイルの失敗で、検査に拾われたと言えないものは、隠さずにパスだけを伏せて残す", () => {
+      const review = readReview(
+        verdict({
+          tests: { exitCode: 1, output: "", environmentFailures: ["x：.sacty-tools/a.md"] },
+        }),
+      );
+      expect(humanVisibleEnvironmentFailures(review.tests?.environmentFailures)).toHaveLength(1);
+      expect(review.tests?.environmentFailures?.join("\n")).not.toContain(".sacty-tools");
     });
 
     it("PR の本文に、作業用のファイルの名前も失敗の説明も出ない。理由だけがテストの行に出る", () => {

@@ -99,6 +99,21 @@ describe("C1：要求要件・設計の本文の外にある作業の報告を�
     expect(withoutWorkReport(setext)).toBe(setext);
   });
 
+  it("字下げのコードブロックは報告として読まない。中の # や --- も見出し・区切り線にしない", () => {
+    // 最後の区切り線の後ろの、字下げのコードブロック（中に報告の語がある）
+    const tail = `${BODY}\n\n---\n\n    git commit -m "直しました"\n    git push`;
+    expect(withoutWorkReport(tail)).toBe(tail);
+    // 最初の見出しの前の、字下げのコードブロック
+    const head = `    # 直しました\n    echo ok\n\n${BODY}`;
+    expect(withoutWorkReport(head)).toBe(head);
+    // 字下げのコードの中の --- は区切り線ではない（本当の区切り線の後ろの報告は、これまでどおり取り除く）
+    const ruleInCode = `${BODY}\n\n---\n\n直しました。\n\n    ---\n    コードの例`;
+    expect(withoutWorkReport(ruleInCode)).toBe(ruleInCode);
+    expect(withoutWorkReport(`${BODY}\n\n    ---\n\n---\n\n直しました。`)).toBe(
+      `${BODY}\n\n    ---`,
+    );
+  });
+
   it("報告が無い出力は、そのまま返す。空の出力も", () => {
     expect(withoutWorkReport(BODY)).toBe(BODY);
     expect(withoutWorkReport("")).toBe("");
@@ -140,6 +155,19 @@ describe("C1：削除した行（R-n（削除：…））は確かめる項目�
       "R-2",
     ]);
     expect(provenanceIds("requirements", "", [])).toEqual([]);
+  });
+
+  it("「削除」で始まるだけの要求の題は外さない。外すのは「削除」の後ろが区切り（：か閉じ括弧）のときだけ", () => {
+    const titles = [
+      "## R-1（削除の確認）",
+      "| R-2（削除済みの項目を表示しない） | x |",
+      "| R-3 (削除ボタン) | y |",
+      "| R-4（削除） | |",
+      "| R-5（削除: 不要になった） | |",
+      "| R-6 （ 削除 ：重複） | |",
+    ].join("\n");
+    expect(provenanceIds("requirements", titles, [])).toEqual(["R-1", "R-2", "R-3"]);
+    expect(provenanceIds("requirements", "## R-1（削除の確認）\n\n本文", [])).toEqual(["R-1"]);
   });
 
   it("確かめる所の案内に、削除の行を並べない", () => {

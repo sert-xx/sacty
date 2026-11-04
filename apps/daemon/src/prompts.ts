@@ -1072,16 +1072,21 @@ function isWorkReportParagraph(paragraph: Paragraph): boolean {
 /** 空行で区切った段落。コードブロック（フェンスの行から閉じる行まで。中の空行を含む）は、1つの段落として code にする。 */
 type Paragraph = { lines: string[]; code: boolean };
 
-/** 行を、空行で区切った段落に分ける。コードブロックの中の空行では分けない（PR #304 のレビュー）。 */
-function paragraphsOf(lines: readonly string[]): Paragraph[] {
+/**
+ * 行を、空行で区切った段落に分ける。コードブロックの中の空行では分けない（PR #304 のレビュー）。
+ * code は、行ごとの、字下げのコードブロックの行か（codeLineFlags）。字下げの行だけの段落は、code にする。
+ */
+function paragraphsOf(lines: readonly string[], code: readonly boolean[] = []): Paragraph[] {
   const out: Paragraph[] = [];
   let current: string[] = [];
+  let indentedOnly = true;
   let fence: CodeFence | undefined;
-  const flush = (code = false) => {
-    if (current.length > 0) out.push({ lines: current, code });
+  const flush = (fenced = false) => {
+    if (current.length > 0) out.push({ lines: current, code: fenced || indentedOnly });
     current = [];
+    indentedOnly = true;
   };
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     if (fence) {
       current.push(line);
       if (closesFence(line, fence)) {
@@ -1098,7 +1103,10 @@ function paragraphsOf(lines: readonly string[]): Paragraph[] {
       continue;
     }
     if (line.trim() === "") flush();
-    else current.push(line);
+    else {
+      current.push(line);
+      if (!code[index]) indentedOnly = false;
+    }
   }
   // 閉じていないコードブロックは、最後までをコードブロックとして扱う
   flush(fence !== undefined);
@@ -1114,19 +1122,12 @@ function paragraphsOf(lines: readonly string[]): Paragraph[] {
  */
 export function withoutWorkReport(output: string): string {
   const lines = output.replace(/\r\n?/g, "\n").split("\n");
-  let fence: CodeFence | undefined;
+  // フェンスと字下げのコードブロックの中の行は、見出し・区切り線として読まない（PR #304 のレビュー）
+  const code = codeLineFlags(lines);
   let firstHeading = -1;
   let lastRule = -1;
   for (const [index, line] of lines.entries()) {
-    if (fence) {
-      if (closesFence(line, fence)) fence = undefined;
-      continue;
-    }
-    const opened = openingFence(line);
-    if (opened) {
-      fence = opened;
-      continue;
-    }
+    if (code[index]) continue;
     if (firstHeading < 0 && /^ {0,3}#{1,6}\s/.test(line)) firstHeading = index;
     // 区切り線。直前が文の行だと、見出しの下線（setext 見出し）なので、区切り線として読まない
     if (
@@ -1142,16 +1143,17 @@ export function withoutWorkReport(output: string): string {
   // 最後の区切り線より後ろに見出しが無く、段落がすべて報告なら、区切り線ごと取り除く
   if (lastRule > firstHeading) {
     const tail = rest.slice(lastRule - firstHeading + 1);
-    const tailParagraphs = paragraphsOf(tail);
+    const tailCode = code.slice(lastRule + 1);
+    const tailParagraphs = paragraphsOf(tail, tailCode);
     if (
       tailParagraphs.length > 0 &&
-      !tail.some((line) => /^ {0,3}#{1,6}\s/.test(line)) &&
+      !tail.some((line, i) => !tailCode[i] && /^ {0,3}#{1,6}\s/.test(line)) &&
       tailParagraphs.every(isWorkReportParagraph)
     ) {
       rest = rest.slice(0, lastRule - firstHeading);
     }
   }
-  const paragraphs = paragraphsOf(head);
+  const paragraphs = paragraphsOf(head, code.slice(0, firstHeading));
   const kept = paragraphs.filter((p) => !isWorkReportParagraph(p));
   if (kept.length !== paragraphs.length) {
     head = kept.flatMap((p) => [...p.lines, ""]);
@@ -2124,9 +2126,13 @@ export function provenanceIds(
   viewpoints: readonly TestViewpoint[],
 ): string[] {
   if (step === "design") return viewpoints.map((v) => v.id);
-  // 差し戻しで消した要求の行（「R-5（削除：理由）」）は、確かめる項目ではない（PBI-302 C1）
+  // 差し戻しで消した要求の行（「R-5（削除：理由）」「R-5（削除）」）は、確かめる項目ではない（PBI-302 C1）。
+  // 「削除」の後ろが区切り（：か閉じ括弧）のときだけ。「R-1（削除の確認）」のような要求の題は外さない（PR #304 のレビュー）
+
   const deleted = new Set(
-    [...output.matchAll(/\b(R-\d+)\s*[（(]\s*削除/g)].map((match) => match[1] ?? ""),
+    [...output.matchAll(/\b(R-\d+)\s*[（(]\s*削除\s*(?:[：:]|[）)])/g)].map(
+      (match) => match[1] ?? "",
+    ),
   );
   return [...new Set(output.match(/\bR-\d+\b/g) ?? [])].filter((id) => !deleted.has(id));
 }
@@ -4550,20 +4556,30 @@ function environmentPassNote(tests: {
  *   拾われた失敗。リポジトリの検査の対象ではないので、人に見せない
  * - tool：検証の道具（sacty が入れたブラウザー・CLI など）を起動・実行できなかった失敗。実行できなかった検証・理由・人が
  *   確かめ直すことは残し、内部のパスだけを伏せる
- * 起動・実行の失敗を言う語があれば tool。無く、名前の後ろが記録のファイル（文書・データ・ログの拡張子、記録の置き場の名前）
- * なら record。どちらとも言えなければ、隠さない側（tool）に倒す。
+ * 起動・実行の失敗を言う語（タイムアウト・中断・終了コードなどを含む）があれば tool。無く、名前の後ろが記録のファイル（文書・
+ * データ・ログの拡張子、記録の置き場の名前）で、そのファイルがリポジトリの検査（フォーマッター・リンターなど）に拾われたと
+ * 言えるときだけ record。どちらとも言えなければ、隠さない側（tool）に倒す（PR #304 のレビュー）。
  */
 const TOOL_RUN_FAILURE =
-  /起動でき|起動に失敗|起動しな|実行でき|実行に失敗|動かな|見つから|権限が無|権限がな|launch|spawn|ENOENT|EACCES|not found|no such file|cannot (?:start|run|execute|open)|failed to (?:start|launch|run|execute)|crash/i;
+  /起動でき|起動に失敗|起動しな|実行でき|実行に失敗|動かな|見つから|権限が無|権限がな|タイムアウト|時間切れ|中断|強制終了|終了コード|終了ステータス|異常終了|応答が無|応答がな|launch|spawn|ENOENT|EACCES|not found|no such file|cannot (?:start|run|execute|open)|failed to (?:start|launch|run|execute)|crash|\btimed? ?out\b|\babort|\binterrupt|\bkilled\b|\bSIG(?:TERM|KILL|INT|ABRT|SEGV)\b|\bexit(?:ed)? (?:code|status|with)/i;
+/** 人が確かめることのうち、環境による失敗を言う項目（「環境によると判断したテストの失敗：…」など）。 */
+const ENVIRONMENT_FAILURE_CHECK = /失敗|エラー|error|fail/i;
+/** 記録のファイルが、リポジトリの検査に拾われたことを言う語。 */
+const REPOSITORY_CHECK_HIT =
+  /フォーマッター|フォーマット|整形|リンター|リント|型検査|型チェック|\b(?:lint|linter|format|formatter|prettier|biome|eslint|stylelint|markdownlint|textlint|editorconfig|codespell)\b|検査の対象|検査に/i;
 const WORK_RECORD_PATH =
   /(?:\.sacty-tools|\/tmp\/(?:sacty-[\w.-]+|agent-scratch))\/(?:[^\s`"'<>()（）、。,;|\]]*\/)?(?:[^\s`"'<>()（）、。,;|\]/]*\.(?:md|markdown|json|jsonl|log|txt|ya?ml|html?|csv|png|jpe?g|diff|patch)\b|(?:review|baseline|dispatch|summary|aggregation|snapshot|logs?)\b)/i;
 
 /** sacty がコンテナの内部に置く入力・記録の置き場（/sacty-input など）。道具ではない。 */
 const CONTAINER_RECORD_PATH = /(?<![\w./-])\/sacty-(?:input|review|memory|ledger|handoff|logs)\b/;
 
-function internalItemKind(item: string): "record" | "tool" {
+function internalItemKind(item: string, failure: boolean): "record" | "tool" {
   if (TOOL_RUN_FAILURE.test(item)) return "tool";
-  return WORK_RECORD_PATH.test(item) || CONTAINER_RECORD_PATH.test(item) ? "record" : "tool";
+  if (!WORK_RECORD_PATH.test(item) && !CONTAINER_RECORD_PATH.test(item)) return "tool";
+  // 失敗の申告は、記録のファイルがリポジトリの検査に拾われたと言えるときだけ record。人が確かめることのうち、失敗を言わない
+  // 項目（記録のファイルを見る、など）は、人が辿れないので record
+  if (failure && !REPOSITORY_CHECK_HIT.test(item)) return "tool";
+  return "record";
 }
 
 /** 道具の置き場の内部のパス（.sacty-tools の下）を、人が読める呼び方にする。 */
@@ -4586,7 +4602,7 @@ function neutralEnvironmentFailures(items: readonly string[], allowed = ""): str
   for (const item of items) {
     const entry = !internalNameIn(item, allowed)
       ? item
-      : internalItemKind(item) === "record"
+      : internalItemKind(item, true) === "record"
         ? WORKSPACE_FILE_FAILURE
         : withInternalPathsHidden(item);
     if (!out.includes(entry)) out.push(entry);
@@ -4609,7 +4625,8 @@ function withoutInternalChecks(
     if (!internalNameIn(item, allowed)) kept.push(item);
     // 「この環境だけの結果」の項目は、入れたツールの注記（置き場所を含む）として、そのまま残す
     else if (isEnvironmentOnlyCheck(item)) kept.push(item);
-    else if (internalItemKind(item) === "tool") kept.push(withInternalPathsHidden(item));
+    else if (internalItemKind(item, ENVIRONMENT_FAILURE_CHECK.test(item)) === "tool")
+      kept.push(withInternalPathsHidden(item));
     else {
       dropped.push(
         `${oneLine(item)} → 外した理由：sacty の作業領域の作業記録のファイルで、人が確かめようがない`,
