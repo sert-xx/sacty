@@ -104,7 +104,12 @@ import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
-import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
+import {
+  buildOrchestratorPrompt,
+  buildPullRequestBody,
+  buildStepDocument,
+  changeableSteps,
+} from "./prompts.js";
 import { type FileChange, NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { isOpenStopNotice } from "./review-stop-notice.js";
 import {
@@ -9623,14 +9628,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // PR の本文：全体の説明と最後の直しが分かれる。前の直しは残らない
     const body = buildPullRequestBody(task);
     expect(body).toContain("- 変更：API・ワーカー・Web に通した");
-    expect(body).toContain("## 変更\n\n# 配送先の国コードを足した");
+    // 説明が自分の見出しから始まるときは、中身の無い「## 変更」を重ねない（PBI-302 C2）
+    expect(body).not.toContain("## 変更\n");
     expect(body).toContain("- 最後の直し：c.ts の変更を外した");
     // 結論に載せた最初の段落は、「変更」の節に重ねない（PBI-301 A7）
     expect(body.match(/API・ワーカー・Web に通した/g)).toHaveLength(1);
-    expect(body).toContain(
-      "## 変更\n\n# 配送先の国コードを足した\n\n## 検証\n\nmake test が成功した",
-    );
-    expect(body).toContain("## 最後の直し\n\nc.ts の変更を外した");
+    expect(body).toContain("# 配送先の国コードを足した\n\n## 検証\n\nmake test が成功した");
+    // 最後の直しは結論に載せた1段落で足りるので、同じ文を別の節に重ねない（PBI-302 C2）
+    expect(body.match(/c\.ts の変更を外した/g)).toHaveLength(1);
+    expect(body).not.toContain("## 最後の直し");
     expect(body).not.toContain("最終レビューの指摘で a.ts の変更を外した");
     expect(body.match(/この環境だけの結果：/g)).toHaveLength(1);
     activity.close();
@@ -33054,6 +33060,36 @@ describe("提出の前の出典の分類の記録", () => {
     const task = service.get(id)?.task;
     expect(task?.provenances?.requirements).toEqual(expected);
     expect(task?.outputs.requirements).toBe(requirements);
+    activity.close();
+  });
+
+  it("本文の外に書かれた作業の報告を取り除いて成果物にし、消した要求の行（R-n（削除：…））は確かめる項目に数えない（PBI-302 C1）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const body = [
+      "# 要求要件",
+      "",
+      "| R-1（削除：区間のまとめ方は R-2 で決める） | | |",
+      "| R-2 | 支払う |",
+      "| R-3 | 記録する |",
+    ].join("\n");
+    const { service } = makeService(activity, [
+      withClassification(`要求要件を直しました。セルフレビューは 1 回目で通りました。\n\n${body}`, {
+        mode: "subagent",
+        items: [
+          { id: "R-1", kind: "inference", refs: [], excerpt: "" },
+          { id: "R-2", kind: "inference", refs: [], excerpt: "" },
+          { id: "R-3", kind: "derived", refs: ["R-2"], excerpt: "" },
+        ],
+      }),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.outputs.requirements).toBe(body);
+    // 削除した行 R-1 は、分類があっても、分類なしでも、確かめる項目に出ない
+    expect(task?.provenances?.requirements?.items.map((item) => item.id)).toEqual(["R-2", "R-3"]);
+    expect(task?.provenances?.requirements?.unclassified).toEqual([]);
+    expect(buildStepDocument(task as unknown as Task, "requirements")).not.toContain("直しました");
     activity.close();
   });
 

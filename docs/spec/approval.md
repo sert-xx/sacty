@@ -291,7 +291,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 2. 「結論」
    - 変更の要約：実装の工程の出力の最初の段落（字下げのない行だけ。見出し・表・コードブロック・字下げした行を除く）の頭。出力が無ければ行ごと出さない。作り直した後は、PR 全体の説明（下の「作り直しの後の本文」）の頭。
    - 最後の直し：作り直した後だけ、最後の直しの説明の頭。
-   - 最終レビューの判定と所見の頭。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - 最終レビューの判定と所見の頭（`BODY_LEAD_MAX` 以内の文の切れ目まで）。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
    - AI のレビューの状況：今の head に sacty の AI のレビューが付いているか（[AI のレビューの指摘](#ai-のレビューの指摘)の「今の head に AI のレビューが付いているか」。`aiReviewBodyLine`）。
    - 人が最終レビューの不合格のまま進めた記録と不合格の要点（あれば。`overrideBodyLines`）
    - 人が確かめること（あれば。`humanCheckBodyLines`）
@@ -299,14 +299,15 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
    - 全文は載せず、最初の段落の頭と、全文のある場所にする（`approvedBasisDigest`）。
      全文のある場所は、マージで承認した要求要件・設計の PR の URL とファイルのパス。PR が無ければ「全文は sacty のタスクの画面で確かめてください。」と書く。
    - 要求要件の工程を省いたタスクと、セキュリティ対応の修正の範囲は、短い文なので従来のとおり。
-4. 「変更」：実装の工程の出力（作り直した後は、PR 全体の説明）から、結論の変更の要約に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-301 A7。実験 S16・S19 の F3 の再発）。残りに見出し以外の中身が無ければ（要約と同じだけの出力・見出しだけが残る出力）節ごと出さない。最初の段落が切り詰められて結論に載ったときは、全文を出す。出力が無ければ見出しも入れない。テンプレートに沿わせる本文の「変更」は、結論の要約が無いので全文のまま。
-5. 「最後の直し」：作り直した後だけ。最後の直しの説明（下の「作り直しの後の本文」）。
+4. 「変更」：実装の工程の出力（作り直した後は、PR 全体の説明）から、結論の変更の要約に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-301 A7。実験 S16・S19 の F3 の再発）。残りに見出し以外の中身が無ければ（要約と同じだけの出力・見出しだけが残る出力）節ごと出さない。最初の段落が切り詰められて結論に載ったときは、全文を出す。出力が無ければ見出しも入れない。出力の残りが自分で見出し（`#`・`##`）から始まるときは、中身の無い「変更」の見出しを重ねず、その見出しから出す（PBI-302 C2。実験 S2 の r5：「## 変更」の直下に「## 変更内容」が続いた）。テンプレートに沿わせる本文の「変更」は、結論の要約が無いので全文のまま。
+5. 「最後の直し」：作り直した後だけ。最後の直しの説明から、結論の「最後の直し」に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-302 C2。実験 S2・S14・S18 の r5）。最後の直しが結論の1段落に収まるときは節ごと出さない（下の「作り直しの後の本文」）。
 6. 書き出した成果
 7. 観点 → テスト → 実行結果
    - 表の列は「観点」「テスト」「最終レビュー」。観点は ID と題（60 文字まで）、テストは 1 件目の名前（70 文字まで）と「ほか N 件」、最終レビューは ✅ か ❌ だけ。
    - 表の下に、テストの行（上の「テスト：」）を置く。
-   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。
-8. 最終レビューの全文（折りたたみ）。結論に載せた頭より長いとき、または前の指摘の再発の確認があるときだけ出す。
+   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。所見のうち、最終レビューの総評にある文（12 文字以上で、句点で区切って一致するもの）は繰り返さない。所見のすべてが総評の文なら「総評と同じです」と書く（`findingText`。PBI-302 C2）。
+   - テスト名は、同じテストを1回にして、書式の文字を印にしてから出す（`displayTestNames`。PBI-302 C3。実験 S18 の r5：同じテストが describe の接頭辞あり・なしで2回出て、10 行のうち5行が重複し、`%j` が書式のまま出た）。同じファイル・同じテスト名で、describe の並びが他方の末尾にあたる名前（接頭辞を省いた名前）は、長いほうに統合する（順序は最初の位置。describe が別の同名のテスト・ファイルが別の同名のテストは別のまま）。区切りは `›` と ` > `。パラメータ化したテストの名前の書式の文字（`%s`・`%d`・`%i`・`%f`・`%j`・`%o`・`%O`・`%p`・`%#`・`%$`）は、名前だけからは値が分からないので展開せず、`‹…›` に置き換える（`%%` は `%`）。画面の観点とテストの対応も同じ。ゴールガーディアンへ渡す対応は、申告のまま。
+8. 最終レビューの続き（折りたたみ）。総評が結論に載せた頭に収まらないときはその続き（頭の続きだけ。結論の文を重ねない）、前の指摘の再発の確認があるときはその確認を出す。どちらも無ければ出さない。見出しは「続き」「再発の確認」「続きと再発の確認」のどれか（`finalReviewMore`。PBI-302 C2）。頭が文の切れ目の無いまま途中で切れたときは、続きは「…」で始める。テンプレートに沿わせる本文では「sacty の記録」に太字の見出しで出す。
 
 共通の規則は次のとおり。
 
@@ -369,7 +370,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 変更：実装の工程の出力（作業の経過の報告を除く。作り直した後は、PR 全体の説明に続けて、太字の「最後の直し」と最後の直しの説明）
   - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果とゴールガーディアンの最終レビューの全文は「sacty の記録」にする。
+  - 書き出した成果とゴールガーディアンの最終レビューの続き・再発の確認は「sacty の記録」にする。
   - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程）
@@ -404,7 +405,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - タスクの画面の PR の欄に「本文」として出す。
     この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`・`finalReviewMore`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  displayTestNames,
   humanVisibleEnvironmentFailures,
   isCompleted,
   SCOPE_VIEWPOINT,
@@ -160,7 +161,7 @@ export function Implementation({ task }: { task: Task }) {
           </h3>
           <ol className="flex flex-col gap-2.5">
             {viewpoints.map((v) => {
-              const list = mapped.get(v.id)?.tests ?? [];
+              const list = displayTestNames(mapped.get(v.id)?.tests ?? []);
               // テストを書かずに差分で確かめると申告した観点（実行される振る舞いの無い変更）
               const untested = list.length === 0 ? mapped.get(v.id)?.untested : undefined;
               const judged = reviewIsCurrent
