@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-04（UTC）
 - タスク: PBI-304
-- PR: なし
+- PR: #307
 - ブランチ: feat/issue-304-x1-expert-tier
 - 関係する ADR: [横断の観点 X-1 を expert で動かし、ultimate は既定で使わない](../adr/20261104-2323-cross-cutting-viewpoint-on-expert-tier.md)
 
