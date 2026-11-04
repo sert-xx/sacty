@@ -56,6 +56,8 @@ providers:
     available_models:          # 単価は例。契約の単価に合わせる
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }
+      gpt-6-astra: { input: 10, cached_input: 1, output: 50 }
 ```
 
 `providers` に書けるのは、Codex の `codex` と Claude Code の `claude` の2つだけです。
@@ -129,15 +131,17 @@ sacty は、段階（[エージェントの段階](#エージェントの段階)
 | 名前 | ツール | モデル | リーズニングエフォート |
 | --- | --- | --- | --- |
 | `codex_lite` | Codex | `gpt-6-luna` | `low` |
-| `codex_entry` | Codex | `gpt-6-luna` | `high` |
-| `codex_standard` | Codex | `gpt-6.1-sol` | `low` |
+| `codex_entry` | Codex | `gpt-6.1-terra` | `low` |
+| `codex_standard` | Codex | `gpt-6.1-terra` | `medium` |
 | `codex_advanced` | Codex | `gpt-6.1-sol` | `medium` |
-| `codex_ultimate` | Codex | `gpt-6.1-sol` | `high` |
+| `codex_expert` | Codex | `gpt-6.1-sol` | `high` |
+| `codex_ultimate` | Codex | `gpt-6-astra` | `low` |
 | `claude_lite` | Claude Code | `claude-haiku-5-5` | （ツールの既定） |
 | `claude_entry` | Claude Code | `claude-sonnet-5-5` | `low` |
 | `claude_standard` | Claude Code | `claude-sonnet-5-5` | `medium` |
 | `claude_advanced` | Claude Code | `claude-opus-5-5` | `medium` |
-| `claude_ultimate` | Claude Code | `claude-opus-5-5` | `high` |
+| `claude_expert` | Claude Code | `claude-opus-5-5` | `high` |
+| `claude_ultimate` | Claude Code | `claude-fable-5-1` | `low` |
 
 - `default_agent` を書かなければ、`codex_standard` を使います。
   `codex_standard` が使えない（`providers.codex` が無い・単価が無い）ときは `claude_standard` を使います。
@@ -216,7 +220,7 @@ Claude Code と Codex のどちらでも、同じ段階の担当が動きます�
 モデルの世代が変わったら、sacty の更新で段階の既定のモデルも新しくなります。
 
 段階のエージェントは、`claude_<段階>`・`codex_<段階>` の名前で sacty が既定で持っています（[既定のエージェント](#既定のエージェント)）。
-段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` の 5 つです。
+段階は `lite`・`entry`・`standard`・`advanced`・`expert`・`ultimate` の 6 つです。
 sacty は、使える段階（`providers` に接続先とモデルの単価がある段階）だけを置きます。
 段階のモデルを変えるときは、[エージェントの上書き](#エージェントの上書き)で同じ名前に `model` を書きます。
 
@@ -226,6 +230,7 @@ sacty は、使える段階（`providers` に接続先とモデルの単価が�
 | `entry` | 日常の作業に十分 | 文言・読み手の適合 |
 | `standard` | 標準 | ほとんどの観点の既定 |
 | `advanced` | 難しい推論 | 正しさ・堅牢性・セキュリティ・並行・設計の整合 |
+| `expert` | より深い推論 | （既定の観点では使いません） |
 | `ultimate` | 最上位 | 観点に縛られない欠陥探索 |
 
 - 工程を動かすとき、sacty はそのツールの段階（Claude Code なら `claude_*`、Codex なら `codex_*`）を、接頭辞を外した名前のサブエージェントの定義として設定の場所に置きます。

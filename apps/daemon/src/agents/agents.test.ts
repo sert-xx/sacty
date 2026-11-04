@@ -840,7 +840,7 @@ describe("設定ファイル", () => {
     expect(text).toMatch(pattern);
     return text.replace(pattern, to);
   };
-  const ALL_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"];
+  const ALL_TIERS = ["lite", "entry", "standard", "advanced", "expert", "ultimate"];
 
   it("`sacty config init` の雛形はそのまま読める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
@@ -850,15 +850,15 @@ describe("設定ファイル", () => {
     // 工程の AI は sacty の既定（config/agents.yaml）の codex_standard。単価は available_models から引く（PBI-134）
     expect(result.config.defaultAgent).toMatchObject({
       id: "codex_standard",
-      model: "gpt-6.1-sol",
-      reasoning_effort: "low",
+      model: "gpt-6.1-terra",
+      reasoning_effort: "medium",
       auth: { mode: "api-key", secret: "openai-api-key" },
     });
     expect(result.config.defaultAgent.price).toEqual({
-      input: 1.25,
-      cachedInput: 0.125,
+      input: 1,
+      cachedInput: 0.05,
       cacheWrite: 0,
-      output: 10,
+      output: 5,
     });
     expect(result.config.budgetPerTaskUsd).toBe(1);
     expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(ALL_TIERS);
@@ -878,7 +878,7 @@ describe("設定ファイル", () => {
   codex:
     auth: { mode: bedrock, secret: "${secret}", region: us-east-2 }
     available_models:
-      gpt-6.1-sol: { input: 1, cached_input: 0.1, output: 2 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.1, output: 2 }
 ${extra}`,
       );
     write("op://Work/Bedrock/credential", "onepassword:\n  account: my-company.1password.com\n");
@@ -908,6 +908,7 @@ ${extra}`,
     via_gateway: true
     available_models:
       gpt-6-luna: { input: 0.3, cached_input: 0.03, output: 1.5 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.1, output: 6 }
       gpt-6.1-sol: { input: 2, cached_input: 0.2, output: 12 }
 `;
     write(`${base}default_agent: codex_lite
@@ -1198,7 +1199,7 @@ ${extra}`,
     auth: ${auth}
     via_gateway: true
     available_models:
-      gpt-6.1-sol: { input: 1, cached_input: 0.1, output: 2 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.1, output: 2 }
       claude-sonnet-5-5: { input: 1, cached_input: 0.1, output: 2 }
 `;
     write(providerYaml("codex", "{ mode: api-key, secret: k }"));
@@ -1320,7 +1321,7 @@ agents:
     expect(result.config.stepAgents?.orchestrator?.id).toBe("codex_lite");
     // 上書きは項目ごと（model は既定のまま）
     expect(result.config.agents?.codex_ultimate).toMatchObject({
-      model: "gpt-6.1-sol",
+      model: "gpt-6-astra",
       reasoning_effort: "xhigh",
     });
     expect(result.config.agents?.stub?.price).toMatchObject({ input: 3, output: 15 });
@@ -2618,7 +2619,7 @@ agents:
     });
     // 段階の名前でないもの（codex_other）は、普通のエージェント
     expect(result.config.agents?.codex_other).toMatchObject({ runtime: "codex" });
-    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(["lite", "entry"]);
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(["lite"]);
   });
 
   it("段階の名前の接頭辞と runtime が合わなければ、どの項目かを示して止める", () => {
@@ -2632,7 +2633,7 @@ agents:
     expect(text).toContain('"claude_lite" は段階のエージェントなので、runtime を claude-code に');
   });
 
-  it("雛形の providers.claude の例のコメントを外すと、両ツールの 5 段階すべてが使える（PBI-119・PBI-134）", () => {
+  it("雛形の providers.claude の例のコメントを外すと、両ツールの 6 段階すべてが使える（PBI-119・PBI-134・PBI-303）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const lines = CONFIG_TEMPLATE.split("\n");
     const start = lines.indexOf("  # claude:");
@@ -2644,12 +2645,12 @@ agents:
     writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
     if (!result.ok) throw new Error(ja(result.problem));
-    const all = ["lite", "entry", "standard", "advanced", "ultimate"];
+    const all = ["lite", "entry", "standard", "advanced", "expert", "ultimate"];
     expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(all);
     expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(all);
     expect(result.config.tierAgents?.["claude-code"]?.ultimate).toMatchObject({
-      model: "claude-opus-5-5",
-      reasoning_effort: "high",
+      model: "claude-fable-5-1",
+      reasoning_effort: "low",
       auth: { mode: "subscription", secret: "claude-oauth-token" },
     });
     expect(result.config.agentWarnings).toEqual([]);

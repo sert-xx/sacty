@@ -1279,6 +1279,8 @@ providers:
     available_models:   # 単価は例。契約の単価に合わせる
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }
+      gpt-6-astra: { input: 10, cached_input: 1, output: 50 }
     # ChatGPT のサブスクリプション（~/.codex/auth.json を使う）
     # auth: { mode: subscription }
     # 組織の AI gateway など、OpenAI 互換（Responses API）の接続先
@@ -1302,6 +1304,7 @@ providers:
   #     claude-haiku-5-5: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
   #     claude-sonnet-5-5: { input: 2, cached_input: 0.1, cache_write: 2.5, output: 10 }
   #     claude-opus-5-5: { input: 5, cached_input: 0.25, cache_write: 6.25, output: 25 }
+  #     claude-fable-5-1: { input: 10, cached_input: 0.25, cache_write: 12.5, output: 50 }
   #   # Amazon Bedrock（APIキー）
   #   # auth: { mode: bedrock, secret: bedrock-api-key, region: us-east-1 }
 

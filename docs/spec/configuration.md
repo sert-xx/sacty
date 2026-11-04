@@ -54,7 +54,7 @@
   使えない理由の文言を `reason` に載せる。
   設定が誤りのときは画面の警告を出さないためである。
 - `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`）なのに、`runtime` が接頭辞と合わない（`config.tierRuntime`）。
-  段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`。
+  段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`expert`・`ultimate`。
 
 使える段階のエージェントは、`tierAgents`（runtime ごと・段階ごと）にも集める（`parseTierId`・`tierAgentsFor`）。
 置き方は [コンテキストの合成](context.md#実行のときに置くファイル) にある。
@@ -103,15 +103,17 @@
 | 名前 | `runtime` | `model` | `reasoning_effort` |
 | --- | --- | --- | --- |
 | `codex_lite` | `codex` | `gpt-6-luna` | `low` |
-| `codex_entry` | `codex` | `gpt-6-luna` | `high` |
-| `codex_standard` | `codex` | `gpt-6.1-sol` | `low` |
+| `codex_entry` | `codex` | `gpt-6.1-terra` | `low` |
+| `codex_standard` | `codex` | `gpt-6.1-terra` | `medium` |
 | `codex_advanced` | `codex` | `gpt-6.1-sol` | `medium` |
-| `codex_ultimate` | `codex` | `gpt-6.1-sol` | `high` |
+| `codex_expert` | `codex` | `gpt-6.1-sol` | `high` |
+| `codex_ultimate` | `codex` | `gpt-6-astra` | `low` |
 | `claude_lite` | `claude-code` | `claude-haiku-5-5` | なし |
 | `claude_entry` | `claude-code` | `claude-sonnet-5-5` | `low` |
 | `claude_standard` | `claude-code` | `claude-sonnet-5-5` | `medium` |
 | `claude_advanced` | `claude-code` | `claude-opus-5-5` | `medium` |
-| `claude_ultimate` | `claude-code` | `claude-opus-5-5` | `high` |
+| `claude_expert` | `claude-code` | `claude-opus-5-5` | `high` |
+| `claude_ultimate` | `claude-code` | `claude-fable-5-1` | `low` |
 
 `default_agent` の候補は `codex_standard`、`claude_standard` の順。
 `config.yaml` に `default_agent` が無ければ、候補のうち使える最初のものにする。

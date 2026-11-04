@@ -88,7 +88,7 @@ npx sacty context init sacty-context   # 指定したディレクトリ（省略
   - ファイル：Codex の `auth.json`・`AGENTS.md`・`skills/`、Claude Code の `.credentials.json`・`.claude.json`・`CLAUDE.md`・`mcp.json`・`skills/`
 - 段階のサブエージェントの定義は、[エージェントの段階](config.md#エージェントの段階)から sacty が作るので、置いても使いません（使える段階が無くても使いません。警告を残します）。
   - 対象は `agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml` と、Codex の `config.toml` の `[agents.<段階>]` です。
-    段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` です。
+    段階は `lite`・`entry`・`standard`・`advanced`・`expert`・`ultimate` です。
   - Codex の `agents/*.toml` は、ファイル名が違っても、中の `name` が段階なら使いません。
 - Codex のルール（`agents/codex/rules/*.rules`）は、既定のルールを消さないように `sacty.rules` 以外の名前にしてください。
 - モデルは、エージェントの `model`（sacty の既定か、`config.yaml` の `agents` の上書き）が、ここの設定より優先します。

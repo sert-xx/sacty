@@ -47,7 +47,7 @@ The following are also errors.
 
 - A value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`).
 - The same value is an agent that cannot be used ("Usable agents" below; `config.agentUnavailable`). The error carries the reason in `reason`, because the web UI shows no warnings while the config has an error.
-- An `agents` name is a tier (`claude_<tier>`, `codex_<tier>`), but its `runtime` does not match the prefix (`config.tierRuntime`). The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`.
+- An `agents` name is a tier (`claude_<tier>`, `codex_<tier>`), but its `runtime` does not match the prefix (`config.tierRuntime`). The tiers are `lite`, `entry`, `standard`, `advanced`, `expert`, and `ultimate` in `AGENT_TIERS`.
 
 Usable tier agents are also collected in `tierAgents` (per runtime and tier; `parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run).
 
@@ -87,15 +87,17 @@ The repository's `config/agents.yaml` (`DefaultsFile`) has `default_agent` (a li
 | Name | `runtime` | `model` | `reasoning_effort` |
 | --- | --- | --- | --- |
 | `codex_lite` | `codex` | `gpt-6-luna` | `low` |
-| `codex_entry` | `codex` | `gpt-6-luna` | `high` |
-| `codex_standard` | `codex` | `gpt-6.1-sol` | `low` |
+| `codex_entry` | `codex` | `gpt-6.1-terra` | `low` |
+| `codex_standard` | `codex` | `gpt-6.1-terra` | `medium` |
 | `codex_advanced` | `codex` | `gpt-6.1-sol` | `medium` |
-| `codex_ultimate` | `codex` | `gpt-6.1-sol` | `high` |
+| `codex_expert` | `codex` | `gpt-6.1-sol` | `high` |
+| `codex_ultimate` | `codex` | `gpt-6-astra` | `low` |
 | `claude_lite` | `claude-code` | `claude-haiku-5-5` | none |
 | `claude_entry` | `claude-code` | `claude-sonnet-5-5` | `low` |
 | `claude_standard` | `claude-code` | `claude-sonnet-5-5` | `medium` |
 | `claude_advanced` | `claude-code` | `claude-opus-5-5` | `medium` |
-| `claude_ultimate` | `claude-code` | `claude-opus-5-5` | `high` |
+| `claude_expert` | `claude-code` | `claude-opus-5-5` | `high` |
+| `claude_ultimate` | `claude-code` | `claude-fable-5-1` | `low` |
 
 The `default_agent` candidates are `codex_standard`, then `claude_standard`. When `config.yaml` has no `default_agent`, the first usable candidate is used. If none is usable, it is an error (`config.noDefaultAgent`).
 
