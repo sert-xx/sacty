@@ -211,8 +211,8 @@ To change a tier's model, write `model` under the same name with [Overriding age
 | `entry` | Enough for everyday work | Wording and fit for the reader |
 | `standard` | Standard | The default for most viewpoints |
 | `advanced` | Hard reasoning | Correctness, robustness, security, concurrency, and design consistency |
-| `expert` | Deeper reasoning | (Not used by the default viewpoints) |
-| `ultimate` | The top tier | Defect hunting not bound to a viewpoint |
+| `expert` | Deeper reasoning | Defect hunting not bound to a viewpoint |
+| `ultimate` | The top tier | (Not used by default; only when a person chooses it) |
 
 - When a step runs, sacty places the tiers of that tool (`claude_*` for Claude Code, `codex_*` for Codex) in the config location as subagent definitions named without the prefix. The location is `agents/<tier>.md` for Claude Code and `agents/<tier>.toml` for Codex.
 - Subagents run in the same process as the step agent. The connection is per tool in `providers`, so the tiers of the same tool have the same connection as the step agent.
