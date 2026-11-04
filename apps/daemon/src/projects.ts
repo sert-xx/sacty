@@ -7,6 +7,11 @@ export interface ProjectStore {
   get(id: string): Project | undefined;
   /** 作るか、置き換える。 */
   put(id: string, definition: ProjectDefinition): Project;
+  /**
+   * 保存した版（updatedAt）の定義。読み込んだ後にほかの保存があった保存を併合するときの、元の定義（PBI-301）。
+   * 古くなって消えた版・無い版は undefined。
+   */
+  revision(id: string, updatedAt: string): ProjectDefinition | undefined;
   /** 消す。無ければ false。 */
   delete(id: string): boolean;
   close(): void;
@@ -21,7 +26,16 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_revisions (
+  id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  PRIMARY KEY (id, updated_at)
+);
 `;
+
+/** 併合のために残す、プロジェクトごとの保存した版の数（古いものから消す）。 */
+export const REVISIONS_KEPT = 50;
 
 function toProject(row: Row): Project {
   return {
@@ -73,12 +87,39 @@ export class SqliteProjectStore implements ProjectStore {
          ON CONFLICT (id) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at`,
       )
       .run(id, JSON.stringify(definition), at, at);
+    // 併合のために、保存した版の定義を残す（PBI-301）。多くなったら古いものから消す
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO project_revisions (id, updated_at, definition) VALUES (?, ?, ?)",
+      )
+      .run(id, at, JSON.stringify(definition));
+    this.db
+      .prepare(
+        `DELETE FROM project_revisions WHERE id = ? AND updated_at NOT IN (
+           SELECT updated_at FROM project_revisions WHERE id = ? ORDER BY updated_at DESC LIMIT ?
+         )`,
+      )
+      .run(id, id, REVISIONS_KEPT);
     const saved = this.get(id);
     if (!saved) throw new Error("project is missing after put");
     return saved;
   }
 
+  revision(id: string, updatedAt: string): ProjectDefinition | undefined {
+    const row = this.db
+      .prepare("SELECT definition FROM project_revisions WHERE id = ? AND updated_at = ?")
+      .get(id, updatedAt) as { definition: string } | undefined;
+    if (!row) return undefined;
+    try {
+      return ProjectDefinition.parse(JSON.parse(row.definition));
+    } catch {
+      // 今の定義の形に合わなくなった版は、併合の元にしない
+      return undefined;
+    }
+  }
+
   delete(id: string): boolean {
+    this.db.prepare("DELETE FROM project_revisions WHERE id = ?").run(id);
     return this.db.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
   }
 
@@ -90,6 +131,7 @@ export class SqliteProjectStore implements ProjectStore {
 /** 設定を持たないメモリ上の保存先（テスト用）。 */
 export class MemoryProjectStore implements ProjectStore {
   private readonly items = new Map<string, Project>();
+  private readonly revisions = new Map<string, ProjectDefinition>();
   private clock = 0;
 
   all(): Project[] {
@@ -109,7 +151,12 @@ export class MemoryProjectStore implements ProjectStore {
       updatedAt: at,
     };
     this.items.set(id, project);
+    this.revisions.set(`${id}\n${at}`, definition);
     return project;
+  }
+
+  revision(id: string, updatedAt: string): ProjectDefinition | undefined {
+    return this.revisions.get(`${id}\n${updatedAt}`);
   }
 
   delete(id: string): boolean {

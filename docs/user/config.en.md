@@ -69,8 +69,12 @@ Only two names can be written in `providers`: `codex` for Codex and `claude` for
   - It is not a settings error.
 - When a sacty update changes the default models, add the prices of the models shown in the warning to `available_models`.
 - Keep the unit prices in line with the latest prices of the models you use. If your contract has different prices, write those.
-  - sacty calculates costs from these unit prices and the token counts.
-  - With a subscription you are not actually billed. sacty treats the value converted at the same unit prices as the cost and uses it to check the budget.
+  - A run's cost is the amount the agent's CLI reported, if it did (the cost of the whole run that Claude Code reports).
+    If it did not, sacty calculates the cost from these unit prices and the token counts. When another model, such as a subagent, was used in the run, sacty calculates that model's usage with that model's price (a model with no price in `available_models` uses the step agent's price).
+    When sacty used the CLI's report, or calculated per model, the activity history of the task shows which one it used, in the line "Cost … is …".
+  - Write example prices close to what you are actually charged. A price higher than the real one makes the cost of runs without a report look large, so the budget cap is reached early and the task pauses.
+  - A Claude Code run uses the amount the CLI reports, so even if your contract prices differ from that amount, the reported amount is the cost. The prices you write here apply to runs without a report and to other models used inside a run.
+  - With a subscription you are not actually billed. sacty treats the reported amount (or, if there is none, the value converted at the same unit prices) as the cost and uses it to check the budget.
 - Writing an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
 - It is also an error when `default_agent` is not written and neither `codex_standard` nor `claude_standard` can be used (for example, when `providers` is not written).
 
@@ -278,9 +282,11 @@ What happens when an agent's run fails depends on the kind of run.
   budget:
     default_per_task_usd: 1
     per_plan_usd:
-      standard: 3
-      split: 10
+      standard: 30
+      split: 100
   ```
+
+  The amounts in the example are a guide. The actual cost changes with the size of the request, so check the "Cost" tab in the task details and decide the amounts.
 
   The plan names are `standard`, `skip-design`, `direct`, `bugfix`, `investigate`, `design-only`, `review`, `split`, `document`, `operation`, `security-check`, and `security-fix`. Any other name is a configuration error.
 - At 80% of the budget, a notice is recorded in the activity log, and when the limit is reached the task is paused (the work is kept). To resume, enter a new cumulative limit in the web UI ([Pause, resume, and cancel](tasks.en.md#pause-resume-and-cancel)).

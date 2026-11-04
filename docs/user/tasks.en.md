@@ -163,6 +163,8 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
 - For a task whose repository to work in is decided, the repository is prepared before information gathering, and it reads that code. If it cannot be prepared, the task stops before information gathering. It also summarizes how tests are written (the framework, the command to run them, where they are placed, and examples of existing tests). Tests are not necessarily written just because the summary describes them. The Orchestrator decides how tests are handled.
 - For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), it picks out a few likely relevant repositories (at most 3) from the project's targets and reads their code through the GitHub read relay (`gh api`). To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)). Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
 
+- It looks for the repository's documents not only among those referenced from AGENTS.md or README but also in the directories that hold documents, and reads those related to the task.
+  Even a document that is not referenced, if it sets behavior or premises related to the request (data freshness, operational rules, and so on), is written in the gathered information.
 - The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.
 - The summary is given to the Orchestrator, every step, and the Goal Guardian. The Goal Guardian uses it only to understand the background; the basis of its verdicts stays the approved deliverables.
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)). The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
@@ -278,11 +280,17 @@ Besides creating it from a report, you can create one in "Create task" by choosi
 A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue is needed, the agent writes the comment in the step's output. After a person approves the step's output, sacty posts it with the project's GitHub account.
 
 Nothing is posted unless you approve.
+The exception is a step that is approved by merging its PR (implementation, requirements, and design): sacty posts without waiting for the merge, as soon as the output is awaiting approval (see the list below).
 
 - Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, sacty posts the revised version.
 - Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. sacty does not post to other URLs and shows the reason in the activity history.
+- For a step approved by merging its PR, sacty posts the requested comments to that PR as soon as the output is awaiting approval.
+  This lets the people watching the PR read a reply to a review comment right away.
+  After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
+  The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
+- sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
 - The end of the comment notes that AI wrote it in a sacty task and a person approved it.
-- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop.
+- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop. If it could not be posted, read the record in the activity history and, if needed, write to the PR yourself.
 - The review step, as before, has sacty post the written review to the PR.
 
 ## Test (verification) commands
@@ -306,6 +314,14 @@ Even a repository without test code uses a check that mechanically validates its
 - For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the Goal Guardian's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
 - The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the Goal Guardian reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 - A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
+- Separately from the test command, the Goal Guardian runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration).
+  A failure caused by the change fails the final review. Verification that could not run, for example because a tool is missing from the image, remains in "人が確かめること" with the reason.
+  The implementation agent also makes the same verification pass before submitting, and writes the reason in the implementation's description for any verification it did not run.
+- The check of acceptance cannot shrink to confirming that a name, item, file, or link exists.
+  When a document describes a responsibility or behavior of the code ("A does B"), the Goal Guardian reads the relevant code and checks that it does so.
+- When the diff newly adds or changes a mechanism shared by several processes (a queue, a lock, a cache, a flag, and so on), the Goal Guardian checks that later processing still continues after an anomaly or failure in that mechanism.
+  What could not be checked remains in "人が確かめること" (in the integration review, it is written in the explanation of the verdict).
+- The Goal Guardian's findings and "人が確かめること" are written in the language the task's title and content are written in. They do not switch to English because the command output or the diff is in English.
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### The implementation PR and CI
@@ -417,6 +433,8 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Verification passed with tools the agent installed itself: when something the tests need, such as a browser, is not in the run environment (image), the implementing agent may install it under `.sacty-tools/` in the workspace and verify with it. When it does, it writes what it installed, the verification it passed, and what it did not check in an environment without it, in the 「この環境だけの結果」 ("results only in this environment") section of the implementation description (which goes into the PR body).
   The Goal Guardian leaves this as an item for a person, "この環境だけの結果: …", and also writes it in the final review summary. Installing alone is not a reason to fail.
   Tools installed under `.sacty-tools/` do not go into the PR or the commit (anything installed elsewhere goes into the PR unless the repository's `.gitignore` ignores it). Check with an image that has the tools, or, if needed, change to an image that includes them ([Container images](images.en.md)).
+- Checks of things inside sacty's workspace (tools under `.sacty-tools/`, temporary files, paths inside the container, and so on) for whether they exist or work are not in this list, because a person has no way to check them.
+  What could not be verified in the workspace but a person can check in their own environment (such as the result of redoing it in an environment without the tool) is included as before.
 - Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
@@ -555,6 +573,8 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - The Goal Guardian's judgment (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
     The judgment is the Goal Guardian's interpretation, so when it disagrees with the original text of your comment, the original text wins.
     When the target could not be decided, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
+  - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text. The record in the Activity and the judgment passed to the redo stay in full.
+  - When there is something for a person to check, the approval screen and the task details show it in a prominent place as "N things for you to check", and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
   - If requests for changes to the same step exceed the limit, it becomes an Escalation.
     What counts toward the limit is the requests for changes by you. A request for changes made only of comments from sacty's own AI review is not counted ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 - When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
@@ -569,7 +589,31 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
   - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, the conclusion of the final review, and what you should confirm in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs, expected results, and the final review's findings are in the collapsed section "観点ごとの詳細" (details per viewpoint). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a failed final review, a send-back, or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
   - Which one was used appears in "Body" in the PR section of the task page.
+  - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated).
+  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments (the investigation result, the comments a step requests, and the comment that tells you what to check). They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
+- The form of the commit message
+  - When the repository defines the Conventional Commits form (a Commitizen or commitlint configuration exists, or the rules in AGENTS.md or CONTRIBUTING describe it), the first line of the commits sacty makes takes the form `feat: <task title>`.
+  - The type is `docs` for the commit of a documents-only request and of a Requirements or Design PR, `fix` for a bug fix, and `feat` otherwise. A title that already has the form `feat: …` is not prefixed again.
+  - For a repository with no definition, or one whose definition cannot be read, the task title is used as is, as before.
+  - When a commitlint configuration sets the form of the first line itself (for example, it requires a ticket number first), the custom form takes priority even if there is also a commitlint dependency, and no type is added.
+
+### Things for a person to check
+
+In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
+In the cases below, the approval screen and the task details show "N things for you to check" under the approval notice.
+
+- The Goal Guardian could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
+- The redo run listed something it wants you to check along with its response to the comment: it guessed because it could not read what the comment meant, it recreated a value or wording it no longer had, it changed something the comment did not ask for, or it left a comment unaddressed. The comment it concerns is also shown.
+
+So that the people looking at the PR notice it, the same content is commented on the PR of the redone deliverable (implementation, requirements, or design) when it is back to waiting for approval. One comment per submission.
+
+- The comment starts with "Sacty：人に確かめてほしいことがあります". If it is not what you meant, comment on the PR or send the task back on the task screen.
+- This comment is not imported as a comment.
+- For a project with no GitHub account chosen, nothing is commented on the PR (the screen still shows it). If commenting fails, the task does not stop.
+- For security check and security fix tasks, nothing is commented on the PR (so details of a vulnerability or the fix scope are not put in a public place; the screen still shows it).
+- If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
+- Secret values are hidden and long text is cut. Paths inside sacty's workspace are replaced with names a person can follow.
 
 ## Cause of a request for changes
 
@@ -641,6 +685,10 @@ The first round reviews with every viewpoint. A re-review after fixing (the seco
 The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
 When the deliverable of a request is judged to be document files only, the self-review of the implementation also uses the document viewpoints (sync with the code, whether the steps work, fit to the reader, static quality) instead of the code viewpoints. A request that also changes code is reviewed with the code viewpoints as before.
 When the agent redoes the work after requested changes from a person, a finding from the AI review, or a failed final review, the first review of that run is also treated as a re-review. It uses only the viewpoints related to the findings of this run, plus X-1 (the first run of a task still uses every viewpoint, as before). The viewpoints it did not use are recorded as "not started (fix run: not related to this run's findings)". If the previous submission's self-review did not pass, every viewpoint is used.
+The Requirements and Design deliverables are put into the PR by sacty as repository files (by default under `docs/sacty/<short task ID>/`).
+Before submitting, the agent runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) on that file and makes it pass.
+It does not run verification of code, such as tests, builds, and type checks.
+The reason for any verification it did not run is kept in the self-review report.
 
 When the agent revises requirements or a design after you request changes, working from a non-empty previous deliverable, it narrows the review to the difference from the previous deliverable and what that change directly requires (this range narrowing is not applied to changes requested on the implementation; however, a fix run of the implementation is also reviewed, as described above, with only the viewpoints related to the findings and centered on what was fixed in that run, when the previous submission's self-review passed).
 However, the agent reviews the whole deliverable as usual when the self-review of the previous submission did not pass or has no record (including after a person edited the document), when the previous deliverable is empty, or when the remark changes the direction.
@@ -709,6 +757,11 @@ The details of a task stopped by the budget limit show a field for the new cumul
 - In the resume section, you can change the following along with the resume.
   - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the Orchestrator and the steps still to run read them. When the task description is long and only a little can be added, the length of notes you can add is shown below the field (to stay within what can be edited when rerunning). If no notes can be added, the field is disabled; resume without notes, or cancel and fix the description in a rerun.
   - **Change step images and agents** (open it to use): for each step not finished yet, you can choose the image and the agent again. The current settings are selected first, only the changed steps are recorded, and each change is used from the next run of that step. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
+- A task waiting for approval (waiting for a PR merge) can also be paused with "Pause". The approval screen and the task details stay as they are. A task in escalation cannot be paused.
+  - While paused, you cannot approve or send it back. When you resume, it returns to waiting for approval and you can use the approval screen again.
+  - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume has the Goal Guardian decide where to send the task back.
+  - A Requirements or Design PR is not watched while paused. If it is merged or comments arrive, the check after the resume (every minute) takes them in as an approval or a send-back.
+  - A person paused it, so nothing is sent to Slack. When it is resumed and returns to the same wait for approval, the approval notice is not sent again.
 - If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task's details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
   When you resume, before redoing the step that stopped (the final review, for example), the Goal Guardian reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
   If no comments have arrived, the step that stopped is redone as before.

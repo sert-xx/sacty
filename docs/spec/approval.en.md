@@ -194,6 +194,25 @@ The task is not waiting for approval, so "Importing PR comments" above does not 
 
 Code: `apps/daemon/src/service.ts` (`checkHeldFeedback`, `holdFeedback`, `reworkHeldReview`, `settleHeldReview`, `withoutStaleReviews`, `resume`, `heldRecheck`), `packages/core/src/projection.ts` (`heldReview`, `PullRequestReviewImported`, `ChangesRequested`), `apps/web/src/components/task-detail.tsx` (`HeldReviewNotice`), `apps/web/src/lib/labels.ts` (`statusText`)
 
+### Pausing while waiting for approval
+
+Related ADR: [承認待ち（PR のマージ待ち）でも一時停止できるようにする](../adr/20261103-2300-pause-while-awaiting-approval.md)
+
+A person can also pause a task that is waiting for approval (`awaiting_approval`). Use it when you want to stop PR imports while you wait for the merge. A task in escalation (`escalated`) cannot be paused.
+
+- Pausing: there is no agent run, so `TaskPaused` (actor `person`, reason `manual`) is recorded on the spot. The approval gate (`gate`) and the PR records stay as they are, and `resumeTo: awaiting_approval` is kept as where to resume to.
+  As before, the task cannot be paused while the Goal Guardian is judging a change proposal.
+- While paused, the task cannot be approved or sent back (its state is `paused`). What happens to the PR depends on the kind of PR.
+  - The implementation PR: it is treated like the PR while the implementation is being reworked (`reworkingPullRequest`). If it is merged, `ReworkStoppedByMerge` (`was: paused`) is recorded, followed by `PullRequestMerged` and `StepApproved`, and the merge is taken as the approval ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)). No resume is needed. Comments that arrive are kept as not yet applied ([Comments that arrive while paused](#comments-that-arrive-while-paused)). The Goal Guardian does not run.
+  - A Requirements or Design PR: it is not watched while paused. Both merges and comments are handled by the check after the resume.
+- Resuming: `TaskResumed` returns the task to waiting for approval (the approval gate is still there, so the approval screen can be used as it is). No agent runs.
+  What happened while it was paused is picked up by the PR check after the resume (every 60 seconds).
+  - If the PR was merged, the merge is taken as the approval ([The PR check](#the-pr-check)).
+  - Comments that were kept (the implementation PR) are taken over by the import while waiting for approval as they are. The Goal Guardian decides where to send the task back. Comments written while paused are imported in the same check.
+- Notification: a person paused it, so nothing is sent to Slack. When it is resumed and returns to the same approval gate, the approval notification is not sent again (`notificationFor`).
+
+Code: `apps/daemon/src/service.ts` (`pause`), `apps/daemon/src/notifier.ts` (`notificationFor`), `packages/core/src/projection.ts` (`TaskPaused`, `TaskResumed`, `resumeTo`, `reworkingPullRequest`), `apps/web/src/components/task-detail.tsx` (`canPause`)
+
 ### Showing a conflict with the base branch
 
 When another PR is merged while the task waits for approval and the implementation PR conflicts with the base branch, the task screen and "Needs you" show it.
@@ -245,7 +264,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
 3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
    - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
    - A task that skipped the requirements step, and the fix scope of a security fix, are short, so they stay as before.
-4. "変更" (Changes): the Implementation step's output (after a redo, the description of the whole PR). Left out when it is the same as the change summary in the conclusion. When there is no output, the heading is left out too.
+4. "変更" (Changes): the Implementation step's output (after a redo, the description of the whole PR) without the first paragraph that the conclusion's change summary already carries (so the conclusion's sentences are not repeated; PBI-301 A7; the F3 recurrence in experiments S16 and S19). When nothing but headings is left (the output is only the summary, or only headings remain), the whole section is left out. When the first paragraph was cut short in the conclusion, the full text is shown. When there is no output, the heading is left out too. In a body that follows a template, "変更" is the full text, because there is no summary in it.
 5. "最後の直し" (The last fix): only after a redo. The description of the last fix (see "Body after a redo" below).
 6. The exported results
 7. Viewpoint → test → result
@@ -258,6 +277,7 @@ The common rules are as follows.
 
 - Sentences that report the progress of the work are removed from the Implementation step's output (`withoutProgressReport`). The removed sentences are those of 100 characters or fewer that contain both a topic word (commit, push, reflecting to GitHub, and so on) and a state word (not done, incomplete, sacty does it, and so on). Only sentences in lines that are outside a code fence and do not start with whitespace are touched. Lines of code blocks (CommonMark fences: indentation of 0 to 3 spaces, closed by the same character at least as long as the opening), tables, and headings, and every indented line (code inside a list, indented code, and so on), are left alone. The rule does not parse Markdown piece by piece and errs on the side of keeping: one leftover progress sentence does less harm than broken code. The summary of the change (`leadParagraph`) also uses only lines without indentation. The Implementation step's output is saved with the indentation of its first line kept (only blank lines before and after and trailing whitespace are removed; `keepIndent` of `extractBlocks`; other steps still trim as before). The instructions for implementation also say that the notes are put into the PR body as they are and that progress reports are not to be written (`IMPLEMENT_REPORT_LINE`).
 - The leading "合格。" or "不合格。" of the final review's summary is removed (the verdict is written separately, so it is not repeated as "合格。合格。").
+- Paths inside sacty's workspace (such as `/sacty-input/task.md:77`, a path inside the container that a person cannot follow) are not shown in the PR body, in the requirements and design files, in the investigation result comment, in the comments a step requests (`sacty-github-comments`), or in the comment that tells people what to check (`withoutInternalPaths`; PBI-301 A7; experiment S16, where one appeared in the body of a Requirements PR). Input files are replaced with names such as "タスクの依頼" (the task request), "人の指摘" (a person's remarks), "調査の結果" (the investigation result), and "承認済みの要求要件" (the approved requirements); other internal paths (`/sacty-review`, `/sacty-memory`, and so on) are replaced with a name for the place, and line numbers of internal files are not written. Repository paths are not changed. The provenance classification prompt and the default skill `classify-provenance` also have the classifier not write the Input location in the references (`refs`).
 - Body after a redo (PBI-299; experiment S5 r4, F44, where after two redos the conclusion, the changes, the verification, and the viewpoint table of the last body described only the last fix, and it was no longer clear what the PR was): however the redo started (a failed final review, a person's send-back, or the remarks of an AI review), the body written when the PR is updated describes the whole PR at that time.
   - The output of each implementation submission is kept in `Task.implementHistory`, oldest first (built from `AgentRunCompleted` of the implementation; up to 10). It also keeps in `Task.implementBase` the base of the description of the whole PR as of the earlier submissions (none before the first submission; the first submission, or the part other than the section of a submission that rewrote the whole with a "最後の直し" section; a submission without the section leaves the base unchanged; `advanceImplementBase`). The base survives when the history drops old submissions at its limit. Both are emptied when an upstream step such as the requirements or the design is approved again, and when a proposal that changes an approved upstream output is applied.
   - The instructions for implementation (`implementReworkLines`; when the previous description is attached) tell the agent that the description is a description of everything the PR adds (rewrite the previous description with this fix reflected, and fold the content of an earlier "最後の直し" section into the whole), that this fix goes only once in a separate section "## 最後の直し" (`LAST_FIX_HEADING`) at the end of the description, and that the viewpoint-test mapping is also the mapping for the whole PR.
@@ -410,6 +430,38 @@ They are, however, told apart from a person's comments.
   The dashboard's quality signals count "Rework from AI review", and the audit's evidence counts "AI review remarks" (`aiReviewRemark`), separately from changes requested by a person and PR remarks ([Architecture](architecture.en.md), [Audit](audit.en.md)).
 
 Code: `apps/daemon/src/service.ts` (`importFeedback`, `withoutStaleReviews`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `feedbackSeenAt`, `settleReview`, `judgeRework`), `apps/daemon/src/prompts.ts` (`buildReworkPrompt`, `reworkDecisionLines`, `remarkSections`, `guardianJudgmentLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`), `packages/core/src/projection.ts` (`changeRounds`, `lastChangeRound`, `isAiReviewRemark`)
+
+### Things for a person to check
+
+Related ADR: [人に確かめてほしいことを、PR のコメントと承認の画面の目立つ所に出す](../adr/20261103-2302-surface-human-asks.md)
+
+In a rework started by PR comments, there can be things only a person can check: whether the comments were read as meant. If they appear only in a corner of the approval screen or in the activity, the people looking at the PR do not notice them. The following two are collected as "things for a person to check" (`humanAsks`) and shown in the PR comment and in a prominent place on the approval screen and the task details.
+
+- The reason it could not be decided (`undecided`): the Goal Guardian could not decide where to send the task back (`prRework.decided` is false), and the implementation or another step was redone. The reason is the text the Goal Guardian wrote (what could not be read). When the reason is sacty's own wording (the Goal Guardian's run failed or its output could not be read), it is not a reading of the comments, so it is not shown.
+- A question or a guess from the run (`confirms`): a `confirm` that the rework run attached to its response to a comment (`sacty-responses`). The run is told to write it when it guessed because it could not read what the comment meant, when it recreated a value or wording it no longer had, when it changed something the comment did not ask for, or when it left a comment unaddressed (`confirmLines`). A response with nothing to check does not get one. It is cut at 1,000 characters. It is kept in `RemarkResponse.confirm`, and `Task.remarks[].confirm` holds only the one from the same submission as the response (it is cleared if the next submission has no response).
+
+- When it is shown: the task is waiting for approval, for the comments (not voided) that the current gate's submission (`gate.submission`) received. The reason it could not be decided is shown only when the `prRework` target is the gate's step and its comment round (`round`) is the latest round of that step (an old judgment is not shown after a later send-back). Nothing is shown when the task is not waiting for approval (during a rework or while paused).
+- Screen (`HumanAskNotice`): shown as "N things for you to check" at the top of the approval screen and in the task details below the approval notice (visible on every tab). The reason it could not be decided shows the gist (the first one or two sentences) first, and the full text opens below ("How the send-back judgment text is shown" below).
+- PR comment: when the reworked deliverable is back to waiting for approval (a `StepSubmitted` that makes the gate's step or submission new; if it could not be written while the task was paused, sacty tries again when the resume brings the task back to waiting for approval on the same submission, and it does not write again if it finds a comment with the marker), one comment is posted on the PR of that gate (the implementation PR, the Requirements PR, or the Design PR) (`announceHumanAsks`, `buildHumanAskNotice`).
+  - The comment starts with a marker (`<!-- sacty-human-ask:<task ID>:<step>:<submission> -->`). If a comment with the marker already exists for the same submission, nothing is posted.
+  - Notices for the same submission are processed one after another (`serialized`). Even if a pause and a resume start a second one while the first is still searching for the comment, the second looks for the marker again after the first finishes, so it does not write twice.
+  - It is not written for a task with a security plan (`security-check`, `security-fix`), because what the run wants checked can include details of a vulnerability or the fix scope (it still appears on the approval screen; this is the same rule as for requested comments).
+  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) in those outside strings are replaced with a name a person can follow (`withoutInternalPaths`).
+  - The body quotes the reason it could not be decided and what the run wants checked. Because they are outside strings, secrets are hidden before cutting at 600 characters, and a zero-width space is put after `@` so that `@name` does not notify other people. It ends by telling the reader to comment on the PR or send the task back on the task screen if the result is not what was meant.
+  - It is posted with the project's gh account (nothing is posted for a project with no GitHub account chosen; the screen still shows it). It does not wait for the post, and the request has a 30-second deadline. If posting fails, the task state does not change (a warning is logged).
+  - This comment is not imported as a person's comment in the next PR check (comments from the task's account that start with the marker are excluded; if someone else copies the marker, it is imported as a person's comment).
+
+Code: `apps/daemon/src/service.ts` (`announceHumanAsks`, `humanAskDue`), `apps/daemon/src/human-ask-notice.ts`, `apps/daemon/src/github.ts` (`isHumanAskNotice`, `GitHubPullRequests.feedback`), `apps/daemon/src/prompts.ts` (`confirmLines`, `extractBlocks`), `packages/core/src/projection.ts` (`humanAsks`), `apps/web/src/components/human-ask.tsx` (`HumanAskNotice`)
+
+### How the send-back judgment text is shown
+
+The Goal Guardian's judgment text for where to send a task back (`reason` of `ReworkJudged`) can run 600 to 1,000 characters, which is hard to read when shown as it is. The screen shows the gist first and lets you open the full text (`summarizeDecision`).
+
+- Gist: up to the first two sentences (split at a Japanese full stop, an English period followed by a space, or a line break; a full stop inside brackets does not split). If it is longer than 160 characters, it is cut at 160 characters and "…" is added. If the full text is the same as the gist, nothing is collapsed.
+- Where: the send-back row in the activity (the gist in the row, the full text in the details), the send-back target in the PR card (`prRework`; the gist, with the full text to open below it), and the reason it could not be decided in the things for a person to check.
+- Not changed: the activity record (`reason` of `ReworkJudged`) and the judgment text passed to the rework run ([how the Goal Guardian's judgment text is passed](#ai-review-comments)) stay in full.
+
+Code: `apps/web/src/lib/decision-summary.ts`, `apps/web/src/lib/labels.ts` (`describeEventParts`), `apps/web/src/components/pull-request.tsx` (`PullRequestCard`)
 
 ## Request changes
 

@@ -40,6 +40,7 @@ import { DerivedTasksCard } from "@/components/derive-dialog";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
 import { ErrorReportCard, showErrorReport } from "@/components/error-report";
 import { ExportRetryButton } from "@/components/export-retry-button";
+import { HumanAskNotice } from "@/components/human-ask";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
 import {
@@ -180,11 +181,12 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   const ticketRepositories = needsTicketRepositories(task)
     ? (data.ticketRepositories ?? [])
     : undefined;
-  // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
-  // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
+  // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間と、承認待ち（PR のマージ待ち。
+  // 止めている間の PR の扱いは仕様書の「承認待ちでの一時停止」）。ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
   const canPause =
     (task.status === "queued" ||
       task.status === "running" ||
+      task.status === "awaiting_approval" ||
       (task.status === "idle" && task.verification !== undefined)) &&
     !(proposal && !proposal.judgement);
 
@@ -281,6 +283,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       {/* 人の対応が要るとき（承認・判断・再開）は、どのタブでも見えるよう、タブの上に出す */}
       <GateNotice task={task} />
       <HeldReviewNotice task={task} />
+      <HumanAskNotice task={task} />
       <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm

@@ -201,6 +201,25 @@ export function isReviewStopNotice(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_STOP_MARKER_PREFIX);
 }
 
+/** sacty が、工程のエージェントの頼みで投稿したコメント（sacty-github-comments）の目印の前半（PBI-301）。 */
+const GITHUB_COMMENT_MARKER_PREFIX = "<!-- sacty-comment:";
+
+/** 本文が、sacty が頼みで投稿したコメントの目印で始まるか。承認を待つ間に投稿するので、人の指摘として取り込まない（PBI-301）。 */
+export function isSactyGitHubComment(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(GITHUB_COMMENT_MARKER_PREFIX);
+}
+
+/**
+ * 人に確かめてほしいことを PR に知らせる投稿の目印（PBI-301）。`<!-- sacty-human-ask:<タスク ID>:<工程>:<提出回> -->`。
+ * 人間の指摘ではないので、PR の指摘に取り込まない。
+ */
+export const HUMAN_ASK_MARKER_PREFIX = "<!-- sacty-human-ask:";
+
+/** 本文が、人に確かめてほしいことの投稿の目印で始まるか（PBI-301）。 */
+export function isHumanAskNotice(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(HUMAN_ASK_MARKER_PREFIX);
+}
+
 /** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
 export function sactyReviewKey(taskId: string, round = 1): string {
   return round > 1 ? `${taskId}:${round}` : taskId;
@@ -335,7 +354,13 @@ export class GitHubPullRequests implements PullRequests {
           isSactyReview(item.body)
         ) &&
         !(
-          isReviewStopNotice(item.body) &&
+          (isReviewStopNotice(item.body) || isHumanAskNotice(item.body)) &&
+          typeof login === "string" &&
+          noticeAccounts.has(login.toLowerCase())
+        ) &&
+        // sacty が頼みで投稿したコメント（指摘への返信など。PBI-301）も、人の指摘ではない（取り込むと、返信が新しい指摘になる）
+        !(
+          isSactyGitHubComment(item.body) &&
           typeof login === "string" &&
           noticeAccounts.has(login.toLowerCase())
         )
@@ -1100,4 +1125,42 @@ export function githubStatus(error: unknown): number | undefined {
   if (typeof text !== "object" || text.code !== "github.failed") return undefined;
   const status = (text.params as { status?: unknown } | undefined)?.status;
   return typeof status === "number" ? status : undefined;
+}
+
+/** ネットワークの一時的な失敗として扱う、接続のエラーコード。 */
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+
+/**
+ * GitHub への問い合わせの失敗が、間を置けば成功しうる一時的なものか（PBI-301）。GitHub の 5xx・レート制限（429、または
+ * 403 でレート制限と説明するもの）・接続の失敗（fetch failed・接続のエラーコード）が一時的。権限が無い・見つからない・
+ * トークンが無効（401・403・404 など）や、GitHub の失敗でないエラーは、待っても変わらないので一時的としない。
+ */
+export function isTransientGitHubFailure(error: unknown): boolean {
+  const status = githubStatus(error);
+  if (status !== undefined) {
+    if (status >= 500 || status === 429) return true;
+    if (status === 403) {
+      const text = errorText(error);
+      const detail =
+        typeof text === "object" ? (text.params as { detail?: unknown } | undefined)?.detail : "";
+      return typeof detail === "string" && /rate limit|abuse|retry later/i.test(detail);
+    }
+    return false;
+  }
+  if (error instanceof MessageError || !(error instanceof Error)) return false;
+  if (error.message === "fetch failed") return true;
+  const cause = (error as { cause?: unknown }).cause;
+  const code = cause && typeof cause === "object" ? (cause as { code?: unknown }).code : undefined;
+  return typeof code === "string" && TRANSIENT_NETWORK_CODES.has(code);
 }

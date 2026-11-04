@@ -39,7 +39,6 @@ import {
   canRerun,
   canRetryExport,
   changeRounds,
-  computeCostUsd,
   type DaemonMessage,
   type DaemonText,
   DashboardStats,
@@ -66,6 +65,7 @@ import {
   GATED_STEPS,
   gatePullRequest,
   heldReview,
+  humanAsks,
   type IntakeKind,
   investigationIsGoal,
   isAuditTarget,
@@ -86,6 +86,7 @@ import {
   MEMORY_TITLE_MAX,
   type MemoryMove,
   mapFreeText,
+  mergeProjectDefinitions,
   message,
   nextAuditDive,
   OperationSettings,
@@ -152,6 +153,7 @@ import {
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
 import { archivedFilePath, type CheckedAgentFile, checkArchivedFiles } from "./agent-sessions.js";
+import { type RunCost, runCost } from "./agents/cost.js";
 import { type AgentExecutor, CONTAINER_INPUT_DIR, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import {
@@ -182,6 +184,12 @@ import {
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
 import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
+import {
+  COMMIT_CONVENTION_FILES,
+  type CommitKind,
+  commitSubject,
+  detectCommitConvention,
+} from "./commit-message.js";
 import {
   type AgentConfig,
   agentFor,
@@ -234,6 +242,7 @@ import {
 import {
   type FoundIssue,
   githubStatus,
+  isTransientGitHubFailure,
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
@@ -249,6 +258,7 @@ import {
   requestedGitHubComments,
 } from "./github-comments.js";
 import { githubPromptLines, githubRelayEnv } from "./github-relay.js";
+import { buildHumanAskNotice, humanAskMarker } from "./human-ask-notice.js";
 import {
   CONTAINER_PROJECT_MEMORY_DIR,
   CONTAINER_REPOSITORY_MEMORY_DIR,
@@ -371,7 +381,9 @@ import {
   selectablePlans,
   servicePromptLines,
   skippedFilesLines,
+  verificationBasis,
   viewpointRename,
+  withoutInternalPaths,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -541,6 +553,9 @@ function awaitingVerification(task: Task): boolean {
   );
 }
 
+/** 一時的な失敗のやり直しの途中で、やり直しをやめた（止める・中止・デーモンの停止）。何も記録せずに処理を終える。 */
+class RetryAbandoned extends Error {}
+
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
 /** 状態に合わない操作。理由は文言のコードと引数で持ち、画面が画面の言語にする（PBI-11）。 */
 export class InvalidOperationError extends Error {
@@ -669,6 +684,11 @@ export type ServiceDeps = {
    * 超えたら通信も止めて、警告にして終える（実行の枠を放す）。
    */
   stopNoticeTimeoutMs?: number;
+  /**
+   * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・接続の失敗）で止まりそうなとき、自動でやり直すまでの
+   * 待ち時間（ミリ秒）の並び（PBI-301）。長さが、やり直しの回数の上限。既定は 15 秒・1 分・3 分・5 分の 4 回（計 9 分余り）。
+   */
+  reviewRetryDelaysMs?: readonly number[];
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -2880,28 +2900,53 @@ export class TaskService {
   }
 
   /**
-   * 承認した工程の成果でエージェントが頼んだ、PR・Issue へのコメント（sacty-github-comments）を、プロジェクトの gh の
+   * 工程の成果でエージェントが頼んだ、PR・Issue へのコメント（sacty-github-comments）を、プロジェクトの gh の
    * アカウントで投稿する。投稿先は、プロジェクトの対象のリポジトリだけ。前に投稿の後・記録の前に止まっていたら、
    * 目印で見つけたコメントを使う（二度投稿しない）。投稿できなくても、理由を記録してタスクは進める。
+   * when が approved なら承認した成果の頼み。submitted なら、PR のマージで承認する工程の、承認を待つ提出の頼み
+   * （指摘への返信を、PR を見ている人がその場で読めるように。PBI-301）。
    */
-  private async postGitHubComments(task: Task, step: StepKey): Promise<void> {
+  private postGitHubComments(
+    task: Task,
+    step: StepKey,
+    when: "approved" | "submitted" = "approved",
+  ): Promise<void> {
+    // 同じタスク・工程の投稿は順に処理する（先の処理が検索や投稿の最中のまま、もう1本始まっても、二重に投稿しない。PBI-301）
+    return this.serialized(`gh-comments:${task.id}:${step}`, () =>
+      this.postGitHubCommentsNow(task, step, when),
+    );
+  }
+
+  private async postGitHubCommentsNow(
+    task: Task,
+    step: StepKey,
+    when: "approved" | "submitted",
+  ): Promise<void> {
+    // 頼みを読む成果と、その版の目印（承認の日時。承認の前の投稿は、提出の回）
+    const submission = when === "submitted" ? task.gate?.submission : undefined;
     const approved = task.approved[step];
-    if (!approved) return;
+    const source =
+      when === "approved"
+        ? approved && { output: approved.output, at: approved.at }
+        : submission !== undefined
+          ? { output: task.outputs[step] ?? "", at: `submission-${submission}` }
+          : undefined;
+    if (!source) return;
     const usedSecrets: string[] = [];
-    const requested = requestedGitHubComments(approved.output);
+    const requested = requestedGitHubComments(source.output);
     const results: { target: string; url?: string; failed?: DaemonText }[] = [];
     let failed: DaemonText | undefined;
     if (!requested) return;
-    // 待っている間（トークンの取り出し・既存のコメントの検索）に、止められた・承認が変わったら、新しく投稿しない
+    // 待っている間（トークンの取り出し・既存のコメントの検索）に、止められた・承認や提出が変わったら、新しく投稿しない
     // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
     const valid = () => {
       if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) return false;
       const latest = this.tasks.get(task.id);
-      return (
-        latest !== undefined &&
-        awaitingGitHubComments(latest) === step &&
-        latest.approved[step]?.at === approved.at
-      );
+      if (latest === undefined) return false;
+      return when === "approved"
+        ? awaitingGitHubComments(latest) === step && latest.approved[step]?.at === source.at
+        : awaitingSubmittedGitHubComments(latest) === step &&
+            latest.gate?.submission === submission;
     };
     if (!requested.ok) failed = requested.reason;
     else {
@@ -2920,10 +2965,26 @@ export class TaskService {
         try {
           const token = await this.githubToken(task, comment.repo, usedSecrets);
           const where = { repo: comment.repo, token, number: comment.number };
-          const existing = await this.deps.pulls.findIssueComment({
-            ...where,
-            marker: githubCommentMarker(task.id, step, approved.at, index),
-          });
+          // 承認の後の投稿は、承認を待つ間に投稿済みの同じ提出の頼み（目印の承認の日時の所が提出の回のもの）も探す。
+          // 承認を待つ間の投稿の最中にマージされて記録できなかったときも、二重に投稿しない
+          const submitted =
+            when === "approved" && approved
+              ? await this.deps.pulls.findIssueComment({
+                  ...where,
+                  marker: githubCommentMarker(
+                    task.id,
+                    step,
+                    `submission-${approved.submission}`,
+                    index,
+                  ),
+                })
+              : undefined;
+          const existing =
+            submitted ??
+            (await this.deps.pulls.findIssueComment({
+              ...where,
+              marker: githubCommentMarker(task.id, step, source.at, index),
+            }));
           if (!existing && !valid()) return;
           const { url } =
             existing ??
@@ -2933,9 +2994,11 @@ export class TaskService {
                 taskId: task.id,
                 step,
                 stepName: STEP_NAME[step],
-                approvedAt: approved.at,
+                approvedAt: source.at,
                 index,
-                body: comment.body,
+                // 作業領域の内部のパスは、人が辿れないので、人が辿れる呼び方に置き換える（PBI-301 A7）
+                body: withoutInternalPaths(comment.body),
+                ...(when === "submitted" ? { awaitingApproval: true } : {}),
               }),
             }));
           results.push({ target, url });
@@ -2951,7 +3014,13 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "GitHubCommentsPosted",
-          payload: { step, approvedAt: approved.at, results, ...(failed ? { failed } : {}) },
+          payload: {
+            step,
+            approvedAt: when === "approved" ? source.at : "",
+            ...(submission !== undefined ? { submission } : {}),
+            results,
+            ...(failed ? { failed } : {}),
+          },
         },
       },
     ]);
@@ -2965,7 +3034,7 @@ export class TaskService {
     task: Task,
   ): Promise<
     | { ok: true; target: Extract<EventInput, { type: "ReviewTargetResolved" }>["payload"] }
-    | { ok: false; message: DaemonText }
+    | { ok: false; message: DaemonText; abandoned?: true }
   > {
     const ref = referencedPullRequest(task);
     if (!ref) {
@@ -2974,8 +3043,11 @@ export class TaskService {
     }
     const usedSecrets: string[] = [];
     try {
-      const token = await this.githubToken(task, ref.repo, usedSecrets);
-      const pr = await this.deps.pulls.pullRequest({ ...ref, token });
+      // GitHub の一時的な失敗は、間を置いて自動でやり直す（PBI-301）
+      const pr = await this.retryTransient(task.id, "reviewTarget", usedSecrets, async () => {
+        const token = await this.githubToken(task, ref.repo, usedSecrets);
+        return this.deps.pulls.pullRequest({ ...ref, token });
+      });
       return {
         ok: true,
         target: {
@@ -2990,6 +3062,10 @@ export class TaskService {
         },
       };
     } catch (error) {
+      // やり直しの途中で止める・中止・デーモンの停止があった。何も記録せずに終える
+      if (error instanceof RetryAbandoned) {
+        return { ok: false, message: "", abandoned: true };
+      }
       return { ok: false, message: redactText(errorText(error), usedSecrets) };
     }
   }
@@ -3131,6 +3207,61 @@ export class TaskService {
   }
 
   /**
+   * Sacty のレビューのタスクの GitHub への問い合わせ（レビューの対象の PR の確認・レビューの投稿）を、一時的な失敗なら、間を
+   * 置いて自動でやり直す（PBI-301）。一時的な失敗は GitHub の 5xx・レート制限・接続の失敗。権限が無いなど、待っても変わらない
+   * 失敗はやり直さずに投げる。やり直しの回数の上限（deps.reviewRetryDelaysMs の長さ）を超えたときも、最後の失敗を投げる。
+   * やり直す前に、作業履歴へ ReviewGitHubRetried を記録する。待つ間に止める・中止・デーモンの停止があれば、やり直しをやめて
+   * RetryAbandoned を投げる。
+   */
+  private async retryTransient<T>(
+    taskId: string,
+    where: "reviewTarget" | "reviewPost",
+    usedSecrets: readonly string[],
+    attempt: () => Promise<T>,
+  ): Promise<T> {
+    const delays = this.deps.reviewRetryDelaysMs ?? [15_000, 60_000, 180_000, 300_000];
+    const abandoned = () =>
+      this.stopping ||
+      this.cancelling.has(taskId) ||
+      this.pauseRequested.has(taskId) ||
+      !this.tasks.has(taskId);
+    for (let retry = 0; ; retry++) {
+      try {
+        return await attempt();
+      } catch (error) {
+        const waitMs = delays[retry];
+        if (waitMs === undefined || !isTransientGitHubFailure(error)) throw error;
+        if (abandoned()) throw new RetryAbandoned();
+        const task = this.tasks.get(taskId);
+        if (task && task.status !== "cancelled") {
+          this.append(task, [
+            {
+              actor: "sacty",
+              event: {
+                type: "ReviewGitHubRetried",
+                payload: {
+                  where,
+                  attempt: retry + 1,
+                  maxAttempts: delays.length,
+                  waitMs,
+                  message: redactText(errorText(error), usedSecrets),
+                },
+              },
+            },
+          ]);
+        }
+        // 長く待つ間も、止める・中止・停止に気づけるよう、短く区切って待つ
+        const until = Date.now() + waitMs;
+        while (Date.now() < until) {
+          if (abandoned()) throw new RetryAbandoned();
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1000, until - Date.now())));
+        }
+        if (abandoned()) throw new RetryAbandoned();
+      }
+    }
+  }
+
+  /**
    * 書いたレビューを、対象の PR にレビュー（COMMENT）として投稿する（PBI-19）。人間の承認は待たない。
    * 投稿するとタスクは完了する。投稿できなければ理由を記録して一時停止する（再開すると投稿からやり直す）。
    */
@@ -3140,56 +3271,13 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      // 認証・既存のレビューの検索・自分へのメンションに、同じアカウントを使う（トークンを取り出している間にプロジェクトの
-      // アカウントが変わっても、投稿するアカウントと違う人にメンションしないように。PR #197 レビュー指摘）
-      const project = this.deps.projects.get(task.projectId);
-      const token = await this.githubToken(task, target.repo, usedSecrets, project);
-      const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""] ?? "";
-      const pr = { repo: target.repo, token, number: target.number };
-      // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
-      const existing = await this.deps.pulls.findReview({
-        ...pr,
-        account,
-        marker: reviewMarker(task),
-      });
-      // 投稿の直前に、PR の先頭がレビューしたコミットのままかを確かめる（PBI-111）。途中で push されていても、レビューは
-      // レビューしたコミットに対して投稿し、その旨を本文に書く（最新のコミットは「再レビュー」でレビューする）
-      // 先頭を読めない応答なら、確かめられないので投稿しない（一時停止し、再開すると確かめ直す）。すでに投稿したレビューが
-      // あれば、その本文に残した先頭を記録し直す（投稿の後・記録の前に止まったとき）
-      let latestCommit: string | undefined;
-      if (existing) {
-        latestCommit = postedLatestCommit(existing.body);
-      } else {
-        const head = (await this.deps.pulls.status(pr)).headSha?.trim() ?? "";
-        if (!/^[0-9A-Za-z]{7,64}$/.test(head))
-          throw new MessageError(message("review.headUnknown"));
-        latestCommit = head !== target.headCommit ? head : undefined;
-      }
-      // sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする
-      const mentionSelf = this.deps.settings.get().reviewMentionSelf ? account : undefined;
-      const post = (foldComments: boolean) =>
-        this.deps.pulls.postReview({
-          ...pr,
-          commit: target.headCommit,
-          body: buildReviewBody(task, {
-            foldComments,
-            ...(latestCommit ? { latestCommit } : {}),
-            ...(mentionSelf !== undefined ? { mentionSelf } : {}),
-          }),
-          comments: foldComments ? [] : buildReviewComments(task),
-        });
-      const { url } =
-        existing ??
-        (await post(false).catch((error: unknown) => {
-          // 行へのコメントを受け付けられなかった（行が差分に無いなど）なら、本文に入れて投稿し直す
-          if (task.reviewComments.length > 0 && githubStatus(error) === 422) return post(true);
-          throw error;
-        }));
-      event = {
-        type: "PullRequestReviewPosted",
-        payload: { url, ...(latestCommit ? { latestCommit } : {}) },
-      };
+      // GitHub の一時的な失敗は、間を置いて自動でやり直す（PBI-301）。やり直しの間は止めないので、PR に「止まりました」の知らせも
+      // 出さない。上限を超えたら、今までどおり理由を記録して止まる。やり直しても、投稿済みのレビューは目印で見つけて二度投稿しない
+      event = await this.retryTransient(task.id, "reviewPost", usedSecrets, () =>
+        this.composeReviewPost(task, target, usedSecrets),
+      );
     } catch (error) {
+      if (error instanceof RetryAbandoned) return;
       event = {
         type: "TaskPaused",
         payload: { reason: "error", message: redactText(errorText(error), usedSecrets) },
@@ -3209,6 +3297,62 @@ export class TaskService {
         event.payload.url,
       );
     }
+  }
+
+  /** レビューを PR に投稿して、記録するイベント（PullRequestReviewPosted）を返す。投稿できなければ例外。 */
+  private async composeReviewPost(
+    task: Task,
+    target: NonNullable<Task["reviewTarget"]>,
+    usedSecrets: string[],
+  ): Promise<EventInput> {
+    // 認証・既存のレビューの検索・自分へのメンションに、同じアカウントを使う（トークンを取り出している間にプロジェクトの
+    // アカウントが変わっても、投稿するアカウントと違う人にメンションしないように。PR #197 レビュー指摘）
+    const project = this.deps.projects.get(task.projectId);
+    const token = await this.githubToken(task, target.repo, usedSecrets, project);
+    const account = project?.githubAccounts?.[httpsHost(`${target.repo}/`) ?? ""] ?? "";
+    const pr = { repo: target.repo, token, number: target.number };
+    // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
+    const existing = await this.deps.pulls.findReview({
+      ...pr,
+      account,
+      marker: reviewMarker(task),
+    });
+    // 投稿の直前に、PR の先頭がレビューしたコミットのままかを確かめる（PBI-111）。途中で push されていても、レビューは
+    // レビューしたコミットに対して投稿し、その旨を本文に書く（最新のコミットは「再レビュー」でレビューする）
+    // 先頭を読めない応答なら、確かめられないので投稿しない（一時停止し、再開すると確かめ直す）。すでに投稿したレビューが
+    // あれば、その本文に残した先頭を記録し直す（投稿の後・記録の前に止まったとき）
+    let latestCommit: string | undefined;
+    if (existing) {
+      latestCommit = postedLatestCommit(existing.body);
+    } else {
+      const head = (await this.deps.pulls.status(pr)).headSha?.trim() ?? "";
+      if (!/^[0-9A-Za-z]{7,64}$/.test(head)) throw new MessageError(message("review.headUnknown"));
+      latestCommit = head !== target.headCommit ? head : undefined;
+    }
+    // sacty の設定で選んでいれば、PR の作者ではなく自分（投稿するアカウント）にメンションする
+    const mentionSelf = this.deps.settings.get().reviewMentionSelf ? account : undefined;
+    const post = (foldComments: boolean) =>
+      this.deps.pulls.postReview({
+        ...pr,
+        commit: target.headCommit,
+        body: buildReviewBody(task, {
+          foldComments,
+          ...(latestCommit ? { latestCommit } : {}),
+          ...(mentionSelf !== undefined ? { mentionSelf } : {}),
+        }),
+        comments: foldComments ? [] : buildReviewComments(task),
+      });
+    const { url } =
+      existing ??
+      (await post(false).catch((error: unknown) => {
+        // 行へのコメントを受け付けられなかった（行が差分に無いなど）なら、本文に入れて投稿し直す
+        if (task.reviewComments.length > 0 && githubStatus(error) === 422) return post(true);
+        throw error;
+      }));
+    return {
+      type: "PullRequestReviewPosted",
+      payload: { url, ...(latestCommit ? { latestCommit } : {}) },
+    };
   }
 
   /**
@@ -4538,17 +4682,35 @@ export class TaskService {
 
   /**
    * プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。
-   * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに拒否する
-   * （PBI-274。照合と保存の間に待ちが無いので、同時に保存しても、先に保存した変更を後の保存が消さない）。
+   * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに、互いの変更を
+   * 併合して保存する（PBI-301）。併合できなければ（同じ項目を違うように変えたなど）拒否する。照合と保存の間に待ちが無いので、
+   * 同時に保存しても、先に保存した変更を後の保存が消さない。
    */
   saveProject(id: string | undefined, raw: unknown, base?: string): Project {
-    const definition = ProjectDefinition.parse(raw);
+    return this.saveProjectMerging(id, raw, base).project;
+  }
+
+  /** saveProject と同じ。読み込んだ後にほかの保存があって、併合して保存したかも返す（画面が、最新の設定を読み込み直すことを案内する）。 */
+  saveProjectMerging(
+    id: string | undefined,
+    raw: unknown,
+    base?: string,
+  ): { project: Project; merged: boolean } {
+    let definition = ProjectDefinition.parse(raw);
     const current = id ? this.deps.projects.get(id) : undefined;
     if (id && !current) {
       throw new InvalidOperationError(message("project.notFound"));
     }
-    if (current && base !== undefined && current.updatedAt !== base) {
-      throw new InvalidOperationError(message("project.changedElsewhere"));
+    let merged = false;
+    if (id && current && base !== undefined && current.updatedAt !== base) {
+      // 読み込んだ版の定義を元に、ほかの保存の変更と、この保存の変更を併合する。元の版が無い（古くて消えた）・併合できないなら拒否する
+      const original = this.deps.projects.revision(id, base);
+      const result = original
+        ? mergeProjectDefinitions(original, ProjectDefinition.parse(current), definition)
+        : undefined;
+      if (!result) throw new InvalidOperationError(message("project.changedElsewhere"));
+      definition = ProjectDefinition.parse(result);
+      merged = true;
     }
     // チケットの取り込み先の重複は、ホストの PF だけプロジェクトをまたいで調べる（コンテキストの PF はプロジェクトごと。
     // PBI-74）。設定を読めなければ、これまでどおりすべてを調べる
@@ -4567,7 +4729,7 @@ export class TaskService {
     const saved = this.deps.projects.put(id ?? randomUUID(), definition);
     // プロジェクトが増えると、数える実行待ちも変わる（PBI-118）
     this.trackQueue();
-    return saved;
+    return { project: saved, merged };
   }
 
   /** プロジェクトの定義をエクスポートする（個人の設定や秘密情報は含めない）。 */
@@ -5556,7 +5718,98 @@ export class TaskService {
     ) {
       this.announceReviewStop(updated);
     }
+    // 作り直した成果物が承認待ちになったとき、人に確かめてほしいこと（ゴールガーディアンが指摘の意図を判断できなかった理由・
+    // 実行が挙げた聞き返し）があれば、その PR にも知らせる（PBI-301。送るのは待たない）
+    if (humanAskDue(before, updated)) this.announceHumanAsks(updated);
     return updated;
+  }
+
+  /** 通知など、同じ対象（タスク・工程・提出回）では順に処理する処理の、最後の処理（キーごと）。 */
+  private readonly serialTails = new Map<string, Promise<void>>();
+
+  /**
+   * 同じキーの処理を、前の処理が終わってから始める（PBI-301）。先の処理が検索や通信の最中のまま、一時停止と再開などでもう1本
+   * 始まると、どちらも「まだ書いていない」と見て二重に投稿するため。後の処理は、先の処理の終了後に目印を探し直す。
+   */
+  private serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.serialTails.get(key) ?? Promise.resolve();
+    const run = previous.then(work);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.serialTails.set(key, tail);
+    void tail.then(() => {
+      if (this.serialTails.get(key) === tail) this.serialTails.delete(key);
+    });
+    return run;
+  }
+
+  /**
+   * 人に確かめてほしいこと（`humanAsks`）を、承認待ちの成果物の PR にコメントする（PBI-301）。PR を見ている人は sacty の
+   * 画面を開かないので、承認の画面に出すだけでは気づかれない。1 回の提出につき 1 件（目印で見つけたものがあれば書かない）。
+   * GitHub のアカウントを選んでいないプロジェクト・PR が無い成果物には書かない（画面には出る）。投稿できなくても、タスクは
+   * 変えない（例外は投げない）。
+   */
+  private announceHumanAsks(task: Task): void {
+    const asks = humanAsks(task);
+    const watched = gatePullRequest(task);
+    const gate = task.gate;
+    // セキュリティのタスクは、確かめたいこと（脆弱性や修正の範囲の詳細を含みうる）を公開の PR に書かない（承認の画面には出る）
+    if (isSecurityTask(task)) return;
+    if ((!asks.undecided && asks.confirms.length === 0) || !watched?.repo || !gate) return;
+    const repo = watched.repo;
+    const number = watched.number;
+    const project = this.deps.projects.get(task.projectId);
+    if (!project?.githubAccounts?.[httpsHost(`${repo}/`) ?? ""]) return;
+    const usedSecrets: string[] = [];
+    const base = (this.deps.webUrl ?? "http://127.0.0.1:4700").replace(/\/+$/, "");
+    void this.serialized(`human-ask:${task.id}:${gate.step}:${gate.submission}`, async () => {
+      // 期限は、順番を待った後の処理の始まりから数える
+      const signal = this.stopNoticeDeadline();
+      try {
+        const token = await untilAborted(
+          signal,
+          this.githubToken(task, repo, usedSecrets, project),
+        );
+        const body = buildHumanAskNotice({
+          taskId: task.id,
+          step: gate.step,
+          stepName: STEP_NAME[gate.step],
+          submission: gate.submission,
+          ...(asks.undecided
+            ? { undecided: { remarkIds: asks.undecided.remarkIds, reason: asks.undecided.reason } }
+            : {}),
+          confirms: asks.confirms.map((c) => ({ remarkId: c.remarkId, text: c.text })),
+          taskUrl: `${base}/tasks/${task.id}`,
+          secrets: usedSecrets,
+        });
+        if (!body) return;
+        const pr = { repo, token, number };
+        const existing = await untilAborted(
+          signal,
+          this.deps.pulls.findIssueComment({
+            ...pr,
+            marker: humanAskMarker(task.id, gate.step, gate.submission),
+          }),
+        );
+        if (existing) return;
+        // 確かめている間に、承認された・差し戻された・別の提出になったなら、書かない
+        const latest = this.tasks.get(task.id);
+        if (
+          latest?.status !== "awaiting_approval" ||
+          latest.gate?.step !== gate.step ||
+          latest.gate.submission !== gate.submission
+        ) {
+          return;
+        }
+        await untilAborted(signal, this.deps.pulls.commentIssue({ ...pr, body, signal }));
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の、人に確かめてほしいことを PR に知らせられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    });
   }
 
   /**
@@ -6274,6 +6527,8 @@ export class TaskService {
               awaitingExport(t) !== undefined ||
               // 承認した成果で頼まれた、PR・Issue へのコメントを投稿する
               awaitingGitHubComments(t) !== undefined ||
+              // PR のマージで承認する工程の、承認を待つ提出で頼まれたコメントを投稿する（PBI-301）
+              awaitingSubmittedGitHubComments(t) !== undefined ||
               // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
               this.awaitingStepPullRequest(t) !== undefined ||
               // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
@@ -6614,6 +6869,46 @@ export class TaskService {
   /** 実装の対象リポジトリの、タスクごとの clone の場所。 */
   private repoDir(task: Task): string {
     return join(this.deps.workspaceRoot, task.id, "repo");
+  }
+
+  /** 起点のコミットごとの、コミットメッセージの形の定め（commitSubjectFor が読んだもの）。 */
+  private readonly commitConventions = new Map<string, boolean>();
+
+  /**
+   * sacty が作るコミットの1行目（PBI-301 A8）。リポジトリが Conventional Commits の形（Commitizen・commitlint の設定、
+   * AGENTS.md・CONTRIBUTING などの決まり）を定めているときだけ、題に種類（feat・fix・docs）を付ける。定めは起点のコミットから
+   * 読む（エージェントが書き換えた作業領域は読まない。再開しても同じコミットになる）。読めなければ、定めが無いものとして題のまま。
+   */
+  private async commitSubjectFor(task: Task, kind: CommitKind, title: string): Promise<string> {
+    const baseCommit = task.repository?.baseCommit;
+    if (!baseCommit) return title;
+    const gitDir = this.trustedGitDir(task);
+    const key = `${gitDir}@${baseCommit}`;
+    let conventional = this.commitConventions.get(key);
+    if (conventional === undefined) {
+      const files: Record<string, string | undefined> = {};
+      let unreadable = false;
+      await Promise.all(
+        COMMIT_CONVENTION_FILES.map(async (path) => {
+          try {
+            files[path] = await this.deps.repos.readFile(gitDir, baseCommit, path);
+          } catch {
+            // 読めない（大きすぎる・文字でない・git を実行できない）ものは、定めを探す材料にしない
+            unreadable = true;
+          }
+        }),
+      );
+      conventional = detectCommitConvention(files);
+      // 起点のコミットの内容は変わらないので覚える。読めないものがあった回は、覚えずに次に読み直す
+      if (!unreadable) this.commitConventions.set(key, conventional);
+    }
+    return commitSubject(title, kind, conventional);
+  }
+
+  /** 実装のコミットの種類。文書だけの依頼は docs、不具合の修正は fix、それ以外は feat。 */
+  private implementCommitKind(task: Task): CommitKind {
+    if (task.documentsOnly === true) return "docs";
+    return verificationBasis(task) === "reproduce" ? "fix" : "feat";
   }
 
   /**
@@ -7013,6 +7308,11 @@ export class TaskService {
     // 承認した成果で頼まれたコメントは、次の工程の前に投稿する
     const commenting = initial && awaitingGitHubComments(initial);
     if (initial && commenting) return this.postGitHubComments(initial, commenting);
+    // PR のマージで承認する工程の、承認を待つ提出で頼まれたコメントは、承認を待たずに投稿する（PBI-301）
+    const submittedComments = initial && awaitingSubmittedGitHubComments(initial);
+    if (initial && submittedComments) {
+      return this.postGitHubComments(initial, submittedComments, "submitted");
+    }
     if (initial && awaitingVerification(initial)) {
       if (!(await this.syncBeforeVerify(initial))) return;
       return this.verify(this.mustGet(taskId));
@@ -7311,6 +7611,7 @@ export class TaskService {
     // レビューの工程は、エージェントを実行する（費用をかける）前に、対象の PR を確かめて記録する（PBI-19）
     if (step === "review" && !task.reviewTarget) {
       const resolved = await this.resolveReviewTarget(task);
+      if (!resolved.ok && resolved.abandoned) return;
       const latest = this.mustGet(task.id);
       if (latest.status !== "queued" || this.pauseRequested.has(task.id)) return;
       this.append(
@@ -9233,7 +9534,7 @@ export class TaskService {
         parent,
         files: { [path]: buildStepDocument(current, step) },
         branch,
-        message: `${buildStepPullRequestTitle(current, step)}\n\nsacty task ${current.id}`,
+        message: `${await this.commitSubjectFor(current, "docs", buildStepPullRequestTitle(current, step))}\n\nsacty task ${current.id}`,
         date: this.outputAt(current, step),
         // 新しい PR には、内容が同じでもコミットが要る（差分のコミットが無いと PR を作れない）
         allowEmpty: !reuse,
@@ -9485,7 +9786,7 @@ export class TaskService {
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        message: `${task.title}\n\nsacty task ${task.id}`,
+        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), task.title)}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
         // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
         // 内容が同じなので、そのコミットのままになる
@@ -9651,6 +9952,7 @@ export class TaskService {
     if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      const subject = await this.commitSubjectFor(task, this.implementCommitKind(task), task.title);
       const push = () =>
         this.deps.repos.publish({
           dir,
@@ -9658,7 +9960,7 @@ export class TaskService {
           baseCommit: task.repository?.baseCommit ?? parent,
           parent,
           branch,
-          message: `${task.title}\n\nsacty task ${task.id}`,
+          message: `${subject}\n\nsacty task ${task.id}`,
           // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
           date: task.lastReview?.at ?? task.createdAt,
           authEnv,
@@ -9907,7 +10209,8 @@ export class TaskService {
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
     if (task.status === "paused") throw new InvalidOperationError(message("pause.alreadyPaused"));
-    if (task.status === "awaiting_approval" || task.status === "escalated") {
+    // エスカレーション（人の判断待ち）は、止める作業が無いので止めない。承認待ち（マージ待ち）は止められる（PBI-301）
+    if (task.status === "escalated") {
       throw new InvalidOperationError(message("pause.awaitingPerson"));
     }
     if (task.status === "blocked" || task.status === "waiting_children") {
@@ -9916,6 +10219,17 @@ export class TaskService {
     const judging = openProposal(task);
     if (judging && !judging.judgement) {
       throw new InvalidOperationError(message("pause.guardianJudging"));
+    }
+    if (task.status === "awaiting_approval") {
+      // 実行中の処理は無いので、その場で一時停止を記録する。承認ゲートと PR の見守りは、再開するまで止まる。実装の PR は
+      // 作り直しの間と同じ扱いで、一時停止の間のマージは承認として進め、届いた指摘は残して再開のあとに反映する
+      if (this.cancelling.has(id) || this.mergeStopping.has(id)) {
+        throw new InvalidOperationError(message("pause.awaitingPerson"));
+      }
+      this.append(task, [
+        { actor: "person", event: { type: "TaskPaused", payload: { reason: "manual" } } },
+      ]);
+      return this.mustGet(id);
     }
     this.pauseRequested.add(id);
     this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
@@ -11172,13 +11486,43 @@ export class TaskService {
       run.agent.auth.mode === "subscription" ||
       run.agent.auth.mode === "stub" ||
       run.estimateCost === true;
-    const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
+    // CLI が実行の費用を報告していれば、それを使う。無ければ、モデルごとの使用量をそのモデルの単価で換算する（PBI-301）
+    const cost = runCost(run.agent, outcome);
+    const costUsd = cost.costUsd;
+    // 報告を使った実行と、モデルごとに換算した実行を記録する（使用量を工程のエージェントの単価で換算しただけの実行は、
+    // これまでと同じなので記録しない）
+    if (cost.source === "reported" || (cost.source && outcome.modelUsages?.length)) {
+      this.recordRunCost(run.runId, run.agent.id, cost);
+    }
     return {
       outcome,
       costUsd,
       estimated,
       ...(outcome.kind === "failed" && outcome.costUnknown ? { costUnknown: true as const } : {}),
     };
+  }
+
+  /** 実行の費用の出どころ（報告か換算か）を、実行中のタスクの作業履歴に記録する（PBI-301）。 */
+  private recordRunCost(runId: string, agentId: string, cost: RunCost): void {
+    const taskId = this.runningTask.getStore();
+    const task = taskId ? this.tasks.get(taskId) : undefined;
+    if (!task || task.status === "cancelled" || !cost.source) return;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "RunCostRecorded",
+          payload: {
+            runId,
+            agentId,
+            source: cost.source,
+            amountUsd: cost.costUsd,
+            convertedUsd: cost.convertedUsd,
+            ...(cost.unpricedModels.length > 0 ? { unpricedModels: cost.unpricedModels } : {}),
+          },
+        },
+      },
+    ]);
   }
 
   /** ゲートウェイのリトライを、実行中のタスクの作業履歴に記録する（PBI-37）。 */
@@ -13902,6 +14246,18 @@ function handedOverFeedback(
   return (task.handedOverFeedback ?? []).includes(item.key);
 }
 
+/**
+ * 人に確かめてほしいことを、PR に知らせる機会か（PBI-301）。承認待ちに入ったとき、または一時停止から同じ提出の承認待ちに
+ * 戻ったとき。承認待ちの間に別の記録が増えただけの変化では知らせ直さない。一時停止のあいだに知らせを書けなかった提出は、
+ * 再開のときにもう一度試す（書く前に目印で見つけたコメントを確かめるので、書き直さない）。
+ */
+function humanAskDue(before: Task | undefined, after: Task): boolean {
+  if (after.status !== "awaiting_approval" || !after.gate) return false;
+  const same =
+    before?.gate?.step === after.gate.step && before.gate.submission === after.gate.submission;
+  return !(before?.status === "awaiting_approval" && same);
+}
+
 /** 2つのコミットが同じか（長さが違っても、短い方が先頭に一致すれば同じ。大文字・小文字は区別しない）。 */
 function sameCommit(a: string, b: string): boolean {
   const x = a.trim().toLowerCase();
@@ -14026,9 +14382,32 @@ export function awaitingGitHubComments(task: Task): StepKey | undefined {
         step !== "review" &&
         approved !== undefined &&
         mentionsGitHubComments(approved.output) &&
-        task.githubComments?.[step]?.approvedAt !== approved.at
+        task.githubComments?.[step]?.approvedAt !== approved.at &&
+        // 承認を待つ間に、その提出の頼みを投稿済みなら、承認の後に重ねて投稿しない（PBI-301）
+        task.githubComments?.[step]?.submission !== approved.submission
       );
     });
+}
+
+/**
+ * PR のマージで承認する工程（実装・要求要件・設計）の、承認を待つ提出の成果で頼まれた PR・Issue へのコメントを、まだ
+ * 投稿していない工程（PBI-301）。マージを待たずに、指摘への返信などを、PR を見ている人が読めるようにする。承認の後の投稿
+ * （awaitingGitHubComments）と同じく、レビューの工程・セキュリティのタスク・中止・一時停止中・実行中は投稿しない。
+ * その提出の頼みは、1回だけ投稿する（承認されたら、承認の後には重ねて投稿しない）。
+ */
+export function awaitingSubmittedGitHubComments(task: Task): StepKey | undefined {
+  if (task.status !== "awaiting_approval" || isSecurityTask(task)) return undefined;
+  const gate = task.gate;
+  const pr = gatePullRequest(task);
+  if (!gate || gate.step === "review" || pr?.step !== gate.step || pr.state !== "open") {
+    return undefined;
+  }
+  const output = task.outputs[gate.step];
+  return output !== undefined &&
+    mentionsGitHubComments(output) &&
+    task.githubComments?.[gate.step]?.submission !== gate.submission
+    ? gate.step
+    : undefined;
 }
 
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */

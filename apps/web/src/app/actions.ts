@@ -477,6 +477,8 @@ export type SaveProjectState = {
   saved?: boolean;
   contextError?: string;
   conflict?: boolean;
+  /** 読み込んだ後にほかの保存があったので、互いの変更を併合して保存した（画面は最新ではない。PBI-301）。 */
+  merged?: boolean;
   updatedAt?: string;
 };
 
@@ -517,9 +519,11 @@ export async function saveProjectAction(
       ? renderMessage(result.contextError, (await getMessages()).locale)
       : undefined;
   refresh();
+  // 併合して保存したときは、画面の内容が保存した内容と違う（ほかの保存の変更を見ていない）ので、版を進めない。
+  // 進めずに続けて保存しても、元の版との差で併合し直されるので、ほかの保存の変更は消えない
   return {
     saved: true,
-    updatedAt: result.project.updatedAt,
+    ...(result.merged ? { merged: true } : { updatedAt: result.project.updatedAt }),
     ...(contextError ? { contextError } : {}),
   };
 }

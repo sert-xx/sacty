@@ -20,6 +20,7 @@ import { voidRemarkAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
 import { DiscardedReviewNotice } from "@/components/discarded-review";
 import { GateForm } from "@/components/gate-form";
+import { HumanAskNotice } from "@/components/human-ask";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
 import {
@@ -133,6 +134,7 @@ export function ReviewView({ task }: { task: Task }) {
 
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-6">
+          <HumanAskNotice task={task} />
           <DiscardedReviewNotice task={task} />
           {fromProposal && (
             <section

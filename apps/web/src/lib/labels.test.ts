@@ -2281,3 +2281,45 @@ describe("代わりのエージェントへの切り替え（AgentFellBack）", 
     );
   });
 });
+
+describe("差し戻しの判断の文は、作業履歴の行に要点、詳細に全文を出す（PBI-301）", () => {
+  const judged = (payload: Record<string, unknown>) =>
+    ({
+      type: "ReworkJudged",
+      payload: { agentId: "g", costUsd: 0.5, estimated: false, ...payload },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-11-04T00:00:00.000Z",
+      actor: "guardian",
+    }) as unknown as ActivityEvent;
+  const long = `決定を変えない指摘なので、実装に戻す。指摘の行は R-8 と合っている。${"詳しい理由が続く。".repeat(80)}`;
+
+  it("長い判断の文は、行には先頭の 2 文だけを出し、全文は詳細に出す（記録は全文のまま）", () => {
+    const parts = describeEventParts(judged({ target: "implement", reason: long }), ja);
+    expect(parts.text).toMatch(
+      /^戻し先：実装（決定を変えない指摘なので、実装に戻す。指摘の行は R-8 と合っている。・.*\$0\.5/,
+    );
+    expect(parts.text).not.toContain("詳しい理由が続く");
+    expect(parts.detail).toBe(long);
+    expect(parts.text.length).toBeLessThan(100);
+    // 英語の画面でも同じ
+    const en = describeEventParts(judged({ target: "implement", reason: long }), labels.en);
+    expect(en.detail).toBe(long);
+    expect(en.text).not.toContain("詳しい理由が続く");
+  });
+
+  it("短い判断の文と、判断できなかった行は、これまでどおり（詳細なし）", () => {
+    const short = describeEventParts(judged({ target: "design", reason: "設計を変える。" }), ja);
+    expect(short.text).toMatch(/^戻し先：設計（設計を変える。・/);
+    expect(short.detail).toBeUndefined();
+    const undecided = describeEventParts(judged({ reason: "どの行か読み取れない。" }), ja);
+    expect(undecided.text).toMatch(/^戻し先：判断できない（どの行か読み取れない。・/);
+    expect(undecided.detail).toBeUndefined();
+    // 判断を採用しなかった記録には、判断の文が無いので詳細も出さない
+    const dropped = describeEventParts(judged({ reason: long, runResult: "interrupted" }), ja);
+    expect(dropped.detail).toBeUndefined();
+    expect(dropped.text).not.toContain("詳しい理由");
+  });
+});

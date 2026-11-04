@@ -9,6 +9,7 @@ import {
 } from "@sacty/core";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
+import { summarizeDecision } from "@/lib/decision-summary";
 
 type PullRequestMessages = ReturnType<typeof useMessages>["parts"]["pullRequest"];
 
@@ -102,6 +103,7 @@ export function PullRequestCard({ task }: { task: Task }) {
   const { step, text } = messages.labels;
   // 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58・PBI-57）
   const rework = task.prRework;
+  const reworkReason = summarizeDecision(rework ? text(rework.reason) : "");
   return (
     <section
       aria-labelledby="pull-request"
@@ -188,9 +190,20 @@ export function PullRequestCard({ task }: { task: Task }) {
             <>
               <dt className="pt-0.5 text-xs text-muted-foreground">{m.rework}</dt>
               <dd>
+                {/* 判断の文は長い（600〜1,000 文字）ので、要点（先頭の 1〜2 文）を先に出し、全文は開いて読む（PBI-301） */}
                 {rework.decided
-                  ? m.reworkJudged(step[rework.target], text(rework.reason))
-                  : m.reworkUndecided(step[rework.target], text(rework.reason))}
+                  ? m.reworkJudged(step[rework.target], reworkReason.summary)
+                  : m.reworkUndecided(step[rework.target], reworkReason.summary)}
+                {reworkReason.full && (
+                  <details data-testid="rework-reason-full" className="pt-1">
+                    <summary className="w-fit cursor-pointer text-xs text-accent-foreground underline">
+                      {messages.labels.event.more}
+                    </summary>
+                    <span className="block whitespace-pre-line pt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                      {reworkReason.full}
+                    </span>
+                  </details>
+                )}
                 {rework.cause && (
                   <span className="block text-xs text-muted-foreground">
                     {m.reworkCause(messages.labels.reworkCause[rework.cause])}

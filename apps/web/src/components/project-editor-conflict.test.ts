@@ -62,6 +62,8 @@ const submit = () =>
       .querySelector("form")
       ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
+const saveButton = () =>
+  [...container.querySelectorAll("button")].find((b) => b.textContent === t.save);
 const reloadButton = () =>
   [...container.querySelectorAll("button")].find((b) => b.textContent === t.reloadLatest);
 
@@ -116,5 +118,30 @@ describe("設定の画面は、読み込んだ版を保存に添える（PBI-274
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("重複しています。");
     expect(reloadButton()).toBeUndefined();
     expect(container.textContent).not.toContain(t.reloadLatestNote);
+  });
+});
+
+describe("読み込んだ後にほかの保存があって、併合して保存したとき（PBI-301）", () => {
+  it("併合したことと再読み込みのボタンを出し、再読み込みするまで保存を止める（古い基準の版のまま保存して、自分の直前の変更を取り消せないようにする）", async () => {
+    results = [{ saved: true, merged: true }, {}];
+    render();
+    expect(reloadButton()).toBeUndefined();
+    expect(saveButton()?.disabled).toBe(false);
+    await submit();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(t.savedMerged);
+    expect(reloadButton()).toBeDefined();
+    expect(saveButton()?.disabled).toBe(true);
+    // フォームの送信も受け付けない（送ると、読み込んだ版のまま併合し直され、足した対象を消せない）
+    await submit();
+    expect(sent).toEqual(["2026-10-30T00:00:01.000Z"]);
+  });
+
+  it("併合しない保存では、これまでどおり「保存しました」で、再読み込みのボタンは出ない", async () => {
+    results = [{ saved: true, updatedAt: "2026-10-30T00:00:02.000Z" }];
+    render();
+    await submit();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(t.saved);
+    expect(reloadButton()).toBeUndefined();
+    expect(saveButton()?.disabled).toBe(false);
   });
 });

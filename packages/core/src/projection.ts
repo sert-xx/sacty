@@ -182,6 +182,8 @@ export type TaskRemark = {
   response?: string;
   /** 対応を書いた提出回。 */
   respondedIn?: number;
+  /** 対応と一緒に、工程エージェントが人に確かめたいこととして挙げたこと（PBI-301）。対応と同じ提出回のものだけ持つ。 */
+  confirm?: string;
   /**
    * この指摘を渡した実行が提出された提出回（回答の有無にかかわらず）。無ければ、まだその工程の実行がこの指摘を
    * 見て提出していない（差し戻しの直しの対象）。承認のあとに上流へ戻して再実行するとき、対応済みの古い指摘を
@@ -532,7 +534,7 @@ export type Task = {
    * 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。
    * 子タスクの完了を待っていたタスクは、その待ちに戻す（PBI-27）。
    */
-  resumeTo?: "queued" | "idle" | "waiting_children";
+  resumeTo?: "queued" | "idle" | "waiting_children" | "awaiting_approval";
   steps: { key: StepKey; state: StepState }[];
   /** 工程ごとの最新の出力。 */
   outputs: Partial<Record<StepKey, string>>;
@@ -1237,13 +1239,25 @@ export function applyEvent(
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
         const step = event.payload.step;
         const submission = (task.submissions[step] ?? 0) + 1;
-        const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r.text]));
+        const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r]));
         task.remarks = task.remarks.map((r) => {
           if (r.step !== step || r.voided) return r;
-          const text = responses.get(r.id);
-          return text === undefined
-            ? { ...r, response: undefined, respondedIn: undefined, submittedIn: submission }
-            : { ...r, response: text, respondedIn: submission, submittedIn: submission };
+          const response = responses.get(r.id);
+          return response === undefined
+            ? {
+                ...r,
+                response: undefined,
+                respondedIn: undefined,
+                confirm: undefined,
+                submittedIn: submission,
+              }
+            : {
+                ...r,
+                response: response.text,
+                respondedIn: submission,
+                confirm: response.confirm,
+                submittedIn: submission,
+              };
         });
       }
       break;
@@ -1866,6 +1880,10 @@ export function applyEvent(
       task.reviewTarget = event.payload;
       break;
 
+    case "ReviewGitHubRetried":
+      // 記録だけ（GitHub の一時的な失敗で、間を置いてやり直した。PBI-301）
+      break;
+
     case "PullRequestReviewPosted": {
       // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する。
       // 行へのコメントだけのレビューもあるので、本文が空でも書き終えたものとして扱う
@@ -1931,11 +1949,21 @@ export function applyEvent(
 
     case "GitHubCommentsPosted": {
       const p = event.payload;
-      if (task.approved[p.step]?.at !== p.approvedAt) {
-        throw new ActivityIntegrityError(event, "not the approved output of the step");
-      }
-      if (task.githubComments?.[p.step]?.approvedAt === p.approvedAt) {
-        throw new ActivityIntegrityError(event, "already posted");
+      if (p.submission !== undefined) {
+        // 承認を待つ提出の頼みを、承認の前に投稿した（PBI-301）
+        if (task.gate?.step !== p.step || task.gate.submission !== p.submission) {
+          throw new ActivityIntegrityError(event, "not the submission awaiting approval");
+        }
+        if (task.githubComments?.[p.step]?.submission === p.submission) {
+          throw new ActivityIntegrityError(event, "already posted");
+        }
+      } else {
+        if (task.approved[p.step]?.at !== p.approvedAt) {
+          throw new ActivityIntegrityError(event, "not the approved output of the step");
+        }
+        if (task.githubComments?.[p.step]?.approvedAt === p.approvedAt) {
+          throw new ActivityIntegrityError(event, "already posted");
+        }
       }
       task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
       break;
@@ -2109,6 +2137,10 @@ export function applyEvent(
 
     case "AiRequestsRetried":
       // 記録だけ（作業履歴で確かめる。PBI-37）
+      break;
+
+    case "RunCostRecorded":
+      // 記録だけ（費用の出どころ。費用そのものは、実行の結果のイベントが持つ。PBI-301）
       break;
 
     case "AgentFellBack":
@@ -2383,10 +2415,12 @@ export function applyEvent(
         ];
         break;
       }
+      // 承認待ち（マージ待ち）でも止められる（PBI-301）。承認ゲート（gate）はそのまま残し、再開すると承認待ちに戻る
       if (
         task.status !== "queued" &&
         task.status !== "idle" &&
-        task.status !== "waiting_children"
+        task.status !== "waiting_children" &&
+        task.status !== "awaiting_approval"
       ) {
         throw new ActivityIntegrityError(event, `pause while ${task.status}`);
       }
@@ -2701,8 +2735,8 @@ export function applyEvent(
         clearChosenSteps(task);
       }
       task.status =
-        task.resumeTo === "waiting_children"
-          ? "waiting_children"
+        task.resumeTo === "waiting_children" || task.resumeTo === "awaiting_approval"
+          ? task.resumeTo
           : event.payload.retry
             ? "queued"
             : "idle";
@@ -3050,6 +3084,48 @@ export function discardedAiReviews(task: Task):
     number,
     head: last.head,
     items: mine.flatMap((d) => d.items.map((item) => ({ ...item, head: d.head }))),
+  };
+}
+
+/**
+ * 承認の画面と PR のコメントで、人に気づいてほしいこと（PBI-301）。今の承認待ちの提出に対する、次の2つ。
+ * - undecided：PR の指摘の戻し先を、ゴールガーディアンが判断できなかった（`prRework.decided` が偽）。実装をやり直しているが、
+ *   指摘の意図を読み取れていないので、直した結果が意図と合うかを指摘した人が確かめる。理由はゴールガーディアンが書いた文。
+ * - confirms：工程エージェントが、指摘への対応と一緒に挙げた「人に確かめたいこと」（聞き返し・推測で決めたこと）。
+ * 今の提出が受けた指摘（無効にしたものを除く）についてだけ。承認待ちでなければ、どちらも無い。
+ */
+export function humanAsks(task: Task): {
+  undecided?: { step: StepKey; reason: string; remarkIds: string[] };
+  confirms: { remarkId: string; step: StepKey; text: string }[];
+} {
+  const gate = task.gate;
+  if (task.status !== "awaiting_approval" || !gate) return { confirms: [] };
+  const mine = task.remarks.filter(
+    (r) => r.step === gate.step && !r.voided && r.submittedIn === gate.submission,
+  );
+  const confirms = mine.flatMap((r) =>
+    r.confirm?.trim() && r.respondedIn === gate.submission
+      ? [{ remarkId: r.id, step: r.step, text: r.confirm.trim() }]
+      : [],
+  );
+  const rework = task.prRework;
+  // 実行に失敗した・出力を読めなかったとき（理由が sacty の文言）は、指摘の読み方ではないので出さない
+  const reason = typeof rework?.reason === "string" ? rework.reason.trim() : "";
+  // 判断した指摘のうち、今の提出が受けたもの。その後に別の差し戻しがあれば（指摘の回が進んでいれば）、古い判断は出さない
+  const latestRound = Math.max(0, ...mine.map((r) => r.round));
+  const judged =
+    rework && !rework.decided && rework.target === gate.step && rework.round === latestRound
+      ? rework
+      : undefined;
+  const remarkIds =
+    judged && reason !== ""
+      ? mine.filter((r) => judged.remarkIds.includes(r.id)).map((r) => r.id)
+      : [];
+  return {
+    ...(judged && remarkIds.length > 0
+      ? { undecided: { step: gate.step, reason, remarkIds } }
+      : {}),
+    confirms,
   };
 }
 

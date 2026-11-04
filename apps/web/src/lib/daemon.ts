@@ -381,7 +381,7 @@ export async function saveProject(
   definition: ProjectDefinitionInput,
   base?: string,
 ): Promise<
-  | { ok: true; project: Project; contextError?: DaemonText }
+  | { ok: true; project: Project; merged?: true; contextError?: DaemonText }
   | { ok: false; message: string; conflict?: true }
 > {
   const res = await daemonFetch(id ? `/api/projects/${encodeURIComponent(id)}` : "/api/projects", {
@@ -407,10 +407,15 @@ export async function saveProject(
     return { ok: false, message: await inputMessage(res) };
   }
   await ensureOk(res);
-  const json = (await res.json()) as { project: Project; contextError?: DaemonText };
+  const json = (await res.json()) as {
+    project: Project;
+    merged?: true;
+    contextError?: DaemonText;
+  };
   return {
     ok: true,
     project: json.project,
+    ...(json.merged ? { merged: true as const } : {}),
     ...(json.contextError !== undefined ? { contextError: json.contextError } : {}),
   };
 }

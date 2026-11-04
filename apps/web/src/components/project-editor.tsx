@@ -61,6 +61,9 @@ export function ProjectEditor({
     ? [...new Set([...hostPlatforms, ...projectPlatforms.platforms.map((p) => p.name)])]
     : hostPlatforms;
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
+  // 併合して保存した後の画面は、ほかの保存の変更を見ていない。続けて保存すると、元の版との差で併合し直されるため、自分が足した
+  // 対象を消すなどの変更が取り消される。再読み込みして最新の設定を見るまで、保存を止める（PBI-301）
+  const mergedStale = state.merged === true;
   // 設定を読み込んだときの版。保存するときに送り、その後にほかの保存で変わっていれば、上書きせずに知らせる（PBI-274）。
   // 自分が保存したら、その版に進める（画面の再取得では進めない。ほかの保存の内容を見ていないため）
   const [baseUpdatedAt, setBaseUpdatedAt] = useState(project?.updatedAt ?? "");
@@ -167,6 +170,7 @@ export function ProjectEditor({
       // 表示だけが最初の選択肢に戻ってしまう（状態は変わらないので書き直されない）。送信は自分で呼び出す
       onSubmit={(e) => {
         e.preventDefault();
+        if (mergedStale) return;
         const data = new FormData(e.currentTarget);
         startTransition(() => formAction(data));
       }}
@@ -794,8 +798,20 @@ export function ProjectEditor({
       )}
       {state.saved && !state.message && !state.contextError && (
         <p role="status" className="text-sm text-accent-foreground">
-          {t.saved}
+          {state.merged ? t.savedMerged : t.saved}
         </p>
+      )}
+      {/* 併合して保存した。画面はほかの保存の変更を見ていないので、読み込み直して確かめる（PBI-301） */}
+      {state.saved && state.merged && (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => window.location.reload()}
+          className="w-fit"
+        >
+          <RefreshCwIcon aria-hidden="true" />
+          {t.reloadLatest}
+        </Button>
       )}
       {/* 保存したが、コンテキストに誤りがある（PBI-76） */}
       {state.saved && state.contextError && (
@@ -808,7 +824,11 @@ export function ProjectEditor({
           {t.githubRequired}
         </p>
       )}
-      <Button type="submit" disabled={pending || needsAccount} className="min-h-11 w-fit px-6">
+      <Button
+        type="submit"
+        disabled={pending || needsAccount || mergedStale}
+        className="min-h-11 w-fit px-6"
+      >
         {project ? t.save : t.create}
       </Button>
     </form>

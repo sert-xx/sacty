@@ -536,7 +536,7 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     expect(buildPullRequestBody(task({ outputs: {} }))).not.toContain("- 変更：");
   });
 
-  it("説明が1段落だけなら、結論の要約と「変更」の節で重ねない。複数の段落なら「変更」の節に全文を出す", () => {
+  it("説明が1段落だけなら、結論の要約と「変更」の節で重ねない。複数の段落なら「変更」の節に、結論に載せた最初の段落を除いた残りを出す（PBI-301 A7）", () => {
     const one = buildPullRequestBody(
       task({ outputs: { implement: "キャンセル API を足しました。" } }),
     );
@@ -549,7 +549,10 @@ describe("実装の PR の本文：作業の報告を載せない（PBI-264）",
     ).toContain("- 変更：一覧に列を足した テストを足した");
     expect(one).not.toContain("## 変更");
     const many = buildPullRequestBody(task());
-    expect(many).toContain("## 変更\n\n予約のキャンセル API と画面の操作を足しました。");
+    expect(many).toContain("## 変更\n\n- `npm test`：成功");
+    // 結論に載せた最初の段落は、「変更」の節に重ねない（結論の1回だけ）
+    expect(many.match(/予約のキャンセル API と画面の操作を足しました。/g)).toHaveLength(1);
+    expect(many).toContain("- 変更：予約のキャンセル API と画面の操作を足しました。");
     expect(many).not.toContain("コミット・プッシュ");
   });
 

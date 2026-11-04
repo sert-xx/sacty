@@ -672,6 +672,11 @@ export type AgentConfig = {
   /** ゲートウェイ経由（Codex × Bedrock のとき。openai-compatible は endpoint.viaGateway。PBI-37）。 */
   via_gateway: boolean;
   price: PricePerMTok;
+  /**
+   * 同じ接続先（provider）で使えるモデルごとの単価（available_models）。実行の中で別のモデル（サブエージェントなど）が
+   * 使われたとき、そのモデルの単価で換算する（PBI-301）。単価が無いモデルは price（このエージェントの単価）で換算する。
+   */
+  modelPrices?: Record<string, PricePerMTok>;
   /** OpenAI 互換の接続先（auth.mode が provider のとき。PBI-40）。 */
   endpoint?: { name: string; baseUrl: string; secret?: string; viaGateway: boolean };
   /** 利用制限に達したときに代わりに使うエージェントの名前（上から順に。使えるものだけ）。 */
@@ -1027,6 +1032,9 @@ function buildAgents(
       runtime: agent.runtime,
       ...connectionOf(key, provider),
       price: toPrice(price),
+      modelPrices: Object.fromEntries(
+        Object.entries(provider.available_models).map(([model, p]) => [model, toPrice(p)]),
+      ),
     };
   }
   for (const { provider, model, ids } of unpriced.values()) {
@@ -1292,8 +1300,8 @@ providers:
   #     secret: claude-oauth-token
   #   available_models:
   #     claude-haiku-5-5: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
-  #     claude-sonnet-5-5: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
-  #     claude-opus-5-5: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+  #     claude-sonnet-5-5: { input: 2, cached_input: 0.1, cache_write: 2.5, output: 10 }
+  #     claude-opus-5-5: { input: 5, cached_input: 0.25, cache_write: 6.25, output: 25 }
   #   # Amazon Bedrock（APIキー）
   #   # auth: { mode: bedrock, secret: bedrock-api-key, region: us-east-1 }
 
@@ -1336,8 +1344,8 @@ budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
   # 工程の組み合わせごとの予算（書いていない組み合わせは default_per_task_usd）。オーケストレーターが組み合わせを選んだときに上限を変える
   # per_plan_usd:
-  #   standard: 3
-  #   split: 10
+  #   standard: 30
+  #   split: 100
   # 完了したタスクの監査の、1回あたりの上限（タスクの予算とは別）
   default_per_audit_usd: ${DEFAULT_AUDIT_BUDGET_USD}
 

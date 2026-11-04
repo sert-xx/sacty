@@ -272,7 +272,15 @@ export const Remark = z.object({
 export type Remark = z.infer<typeof Remark>;
 
 /** 工程エージェントの、指摘への対応。 */
-export const RemarkResponse = z.object({ remarkId: z.string(), text: z.string() });
+export const RemarkResponse = z.object({
+  remarkId: z.string(),
+  text: z.string(),
+  /**
+   * 人に確かめたいこと（PBI-301）。指摘の意図を読み取れず推測で直した・消えた値を作り直した・求められていない範囲を変えた、
+   * など。承認の画面と PR のコメントで人に知らせる。無ければ確かめたいことは無い。以前の作業履歴には無い。
+   */
+  confirm: z.string().optional(),
+});
 
 /**
  * 工程エージェントが提出の前に行ったセルフレビュー（既定のスキル review-dispatch の self-review。PBI-120）の報告。
@@ -1421,6 +1429,26 @@ const AiRequestsRetried = z.object({
   }),
 });
 
+/**
+ * 実行の費用の出どころ（PBI-301）。実行の終わりに、実行ごとに記録する（記録だけで、費用は変えない。実行の費用は、その実行の結果の
+ * イベントが持つ）。reported：エージェントの CLI が報告した実行の費用（Claude Code の total_cost_usd）を、実行の費用にした。
+ * converted：使用量を単価で換算した（モデルごとの使用量があれば、そのモデルの単価で）。convertedUsd は、設定の単価で換算したら
+ * いくらか（報告があったときも持つ。報告との差を確かめるため）。unpricedModels は、設定に単価が無く、工程のエージェントの単価で
+ * 換算したモデル。
+ */
+const RunCostRecorded = z.object({
+  type: z.literal("RunCostRecorded"),
+  payload: z.object({
+    runId: z.string(),
+    agentId: z.string(),
+    source: z.enum(["reported", "converted"]),
+    /** 実行の費用として使った額（予算には、実行の結果のイベントが入れる。ここでは足さない）。 */
+    amountUsd: z.number().nonnegative(),
+    convertedUsd: z.number().nonnegative(),
+    unpricedModels: z.array(z.string()).optional(),
+  }),
+});
+
 /** 写したエージェントの元のファイル1つ（PBI-66）。path は、実行の agent/ の場所からの相対パス（区切りは /）。 */
 export const ArchivedAgentFile = z.object({
   path: z.string().min(1),
@@ -2302,6 +2330,24 @@ const ReviewTargetResolved = z.object({
 });
 
 /**
+ * Sacty のレビューのタスクが、GitHub の一時的な失敗（5xx・レート制限・ネットワークの失敗など）で処理を終えられず、間を置いて
+ * 自動でやり直す（PBI-301）。やり直す前に1回ずつ記録する。回数の上限を超えたら記録せずに、今までどおり一時停止する。
+ * where は、やり直す処理（reviewTarget：レビューの対象の PR の確認、reviewPost：レビューの投稿）。attempt は何回目のやり直しか。
+ */
+const ReviewGitHubRetried = z.object({
+  type: z.literal("ReviewGitHubRetried"),
+  payload: z.object({
+    where: z.enum(["reviewTarget", "reviewPost"]),
+    attempt: z.number().int().positive(),
+    maxAttempts: z.number().int().positive(),
+    /** やり直すまで待つ時間（ミリ秒）。 */
+    waitMs: z.number().int().nonnegative(),
+    /** 失敗の理由（秘密の値は伏せたもの）。 */
+    message: DaemonText,
+  }),
+});
+
+/**
  * レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。これでタスクは完了する（PBI-19）。
  * latestCommit は、投稿の直前に確かめた PR の先頭が、レビューしたコミットと違ったときの、その先頭（PBI-111。レビューは、
  * レビューしたコミットに対して投稿し、その旨を本文に書く）。
@@ -2338,12 +2384,17 @@ const IssueCommentFailed = z.object({
  * 承認した工程の成果でエージェントが頼んだ、GitHub の PR・Issue へのコメント（sacty-github-comments）を、sacty が
  * 投稿した・投稿できなかった。コメントごとに結果を持つ。頼みの JSON を読めなければ、failed（理由）だけを持つ。
  * 承認し直したら（approvedAt が変わる）、その版の頼みを投稿する。タスクの状態・工程は変えない（投稿できなくても止めない）。
+ * PR のマージで承認する工程（実装・要求要件・設計）は、承認を待たずに、提出した成果が承認待ちになったときに投稿する
+ * （PR を見ている人が、指摘への返信にその場で気づけるように。PBI-301）。そのときは submission（何回目の提出か）を持ち、
+ * approvedAt は空。
  */
 const GitHubCommentsPosted = z.object({
   type: z.literal("GitHubCommentsPosted"),
   payload: z.object({
     step: StepKey,
     approvedAt: z.string(),
+    /** 承認の前に、承認待ちの提出の頼みを投稿したときの提出の回。承認の後に投稿したときは無い。 */
+    submission: z.number().int().positive().optional(),
     results: z
       .array(
         z.object({
@@ -2986,6 +3037,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewFailed,
   OrchestratorFailed,
   AiRequestsRetried,
+  RunCostRecorded,
   AgentFellBack,
   AgentSessionArchived,
   AgentRunTimedOut,
@@ -3016,6 +3068,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IssueCommentFailed,
   GitHubCommentsPosted,
   ReviewTargetResolved,
+  ReviewGitHubRetried,
   PullRequestReviewPosted,
   ReviewRestarted,
   BranchPushed,

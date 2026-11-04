@@ -1,7 +1,12 @@
 import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { errorText } from "./errors.js";
-import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
+import {
+  apiError,
+  GitHubIssueSearch,
+  GitHubPullRequests,
+  isTransientGitHubFailure,
+} from "./github.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -1268,6 +1273,52 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
       await expect(client.editIssueComment({ ...base, id: 1, body: "b" })).rejects.toThrow("期限");
     });
 
+    it("sacty が頼みで投稿したコメント（指摘への返信など）は、そのアカウントのものだけ、PR の指摘に取り込まない（PBI-301）", async () => {
+      const reply =
+        "<!-- sacty-comment:t1:implement:submission-1:0 -->\nご指摘の件は、こう直します";
+      const { impl } = fakeFetch([
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", reply),
+            comment(2, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(3, "mallory", reply),
+            comment(4, "sacty-bot", "同じアカウントの、目印の無いコメント"),
+          ],
+        },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        ...pr,
+        account: "sacty-bot",
+      });
+      expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3", "comment:4"]);
+    });
+
+    it("人に確かめてほしいことの投稿（PBI-301）は、sacty のタスクのアカウントのものだけ、PR の指摘に取り込まない", async () => {
+      const ask =
+        "<!-- sacty-human-ask:t1:implement:2 -->\n## Sacty：人に確かめてほしいことがあります";
+      const { impl } = fakeFetch([
+        { status: 200, json: [] },
+        { status: 200, json: [] },
+        {
+          status: 200,
+          json: [
+            comment(1, "sacty-bot", ask),
+            comment(2, "alice", "人間のコメント"),
+            // 他人が目印をまねても、人間の指摘として取り込む（指摘を隠されないように）
+            comment(3, "mallory", ask),
+            // 目印の無い、同じアカウントのコメントは除かない
+            comment(4, "sacty-bot", "同じアカウントの、目印の無いコメント"),
+          ],
+        },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({ ...pr, account: "sacty-bot" });
+      expect(feedback.map((f) => f.key)).toEqual(["comment:2", "comment:3", "comment:4"]);
+    });
+
     it("ほかに知っている sacty のアカウント（noticeAccounts）の止まったことの投稿も除く（それ以外のコメントは除かない）", async () => {
       const comments = [
         comment(1, "other-project-bot", notice("t3")),
@@ -1790,4 +1841,38 @@ describe("元のタスクと違うアカウントの sacty のレビュー（PBI
       expect(feedback.map((f) => f.key)).toEqual(["review:2", "review:4", "review_comment:6"]);
     });
   }
+});
+
+describe("一時的な失敗か（PBI-301）", () => {
+  const failure = (status: number, detail = "") =>
+    apiError("getPr", status, detail ? { message: detail } : {});
+
+  it("GitHub の 5xx・429・レート制限と説明する 403・接続の失敗は一時的", () => {
+    for (const status of [500, 502, 503, 504, 429]) {
+      expect(isTransientGitHubFailure(failure(status)), String(status)).toBe(true);
+    }
+    expect(isTransientGitHubFailure(failure(403, "API rate limit exceeded"))).toBe(true);
+    expect(isTransientGitHubFailure(failure(403, "You have exceeded a secondary rate limit"))).toBe(
+      true,
+    );
+    expect(isTransientGitHubFailure(new TypeError("fetch failed"))).toBe(true);
+    expect(
+      isTransientGitHubFailure(Object.assign(new Error("boom"), { cause: { code: "ETIMEDOUT" } })),
+    ).toBe(true);
+  });
+
+  it("権限・見つからない・トークン・入力の誤りと、GitHub の失敗でないエラーは一時的でない", () => {
+    expect(isTransientGitHubFailure(failure(401, "Bad credentials"))).toBe(false);
+    expect(isTransientGitHubFailure(failure(403, "Resource not accessible"))).toBe(false);
+    expect(isTransientGitHubFailure(failure(403))).toBe(false);
+    for (const status of [400, 404, 410, 422]) {
+      expect(isTransientGitHubFailure(failure(status)), String(status)).toBe(false);
+    }
+    expect(isTransientGitHubFailure(new Error("GitHub API 503"))).toBe(false);
+    expect(
+      isTransientGitHubFailure(Object.assign(new Error("x"), { cause: { code: "EACCES" } })),
+    ).toBe(false);
+    expect(isTransientGitHubFailure("fetch failed")).toBe(false);
+    expect(isTransientGitHubFailure(undefined)).toBe(false);
+  });
 });
