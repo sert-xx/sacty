@@ -1034,9 +1034,13 @@ function deliverableBodyLines(deliverable: string): string[] {
 /** 指摘の ID（`<工程>-<回>-<番号>`）。作業の報告が、どの指摘に合わせたかを書くときに出てくる。 */
 const REMARK_ID_IN_TEXT =
   /\b(?:requirements|design|implement|investigate|reproduce|review|document|split|integrate|deployment)-\d+-\d+\b/;
-/** 作業の経過・結果の報告を見分ける語（〜しました・セルフレビュー・コミット・プッシュなど）。成果物の本体は「〜する」「〜とき」の現在形で書く。 */
+/**
+ * 作業の経過・結果の報告を見分ける語（文書を書き直した・足したなどの、書き手の作業を言う「〜ました」・セルフレビュー・
+ * コミット・プッシュなど）。成果物の本体は「〜する」「〜とき」の現在形で書く。背景を述べる「〜ました」（「2024 年に廃止され
+ * ました」「障害が起きました」）は本文の要約にもありうるので、作業を言う動詞のときだけ報告とみなす（DA の見直し）。
+ */
 const WORK_REPORT_WORDS =
-  /ました|ませんでした|セルフレビュー|コミット・プッシュ|プッシュ(?:は|も)しません|プッシュ(?:は|も)していません/;
+  /(?:直し|足し|書き|外し|戻し|加え|まとめ|改め|分け|確かめ|反映し|修正し|更新し|追記し|追加し|削除し|作成し|整理し|対応し|変更し|見直し|置き換え|確認し)(?:ました|ませんでした)|セルフレビュー|コミット・プッシュ|プッシュ(?:は|も)しません|プッシュ(?:は|も)していません/;
 
 /** 段落が、作業の経過・結果の報告か。 */
 function isWorkReportParagraph(paragraph: string): boolean {
@@ -2153,10 +2157,26 @@ const INTERNAL_NAME_HITS_MAX = 20;
  */
 export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit[] {
   const hits: InternalNameHit[] = [];
+  // ファイルごとの、変更前からある名前（消した行・前後の行にある名前）。すでにリポジトリが使っている名前を書き直した行は、
+  // 持ち込みではないので見つけない（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など。DA の見直し）
+  const existing = new Map<string, Set<string>>();
+  const namesIn = (text: string) =>
+    [...text.matchAll(new RegExp(INTERNAL_NAME_SOURCE, "g"))].map((m) => m[0]);
   let path = "";
+  let oldPath = "";
   let line = 0;
+  let inHunk = false;
   for (const text of diff.split("\n")) {
-    if (text.startsWith("+++ ")) {
+    if (text.startsWith("diff --git ")) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk && text.startsWith("--- ")) {
+      const name = text.slice(4).trim();
+      oldPath = name === "/dev/null" ? "" : name.replace(/^a\//, "");
+      continue;
+    }
+    if (!inHunk && text.startsWith("+++ ")) {
       const name = text.slice(4).trim();
       path = name === "/dev/null" ? "" : name.replace(/^b\//, "");
       continue;
@@ -2164,19 +2184,23 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
     if (hunk) {
       line = Number(hunk[1]);
+      inHunk = true;
       continue;
     }
+    if (!inHunk) continue;
     if (text.startsWith("+")) {
       const name = internalNameIn(text.slice(1), allowed);
-      if (name && path && hits.length < INTERNAL_NAME_HITS_MAX) {
-        hits.push({ path, line, name });
-      }
+      if (name && path) hits.push({ path, line, name });
       line++;
-    } else if (text.startsWith(" ")) {
-      line++;
+    } else if (text.startsWith(" ") || text.startsWith("-")) {
+      const key = path || oldPath;
+      const seen = existing.get(key) ?? new Set<string>();
+      for (const name of namesIn(text.slice(1))) seen.add(name);
+      existing.set(key, seen);
+      if (text.startsWith(" ")) line++;
     }
   }
-  return hits;
+  return hits.filter((h) => !existing.get(h.path)?.has(h.name)).slice(0, INTERNAL_NAME_HITS_MAX);
 }
 
 /** タスクの依頼・承認済みの要求要件・設計の文（これらが挙げた内部の名前は、リポジトリに書いてよい）。 */

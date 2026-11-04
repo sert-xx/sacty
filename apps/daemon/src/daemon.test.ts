@@ -9514,6 +9514,47 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("差分の内部の名前が、起点のコミットのそのファイルにすでにあれば（リポジトリがもともと使う名前）、範囲外にしない（PBI-302 A1）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/docs/spec.md b/docs/spec.md",
+      "--- a/docs/spec.md",
+      "+++ b/docs/spec.md",
+      "@@ -1,1 +1,2 @@",
+      " # 仕様",
+      "+道具は `.sacty-tools/` に置き、検査の対象にしない。",
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    const reads: string[] = [];
+    repos.readFile = async (gitDir: string, commit: string, path: string) => {
+      if (path !== "docs/spec.md") return original(gitDir, commit, path);
+      reads.push(path);
+      return "# 仕様\n\n作業領域の `.sacty-tools/` は sacty の道具の置き場。\n";
+    };
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), passing], {
+      repos,
+    });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+    expect(reads).toEqual(["docs/spec.md"]);
+    expect(promptOf(executor, 4)).not.toContain('"path":"docs/spec.md"');
+    activity.close();
+  });
+
   it("最終レビューをやり直したとき、前の回が人が確かめることに挙げた項目を、2回目の判定が空でも引き継ぐ。理由を書いて外した項目だけ外す（PBI-294）", async () => {
     const RATE = "率の検査が Number() で読むので 1e1・0x10 も整数として受ける";
     const QUEUE = "範囲内か判断できない：queue.ts の直列化のキュー（設計に無い）";

@@ -172,6 +172,50 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
       expect(internalNamesInDiff(diff, internalNameAllowance(t))).toHaveLength(1);
     });
 
+    it("同じファイルの消した行・前後の行に同じ名前があれば、変更前からある名前の書き直しとして見つけない", () => {
+      // sacty 自身のリポジトリの文書が `.sacty-tools` を説明していて、その行を書き直した
+      const rewritten = [
+        "diff --git a/docs/spec/a.md b/docs/spec/a.md",
+        "--- a/docs/spec/a.md",
+        "+++ b/docs/spec/a.md",
+        "@@ -3,1 +3,1 @@",
+        "-道具は `.sacty-tools/` に置く。",
+        "+道具は作業領域の `.sacty-tools/` に置く（PR に入れない）。",
+      ].join("\n");
+      expect(internalNamesInDiff(rewritten)).toEqual([]);
+      // 前後の行（後ろにあっても）に同じ名前があるときも
+      const context = [
+        "diff --git a/docs/a.md b/docs/a.md",
+        "--- a/docs/a.md",
+        "+++ b/docs/a.md",
+        "@@ -1,1 +1,2 @@",
+        "+`.sacty-tools/` の下は検査しない。",
+        " 道具の置き場は `.sacty-tools/`。",
+      ].join("\n");
+      expect(internalNamesInDiff(context)).toEqual([]);
+      // 別の名前・別のファイルの名前は、変更前からあるものに数えない
+      const other = [
+        rewritten,
+        diffOf("scripts/c.js", ["// .sacty-tools/baseline", "// /tmp/agent-scratch/x"]),
+      ].join("\n");
+      expect(internalNamesInDiff(other).map((h) => `${h.path}:${h.name}`)).toEqual([
+        "scripts/c.js:.sacty-tools",
+        "scripts/c.js:/tmp/agent-scratch",
+      ]);
+      // 消した行が「--」で始まっても、ファイルの見出しと取り違えない
+      const dashes = [
+        "diff --git a/b.md b/b.md",
+        "--- a/b.md",
+        "+++ b/b.md",
+        "@@ -1,1 +1,1 @@",
+        "--- 古い区切り",
+        "+.sacty-tools の新しい行",
+      ].join("\n");
+      expect(internalNamesInDiff(dashes)).toEqual([
+        { path: "b.md", line: 1, name: ".sacty-tools" },
+      ]);
+    });
+
     it("名前が似ているだけの語（.sacty-tools-x ではない別名など）と、通常のパスは見つけない", () => {
       expect(internalNamesInDiff(diffOf("a.ts", ["import x from './sacty-input.js'"]))).toEqual([]);
       expect(internalNamesInDiff(diffOf("a.ts", ["// /home/me/sacty-input/x"]))).toEqual([]);

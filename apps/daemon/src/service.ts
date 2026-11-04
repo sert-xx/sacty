@@ -364,6 +364,7 @@ import {
   finalReviewUnreadableDetail,
   finalReviewVerdictIds,
   finalReviewViewpointIds,
+  type InternalNameHit,
   integrationViewpointIds,
   internalNameAllowance,
   internalNamesInDiff,
@@ -8840,6 +8841,35 @@ export class TaskService {
   }
 
   /**
+   * 差分の追加された行にある内部の名前のうち、起点のコミットのそのファイルにすでにある名前を除く（PBI-302 A1 の DA の見直し）。
+   * リポジトリがもともと使っている名前（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など）を足した行は、
+   * 持ち込みではない。起点に無いファイル・読めないファイルは、除かずに残す（見つけたまま）。
+   */
+  private async introducedInternalNames(
+    task: Task,
+    hits: readonly InternalNameHit[],
+  ): Promise<InternalNameHit[]> {
+    if (hits.length === 0 || !task.repository) return [...hits];
+    const repository = task.repository;
+    const base = new Map<string, string | undefined>();
+    for (const path of new Set(hits.map((h) => h.path))) {
+      try {
+        base.set(
+          path,
+          await this.deps.repos.readFile(
+            this.trustedGitDir(task),
+            workBaseCommit(repository, task.baseMerge),
+            path,
+          ),
+        );
+      } catch {
+        base.set(path, undefined);
+      }
+    }
+    return hits.filter((h) => !base.get(h.path)?.includes(h.name));
+  }
+
+  /**
    * 最終レビューの写しに入れる、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物。PBI-57）と、その
    * 内容を持つコミット。コミットは、最終レビューの前に作った実装の PR のコミット（CI を待つコミット）で、PR の中身そのもの
    * （人が PR の中で直してマージした内容を含む）。要求要件・設計の PR が無いタスク・既存の PR を引き継いだタスク・PR を
@@ -9104,7 +9134,10 @@ export class TaskService {
     const include = await this.stepDocumentsForReview(this.mustGet(task.id));
     // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
     // 変更として不合格にする（PBI-302 A1）
-    const internalNames = internalNamesInDiff(diff, internalNameAllowance(current));
+    const internalNames = await this.introducedInternalNames(
+      current,
+      internalNamesInDiff(diff, internalNameAllowance(current)),
+    );
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(

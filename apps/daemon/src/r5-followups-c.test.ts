@@ -50,6 +50,18 @@ describe("C1：要求要件・設計の本文の外にある作業の報告を�
     expect(withoutWorkReport(text)).toBe(`会議室の空き時間を返す API を足す。\n\n${BODY}`);
   });
 
+  it("見出しの前・区切り線の後ろの、背景を述べる「〜ました」は報告とみなさず残す", () => {
+    const background =
+      "旧 API は 2024 年に廃止されました。r5 で予約の重なりが起きました。この要求要件は、その代わりを定める。";
+    expect(withoutWorkReport(`${background}\n\n${BODY}`)).toBe(`${background}\n\n${BODY}`);
+    const note = `${BODY}\n\n---\n\n注：税率は 2019 年に改定されました。`;
+    expect(withoutWorkReport(note)).toBe(note);
+    // 同じ段落に作業の報告の語があれば取り除く（背景の文と混ざっていても）
+    expect(withoutWorkReport(`障害が起きました。そこで本文を書き直しました。\n\n${BODY}`)).toBe(
+      BODY,
+    );
+  });
+
   it("最後の区切り線の後ろが報告だけなら、区切り線ごと取り除く。区切り線の後ろに本文の節があれば残す", () => {
     expect(withoutWorkReport(`${BODY}\n\n---\n\nコミット・プッシュはしていません。`)).toBe(BODY);
     const kept = `${BODY}\n\n---\n\n## 付録\n\nセルフレビューという語を説明する節。`;
