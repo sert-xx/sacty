@@ -50,6 +50,21 @@ describe("C1：要求要件・設計の本文の外にある作業の報告を�
     expect(withoutWorkReport(text)).toBe(`会議室の空き時間を返す API を足す。\n\n${BODY}`);
   });
 
+  it("区切り線の後ろ・見出しの前のコードブロックは、中に報告の語があっても消さない（中の空行でも分けない）", () => {
+    const tail = `${BODY}\n\n---\n\n\`\`\`text\n更新しました\n\n保存しました\n\`\`\``;
+    expect(withoutWorkReport(tail)).toBe(tail);
+    // コードブロックと報告の段落が混ざるときは、報告の段落だけを消す（区切り線の後ろは、全部が報告ではないので残す）
+    const mixed = `${BODY}\n\n---\n\n直しました。\n\n~~~\n更新しました\n~~~`;
+    expect(withoutWorkReport(mixed)).toBe(mixed);
+    const head = `\`\`\`text\n更新しました\n\n反映しました\n\`\`\`\n\n直しました。\n\n${BODY}`;
+    expect(withoutWorkReport(head)).toBe(
+      `\`\`\`text\n更新しました\n\n反映しました\n\`\`\`\n\n${BODY}`,
+    );
+    // 閉じていないコードブロックも消さない
+    const open = `${BODY}\n\n---\n\n\`\`\`\n更新しました`;
+    expect(withoutWorkReport(open)).toBe(open);
+  });
+
   it("見出しの前・区切り線の後ろの、背景を述べる「〜ました」は報告とみなさず残す", () => {
     const background =
       "旧 API は 2024 年に廃止されました。r5 で予約の重なりが起きました。この要求要件は、その代わりを定める。";
@@ -337,6 +352,33 @@ describe("C3：観点 → テストの表で、同じテストを1回だけ出�
     expect(displayTestNames(["f.ts > A > t", "f.ts > t"])).toEqual(["f.ts > A > t"]);
   });
 
+  it("区切りの書き方（› と >）だけが違う名前は同じテストにし、最初の表記を残す", () => {
+    expect(displayTestNames(["f.ts › A › t", "f.ts > A > t"])).toEqual(["f.ts › A › t"]);
+    expect(displayTestNames(["f.ts > A > t", "f.ts › A › t", "f.ts › t"])).toEqual([
+      "f.ts > A > t",
+    ]);
+  });
+
+  it("短い名前・別のテスト・長い名前の順なら、長い名前を短い名前の位置（最初の位置）に置く", () => {
+    expect(displayTestNames(["f.ts › t", "g.ts › u", "f.ts › A › t"])).toEqual([
+      "f.ts › A › t",
+      "g.ts › u",
+    ]);
+    // 入れ子：いちばん長い名前を、最初に出てきた位置に 1 回だけ
+    expect(displayTestNames(["f.ts › t", "g.ts › u", "f.ts › B › t", "f.ts › A › B › t"])).toEqual([
+      "f.ts › A › B › t",
+      "g.ts › u",
+    ]);
+  });
+
+  it("空白の長い並びがあっても分けられる（正規表現の繰り返しで遅くならない書き方）", () => {
+    const spaces = " ".repeat(50_000);
+    expect(displayTestNames([`f.ts${spaces}›${spaces}t`, "f.ts › t"])).toEqual([
+      `f.ts${spaces}›${spaces}t`,
+    ]);
+    expect(displayTestNames([`f.ts${spaces}>${spaces}t`])).toHaveLength(1);
+  });
+
   it("書式の文字（%s %d %i %f %j %o %O %p %# %$）を値の印にする。%% は % にし、数字の直後の % は触らない", () => {
     expect(withoutFormatPlaceholders("rejects %j and %s, %d %i %f %o %O %p %# %$")).toBe(
       "rejects ‹…› and ‹…›, ‹…› ‹…› ‹…› ‹…› ‹…› ‹…› ‹…› ‹…›",
@@ -420,5 +462,31 @@ describe("C4：対象のリポジトリの外から集めた情報の書き方",
       );
     }
     expect(gatheredLines(task)).toEqual([]);
+  });
+});
+
+describe("表のセルのエスケープ（PR #304 の CodeQL）", () => {
+  it("表のセルでは、縦棒とバックスラッシュをどちらもエスケープし、元の \\| でセルが分かれない", () => {
+    const body = buildPullRequestBody(
+      taskOf({
+        testMap: [{ viewpointId: "REQ", tests: ["src/a.test.ts › splits a\\|b and c|d"] }],
+      }),
+    );
+    const row = body.split("\n").find((l) => l.startsWith("| REQ ")) ?? "";
+    expect(row).toContain("splits a\\\\\\|b and c\\|d");
+    // エスケープしていない縦棒は、表の区切りの 4 本だけ
+    expect(row.replace(/\\./g, "").split("|")).toHaveLength(5);
+  });
+
+  it("表の外のインラインコードのテストのコマンドは、エスケープを足さずにそのまま出す", () => {
+    const body = buildPullRequestBody(
+      taskOf({
+        lastReview: {
+          ...review(),
+          tests: { command: "npm test -- -t 'a\\.b|c'", exitCode: 0, output: "" },
+        },
+      }),
+    );
+    expect(body).toContain("`npm test -- -t 'a\\.b|c'`");
   });
 });

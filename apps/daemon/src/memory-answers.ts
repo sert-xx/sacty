@@ -1,4 +1,5 @@
 import type { Task } from "@sacty/core";
+import { splitLineContext } from "./prompts.js";
 
 /*
  * 監査が登録するメモリーに、そのタスクの依頼者が決めた答え（範囲・数値・有無・画面の要否など、そのタスクの要求そのもの）が、
@@ -14,15 +15,19 @@ export function requesterTexts(task: Task): string[] {
   return [
     task.title,
     task.body,
-    ...task.remarks.filter((r) => !r.voided && r.source !== "sacty_review").map((r) => r.text),
+    // 行へのコメントの指摘は、sacty が添えた行の内容（リポジトリの引用）を除いた、人が書いた本文だけ（PR #304 のレビュー）
+    ...task.remarks
+      .filter((r) => !r.voided && r.source !== "sacty_review")
+      .map((r) => splitLineContext(r.text).body),
     ...(task.resumeNotes ?? []),
   ].filter((text) => typeof text === "string" && text.trim() !== "");
 }
 
-/** 重なりを調べる、続く文字数（空白・記号を除いた後）。これより短い一致は偶然の一致として見逃す。 */
-const GRAM = 12;
-/** 異なる一致がこの数以上なら、写したと見なす（GRAM + この数 − 1 文字以上の連続した一致）。 */
-const GRAMS_COPIED = 3;
+/**
+ * 写したと見なす、連続した一致の文字数（空白・記号を除いた後）。これより短い一致は偶然の一致として見逃す。一致は、1つの依頼者の文の
+ * 中の連続した位置で数え、位置や文をまたいで合算しない（PR #304 のレビュー：12 文字の句が別々の文に 3 つあるだけで弾いていた）。
+ */
+const COPIED_RUN = 14;
 
 /** 比べるために、全角半角・大文字小文字をそろえ、空白・記号を除く。 */
 function squeeze(text: string): string[] {
@@ -46,8 +51,8 @@ function isProse(gram: string): boolean {
 
 function grams(chars: readonly string[]): Set<string> {
   const result = new Set<string>();
-  for (let i = 0; i + GRAM <= chars.length; i++) {
-    const gram = chars.slice(i, i + GRAM).join("");
+  for (let i = 0; i + COPIED_RUN <= chars.length; i++) {
+    const gram = chars.slice(i, i + COPIED_RUN).join("");
     if (isProse(gram)) result.add(gram);
   }
   return result;
@@ -79,10 +84,9 @@ export function memoryRequesterIssue(
   if (requester.length === 0) return undefined;
   const written = grams(squeeze(all));
   if (written.size === 0) return undefined;
-  const shared = new Set<string>();
+  // 14 文字の並び（連続した位置）が、1つの依頼者の文とそのまま重なれば、14 文字以上の連続した一致がある
   for (const text of requester) {
-    for (const gram of grams(squeeze(text))) if (written.has(gram)) shared.add(gram);
-    if (shared.size >= GRAMS_COPIED) return "requester_text_copied";
+    for (const gram of grams(squeeze(text))) if (written.has(gram)) return "requester_text_copied";
   }
   return undefined;
 }

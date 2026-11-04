@@ -216,6 +216,28 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
       ]);
     });
 
+    it("1 つの追加行にある名前をすべて挙げ、許可・変更前からある名前の除外は名前ごとにかける", () => {
+      // 同じ行に、変更前からある名前（.sacty-tools）と新しい名前（/tmp/agent-scratch）がある
+      const diff = [
+        "diff --git a/docs/a.md b/docs/a.md",
+        "--- a/docs/a.md",
+        "+++ b/docs/a.md",
+        "@@ -1,1 +1,1 @@",
+        "-道具は `.sacty-tools/` に置く。",
+        "+道具は `.sacty-tools/` に、記録は `/tmp/agent-scratch/` に置く。",
+      ].join("\n");
+      expect(internalNamesInDiff(diff)).toEqual([
+        { path: "docs/a.md", line: 1, name: "/tmp/agent-scratch" },
+      ]);
+      // 許可した名前と、許可していない名前が同じ行にある
+      const both = diffOf("scripts/c.js", ["x('.sacty-tools', '/sacty-input')"]);
+      expect(internalNamesInDiff(both, "依頼：.sacty-tools を使う").map((h) => h.name)).toEqual([
+        "/sacty-input",
+      ]);
+      // 同じ名前が 1 行に 2 回あっても 1 件
+      expect(internalNamesInDiff(diffOf("a.ts", [".sacty-tools と .sacty-tools"]))).toHaveLength(1);
+    });
+
     it("名前が似ているだけの語（.sacty-tools-x ではない別名など）と、通常のパスは見つけない", () => {
       expect(internalNamesInDiff(diffOf("a.ts", ["import x from './sacty-input.js'"]))).toEqual([]);
       expect(internalNamesInDiff(diffOf("a.ts", ["// /home/me/sacty-input/x"]))).toEqual([]);

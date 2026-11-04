@@ -1,6 +1,7 @@
 "use client";
 
 import type { Task } from "@sacty/core";
+import { WithHint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 /**
@@ -23,9 +24,12 @@ export function AiReviewNotice({ task }: { task: Task }) {
       }`}
     >
       <h2 id="ai-review" className="text-[15px] font-semibold">
-        {m.aiReview.title}
+        <WithHint hint={m.aiReview.hint}>{m.aiReview.title}</WithHint>
       </h2>
-      <p className="text-sm">{m.aiReview[state.status](head)}</p>
+      {/* 状態は画面を開いたままでも変わる（レビュー中 → 付いた）ので、スクリーンリーダーにも知らせる（PR #304 のレビュー） */}
+      <p role="status" className="text-sm">
+        {m.aiReview[state.status](head)}
+      </p>
       {state.status !== "attached" && (
         <p className="text-xs text-muted-foreground">{m.aiReview.help}</p>
       )}

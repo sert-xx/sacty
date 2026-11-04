@@ -696,6 +696,17 @@ export function lineContextText(context: { line: string; before: readonly string
   return `${LINE_CONTEXT_MARK}${quote(context.line)}${before}）`;
 }
 
+/**
+ * 指摘の文を、人が書いた本文と、sacty が後ろに添えた行の内容（lineContextText）に分ける（PR #304 のレビュー）。添えた行の内容は
+ * リポジトリのコードや文書の引用で、人が書いた文ではないので、依頼者の文として扱う所（メモリーの登録の前の検査など）では
+ * 本文だけを使う。添えた行の内容は、いつも改行のあとに目印から始まり、文の最後にある。
+ */
+export function splitLineContext(text: string): { body: string; lineContext?: string } {
+  const at = text.lastIndexOf(`\n${LINE_CONTEXT_MARK}`);
+  if (at < 0 || !text.endsWith("）")) return { body: text };
+  return { body: text.slice(0, at), lineContext: text.slice(at + 1) };
+}
+
 /** 行の内容を添えた指摘があるときの、読み方の注意（PBI-302 B3）。無ければ空。 */
 export function lineContextNote(remarkTexts: readonly string[]): string[] {
   if (!remarkTexts.some((text) => text.includes(LINE_CONTEXT_MARK))) return [];
@@ -1042,22 +1053,46 @@ const REMARK_ID_IN_TEXT =
 const WORK_REPORT_WORDS =
   /(?:直し|足し|書き|外し|戻し|加え|まとめ|改め|分け|確かめ|反映し|修正し|更新し|追記し|追加し|削除し|作成し|整理し|対応し|変更し|見直し|置き換え|確認し)(?:ました|ませんでした)|セルフレビュー|コミット・プッシュ|プッシュ(?:は|も)しません|プッシュ(?:は|も)していません/;
 
-/** 段落が、作業の経過・結果の報告か。 */
-function isWorkReportParagraph(paragraph: string): boolean {
-  return WORK_REPORT_WORDS.test(paragraph) || REMARK_ID_IN_TEXT.test(paragraph);
+/** 段落が、作業の経過・結果の報告か。コードブロックは、中に報告の語があっても報告ではない（コードの例など）。 */
+function isWorkReportParagraph(paragraph: Paragraph): boolean {
+  if (paragraph.code) return false;
+  const text = paragraph.lines.join("\n");
+  return WORK_REPORT_WORDS.test(text) || REMARK_ID_IN_TEXT.test(text);
 }
 
-/** 行を、空行で区切った段落（空行を含まない行の連なり）に分ける。 */
-function paragraphsOf(lines: readonly string[]): string[][] {
-  const out: string[][] = [];
+/** 空行で区切った段落。コードブロック（フェンスの行から閉じる行まで。中の空行を含む）は、1つの段落として code にする。 */
+type Paragraph = { lines: string[]; code: boolean };
+
+/** 行を、空行で区切った段落に分ける。コードブロックの中の空行では分けない（PR #304 のレビュー）。 */
+function paragraphsOf(lines: readonly string[]): Paragraph[] {
+  const out: Paragraph[] = [];
   let current: string[] = [];
+  let fence: CodeFence | undefined;
+  const flush = (code = false) => {
+    if (current.length > 0) out.push({ lines: current, code });
+    current = [];
+  };
   for (const line of lines) {
-    if (line.trim() === "") {
-      if (current.length > 0) out.push(current);
-      current = [];
-    } else current.push(line);
+    if (fence) {
+      current.push(line);
+      if (closesFence(line, fence)) {
+        fence = undefined;
+        flush(true);
+      }
+      continue;
+    }
+    const opened = openingFence(line);
+    if (opened) {
+      flush();
+      fence = opened;
+      current.push(line);
+      continue;
+    }
+    if (line.trim() === "") flush();
+    else current.push(line);
   }
-  if (current.length > 0) out.push(current);
+  // 閉じていないコードブロックは、最後までをコードブロックとして扱う
+  flush(fence !== undefined);
   return out;
 }
 
@@ -1102,15 +1137,15 @@ export function withoutWorkReport(output: string): string {
     if (
       tailParagraphs.length > 0 &&
       !tail.some((line) => /^ {0,3}#{1,6}\s/.test(line)) &&
-      tailParagraphs.every((p) => isWorkReportParagraph(p.join("\n")))
+      tailParagraphs.every(isWorkReportParagraph)
     ) {
       rest = rest.slice(0, lastRule - firstHeading);
     }
   }
   const paragraphs = paragraphsOf(head);
-  const kept = paragraphs.filter((p) => !isWorkReportParagraph(p.join("\n")));
+  const kept = paragraphs.filter((p) => !isWorkReportParagraph(p));
   if (kept.length !== paragraphs.length) {
-    head = kept.flatMap((p) => [...p, ""]);
+    head = kept.flatMap((p) => [...p.lines, ""]);
   }
   return trimBlankLines([...head, ...rest].join("\n"));
 }
@@ -2189,8 +2224,12 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
     }
     if (!inHunk) continue;
     if (text.startsWith("+")) {
-      const name = internalNameIn(text.slice(1), allowed);
-      if (name && path) hits.push({ path, line, name });
+      // 行の中の名前をすべて挙げる（許可と、変更前からある名前の除外は、名前ごとにかける。PR #304 のレビュー）
+      if (path) {
+        for (const name of new Set(namesIn(text.slice(1)))) {
+          if (!allowed.includes(name)) hits.push({ path, line, name });
+        }
+      }
       line++;
     } else if (text.startsWith(" ") || text.startsWith("-")) {
       const key = path || oldPath;
@@ -4950,8 +4989,17 @@ export function extractIntegrationReview(
   };
 }
 
-/** 表のセルに入れられるよう、改行と縦棒を置き換える。 */
-const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+/**
+ * 表のセルに入れられるよう、改行を空白にし、縦棒とバックスラッシュをエスケープする（バックスラッシュをエスケープしないと、
+ * 元の `\|` が `\\|` になって縦棒がセルを分ける。PR #304 の CodeQL）。
+ */
+const cell = (value: string) =>
+  value.replace(/\r?\n/g, " ").replace(/[\\|]/g, (char) => `\\${char}`);
+
+/**
+ * 表の外のインラインコード（`…`）に入れる1行。コードの中ではエスケープが効かず、そのまま見えるので、改行だけを空白にする。
+ */
+const codeLine = (value: string) => value.replace(/\r?\n/g, " ");
 
 /**
  * 改行を空白にして1行にする（改行の前後の空白と、空行は1つの空白にまとめる）。改行で分けて行ごとに整える：
@@ -5097,9 +5145,9 @@ function resultTableLines(task: Task): string[] {
     ),
     "",
     guardianTests
-      ? `テスト：\`${cell(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${environmentPassNote(guardianTests)}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
+      ? `テスト：\`${codeLine(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（ゴールガーディアンが実行。終了コード ${guardianTests.exitCode ?? "申告なし"}${environmentPassNote(guardianTests)}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
       : tests
-        ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
+        ? `テスト：\`${codeLine(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
         : task.noTestsReason
           ? "テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。"
           : "テスト：（未実行）",

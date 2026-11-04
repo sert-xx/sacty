@@ -737,6 +737,74 @@ describe("B6 監査が登録するメモリーに、依頼者の答えを書か�
     );
   });
 
+  it("一致は 1 つの依頼者の文の中の連続した位置で数える。13 文字までは写しと見なさない。別々の文・位置の短い一致を合算しない", () => {
+    const requester = [
+      "予約は十五分単位でそろえる",
+      "停止期間の予約は受け付けない",
+      "過去の時刻の予約は出さない",
+    ];
+    // 13 文字（空白・記号を除く）の連続した一致は見逃し、14 文字で写しとする
+    expect(
+      memoryRequesterIssue(memory("予約は必ず十五分単位でそろ"), [
+        "予約は必ず十五分単位でそろえる。",
+      ]),
+    ).toBeUndefined();
+    expect(
+      memoryRequesterIssue(memory("予約は必ず十五分単位でそろえ"), [
+        "前置き。予約は必ず十五分単位でそろえる。",
+      ]),
+    ).toBe("requester_text_copied");
+    // 12 文字ほどの句が 3 つ、別々の依頼者の文にあるだけ（14 文字の連続した一致は無い）
+    expect(
+      memoryRequesterIssue(
+        memory(
+          "- 予約は十五分単位でそろえ、停止期間の予約は受け付けず、過去の時刻の予約は出さない",
+        ),
+        requester.map((t) => t.slice(0, 12)),
+      ),
+    ).toBeUndefined();
+    // 同じ文の中でも、離れた位置の短い一致は合算しない
+    expect(
+      memoryRequesterIssue(memory("予約は十五分単位でそ／停止期間の予約は受け付"), [
+        "予約は十五分単位でそ。別の話。停止期間の予約は受け付",
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("人の指摘に sacty が添えた行の内容（リポジトリの引用）は、依頼者の文として照らさない", () => {
+    const quoted = lineContextText({
+      line: "予約は十五分単位で受け付け、停止期間の予約は拒否する",
+      before: ["## 予約のルール"],
+    });
+    const t = base({
+      remarks: [
+        {
+          id: "implement-1-1",
+          step: "implement",
+          round: 1,
+          text: `README.md:12：ここの説明を今の振る舞いに合わせて直してください\n${quoted}`,
+          voided: false,
+        },
+      ] as never,
+    });
+    const list = requesterTexts(t);
+    expect(list).toContain("README.md:12：ここの説明を今の振る舞いに合わせて直してください");
+    expect(list.some((x) => x.includes("停止期間の予約は拒否する"))).toBe(false);
+    // 引用と同じ既存の仕様を書いたメモリーは登録できる。人が書いた本文そのものを写したら、今までどおり弾く
+    expect(
+      memoryRequesterIssue(
+        memory("README の予約のルール：予約は十五分単位で受け付け、停止期間の予約は拒否する"),
+        list,
+      ),
+    ).toBeUndefined();
+    expect(
+      memoryRequesterIssue(
+        memory("メモ：ここの説明を今の振る舞いに合わせて直してください。そのとおり"),
+        list,
+      ),
+    ).toBe("requester_text_copied");
+  });
+
   const output = (memories: unknown[]) =>
     `\`\`\`json\n${JSON.stringify({ "sacty-audit-findings": { summary: "", findings: [], memories } })}\n\`\`\``;
   const context = {
