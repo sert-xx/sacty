@@ -156,26 +156,41 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
     expect(plain).toContain("- 最終レビュー：合格。合格基準を満たす");
   });
 
-  it("所見が長いときは、結論には文の切れ目までの頭だけを出し、全文は折りたたむ", () => {
-    const sentence = "境界の入力をテストで確かめている。";
-    const summary = sentence.repeat(60);
+  it("所見が長いときは、結論には文の切れ目までの頭だけを出し、折りたたみにはその続きだけを出す（同じ文を重ねない）", () => {
+    const summary = Array.from(
+      { length: 60 },
+      (_, i) => `${i + 1}番目の境界をテストで確かめている。`,
+    ).join("");
     const body = buildPullRequestBody(task({ lastReview: review({ summary }) }));
     const conclusion = body.slice(body.indexOf("## 結論"), body.indexOf("## 要求要件"));
     const line = conclusion.split("\n").find((l) => l.startsWith("- 最終レビュー："));
     expect(line?.length).toBeLessThan(300);
     expect(line?.endsWith("。")).toBe(true);
-    // 全文は折りたたみの中にある
-    const folded = body.slice(body.indexOf("<summary>ゴールガーディアンの最終レビュー（全文）"));
-    expect(folded).toContain(summary);
-    expect(body.split(summary).length - 1).toBe(1);
+    const lead = (line ?? "").replace("- 最終レビュー：合格。", "");
+    // 折りたたみには続きだけがあり、全文は本文のどこにも1回も重ならない
+    const folded = body.slice(body.indexOf("<summary>ゴールガーディアンの最終レビュー（続き）"));
+    expect(folded).toContain(summary.slice(lead.length));
+    expect(body.split(lead).length - 1).toBe(1);
+    expect(body).not.toContain("（全文）");
+    // 頭と続きをつなぐと、元の所見になる
+    expect(`${lead}${summary.slice(lead.length)}`).toBe(summary);
   });
 
-  it("所見が短くて再発の確認も無ければ、全文の折りたたみを出さない", () => {
-    expect(buildPullRequestBody(task())).not.toContain("最終レビュー（全文）");
+  it("結論の頭が文の切れ目の無いまま途中で切れたときは、続きを「…」で始める", () => {
+    const summary = "あ".repeat(500);
+    const body = buildPullRequestBody(task({ lastReview: review({ summary }) }));
+    expect(body).toContain(`- 最終レビュー：合格。${"あ".repeat(240)}…`);
+    expect(body).toContain(`…${"あ".repeat(260)}`);
+  });
+
+  it("所見が短くて再発の確認も無ければ、続きの折りたたみを出さない。再発の確認だけなら、それだけを出す", () => {
+    expect(buildPullRequestBody(task())).not.toContain("ゴールガーディアンの最終レビュー（");
     const remarks = [{ remarkId: "implement-1-1", notRecurred: true, reason: "直した" }];
     const body = buildPullRequestBody(task({ lastReview: review({ remarks }) }));
-    expect(body).toContain("最終レビュー（全文）");
+    expect(body).toContain("<summary>ゴールガーディアンの最終レビュー（再発の確認）</summary>");
     expect(body).toContain("- implement-1-1：再発なし（直した）");
+    // 結論の文は、折りたたみに重ねない
+    expect(body.split("変更は最小限で、境界のテストも通っている。")).toHaveLength(2);
   });
 
   it("最終レビューが無い・検証中のときも、結論に状態を書く", () => {
@@ -186,7 +201,7 @@ describe("実装の PR の本文：結論を冒頭に置く（PBI-264）", () =>
       verifying: true,
     }).main;
     expect(verifying).toContain("- 最終レビュー：（検証中です。");
-    expect(verifying).not.toContain("最終レビュー（全文）");
+    expect(verifying).not.toContain("ゴールガーディアンの最終レビュー（");
   });
 
   it("人が不合格のまま進めた記録も、冒頭の結論に置く", () => {
@@ -583,7 +598,7 @@ describe("PR テンプレートに沿わせる本文（PBI-264。既存の仕様
     expect(main).not.toContain("コミット・プッシュはしていません");
     expect(main).toContain("ケース 1 ほか 5 件");
     expect(main).toContain("<summary>sacty の記録</summary>");
-    expect(main).toContain("ゴールガーディアンの最終レビュー（全文）");
+    expect(main).toContain("ゴールガーディアンの最終レビュー（続き）");
     // 人が確かめることは footer（最後）に置く
     expect(footer).toContain("- [ ] 実機で確かめる");
     expect(footer).toContain("この PR をマージすると");

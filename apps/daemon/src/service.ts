@@ -384,6 +384,7 @@ import {
   verificationBasis,
   viewpointRename,
   withoutInternalPaths,
+  withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -8107,8 +8108,12 @@ export class TaskService {
             output: extractDocumentPages(extracted.output).output,
           }
         : undefined;
-    const output =
-      review?.output ?? reproduction?.output ?? documentPages?.output ?? extracted.output;
+    // 要求要件・設計は、最後のメッセージがそのまま成果物になる。文書の外に書かれた作業の報告は、sacty が取り除く（PBI-302 C1）
+    const deliverable =
+      step === "requirements" || step === "design"
+        ? withoutWorkReport(extracted.output)
+        : extracted.output;
+    const output = review?.output ?? reproduction?.output ?? documentPages?.output ?? deliverable;
     const events: { actor: Actor; event: EventInput }[] = [
       ...(handedOverKeys.length > 0
         ? [
@@ -8148,7 +8153,7 @@ export class TaskService {
                     checkProvenance(
                       extracted.provenance,
                       inputs,
-                      provenanceIds(provenanceStep, extracted.output, testViewpoints),
+                      provenanceIds(provenanceStep, deliverable, testViewpoints),
                       provenanceStep === "design"
                         ? viewpointRename(extracted.viewpointPositions)
                         : undefined,

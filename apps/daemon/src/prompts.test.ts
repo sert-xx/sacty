@@ -1528,9 +1528,11 @@ describe("成果の書き出し（PBI-56）", () => {
     const body = buildPullRequestBody(task);
     // 結論に載せた最初の段落（箇条書きの質問）は「変更」の節に重ねない。中身の無くなった見出しも残さない（PBI-301 A7）
     expect(body).toContain("- 変更：決済の再試行は3回まででよいですか？");
+    // 説明が自分の見出しから始まるので、中身の無い「## 変更」を重ねない（PBI-302 C2）
     expect(body).toContain(
-      "## 変更\n\n## 棚卸し\n\n| 場所 | 扱い |\n| --- | --- |\n| README.md | そのまま参照する |\n",
+      "## 棚卸し\n\n| 場所 | 扱い |\n| --- | --- |\n| README.md | そのまま参照する |\n",
     );
+    expect(body).not.toContain("## 変更\n");
     expect(body.match(/決済の再試行は3回まででよいですか？/g)).toHaveLength(1);
     expect(body).not.toContain("## 人に確かめること");
     // テンプレートに沿わせるときの「変更」は、全文
