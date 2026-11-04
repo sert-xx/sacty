@@ -1822,6 +1822,61 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await expect(workspace.readFile(gitDir, "HEAD", path)).rejects.toThrow();
   });
 
+  it("任意の名前の読み方（anyName）は、日本語・空白・記号の名前も読み、リポジトリの外へ出るパス・シンボリックリンクは読まない（PR #304 のレビュー）", async () => {
+    const origin = makeOrigin();
+    mkdirSync(join(origin, "docs"));
+    const names = ["docs/日本語.md", "docs/guide name.md", 'docs/q"t.md', "docs/a*b.md"];
+    for (const name of names) writeFileSync(join(origin, name), `${name} の本文\n`);
+    writeFileSync(join(origin, "docs/x.md"), "x\n");
+    symlinkSync("../pay.ts", join(origin, "docs/リンク.md"));
+    git(origin, "add", "--all");
+    git(origin, "commit", "--quiet", "-m", "names");
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "n.git");
+    const { baseCommit } = await workspace.prepare(join(dir, "n"), gitDir, origin, "main");
+    for (const name of names) {
+      expect(await workspace.readFile(gitDir, baseCommit, name, { anyName: true }), name).toBe(
+        `${name} の本文\n`,
+      );
+      // ほかの読み方（anyName を付けない）は、これまでどおり受け付けない
+      await expect(workspace.readFile(gitDir, baseCommit, name), name).rejects.toThrow(
+        /パスが不正/,
+      );
+    }
+    // パスの指定の特別な書き方として読まない（* は字のまま。docs/x.md に一致させない）
+    expect(await workspace.readFile(gitDir, baseCommit, "docs/*.md", { anyName: true })).toBe(
+      undefined,
+    );
+    expect(
+      await workspace.readFile(gitDir, baseCommit, ":(glob)docs/*.md", { anyName: true }),
+    ).toBe(undefined);
+    // 無いファイルは undefined。シンボリックリンクは通常のファイルでないので読まない
+    expect(await workspace.readFile(gitDir, baseCommit, "docs/無い.md", { anyName: true })).toBe(
+      undefined,
+    );
+    await expect(
+      workspace.readFile(gitDir, baseCommit, "docs/リンク.md", { anyName: true }),
+    ).rejects.toThrow(/通常のファイルではありません/);
+    // リポジトリの外・.git・オプションに見えるもの・制御文字は受け付けない
+    for (const bad of [
+      "../x.md",
+      "docs/../../x.md",
+      "./pay.ts",
+      ".git/config",
+      "docs/.GIT/config",
+      "/etc/passwd",
+      "-x.md",
+      "docs//x.md",
+      "docs/a\nb.md",
+      "",
+    ]) {
+      await expect(
+        workspace.readFile(gitDir, baseCommit, bad, { anyName: true }),
+        JSON.stringify(bad),
+      ).rejects.toThrow(/パスが不正/);
+    }
+  });
+
   it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {
     const origin = makeOrigin();
     git(origin, "config", "receive.denyCurrentBranch", "ignore");

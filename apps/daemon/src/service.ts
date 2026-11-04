@@ -388,6 +388,7 @@ import {
   selectablePlans,
   servicePromptLines,
   skippedFilesLines,
+  type UncheckedInternalName,
   verificationBasis,
   viewpointRename,
   withoutInternalPaths,
@@ -8869,30 +8870,39 @@ export class TaskService {
   /**
    * 差分の追加された行にある内部の名前のうち、起点のコミットのそのファイルにすでにある名前を除く（PBI-302 A1 の DA の見直し）。
    * リポジトリがもともと使っている名前（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など）を足した行は、
-   * 持ち込みではない。起点に無いファイル・読めないファイルは、除かずに残す（見つけたまま）。
+   * 持ち込みではない。起点に無いファイル（新しく足したファイル）は、除かずに残す（見つけたまま）。
+   * 起点のファイルを読めない（通常のファイルでない・大きすぎる・テキストでないなど）ときは、もともとある名前かを確かめられないので、
+   * 範囲外の変更にはせず、読めなかった理由とともに unchecked に分ける（誤って不合格にしない。PR #304 のレビュー）。
+   * 日本語・空白を含む名前のファイルも読めるよう、任意の名前の相対パスとして読む（anyName）。
    */
   private async introducedInternalNames(
     task: Task,
     hits: readonly InternalNameHit[],
-  ): Promise<InternalNameHit[]> {
-    if (hits.length === 0 || !task.repository) return [...hits];
+  ): Promise<{ introduced: InternalNameHit[]; unchecked: UncheckedInternalName[] }> {
+    if (hits.length === 0 || !task.repository) return { introduced: [...hits], unchecked: [] };
     const repository = task.repository;
-    const base = new Map<string, string | undefined>();
+    const base = new Map<string, { text?: string; error?: string }>();
     for (const path of new Set(hits.map((h) => h.path))) {
       try {
-        base.set(
+        const text = await this.deps.repos.readFile(
+          this.trustedGitDir(task),
+          workBaseCommit(repository, task.baseMerge),
           path,
-          await this.deps.repos.readFile(
-            this.trustedGitDir(task),
-            workBaseCommit(repository, task.baseMerge),
-            path,
-          ),
+          { anyName: true },
         );
-      } catch {
-        base.set(path, undefined);
+        base.set(path, text === undefined ? {} : { text });
+      } catch (error) {
+        base.set(path, { error: renderMessage(errorText(error), "ja") });
       }
     }
-    return hits.filter((h) => !base.get(h.path)?.includes(h.name));
+    const introduced: InternalNameHit[] = [];
+    const unchecked: UncheckedInternalName[] = [];
+    for (const hit of hits) {
+      const read = base.get(hit.path);
+      if (read?.error !== undefined) unchecked.push({ ...hit, reason: read.error });
+      else if (!read?.text?.includes(hit.name)) introduced.push(hit);
+    }
+    return { introduced, unchecked };
   }
 
   /**
@@ -9161,12 +9171,12 @@ export class TaskService {
     // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
     // 変更として不合格にする（PBI-302 A1）
     // 件数は、起点にある名前を除いた後で絞る（PR #304 のレビュー）
-    const internalNames = limitInternalNames(
-      await this.introducedInternalNames(
-        current,
-        internalNamesInDiff(diff, internalNameAllowance(current)),
-      ),
+    const sortedNames = await this.introducedInternalNames(
+      current,
+      internalNamesInDiff(diff, internalNameAllowance(current)),
     );
+    const internalNames = limitInternalNames(sortedNames.introduced);
+    const uncheckedInternalNames = limitInternalNames(sortedNames.unchecked);
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(
@@ -9294,6 +9304,7 @@ export class TaskService {
           hide,
           ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
           ...(internalNames.length > 0 ? { internalNames } : {}),
+          ...(uncheckedInternalNames.length > 0 ? { uncheckedInternalNames } : {}),
           internalAllowance: internalNameAllowance(current),
           ...(documentsOnly ? { documentsOnly } : {}),
         },

@@ -230,7 +230,12 @@ export interface RepositoryWorkspace {
    * ファイル。PBI-63）。作業領域・利用者の git の設定は使わない。ファイルが無ければ undefined。通常のファイルでない・
    * 大きすぎる・UTF-8 のテキストでなければエラー。コミットは取得済みであること。
    */
-  readFile(gitDir: string, commit: string, path: string): Promise<string | undefined>;
+  readFile(
+    gitDir: string,
+    commit: string,
+    path: string,
+    options?: ReadFileOptions,
+  ): Promise<string | undefined>;
   /**
    * コミットのそのパスがシンボリックリンクなら、リンクの先（書かれたままの文字列）を返す。そうでなければ（無い・通常の
    * ファイル・ディレクトリ）undefined。デプロイの確認のスキル（PBI-89）のリンクを、リポジトリの中でたどるため。
@@ -447,10 +452,35 @@ function validBranch(branch: string): boolean {
 /** コミットに書くファイルのパスとして受け付けるか（リポジトリの中の相対パス。.git・. と .. を含まない）。 */
 function validPath(path: string): boolean {
   if (!/^[\w./-]+$/.test(path)) return false;
+  return safeSegments(path);
+}
+
+function safeSegments(path: string): boolean {
   return path
     .split("/")
     .every((p) => p !== "" && p !== "." && p !== ".." && p.toLowerCase() !== ".git");
 }
+
+/**
+ * リポジトリの中の相対パスとして読めるか（readFile の anyName。PR #304 のレビュー）。日本語・空白・記号を含む名前も受け付ける。
+ * 外へ出られないこと（絶対パス・`..`・`.git`）、制御文字・オプションに見える先頭の `-` を含まないことは validPath と同じに守る。
+ * 読むのは git のオブジェクトからで、作業領域のファイルシステムをたどらない（シンボリックリンクは通常のファイルでないので読まない）。
+ */
+function validRelativePath(path: string): boolean {
+  if (path === "" || path.startsWith("/") || path.startsWith("-")) return false;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 制御文字を拒否するため
+  if (/[\u0000-\u001f\u007f]/.test(path)) return false;
+  return safeSegments(path);
+}
+
+/** readFile の読み方。 */
+export type ReadFileOptions = {
+  /**
+   * パスに、英数字と `._/-` 以外（日本語・空白・記号）を含んでもよい（差分に出てきた、リポジトリの任意のファイルを読むとき。
+   * PR #304 のレビュー）。リポジトリの外へ出るパスは、これまでどおり受け付けない。
+   */
+  anyName?: boolean;
+};
 
 export class GitRepositoryWorkspace implements RepositoryWorkspace {
   /**
@@ -1092,8 +1122,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return out.split("\0").filter(Boolean);
   }
 
-  async readFile(gitDir: string, commit: string, path: string) {
-    const blob = await this.readBlob(gitDir, commit, path);
+  async readFile(gitDir: string, commit: string, path: string, options: ReadFileOptions = {}) {
+    const blob = await this.readBlob(gitDir, commit, path, options.anyName === true);
     return blob && new TextDecoder("utf-8", { fatal: true }).decode(blob.bytes);
   }
 
@@ -1105,10 +1135,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     gitDir: string,
     commit: string,
     path: string,
+    anyName = false,
   ): Promise<{ bytes: Buffer; mode: string; object: string } | undefined> {
     if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
-    if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
-    const env = isolatedEnv("/dev/null");
+    if (!(anyName ? validRelativePath(path) : validPath(path))) {
+      throw new MessageError(message("git.invalidPath"));
+    }
+    // 任意の名前は、パスの指定の特別な書き方（`:(glob)`・`*` など）として読まない
+    const env = {
+      ...isolatedEnv("/dev/null"),
+      ...(anyName ? { GIT_LITERAL_PATHSPECS: "1" } : {}),
+    };
     const run = (label: string, args: string[]) =>
       git(label, ["--git-dir", gitDir, ...SAFE_CONFIG, ...args], env);
     // パスの種類を確かめる（シンボリックリンク・サブモジュール・ディレクトリは読まない）

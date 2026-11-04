@@ -275,6 +275,63 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
     expect(prompt).not.toContain(`作業領域に ${WORKSPACE_TOOLS_DIR}/ があるとき`);
   });
 
+  describe("日本語・空白・記号を含む名前のファイル（PR #304 のレビュー）", () => {
+    it("差分の見出しのパスを、git の書き方（空白の後ろのタブ・引用符の逃がし）から元の名前に戻す", () => {
+      const diff = [
+        "diff --git a/docs/guide name.md b/docs/guide name.md",
+        "--- a/docs/guide name.md\t",
+        "+++ b/docs/guide name.md\t",
+        "@@ -1,1 +1,2 @@",
+        " a",
+        "+.sacty-tools/x",
+        'diff --git "a/docs/q\\"t\\t.md" "b/docs/q\\"t\\t.md"',
+        '--- "a/docs/q\\"t\\t.md"',
+        '+++ "b/docs/q\\"t\\t.md"',
+        "@@ -1,1 +1,2 @@",
+        " a",
+        "+.sacty-tools/y",
+        // core.quotepath=true の書き方（日本語を 8 進で逃がす）でも
+        'diff --git "a/docs/\\346\\227\\245.md" "b/docs/\\346\\227\\245.md"',
+        '--- "a/docs/\\346\\227\\245.md"',
+        '+++ "b/docs/\\346\\227\\245.md"',
+        "@@ -1,1 +1,2 @@",
+        " a",
+        "+.sacty-tools/z",
+        ...diffOf("docs/日本語.md", [".sacty-tools/w"]).split("\n"),
+      ].join("\n");
+      expect(internalNamesInDiff(diff).map((h) => h.path)).toEqual([
+        "docs/guide name.md",
+        'docs/q"t\t.md',
+        "docs/日.md",
+        "docs/日本語.md",
+      ]);
+    });
+
+    it("起点のファイルを読めず確かめられなかった名前は、不合格にせず、理由とともに人が確かめることに足す", () => {
+      const review = readReview(verdict({ tests: { exitCode: 0, output: "" } }), {
+        testCommand: "npm test",
+        uncheckedInternalNames: [
+          { path: "docs/日本語.md", line: 3, name: ".sacty-tools", reason: "大きすぎます" },
+          { path: "docs/日本語.md", line: 5, name: "/sacty-input", reason: "大きすぎます" },
+        ],
+      });
+      expect(review.passed).toBe(true);
+      expect(review.viewpoints.some((v) => v.viewpointId === "SCOPE")).toBe(false);
+      expect(review.humanChecks).toHaveLength(1);
+      const item = review.humanChecks?.[0] ?? "";
+      expect(item).toContain("docs/日本語.md（3・5 行目）");
+      expect(item).toContain("大きすぎます");
+      expect(item).toContain("範囲外の変更にはしていない");
+      // 内部の名前そのものは書かない（次の回に引き継いでも外れない）
+      expect(item).not.toContain(".sacty-tools");
+      const next = readReview(verdict({ tests: { exitCode: 0, output: "" } }), {
+        testCommand: "npm test",
+        previousHumanChecks: [item],
+      });
+      expect(next.humanChecks).toEqual([item]);
+    });
+  });
+
   describe("最終レビューの結果", () => {
     const hits = internalNamesInDiff(diffOf("scripts/c.js", ["// .sacty-tools/baseline"]));
 

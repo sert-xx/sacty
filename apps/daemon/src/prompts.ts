@@ -2201,8 +2201,50 @@ export type InternalNameHit = { path: string; line: number; name: string };
 const INTERNAL_NAME_HITS_MAX = 20;
 
 /** 内部の名前の一覧を、記録・指示に渡す件数に絞る。起点にある名前などを除いた後に使う（PR #304 のレビュー）。 */
-export function limitInternalNames(hits: readonly InternalNameHit[]): InternalNameHit[] {
+export function limitInternalNames<T extends InternalNameHit>(hits: readonly T[]): T[] {
   return hits.slice(0, INTERNAL_NAME_HITS_MAX);
+}
+
+/** C の書き方の逃がし（git が引用符で囲んだパス）の、1文字の逃がし。 */
+const GIT_QUOTE_ESCAPES: Record<string, number> = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  "\\": 92,
+};
+
+/**
+ * 差分の `--- `・`+++ ` の行のパス。git は、名前に空白があると後ろにタブを足し、引用符・バックスラッシュ・制御文字があると
+ * 引用符で囲んで逃がす（core.quotepath=false でも）。囲まれていれば、元の名前（UTF-8）に戻す（PR #304 のレビュー）。
+ */
+function diffHeaderPath(line: string): string {
+  const name = line.slice(4).replace(/\r$/, "").replace(/\t$/, "");
+  if (!(name.length >= 2 && name.startsWith('"') && name.endsWith('"'))) return name;
+  const bytes: number[] = [];
+  const body = name.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const char = body[i] ?? "";
+    if (char !== "\\") {
+      bytes.push(...new TextEncoder().encode(char));
+      continue;
+    }
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1))?.[0];
+    if (octal) {
+      bytes.push(Number.parseInt(octal, 8));
+      i += 3;
+      continue;
+    }
+    const escaped = GIT_QUOTE_ESCAPES[body[i + 1] ?? ""];
+    if (escaped === undefined) return name;
+    bytes.push(escaped);
+    i += 1;
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
 /**
@@ -2227,12 +2269,12 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
       continue;
     }
     if (!inHunk && text.startsWith("--- ")) {
-      const name = text.slice(4).trim();
+      const name = diffHeaderPath(text);
       oldPath = name === "/dev/null" ? "" : name.replace(/^a\//, "");
       continue;
     }
     if (!inHunk && text.startsWith("+++ ")) {
-      const name = text.slice(4).trim();
+      const name = diffHeaderPath(text);
       path = name === "/dev/null" ? "" : name.replace(/^b\//, "");
       continue;
     }
@@ -2272,6 +2314,26 @@ export function internalNameAllowance(task: Task): string {
 }
 
 /** 内部の名前が差分にあるときの、範囲外の変更の項目（観点 SCOPE。PBI-302 A1）。 */
+/** 起点のファイルを読めず、もともとある名前かを確かめられなかった内部の名前（reason は読めなかった理由）。 */
+export type UncheckedInternalName = InternalNameHit & { reason: string };
+
+/**
+ * 確かめられなかった内部の名前の、人が確かめることの項目。ファイルごとに1件。名前そのものは書かない（書くと、内部の名前を含む
+ * 項目として、次の回で人が確かめることから外れるため）。
+ */
+export function uncheckedInternalNameChecks(items: readonly UncheckedInternalName[]): string[] {
+  const byPath = new Map<string, { lines: number[]; reason: string }>();
+  for (const item of items) {
+    const entry = byPath.get(item.path) ?? { lines: [], reason: item.reason };
+    if (!entry.lines.includes(item.line)) entry.lines.push(item.line);
+    byPath.set(item.path, entry);
+  }
+  return [...byPath].map(
+    ([path, { lines, reason }]) =>
+      `${path}（${lines.join("・")} 行目）に足した行に、sacty の作業領域の内部の名前がある。起点のこのファイルを読めず（${oneLine(reason)}）、リポジトリがもともと使っている名前かを確かめられなかったので、範囲外の変更にはしていない。もともと使っている名前か、作業領域から持ち込んだものかを確かめる`,
+  );
+}
+
 export function internalNameOutOfScope(hits: readonly InternalNameHit[]): string[] {
   return hits.map(
     (h) =>
@@ -4256,6 +4318,11 @@ export function extractFinalReview(
      * かかわらず、範囲外の変更（観点 SCOPE）として不合格にする。セキュリティ対応は観点 SEC-MIN が見るので使わない。
      */
     internalNames?: readonly InternalNameHit[];
+    /**
+     * 差分の内部の名前のうち、起点のファイルを読めず、リポジトリがもともと使う名前かを確かめられなかったもの（PR #304 の
+     * レビュー）。不合格にはせず、読めなかった理由とともに人が確かめることに足す。
+     */
+    uncheckedInternalNames?: readonly UncheckedInternalName[];
     /** 依頼・承認済みの要求要件・設計の文（internalNameAllowance）。これが挙げた内部の名前を含む項目は、外さず言い換えない。 */
     internalAllowance?: string;
     /**
@@ -4350,7 +4417,10 @@ export function extractFinalReview(
     options.internalAllowance,
   );
   const environment = mergeEnvironmentOnlyChecks(internal.kept);
-  const unique = uniqueChecks(environment.items);
+  const unique = uniqueChecks([
+    ...environment.items,
+    ...uncheckedInternalNameChecks(options.uncheckedInternalNames ?? []),
+  ]);
   const humanChecks = unique.items;
   const droppedAll = [...dropped, ...internal.dropped];
   const droppedChecks = {

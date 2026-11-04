@@ -9558,6 +9558,75 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("日本語・空白の名前のファイルも起点を読んで、もともとある名前を除く。起点を読めないファイルは不合格にせず、理由を人が確かめることに残す（PR #304 のレビュー）", async () => {
+    const repos = new FakeRepos();
+    const section = (path: string, line: string) => [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}${path.includes(" ") ? "\t" : ""}`,
+      `+++ b/${path}${path.includes(" ") ? "\t" : ""}`,
+      "@@ -1,1 +1,2 @@",
+      " # 仕様",
+      `+${line}`,
+    ];
+    repos.diffText = [
+      ...section("docs/日本語.md", "道具は `.sacty-tools/` に置く。"),
+      ...section("docs/guide name.md", "道具は `.sacty-tools/` に置く。"),
+      ...section("docs/大きい.md", "記録は `/tmp/agent-scratch/` に置く。"),
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    const reads: { path: string; anyName?: boolean }[] = [];
+    repos.readFile = async (
+      gitDir: string,
+      commit: string,
+      path: string,
+      options?: { anyName?: boolean },
+    ) => {
+      if (!["docs/日本語.md", "docs/guide name.md", "docs/大きい.md"].includes(path)) {
+        return original(gitDir, commit, path);
+      }
+      reads.push({ path, anyName: options?.anyName });
+      // 実際の読み方と同じく、anyName が無ければ日本語・空白の名前を拒否する
+      if (!options?.anyName) throw new Error("パスが不正です");
+      if (path === "docs/大きい.md") throw new Error("ファイルが大きすぎます");
+      return "# 仕様\n\n道具は `.sacty-tools/` に置く。\n";
+    };
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), passing], {
+      repos,
+    });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(reads).toEqual([
+      { path: "docs/日本語.md", anyName: true },
+      { path: "docs/guide name.md", anyName: true },
+      { path: "docs/大きい.md", anyName: true },
+    ]);
+    // もともとある名前は除き、読めないファイルの名前も不合格にしない
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+    expect(
+      first?.type === "FinalReviewed" &&
+        first.payload.viewpoints.some((v) => v.viewpointId === "SCOPE"),
+    ).toBe(false);
+    expect(promptOf(executor, 4)).not.toContain('"path":"docs/');
+    const checks = (first?.type === "FinalReviewed" && first.payload.humanChecks) || [];
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toContain("docs/大きい.md（2 行目）");
+    expect(checks[0]).toContain("ファイルが大きすぎます");
+    activity.close();
+  });
+
   it("差分の内部の名前が、起点のコミットのそのファイルにすでにあれば（リポジトリがもともと使う名前）、範囲外にしない（PBI-302 A1）", async () => {
     const repos = new FakeRepos();
     repos.diffText = [
