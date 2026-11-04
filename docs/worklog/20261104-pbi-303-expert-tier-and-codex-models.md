@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-04（UTC）
 - タスク: PBI-303
-- PR: （作成後に記入）
+- PR: #305
 - ブランチ: feat/issue-303-codex-tier-models
 - 関係する ADR: [段階に expert を足して 6 つにし、ultimate を各ツールの最上位のモデルにする](../adr/20261104-1327-expert-tier-between-advanced-and-ultimate.md)
 
