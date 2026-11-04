@@ -354,6 +354,11 @@ class FakeSharedComposes implements SharedComposeFetcher {
 }
 
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
+/** PR の本文に書く、今の head の AI のレビューの状況（レビューのタスクが無ければ付いていない。PBI-302 D1）。 */
+function noAiReview(task: Task) {
+  return { aiReview: { head: task.pullRequest?.commit ?? "", status: "none" as const } };
+}
+
 class FakeRepos implements RepositoryWorkspace {
   prepared: {
     dir: string;
@@ -1651,14 +1656,21 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
-    it("報告もモデルごとの使用量も無ければ（Codex など）、これまでどおり、エージェントの単価で換算し、出どころは記録しない", async () => {
+    it("報告もモデルごとの使用量も無ければ（Codex など）、エージェントの単価で換算し、出どころ（換算）を記録する（PBI-302 D2）", async () => {
       const { done, recorded } = await run({
         kind: "completed",
         output: "# 要求要件",
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1_000_000 },
       });
       expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(25);
-      expect(recorded).toEqual([]);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.payload).toMatchObject({
+        agentId: "claude_advanced",
+        source: "converted",
+        amountUsd: 25,
+        convertedUsd: 25,
+      });
+      expect(recorded[0]?.payload).not.toHaveProperty("unpricedModels");
     });
 
     it("失敗した実行も、CLI の報告があればそれを費用にする", async () => {
@@ -2490,6 +2502,8 @@ describe("工程の実行と費用", () => {
       // 工程は、リポジトリを用意した後に、オーケストレーターが選ぶ（PBI-17）
       "StepsChosen",
       "AgentRunStarted",
+      // 費用の出どころ（CLI が費用を報告しない実行は、換算した額。PBI-302 D2）
+      "RunCostRecorded",
       "AgentRunCompleted",
       "StepSubmitted",
     ]);
@@ -3828,8 +3842,8 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(task?.budget.usedUsd).toBeCloseTo(0.018, 6);
     const types = service.get(id)?.activity.map((e) => e.type) ?? [];
     expect(types.slice(-4)).toEqual([
-      "AgentRunCompleted",
       "ChangeProposed",
+      "RunCostRecorded",
       "ChangeJudged",
       "StepSubmitted",
     ]);
@@ -9346,7 +9360,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
     expect(task?.lastTests).toBeUndefined();
     expect(types(service, id).slice(-6)).toEqual([
-      "AgentRunCompleted",
+      "RunCostRecorded",
       "FinalReviewed",
       "BranchPushed",
       "PullRequestPublished",
@@ -9442,6 +9456,56 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ]);
     // 最終レビューの指示に、範囲外の変更の判定が入っている
     expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
+    activity.close();
+  });
+
+  it("差分にリポジトリの作業領域の内部の名前（.sacty-tools）が入っていたら、ゴールガーディアンが合格と判定しても範囲外の変更として不合格にし、外すよう伝える（PBI-302 A1）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/test/capture.js b/test/capture.js",
+      "--- a/test/capture.js",
+      "+++ b/test/capture.js",
+      "@@ -1,1 +1,2 @@",
+      " const a = 1;",
+      "+const base = '.sacty-tools/baseline';",
+    ].join("\n");
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# v1"), passing, implement("# v2"), passing],
+      { repos },
+    );
+    // 1回目だけ、内部の名前を含む差分。2回目は取り除かれた差分
+    const diffs = [
+      repos.diffText,
+      "diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1,1 +1,1 @@\n+ok",
+    ];
+    repos.diff = async () => diffs.shift() ?? "";
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(scope?.verified).toBe(false);
+    expect(ja(scope?.reason)).toContain("test/capture.js:2");
+    expect(ja(scope?.reason)).toContain(".sacty-tools");
+    expect(promptOf(executor, 4)).toContain('"path":"test/capture.js"');
+    expect(promptOf(executor, 5)).toContain("[SCOPE] 観点を検証できていない");
+    expect(second?.type === "FinalReviewed" && second.payload.passed).toBe(true);
     activity.close();
   });
 
@@ -10534,6 +10598,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     return made;
   }
 
+  it("画面に返すタスクには、承認待ちの PR の今の head の AI のレビューの状況を足し、PR の本文にも書く。承認待ちでなければ足さない（PBI-302 D1）", async () => {
+    const { activity, service, pulls, id } = await toImplementGate();
+    const task = service.get(id)?.task;
+    const commit = task?.pullRequest?.commit;
+    expect(task?.status).toBe("awaiting_approval");
+    // 作業履歴から復元したタスクには持たず、画面に返すときだけ足す
+    expect(task?.aiReview).toBeUndefined();
+    expect(service.view(id)?.task.aiReview).toEqual({ head: commit, status: "none" });
+    expect(pulls.calls.at(-1)?.body).toContain(
+      `AI のレビュー：この head（${commit?.slice(0, 7)}）には、sacty の AI のレビューがまだ付いていません`,
+    );
+    expect(service.view("no-such-task")).toBeUndefined();
+    activity.close();
+  });
+
   it("最終レビューに通ったら、ブランチにプッシュしてPRを作り、実装の承認待ちで止まる（PBI-10b・PBI-110）", async () => {
     const { activity, service, repos, pulls, id } = await toImplementGate();
     expect(repos.published).toEqual([
@@ -10623,7 +10702,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
       );
       expect(run?.type === "AgentRunCompleted" && run.payload.costUsd).toBe(0.5);
-      expect(events.filter((e) => e.type === "RunCostRecorded")).toHaveLength(1);
+      // 報告を使った実行は 1 件。報告の無い実行は、換算として記録する（PBI-302 D2）
+      expect(
+        events.filter((e) => e.type === "RunCostRecorded" && e.payload.source === "reported"),
+      ).toHaveLength(1);
       made.activity.close();
     });
 
@@ -14771,8 +14853,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           // 読めるようになったら、指摘を読んで、判断し、反映する
           pulls.feedback = original;
           await service.runNext(id);
-          expect(types(service, id).slice(-3)).toEqual([
+          expect(types(service, id).slice(-4)).toEqual([
             "PullRequestReviewImported",
+            "RunCostRecorded",
             "ReworkJudged",
             "ChangesRequested",
           ]);
@@ -14870,8 +14953,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           // 確かめられたら、AI のレビューを残して、判断し、反映する
           pulls.status = original;
           await service.runNext(id);
-          expect(types(service, id).slice(-3)).toEqual([
+          expect(types(service, id).slice(-4)).toEqual([
             "PullRequestReviewImported",
+            "RunCostRecorded",
             "ReworkJudged",
             "ChangesRequested",
           ]);
@@ -29082,7 +29166,7 @@ describe("PR テンプレート（PBI-87）", () => {
       new FakeTemplates(async () => ({ kind: "none" })),
     );
     const task = taskOf(service, id);
-    expect(pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(pulls.calls[2]?.body).toBe(buildPullRequestBody(task, noAiReview(task)));
     expect(task.pullRequest?.template).toEqual({ fallback: "none" });
     expect(task.stepPullRequests[0]?.template).toEqual({ fallback: "none" });
     activity.close();
@@ -29102,7 +29186,7 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     let task = taskOf(unusable.service, unusable.id);
     expect(unusable.pulls.calls).toHaveLength(3);
-    expect(unusable.pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(unusable.pulls.calls[2]?.body).toBe(buildPullRequestBody(task, noAiReview(task)));
     expect(task.pullRequest?.template?.fallback).toBe("unusable");
     expect(renderMessage(task.pullRequest?.template?.message, "ja")).toContain("HTTP 403");
     expect(JSON.stringify(unusable.service.get(unusable.id)?.activity)).not.toContain("ghp_secret");

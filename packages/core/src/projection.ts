@@ -159,6 +159,18 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * blocked：分割で作った子タスクが、依存先の子タスクの完了を待っている（PBI-27）
  * waiting_children：タスク分割の後、子タスクの完了を待っている（PBI-27）
  */
+/**
+ * 承認待ちの PR の今の head に、sacty 自身の AI のレビュー（sacty のレビューのタスクの投稿）が付いているか（PBI-302 D1）。
+ * none：付いていない、reviewing：レビューのタスクが今の head をレビューしている、attached：今の head のレビューが投稿された。
+ * 承認やマージは止めない。作業履歴から復元する状態ではなく、デーモンが画面と PR の本文のために、ほかのタスクを見て計算する。
+ */
+export type AiReviewOfHead = {
+  head: string;
+  status: "none" | "reviewing" | "attached";
+  /** attached のとき、投稿されたレビューの URL。 */
+  url?: string;
+};
+
 export type TaskStatus =
   | "blocked"
   | "waiting_children"
@@ -609,6 +621,11 @@ export type Task = {
    * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
    */
   pullRequestCi?: PullRequestCi;
+  /**
+   * 承認待ちの PR の今の head に付いた AI のレビューの状況（PBI-302 D1）。作業履歴からは復元しない。デーモンが画面に返すときだけ
+   * 足す（`TaskService.view`）。
+   */
+  aiReview?: AiReviewOfHead;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */

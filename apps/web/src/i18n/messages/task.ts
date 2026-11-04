@@ -61,6 +61,15 @@ const ja = {
     reviewed: (commit: string) => `対象：${commit}`,
     open: "指摘を開く",
   },
+  aiReview: {
+    title: "sacty の AI のレビュー（今の head）",
+    none: (head: string) =>
+      `今の head（${head}）には、sacty の AI のレビューがまだ付いていません。`,
+    reviewing: (head: string) => `今の head（${head}）を、sacty の AI のレビューがレビュー中です。`,
+    attached: (head: string) => `今の head（${head}）に、sacty の AI のレビューが付いています。`,
+    help: "承認やマージは止めませんが、レビューが付く前に進むと、その指摘を見ずに承認します。",
+    open: "レビューを開く",
+  },
   gate: {
     undecidable: "変更の申し出の判断待ち",
     tooMany: "差し戻しが上限に達しました",
@@ -539,6 +548,14 @@ const en: TaskMessages = {
       `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework (the PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed). If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
     reviewed: (commit: string) => `For: ${commit}`,
     open: "Open comment",
+  },
+  aiReview: {
+    title: "Sacty AI review (current head)",
+    none: (head: string) => `No Sacty AI review is attached to the current head (${head}) yet.`,
+    reviewing: (head: string) => `A Sacty AI review is reviewing the current head (${head}).`,
+    attached: (head: string) => `A Sacty AI review is attached to the current head (${head}).`,
+    help: "Approving and merging are not blocked, but going ahead before the review arrives means missing its comments.",
+    open: "Open review",
   },
   gate: {
     undecidable: "Change request needs your decision",

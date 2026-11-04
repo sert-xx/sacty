@@ -32,6 +32,7 @@ import { Check } from "lucide-react";
 import Link from "next/link";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ActionLink } from "@/components/action-link";
+import { AiReviewNotice } from "@/components/ai-review-notice";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection, ExpandCards } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
@@ -284,6 +285,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       <GateNotice task={task} />
       <HeldReviewNotice task={task} />
       <HumanAskNotice task={task} />
+      <AiReviewNotice task={task} />
       <DiscardedReviewNotice task={task} />
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm

@@ -75,6 +75,12 @@ const SKIPPED_PATH_LENGTH_MAX = 500;
  * PR・コミットには入れない（stage の除外。追跡しているファイルには効かない）。PBI-278。
  */
 export const WORKSPACE_TOOLS_DIR = ".sacty-tools";
+/**
+ * 検証の記録（ログ・集計・差分の写し）や起点の写し、下書きなど、sacty とエージェントが作る作業用のファイルを置く、作業領域の外の
+ * 場所（PBI-302 A1）。作業領域の中に置くと、リポジトリ全体を対象にするフォーマッター・リンター・テストの結果を変える。
+ * `.sacty-tools/` は入れた道具の置き場だけで、記録は置かない。
+ */
+export const WORKSPACE_SCRATCH_DIR = "/tmp/agent-scratch";
 
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
 export interface RepositoryWorkspace {

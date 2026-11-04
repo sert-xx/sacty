@@ -1362,6 +1362,18 @@ export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boole
   return tests.exitCode === 0 || (tests.environmentFailures?.length ?? 0) > 0;
 }
 
+/**
+ * 環境による失敗の申告のうち、sacty の作業用のファイル（.sacty-tools の下の記録など）によるものを、パスや説明を載せずに言う文
+ * （PBI-302 A1）。人が確かめることには出さない。終了コードが 0 でないのに合格にした理由としてだけ、テストの行に出す。
+ */
+export const WORKSPACE_FILE_FAILURE =
+  "sacty の作業用のファイルによる失敗（リポジトリの検査の対象ではない）";
+
+/** 環境による失敗の申告のうち、人が確かめるもの（sacty の作業用のファイルによる失敗を除く）。 */
+export function humanVisibleEnvironmentFailures(failures: readonly string[] | undefined): string[] {
+  return (failures ?? []).filter((f) => f !== WORKSPACE_FILE_FAILURE);
+}
+
 const FinalReviewed = z.object({
   type: z.literal("FinalReviewed"),
   payload: z.object({

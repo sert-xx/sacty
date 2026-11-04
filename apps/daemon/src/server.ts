@@ -131,7 +131,7 @@ export function createApp(
   // 消したプロジェクトのタスクは、無いものとして返す（タスクと作業履歴は残すが、画面には出さない）
   app.get("/api/tasks/:id", (c) => {
     const id = c.req.param("id");
-    const found = service.visibleTask(id) ? service.get(id) : undefined;
+    const found = service.visibleTask(id) ? service.view(id) : undefined;
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
   });
 

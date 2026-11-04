@@ -166,6 +166,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
+import { aiReviewFor, aiReviewOfHead } from "./ai-review-head.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
   type AdoptedAuditProposalNote,
@@ -363,6 +364,8 @@ import {
   finalReviewVerdictIds,
   finalReviewViewpointIds,
   integrationViewpointIds,
+  internalNameAllowance,
+  internalNamesInDiff,
   investigationMarker,
   mappedViewpointIds,
   operationSucceeded,
@@ -977,6 +980,17 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     return { task, activity: this.deps.activity.forTask(id) };
+  }
+
+  /**
+   * 画面に返すタスクと作業履歴。承認待ちの PR の今の head に、sacty の AI のレビューが付いているかを足す（PBI-302 D1）。
+   * ほかのタスクを見て計算するので、タスクの状態（作業履歴から復元するもの）には持たない。
+   */
+  view(id: string): { task: Task; activity: ActivityEvent[] } | undefined {
+    const found = this.get(id);
+    if (!found) return undefined;
+    const aiReview = aiReviewOfHead(found.task, this.tasks.values(), sameRepo);
+    return aiReview ? { ...found, task: { ...found.task, aiReview } } : found;
   }
 
   /**
@@ -9070,6 +9084,9 @@ export class TaskService {
     // 実装の PR に sacty が足す成果物は、実装の作業領域に無いので、最終レビューの写しに PR の内容で入れる。入れられなければ、
     // 入っていないものとして指示を作る（指示が、写しで通った検査を未確認として人の確認に回させる）
     const include = await this.stepDocumentsForReview(this.mustGet(task.id));
+    // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
+    // 変更として不合格にする（PBI-302 A1）
+    const internalNames = internalNamesInDiff(diff, internalNameAllowance(current));
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(
@@ -9085,6 +9102,7 @@ export class TaskService {
               ...(testCommand ? { testCommand } : {}),
               ...(include ? { stepDocumentsIncluded: true } : {}),
               ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+              ...(internalNames.length > 0 ? { internalNames } : {}),
               ...(prCi?.result
                 ? {
                     pullRequest: {
@@ -9195,6 +9213,8 @@ export class TaskService {
           previousHumanChecks: carriedHumanChecks(current),
           hide,
           ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+          ...(internalNames.length > 0 ? { internalNames } : {}),
+          internalAllowance: internalNameAllowance(current),
           ...(documentsOnly ? { documentsOnly } : {}),
         },
       );
@@ -9560,12 +9580,19 @@ export class TaskService {
           );
         }
       }
+      // 更新する head に、sacty の AI のレビューが付いているか（PR の本文に書く。PBI-302 D1）
+      const aiReview = aiReviewFor(
+        { repo, number: reuse?.number, head: commit },
+        task.id,
+        this.tasks.values(),
+        sameRepo,
+      );
       const { body, template } = await this.pullRequestBody(
         repo,
         token,
         usedSecrets,
-        buildStepPullRequestBodyText(current, step, path),
-        buildStepPullRequestBodyParts(current, step, path),
+        buildStepPullRequestBodyText(current, step, path, aiReview),
+        buildStepPullRequestBodyParts(current, step, path, aiReview),
       );
       const pr = await this.deps.pulls.upsert({
         repo,
@@ -9818,12 +9845,19 @@ export class TaskService {
           number = undefined;
         }
       }
+      // 更新する head に、sacty の AI のレビューが付いているか（PR の本文に書く。PBI-302 D1）
+      const aiReview = aiReviewFor(
+        { repo: prRepo, number, head: commit },
+        task.id,
+        this.tasks.values(),
+        sameRepo,
+      );
       const { body, template } = await this.pullRequestBody(
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets }),
-        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets }),
+        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets, aiReview }),
+        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets, aiReview }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
@@ -11489,11 +11523,9 @@ export class TaskService {
     // CLI が実行の費用を報告していれば、それを使う。無ければ、モデルごとの使用量をそのモデルの単価で換算する（PBI-301）
     const cost = runCost(run.agent, outcome);
     const costUsd = cost.costUsd;
-    // 報告を使った実行と、モデルごとに換算した実行を記録する（使用量を工程のエージェントの単価で換算しただけの実行は、
-    // これまでと同じなので記録しない）
-    if (cost.source === "reported" || (cost.source && outcome.modelUsages?.length)) {
-      this.recordRunCost(run.runId, run.agent.id, cost);
-    }
+    // 費用の出どころ（CLI の報告か、使用量の換算か）を、すべての実行について記録する。Codex など、CLI が費用を報告しない
+    // エージェントの実行も、「換算した額」と分かるようにする（PBI-302 D2。以前は報告とモデルごとの換算だけ記録した）
+    if (cost.source) this.recordRunCost(run.runId, run.agent.id, cost);
     return {
       outcome,
       costUsd,

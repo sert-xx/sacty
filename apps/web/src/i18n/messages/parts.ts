@@ -31,6 +31,9 @@ const ja = {
     result: "実行結果",
     notRun: "未実行",
     testsPassed: "テスト合格",
+    testsPassedEnvironment: "テスト合格（環境による失敗のみ）",
+    environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean) =>
+      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : "失敗がすべて環境によるものとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
     testsFailed: "テスト不合格",
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
@@ -306,6 +309,9 @@ const en: PartsMessages = {
     result: "Result",
     notRun: "Not run",
     testsPassed: "Tests passed",
+    testsPassedEnvironment: "Tests passed (environment failures only)",
+    environmentPassNote: (exitCode, workspaceOnly) =>
+      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : 'the Goal Guardian judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
     testsFailed: "Tests failed",
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",
