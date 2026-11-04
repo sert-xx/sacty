@@ -573,3 +573,68 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
     ).toContain("（https://github.com/a/b/pull/1#r）");
   });
 });
+
+describe("統合：A・B・C・D の本文の行を同じ PR の本文に重ねても、互いに打ち消さない（PBI-302）", () => {
+  const summary =
+    "率の設定は要求要件どおりに動き、既存の請求の計算も変わっていない。送信のキューは理由があり範囲内とした。";
+  const review = readReview(
+    verdict({
+      summary,
+      tests: {
+        exitCode: 1,
+        output: "",
+        environmentFailures: ["prettier：.sacty-tools/review/summary.json"],
+      },
+      humanChecks: [
+        "共有の仕組みを足した：送信のキュー（率の変更を順に反映しないと、同時の更新で古い率が残るため）",
+        "環境によると判断した失敗：.sacty-tools/dispatch.md",
+      ],
+    }),
+  ) as unknown as FinalReview;
+  const t = task({
+    testMap: [
+      {
+        viewpointId: "REQ",
+        tests: ["src/rate.test.ts › rates › returns %j", "src/rate.test.ts › returns %j"],
+      },
+    ],
+    lastReview: {
+      ...review,
+      agentId: "g",
+      runId: "r",
+      costUsd: 0,
+      estimated: false,
+      at: "2026-11-04T00:00:00.000Z",
+    },
+  } as Partial<Task>);
+  const aiReview = { head: "7ed51c5aaaa", status: "reviewing" as const };
+  const count = (text: string, part: string) => text.split(part).length - 1;
+
+  it("B4 の共有の仕組みの項目は残り、A1 の内部の名前の項目は外れ、A2 の理由・D1 の行・C2・C3 の重ならない形がそろう", () => {
+    for (const text of [
+      joinBodyText(buildPullRequestBodyText(t, { aiReview })),
+      Object.values(buildPullRequestBodyParts(t, { aiReview })).join("\n"),
+    ]) {
+      // B4：理由つきの共有の仕組みは、人が確かめることに 1 回だけ
+      expect(count(text, "共有の仕組みを足した：送信のキュー")).toBe(1);
+      // A1：内部の名前を含む項目と、失敗の説明は出ない
+      expect(text).not.toContain(".sacty-tools");
+      // A2：終了コード 1 の合格の理由
+      expect(text).toContain("失敗は sacty の作業用のファイルによるものだけ");
+      // D1：今の head の AI のレビューの状況は 1 回だけ
+      expect(count(text, "sacty の AI のレビューがレビュー中です")).toBe(1);
+      // C2：総評の文を繰り返さない
+      expect(count(text, "率の設定は要求要件どおりに動き")).toBe(1);
+      // C3：同じテストは 1 回、書式の文字はそのまま見せない
+      expect(text).not.toContain("%j");
+      for (const line of text.split("\n").filter((l) => l.includes("returns ‹"))) {
+        expect(count(line, "returns ‹"), line).toBe(1);
+      }
+      expect(text).toContain("src/rate.test.ts › rates › returns ‹…›");
+    }
+    // C2：空の見出しを出さない（見出しの直後に別の見出しが続かない）
+    expect(joinBodyText(buildPullRequestBodyText(t, { aiReview }))).not.toMatch(
+      /^#{1,6} .*\n\n#{1,6} /m,
+    );
+  });
+});
