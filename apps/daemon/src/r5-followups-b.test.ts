@@ -406,9 +406,38 @@ describe("B3 行へのコメントの指摘に、その行の内容を添える"
     expect(lineContextOf(undefined)).toBeUndefined();
     expect(lineContextOf(12)).toBeUndefined();
     expect(lineContextOf("")).toEqual({ line: "", before: [] });
+    // 抜粋からは切り詰めずに取る（秘密情報を伏せてから、lineContextText が切り詰める）
     const long = lineContextOf(`@@ -1 +1 @@\n+${"あ".repeat(500)}`);
-    expect(long?.line.length).toBe(200);
-    expect(long?.line.endsWith("…")).toBe(true);
+    expect(long?.line).toBe("あ".repeat(500));
+    const shown = lineContextText({ line: long?.line ?? "", before: ["い".repeat(500)] });
+    expect(shown).toContain(`「${"あ".repeat(199)}…」`);
+    expect(shown).toContain(`「${"い".repeat(199)}…」`);
+  });
+
+  it("秘密情報は行全体で伏せてから切り詰める。値が切り詰めの境界にかかっても、境界の前後にあっても、値の一部を残さない", () => {
+    const jwt = `eyJ${"a".repeat(30)}.${"b".repeat(30)}.${"c".repeat(40)}`;
+    const head = "x".repeat(150);
+    // 境界にかかる（200 文字目が署名の途中）：切ってから伏せると、署名が切れて JWT の形にならず、残っていた
+    const across = `${head} 値は ${jwt} tail`;
+    // 境界の前に収まる・境界の後ろにある
+    const before = `値 ${jwt} ${"y".repeat(300)}`;
+    const after = `${"z".repeat(250)} 値 ${jwt}`;
+    for (const line of [across, before, after]) {
+      for (const context of [
+        { line, before: [] },
+        { line: "ok", before: [line] },
+      ]) {
+        const text = lineContextText(context);
+        expect(text).not.toContain("a".repeat(30));
+        expect(text).not.toContain("b".repeat(20));
+        expect(text).not.toContain("eyJaaaa");
+      }
+    }
+    // サービスを通しても：抜粋から取った行で、境界にかかる値が残らない
+    const fromHunk = lineContextOf(`@@ -1,2 +1,2 @@\n ${across}\n+${across}`);
+    const text = lineContextText(fromHunk ?? { line: "", before: [] });
+    expect(text).not.toContain("b".repeat(20));
+    expect(text).not.toContain("eyJaaaa");
   });
 
   it("指摘の文に添える形：行の内容と直前の行。空行は「空行」。秘密情報は伏せる", () => {

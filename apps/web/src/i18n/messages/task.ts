@@ -67,6 +67,8 @@ const ja = {
     none: (head: string) => `今の head ${head} には、Sacty の AI のレビューがまだ付いていません。`,
     reviewing: (head: string) => `今の head ${head} を、Sacty の AI のレビューがレビュー中です。`,
     attached: (head: string) => `今の head ${head} に、Sacty の AI のレビューが付いています。`,
+    unknown: (_head: string) =>
+      "PR の今の head をまだ読めていないため、AI のレビューの状況は分かりません。",
     help: "承認やマージは止めませんが、レビューが付く前に進むと、その指摘を見ずに承認します。",
     open: "レビューを開く",
   },
@@ -555,6 +557,8 @@ const en: TaskMessages = {
     none: (head: string) => `No Sacty AI review is attached to the current head ${head} yet.`,
     reviewing: (head: string) => `A Sacty AI review is reviewing the current head ${head}.`,
     attached: (head: string) => `A Sacty AI review is attached to the current head ${head}.`,
+    unknown: (_head: string) =>
+      "The PR's current head has not been read yet, so the AI review state is unknown.",
     help: "Approving and merging are not blocked, but going ahead before the review arrives means missing its comments.",
     open: "Open review",
   },

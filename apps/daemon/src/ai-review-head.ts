@@ -45,17 +45,23 @@ export function aiReviewFor(
   return { head, status: reviewing ? "reviewing" : "none" };
 }
 
-/** 承認待ちの PR の今の head の AI のレビューの状況。承認待ちでない・PR が開いていないタスクは undefined。 */
+/**
+ * 承認待ちの PR の今の head の AI のレビューの状況。承認待ちでない・PR が開いていないタスクは undefined。
+ * latestHead は、PR が開いている間に GitHub から読んだ最新の head（提出したコミットとは別。人が未レビューのコミットを足すと
+ * 変わる。PR #304 のレビュー）。読めていなければ、提出したコミットで計算せず unknown にする（誤って「付いた」と出さない）。
+ */
 export function aiReviewOfHead(
   task: Task,
   tasks: Iterable<Task>,
   sameRepo: (a: string, b: string) => boolean,
+  latestHead: string | undefined,
 ): AiReviewOfHead | undefined {
   const pr = gatePullRequest(task);
   if (task.status !== "awaiting_approval" || !pr || pr.state !== "open" || !pr.repo)
     return undefined;
+  if (!latestHead) return { head: pr.commit, status: "unknown" };
   return aiReviewFor(
-    { repo: pr.repo, number: pr.number, head: pr.commit },
+    { repo: pr.repo, number: pr.number, head: latestHead },
     task.id,
     tasks,
     sameRepo,

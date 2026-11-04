@@ -9514,6 +9514,50 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("起点にある名前を除いた後で件数を絞るので、上限より後ろにある新しい内部の名前も見つける（PBI-302 A1。PR #304 のレビュー）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/docs/spec.md b/docs/spec.md",
+      "--- a/docs/spec.md",
+      "+++ b/docs/spec.md",
+      "@@ -1,1 +1,26 @@",
+      // 起点のファイルにもある名前の行が 25 行（上限の 20 を超える）
+      ...Array.from({ length: 25 }, (_, i) => `+${i}. 道具は \`.sacty-tools/\` に置く。`),
+      // 26 行目に、新しい内部の名前
+      "+記録は `/tmp/agent-scratch/` に置く。",
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    repos.readFile = async (gitDir: string, commit: string, path: string) =>
+      path === "docs/spec.md"
+        ? "道具は `.sacty-tools/` に置く。\n"
+        : original(gitDir, commit, path);
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, id } = await toImplement([implement("# v1"), passing], { repos });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(ja(scope?.reason)).toContain("docs/spec.md:26");
+    expect(ja(scope?.reason)).toContain("/tmp/agent-scratch");
+    expect(ja(scope?.reason)).not.toContain(".sacty-tools）");
+    activity.close();
+  });
+
   it("差分の内部の名前が、起点のコミットのそのファイルにすでにあれば（リポジトリがもともと使う名前）、範囲外にしない（PBI-302 A1）", async () => {
     const repos = new FakeRepos();
     repos.diffText = [
@@ -10652,7 +10696,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.status).toBe("awaiting_approval");
     // 作業履歴から復元したタスクには持たず、画面に返すときだけ足す
     expect(task?.aiReview).toBeUndefined();
+    // PR の確認で最新の head を読む前は、提出したコミットで計算せず「分からない」
+    expect(service.view(id)?.task.aiReview).toEqual({ head: commit, status: "unknown" });
+    pulls.state = { state: "open", headSha: commit };
+    await service.checkPullRequests();
     expect(service.view(id)?.task.aiReview).toEqual({ head: commit, status: "none" });
+    // 人が PR にコミットを足した：最新の head で計算する（PR #304 のレビュー）
+    pulls.state = { state: "open", headSha: "fedcba9876543210" };
+    await service.checkPullRequests();
+    expect(service.view(id)?.task.aiReview).toEqual({ head: "fedcba9876543210", status: "none" });
+    // 読めなくなったら、また「分からない」
+    pulls.state = { state: "open" };
+    pulls.prInfo = { ...pulls.prInfo, headSha: undefined } as typeof pulls.prInfo;
+    await service.checkPullRequests();
+    expect(service.view(id)?.task.aiReview?.status).toBe("unknown");
     expect(pulls.calls.at(-1)?.body).toContain(
       `AI のレビュー：この head（${commit?.slice(0, 7)}）には、sacty の AI のレビューがまだ付いていません`,
     );

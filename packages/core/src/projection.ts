@@ -167,7 +167,11 @@ export type StepState = "todo" | "active" | "done" | "skip";
  */
 export type AiReviewOfHead = {
   head: string;
-  status: "none" | "reviewing" | "attached";
+  /**
+   * unknown は、PR が開いている間の最新の head をまだ GitHub から読めていない（デーモンの起動の直後など）。提出したコミット
+   * （head）で計算すると、人が後から足したコミットを見落として「付いた」と誤るので、状況を出さない（PR #304 のレビュー）。
+   */
+  status: "none" | "reviewing" | "attached" | "unknown";
   /** attached のとき、投稿されたレビューの URL。 */
   url?: string;
 };

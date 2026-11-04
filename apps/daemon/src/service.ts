@@ -369,6 +369,7 @@ import {
   internalNameAllowance,
   internalNamesInDiff,
   investigationMarker,
+  limitInternalNames,
   lineContextText,
   mappedViewpointIds,
   operationSucceeded,
@@ -923,6 +924,11 @@ export class TaskService {
    * 消えるので、再起動で数え直しても困らない。
    */
   private readonly pauseCounts = new Map<string, number>();
+  /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
+  private readonly latestHeads = new Map<
+    string,
+    { number: number; commit: string; head: string }
+  >();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -990,10 +996,26 @@ export class TaskService {
    * 画面に返すタスクと作業履歴。承認待ちの PR の今の head に、sacty の AI のレビューが付いているかを足す（PBI-302 D1）。
    * ほかのタスクを見て計算するので、タスクの状態（作業履歴から復元するもの）には持たない。
    */
+  /**
+   * 承認待ちの PR の、PR の確認で最後に読んだ head（PR #304 のレビュー）。読んだときの PR の番号と提出したコミットが今の
+   * 承認待ちの PR と同じときだけ使う（作り直して別の PR・別の提出になったら、読み直すまで分からない）。
+   */
+  private latestHeadOf(task: Task): string | undefined {
+    const pr = gatePullRequest(task);
+    const seen = this.latestHeads.get(task.id);
+    if (!pr || !seen || seen.number !== pr.number || seen.commit !== pr.commit) return undefined;
+    return seen.head;
+  }
+
   view(id: string): { task: Task; activity: ActivityEvent[] } | undefined {
     const found = this.get(id);
     if (!found) return undefined;
-    const aiReview = aiReviewOfHead(found.task, this.tasks.values(), sameRepo);
+    const aiReview = aiReviewOfHead(
+      found.task,
+      this.tasks.values(),
+      sameRepo,
+      this.latestHeadOf(found.task),
+    );
     return aiReview ? { ...found, task: { ...found.task, aiReview } } : found;
   }
 
@@ -1124,6 +1146,10 @@ export class TaskService {
         // 開いたままの PR は、ベースブランチとの競合を画面に出し（取り込まない）、レビュー・コメントを指摘として取り込む
         // （PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
+          // PR が開いている間の最新の head（提出したコミットとは別。人が足したコミットで変わる。PR #304 のレビュー）
+          const head = status.headSha?.trim();
+          if (head) this.latestHeads.set(task.id, { number: pr.number, commit: pr.commit, head });
+          else this.latestHeads.delete(task.id);
           latest = this.recordPullRequestConflict(latest, pr, status.mergeable) ?? latest;
           try {
             const settled = await this.importFeedback(latest, token);
@@ -9134,9 +9160,12 @@ export class TaskService {
     const include = await this.stepDocumentsForReview(this.mustGet(task.id));
     // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
     // 変更として不合格にする（PBI-302 A1）
-    const internalNames = await this.introducedInternalNames(
-      current,
-      internalNamesInDiff(diff, internalNameAllowance(current)),
+    // 件数は、起点にある名前を除いた後で絞る（PR #304 のレビュー）
+    const internalNames = limitInternalNames(
+      await this.introducedInternalNames(
+        current,
+        internalNamesInDiff(diff, internalNameAllowance(current)),
+      ),
     );
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {

@@ -262,8 +262,7 @@ export type PullRequestFeedback = {
   lineContext?: { line: string; before: string[] };
 };
 
-/** 行へのコメントの行の内容として渡す、1 行の文字数の上限と、直前の行の数。 */
-const LINE_CONTEXT_CHARS = 200;
+/** 行へのコメントの行の内容として渡す、直前の行の数。1 行の長さは、秘密情報を伏せた後で lineContextText が切り詰める。 */
 const LINE_CONTEXT_BEFORE = 2;
 
 /**
@@ -280,11 +279,11 @@ export function lineContextOf(diffHunk: unknown): PullRequestFeedback["lineConte
     .map((l) => (/^[ +-]/.test(l) ? l.slice(1) : l));
   const last = lines.at(-1);
   if (last === undefined) return undefined;
-  const cut = (l: string) =>
-    l.length > LINE_CONTEXT_CHARS ? `${l.slice(0, LINE_CONTEXT_CHARS - 1)}…` : l;
+  // ここでは切り詰めない。切ってから伏せると、境界で形の崩れた秘密の値（署名の切れた JWT など）を見つけられないので、
+  // lineContextText が行全体を伏せてから切り詰める（PR #304 のレビュー）
   return {
-    line: cut(last),
-    before: lines.slice(Math.max(0, lines.length - 1 - LINE_CONTEXT_BEFORE), -1).map(cut),
+    line: last,
+    before: lines.slice(Math.max(0, lines.length - 1 - LINE_CONTEXT_BEFORE), -1),
   };
 }
 

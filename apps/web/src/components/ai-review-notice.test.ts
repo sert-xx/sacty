@@ -67,6 +67,16 @@ describe("AiReviewNotice", () => {
     expect(render({ head: "abc1234", status: "attached" })).not.toContain("<a ");
   });
 
+  it("最新の head を読めていないときは、そう出し、付いたとは出さない", () => {
+    const html = render({ head: "abc1234", status: "unknown" });
+    expect(html).toContain(
+      "PR の今の head をまだ読めていないため、AI のレビューの状況は分かりません。",
+    );
+    expect(html).toContain('data-status="unknown"');
+    expect(html).toContain("承認やマージは止めませんが");
+    expect(render({ head: "abc1234", status: "unknown" }, "en")).toContain("has not been read yet");
+  });
+
   it("状況が無ければ（承認待ちでない・PR が開いていない）何も出さない。https 以外のリンクは出さない", () => {
     expect(render(undefined)).toBe("");
     expect(

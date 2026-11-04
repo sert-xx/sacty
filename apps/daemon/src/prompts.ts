@@ -685,12 +685,21 @@ export function remarkSections(
  */
 export const LINE_CONTEXT_MARK = "（コメントが付いた行の内容：";
 
+/** 行へのコメントに添える行の内容の、1 行の文字数の上限（秘密情報を伏せた後に切り詰める）。 */
+export const LINE_CONTEXT_CHARS = 200;
+
 /**
  * 行へのコメントの指摘の後ろに足す、そのコメントが付いた行の内容と直前の行（PBI-302 B3）。内容は外から来た文字列（リポジトリのコード）
  * なので、秘密情報と URL の認証情報を伏せる。空白はそろえる（字下げは見えなくなる）。空の行は「空行」と書く。
  */
 export function lineContextText(context: { line: string; before: readonly string[] }): string {
-  const quote = (text: string) => `「${hideItem(text.replace(/\s+/g, " ").trim()) || "空行"}」`;
+  // 行全体の秘密情報を伏せてから、1 行の長さに切り詰める（切ってから伏せると、境界で崩れた値を見つけられない。PR #304 のレビュー）
+  const quote = (text: string) => {
+    const hidden = hideItem(text.replace(/\s+/g, " ").trim());
+    const shown =
+      hidden.length > LINE_CONTEXT_CHARS ? `${hidden.slice(0, LINE_CONTEXT_CHARS - 1)}…` : hidden;
+    return `「${shown || "空行"}」`;
+  };
   const before =
     context.before.length > 0 ? `。直前の行：${context.before.map(quote).join("")}` : "";
   return `${LINE_CONTEXT_MARK}${quote(context.line)}${before}）`;
@@ -2182,8 +2191,13 @@ export function internalNameIn(text: string, allowed = ""): string | undefined {
 /** リポジトリの差分に追加された行にある、sacty の作業領域の内部の名前（PBI-302 A1）。 */
 export type InternalNameHit = { path: string; line: number; name: string };
 
-/** 差分の中の、内部の名前を調べる件数の上限（プロンプトと記録を膨らませない）。 */
+/** 内部の名前を、記録・最終レビューの指示に渡す件数の上限（プロンプトと記録を膨らませない）。 */
 const INTERNAL_NAME_HITS_MAX = 20;
+
+/** 内部の名前の一覧を、記録・指示に渡す件数に絞る。起点にある名前などを除いた後に使う（PR #304 のレビュー）。 */
+export function limitInternalNames(hits: readonly InternalNameHit[]): InternalNameHit[] {
+  return hits.slice(0, INTERNAL_NAME_HITS_MAX);
+}
 
 /**
  * リポジトリの差分で追加された行から、sacty の作業領域の内部の名前を見つける（PBI-302 A1。実験 S16：検証のスクリプトに
@@ -2239,7 +2253,9 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
       if (text.startsWith(" ")) line++;
     }
   }
-  return hits.filter((h) => !existing.get(h.path)?.has(h.name)).slice(0, INTERNAL_NAME_HITS_MAX);
+  // 件数は絞らない（起点にある名前を除いた後で絞る。先に絞ると、除かれる名前で枠が埋まり、後ろの新しい名前を見逃す。
+  // PR #304 のレビュー）
+  return hits.filter((h) => !existing.get(h.path)?.has(h.name));
 }
 
 /** タスクの依頼・承認済みの要求要件・設計の文（これらが挙げた内部の名前は、リポジトリに書いてよい）。 */
@@ -5198,6 +5214,7 @@ export function aiReviewBodyLine(state: AiReviewOfHead | undefined): string | un
     none: `この head（${head}）には、sacty の AI のレビューがまだ付いていません`,
     reviewing: `この head（${head}）を、sacty の AI のレビューがレビュー中です`,
     attached: `この head（${head}）には、sacty の AI のレビューが付いています${state.url ? `（${state.url}）` : ""}`,
+    unknown: `この head（${head}）の、sacty の AI のレビューの状況は分かりません`,
   }[state.status];
   return `AI のレビュー：${text}（この本文を書いた時点の状況です。マージは止めません。最新の状況は、sacty の承認の画面で確かめてください）`;
 }

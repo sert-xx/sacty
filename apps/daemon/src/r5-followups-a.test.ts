@@ -16,6 +16,7 @@ import {
   internalNameAllowance,
   internalNamesInDiff,
   joinBodyText,
+  limitInternalNames,
   withoutInternalPaths,
 } from "./prompts.js";
 import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR } from "./repository.js";
@@ -145,7 +146,10 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
         "a.ts",
         Array.from({ length: 50 }, (_, i) => `// /sacty-input ${i}`),
       );
-      expect(internalNamesInDiff(many)).toHaveLength(20);
+      // 見つける段階では絞らない（起点にある名前を除いた後で、limitInternalNames が絞る）
+      expect(internalNamesInDiff(many)).toHaveLength(50);
+      expect(limitInternalNames(internalNamesInDiff(many))).toHaveLength(20);
+      expect(limitInternalNames([])).toEqual([]);
     });
 
     it("削除したファイル（/dev/null）と、ファイルが複数のときのパスの切り替わりを取り違えない", () => {
@@ -485,8 +489,11 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
 
   it("レビューのタスクが無ければ none、動いていれば reviewing、今の head に投稿していれば attached", () => {
     const g = gate();
-    expect(aiReviewOfHead(g, [g], same)).toEqual({ head: "7ed51c5aaaa", status: "none" });
-    expect(aiReviewOfHead(g, [g, reviewer()], same)).toEqual({
+    expect(aiReviewOfHead(g, [g], same, "7ed51c5aaaa")).toEqual({
+      head: "7ed51c5aaaa",
+      status: "none",
+    });
+    expect(aiReviewOfHead(g, [g, reviewer()], same, "7ed51c5aaaa")).toEqual({
       head: "7ed51c5aaaa",
       status: "reviewing",
     });
@@ -495,7 +502,7 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
       reviewTarget: { headCommit: "7ed51c5" },
       reviewPost: { url: "https://github.com/acme/app/pull/2#r1", at: "x" },
     });
-    expect(aiReviewOfHead(g, [g, posted], same)).toEqual({
+    expect(aiReviewOfHead(g, [g, posted], same, "7ed51c5aaaa")).toEqual({
       head: "7ed51c5aaaa",
       status: "attached",
       url: "https://github.com/acme/app/pull/2#r1",
@@ -509,13 +516,17 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
       reviewTarget: { headCommit: "0000000" },
       reviewPost: { url: "https://github.com/acme/app/pull/2#r0", at: "x" },
     });
-    expect(aiReviewOfHead(g, [g, old], same)?.status).toBe("none");
+    expect(aiReviewOfHead(g, [g, old], same, "7ed51c5aaaa")?.status).toBe("none");
     const runningOld = reviewer({ reviewTarget: { headCommit: "0000000" } });
-    expect(aiReviewOfHead(g, [g, runningOld], same)?.status).toBe("none");
+    expect(aiReviewOfHead(g, [g, runningOld], same, "7ed51c5aaaa")?.status).toBe("none");
     const other = reviewer({ body: "https://github.com/acme/app/pull/9 をレビューする" });
-    expect(aiReviewOfHead(g, [g, other], same)?.status).toBe("none");
-    expect(aiReviewOfHead(g, [g, reviewer({ status: "cancelled" })], same)?.status).toBe("none");
-    expect(aiReviewOfHead(g, [g, reviewer({ status: "paused" })], same)?.status).toBe("none");
+    expect(aiReviewOfHead(g, [g, other], same, "7ed51c5aaaa")?.status).toBe("none");
+    expect(
+      aiReviewOfHead(g, [g, reviewer({ status: "cancelled" })], same, "7ed51c5aaaa")?.status,
+    ).toBe("none");
+    expect(
+      aiReviewOfHead(g, [g, reviewer({ status: "paused" })], same, "7ed51c5aaaa")?.status,
+    ).toBe("none");
     // 再レビューの前の回が今の head に付いていたなら、付いている
     const rerun = reviewer({
       reviewRound: 2,
@@ -526,13 +537,39 @@ describe("D1 今の head に sacty の AI のレビューが付いているか",
         headCommit: "7ed51c5",
       },
     });
-    expect(aiReviewOfHead(g, [g, rerun], same)?.status).toBe("attached");
+    expect(aiReviewOfHead(g, [g, rerun], same, "7ed51c5aaaa")?.status).toBe("attached");
+  });
+
+  it("状況は、提出したコミットではなく、PR が開いている間に読んだ最新の head で計算する。読めていなければ unknown", () => {
+    const g = gate();
+    // 提出したコミット A（7ed51c5）にレビューが付いている
+    const posted = reviewer({
+      status: "idle",
+      reviewTarget: { headCommit: "7ed51c5" },
+      reviewPost: { url: "https://github.com/acme/app/pull/2#r1", at: "x" },
+    });
+    expect(aiReviewOfHead(g, [g, posted], same, "7ed51c5aaaa")?.status).toBe("attached");
+    // 人が未レビューのコミット B を足した：A のレビューを「今の head に付いている」としない
+    expect(aiReviewOfHead(g, [g, posted], same, "bbbbbbb1111")).toEqual({
+      head: "bbbbbbb1111",
+      status: "none",
+    });
+    // 最新の head を読めていない：付いたと誤らない
+    expect(aiReviewOfHead(g, [g, posted], same, undefined)).toEqual({
+      head: "7ed51c5aaaa",
+      status: "unknown",
+    });
+    expect(aiReviewBodyLine({ head: "7ed51c5aaaa", status: "unknown" })).toContain(
+      "状況は分かりません",
+    );
   });
 
   it("承認待ちでない・PR が開いていないタスクは、状況を持たない。作成前の PR（番号なし）は none", () => {
-    expect(aiReviewOfHead(gate({ status: "running" } as Partial<Task>), [], same)).toBeUndefined();
     expect(
-      aiReviewOfHead(gate({ pullRequestState: "merged" } as Partial<Task>), [], same),
+      aiReviewOfHead(gate({ status: "running" } as Partial<Task>), [], same, "abc"),
+    ).toBeUndefined();
+    expect(
+      aiReviewOfHead(gate({ pullRequestState: "merged" } as Partial<Task>), [], same, "abc"),
     ).toBeUndefined();
     expect(
       aiReviewFor(
