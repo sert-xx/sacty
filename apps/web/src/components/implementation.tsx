@@ -1,6 +1,12 @@
 "use client";
 
-import { isCompleted, SCOPE_VIEWPOINT, type Task } from "@sacty/core";
+import {
+  displayTestNames,
+  humanVisibleEnvironmentFailures,
+  isCompleted,
+  SCOPE_VIEWPOINT,
+  type Task,
+} from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
@@ -34,7 +40,9 @@ function HumanChecks({ review }: { review: NonNullable<Task["lastReview"]> }) {
   const m = useMessages().parts.implementation;
   const items = [
     ...(review.humanChecks ?? []),
-    ...(review.tests?.environmentFailures ?? []).map((f) => m.environmentFailure(f)),
+    ...humanVisibleEnvironmentFailures(review.tests?.environmentFailures).map((f) =>
+      m.environmentFailure(f),
+    ),
   ];
   if (items.length === 0) return null;
   return (
@@ -153,7 +161,7 @@ export function Implementation({ task }: { task: Task }) {
           </h3>
           <ol className="flex flex-col gap-2.5">
             {viewpoints.map((v) => {
-              const list = mapped.get(v.id)?.tests ?? [];
+              const list = displayTestNames(mapped.get(v.id)?.tests ?? []);
               // テストを書かずに差分で確かめると申告した観点（実行される振る舞いの無い変更）
               const untested = list.length === 0 ? mapped.get(v.id)?.untested : undefined;
               const judged = reviewIsCurrent
@@ -197,7 +205,12 @@ export function Implementation({ task }: { task: Task }) {
                           untested ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.passed && list.length > 0 ? (
-                          <Pill tone={OK}>{m.testsPassed}</Pill>
+                          // 終了コードが 0 でないのに合格にしたときは、「合格」とだけ出さず、その理由を添える（PBI-302 A2）
+                          <Pill tone={OK}>
+                            {tests.environmentFailures && tests.exitCode !== 0
+                              ? m.testsPassedEnvironment
+                              : m.testsPassed}
+                          </Pill>
                         ) : (
                           <Pill tone={NG}>{m.testsFailed}</Pill>
                         )}
@@ -257,6 +270,15 @@ export function Implementation({ task }: { task: Task }) {
             </span>
           </summary>
           <p className="mt-2 font-mono text-xs break-all">{tests.command}</p>
+          {/* 終了コードが 0 でないのに合格にした理由（PBI-302 A2）。失敗の中身は「人が確かめること」に出る */}
+          {tests.environmentFailures && tests.exitCode !== 0 && (
+            <p className="mt-2 text-sm" data-testid="environment-pass-note">
+              {m.environmentPassNote(
+                tests.exitCode,
+                humanVisibleEnvironmentFailures(tests.environmentFailures).length === 0,
+              )}
+            </p>
+          )}
           {tests.note && <p className="mt-2 text-warn">{messages.labels.text(tests.note)}</p>}
           <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
             {tests.output || m.noOutput}

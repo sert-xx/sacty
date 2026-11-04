@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { FinalReview, Task } from "@sacty/core";
+import { type FinalReview, type Task, WORKSPACE_FILE_FAILURE } from "@sacty/core";
 import { type FC, createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -159,5 +159,74 @@ describe("Implementation の設計の無いタスクの観点 REQ", () => {
     expect(html).toContain("受け入れ条件・タスクの目的");
     expect(html).toContain("テストなし・差分で確認（README の文言だけを直したため）");
     expect(html).toContain("差分で判定");
+  });
+});
+
+describe("Implementation の、終了コードが 0 でないのに合格にした理由（PBI-302 A2）", () => {
+  const designed = (lastReview: FinalReview) =>
+    ({
+      ...task(lastReview),
+      verification: undefined,
+      approved: {
+        design: {
+          output: "# 設計",
+          testViewpoints: [
+            { id: "TV-1", title: "文言", input: "README", expected: "書かれている" },
+          ],
+        },
+      },
+      testMap: [{ viewpointId: "TV-1", tests: ["a.test.ts › 文言"] }],
+    }) as unknown as Task;
+  const reviewed = (tests: FinalReview["tests"]) =>
+    review({
+      viewpoints: [{ viewpointId: "TV-1", verified: true, reason: "検証している" }],
+      humanChecks: undefined,
+      tests,
+    });
+
+  it("観点ごとの「テスト合格」に、環境による失敗だけで合格にしたことを添え、理由を日英で出す", () => {
+    const html = render(
+      designed(
+        reviewed({ command: "npm test", exitCode: 1, output: "", environmentFailures: [FAILURE] }),
+      ),
+    );
+    expect(html).toContain("テスト合格（環境による失敗のみ）");
+    expect(html).toContain('data-testid="environment-pass-note"');
+    expect(html).toContain(
+      "終了コードは 1 ですが、失敗がすべて環境によるものとゴールガーディアンが判断したため",
+    );
+    const en = render(
+      designed(
+        reviewed({ command: "npm test", exitCode: 1, output: "", environmentFailures: [FAILURE] }),
+      ),
+      "en",
+    );
+    expect(en).toContain("Tests passed (environment failures only)");
+    expect(en).toContain("The exit code is 1, but the run counts as passed");
+  });
+
+  it("終了コード 0 の合格には添えない", () => {
+    const html = render(designed(reviewed({ command: "npm test", exitCode: 0, output: "" })));
+    expect(html).toContain("テスト合格");
+    expect(html).not.toContain("環境による失敗のみ");
+    expect(html).not.toContain("environment-pass-note");
+  });
+
+  it("sacty の作業用のファイルによる失敗だけなら、人が確かめることには出さず、理由だけを出す", () => {
+    const html = render(
+      designed(
+        reviewed({
+          command: "npm test",
+          exitCode: 1,
+          output: "",
+          environmentFailures: [WORKSPACE_FILE_FAILURE],
+        }),
+      ),
+    );
+    expect(html).toContain(
+      "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため",
+    );
+    expect(html).not.toContain("人が確かめること");
+    expect(html).not.toContain(WORKSPACE_FILE_FAILURE);
   });
 });

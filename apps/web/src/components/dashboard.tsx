@@ -708,7 +708,7 @@ export function QualityCard({ data }: { data: DashboardData }) {
         <WithHint hint={m.byCauseHint}>{m.byCause}</WithHint>
       </h3>
       <dl className={cn(row, "px-5 pb-5")}>
-        {(["new_request", "base_changed"] as const).map((cause) => (
+        {(["new_request", "question_answer", "base_changed"] as const).map((cause) => (
           <Fragment key={cause}>
             <dt className="text-muted-foreground">{m.causes[cause]}</dt>
             <dd

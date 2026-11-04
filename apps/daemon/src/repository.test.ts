@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
+import { diffMatchesFiles, internalNamesInDiff } from "./prompts.js";
 import {
   DIFF_LIMIT,
   GitRepositoryWorkspace,
@@ -1820,6 +1821,132 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       await expect(workspace.readFile(gitDir, merged, bad)).rejects.toThrow(/パスが不正/);
     }
     await expect(workspace.readFile(gitDir, "HEAD", path)).rejects.toThrow();
+  });
+
+  it("任意の名前の読み方（anyName）は、日本語・空白・記号の名前も読み、リポジトリの外へ出るパス・シンボリックリンクは読まない（PR #304 のレビュー）", async () => {
+    const origin = makeOrigin();
+    mkdirSync(join(origin, "docs"));
+    const names = ["docs/日本語.md", "docs/guide name.md", 'docs/q"t.md', "docs/a*b.md"];
+    for (const name of names) writeFileSync(join(origin, name), `${name} の本文\n`);
+    writeFileSync(join(origin, "docs/x.md"), "x\n");
+    symlinkSync("../pay.ts", join(origin, "docs/リンク.md"));
+    git(origin, "add", "--all");
+    git(origin, "commit", "--quiet", "-m", "names");
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "n.git");
+    const { baseCommit } = await workspace.prepare(join(dir, "n"), gitDir, origin, "main");
+    for (const name of names) {
+      expect(await workspace.readFile(gitDir, baseCommit, name, { anyName: true }), name).toBe(
+        `${name} の本文\n`,
+      );
+      // ほかの読み方（anyName を付けない）は、これまでどおり受け付けない
+      await expect(workspace.readFile(gitDir, baseCommit, name), name).rejects.toThrow(
+        /パスが不正/,
+      );
+    }
+    // パスの指定の特別な書き方として読まない（* は字のまま。docs/x.md に一致させない）
+    expect(await workspace.readFile(gitDir, baseCommit, "docs/*.md", { anyName: true })).toBe(
+      undefined,
+    );
+    expect(
+      await workspace.readFile(gitDir, baseCommit, ":(glob)docs/*.md", { anyName: true }),
+    ).toBe(undefined);
+    // 無いファイルは undefined。シンボリックリンクは通常のファイルでないので読まない
+    expect(await workspace.readFile(gitDir, baseCommit, "docs/無い.md", { anyName: true })).toBe(
+      undefined,
+    );
+    await expect(
+      workspace.readFile(gitDir, baseCommit, "docs/リンク.md", { anyName: true }),
+    ).rejects.toThrow(/通常のファイルではありません/);
+    // リポジトリの外・.git・オプションに見えるもの・制御文字は受け付けない
+    for (const bad of [
+      "../x.md",
+      "docs/../../x.md",
+      "./pay.ts",
+      ".git/config",
+      "docs/.GIT/config",
+      "/etc/passwd",
+      "-x.md",
+      "docs//x.md",
+      "docs/a\nb.md",
+      "",
+    ]) {
+      await expect(
+        workspace.readFile(gitDir, baseCommit, bad, { anyName: true }),
+        JSON.stringify(bad),
+      ).rejects.toThrow(/パスが不正/);
+    }
+  });
+
+  it("差分の節を、git が出したファイルの一覧で結び付ける。BMP の外の文字・引用符・タブの名前と、名前の変更の前のパスを取り違えない（PR #304 のレビュー）", async () => {
+    const origin = makeOrigin();
+    mkdirSync(join(origin, "docs"));
+    const body = Array.from({ length: 12 }, (_, i) => `${i + 1}. 説明の行`);
+    writeFileSync(
+      join(origin, "docs/old name.md"),
+      // もともとある名前は、差分の前後の行に入らない先頭に置く（起点と比べないと除けない）
+      ["道具は `.sacty-tools/` に置く。", ...body, ""].join("\n"),
+    );
+    writeFileSync(join(origin, "docs/link"), "x\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "--quiet", "-m", "docs");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    // 名前を変え、もともとある名前の行を足す
+    rmSync(join(clone, "docs/old name.md"));
+    writeFileSync(
+      join(clone, 'docs/new "名".md'),
+      [
+        "道具は `.sacty-tools/` に置く。",
+        ...body,
+        "道具は `.sacty-tools/` に置く（再掲）。",
+        "",
+      ].join("\n"),
+    );
+    // BMP の外の文字と引用符・タブを含む名前の、新しいファイル
+    const emoji = 'docs/😀"guide.md';
+    const tab = "docs/新\tタブ.md";
+    writeFileSync(join(clone, emoji), "記録は `/tmp/agent-scratch/` に置く。\n");
+    writeFileSync(join(clone, tab), "記録は `/sacty-input` に置く。\n");
+    // 種類の変更（節が 2 つに分かれる）
+    rmSync(join(clone, "docs/link"));
+    symlinkSync("../pay.ts", join(clone, "docs/link"));
+
+    const diff = await workspace.diff(clone, gitDir, baseCommit);
+    const files = await workspace.diffFiles(clone, gitDir, baseCommit);
+    expect(files).toContainEqual({
+      status: expect.stringMatching(/^R/),
+      oldPath: "docs/old name.md",
+      path: 'docs/new "名".md',
+    });
+    expect(files.find((f) => f.path === "docs/link")?.status).toBe("T");
+    expect(diffMatchesFiles(diff, files)).toBe(true);
+    const hits = internalNamesInDiff(diff, "", files);
+    expect(hits).toEqual(
+      expect.arrayContaining([
+        { path: emoji, line: 1, name: "/tmp/agent-scratch" },
+        { path: tab, line: 1, name: "/sacty-input" },
+        {
+          path: 'docs/new "名".md',
+          line: 14,
+          name: ".sacty-tools",
+          basePath: "docs/old name.md",
+        },
+      ]),
+    );
+    expect(hits).toHaveLength(3);
+    // 起点の側は、変える前のパスで読める（もともとある名前を除ける）
+    const renamed = hits.find((h) => h.basePath);
+    const base = await workspace.readFile(gitDir, baseCommit, renamed?.basePath ?? "", {
+      anyName: true,
+    });
+    expect(base).toContain(renamed?.name);
+    // 変えた後のパスは起点に無い
+    expect(
+      await workspace.readFile(gitDir, baseCommit, renamed?.path ?? "", { anyName: true }),
+    ).toBeUndefined();
   });
 
   it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {

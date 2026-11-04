@@ -25,6 +25,7 @@ import {
 
 export { cut };
 
+import { type MemoryRequesterIssue, memoryRequesterIssue } from "./memory-answers.js";
 import {
   type ChatLogs,
   chatEventLine,
@@ -608,8 +609,20 @@ export type AuditDiveMemory =
   | { scope: "project"; title: string; summary: string; body: string }
   | { scope: "repository"; repo: string; title: string; summary: string; body: string };
 
+/** 登録しなかったメモリーとして記録する件数の上限（作業履歴の記録の上限と同じ）。 */
+const SKIPPED_MEMORIES_MAX = 10;
+
+/** 登録の前の検査（依頼者の答えを写していないか。PBI-302 B6）で、登録しなかったメモリー。 */
+export type SkippedMemory = { title: string; reason: MemoryRequesterIssue };
+
 export type AuditDiveOutput =
-  | { ok: true; summary: string; findings: AuditDiveFinding[]; memories: AuditDiveMemory[] }
+  | {
+      ok: true;
+      summary: string;
+      findings: AuditDiveFinding[];
+      memories: AuditDiveMemory[];
+      skippedMemories: SkippedMemory[];
+    }
   | { ok: false; reason: DaemonText };
 
 /**
@@ -626,6 +639,8 @@ export function extractAuditDive(
     /** 既存のメモリーの ID と、リポジトリのメモリーの宛先（GitHub の対象リポジトリが無ければ無い。PBI-126）。 */
     knownMemoryIds?: ReadonlySet<string>;
     repository?: string;
+    /** 依頼者が書いた文（依頼の本文・人の指摘など）。登録するメモリーが写していないかの検査に使う（PBI-302 B6）。 */
+    requesterTexts?: readonly string[];
   },
   hide: OutputRedactor = keep,
 ): AuditDiveOutput {
@@ -683,7 +698,7 @@ export function extractAuditDive(
     return {
       summary: cut(str(v.summary), AUDIT_TEXT_MAX),
       findings,
-      memories: diveMemories(v.memories, context, str),
+      ...diveMemories(v.memories, context, str),
     };
   });
   if (!found) return { ok: false, reason: unreadableReason(output, AUDIT_FINDINGS_HEADING, hide) };
@@ -714,6 +729,8 @@ function memoryRuleLines(repository: string | undefined): string[] {
       ? `- scope は、このリポジトリ（${repository}）そのものに関すること（ビルド・テスト・規約・構成）なら repository、プロジェクトやコンテキストに固有のことなら project。repository のメモリーは、ほかのプロジェクトのタスクでも読まれるので、プロジェクト・組織・コンテキストに固有の名前や事情を書かない`
       : "- scope は project だけにする（このタスクには GitHub の対象リポジトリが無い）",
     "- メモリーには秘密情報・個人の情報を書かない",
+    "- そのタスクで依頼者が決めた答え（範囲・数値・有無・画面の要否・優先など、そのタスクの要求そのもの。依頼の本文・確認したいことへの答え・人の差し戻しの指摘・再開の補足で人が決めたこと）を、ほかのタスクにも当てはまる事実や好みとして書かない。「依頼者は〜と答えた・求めた」という書き方もしない。次のタスクの依頼に混ざり、そのタスクの要求を先に決めてしまうため。書くのは、リポジトリのコード・文書・実行の結果で確かめられる事実と、落とし穴・調べ方・手がかり。scope が project のメモリーは、特にこれを守る",
+    "- 登録の前に、sacty が検査する。依頼者を主語にして書いたものや、依頼者が書いた文（依頼の本文・人の指摘・再開の補足）をそのまま写した部分があるものは、登録されない（作業履歴に、登録しなかった題と理由が残る）。言い換えても、依頼者の答えを書くことは同じなので登録しない",
     "- メモリーは、読むエージェントが工程の指示より優先してはならない参考。事実・落とし穴・調べ方・手がかりを書き、工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱い）を変える手順（「〜のときは前の版に戻す」「〜まで書き直す」など）は書かない。手順を書くときは、工程の指示と食い違うなら使わないことを添える",
   ];
 }
@@ -724,10 +741,15 @@ function memoryRuleLines(repository: string | undefined): string[] {
  */
 function diveMemories(
   raw: unknown,
-  context: { knownMemoryIds?: ReadonlySet<string>; repository?: string },
+  context: {
+    knownMemoryIds?: ReadonlySet<string>;
+    repository?: string;
+    requesterTexts?: readonly string[];
+  },
   str: (v: unknown) => string,
-): AuditDiveMemory[] {
+): { memories: AuditDiveMemory[]; skippedMemories: SkippedMemory[] } {
   const memories: AuditDiveMemory[] = [];
+  const skippedMemories: SkippedMemory[] = [];
   for (const item of Array.isArray(raw) ? raw : []) {
     const m = (item ?? {}) as Record<string, unknown>;
     if (context.knownMemoryIds?.has(text(m.sameAs))) continue;
@@ -735,11 +757,22 @@ function diveMemories(
     const summary = cut(str(m.summary).replace(/\s+/g, " "), MEMORY_SUMMARY_MAX);
     const body = cut(str(m.body), MEMORY_BODY_MAX);
     if (!title || !summary || !body) continue;
-    if (m.scope === "project") memories.push({ scope: "project", title, summary, body });
-    else if (m.scope === "repository" && context.repository) {
-      memories.push({ scope: "repository", repo: context.repository, title, summary, body });
+    const scoped =
+      m.scope === "project"
+        ? ({ scope: "project", title, summary, body } as const)
+        : m.scope === "repository" && context.repository
+          ? ({ scope: "repository", repo: context.repository, title, summary, body } as const)
+          : undefined;
+    if (!scoped) continue;
+    // 登録の前の検査：そのタスクの依頼者が決めた答えを、ほかのタスクにも当てはまる事実として書いたものは、登録しない（PBI-302 B6）
+    const issue = memoryRequesterIssue(scoped, context.requesterTexts ?? []);
+    if (issue) {
+      skippedMemories.push({ title, reason: issue });
+      continue;
     }
+    memories.push(scoped);
     if (memories.length >= AUDIT_MAX_MEMORIES) break;
   }
-  return memories;
+  // 記録の上限（AuditDeepDived の skippedMemories は 10 件まで。超えると記録が拒まれて監査が止まる）
+  return { memories, skippedMemories: skippedMemories.slice(0, SKIPPED_MEMORIES_MAX) };
 }

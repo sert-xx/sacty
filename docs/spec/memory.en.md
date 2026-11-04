@@ -55,6 +55,7 @@ Code: `apps/daemon/src/memory.ts` (`liveMemories`, `writeMemoryLayer`, `syncMemo
   - If the knowledge matches an existing memory, put its ID in `sameAs`; nothing is registered.
   - `scope` is `repository` for things about the repository itself (build, tests, conventions, structure), and `project` for things specific to the project or context. `repository` memories must not contain names or circumstances specific to a project, organization, or context. With no GitHub target repository, only `project` is allowed.
   - No secrets or personal information.
+  - Do not write answers the task's requester decided (scope, numbers, whether something exists, whether a screen is needed, priorities: the task's own requirements; what a person decided in the request body, in answers to the open questions, in a person's comments, or in a resume note) as facts or preferences that apply to other tasks. Do not phrase it as "the requester answered/asked ...". This applies especially to `project` (PBI-302 B6).
   - No procedure that changes the step instructions (the scope of the rework, what to write and not to write, how decided judgements are handled).
     Have it write facts, pitfalls, how to investigate, and leads; if it does write a procedure, have it add that the procedure is not to be used when it conflicts with the step instructions.
     sacty does not judge the contents of procedures at registration (the instruction is the only rule; the priority at reading time is the safeguard).
@@ -65,12 +66,20 @@ Code: `apps/daemon/src/memory.ts` (`liveMemories`, `writeMemoryLayer`, `syncMemo
     - Items missing a title, summary, or contents
     - Items whose `sameAs` is an existing ID
     - `repository` items without a target repository
+    - Items judged to record the requester's answers ("Check for the requester's answers" below)
   - sacty sets the `repository` destination to the target repository (the output's destination is not used).
+- Check for the requester's answers (`memoryRequesterIssue`, `requesterTexts`; PBI-302 B6): before registering, sacty checks the title, summary, and contents mechanically, and does not rely on the instruction alone.
+  - The text the requester wrote is the task's title and body, a person's comments (excluding AI review comments and voided comments; for a line comment, only the text the person wrote, without the line content that sacty appended, which quotes the repository), and resume notes.
+  - A memory that meets either of the following is not registered (either layer, `project` or `repository`). It does not count toward the limit of 2.
+    - `requester_mentioned`: it speaks of the requester as the subject ("依頼者", "依頼人", "依頼した人", "依頼主", "発注者", "ステークホルダー", "requester", "stakeholder", or "〜と答えた" / "〜を回答した" with a person ("人", "ユーザー", "利用者", "お客様", "顧客") as the subject; an agent having answered is not counted).
+    - `requester_text_copied`: it copies text the requester wrote. Compared after normalizing full-width/half-width and case and removing whitespace and symbols, when a run of 14 or more characters in a row matches one text of the requester (shorter matches at different places or in different texts are not added up). Overlaps that are mostly alphanumeric (fewer than 6 non-alphanumeric characters: paths, identifiers, commands) are not counted.
+  - The title and reason of each memory not registered are kept in `skippedMemories` (`title`, `reason`) of `AuditDeepDived` (the deep-dive line of the Activity shows the count; the titles and reasons stay in the record; present only when there is one).
+  - It can find only sentences with the requester as the subject and copies of the requester's text. A reworded answer is not found (the instruction's rule is what guards against it).
 - Like other audit output, sacty redacts secrets before recording. It also applies the same redaction to the title, summary, and contents after decoding the JSON and before trimming, joining into one line, and truncation. This is because values containing quotes, backslashes, or newlines are escaped in the JSON string and would not match there. sacty assigns the IDs.
 - Deep dives of the same project run one at a time, so duplicates in the project layer are checked against the list at registration time. The repository layer can receive a registration from another project's deep dive at the same time; then the same knowledge may end up as two memories.
 - Each layer holds at most 30 memories (`MEMORY_MAX_PER_LAYER`). When a registration exceeds it, sacty deletes the memories with the oldest last useful date (then the oldest registration) with `capacity`.
 
-Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditDive`, `AUDIT_MAX_MEMORIES`), `apps/daemon/src/service.ts` (`knownMemories`, `trimMemories`, `runAuditAgent`), `apps/daemon/src/memory.ts` (`overCapacity`, `MEMORY_MAX_PER_LAYER`)
+Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditDive`, `AUDIT_MAX_MEMORIES`), `apps/daemon/src/memory-answers.ts` (`memoryRequesterIssue`, `requesterTexts`), `apps/daemon/src/service.ts` (`knownMemories`, `trimMemories`, `runAuditAgent`), `apps/daemon/src/memory.ts` (`overCapacity`, `MEMORY_MAX_PER_LAYER`)
 
 ## Updating the last useful date
 

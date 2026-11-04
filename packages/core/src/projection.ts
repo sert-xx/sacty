@@ -16,6 +16,7 @@ import type {
   RemarkSource,
   ReviewComment,
   ReviewVerdict,
+  ReworkAnswer,
   ReworkCause,
   SecurityCategory,
   SelfReview,
@@ -159,6 +160,22 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * blocked：分割で作った子タスクが、依存先の子タスクの完了を待っている（PBI-27）
  * waiting_children：タスク分割の後、子タスクの完了を待っている（PBI-27）
  */
+/**
+ * 承認待ちの PR の今の head に、sacty 自身の AI のレビュー（sacty のレビューのタスクの投稿）が付いているか（PBI-302 D1）。
+ * none：付いていない、reviewing：レビューのタスクが今の head をレビューしている、attached：今の head のレビューが投稿された。
+ * 承認やマージは止めない。作業履歴から復元する状態ではなく、デーモンが画面と PR の本文のために、ほかのタスクを見て計算する。
+ */
+export type AiReviewOfHead = {
+  head: string;
+  /**
+   * unknown は、PR が開いている間の最新の head をまだ GitHub から読めていない（デーモンの起動の直後など）。提出したコミット
+   * （head）で計算すると、人が後から足したコミットを見落として「付いた」と誤るので、状況を出さない（PR #304 のレビュー）。
+   */
+  status: "none" | "reviewing" | "attached" | "unknown";
+  /** attached のとき、投稿されたレビューの URL。 */
+  url?: string;
+};
+
 export type TaskStatus =
   | "blocked"
   | "waiting_children"
@@ -609,6 +626,11 @@ export type Task = {
    * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
    */
   pullRequestCi?: PullRequestCi;
+  /**
+   * 承認待ちの PR の今の head に付いた AI のレビューの状況（PBI-302 D1）。作業履歴からは復元しない。デーモンが画面に返すときだけ
+   * 足す（`TaskService.view`）。
+   */
+  aiReview?: AiReviewOfHead;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
@@ -803,7 +825,12 @@ export type Task = {
   pendingReview?: {
     keys: string[];
     remarks: string[];
-    judgement?: { target?: StepKey; cause?: ReworkCause; reason: DaemonText };
+    judgement?: {
+      target?: StepKey;
+      cause?: ReworkCause;
+      answer?: ReworkAnswer;
+      reason: DaemonText;
+    };
     /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
     aiReview?: number[];
   };
@@ -816,6 +843,8 @@ export type Task = {
     decided: boolean;
     /** ゴールガーディアンが判断した差し戻しの原因（PBI-268）。判断できなければ無い。 */
     cause?: ReworkCause;
+    /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1）。as_recommended なら、答えの反映だけの軽い直しにした。 */
+    answer?: ReworkAnswer;
     reason: DaemonText;
     at: string;
     /**
@@ -1452,6 +1481,7 @@ export function applyEvent(
           target,
           decided: judged.target !== undefined,
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
+          ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: judged.reason,
           at: event.at,
           round: event.payload.round,
@@ -1866,6 +1896,7 @@ export function applyEvent(
         judgement: {
           ...(event.payload.target ? { target: event.payload.target } : {}),
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
+          ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: event.payload.reason,
         },
       };

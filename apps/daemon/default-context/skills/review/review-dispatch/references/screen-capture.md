@@ -49,7 +49,7 @@ Playwright やブラウザを新たにダウンロード・インストールし
 作業領域の外の、検証の結果と同じ場所に保存する。
 
 ```
-<一時ディレクトリ>/review-verify/round-<回>/screens/
+/tmp/agent-scratch/review-verify/round-<回>/screens/
   screens.json
   <画面>-<幅>-<状態>[-base].png
 ```
@@ -68,7 +68,7 @@ Playwright やブラウザを新たにダウンロード・インストールし
       "width": 375,
       "state": "0 件",
       "version": "head | base",
-      "path": "<一時ディレクトリ>/review-verify/round-1/screens/tasks-375-empty.png",
+      "path": "/tmp/agent-scratch/review-verify/round-1/screens/tasks-375-empty.png",
       "console_errors": ["コンソールのエラー（無ければ空）"]
     }
   ],

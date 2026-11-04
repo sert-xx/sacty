@@ -71,7 +71,7 @@ Only two names can be written in `providers`: `codex` for Codex and `claude` for
 - Keep the unit prices in line with the latest prices of the models you use. If your contract has different prices, write those.
   - A run's cost is the amount the agent's CLI reported, if it did (the cost of the whole run that Claude Code reports).
     If it did not, sacty calculates the cost from these unit prices and the token counts. When another model, such as a subagent, was used in the run, sacty calculates that model's usage with that model's price (a model with no price in `available_models` uses the step agent's price).
-    When sacty used the CLI's report, or calculated per model, the activity history of the task shows which one it used, in the line "Cost … is …".
+    For every run, the activity history of the task shows whether sacty used the CLI's report or calculated from the usage, in the line "Cost … is …". A run of an agent whose CLI does not report a cost, such as Codex, shows "the agent CLI did not report a cost, so the usage was converted with the price".
   - Write example prices close to what you are actually charged. A price higher than the real one makes the cost of runs without a report look large, so the budget cap is reached early and the task pauses.
   - A Claude Code run uses the amount the CLI reports, so even if your contract prices differ from that amount, the reported amount is the cost. The prices you write here apply to runs without a report and to other models used inside a run.
   - With a subscription you are not actually billed. sacty treats the reported amount (or, if there is none, the value converted at the same unit prices) as the cost and uses it to check the budget.

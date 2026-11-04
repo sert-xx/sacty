@@ -63,10 +63,11 @@
 
 ## 3. 結果を保存する
 
-作業領域の外（スクラッチ用の一時ディレクトリ）に、コマンドごとのログと要約を保存する。作業領域の中に置かない（差分やレビューの対象に混ざる）。
+作業領域の外の `/tmp/agent-scratch/`（スクラッチ用の一時ディレクトリ。このスキルの「一時ディレクトリ」はここを指す）に、コマンドごとのログと要約を保存する。作業領域の中には置かない（差分やレビューの対象に混ざるだけでなく、リポジトリ全体を対象にするフォーマッター・リンター・テストの結果を変える）。依頼文や環境が、作業領域の中に道具を入れる場所（ツール用のディレクトリなど）を示していても、そこはログ・要約・起点の写しなどの記録を置く場所ではない。
+検証のスクリプトやコマンドにも、この一時ディレクトリの場所や、作業用のディレクトリの名前を書き込まない（リポジトリのファイルに残さない）。
 
 ```
-<一時ディレクトリ>/review-verify/round-<回>/
+/tmp/agent-scratch/review-verify/round-<回>/
   summary.json
   <種類>-<名前>.log      # 標準出力と標準エラーをまとめたもの
 ```
@@ -86,7 +87,7 @@
       "status": "passed | failed | error | timeout | skipped",
       "exit_code": 1,
       "duration_sec": 42,
-      "log": "<一時ディレクトリ>/review-verify/round-1/lint-eslint.log",
+      "log": "/tmp/agent-scratch/review-verify/round-1/lint-eslint.log",
       "note": "skipped・error の理由、再実行の結果など"
     }
   ],
@@ -104,9 +105,9 @@
 失敗があり、作業領域に `.git` があって変更前（ベース）を取り出せるときは、失敗したコマンドだけをベースでも実行する。今回の変更が持ち込んだ失敗か、既存の失敗かを分けるため。
 
 ```bash
-git worktree add <一時ディレクトリ>/review-base <ベースの SHA>
-# <一時ディレクトリ>/review-base で失敗したコマンドだけを実行し、ログを base-<種類>-<名前>.log に保存
-git worktree remove <一時ディレクトリ>/review-base
+git worktree add /tmp/agent-scratch/review-base <ベースの SHA>
+# /tmp/agent-scratch/review-base で失敗したコマンドだけを実行し、ログを base-<種類>-<名前>.log に保存
+git worktree remove /tmp/agent-scratch/review-base
 ```
 
 結果は `summary.json` の該当コマンドの `note` に「ベースでも失敗」「ベースでは成功」と書く。取り出せないときは「ベースとの比較なし」と書く。

@@ -104,8 +104,18 @@ import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
-import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
-import { type FileChange, NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import {
+  buildOrchestratorPrompt,
+  buildPullRequestBody,
+  buildStepDocument,
+  changeableSteps,
+} from "./prompts.js";
+import {
+  type DiffFile,
+  type FileChange,
+  NothingToCommitError,
+  type RepositoryWorkspace,
+} from "./repository.js";
 import { isOpenStopNotice } from "./review-stop-notice.js";
 import {
   MemorySecretStore,
@@ -354,6 +364,11 @@ class FakeSharedComposes implements SharedComposeFetcher {
 }
 
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
+/** PR の本文に書く、今の head の AI のレビューの状況（レビューのタスクが無ければ付いていない。PBI-302 D1）。 */
+function noAiReview(task: Task) {
+  return { aiReview: { head: task.pullRequest?.commit ?? "", status: "none" as const } };
+}
+
 class FakeRepos implements RepositoryWorkspace {
   prepared: {
     dir: string;
@@ -425,6 +440,17 @@ class FakeRepos implements RepositoryWorkspace {
     if (baseCommit) this.diffBases.push(baseCommit);
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
+  }
+  /** diff と同じ差分のファイルの一覧。無ければ、diffText の見出し（引用の無い簡単な形）から作る。 */
+  diffFileList: DiffFile[] | undefined;
+  diffFilesFail: string | undefined;
+  async diffFiles() {
+    if (this.diffFilesFail) throw new Error(this.diffFilesFail);
+    if (this.diffFileList) return this.diffFileList;
+    return this.diffText
+      .split("\n")
+      .filter((line) => line.startsWith("diff --git "))
+      .map((line) => ({ status: "M", path: line.replace(/^diff --git a\/.* b\//, "") }));
   }
   /** ファイルごとの変更（セキュリティ対応の範囲の照合）。 */
   changes: FileChange[] = [{ path: "src/pay.ts", added: 1, removed: 0 }];
@@ -1651,14 +1677,21 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
-    it("報告もモデルごとの使用量も無ければ（Codex など）、これまでどおり、エージェントの単価で換算し、出どころは記録しない", async () => {
+    it("報告もモデルごとの使用量も無ければ（Codex など）、エージェントの単価で換算し、出どころ（換算）を記録する（PBI-302 D2）", async () => {
       const { done, recorded } = await run({
         kind: "completed",
         output: "# 要求要件",
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1_000_000 },
       });
       expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(25);
-      expect(recorded).toEqual([]);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.payload).toMatchObject({
+        agentId: "claude_advanced",
+        source: "converted",
+        amountUsd: 25,
+        convertedUsd: 25,
+      });
+      expect(recorded[0]?.payload).not.toHaveProperty("unpricedModels");
     });
 
     it("失敗した実行も、CLI の報告があればそれを費用にする", async () => {
@@ -2490,6 +2523,8 @@ describe("工程の実行と費用", () => {
       // 工程は、リポジトリを用意した後に、オーケストレーターが選ぶ（PBI-17）
       "StepsChosen",
       "AgentRunStarted",
+      // 費用の出どころ（CLI が費用を報告しない実行は、換算した額。PBI-302 D2）
+      "RunCostRecorded",
       "AgentRunCompleted",
       "StepSubmitted",
     ]);
@@ -3828,8 +3863,8 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(task?.budget.usedUsd).toBeCloseTo(0.018, 6);
     const types = service.get(id)?.activity.map((e) => e.type) ?? [];
     expect(types.slice(-4)).toEqual([
-      "AgentRunCompleted",
       "ChangeProposed",
+      "RunCostRecorded",
       "ChangeJudged",
       "StepSubmitted",
     ]);
@@ -9346,7 +9381,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
     expect(task?.lastTests).toBeUndefined();
     expect(types(service, id).slice(-6)).toEqual([
-      "AgentRunCompleted",
+      "RunCostRecorded",
       "FinalReviewed",
       "BranchPushed",
       "PullRequestPublished",
@@ -9442,6 +9477,278 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ]);
     // 最終レビューの指示に、範囲外の変更の判定が入っている
     expect(promptOf(executor, 4)).toContain("--- 範囲外の変更 ---");
+    activity.close();
+  });
+
+  it("差分にリポジトリの作業領域の内部の名前（.sacty-tools）が入っていたら、ゴールガーディアンが合格と判定しても範囲外の変更として不合格にし、外すよう伝える（PBI-302 A1）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/test/capture.js b/test/capture.js",
+      "--- a/test/capture.js",
+      "+++ b/test/capture.js",
+      "@@ -1,1 +1,2 @@",
+      " const a = 1;",
+      "+const base = '.sacty-tools/baseline';",
+    ].join("\n");
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# v1"), passing, implement("# v2"), passing],
+      { repos },
+    );
+    // 1回目だけ、内部の名前を含む差分。2回目は取り除かれた差分
+    const diffs = [
+      repos.diffText,
+      "diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1,1 +1,1 @@\n+ok",
+    ];
+    repos.diff = async () => diffs.shift() ?? "";
+    await drain(service);
+    const [first, second] =
+      service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(scope?.verified).toBe(false);
+    expect(ja(scope?.reason)).toContain("test/capture.js:2");
+    expect(ja(scope?.reason)).toContain(".sacty-tools");
+    expect(promptOf(executor, 4)).toContain('"path":"test/capture.js"');
+    expect(promptOf(executor, 5)).toContain("[SCOPE] 観点を検証できていない");
+    expect(second?.type === "FinalReviewed" && second.payload.passed).toBe(true);
+    activity.close();
+  });
+
+  it("起点にある名前を除いた後で件数を絞るので、上限より後ろにある新しい内部の名前も見つける（PBI-302 A1。PR #304 のレビュー）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/docs/spec.md b/docs/spec.md",
+      "--- a/docs/spec.md",
+      "+++ b/docs/spec.md",
+      "@@ -1,1 +1,26 @@",
+      // 起点のファイルにもある名前の行が 25 行（上限の 20 を超える）
+      ...Array.from({ length: 25 }, (_, i) => `+${i}. 道具は \`.sacty-tools/\` に置く。`),
+      // 26 行目に、新しい内部の名前
+      "+記録は `/tmp/agent-scratch/` に置く。",
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    repos.readFile = async (gitDir: string, commit: string, path: string) =>
+      path === "docs/spec.md"
+        ? "道具は `.sacty-tools/` に置く。\n"
+        : original(gitDir, commit, path);
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, id } = await toImplement([implement("# v1"), passing], { repos });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(false);
+    const scope =
+      first?.type === "FinalReviewed"
+        ? first.payload.viewpoints.find((v) => v.viewpointId === "SCOPE")
+        : undefined;
+    expect(ja(scope?.reason)).toContain("docs/spec.md:26");
+    expect(ja(scope?.reason)).toContain("/tmp/agent-scratch");
+    expect(ja(scope?.reason)).not.toContain(".sacty-tools）");
+    activity.close();
+  });
+
+  it("日本語・空白の名前のファイルも起点を読んで、もともとある名前を除く。起点を読めないファイルは不合格にせず、理由を人が確かめることに残す（PR #304 のレビュー）", async () => {
+    const repos = new FakeRepos();
+    const section = (path: string, line: string) => [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}${path.includes(" ") ? "\t" : ""}`,
+      `+++ b/${path}${path.includes(" ") ? "\t" : ""}`,
+      "@@ -1,1 +1,2 @@",
+      " # 仕様",
+      `+${line}`,
+    ];
+    repos.diffText = [
+      ...section("docs/日本語.md", "道具は `.sacty-tools/` に置く。"),
+      ...section("docs/guide name.md", "道具は `.sacty-tools/` に置く。"),
+      ...section("docs/大きい.md", "記録は `/tmp/agent-scratch/` に置く。"),
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    const reads: { path: string; anyName?: boolean }[] = [];
+    repos.readFile = async (
+      gitDir: string,
+      commit: string,
+      path: string,
+      options?: { anyName?: boolean },
+    ) => {
+      if (!["docs/日本語.md", "docs/guide name.md", "docs/大きい.md"].includes(path)) {
+        return original(gitDir, commit, path);
+      }
+      reads.push({ path, anyName: options?.anyName });
+      // 実際の読み方と同じく、anyName が無ければ日本語・空白の名前を拒否する
+      if (!options?.anyName) throw new Error("パスが不正です");
+      if (path === "docs/大きい.md") throw new Error("ファイルが大きすぎます");
+      return "# 仕様\n\n道具は `.sacty-tools/` に置く。\n";
+    };
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), passing], {
+      repos,
+    });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(reads).toEqual([
+      { path: "docs/日本語.md", anyName: true },
+      { path: "docs/guide name.md", anyName: true },
+      { path: "docs/大きい.md", anyName: true },
+    ]);
+    // もともとある名前は除き、読めないファイルの名前も不合格にしない
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+    expect(
+      first?.type === "FinalReviewed" &&
+        first.payload.viewpoints.some((v) => v.viewpointId === "SCOPE"),
+    ).toBe(false);
+    expect(promptOf(executor, 4)).not.toContain('"path":"docs/');
+    const checks = (first?.type === "FinalReviewed" && first.payload.humanChecks) || [];
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toContain("docs/大きい.md（2 行目）");
+    expect(checks[0]).toContain("ファイルが大きすぎます");
+    activity.close();
+  });
+
+  it("名前を変えたファイルは、起点の変える前のパスと比べてもともとある名前を除く。ファイルの一覧を取れなければ不合格にせず人に回す（PR #304 のレビュー）", async () => {
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const diffText = [
+      'diff --git a/docs/old.md "b/docs/new \\"x\\".md"',
+      "similarity index 90%",
+      "rename from docs/old.md",
+      'rename to "docs/new \\"x\\".md"',
+      "--- a/docs/old.md",
+      '+++ "b/docs/new \\"x\\".md"',
+      "@@ -20,1 +20,2 @@",
+      " 末尾",
+      "+道具は `.sacty-tools/` に置く。",
+    ].join("\n");
+    const run = async (setup: (repos: FakeRepos) => void) => {
+      const repos = new FakeRepos();
+      repos.diffText = diffText;
+      repos.diffFileList = [{ status: "R090", oldPath: "docs/old.md", path: 'docs/new "x".md' }];
+      const original = repos.readFile.bind(repos);
+      const reads: string[] = [];
+      repos.readFile = async (gitDir: string, commit: string, path: string) => {
+        if (!["docs/old.md", 'docs/new "x".md'].includes(path)) {
+          return original(gitDir, commit, path);
+        }
+        reads.push(path);
+        return path === "docs/old.md" ? "道具は `.sacty-tools/` に置く。\n" : undefined;
+      };
+      setup(repos);
+      const { activity, service, id } = await toImplement([implement("# v1"), passing], {
+        repos,
+      });
+      await drain(service);
+      const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      activity.close();
+      return { first, reads };
+    };
+    // 起点の側は変える前のパス（docs/old.md）で読み、もともとある名前なので範囲外にしない
+    const renamed = await run(() => {});
+    expect(renamed.reads).toEqual(["docs/old.md"]);
+    expect(renamed.first?.type === "FinalReviewed" && renamed.first.payload.passed).toBe(true);
+    // ファイルの一覧を取れない・節と合わないときは、不合格にせず、理由を人が確かめることに残す
+    for (const setup of [
+      (repos: FakeRepos) => {
+        repos.diffFilesFail = "git を実行できない";
+      },
+      (repos: FakeRepos) => {
+        repos.diffFileList = [];
+      },
+    ]) {
+      const { first, reads } = await run(setup);
+      expect(reads).toEqual([]);
+      expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+      const checks = (first?.type === "FinalReviewed" && first.payload.humanChecks) || [];
+      expect(checks.join("\n")).toContain("変更したファイルの一覧を取れない");
+    }
+  });
+
+  it("差分の内部の名前が、起点のコミットのそのファイルにすでにあれば（リポジトリがもともと使う名前）、範囲外にしない（PBI-302 A1）", async () => {
+    const repos = new FakeRepos();
+    repos.diffText = [
+      "diff --git a/docs/spec.md b/docs/spec.md",
+      "--- a/docs/spec.md",
+      "+++ b/docs/spec.md",
+      "@@ -1,1 +1,2 @@",
+      " # 仕様",
+      "+道具は `.sacty-tools/` に置き、検査の対象にしない。",
+    ].join("\n");
+    const original = repos.readFile.bind(repos);
+    const reads: string[] = [];
+    repos.readFile = async (gitDir: string, commit: string, path: string) => {
+      if (path !== "docs/spec.md") return original(gitDir, commit, path);
+      reads.push(path);
+      return "# 仕様\n\n作業領域の `.sacty-tools/` は sacty の道具の置き場。\n";
+    };
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), passing], {
+      repos,
+    });
+    await drain(service);
+    const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+    expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+    expect(reads).toEqual(["docs/spec.md"]);
+    expect(promptOf(executor, 4)).not.toContain('"path":"docs/spec.md"');
     activity.close();
   });
 
@@ -9559,14 +9866,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // PR の本文：全体の説明と最後の直しが分かれる。前の直しは残らない
     const body = buildPullRequestBody(task);
     expect(body).toContain("- 変更：API・ワーカー・Web に通した");
-    expect(body).toContain("## 変更\n\n# 配送先の国コードを足した");
+    // 説明が自分の見出しから始まるときは、中身の無い「## 変更」を重ねない（PBI-302 C2）
+    expect(body).not.toContain("## 変更\n");
     expect(body).toContain("- 最後の直し：c.ts の変更を外した");
     // 結論に載せた最初の段落は、「変更」の節に重ねない（PBI-301 A7）
     expect(body.match(/API・ワーカー・Web に通した/g)).toHaveLength(1);
-    expect(body).toContain(
-      "## 変更\n\n# 配送先の国コードを足した\n\n## 検証\n\nmake test が成功した",
-    );
-    expect(body).toContain("## 最後の直し\n\nc.ts の変更を外した");
+    expect(body).toContain("# 配送先の国コードを足した\n\n## 検証\n\nmake test が成功した");
+    // 最後の直しは結論に載せた1段落で足りるので、同じ文を別の節に重ねない（PBI-302 C2）
+    expect(body.match(/c\.ts の変更を外した/g)).toHaveLength(1);
+    expect(body).not.toContain("## 最後の直し");
     expect(body).not.toContain("最終レビューの指摘で a.ts の変更を外した");
     expect(body.match(/この環境だけの結果：/g)).toHaveLength(1);
     activity.close();
@@ -10534,6 +10842,34 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     return made;
   }
 
+  it("画面に返すタスクには、承認待ちの PR の今の head の AI のレビューの状況を足し、PR の本文にも書く。承認待ちでなければ足さない（PBI-302 D1）", async () => {
+    const { activity, service, pulls, id } = await toImplementGate();
+    const task = service.get(id)?.task;
+    const commit = task?.pullRequest?.commit;
+    expect(task?.status).toBe("awaiting_approval");
+    // 作業履歴から復元したタスクには持たず、画面に返すときだけ足す
+    expect(task?.aiReview).toBeUndefined();
+    // PR の確認で最新の head を読む前は、提出したコミットで計算せず「分からない」
+    expect(service.view(id)?.task.aiReview).toEqual({ head: commit, status: "unknown" });
+    pulls.state = { state: "open", headSha: commit };
+    await service.checkPullRequests();
+    expect(service.view(id)?.task.aiReview).toEqual({ head: commit, status: "none" });
+    // 人が PR にコミットを足した：最新の head で計算する（PR #304 のレビュー）
+    pulls.state = { state: "open", headSha: "fedcba9876543210" };
+    await service.checkPullRequests();
+    expect(service.view(id)?.task.aiReview).toEqual({ head: "fedcba9876543210", status: "none" });
+    // 読めなくなったら、また「分からない」
+    pulls.state = { state: "open" };
+    pulls.prInfo = { ...pulls.prInfo, headSha: undefined } as typeof pulls.prInfo;
+    await service.checkPullRequests();
+    expect(service.view(id)?.task.aiReview?.status).toBe("unknown");
+    expect(pulls.calls.at(-1)?.body).toContain(
+      `AI のレビュー：この head（${commit?.slice(0, 7)}）には、sacty の AI のレビューがまだ付いていません`,
+    );
+    expect(service.view("no-such-task")).toBeUndefined();
+    activity.close();
+  });
+
   it("最終レビューに通ったら、ブランチにプッシュしてPRを作り、実装の承認待ちで止まる（PBI-10b・PBI-110）", async () => {
     const { activity, service, repos, pulls, id } = await toImplementGate();
     expect(repos.published).toEqual([
@@ -10623,7 +10959,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
       );
       expect(run?.type === "AgentRunCompleted" && run.payload.costUsd).toBe(0.5);
-      expect(events.filter((e) => e.type === "RunCostRecorded")).toHaveLength(1);
+      // 報告を使った実行は 1 件。報告の無い実行は、換算として記録する（PBI-302 D2）
+      expect(
+        events.filter((e) => e.type === "RunCostRecorded" && e.payload.source === "reported"),
+      ).toHaveLength(1);
       made.activity.close();
     });
 
@@ -13076,6 +13415,28 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の PR には sacty の質問が無いので、質問への答えとして判断されても、軽い直しにせず、答えの扱いを記録しない（PBI-302 B1）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [
+          out(
+            `\`\`\`json\n${JSON.stringify({ "sacty-rework": { target: "implement", cause: "question_answer", answer: "as_recommended", reason: "実装で直せる" } })}\n\`\`\``,
+          ),
+          implement("# 直した"),
+        ],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:500", { body: "推奨どおりで" })];
+      await service.checkPullRequests();
+      const change = service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested");
+      expect(change?.payload).toMatchObject({ step: "implement", cause: "question_answer" });
+      expect(change?.payload).not.toHaveProperty("answer");
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(promptOf(executor, before)).not.toContain("答えの反映だけ");
+      activity.close();
+    });
+
     it("戻し先を判断できなかったときも、判断できなかった理由を実装の実行の指示に渡す。判断できたときの文は出さない（PBI-300。S14 の台本3）", async () => {
       const pulls = new FakePulls();
       const reason = "付け先の候補が2つあり、どちらを指すのか読み取れない";
@@ -14771,8 +15132,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           // 読めるようになったら、指摘を読んで、判断し、反映する
           pulls.feedback = original;
           await service.runNext(id);
-          expect(types(service, id).slice(-3)).toEqual([
+          expect(types(service, id).slice(-4)).toEqual([
             "PullRequestReviewImported",
+            "RunCostRecorded",
             "ReworkJudged",
             "ChangesRequested",
           ]);
@@ -14870,8 +15232,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           // 確かめられたら、AI のレビューを残して、判断し、反映する
           pulls.status = original;
           await service.runNext(id);
-          expect(types(service, id).slice(-3)).toEqual([
+          expect(types(service, id).slice(-4)).toEqual([
             "PullRequestReviewImported",
+            "RunCostRecorded",
             "ReworkJudged",
             "ChangesRequested",
           ]);
@@ -23949,6 +24312,185 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
   });
 
+  describe("質問への答えだけのコメント（PBI-302 B1）", () => {
+    const v1 = [
+      "# 要求要件 v1",
+      "",
+      "## 確認したいこと",
+      "",
+      "- should：国名の表示は要るか（推奨：要らない）",
+    ].join("\n");
+    const answerJudged = (answer?: string, cause = "question_answer", target = "requirements") =>
+      out(
+        block({
+          "sacty-rework": {
+            target,
+            cause,
+            ...(answer ? { answer } : {}),
+            reason: "決定を変えない：確認したいことの should に答えただけ",
+          },
+        }),
+      );
+    const answered = (outcomes: AgentOutcome[]) => start([out(v1), ...outcomes]);
+
+    it("推奨どおりの答えだけなら、原因を質問への答えとして記録し、成果物の作り直しとセルフレビューを走らせない答えの反映だけの直しにする", async () => {
+      const made = await answered([answerJudged("as_recommended"), out("# 要求要件 v2")]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.find((e) => e.type === "ReworkJudged")?.payload).toMatchObject({
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      expect(events.find((e) => e.type === "ChangesRequested")?.payload).toMatchObject({
+        step: "requirements",
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      // 新しい要望・見逃しの記録にはしない
+      expect(events.some((e) => e.type === "GuardianMissed")).toBe(false);
+      expect(taskOf(service, id).prRework).toMatchObject({
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      // 直しの実行：答えの反映だけを求め、セルフレビューは求めない
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("「確認したいこと」への答えの反映だけ");
+      expect(prompt).toContain("[requirements-1-1] 推奨どおりでお願いします");
+      expect(prompt).toContain("--- 提出の前の確認（セルフレビューは行わない） ---");
+      expect(prompt).not.toContain("--- 提出の前のセルフレビュー ---");
+      expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 2 });
+      activity.close();
+    });
+
+    it("推奨と違う答えは、原因は質問への答えのまま、今までどおりの直しの実行（作り直しとセルフレビュー）にする", async () => {
+      const made = await answered([answerJudged("changes_decision"), out("# 要求要件 v2")]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:1", { body: "国名は表示してください" })];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.find((e) => e.type === "ChangesRequested")?.payload).toMatchObject({
+        cause: "question_answer",
+        answer: "changes_decision",
+      });
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).not.toContain("答えの反映だけ");
+      expect(prompt).toContain("--- 提出の前のセルフレビュー ---");
+      activity.close();
+    });
+
+    it("答えの扱いを読めなかった・原因が別なら、今までどおり。答えの扱いを記録しない", async () => {
+      for (const judged of [
+        answerJudged(undefined),
+        answerJudged("as_recommended", "new_request"),
+      ]) {
+        const made = await answered([judged, out("# 要求要件 v2")]);
+        const { activity, service, executor, pulls, id } = made;
+        pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+        await service.checkPullRequests();
+        const change = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
+        expect(change?.payload).not.toHaveProperty("answer");
+        const before = executor.calls.length;
+        await service.runNext(id);
+        expect(promptOf(executor, before)).toContain("--- 提出の前のセルフレビュー ---");
+        activity.close();
+      }
+    });
+
+    it("設計の PR で、推奨どおりと判断しても前の工程（要求要件）へ戻すなら、軽い直しにしない（答えの扱いを記録しない）", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        design("# 設計 v1"),
+        answerJudged("as_recommended", "question_answer", "requirements"),
+        out("# 要求要件 v2"),
+      ]);
+      const { activity, service, executor, pulls, id } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      pulls.feedbackBy[8] = [item("comment:20", { body: "推奨どおり" })];
+      await service.checkPullRequests();
+      const change = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
+      expect(change?.payload).toMatchObject({ step: "design", target: "requirements" });
+      expect(change?.payload).not.toHaveProperty("answer");
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(promptOf(executor, before)).not.toContain("答えの反映だけ");
+      activity.close();
+    });
+  });
+
+  describe("行へのコメントの指摘に、その行の内容を添える（PBI-302 B3）", () => {
+    it("コメントが付いた行の内容と直前の行を指摘の文に添え、戻し先の判断と直しの実行に、行番号でなく内容で箇所を確かめさせる", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out("# 要求要件 v2"),
+      ]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 89,
+          body: "ここは空の入力も拒否してください",
+          lineContext: { line: "| R-9 | 空を拒否する |", before: ["| R-8 | 上限は 50 |"] },
+        }),
+        item("review_comment:3", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 10,
+          body: "抜粋の無いコメント",
+        }),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      const remarks = taskOf(service, id).remarks.map((r) => r.text);
+      expect(remarks[0]).toBe(
+        `${docOf(id, "requirements")}:89：ここは空の入力も拒否してください\n（コメントが付いた行の内容：「| R-9 | 空を拒否する |」。直前の行：「| R-8 | 上限は 50 |」）`,
+      );
+      // 抜粋の無いコメントは、今までどおり
+      expect(remarks[1]).toBe(`${docOf(id, "requirements")}:10：抜粋の無いコメント`);
+      const guardian = promptOf(executor, before);
+      expect(guardian).toContain("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」");
+      expect(guardian).toContain("添えた行の内容で確かめてください");
+      await service.runNext(id);
+      const rerun = promptOf(executor, executor.calls.length - 1);
+      expect(rerun).toContain("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」");
+      expect(rerun).toContain("添えた行の内容で確かめてください");
+      activity.close();
+    });
+
+    it("長い指摘でも、添える行の内容は切らない（指摘の文を短くして、上限に収める）", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+      ]);
+      const { activity, service, pulls, id } = made;
+      pulls.feedbackBy[7] = [
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 3,
+          body: "あ".repeat(5_000),
+          lineContext: { line: "| R-9 | 空を拒否する |", before: [] },
+        }),
+      ];
+      await service.checkPullRequests();
+      const text = taskOf(service, id).remarks[0]?.text ?? "";
+      expect(text.length).toBeLessThanOrEqual(2_000);
+      expect(text.endsWith("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」）")).toBe(true);
+      activity.close();
+    });
+  });
+
   it("設計の PR の指摘で要求要件に戻したら、要求要件の直しの PR をタスクブランチに新しく作り、マージされたら設計の PR を作り直す（受け入れ条件 5）", async () => {
     const made = await start([
       out("# 要求要件 v1"),
@@ -29082,7 +29624,7 @@ describe("PR テンプレート（PBI-87）", () => {
       new FakeTemplates(async () => ({ kind: "none" })),
     );
     const task = taskOf(service, id);
-    expect(pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(pulls.calls[2]?.body).toBe(buildPullRequestBody(task, noAiReview(task)));
     expect(task.pullRequest?.template).toEqual({ fallback: "none" });
     expect(task.stepPullRequests[0]?.template).toEqual({ fallback: "none" });
     activity.close();
@@ -29102,7 +29644,7 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     let task = taskOf(unusable.service, unusable.id);
     expect(unusable.pulls.calls).toHaveLength(3);
-    expect(unusable.pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(unusable.pulls.calls[2]?.body).toBe(buildPullRequestBody(task, noAiReview(task)));
     expect(task.pullRequest?.template?.fallback).toBe("unusable");
     expect(renderMessage(task.pullRequest?.template?.message, "ja")).toContain("HTTP 403");
     expect(JSON.stringify(unusable.service.get(unusable.id)?.activity)).not.toContain("ghp_secret");
@@ -32772,6 +33314,36 @@ describe("提出の前の出典の分類の記録", () => {
     activity.close();
   });
 
+  it("本文の外に書かれた作業の報告を取り除いて成果物にし、消した要求の行（R-n（削除：…））は確かめる項目に数えない（PBI-302 C1）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const body = [
+      "# 要求要件",
+      "",
+      "| R-1（削除：区間のまとめ方は R-2 で決める） | | |",
+      "| R-2 | 支払う |",
+      "| R-3 | 記録する |",
+    ].join("\n");
+    const { service } = makeService(activity, [
+      withClassification(`要求要件を直しました。セルフレビューは 1 回目で通りました。\n\n${body}`, {
+        mode: "subagent",
+        items: [
+          { id: "R-1", kind: "inference", refs: [], excerpt: "" },
+          { id: "R-2", kind: "inference", refs: [], excerpt: "" },
+          { id: "R-3", kind: "derived", refs: ["R-2"], excerpt: "" },
+        ],
+      }),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.outputs.requirements).toBe(body);
+    // 削除した行 R-1 は、分類があっても、分類なしでも、確かめる項目に出ない
+    expect(task?.provenances?.requirements?.items.map((item) => item.id)).toEqual(["R-2", "R-3"]);
+    expect(task?.provenances?.requirements?.unclassified).toEqual([]);
+    expect(buildStepDocument(task as unknown as Task, "requirements")).not.toContain("直しました");
+    activity.close();
+  });
+
   it("答えが無い・形が違うときは「記録なし」（null）にして、工程は止めない", async () => {
     for (const classification of [undefined, { items: "R-1" }]) {
       const activity = new SqliteActivityStore(dbPath);
@@ -34732,6 +35304,65 @@ describe("監査のメモリー（PBI-126）", () => {
     }
     return task.id;
   }
+
+  it("依頼者が決めた答えを書いたメモリーは、プロジェクトの階層もリポジトリの階層も登録せず、登録しなかった題と理由を作業履歴に残す。ほかは登録する（PBI-302 B6。S14 r5）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => [
+      // 依頼者を主語にして答えを書いた
+      memory({
+        title: "rooms の業務のルールは、依頼者が削られたくないものとして扱った",
+        summary: "予約のルール",
+        body: "依頼者は、15 分にそろえることを削ってほしくないと答えた",
+      }),
+      // 依頼の本文を写した
+      memory({
+        scope: "repository",
+        title: "予約の戻し方",
+        summary: "戻し方",
+        body: "削除した予約を、あとから元に戻せるようにしてください。API だけで構いません",
+      }),
+      // リポジトリの事実
+      memory({
+        title: "削除は物理削除",
+        summary: "削除の実装",
+        body: "reservations.ts の delete は行を消す。deletedAt の列は migration にも無い",
+      }),
+    ]);
+    const task = service.createTask({
+      projectId: "default",
+      title: "削除した予約を元に戻せるようにする",
+      body: "予約を間違えて削除してしまう人がいます。削除した予約を、あとから元に戻せるようにしてください。API だけで構いません。",
+    });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    for (let i = 0; i < 3 && service.get(task.id)?.task.audit?.completedAt === undefined; i++) {
+      await service.runNext(task.id);
+    }
+    expect(service.get(task.id)?.task.audit?.memories.map((m) => m.title)).toEqual([
+      "削除は物理削除",
+    ]);
+    const dived = service.get(task.id)?.activity.find((e) => e.type === "AuditDeepDived");
+    expect(dived?.payload).toMatchObject({
+      skippedMemories: [
+        {
+          title: "rooms の業務のルールは、依頼者が削られたくないものとして扱った",
+          reason: "requester_mentioned",
+        },
+        { title: "予約の戻し方", reason: "requester_text_copied" },
+      ],
+    });
+    // 書き出したメモリーの索引にも、登録しなかったものは無い
+    const index = readFileSync(join(projectDir(), "SKILL.md"), "utf8");
+    expect(index).toContain("削除は物理削除");
+    expect(index).not.toContain("削られたくない");
+    expect(existsSync(join(repoDir(), "SKILL.md"))).toBe(false);
+    activity.close();
+  });
 
   it("深掘りが登録したメモリーを索引の形で書き出し、次のタスクの工程に読み取り専用で渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);

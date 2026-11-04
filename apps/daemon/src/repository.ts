@@ -53,6 +53,32 @@ function parseNameStatus(output: string): Map<string, string> {
   return statuses;
 }
 
+/** 差分のファイル。status は git の状態（A・M・D・T・R089 など）。oldPath は、名前を変えた（R）・写した（C）元のパス。 */
+export type DiffFile = { status: string; path: string; oldPath?: string };
+
+/** `git diff -z --name-status` の出力を、ファイルの一覧にする。名前の変更・写しは、元と先の 2 つのパスが続く。 */
+export function parseDiffFiles(output: string): DiffFile[] {
+  const fields = output.split("\0");
+  const files: DiffFile[] = [];
+  for (let i = 0; i < fields.length; ) {
+    const status = fields[i] ?? "";
+    if (status === "") break;
+    if (/^[RC]/.test(status)) {
+      const oldPath = fields[i + 1];
+      const path = fields[i + 2];
+      if (oldPath === undefined || path === undefined) break;
+      files.push({ status, path, oldPath });
+      i += 3;
+    } else {
+      const path = fields[i + 1];
+      if (path === undefined) break;
+      files.push({ status, path });
+      i += 2;
+    }
+  }
+  return files;
+}
+
 /** 中身の行の数（最後の行に改行が無くても1行に数える）。 */
 function lineCount(text: string): number {
   if (text === "") return 0;
@@ -75,6 +101,12 @@ const SKIPPED_PATH_LENGTH_MAX = 500;
  * PR・コミットには入れない（stage の除外。追跡しているファイルには効かない）。PBI-278。
  */
 export const WORKSPACE_TOOLS_DIR = ".sacty-tools";
+/**
+ * 検証の記録（ログ・集計・差分の写し）や起点の写し、下書きなど、sacty とエージェントが作る作業用のファイルを置く、作業領域の外の
+ * 場所（PBI-302 A1）。作業領域の中に置くと、リポジトリ全体を対象にするフォーマッター・リンター・テストの結果を変える。
+ * `.sacty-tools/` は入れた道具の置き場だけで、記録は置かない。
+ */
+export const WORKSPACE_SCRATCH_DIR = "/tmp/agent-scratch";
 
 /** 実装の対象リポジトリを扱う口。テストでは偽物に差し替える。 */
 export interface RepositoryWorkspace {
@@ -98,6 +130,11 @@ export interface RepositoryWorkspace {
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * diff と同じ差分の、ファイルの一覧（同じ並び。名前の変更を見つける）。パスは git が引用せずに出したまま（NUL 区切り）。
+   * 差分の節をファイルに結び付けるために使う（PR #304 のレビュー）。
+   */
+  diffFiles(dir: string, gitDir: string, baseCommit: string): Promise<DiffFile[]>;
   /**
    * 起点からの変更を、ファイルごとの追加と削除の行の数で返す（切り詰めない）。名前の変更は、変更元の削除と変更先の追加に
    * 分ける。バイナリのファイルは、行の数を 0 にする。
@@ -224,7 +261,12 @@ export interface RepositoryWorkspace {
    * ファイル。PBI-63）。作業領域・利用者の git の設定は使わない。ファイルが無ければ undefined。通常のファイルでない・
    * 大きすぎる・UTF-8 のテキストでなければエラー。コミットは取得済みであること。
    */
-  readFile(gitDir: string, commit: string, path: string): Promise<string | undefined>;
+  readFile(
+    gitDir: string,
+    commit: string,
+    path: string,
+    options?: ReadFileOptions,
+  ): Promise<string | undefined>;
   /**
    * コミットのそのパスがシンボリックリンクなら、リンクの先（書かれたままの文字列）を返す。そうでなければ（無い・通常の
    * ファイル・ディレクトリ）undefined。デプロイの確認のスキル（PBI-89）のリンクを、リポジトリの中でたどるため。
@@ -441,10 +483,35 @@ function validBranch(branch: string): boolean {
 /** コミットに書くファイルのパスとして受け付けるか（リポジトリの中の相対パス。.git・. と .. を含まない）。 */
 function validPath(path: string): boolean {
   if (!/^[\w./-]+$/.test(path)) return false;
+  return safeSegments(path);
+}
+
+function safeSegments(path: string): boolean {
   return path
     .split("/")
     .every((p) => p !== "" && p !== "." && p !== ".." && p.toLowerCase() !== ".git");
 }
+
+/**
+ * リポジトリの中の相対パスとして読めるか（readFile の anyName。PR #304 のレビュー）。日本語・空白・記号を含む名前も受け付ける。
+ * 外へ出られないこと（絶対パス・`..`・`.git`）、制御文字・オプションに見える先頭の `-` を含まないことは validPath と同じに守る。
+ * 読むのは git のオブジェクトからで、作業領域のファイルシステムをたどらない（シンボリックリンクは通常のファイルでないので読まない）。
+ */
+function validRelativePath(path: string): boolean {
+  if (path === "" || path.startsWith("/") || path.startsWith("-")) return false;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 制御文字を拒否するため
+  if (/[\u0000-\u001f\u007f]/.test(path)) return false;
+  return safeSegments(path);
+}
+
+/** readFile の読み方。 */
+export type ReadFileOptions = {
+  /**
+   * パスに、英数字と `._/-` 以外（日本語・空白・記号）を含んでもよい（差分に出てきた、リポジトリの任意のファイルを読むとき。
+   * PR #304 のレビュー）。リポジトリの外へ出るパスは、これまでどおり受け付けない。
+   */
+  anyName?: boolean;
+};
 
 export class GitRepositoryWorkspace implements RepositoryWorkspace {
   /**
@@ -686,12 +753,31 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         "--no-ext-diff",
         "--no-textconv",
         "--text",
+        // 名前の変更の見つけ方を diffFiles とそろえる（節とファイルを同じ並びで結び付けるため）
+        "-M",
         baseCommit,
       ]);
       return diff.length > DIFF_LIMIT
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
     });
+  }
+
+  async diffFiles(dir: string, gitDir: string, baseCommit: string) {
+    return this.stage(dir, gitDir, baseCommit, async (run) =>
+      parseDiffFiles(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--no-ext-diff",
+          "--no-textconv",
+          "-M",
+          baseCommit,
+        ]),
+      ),
+    );
   }
 
   async diffStats(dir: string, gitDir: string, baseCommit: string) {
@@ -1086,8 +1172,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return out.split("\0").filter(Boolean);
   }
 
-  async readFile(gitDir: string, commit: string, path: string) {
-    const blob = await this.readBlob(gitDir, commit, path);
+  async readFile(gitDir: string, commit: string, path: string, options: ReadFileOptions = {}) {
+    const blob = await this.readBlob(gitDir, commit, path, options.anyName === true);
     return blob && new TextDecoder("utf-8", { fatal: true }).decode(blob.bytes);
   }
 
@@ -1099,10 +1185,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     gitDir: string,
     commit: string,
     path: string,
+    anyName = false,
   ): Promise<{ bytes: Buffer; mode: string; object: string } | undefined> {
     if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
-    if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
-    const env = isolatedEnv("/dev/null");
+    if (!(anyName ? validRelativePath(path) : validPath(path))) {
+      throw new MessageError(message("git.invalidPath"));
+    }
+    // 任意の名前は、パスの指定の特別な書き方（`:(glob)`・`*` など）として読まない
+    const env = {
+      ...isolatedEnv("/dev/null"),
+      ...(anyName ? { GIT_LITERAL_PATHSPECS: "1" } : {}),
+    };
     const run = (label: string, args: string[]) =>
       git(label, ["--git-dir", gitDir, ...SAFE_CONFIG, ...args], env);
     // パスの種類を確かめる（シンボリックリンク・サブモジュール・ディレクトリは読まない）

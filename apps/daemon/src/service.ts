@@ -166,6 +166,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
+import { aiReviewFor, aiReviewOfHead } from "./ai-review-head.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
   type AdoptedAuditProposalNote,
@@ -281,6 +282,7 @@ import {
   taskMemoryLayers,
   usefulCounts,
 } from "./memory.js";
+import { requesterTexts } from "./memory-answers.js";
 import type { FeedReply, NotificationFeed } from "./notification-feed.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import { CONTAINER_HANDOFF_DIR, stageHandoff } from "./orchestrator-handoff.js";
@@ -340,6 +342,7 @@ import {
   continuablePullRequest,
   deriveBody,
   deriveRecord,
+  diffMatchesFiles,
   ERROR_REPORT_FILE,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -362,8 +365,13 @@ import {
   finalReviewUnreadableDetail,
   finalReviewVerdictIds,
   finalReviewViewpointIds,
+  type InternalNameHit,
   integrationViewpointIds,
+  internalNameAllowance,
+  internalNamesInDiff,
   investigationMarker,
+  limitInternalNames,
+  lineContextText,
   mappedViewpointIds,
   operationSucceeded,
   passedContinuedFeedback,
@@ -381,9 +389,11 @@ import {
   selectablePlans,
   servicePromptLines,
   skippedFilesLines,
+  type UncheckedInternalName,
   verificationBasis,
   viewpointRename,
   withoutInternalPaths,
+  withoutWorkReport,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -916,6 +926,11 @@ export class TaskService {
    * 消えるので、再起動で数え直しても困らない。
    */
   private readonly pauseCounts = new Map<string, number>();
+  /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
+  private readonly latestHeads = new Map<
+    string,
+    { number: number; commit: string; head: string }
+  >();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -977,6 +992,33 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     return { task, activity: this.deps.activity.forTask(id) };
+  }
+
+  /**
+   * 画面に返すタスクと作業履歴。承認待ちの PR の今の head に、sacty の AI のレビューが付いているかを足す（PBI-302 D1）。
+   * ほかのタスクを見て計算するので、タスクの状態（作業履歴から復元するもの）には持たない。
+   */
+  /**
+   * 承認待ちの PR の、PR の確認で最後に読んだ head（PR #304 のレビュー）。読んだときの PR の番号と提出したコミットが今の
+   * 承認待ちの PR と同じときだけ使う（作り直して別の PR・別の提出になったら、読み直すまで分からない）。
+   */
+  private latestHeadOf(task: Task): string | undefined {
+    const pr = gatePullRequest(task);
+    const seen = this.latestHeads.get(task.id);
+    if (!pr || !seen || seen.number !== pr.number || seen.commit !== pr.commit) return undefined;
+    return seen.head;
+  }
+
+  view(id: string): { task: Task; activity: ActivityEvent[] } | undefined {
+    const found = this.get(id);
+    if (!found) return undefined;
+    const aiReview = aiReviewOfHead(
+      found.task,
+      this.tasks.values(),
+      sameRepo,
+      this.latestHeadOf(found.task),
+    );
+    return aiReview ? { ...found, task: { ...found.task, aiReview } } : found;
   }
 
   /**
@@ -1106,6 +1148,10 @@ export class TaskService {
         // 開いたままの PR は、ベースブランチとの競合を画面に出し（取り込まない）、レビュー・コメントを指摘として取り込む
         // （PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
+          // PR が開いている間の最新の head（提出したコミットとは別。人が足したコミットで変わる。PR #304 のレビュー）
+          const head = status.headSha?.trim();
+          if (head) this.latestHeads.set(task.id, { number: pr.number, commit: pr.commit, head });
+          else this.latestHeads.delete(task.id);
           latest = this.recordPullRequestConflict(latest, pr, status.mergeable) ?? latest;
           try {
             const settled = await this.importFeedback(latest, token);
@@ -2679,6 +2725,17 @@ export class TaskService {
         comments: pending.remarks,
         // ゴールガーディアンが判断した原因（判断できなければ、原因を決めない。見逃しにしない。PBI-268）
         ...(judgement.cause ? { cause: judgement.cause } : {}),
+        // 質問への答えだけで、推奨どおり（決定を変えない）なら、答えの反映だけの軽い直しにする（PBI-302 B1）。
+        // 要求要件・設計の PR を、その工程で直すときだけ（前の工程へ戻す・実装の PR・判断できなかったときは、今までどおりの直し）
+        ...(judgement.cause === "question_answer" && judgement.answer === "changes_decision"
+          ? { answer: "changes_decision" as const }
+          : judgement.cause === "question_answer" &&
+              judgement.answer === "as_recommended" &&
+              judgement.target === gate.step &&
+              target === gate.step &&
+              (gate.step === "requirements" || gate.step === "design")
+            ? { answer: "as_recommended" as const }
+            : {}),
       },
       // AI のレビューの指摘は、人の差し戻しの回数に数えない（PBI-275）
       { aiReview: pending.aiReview ?? [] },
@@ -8107,8 +8164,12 @@ export class TaskService {
             output: extractDocumentPages(extracted.output).output,
           }
         : undefined;
-    const output =
-      review?.output ?? reproduction?.output ?? documentPages?.output ?? extracted.output;
+    // 要求要件・設計は、最後のメッセージがそのまま成果物になる。文書の外に書かれた作業の報告は、sacty が取り除く（PBI-302 C1）
+    const deliverable =
+      step === "requirements" || step === "design"
+        ? withoutWorkReport(extracted.output)
+        : extracted.output;
+    const output = review?.output ?? reproduction?.output ?? documentPages?.output ?? deliverable;
     const events: { actor: Actor; event: EventInput }[] = [
       ...(handedOverKeys.length > 0
         ? [
@@ -8148,7 +8209,7 @@ export class TaskService {
                     checkProvenance(
                       extracted.provenance,
                       inputs,
-                      provenanceIds(provenanceStep, extracted.output, testViewpoints),
+                      provenanceIds(provenanceStep, deliverable, testViewpoints),
                       provenanceStep === "design"
                         ? viewpointRename(extracted.viewpointPositions)
                         : undefined,
@@ -8808,6 +8869,60 @@ export class TaskService {
   }
 
   /**
+   * 差分の追加された行にある内部の名前のうち、起点のコミットのそのファイルにすでにある名前を除く（PBI-302 A1 の DA の見直し）。
+   * リポジトリがもともと使っている名前（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など）を足した行は、
+   * 持ち込みではない。起点に無いファイル（新しく足したファイル）は、除かずに残す（見つけたまま）。
+   * 起点のファイルを読めない（通常のファイルでない・大きすぎる・テキストでないなど）ときは、もともとある名前かを確かめられないので、
+   * 範囲外の変更にはせず、読めなかった理由とともに unchecked に分ける（誤って不合格にしない。PR #304 のレビュー）。
+   * 日本語・空白を含む名前のファイルも読めるよう、任意の名前の相対パスとして読む（anyName）。
+   */
+  private async introducedInternalNames(
+    task: Task,
+    dir: string,
+    diff: string,
+    allowed: string,
+  ): Promise<{ introduced: InternalNameHit[]; unchecked: UncheckedInternalName[] }> {
+    // 見出しを読み直した位置で、まず名前があるかを見る（無ければ、ファイルの一覧を取らない）
+    const found = internalNamesInDiff(diff, allowed);
+    if (found.length === 0 || !task.repository) return { introduced: found, unchecked: [] };
+    const repository = task.repository;
+    const gitDir = this.trustedGitDir(task);
+    const baseCommit = workBaseCommit(repository, task.baseMerge);
+    // 差分の節を、git が出したファイルの一覧（引用されていないパスと、名前の変更の前後）に結び付けて、位置と起点の側のパスを
+    // 決める（PR #304 のレビュー）。一覧を取れない・結び付けられないときは、起点と比べられないので、不合格にせず人に回す
+    let hits: InternalNameHit[];
+    try {
+      const files = await this.deps.repos.diffFiles(dir, gitDir, baseCommit);
+      if (!diffMatchesFiles(diff, files)) {
+        throw new Error("差分の節の数が、変更したファイルの一覧と合わない");
+      }
+      hits = internalNamesInDiff(diff, allowed, files);
+    } catch (error) {
+      const reason = `変更したファイルの一覧を取れない（${renderMessage(errorText(error), "ja")}）`;
+      return { introduced: [], unchecked: found.map((hit) => ({ ...hit, reason })) };
+    }
+    if (hits.length === 0) return { introduced: [], unchecked: [] };
+    const base = new Map<string, { text?: string; error?: string }>();
+    for (const path of new Set(hits.map((h) => h.basePath ?? h.path))) {
+      try {
+        const text = await this.deps.repos.readFile(gitDir, baseCommit, path, { anyName: true });
+        base.set(path, text === undefined ? {} : { text });
+      } catch (error) {
+        base.set(path, { error: renderMessage(errorText(error), "ja") });
+      }
+    }
+    const introduced: InternalNameHit[] = [];
+    const unchecked: UncheckedInternalName[] = [];
+    for (const hit of hits) {
+      // 起点の側は、名前を変える前のパスで比べる。表示する位置（path・line）は変えた後のまま
+      const read = base.get(hit.basePath ?? hit.path);
+      if (read?.error !== undefined) unchecked.push({ ...hit, reason: read.error });
+      else if (!read?.text?.includes(hit.name)) introduced.push(hit);
+    }
+    return { introduced, unchecked };
+  }
+
+  /**
    * 最終レビューの写しに入れる、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物。PBI-57）と、その
    * 内容を持つコミット。コミットは、最終レビューの前に作った実装の PR のコミット（CI を待つコミット）で、PR の中身そのもの
    * （人が PR の中で直してマージした内容を含む）。要求要件・設計の PR が無いタスク・既存の PR を引き継いだタスク・PR を
@@ -9070,6 +9185,17 @@ export class TaskService {
     // 実装の PR に sacty が足す成果物は、実装の作業領域に無いので、最終レビューの写しに PR の内容で入れる。入れられなければ、
     // 入っていないものとして指示を作る（指示が、写しで通った検査を未確認として人の確認に回させる）
     const include = await this.stepDocumentsForReview(this.mustGet(task.id));
+    // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
+    // 変更として不合格にする（PBI-302 A1）
+    // 件数は、起点にある名前を除いた後で絞る（PR #304 のレビュー）
+    const sortedNames = await this.introducedInternalNames(
+      current,
+      dir,
+      diff,
+      internalNameAllowance(current),
+    );
+    const internalNames = limitInternalNames(sortedNames.introduced);
+    const uncheckedInternalNames = limitInternalNames(sortedNames.unchecked);
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(
@@ -9085,6 +9211,7 @@ export class TaskService {
               ...(testCommand ? { testCommand } : {}),
               ...(include ? { stepDocumentsIncluded: true } : {}),
               ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+              ...(internalNames.length > 0 ? { internalNames } : {}),
               ...(prCi?.result
                 ? {
                     pullRequest: {
@@ -9195,6 +9322,9 @@ export class TaskService {
           previousHumanChecks: carriedHumanChecks(current),
           hide,
           ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
+          ...(internalNames.length > 0 ? { internalNames } : {}),
+          ...(uncheckedInternalNames.length > 0 ? { uncheckedInternalNames } : {}),
+          internalAllowance: internalNameAllowance(current),
           ...(documentsOnly ? { documentsOnly } : {}),
         },
       );
@@ -9560,12 +9690,19 @@ export class TaskService {
           );
         }
       }
+      // 更新する head に、sacty の AI のレビューが付いているか（PR の本文に書く。PBI-302 D1）
+      const aiReview = aiReviewFor(
+        { repo, number: reuse?.number, head: commit },
+        task.id,
+        this.tasks.values(),
+        sameRepo,
+      );
       const { body, template } = await this.pullRequestBody(
         repo,
         token,
         usedSecrets,
-        buildStepPullRequestBodyText(current, step, path),
-        buildStepPullRequestBodyParts(current, step, path),
+        buildStepPullRequestBodyText(current, step, path, aiReview),
+        buildStepPullRequestBodyParts(current, step, path, aiReview),
       );
       const pr = await this.deps.pulls.upsert({
         repo,
@@ -9818,12 +9955,19 @@ export class TaskService {
           number = undefined;
         }
       }
+      // 更新する head に、sacty の AI のレビューが付いているか（PR の本文に書く。PBI-302 D1）
+      const aiReview = aiReviewFor(
+        { repo: prRepo, number, head: commit },
+        task.id,
+        this.tasks.values(),
+        sameRepo,
+      );
       const { body, template } = await this.pullRequestBody(
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets }),
-        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets }),
+        buildPullRequestBodyText(task, { verifying, secrets: usedSecrets, aiReview }),
+        buildPullRequestBodyParts(task, { verifying, secrets: usedSecrets, aiReview }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
@@ -11489,11 +11633,9 @@ export class TaskService {
     // CLI が実行の費用を報告していれば、それを使う。無ければ、モデルごとの使用量をそのモデルの単価で換算する（PBI-301）
     const cost = runCost(run.agent, outcome);
     const costUsd = cost.costUsd;
-    // 報告を使った実行と、モデルごとに換算した実行を記録する（使用量を工程のエージェントの単価で換算しただけの実行は、
-    // これまでと同じなので記録しない）
-    if (cost.source === "reported" || (cost.source && outcome.modelUsages?.length)) {
-      this.recordRunCost(run.runId, run.agent.id, cost);
-    }
+    // 費用の出どころ（CLI の報告か、使用量の換算か）を、すべての実行について記録する。Codex など、CLI が費用を報告しない
+    // エージェントの実行も、「換算した額」と分かるようにする（PBI-302 D2。以前は報告とモデルごとの換算だけ記録した）
+    if (cost.source) this.recordRunCost(run.runId, run.agent.id, cost);
     return {
       outcome,
       costUsd,
@@ -12583,6 +12725,8 @@ export class TaskService {
               ? {
                   knownMemoryIds: new Set(memories.map((m) => m.id)),
                   ...(memoryRepo ? { repository: memoryRepo } : {}),
+                  // 登録の前に、依頼者の答えを写していないか検査する（PBI-302 B6）
+                  requesterTexts: requesterTexts(task),
                 }
               : {}),
           },
@@ -12613,7 +12757,12 @@ export class TaskService {
                       })),
                     })),
                     ...(memories
-                      ? { memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })) }
+                      ? {
+                          memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })),
+                          ...(dive.skippedMemories.length > 0
+                            ? { skippedMemories: dive.skippedMemories }
+                            : {}),
+                        }
                       : {}),
                     ...run,
                   },
@@ -14013,6 +14162,7 @@ export class TaskService {
             remarks,
             overLimit,
             ...(input.cause ? { cause: input.cause } : {}),
+            ...(input.cause === "question_answer" && input.answer ? { answer: input.answer } : {}),
           },
         },
       },
@@ -14051,7 +14201,13 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   return items.map((item) => {
     const body = item.body.trim();
     if (item.kind === "review_comment") {
-      return cut(`${item.path}${item.line ? `:${item.line}` : ""}：${body}`);
+      // コメントが付いた行の内容と直前の行を添える（行番号だけに頼って 1 行ずれて読まないため。PBI-302 B3）。添える分は
+      // 切らない（指摘の文を、その分だけ短くして上限に収める）
+      const context = item.lineContext ? `\n${lineContextText(item.lineContext)}` : "";
+      const text = `${item.path}${item.line ? `:${item.line}` : ""}：${body}`;
+      return context
+        ? `${text.length + context.length > REMARK_MAX ? `${text.slice(0, Math.max(0, REMARK_MAX - context.length - 1))}…` : text}${context}`
+        : cut(text);
     }
     return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
   });
@@ -14066,7 +14222,8 @@ const DISCARDED_SUMMARY_MAX = 400;
  */
 function discardedSummary(item: PullRequestFeedback): string {
   // 投稿の先頭の目印（HTML のコメント）と見出しは、人が読む要点に要らない
-  const text = (feedbackRemarks([item])[0] ?? "")
+  // 行の内容の添え書きは、表示用の要点には要らない
+  const text = (feedbackRemarks([{ ...item, lineContext: undefined }])[0] ?? "")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/^\s*#+\s*sacty のレビュー\s*$/gm, " ")
     .replace(/\s+/g, " ")

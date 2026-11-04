@@ -61,6 +61,17 @@ const ja = {
     reviewed: (commit: string) => `対象：${commit}`,
     open: "指摘を開く",
   },
+  aiReview: {
+    title: "Sacty の AI のレビュー",
+    hint: "head は、PR のいちばん新しいコミットです。作り直しで head が変わると、新しい head へのレビューが付くまで「まだ付いていない」か「レビュー中」になります。",
+    none: (head: string) => `今の head ${head} には、Sacty の AI のレビューがまだ付いていません。`,
+    reviewing: (head: string) => `今の head ${head} を、Sacty の AI のレビューがレビュー中です。`,
+    attached: (head: string) => `今の head ${head} に、Sacty の AI のレビューが付いています。`,
+    unknown: (_head: string) =>
+      "PR の今の head をまだ読めていないため、AI のレビューの状況は分かりません。",
+    help: "承認やマージは止めませんが、レビューが付く前に進むと、その指摘を見ずに承認します。",
+    open: "レビューを開く",
+  },
   gate: {
     undecidable: "変更の申し出の判断待ち",
     tooMany: "差し戻しが上限に達しました",
@@ -539,6 +550,17 @@ const en: TaskMessages = {
       `The AI review comments on PR #${number} were for an old head, so they were not taken into the rework (the PR's head when they were last discarded was ${head}; if the PR has been updated since, the current head has changed). If any still applies to the current head, send it back as a change request. Check them before you approve or merge.`,
     reviewed: (commit: string) => `For: ${commit}`,
     open: "Open comment",
+  },
+  aiReview: {
+    title: "Sacty AI review",
+    hint: "The head is the latest commit of the PR. When a redo changes the head, the state is “not yet” or “reviewing” until a review of the new head arrives.",
+    none: (head: string) => `No Sacty AI review is attached to the current head ${head} yet.`,
+    reviewing: (head: string) => `A Sacty AI review is reviewing the current head ${head}.`,
+    attached: (head: string) => `A Sacty AI review is attached to the current head ${head}.`,
+    unknown: (_head: string) =>
+      "The PR's current head has not been read yet, so the AI review state is unknown.",
+    help: "Approving and merging are not blocked, but going ahead before the review arrives means missing its comments.",
+    open: "Open review",
   },
   gate: {
     undecidable: "Change request needs your decision",

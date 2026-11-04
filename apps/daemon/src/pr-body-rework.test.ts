@@ -126,10 +126,9 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
     expect(changes).toContain("## 検証");
     expect(changes).not.toContain(FIX2);
     expect(body).not.toContain(FIX1);
-    // 最後の直しは別の節
-    expect(section(body, LAST_FIX_HEADING)).toContain(FIX2);
-    // 「## 最後の直し」の見出しを説明の中に残さない（1つだけ）
-    expect(body.match(new RegExp(`## ${LAST_FIX_HEADING}`, "g"))).toHaveLength(1);
+    // 最後の直しは結論に載せた1段落で足りるので、同じ文を別の節に重ねない（PBI-302 C2）
+    expect(section(body, LAST_FIX_HEADING)).toBeUndefined();
+    expect(body.split(FIX2)).toHaveLength(2);
   });
 
   it("エージェントが節を書かず、最後の直しだけを書いたときも、最後に全体の説明だった提出を土台にして、最後の説明を最後の直しに回す", () => {
@@ -140,7 +139,7 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
     expect(changes).toContain("- 2回目で足した行");
     expect(changes).toContain("- Web：注文一覧に配送先の列を足した");
     expect(changes).not.toContain(FIX1);
-    expect(section(body, LAST_FIX_HEADING)).toContain(FIX2);
+    expect(section(body, "結論")).toContain(`- ${LAST_FIX_HEADING}：${FIX2}`);
     expect(section(body, "結論")).toContain("- 変更：注文に shipping_country を足し");
   });
 
@@ -155,7 +154,7 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
       expect(section(body, "変更"), history.length.toString()).toContain(
         "- Web：注文一覧に配送先の列を足した",
       );
-      expect(section(body, LAST_FIX_HEADING)).toContain(last);
+      expect(section(body, "結論")).toContain(`- ${LAST_FIX_HEADING}：${last}`);
       // 最後以外の直しの説明は、本文に出さない
       for (const middle of history.slice(1, -1)) expect(body).not.toContain(middle);
     }
@@ -189,13 +188,13 @@ describe("作り直しの後の PR の本文は、PR 全体の説明にする（
       }),
     );
     expect(section(body, "変更")).toContain("- Web：注文一覧に配送先の列を足した");
-    expect(section(body, LAST_FIX_HEADING)).toContain("直し 12");
+    expect(section(body, "結論")).toContain(`- ${LAST_FIX_HEADING}：直し 12`);
     expect(body).not.toContain("直し 5");
   });
 
   it("履歴の最後が現在の説明と食い違っても（人が直した等）、現在の説明を最後の直しとして扱い、落とさない", () => {
     const body = bodyOf(task({ outputs: { implement: FIX3 }, implementHistory: [FEATURE, FIX1] }));
-    expect(section(body, LAST_FIX_HEADING)).toContain(FIX3);
+    expect(section(body, "結論")).toContain(`- ${LAST_FIX_HEADING}：${FIX3}`);
     expect(section(body, "変更")).toContain("- Web：注文一覧に配送先の列を足した");
   });
 

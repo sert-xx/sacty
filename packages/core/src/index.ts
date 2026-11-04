@@ -11,3 +11,4 @@ export * from "./projection.js";
 export * from "./projects.js";
 export * from "./schedules.js";
 export * from "./session-log.js";
+export * from "./test-names.js";

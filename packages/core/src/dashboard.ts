@@ -38,6 +38,7 @@ export type ReworkCauseKey = ReworkCause | "unspecified";
 export const REWORK_CAUSE_KEYS: readonly ReworkCauseKey[] = [
   "guardian_missed",
   "new_request",
+  "question_answer",
   "base_changed",
   "unspecified",
 ];

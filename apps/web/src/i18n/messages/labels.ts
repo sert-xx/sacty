@@ -195,6 +195,7 @@ const ja = {
     guardian_missed: "ゴールガーディアンの見逃し",
     base_changed: "ベースの変化による競合",
     new_request: "新しい要望・方針の変更",
+    question_answer: "質問への答え",
   },
   cleanupTarget: {
     container: "実行中のコンテナ",
@@ -478,7 +479,7 @@ const ja = {
     ) =>
       source === "reported"
         ? `費用 ${cost} は、エージェントの CLI が報告した額（設定の単価で換算すると ${converted}）`
-        : `費用 ${cost} は、使用量を単価で換算した額${unpriced.length > 0 ? `（単価が設定に無いモデル ${unpriced.join("・")} は、工程のエージェントの単価）` : ""}`,
+        : `費用 ${cost} は、エージェントの CLI が費用を報告しなかったので、使用量を単価で換算した額${unpriced.length > 0 ? `（単価が設定に無いモデル ${unpriced.join("・")} は、工程のエージェントの単価）` : ""}`,
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・計${seconds}秒）${gaveUp ? "・上限であきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした`,
@@ -636,8 +637,14 @@ const ja = {
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
       `大まかな監査を終えた（懸念のある工程 ${concerns}件・${tail}）`,
-    AuditDeepDived: (step: string, findings: number, memories: number, tail: string) =>
-      `${step}の深掘りを終えた（原因 ${findings}件・${memories > 0 ? `メモリーを ${memories}件登録・` : ""}${tail}）`,
+    AuditDeepDived: (
+      step: string,
+      findings: number,
+      memories: number,
+      skipped: number,
+      tail: string,
+    ) =>
+      `${step}の深掘りを終えた（原因 ${findings}件・${memories > 0 ? `メモリーを ${memories}件登録・` : ""}${skipped > 0 ? `依頼者の答えを書いたメモリー ${skipped}件は登録せず・` : ""}${tail}）`,
     AuditCompleted: "監査を終えた",
     AuditFailed: (reason: string) => `監査を実行できなかった：${reason}`,
     AuditBudgetWarned: (used: string, cap: string) =>
@@ -825,6 +832,7 @@ const en: LabelMessages = {
     guardian_missed: "Goal Guardian miss",
     base_changed: "Conflict from base changes",
     new_request: "New request or change of direction",
+    question_answer: "Answer to a question",
   },
   cleanupTarget: {
     container: "Running container",
@@ -1032,7 +1040,7 @@ const en: LabelMessages = {
     RunCostRecorded: (source, cost, converted, unpriced) =>
       source === "reported"
         ? `Cost ${cost} is the amount reported by the agent CLI (${converted} when converted with the configured prices)`
-        : `Cost ${cost} was converted from token usage${unpriced.length > 0 ? ` (models without a configured price, ${unpriced.join(", ")}, use the step agent's price)` : ""}`,
+        : `Cost ${cost} was converted from token usage because the agent CLI did not report a cost${unpriced.length > 0 ? ` (models without a configured price, ${unpriced.join(", ")}, use the step agent's price)` : ""}`,
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; ${seconds}s in total)${gaveUp ? " · gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued`,
@@ -1150,8 +1158,8 @@ const en: LabelMessages = {
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,
-    AuditDeepDived: (step, findings, memories, tail) =>
-      `Finished the deep dive into ${step} (${findings} cause${findings === 1 ? "" : "s"} · ${memories > 0 ? `registered ${memories} memor${memories === 1 ? "y" : "ies"} · ` : ""}${tail})`,
+    AuditDeepDived: (step, findings, memories, skipped, tail) =>
+      `Finished the deep dive into ${step} (${findings} cause${findings === 1 ? "" : "s"} · ${memories > 0 ? `registered ${memories} memor${memories === 1 ? "y" : "ies"} · ` : ""}${skipped > 0 ? `did not register ${skipped} memor${skipped === 1 ? "y" : "ies"} that recorded the requester's answers · ` : ""}${tail})`,
     AuditCompleted: "Finished the audit",
     AuditFailed: (reason) => `The audit could not run: ${reason}`,
     AuditBudgetWarned: (used, cap) => `The audit reached 80% of its budget (${used} / ${cap})`,

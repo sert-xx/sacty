@@ -298,7 +298,7 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     const body = buildPullRequestBody(reviewed);
     expect(body).toContain(checklist);
     expect(body).toContain(
-      "→ 合格（ゴールガーディアンが実行。終了コード 1。環境による失敗だけ。下の「人が確かめること」）",
+      "→ 合格（ゴールガーディアンが実行。終了コード 1。終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」）",
     );
     // 長さの上限で省かれない footer の、承認の案内の前に置く（PR #215 レビュー指摘）
     const parts = buildPullRequestBodyParts(reviewed);

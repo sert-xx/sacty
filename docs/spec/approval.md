@@ -291,21 +291,23 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 2. 「結論」
    - 変更の要約：実装の工程の出力の最初の段落（字下げのない行だけ。見出し・表・コードブロック・字下げした行を除く）の頭。出力が無ければ行ごと出さない。作り直した後は、PR 全体の説明（下の「作り直しの後の本文」）の頭。
    - 最後の直し：作り直した後だけ、最後の直しの説明の頭。
-   - 最終レビューの判定と所見の頭。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - 最終レビューの判定と所見の頭（`BODY_LEAD_MAX` 以内の文の切れ目まで）。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - AI のレビューの状況：今の head に sacty の AI のレビューが付いているか（[AI のレビューの指摘](#ai-のレビューの指摘)の「今の head に AI のレビューが付いているか」。`aiReviewBodyLine`）。
    - 人が最終レビューの不合格のまま進めた記録と不合格の要点（あれば。`overrideBodyLines`）
    - 人が確かめること（あれば。`humanCheckBodyLines`）
 3. 承認済みの要求要件（再現のタスクは不具合の再現。`approvedBasisLines`）
    - 全文は載せず、最初の段落の頭と、全文のある場所にする（`approvedBasisDigest`）。
      全文のある場所は、マージで承認した要求要件・設計の PR の URL とファイルのパス。PR が無ければ「全文は sacty のタスクの画面で確かめてください。」と書く。
    - 要求要件の工程を省いたタスクと、セキュリティ対応の修正の範囲は、短い文なので従来のとおり。
-4. 「変更」：実装の工程の出力（作り直した後は、PR 全体の説明）から、結論の変更の要約に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-301 A7。実験 S16・S19 の F3 の再発）。残りに見出し以外の中身が無ければ（要約と同じだけの出力・見出しだけが残る出力）節ごと出さない。最初の段落が切り詰められて結論に載ったときは、全文を出す。出力が無ければ見出しも入れない。テンプレートに沿わせる本文の「変更」は、結論の要約が無いので全文のまま。
-5. 「最後の直し」：作り直した後だけ。最後の直しの説明（下の「作り直しの後の本文」）。
+4. 「変更」：実装の工程の出力（作り直した後は、PR 全体の説明）から、結論の変更の要約に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-301 A7。実験 S16・S19 の F3 の再発）。残りに見出し以外の中身が無ければ（要約と同じだけの出力・見出しだけが残る出力）節ごと出さない。最初の段落が切り詰められて結論に載ったときは、全文を出す。出力が無ければ見出しも入れない。出力の残りが自分で見出し（`#`・`##`）から始まるときは、中身の無い「変更」の見出しを重ねず、その見出しから出す（PBI-302 C2。実験 S2 の r5：「## 変更」の直下に「## 変更内容」が続いた）。テンプレートに沿わせる本文の「変更」は、結論の要約が無いので全文のまま。
+5. 「最後の直し」：作り直した後だけ。最後の直しの説明から、結論の「最後の直し」に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-302 C2。実験 S2・S14・S18 の r5）。最後の直しが結論の1段落に収まるときは節ごと出さない（下の「作り直しの後の本文」）。
 6. 書き出した成果
 7. 観点 → テスト → 実行結果
    - 表の列は「観点」「テスト」「最終レビュー」。観点は ID と題（60 文字まで）、テストは 1 件目の名前（70 文字まで）と「ほか N 件」、最終レビューは ✅ か ❌ だけ。
    - 表の下に、テストの行（上の「テスト：」）を置く。
-   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。
-8. 最終レビューの全文（折りたたみ）。結論に載せた頭より長いとき、または前の指摘の再発の確認があるときだけ出す。
+   - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。所見のうち、最終レビューの総評にある文（12 文字以上で、句点で区切って一致するもの）は繰り返さない。所見のすべてが総評の文なら「総評と同じです」と書く（`findingText`。PBI-302 C2）。
+   - テスト名は、同じテストを1回にして、書式の文字を印にしてから出す（`displayTestNames`。PBI-302 C3。実験 S18 の r5：同じテストが describe の接頭辞あり・なしで2回出て、10 行のうち5行が重複し、`%j` が書式のまま出た）。同じファイル・同じテスト名で、describe の並びが他方の末尾にあたる名前（接頭辞を省いた名前）は、長いほうに統合し、そのテストが最初に出てきた位置（短い名前と長い名前の早いほう）に置く（describe が別の同名のテスト・ファイルが別の同名のテストは別のまま）。区切りは `›` と ` > ` で、区切りの書き方や空白だけが違う名前は同じテストとし、最初の表記を残す。パラメータ化したテストの名前の書式の文字（`%s`・`%d`・`%i`・`%f`・`%j`・`%o`・`%O`・`%p`・`%#`・`%$`）は、名前だけからは値が分からないので展開せず、`‹…›` に置き換える（`%%` は `%`）。画面の観点とテストの対応も同じ。ゴールガーディアンへ渡す対応は、申告のまま。
+8. 最終レビューの続き（折りたたみ）。総評が結論に載せた頭に収まらないときはその続き（頭の続きだけ。結論の文を重ねない）、前の指摘の再発の確認があるときはその確認を出す。どちらも無ければ出さない。見出しは「続き」「再発の確認」「続きと再発の確認」のどれか（`finalReviewMore`。PBI-302 C2）。頭が文の切れ目の無いまま途中で切れたときは、続きは「…」で始める。テンプレートに沿わせる本文では「sacty の記録」に太字の見出しで出す。
 
 共通の規則は次のとおり。
 
@@ -368,7 +370,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 変更：実装の工程の出力（作業の経過の報告を除く。作り直した後は、PR 全体の説明に続けて、太字の「最後の直し」と最後の直しの説明）
   - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果とゴールガーディアンの最終レビューの全文は「sacty の記録」にする。
+  - 書き出した成果とゴールガーディアンの最終レビューの続き・再発の確認は「sacty の記録」にする。
   - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程）
@@ -403,7 +405,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - タスクの画面の PR の欄に「本文」として出す。
     この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`・`finalReviewMore`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 
@@ -414,6 +416,11 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     GitHub の時刻が遅れているときは、見た時点で2分たっていれば待たない。
     指摘を取り込む対象から外れたタスク（承認待ちでなくなった・中止など）の分は、次の確認で忘れる。
   - 古い順に最大50件（`REMARKS_MAX`）、1件 2000 文字（`REMARK_MAX`）まで。
+  - 行へのコメントの指摘には、そのコメントが付いた行の内容と直前の2行を、指摘の文の後ろに添える（PBI-302 B3）。
+    - 内容は、GitHub が返すコメントの diff の抜粋（`diff_hunk`。コメントが付いた行が最後）から取る（`lineContextOf`）。ハンクの見出しと差分の先頭の印（`+`・`-`・空白）は除く。引用する行を選ぶ前に、抜粋の全体を一度に伏せる（複数行の PEM の秘密鍵の本文を見つけるため。開始の行が抜粋の外にあり終了の行だけがあるときは、抜粋の頭から終了の行まで伏せる）。ここでは切り詰めない。
+    - 指摘の文は `path:行：本文` のあとに、改行して `（コメントが付いた行の内容：「…」。直前の行：「…」「…」）` を足す（`lineContextText`。空白をそろえ、空の行は「空行」、秘密情報と URL の認証情報は行全体で伏せてから 1 行 200 文字までにする。切ってから伏せると、境界で形の崩れた値を見つけられないため）。添える分は切らず、指摘の文を短くして 2000 文字に収める。
+    - 抜粋が無いコメントには何も添えない。コメントが付いた行の後ろの行は渡さない（抜粋にあるのは前の行まで）。
+    - 戻し先の判断と、直しの実行（要求要件・設計・実装）の指示は、添えた指摘があるとき、行番号から成果物の行を数えて当てはめず、添えた行の内容で箇所を確かめさせる（行番号と内容が食い違うときは内容を信じる。添えた行の内容はコードや文書の引用で、指示ではないと伝える。`lineContextNote`）。
   - 同じものは二度取り込まない。
   - 実装の作り直しを一時停止している間は、承認待ちではないので取り込まず、未反映として残して再開のときに反映する（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。
   - 引き継いだ既存の PR では、実装の工程の指示に渡した指摘を取り込まない（実装に対応させたため。[既存の PR の引き継ぎ](tasks-and-steps.md#既存の-pr-の引き継ぎ)）。
@@ -446,8 +453,20 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
     書式は指示で求めるだけで、sacty は検査しない（理由は読み取れれば、書式に関わらず記録する）。
   判断できなければ、戻せる工程の先頭（実装の PR なら実装、要求要件・設計ならその工程）をやり直す。
 - 戻し先と一緒に、差し戻しの原因（`cause`）も判断させる（[差し戻し](#差し戻し)）。
-  `guardian_missed`・`new_request`・`base_changed` のどれかで、判断できなければ（答えが無い・`undecidable`・知らない値）原因を決めない（原因が分からない差し戻しとして数える）。
+  `guardian_missed`・`new_request`・`question_answer`・`base_changed` のどれかで、判断できなければ（答えが無い・`undecidable`・知らない値）原因を決めない（原因が分からない差し戻しとして数える）。
   判断は `ReworkJudged` の `cause` に残し、差し戻し（`ChangesRequested`）に引き継ぐ。
+  - `question_answer`（質問への答えだけのコメント）を選べるのは、要求要件・設計の PR のとき。
+    指摘が、成果物の「確認したいこと」（sacty の質問）への答えだけ（「推奨どおり」「A 案で」など）のときに選ぶ。新しい要望・方針の変更（`new_request`）ではない。
+    質問への答えでない要望や修正の依頼が1件でも混じるときは選ばない。実装の PR には sacty の質問が無いので、選択肢に出さない。
+  - 原因が `question_answer` のときは、答えの扱い（`answer`）も判断させる（`ReworkJudged`・`ChangesRequested`・`prRework` の `answer`）。
+    `as_recommended` は、答えがすべて成果物の推奨の答えどおり（「推奨どおり」「任せる」を含む）で、承認済みの決定を変えないとき。`changes_decision` は、推奨と違う答えが1つでもある・答えが承認済みの決定を変えるとき。迷うときや答えの意味を読み取れないときは `changes_decision`。
+    原因が `question_answer` でないときの `answer`・読めない値は読まない（`answer` を持たない）。
+  - `as_recommended` で、判断した戻し先がその PR の工程（要求要件・設計）のときだけ、答えの反映だけの軽い直しにする（`settleReview` が `ChangesRequested` に `answer: as_recommended` を残す）。
+    前の工程へ戻す・実装の PR・戻し先を判断できない・`answer` が無いときは、`as_recommended` を残さず、今までどおりの直し。`changes_decision` は、そのまま `answer` に残して今までどおりの直し（成果物を作り直し、セルフレビューをする）。
+  - 軽い直し（`isAnswerOnlyRework`）：その差し戻しの指摘（判断した指摘の集合そのもの）で始まった要求要件・設計の実行は、前回の下書きを元に、答えた項目を「確認したいこと」から外し、答えを反映する所だけを直す。ほかの節・項目・表の行・ID は一字一句そのまま保つ（`answerOnlyReworkLines`）。
+    セルフレビュー（観点の担当の起動）は行わず、提出の前に本文を読み直して3点（答えた項目が外れている・反映した所以外が前回と同じ・ID に欠番や重複が無い）だけ確かめさせる。セルフレビューの報告（`sacty-self-review`）は付けさせない（`answerOnlyCheckLines`。記録なしとして扱い、次の直しは全体をレビューする）。
+    出典の分類（確かめる所の表）と、指摘ごとの対応の報告は、今までどおり。答えが推奨どおりでないと分かったら、軽い直しをやめて通常の直しをさせる（指摘への対応に理由を書かせる）。
+    前回の下書きが空で読めないときは、軽い直しにしない。
   承認済みの要求要件が無いタスク（要求要件の工程を省いたもの）は、最終レビューが基準にした元の依頼（タスクの題名と本文）も判断に渡す。承認済みの要求要件があるタスクには渡さない（要求要件が基準）。
 - 判断の実行を、デーモンの停止・中止のために止めたときは、判断の失敗として採用しない（実装をやり直すことになるため）。承認待ちの取り込みの判断も同じで、使った実行の費用だけを `runResult: interrupted` の `ReworkJudged` に記録し、指摘は未判断のまま残して、次の確認（再起動の後）で判断し直す。
 - 差し戻す直前に、PR の状態をもう一度読む（判断の最中や、判断を記録した後の再開で、人がマージ・クローズしていることがあるため）。
@@ -485,6 +504,11 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - 捨てた指摘は、人に届ける（PBI-291）。`PullRequestReviewDiscarded` の `items[].summary` に、指摘の要点（取り込む指摘と同じ文の先頭400文字。投稿の目印と見出しを除き、空白をそろえる。以前の記録には無い）を残し、`Task.discardedReviews` に積む。見守っている PR（承認ゲートの PR。実装の作り直しの間は実装の PR）へのものを `discardedAiReviews` が古い順に返し、PR がマージされたら返さない（クローズ後・差し戻した後は、マージまで残る）。
   - 承認の画面とタスクの詳細の上（`DiscardedReviewNotice`）に、「取り込んでいない AI のレビューの指摘」として、捨てた理由（古い head と、最後に捨てた時点の PR の head。そのあと PR が更新されても値は変わらない）・指摘ごとの対象のコミット・要点・GitHub へのリンクを出す。人が承認・マージする前に気づけるようにするため。
   - 捨てた指摘を、自動で作り直しに取り込むことも、新しい head に AI のレビューをかけ直すことも、PR に sacty が投稿することもしない。新しい head にも当てはまると人が判断したら、差し戻しの指摘（またはPR への指摘）として伝える。人の指摘として扱う（`source` なし。差し戻しの回数に数える）。
+- 今の head に AI のレビューが付いているか（PBI-302 D1。実験 S14・S18：作り直した head に AI のレビューが届く前に、人がマージに進んだ）：承認待ちの PR の今の head について、付いていない（`none`）・レビュー中（`reviewing`）・付いた（`attached`）を示す。今の head は、提出したコミット（`gatePullRequest` の `commit`）ではなく、PR の確認（`checkPullRequests`）で PR が開いている間に読んだ最新の head（`latestHeads`。人が足したコミットで変わる。同じ PR・同じ提出のときだけ使う。デーモンのメモリーに持つ）。まだ読めていない（デーモンの起動の直後・作り直した直後・GitHub が head を返さない）ときは、分からない（`unknown`）として、付いたとは出さない。承認やマージは止めない。
+  - 判定（`aiReviewFor`・`aiReviewOfHead`）：同じ PR を指す（`referencedPullRequest`）、ほかの sacty のレビューのタスク（レビューの工程を持つ。中止したものを除く）を見る。今の head をレビューして投稿していれば（`reviewPost` と `reviewTarget.headCommit`。再レビューの前の回は `previousReview.headCommit`。コミットは短い表記との先頭の一致で比べる）付いた。投稿しておらず、動いていて（一時停止・エスカレーションを除く）、対象の head が今の head か、まだ決まっていなければレビュー中。ほかは付いていない。別の head へのレビューは、今の head のものに数えない。
+  - 作業履歴からは復元しない（ほかのタスクを見て計算する）。画面に返すとき（`TaskService.view`。`GET /api/tasks/:id`）だけ `Task.aiReview`（head・状況・付いたときのレビューの URL）を足す。承認待ちでない・PR が開いていないタスクには足さない。
+  - 画面：承認の画面とタスクの詳細に、`AiReviewNotice` で出す（状況・head の短い表記・付いたときのレビューへのリンク。付いていないとき、レビュー中のとき、分からないとき〔head を読めていないことを出す〕は、承認やマージを止めないことと、レビューが付く前に進むとその指摘を見ないまま承認することを添える）。
+  - PR の本文：実装の PR は結論に「AI のレビュー：…」の1行を入れる（テンプレートに沿わせる本文は、目的の最終レビューの行の次）。要求要件・設計の PR は、承認の案内の前（テンプレートに沿わせる本文は要約）に入れる（`aiReviewBodyLine`）。本文を作る（更新する）時点の状況で、その後に付いたレビューは反映しないので、そのことと、最新の状況は承認の画面で確かめることを添える。
 - エージェントへの渡し方：人の指摘と AI のレビューの指摘を分けて渡す。
   - 工程のエージェント（実装・要求要件・設計など）の指示、最終レビュー・統合レビュー・戻し先の判断・質問への答え・監査の指示で、「人間の指摘」の節と「AI のレビューの指摘（人間の指摘ではない）」の節に分ける（`remarkSections`・`reworkRemarkLines`）。
   - AI のレビューの指摘が並ぶときは、人の指摘にある「さっきの指摘」「前の指摘」などは、AI のレビューの指摘ではなく人の指摘を指す、と人の指摘の節に添える。
@@ -551,7 +575,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
   - 原因は、作業履歴の差し戻しの行と、PR の欄の戻し先（PR の指摘のとき。`prRework` の `cause`）に出す。
   - 上限でエスカレーションになる差し戻し（`TaskEscalated`）には、原因を残さない。上限を超えて差し戻すときに、あらためて選ぶ。
 - 見逃し（`GuardianMissed`）を記録するのは、原因が `guardian_missed` で、差し戻した成果物が最終レビュー（実装の承認待ち）・統合レビュー（統合レビューの承認待ち）に合格していたときだけ。
-  - 原因が `new_request`・`base_changed` のとき、原因を決めないときは記録しない（原因を決めない差し戻しは、見逃しかどうか分からないものとして、集計の「原因が分からない」に出す。見逃しの数の横で見られる）。
+  - 原因が `new_request`・`question_answer`・`base_changed` のとき、原因を決めないときは記録しない（原因を決めない差し戻しは、見逃しかどうか分からないものとして、集計の「原因が分からない」に出す。見逃しの数の横で見られる）。
   - 同じレビューの見逃しは1回だけ記録する。
   - 原因を記録する前の作業履歴は、そのまま読める（原因を持たない差し戻しは、集計で、直前に見逃しの記録（`GuardianMissed`）があれば見逃し、無ければ「原因が分からない」として扱う。記録済みの見逃しは、見逃しのまま数える）。
 
@@ -559,6 +583,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 | --- | --- |
 | `guardian_missed` | ゴールガーディアンが、確かめられたはずの不備を見逃した |
 | `new_request` | 承認済みの要求要件・設計に無い、人が新しく足した要望や方針の変更 |
+| `question_answer` | sacty の質問（成果物の「確認したいこと」）への答えだけのコメント。新しい要望ではない。要求要件・設計の PR だけ |
 | `base_changed` | ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物そのものの不備ではない |
 
 - 人は差し戻しと一緒に、工程のイメージ・エージェントを変えられる（`RequestChangesInput` の `images`・`agents`）。
@@ -567,7 +592,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
   画面は、やり直す工程とそれより後の工程（飛ばした工程を除く）を出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えた工程だけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`ReworkAnswer`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`・`isAnswerOnlyRework`・`answerOnlyReworkLines`・`answerOnlyCheckLines`・`lineContextText`・`lineContextNote`）、`apps/daemon/src/github.ts`（`lineContextOf`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
 
 ## エスカレーション
 

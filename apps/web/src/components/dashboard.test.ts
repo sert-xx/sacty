@@ -136,7 +136,13 @@ const empty = (): DashboardData => ({
       fixTask: 0,
     },
     reworkBySteps: {},
-    reworkByCause: { guardian_missed: 0, new_request: 0, base_changed: 0, unspecified: 0 },
+    reworkByCause: {
+      guardian_missed: 0,
+      new_request: 0,
+      question_answer: 0,
+      base_changed: 0,
+      unspecified: 0,
+    },
   },
   queue: { running: 0, queued: 0, max: 3 },
 });
@@ -504,7 +510,13 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
             fixTask: 1,
           },
           reworkBySteps: { design: 3, document: 1 },
-          reworkByCause: { guardian_missed: 2, new_request: 1, base_changed: 1, unspecified: 2 },
+          reworkByCause: {
+            guardian_missed: 2,
+            new_request: 1,
+            question_answer: 3,
+            base_changed: 1,
+            unspecified: 2,
+          },
         },
       }),
     );
@@ -520,6 +532,7 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
     expect(byId("rework-investigate")).toBeNull();
     // 見逃しではない差し戻しは、原因ごとに分けて出す（見逃しは「ゴールガーディアンの見逃し」の欄）
     expect(byId("rework-cause-new_request")?.textContent).toBe("1回");
+    expect(byId("rework-cause-question_answer")?.textContent).toBe("3回");
     expect(byId("rework-cause-base_changed")?.textContent).toBe("1回");
     // 原因が分からない差し戻しは、見逃しの数の横に出す
     expect(byId("quality-reworkUnspecified")?.textContent).toBe("2回");

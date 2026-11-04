@@ -141,7 +141,7 @@ Each dashboard section contains the following.
   - It also counts goal guardian misses (`GuardianMissed`, recorded only by a send-back whose cause is a miss), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).
   - Rework by step counts changes requested by a person, rework from PR feedback, and rework from AI review by the step whose deliverable was sent back. The step is `step` of `ChangesRequested` (the step at the approval gate). Requirements, design, and implement (`REWORK_STEPS`) are always shown, other steps only when they have a count.
   - "Rework with unknown cause" (`reworkByCause.unspecified`) is shown right under "Goal guardian misses" (so that rework whose cause was not chosen does not go unseen, since it is not known whether it was a miss).
-  - Rework known not to be a miss is shown by cause: "New request or change of direction" and "Conflict from base changes".
+  - Rework known not to be a miss is shown by cause: "New request or change of direction", "Answer to a question", and "Conflict from base changes".
 - Period boundaries follow the local date of the machine running sacty (the daemon), not the UI language.
   - Today: from 0:00 of that day.
   - Last 7 days: 7 days including today.
