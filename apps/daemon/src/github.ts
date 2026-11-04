@@ -255,7 +255,38 @@ export type PullRequestFeedback = {
   source?: "sacty_review";
   /** source が sacty_review のとき、そのレビュー・行へのコメントが対象にしたコミット（PR の head。読めなければ無い）。 */
   commit?: string;
+  /**
+   * 行へのコメントが付いた行の内容と、その直前の行（GitHub のコメントの diff の抜粋から取った。PBI-302 B3）。指摘を読むエージェントが
+   * 行番号だけに頼って 1 行ずれて読まないよう、指摘の文に添える。抜粋が無ければ無い。
+   */
+  lineContext?: { line: string; before: string[] };
 };
+
+/** 行へのコメントの行の内容として渡す、1 行の文字数の上限と、直前の行の数。 */
+const LINE_CONTEXT_CHARS = 200;
+const LINE_CONTEXT_BEFORE = 2;
+
+/**
+ * 行へのコメントの diff の抜粋（GitHub の diff_hunk。コメントが付いた行が最後）から、その行と直前の行を取る。ハンクの見出し
+ * （@@ ...）と「改行なし」の注記は除き、差分の先頭の印（+ - 空白）を外す。抜粋が無い・読めなければ undefined。
+ */
+export function lineContextOf(diffHunk: unknown): PullRequestFeedback["lineContext"] {
+  if (typeof diffHunk !== "string") return undefined;
+  const lines = diffHunk
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n$/, "")
+    .split("\n")
+    .filter((l) => !l.startsWith("@@") && !l.startsWith("\\"))
+    .map((l) => (/^[ +-]/.test(l) ? l.slice(1) : l));
+  const last = lines.at(-1);
+  if (last === undefined) return undefined;
+  const cut = (l: string) =>
+    l.length > LINE_CONTEXT_CHARS ? `${l.slice(0, LINE_CONTEXT_CHARS - 1)}…` : l;
+  return {
+    line: cut(last),
+    before: lines.slice(Math.max(0, lines.length - 1 - LINE_CONTEXT_BEFORE), -1).map(cut),
+  };
+}
 
 /**
  * PR の状態。merged はマージ済み、closed はマージせずに閉じられた。headSha は PR の先頭のコミット
@@ -429,6 +460,7 @@ export class GitHubPullRequests implements PullRequests {
         body: body(c),
         path: String(c.path ?? ""),
         ...(typeof line === "number" ? { line } : {}),
+        ...(lineContextOf(c.diff_hunk) ? { lineContext: lineContextOf(c.diff_hunk) } : {}),
         ...aiReview(c, commentCommit),
       });
     }

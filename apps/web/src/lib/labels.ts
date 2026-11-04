@@ -1025,6 +1025,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         l.step[event.payload.step],
         event.payload.findings.length,
         event.payload.memories.length,
+        event.payload.skippedMemories.length,
         cost(event.payload.auditCostUsd, event.payload.estimated),
       );
     case "AuditCompleted":

@@ -2289,9 +2289,23 @@ const PullRequestReviewDiscarded = z.object({
  * guardian_missed：ゴールガーディアンが確かめられたはずの不備を見逃した。
  * base_changed：ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物の不備ではない。
  * new_request：承認済みの要求要件・設計に無い、人が新しく足した要望・方針の変更。
+ * question_answer：sacty の質問（成果物の「確認したいこと」）への答えだけのコメント。新しい要望ではない（PBI-302 B1）。
  */
-export const ReworkCause = z.enum(["guardian_missed", "base_changed", "new_request"]);
+export const ReworkCause = z.enum([
+  "guardian_missed",
+  "base_changed",
+  "new_request",
+  "question_answer",
+]);
 export type ReworkCause = z.infer<typeof ReworkCause>;
+
+/**
+ * 原因が question_answer の差し戻しの、答えと推奨の関係（PBI-302 B1）。
+ * as_recommended：すべての答えが推奨の答えどおりで、承認済みの決定を変えない（答えの反映だけの軽い直しにする）。
+ * changes_decision：推奨と違う答えがあり、決定を変える（今までどおりの直しの実行にする）。
+ */
+export const ReworkAnswer = z.enum(["as_recommended", "changes_decision"]);
+export type ReworkAnswer = z.infer<typeof ReworkAnswer>;
 
 /**
  * 取り込んだ PR の指摘で、どの工程まで戻すかのゴールガーディアンの判断（PBI-14b）。target が無ければ
@@ -2304,6 +2318,8 @@ const ReworkJudged = z.object({
     target: StepKey.optional(),
     /** 差し戻しの原因の判断（PBI-268）。判断できなければ無い。 */
     cause: ReworkCause.optional(),
+    /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1）。判断できなければ無い。 */
+    answer: ReworkAnswer.optional(),
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
     agentId: z.string(),
@@ -2537,6 +2553,8 @@ const ChangesRequested = z.object({
      * 原因を決めていない差し戻し（PBI-267 までの作業履歴を含む）には無い。
      */
     cause: ReworkCause.optional(),
+    /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1）。as_recommended は、答えの反映だけの軽い直しにする。 */
+    answer: ReworkAnswer.optional(),
     /**
      * やり直す工程（指摘はこの工程に付く）。承認ゲートの工程か、それより前の工程。
      * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
@@ -2922,6 +2940,19 @@ const AuditDeepDived = z.object({
     findings: z.array(AuditFindingRecord).max(10),
     /** 登録したメモリー（PBI-126）。 */
     memories: z.array(AuditMemoryRecord).max(10).default([]),
+    /**
+     * 登録の前の検査で、登録しなかったメモリー（PBI-302 B6）。そのタスクの依頼者が決めた答えを、ほかのタスクにも当てはまる事実として
+     * 書いたもの：requester_mentioned は依頼者を主語にした文があるもの、requester_text_copied は依頼者が書いた文を写したもの。
+     */
+    skippedMemories: z
+      .array(
+        z.object({
+          title: z.string().max(MEMORY_TITLE_MAX),
+          reason: z.enum(["requester_mentioned", "requester_text_copied"]),
+        }),
+      )
+      .max(10)
+      .default([]),
     ...AuditRun,
   }),
 });
@@ -3358,6 +3389,8 @@ export const RequestChangesInput = z.object({
   submission: Submission,
   /** 差し戻しの原因（PBI-268）。省略すると、原因を決めていない差し戻しとして記録する（見逃しには数えない）。 */
   cause: ReworkCause.optional(),
+  /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1。ゴールガーディアンの判断から渡す）。 */
+  answer: ReworkAnswer.optional(),
   /** やり直す工程。省略すると承認ゲートの工程。 */
   target: StepKey.optional(),
   comments: z

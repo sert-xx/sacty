@@ -173,6 +173,7 @@ describe("深掘りの出力（PBI-125）", () => {
         { title: "原因B", detail: "", evidence: [], proposals: [] },
       ],
       memories: [],
+      skippedMemories: [],
     });
   });
 

@@ -125,7 +125,9 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       ).text;
     expect(back("implement")).toBe("実装を差し戻し：指摘1件（人間）");
     // 原因を決めた差し戻しは、原因を添える（PBI-268）
-    const because = (cause: "guardian_missed" | "base_changed" | "new_request") =>
+    const because = (
+      cause: "guardian_missed" | "base_changed" | "new_request" | "question_answer",
+    ) =>
       describeEventParts(
         event({
           type: "ChangesRequested",
@@ -149,6 +151,33 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
     expect(because("new_request")).toBe(
       "実装を差し戻し：指摘1件（人間）（原因：新しい要望・方針の変更）",
     );
+    expect(because("question_answer")).toBe(
+      "実装を差し戻し：指摘1件（人間）（原因：質問への答え）",
+    );
+    // 監査の深掘りで、依頼者の答えを書いたため登録しなかったメモリーの件数（PBI-302 B6）
+    const dived = (skippedMemories: { title: string; reason: "requester_mentioned" }[]) =>
+      describeEvent(
+        event({
+          type: "AuditDeepDived",
+          payload: {
+            auditId: "a1",
+            step: "requirements",
+            summary: "x",
+            findings: [],
+            memories: [],
+            skippedMemories,
+            auditCostUsd: 0,
+            estimated: false,
+          },
+        }),
+      );
+    expect(dived([])).not.toContain("登録せず");
+    expect(
+      dived([
+        { title: "A", reason: "requester_mentioned" },
+        { title: "B", reason: "requester_mentioned" },
+      ]),
+    ).toContain("依頼者の答えを書いたメモリー 2件は登録せず");
     expect(back("design")).toBe(
       "実装を差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
     );

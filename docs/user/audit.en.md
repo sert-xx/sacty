@@ -116,6 +116,7 @@ When a deep dive finds knowledge that will help later tasks (how to run the test
   - As with other proposals, adopting creates a fix task, and merging its PR puts it into the context.
   - Once merged, the original memory is deleted as "Made context".
   - If you reject it, the memory stays and the reason is passed to the next audit.
+- The audit does not register an answer you decided in a task (scope, numbers, whether something exists, whether a screen is needed, and so on) as a fact that applies to other tasks, because it would mix into the next task's request and decide that task's requirements in advance. sacty checks before registering: a memory that speaks of the requester as the subject ("the requester answered ...") or copies the request body, comments, or resume notes you wrote is not registered. The title and reason of a memory that was not registered are kept in the deep-dive record in the task's Activity. A reworded answer cannot be found. If an answer is left in a memory, delete it in the Audit tab.
 - The Audit tab in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted memory cannot be restored. You cannot add memories by hand.
 - sacty rewrites the files under `memory/` from the activity log. Hand edits are reverted at the next startup.
 

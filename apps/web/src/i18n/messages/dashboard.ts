@@ -121,6 +121,7 @@ const ja = {
       "原因が見逃しではないと分かっている差し戻しを、原因ごとに数えます。原因は差し戻すときに選ぶか、PR の指摘ならゴールガーディアンが判断します。",
     causes: {
       new_request: "新しい要望・方針の変更",
+      question_answer: "質問への答え",
       base_changed: "ベースの変化による競合",
     },
     times: (n: number) => `${n}回`,
@@ -251,6 +252,7 @@ const en: DashboardMessages = {
       "Rework known not to be a miss, counted by cause. The cause is chosen when requesting changes, or judged by the Goal Guardian for PR feedback.",
     causes: {
       new_request: "New request or change of direction",
+      question_answer: "Answer to a question",
       base_changed: "Conflict from base changes",
     },
     times: (n) => `${n} time${n === 1 ? "" : "s"}`,
