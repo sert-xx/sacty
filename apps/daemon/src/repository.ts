@@ -53,6 +53,32 @@ function parseNameStatus(output: string): Map<string, string> {
   return statuses;
 }
 
+/** 差分のファイル。status は git の状態（A・M・D・T・R089 など）。oldPath は、名前を変えた（R）・写した（C）元のパス。 */
+export type DiffFile = { status: string; path: string; oldPath?: string };
+
+/** `git diff -z --name-status` の出力を、ファイルの一覧にする。名前の変更・写しは、元と先の 2 つのパスが続く。 */
+export function parseDiffFiles(output: string): DiffFile[] {
+  const fields = output.split("\0");
+  const files: DiffFile[] = [];
+  for (let i = 0; i < fields.length; ) {
+    const status = fields[i] ?? "";
+    if (status === "") break;
+    if (/^[RC]/.test(status)) {
+      const oldPath = fields[i + 1];
+      const path = fields[i + 2];
+      if (oldPath === undefined || path === undefined) break;
+      files.push({ status, path, oldPath });
+      i += 3;
+    } else {
+      const path = fields[i + 1];
+      if (path === undefined) break;
+      files.push({ status, path });
+      i += 2;
+    }
+  }
+  return files;
+}
+
 /** 中身の行の数（最後の行に改行が無くても1行に数える）。 */
 function lineCount(text: string): number {
   if (text === "") return 0;
@@ -104,6 +130,11 @@ export interface RepositoryWorkspace {
   ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * diff と同じ差分の、ファイルの一覧（同じ並び。名前の変更を見つける）。パスは git が引用せずに出したまま（NUL 区切り）。
+   * 差分の節をファイルに結び付けるために使う（PR #304 のレビュー）。
+   */
+  diffFiles(dir: string, gitDir: string, baseCommit: string): Promise<DiffFile[]>;
   /**
    * 起点からの変更を、ファイルごとの追加と削除の行の数で返す（切り詰めない）。名前の変更は、変更元の削除と変更先の追加に
    * 分ける。バイナリのファイルは、行の数を 0 にする。
@@ -722,12 +753,31 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         "--no-ext-diff",
         "--no-textconv",
         "--text",
+        // 名前の変更の見つけ方を diffFiles とそろえる（節とファイルを同じ並びで結び付けるため）
+        "-M",
         baseCommit,
       ]);
       return diff.length > DIFF_LIMIT
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
     });
+  }
+
+  async diffFiles(dir: string, gitDir: string, baseCommit: string) {
+    return this.stage(dir, gitDir, baseCommit, async (run) =>
+      parseDiffFiles(
+        await run("diff", [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--no-ext-diff",
+          "--no-textconv",
+          "-M",
+          baseCommit,
+        ]),
+      ),
+    );
   }
 
   async diffStats(dir: string, gitDir: string, baseCommit: string) {

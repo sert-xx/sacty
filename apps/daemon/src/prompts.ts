@@ -87,7 +87,12 @@ import {
   QUESTION_LOG_INDEX,
   type QuestionLogRun,
 } from "./question-logs.js";
-import { WORKSPACE_SCRATCH_DIR, WORKSPACE_TOOLS_DIR, type WorkingTreeCopy } from "./repository.js";
+import {
+  type DiffFile,
+  WORKSPACE_SCRATCH_DIR,
+  WORKSPACE_TOOLS_DIR,
+  type WorkingTreeCopy,
+} from "./repository.js";
 import {
   isSecurityFix,
   MINIMAL_CHANGE_VIEWPOINT,
@@ -2195,7 +2200,11 @@ export function internalNameIn(text: string, allowed = ""): string | undefined {
 }
 
 /** リポジトリの差分に追加された行にある、sacty の作業領域の内部の名前（PBI-302 A1）。 */
-export type InternalNameHit = { path: string; line: number; name: string };
+/**
+ * 差分の追加された行にある内部の名前。path・line は変更後のファイルの位置。basePath は、起点の側で比べるパス（名前を変えた
+ * ファイルは変える前のパス。PR #304 のレビュー）。無ければ path と同じ。
+ */
+export type InternalNameHit = { path: string; line: number; name: string; basePath?: string };
 
 /** 内部の名前を、記録・最終レビューの指示に渡す件数の上限（プロンプトと記録を膨らませない）。 */
 const INTERNAL_NAME_HITS_MAX = 20;
@@ -2203,6 +2212,35 @@ const INTERNAL_NAME_HITS_MAX = 20;
 /** 内部の名前の一覧を、記録・指示に渡す件数に絞る。起点にある名前などを除いた後に使う（PR #304 のレビュー）。 */
 export function limitInternalNames<T extends InternalNameHit>(hits: readonly T[]): T[] {
   return hits.slice(0, INTERNAL_NAME_HITS_MAX);
+}
+
+/**
+ * ファイルの一覧から、差分（パッチ）の節の並び。git は、種類の変わったファイル（T。通常のファイルとシンボリックリンクなど）を、
+ * 消す節と足す節の 2 つに分けて出す。足す行を持ちうるのは、消す節以外。
+ */
+function diffSections(
+  files: readonly DiffFile[],
+): { path: string; oldPath?: string; addsLines: boolean }[] {
+  return files.flatMap((file) =>
+    file.status.startsWith("T")
+      ? [
+          { path: file.path, addsLines: false },
+          { path: file.path, addsLines: true },
+        ]
+      : [
+          {
+            path: file.path,
+            ...(file.oldPath ? { oldPath: file.oldPath } : {}),
+            addsLines: !file.status.startsWith("D"),
+          },
+        ],
+  );
+}
+
+/** 差分の節の数（`diff --git ` の見出しの数）が、ファイルの一覧の節の数を超えないか（超えれば、結び付けられない）。 */
+export function diffMatchesFiles(diff: string, files: readonly DiffFile[]): boolean {
+  const headers = diff.split("\n").filter((line) => line.startsWith("diff --git ")).length;
+  return headers <= diffSections(files).length;
 }
 
 /** C の書き方の逃がし（git が引用符で囲んだパス）の、1文字の逃がし。 */
@@ -2228,9 +2266,11 @@ function diffHeaderPath(line: string): string {
   const bytes: number[] = [];
   const body = name.slice(1, -1);
   for (let i = 0; i < body.length; i++) {
-    const char = body[i] ?? "";
-    if (char !== "\\") {
+    if (body[i] !== "\\") {
+      // 1 つの文字（BMP の外の文字はサロゲートペアの 2 つ）を、割らずに UTF-8 にする（PR #304 のレビュー）
+      const char = String.fromCodePoint(body.codePointAt(i) ?? 0);
       bytes.push(...new TextEncoder().encode(char));
+      i += char.length - 1;
       continue;
     }
     const octal = /^[0-7]{3}/.exec(body.slice(i + 1))?.[0];
@@ -2252,8 +2292,17 @@ function diffHeaderPath(line: string): string {
  * `.sacty-tools` の名前が入った）。依頼・承認済みの要求要件・設計（allowed）が名前を挙げているときは、その名前を求められた
  * ものとして見つけない（sacty 自身のリポジトリを直すタスクなど）。
  */
-export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit[] {
+export function internalNamesInDiff(
+  diff: string,
+  allowed = "",
+  files?: readonly DiffFile[],
+): InternalNameHit[] {
   const hits: InternalNameHit[] = [];
+  // ファイルの一覧（git が引用せずに出したパスと、名前の変更の前後）があれば、差分の節を順に結び付ける。見出しの文字列から
+  // パスを読み直さない（引用・逃がし・空白の端の場合を git に任せる。PR #304 のレビュー）
+  const sections = files ? diffSections(files) : undefined;
+  let section = -1;
+  let basePath: string | undefined;
   // ファイルごとの、変更前からある名前（消した行・前後の行にある名前）。すでにリポジトリが使っている名前を書き直した行は、
   // 持ち込みではないので見つけない（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など。DA の見直し）
   const existing = new Map<string, Set<string>>();
@@ -2266,9 +2315,20 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
   for (const text of diff.split("\n")) {
     if (text.startsWith("diff --git ")) {
       inHunk = false;
+      if (sections) {
+        section++;
+        const file = sections[section];
+        // 一覧より節が多い（結び付けられない）ときは、呼び出し元が一覧と節の数を確かめて扱う。ここでは見つけない
+        path = file?.addsLines ? file.path : "";
+        oldPath = file?.path ?? "";
+        basePath = file?.oldPath;
+      }
       continue;
     }
-    if (!inHunk && text.startsWith("--- ")) {
+    if (sections) {
+      // 見出しのパスは読まない（一覧のパスを使う）
+      if (!inHunk && (text.startsWith("--- ") || text.startsWith("+++ "))) continue;
+    } else if (!inHunk && text.startsWith("--- ")) {
       const name = diffHeaderPath(text);
       oldPath = name === "/dev/null" ? "" : name.replace(/^a\//, "");
       continue;
@@ -2289,7 +2349,9 @@ export function internalNamesInDiff(diff: string, allowed = ""): InternalNameHit
       // 行の中の名前をすべて挙げる（許可と、変更前からある名前の除外は、名前ごとにかける。PR #304 のレビュー）
       if (path) {
         for (const name of new Set(namesIn(text.slice(1)))) {
-          if (!allowed.includes(name)) hits.push({ path, line, name });
+          if (!allowed.includes(name)) {
+            hits.push({ path, line, name, ...(basePath && basePath !== path ? { basePath } : {}) });
+          }
         }
       }
       line++;
@@ -2313,7 +2375,6 @@ export function internalNameAllowance(task: Task): string {
     .join("\n");
 }
 
-/** 内部の名前が差分にあるときの、範囲外の変更の項目（観点 SCOPE。PBI-302 A1）。 */
 /** 起点のファイルを読めず、もともとある名前かを確かめられなかった内部の名前（reason は読めなかった理由）。 */
 export type UncheckedInternalName = InternalNameHit & { reason: string };
 
@@ -2334,6 +2395,7 @@ export function uncheckedInternalNameChecks(items: readonly UncheckedInternalNam
   );
 }
 
+/** 内部の名前が差分にあるときの、範囲外の変更の項目（観点 SCOPE。PBI-302 A1）。 */
 export function internalNameOutOfScope(hits: readonly InternalNameHit[]): string[] {
   return hits.map(
     (h) =>

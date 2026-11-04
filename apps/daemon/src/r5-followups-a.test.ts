@@ -297,12 +297,20 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
         "@@ -1,1 +1,2 @@",
         " a",
         "+.sacty-tools/z",
+        // BMP の外の文字（サロゲートペア）と引用符の名前（core.quotepath=false の git の書き方）
+        'diff --git "a/docs/😀\\"guide.md" "b/docs/😀\\"guide.md"',
+        '--- "a/docs/😀\\"guide.md"',
+        '+++ "b/docs/😀\\"guide.md"',
+        "@@ -1,1 +1,2 @@",
+        " a",
+        "+.sacty-tools/v",
         ...diffOf("docs/日本語.md", [".sacty-tools/w"]).split("\n"),
       ].join("\n");
       expect(internalNamesInDiff(diff).map((h) => h.path)).toEqual([
         "docs/guide name.md",
         'docs/q"t\t.md',
         "docs/日.md",
+        'docs/😀"guide.md',
         "docs/日本語.md",
       ]);
     });

@@ -110,7 +110,12 @@ import {
   buildStepDocument,
   changeableSteps,
 } from "./prompts.js";
-import { type FileChange, NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import {
+  type DiffFile,
+  type FileChange,
+  NothingToCommitError,
+  type RepositoryWorkspace,
+} from "./repository.js";
 import { isOpenStopNotice } from "./review-stop-notice.js";
 import {
   MemorySecretStore,
@@ -435,6 +440,17 @@ class FakeRepos implements RepositoryWorkspace {
     if (baseCommit) this.diffBases.push(baseCommit);
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
+  }
+  /** diff と同じ差分のファイルの一覧。無ければ、diffText の見出し（引用の無い簡単な形）から作る。 */
+  diffFileList: DiffFile[] | undefined;
+  diffFilesFail: string | undefined;
+  async diffFiles() {
+    if (this.diffFilesFail) throw new Error(this.diffFilesFail);
+    if (this.diffFileList) return this.diffFileList;
+    return this.diffText
+      .split("\n")
+      .filter((line) => line.startsWith("diff --git "))
+      .map((line) => ({ status: "M", path: line.replace(/^diff --git a\/.* b\//, "") }));
   }
   /** ファイルごとの変更（セキュリティ対応の範囲の照合）。 */
   changes: FileChange[] = [{ path: "src/pay.ts", added: 1, removed: 0 }];
@@ -9625,6 +9641,74 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(checks[0]).toContain("docs/大きい.md（2 行目）");
     expect(checks[0]).toContain("ファイルが大きすぎます");
     activity.close();
+  });
+
+  it("名前を変えたファイルは、起点の変える前のパスと比べてもともとある名前を除く。ファイルの一覧を取れなければ不合格にせず人に回す（PR #304 のレビュー）", async () => {
+    const passing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "ok" },
+            { id: "TV-2", verified: true, reason: "ok" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "ok" }],
+          tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+    const diffText = [
+      'diff --git a/docs/old.md "b/docs/new \\"x\\".md"',
+      "similarity index 90%",
+      "rename from docs/old.md",
+      'rename to "docs/new \\"x\\".md"',
+      "--- a/docs/old.md",
+      '+++ "b/docs/new \\"x\\".md"',
+      "@@ -20,1 +20,2 @@",
+      " 末尾",
+      "+道具は `.sacty-tools/` に置く。",
+    ].join("\n");
+    const run = async (setup: (repos: FakeRepos) => void) => {
+      const repos = new FakeRepos();
+      repos.diffText = diffText;
+      repos.diffFileList = [{ status: "R090", oldPath: "docs/old.md", path: 'docs/new "x".md' }];
+      const original = repos.readFile.bind(repos);
+      const reads: string[] = [];
+      repos.readFile = async (gitDir: string, commit: string, path: string) => {
+        if (!["docs/old.md", 'docs/new "x".md'].includes(path)) {
+          return original(gitDir, commit, path);
+        }
+        reads.push(path);
+        return path === "docs/old.md" ? "道具は `.sacty-tools/` に置く。\n" : undefined;
+      };
+      setup(repos);
+      const { activity, service, id } = await toImplement([implement("# v1"), passing], {
+        repos,
+      });
+      await drain(service);
+      const [first] = service.get(id)?.activity.filter((e) => e.type === "FinalReviewed") ?? [];
+      activity.close();
+      return { first, reads };
+    };
+    // 起点の側は変える前のパス（docs/old.md）で読み、もともとある名前なので範囲外にしない
+    const renamed = await run(() => {});
+    expect(renamed.reads).toEqual(["docs/old.md"]);
+    expect(renamed.first?.type === "FinalReviewed" && renamed.first.payload.passed).toBe(true);
+    // ファイルの一覧を取れない・節と合わないときは、不合格にせず、理由を人が確かめることに残す
+    for (const setup of [
+      (repos: FakeRepos) => {
+        repos.diffFilesFail = "git を実行できない";
+      },
+      (repos: FakeRepos) => {
+        repos.diffFileList = [];
+      },
+    ]) {
+      const { first, reads } = await run(setup);
+      expect(reads).toEqual([]);
+      expect(first?.type === "FinalReviewed" && first.payload.passed).toBe(true);
+      const checks = (first?.type === "FinalReviewed" && first.payload.humanChecks) || [];
+      expect(checks.join("\n")).toContain("変更したファイルの一覧を取れない");
+    }
   });
 
   it("差分の内部の名前が、起点のコミットのそのファイルにすでにあれば（リポジトリがもともと使う名前）、範囲外にしない（PBI-302 A1）", async () => {

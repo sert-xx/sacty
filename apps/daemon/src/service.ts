@@ -342,6 +342,7 @@ import {
   continuablePullRequest,
   deriveBody,
   deriveRecord,
+  diffMatchesFiles,
   ERROR_REPORT_FILE,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -8877,19 +8878,34 @@ export class TaskService {
    */
   private async introducedInternalNames(
     task: Task,
-    hits: readonly InternalNameHit[],
+    dir: string,
+    diff: string,
+    allowed: string,
   ): Promise<{ introduced: InternalNameHit[]; unchecked: UncheckedInternalName[] }> {
-    if (hits.length === 0 || !task.repository) return { introduced: [...hits], unchecked: [] };
+    // 見出しを読み直した位置で、まず名前があるかを見る（無ければ、ファイルの一覧を取らない）
+    const found = internalNamesInDiff(diff, allowed);
+    if (found.length === 0 || !task.repository) return { introduced: found, unchecked: [] };
     const repository = task.repository;
+    const gitDir = this.trustedGitDir(task);
+    const baseCommit = workBaseCommit(repository, task.baseMerge);
+    // 差分の節を、git が出したファイルの一覧（引用されていないパスと、名前の変更の前後）に結び付けて、位置と起点の側のパスを
+    // 決める（PR #304 のレビュー）。一覧を取れない・結び付けられないときは、起点と比べられないので、不合格にせず人に回す
+    let hits: InternalNameHit[];
+    try {
+      const files = await this.deps.repos.diffFiles(dir, gitDir, baseCommit);
+      if (!diffMatchesFiles(diff, files)) {
+        throw new Error("差分の節の数が、変更したファイルの一覧と合わない");
+      }
+      hits = internalNamesInDiff(diff, allowed, files);
+    } catch (error) {
+      const reason = `変更したファイルの一覧を取れない（${renderMessage(errorText(error), "ja")}）`;
+      return { introduced: [], unchecked: found.map((hit) => ({ ...hit, reason })) };
+    }
+    if (hits.length === 0) return { introduced: [], unchecked: [] };
     const base = new Map<string, { text?: string; error?: string }>();
-    for (const path of new Set(hits.map((h) => h.path))) {
+    for (const path of new Set(hits.map((h) => h.basePath ?? h.path))) {
       try {
-        const text = await this.deps.repos.readFile(
-          this.trustedGitDir(task),
-          workBaseCommit(repository, task.baseMerge),
-          path,
-          { anyName: true },
-        );
+        const text = await this.deps.repos.readFile(gitDir, baseCommit, path, { anyName: true });
         base.set(path, text === undefined ? {} : { text });
       } catch (error) {
         base.set(path, { error: renderMessage(errorText(error), "ja") });
@@ -8898,7 +8914,8 @@ export class TaskService {
     const introduced: InternalNameHit[] = [];
     const unchecked: UncheckedInternalName[] = [];
     for (const hit of hits) {
-      const read = base.get(hit.path);
+      // 起点の側は、名前を変える前のパスで比べる。表示する位置（path・line）は変えた後のまま
+      const read = base.get(hit.basePath ?? hit.path);
       if (read?.error !== undefined) unchecked.push({ ...hit, reason: read.error });
       else if (!read?.text?.includes(hit.name)) introduced.push(hit);
     }
@@ -9173,7 +9190,9 @@ export class TaskService {
     // 件数は、起点にある名前を除いた後で絞る（PR #304 のレビュー）
     const sortedNames = await this.introducedInternalNames(
       current,
-      internalNamesInDiff(diff, internalNameAllowance(current)),
+      dir,
+      diff,
+      internalNameAllowance(current),
     );
     const internalNames = limitInternalNames(sortedNames.introduced);
     const uncheckedInternalNames = limitInternalNames(sortedNames.unchecked);
