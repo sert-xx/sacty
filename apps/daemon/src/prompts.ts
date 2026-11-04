@@ -4545,22 +4545,59 @@ function environmentPassNote(tests: {
 }
 
 /**
- * 環境による失敗の申告のうち、sacty の作業領域の内部の物（.sacty-tools の下の記録など）によるものは、パスや失敗の説明を
- * 載せず、WORKSPACE_FILE_FAILURE の1件にまとめる（PBI-302 A1）。失敗として残すので、合格の扱い（終了コード 0 でない合格）は
- * 変わらず、理由は PR の本文と画面に出る。
+ * 作業領域の内部の名前を含む項目（環境による失敗の申告・人が確かめること）の種類（PR #304 のレビュー）。
+ * - record：作業記録のファイル（検証の記録・起点の写し・下書きなど）が、リポジトリの検査（フォーマッター・リンターなど）に
+ *   拾われた失敗。リポジトリの検査の対象ではないので、人に見せない
+ * - tool：検証の道具（sacty が入れたブラウザー・CLI など）を起動・実行できなかった失敗。実行できなかった検証・理由・人が
+ *   確かめ直すことは残し、内部のパスだけを伏せる
+ * 起動・実行の失敗を言う語があれば tool。無く、名前の後ろが記録のファイル（文書・データ・ログの拡張子、記録の置き場の名前）
+ * なら record。どちらとも言えなければ、隠さない側（tool）に倒す。
+ */
+const TOOL_RUN_FAILURE =
+  /起動でき|起動に失敗|起動しな|実行でき|実行に失敗|動かな|見つから|権限が無|権限がな|launch|spawn|ENOENT|EACCES|not found|no such file|cannot (?:start|run|execute|open)|failed to (?:start|launch|run|execute)|crash/i;
+const WORK_RECORD_PATH =
+  /(?:\.sacty-tools|\/tmp\/(?:sacty-[\w.-]+|agent-scratch))\/(?:[^\s`"'<>()（）、。,;|\]]*\/)?(?:[^\s`"'<>()（）、。,;|\]/]*\.(?:md|markdown|json|jsonl|log|txt|ya?ml|html?|csv|png|jpe?g|diff|patch)\b|(?:review|baseline|dispatch|summary|aggregation|snapshot|logs?)\b)/i;
+
+/** sacty がコンテナの内部に置く入力・記録の置き場（/sacty-input など）。道具ではない。 */
+const CONTAINER_RECORD_PATH = /(?<![\w./-])\/sacty-(?:input|review|memory|ledger|handoff|logs)\b/;
+
+function internalItemKind(item: string): "record" | "tool" {
+  if (TOOL_RUN_FAILURE.test(item)) return "tool";
+  return WORK_RECORD_PATH.test(item) || CONTAINER_RECORD_PATH.test(item) ? "record" : "tool";
+}
+
+/** 道具の置き場の内部のパス（.sacty-tools の下）を、人が読める呼び方にする。 */
+const TOOLS_PATH = /\.sacty-tools(?:\/[^\s`"'<>()（）、。,;|\]]*)?/g;
+const TOOLS_LABEL = "sacty が作業領域に入れた検証の道具";
+
+/** 項目の中の内部のパスだけを伏せる（tool の項目。中身は残す）。 */
+function withInternalPathsHidden(item: string): string {
+  return withoutInternalPaths(item.replace(TOOLS_PATH, TOOLS_LABEL));
+}
+
+/**
+ * 環境による失敗の申告のうち、作業記録のファイルによるもの（record）は、パスや失敗の説明を載せず、WORKSPACE_FILE_FAILURE の
+ * 1件にまとめる（PBI-302 A1）。検証の道具を実行できなかった失敗（tool）は、内部のパスだけを伏せて、そのまま残す（人が確かめる
+ * ことに出る。PR #304 のレビュー）。失敗として残すので、合格の扱い（終了コード 0 でない合格）は変わらず、理由は PR の本文と
+ * 画面に出る。
  */
 function neutralEnvironmentFailures(items: readonly string[], allowed = ""): string[] {
   const out: string[] = [];
   for (const item of items) {
-    const entry = internalNameIn(item, allowed) ? WORKSPACE_FILE_FAILURE : item;
+    const entry = !internalNameIn(item, allowed)
+      ? item
+      : internalItemKind(item) === "record"
+        ? WORKSPACE_FILE_FAILURE
+        : withInternalPathsHidden(item);
     if (!out.includes(entry)) out.push(entry);
   }
   return out;
 }
 
 /**
- * 人が確かめることの項目のうち、sacty の作業領域の内部の名前を含むものを外す（PBI-302 A1）。人は辿れず、確かめようがない。
- * 「この環境だけの結果」の項目は、入れたツールの注記として残す。外した項目は、理由とともに返す。
+ * 人が確かめることの項目のうち、作業記録のファイル（record）についての項目を外す（PBI-302 A1）。人は辿れず、確かめようがない。
+ * 検証の道具を実行できなかった項目（tool）は、内部のパスだけを伏せて残す（実行できなかった検証と、人が確かめ直すことが
+ * 分かるように。PR #304 のレビュー）。「この環境だけの結果」の項目は、入れたツールの注記として残す。外した項目は、理由とともに返す。
  */
 function withoutInternalChecks(
   items: readonly string[],
@@ -4572,9 +4609,10 @@ function withoutInternalChecks(
     if (!internalNameIn(item, allowed)) kept.push(item);
     // 「この環境だけの結果」の項目は、入れたツールの注記（置き場所を含む）として、そのまま残す
     else if (isEnvironmentOnlyCheck(item)) kept.push(item);
+    else if (internalItemKind(item) === "tool") kept.push(withInternalPathsHidden(item));
     else {
       dropped.push(
-        `${oneLine(item)} → 外した理由：sacty の作業領域の内部の物で、人が確かめようがない`,
+        `${oneLine(item)} → 外した理由：sacty の作業領域の作業記録のファイルで、人が確かめようがない`,
       );
     }
   }
@@ -5349,19 +5387,60 @@ function bodyAfterLead(text: string, max = BODY_LEAD_MAX): string {
     ...lines.slice(0, paragraph.first),
     ...lines.slice(paragraph.last + 1),
   ]);
-  const content = rest.some((line) => line.trim() !== "" && !/^#{1,6}\s/.test(line.trim()));
+  const code = codeLineFlags(rest);
+  const content = rest.some(
+    (line, i) => line.trim() !== "" && (code[i] || !/^ {0,3}#{1,6}\s/.test(line)),
+  );
   if (!content) return "";
   return trimBlankLines(rest.join("\n").replace(/\n{3,}/g, "\n\n"));
 }
 
-/** 中身が無くなった見出し（次が、同じか上の階層の見出し・文章の終わり）を除く。最初の段落を除いた後に見出しだけが残らないため。 */
+/**
+ * 行ごとに、コードの中か（フェンスで囲んだコードブロックの行〔フェンスの行を含む〕と、空行の後ろの 4 空白以上の字下げの
+ * コードブロックの行）。コードの中の `# …` は見出しではない（PR #304 のレビュー）。
+ */
+function codeLineFlags(lines: readonly string[]): boolean[] {
+  const flags: boolean[] = [];
+  let fence: CodeFence | undefined;
+  let indentedCode = false;
+  for (const [index, line] of lines.entries()) {
+    if (fence) {
+      flags.push(true);
+      if (closesFence(line, fence)) fence = undefined;
+      continue;
+    }
+    const opened = openingFence(line);
+    if (opened) {
+      fence = opened;
+      indentedCode = false;
+      flags.push(true);
+      continue;
+    }
+    if (line.trim() === "") {
+      flags.push(indentedCode);
+      continue;
+    }
+    const indented = /^(?: {4}|\t)/.test(line);
+    const afterBlank = index === 0 || (lines[index - 1] ?? "").trim() === "";
+    indentedCode = indented && (indentedCode || afterBlank);
+    flags.push(indentedCode);
+  }
+  return flags;
+}
+
+/**
+ * 中身が無くなった見出し（次が、同じか上の階層の見出し・文章の終わり）を除く。最初の段落を除いた後に見出しだけが残らないため。
+ * コードブロックの中の行は見出しとして読まず、そのまま残す。見出しの次がコードブロックなら、中身がある（PR #304 のレビュー）。
+ */
 function withoutEmptyHeadings(lines: readonly string[]): string[] {
-  const level = (line: string) => /^(#{1,6})\s/.exec(line.trim())?.[1]?.length;
-  return lines.filter((line, index) => {
-    const own = level(line);
+  const code = codeLineFlags(lines);
+  const level = (index: number) =>
+    code[index] ? undefined : /^ {0,3}(#{1,6})\s/.exec(lines[index] ?? "")?.[1]?.length;
+  return lines.filter((_line, index) => {
+    const own = level(index);
     if (own === undefined) return true;
-    const next = lines.slice(index + 1).find((l) => l.trim() !== "");
-    if (next === undefined) return false;
+    const next = lines.findIndex((l, i) => i > index && l.trim() !== "");
+    if (next < 0) return false;
     const following = level(next);
     return following === undefined || following > own;
   });
@@ -5697,7 +5776,10 @@ export function buildPullRequestBodyText(
   // 「最後の直し」の節は、結論に載せた最初の段落を除いた残り。残りが無ければ節ごと出さない（結論と同じ文を重ねない。PBI-302 C2）
   const fixRest = fix ? bodyAfterLead(fix) : "";
   // 説明が自分で「## 変更内容」のような見出しから始まるときは、「## 変更」を重ねない（中身の無い見出しを出さない）
-  const changeHeading = /^#{1,2}\s/.test(changeRest.trimStart()) ? [] : ["## 変更", ""];
+  // 字下げしたコードの中の `# …` は見出しではないので、字下げは 3 空白まで（PR #304 のレビュー）
+  const changeHeading = /^ {0,3}#{1,2}\s/.test(changeRest.replace(/^(?:[ \t]*\n)+/, ""))
+    ? []
+    : ["## 変更", ""];
   // 人が不合格のまま進めた記録と人が確かめること（PBI-155）は、長さの上限で省かれないよう keep にする
   const override = overrideBodyLines(task).join("\n").trim();
   const human = humanCheckBodyLines(task).join("\n").trim();

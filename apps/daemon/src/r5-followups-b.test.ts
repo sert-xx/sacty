@@ -414,6 +414,39 @@ describe("B3 行へのコメントの指摘に、その行の内容を添える"
     expect(shown).toContain(`「${"い".repeat(199)}…」`);
   });
 
+  it("複数行の PEM の秘密鍵は、抜粋の全体を伏せてから引用する行を選ぶ。開始・本文・終了のどこが引用の範囲にかかっても、範囲の外に開始や終了の行があっても、本文を残さない", () => {
+    const body = [
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+      "Qk9ESUxJTkUyX3NlY3JldF9ib2R5X2xpbmVfdHdvX2FiY2RlZmdo",
+      "Qk9ESUxJTkUzX3NlY3JldF9ib2R5X2xpbmVfdGhyZWVfeHl6",
+    ];
+    const begin = "-----BEGIN PRIVATE KEY-----";
+    const end = "-----END PRIVATE KEY-----";
+    const hunk = (lines: string[]) =>
+      `@@ -1,${lines.length} +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}`;
+    const quoted = (lines: string[]) =>
+      lineContextText(lineContextOf(hunk(lines)) ?? { line: "", before: [] });
+    const cases: Array<[string, string[]]> = [
+      // コメントが PEM の後ろの行：範囲（対象の行と直前 2 行）に本文の終わりと終了の行がかかる。開始の行は範囲の外
+      ["後ろの行", ["const a = 1;", begin, ...body, end, "const b = 2;"]],
+      // コメントが本文の途中：開始の行は範囲の外、終了の行は抜粋の外
+      ["本文の途中", ["const a = 1;", begin, ...body]],
+      // コメントが終了の行
+      ["終了の行", [begin, ...body, end]],
+      // コメントが開始の行
+      ["開始の行", ["x", "y", begin]],
+      // 開始の行が抜粋の外（抜粋は本文から始まる）
+      ["開始が抜粋の外", [...body, end, "const b = 2;"]],
+      ["開始が抜粋の外で終了の行にコメント", [...body, end]],
+    ];
+    for (const [name, lines] of cases) {
+      const text = quoted(lines);
+      for (const secret of body) expect(text, name).not.toContain(secret.slice(0, 20));
+    }
+    // PEM の後ろの行そのものは残る
+    expect(quoted(cases[0]?.[1] ?? [])).toContain("「const b = 2;」");
+  });
+
   it("秘密情報は行全体で伏せてから切り詰める。値が切り詰めの境界にかかっても、境界の前後にあっても、値の一部を残さない", () => {
     const jwt = `eyJ${"a".repeat(30)}.${"b".repeat(30)}.${"c".repeat(40)}`;
     const head = "x".repeat(150);

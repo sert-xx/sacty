@@ -1,4 +1,5 @@
 import { type DaemonText, githubApiBase, message, parseOrgUrl, parseRepoUrl } from "@sacty/core";
+import { redactLog, redactUrlCredentials } from "./ci.js";
 import { errorText, MessageError } from "./errors.js";
 import { githubGraphqlUrl } from "./github-relay.js";
 
@@ -265,18 +266,40 @@ export type PullRequestFeedback = {
 /** 行へのコメントの行の内容として渡す、直前の行の数。1 行の長さは、秘密情報を伏せた後で lineContextText が切り詰める。 */
 const LINE_CONTEXT_BEFORE = 2;
 
+/** PEM の秘密鍵の終了の行。開始の行が抜粋の外にあるときに、本文ごと伏せるのに使う。 */
+const PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY-----/;
+const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
+
+/**
+ * 抜粋の全体（行を改行でつないだもの）の秘密情報を伏せる。開始の行が抜粋の外にあり、終了の行だけがある PEM は、
+ * 抜粋の頭から終了の行までを伏せる（本文は抜粋の頭から続いている）。開始の行があって終了の行が抜粋の外にあるものは、
+ * redactLog が抜粋の終わりまで伏せる。
+ */
+function hideHunk(text: string): string {
+  const end = PEM_END.exec(text);
+  const begin = PEM_BEGIN.exec(text);
+  let hidden = text;
+  if (end && (!begin || begin.index > end.index)) {
+    hidden = `[REDACTED]${text.slice(end.index + end[0].length)}`;
+  }
+  return redactUrlCredentials(redactLog(hidden, []));
+}
+
 /**
  * 行へのコメントの diff の抜粋（GitHub の diff_hunk。コメントが付いた行が最後）から、その行と直前の行を取る。ハンクの見出し
  * （@@ ...）と「改行なし」の注記は除き、差分の先頭の印（+ - 空白）を外す。抜粋が無い・読めなければ undefined。
  */
 export function lineContextOf(diffHunk: unknown): PullRequestFeedback["lineContext"] {
   if (typeof diffHunk !== "string") return undefined;
-  const lines = diffHunk
+  const raw = diffHunk
     .replace(/\r\n?/g, "\n")
     .replace(/\n$/, "")
     .split("\n")
     .filter((l) => !l.startsWith("@@") && !l.startsWith("\\"))
     .map((l) => (/^[ +-]/.test(l) ? l.slice(1) : l));
+  // 引用する行を選ぶ前に、抜粋の全体を一度に伏せる。行ごとに伏せると、複数行にまたがる秘密（PEM の秘密鍵の本文など）を
+  // 見つけられない（PR #304 のレビュー）。抜粋の外に開始の行がある PEM（終了の行だけがある）は、抜粋の頭から終了の行まで伏せる
+  const lines = hideHunk(raw.join("\n")).split("\n");
   const last = lines.at(-1);
   if (last === undefined) return undefined;
   // ここでは切り詰めない。切ってから伏せると、境界で形の崩れた秘密の値（署名の切れた JWT など）を見つけられないので、

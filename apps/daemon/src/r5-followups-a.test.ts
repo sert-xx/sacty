@@ -308,7 +308,7 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
         }),
       );
       expect(review.humanChecks).toEqual(["macOS の日本語入力で確かめる"]);
-      expect(review.droppedHumanChecks?.[0]).toContain("sacty の作業領域の内部の物");
+      expect(review.droppedHumanChecks?.[0]).toContain("sacty の作業領域の作業記録のファイル");
     });
 
     it("前の回から引き継ぐ項目にも、同じ扱いをする。内部の名前の無い項目は残る", () => {
@@ -330,6 +330,51 @@ describe("A1 作業用のファイルを作業領域の外に置き、リポジ�
       );
       expect(review.humanChecks).toEqual([".sacty-tools の説明を読んで確かめる"]);
       expect(review.tests?.environmentFailures).toEqual(["a：.sacty-tools の説明が古い"]);
+    });
+
+    it("検証の道具を起動・実行できなかった失敗は、作業用のファイルの失敗にせず、パスだけを伏せて人が確かめることに残す", () => {
+      const review = readReview(
+        verdict({
+          tests: {
+            exitCode: 1,
+            output: "",
+            environmentFailures: [
+              "screenshot：.sacty-tools/chromium/chrome を起動できず、画面の確認を実行できなかった",
+              "prettier：.sacty-tools/review/summary.json が整形されていない",
+            ],
+          },
+          humanChecks: [
+            ".sacty-tools/bin/playwright が起動できなかったので、画面の操作を手元で確かめ直す",
+            "検証の記録 .sacty-tools/review/dispatch.md を見る",
+          ],
+        }),
+      );
+      // 道具の失敗：実行できなかった検証・理由・確かめ直すことは残り、内部のパスは出ない
+      expect(review.humanChecks).toEqual([
+        "sacty が作業領域に入れた検証の道具 が起動できなかったので、画面の操作を手元で確かめ直す",
+      ]);
+      expect(review.droppedHumanChecks).toHaveLength(1);
+      const failures = review.tests?.environmentFailures ?? [];
+      expect(failures).toContain(
+        "screenshot：sacty が作業領域に入れた検証の道具 を起動できず、画面の確認を実行できなかった",
+      );
+      expect(failures.join("\n")).not.toContain(".sacty-tools");
+      expect(humanVisibleEnvironmentFailures(failures)).toHaveLength(1);
+      // PR の本文で「作業用のファイルによる失敗だけ」として合格にしない
+      const t = task({
+        lastReview: {
+          ...(review as unknown as FinalReview),
+          agentId: "g",
+          runId: "r",
+          costUsd: 0,
+          estimated: false,
+          at: "2026-11-04T00:00:00.000Z",
+        },
+      } as Partial<Task>);
+      const body = joinBodyText(buildPullRequestBodyText(t));
+      expect(body).not.toContain("失敗は sacty の作業用のファイルによるものだけ");
+      expect(body).toContain("失敗は環境によるものだけと判断して合格にした");
+      expect(body).toContain("画面の確認を実行できなかった");
     });
 
     it("「この環境だけの結果」の項目は、入れたツールの注記なので外さない", () => {

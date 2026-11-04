@@ -289,6 +289,30 @@ describe("C2：PR の本文で、同じ文を複数の節に繰り返さない�
     );
   });
 
+  it("最後の直し・変更の説明のコードブロックの中の `# …` は、空の見出しとして消さない（フェンス・字下げのコード）", () => {
+    const whole = "予約の空きを返す API を足しました。";
+    const fence = "```sh\n# 依存を入れる\n# テストを走らせる\nnpm test\n```";
+    const fix = `設定の例を直しました。\n\n${fence}`;
+    const t = taskOf({
+      outputs: { implement: `${whole}\n\n## 最後の直し\n\n${fix}` },
+      implementHistory: [whole, `${whole}\n\n## 最後の直し\n\n${fix}`],
+    });
+    expect(buildPullRequestBody(t)).toContain(`## 最後の直し\n\n${fence}`);
+    // フェンスの中だけのコード（# の行だけ）でも、中身として残す
+    const onlyHashes = "```\n# a\n# b\n```";
+    const t2 = taskOf({
+      outputs: { implement: `${whole}\n\n## 最後の直し\n\n直しました。\n\n${onlyHashes}` },
+      implementHistory: [whole, `${whole}\n\n## 最後の直し\n\n直しました。\n\n${onlyHashes}`],
+    });
+    expect(buildPullRequestBody(t2)).toContain(onlyHashes);
+    // 字下げのコードブロック（4 空白）の中の # の行も残し、「## 変更」は重ねる（説明の見出しではない）
+    const indented = "    # 設定の例\n    # 2 行目";
+    const t3 = taskOf({ outputs: { implement: `要約。\n\n## 手順\n\n${indented}` } });
+    expect(buildPullRequestBody(t3)).toContain(`## 手順\n\n${indented}`);
+    const t4 = taskOf({ outputs: { implement: `要約。\n\n${indented}` } });
+    expect(buildPullRequestBody(t4)).toContain(`## 変更\n\n${indented}`);
+  });
+
   it("S2：説明が自分の見出しから始まるときは、中身の無い「## 変更」を重ねない。見出しより前に文があれば「## 変更」を出す", () => {
     const own = "## 変更内容\n\n- 概要を書いた\n- 例を書いた";
     const withOwn = buildPullRequestBody(
