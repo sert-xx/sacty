@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-04（UTC）
 - タスク: PBI-302
-- PR: なし
+- PR: #304
 - ブランチ: feat/issue-302-r5-followups
 - 関係する ADR: [sacty とエージェントの作業用のファイルは作業領域の外に置き、リポジトリの検査と人の確認に影響させない](../adr/20261104-0355-keep-working-files-out-of-repository-checks.md)、[質問への答えだけのコメントを新しい要望と分けて軽く直し、レビュー・判断の読み違いと作り込みを防ぐ](../adr/20261104-0410-answer-comments-and-judgment-after-r5.md)、[要求要件・設計の本文の外にある作業の報告は、指示で防ぐだけでなく、sacty が取り除く](../adr/20261104-0354-strip-work-report-from-deliverables.md)
 
