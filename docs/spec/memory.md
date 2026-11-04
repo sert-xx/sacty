@@ -71,6 +71,7 @@
     `repository` には、プロジェクト・組織・コンテキストに固有の名前や事情を書かせない。
     GitHub の対象リポジトリが無ければ `project` だけ。
   - 秘密情報・個人の情報を書かせない。
+  - そのタスクで依頼者が決めた答え（範囲・数値・有無・画面の要否・優先など、そのタスクの要求そのもの。依頼の本文・確認したいことへの答え・人の差し戻しの指摘・再開の補足で人が決めたこと）を、ほかのタスクにも当てはまる事実や好みとして書かせない。「依頼者は〜と答えた・求めた」という書き方もさせない。`project` では特に守らせる（PBI-302 B6）。
   - 工程の指示（直す範囲・書くこと・書かないこと・判断の結果の扱い）を変える手順を書かせない。
     事実・落とし穴・調べ方・手がかりを書かせ、手順を書くときは、工程の指示と食い違うなら使わないことを添えさせる。
     sacty は登録のときに手順の中身を判定しない（指示の決まりだけで、読むときの優先が守る）。
@@ -81,7 +82,15 @@
     - 題・概要・中身のどれかが無いもの
     - 既存の ID を `sameAs` にしたもの
     - `repository` でも対象リポジトリが無いもの
+    - 依頼者の答えを書いたと判定したもの（下の「依頼者の答えの検査」）
   - `repository` の宛先は sacty が対象リポジトリにする（出力の宛先は使わない）。
+- 依頼者の答えの検査（`memoryRequesterIssue`・`requesterTexts`。PBI-302 B6）：登録の前に、題・概要・中身を機械的に検査する。指示だけに頼らない。
+  - 依頼者が書いた文は、そのタスクの題・本文、人の指摘（AI のレビューの指摘と無効にした指摘は除く）、再開の補足。
+  - 次のどちらかに当たるメモリーは登録しない（階層は問わない。`project` でも `repository` でも）。登録上限（2 つ）には数えない。
+    - `requester_mentioned`：依頼者を主語にした言い方がある（「依頼者」「依頼人」「依頼した人」「依頼主」「発注者」「ステークホルダー」「requester」「stakeholder」、「〜と答えた」「〜を回答した」など）。
+    - `requester_text_copied`：依頼者が書いた文を、そのまま写した部分がある。全角半角・大文字小文字をそろえ、空白と記号を除いた文字列で、12 文字以上が 3 つ以上（14 文字以上の連続した一致）重なるとき。英数字が主の一致（文章の文字が 6 文字未満。パス・識別子・コマンド）は数えない。
+  - 登録しなかったメモリーの題と理由を、`AuditDeepDived` の `skippedMemories`（`title`・`reason`）に残す（作業履歴の深掘りの行に件数が出る。題と理由は記録に残る。ある回だけ持つ）。
+  - 見つけられるのは、依頼者を主語にした文と、依頼者の文の写しだけ。言い換えた答えは見つけられない（指示の決まりが防ぐ）。
 - 出力は、監査の出力と同じく、記録の前に秘密情報を伏せる。
   JSON をデコードした後の題・概要・中身にも、前後の空白を除く・1行にする・切り詰める前に同じ伏せを当てる。
   引用符・バックスラッシュ・改行を含む値は、JSON の文字列のままではエスケープされて一致しないためである。
@@ -91,7 +100,7 @@
 - 階層ごとの件数の上限は 30（`MEMORY_MAX_PER_LAYER`）。
   登録で超えたら、有効な最終利用日の古いもの（同じなら登録の古いもの）から `capacity` で消す。
 
-コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditDivePrompt`・`extractAuditDive`・`AUDIT_MAX_MEMORIES`）、`apps/daemon/src/service.ts`（`knownMemories`・`trimMemories`・`runAuditAgent`）、`apps/daemon/src/memory.ts`（`overCapacity`・`MEMORY_MAX_PER_LAYER`）
+コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditDivePrompt`・`extractAuditDive`・`AUDIT_MAX_MEMORIES`）、`apps/daemon/src/memory-answers.ts`（`memoryRequesterIssue`・`requesterTexts`）、`apps/daemon/src/service.ts`（`knownMemories`・`trimMemories`・`runAuditAgent`）、`apps/daemon/src/memory.ts`（`overCapacity`・`MEMORY_MAX_PER_LAYER`）
 
 ## 有効な最終利用日の更新
 

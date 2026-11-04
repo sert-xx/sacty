@@ -39,6 +39,7 @@ describe("PR の欄の差し戻しの原因（PBI-268）", () => {
   it.each([
     ["base_changed", "原因：ベースの変化による競合"],
     ["new_request", "原因：新しい要望・方針の変更"],
+    ["question_answer", "原因：質問への答え"],
     ["guardian_missed", "原因：ゴールガーディアンの見逃し"],
   ])("原因が %s なら、戻し先の下に出す。見逃しの記録は、記録が無ければ出ない", (cause, text) => {
     const html = renderToStaticMarkup(

@@ -16,6 +16,7 @@ import type {
   RemarkSource,
   ReviewComment,
   ReviewVerdict,
+  ReworkAnswer,
   ReworkCause,
   SecurityCategory,
   SelfReview,
@@ -803,7 +804,12 @@ export type Task = {
   pendingReview?: {
     keys: string[];
     remarks: string[];
-    judgement?: { target?: StepKey; cause?: ReworkCause; reason: DaemonText };
+    judgement?: {
+      target?: StepKey;
+      cause?: ReworkCause;
+      answer?: ReworkAnswer;
+      reason: DaemonText;
+    };
     /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
     aiReview?: number[];
   };
@@ -816,6 +822,8 @@ export type Task = {
     decided: boolean;
     /** ゴールガーディアンが判断した差し戻しの原因（PBI-268）。判断できなければ無い。 */
     cause?: ReworkCause;
+    /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1）。as_recommended なら、答えの反映だけの軽い直しにした。 */
+    answer?: ReworkAnswer;
     reason: DaemonText;
     at: string;
     /**
@@ -1452,6 +1460,7 @@ export function applyEvent(
           target,
           decided: judged.target !== undefined,
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
+          ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: judged.reason,
           at: event.at,
           round: event.payload.round,
@@ -1866,6 +1875,7 @@ export function applyEvent(
         judgement: {
           ...(event.payload.target ? { target: event.payload.target } : {}),
           ...(event.payload.cause ? { cause: event.payload.cause } : {}),
+          ...(event.payload.answer ? { answer: event.payload.answer } : {}),
           reason: event.payload.reason,
         },
       };

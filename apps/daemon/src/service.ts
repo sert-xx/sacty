@@ -281,6 +281,7 @@ import {
   taskMemoryLayers,
   usefulCounts,
 } from "./memory.js";
+import { requesterTexts } from "./memory-answers.js";
 import type { FeedReply, NotificationFeed } from "./notification-feed.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import { CONTAINER_HANDOFF_DIR, stageHandoff } from "./orchestrator-handoff.js";
@@ -364,6 +365,7 @@ import {
   finalReviewViewpointIds,
   integrationViewpointIds,
   investigationMarker,
+  lineContextText,
   mappedViewpointIds,
   operationSucceeded,
   passedContinuedFeedback,
@@ -2679,6 +2681,17 @@ export class TaskService {
         comments: pending.remarks,
         // ゴールガーディアンが判断した原因（判断できなければ、原因を決めない。見逃しにしない。PBI-268）
         ...(judgement.cause ? { cause: judgement.cause } : {}),
+        // 質問への答えだけで、推奨どおり（決定を変えない）なら、答えの反映だけの軽い直しにする（PBI-302 B1）。
+        // 要求要件・設計の PR を、その工程で直すときだけ（前の工程へ戻す・実装の PR・判断できなかったときは、今までどおりの直し）
+        ...(judgement.cause === "question_answer" && judgement.answer === "changes_decision"
+          ? { answer: "changes_decision" as const }
+          : judgement.cause === "question_answer" &&
+              judgement.answer === "as_recommended" &&
+              judgement.target === gate.step &&
+              target === gate.step &&
+              (gate.step === "requirements" || gate.step === "design")
+            ? { answer: "as_recommended" as const }
+            : {}),
       },
       // AI のレビューの指摘は、人の差し戻しの回数に数えない（PBI-275）
       { aiReview: pending.aiReview ?? [] },
@@ -12583,6 +12596,8 @@ export class TaskService {
               ? {
                   knownMemoryIds: new Set(memories.map((m) => m.id)),
                   ...(memoryRepo ? { repository: memoryRepo } : {}),
+                  // 登録の前に、依頼者の答えを写していないか検査する（PBI-302 B6）
+                  requesterTexts: requesterTexts(task),
                 }
               : {}),
           },
@@ -12613,7 +12628,12 @@ export class TaskService {
                       })),
                     })),
                     ...(memories
-                      ? { memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })) }
+                      ? {
+                          memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })),
+                          ...(dive.skippedMemories.length > 0
+                            ? { skippedMemories: dive.skippedMemories }
+                            : {}),
+                        }
                       : {}),
                     ...run,
                   },
@@ -14013,6 +14033,7 @@ export class TaskService {
             remarks,
             overLimit,
             ...(input.cause ? { cause: input.cause } : {}),
+            ...(input.cause === "question_answer" && input.answer ? { answer: input.answer } : {}),
           },
         },
       },
@@ -14051,7 +14072,13 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   return items.map((item) => {
     const body = item.body.trim();
     if (item.kind === "review_comment") {
-      return cut(`${item.path}${item.line ? `:${item.line}` : ""}：${body}`);
+      // コメントが付いた行の内容と直前の行を添える（行番号だけに頼って 1 行ずれて読まないため。PBI-302 B3）。添える分は
+      // 切らない（指摘の文を、その分だけ短くして上限に収める）
+      const context = item.lineContext ? `\n${lineContextText(item.lineContext)}` : "";
+      const text = `${item.path}${item.line ? `:${item.line}` : ""}：${body}`;
+      return context
+        ? `${text.length + context.length > REMARK_MAX ? `${text.slice(0, Math.max(0, REMARK_MAX - context.length - 1))}…` : text}${context}`
+        : cut(text);
     }
     return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
   });
@@ -14066,7 +14093,8 @@ const DISCARDED_SUMMARY_MAX = 400;
  */
 function discardedSummary(item: PullRequestFeedback): string {
   // 投稿の先頭の目印（HTML のコメント）と見出しは、人が読む要点に要らない
-  const text = (feedbackRemarks([item])[0] ?? "")
+  // 行の内容の添え書きは、表示用の要点には要らない
+  const text = (feedbackRemarks([{ ...item, lineContext: undefined }])[0] ?? "")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/^\s*#+\s*sacty のレビュー\s*$/gm, " ")
     .replace(/\s+/g, " ")

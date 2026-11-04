@@ -62,6 +62,8 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
   Fine defaults such as whitespace, limits, ordering, and column positions are decided by the implementation agent and written under "既定で決めたこと" (decided by default) in the PR body, so check them in the PR.
   When the request is ambiguous, conflicts with a document or the code, has something you should confirm, needs a design decision, puts a new meaning on an existing shared state or field (or adds a state), needs a change to a published API or field that the acceptance criteria do not state, or has a conflict with the side that uses it that you should confirm, Requirements is kept even if the acceptance criteria look detailed.
   When the acceptance criteria clearly state the change to a published API or field (the new name, shape, whether it is required, how errors are handled) and there is nothing to confirm about the side that uses it, that alone is not a reason to keep Requirements (a change such as a rename, where what happens to the existing side that uses it is not settled, is not clearly stated).
+  The following are not reasons to keep Requirements either, because there is nothing for you to confirm: a conflict between documents, or between a document and the acceptance criteria, that does not change what is built (such as which commands count for completion), callers and tests following a change the acceptance criteria decided, and points the implementation can decide from the request and the existing code. The reasons to keep Requirements are only things that have several answers, that neither the request nor the existing code and documents settle, and that you must be asked.
+  When Requirements is kept, the reasons the Orchestrator gave are passed to the first Requirements run. For each reason, either it appears under "確認したいこと" as something to ask you, or the reason it was decided without asking is written as "確認しないと決めたこと" (decided without asking) at the end of that section.
   The number of self-review rounds, the model, and the effort do not change.
 - The specified plan appears on the "Step settings" tab of the task details.
 - Plans that implement have no Investigate step. Information gathering at the start of the task reads the code ("Information gathering at the start of a task" below). Only Security fix has Investigate before Implement, to decide the fix scope.
@@ -627,6 +629,9 @@ When you request changes on the approval screen, you can choose a "Cause of the 
 | A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
 
 - When changes are requested from PR feedback, the Goal Guardian also judges the cause together with where to send it back. If it cannot decide, no cause is set (it is not counted as a miss, and is counted under "Rework with unknown cause").
+- When a comment on a Requirements or Design PR only answers the deliverable's "Open questions" (questions from sacty), the cause is judged to be "An answer to a question". It is not a new request, so it is not counted as a miss.
+  - When every answer is as recommended (for example "as recommended") and nothing you approved changes, the deliverable is not redone and not self-reviewed. The answered items are removed from "Open questions", and only the places that reflect the answers are changed.
+  - When an answer differs from the recommendation, when an answer changes what you approved, or when a request other than an answer is mixed in, the work is redone as before.
 - When you request changes on the approval screen, you choose where to send it back, so the Goal Guardian does not judge the cause. To count misses correctly, choose the cause when you know it.
 - The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Goal Guardian miss" lists only what was recorded as a miss.
 - The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
@@ -696,6 +701,7 @@ When the remark is small (at most 2 places to fix, and no change of direction; f
 If the first review finds no `must` findings, the agent submits at that point.
 For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
 Which one the agent took is written at the start of the self-review summary.
+When a PR comment only answers the "確認したいこと" (questions) and every answer is as recommended, the deliverable is not redone and not self-reviewed ([Cause of the rework](#cause-of-a-request-for-changes)). The agent only removes the answered items and re-reads the text to check, for example, that nothing other than the places reflecting the answers differs from the previous version. The self-review result is then "no record", and the next rework reviews the whole.
 
 The result appears on the deliverable cards, the Implementation card, and the approval screen.
 

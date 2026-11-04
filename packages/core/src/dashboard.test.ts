@@ -241,6 +241,7 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.reworkByCause).toEqual({
       guardian_missed: 0,
       new_request: 0,
+      question_answer: 0,
       base_changed: 0,
       unspecified: 0,
     });
@@ -305,6 +306,7 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.reworkByCause).toEqual({
       guardian_missed: 1,
       new_request: 1,
+      question_answer: 0,
       base_changed: 2,
       unspecified: 1,
     });
@@ -336,6 +338,7 @@ describe("ダッシュボードの集計：品質の信号（PBI-118）", () => 
     expect(s.quality.reworkByCause).toEqual({
       guardian_missed: 2,
       new_request: 0,
+      question_answer: 0,
       base_changed: 0,
       unspecified: 3,
     });

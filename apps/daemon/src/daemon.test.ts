@@ -13076,6 +13076,28 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の PR には sacty の質問が無いので、質問への答えとして判断されても、軽い直しにせず、答えの扱いを記録しない（PBI-302 B1）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await toImplementGate(
+        [
+          out(
+            `\`\`\`json\n${JSON.stringify({ "sacty-rework": { target: "implement", cause: "question_answer", answer: "as_recommended", reason: "実装で直せる" } })}\n\`\`\``,
+          ),
+          implement("# 直した"),
+        ],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:500", { body: "推奨どおりで" })];
+      await service.checkPullRequests();
+      const change = service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested");
+      expect(change?.payload).toMatchObject({ step: "implement", cause: "question_answer" });
+      expect(change?.payload).not.toHaveProperty("answer");
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(promptOf(executor, before)).not.toContain("答えの反映だけ");
+      activity.close();
+    });
+
     it("戻し先を判断できなかったときも、判断できなかった理由を実装の実行の指示に渡す。判断できたときの文は出さない（PBI-300。S14 の台本3）", async () => {
       const pulls = new FakePulls();
       const reason = "付け先の候補が2つあり、どちらを指すのか読み取れない";
@@ -23949,6 +23971,185 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     activity.close();
   });
 
+  describe("質問への答えだけのコメント（PBI-302 B1）", () => {
+    const v1 = [
+      "# 要求要件 v1",
+      "",
+      "## 確認したいこと",
+      "",
+      "- should：国名の表示は要るか（推奨：要らない）",
+    ].join("\n");
+    const answerJudged = (answer?: string, cause = "question_answer", target = "requirements") =>
+      out(
+        block({
+          "sacty-rework": {
+            target,
+            cause,
+            ...(answer ? { answer } : {}),
+            reason: "決定を変えない：確認したいことの should に答えただけ",
+          },
+        }),
+      );
+    const answered = (outcomes: AgentOutcome[]) => start([out(v1), ...outcomes]);
+
+    it("推奨どおりの答えだけなら、原因を質問への答えとして記録し、成果物の作り直しとセルフレビューを走らせない答えの反映だけの直しにする", async () => {
+      const made = await answered([answerJudged("as_recommended"), out("# 要求要件 v2")]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.find((e) => e.type === "ReworkJudged")?.payload).toMatchObject({
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      expect(events.find((e) => e.type === "ChangesRequested")?.payload).toMatchObject({
+        step: "requirements",
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      // 新しい要望・見逃しの記録にはしない
+      expect(events.some((e) => e.type === "GuardianMissed")).toBe(false);
+      expect(taskOf(service, id).prRework).toMatchObject({
+        target: "requirements",
+        cause: "question_answer",
+        answer: "as_recommended",
+      });
+      // 直しの実行：答えの反映だけを求め、セルフレビューは求めない
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("「確認したいこと」への答えの反映だけ");
+      expect(prompt).toContain("[requirements-1-1] 推奨どおりでお願いします");
+      expect(prompt).toContain("--- 提出の前の確認（セルフレビューは行わない） ---");
+      expect(prompt).not.toContain("--- 提出の前のセルフレビュー ---");
+      expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 2 });
+      activity.close();
+    });
+
+    it("推奨と違う答えは、原因は質問への答えのまま、今までどおりの直しの実行（作り直しとセルフレビュー）にする", async () => {
+      const made = await answered([answerJudged("changes_decision"), out("# 要求要件 v2")]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:1", { body: "国名は表示してください" })];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      expect(events.find((e) => e.type === "ChangesRequested")?.payload).toMatchObject({
+        cause: "question_answer",
+        answer: "changes_decision",
+      });
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).not.toContain("答えの反映だけ");
+      expect(prompt).toContain("--- 提出の前のセルフレビュー ---");
+      activity.close();
+    });
+
+    it("答えの扱いを読めなかった・原因が別なら、今までどおり。答えの扱いを記録しない", async () => {
+      for (const judged of [
+        answerJudged(undefined),
+        answerJudged("as_recommended", "new_request"),
+      ]) {
+        const made = await answered([judged, out("# 要求要件 v2")]);
+        const { activity, service, executor, pulls, id } = made;
+        pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+        await service.checkPullRequests();
+        const change = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
+        expect(change?.payload).not.toHaveProperty("answer");
+        const before = executor.calls.length;
+        await service.runNext(id);
+        expect(promptOf(executor, before)).toContain("--- 提出の前のセルフレビュー ---");
+        activity.close();
+      }
+    });
+
+    it("設計の PR で、推奨どおりと判断しても前の工程（要求要件）へ戻すなら、軽い直しにしない（答えの扱いを記録しない）", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        design("# 設計 v1"),
+        answerJudged("as_recommended", "question_answer", "requirements"),
+        out("# 要求要件 v2"),
+      ]);
+      const { activity, service, executor, pulls, id } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      pulls.feedbackBy[8] = [item("comment:20", { body: "推奨どおり" })];
+      await service.checkPullRequests();
+      const change = service.get(id)?.activity.find((e) => e.type === "ChangesRequested");
+      expect(change?.payload).toMatchObject({ step: "design", target: "requirements" });
+      expect(change?.payload).not.toHaveProperty("answer");
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(promptOf(executor, before)).not.toContain("答えの反映だけ");
+      activity.close();
+    });
+  });
+
+  describe("行へのコメントの指摘に、その行の内容を添える（PBI-302 B3）", () => {
+    it("コメントが付いた行の内容と直前の行を指摘の文に添え、戻し先の判断と直しの実行に、行番号でなく内容で箇所を確かめさせる", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+        out("# 要求要件 v2"),
+      ]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 89,
+          body: "ここは空の入力も拒否してください",
+          lineContext: { line: "| R-9 | 空を拒否する |", before: ["| R-8 | 上限は 50 |"] },
+        }),
+        item("review_comment:3", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 10,
+          body: "抜粋の無いコメント",
+        }),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      const remarks = taskOf(service, id).remarks.map((r) => r.text);
+      expect(remarks[0]).toBe(
+        `${docOf(id, "requirements")}:89：ここは空の入力も拒否してください\n（コメントが付いた行の内容：「| R-9 | 空を拒否する |」。直前の行：「| R-8 | 上限は 50 |」）`,
+      );
+      // 抜粋の無いコメントは、今までどおり
+      expect(remarks[1]).toBe(`${docOf(id, "requirements")}:10：抜粋の無いコメント`);
+      const guardian = promptOf(executor, before);
+      expect(guardian).toContain("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」");
+      expect(guardian).toContain("添えた行の内容で確かめてください");
+      await service.runNext(id);
+      const rerun = promptOf(executor, executor.calls.length - 1);
+      expect(rerun).toContain("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」");
+      expect(rerun).toContain("添えた行の内容で確かめてください");
+      activity.close();
+    });
+
+    it("長い指摘でも、添える行の内容は切らない（指摘の文を短くして、上限に収める）", async () => {
+      const made = await start([
+        out("# 要求要件 v1"),
+        out(block({ "sacty-rework": { target: "requirements", reason: "要求要件で直せる" } })),
+      ]);
+      const { activity, service, pulls, id } = made;
+      pulls.feedbackBy[7] = [
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: docOf(id, "requirements"),
+          line: 3,
+          body: "あ".repeat(5_000),
+          lineContext: { line: "| R-9 | 空を拒否する |", before: [] },
+        }),
+      ];
+      await service.checkPullRequests();
+      const text = taskOf(service, id).remarks[0]?.text ?? "";
+      expect(text.length).toBeLessThanOrEqual(2_000);
+      expect(text.endsWith("（コメントが付いた行の内容：「| R-9 | 空を拒否する |」）")).toBe(true);
+      activity.close();
+    });
+  });
+
   it("設計の PR の指摘で要求要件に戻したら、要求要件の直しの PR をタスクブランチに新しく作り、マージされたら設計の PR を作り直す（受け入れ条件 5）", async () => {
     const made = await start([
       out("# 要求要件 v1"),
@@ -34732,6 +34933,65 @@ describe("監査のメモリー（PBI-126）", () => {
     }
     return task.id;
   }
+
+  it("依頼者が決めた答えを書いたメモリーは、プロジェクトの階層もリポジトリの階層も登録せず、登録しなかった題と理由を作業履歴に残す。ほかは登録する（PBI-302 B6。S14 r5）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => [
+      // 依頼者を主語にして答えを書いた
+      memory({
+        title: "rooms の業務のルールは、依頼者が削られたくないものとして扱った",
+        summary: "予約のルール",
+        body: "依頼者は、15 分にそろえることを削ってほしくないと答えた",
+      }),
+      // 依頼の本文を写した
+      memory({
+        scope: "repository",
+        title: "予約の戻し方",
+        summary: "戻し方",
+        body: "削除した予約を、あとから元に戻せるようにしてください。API だけで構いません",
+      }),
+      // リポジトリの事実
+      memory({
+        title: "削除は物理削除",
+        summary: "削除の実装",
+        body: "reservations.ts の delete は行を消す。deletedAt の列は migration にも無い",
+      }),
+    ]);
+    const task = service.createTask({
+      projectId: "default",
+      title: "削除した予約を元に戻せるようにする",
+      body: "予約を間違えて削除してしまう人がいます。削除した予約を、あとから元に戻せるようにしてください。API だけで構いません。",
+    });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    for (let i = 0; i < 3 && service.get(task.id)?.task.audit?.completedAt === undefined; i++) {
+      await service.runNext(task.id);
+    }
+    expect(service.get(task.id)?.task.audit?.memories.map((m) => m.title)).toEqual([
+      "削除は物理削除",
+    ]);
+    const dived = service.get(task.id)?.activity.find((e) => e.type === "AuditDeepDived");
+    expect(dived?.payload).toMatchObject({
+      skippedMemories: [
+        {
+          title: "rooms の業務のルールは、依頼者が削られたくないものとして扱った",
+          reason: "requester_mentioned",
+        },
+        { title: "予約の戻し方", reason: "requester_text_copied" },
+      ],
+    });
+    // 書き出したメモリーの索引にも、登録しなかったものは無い
+    const index = readFileSync(join(projectDir(), "SKILL.md"), "utf8");
+    expect(index).toContain("削除は物理削除");
+    expect(index).not.toContain("削られたくない");
+    expect(existsSync(join(repoDir(), "SKILL.md"))).toBe(false);
+    activity.close();
+  });
 
   it("深掘りが登録したメモリーを索引の形で書き出し、次のタスクの工程に読み取り専用で渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);
