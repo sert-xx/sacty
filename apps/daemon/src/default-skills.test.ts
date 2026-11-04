@@ -72,16 +72,16 @@ describe("既定のスキル（git・review）の、PR のレビューの投稿�
 });
 
 describe("既定の review スキルの、段階のサブエージェント（PBI-119）", () => {
-  it("観点カタログに観点ごとの段階の表があり、expert を除く段階をすべて使う（PBI-303）", () => {
+  it("観点カタログに観点ごとの段階の表があり、ultimate を除く段階をすべて使う（PBI-304）", () => {
     const text = read("skills/review/review-dispatch/references/viewpoints.md");
     expect(text).toContain("## 観点ごとの段階");
     expect(text).toContain("`lite` < `entry` < `standard` < `advanced` < `expert` < `ultimate`");
-    for (const tier of ["lite", "entry", "standard", "advanced", "ultimate"]) {
+    for (const tier of ["lite", "entry", "standard", "advanced", "expert"]) {
       expect(text, tier).toMatch(new RegExp(`^\\| \`${tier}\` \\|`, "m"));
     }
-    expect(text).not.toMatch(/^\| `expert` \|/m);
-    // 横断の欠陥探索は最上位
-    expect(text).toMatch(/^\| `ultimate` \| X-1 \|/m);
+    expect(text).not.toMatch(/^\| `ultimate` \|/m);
+    // 横断の欠陥探索は expert。ultimate は既定では使わない
+    expect(text).toMatch(/^\| `expert` \| X-1 \|/m);
   });
 
   it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
