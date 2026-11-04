@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type DaemonText, renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -37,16 +37,19 @@ function problem(yaml: string): string {
 
 const LUNA = "      gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }\n";
 const SOL = "      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }\n";
-const codex = (models = LUNA + SOL) =>
+const TERRA = "      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }\n";
+const ASTRA = "      gpt-6-astra: { input: 10, cached_input: 1, output: 50 }\n";
+const codex = (models = LUNA + TERRA + SOL + ASTRA) =>
   `  codex:\n    auth: { mode: api-key, secret: openai-api-key }\n    available_models:${models ? `\n${models}` : " {}\n"}`;
 const CLAUDE_MODELS = [
   "      claude-haiku-5-5: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }\n",
   "      claude-sonnet-5-5: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }\n",
   "      claude-opus-5-5: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }\n",
+  "      claude-fable-5-1: { input: 10, cached_input: 0.25, cache_write: 12.5, output: 50 }\n",
 ].join("");
 const claude = (models = CLAUDE_MODELS) =>
   `  claude:\n    auth: { mode: subscription, secret: claude-oauth-token }\n    available_models:\n${models}`;
-const ALL_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"];
+const ALL_TIERS = ["lite", "entry", "standard", "advanced", "expert", "ultimate"];
 
 describe("リポジトリの既定（config/agents.yaml）", () => {
   const defaults = parseYaml(readFileSync(DEFAULT_AGENTS_PATH, "utf8")) as {
@@ -58,17 +61,29 @@ describe("リポジトリの既定（config/agents.yaml）", () => {
       .filter(([id]) => id.startsWith(prefix))
       .map(([id, a]) => [id, a.model, a.reasoning_effort ?? null]);
 
-  it("codex の 5 段階は、決めたモデルとリーズニングエフォート", () => {
+  it("codex の 6 段階は、決めたモデルとリーズニングエフォート（PBI-303）", () => {
     expect(table("codex_")).toEqual([
       ["codex_lite", "gpt-6-luna", "low"],
-      ["codex_entry", "gpt-6-luna", "high"],
-      ["codex_standard", "gpt-6.1-sol", "low"],
+      ["codex_entry", "gpt-6.1-terra", "low"],
+      ["codex_standard", "gpt-6.1-terra", "medium"],
       ["codex_advanced", "gpt-6.1-sol", "medium"],
-      ["codex_ultimate", "gpt-6.1-sol", "high"],
+      ["codex_expert", "gpt-6.1-sol", "high"],
+      ["codex_ultimate", "gpt-6-astra", "low"],
     ]);
   });
 
-  it("claude の 5 段階もあり、名前の接頭辞と runtime が合う。既定の工程の AI は codex_standard、次に claude_standard", () => {
+  it("claude の 6 段階は、決めたモデルとリーズニングエフォート（PBI-303）", () => {
+    expect(table("claude_")).toEqual([
+      ["claude_lite", "claude-haiku-5-5", null],
+      ["claude_entry", "claude-sonnet-5-5", "low"],
+      ["claude_standard", "claude-sonnet-5-5", "medium"],
+      ["claude_advanced", "claude-opus-5-5", "medium"],
+      ["claude_expert", "claude-opus-5-5", "high"],
+      ["claude_ultimate", "claude-fable-5-1", "low"],
+    ]);
+  });
+
+  it("claude の 6 段階もあり、名前の接頭辞と runtime が合う。既定の工程の AI は codex_standard、次に claude_standard", () => {
     expect(table("claude_").map(([id]) => id)).toEqual(ALL_TIERS.map((t) => `claude_${t}`));
     for (const [id, agent] of Object.entries(defaults.agents)) {
       expect(parseTierId(id)?.runtime, id).toBe(agent.runtime);
@@ -102,6 +117,7 @@ describe("接続先と単価だけの config.yaml", () => {
     const config = loaded(`providers:\n${claude()}`);
     expect(config.defaultAgent.id).toBe("claude_standard");
     expect(Object.keys(config.defaultAgent.modelPrices ?? {}).sort()).toEqual([
+      "claude-fable-5-1",
       "claude-haiku-5-5",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
@@ -114,17 +130,22 @@ describe("接続先と単価だけの config.yaml", () => {
     });
     // ほかの接続先のモデルは持たない
     const both = loaded(`providers:\n${codex()}${claude()}`);
-    expect(Object.keys(both.defaultAgent.modelPrices ?? {})).toEqual(["gpt-6-luna", "gpt-6.1-sol"]);
+    expect(Object.keys(both.defaultAgent.modelPrices ?? {})).toEqual([
+      "gpt-6-luna",
+      "gpt-6.1-terra",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+    ]);
   });
 
   it("providers.codex だけ：既定の codex の段階がすべて使え、工程の AI は codex_standard。警告は無い", () => {
     const config = loaded(`providers:\n${codex()}`);
     expect(config.defaultAgent).toMatchObject({
       id: "codex_standard",
-      model: "gpt-6.1-sol",
-      reasoning_effort: "low",
+      model: "gpt-6.1-terra",
+      reasoning_effort: "medium",
       auth: { mode: "api-key", secret: "openai-api-key" },
-      price: { input: 1.25, cachedInput: 0.125, cacheWrite: 0, output: 10 },
+      price: { input: 1, cachedInput: 0.05, cacheWrite: 0, output: 5 },
     });
     expect(config.guardianAgent.id).toBe("codex_standard");
     expect(config.auditAgent.id).toBe("codex_standard");
@@ -149,7 +170,7 @@ describe("接続先と単価だけの config.yaml", () => {
   it("両方：既定の工程の AI は codex_standard", () => {
     const config = loaded(`providers:\n${codex()}${claude()}`);
     expect(config.defaultAgent.id).toBe("codex_standard");
-    expect(Object.keys(config.agents ?? {})).toHaveLength(10);
+    expect(Object.keys(config.agents ?? {})).toHaveLength(12);
   });
 
   it("工程の組み合わせごとの予算（budget.per_plan_usd）を読み、無い組み合わせの名前・0 以下は誤りにする", () => {
@@ -173,7 +194,7 @@ describe("接続先と単価だけの config.yaml", () => {
   it("providers・agents・available_models の下をすべてコメントにしても（null）、書いていないのと同じに読む", () => {
     expect(
       loaded(`providers:\n${codex()}agents:\n  # codex_ultimate:\n`).agents?.codex_ultimate,
-    ).toMatchObject({ reasoning_effort: "high" });
+    ).toMatchObject({ reasoning_effort: "low" });
     expect(load("providers:\n  # codex:\n")).toMatchObject({
       ok: false,
       problem: { code: "config.noDefaultAgent" },
@@ -182,7 +203,7 @@ describe("接続先と単価だけの config.yaml", () => {
       `default_agent: s\nagents:\n  s:\n    runtime: stub\nproviders:\n  codex:\n    auth: { mode: subscription }\n    available_models:\n`,
     );
     expect(empty.tierAgents?.codex).toBeUndefined();
-    expect(empty.agentWarnings).toHaveLength(2);
+    expect(empty.agentWarnings).toHaveLength(4);
   });
 
   it("providers が無く default_agent も無ければ、工程を動かす AI が無いことを示して止める", () => {
@@ -206,9 +227,11 @@ describe("単価（available_models）が無いモデル", () => {
   it("空・1件・すべて：単価のあるモデルの段階だけが使え、無いモデルはどの段階が使えないかを警告する（誤りにしない）", () => {
     // 1件（luna だけ）
     const one = loaded(`default_agent: codex_lite\nproviders:\n${codex(LUNA)}`);
-    expect(Object.keys(one.tierAgents?.codex ?? {})).toEqual(["lite", "entry"]);
+    expect(Object.keys(one.tierAgents?.codex ?? {})).toEqual(["lite"]);
     expect((one.agentWarnings ?? []).map(ja)).toEqual([
-      "providers.codex.available_models に gpt-6.1-sol の単価が無いので、codex_standard, codex_advanced, codex_ultimate を使えません。単価を足してください。",
+      "providers.codex.available_models に gpt-6.1-terra の単価が無いので、codex_entry, codex_standard を使えません。単価を足してください。",
+      "providers.codex.available_models に gpt-6.1-sol の単価が無いので、codex_advanced, codex_expert を使えません。単価を足してください。",
+      "providers.codex.available_models に gpt-6-astra の単価が無いので、codex_ultimate を使えません。単価を足してください。",
     ]);
     // 空：codex の段階はどれも使えない
     const none = loaded(
@@ -217,7 +240,7 @@ describe("単価（available_models）が無いモデル", () => {
     expect(none.tierAgents?.codex).toBeUndefined();
     expect(
       (none.agentWarnings ?? []).map((w) => (w as { params: { model: string } }).params.model),
-    ).toEqual(["gpt-6-luna", "gpt-6.1-sol"]);
+    ).toEqual(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"]);
     // すべて
     expect(loaded(`providers:\n${codex()}`).agentWarnings).toEqual([]);
   });
@@ -246,7 +269,7 @@ describe("単価（available_models）が無いモデル", () => {
     expect(
       problem(`${base}default_agent: codex_lite\nstep_agents:\n  design: codex_standard\n`),
     ).toBe(
-      '設定ファイルに誤りがあります（step_agents.design）：step_agents.design の "codex_standard" は使えません：providers.codex.available_models に gpt-6.1-sol の単価が無いので、codex_standard を使えません。単価を足してください。',
+      '設定ファイルに誤りがあります（step_agents.design）：step_agents.design の "codex_standard" は使えません：providers.codex.available_models に gpt-6.1-terra の単価が無いので、codex_standard を使えません。単価を足してください。',
     );
     expect(problem(`${base}default_agent: claude_lite\n`)).toContain(
       "エージェント「claude_lite」は、providers.claude が無いので使えません。",
@@ -274,7 +297,7 @@ describe("agents の上書き（任意）", () => {
   it("同じ名前は項目ごとに上書きし、書いていない項目は既定のまま", () => {
     const config = loaded(`${base}agents:\n  codex_ultimate:\n    reasoning_effort: xhigh\n`);
     expect(config.agents?.codex_ultimate).toMatchObject({
-      model: "gpt-6.1-sol",
+      model: "gpt-6-astra",
       reasoning_effort: "xhigh",
     });
     const model = loaded(`${base}agents:\n  codex_lite:\n    model: gpt-6.1-sol\n`);
@@ -426,5 +449,25 @@ describe("利用制限のときの代わりのエージェント（agents の fa
     expect(pick("claude_ultimate", "claude_advanced", "codex_advanced", "codex_ultimate")).toBe(
       "claude_ultimate",
     );
+  });
+});
+
+describe("ユーザードキュメントの設定の例（PBI-303）", () => {
+  // 既定のモデルを変えたら、例の available_models も足す。足し忘れると、例のままでは工程の AI が無く読めない（PR #305 レビュー）
+  it("available_models を書いた例は、そのまま読める", () => {
+    const docs = join(dirname(DEFAULT_AGENTS_PATH), "..", "docs", "user");
+    const examples = readdirSync(docs)
+      .filter((name) => name.endsWith(".md"))
+      .flatMap((name) =>
+        [...readFileSync(join(docs, name), "utf8").matchAll(/```yaml\n([\s\S]*?)```/g)]
+          .map((m) => m[1] ?? "")
+          .filter((yaml) => yaml.includes("available_models:"))
+          .map((yaml) => ({ name, yaml })),
+      );
+    expect(examples.length).toBeGreaterThan(0);
+    for (const { name, yaml } of examples) {
+      const result = load(yaml);
+      expect(result.ok ? "" : ja(result.problem), name).toBe("");
+    }
   });
 });

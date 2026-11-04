@@ -36,7 +36,7 @@ providers:
   codex:
     auth: { mode: api-key, secret: "op://Work/OpenAI/api-key" }
     available_models:
-      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }
 # 複数の 1Password のアカウントにサインインしているときは、使うアカウントを書く
 onepassword:
   account: acme.1password.com

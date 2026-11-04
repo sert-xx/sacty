@@ -4,7 +4,7 @@
  */
 
 /** 段階（弱い順）。config.yaml の `claude_<段階>`・`codex_<段階>` の接尾辞で、サブエージェントの定義の名前にもなる。 */
-export const AGENT_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"] as const;
+export const AGENT_TIERS = ["lite", "entry", "standard", "advanced", "expert", "ultimate"] as const;
 export type AgentTier = (typeof AGENT_TIERS)[number];
 /** 段階のエージェントを置ける runtime（stub には置かない）。 */
 export type TierRuntime = "claude-code" | "codex";

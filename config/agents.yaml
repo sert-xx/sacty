@@ -9,7 +9,7 @@ default_agent:
   - codex_standard
   - claude_standard
 
-# 段階のエージェント。claude_<段階>・codex_<段階>（段階は lite・entry・standard・advanced・ultimate）は、
+# 段階のエージェント。claude_<段階>・codex_<段階>（段階は lite・entry・standard・advanced・expert・ultimate）は、
 # 工程の実行で、接頭辞を外した名前（lite など）のサブエージェントとして置く
 agents:
   codex_lite:
@@ -18,20 +18,24 @@ agents:
     reasoning_effort: low
   codex_entry:
     runtime: codex
-    model: gpt-6-luna
-    reasoning_effort: high
+    model: gpt-6.1-terra
+    reasoning_effort: low
   codex_standard:
     runtime: codex
-    model: gpt-6.1-sol
-    reasoning_effort: low
+    model: gpt-6.1-terra
+    reasoning_effort: medium
   codex_advanced:
     runtime: codex
     model: gpt-6.1-sol
     reasoning_effort: medium
-  codex_ultimate:
+  codex_expert:
     runtime: codex
     model: gpt-6.1-sol
     reasoning_effort: high
+  codex_ultimate:
+    runtime: codex
+    model: gpt-6-astra
+    reasoning_effort: low
 
   claude_lite:
     runtime: claude-code
@@ -48,7 +52,11 @@ agents:
     runtime: claude-code
     model: claude-opus-5-5
     reasoning_effort: medium
-  claude_ultimate:
+  claude_expert:
     runtime: claude-code
     model: claude-opus-5-5
     reasoning_effort: high
+  claude_ultimate:
+    runtime: claude-code
+    model: claude-fable-5-1
+    reasoning_effort: low

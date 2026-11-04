@@ -53,6 +53,8 @@ providers:
     available_models:          # The prices are examples. Match your contract
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }
+      gpt-6-astra: { input: 10, cached_input: 1, output: 50 }
 ```
 
 Only two names can be written in `providers`: `codex` for Codex and `claude` for Claude Code. You can write one of them or both.
@@ -119,15 +121,17 @@ sacty has default agents for each tier ([Agent tiers](#agent-tiers)). When model
 | Name | Tool | Model | Reasoning effort |
 | --- | --- | --- | --- |
 | `codex_lite` | Codex | `gpt-6-luna` | `low` |
-| `codex_entry` | Codex | `gpt-6-luna` | `high` |
-| `codex_standard` | Codex | `gpt-6.1-sol` | `low` |
+| `codex_entry` | Codex | `gpt-6.1-terra` | `low` |
+| `codex_standard` | Codex | `gpt-6.1-terra` | `medium` |
 | `codex_advanced` | Codex | `gpt-6.1-sol` | `medium` |
-| `codex_ultimate` | Codex | `gpt-6.1-sol` | `high` |
+| `codex_expert` | Codex | `gpt-6.1-sol` | `high` |
+| `codex_ultimate` | Codex | `gpt-6-astra` | `low` |
 | `claude_lite` | Claude Code | `claude-haiku-5-5` | (the tool's default) |
 | `claude_entry` | Claude Code | `claude-sonnet-5-5` | `low` |
 | `claude_standard` | Claude Code | `claude-sonnet-5-5` | `medium` |
 | `claude_advanced` | Claude Code | `claude-opus-5-5` | `medium` |
-| `claude_ultimate` | Claude Code | `claude-opus-5-5` | `high` |
+| `claude_expert` | Claude Code | `claude-opus-5-5` | `high` |
+| `claude_ultimate` | Claude Code | `claude-fable-5-1` | `low` |
 
 - If you do not write `default_agent`, `codex_standard` is used. When `codex_standard` cannot be used (no `providers.codex`, or no price), `claude_standard` is used.
 - The default agents of a tool that is not in `providers` cannot be used. You are just not using that tool, so no warning is shown.
@@ -197,7 +201,7 @@ You can write the following keys in `step_agents`.
 
 If you sort your agents into tiers, skills (such as the default `review`) start a subagent by tier name for each viewpoint. The same tier runs in both Claude Code and Codex. When a new model generation comes out, a sacty update renews the tiers' default models too.
 
-sacty has the tier agents by default under the names `claude_<tier>` and `codex_<tier>` ([Default agents](#default-agents)). The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate`. sacty places only the tiers that can be used (with a connection and a model price in `providers`).
+sacty has the tier agents by default under the names `claude_<tier>` and `codex_<tier>` ([Default agents](#default-agents)). The tiers are `lite`, `entry`, `standard`, `advanced`, `expert`, and `ultimate`. sacty places only the tiers that can be used (with a connection and a model price in `providers`).
 
 To change a tier's model, write `model` under the same name with [Overriding agents](#overriding-agents).
 
@@ -207,6 +211,7 @@ To change a tier's model, write `model` under the same name with [Overriding age
 | `entry` | Enough for everyday work | Wording and fit for the reader |
 | `standard` | Standard | The default for most viewpoints |
 | `advanced` | Hard reasoning | Correctness, robustness, security, concurrency, and design consistency |
+| `expert` | Deeper reasoning | (Not used by the default viewpoints) |
 | `ultimate` | The top tier | Defect hunting not bound to a viewpoint |
 
 - When a step runs, sacty places the tiers of that tool (`claude_*` for Claude Code, `codex_*` for Codex) in the config location as subagent definitions named without the prefix. The location is `agents/<tier>.md` for Claude Code and `agents/<tier>.toml` for Codex.

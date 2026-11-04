@@ -52,6 +52,8 @@ providers:
     available_models:                                # the prices are examples; match your contract
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6.1-terra: { input: 1, cached_input: 0.05, output: 5 }
+      gpt-6-astra: { input: 10, cached_input: 1, output: 50 }
 ```
 
 | Item | Meaning | Default |
