@@ -38,3 +38,11 @@ Anthropic の料金のページ：`claude-fable-5-1` は input 10・cache hits 0
 - リスク：既に使っている人の `config.yaml` に terra・astra・fable の単価が無いと、`codex_entry`・`codex_standard`・`codex_ultimate`・
   `claude_ultimate` が使えない扱いになる。`step_agents` などで名前を指していれば設定の誤りで止まる（足すべき単価を示す）。
   既定の ADR の方針どおりで、PR の本文に書いた。
+
+## レビューの指摘と対応
+
+- [要修正] `docs/user/gateway.md`・`docs/user/secrets.md`（と英語の版）の設定の例に `gpt-6.1-terra` の単価が無く、例のままでは
+  `codex_standard` が使えず `config.noDefaultAgent` で読めない：認証の例とみなして見落としていた。gateway の例に terra・astra を足し、
+  secrets の例（単価が 1 つだけの短い例）は sol を terra に替えた。同じ漏れを防ぐため、`docs/user/` の `available_models` を書いた
+  yaml の例をすべて `loadConfig` で読むテストを `agent-defaults.test.ts` に足した。直す前の gateway の例で落ちることを確かめた。
+- [提案] ADR の「段階の名前は…案に、名前は…」の文がつながらない：「段階の位置はステークホルダーの案に従い、名前は開発側で `expert` とした」に直した。

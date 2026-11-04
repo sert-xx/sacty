@@ -20,7 +20,7 @@ Codex に `gpt-6.1-terra`（`gpt-6.1-sol` より安い）と最上位の `gpt-6-
   （`gpt-6-astra`・`claude-fable-5-1`）にする。
 - Codex の `entry` を `gpt-6.1-terra` の `low`、`standard` を `gpt-6.1-terra` の `medium` にする。
 - 既定の review スキルの観点ごとの段階は変えない（`expert` はどの観点にも割り当てない。X-1 は `ultimate` のまま）。
-- 段階の名前はステークホルダーの案（「advanced と ultimate の間」）に、名前は開発側で付けた。
+- 段階の位置はステークホルダーの案（advanced と ultimate の間）に従い、名前は開発側で `expert` とした。
 
 ## 検討した案
 

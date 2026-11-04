@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type DaemonText, renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -449,5 +449,25 @@ describe("利用制限のときの代わりのエージェント（agents の fa
     expect(pick("claude_ultimate", "claude_advanced", "codex_advanced", "codex_ultimate")).toBe(
       "claude_ultimate",
     );
+  });
+});
+
+describe("ユーザードキュメントの設定の例（PBI-303）", () => {
+  // 既定のモデルを変えたら、例の available_models も足す。足し忘れると、例のままでは工程の AI が無く読めない（PR #305 レビュー）
+  it("available_models を書いた例は、そのまま読める", () => {
+    const docs = join(dirname(DEFAULT_AGENTS_PATH), "..", "docs", "user");
+    const examples = readdirSync(docs)
+      .filter((name) => name.endsWith(".md"))
+      .flatMap((name) =>
+        [...readFileSync(join(docs, name), "utf8").matchAll(/```yaml\n([\s\S]*?)```/g)]
+          .map((m) => m[1] ?? "")
+          .filter((yaml) => yaml.includes("available_models:"))
+          .map((yaml) => ({ name, yaml })),
+      );
+    expect(examples.length).toBeGreaterThan(0);
+    for (const { name, yaml } of examples) {
+      const result = load(yaml);
+      expect(result.ok ? "" : ja(result.problem), name).toBe("");
+    }
   });
 });
