@@ -27,6 +27,11 @@ export interface CiStatusReader {
   }): Promise<CiFailure[]>;
   /** ワークフローの実行の、失敗したジョブを再実行する（PBI-311）。できなければ例外を投げる。 */
   rerunFailedJobs(input: { repo: string; token: string; runId: number }): Promise<void>;
+  /**
+   * リポジトリに CI が無いと確かめられるか（PBI-309）。有効なワークフローが無く、ベースブランチの先頭のコミットにチェック・
+   * コミットの状態が1つも無いときだけ true。読めないときは例外を投げる。
+   */
+  repositoryHasNoCi(input: { repo: string; token: string; baseBranch: string }): Promise<boolean>;
 }
 
 /** 失敗とみなすジョブの結論（PBI-89。isFailedCiCheck と同じ）。 */
@@ -531,6 +536,49 @@ export class GitHubCiStatus implements CiStatusReader {
       url = next?.startsWith(`${api}/`) ? next : undefined;
     }
     return all;
+  }
+
+  /** 一覧の1ページ。CI が無いと決める元なので、key の配列を読めなければ（中継の応答など）空とせず例外を投げる。 */
+  private async page(
+    url: string,
+    token: string,
+    key: string,
+  ): Promise<{ items: Record<string, unknown>[]; next: string | undefined }> {
+    const res = await this.fetchImpl(url, { headers: this.headers(token) });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const items = json[key];
+    if (!res.ok || !Array.isArray(items)) throw apiError("readChecks", res.status, json);
+    return { items: items as Record<string, unknown>[], next: nextPage(res.headers.get("link")) };
+  }
+
+  async repositoryHasNoCi(input: Parameters<CiStatusReader["repositoryHasNoCi"]>[0]) {
+    const { api, base } = repoApi(input.repo);
+    const { token } = input;
+    let url: string | undefined = `${base}/actions/workflows?per_page=100`;
+    for (let page = 1; url; page++) {
+      const { items, next } = await this.page(url, token, "workflows");
+      if (items.some((w) => w.state === "active")) return false;
+      // 読み切れない一覧では、有効なワークフローが無いとは言えない
+      if (next && (page === MAX_PAGES || !next.startsWith(`${api}/`))) return false;
+      url = next;
+    }
+    const branch = input.baseBranch.split("/").map(encodeURIComponent).join("/");
+    const res = await this.fetchImpl(`${base}/git/ref/heads/${branch}`, {
+      headers: this.headers(token),
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const head = (json.object as { sha?: unknown } | null | undefined)?.sha;
+    if (!res.ok || typeof head !== "string") throw apiError("readChecks", res.status, json);
+    // 1件でもあれば CI があるので、先頭の1件だけを読む
+    const sha = encodeURIComponent(head);
+    const checks = await this.page(
+      `${base}/commits/${sha}/check-runs?per_page=1`,
+      token,
+      "check_runs",
+    );
+    if (checks.items.length > 0) return false;
+    const statuses = await this.page(`${base}/commits/${sha}/status?per_page=1`, token, "statuses");
+    return statuses.items.length === 0;
   }
 
   async snapshot(input: Parameters<CiStatusReader["snapshot"]>[0]): Promise<CiSnapshot> {
