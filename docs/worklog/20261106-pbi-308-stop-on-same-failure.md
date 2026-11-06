@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-06（UTC）
 - タスク: PBI-308
-- PR: なし
+- PR: #314
 - ブランチ: feat/issue-308-stop-on-same-failure
 - 関係する ADR: [実装をやり直しても前回のテストの失敗が1つも直らなければ、回数を待たずに止める](../adr/20261106-1045-pause-when-redo-fixes-no-test-failure.md)
 
