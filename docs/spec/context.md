@@ -33,7 +33,7 @@ sacty はコンテキストを層を重ねて合成し、実行のたびに Clau
   - `./`・`../` で始まる相対パス：同じリポジトリ・同じ `ref` の中の、その層のディレクトリから見たディレクトリ。
     リポジトリの外を指したら `context.extendsOutside` で止める。
   - git で取得した層（`ref` のあるローカルのパスを含む）は、ローカルのパスを継承できない（`context.localExtendsFromRemote`）。
-    継承できるのは、`https://`・`http://`・`ssh://`・`git://` の URL と `user@host:path` の形だけ（`file://`・相対パス・`ext::` などは止める）。
+    別のリポジトリとして継承できるのは、`https://`・`http://`・`ssh://`・`git://` の URL と `user@host:path` の形だけ（`file://`・`sibling/repo.git` のような相対パス・`ext::` などは止める）。`./`・`../` で始まる、同じリポジトリの中の相対パスは継承できる。
     ローカルのパスを書けるのは、プロジェクトの指定と、`ref` の無いローカルのパスの層（今の中身を読む層）の `extends` だけ。
   - 同じ層（`repo`・`path`・`ref`）が2度出たら `context.cycle` で止める。
   - 深さが `MAX_CONTEXT_DEPTH`（10）に達したら `context.tooDeep` で止める。
