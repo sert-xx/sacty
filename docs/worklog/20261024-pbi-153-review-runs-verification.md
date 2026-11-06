@@ -4,7 +4,7 @@
 - タスク: PBI-153
 - PR: #212
 - ブランチ: feat/issue-153-review-runs-verification
-- 関係する ADR: [PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)
+- 関係する ADR: [PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)
 
 ## 目的
 

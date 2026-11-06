@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -1240,6 +1240,30 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`readCi`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
 
+### 同じ内容の検証の使い回し
+
+関係する ADR: [同じ内容で実行済みの検証は、記録と CI の結果を使い回し、覆われていない分だけを実行する](../adr/20261106-0005-reuse-verification-results-for-same-content.md)
+
+同じ内容（コミット）に同じ検証を重ねて実行しないよう、検証を実行した段が記録を申告し、sacty が台帳に残して次の段に渡す（PBI-305）。
+
+- 記録（`VerificationRecord`）は、コマンドごとに、種類（`kind`）・コマンド・覆った範囲（`coverage`。`full` はコマンドが定める対象の全体、`partial` は一部だけで、`note` に範囲を書く）・結果（`status`。`passed`・`failed`）・終了コード・結果の抜粋・実行した段（`by`。`self-review`・`guardian`・`ci`）を持つ。
+  エージェントは、見出し `sacty-verification` の JSON で申告する（`extractVerificationRecord`）。最後の申告だけを使う。結果の出ていないもの・種類の分からないものは捨て、`coverage` が `full` でないものは `partial` として読む。
+- 実装の工程：作業領域を最後に変えた後に実行した検証だけを申告させる（`implementVerificationRecordLines`）。提出の前の検証とセルフレビューの検証は、同じ内容なら1回の実行で両方に使わせる。
+  申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・実装の本文を工程の外で差し替えたら消す。
+- 最終レビュー：`implementVerification` と実装の PR の CI の結果を渡し、覆われていない分だけを実行させる（`reuseVerificationLines`）。
+  テストのコマンドの全体が覆われていれば実行させず、使い回した結果を `tests` に書かせ、元の段を `reusedFrom`（`self-review`・`ci`）に書かせる。
+  sacty が PR に足す成果物のファイルは実装の工程の作業領域に無いので、それを検査しうる検証は、実装の工程の記録から使い回させない。
+  使い回したテストは、実装の成果物の「ゴールガーディアンが実行したテスト」に「実装の工程の結果を使い回し」「PR の CI の結果を使い回し」（`reusedTests`）を、PR の本文のテストの行に使い回したことを添える。
+  ゴールガーディアンにも記録を申告させ（`guardianVerificationRecordLines`）、実装の PR の CI のコミットを付けて `FinalReviewed` の `verificationRecord` に残す。
+- PR のレビュー：sacty が作った PR のレビューのタスク（`source.review` が `sacty`）では、その PR を作ったタスクの最終レビューの記録を、記録のコミットがレビューする先頭のコミット（`reviewTarget.headCommit`）と同じときだけ渡す（`reviewVerification`）。人の PR では記録は無く、CI の結果だけを使い回せる。
+- 使い回しの規則（エージェントへの指示と、既定のスキルの `verification-run` の「1.5 使い回せる結果を探す」）：
+  - 使い回せるのは、同じ内容で全体（`full`）を実行して結果が出たものだけ。`partial` の記録は、覆った範囲を除いた残りを実行させる。
+  - CI は段階・分割（ジョブの分割・matrix・shard など）で実行することがあるので、決まった規則では照らさない。ワークフローの定義と各ジョブの結果・ログから、段階・分割を合わせて全体を覆うと確かめられたものだけを実行済みにさせる。飛ばされた・条件で実行されなかったジョブは何も覆わず、ジョブの名前だけで推し量らせない。
+  - CI が無い・結果が無い・読めないときは、CI で実行されたものとして扱わせない。最終レビューでは、記録が無く、CI の結果が `none`・`timed_out` なら、使い回しの指示を足さない。
+  - 内容が同じでも結果が変わりうる検証は使い回させない。確かめられないものは実行させる。PR の作者の報告は使い回させない。
+
+コード: `apps/daemon/src/verification-reuse.ts`（`extractVerificationRecord`・`implementVerificationRecordLines`・`reuseVerificationLines`・`guardianVerificationRecordLines`）、`apps/daemon/src/prompts.ts`（`buildFinalReviewPrompt`・`testRunLines`・`reviewVerificationLines`・`extractFinalReview`）、`apps/daemon/src/service.ts`（`verify`・`reviewVerification`）、`packages/core/src/events.ts`（`VerificationRecord`・`GuardianTests`）、`packages/core/src/projection.ts`（`implementVerification`）
+
 ### 検証に通った実装の PR
 
 - 最終レビューに通ると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。
@@ -1637,7 +1661,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   判定・作者への @ メンション・AI による投稿である旨は sacty が付けるので、エージェントには書かせない。
 - 検証：作業領域は PR のコードだけの写しで、依存関係やビルドの成果物は無い。
   指示には、依存関係をロックファイルどおりに取得して、フォーマッター・リンター・型チェック・テスト・ビルドなどの検証を実行してよいこと、対象のファイルは書き換えない（フォーマッターなどは確かめるだけのモードで実行する）こと、スキルの手順（`verification-run`）で観点の担当を起動する前に実行することを書く。
-  依存関係が無いことを理由に見送らないこと、CI の結果や作者の報告を自分で実行した結果の代わりにしないことも書く。
+  依存関係が無いことを理由に見送らないこと、作者の報告を自分で実行した結果の代わりにしないことも書く。CI の結果と、同じコミットの sacty の最終レビューの記録は、全体を覆うと確かめたものだけを使い回させる（[同じ内容の検証の使い回し](#同じ内容の検証の使い回し)）。
   オーケストレーターが決めたテストのコマンド（`testCommand`）があれば、検証のコマンドの候補として示す。
   主対象が文書（`design-doc`・`user-doc`）で、差分にコードの変更が無いレビューでは、スキルの規則に従い、変えた文書に効く検証だけを実行し、コードのテスト・ビルド・型チェック・コードのリンターは（`testCommand` も含めて）実行しないことも書く。差分にコードの変更があれば、主対象が文書でも全部の検証を実行する（[既定のレビュー用スキル](context.md#既定のレビュー用スキル)）。
   PR の取り込みで作ったレビューだけのタスクは、オーケストレーターが工程を選ばないのでテストのコマンドが無く、候補は示さない（エージェントがリポジトリの手順と CI の設定から決める）。

@@ -1964,6 +1964,15 @@ describe("ゴールガーディアンが最終レビューの中で実行した�
       output: "2 passed",
     },
   });
+  it("ゴールガーディアンが前の段の結果を使い回したら、元の段を出す（PBI-305）", () => {
+    const reused = review(0);
+    expect(
+      verificationResults(
+        task({ lastReview: { ...reused, tests: { ...reused.tests, reusedFrom: "ci" } } }),
+      ).tests,
+    ).toMatchObject({ reusedFrom: "ci", passed: true });
+    expect(verificationResults(task({ lastReview: reused })).tests?.reusedFrom).toBeUndefined();
+  });
   it("最終レビューの tests を、テストの実行として出す（終了コードを申告しなければ不合格）", () => {
     expect(verificationResults(task({ lastReview: review(0) }))).toMatchObject({
       tests: { command: "make test", exitCode: 0, passed: true, byGuardian: true },

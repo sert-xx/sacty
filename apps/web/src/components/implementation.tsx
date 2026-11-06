@@ -254,6 +254,13 @@ export function Implementation({ task }: { task: Task }) {
                 <Hint text={m.environmentOnlyHint} />{" "}
               </>
             )}
+            {/* 同じ内容で前の段が実行した結果を使い回した（PBI-305） */}
+            {tests.reusedFrom && (
+              <>
+                <Pill tone={OK}>{m.reusedTests(tests.reusedFrom)}</Pill>
+                <Hint text={m.reusedTestsHint} />{" "}
+              </>
+            )}
             {/* 差分が文書だけで、ツールがイメージに無くて実行できなかった検証を、人の確認に回した（PBI-158） */}
             {tests.missingCommands && (
               <>

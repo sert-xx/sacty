@@ -342,6 +342,10 @@ Behavior that only CI can check (fixing a workflow, for example) is part of the 
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
 - A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
+- So that the same verification is not run again on the same content, the Goal Guardian reuses the results of the verification the Implementation step ran last and the PR's CI results.
+  Only results of running the whole are reused. What ran only in part, or what CI cannot be confirmed to cover, is run again. In a repository without CI, CI results are not relied on.
+  The PR review started by the review label also reuses the results the final review handled on the same commit and the CI results.
+  When the test command was reused, "Tests run by the Goal Guardian" shows "Reused the implementation step's result" or "Reused the PR's CI result".
 - Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR. If marking it ready fails, the task stops with the reason. Fix the cause and press "Resume" to start again from marking it ready.
 
 ### When the base branch moves ahead

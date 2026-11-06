@@ -148,6 +148,7 @@ import {
   taskPlan,
   exportProject as toProjectExport,
   unreflectedImplementRemarks,
+  type VerificationRecord,
   workBaseCommit,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -453,6 +454,7 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import type { UpdateStatus } from "./update-check.js";
+import { extractVerificationRecord } from "./verification-reuse.js";
 import {
   idEntries,
   overlapsMounts,
@@ -3193,6 +3195,21 @@ export class TaskService {
         t.status !== "cancelled" &&
         (same(t.pullRequest) || same(t.continuedPullRequest) || t.stepPullRequests.some(same)),
     );
+  }
+
+  /**
+   * PR のレビューのタスクに渡す、同じコミットで実行済みの検証の記録（PBI-305）。sacty が作った実装の PR（レビュー用のラベルで
+   * 作ったレビューのタスク）で、その PR を作ったタスクの最終レビューの記録が、レビューする先頭のコミットのものなら返す。
+   * 人の PR・コミットが進んだ PR・記録の無いものは無い（レビューは、CI の結果だけを自分で読んで使い回す）。
+   */
+  private reviewVerification(task: Task): VerificationRecord | undefined {
+    const target = task.reviewTarget;
+    if (!target || task.source?.kind !== "github_pull_request" || task.source.review !== "sacty") {
+      return undefined;
+    }
+    const owner = this.continuedPullRequestOwner(task.id, target);
+    const record = owner?.lastReview?.verificationRecord;
+    return record?.commit !== undefined && record.commit === target.headCommit ? record : undefined;
   }
 
   /**
@@ -7941,6 +7958,9 @@ export class TaskService {
         };
       }
       const started = services?.ok ? services.started : undefined;
+      // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
+      const reviewVerification =
+        step === "review" ? this.reviewVerification(this.mustGet(task.id)) : undefined;
       executed ??= await this.execute({
         agent,
         taskId: task.id,
@@ -7959,6 +7979,8 @@ export class TaskService {
             ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
+            // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
+            ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
@@ -8198,6 +8220,10 @@ export class TaskService {
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
+            // 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）
+            ...(step === "implement" && extracted.verificationRecord
+              ? { verificationRecord: extracted.verificationRecord }
+              : {}),
             // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）
             ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step)
               ? { selfReview: extracted.selfReview ?? null }
@@ -9212,6 +9238,10 @@ export class TaskService {
               ...(include ? { stepDocumentsIncluded: true } : {}),
               ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
               ...(internalNames.length > 0 ? { internalNames } : {}),
+              // 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305。取り込みなどで作業領域が変われば消えている）
+              ...(current.implementVerification
+                ? { implementVerification: current.implementVerification }
+                : {}),
               ...(prCi?.result
                 ? {
                     pullRequest: {
@@ -9433,6 +9463,8 @@ export class TaskService {
       ]);
       return;
     }
+    // 検証の記録（PBI-305）。最終レビューの前に作った実装の PR のコミットに結び付け、PR のレビューが同じコミットで使い回す
+    const verification = extractVerificationRecord(outcome.output, "guardian").record;
     const reviewed = this.append(current, [
       {
         actor: "guardian",
@@ -9440,6 +9472,14 @@ export class TaskService {
           type: "FinalReviewed",
           payload: {
             ...review,
+            ...(verification
+              ? {
+                  verificationRecord: {
+                    ...(prCi?.commit ? { commit: prCi.commit } : {}),
+                    commands: verification.commands,
+                  },
+                }
+              : {}),
             agentId: agent.id,
             ...agentSetting(agent),
             runId,

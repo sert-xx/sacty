@@ -3437,6 +3437,63 @@ describe("人がゴールガーディアンの不合格のままレビューへ�
   });
 });
 
+describe("実装の工程の検証の記録（PBI-305）", () => {
+  const record = {
+    commands: [
+      {
+        kind: "test" as const,
+        command: "npm test",
+        coverage: "full" as const,
+        note: "",
+        status: "passed" as const,
+        excerpt: "10 passed",
+        by: "self-review" as const,
+      },
+    ],
+  };
+  const implemented = (id: string, verificationRecord?: typeof record) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: "r1", step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "r1",
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装",
+        ...(verificationRecord ? { verificationRecord } : {}),
+      },
+    }),
+  ];
+
+  it("実装の提出の記録を持ち、記録の無い提出では前の記録を残さない", () => {
+    seq = 0;
+    expect(project(implemented("t1", record)).get("t1")?.implementVerification).toEqual(record);
+    expect(project(implemented("t2")).get("t2")?.implementVerification).toBeUndefined();
+  });
+
+  it("ベースブランチを作業領域に取り込んだら、内容が変わったので記録を消す", () => {
+    seq = 0;
+    const task = project([
+      ...implemented("t1", record),
+      ev("t1", { type: "BaseBranchMerged", payload: { from: "b1", commit: "n1", conflicts: [] } }),
+    ]).get("t1");
+    expect(task?.implementVerification).toBeUndefined();
+  });
+});
+
 describe("ベースブランチの取り込み", () => {
   const prepared = (id: string) => [
     created(id),
