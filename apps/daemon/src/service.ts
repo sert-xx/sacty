@@ -864,9 +864,9 @@ type ExecuteRun = {
 /**
  * エージェントが、再開するセッションを受け付けなかったときのエラーの文（PBI-67）。エージェントの本体にある文から選ぶ
  * （推し量って広く取らない）。
- * - Claude Code（2.1.296 の本体で確かめた）：セッションが見つからない `No conversation found with session ID: <ID>`、
+ * - Claude Code（2.1.318 の本体で確かめた）：セッションが見つからない `No conversation found with session ID: <ID>`、
  *   読み込めない `--resume session load failed (…)`・`Failed to resume session <ID>`。どれも終了コード 1
- * - Codex（codex-cli 0.160.0 の本体で確かめた）：`no rollout found for thread id <ID>`・
+ * - Codex（codex-cli 0.167.0 の本体で確かめた）：`no rollout found for thread id <ID>`・
  *   `no rollout found for conversation id <ID>`・`rollout path missing for thread <ID>`・`thread not found: <ID>`・
  *   `error resuming thread: …`
  */

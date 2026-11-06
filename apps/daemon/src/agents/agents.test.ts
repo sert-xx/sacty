@@ -2532,7 +2532,7 @@ describe("結果が出る前に止まった実行の使用量（PBI-281。S20 �
 });
 
 describe("再開の拒否の判定（PBI-67 レビュー指摘。本物の出力）", () => {
-  it("Claude Code 2.1.296・Codex 0.160.0 が、無いセッションの再開を断ったときの出力を、再開の拒否と読む", async () => {
+  it("Claude Code 2.1.318・Codex 0.167.0 が、無いセッションの再開を断ったときの出力を、再開の拒否と読む", async () => {
     const { resumeRejected } = await import("../service.js");
     // sacty-agent のイメージで、認証なしに `claude -p hi --output-format stream-json --verbose --resume <無い ID>` を実行した出力
     const id = "0b1c2d3e-0000-4000-8000-000000000000";

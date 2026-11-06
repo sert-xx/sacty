@@ -245,7 +245,7 @@
   設定ファイルが無ければ既定で作り、ほかの誤りがあれば作らない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
     既定は、タグに加えて、マルチアーキのインデックスのダイジェスト（`node:26-bookworm-slim@sha256:…`）で固定する（`NODE_IMAGE` の既定も同じ）。
-    Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex（`@openai/codex@0.160.0`）は、`packages/cli/docker/agent-cli` の `package.json`・`package-lock.json` を `/opt/sacty/agent-cli` に写し、`npm ci --omit=dev` で推移依存までロックのとおりに入れる。
+    Claude Code（`@anthropic-ai/claude-code@2.1.318`）と Codex（`@openai/codex@0.167.0`）は、`packages/cli/docker/agent-cli` の `package.json`・`package-lock.json` を `/opt/sacty/agent-cli` に写し、`npm ci --omit=dev` で推移依存までロックのとおりに入れる。
     `claude`・`codex` は `/opt/sacty/bin` からのリンクにし、`/opt/sacty/bin` をここで `PATH` の先頭に足す（後の `run` からも呼べる）。
     lockfile には取得元の URL（`resolved`）を書かず、設定したレジストリから取って `integrity` で確かめる（プライベートのレジストリでも同じ lockfile を使う）。
     `NPM_VERSION`（`image_build.npm_version`）があれば、その後に `npm install -g npm@<版>` で入れる。
