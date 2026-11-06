@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-06（UTC）
 - タスク: PBI-312
-- PR: なし
+- PR: #318
 - ブランチ: feat/issue-312-flaky-ledger
 - 関係する ADR: [不安定なテストの台帳を作業履歴から導き、提案は人が作るタスクにする](../adr/20261106-1105-derive-flaky-test-ledger-from-activity.md)
 
