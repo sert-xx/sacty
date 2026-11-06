@@ -1,4 +1,4 @@
-import { guardianTestsPassed } from "@sacty/core";
+import { FAILED_TESTS_MAX, guardianTestsPassed } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { buildFinalReviewPrompt, extractFinalReview } from "./prompts.js";
 
@@ -83,6 +83,17 @@ describe("不安定な失敗の申告（PBI-310）", () => {
     expect(review.tests?.rejectedFlakyFailures).toEqual([
       "b：環境による失敗にも不安定な失敗にも挙げられていない",
     ]);
+  });
+
+  it("失敗が上限を超えて一覧を記録しなくても、説明できない失敗があれば認めない", () => {
+    const names = Array.from({ length: FAILED_TESTS_MAX }, (_, i) => `t${i}`);
+    const review = read({
+      failedTests: ["ui.spec.ts > 保存", ...names],
+      flakyFailures: [flaky()],
+    });
+    expect(review.tests?.failedTests).toBeUndefined();
+    expect(review.passed).toBe(false);
+    expect(review.tests?.flakyFailures).toBeUndefined();
   });
 
   it("環境と不安定の混在は、全件を説明できれば不合格にしない", () => {

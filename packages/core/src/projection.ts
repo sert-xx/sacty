@@ -645,7 +645,7 @@ export type Task = {
    * （再開の後に同じ失敗なら、回数に関係なく止める）。テストが通る・前の工程からやり直す・人がレビューへ進めると消す。
    */
   failedTests?: string[];
-  /** 実装をやり直しても前回の失敗が1つも直らなかった、今回の失敗（PBI-308）。あれば、やり直さずに止める。 */
+  /** 実装をやり直しても1つも直らなかった、前回の失敗（PBI-308）。あれば、やり直さずに止める。 */
   verifyStalled?: string[];
   /**
    * 最終レビューの出力から判定を読み取れなかった回数（続けて。FinalReviewFailed の verdictUnreadable）。不合格ではないので
@@ -1686,10 +1686,11 @@ export function applyEvent(
       const tests = event.payload.tests;
       const failedTests = tests && !guardianTestsPassed(tests) ? tests.failedTests : undefined;
       if (!event.payload.passed) {
-        const stalled = testsMadeNoProgress(task.failedTests, failedTests);
+        const previous = task.failedTests;
+        const stalled = testsMadeNoProgress(previous, failedTests);
         failVerification(task, { kind: "review", review });
         task.failedTests = failedTests?.length ? failedTests : undefined;
-        task.verifyStalled = stalled ? failedTests : undefined;
+        task.verifyStalled = stalled ? previous : undefined;
         break;
       }
       // 検証に通った。実装の工程の中で、sacty が実装の PR を作るので、実行待ちにする（PBI-110。工程は進めない。

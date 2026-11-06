@@ -4713,16 +4713,19 @@ export function extractFinalReview(
           options.internalAllowance,
         )
       : [];
-  // 失敗の名前（PBI-308）も、テストのコマンドが失敗したときだけ読む。回をまたいで比べるので、理由を混ぜない
-  const failedTests =
+  // 失敗の名前（PBI-308）も、テストのコマンドが失敗したときだけ読む。回をまたいで比べるので、理由を混ぜない。
+  // 上限を超えたら切り詰めずに捨てる（欠けた一覧を比べると、切り捨てた分が直っても進展なしに見える）
+  const failedNames =
     exitCode !== undefined && exitCode !== 0
-      ? [...new Set(reportedFailedTests(raw.failedTests))].slice(0, FAILED_TESTS_MAX)
+      ? [...new Set(reportedFailedTests(raw.failedTests))]
       : [];
-  // 不安定な失敗（PBI-310）。1件でも認めなければ本当の失敗が残っているので、環境による失敗の申告でも通さない
+  const failedTests = failedNames.length <= FAILED_TESTS_MAX ? failedNames : [];
+  // 不安定な失敗（PBI-310）。1件でも認めなければ本当の失敗が残っているので、環境による失敗の申告でも通さない。
+  // 全件を説明できるかは、記録しなかった上限超えの一覧も含めて確かめる
   const flaky =
     exitCode !== undefined && exitCode !== 0
       ? checkFlakyFailures(raw.flakyFailures, {
-          failedTests,
+          failedTests: failedNames,
           environmentFailures: reportedEnvironment,
           changedFiles: options.changedFiles,
           knownFlaky: options.knownFlaky ?? [],
