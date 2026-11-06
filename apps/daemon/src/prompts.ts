@@ -10,6 +10,7 @@ import {
   DOCUMENT_PAGES_MAX,
   displayTestNames,
   ExportVia,
+  FAILED_TESTS_MAX,
   type FinalReview,
   GATHERED_BRIEF_MAX,
   guardianTestsPassed,
@@ -3371,6 +3372,25 @@ const reportedItems = (v: unknown): string[] => {
 };
 
 /**
+ * 失敗したテスト・検査の名前の一覧（PBI-308）。文字列か、名前を持つオブジェクトの名前だけを読む。根拠はつながない
+ * （回をまたいで同じ名前を比べるので、理由の言い回しの違いで別のものにしない）。
+ */
+const reportedFailedTests = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((item) => {
+      if (typeof item === "string") return oneLine(text(item));
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const o = item as Record<string, unknown>;
+        return ITEM_NAME_KEYS.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
+      }
+      return "";
+    })
+    .filter((item) => item && !isNoneItem(item))
+    .map(hideItem);
+};
+
+/**
  * 失敗の申告が1件でもあるか（`otherFailures`。止める側の欄なので、読めない形でも、書いてあれば「ある」とする）。
  * 空でない文字列・0 でない数値・真・オブジェクト（空でも）が1件でもあれば true。配列は中の項目を見る。
  * 無い・空の値と、「なし」「none」「n/a」だけなら false（`no`・`false` の文字列は、書いてあるものとして true）。
@@ -3992,6 +4012,7 @@ export function buildFinalReviewPrompt(
               command: testCommand,
               exitCode: 0,
               output: "結果の抜粋（実行した件数・失敗したテストとその理由）",
+              failedTests: [],
               missingCommands: [],
               environmentFailures: [],
               otherFailures: [],
@@ -4007,6 +4028,7 @@ export function buildFinalReviewPrompt(
     ...(testCommand
       ? [
           "tests には、あなたが実行したテストのコマンドの終了コード（exitCode）と、結果の抜粋（output）を書いてください。",
+          "テストのコマンドが失敗したときは、失敗したテスト・検査の名前を failedTests に1件ずつ書いてください（文字列の配列）。名前はツールが出力したとおりに、ファイルとテストの名前を写します。件数・理由・言い換えは書きません。回をまたいで同じ失敗かを機械的に比べるためです。失敗したテストの名前が出ない検査は、失敗した段階のコマンドを書きます。",
           "テストのコマンドに書いたツールがイメージに無くて実行できなかったときは、そのコマンドの名前を missingCommands に書いてください。ツールが無くても、実行できる検証と、観点・指摘の判定は最後まで行ってください。",
           "ツールが無くて実行できなかったことのほかに失敗（テストの失敗・lint のエラーなど）があれば、失敗ごとに otherFailures に1件ずつ書いてください（無ければ空）。",
           "失敗がすべて環境によるものなら、失敗したテストごとに、名前と環境によると判断した根拠を environmentFailures に1件ずつ書いてください。1件は「名前：根拠」の1つの文字列にして、文字列の配列で書きます。それ以外は空にしてください。",
@@ -4582,6 +4604,11 @@ export function extractFinalReview(
           options.internalAllowance,
         )
       : [];
+  // 失敗の名前（PBI-308）も、テストのコマンドが失敗したときだけ読む。回をまたいで比べるので、理由を混ぜない
+  const failedTests =
+    exitCode !== undefined && exitCode !== 0
+      ? [...new Set(reportedFailedTests(raw.failedTests))].slice(0, FAILED_TESTS_MAX)
+      : [];
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
   const reportedMissing = [
@@ -4616,6 +4643,7 @@ export function extractFinalReview(
     ...(exitCode !== undefined ? { exitCode } : {}),
     ...(reusedFrom ? { reusedFrom } : {}),
     output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
+    ...(failedTests.length > 0 ? { failedTests } : {}),
     ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
     ...(skipped.length > 0 ? { missingCommands: skipped } : {}),
   };
@@ -4933,6 +4961,7 @@ const FINAL_REVIEW_SHAPE: LenientShape = {
       "command",
       "exitCode",
       "output",
+      "failedTests",
       "missingCommands",
       "environmentFailures",
       "otherFailures",

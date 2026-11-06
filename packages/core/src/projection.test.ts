@@ -14,6 +14,7 @@ import {
   rerunEditableBody,
   STEP_PLANS,
   TASK_BODY_MAX,
+  testsMadeNoProgress,
 } from "./events.js";
 import type { DaemonText } from "./message-code.js";
 import {
@@ -3197,6 +3198,98 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
       },
       "guardian",
     );
+
+  /** 失敗の名前を申告した不合格の最終レビュー（PBI-308）。 */
+  const reviewedFailing = (id: string, failedTests?: string[]) =>
+    ev(
+      id,
+      {
+        type: "FinalReviewed",
+        payload: {
+          passed: false,
+          viewpoints: [],
+          remarks: [],
+          summary: "ng",
+          agentId: "g",
+          tests: {
+            command: "npm test",
+            exitCode: 1,
+            output: "failed",
+            ...(failedTests ? { failedTests } : {}),
+          },
+        },
+      },
+      "guardian",
+    );
+
+  describe("同じ失敗が続いたら止める（PBI-308）", () => {
+    const start = (id: string) => [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ...implemented(id, "i1"),
+    ];
+
+    it("前回の失敗がすべて残っていれば、進展なしとする", () => {
+      expect(testsMadeNoProgress(["a"], ["a"])).toBe(true);
+      expect(testsMadeNoProgress(["a"], ["a", "b"])).toBe(true);
+      expect(testsMadeNoProgress(["a", "b"], ["a"])).toBe(false);
+      expect(testsMadeNoProgress(["a"], ["b"])).toBe(false);
+    });
+
+    it("どちらかの申告が無ければ、比べない", () => {
+      expect(testsMadeNoProgress(undefined, ["a"])).toBe(false);
+      expect(testsMadeNoProgress(["a"], undefined)).toBe(false);
+      expect(testsMadeNoProgress([], ["a"])).toBe(false);
+      expect(testsMadeNoProgress(["a"], [])).toBe(false);
+    });
+
+    it("最初の不合格では止めず、失敗を覚える", () => {
+      seq = 0;
+      const task = project([...start("s1"), reviewedFailing("s1", ["a"])]).get("s1");
+      expect(task?.failedTests).toEqual(["a"]);
+      expect(task?.verifyStalled).toBeUndefined();
+    });
+
+    it("テストが通らなかったのでなければ、不合格でも失敗を覚えない", () => {
+      seq = 0;
+      const events = start("s2");
+      const environment = ev(
+        "s2",
+        {
+          type: "FinalReviewed",
+          payload: {
+            passed: false,
+            viewpoints: [],
+            remarks: [],
+            summary: "観点が不合格",
+            agentId: "g",
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "環境",
+              failedTests: ["a"],
+              environmentFailures: ["a：環境"],
+            },
+          },
+        },
+        "guardian",
+      );
+      const task = project([...events, environment]).get("s2");
+      expect(task?.failedTests).toBeUndefined();
+    });
+
+    it("合格したら、失敗の記憶を消す", () => {
+      seq = 0;
+      const task = project([
+        ...start("s3"),
+        reviewedFailing("s3", ["a"]),
+        ...implemented("s3", "i2"),
+        reviewed("s3", 0),
+      ]).get("s3");
+      expect(task?.failedTests).toBeUndefined();
+      expect(task?.verifyStalled).toBeUndefined();
+    });
+  });
 
   it("テストの記録なしに、実装の完了から最終レビューへ進み、ゴールガーディアンが実行したテストを最終レビューと一緒に持つ", () => {
     seq = 0;

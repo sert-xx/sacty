@@ -10319,6 +10319,131 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("実装をやり直しても失敗が直らなければ止める（PBI-308）", () => {
+    /** テストの失敗の名前を申告した、不合格の最終レビュー。 */
+    const failing = (failedTests?: string[]) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "失敗あり",
+              ...(failedTests ? { failedTests } : {}),
+            },
+            humanChecks: [],
+            summary: "テストが通らない",
+          },
+        }),
+      );
+    const reviews = (service: TaskService, id: string) =>
+      types(service, id).filter((t) => t === "FinalReviewed").length;
+
+    it("前回と同じ失敗なら、上限を待たずに止める", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(["a.test.ts > x"]),
+        implement("# v2"),
+        failing(["a.test.ts > x"]),
+        implement("# v3"),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(task.pausedReason).toBe("verification");
+      expect(JSON.stringify(task.pausedMessage)).toContain("verify.sameFailureRemains");
+      expect(JSON.stringify(task.pausedMessage)).toContain("a.test.ts > x");
+      expect(task.verifyFailures).toBe(2);
+      expect(reviews(service, id)).toBe(2);
+      activity.close();
+    });
+
+    it("前回の失敗が1つでも直ったら止めず、上限までやり直す", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(["a", "b"]),
+        implement("# v2"),
+        failing(["a"]),
+        implement("# v3"),
+        failing(["c"]),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(reviews(service, id)).toBe(3);
+      expect(JSON.stringify(task.pausedMessage)).toContain("verify.tooManyAttempts");
+      activity.close();
+    });
+
+    it("失敗の名前の申告が無ければ、回数だけで判断する", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(),
+        implement("# v2"),
+        failing(),
+        implement("# v3"),
+        failing(),
+      ]);
+      await drain(service);
+      expect(reviews(service, id)).toBe(3);
+      expect(JSON.stringify(service.get(id)?.task.pausedMessage)).toContain(
+        "verify.tooManyAttempts",
+      );
+      activity.close();
+    });
+
+    it("再開の後も失敗を覚えていて、同じ失敗なら1回で止まる", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(["a"]),
+        implement("# v2"),
+        failing(["a"]),
+        implement("# v3"),
+        failing(["a"]),
+        implement("# v4"),
+      ]);
+      await drain(service);
+      expect(reviews(service, id)).toBe(2);
+      service.resume(id, {});
+      expect(service.get(id)?.task.verifyFailures).toBe(0);
+      expect(service.get(id)?.task.failedTests).toEqual(["a"]);
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(reviews(service, id)).toBe(3);
+      expect(task.status).toBe("paused");
+      expect(task.verifyFailures).toBe(1);
+      expect(JSON.stringify(task.pausedMessage)).toContain("verify.sameFailureRemains");
+      activity.close();
+    });
+
+    it("再開の後に失敗が変われば止まらない", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(["a"]),
+        implement("# v2"),
+        failing(["a"]),
+        implement("# v3"),
+        failing(["b"]),
+        implement("# v4"),
+        failing(["c"]),
+        implement("# v5"),
+        failing(["d"]),
+      ]);
+      await drain(service);
+      service.resume(id, {});
+      await drain(service);
+      expect(reviews(service, id)).toBe(5);
+      expect(JSON.stringify(service.get(id)?.task.pausedMessage)).toContain(
+        "verify.tooManyAttempts",
+      );
+      activity.close();
+    });
+  });
+
   describe("差分が文書だけなら、ツールが無くても止めずに人の確認へ回す（PBI-158）", () => {
     /** go が無くてテストを実行できなかったと申告する最終レビュー（観点はすべて検証済み）。 */
     const missingGo = (exitCode = 127) =>
