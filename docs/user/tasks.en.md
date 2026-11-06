@@ -392,6 +392,8 @@ After you check the output, "Resume" redoes the final review.
 ### When verification keeps failing
 
 If the implementation fails the tests or the final review three times in a row, the task pauses.
+If redoing the implementation fixed none of the previous test failures, the task pauses without waiting for the three times.
+If all the previous failures remain after you resume, the task pauses at the next final review.
 Conflict markers with the base branch left in the workspace count the same three times ([When the base branch moves ahead](#when-the-base-branch-moves-ahead)).
 In the task details, you can choose one of the following.
 

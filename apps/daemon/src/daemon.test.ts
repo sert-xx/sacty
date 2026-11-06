@@ -10346,6 +10346,22 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const reviews = (service: TaskService, id: string) =>
       types(service, id).filter((t) => t === "FinalReviewed").length;
 
+    it("失敗が増えただけで止めるときは、前回から残った失敗を理由に示す", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        failing(["old.test.ts > z"]),
+        implement("# v2"),
+        failing(["n1", "n2", "n3", "n4", "n5", "old.test.ts > z"]),
+        implement("# v3"),
+      ]);
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(JSON.stringify(task.pausedMessage)).toContain("old.test.ts > z");
+      expect(JSON.stringify(task.pausedMessage)).not.toContain("n1");
+      activity.close();
+    });
+
     it("前回と同じ失敗なら、上限を待たずに止める", async () => {
       const { activity, service, id } = await toImplement([
         implement("# v1"),
