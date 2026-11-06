@@ -3250,6 +3250,18 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
       expect(task?.verifyStalled).toBeUndefined();
     });
 
+    it("進展なしなら、止める根拠として前回の失敗を残す（今回増えた失敗でなく）", () => {
+      seq = 0;
+      const task = project([
+        ...start("s5"),
+        reviewedFailing("s5", ["z"]),
+        ...implemented("s5", "i2"),
+        reviewedFailing("s5", ["a", "b", "c", "d", "e", "z"]),
+      ]).get("s5");
+      expect(task?.verifyStalled).toEqual(["z"]);
+      expect(task?.failedTests).toEqual(["a", "b", "c", "d", "e", "z"]);
+    });
+
     it("テストが通らなかったのでなければ、不合格でも失敗を覚えない", () => {
       seq = 0;
       const events = start("s2");
