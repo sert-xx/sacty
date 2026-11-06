@@ -29,6 +29,7 @@ import type {
   TestMapping,
   TestViewpoint,
   Verdict,
+  VerificationRecord,
 } from "./events.js";
 import {
   bodyWithResumeNote,
@@ -780,6 +781,11 @@ export type Task = {
    */
   selfReviews?: Partial<Record<StepKey, SelfReview | null>>;
   /**
+   * 最新の実装の提出で、実装の工程が最後の変更の後に実行した検証の記録（PBI-305）。最終レビューが、同じ内容の結果として
+   * 使い回す。作業領域が実装の工程の外で変わった（ベースブランチの取り込み・本文の差し替え）ら消す。
+   */
+  implementVerification?: VerificationRecord;
+  /**
    * 工程ごとの、最新の提出の項目ごとの出典の分類（要求要件・設計）。null は結果が無い・読めなかった。分類より前の記録の
    * 工程には無い。
    */
@@ -969,6 +975,8 @@ function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback
  * そのまま。
  */
 function voidSubmissionChecks(task: Task, step: StepKey): void {
+  // 差し替えた内容は、実装の工程の検証を通っていない（PBI-305）
+  if (step === "implement") task.implementVerification = undefined;
   if (task.selfReviews?.[step] !== undefined) {
     task.selfReviews = { ...task.selfReviews, [step]: null };
   }
@@ -1222,6 +1230,7 @@ export function applyEvent(
           task.reproductionPending = true;
         }
         if (event.payload.step === "implement") {
+          task.implementVerification = event.payload.verificationRecord;
           // 直しの提出は、PR 全体の対応にする：前の提出までに対応させたテストを、今回の申告に出てくる観点に残す（PBI-299）
           task.testMap = mergeTestMaps(
             (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
@@ -1584,6 +1593,8 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the repository is not prepared");
       }
       task.baseMerge = { ...event.payload, at: event.at };
+      // 取り込みで作業領域の内容が変わったので、実装の工程が実行した検証の結果は、今の内容のものではない（PBI-305）
+      task.implementVerification = undefined;
       // 検証の待ちで取り込んだなら、前の CI の結果は取り込む前のコードのものなので、PR を作り直して CI を待ち直す
       if (task.verification !== undefined) task.pullRequestCi = undefined;
       break;

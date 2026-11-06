@@ -41,6 +41,9 @@ const ja = {
     previousTestRun: "前の提出のテストの実行",
     guardianTestRun: "ゴールガーディアンが実行したテスト",
     previousGuardianTestRun: "前の提出で、ゴールガーディアンが実行したテスト",
+    /** ゴールガーディアンが実行せず、前の段の結果を判定に使った（PBI-305）。 */
+    reusedTestRun: "最終レビューが判定に使ったテスト",
+    previousReusedTestRun: "前の提出で、最終レビューが判定に使ったテスト",
     guardianTestRunHint:
       "ゴールガーディアンが最終レビューの中で実行し、終了コードと結果の抜粋を申告したものです。",
     previousHint: "今の提出では、まだ実行・判定していません。",
@@ -67,6 +70,11 @@ const ja = {
     environmentOnlyHint:
       "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
     toolsMissing: (tools: string) => `${tools} が無く実行できず`,
+    /** ゴールガーディアンが実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。 */
+    reusedTests: (from: "self-review" | "ci"): string =>
+      from === "ci" ? "PR の CI の結果を使い回し" : "実装の工程の結果を使い回し",
+    reusedTestsHint:
+      "同じ内容で前の段が全体を実行した結果なので、ゴールガーディアンは実行し直さず、その結果で判定しました。",
     toolsMissingHint:
       "テストのコマンドのツールがイメージに無く、変更が文書のファイルだけなので、止めずに進めました。実行できなかった検証は「人が確かめること」にあります。",
     /** テストの仕組みが無いタスク（PBI-94）。 */
@@ -319,6 +327,8 @@ const en: PartsMessages = {
     previousTestRun: "Test run for the previous submission",
     guardianTestRun: "Tests run by the Goal Guardian",
     previousGuardianTestRun: "Tests run by the Goal Guardian for the previous submission",
+    reusedTestRun: "Tests the final review judged with",
+    previousReusedTestRun: "Tests the final review judged with for the previous submission",
     guardianTestRunHint:
       "The Goal Guardian ran them in the final review and reported the exit code and an excerpt of the result.",
     previousHint: "Not yet run or judged for the current submission.",
@@ -345,6 +355,10 @@ const en: PartsMessages = {
     environmentOnlyHint:
       "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment, so the tests count as passed.",
     toolsMissing: (tools) => `Could not run: ${tools} missing`,
+    reusedTests: (from) =>
+      from === "ci" ? "Reused the PR's CI result" : "Reused the implementation step's result",
+    reusedTestsHint:
+      "An earlier stage ran the whole command on the same content, so the Goal Guardian judged with that result instead of running it again.",
     toolsMissingHint:
       'A tool of the test command is not in the image, and the change touches only document files, so the task went on instead of stopping. The verification that could not run is listed under "For a person to check".',
     noTestsTitle: "Not verified by tests",

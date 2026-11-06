@@ -4687,6 +4687,64 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         return { ...made, advance: (ms: number) => (clock += ms) };
       }
 
+      it("実装の工程の検証の記録を最終レビューに渡し、ゴールガーディアンの記録を PR のコミットに結び付けて残す（PBI-305）", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        const verified = (by: string, extra: Record<string, unknown> = {}) =>
+          block({
+            "sacty-verification": {
+              commands: [
+                {
+                  kind: "test",
+                  command: "npm test",
+                  coverage: "full",
+                  status: "passed",
+                  by,
+                  ...extra,
+                },
+              ],
+            },
+          });
+        const { activity, service, executor, id } = await toCiFinished(
+          [
+            out(
+              [
+                "# 実装",
+                verified("self-review"),
+                block({
+                  "sacty-test-map": [
+                    { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                    { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+                  ],
+                }),
+              ].join("\n\n"),
+            ),
+            out([review().output, verified("self-review", { reused: true })].join("\n\n")),
+          ],
+          repos,
+        );
+        const task = service.get(id)?.task as Task;
+        expect(task.implementVerification?.commands[0]).toMatchObject({
+          command: "npm test",
+          by: "self-review",
+        });
+        // 実装の説明（PR の本文）には、記録の JSON を載せない
+        expect(task.outputs.implement).not.toContain("sacty-verification");
+        const runs = executor.calls.length;
+        await drain(service);
+        const guardian = promptOf(executor, runs);
+        expect(guardian).toContain("--- 前の段で実行した検証の使い回し ---");
+        expect(guardian).toContain("実装の工程のセルフレビュー（self-review）");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.verificationRecord).toEqual({
+          commit: task.pullRequestCi?.commit,
+          commands: [
+            expect.objectContaining({ command: "npm test", by: "self-review", reused: true }),
+          ],
+        });
+        activity.close();
+      });
+
       it("PR の CI の結果が出た後（競合で止まって再開した場合を含む）にベースブランチが進んで競合していたら、古いコードで最終レビューをせず、競合したファイルを渡して実装をやり直す", async () => {
         const repos = new FakeRepos();
         repos.remote.main = "base123";

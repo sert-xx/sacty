@@ -287,6 +287,17 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(prompt).not.toContain("environmentFailures");
   });
 
+  it("テストを前の段の結果から使い回したら、PR の本文のテストの行にそう書く（PBI-305）", () => {
+    const reused = task({
+      lastReview: review({
+        tests: { command: "npm test", exitCode: 0, output: "", reusedFrom: "ci" },
+      }),
+    } as Partial<Task>);
+    expect(buildPullRequestBody(reused)).toContain(
+      "→ 合格（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード 0）",
+    );
+  });
+
   it("実装の PR の本文に、人が確かめることを、改行をまたがないチェックリストで出す", () => {
     const reviewed = task({ lastReview: review() } as Partial<Task>);
     const checklist = [

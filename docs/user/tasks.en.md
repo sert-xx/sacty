@@ -298,7 +298,7 @@ The exception is a step that is approved by merging its PR (implementation, requ
 
 ## Test (verification) commands
 
-To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. The Goal Guardian uses the Implementation step's image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
+To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the Implementation step's image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
 
 sacty does not run the tests separately.
 
@@ -309,7 +309,7 @@ Even a repository without test code uses a check that mechanically validates its
   - For Terraform, `terraform validate`
   - For YAML, `yamllint`, and so on
 - The chosen command appears as "Test command" on the "Step settings" tab of the task details, and as "Tests" in the properties in the right column.
-- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）".
+- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）". When an earlier stage's result was reused, the heading becomes "Tests the final review judged with", and the test line of the PR body reads like "（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード N）".
 - In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
   - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
@@ -317,7 +317,7 @@ Even a repository without test code uses a check that mechanically validates its
 - For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the Goal Guardian's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
 - The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the Goal Guardian reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 - A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
-- Separately from the test command, the Goal Guardian runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration).
+- Separately from the test command, the Goal Guardian runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration) (results an earlier stage got by running the whole on the same content are reused).
   A failure caused by the change fails the final review. Verification that could not run, for example because a tool is missing from the image, remains in "人が確かめること" with the reason.
   The implementation agent also makes the same verification pass before submitting, and writes the reason in the implementation's description for any verification it did not run.
 - The check of acceptance cannot shrink to confirming that a name, item, file, or link exists.
@@ -342,6 +342,10 @@ Behavior that only CI can check (fixing a workflow, for example) is part of the 
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
 - A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
+- So that the same verification is not run again on the same content, the Goal Guardian reuses the results of the verification the Implementation step ran last and the PR's CI results.
+  Only results of running the whole are reused. What ran only in part, or what CI cannot be confirmed to cover, is run again. In a repository without CI, CI results are not relied on.
+  The PR review started by the review label also reuses the results the final review handled on the same commit and the CI results.
+  When the test command was reused, "Tests the final review judged with" in the implementation deliverable shows "Reused the implementation step's result" or "Reused the PR's CI result".
 - Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR. If marking it ready fails, the task stops with the reason. Fix the cause and press "Resume" to start again from marking it ready.
 
 ### When the base branch moves ahead

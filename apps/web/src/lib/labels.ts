@@ -149,6 +149,8 @@ export type TestRunView = {
   environmentFailures?: string[];
   /** イメージにツールが無くて実行できなかった検証（差分が文書だけで、止めずに進めたとき。PBI-158）。 */
   missingCommands?: string[];
+  /** ゴールガーディアンが実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。元の段。 */
+  reusedFrom?: "self-review" | "ci";
 };
 
 /**
@@ -177,6 +179,7 @@ export function verificationResults(task: Task): {
           ? { environmentFailures: review.tests.environmentFailures }
           : {}),
         ...(review.tests.missingCommands ? { missingCommands: review.tests.missingCommands } : {}),
+        ...(review.tests.reusedFrom ? { reusedFrom: review.tests.reusedFrom } : {}),
         at: review.at,
         byGuardian: true,
       }

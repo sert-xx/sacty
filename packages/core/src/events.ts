@@ -282,6 +282,45 @@ export const RemarkResponse = z.object({
   confirm: z.string().optional(),
 });
 
+/** 検証の記録の、コマンドの種類（既定のスキルの verification-run の種類）。 */
+export const VERIFICATION_KINDS = ["format", "lint", "typecheck", "test", "build"] as const;
+/** 検証の記録に持つコマンドの数の上限。 */
+export const VERIFICATION_COMMANDS_MAX = 50;
+/** 検証の記録の、コマンド・覆った範囲の説明・結果の抜粋の長さの上限（文字）。 */
+export const VERIFICATION_COMMAND_MAX = 1000;
+export const VERIFICATION_NOTE_MAX = 1000;
+export const VERIFICATION_EXCERPT_MAX = 2000;
+
+/**
+ * 検証の記録の1件（PBI-305）。同じ内容（コード）で実行した検証の結果は決定的なので、後の段（最終レビュー・PR のレビュー）が
+ * 実行し直さずに使い回せるよう、実行した段が申告する。
+ * - coverage：full はコマンドが定める対象の全体を実行した、partial は一部だけ（変更したファイルに絞った・テストを選んだ・
+ *   分割の一部・文書に効く検証だけなど）。partial は使い回さず、後の段が残りを実行する。note に覆った範囲を書く
+ * - status：結果が出たもの（passed・failed）だけを持つ。止まった（error・timeout）・実行しなかったものは記録しない
+ * - by：実際に実行した段。reused は、この段が実行せず、前の段の結果を使い回した（そのときの by は元の段）
+ */
+export const VerificationCommand = z.object({
+  kind: z.enum(VERIFICATION_KINDS),
+  command: z.string().trim().min(1).max(VERIFICATION_COMMAND_MAX),
+  coverage: z.enum(["full", "partial"]),
+  note: z.string().max(VERIFICATION_NOTE_MAX).default(""),
+  status: z.enum(["passed", "failed"]),
+  exitCode: z.number().int().optional(),
+  excerpt: z.string().max(VERIFICATION_EXCERPT_MAX).default(""),
+  by: z.enum(["self-review", "guardian", "ci"]),
+  reused: z.literal(true).optional(),
+});
+export type VerificationCommand = z.infer<typeof VerificationCommand>;
+/**
+ * 検証の記録（PBI-305）。commit は、記録が対象にした内容のコミット（sacty が付ける。実装の工程の記録は、sacty が作業領域を
+ * コミットするまで無い）。
+ */
+export const VerificationRecord = z.object({
+  commit: z.string().min(1).optional(),
+  commands: z.array(VerificationCommand).max(VERIFICATION_COMMANDS_MAX),
+});
+export type VerificationRecord = z.infer<typeof VerificationRecord>;
+
 /**
  * 工程エージェントが提出の前に行ったセルフレビュー（既定のスキル review-dispatch の self-review。PBI-120）の報告。
  * rounds は回数（初回を含む）、passed は must の指摘が残らなかったか、remaining は残った must の要約、notReviewed は
@@ -1037,6 +1076,11 @@ const AgentRunCompleted = z.object({
      */
     selfReview: SelfReview.nullable().optional(),
     /**
+     * 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）。最終レビュー・PR のレビューが、同じ内容の結果として
+     * 使い回す。申告が無い・読めない・実装でない工程と、それより前の記録には無い。
+     */
+    verificationRecord: VerificationRecord.optional(),
+    /**
      * 項目ごとの出典の分類（要求要件・設計の工程）。null は、分類させたが結果が無い・読めなかった。分類させない工程と、
      * それより前の記録には無い。
      */
@@ -1350,6 +1394,11 @@ export const GuardianTests = z.object({
    * 人が最終承認で確かめるものとし、テストは通ったものとして扱う。
    */
   missingCommands: z.array(z.string()).optional(),
+  /**
+   * ゴールガーディアンがテストのコマンドを実行せず、同じ内容で前の段が全体を実行した結果を使い回した（PBI-305）。元の段。
+   * exitCode・output は、使い回した結果のもの。
+   */
+  reusedFrom: z.enum(["self-review", "ci"]).optional(),
 });
 
 /**
@@ -1384,6 +1433,12 @@ const FinalReviewed = z.object({
     summary: DaemonText,
     /** ゴールガーディアンが実行したテスト（テストのコマンドがあるとき。それより前の版の記録には無い）。 */
     tests: GuardianTests.optional(),
+    /**
+     * ゴールガーディアンが最終レビューで扱った検証の記録（PBI-305）。自分で実行したものと、前の段（実装のセルフレビュー・
+     * PR の CI）から使い回したもの。commit は sacty が付ける（最終レビューの前に作った実装の PR のコミット）。PR のレビューが、
+     * 同じコミットの結果として使い回す。申告が無い・読めなければ無い。
+     */
+    verificationRecord: VerificationRecord.optional(),
     /**
      * 人が最終承認で確かめること（PBI-155）。承認済みの確かめ方のうち、作業領域（コンテナ）では確かめられないもの
      * （実機・特定の OS・入力方式など）。それより前の版の記録には無い。
