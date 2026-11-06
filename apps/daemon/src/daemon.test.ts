@@ -51,6 +51,7 @@ import {
   message,
   PULL_REQUEST_CI_GRACE_MS,
   PULL_REQUEST_CI_TIMEOUT_MS,
+  PULL_REQUEST_NO_CI_GRACE_MS,
   pullRequestConflict,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
@@ -4652,6 +4653,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     describe("検証の待ちに戻るとき（PR を作った後・再開）", () => {
       class StubCi implements CiStatusReader {
+        async repositoryHasNoCi() {
+          return false;
+        }
         async snapshot() {
           return {
             checks: [
@@ -8899,6 +8903,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           failedRuns: [],
         }),
         failures: async () => [],
+        repositoryHasNoCi: async () => false,
       };
       const { service } = makeService(
         activity,
@@ -12259,6 +12264,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       };
       failuresList: CiFailure[] = [];
       calls: { repo: string; commit: string }[] = [];
+      /** リポジトリに CI が無いかの答え。Error なら読めない。 */
+      noCi: boolean | Error = false;
+      noCiCalls: { repo: string; baseBranch: string }[] = [];
+      /** 確かめている間に割り込ませる処理。 */
+      whileCheckingNoCi?: () => Promise<unknown>;
+      async repositoryHasNoCi(input: { repo: string; baseBranch: string }) {
+        this.noCiCalls.push({ repo: input.repo, baseBranch: input.baseBranch });
+        await this.whileCheckingNoCi?.();
+        if (this.noCi instanceof Error) throw this.noCi;
+        return this.noCi;
+      }
       async snapshot(input: { repo: string; token: string; commit: string }) {
         this.calls.push({ repo: input.repo, commit: input.commit });
         if (this.snap instanceof Error) throw this.snap;
@@ -12512,6 +12528,168 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       expect(service.get(id)?.task.pullRequestCi?.result).toBe("none");
       activity.close();
+    });
+
+    describe("リポジトリに CI が無いと確かめられたとき（PBI-309）", () => {
+      /** 時計を、CI を待ち始めた時刻に合わせる（記録の時刻は実際の時計なので、猶予の境界を確かめるため）。 */
+      function atCiStart(made: Awaited<ReturnType<typeof drafted>>) {
+        const started = made.service.get(made.id)?.task.pullRequestCi?.startedAt ?? "";
+        made.advance(Date.parse(started) - made.advance(0));
+      }
+      /** PR を作って CI を待つところまで進める。チェックは無い。 */
+      async function waiting() {
+        const made = await drafted([implement("# 実装の説明"), review()]);
+        made.ci.snap = { checks: [], failedRuns: [] };
+        await made.service.runNext(made.id);
+        await made.service.runNext(made.id);
+        atCiStart(made);
+        return made;
+      }
+      const result = (service: TaskService, id: string) =>
+        service.get(id)?.task.pullRequestCi?.result;
+
+      it("短い猶予の前は確かめず、過ぎたら PR の向き先を確かめて none にする", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = true;
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toEqual([]);
+        expect(result(service, id)).toBeUndefined();
+        advance(PULL_REQUEST_NO_CI_GRACE_MS - 1_000);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toEqual([]);
+        advance(1_000);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toEqual([{ repo: "https://github.com/acme/app", baseBranch: "main" }]);
+        expect(result(service, id)).toBe("none");
+        activity.close();
+      });
+
+      it("CI が無いと確かめられなければ今までの猶予まで待ち、確かめるのはコミットごとに1回", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        advance(60_000);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBeUndefined();
+        expect(ci.noCiCalls).toHaveLength(1);
+        advance(PULL_REQUEST_CI_GRACE_MS - PULL_REQUEST_NO_CI_GRACE_MS - 60_000 - 1_000);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBeUndefined();
+        advance(1_000);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBe("none");
+        expect(ci.noCiCalls).toHaveLength(1);
+        activity.close();
+      });
+
+      it("確かめる API が失敗したら今までの猶予まで待ち、次の確認でやり直す。読めたら短い猶予で none にする", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = new Error("forbidden");
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toHaveLength(2);
+        expect(result(service, id)).toBeUndefined();
+        ci.noCi = true;
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toHaveLength(3);
+        expect(result(service, id)).toBe("none");
+        activity.close();
+      });
+
+      it("確かめる API が失敗し続けても、今までの猶予で none にして止まらない", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = new Error("forbidden");
+        advance(PULL_REQUEST_CI_GRACE_MS - 1_000);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBeUndefined();
+        advance(1_000);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBe("none");
+        activity.close();
+      });
+
+      it("短い猶予の間にチェックが現れたら確かめず、終わるのを待つ", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = true;
+        await service.checkPullRequests();
+        ci.snap = {
+          checks: [{ kind: "status", name: "external", status: "pending" }],
+          failedRuns: [],
+        };
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBeUndefined();
+        ci.snap = {
+          checks: [
+            { kind: "status", name: "external", status: "completed", conclusion: "success" },
+          ],
+          failedRuns: [],
+        };
+        await settleCi(service);
+        expect(result(service, id)).toBe("passed");
+        expect(ci.noCiCalls).toEqual([]);
+        activity.close();
+      });
+
+      it("確かめている間に一時停止したら記録せず、再開した後は覚えた結果で none にする", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = true;
+        ci.whileCheckingNoCi = () => service.pause(id);
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(result(service, id)).toBeUndefined();
+        ci.whileCheckingNoCi = undefined;
+        service.resume(id, {});
+        await service.checkPullRequests();
+        expect(result(service, id)).toBe("none");
+        expect(ci.noCiCalls).toHaveLength(1);
+        activity.close();
+      });
+
+      it("CI の状態を読めない間は、CI が無いかを確かめない", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        ci.noCi = true;
+        ci.snap = new Error("network down");
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toEqual([]);
+        expect(result(service, id)).toBeUndefined();
+        activity.close();
+      });
+
+      it("確かめた後に実装を更新したら、新しいコミットで確かめ直す", async () => {
+        const made = await drafted([
+          implement("# 実装の説明"),
+          review([
+            ["TV-1", false],
+            ["TV-2", true],
+          ]),
+          implement("# 直した実装"),
+          review(),
+        ]);
+        const { activity, service, ci, advance, id } = made;
+        ci.snap = { checks: [], failedRuns: [] };
+        ci.noCi = true;
+        await service.runNext(id);
+        await service.runNext(id);
+        const first = service.get(id)?.task.pullRequestCi?.commit;
+        atCiStart(made);
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toHaveLength(1);
+        await service.runNext(id); // 最終レビュー（不合格）
+        await service.runNext(id); // 実装のやり直し
+        await service.runNext(id); // 同じ PR を更新する
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        expect(service.get(id)?.task.pullRequestCi?.commit).not.toBe(first);
+        atCiStart(made);
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toHaveLength(2);
+        expect(result(service, id)).toBe("none");
+        activity.close();
+      });
     });
 
     it("CI が終わらない・読めないまま上限を過ぎたら、時間切れとして最終レビューに進む", async () => {
@@ -29790,6 +29968,11 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     failuresList: CiFailure[] = [];
     calls: { repo: string; token: string; commit: string }[] = [];
     failureCalls: { secrets: readonly string[] }[] = [];
+    noCiCalls = 0;
+    async repositoryHasNoCi() {
+      this.noCiCalls++;
+      return true;
+    }
     async snapshot(input: { repo: string; token: string; commit: string }) {
       this.calls.push(input);
       if (this.snap instanceof Error) throw this.snap;
@@ -30120,7 +30303,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
   });
 
   it("CI/CD が1つも無いまま5分たったら、CI/CD が無いとして飛ばす（それまでは待つ）", async () => {
-    const t = setup();
+    const ci = new FakeCi();
+    const t = setup({ ci });
     const id = t.create();
     await t.merge(id);
     t.clock.offset = DEPLOYMENT_CI_GRACE_MS - 10_000;
@@ -30130,6 +30314,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     await t.service.checkPullRequests();
     expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "skipped", reason: "no_ci" });
     expect(t.service.get(id)?.activity.at(-1)?.payload).toMatchObject({ result: "none" });
+    // リポジトリに CI が無いと確かめて短くするのは、実装の PR の CI だけ（PBI-309）
+    expect(ci.noCiCalls).toBe(0);
     t.activity.close();
   });
 

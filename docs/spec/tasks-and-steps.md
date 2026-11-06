@@ -1225,6 +1225,16 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     読み方と判定は、マージの後の監視と同じ（`readCi`。[マージの後の監視](deployment-watch.md#cicd-の監視)）。
   - CI が1つも現れないまま `PULL_REQUEST_CI_GRACE_MS`（5分）たったら `none`、終わらない・読めないまま `PULL_REQUEST_CI_TIMEOUT_MS`（60分）たったら `timed_out`。
     時間は PR を作った・更新した時刻から数える。
+  - リポジトリに CI が無いと確かめられたら、`PULL_REQUEST_NO_CI_GRACE_MS`（1分）で `none` にする（`repositoryHasNoCi`）。
+    チェックが1つも無いまま1分たった確認で、次の両方を確かめる。
+    - 有効なワークフローが無い（`GET /repos/{repo}/actions/workflows` の `state` が `active` のものが0件）。
+    - PR の向き先のブランチの先頭のコミットに、チェック・コミットの状態が1つも無い（外部の CI を見逃さないため）。
+
+    どちらかを満たさない、または確かめられない（権限不足・404・ネットワーク・一覧を読み切れない）なら、5分まで待つ。
+    確かめた結果はタスクとコミットごとにメモリーで覚え、毎回は読まない。
+    読めなかったときは覚えず、次の確認でやり直す。
+    CI の状態を読めないときと、チェックが現れた後は確かめない。
+    マージの後の監視は、この短い猶予を使わない。
   - 一時停止したタスクは読まない（再開すると待ち続ける）。
   - 結果（`passed`・`failed`・`none`・`timed_out`）を `PullRequestCiFinished` に記録して、最終レビューに進む。
     失敗なら、失敗したジョブとログの抜粋も持つ。
@@ -1238,7 +1248,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - PR の本文は、検証中であること（最終レビューの前のドラフト）を書く（`PullRequestBodyStage`）。
   検証に通ったら、最終レビューの結果で書き直す。
 
-コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`readCi`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
+コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`readCi`・`repositoryHasNoCi`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus.repositoryHasNoCi`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_NO_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
 
 ### 同じ内容の検証の使い回し
 
