@@ -249,6 +249,12 @@ export function localContextDir(repo: string): string | undefined {
   return isAbsolute(repo) ? resolve(repo) : undefined;
 }
 
+/**
+ * ネットワークの先のリポジトリか（URL か `user@host:path`）。git で取得した層が継承できるのは、これだけ。
+ * `file://`・相対パス（デーモンのカレントディレクトリから読める）・`ext::` などの取得方法は、ホストに届くので含めない。
+ */
+const REMOTE_REPO = /^(?:(?:https?|ssh|git):\/\/|[\w.-]+@[\w.-]+:(?!:))/i;
+
 type ManifestExtends = NonNullable<z.output<typeof ContextManifest>["extends"]>;
 
 /**
@@ -256,8 +262,9 @@ type ManifestExtends = NonNullable<z.output<typeof ContextManifest>["extends"]>;
  * - `./`・`../` で始まる相対パスは、同じリポジトリ・同じ ref の中の、その層のディレクトリから見たディレクトリ
  *   （モノレポの中で継承する）。リポジトリの外は指せない
  * - `URL#ref` と `{ repo, ref, path }` は、ほかのリポジトリ（かその中のディレクトリ）
- * git で取得した層（ref を付けたローカルの git のリポジトリを含む）は、ローカルのパスを継承できない（取得したコミットの
- * 中身で、ホストのディレクトリを読ませないため）。ローカルのパスを継承できるのは、今の中身を読む層（workingTree）だけ。
+ * git で取得した層（ref を付けたローカルの git のリポジトリを含む）は、別のリポジトリとしてはネットワークの先（REMOTE_REPO）だけを
+ * 継承できる（取得したコミットの中身で、ホストのディレクトリを読ませないため）。ローカルのパスを継承できるのは、今の中身を
+ * 読む層（workingTree）だけ。
  */
 function extendsRef(
   value: ManifestExtends,
@@ -298,7 +305,7 @@ function extendsRef(
           ...(value.ref ? { ref: value.ref } : {}),
           ...(value.path ? { path: value.path } : {}),
         };
-  if (!workingTree && localContextDir(parent.repo) !== undefined) {
+  if (!workingTree && !REMOTE_REPO.test(parent.repo)) {
     throw new ContextError(message("context.localExtendsFromRemote", { key, value: shown }));
   }
   return parent;

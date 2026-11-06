@@ -41,6 +41,7 @@ The web UI relays to the daemon only the requests from the browser of the person
 - On every request (pages, live refreshes, downloads, and Server Actions; except built static files and icons), the Proxy (`apps/web/src/proxy.ts`) checks the following. When it refuses, it returns only a fixed text in the screen's language, without the page parts (which query the daemon).
   - If the Host is not a loopback name (`127.0.0.1`, `localhost`, `[::1]`; any port), 403 (against DNS rebinding).
   - Without the cookie of the current start, 401. Without the web UI secret (not started with `sacty up`), also 401, with how to start.
+- Web UI responses carry `Content-Security-Policy: frame-ancestors 'none'`, so other sites can't embed them in a frame (against clickjacking; `apps/web/next.config.ts`).
 - Where the web UI relays requests to the daemon (`daemonFetch`), it checks the cookie of the current start again. Without it, it refuses the request without using the daemon token (even an entry point outside the Proxy's range is not relayed).
 - The daemon API's authentication (`SACTY_DAEMON_TOKEN`) does not change. The web UI passes its secret to neither the daemon nor step containers.
 - When a live refresh of a page left open gets 401, the page tells the user to open the new URL printed in the terminal. This happens when sacty was restarted and the old cookie no longer works, and the page reports it separately from the daemon being unreachable. The last fetched data stays on screen.

@@ -1353,7 +1353,7 @@ const ja: MessageDictionary = {
   "context.extendsOutside": ({ key, value }) =>
     `${key} の sacty-context.yaml の extends（${value}）は、リポジトリの外を指しています。`,
   "context.localExtendsFromRemote": ({ key, value }) =>
-    `${key} は git で取得した層のため、ローカルのパス（${value}）を継承できません。ローカルのパスは、プロジェクトの設定か、ブランチ・タグの無いローカルのパスの層の extends にだけ書けます。`,
+    `${key} は git で取得した層のため、${value} を継承できません。別のリポジトリとして継承できるのは https:// などの URL と user@host:path の形だけです。同じリポジトリの中は ./ か ../ で書けます。ローカルのパスは、プロジェクトの設定か、ブランチ・タグの無いローカルのパスの層の extends にだけ書けます。`,
   "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
     `${from} は${contextKindJa[kind]}「${name}」を上書きしようとしましたが、${lockedBy} で上書き禁止のため上位のものを使いました。`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
@@ -2056,7 +2056,7 @@ const en: MessageDictionary = {
   "context.extendsOutside": ({ key, value }) =>
     `The extends (${value}) in sacty-context.yaml of ${key} points outside the repository.`,
   "context.localExtendsFromRemote": ({ key, value }) =>
-    `${key} is a layer fetched with git, so it can't extend a local path (${value}). Local paths can be written only in the project settings or in the extends of a local path layer without a branch or tag.`,
+    `${key} is a layer fetched with git, so it can't extend ${value}. As another repository, it can extend only URLs such as https:// and the user@host:path form. Inside the same repository, write ./ or ../. Local paths can be written only in the project settings or in the extends of a local path layer without a branch or tag.`,
   "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
     `${from} tried to override the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so the upper one was used.`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>

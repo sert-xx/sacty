@@ -21,18 +21,33 @@ const ORG_URL = new RegExp(`^https://(${HOST})/(${OWNER})$`);
 /** 貼り付けで紛れ込む、見えない文字（ゼロ幅の空白・BOM など）。 */
 const INVISIBLE = /[\u200B-\u200D\u2060\uFEFF]/g;
 
+/** クエリ・フラグメントを除く。最後の行末より前の `?`・`#` は除かない（改行の混ざった入力を、URL として読まないため）。 */
+function withoutQuery(url: string): string {
+  let at = url.length;
+  for (let i = url.length - 1; i >= 0; i--) {
+    const char = url[i] ?? "";
+    if ("\n\r\u2028\u2029".includes(char)) break;
+    if (char === "?" || char === "#") at = i;
+  }
+  return url.slice(0, at);
+}
+
+/** 末尾の / を除く。 */
+function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") end--;
+  return url.slice(0, end);
+}
+
 /**
  * 書き方の揺れ（全角の文字・見えない文字・クエリ・フラグメント・末尾の /・.git、ホストの大文字）をそろえる。
  * 全角の「：」「／」や、チャットからの貼り付けで入るゼロ幅の空白は、見た目では正しい URL と区別できない。
+ * 入力の長さに制限が無いので、線形時間で処理する（`/\/+$/` などの正規表現は、長い入力で二乗の時間がかかる）。
  */
 function normalize(url: string): string {
-  const trimmed = url
-    .normalize("NFKC")
-    .replace(INVISIBLE, "")
-    .trim()
-    .replace(/[?#].*$/, "")
-    .replace(/\/+$/, "")
-    .replace(/\.git$/, "");
+  const trimmed = withoutTrailingSlashes(
+    withoutQuery(url.normalize("NFKC").replace(INVISIBLE, "").trim()),
+  ).replace(/\.git$/, "");
   return trimmed.replace(
     /^https:\/\/([^/]+)/i,
     (_, host: string) => `https://${host.toLowerCase()}`,

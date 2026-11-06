@@ -194,6 +194,19 @@ describe("監査のレポート（PBI-124）", () => {
     expect(md).not.toContain("モック");
   });
 
+  it("表のセルのバックスラッシュと改行は、表を崩さないようにする", () => {
+    const period = reportPeriod("2026-10-01", "2026-10-17");
+    if (!period) throw new Error("period");
+    const taskTitle = "a\\|b\r\nc\rd\\";
+    const md = auditReport(
+      { ...data, audits: data.audits.map((a) => (a.taskId === "in" ? { ...a, taskTitle } : a)) },
+      "決済",
+      period,
+      messagesFor("ja"),
+    );
+    expect(md).toContain("| a\\\\\\|b c d\\\\ | 3 |");
+  });
+
   it("英語の画面なら見出しは英語。監査の結果の文は訳さない。モックなら印を付ける", () => {
     const period = reportPeriod("2026-10-01", "2026-10-17");
     if (!period) throw new Error("period");

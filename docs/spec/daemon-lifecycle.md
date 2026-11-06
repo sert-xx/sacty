@@ -60,6 +60,7 @@
   - Host がループバック（`127.0.0.1`・`localhost`・`[::1]`。ポートは問わない）でなければ 403（DNS rebinding の対策）。
   - 今の起動の cookie が無ければ 401。
     画面の秘密が無い（`sacty up` で起動していない）ときも 401 で、起動の仕方を出す。
+- 画面の応答には `Content-Security-Policy: frame-ancestors 'none'` を付け、別のサイトの枠に埋め込ませない（クリックジャッキングの対策。`apps/web/next.config.ts`）。
 - デーモンへ中継する所（`daemonFetch`）でも、今の起動の cookie を確かめ直す。
   無ければ、デーモンのトークンを使わずに断る（Proxy の範囲から外れた入口があっても中継しない）。
 - デーモンの API の認証（`SACTY_DAEMON_TOKEN`）は変えない。
