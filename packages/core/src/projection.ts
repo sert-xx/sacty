@@ -427,6 +427,8 @@ export type Task = {
   fix?: PayloadOf<"TaskCreated">["fix"];
   /** 監査の改修の提案を採用して作ったタスクの、元の提案（PBI-125）。 */
   auditFix?: PayloadOf<"TaskCreated">["auditFix"];
+  /** 不安定なテストの台帳の提案から作ったタスクが直すテスト（PBI-312）。 */
+  flakyFix?: PayloadOf<"TaskCreated">["flakyFix"];
   /** セキュリティチェックのレポートの区分から作った対応のタスクの、元のタスクと区分。 */
   securityFix?: PayloadOf<"TaskCreated">["securityFix"];
   /** セキュリティチェックのタスクで、区分ごとに頼んだ対応のタスク（SecurityFixRequested）。 */
@@ -656,6 +658,8 @@ export type Task = {
    */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
+  /** すべての回の最終レビューが認めた不安定な失敗（不安定なテストの台帳に使う。PBI-312）。 */
+  flakySightings?: { name: string; file: string; reason: string; at: string }[];
   /** 最新の統合レビュー（PBI-31）。 */
   integration?: IntegrationReview;
   /** 統合レビューが続けて通らなかった回数。合格するか、人間が差し戻すと0に戻る（PBI-31）。 */
@@ -1084,6 +1088,7 @@ export function applyEvent(
         : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
+      ...(event.payload.flakyFix ? { flakyFix: event.payload.flakyFix } : {}),
       ...(event.payload.securityFix ? { securityFix: event.payload.securityFix } : {}),
       ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),
       ...(event.payload.derivedFrom ? { derivedFrom: event.payload.derivedFrom } : {}),
@@ -1667,6 +1672,16 @@ export function applyEvent(
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
       task.unreadableReviews = undefined;
+      // lastReview は回ごとに置き換わるので、認めた不安定な失敗は全部の回の分を残す（台帳に使う。PBI-312）
+      const sightings = (event.payload.tests?.flakyFailures ?? []).map((f) => ({
+        name: f.name,
+        file: f.file,
+        reason: f.reason,
+        at: event.at,
+      }));
+      if (sightings.length > 0) {
+        task.flakySightings = [...(task.flakySightings ?? []), ...sightings];
+      }
       // テストが通っていれば、不合格の理由は別にあるので、失敗の記憶に入れない（PBI-308）
       const tests = event.payload.tests;
       const failedTests = tests && !guardianTestsPassed(tests) ? tests.failedTests : undefined;

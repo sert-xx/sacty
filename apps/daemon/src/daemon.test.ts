@@ -10522,6 +10522,156 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("不安定なテストの台帳（PBI-312）", () => {
+    const UI = { name: "ui.spec.ts > 保存", file: "tests/ui.spec.ts" };
+    /** 既知かを問わず、実行し直しを省いて申告する最終レビュー。 */
+    const reported = (viewpoint = true) =>
+      out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: viewpoint, reason: "判定" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "1 failed",
+              failedTests: [UI.name],
+              flakyFailures: [{ ...UI, runs: 0, passes: 0, reason: "差分と別の画面" }],
+            },
+            humanChecks: [],
+            summary: "要求を満たす",
+          },
+        }),
+      );
+    /** 過去のタスク（台帳の元）を、最終レビューの前に足す。 */
+    const seed = (service: TaskService, id: string, count: number, projectId = "default") => {
+      const tasks = (service as unknown as { tasks: Map<string, Task> }).tasks;
+      const current = tasks.get(id) as Task;
+      for (let i = 0; i < count; i += 1) {
+        tasks.set(`past-${i}`, {
+          ...current,
+          id: `past-${i}`,
+          projectId,
+          status: "cancelled",
+          flakySightings: [{ ...UI, reason: "別の画面", at: `2026-01-0${i + 1}T00:00:00.000Z` }],
+        });
+      }
+    };
+    const finalReviewPrompt = (executor: { calls: { command: string[] }[] }) =>
+      executor.calls
+        .map((c) => c.command.join(" "))
+        .find((p) => p.includes("あなたはゴールガーディアンです")) ?? "";
+
+    it("3 タスクで見たテストは、指示に渡し、実行し直しを省いた申告を認める", async () => {
+      const { activity, service, executor, pulls, id } = await toImplement([
+        implement("# v1"),
+        reported(),
+      ]);
+      seed(service, id, 3);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(task?.lastReview?.tests?.flakyFailures?.[0]?.runs).toBe(0);
+      expect(finalReviewPrompt(executor)).toContain("--- 既知の不安定なテスト ---");
+      expect(pulls.calls.at(-1)?.body ?? "").toContain(
+        "既知の不安定なテストで、実行し直しを省いた",
+      );
+      // 認めたので、このタスクも台帳に入る
+      expect((await service.projectFlakyTests("default"))?.tests[0]?.taskCount).toBe(4);
+      activity.close();
+    });
+
+    it("2 タスクでは既知にならず、実行し直しを省いた申告を認めない", async () => {
+      const { activity, service, executor, id } = await toImplement([
+        implement("# v1"),
+        reported(),
+        implement("# v2"),
+      ]);
+      seed(service, id, 2);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.lastReview?.tests?.flakyFailures).toBeUndefined();
+      expect(task?.lastReview?.tests?.rejectedFlakyFailures?.[0]).toContain("満たない");
+      expect(finalReviewPrompt(executor)).not.toContain("--- 既知の不安定なテスト ---");
+      activity.close();
+    });
+
+    it("別のプロジェクトで何タスク見ても既知にならない", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        reported(),
+        implement("# v2"),
+      ]);
+      seed(service, id, 3, "other");
+      await drain(service);
+      expect(service.get(id)?.task.lastReview?.tests?.flakyFailures).toBeUndefined();
+      activity.close();
+    });
+
+    it("既知でも、テストのファイルが差分に含まれれば認めない", async () => {
+      const repos = new FakeRepos();
+      repos.changes = [{ path: UI.file, added: 1, removed: 0 }];
+      const { activity, service, id } = await toImplement(
+        [implement("# v1"), reported(), implement("# v2")],
+        { repos },
+      );
+      seed(service, id, 3);
+      await drain(service);
+      const tests = service.get(id)?.task.lastReview?.tests;
+      expect(tests?.flakyFailures).toBeUndefined();
+      expect(tests?.rejectedFlakyFailures?.[0]).toContain("差分に含まれる");
+      activity.close();
+    });
+
+    it("同じタスクの複数回の最終レビューを残し、台帳では1と数える", async () => {
+      const { activity, service, id } = await toImplement([
+        implement("# v1"),
+        reported(false),
+        implement("# v2"),
+        reported(),
+      ]);
+      seed(service, id, 3);
+      await drain(service);
+      expect(service.get(id)?.task.flakySightings).toHaveLength(2);
+      const ledger = await service.projectFlakyTests("default");
+      expect(ledger?.tests[0]?.tasks.filter((t) => t.taskId === id)).toHaveLength(1);
+      expect(ledger?.tests[0]?.taskCount).toBe(4);
+      activity.close();
+    });
+
+    it("台帳を読んでも何も記録せず、タスクを作らない。提案から人が作ると、直すタスクが付く", async () => {
+      const { activity, service, id } = await toImplement([implement("# v1"), reported()]);
+      seed(service, id, 3);
+      const before = service.list().length;
+      const events = service.get(id)?.activity.length;
+      const ledger = await service.projectFlakyTests("default");
+      expect(ledger?.tests[0]).toMatchObject({ known: true, name: UI.name });
+      expect(ledger?.tests[0]?.fixTask).toBeUndefined();
+      expect(service.list()).toHaveLength(before);
+      expect(service.get(id)?.activity).toHaveLength(events ?? 0);
+      const fix = service.createTask({
+        projectId: "default",
+        title: "不安定なテストを直す",
+        body: "本文",
+        flakyFix: UI,
+      });
+      expect(fix.flakyFix).toEqual(UI);
+      const after = await service.projectFlakyTests("default");
+      expect(after?.tests[0]?.fixTask).toEqual({ taskId: fix.id, title: "不安定なテストを直す" });
+      activity.close();
+    });
+
+    it("プロジェクトが無ければ null", async () => {
+      const { activity, service } = await toImplement([]);
+      expect(await service.projectFlakyTests("nope")).toBeNull();
+      expect((await service.projectFlakyTests("default"))?.tests).toEqual([]);
+      activity.close();
+    });
+  });
+
   describe("差分が文書だけなら、ツールが無くても止めずに人の確認へ回す（PBI-158）", () => {
     /** go が無くてテストを実行できなかったと申告する最終レビュー（観点はすべて検証済み）。 */
     const missingGo = (exitCode = 127) =>

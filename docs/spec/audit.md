@@ -9,7 +9,7 @@
 採用のときは、改善案に補足する・人の案に差し替えることもできる。
 監査は、監査したタスクの作業履歴に記録する。
 
-関係する ADR: [監査の画面を、裏側のモックで先に作る](../adr/20261017-1145-audit-ui-with-mock.md)、[完了したタスクを、作業履歴に記録しながら2段で監査する](../adr/20261017-1310-audit-engine.md)
+関係する ADR: [監査の画面を、裏側のモックで先に作る](../adr/20261017-1145-audit-ui-with-mock.md)、[完了したタスクを、作業履歴に記録しながら2段で監査する](../adr/20261017-1310-audit-engine.md)、[不安定なテストの台帳を作業履歴から導き、提案は人が作るタスクにする](../adr/20261106-1105-derive-flaky-test-ledger-from-activity.md)
 
 ## 監査の始まりと対象
 
@@ -143,6 +143,34 @@
 コード: `apps/daemon/src/service.ts`（`adoptAuditProposal`・`createAuditFixTask`・`resumeAuditFixTasks`・`rejectAuditProposal`・`knownAuditCauses`）、
 `apps/daemon/src/audit-targets.ts`（`auditTargetCandidates`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）、`apps/daemon/src/audits.ts`（`causeStatus`・`sortCauses`）
 
+## 不安定なテストの台帳
+
+最終レビューが認めた不安定な失敗（`FinalReviewed` の `tests.flakyFailures`。[工程の仕様](tasks-and-steps.md)）を、プロジェクトごとに集計する。
+監査の実行とは別のもので、監査の予算を使わない。
+
+- 新しい保存先は持たず、作業履歴から導く。
+  `lastReview` は回ごとに置き換わるので、タスクの状態の `flakySightings` に、すべての回の認めた失敗を畳み込む。
+- リポジトリ・ファイル（先頭の `./` と `/` を除く）・名前の組を1つのテストとする。
+  同じ名前でも、リポジトリかファイルが違えば別のテストと数える。
+  ほかのプロジェクトのタスクは数えない。
+- 1件が持つもの：名前・ファイル・リポジトリ・見たタスクの数・最後に見た日時・最後の根拠・見たタスク（新しい順。タスクと PR へのリンク）。
+  同じタスクの複数回は1と数える。
+- `FLAKY_KNOWN_MIN_TASKS`（3）以上のタスクで見たテストを、既知とする。
+  - 既知のテストは最終レビューの指示に渡す（タスクと同じリポジトリの分だけ）。
+  - 既知のテストには、画面で、そのテストを直すタスクを提案する。
+- 提案は、タスクの作成のダイアログを、題・内容・対象リポジトリを入れて開くだけ。
+  人が作成を押すまでタスクを作らず、作ったタスクは通常のタスクとして進む。
+  - 台帳を読むときは何も記録しない。
+  - sacty は、テストの隔離・無効化を自動で行わない。
+  - 内容には PR のリンクを書かない（タスクの内容にある PR は、そのタスクが扱う PR と読まれるため）。
+- 提案から作ったタスクは、`TaskCreated` の `flakyFix`（テストの名前とファイル）で台帳とつなぐ。リポジトリはタスクのもの。
+  - 終わっていないタスクがあれば、提案を重ねず、そのタスクへのリンクを出す。
+  - タスクを中止する・PR をマージせずに終えると、また提案する。
+  - PR をマージしたら、マージより前の記録は数えない。後の記録があれば、数え直す。
+
+コード: `packages/core/src/flaky-tests.ts`（`flakyTests`・`knownFlakyTests`）、`packages/core/src/projection.ts`（`flakySightings`）、`apps/daemon/src/service.ts`（`projectFlakyTests`）、
+`apps/web/src/components/flaky-tests.tsx`（`FlakyTestsCard`・`flakyFixDraft`）、`apps/web/src/components/new-task-dialog.tsx`（`NewTaskDialog`）
+
 ## 監査の予算
 
 - 1回の監査の予算の上限は、`AuditQueued` に記録する。
@@ -174,6 +202,7 @@
 | `GET /api/tasks/:id/audit` | タスクの監査（`{ audit }`。無ければ null） |
 | `POST /api/tasks/:id/audit/resume` | 予算で止まった監査を再開する（`{ capUsd }`） |
 | `GET /api/projects/:id/audits` | プロジェクトの監査（原因・提案・監査したタスク）。プロジェクトが無ければ 404 |
+| `GET /api/projects/:id/flaky-tests` | プロジェクトの不安定なテストの台帳（読むだけ）。プロジェクトが無ければ 404 |
 | `GET /api/audits/dashboard` | ダッシュボードの件数（プロジェクトごと・週ごと） |
 | `POST /api/audits/proposals/:id/adopt` | 提案を採用する（`{ target, note? }`。`note` は `{ kind, text }`） |
 | `POST /api/audits/proposals/:id/reject` | 提案を却下する（`{ reason }`） |
@@ -191,7 +220,7 @@
   - 根拠から、作業履歴の行（`#event-<ID>`）と実行のログへ移れる。
   - 作業履歴の監査の実行の行からも、そのログを開ける。
 - 監査の画面（`/projects/<ID>/audit`。サイドメニューの「監査」）
-  - 原因（再発を先に）・提案（判断待ちを先に）・監査したタスク・レポートの出力を出す。
+  - 原因（再発を先に）・提案（判断待ちを先に）・不安定なテスト（既知を先に、新しい順）・監査したタスク・レポートの出力を出す。
   - sacty 宛ての採用は「プロジェクトにはタスクを作っていない」と出す。
   - 判断待ちの提案では、採用のフォームから改善案への手入れ（補足・差し替え）を開いて添えられる。
   - 採用に手入れがあれば、提案の下に種類とともに出す（レポートにも出す）。

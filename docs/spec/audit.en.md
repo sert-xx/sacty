@@ -6,7 +6,7 @@ An AI agent examines the whole process of a completed task, from the step choice
 
 A person adopts or rejects each proposal, and an adopted proposal becomes a fix task. When adopting, they can also supplement the proposed fix or replace it with their own. Audits are recorded in the audited task's activity log.
 
-Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017-1145-audit-ui-with-mock.md), [Audit completed tasks in two stages, recorded in the activity log](../adr/20261017-1310-audit-engine.md)
+Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017-1145-audit-ui-with-mock.md), [Audit completed tasks in two stages, recorded in the activity log](../adr/20261017-1310-audit-engine.md), [Derive the flaky test ledger from the activity log, and leave proposals to tasks a person creates](../adr/20261106-1105-derive-flaky-test-ledger-from-activity.md)
 
 ## When an audit starts, and what is audited
 
@@ -120,6 +120,34 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
 Code: `apps/daemon/src/service.ts` (`adoptAuditProposal`, `createAuditFixTask`, `resumeAuditFixTasks`, `rejectAuditProposal`, `knownAuditCauses`),
 `apps/daemon/src/audit-targets.ts` (`auditTargetCandidates`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/audits.ts` (`causeStatus`, `sortCauses`)
 
+## The flaky test ledger
+
+sacty counts, per project, the flaky failures the final review accepted (`tests.flakyFailures` of `FinalReviewed`; [the step specification](tasks-and-steps.en.md)).
+This is separate from running audits and does not use the audit budget.
+
+- There is no new store; the ledger is derived from the activity log.
+  Because `lastReview` is replaced on each round, `flakySightings` in the task state folds in the accepted failures of every round.
+- A test is the combination of the repository, the file (without a leading `./` or `/`), and the name.
+  The same name in another repository or file counts as another test.
+  Tasks of other projects are not counted.
+- Each entry has the name, file, repository, the number of tasks that saw it, when it was last seen, the last reason, and the tasks (newest first, with links to the task and PR).
+  Several times in the same task count as one.
+- A test seen in `FLAKY_KNOWN_MIN_TASKS` (3) or more tasks is known.
+  - Known tests are passed to the final review prompt (only those of the task's repository).
+  - For a known test, the screen proposes a task to fix it.
+- A proposal only opens the task creation dialog with the title, description, and target repository filled in.
+  No task is created until a person presses create, and the created task runs as a normal task.
+  - Reading the ledger records nothing.
+  - sacty does not quarantine or disable tests automatically.
+  - The description has no PR links (a PR in a task's description is read as the PR the task is about).
+- A task created from a proposal is linked to the ledger by `flakyFix` of `TaskCreated` (the test's name and file). The repository is the task's.
+  - While such a task is unfinished, no second proposal is shown; a link to the task is shown instead.
+  - If the task is cancelled or finishes without merging a PR, the test is proposed again.
+  - Once its PR is merged, records from before the merge are not counted. Later records are counted anew.
+
+Code: `packages/core/src/flaky-tests.ts` (`flakyTests`, `knownFlakyTests`), `packages/core/src/projection.ts` (`flakySightings`), `apps/daemon/src/service.ts` (`projectFlakyTests`),
+`apps/web/src/components/flaky-tests.tsx` (`FlakyTestsCard`, `flakyFixDraft`), `apps/web/src/components/new-task-dialog.tsx` (`NewTaskDialog`)
+
 ## Audit budget
 
 - The cap per audit is recorded in `AuditQueued`. The default is `budget.default_per_audit_usd` in config.yaml (default 1 US dollar).
@@ -146,6 +174,7 @@ Code: `apps/daemon/src/audits.ts` (`MockAuditService`, `AuditService`), `apps/da
 | `GET /api/tasks/:id/audit` | The task's audit (`{ audit }`; null if none) |
 | `POST /api/tasks/:id/audit/resume` | Resume an audit paused by its budget (`{ capUsd }`) |
 | `GET /api/projects/:id/audits` | The project's audits (causes, proposals, audited tasks). 404 if the project does not exist |
+| `GET /api/projects/:id/flaky-tests` | The project's flaky test ledger (read only). 404 if the project does not exist |
 | `GET /api/audits/dashboard` | Counts for the dashboard (per project and per week) |
 | `POST /api/audits/proposals/:id/adopt` | Adopt a proposal (`{ target, note? }`, where `note` is `{ kind, text }`) |
 | `POST /api/audits/proposals/:id/reject` | Reject a proposal (`{ reason }`) |
@@ -163,7 +192,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
   - Evidence links to the activity row (`#event-<ID>`) and the run log.
   - Activity rows of audit runs also open their logs.
 - Audit page (`/projects/<ID>/audit`; "Audit" in the side menu)
-  - It shows causes (recurred first), proposals (those needing a decision first), audited tasks, and report export.
+  - It shows causes (recurred first), proposals (those needing a decision first), flaky tests (known first, then newest), audited tasks, and report export.
   - An adoption for sacty shows that no task was created in the project.
   - For a proposal that needs a decision, the adopt form can open an edit to the proposed fix (supplement or replacement).
   - A note attached to an adoption is shown under the proposal with its kind (and in reports).

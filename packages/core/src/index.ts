@@ -3,6 +3,7 @@ export * from "./cost.js";
 export * from "./dashboard.js";
 export * from "./error-report.js";
 export * from "./events.js";
+export * from "./flaky-tests.js";
 export * from "./github-url.js";
 export * from "./implement-description.js";
 export { code, DaemonText, message } from "./message-code.js";

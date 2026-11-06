@@ -69,7 +69,11 @@ const ja = {
       "ゴールガーディアンが作業領域では確かめられなかったことです。実装の PR をマージする前に確かめてください。",
     environmentFailure: (detail: string) => `環境によると判断したテストの失敗：${detail}`,
     flakyFailure: (f: FlakyFailure) =>
-      `不安定と判断したテストの失敗：${f.name}（${f.file}。実行し直して ${f.runs} 回中 ${f.passes} 回通った）：${f.reason}`,
+      `不安定と判断したテストの失敗：${f.name}（${f.file}。${
+        f.runs === 0
+          ? "既知の不安定なテストで、実行し直しを省いた"
+          : `実行し直して ${f.runs} 回中 ${f.passes} 回通った`
+      }）：${f.reason}`,
     flakyOnly: "不安定な失敗あり",
     flakyOnlyHint:
       "差分と無関係で、実行し直すと結果が変わった失敗があります。テストは通ったものとしました。",
@@ -358,7 +362,11 @@ const en: PartsMessages = {
     humanChecksHint:
       "The Goal Guardian could not check these in the workspace. Check them before merging the implementation PR.",
     flakyFailure: (f) =>
-      `Test failure judged flaky: ${f.name} (${f.file}; passed ${f.passes} of ${f.runs} reruns): ${f.reason}`,
+      `Test failure judged flaky: ${f.name} (${f.file}; ${
+        f.runs === 0
+          ? "a known flaky test, so the reruns were skipped"
+          : `passed ${f.passes} of ${f.runs} reruns`
+      }): ${f.reason}`,
     flakyOnly: "Flaky failures",
     flakyOnlyHint:
       "Some failures are unrelated to the diff and changed when rerun. The tests count as passed.",

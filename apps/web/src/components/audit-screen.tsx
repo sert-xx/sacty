@@ -3,6 +3,7 @@
 import { auditRemarkCount, isPendingAuditProposal, type ProjectAudits } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { AuditStatusLabel, MockBadge, ProposalView } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
 import { Button } from "@/components/ui/button";
@@ -24,10 +25,19 @@ const CAUSE_STYLE: Record<ProjectAudits["causes"][number]["status"], string> = {
 };
 
 /**
- * プロジェクトの監査の画面（PBI-124）。タスクをまたいでまとめた原因・改修の提案（判断待ちを上に）・監査したタスク・
- * レポートの出力を出す。プロジェクトをまたいで集約しない。
+ * プロジェクトの監査の画面（PBI-124）。タスクをまたいでまとめた原因・改修の提案（判断待ちを上に）・不安定なテスト・
+ * 監査したタスク・レポートの出力を出す。プロジェクトをまたいで集約しない。
  */
-export function AuditScreen({ data, today }: { data: ProjectAudits; today: string }) {
+export function AuditScreen({
+  data,
+  today,
+  flaky,
+}: {
+  data: ProjectAudits;
+  today: string;
+  /** 不安定なテストの台帳の欄（PBI-312）。 */
+  flaky?: ReactNode;
+}) {
   const messages = useMessages();
   const m = messages.audit;
   const pending = data.proposals.filter(isPendingAuditProposal).length;
@@ -129,6 +139,8 @@ export function AuditScreen({ data, today }: { data: ProjectAudits; today: strin
           </ul>
         )}
       </CardSection>
+
+      {flaky}
 
       <CardSection id="audit-tasks" title={m.screen.audits}>
         {data.audits.length === 0 ? (

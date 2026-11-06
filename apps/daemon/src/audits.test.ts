@@ -495,6 +495,7 @@ describe("監査の API（PBI-124）", () => {
       get: (id: string) => ({ activity: deps.activity(id) }),
       listProjects: deps.projects,
       auditBudgetUsd: () => 1,
+      projectFlakyTests: async (id: string) => (id === "p1" ? { projectId: id, tests: [] } : null),
     } as unknown as TaskService;
     return createApp(service, "tok", mock ? { audits: new MockAuditService(deps) } : {});
   }
@@ -508,6 +509,14 @@ describe("監査の API（PBI-124）", () => {
     expect((await a.request("/api/projects/nope/audits", { headers: auth })).status).toBe(404);
     expect((await a.request("/api/audits/dashboard", { headers: auth })).status).toBe(200);
     expect((await a.request("/api/audits/dashboard")).status).toBe(401);
+  });
+
+  it("不安定なテストの台帳の取得：プロジェクトが無ければ 404。トークンが無ければ 401（PBI-312）", async () => {
+    const a = app();
+    const found = await a.request("/api/projects/p1/flaky-tests", { headers: auth });
+    expect(await found.json()).toEqual({ projectId: "p1", tests: [] });
+    expect((await a.request("/api/projects/nope/flaky-tests", { headers: auth })).status).toBe(404);
+    expect((await a.request("/api/projects/p1/flaky-tests")).status).toBe(401);
   });
 
   it("モックを渡さなければ、監査の無い実装（タスクの監査は null）", async () => {

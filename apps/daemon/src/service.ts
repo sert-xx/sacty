@@ -62,6 +62,7 @@ import {
   exportSteps,
   fixDecisionPending,
   fixTaskOpen,
+  flakyTests,
   GATED_STEPS,
   gatePullRequest,
   heldReview,
@@ -73,6 +74,7 @@ import {
   isFinished,
   isRepoless,
   isSecurityTask,
+  knownFlakyTests,
   lastChangeRound,
   latestStepPullRequest,
   MAX_BASE_CONFLICTS,
@@ -95,6 +97,7 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  type ProjectFlakyTests,
   PULL_REQUEST_CI_GRACE_MS,
   PULL_REQUEST_CI_TIMEOUT_MS,
   type PullRequestMerge,
@@ -116,6 +119,7 @@ import {
   ResumeAuditInput,
   ResumeTaskInput,
   renderMessage,
+  repoKey,
   responsibleProject,
   responsibleTicketProject,
   resumeNoteRoom,
@@ -371,6 +375,7 @@ import {
   internalNameAllowance,
   internalNamesInDiff,
   investigationMarker,
+  KNOWN_FLAKY_IN_PROMPT,
   limitInternalNames,
   lineContextText,
   mappedViewpointIds,
@@ -6179,6 +6184,7 @@ export class TaskService {
         budgetCapUsd,
         ...(plan ? { plan } : {}),
         ...stepSettings,
+        ...(input.flakyFix ? { flakyFix: input.flakyFix } : {}),
       },
     };
   }
@@ -9222,6 +9228,11 @@ export class TaskService {
     );
     const internalNames = limitInternalNames(sortedNames.introduced);
     const uncheckedInternalNames = limitInternalNames(sortedNames.unchecked);
+    // プロジェクトの台帳の既知の不安定なテスト（PBI-312）。指示に渡したものだけを、申告を確かめるのにも使う
+    const knownFlaky = knownFlakyTests([...this.tasks.values()], current).slice(
+      0,
+      KNOWN_FLAKY_IN_PROMPT,
+    );
     let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
       executed = await this.runGuardian(
@@ -9242,6 +9253,7 @@ export class TaskService {
               ...(current.implementVerification
                 ? { implementVerification: current.implementVerification }
                 : {}),
+              ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
               ...(prCi?.result
                 ? {
                     pullRequest: {
@@ -9357,6 +9369,7 @@ export class TaskService {
           internalAllowance: internalNameAllowance(current),
           ...(documentsOnly ? { documentsOnly } : {}),
           ...(changedFiles ? { changedFiles } : {}),
+          ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
         },
       );
     // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
@@ -13405,6 +13418,15 @@ export class TaskService {
    * 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（PR #135 再レビュー指摘）。設定を読めなければ、
    * よくある秘密情報の形だけを伏せる。
    */
+  /**
+   * プロジェクトの不安定なテストの台帳（PBI-312）。作業履歴から導くだけで、何も記録しない。プロジェクトが無ければ null。
+   */
+  async projectFlakyTests(projectId: string): Promise<ProjectFlakyTests | null> {
+    if (!this.deps.projects.get(projectId)) return null;
+    const hide = await this.auditHide(projectId);
+    return { projectId, tests: flakyTests([...this.tasks.values()], projectId, hide) };
+  }
+
   async auditHide(projectId: string): Promise<(text: string) => string> {
     const values = await this.auditSecretValues(projectId);
     return (text: string) => redactLog(text, values);
@@ -14396,11 +14418,6 @@ function splitWithRepositories(
     children.push({ ...child, repo: found });
   }
   return { ...plan, children };
-}
-
-/** リポジトリの URL の、比べるためのキー（書き方の揺れをそろえ、大文字・小文字を区別しない。PBI-88）。 */
-function repoKey(repo: string): string {
-  return (parseRepoUrl(repo)?.url ?? repo).toLowerCase();
 }
 
 function sameRepo(a: string, b: string): boolean {

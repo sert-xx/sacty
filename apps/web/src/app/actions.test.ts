@@ -85,6 +85,25 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
     });
   });
 
+  it("不安定なテストの提案から開いたフォームは、直すテストを添える（PBI-312）", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction(
+        {},
+        form({
+          title: "直す",
+          projectId: "project-a",
+          flakyFixName: "ui > 保存",
+          flakyFixFile: "tests/ui.spec.ts",
+        }),
+      ),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask.mock.calls[0]?.[0].flakyFix).toEqual({
+      name: "ui > 保存",
+      file: "tests/ui.spec.ts",
+    });
+  });
+
   it("作成先が無い・見つからなければ、理由を返して作らない", async () => {
     expect(await createTaskAction({}, form({ title: "決済" }))).toMatchObject({
       message: expect.stringMatching(/作成先のプロジェクトが分かりません/),

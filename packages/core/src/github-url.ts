@@ -104,6 +104,11 @@ export function parseRepoUrl(url: string): GitHubRepo | undefined {
   return { url: normalized, host, owner, name, path: `${owner}/${name}` };
 }
 
+/** リポジトリの URL の、比べるためのキー（書き方の揺れをそろえ、大文字・小文字を区別しない。PBI-88）。 */
+export function repoKey(repo: string): string {
+  return (parseRepoUrl(repo)?.url ?? repo).toLowerCase();
+}
+
 /** Org の URL を読む（読めなければ undefined）。 */
 export function parseOrgUrl(url: string): { url: string; host: string; owner: string } | undefined {
   const normalized = normalize(url);

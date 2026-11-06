@@ -89,6 +89,9 @@ export async function createTaskAction(
   if (template.success) return createTemplateTask(template.data, repo, formData);
   // 進め方の工程ごとのイメージ・エージェント。進め方を選んだときだけ送る（名前と工程は、デーモンが検査する）
   const { images, agents } = stepChoicesFrom(formData);
+  // 不安定なテストの台帳の提案から開いたダイアログなら、直すテスト（PBI-312）
+  const flakyName = String(formData.get("flakyFixName") ?? "");
+  const flakyFile = String(formData.get("flakyFixFile") ?? "");
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
@@ -98,6 +101,7 @@ export async function createTaskAction(
     ...(plan ? { plan } : {}),
     ...(plan && Object.keys(images).length > 0 ? { images } : {}),
     ...(plan && Object.keys(agents).length > 0 ? { agents } : {}),
+    ...(flakyName && flakyFile ? { flakyFix: { name: flakyName, file: flakyFile } } : {}),
   };
   const a = (await getMessages()).common.action;
   // 作成先のプロジェクトは、下で別に確かめる（無ければ、入力の誤りではなく理由を返す）

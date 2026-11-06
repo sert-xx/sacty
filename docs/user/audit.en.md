@@ -1,4 +1,4 @@
-<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, apps/daemon/src/memory.ts, apps/daemon/default-context/skills/memory/SKILL.md, packages/core/src/audit.ts -->
+<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/components/flaky-tests.tsx, packages/core/src/flaky-tests.ts, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, apps/daemon/src/memory.ts, apps/daemon/default-context/skills/memory/SKILL.md, packages/core/src/audit.ts -->
 
 [日本語](audit.md) | **English**
 
@@ -83,10 +83,36 @@ The audit page looks like this (the image uses the audit mock data).
   - Each shows its state (Recurred, Proposed, Adopted, Fixed, Rejected), how many times it was found, and the tasks.
   - Recurred causes come first and stand out.
 - **Proposals**: those needing a decision come first. Each shows which task's audit it came from, and you can adopt or reject it here too.
+- **Flaky tests**: the ledger of tests the final review accepted as flaky ([The flaky test ledger](#the-flaky-test-ledger)).
 - **Audited tasks**: state, remarks, cost, and when the audit finished.
 - **Report**: choose a start and end date and press "Export report" to download a Markdown file with the causes, proposals, and decisions of audits finished in the period. Headings follow the UI language; audit text is not translated. Times are UTC.
 
 Audit results are not combined across projects.
+
+## The flaky test ledger
+
+Tests the final review accepted as flaky and unrelated to the diff are counted per project and shown on the audit page.
+This does not use the audit budget.
+It needs no setup.
+
+![Flaky tests on the audit page (a known test and a proposal for a task to fix it)](images/audit-flaky-tests.en.png)
+
+- It shows the test's name and file, the number of tasks that saw it, when it was last seen, and links to those tasks and PRs.
+- Several times in the same task count as one task.
+  The same name in another repository or file counts as another test.
+  Records from other projects are not mixed in.
+- A test seen in 3 or more tasks is marked Known.
+  Unless the diff includes it, the Goal Guardian may report it without rerunning it.
+  sacty checks this against the ledger and the diff, and does not accept a test in the diff even if it is known.
+  Accepted failures still appear under "For a person to check".
+- A known test gets a proposal for a task to fix it.
+  Pressing "Create a task to fix it" opens the task creation dialog with the title and description filled in.
+  When you check them and press create, it runs as a normal task.
+  - Proposals are never run automatically.
+  - sacty does not quarantine or disable tests automatically.
+- While the fix task is unfinished, a link to it replaces the proposal.
+  If you cancel the task, the test is proposed again.
+  Once its PR is merged, records from before the merge are no longer counted.
 
 ## Dashboard
 
