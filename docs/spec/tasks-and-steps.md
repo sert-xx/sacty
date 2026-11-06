@@ -1247,7 +1247,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 同じ内容（コミット）に同じ検証を重ねて実行しないよう、検証を実行した段が記録を申告し、sacty が台帳に残して次の段に渡す（PBI-305）。
 
 - 記録（`VerificationRecord`）は、コマンドごとに、種類（`kind`）・コマンド・覆った範囲（`coverage`。`full` はコマンドが定める対象の全体、`partial` は一部だけで、`note` に範囲を書く）・結果（`status`。`passed`・`failed`）・終了コード・結果の抜粋・実行した段（`by`。`self-review`・`guardian`・`ci`）を持つ。
-  エージェントは、見出し `sacty-verification` の JSON で申告する（`extractVerificationRecord`）。最後の申告だけを使う。結果の出ていないもの・種類の分からないものは捨て、`coverage` が `full` でないものは `partial` として読む。
+  エージェントは、見出し `sacty-verification` の JSON で申告する（`extractVerificationRecord`）。最後の申告だけを使い、最後の申告が JSON として読めなければ、前の申告に戻らず記録なしにする。結果の出ていないもの・種類の分からないものは捨て、`coverage` が `full` でないものは `partial` として読む。
 - 実装の工程：作業領域を最後に変えた後に実行した検証だけを申告させる（`implementVerificationRecordLines`）。提出の前の検証とセルフレビューの検証は、同じ内容なら1回の実行で両方に使わせる。
   申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・実装の本文を工程の外で差し替えたら消す。
 - 最終レビュー：`implementVerification` と実装の PR の CI の結果を渡し、覆われていない分だけを実行させる（`reuseVerificationLines`）。
@@ -1255,7 +1255,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   sacty が PR に足す成果物のファイルは実装の工程の作業領域に無いので、それを検査しうる検証は、実装の工程の記録から使い回させない。
   使い回したテストは、実装の成果物の見出しを「最終レビューが判定に使ったテスト」にして「実装の工程の結果を使い回し」「PR の CI の結果を使い回し」（`reusedTests`）を出し、PR の本文のテストの行に使い回したことを添える。
   ゴールガーディアンにも記録を申告させ（`guardianVerificationRecordLines`）、実装の PR の CI のコミットを付けて `FinalReviewed` の `verificationRecord` に残す。
-  sacty が PR に足す成果物のファイルを最終レビューの写しに入れられなかったときは、写しが PR のコミットと同じ内容ではないので、どのコマンドも `partial` にし、無かったファイルを `note` に書いて残す（`withoutStepDocuments`）。PR のレビューは、そのファイルの分を実行する。
+  sacty が PR に足す成果物のファイルを最終レビューの写しに入れられなかったときは、写しが PR のコミットと同じ内容ではないので、どのコマンドも `partial` にし、無かったファイルを `note` の先頭に書いて残す（元の `note` は残りの長さに収める。`withoutStepDocuments`）。PR のレビューは、そのファイルの分を実行する。
 - PR のレビュー：sacty が作った PR のレビューのタスク（`source.review` が `sacty`）では、その PR を作ったタスクの最終レビューの記録を、記録のコミットがレビューする先頭のコミット（`reviewTarget.headCommit`）と同じときだけ渡す（`reviewVerification`）。人の PR では記録は無く、CI の結果だけを使い回せる。
 - 使い回しの規則（エージェントへの指示と、既定のスキルの `verification-run` の「1.5 使い回せる結果を探す」）：
   - 使い回せるのは、同じ内容で全体（`full`）を実行して結果が出たものだけ。`partial` の記録は、覆った範囲を除いた残りを実行させる。

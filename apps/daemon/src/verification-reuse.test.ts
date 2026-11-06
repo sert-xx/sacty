@@ -1,4 +1,4 @@
-import type { PullRequestCi, Task, VerificationRecord } from "@sacty/core";
+import type { PullRequestCi, Task, VerificationCommand, VerificationRecord } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
   buildFinalReviewPrompt,
@@ -112,6 +112,26 @@ describe("検証の記録を読む", () => {
     expect(extractVerificationRecord(output, "implement").record?.commands[0]?.command).toBe("new");
     expect(extractVerificationRecord(block({ commands: [] }), "implement").record).toBeUndefined();
     expect(extractVerificationRecord("記録なし", "implement").record).toBeUndefined();
+  });
+
+  it("最後の記録が JSON として読めなければ、前の記録に戻らず記録なしにし、どちらも本文から取り除く", () => {
+    const good = block({
+      commands: [{ kind: "test", command: "npm test", coverage: "full", status: "passed" }],
+    });
+    // 末尾のカンマで読めない、最後の記録（失敗の結果）
+    const broken = `\`\`\`json\n{"${VERIFICATION_HEADING}": {"commands": [{"kind": "test", "command": "npm test", "coverage": "full", "status": "failed"},]}}\n\`\`\``;
+    const output = `# 実装\n\n${good}\n\n直した\n\n${broken}`;
+    expect(extractVerificationRecord(output, "implement").record).toBeUndefined();
+    const extracted = extractBlocks(output, new Set());
+    expect(extracted.verificationRecord).toBeUndefined();
+    expect(extracted.output).not.toContain(VERIFICATION_HEADING);
+    // 先頭以外のキーにある、壊れた最後の記録も同じ
+    const inner = `{"note": "x", "${VERIFICATION_HEADING}": {"commands": [],}}`;
+    expect(extractVerificationRecord(`${good}\n${inner}`, "implement").record).toBeUndefined();
+    // 壊れた記録の後に読める記録があれば、それを使う
+    expect(
+      extractVerificationRecord(`${broken}\n${good}`, "implement").record?.commands,
+    ).toHaveLength(1);
   });
 
   it("実装の出力から記録を読み、PR の本文に載る説明からは取り除く", () => {
@@ -276,8 +296,18 @@ describe("成果物のファイルが無い写しで実行した記録（PBI-305
       "成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した",
     );
     expect(marked?.commands[1]?.note).toBe(
-      "変更したファイルだけ。成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した",
+      "成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した。変更したファイルだけ",
     );
+    // 元の note が上限まであっても、欠けたファイルは切り捨てず、元の note を残りの長さに収める
+    const full = withoutStepDocuments(
+      { commands: [{ ...(record.commands[0] as VerificationCommand), note: "あ".repeat(1000) }] },
+      ["docs/sacty/abc/design.md"],
+    );
+    const note = full?.commands[0]?.note ?? "";
+    expect(note.length).toBe(1000);
+    expect(
+      note.startsWith("成果物のファイル（docs/sacty/abc/design.md）が無い写しで実行した。あ"),
+    ).toBe(true);
     expect(withoutStepDocuments(record, [])).toBe(record);
     expect(withoutStepDocuments(undefined, ["x"])).toBeUndefined();
   });

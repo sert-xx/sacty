@@ -17,7 +17,7 @@ import {
   type VerificationCommand,
   type VerificationRecord,
 } from "@sacty/core";
-import { type JsonCandidate, jsonCandidates } from "./agent-json.js";
+import { type HeadingSpan, headingMentions, headingSpans, jsonCandidates } from "./agent-json.js";
 
 /** 検証の記録の見出し。 */
 export const VERIFICATION_HEADING = "sacty-verification";
@@ -63,14 +63,32 @@ function readCommand(raw: unknown, stage: VerificationStage): VerificationComman
 
 /**
  * 出力から、検証の記録（見出し sacty-verification の最後のもの）を読む。読んだ JSON の範囲（本文から取り除く）も返す。
- * 記録が無い・形が合わない・1件も読めなければ record は無い。
+ * 記録が無い・形が合わない・1件も読めなければ record は無い。最後の記録が JSON として読めない（末尾のカンマなど）ときも、
+ * 前の記録には戻らず、記録なしにする（前の記録は、最後の変更より前の結果でありうるため。PR #309 のレビュー）。
  */
 export function extractVerificationRecord(
   output: string,
   stage: VerificationStage,
-): { record?: VerificationRecord; spans: JsonCandidate[] } {
-  const spans = jsonCandidates(output).filter((c) => c.value[VERIFICATION_HEADING] !== undefined);
-  const last = spans.at(-1)?.value[VERIFICATION_HEADING];
+): { record?: VerificationRecord; spans: HeadingSpan[] } {
+  // 見出しを先頭のキーに持つもの（読めないものも）、先頭以外のキーに持つ読めるもの、それ以外の読めない記録の順に集める
+  const headed = headingSpans(output, VERIFICATION_HEADING);
+  const inner = jsonCandidates(output)
+    .filter(
+      (c) =>
+        c.value[VERIFICATION_HEADING] !== undefined &&
+        !headed.some((h) => h.start <= c.start && c.end <= h.end),
+    )
+    .map(
+      (c): HeadingSpan => ({ start: c.start, end: c.end, value: c.value[VERIFICATION_HEADING] }),
+    );
+  const read = [...headed, ...inner];
+  const spans = [...read, ...headingMentions(output, VERIFICATION_HEADING, read)];
+  // 最後の記録は、取り除く範囲ではなく、記録が出てきた位置で選ぶ
+  const position = (r: HeadingSpan) => r.at ?? r.start;
+  const last = spans.reduce<HeadingSpan | undefined>(
+    (latest, r) => (latest === undefined || position(r) >= position(latest) ? r : latest),
+    undefined,
+  )?.value;
   const list =
     last && typeof last === "object" && !Array.isArray(last)
       ? (last as Record<string, unknown>).commands
@@ -233,13 +251,18 @@ export function withoutStepDocuments(
   missing: readonly string[],
 ): VerificationRecord | undefined {
   if (!record || missing.length === 0) return record;
-  const gap = `成果物のファイル（${missing.join("・")}）が無い写しで実行した`;
+  // 欠けたファイルを先に残し、元の note は残りの長さに収める（次の段が、残りを実行する範囲を判断できるように。PR #309 のレビュー）
+  const gap = `成果物のファイル（${missing.join("・")}）が無い写しで実行した`.slice(
+    0,
+    VERIFICATION_NOTE_MAX,
+  );
+  const room = VERIFICATION_NOTE_MAX - gap.length - 1;
   return {
     ...record,
     commands: record.commands.map((c) => ({
       ...c,
       coverage: "partial" as const,
-      note: [c.note, gap].filter(Boolean).join("。").slice(0, VERIFICATION_NOTE_MAX),
+      note: c.note && room > 0 ? `${gap}。${c.note.slice(0, room)}` : gap,
     })),
   };
 }
