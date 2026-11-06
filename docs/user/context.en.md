@@ -121,7 +121,7 @@ remove:            # remove skills, MCP servers, and external platforms inherite
   ```
 
 - A relative path starting with `./` or `../` points inside the same branch or tag of the same repository (for a local directory, inside the same directory). Use it in a monorepo when a team's directory inherits a shared directory. It can't point outside the repository.
-- Only a local path context without a branch or tag can write a local path (an absolute path or one starting with `~/`) in `extends`. If a context fetched with git (including a local git repository with a branch or tag) tries to inherit a local path, sacty stops and shows the reason.
+- Only a local path context without a branch or tag can write a local path (an absolute path or one starting with `~/`) in `extends`. If a context fetched with git (including a local git repository with a branch or tag) tries to inherit a local path, sacty stops and shows the reason. The `extends` of a context fetched with git can use `https://`, `http://`, `ssh://`, and `git://` URLs and the `git@example.com:acme/base.git` form (`file://` and relative paths such as `sibling/repo.git` also stop).
 - Inheritance goes up to 10 layers. If the same repository, directory, and ref appear twice (a cycle), sacty stops and shows the reason.
 - If a lower layer tries to override or remove a locked item, a warning is recorded and the upper layer's item is used.
 

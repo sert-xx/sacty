@@ -58,7 +58,8 @@ export function auditReport(
   const rejected = proposals.filter((p) => p.decision?.kind === "rejected").length;
   const rate = auditAdoptionRate(adopted, rejected);
   const remarks = audits.reduce((sum, a) => sum + (a.counts ? auditRemarkCount(a.counts) : 0), 0);
-  const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  // バックスラッシュもエスケープする（元の `\|` が `\\|` になって、縦棒がセルを分けないように）
+  const cell = (text: string) => text.replace(/\r\n?|\n/g, " ").replace(/[\\|]/g, "\\$&");
 
   const lines: string[] = [
     `# ${m.title}: ${projectName}`,

@@ -113,8 +113,10 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
 
   it("上書き禁止でない項目は、下位で取り除ける", async () => {
     const fetcher = new FakeFetcher({
-      "c.git": { "skills/old/SKILL.md": "x" },
-      "t.git": { "sacty-context.yaml": "extends: c.git\nremove:\n  skills: [old]\n" },
+      "https://example.com/c.git": { "skills/old/SKILL.md": "x" },
+      "t.git": {
+        "sacty-context.yaml": "extends: https://example.com/c.git\nremove:\n  skills: [old]\n",
+      },
     });
     const composed = composeContext(
       await resolveContext(fetcher, { repo: "t.git" }, join(dir, "w")),
@@ -125,7 +127,7 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
 
   it("SKILL.md の無いディレクトリはグループで、その下のスキルも名前ごとに扱い、同じ名前が重なれば先のものを使って警告する（PBI-65）", async () => {
     const fetcher = new FakeFetcher({
-      "c.git": {
+      "https://example.com/c.git": {
         "skills/review/README.md": "グループの説明（スキルにならない）",
         "skills/review/review-dispatch/SKILL.md": "---\ndescription: 親\n---\n親",
         "skills/review/review-execution/SKILL.md": "担当",
@@ -135,7 +137,7 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
       },
       "t.git": {
         "skills/review-execution/SKILL.md": "チーム版",
-        "sacty-context.yaml": "extends: c.git\nremove:\n  skills: [plain]\n",
+        "sacty-context.yaml": "extends: https://example.com/c.git\nremove:\n  skills: [plain]\n",
       },
     });
     const composed = composeContext(
@@ -157,16 +159,20 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
 
   it("継承の循環・深すぎる継承・取得の失敗・誤った設定は、理由つきで止める", async () => {
     const loop = new FakeFetcher({
-      "a.git": { "sacty-context.yaml": "extends: b.git\n" },
-      "b.git": { "sacty-context.yaml": "extends: a.git\n" },
+      "https://example.com/a.git": { "sacty-context.yaml": "extends: https://example.com/b.git\n" },
+      "https://example.com/b.git": { "sacty-context.yaml": "extends: https://example.com/a.git\n" },
     });
-    await expect(resolveContext(loop, { repo: "a.git" }, join(dir, "1"))).rejects.toThrow(/循環/);
+    await expect(
+      resolveContext(loop, { repo: "https://example.com/a.git" }, join(dir, "1")),
+    ).rejects.toThrow(/循環/);
 
     const deep: Record<string, Record<string, string>> = {};
     for (let i = 0; i < 12; i++)
-      deep[`r${i}.git`] = { "sacty-context.yaml": `extends: r${i + 1}.git\n` };
+      deep[`https://example.com/r${i}.git`] = {
+        "sacty-context.yaml": `extends: https://example.com/r${i + 1}.git\n`,
+      };
     await expect(
-      resolveContext(new FakeFetcher(deep), { repo: "r0.git" }, join(dir, "2")),
+      resolveContext(new FakeFetcher(deep), { repo: "https://example.com/r0.git" }, join(dir, "2")),
     ).rejects.toThrow(/深すぎます/);
 
     await expect(
@@ -181,28 +187,37 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
 
   it("extends の { repo, ref, path } はほかのリポジトリの中のディレクトリを継承し、相対パスはリポジトリの外を指せない", async () => {
     const fetcher = new FakeFetcher({
-      "mono.git": {
+      "https://example.com/mono.git": {
         "contexts/base/rules.md": "共通",
         "contexts/escape/sacty-context.yaml": "extends: ../../..\n",
         "contexts/self/sacty-context.yaml": "extends: ./\n",
       },
       "team.git": {
-        "sacty-context.yaml": "extends:\n  repo: mono.git\n  ref: v1\n  path: contexts/base\n",
+        "sacty-context.yaml":
+          "extends:\n  repo: https://example.com/mono.git\n  ref: v1\n  path: contexts/base\n",
       },
     });
     const layers = await resolveContext(fetcher, { repo: "team.git" }, join(dir, "w"));
     expect(layers.map((l) => ({ repo: l.repo, ref: l.ref, path: l.path }))).toEqual([
-      { repo: "mono.git", ref: "v1", path: "contexts/base" },
+      { repo: "https://example.com/mono.git", ref: "v1", path: "contexts/base" },
       { repo: "team.git", ref: undefined, path: undefined },
     ]);
     expect(composeContext(layers).rules).toContain("共通");
     await expect(
-      resolveContext(fetcher, { repo: "mono.git", path: "contexts/escape" }, join(dir, "w2")),
+      resolveContext(
+        fetcher,
+        { repo: "https://example.com/mono.git", path: "contexts/escape" },
+        join(dir, "w2"),
+      ),
     ).rejects.toThrow(
-      "mono.git//contexts/escape の sacty-context.yaml の extends（../../..）は、リポジトリの外を指しています。",
+      "https://example.com/mono.git//contexts/escape の sacty-context.yaml の extends（../../..）は、リポジトリの外を指しています。",
     );
     await expect(
-      resolveContext(fetcher, { repo: "mono.git", path: "contexts/self" }, join(dir, "w3")),
+      resolveContext(
+        fetcher,
+        { repo: "https://example.com/mono.git", path: "contexts/self" },
+        join(dir, "w3"),
+      ),
     ).rejects.toThrow(/循環/);
     const badPath = new FakeFetcher({
       "x.git": { "sacty-context.yaml": "extends:\n  repo: y.git\n  path: ../etc\n" },
@@ -216,13 +231,44 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
     const local = join(dir, "local-ctx");
     mkdirSync(local);
     writeFileSync(join(local, "rules.md"), "HOST-ONLY-MARKER");
-    for (const value of [local, `${local}#main`, "~/ctx", `\n  repo: ${local}`]) {
+    for (const value of [
+      local,
+      `${local}#main`,
+      "~/ctx",
+      `\n  repo: ${local}`,
+      // ローカルのパスの別の書き方（git はホストから読む）
+      `file://${local}`,
+      `FILE://${local}`,
+      `\n  repo: file://${local}`,
+      "sibling/repo.git",
+      "\n  repo: ../sibling",
+      // 任意のコマンドを動かせる取得方法
+      "ext::sh -c id",
+      "git@example.com::x",
+    ]) {
       const fetcher = new FakeFetcher({
         "https://example.com/remote.git": { "sacty-context.yaml": `extends: ${value}\n` },
       });
       await expect(
         resolveContext(fetcher, { repo: "https://example.com/remote.git" }, join(dir, "w")),
-      ).rejects.toThrow(/git で取得した層のため、ローカルのパス（.*）を継承できません/);
+      ).rejects.toThrow(/git で取得した層のため、.* を継承できません/);
+    }
+    // ネットワークの先のリポジトリは継承できる
+    for (const value of [
+      "https://example.com/base.git",
+      "ssh://git@example.com/base.git",
+      "git@example.com:acme/base.git",
+    ]) {
+      const fetcher = new FakeFetcher({
+        "https://example.com/remote.git": { "sacty-context.yaml": `extends: ${value}\n` },
+        [value]: {},
+      });
+      const layers = await resolveContext(
+        fetcher,
+        { repo: "https://example.com/remote.git" },
+        join(dir, "w3"),
+      );
+      expect(layers.map((l) => l.repo)).toEqual([value, "https://example.com/remote.git"]);
     }
     // ローカルのパスの層からは、ほかのローカルのパスを継承できる
     const child = join(dir, "local-child");
@@ -297,9 +343,10 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
       "  local:",
       "    command: ./local-server",
     ].join("\n"),
-    "sacty-context.yaml": "extends: company.git\nremove:\n  mcp: [old]\n",
+    "sacty-context.yaml": "extends: https://example.com/company.git\nremove:\n  mcp: [old]\n",
   };
-  const fetcher = () => new FakeFetcher({ "company.git": companyMcp, "team.git": teamMcp });
+  const fetcher = () =>
+    new FakeFetcher({ "https://example.com/company.git": companyMcp, "team.git": teamMcp });
 
   it("名前ごとに下位が上書きし、上書き禁止は守り、取り除ける", async () => {
     const composed = composeContext(
@@ -326,7 +373,7 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
   it("Claude Code には、秘密情報を環境変数の参照にした mcp.json を書く（値は書かない）", async () => {
     const companyOnly = await prepareContext(
       fetcher(),
-      { repo: "company.git" },
+      { repo: "https://example.com/company.git" },
       "claude-code",
       "/tmp/sacty-claude-config",
     );
@@ -718,7 +765,12 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
   });
 
   it("Codex には config.toml を書き、秘密情報は env_vars と env_http_headers で名前だけを渡す", async () => {
-    const codex = await prepareContext(fetcher(), { repo: "company.git" }, "codex", "/.codex");
+    const codex = await prepareContext(
+      fetcher(),
+      { repo: "https://example.com/company.git" },
+      "codex",
+      "/.codex",
+    );
     const toml = readFileSync(join(codex.dir, "config.toml"), "utf8");
     expect(toml).toBe(
       [
@@ -1114,9 +1166,11 @@ describe("外部 PF の合成（PBI-74）", () => {
       deploy: { upstream: "https://evil.example.com", secret: "team-deploy" },
       local: { upstream: "https://local.example.com", secret: "local-token" },
     }),
-    "sacty-context.yaml": "extends: company.git\nremove:\n  platforms: [old]\n  mcp: []\n",
+    "sacty-context.yaml":
+      "extends: https://example.com/company.git\nremove:\n  platforms: [old]\n  mcp: []\n",
   };
-  const fetcher = () => new FakeFetcher({ "company.git": companyPf, "team.git": teamPf });
+  const fetcher = () =>
+    new FakeFetcher({ "https://example.com/company.git": companyPf, "team.git": teamPf });
 
   it("名前ごとに下位が上書きし、上書き禁止は守り、取り除ける。どの層のものかを持ち、秘密情報は名前のまま", async () => {
     const composed = composeContext(
@@ -1136,7 +1190,7 @@ describe("外部 PF の合成（PBI-74）", () => {
     expect(byName.deploy).toMatchObject({
       upstream: "https://deploy.company.example.com",
       auth: { secret: "op://Work/Deploy/key" },
-      from: "company.git@company",
+      from: "https://example.com/company.git@httpsex",
     });
     expect(byName.local?.from).toBe("team.git@teamgit");
     expect(composed.warnings).toEqual([
@@ -1154,9 +1208,10 @@ describe("外部 PF の合成（PBI-74）", () => {
     const composed = composeContext(
       await resolveContext(
         new FakeFetcher({
-          "company.git": companyPf,
+          "https://example.com/company.git": companyPf,
           "team.git": {
-            "sacty-context.yaml": "extends: company.git\nremove:\n  platforms: [deploy]\n",
+            "sacty-context.yaml":
+              "extends: https://example.com/company.git\nremove:\n  platforms: [deploy]\n",
           },
         }),
         { repo: "team.git" },
@@ -1238,7 +1293,7 @@ describe("外部 PF の合成（PBI-74）", () => {
   it("contextPlatforms は、PF に関わる警告だけを返す", async () => {
     const result = await contextPlatforms(
       new FakeFetcher({
-        "company.git": {
+        "https://example.com/company.git": {
           ...companyPf,
           "sacty-context.yaml": "locked:\n  platforms: [deploy]\n  skills: [r]\n",
           "skills/r/SKILL.md": "r",
@@ -1975,7 +2030,7 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     const repo = makeRepo("local-git", { "sacty-context.yaml": `extends: ${local}\n` });
     await expect(
       resolveContext(new GitContextFetcher(), { repo, ref: "main" }, join(dir, "w")),
-    ).rejects.toThrow(/git で取得した層のため、ローカルのパス（.*）を継承できません/);
+    ).rejects.toThrow(/git で取得した層のため、.* を継承できません/);
     // ref が無ければ今の中身を読む層なので、ローカルのパスを継承できる
     const layers = await resolveContext(new GitContextFetcher(), { repo }, join(dir, "w2"));
     expect(layers.map((l) => l.repo)).toEqual([local, repo]);

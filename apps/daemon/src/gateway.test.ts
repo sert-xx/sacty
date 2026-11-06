@@ -363,6 +363,29 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls[1]?.body).toBe('{"text":"調べました"}');
   });
 
+  it("メソッドを上書きするヘッダーは、上流に送らない", async () => {
+    const g = await startPf([json(200, { id: 42 })]);
+    const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {
+      readOnly: true,
+    });
+    const base = `http://127.0.0.1:${g.port}/r/${run?.token}/pf`;
+    const res = await fetch(`${base}/ticket/api/v1/tickets/42`, {
+      headers: {
+        "X-HTTP-Method-Override": "DELETE",
+        "X-HTTP-Method": "DELETE",
+        "X-Method-Override": "DELETE",
+        X_HTTP_Method_Override: "DELETE",
+        Accept: "application/json",
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(g.calls[0]?.headers.get("x-http-method-override")).toBeNull();
+    expect(g.calls[0]?.headers.get("x-http-method")).toBeNull();
+    expect(g.calls[0]?.headers.get("x-method-override")).toBeNull();
+    expect(g.calls[0]?.headers.get("x_http_method_override")).toBeNull();
+    expect(g.calls[0]?.headers.get("accept")).toBe("application/json");
+  });
+
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {
     const g = await startPf([json(200, { id: 42 })]);
     const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {

@@ -48,6 +48,7 @@ const MAX_DELAY_MS = 60_000;
 /**
  * 転送しないリクエストのヘッダー（宛先・認証・長さ・接続。圧縮は上流に任せず、平文で受ける）。expect（curl などが大きな本文に
  * 付ける 100-continue）は、ゲートウェイが本文を受け取り終えてから送るので要らず、fetch が受け付けない（PBI-132 の確認で発見）。
+ * メソッドを上書きするヘッダーは、上流が解釈すると、確かめたメソッドと違う操作になる（読み取り専用の実行の GET で書き込むなど）。
  */
 const DROP_REQUEST = new Set([
   "host",
@@ -58,7 +59,12 @@ const DROP_REQUEST = new Set([
   "transfer-encoding",
   "accept-encoding",
   "expect",
+  "x-http-method-override",
+  "x-http-method",
+  "x-method-override",
 ]);
+/** 転送しないリクエストのヘッダーか。`_` の綴りも同じに扱う（CGI などの上流は `-` と `_` を区別しない）。 */
+const dropsRequestHeader = (name: string) => DROP_REQUEST.has(name.replaceAll("_", "-"));
 /** 転送しない応答のヘッダー（fetch が展開した後の本文を流すので、長さ・圧縮は付け直させる）。 */
 const DROP_RESPONSE = new Set([
   "content-encoding",
@@ -532,7 +538,7 @@ export class AiGateway {
     for (const [name, value] of Object.entries(req.headers)) {
       if (
         value === undefined ||
-        DROP_REQUEST.has(name) ||
+        dropsRequestHeader(name) ||
         name === "cookie" ||
         name === authHeader
       ) {
@@ -720,7 +726,7 @@ export class AiGateway {
     }
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {
-      if (value === undefined || DROP_REQUEST.has(name)) continue;
+      if (value === undefined || dropsRequestHeader(name)) continue;
       headers.set(name, Array.isArray(value) ? value.join(", ") : value);
     }
 

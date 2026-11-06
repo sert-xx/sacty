@@ -228,6 +228,39 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
   });
 });
 
+describe("URL の正規化の処理時間", () => {
+  it("/ や # を長く続けた入力でも、線形の時間で読む", () => {
+    const repeated = 200_000;
+    for (const url of [
+      `${"/".repeat(repeated)}x`,
+      `https://github.com/acme/app${"/".repeat(repeated)}x`,
+      `https://github.com/acme/app${"#".repeat(repeated)}\nx`,
+    ]) {
+      const started = performance.now();
+      RepoUrl.safeParse(url);
+      expect(performance.now() - started).toBeLessThan(5_000);
+    }
+  });
+
+  it("末尾の / の並びと、クエリ・フラグメントは今までどおり除く", () => {
+    expect(parseRepoUrl("https://github.com/acme/app///")?.url).toBe("https://github.com/acme/app");
+    expect(parseRepoUrl("https://github.com/acme/app.git/?tab=readme#top")?.url).toBe(
+      "https://github.com/acme/app",
+    );
+    expect(parseRepoUrl("///")).toBeUndefined();
+    // 改行の混ざった入力は、クエリ・フラグメントとして除かず、URL として読まない
+    for (const url of [
+      "https://github.com/acme/app#\nx",
+      "https://github.com/acme/app?a=1\nb",
+      "https://github.com/acme/app#\rx",
+      "https://github.com/acme/app#\u2028x",
+    ]) {
+      expect(parseRepoUrl(url)).toBeUndefined();
+      expect(RepoUrl.safeParse(url).success).toBe(false);
+    }
+  });
+});
+
 describe("コンテキストリポジトリの指定", () => {
   it("path はリポジトリの根からの相対パスだけで、. と .. の部分は使えない", () => {
     for (const path of ["contexts/team", "a", "pkg/@scope/ctx", "v1.2/ctx", ""]) {
