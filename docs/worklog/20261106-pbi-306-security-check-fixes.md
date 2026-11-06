@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-06（UTC）
 - タスク: PBI-306
-- PR: なし
+- PR: #311
 - ブランチ: feat/issue-306-security-check-fixes
 - 関係する ADR: [git で取得した層の extends を、ネットワークの先のリポジトリに限る](../adr/20261106-0255-limit-extends-of-fetched-layers-to-network-repositories.md)
 
