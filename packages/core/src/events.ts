@@ -1390,7 +1390,7 @@ export const GuardianTests = z.object({
   environmentFailures: z.array(z.string()).optional(),
   /**
    * テストのコマンドが失敗したときの、失敗したテスト・検査の名前（PBI-308）。回をまたいで比べ、実装をやり直しても
-   * 1つも直らなければ止める（`testsMadeNoProgress`）。申告が無い・それより前の版の記録には無い。
+   * 1つも直らなければ止める（`testsMadeNoProgress`）。申告が無い・`FAILED_TESTS_MAX` を超えた・それより前の版の記録には無い。
    */
   failedTests: z.array(z.string()).optional(),
   /**

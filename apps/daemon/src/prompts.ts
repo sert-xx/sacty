@@ -4604,11 +4604,13 @@ export function extractFinalReview(
           options.internalAllowance,
         )
       : [];
-  // 失敗の名前（PBI-308）も、テストのコマンドが失敗したときだけ読む。回をまたいで比べるので、理由を混ぜない
-  const failedTests =
+  // 失敗の名前（PBI-308）も、テストのコマンドが失敗したときだけ読む。回をまたいで比べるので、理由を混ぜない。
+  // 上限を超えたら切り詰めずに捨てる（欠けた一覧を比べると、切り捨てた分が直っても進展なしに見える）
+  const failedNames =
     exitCode !== undefined && exitCode !== 0
-      ? [...new Set(reportedFailedTests(raw.failedTests))].slice(0, FAILED_TESTS_MAX)
+      ? [...new Set(reportedFailedTests(raw.failedTests))]
       : [];
+  const failedTests = failedNames.length <= FAILED_TESTS_MAX ? failedNames : [];
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
   const reportedMissing = [

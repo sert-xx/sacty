@@ -1,4 +1,4 @@
-import { FAILED_TESTS_MAX } from "@sacty/core";
+import { FAILED_TESTS_MAX, testsMadeNoProgress } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { extractFinalReview } from "./prompts.js";
 
@@ -49,10 +49,20 @@ describe("失敗したテストの名前の読み取り（PBI-308）", () => {
     expect(read({ exitCode: 1 }).tests?.failedTests).toBeUndefined();
   });
 
-  it("上限を超えた分は記録しない", () => {
-    const names = Array.from({ length: FAILED_TESTS_MAX + 5 }, (_, i) => `t${i}`);
-    expect(read({ exitCode: 1, failedTests: names }).tests?.failedTests).toHaveLength(
-      FAILED_TESTS_MAX,
-    );
+  it("上限ちょうどまでは記録する", () => {
+    const names = Array.from({ length: FAILED_TESTS_MAX }, (_, i) => `t${i}`);
+    expect(read({ exitCode: 1, failedTests: names }).tests?.failedTests).toEqual(names);
+  });
+
+  it("上限を超えた一覧は記録しない（欠けた一覧では比べられない）", () => {
+    const names = Array.from({ length: FAILED_TESTS_MAX + 1 }, (_, i) => `t${i}`);
+    expect(read({ exitCode: 1, failedTests: names }).tests?.failedTests).toBeUndefined();
+  });
+
+  it("上限を超えた失敗の最後の1件だけが直ったら、進展なしにしない", () => {
+    const names = Array.from({ length: FAILED_TESTS_MAX + 1 }, (_, i) => `t${i}`);
+    const previous = read({ exitCode: 1, failedTests: names }).tests?.failedTests;
+    const current = read({ exitCode: 1, failedTests: names.slice(0, -1) }).tests?.failedTests;
+    expect(testsMadeNoProgress(previous, current)).toBe(false);
   });
 });
