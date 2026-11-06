@@ -333,7 +333,7 @@ When the Implementation step finishes, sacty opens the implementation PR as a dr
 Behavior that only CI can check (fixing a workflow, for example) is part of the Goal Guardian's judgment too.
 
 1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The review label is not added yet. While it is a draft, please wait before reviewing or merging.
-2. sacty waits for the PR's CI. The task's status is "Waiting for the PR's CI". In a repository without CI it moves on after 5 minutes, and if CI does not finish, after up to 60 minutes.
+2. sacty waits for the PR's CI. The task's status is "Waiting for the PR's CI". In a repository confirmed to have no CI it moves on after 1 minute, if no CI appears, after 5 minutes, and if CI does not finish, after up to 60 minutes.
 3. The Goal Guardian does the final review from the tests it ran in the workspace together with the PR's CI result.
    - If a CI failure is caused by the change, the review fails and the implementation is redone.
    - If a failure is unrelated to the change (the CI environment, an external service, a missing secret, and so on), the review does not fail for it, and it goes into "For a person to check".
