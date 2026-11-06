@@ -97,6 +97,7 @@ import {
   ProjectExport,
   PULL_REQUEST_CI_GRACE_MS,
   PULL_REQUEST_CI_TIMEOUT_MS,
+  PULL_REQUEST_NO_CI_GRACE_MS,
   type PullRequestMerge,
   type PullRequestTemplateUse,
   parseOrgUrl,
@@ -969,6 +970,11 @@ export class TaskService {
    * 再起動の後は1回ぶん余分に待つ。
    */
   private readonly ciSettled = new Map<string, string>();
+  /**
+   * 実装の PR の CI を待つタスクの、リポジトリに CI が無いかを確かめた結果（タスクごと。commit は確かめたときのコミット。
+   * PBI-309）。読めなかったときは覚えず、次の確認でやり直す。メモリーだけに持ち、再起動の後は1回確かめ直す。
+   */
+  private readonly noCiChecks = new Map<string, { commit: string; noCi: boolean }>();
 
   /** ダッシュボードの集計の元（作業履歴を畳み込んで持つ。PBI-118）。 */
   private readonly dashboardStats = new DashboardStats();
@@ -1761,12 +1767,15 @@ export class TaskService {
    */
   async checkVerificationCi(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
+      if (!awaitingPullRequestCi(task)) this.noCiChecks.delete(task.id);
       const ci = task.pullRequestCi;
       const repo = task.pullRequest?.repo;
       if (!ci || !repo || !awaitingPullRequestCi(task) || task.status !== "idle") continue;
       if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) continue;
       const pauses = this.pauseCounts.get(task.id) ?? 0;
       const usedSecrets: string[] = [];
+      // PR の向き先。引き継いだ既存の PR は、作業領域のベースブランチではなく PR の向き先
+      const baseBranch = task.continuedPullRequest?.baseBranch ?? task.repository?.baseBranch;
       try {
         const result = await this.readCi(task, {
           repo,
@@ -1776,6 +1785,7 @@ export class TaskService {
           graceMs: PULL_REQUEST_CI_GRACE_MS,
           timeoutMs: PULL_REQUEST_CI_TIMEOUT_MS,
           usedSecrets,
+          ...(baseBranch ? { noCi: { graceMs: PULL_REQUEST_NO_CI_GRACE_MS, baseBranch } } : {}),
         });
         if (!result) continue;
         // 読んでいる間に一時停止・中止した、実装をやり直したなら記録しない（再開した後の確認で取り直す）
@@ -1975,7 +1985,8 @@ export class TaskService {
   /**
    * コミットの CI/CD の状態を読み、終わっていれば結果を返す（PBI-89。マージの後の監視と、最終レビューの前に作った実装の PR）。
    * 待つなら undefined。読めない（認証・ネットワーク）なら待ち、時間の上限（timeoutMs）を過ぎていれば時間切れ。1つも無ければ
-   * graceMs を過ぎるまで待ってから none。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。
+   * graceMs を過ぎるまで待ってから none（noCi があれば、その短い猶予を過ぎた所でリポジトリに CI が無いと確かめられても
+   * none。PBI-309）。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。
    * 失敗があれば、失敗したジョブとログの抜粋を読む。
    */
   private async readCi(
@@ -1988,6 +1999,7 @@ export class TaskService {
       graceMs: number;
       timeoutMs: number;
       usedSecrets: string[];
+      noCi?: { graceMs: number; baseBranch: string };
     },
   ): Promise<
     | {
@@ -2022,7 +2034,19 @@ export class TaskService {
       .slice(0, 50);
     if (snapshot.checks.length === 0) {
       // ワークフローの作成には少し時間がかかるので、しばらく待ってから CI/CD が無いと決める
-      return elapsed >= input.graceMs ? { result: "none", checks: [], failures: [] } : undefined;
+      const absent =
+        elapsed >= input.graceMs ||
+        (input.noCi !== undefined &&
+          elapsed >= input.noCi.graceMs &&
+          (await this.repositoryHasNoCi(
+            task,
+            repo,
+            commit,
+            input.noCi.baseBranch,
+            token,
+            usedSecrets,
+          )));
+      return absent ? { result: "none", checks: [], failures: [] } : undefined;
     }
     if (snapshot.checks.some((c) => c.status === "pending")) {
       this.ciSettled.delete(key);
@@ -2062,6 +2086,32 @@ export class TaskService {
       });
     }
     return { result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) };
+  }
+
+  /**
+   * リポジトリに CI が無いと確かめられるか（PBI-309）。結果はタスクとコミットごとに覚える。読めなければ覚えず、CI が無いとは
+   * 決めない（次の確認でやり直す）。
+   */
+  private async repositoryHasNoCi(
+    task: Task,
+    repo: string,
+    commit: string,
+    baseBranch: string,
+    token: string,
+    usedSecrets: string[],
+  ): Promise<boolean> {
+    const known = this.noCiChecks.get(task.id);
+    if (known?.commit === commit) return known.noCi;
+    try {
+      const noCi = (await this.deps.ci?.repositoryHasNoCi({ repo, token, baseBranch })) === true;
+      this.noCiChecks.set(task.id, { commit, noCi });
+      return noCi;
+    } catch (error) {
+      console.warn(
+        `[daemon] ${repo} に CI が無いかを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return false;
+    }
   }
 
   /**

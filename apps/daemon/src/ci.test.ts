@@ -516,6 +516,135 @@ describe("GitHub の CI/CD の状態（PBI-89）", () => {
   });
 });
 
+describe("リポジトリに CI が無いかを確かめる（PBI-309）", () => {
+  const head = "b".repeat(40);
+  const empty = {
+    [`${api}/actions/workflows`]: { total_count: 0, workflows: [] },
+    [`${api}/git/ref/heads/main`]: { object: { sha: head } },
+    [`${api}/commits/${head}/check-runs`]: { total_count: 0, check_runs: [] },
+    [`${api}/commits/${head}/status`]: { total_count: 0, statuses: [] },
+  };
+  const ask = (ci: GitHubCiStatus, baseBranch = "main") =>
+    ci.repositoryHasNoCi({ repo: "https://github.com/acme/app", token: "t", baseBranch });
+
+  it("有効なワークフローが無く、ベースブランチの先頭にチェックも状態も無ければ true", async () => {
+    const calls: string[] = [];
+    await expect(ask(new GitHubCiStatus(fakeFetch(empty, calls)))).resolves.toBe(true);
+    expect(calls).toEqual([
+      `${api}/actions/workflows?per_page=100`,
+      `${api}/git/ref/heads/main`,
+      `${api}/commits/${head}/check-runs?per_page=1`,
+      `${api}/commits/${head}/status?per_page=1`,
+    ]);
+  });
+
+  it("止めたワークフローは数えない", async () => {
+    const workflows = [
+      { state: "disabled_manually" },
+      { state: "disabled_inactivity" },
+      { state: "deleted" },
+    ];
+    const routes = { ...empty, [`${api}/actions/workflows`]: { workflows } };
+    await expect(ask(new GitHubCiStatus(fakeFetch(routes)))).resolves.toBe(true);
+  });
+
+  it("有効なワークフローがあれば false で、ベースブランチは読まない", async () => {
+    const calls: string[] = [];
+    const routes = {
+      ...empty,
+      [`${api}/actions/workflows`]: {
+        workflows: [{ state: "disabled_fork" }, { state: "active" }],
+      },
+    };
+    await expect(ask(new GitHubCiStatus(fakeFetch(routes, calls)))).resolves.toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("ベースブランチの先頭に、チェックかコミットの状態があれば false", async () => {
+    const check = {
+      ...empty,
+      [`${api}/commits/${head}/check-runs`]: { check_runs: [{ id: 1, name: "external" }] },
+    };
+    const status = {
+      ...empty,
+      [`${api}/commits/${head}/status`]: { statuses: [{ context: "external", state: "success" }] },
+    };
+    await expect(ask(new GitHubCiStatus(fakeFetch(check)))).resolves.toBe(false);
+    await expect(ask(new GitHubCiStatus(fakeFetch(status)))).resolves.toBe(false);
+  });
+
+  it("どの API が失敗しても、例外を投げる", async () => {
+    for (const path of Object.keys(empty)) {
+      const routes: Record<string, unknown> = { ...empty };
+      delete routes[path];
+      await expect(ask(new GitHubCiStatus(fakeFetch(routes)))).rejects.toThrow();
+    }
+  });
+
+  it("成功の応答でも一覧を読めなければ、空とせず例外を投げる", async () => {
+    for (const path of Object.keys(empty)) {
+      const routes = { ...empty, [path]: "<html>proxy</html>" };
+      await expect(ask(new GitHubCiStatus(fakeFetch(routes)))).rejects.toThrow();
+    }
+  });
+
+  it("ネットワークの失敗は例外になる", async () => {
+    const down = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    await expect(ask(new GitHubCiStatus(down))).rejects.toThrow("fetch failed");
+  });
+
+  it("スラッシュを含むベースブランチを読める", async () => {
+    const calls: string[] = [];
+    const routes = {
+      ...empty,
+      [`${api}/git/ref/heads/release/1%232`]: { object: { sha: head } },
+    };
+    await expect(ask(new GitHubCiStatus(fakeFetch(routes, calls)), "release/1#2")).resolves.toBe(
+      true,
+    );
+    expect(calls).toContain(`${api}/git/ref/heads/release/1%232`);
+  });
+
+  /** ワークフローの一覧のページを、Link で続ける偽物。 */
+  const paged = (pages: number, nextUrl: (page: number) => string, last: unknown[] = []) => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (!url.includes("/actions/workflows")) {
+        const key = Object.keys(empty).find((k) => url.startsWith(k)) as keyof typeof empty;
+        return new Response(JSON.stringify(empty[key]));
+      }
+      const page = calls.filter((c) => c.includes("/actions/workflows")).length;
+      return new Response(
+        JSON.stringify({ workflows: page === pages ? last : [{ state: "deleted" }] }),
+        page < pages ? { headers: { link: `<${nextUrl(page + 1)}>; rel="next"` } } : {},
+      );
+    }) as typeof fetch;
+    return { ci: new GitHubCiStatus(fetchImpl), calls };
+  };
+  const nextOf = (page: number) => `${api}/actions/workflows?per_page=100&page=${page}`;
+
+  it("ワークフローの一覧は次のページも読む", async () => {
+    const found = paged(3, nextOf, [{ state: "active" }]);
+    await expect(ask(found.ci)).resolves.toBe(false);
+    expect(found.calls).toHaveLength(3);
+    const none = paged(3, nextOf);
+    await expect(ask(none.ci)).resolves.toBe(true);
+  });
+
+  it("ワークフローの一覧を読み切れないなら、CI が無いとは言わない", async () => {
+    const long = paged(11, nextOf);
+    await expect(ask(long.ci)).resolves.toBe(false);
+    expect(long.calls).toHaveLength(10);
+    const away = paged(2, () => "https://evil.example.com/next");
+    await expect(ask(away.ci)).resolves.toBe(false);
+    expect(away.calls).toHaveLength(1);
+  });
+});
+
 describe("リポジトリの中のリンクのたどり方（PBI-89）", () => {
   const links = (map: Record<string, string>) => async (p: string) => map[p];
   it("途中のリンクをたどり、外を指す・たどりすぎるものは外とする", async () => {

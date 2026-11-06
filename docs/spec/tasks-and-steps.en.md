@@ -782,6 +782,11 @@ Code: `apps/daemon/src/service.ts` (`mergesBase`, `syncBase`, `syncBeforeVerify`
 - sacty waits for the CI of the PR's head commit (`Task.pullRequestCi`). While waiting, the task does not move on to the final review and nothing is charged. The screen shows "Waiting for the PR's CI".
   - It is read at each PR check (every 60 seconds; `checkVerificationCi`). How it is read and judged is the same as the watch after merge (`readCi`; [Watch after merge](deployment-watch.en.md#watching-cicd)).
   - If no CI appears within `PULL_REQUEST_CI_GRACE_MS` (5 minutes), the result is `none`; if it does not finish or cannot be read within `PULL_REQUEST_CI_TIMEOUT_MS` (60 minutes), it is `timed_out`. Time is counted from when the PR was opened or updated.
+  - If the repository is confirmed to have no CI, the result is `none` after `PULL_REQUEST_NO_CI_GRACE_MS` (1 minute) (`repositoryHasNoCi`). At the first check after 1 minute with no checks, both of the following are confirmed.
+    - There is no active workflow (no workflow in `GET /repos/{repo}/actions/workflows` has the `state` `active`).
+    - The head commit of the branch the PR targets has no checks and no commit statuses (so that external CI is not missed).
+
+    If either does not hold, or cannot be confirmed (missing permission, 404, network, or a list that cannot be read to the end), sacty waits up to 5 minutes. The result is kept in memory per task and commit and is not read every time. A list that cannot be read to the end (the page limit, or a link outside the API) is kept as the result that the repository cannot be said to have no CI, and is not tried again for the same commit. When an API call fails (missing permission, 404, network), nothing is kept and the next check tries again. It is not confirmed while the CI status cannot be read, or after checks have appeared. The watch after merge does not use this short grace period.
   - A paused task is not read (resuming keeps waiting).
   - The result (`passed`, `failed`, `none`, `timed_out`) is recorded in `PullRequestCiFinished`, and the task moves on to the final review. A failure also keeps the failed jobs and log excerpts.
 - The final review prompt (`pullRequestCiLines`) gets the PR URL and the CI result as JSON data that is not instructions. When the run can read GitHub with gh (through the GitHub read relay), the Goal Guardian can also read the PR and the CI logs (read only).
@@ -791,7 +796,7 @@ Code: `apps/daemon/src/service.ts` (`mergesBase`, `syncBase`, `syncBeforeVerify`
   - sacty does not fail the review on the CI result alone.
 - The PR body says that the implementation is being verified (a draft before the final review; `PullRequestBodyStage`). Once verified, it is rewritten with the final review's result.
 
-Code: `apps/daemon/src/service.ts` (`verify`, `publish`, `draftsPullRequest`, `checkVerificationCi`, `readCi`), `apps/daemon/src/github.ts` (`GitHubPullRequests.upsert`, `GitHubPullRequests.setDraft`), `apps/daemon/src/prompts.ts` (`pullRequestCiLines`, `buildPullRequestBodyText`), `packages/core/src/projection.ts` (`pullRequestCi`, `awaitingPullRequestCi`), `packages/core/src/events.ts` (`PullRequestCiFinished`, `PULL_REQUEST_CI_GRACE_MS`, `PULL_REQUEST_CI_TIMEOUT_MS`), `apps/daemon/src/commit-message.ts` (`COMMIT_CONVENTION_FILES`, `detectCommitConvention`, `commitSubject`)
+Code: `apps/daemon/src/service.ts` (`verify`, `publish`, `draftsPullRequest`, `checkVerificationCi`, `readCi`, `repositoryHasNoCi`), `apps/daemon/src/ci.ts` (`GitHubCiStatus.repositoryHasNoCi`), `apps/daemon/src/github.ts` (`GitHubPullRequests.upsert`, `GitHubPullRequests.setDraft`), `apps/daemon/src/prompts.ts` (`pullRequestCiLines`, `buildPullRequestBodyText`), `packages/core/src/projection.ts` (`pullRequestCi`, `awaitingPullRequestCi`), `packages/core/src/events.ts` (`PullRequestCiFinished`, `PULL_REQUEST_CI_GRACE_MS`, `PULL_REQUEST_NO_CI_GRACE_MS`, `PULL_REQUEST_CI_TIMEOUT_MS`), `apps/daemon/src/commit-message.ts` (`COMMIT_CONVENTION_FILES`, `detectCommitConvention`, `commitSubject`)
 
 ### Reusing verification results for the same content
 
