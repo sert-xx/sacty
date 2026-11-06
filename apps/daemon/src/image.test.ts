@@ -9,6 +9,8 @@ import {
   imageBuildTargets,
   npmGlobalConfigContent,
   npmrcContent,
+  pruneOldImages,
+  staleImages,
 } from "./image.js";
 import { MemorySecretStore, SecretNotFoundError } from "./secrets.js";
 
@@ -485,5 +487,130 @@ describe("既定のイメージの固定（セキュリティチェックの指�
       expect(entry).not.toHaveProperty("resolved");
       expect(entry).toHaveProperty("integrity");
     }
+  });
+});
+
+describe("古い版のイメージの片付け（PBI-313）", () => {
+  it("名前ごとに新しい版から2つ残し、版は数値で比べる", () => {
+    expect(
+      staleImages(
+        [
+          "sacty-agent:1.9.1",
+          "sacty-agent:1.10.0",
+          "sacty-agent:1.18.0",
+          "sacty-agent:1.18.1",
+          "sacty-agent-java17:1.9.1",
+          "sacty-agent-java17:1.10.0",
+          "sacty-agent-java17:1.11.0",
+        ],
+        [],
+      ).sort(),
+    ).toEqual(["sacty-agent-java17:1.9.1", "sacty-agent:1.10.0", "sacty-agent:1.9.1"]);
+  });
+
+  it("版が0・1・2個なら何も消さない", () => {
+    expect(staleImages([], [])).toEqual([]);
+    expect(staleImages(["sacty-agent:1.0.0"], [])).toEqual([]);
+    expect(staleImages(["sacty-agent:1.0.0", "sacty-agent:1.0.1"], [])).toEqual([]);
+  });
+
+  it("今回作ったもの・設定が指すものは、古くても残す", () => {
+    expect(
+      staleImages(
+        ["sacty-agent:1.0.0", "sacty-agent:1.1.0", "sacty-agent:1.2.0", "sacty-agent:1.3.0"],
+        ["sacty-agent:1.0.0"],
+      ),
+    ).toEqual(["sacty-agent:1.1.0"]);
+  });
+
+  it("版のタグでないもの・sacty の名前でないものは消さない", () => {
+    const others = [
+      "sacty-agent:latest",
+      "sacty-agent:bump-307",
+      "sacty-agent:1.18.0-rc1",
+      "sacty-agent:<none>",
+      "<none>:<none>",
+      "",
+      "karakuri-id-nest:1.0.0",
+      "my-sacty-agent:1.0.0",
+      "sacty-agents:1.0.0",
+      "ghcr.io/acme/sacty-agent:1.0.0",
+      "localhost:5000/sacty-agent:1.0.0",
+    ];
+    expect(staleImages([...others, ...others], [])).toEqual([]);
+    expect(
+      staleImages([...others, "sacty-agent:1.0.0", "sacty-agent:1.0.1", "sacty-agent:1.0.2"], []),
+    ).toEqual(["sacty-agent:1.0.0"]);
+  });
+
+  it("sacty の名前でないイメージは、版がいくつあっても消さない", () => {
+    const names = [
+      "karakuri-id-nest",
+      "my-sacty-agent",
+      "sacty-agents",
+      "ghcr.io/acme/sacty-agent",
+      "localhost:5000/sacty-agent",
+    ];
+    const listed = names.flatMap((name) => ["1.0.0", "1.0.1", "1.0.2"].map((v) => `${name}:${v}`));
+    expect(staleImages(listed, [])).toEqual([]);
+  });
+
+  function docker(results: Record<string, { code: number; stdout?: string }>) {
+    const calls: string[] = [];
+    return {
+      calls,
+      run: async (args: string[]) => {
+        const command = args.join(" ");
+        calls.push(command);
+        const key = Object.keys(results).find((k) => command.startsWith(k));
+        return { code: 0, stdout: "", ...(key ? results[key] : {}) };
+      },
+    };
+  }
+
+  it("古い版を強制せずに消してから、使っていないビルドキャッシュを消す", async () => {
+    const { calls, run } = docker({
+      "image ls": { code: 0, stdout: "sacty-agent:1.0.0\nsacty-agent:1.0.1\nsacty-agent:1.0.2\n" },
+    });
+    expect(await pruneOldImages({ kept: ["sacty-agent:1.0.2"], run })).toEqual({
+      removed: ["sacty-agent:1.0.0"],
+      failed: [],
+      listFailed: false,
+      cacheFailed: false,
+    });
+    expect(calls).toEqual([
+      "image ls --format {{.Repository}}:{{.Tag}}",
+      "image rm sacty-agent:1.0.0",
+      "builder prune -f --filter until=168h",
+    ]);
+  });
+
+  it("1つ消せなくても残りを消し、消せなかったものを返す", async () => {
+    const { run } = docker({
+      "image ls": {
+        code: 0,
+        stdout: ["0", "1", "2", "3"].map((n) => `sacty-agent:1.0.${n}`).join("\n"),
+      },
+      "image rm sacty-agent:1.0.1": { code: 1 },
+    });
+    expect(await pruneOldImages({ kept: [], run })).toMatchObject({
+      removed: ["sacty-agent:1.0.0"],
+      failed: ["sacty-agent:1.0.1"],
+    });
+  });
+
+  it("一覧やキャッシュの片付けに失敗しても例外にしない", async () => {
+    const stdout = ["0", "1", "2"].map((n) => `sacty-agent:1.0.${n}`).join("\n");
+    const { calls, run } = docker({
+      "image ls": { code: 1, stdout },
+      "builder prune": { code: 1 },
+    });
+    expect(await pruneOldImages({ kept: [], run })).toEqual({
+      removed: [],
+      failed: [],
+      listFailed: true,
+      cacheFailed: true,
+    });
+    expect(calls.some((call) => call.startsWith("image rm"))).toBe(false);
   });
 });
