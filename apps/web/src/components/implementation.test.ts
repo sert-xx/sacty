@@ -202,6 +202,38 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
     expect(render(task, "en")).toContain("passed 2 of 3 reruns");
   });
 
+  it("環境と不安定が混ざるときは「環境による失敗だけ」と出さない（PBI-310）", () => {
+    const flaky = { name: "ui", file: "tests/ui.spec.ts", runs: 3, passes: 2, reason: "別の画面" };
+    const task = designed(
+      reviewed({
+        command: "npm test",
+        exitCode: 1,
+        output: "",
+        environmentFailures: [FAILURE],
+        flakyFailures: [flaky],
+      }),
+    );
+    const html = render(task);
+    expect(html).toContain("環境による失敗あり");
+    expect(html).not.toContain("環境による失敗だけ");
+    expect(render(task, "en")).not.toContain("Environment failures only");
+  });
+
+  it("不安定な失敗として認めなかった申告と理由を、テストの結果に出す（PBI-310）", () => {
+    const html = render(
+      designed(
+        reviewed({
+          command: "npm test",
+          exitCode: 1,
+          output: "",
+          rejectedFlakyFailures: ["ui：実行し直しが 2 回に満たない（1 回）"],
+        }),
+      ),
+    );
+    expect(html).toContain('data-testid="rejected-flaky-failures"');
+    expect(html).toContain("ui：実行し直しが 2 回に満たない（1 回）");
+  });
+
   it("観点ごとの「テスト合格」に、環境による失敗だけで合格にしたことを添え、理由を日英で出す", () => {
     const html = render(
       designed(

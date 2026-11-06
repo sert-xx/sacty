@@ -10480,6 +10480,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
             command: "npm test",
             exitCode: 1,
             output: "1 failed",
+            failedTests: ["ui"],
             flakyFailures: [
               { name: "ui", file: "tests/ui.spec.ts", runs: 2, passes: 1, reason: "別の画面" },
             ],
@@ -10504,6 +10505,52 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ).toBe(true);
     activity.close();
   });
+
+  for (const mode of ["pause", "cancel"] as const) {
+    it(`不安定な失敗を確かめる差分を読む間に${mode === "pause" ? "一時停止" : "中止"}されたら、判定を記録しない（PBI-310）`, async () => {
+      const flaky = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "1 failed",
+              failedTests: ["ui"],
+              flakyFailures: [
+                { name: "ui", file: "tests/ui.spec.ts", runs: 2, passes: 1, reason: "別の画面" },
+              ],
+            },
+            humanChecks: [],
+            summary: "要求を満たす",
+          },
+        }),
+      );
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      const read = repos.diffStats.bind(repos);
+      repos.diffStats = async () => {
+        entered.resolve();
+        await gate.promise;
+        return read();
+      };
+      const { activity, service, id } = await toImplement([implement("# v1"), flaky], { repos });
+      const running = drain(service);
+      await entered.promise;
+      const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+      gate.resolve();
+      await stopping;
+      await running;
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+      activity.close();
+    });
+  }
 
   it("差分と無関係な不安定な失敗は実装に戻さず、人が確かめることに出す（PBI-310）", async () => {
     const flaky = out(

@@ -74,6 +74,10 @@ const ja = {
     flakyOnlyHint:
       "差分と無関係で、実行し直すと結果が変わった失敗があります。テストは通ったものとしました。",
     testsPassedFlaky: "テスト合格（不安定な失敗あり）",
+    rejectedFlakyFailures: "不安定な失敗として認めなかった申告：",
+    environmentMixed: "環境による失敗あり",
+    environmentMixedHint:
+      "終了コードは 0 ではありませんが、ゴールガーディアンが失敗を環境によるものか不安定なものと判断したため、テストは通ったものとしました。",
     environmentOnly: "環境による失敗だけ",
     environmentOnlyHint:
       "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
@@ -363,6 +367,10 @@ const en: PartsMessages = {
     flakyOnlyHint:
       "Some failures are unrelated to the diff and changed when rerun. The tests count as passed.",
     testsPassedFlaky: "Tests passed (flaky failures)",
+    rejectedFlakyFailures: "Reports not accepted as flaky failures:",
+    environmentMixed: "Environment failures",
+    environmentMixedHint:
+      "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment or flaky, so the tests count as passed.",
     environmentFailure: (detail) =>
       `Test failure judged to be caused by the environment: ${detail}`,
     environmentOnly: "Environment failures only",

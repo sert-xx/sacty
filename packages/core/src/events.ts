@@ -1428,6 +1428,8 @@ export const GuardianTests = z.object({
  * 差分が文書だけで、ツールが無くて実行できなかった検証があるとき（PBI-158）も、通ったものとして扱う。
  */
 export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boolean {
+  // 不安定な失敗の申告を認めなかったら、本当の失敗が残っている恐れがあるので、ほかの理由より優先する（PBI-310）
+  if ((tests.rejectedFlakyFailures?.length ?? 0) > 0) return false;
   if ((tests.missingCommands?.length ?? 0) > 0) return true;
   if (tests.exitCode === undefined) return false;
   return (

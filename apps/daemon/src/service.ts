@@ -9511,6 +9511,11 @@ export class TaskService {
     const changedFiles = outcome.output.includes("flakyFailures")
       ? await this.changedFiles(current, dir)
       : undefined;
+    // 差分を読む間に人間が止めたなら、判定を記録しない（合格を記録すると、再開で最終レビューをやり直さずに公開へ進む）
+    if (this.stopRequested(task.id)) {
+      recordStopped();
+      return;
+    }
     let { missingCommands, unreadable, ...review } = extractReview(false);
     // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
     // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
