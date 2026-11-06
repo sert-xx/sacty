@@ -1134,14 +1134,14 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - それより前の版の作業履歴：`TestsRun`（sacty がテストのコンテナで実行した結果）・`TestsSkipped` と、`verification` の `tests_passed` は、読むためだけに残す（今の版は記録しない）。
   `FinalReviewed`・`FinalReviewFailed` は、`verification` が `pending` でも `tests_passed` でも受け付ける。
   実装の `AgentRunCompleted` で、前のテストの結果（`lastTests`・`testsSkippedAt`）を消す。
-- 実装の成果物（タスクの画面と実装の承認の画面）は、ゴールガーディアンが実行したテスト（最終レビューの `tests`）を「ゴールガーディアンが実行したテスト」として出す（それより前の版の記録は「テストの実行」）。
+- 実装の成果物（タスクの画面と実装の承認の画面）は、ゴールガーディアンが実行したテスト（最終レビューの `tests`）を「ゴールガーディアンが実行したテスト」として出す（それより前の版の記録は「テストの実行」）。前の段の結果を使い回したとき（`reusedFrom`）は、見出しを「最終レビューが判定に使ったテスト」（前の提出は「前の提出で、最終レビューが判定に使ったテスト」）にし、補足（ツールチップ）も使い回したことを示す（[同じ内容の検証の使い回し](#同じ内容の検証の使い回し)）。
   テストの結果と最終レビューは、今の提出の検証のものだけ対応表に出す（`verificationResults`）。
   やり直した実装の検証が始まった（`verification` が `pending`）後のテストの結果と最終レビューは、前の提出のものとして出す。
   それより前の版の記録で、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より前の最終レビューも、前の提出のものとして出す。
   前の提出のものは、見出しを「前の提出で、ゴールガーディアンが実行したテスト」（それより前の版の記録は「前の提出のテストの実行」）「前の提出の最終レビュー」にし、対応表の実行結果は「未実行」にする。
   今の提出ではまだ実行・判定していないことは、見出しの横の補足（ツールチップ）に出す。
   テストの仕組みが無いタスクのテストの無い観点も、今の提出の最終レビューがあるときだけ「目的から判定」にし、検証待ちの間（目的からの判定がまだ）は「未実行」にする（`judgedByGoalForCurrent`）。
-- PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）` を書く（`resultTableLines`。表と全体の組み立ては[承認](approval.md#実装の-pr-の本文の組み立て)）。
+- PR の本文のテストの行は `テスト：` に、コマンド・合格か不合格・`（ゴールガーディアンが実行。終了コード N）`（前の段の結果を使い回したときは「ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した」など）を書く（`resultTableLines`。表と全体の組み立ては[承認](approval.md#実装の-pr-の本文の組み立て)）。
   終了コードが 0 でないのに環境による失敗だけで合格にしたときは、終了コードの後ろに「終了コードは 0 でないが、失敗は環境によるものだけと判断して合格にした。下の「人が確かめること」」を添える（`environmentPassNote`。PBI-302 A2。実験 S18：終了コード 1 でも「合格」とだけ出た）。失敗の中身は「人が確かめること」に出る。失敗が sacty の作業用のファイルによるものだけのときは、「失敗は sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため合格にした」と添え、失敗の説明は載せない。
   チャットの判定の説明にも、ゴールガーディアンが実行したテストのコマンドと終了コード・環境によると判断した失敗・人が確かめることを出す（`chatJudgementLines`）。
 - 最終レビューの `humanChecks` と `tests.environmentFailures` は、人が最終承認で確かめることとして出す（PBI-155。差分が文書だけのときにツールが無くて実行できなかった検証の項目も `humanChecks` に入る）。
@@ -1253,8 +1253,9 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 最終レビュー：`implementVerification` と実装の PR の CI の結果を渡し、覆われていない分だけを実行させる（`reuseVerificationLines`）。
   テストのコマンドの全体が覆われていれば実行させず、使い回した結果を `tests` に書かせ、元の段を `reusedFrom`（`self-review`・`ci`）に書かせる。
   sacty が PR に足す成果物のファイルは実装の工程の作業領域に無いので、それを検査しうる検証は、実装の工程の記録から使い回させない。
-  使い回したテストは、実装の成果物の「ゴールガーディアンが実行したテスト」に「実装の工程の結果を使い回し」「PR の CI の結果を使い回し」（`reusedTests`）を、PR の本文のテストの行に使い回したことを添える。
+  使い回したテストは、実装の成果物の見出しを「最終レビューが判定に使ったテスト」にして「実装の工程の結果を使い回し」「PR の CI の結果を使い回し」（`reusedTests`）を出し、PR の本文のテストの行に使い回したことを添える。
   ゴールガーディアンにも記録を申告させ（`guardianVerificationRecordLines`）、実装の PR の CI のコミットを付けて `FinalReviewed` の `verificationRecord` に残す。
+  sacty が PR に足す成果物のファイルを最終レビューの写しに入れられなかったときは、写しが PR のコミットと同じ内容ではないので、どのコマンドも `partial` にし、無かったファイルを `note` に書いて残す（`withoutStepDocuments`）。PR のレビューは、そのファイルの分を実行する。
 - PR のレビュー：sacty が作った PR のレビューのタスク（`source.review` が `sacty`）では、その PR を作ったタスクの最終レビューの記録を、記録のコミットがレビューする先頭のコミット（`reviewTarget.headCommit`）と同じときだけ渡す（`reviewVerification`）。人の PR では記録は無く、CI の結果だけを使い回せる。
 - 使い回しの規則（エージェントへの指示と、既定のスキルの `verification-run` の「1.5 使い回せる結果を探す」）：
   - 使い回せるのは、同じ内容で全体（`full`）を実行して結果が出たものだけ。`partial` の記録は、覆った範囲を除いた残りを実行させる。
@@ -1262,7 +1263,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - CI が無い・結果が無い・読めないときは、CI で実行されたものとして扱わせない。最終レビューでは、記録が無く、CI の結果が `none`・`timed_out` なら、使い回しの指示を足さない。
   - 内容が同じでも結果が変わりうる検証は使い回させない。確かめられないものは実行させる。PR の作者の報告は使い回させない。
 
-コード: `apps/daemon/src/verification-reuse.ts`（`extractVerificationRecord`・`implementVerificationRecordLines`・`reuseVerificationLines`・`guardianVerificationRecordLines`）、`apps/daemon/src/prompts.ts`（`buildFinalReviewPrompt`・`testRunLines`・`reviewVerificationLines`・`extractFinalReview`）、`apps/daemon/src/service.ts`（`verify`・`reviewVerification`）、`packages/core/src/events.ts`（`VerificationRecord`・`GuardianTests`）、`packages/core/src/projection.ts`（`implementVerification`）
+コード: `apps/daemon/src/verification-reuse.ts`（`withoutStepDocuments`・`extractVerificationRecord`・`implementVerificationRecordLines`・`reuseVerificationLines`・`guardianVerificationRecordLines`）、`apps/daemon/src/prompts.ts`（`buildFinalReviewPrompt`・`testRunLines`・`reviewVerificationLines`・`extractFinalReview`）、`apps/daemon/src/service.ts`（`verify`・`reviewVerification`）、`packages/core/src/events.ts`（`VerificationRecord`・`GuardianTests`）、`packages/core/src/projection.ts`（`implementVerification`）
 
 ### 検証に通った実装の PR
 

@@ -3481,7 +3481,38 @@ describe("実装の工程の検証の記録（PBI-305）", () => {
   it("実装の提出の記録を持ち、記録の無い提出では前の記録を残さない", () => {
     seq = 0;
     expect(project(implemented("t1", record)).get("t1")?.implementVerification).toEqual(record);
-    expect(project(implemented("t2")).get("t2")?.implementVerification).toBeUndefined();
+    // 同じタスクで、記録のある提出の後に、記録の無い提出をやり直すと、前の記録は消える
+    const resubmitted = project([
+      ...implemented("t2", record),
+      // 最終レビューが不合格で、実装をやり直す
+      ev(
+        "t2",
+        {
+          type: "FinalReviewed",
+          payload: { passed: false, viewpoints: [], remarks: [], summary: "ng", agentId: "g" },
+        },
+        "guardian",
+      ),
+      ev("t2", {
+        type: "AgentRunStarted",
+        payload: { runId: "r2", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t2", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "r2",
+          step: "implement",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 実装 v2",
+        },
+      }),
+    ]).get("t2");
+    expect(resubmitted?.implementHistory).toHaveLength(2);
+    expect(resubmitted?.implementVerification).toBeUndefined();
   });
 
   it("ベースブランチを作業領域に取り込んだら、内容が変わったので記録を消す", () => {

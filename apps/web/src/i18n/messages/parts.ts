@@ -41,6 +41,9 @@ const ja = {
     previousTestRun: "前の提出のテストの実行",
     guardianTestRun: "ゴールガーディアンが実行したテスト",
     previousGuardianTestRun: "前の提出で、ゴールガーディアンが実行したテスト",
+    /** ゴールガーディアンが実行せず、前の段の結果を判定に使った（PBI-305）。 */
+    reusedTestRun: "最終レビューが判定に使ったテスト",
+    previousReusedTestRun: "前の提出で、最終レビューが判定に使ったテスト",
     guardianTestRunHint:
       "ゴールガーディアンが最終レビューの中で実行し、終了コードと結果の抜粋を申告したものです。",
     previousHint: "今の提出では、まだ実行・判定していません。",
@@ -324,6 +327,8 @@ const en: PartsMessages = {
     previousTestRun: "Test run for the previous submission",
     guardianTestRun: "Tests run by the Goal Guardian",
     previousGuardianTestRun: "Tests run by the Goal Guardian for the previous submission",
+    reusedTestRun: "Tests the final review judged with",
+    previousReusedTestRun: "Tests the final review judged with for the previous submission",
     guardianTestRunHint:
       "The Goal Guardian ran them in the final review and reported the exit code and an excerpt of the result.",
     previousHint: "Not yet run or judged for the current submission.",

@@ -230,3 +230,27 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
     expect(html).not.toContain(WORKSPACE_FILE_FAILURE);
   });
 });
+
+describe("Implementation の、前の段の結果を使い回したテスト（PBI-305）", () => {
+  const reused = review({
+    tests: { command: "npm test", exitCode: 0, output: "120 passed", reusedFrom: "ci" },
+    humanChecks: undefined,
+  });
+
+  it("見出しと補足を、ゴールガーディアンが実行したものではなく、判定に使った結果の表現にする", () => {
+    const html = render(task(reused));
+    expect(html).toContain("最終レビューが判定に使ったテスト");
+    expect(html).toContain("PR の CI の結果を使い回し");
+    expect(html).not.toContain("ゴールガーディアンが実行したテスト");
+    expect(html).not.toContain("ゴールガーディアンが最終レビューの中で実行し");
+    const en = render(task(reused), "en");
+    expect(en).toContain("Tests the final review judged with");
+    expect(en).not.toContain("Tests run by the Goal Guardian");
+  });
+
+  it("使い回していなければ、これまでどおりゴールガーディアンが実行したテストとして出す", () => {
+    const html = render(task(review({ tests: { command: "npm test", exitCode: 0, output: "" } })));
+    expect(html).toContain("ゴールガーディアンが実行したテスト");
+    expect(html).not.toContain("最終レビューが判定に使ったテスト");
+  });
+});

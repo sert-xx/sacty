@@ -454,7 +454,7 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import type { UpdateStatus } from "./update-check.js";
-import { extractVerificationRecord } from "./verification-reuse.js";
+import { extractVerificationRecord, withoutStepDocuments } from "./verification-reuse.js";
 import {
   idEntries,
   overlapsMounts,
@@ -9463,8 +9463,15 @@ export class TaskService {
       ]);
       return;
     }
-    // 検証の記録（PBI-305）。最終レビューの前に作った実装の PR のコミットに結び付け、PR のレビューが同じコミットで使い回す
-    const verification = extractVerificationRecord(outcome.output, "guardian").record;
+    // 検証の記録（PBI-305）。最終レビューの前に作った実装の PR のコミットに結び付け、PR のレビューが同じコミットで使い回す。
+    // PR に sacty が足す成果物のファイルを写しに入れられなかったときは、写しが PR のコミットと同じ内容ではないので、どの検証も
+    // 成果物のファイルを覆っていない（一部だけ）として残す（PR のレビューは、そのファイルの分を実行する）
+    const verification = withoutStepDocuments(
+      extractVerificationRecord(outcome.output, "guardian").record,
+      include || current.continuedPullRequest
+        ? []
+        : [...new Set((current.stepPullRequests ?? []).map((p) => p.path))],
+    );
     const reviewed = this.append(current, [
       {
         actor: "guardian",

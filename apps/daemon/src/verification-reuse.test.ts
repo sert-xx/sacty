@@ -10,6 +10,7 @@ import {
   extractVerificationRecord,
   reuseVerificationLines,
   VERIFICATION_HEADING,
+  withoutStepDocuments,
 } from "./verification-reuse.js";
 
 /*
@@ -264,5 +265,20 @@ describe("PR のレビュー", () => {
     const without = buildPrompt(reviewTask, "review", { diff: "diff" });
     expect(without).toContain("--- 前の段で実行した検証の使い回し ---");
     expect(without).not.toContain("sacty の最終レビュー（ゴールガーディアン）");
+  });
+});
+
+describe("成果物のファイルが無い写しで実行した記録（PBI-305）", () => {
+  it("どのコマンドも一部だけ（partial）にし、無かったファイルを note に書く。無かったファイルが無ければ変えない", () => {
+    const marked = withoutStepDocuments(record, ["docs/sacty/abc/requirements.md"]);
+    expect(marked?.commands.map((c) => c.coverage)).toEqual(["partial", "partial"]);
+    expect(marked?.commands[0]?.note).toBe(
+      "成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した",
+    );
+    expect(marked?.commands[1]?.note).toBe(
+      "変更したファイルだけ。成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した",
+    );
+    expect(withoutStepDocuments(record, [])).toBe(record);
+    expect(withoutStepDocuments(undefined, ["x"])).toBeUndefined();
   });
 });

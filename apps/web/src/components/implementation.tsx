@@ -236,15 +236,21 @@ export function Implementation({ task }: { task: Task }) {
         <details className="rounded-lg border border-border p-3.5 text-sm">
           <summary className="cursor-pointer">
             <span className="font-semibold">
-              {tests.byGuardian
+              {tests.reusedFrom
                 ? testsCurrent
-                  ? m.guardianTestRun
-                  : m.previousGuardianTestRun
-                : testsCurrent
-                  ? m.testRun
-                  : m.previousTestRun}
+                  ? m.reusedTestRun
+                  : m.previousReusedTestRun
+                : tests.byGuardian
+                  ? testsCurrent
+                    ? m.guardianTestRun
+                    : m.previousGuardianTestRun
+                  : testsCurrent
+                    ? m.testRun
+                    : m.previousTestRun}
             </span>
-            {tests.byGuardian && <Hint text={m.guardianTestRunHint} />}
+            {tests.byGuardian && (
+              <Hint text={tests.reusedFrom ? m.reusedTestsHint : m.guardianTestRunHint} />
+            )}
             {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
             {/* 環境による失敗だけで、テストは通ったものとした（PBI-155） */}
@@ -257,8 +263,7 @@ export function Implementation({ task }: { task: Task }) {
             {/* 同じ内容で前の段が実行した結果を使い回した（PBI-305） */}
             {tests.reusedFrom && (
               <>
-                <Pill tone={OK}>{m.reusedTests(tests.reusedFrom)}</Pill>
-                <Hint text={m.reusedTestsHint} />{" "}
+                <Pill tone={OK}>{m.reusedTests(tests.reusedFrom)}</Pill>{" "}
               </>
             )}
             {/* 差分が文書だけで、ツールがイメージに無くて実行できなかった検証を、人の確認に回した（PBI-158） */}

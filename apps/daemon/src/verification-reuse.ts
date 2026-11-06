@@ -223,3 +223,23 @@ export function guardianVerificationRecordLines(): string[] {
     ...exampleLines("guardian"),
   ];
 }
+
+/**
+ * 検証の記録から、写しに無かった成果物のファイル（missing）を覆っていないことを示す（PBI-305）。どのコマンドも、そのファイルを
+ * 検査しうるかを sacty は確かめられないので、一部だけ（partial）にし、無かったファイルを note に書く。missing が空なら変えない。
+ */
+export function withoutStepDocuments(
+  record: VerificationRecord | undefined,
+  missing: readonly string[],
+): VerificationRecord | undefined {
+  if (!record || missing.length === 0) return record;
+  const gap = `成果物のファイル（${missing.join("・")}）が無い写しで実行した`;
+  return {
+    ...record,
+    commands: record.commands.map((c) => ({
+      ...c,
+      coverage: "partial" as const,
+      note: [c.note, gap].filter(Boolean).join("。").slice(0, VERIFICATION_NOTE_MAX),
+    })),
+  };
+}
