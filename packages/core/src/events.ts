@@ -1389,6 +1389,11 @@ export const GuardianTests = z.object({
    */
   environmentFailures: z.array(z.string()).optional(),
   /**
+   * テストのコマンドが失敗したときの、失敗したテスト・検査の名前（PBI-308）。回をまたいで比べ、実装をやり直しても
+   * 1つも直らなければ止める（`testsMadeNoProgress`）。申告が無い・`FAILED_TESTS_MAX` を超えた・それより前の版の記録には無い。
+   */
+  failedTests: z.array(z.string()).optional(),
+  /**
    * テストのコマンドに書いたツールのうち、イメージに無くて実行できなかったもの（PBI-158）。sacty が、差分が文書の
    * ファイルだけと確かめたときだけ記録する（コードを含む差分では、止めて記録しない）。あれば、実行できなかった検証は
    * 人が最終承認で確かめるものとし、テストは通ったものとして扱う。
@@ -1409,6 +1414,22 @@ export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boole
   if ((tests.missingCommands?.length ?? 0) > 0) return true;
   if (tests.exitCode === undefined) return false;
   return tests.exitCode === 0 || (tests.environmentFailures?.length ?? 0) > 0;
+}
+
+/** 記録する、失敗したテスト・検査の名前の数の上限（PBI-308）。 */
+export const FAILED_TESTS_MAX = 100;
+
+/**
+ * 実装をやり直したのに、前回の不合格で失敗したものが1つも直っていないか（PBI-308）。前回の失敗がすべて今回も失敗して
+ * いれば true（失敗が増えただけのときも）。どちらかの申告が無ければ、比べられないので false（回数だけで判断する）。
+ */
+export function testsMadeNoProgress(
+  previous: readonly string[] | undefined,
+  current: readonly string[] | undefined,
+): boolean {
+  if (!previous?.length || !current?.length) return false;
+  const now = new Set(current);
+  return previous.every((name) => now.has(name));
 }
 
 /**

@@ -10359,9 +10359,13 @@ export class TaskService {
     }
   }
 
-  /** 検証が続けて通らなければ、実装のやり直しを止めて人間に判断してもらう。 */
+  /**
+   * 検証が続けて通らなければ、実装のやり直しを止めて人間に判断してもらう。実装をやり直しても前回の失敗が1つも
+   * 直らなかったときは、回数を待たずに止める（やり直しても直らない失敗なので。PBI-308）。
+   */
   private pauseIfVerificationKeepsFailing(task: Task): void {
-    if (task.verifyFailures < MAX_VERIFY_ATTEMPTS) return;
+    const stalled = task.verifyStalled ?? [];
+    if (task.verifyFailures < MAX_VERIFY_ATTEMPTS && stalled.length === 0) return;
     // 競合の目印が残って通らなかったときは、そう伝える（目印のあるファイルを、レビューへ進められない理由と一緒に示す）
     const feedback = task.verifyFeedback;
     this.append(task, [
@@ -10378,7 +10382,12 @@ export class TaskService {
                     files: feedback.files.slice(0, 5).join(", "),
                     total: feedback.files.length,
                   })
-                : message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
+                : stalled.length > 0
+                  ? message("verify.sameFailureRemains", {
+                      names: stalled.slice(0, 5).join(", "),
+                      total: stalled.length,
+                    })
+                  : message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
           },
         },
       },

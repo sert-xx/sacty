@@ -36,6 +36,7 @@ import {
   DEFAULT_DOCUMENTS_DIR,
   EXPORT_STEPS,
   exportSteps,
+  guardianTestsPassed,
   isDocumentsDir,
   MAX_INTEGRATION_ATTEMPTS,
   RESUME_NOTE_MAX,
@@ -44,6 +45,7 @@ import {
   resumeNoteSections,
   SKIPPABLE_STEPS,
   TASK_BODY_MAX,
+  testsMadeNoProgress,
   withoutResumeNoteHeadings,
 } from "./events.js";
 import { advanceImplementBase } from "./implement-description.js";
@@ -637,6 +639,13 @@ export type Task = {
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
+   * 最後の最終レビューで、テストが通らなかった原因として申告された失敗の名前（PBI-308）。人が再開しても消さない
+   * （再開の後に同じ失敗なら、回数に関係なく止める）。テストが通る・前の工程からやり直す・人がレビューへ進めると消す。
+   */
+  failedTests?: string[];
+  /** 実装をやり直しても1つも直らなかった、前回の失敗（PBI-308）。あれば、やり直さずに止める。 */
+  verifyStalled?: string[];
+  /**
    * 最終レビューの出力から判定を読み取れなかった回数（続けて。FinalReviewFailed の verdictUnreadable）。不合格ではないので
    * verifyFailures には数えない。最終レビューの判定が記録される・人間が再開する・前の工程からやり直すと0に戻る。
    */
@@ -878,7 +887,7 @@ function reopen(task: Task, target: StepKey) {
   task.stepReview = undefined;
   task.verification = undefined;
   task.verifyFeedback = undefined;
-  task.verifyFailures = 0;
+  resetVerifyFailures(task);
   task.unreadableReviews = undefined;
   task.publishPending = undefined;
   task.pullRequestCi = undefined;
@@ -962,9 +971,17 @@ function mergeTestMaps(previous: TestMapping[], next: TestMapping[]): TestMappin
   });
 }
 
+/** 検証の失敗の回数と一緒に、回をまたいで比べる失敗の記憶も消す（PBI-308）。 */
+function resetVerifyFailures(task: Task) {
+  task.verifyFailures = 0;
+  task.failedTests = undefined;
+  task.verifyStalled = undefined;
+}
+
 function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback"]>) {
   task.verification = undefined;
   task.verifyFailures += 1;
+  task.verifyStalled = undefined;
   task.verifyFeedback = feedback;
   task.status = "queued";
 }
@@ -1468,7 +1485,7 @@ export function applyEvent(
         task.stepReview = undefined;
         task.verification = undefined;
         task.verifyFeedback = undefined;
-        task.verifyFailures = 0;
+        resetVerifyFailures(task);
         task.unreadableReviews = undefined;
         task.publishPending = undefined;
         task.pullRequestCi = undefined;
@@ -1650,14 +1667,21 @@ export function applyEvent(
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
       task.unreadableReviews = undefined;
+      // テストが通っていれば、不合格の理由は別にあるので、失敗の記憶に入れない（PBI-308）
+      const tests = event.payload.tests;
+      const failedTests = tests && !guardianTestsPassed(tests) ? tests.failedTests : undefined;
       if (!event.payload.passed) {
+        const previous = task.failedTests;
+        const stalled = testsMadeNoProgress(previous, failedTests);
         failVerification(task, { kind: "review", review });
+        task.failedTests = failedTests?.length ? failedTests : undefined;
+        task.verifyStalled = stalled ? previous : undefined;
         break;
       }
       // 検証に通った。実装の工程の中で、sacty が実装の PR を作るので、実行待ちにする（PBI-110。工程は進めない。
       // PR を作ったら実装の承認待ちになり、PR のマージで実装を承認する）
       task.verification = undefined;
-      task.verifyFailures = 0;
+      resetVerifyFailures(task);
       task.verifyFeedback = undefined;
       task.publishPending = true;
       task.status = "queued";
@@ -1743,7 +1767,7 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the verification cannot be overridden");
       }
       task.verification = undefined;
-      task.verifyFailures = 0;
+      resetVerifyFailures(task);
       task.verifyFeedback = undefined;
       task.publishPending = true;
       task.verificationOverride = {
@@ -2079,7 +2103,7 @@ export function applyEvent(
       task.remarks = task.remarks.map((r) => (discarded.has(r.id) ? { ...r, voided: true } : r));
       task.currentRunId = undefined;
       task.verification = undefined;
-      task.verifyFailures = 0;
+      resetVerifyFailures(task);
       task.verifyFeedback = undefined;
       task.publishPending = undefined;
       task.pullRequestCi = undefined;
@@ -2783,7 +2807,11 @@ export function applyEvent(
             ? "queued"
             : "idle";
       // 人間が再開したら、検証の失敗の回数を数え直す
-      if (task.pausedReason === "verification") task.verifyFailures = 0;
+      if (task.pausedReason === "verification") {
+        // 回数は数え直すが、失敗の記憶は残す（再開の後に同じ失敗なら、回数に関係なく止める。PBI-308）
+        task.verifyFailures = 0;
+        task.verifyStalled = undefined;
+      }
       task.unreadableReviews = undefined;
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
       if (task.split && task.pausedCancelledChildren?.length) {

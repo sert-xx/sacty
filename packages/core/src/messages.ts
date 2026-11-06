@@ -429,6 +429,7 @@ const PARAMS = {
     detail: TextParam.optional(),
   }),
   "verify.tooManyAttempts": z.object({ count: Count }),
+  "verify.sameFailureRemains": z.object({ names: TextParam, total: Count }),
   "verify.mergeConflictsRemain": z.object({
     count: Count,
     files: TextParam,
@@ -1271,6 +1272,8 @@ const ja: MessageDictionary = {
     `最終レビューの出力から、判定を読み取れませんでした（${count}/${max}回目）。${detail === undefined ? "" : text(detail)}不合格にはせず、過去の指摘も再発と数えずに、最終レビューをやり直します。出力：${path}`,
   "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
     `最終レビューの出力から、判定を${max}回続けて読み取れませんでした。${detail === undefined ? "" : text(detail)}実装の不合格ではないので、実装には戻さず、一時停止しました。出力（${path}）を確かめてください。再開すると、最終レビューからやり直します。`,
+  "verify.sameFailureRemains": ({ names, total }, text) =>
+    `実装をやり直しても、前回の検証の失敗が1つも直りませんでした（${text(names)}${total > 5 ? ` ほか、全${total}件` : ""}）。実装では直らない失敗の可能性があります。テストや環境を確かめてください。再開すると実装をやり直します。PR を確かめて問題が無ければ、レビューへ進めることもできます。`,
   "verify.tooManyAttempts": ({ count }) =>
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
@@ -1975,6 +1978,8 @@ const en: MessageDictionary = {
     `Could not read the verdicts from the final review output (attempt ${count} of ${max}). ${detail === undefined ? "" : `${text(detail)} `}It is not counted as a failure, and no past remark is counted as recurring; the final review is run again. Output: ${path}`,
   "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
     `Could not read the verdicts from the final review output ${max} times in a row. ${detail === undefined ? "" : `${text(detail)} `}This is not a failure of the implementation, so it was not sent back; the task is paused. Check the output (${path}). Resuming redoes the final review.`,
+  "verify.sameFailureRemains": ({ names, total }, text) =>
+    `Redoing the implementation fixed none of the failures from the previous verification (${text(names)}${total > 5 ? ` and more, ${total} in total` : ""}). The implementation may not be able to fix them. Check the tests and the environment. Resuming redoes the implementation. If you check the PR and find no problem, you can also move on to review.`,
   "verify.tooManyAttempts": ({ count }) =>
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
