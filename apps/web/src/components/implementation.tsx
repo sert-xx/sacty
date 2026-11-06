@@ -256,11 +256,15 @@ export function Implementation({ task }: { task: Task }) {
             )}
             {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
-            {/* 環境による失敗だけで、テストは通ったものとした（PBI-155） */}
+            {/* 環境による失敗（不安定な失敗と混ざることもある）で、テストは通ったものとした（PBI-155） */}
             {tests.environmentFailures && (
               <>
-                <Pill tone={NG}>{m.environmentOnly}</Pill>
-                <Hint text={m.environmentOnlyHint} />{" "}
+                <Pill tone={NG}>
+                  {tests.flakyFailures ? m.environmentMixed : m.environmentOnly}
+                </Pill>
+                <Hint
+                  text={tests.flakyFailures ? m.environmentMixedHint : m.environmentOnlyHint}
+                />{" "}
               </>
             )}
             {/* 差分と無関係な不安定な失敗があり、テストは通ったものとした（PBI-310） */}
@@ -302,6 +306,17 @@ export function Implementation({ task }: { task: Task }) {
                 Boolean(tests.flakyFailures),
               )}
             </p>
+          )}
+          {/* 不安定な失敗として認めなかった申告と理由（PBI-310）。テストが不合格になった原因 */}
+          {tests.rejectedFlakyFailures && (
+            <div className="mt-2 text-sm" data-testid="rejected-flaky-failures">
+              <p>{m.rejectedFlakyFailures}</p>
+              <ul className="ml-4 list-disc">
+                {tests.rejectedFlakyFailures.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+            </div>
           )}
           {tests.note && <p className="mt-2 text-warn">{messages.labels.text(tests.note)}</p>}
           <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">

@@ -431,7 +431,7 @@ For a task that takes over an existing PR, however, "Move to review" is not avai
 What cannot be checked in the workspace (container) does not fail the final review; it is left as items a person checks before merging.
 
 - Test failures caused by the environment: when the Goal Guardian judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
-  If even one failure comes from the change or cannot be judged, the review fails as before.
+  If even one failure can be explained neither as caused by the environment nor as flaky, the review fails as before.
 - Flaky test failures: when a rerun of the failed tests changes the result and the Goal Guardian judges the failure unrelated to the diff, the tests also count as passed.
   The failures appear under "For a person to check". A failure of a test changed in the diff is not treated as flaky.
   A known flaky test seen in 3 or more tasks may skip the rerun ([The flaky test ledger](audit.en.md#the-flaky-test-ledger)).
@@ -439,7 +439,7 @@ What cannot be checked in the workspace (container) does not fail the final revi
   The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
 
 - Items carried over from the previous round: when the final review is redone, the items the previous round listed under "For a person to check" (including changes it called "cannot be judged as in scope") stay in the next round.
-  The exceptions are test failures judged to be caused by the environment, which are not carried over and are judged again from that round's test results, and the item for verification that could not run because a tool is missing, which is not carried over and is created again only when the same condition applies in that round.
+  The exceptions are test failures judged to be caused by the environment or judged flaky, which are not carried over and are judged again from that round's test results, and the item for verification that could not run because a tool is missing, which is not carried over and is created again only when the same condition applies in that round.
   The Goal Guardian can drop one only after confirming that its concern is resolved in the current code, or that the previous judgment was wrong, and writing the reason.
   The dropped item and its reason are kept in the final review record. An item whose code has not changed is not dropped.
   Items with the same purpose across rounds are merged into one. When the Goal Guardian rewrites an item of the previous round for the current state, or when items with the same heading overlap, such as 「この環境だけの結果」, only the newest wording stays. The wording before merging is kept in the final review record.
