@@ -12564,6 +12564,27 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("引き継いだ PR があれば、作業領域のベースブランチでなく PR の向き先を確かめる", async () => {
+        const { activity, service, ci, advance, id } = await waiting();
+        // 引き継ぎのタスクは今はドラフトの PR を作らないので、待っているタスクに直接持たせる
+        Object.assign(service.get(id)?.task as Task, {
+          continuedPullRequest: {
+            repo: "https://github.com/acme/app",
+            number: 12,
+            url: "https://github.com/acme/app/pull/12",
+            branch: "feature/retry",
+            baseBranch: "develop",
+          },
+        });
+        ci.noCi = true;
+        advance(PULL_REQUEST_NO_CI_GRACE_MS);
+        await service.checkPullRequests();
+        expect(ci.noCiCalls).toEqual([
+          { repo: "https://github.com/acme/app", baseBranch: "develop" },
+        ]);
+        activity.close();
+      });
+
       it("CI が無いと確かめられなければ今までの猶予まで待ち、確かめるのはコミットごとに1回", async () => {
         const { activity, service, ci, advance, id } = await waiting();
         advance(PULL_REQUEST_NO_CI_GRACE_MS);
