@@ -12,6 +12,10 @@ import {
   ExportVia,
   FAILED_TESTS_MAX,
   type FinalReview,
+  FLAKY_MAX_RERUNS,
+  FLAKY_MIN_RERUNS,
+  type FlakyFailure,
+  flakyFailureLine,
   GATHERED_BRIEF_MAX,
   guardianTestsPassed,
   humanVisibleEnvironmentFailures,
@@ -861,6 +865,20 @@ function feedbackLines(task: Task): string[] {
             ? [
                 "環境によるとゴールガーディアンが判断したテストの失敗（実装で直す対象ではありません）：",
                 ...r.tests.environmentFailures.map((f) => `- ${f}`),
+              ]
+            : []),
+          // 認めた不安定な失敗も、実装を直しても直らないので、直す対象から外す（PBI-310）
+          ...(r.tests.flakyFailures
+            ? [
+                "差分と無関係で不安定と判断したテストの失敗（実装で直す対象ではありません）：",
+                ...r.tests.flakyFailures.map((f) => `- ${flakyFailureLine(f)}`),
+              ]
+            : []),
+          // 不安定な失敗として認めなかった理由（PBI-310）。テストの失敗として直す対象になる
+          ...(r.tests.rejectedFlakyFailures
+            ? [
+                "不安定な失敗として認めなかった申告（テストの失敗として、原因を確かめて直してください）：",
+                ...r.tests.rejectedFlakyFailures.map((f) => `- ${f}`),
               ]
             : []),
           // 差分が文書だけで、ツールがイメージに無くて実行できなかった検証も、実装で直す対象ではない（PBI-158）
@@ -3371,6 +3389,56 @@ const reportedItems = (v: unknown): string[] => {
     .map(hideItem);
 };
 
+/** ファイルのパスを比べられる形にする（先頭の ./ と / を除く）。 */
+const repoPath = (path: string) =>
+  path
+    .trim()
+    .replace(/^(?:\.\/)+/, "")
+    .replace(/^\/+/, "");
+
+/**
+ * 不安定な失敗の申告を確かめる（PBI-310）。ゴールガーディアンの申告のうち、機械で確かめられること（実行し直しの回数・
+ * 通った回数・テストのファイルが差分に含まれないこと・失敗の全件を説明できること）を確かめる。1件でも認めなければ、
+ * すべて認めない（本当の失敗が残っている恐れがあるので、テストが通らなかったものとする）。
+ */
+function checkFlakyFailures(
+  v: unknown,
+  known: {
+    failedTests: readonly string[];
+    environmentFailures: readonly string[];
+    changedFiles: readonly string[] | undefined;
+  },
+): { accepted: FlakyFailure[]; rejected: string[] } {
+  if (!Array.isArray(v) || v.length === 0) return { accepted: [], rejected: [] };
+  const changed = known.changedFiles && new Set(known.changedFiles.map(repoPath));
+  const accepted: FlakyFailure[] = [];
+  const rejected: string[] = [];
+  for (const item of v) {
+    const o = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const name = hideItem(oneLine(text(o.name)));
+    const file = hideItem(oneLine(text(o.file)));
+    const reason = hideItem(oneLine(text(o.reason)));
+    const runs = typeof o.runs === "number" && Number.isInteger(o.runs) ? o.runs : 0;
+    const passes = typeof o.passes === "number" && Number.isInteger(o.passes) ? o.passes : 0;
+    const label = name || "名前の無い申告";
+    if (!name || !file || !reason) rejected.push(`${label}：名前・ファイル・根拠のどれかが無い`);
+    else if (runs < FLAKY_MIN_RERUNS)
+      rejected.push(`${label}：実行し直しが ${FLAKY_MIN_RERUNS} 回に満たない（${runs} 回）`);
+    else if (passes < 1 || passes > runs)
+      rejected.push(`${label}：実行し直して通った回数が正しくない（${runs} 回中 ${passes} 回）`);
+    else if (!changed) rejected.push(`${label}：差分のファイルを読めず、無関係と確かめられない`);
+    else if (changed.has(repoPath(file)))
+      rejected.push(`${label}：テストのファイル ${file} が差分に含まれる`);
+    else accepted.push({ name, file, runs, passes, reason });
+  }
+  const names = new Set(accepted.map((f) => f.name));
+  for (const name of known.failedTests) {
+    const explained = names.has(name) || known.environmentFailures.some((f) => f.includes(name));
+    if (!explained) rejected.push(`${name}：環境による失敗にも不安定な失敗にも挙げられていない`);
+  }
+  return rejected.length > 0 ? { accepted: [], rejected } : { accepted, rejected };
+}
+
 /**
  * 失敗したテスト・検査の名前の一覧（PBI-308）。文字列か、名前を持つオブジェクトの名前だけを読む。根拠はつながない
  * （回をまたいで同じ名前を比べるので、理由の言い回しの違いで別のものにしない）。
@@ -3763,6 +3831,7 @@ export function pullRequestCiLines(pr: { url?: string; ci: PullRequestCi }): str
     "- gh で GitHub を読めるなら、PR の状態と CI のログを読んで確かめてよい（読むだけ。PR への投稿・CI の再実行・PR やブランチの変更はしない）",
     "- CI の失敗が、実装の変更によるもの（変更したコード・テスト・設定・依存で失敗している）なら、関わる観点を不合格にし、失敗したジョブと理由を書く",
     "- CI の失敗が、変更と関係の無いもの（変更を外した起点でも同じように失敗する、または CI の環境・外部のサービス・権限や秘密情報の不足によると確かめられる）なら、不合格の理由にせず、`humanChecks` に「CI の失敗：<ワークフロー・ジョブ>（根拠）」を書く",
+    `- CI で失敗したテストは、作業領域で実行できるなら、不安定なテストの基準（${FLAKY_MIN_RERUNS} 回以上実行し直し、差分と関係が無い）で確かめてよい。確かめられたら、tests.flakyFailures に書き、不合格の理由にしない`,
     "- 変更によるか確かめられない CI の失敗は、変更によるものとして扱う",
     ...(result === "timed_out"
       ? [
@@ -4013,6 +4082,7 @@ export function buildFinalReviewPrompt(
               exitCode: 0,
               output: "結果の抜粋（実行した件数・失敗したテストとその理由）",
               failedTests: [],
+              flakyFailures: [],
               missingCommands: [],
               environmentFailures: [],
               otherFailures: [],
@@ -4228,7 +4298,13 @@ function humanCheckLines(withTests: boolean): string[] {
           "--- 環境によるテストの失敗 ---",
           "- テストのコマンドの失敗が、すべて環境によるものなら、テストの失敗を理由に不合格にしない。環境によるものとは、変更を外した起点の状態でも同じように失敗する（起点のコミットを別の場所に取り出して同じテストを実行するなど）、または差分と関係の無い環境の要因（プロセス・権限・ネットワーク・OS など）で失敗すると確かめられるもの",
           "- そのときは、失敗したテストごとに、名前と環境によると判断した根拠を tests.environmentFailures に書く（1件は「名前：根拠」の1つの文字列にした、文字列の配列）。観点に対応するテストは、通っていることを確かめる",
-          "- 失敗のうち1件でも、変更によるもの・環境によると確かめられないものがあれば、environmentFailures を空にして、テストが通らなかったものとして判定する",
+          "- 失敗のうち1件でも、変更によるもの・環境によるとも不安定とも確かめられないものがあれば、environmentFailures を空にして、テストが通らなかったものとして判定する",
+          "",
+          "--- 不安定なテストの失敗 ---",
+          `- テストのコマンドが失敗したら、環境によるものと確かめられなかった失敗のテストだけを、${FLAKY_MIN_RERUNS}〜${FLAKY_MAX_RERUNS} 回実行し直す。全体を実行し直さない`,
+          "- 実行し直して1回でも通り、差分と関係が無いと確かめられた失敗は、tests.flakyFailures に1件ずつ書く（name：failedTests と同じ名前、file：テストのファイルの作業領域からのパス、runs：実行し直した回数、passes：そのうち通った回数、reason：差分と関係が無いと判断した根拠）",
+          "- 失敗がすべて、環境によるものか不安定なものなら、テストの失敗を理由に不合格にしない",
+          "- 差分で変えたテスト、または差分で変えたコードを通るテストが不安定なときは、flakyFailures に書かない。変更がタイミングや順序の問題を持ち込んだ恐れがあるので、テストが通らなかったものとして判定する",
         ]
       : []),
     "",
@@ -4476,6 +4552,11 @@ export function extractFinalReview(
     /** 依頼・承認済みの要求要件・設計の文（internalNameAllowance）。これが挙げた内部の名前を含む項目は、外さず言い換えない。 */
     internalAllowance?: string;
     /**
+     * タスクの差分のファイル（作業領域からのパス。PBI-310）。不安定な失敗の申告を確かめるのに使う。取れなければ無く、
+     * そのときは差分に含まれないと確かめられないので、不安定な失敗を認めない。
+     */
+    changedFiles?: readonly string[];
+    /**
      * タスクの差分が文書のファイルだけと、sacty が確かめた（PBI-158）。ツールがイメージに無かったと申告されても止めず、
      * 実行できなかった検証を人が確かめること（humanChecks）に足して、テストは通ったものとして判定する。
      */
@@ -4597,7 +4678,7 @@ export function extractFinalReview(
   const exitCode =
     typeof raw.exitCode === "number" && Number.isInteger(raw.exitCode) ? raw.exitCode : undefined;
   // 環境による失敗（PBI-155）は、テストのコマンドが失敗したときだけ読む（成功したのに書いてあっても使わない）
-  const environmentFailures =
+  const reportedEnvironment =
     exitCode !== undefined && exitCode !== 0
       ? neutralEnvironmentFailures(
           reportedItems(raw.environmentFailures),
@@ -4609,6 +4690,16 @@ export function extractFinalReview(
     exitCode !== undefined && exitCode !== 0
       ? [...new Set(reportedFailedTests(raw.failedTests))].slice(0, FAILED_TESTS_MAX)
       : [];
+  // 不安定な失敗（PBI-310）。1件でも認めなければ本当の失敗が残っているので、環境による失敗の申告でも通さない
+  const flaky =
+    exitCode !== undefined && exitCode !== 0
+      ? checkFlakyFailures(raw.flakyFailures, {
+          failedTests,
+          environmentFailures: reportedEnvironment,
+          changedFiles: options.changedFiles,
+        })
+      : { accepted: [], rejected: [] };
+  const environmentFailures = flaky.rejected.length > 0 ? [] : reportedEnvironment;
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
   const reportedMissing = [
@@ -4644,6 +4735,8 @@ export function extractFinalReview(
     ...(reusedFrom ? { reusedFrom } : {}),
     output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
     ...(failedTests.length > 0 ? { failedTests } : {}),
+    ...(flaky.accepted.length > 0 ? { flakyFailures: flaky.accepted } : {}),
+    ...(flaky.rejected.length > 0 ? { rejectedFlakyFailures: flaky.rejected } : {}),
     ...(environmentFailures.length > 0 ? { environmentFailures } : {}),
     ...(skipped.length > 0 ? { missingCommands: skipped } : {}),
   };
@@ -4772,8 +4865,12 @@ function carryHumanChecks(
 function environmentPassNote(tests: {
   exitCode?: number;
   environmentFailures?: readonly string[];
+  flakyFailures?: readonly FlakyFailure[];
 }): string {
   const failures = tests.environmentFailures ?? [];
+  if (tests.exitCode !== 0 && (tests.flakyFailures?.length ?? 0) > 0) {
+    return "。終了コードは 0 でないが、失敗は環境によるものか、差分と無関係で実行し直すと結果が変わるものだけと判断して合格にした。下の「人が確かめること」";
+  }
   if (failures.length === 0 || tests.exitCode === 0) return "";
   return humanVisibleEnvironmentFailures(failures).length === 0
     ? "。終了コードは 0 でないが、失敗は sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため合格にした"
@@ -4962,6 +5059,7 @@ const FINAL_REVIEW_SHAPE: LenientShape = {
       "exitCode",
       "output",
       "failedTests",
+      "flakyFailures",
       "missingCommands",
       "environmentFailures",
       "otherFailures",
@@ -5871,6 +5969,9 @@ function humanCheckItems(task: Task): string[] {
     ...(review?.humanChecks ?? []),
     ...humanVisibleEnvironmentFailures(review?.tests?.environmentFailures).map(
       (f) => `環境によると判断したテストの失敗：${f}`,
+    ),
+    ...(review?.tests?.flakyFailures ?? []).map(
+      (f) => `不安定と判断したテストの失敗：${flakyFailureLine(f)}`,
     ),
   ].map((item) => {
     const line = oneLine(item);
@@ -6876,6 +6977,9 @@ export function chatJudgementLines(task: Task): string[] {
             `  - ゴールガーディアンが実行したテスト：${r.tests.command}・終了コード ${r.tests.exitCode ?? "申告なし"}`,
             ...humanVisibleEnvironmentFailures(r.tests.environmentFailures).map(
               (f) => `  - 環境によると判断したテストの失敗：${f}`,
+            ),
+            ...(r.tests.flakyFailures ?? []).map(
+              (f) => `  - 不安定と判断したテストの失敗：${flakyFailureLine(f)}`,
             ),
           ]
         : []),

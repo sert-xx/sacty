@@ -184,6 +184,24 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
       tests,
     });
 
+  it("不安定な失敗で合格にしたことと、失敗の内容を出す（PBI-310）", () => {
+    const flaky = {
+      name: "ui.spec.ts > 保存",
+      file: "tests/ui.spec.ts",
+      runs: 3,
+      passes: 2,
+      reason: "差分と別の画面",
+    };
+    const task = designed(
+      reviewed({ command: "npm test", exitCode: 1, output: "", flakyFailures: [flaky] }),
+    );
+    const html = render(task);
+    expect(html).toContain("テスト合格（不安定な失敗あり）");
+    expect(html).toContain("不安定と判断したテストの失敗：ui.spec.ts &gt; 保存");
+    expect(html).toContain('data-testid="environment-pass-note"');
+    expect(render(task, "en")).toContain("passed 2 of 3 reruns");
+  });
+
   it("観点ごとの「テスト合格」に、環境による失敗だけで合格にしたことを添え、理由を日英で出す", () => {
     const html = render(
       designed(

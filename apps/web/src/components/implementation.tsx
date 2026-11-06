@@ -43,6 +43,7 @@ function HumanChecks({ review }: { review: NonNullable<Task["lastReview"]> }) {
     ...humanVisibleEnvironmentFailures(review.tests?.environmentFailures).map((f) =>
       m.environmentFailure(f),
     ),
+    ...(review.tests?.flakyFailures ?? []).map((f) => m.flakyFailure(f)),
   ];
   if (items.length === 0) return null;
   return (
@@ -207,9 +208,11 @@ export function Implementation({ task }: { task: Task }) {
                         ) : tests.passed && list.length > 0 ? (
                           // 終了コードが 0 でないのに合格にしたときは、「合格」とだけ出さず、その理由を添える（PBI-302 A2）
                           <Pill tone={OK}>
-                            {tests.environmentFailures && tests.exitCode !== 0
-                              ? m.testsPassedEnvironment
-                              : m.testsPassed}
+                            {tests.flakyFailures && tests.exitCode !== 0
+                              ? m.testsPassedFlaky
+                              : tests.environmentFailures && tests.exitCode !== 0
+                                ? m.testsPassedEnvironment
+                                : m.testsPassed}
                           </Pill>
                         ) : (
                           <Pill tone={NG}>{m.testsFailed}</Pill>
@@ -260,6 +263,13 @@ export function Implementation({ task }: { task: Task }) {
                 <Hint text={m.environmentOnlyHint} />{" "}
               </>
             )}
+            {/* 差分と無関係な不安定な失敗があり、テストは通ったものとした（PBI-310） */}
+            {tests.flakyFailures && (
+              <>
+                <Pill tone={NG}>{m.flakyOnly}</Pill>
+                <Hint text={m.flakyOnlyHint} />{" "}
+              </>
+            )}
             {/* 同じ内容で前の段が実行した結果を使い回した（PBI-305） */}
             {tests.reusedFrom && (
               <>
@@ -283,11 +293,13 @@ export function Implementation({ task }: { task: Task }) {
           </summary>
           <p className="mt-2 font-mono text-xs break-all">{tests.command}</p>
           {/* 終了コードが 0 でないのに合格にした理由（PBI-302 A2）。失敗の中身は「人が確かめること」に出る */}
-          {tests.environmentFailures && tests.exitCode !== 0 && (
+          {(tests.environmentFailures || tests.flakyFailures) && tests.exitCode !== 0 && (
             <p className="mt-2 text-sm" data-testid="environment-pass-note">
               {m.environmentPassNote(
                 tests.exitCode,
-                humanVisibleEnvironmentFailures(tests.environmentFailures).length === 0,
+                humanVisibleEnvironmentFailures(tests.environmentFailures).length === 0 &&
+                  !tests.flakyFailures,
+                Boolean(tests.flakyFailures),
               )}
             </p>
           )}

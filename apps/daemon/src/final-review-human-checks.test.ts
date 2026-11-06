@@ -166,7 +166,7 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(prompt).toContain("--- 環境によるテストの失敗 ---");
     expect(prompt).toContain("変更を外した起点の状態でも同じように失敗する");
     expect(prompt).toContain(
-      "1件でも、変更によるもの・環境によると確かめられないものがあれば、environmentFailures を空にして",
+      "1件でも、変更によるもの・環境によるとも不安定とも確かめられないものがあれば、environmentFailures を空にして",
     );
     expect(prompt).toContain('"environmentFailures":[]');
     expect(prompt).toContain('"humanChecks":[]');
