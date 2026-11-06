@@ -4668,6 +4668,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         async failures() {
           return [];
         }
+        async rerunFailedJobs() {}
       }
       /** 実装して PR をドラフトで作り、CI の結果が出て、最終レビューに進む直前まで進める。 */
       async function toCiFinished(outcomes: AgentOutcome[], repos: FakeRepos) {
@@ -8899,6 +8900,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           failedRuns: [],
         }),
         failures: async () => [],
+        rerunFailedJobs: async () => {},
       };
       const { service } = makeService(
         activity,
@@ -12462,6 +12464,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       };
       failuresList: CiFailure[] = [];
       calls: { repo: string; commit: string }[] = [];
+      /** 再実行を頼まれた実行の ID。 */
+      reruns: number[] = [];
+      /** 再実行の答え（Error なら頼めない。既定は権限不足）。 */
+      rerunAnswer: Error | undefined | ((runId: number) => Error | undefined) = new Error(
+        "403 Resource not accessible by integration",
+      );
+      /** 再実行を頼まれたときの処理（再実行の後の状態にするなど）。 */
+      onRerun?: () => void;
       async snapshot(input: { repo: string; token: string; commit: string }) {
         this.calls.push({ repo: input.repo, commit: input.commit });
         if (this.snap instanceof Error) throw this.snap;
@@ -12470,10 +12480,25 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       async failures() {
         return this.failuresList;
       }
+      async rerunFailedJobs(input: { repo: string; token: string; runId: number }) {
+        this.reruns.push(input.runId);
+        const answer =
+          typeof this.rerunAnswer === "function" ? this.rerunAnswer(input.runId) : this.rerunAnswer;
+        if (answer) throw answer;
+        this.onRerun?.();
+      }
     }
-    const failing = (): CiSnapshot => ({
+    const failing = (attempt = 1): CiSnapshot => ({
       checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "failure" }],
-      failedRuns: [{ id: 1, name: "CI", conclusion: "failure" }],
+      failedRuns: [{ id: 1, name: "CI", conclusion: "failure", attempt }],
+    });
+    const running = (): CiSnapshot => ({
+      checks: [{ kind: "workflow", name: "CI", status: "pending" }],
+      failedRuns: [],
+    });
+    const passing = (): CiSnapshot => ({
+      checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
+      failedRuns: [],
     });
     /** CI が終わったと決める（すべて終わっていても、同じ並びをもう1回見るまで決めない）。 */
     async function settleCi(service: TaskService) {
@@ -12493,7 +12518,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ci,
         now: () => clock,
       });
-      return { ...made, ci, advance: (ms: number) => (clock += ms) };
+      return {
+        ...made,
+        ci,
+        advance: (ms: number) => (clock += ms),
+        /** デーモンを起動し直す（作業履歴から状態を読み直す）。 */
+        restart: () =>
+          makeService(made.activity, [], {
+            repos: made.repos,
+            pulls: made.pulls,
+            draftPullRequests: true,
+            ci,
+            now: () => clock,
+          }).service,
+      };
     }
 
     it("実装の後、最終レビューの前に PR をドラフトで作って CI を待ち、合格したらドラフトを外してラベルを付け、承認待ちにする", async () => {
@@ -12731,6 +12769,409 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       expect(service.get(id)?.task.pullRequestCi?.result).toBe("timed_out");
       activity.close();
+    });
+
+    describe("CI の失敗ジョブの再実行（PBI-311）", () => {
+      // 記録の時刻（再実行の時刻）も進められるよう、Date だけを偽物にする
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+      const originalFailure: CiFailure = {
+        workflow: "CI",
+        job: "test",
+        conclusion: "failure",
+        excerpt: "1 failed",
+      };
+      /** 実装の PR を作り、CI が失敗で終わって再実行を頼むところまで進める。 */
+      async function untilRerun(options: { pulls?: FakePulls; repos?: FakeRepos } = {}) {
+        const made = await drafted([implement("# 実装の説明"), review()], options);
+        made.ci.snap = failing();
+        made.ci.failuresList = [originalFailure];
+        made.ci.rerunAnswer = undefined;
+        await made.service.runNext(made.id);
+        await made.service.runNext(made.id);
+        return {
+          ...made,
+          advance: (ms: number) => {
+            made.advance(ms);
+            vi.setSystemTime(Date.now() + ms);
+          },
+        };
+      }
+
+      it("再実行で通ると passed を記録し、元の失敗を残して最終レビューに渡す", async () => {
+        const { activity, service, ci, executor, id } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+          ci.failuresList = [];
+        };
+        await settleCi(service);
+        expect(ci.reruns).toEqual([1]);
+        const waiting = service.get(id)?.task;
+        expect(waiting?.pullRequestCi?.result).toBeUndefined();
+        expect(waiting?.pullRequestCi?.rerun).toMatchObject({
+          runs: [{ id: 1, attempt: 1 }],
+          failures: [originalFailure],
+        });
+        expect(service.queuedTaskIds()).not.toContain(id);
+        await settleCi(service); // まだ動いている
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        ci.snap = passing();
+        await settleCi(service);
+        const done = service.get(id)?.task.pullRequestCi;
+        expect(done?.result).toBe("passed");
+        expect(done?.rerunSkipped).toBeUndefined();
+        expect(done?.rerun?.failures).toEqual([originalFailure]);
+        expect(ci.reruns).toEqual([1]);
+        await service.runNext(id); // 最終レビュー
+        const prompt = promptOf(executor, executor.calls.length - 1);
+        expect(prompt).toContain("結果：すべて通った");
+        expect(prompt).toContain("sacty が失敗したジョブを1回再実行すると通りました");
+        expect(prompt).toContain('"excerpt": "1 failed"');
+        activity.close();
+      });
+
+      it("再実行でも落ちると failed を記録し、2回目の再実行はしない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+        };
+        await settleCi(service);
+        ci.snap = failing(2);
+        ci.failuresList = [{ ...originalFailure, excerpt: "2 failed" }];
+        await settleCi(service);
+        await settleCi(service);
+        const done = service.get(id)?.task.pullRequestCi;
+        expect(done?.result).toBe("failed");
+        expect(done?.failures?.[0]?.excerpt).toBe("2 failed");
+        expect(done?.rerun?.failures).toEqual([originalFailure]);
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it("再実行の直後に古い試行の失敗が読めても、結果にせず始まるまで待つ", async () => {
+        const { activity, service, ci, advance, id } = await untilRerun();
+        await settleCi(service); // 再実行を頼む。答えは古い失敗のまま
+        expect(ci.reruns).toEqual([1]);
+        await settleCi(service);
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        advance(60_000);
+        ci.snap = failing(2); // 始まって、また落ちた
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it("再実行が始まらないまま猶予を過ぎたら、今の失敗を結果にする（頼む前に止まったときなど）", async () => {
+        const { activity, service, ci, advance, id } = await untilRerun();
+        await settleCi(service);
+        advance(PULL_REQUEST_CI_GRACE_MS - 60_000);
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        advance(60_000);
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it.each([
+        ["403", new Error("403 Resource not accessible by integration")],
+        ["404", new Error("404 Not Found")],
+        ["ネットワークの失敗", new Error("fetch failed")],
+      ])("%s で再実行できなければ、元の failed のまま進み、止めない", async (_name, error) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, ci, id } = await untilRerun();
+        ci.rerunAnswer = error;
+        await settleCi(service);
+        const task = service.get(id)?.task;
+        expect(ci.reruns).toEqual([1]);
+        expect(task?.pullRequestCi).toMatchObject({ result: "failed", rerunSkipped: true });
+        expect(task?.pullRequestCi?.failures).toEqual([originalFailure]);
+        expect(task?.status).not.toBe("paused");
+        expect(service.queuedTaskIds()).toContain(id);
+        expect(warn.mock.calls.flat().join("\n")).toContain(error.message);
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("再実行前に状態を読み直せないなら、頼まずに元の failed のまま進む", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, ci, id } = await untilRerun();
+        let reads = 0;
+        const read = ci.snapshot.bind(ci);
+        ci.snapshot = async (input) => {
+          reads++;
+          if (reads === 3) throw new Error("socket hang up");
+          return read(input);
+        };
+        await settleCi(service);
+        expect(ci.reruns).toEqual([]);
+        expect(service.get(id)?.task.pullRequestCi).toMatchObject({
+          result: "failed",
+          rerunSkipped: true,
+        });
+        expect(service.get(id)?.task.pullRequestCi?.rerun).toBeUndefined();
+        expect(warn.mock.calls.flat().join("\n")).toContain("socket hang up");
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("Actions 以外のチェックだけの失敗は、再実行せずに元の failed のまま進む", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, ci, id } = await drafted([implement("# 実装の説明"), review()]);
+        ci.rerunAnswer = undefined;
+        ci.snap = {
+          checks: [{ kind: "check", name: "lint", status: "completed", conclusion: "failure" }],
+          failedRuns: [],
+        };
+        await service.runNext(id);
+        await service.runNext(id);
+        await settleCi(service);
+        expect(ci.reruns).toEqual([]);
+        expect(service.get(id)?.task.pullRequestCi).toMatchObject({
+          result: "failed",
+          rerunSkipped: true,
+        });
+        expect(warn.mock.calls.flat().join("\n")).toContain("Actions 以外");
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("複数の実行のうち1つでも頼めたら、再実行を待つ", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, ci, id } = await untilRerun();
+        ci.snap = {
+          ...failing(),
+          failedRuns: [
+            { id: 1, name: "CI", conclusion: "failure", attempt: 1 },
+            { id: 2, name: "E2E", conclusion: "failure", attempt: 1 },
+          ],
+        };
+        ci.rerunAnswer = (runId) => (runId === 2 ? new Error("403") : undefined);
+        await settleCi(service);
+        expect(ci.reruns).toEqual([1, 2]);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("再実行できなかった理由は、秘密情報を伏せてから切り詰めてログに出す", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { activity, service, ci } = await untilRerun();
+        const leaked = `ghp_${"a".repeat(36)}`;
+        // 伏せる前に切り詰めると値の一部が残る位置に、秘密情報を置く
+        ci.rerunAnswer = new Error(`${"x".repeat(488)} ${leaked}${"y".repeat(600)}`);
+        await settleCi(service);
+        const logged = warn.mock.calls.flat().join("\n");
+        expect(logged).toContain("再実行できませんでした");
+        expect(logged).not.toContain("ghp_");
+        expect(logged).not.toContain("aaaa");
+        expect(logged).not.toContain("y".repeat(600));
+        warn.mockRestore();
+        activity.close();
+      });
+
+      it("デーモンを再起動しても、記録があれば2回再実行しない", async () => {
+        const { activity, service, ci, id, restart } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+        };
+        await settleCi(service);
+        expect(ci.reruns).toEqual([1]);
+        const again = restart();
+        ci.snap = failing(2);
+        await settleCi(again);
+        expect(again.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it("頼む前に止まっても（記録はあるが頼んでいない）再起動の後に頼まず、猶予の後に元の失敗で進む", async () => {
+        const { activity, service, ci, advance, id, restart } = await untilRerun();
+        // 再実行の記録の後、GitHub に頼み終える前にデーモンが止まった
+        const rerun = ci.rerunFailedJobs;
+        let stopped = 0;
+        ci.rerunFailedJobs = () => {
+          stopped++;
+          return new Promise<void>(() => {});
+        };
+        await service.checkPullRequests();
+        void service.checkPullRequests();
+        await vi.waitFor(() => expect(stopped).toBe(1));
+        expect(service.get(id)?.task.pullRequestCi?.rerun).toBeDefined();
+        ci.rerunFailedJobs = rerun;
+        const again = restart();
+        await settleCi(again);
+        expect(again.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        advance(PULL_REQUEST_CI_GRACE_MS + 60_000);
+        await settleCi(again);
+        expect(ci.reruns).toEqual([]);
+        expect(again.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        activity.close();
+      });
+
+      it("時間の上限は再実行の時刻から数え直す", async () => {
+        const { activity, service, ci, advance, id } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+        };
+        advance(PULL_REQUEST_CI_TIMEOUT_MS - 60_000); // 上限の少し前に失敗を読む
+        await settleCi(service);
+        expect(ci.reruns).toEqual([1]);
+        advance(PULL_REQUEST_CI_TIMEOUT_MS - 60_000); // PR の時刻からは上限を過ぎた
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        advance(120_000);
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("timed_out");
+        expect(service.get(id)?.task.pullRequestCi?.rerun?.failures).toEqual([originalFailure]);
+        activity.close();
+      });
+
+      it("再実行の間に一時停止したら読まず、読んでいる間の一時停止なら古い結果を記録しない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+        };
+        await settleCi(service);
+        await service.pause(id);
+        ci.snap = passing();
+        const reads = ci.calls.length;
+        await settleCi(service);
+        expect(ci.calls.length).toBe(reads);
+        service.resume(id, {});
+        ci.snap = failing(2);
+        await service.checkPullRequests(); // 1回目は並びを覚えるだけ
+        const read = ci.snapshot.bind(ci);
+        ci.snapshot = async (input) => {
+          const snapshot = await read(input);
+          await service.pause(id);
+          service.resume(id, {});
+          return snapshot;
+        };
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        ci.snapshot = read;
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it("失敗を読んだ後に一時停止したら、再実行を頼まない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        await service.checkPullRequests();
+        let reads = 0;
+        const read = ci.snapshot.bind(ci);
+        ci.snapshot = async (input) => {
+          reads++;
+          const snapshot = await read(input);
+          if (reads === 2) await service.pause(id); // 再実行の前の読み直し
+          return snapshot;
+        };
+        await service.checkPullRequests();
+        expect(ci.reruns).toEqual([]);
+        expect(service.get(id)?.task.pullRequestCi?.rerun).toBeUndefined();
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        activity.close();
+      });
+
+      it("同じコミットのまま CI を待ち直しても、そのコミットは再実行しない", async () => {
+        const repos = new FakeRepos();
+        const { activity, service, ci, id } = await drafted(
+          [implement("# 実装の説明"), review(), implement("# 実装の説明 v2")],
+          { repos },
+        );
+        ci.snap = failing();
+        ci.rerunAnswer = undefined;
+        ci.onRerun = () => {
+          ci.snap = failing(2);
+        };
+        await service.runNext(id);
+        await service.runNext(id);
+        const commit = service.get(id)?.task.pullRequestCi?.commit;
+        await settleCi(service);
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        await service.runNext(id); // 最終レビュー
+        repos.sameAsParent = true;
+        await service.runNext(id); // 承認待ち
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 1,
+          comments: ["エラーの文言を直す"],
+        });
+        await service.runNext(id); // 実装のやり直し
+        await service.runNext(id); // PR を更新する（内容は同じ）
+        expect(service.get(id)?.task.pullRequestCi).toMatchObject({ commit });
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(service.get(id)?.task.pullRequestCi?.rerunSkipped).toBeUndefined();
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
+
+      it("読み始めた後に再実行を記録していたら、読んだ古い失敗で記録も再実行もしない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        await service.checkPullRequests(); // 1回目は並びを覚えるだけ
+        const read = ci.snapshot.bind(ci);
+        ci.snapshot = async (input) => {
+          ci.snapshot = read;
+          const snapshot = await read(input);
+          const task = service.get(id)?.task as Task;
+          (service as unknown as { append: (t: Task, e: unknown[]) => void }).append(task, [
+            {
+              actor: "sacty",
+              event: {
+                type: "PullRequestCiRerunRequested",
+                payload: { commit: input.commit, runs: [{ id: 1, attempt: 1 }], failures: [] },
+              },
+            },
+          ]);
+          return snapshot;
+        };
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        expect(ci.reruns).toEqual([]);
+        activity.close();
+      });
+
+      it("読んでいる間に中止・実装のやり直しがあれば、古い結果を記録しない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        ci.onRerun = () => {
+          ci.snap = running();
+        };
+        await settleCi(service);
+        ci.snap = failing(2);
+        await service.checkPullRequests(); // 1回目は並びを覚えるだけ
+        const read = ci.snapshot.bind(ci);
+        ci.snapshot = async (input) => {
+          const snapshot = await read(input);
+          // 取り込みで内容が変わると、前の CI の結果は捨てる（待ち直す）
+          const task = service.get(id)?.task as Task;
+          (service as unknown as { append: (t: Task, e: unknown[]) => void }).append(task, [
+            {
+              actor: "sacty",
+              event: {
+                type: "BaseBranchMerged",
+                payload: { from: "main", commit: "merged", conflicts: [] },
+              },
+            },
+          ]);
+          return snapshot;
+        };
+        await service.checkPullRequests();
+        expect(service.get(id)?.task.pullRequestCi).toBeUndefined();
+        expect(ci.reruns).toEqual([1]);
+        activity.close();
+      });
     });
 
     it("一時停止したタスクの CI は読まず、再開すると待ち続ける", async () => {
@@ -30002,6 +30443,10 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       this.failureCalls.push({ secrets: [...input.secrets] });
       return this.failuresList;
     }
+    reruns = 0;
+    async rerunFailedJobs() {
+      this.reruns++;
+    }
   }
   const success = (): CiSnapshot => ({
     checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
@@ -30381,6 +30826,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     const task = t.service.get(id)?.task;
     expect(task?.deployment?.state).toBe("failed");
     expect(task?.deployment?.ci?.failures).toEqual([testFailure]);
+    // マージの後の監視では、失敗したジョブを再実行しない（PBI-311）
+    expect(ci.reruns).toBe(0);
     // ログの抜粋を伏せるため、使ったトークンを渡す
     expect(ci.failureCalls[0]?.secrets).toContain("ghp_secret");
     const fixId = task?.deployment?.fix?.taskId ?? "";

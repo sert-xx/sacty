@@ -368,14 +368,17 @@ const ja = {
     PullRequestCiFinished: (
       result: "passed" | "failed" | "none" | "timed_out",
       failed: string[],
+      rerunSkipped: boolean,
     ) =>
       result === "passed"
         ? "PR の CI が通った。最終レビューへ"
         : result === "failed"
-          ? `PR の CI が失敗した：${failed.join("、")}。最終レビューで判断する`
+          ? `PR の CI が失敗した：${failed.join("、")}。${rerunSkipped ? "再実行はできなかった。" : ""}最終レビューで判断する`
           : result === "none"
             ? "PR の CI が無い。最終レビューへ"
             : "PR の CI が時間内に終わらなかった。最終レビューへ",
+    PullRequestCiRerunRequested: (failed: string[]) =>
+      `PR の CI が失敗した：${failed.join("、")}。失敗したジョブを1回再実行する`,
     VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
@@ -962,14 +965,16 @@ const en: LabelMessages = {
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
     prDrafted: (number, draft, commit) =>
       `Opened or updated the PR${draft ? " as a draft" : ""} before the final review (#${number} · ${commit}); waiting for CI`,
-    PullRequestCiFinished: (result, failed) =>
+    PullRequestCiFinished: (result, failed, rerunSkipped) =>
       result === "passed"
         ? "The PR's CI passed; on to the final review"
         : result === "failed"
-          ? `The PR's CI failed: ${failed.join(", ")}; the final review decides`
+          ? `The PR's CI failed: ${failed.join(", ")}; ${rerunSkipped ? "it could not be rerun; " : ""}the final review decides`
           : result === "none"
             ? "The PR has no CI; on to the final review"
             : "The PR's CI did not finish in time; on to the final review",
+    PullRequestCiRerunRequested: (failed) =>
+      `The PR's CI failed: ${failed.join(", ")}; rerunning the failed jobs once`,
     VerificationOverridden: "A person moved the task to review despite the failed final review",
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,

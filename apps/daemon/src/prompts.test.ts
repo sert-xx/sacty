@@ -4843,6 +4843,55 @@ describe("最終レビューに渡す実装の PR の CI", () => {
     expect(text).not.toContain("時間内に終わらなかった（または sacty が読めなかった）ので");
   });
 
+  describe("CI の再実行（PBI-311）", () => {
+    const rerun = {
+      at: "2026-10-27T00:10:00Z",
+      runs: [{ id: 1, attempt: 1 }],
+      failures: [{ workflow: "CI", job: "e2e", conclusion: "failure", excerpt: "flaked" }],
+    };
+    const jsonOf = (text: string) =>
+      JSON.parse(text.slice(text.indexOf("```json") + 8, text.lastIndexOf("```")));
+
+    it("再実行で通ったら、元の失敗を不安定な失敗の候補として渡す。CI の再実行は実行し直しの回数に数えさせない", () => {
+      const text = pullRequestCiLines({
+        ci: { commit, startedAt: "2026-10-27T00:00:00Z", result: "passed", rerun },
+      }).join("\n");
+      expect(text).toContain("結果：すべて通った");
+      expect(text).toContain("不安定な失敗の候補");
+      expect(text).toContain("差分で変えたコードを通るテストなら");
+      expect(text).toContain("`humanChecks` に「CI の再実行で通った失敗");
+      expect(text).toContain("CI の再実行は数えない");
+      expect(text).toContain("再実行で通ったジョブの結果は使い回さず");
+      expect(jsonOf(text).rerun.failures).toEqual(rerun.failures);
+    });
+
+    it("再実行でも落ちたら、元の失敗も渡すが、不安定な失敗の候補とは言わない", () => {
+      const text = pullRequestCiLines({
+        ci: { commit, startedAt: "2026-10-27T00:00:00Z", result: "failed", rerun },
+      }).join("\n");
+      expect(text).toContain("今の結果は再実行の後のもの");
+      expect(text).not.toContain("不安定な失敗の候補");
+      expect(jsonOf(text).rerun.failures).toEqual(rerun.failures);
+    });
+
+    it("再実行できなかった・していないなら、再実行のことを書かない", () => {
+      for (const ci of [
+        { commit, startedAt: "2026-10-27T00:00:00Z", result: "failed" as const },
+        {
+          commit,
+          startedAt: "2026-10-27T00:00:00Z",
+          result: "failed" as const,
+          rerun,
+          rerunSkipped: true as const,
+        },
+      ]) {
+        const text = pullRequestCiLines({ ci }).join("\n");
+        expect(text).not.toContain("再実行の後のもの");
+        expect(jsonOf(text).rerun).toBeUndefined();
+      }
+    });
+  });
+
   it("時間切れなら、CI の結果を理由に不合格にさせない", () => {
     const text = pullRequestCiLines({
       ci: { commit, startedAt: "2026-10-27T00:00:00Z", result: "timed_out" },

@@ -8,8 +8,8 @@ import { apiError, nextPage, repoApi } from "./github.js";
  */
 export type CiSnapshot = {
   checks: CiCheck[];
-  /** 失敗したワークフローの実行（ID と名前・URL）。 */
-  failedRuns: { id: number; name: string; url?: string; conclusion: string }[];
+  /** 失敗したワークフローの実行（ID と名前・URL・試行の回数）。 */
+  failedRuns: { id: number; name: string; url?: string; conclusion: string; attempt?: number }[];
 };
 
 /** CI/CD の状態を読む口（PBI-89）。テストでは偽物に差し替える。repo はリポジトリの URL。 */
@@ -25,6 +25,8 @@ export interface CiStatusReader {
     runs: CiSnapshot["failedRuns"];
     secrets: readonly string[];
   }): Promise<CiFailure[]>;
+  /** ワークフローの実行の、失敗したジョブを再実行する（PBI-311）。できなければ例外を投げる。 */
+  rerunFailedJobs(input: { repo: string; token: string; runId: number }): Promise<void>;
 }
 
 /** 失敗とみなすジョブの結論（PBI-89。isFailedCiCheck と同じ）。 */
@@ -43,6 +45,20 @@ const MAX_PAGES = 10;
 
 /** 結論が失敗か（PBI-89）。 */
 export const isFailedConclusion = isFailedCiCheck;
+
+/**
+ * 再実行を頼んだ実行が、まだ頼む前の失敗のままか（PBI-311）。頼んだ直後の GitHub の答えには、古い試行が残ることがある。
+ * 試行の回数が増えた・失敗でなくなった実行は、始まったものとする。
+ */
+export function rerunNotStarted(
+  snapshot: Pick<CiSnapshot, "failedRuns">,
+  requested: readonly { id: number; attempt?: number }[],
+): boolean {
+  return snapshot.failedRuns.some((run) => {
+    const before = requested.find((r) => r.id === run.id);
+    return before !== undefined && (run.attempt ?? 1) <= (before.attempt ?? 1);
+  });
+}
 
 /**
  * よくある秘密情報の形（PBI-89。CI のログの抜粋に使う）。値の部分だけを伏せる（前の名前は残す）。
@@ -562,7 +578,13 @@ export class GitHubCiStatus implements CiStatusReader {
       };
       checks.push(check);
       if (isFailedConclusion(check) && typeof r.id === "number") {
-        failedRuns.push({ id: r.id, name, conclusion: conclusion ?? "", ...(url ? { url } : {}) });
+        failedRuns.push({
+          id: r.id,
+          name,
+          conclusion: conclusion ?? "",
+          ...(url ? { url } : {}),
+          ...(typeof r.run_attempt === "number" ? { attempt: r.run_attempt } : {}),
+        });
       }
     }
     for (const c of checkRuns) {
@@ -638,6 +660,17 @@ export class GitHubCiStatus implements CiStatusReader {
       }
     }
     return found;
+  }
+
+  async rerunFailedJobs(input: Parameters<CiStatusReader["rerunFailedJobs"]>[0]): Promise<void> {
+    const { base } = repoApi(input.repo);
+    const res = await this.fetchImpl(`${base}/actions/runs/${input.runId}/rerun-failed-jobs`, {
+      method: "POST",
+      headers: this.headers(input.token),
+    });
+    if (res.ok) return;
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    throw apiError("rerunChecks", res.status, json);
   }
 
   /** ジョブのログの抜粋（読めなければ undefined）。伏せてから切り詰める。 */

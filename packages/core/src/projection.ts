@@ -67,11 +67,15 @@ export type PreviousReview = NonNullable<
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 /**
  * 最終レビューの前に作った実装の PR の CI（PullRequestPublished の verifying と PullRequestCiFinished）。startedAt は PR を
- * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。
+ * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。rerun は、失敗した
+ * ジョブの再実行を頼んだ記録（PBI-311。PullRequestCiRerunRequested）。あれば、待つ時間は rerun.at から数える。
  */
 export type PullRequestCi = { commit: string; startedAt: string } & Partial<
   Omit<PayloadOf<"PullRequestCiFinished">, "commit">
-> & { finishedAt?: string };
+> & {
+    finishedAt?: string;
+    rerun?: Omit<PayloadOf<"PullRequestCiRerunRequested">, "commit"> & { at: string };
+  };
 
 /**
  * 人が、ゴールガーディアンの不合格のまま実装の承認へ進められるか（VerificationOverridden）。実装の検証が続けて通らずに
@@ -629,6 +633,11 @@ export type Task = {
    * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
    */
   pullRequestCi?: PullRequestCi;
+  /**
+   * CI の失敗ジョブの再実行を頼んだコミット（PBI-311）。実装をやり直しても消さない（同じコミットのまま CI を待ち直しても、
+   * コミットごとに1回だけ頼む）。
+   */
+  pullRequestCiRerunCommits?: string[];
   /**
    * 承認待ちの PR の今の head に付いた AI のレビューの状況（PBI-302 D1）。作業履歴からは復元しない。デーモンが画面に返すときだけ
    * 足す（`TaskService.view`）。
@@ -1756,6 +1765,23 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "not the commit of the pull request");
       }
       task.pullRequestCi = { ...ci, ...event.payload, finishedAt: event.at };
+      break;
+    }
+
+    case "PullRequestCiRerunRequested": {
+      const ci = task.pullRequestCi;
+      if (!ci || ci.result !== undefined || task.verification === undefined) {
+        throw new ActivityIntegrityError(event, "the pull request CI is not awaited");
+      }
+      const { commit, ...rerun } = event.payload;
+      if (ci.commit !== commit) {
+        throw new ActivityIntegrityError(event, "not the commit of the pull request");
+      }
+      if (task.pullRequestCiRerunCommits?.includes(commit)) {
+        throw new ActivityIntegrityError(event, "the commit was already rerun");
+      }
+      task.pullRequestCi = { ...ci, rerun: { ...rerun, at: event.at } };
+      task.pullRequestCiRerunCommits = [...(task.pullRequestCiRerunCommits ?? []), commit];
       break;
     }
 
