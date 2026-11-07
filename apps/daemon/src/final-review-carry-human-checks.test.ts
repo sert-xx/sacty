@@ -350,3 +350,34 @@ describe("引き継いだ項目の出方（PBI-294）", () => {
     );
   });
 });
+
+describe("不安定な失敗の申告の指示（PBI-310）", () => {
+  it("テストのコマンドが無くても、PR があれば CI の申告の形と除外の条件を指示する（PBI-310）", () => {
+    const t = task();
+    const pullRequest = {
+      ci: { commit: "c".repeat(40), startedAt: "2026-10-27T00:00:00Z", result: "failed" as const },
+    };
+    const prompt = buildFinalReviewPrompt(t, "diff", { pullRequest });
+    expect(prompt).toContain(
+      "tests.flakyFailures には1件ずつ書く（name：失敗したテストの名前、file：",
+    );
+    expect(prompt).toContain(
+      "差分で変えたコードを通るテストが不安定なときは、flakyFailures に書かない",
+    );
+    expect(prompt).toContain('"flakyFailures"');
+    expect(buildFinalReviewPrompt(t, "diff")).not.toContain('"flakyFailures"');
+    // テストのコマンドがあれば、同じ説明は「不安定なテストの失敗」の節にある
+    const withTests = buildFinalReviewPrompt(t, "diff", { pullRequest, testCommand: "npm test" });
+    expect(withTests).not.toContain("tests.flakyFailures には1件ずつ書く");
+    expect(withTests).toContain("name：failedTests と同じ名前、file：");
+  });
+
+  it("環境と不安定が混ざるときは、環境の申告を空にさせない（PBI-310）", () => {
+    const t = task();
+    const prompt = buildFinalReviewPrompt(t, "diff", { testCommand: "npm test" });
+    expect(prompt).toContain(
+      "環境によるものか不安定なもの（flakyFailures）で全件を説明できないときは、空にしてください",
+    );
+    expect(prompt).not.toContain("それ以外は空にしてください");
+  });
+});
