@@ -53,6 +53,7 @@ A paused task's details show why it stopped and a "Resume" button.
 | Stopped on an image name that is not in `images` | Add it to `images` in `config.yaml`, or fix the image specified for the project's target ([Container images](images.en.md#which-image-a-step-runs-in)) |
 | Stopped because docker compose services could not start | Check whether the settings named in the reason (`privileged`, host networking, mounts outside the workspace, and so on) are used ([docker compose services](compose.en.md#unsupported-settings)) |
 | Cannot connect to MySQL or similar with `localhost` | Write `127.0.0.1`, or connect by service name ([docker compose services](compose.en.md#reaching-services-via-localhost)) |
+| A task stopped with `ENOSPC` or `the volume holding /tmp is full` | Docker's virtual disk can be full even when your Mac has free space. Check the usage with `docker system df`. `npx sacty image build` cleans up old image versions. If that is not enough, free space by removing unused images and running `docker builder prune`, then resume the task. |
 
 ## Getting an error report
 

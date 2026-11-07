@@ -53,6 +53,7 @@
 | `images` に無いイメージの名前で止まった | `config.yaml` の `images` に足すか、プロジェクトの対象のイメージの指定を直してください（[コンテナイメージ](images.md#どのイメージで動くか)） |
 | docker compose のサービスを起動できずに止まった | 理由に出た設定（`privileged`・ホストのネットワーク・作業領域の外のマウントなど）を使っていないか確かめてください（[docker compose のサービス](compose.md#使えない設定)） |
 | MySQL などに `localhost` でつなげない | `127.0.0.1` と書くか、サービス名で接続してください（[docker compose のサービス](compose.md#localhost-のままでも届く)） |
+| `ENOSPC`・`the volume holding /tmp is full` で止まった | Mac に空きがあっても、Docker の仮想ディスクが満杯のことがあります。`docker system df` で使用量を確かめてください。`npx sacty image build` が古い版のイメージを片付けます。それでも足りなければ、使っていないイメージと `docker builder prune` で容量を空けてから、タスクを再開してください。 |
 
 ## エラーレポートを出す
 

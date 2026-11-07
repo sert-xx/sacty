@@ -254,3 +254,69 @@ export async function buildImage(deps: {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** sacty が版ごとに作るイメージの名前（既定のイメージと、言語ごとのイメージの既定の名前）。 */
+const SACTY_IMAGE_REPOSITORY = /^sacty-agent(-[a-z0-9._-]+)?$/;
+/** 版のタグ。これ以外のタグ（latest・試しに付けた名前など）は人が付けたものとして残す。 */
+const VERSION_TAG = /^(\d+)\.(\d+)\.(\d+)$/;
+/** 名前ごとに残す版の数。今の版と、戻すときの1つ前の版。 */
+const KEPT_IMAGE_VERSIONS = 2;
+/** これより長く使っていないビルドキャッシュを消す。イメージを消しても、層はキャッシュに残るため。 */
+const BUILD_CACHE_MAX_UNUSED = "168h";
+
+/**
+ * 消してよい古い版のイメージ（PBI-313）。listed は `repository:tag` の一覧。sacty の名前で版のタグのものを、
+ * 名前ごとに新しい版から KEPT_IMAGE_VERSIONS 個残す。kept（今回作ったもの・設定が指すもの）は必ず残す。
+ */
+export function staleImages(listed: readonly string[], kept: readonly string[]): string[] {
+  const byRepository = new Map<string, { image: string; version: number[] }[]>();
+  for (const image of new Set(listed)) {
+    const separator = image.lastIndexOf(":");
+    const repository = image.slice(0, separator);
+    const version = VERSION_TAG.exec(image.slice(separator + 1));
+    if (!version || !SACTY_IMAGE_REPOSITORY.test(repository)) continue;
+    const versions = byRepository.get(repository) ?? [];
+    versions.push({ image, version: version.slice(1).map(Number) });
+    byRepository.set(repository, versions);
+  }
+  return [...byRepository.values()].flatMap((versions) =>
+    versions
+      .sort(
+        (a, b) =>
+          (b.version[0] ?? 0) - (a.version[0] ?? 0) ||
+          (b.version[1] ?? 0) - (a.version[1] ?? 0) ||
+          (b.version[2] ?? 0) - (a.version[2] ?? 0),
+      )
+      .slice(KEPT_IMAGE_VERSIONS)
+      .map(({ image }) => image)
+      .filter((image) => !kept.includes(image)),
+  );
+}
+
+/**
+ * 古い版のイメージと、使っていないビルドキャッシュを消す（PBI-313）。作成は済んでいるので、失敗しても例外にせず、
+ * 結果で返す。コンテナが使っているイメージは強制では消さない（消せなかったものとして返す）。
+ */
+export async function pruneOldImages(deps: {
+  kept: readonly string[];
+  /** docker を実行して、終了コードと標準出力を返す（テストでは差し替える）。 */
+  run: (args: string[]) => Promise<{ code: number; stdout: string }>;
+}): Promise<{ removed: string[]; failed: string[]; listFailed: boolean; cacheFailed: boolean }> {
+  const list = await deps.run(["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]);
+  const removed: string[] = [];
+  const failed: string[] = [];
+  if (list.code === 0) {
+    for (const image of staleImages(list.stdout.split("\n"), deps.kept)) {
+      const { code } = await deps.run(["image", "rm", image]);
+      (code === 0 ? removed : failed).push(image);
+    }
+  }
+  const cache = await deps.run([
+    "builder",
+    "prune",
+    "-f",
+    "--filter",
+    `until=${BUILD_CACHE_MAX_UNUSED}`,
+  ]);
+  return { removed, failed, listFailed: list.code !== 0, cacheFailed: cache.code !== 0 };
+}

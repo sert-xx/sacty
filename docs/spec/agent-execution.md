@@ -243,6 +243,11 @@
 - `sacty image build [<名前>...]` は `packages/cli/docker/Dockerfile` を `docker build` する。
   名前を省くと既定と `images` のすべてを作る。
   設定ファイルが無ければ既定で作り、ほかの誤りがあれば作らない。
+  - すべて作れたら、古い版を片付ける（`pruneOldImages`）。
+    `sacty-agent`・`sacty-agent-<名前>` の `X.Y.Z` のタグのイメージを、名前ごとに新しい版から2つ残して、強制せずに消す。
+    `image`・`images.*.image` が指すイメージと、ほかのタグ・ほかの名前のイメージは消さない。
+    イメージの層はビルドキャッシュにも残るので、7日より長く使っていないビルドキャッシュも消す。
+    片付けに失敗しても、`sacty image build` は失敗にしない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:26-bookworm-slim`。
     既定は、タグに加えて、マルチアーキのインデックスのダイジェスト（`node:26-bookworm-slim@sha256:…`）で固定する（`NODE_IMAGE` の既定も同じ）。
     Claude Code（`@anthropic-ai/claude-code@2.1.318`）と Codex（`@openai/codex@0.167.0`）は、`packages/cli/docker/agent-cli` の `package.json`・`package-lock.json` を `/opt/sacty/agent-cli` に写し、`npm ci --omit=dev` で推移依存までロックのとおりに入れる。
