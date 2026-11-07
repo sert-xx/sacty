@@ -1409,7 +1409,7 @@ export const GuardianTests = z.object({
   /** 認めた不安定な失敗（PBI-310）。これと環境による失敗で全件を説明できれば、テストは通ったものとして扱う。 */
   flakyFailures: z.array(FlakyFailure).optional(),
   /** 不安定な失敗の申告のうち、認めなかったものと理由（PBI-310）。あれば、テストは通っていないものとして扱う。 */
-  rejectedFlakyFailures: z.array(z.string()).optional(),
+  rejectedFlakyFailures: z.array(DaemonText).optional(),
   /**
    * テストのコマンドに書いたツールのうち、イメージに無くて実行できなかったもの（PBI-158）。sacty が、差分が文書の
    * ファイルだけと確かめたときだけ記録する（コードを含む差分では、止めて記録しない）。あれば、実行できなかった検証は
@@ -1443,6 +1443,14 @@ export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boole
 export const FLAKY_MIN_RERUNS = 2;
 /** ゴールガーディアンに許す、実行し直しの回数の上限（PBI-310）。 */
 export const FLAKY_MAX_RERUNS = 3;
+
+/** 最終レビューが認めた不安定な失敗（PBI-310）。テストのコマンドが無いタスクの CI の失敗の申告も含める。 */
+export function reviewFlakyFailures(review: {
+  tests?: { flakyFailures?: readonly FlakyFailure[] };
+  ciFlakyFailures?: readonly FlakyFailure[];
+}): FlakyFailure[] {
+  return [...(review.tests?.flakyFailures ?? []), ...(review.ciFlakyFailures ?? [])];
+}
 
 /** 人が確かめることに出す、認めた不安定な失敗の1行（PBI-310）。 */
 export function flakyFailureLine(f: FlakyFailure): string {
@@ -1487,6 +1495,13 @@ const FinalReviewed = z.object({
     summary: DaemonText,
     /** ゴールガーディアンが実行したテスト（テストのコマンドがあるとき。それより前の版の記録には無い）。 */
     tests: GuardianTests.optional(),
+    /**
+     * テストのコマンドが無いタスクで、CI の失敗の申告のうち認めた不安定な失敗（PBI-310）。`tests` が無いので、ここに持つ。
+     * `humanChecks` に混ぜると種別を失い、次の回へ引き継がれるので、分ける。
+     */
+    ciFlakyFailures: z.array(FlakyFailure).optional(),
+    /** テストのコマンドが無いタスクで、CI の失敗の申告のうち認めなかったものと理由（PBI-310）。あれば不合格。 */
+    rejectedCiFlakyFailures: z.array(DaemonText).optional(),
     /**
      * ゴールガーディアンが最終レビューで扱った検証の記録（PBI-305）。自分で実行したものと、前の段（実装のセルフレビュー・
      * PR の CI）から使い回したもの。commit は sacty が付ける（最終レビューの前に作った実装の PR のコミット）。PR のレビューが、

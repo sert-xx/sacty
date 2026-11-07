@@ -50,6 +50,7 @@ import {
   ReworkCause,
   renderMessage,
   resumeNoteSections,
+  reviewFlakyFailures,
   SCOPE_VIEWPOINT,
   SelfReview,
   StepKey,
@@ -879,7 +880,7 @@ function feedbackLines(task: Task): string[] {
           ...(r.tests.rejectedFlakyFailures
             ? [
                 "不安定な失敗として認めなかった申告（テストの失敗として、原因を確かめて直してください）：",
-                ...r.tests.rejectedFlakyFailures.map((f) => `- ${f}`),
+                ...r.tests.rejectedFlakyFailures.map((f) => `- ${ja(f)}`),
               ]
             : []),
           // 差分が文書だけで、ツールがイメージに無くて実行できなかった検証も、実装で直す対象ではない（PBI-158）
@@ -891,6 +892,19 @@ function feedbackLines(task: Task): string[] {
           ...(r.tests.output
             ? ["テストの結果の抜粋：", r.tests.output.slice(-OUTPUT_IN_PROMPT)]
             : []),
+        ]
+      : []),
+    // テストのコマンドが無いタスクの、CI の失敗の申告（PBI-310）。扱いはテストの結果の申告と同じ
+    ...(r.ciFlakyFailures
+      ? [
+          "差分と無関係で不安定と判断した CI の失敗（実装で直す対象ではありません）：",
+          ...r.ciFlakyFailures.map((f) => `- ${flakyFailureLine(f)}`),
+        ]
+      : []),
+    ...(r.rejectedCiFlakyFailures
+      ? [
+          "不安定な失敗として認めなかった申告（CI の失敗の原因を確かめて直してください）：",
+          ...r.rejectedCiFlakyFailures.map((f) => `- ${ja(f)}`),
         ]
       : []),
     ...r.viewpoints
@@ -3411,16 +3425,18 @@ function checkFlakyFailures(
   known: {
     /** 説明しなければいけない失敗の全件。undefined なら確かめない（作業領域のテストは通り、CI の失敗の申告を読むとき）。 */
     failedTests: readonly string[] | undefined;
+    /** failedTests の項目のうち、名前を読めなかった数。全件を説明できるか確かめられないので、1件でもあれば認めない。 */
+    unreadableFailedTests: number;
     /** 環境による失敗として申告された名前。failedTests と完全に一致するものだけ、説明できたものとする。 */
     environmentNames: readonly string[];
     changedFiles: readonly string[] | undefined;
   },
-): { accepted: FlakyFailure[]; rejected: string[] } {
+): { accepted: FlakyFailure[]; rejected: DaemonText[] } {
   if (!Array.isArray(v) || v.length === 0) return { accepted: [], rejected: [] };
   const changed = known.changedFiles && new Set(known.changedFiles.map(repoPath));
   const environment = new Set(known.environmentNames);
   const accepted: FlakyFailure[] = [];
-  const rejected: string[] = [];
+  const rejected: DaemonText[] = [];
   for (const item of v) {
     const o = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
     const name = hideItem(oneLine(text(o.name)));
@@ -3428,26 +3444,30 @@ function checkFlakyFailures(
     const reason = hideItem(oneLine(text(o.reason)));
     const runs = typeof o.runs === "number" && Number.isInteger(o.runs) ? o.runs : 0;
     const passes = typeof o.passes === "number" && Number.isInteger(o.passes) ? o.passes : 0;
-    const label = name || "名前の無い申告";
-    if (!name || !file || !reason) rejected.push(`${label}：名前・ファイル・根拠のどれかが無い`);
+    if (!name || !file || !reason)
+      rejected.push(message("review.flakyIncomplete", name ? { name } : {}));
     else if (runs < FLAKY_MIN_RERUNS)
-      rejected.push(`${label}：実行し直しが ${FLAKY_MIN_RERUNS} 回に満たない（${runs} 回）`);
+      rejected.push(message("review.flakyTooFewRuns", { name, min: FLAKY_MIN_RERUNS, runs }));
     else if (passes < 1 || passes > runs)
-      rejected.push(`${label}：実行し直して通った回数が正しくない（${runs} 回中 ${passes} 回）`);
-    else if (!changed) rejected.push(`${label}：差分のファイルを読めず、無関係と確かめられない`);
+      rejected.push(message("review.flakyBadPasses", { name, runs, passes }));
+    else if (!changed) rejected.push(message("review.flakyNoDiff", { name }));
     else if (repoPath(file) === undefined)
-      rejected.push(`${label}：テストのファイル ${file} を作業領域のパスとして比べられない`);
+      rejected.push(message("review.flakyBadPath", { name, file }));
     else if (changed.has(repoPath(file)))
-      rejected.push(`${label}：テストのファイル ${file} が差分に含まれる`);
+      rejected.push(message("review.flakyInDiff", { name, file }));
     else accepted.push({ name, file, runs, passes, reason });
   }
   const names = new Set(accepted.map((f) => f.name));
-  if (known.failedTests?.length === 0) {
-    rejected.push("失敗したテストの名前（failedTests）が無く、全件を説明できるか確かめられない");
+  if (known.unreadableFailedTests > 0) {
+    rejected.push(
+      message("review.flakyUnreadableFailedTests", { count: known.unreadableFailedTests }),
+    );
+  } else if (known.failedTests?.length === 0) {
+    rejected.push(message("review.flakyNoFailedTests"));
   }
   for (const name of known.failedTests ?? []) {
     if (!names.has(name) && !environment.has(name)) {
-      rejected.push(`${name}：環境による失敗にも不安定な失敗にも挙げられていない`);
+      rejected.push(message("review.flakyUnexplained", { name }));
     }
   }
   return rejected.length > 0 ? { accepted: [], rejected } : { accepted, rejected };
@@ -3460,15 +3480,45 @@ function checkFlakyFailures(
 const reportedFailedTests = (v: unknown): string[] => {
   if (!Array.isArray(v)) return [];
   return v
-    .map((item) => {
-      if (typeof item === "string") return oneLine(text(item));
+    .map(failedTestName)
+    .filter((item) => item && !isNoneItem(item))
+    .map(hideItem);
+};
+
+/** 失敗したテストの1項目の名前。読めなければ空。 */
+function failedTestName(item: unknown): string {
+  if (typeof item === "string") return oneLine(text(item));
+  if (item && typeof item === "object" && !Array.isArray(item)) {
+    const o = item as Record<string, unknown>;
+    return ITEM_NAME_KEYS.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
+  }
+  return "";
+}
+
+/** 失敗したテストの一覧のうち、名前を読めなかった項目の数（PBI-310）。 */
+const unreadableFailedTests = (v: unknown): number =>
+  Array.isArray(v) ? v.filter((item) => !failedTestName(item)).length : 0;
+
+/**
+ * 環境による失敗の申告が挙げた名前（PBI-310）。オブジェクトは名前の項目をそのまま読む。文字列（「名前：根拠」）は、名前にも
+ * 「：」が入りうるので、「：」で区切った先頭からのどの範囲も名前の候補にする（照合は failedTests との完全一致）。
+ */
+const reportedEnvironmentNames = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .flatMap((item) => {
+      if (typeof item === "string") {
+        const parts = oneLine(text(item)).split("：");
+        return parts.map((_, i) => parts.slice(0, i + 1).join("："));
+      }
       if (item && typeof item === "object" && !Array.isArray(item)) {
         const o = item as Record<string, unknown>;
-        return ITEM_NAME_KEYS.map((key) => oneLine(text(o[key]))).find(Boolean) ?? "";
+        if (ENVIRONMENT_FLAG_KEYS.some((key) => isFalse(o[key]))) return [];
+        return [failedTestName(item)];
       }
-      return "";
+      return [];
     })
-    .filter((item) => item && !isNoneItem(item))
+    .filter(Boolean)
     .map(hideItem);
 };
 
@@ -4594,6 +4644,8 @@ export function extractFinalReview(
   | "remarks"
   | "summary"
   | "tests"
+  | "ciFlakyFailures"
+  | "rejectedCiFlakyFailures"
   | "humanChecks"
   | "droppedHumanChecks"
   | "mergedHumanChecks"
@@ -4676,33 +4728,27 @@ export function extractFinalReview(
   };
   const command = options.testCommand;
   if (!command) {
-    // テストのコマンドが無くても、CI の失敗の申告は確かめて残す（テストの結果が無いので、人が確かめることに出す。PBI-310）
+    // テストのコマンドが無くても、CI の失敗の申告は確かめて残す（PBI-310）。humanChecks に混ぜると、種別を失い次の回へ引き継がれる
     const reportedTests = found?.raw.tests;
     const ciFlaky = checkFlakyFailures(
       reportedTests && typeof reportedTests === "object"
         ? (reportedTests as Record<string, unknown>).flakyFailures
         : undefined,
-      { failedTests: undefined, environmentNames: [], changedFiles: options.changedFiles },
+      {
+        failedTests: undefined,
+        unreadableFailedTests: 0,
+        environmentNames: [],
+        changedFiles: options.changedFiles,
+      },
     );
-    const checks = uniqueChecks([
-      ...humanChecks,
-      ...ciFlaky.accepted.map((f) => `不安定と判断したテストの失敗：${flakyFailureLine(f)}`),
-    ]).items;
     return {
       ...verdicts,
-      ...(ciFlaky.rejected.length > 0
-        ? {
-            summary: [
-              verdicts.summary,
-              "不安定な失敗として認めなかった申告（CI の失敗の原因を確かめて直してください）：",
-              ...ciFlaky.rejected.map((f) => `- ${f}`),
-            ].join("\n"),
-          }
-        : {}),
       viewpoints,
       ...droppedChecks,
       ...repaired,
-      ...(checks.length > 0 ? { humanChecks: checks } : {}),
+      ...(humanChecks.length > 0 ? { humanChecks } : {}),
+      ...(ciFlaky.accepted.length > 0 ? { ciFlakyFailures: ciFlaky.accepted } : {}),
+      ...(ciFlaky.rejected.length > 0 ? { rejectedCiFlakyFailures: ciFlaky.rejected } : {}),
       passed:
         verdicts.passed && viewpoints.every((v) => v.verified) && ciFlaky.rejected.length === 0,
       missingCommands: [],
@@ -4735,7 +4781,8 @@ export function extractFinalReview(
     exitCode !== undefined
       ? checkFlakyFailures(raw.flakyFailures, {
           failedTests: exitCode !== 0 ? failedNames : undefined,
-          environmentNames: reportedEnvironment.map((f) => oneLine(f.split("：")[0] ?? "")),
+          unreadableFailedTests: exitCode !== 0 ? unreadableFailedTests(raw.failedTests) : 0,
+          environmentNames: exitCode !== 0 ? reportedEnvironmentNames(raw.environmentFailures) : [],
           changedFiles: options.changedFiles,
         })
       : { accepted: [], rejected: [] };
@@ -6010,7 +6057,7 @@ function humanCheckItems(task: Task): string[] {
     ...humanVisibleEnvironmentFailures(review?.tests?.environmentFailures).map(
       (f) => `環境によると判断したテストの失敗：${f}`,
     ),
-    ...(review?.tests?.flakyFailures ?? []).map(
+    ...(review ? reviewFlakyFailures(review) : []).map(
       (f) => `不安定と判断したテストの失敗：${flakyFailureLine(f)}`,
     ),
   ].map((item) => {
@@ -7018,11 +7065,11 @@ export function chatJudgementLines(task: Task): string[] {
             ...humanVisibleEnvironmentFailures(r.tests.environmentFailures).map(
               (f) => `  - 環境によると判断したテストの失敗：${f}`,
             ),
-            ...(r.tests.flakyFailures ?? []).map(
-              (f) => `  - 不安定と判断したテストの失敗：${flakyFailureLine(f)}`,
-            ),
           ]
         : []),
+      ...reviewFlakyFailures(r).map(
+        (f) => `  - 不安定と判断したテストの失敗：${flakyFailureLine(f)}`,
+      ),
       ...(r.humanChecks ?? []).map((c) => `  - 人が確かめること：${c}`),
       ...r.viewpoints.map(
         (v) =>

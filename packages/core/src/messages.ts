@@ -389,6 +389,15 @@ const PARAMS = {
   "review.outputRepaired": OutputRepaired,
   "review.viewpointUnmapped": null,
   "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
+  "review.flakyIncomplete": z.object({ name: z.string().optional() }),
+  "review.flakyTooFewRuns": z.object({ name: z.string(), min: z.number(), runs: z.number() }),
+  "review.flakyBadPasses": z.object({ name: z.string(), runs: z.number(), passes: z.number() }),
+  "review.flakyNoDiff": z.object({ name: z.string() }),
+  "review.flakyBadPath": z.object({ name: z.string(), file: z.string() }),
+  "review.flakyInDiff": z.object({ name: z.string(), file: z.string() }),
+  "review.flakyNoFailedTests": null,
+  "review.flakyUnreadableFailedTests": z.object({ count: z.number() }),
+  "review.flakyUnexplained": z.object({ name: z.string() }),
   "review.scopeViolated": z.object({
     outside: z.array(z.string()),
     lines: z.number().int().nonnegative().optional(),
@@ -1231,6 +1240,22 @@ const ja: MessageDictionary = {
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
   "review.outOfScope": ({ items }) =>
     `依頼にも承認済みの要求要件・設計にも無い変更、または既存のテストの期待を変える変更があります：${items.join(" / ")}`,
+  "review.flakyIncomplete": ({ name }) =>
+    `${name ?? "名前の無い申告"}：名前・ファイル・根拠のどれかが無い`,
+  "review.flakyTooFewRuns": ({ name, min, runs }) =>
+    `${name}：実行し直しが ${min} 回に満たない（${runs} 回）`,
+  "review.flakyBadPasses": ({ name, runs, passes }) =>
+    `${name}：実行し直して通った回数が正しくない（${runs} 回中 ${passes} 回）`,
+  "review.flakyNoDiff": ({ name }) => `${name}：差分のファイルを読めず、無関係と確かめられない`,
+  "review.flakyBadPath": ({ name, file }) =>
+    `${name}：テストのファイル ${file} を作業領域のパスとして比べられない`,
+  "review.flakyInDiff": ({ name, file }) => `${name}：テストのファイル ${file} が差分に含まれる`,
+  "review.flakyNoFailedTests":
+    "失敗したテストの名前（failedTests）が無く、全件を説明できるか確かめられない",
+  "review.flakyUnreadableFailedTests": ({ count }) =>
+    `失敗したテストの名前（failedTests）のうち ${count} 件を読めず、全件を説明できるか確かめられない`,
+  "review.flakyUnexplained": ({ name }) =>
+    `${name}：環境による失敗にも不安定な失敗にも挙げられていない`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "差分が修正の範囲を守っていません（sacty の検査）。",
@@ -1935,6 +1960,23 @@ const en: MessageDictionary = {
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
   "review.outOfScope": ({ items }) =>
     `The diff has changes that neither the request nor the approved requirements and design call for, or that change what an existing test expects: ${items.join(" / ")}`,
+  "review.flakyIncomplete": ({ name }) =>
+    `${name ?? "A report with no name"}: the name, file or reason is missing`,
+  "review.flakyTooFewRuns": ({ name, min, runs }) =>
+    `${name}: rerun fewer than ${min} times (${runs})`,
+  "review.flakyBadPasses": ({ name, runs, passes }) =>
+    `${name}: the number of passing reruns is not valid (${passes} of ${runs})`,
+  "review.flakyNoDiff": ({ name }) =>
+    `${name}: the changed files could not be read, so it could not be confirmed as unrelated`,
+  "review.flakyBadPath": ({ name, file }) =>
+    `${name}: the test file ${file} could not be compared as a path in the workspace`,
+  "review.flakyInDiff": ({ name, file }) => `${name}: the test file ${file} is in the diff`,
+  "review.flakyNoFailedTests":
+    "There are no failed test names (failedTests), so it could not be confirmed that every failure is explained",
+  "review.flakyUnreadableFailedTests": ({ count }) =>
+    `${count} of the failed test names (failedTests) could not be read, so it could not be confirmed that every failure is explained`,
+  "review.flakyUnexplained": ({ name }) =>
+    `${name}: reported neither as an environment failure nor as a flaky failure`,
   "review.scopeViolated": ({ outside, lines, max }) =>
     [
       "The diff does not stay within the fix scope (sacty's check).",
