@@ -389,6 +389,7 @@ const PARAMS = {
   "review.outputRepaired": OutputRepaired,
   "review.viewpointUnmapped": null,
   "review.outOfScope": z.object({ items: z.array(z.string()).min(1) }),
+  "review.flakyUnreadable": null,
   "review.flakyIncomplete": z.object({ name: z.string().optional() }),
   "review.flakyTooFewRuns": z.object({ name: z.string(), min: z.number(), runs: z.number() }),
   "review.flakyBadPasses": z.object({ name: z.string(), runs: z.number(), passes: z.number() }),
@@ -1240,6 +1241,7 @@ const ja: MessageDictionary = {
   "review.viewpointUnmapped": "実装が、この観点にテストを対応させていません。",
   "review.outOfScope": ({ items }) =>
     `依頼にも承認済みの要求要件・設計にも無い変更、または既存のテストの期待を変える変更があります：${items.join(" / ")}`,
+  "review.flakyUnreadable": "不安定な失敗の申告（flakyFailures）が一覧の形でなく、読めない",
   "review.flakyIncomplete": ({ name }) =>
     `${name ?? "名前の無い申告"}：名前・ファイル・根拠のどれかが無い`,
   "review.flakyTooFewRuns": ({ name, min, runs }) =>
@@ -1960,6 +1962,8 @@ const en: MessageDictionary = {
   "review.viewpointUnmapped": "The implementation did not map a test to this viewpoint.",
   "review.outOfScope": ({ items }) =>
     `The diff has changes that neither the request nor the approved requirements and design call for, or that change what an existing test expects: ${items.join(" / ")}`,
+  "review.flakyUnreadable":
+    "The flaky failure report (flakyFailures) is not a list and could not be read",
   "review.flakyIncomplete": ({ name }) =>
     `${name ?? "A report with no name"}: the name, file or reason is missing`,
   "review.flakyTooFewRuns": ({ name, min, runs }) =>

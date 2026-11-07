@@ -39,13 +39,13 @@ const read = (tests: Record<string, unknown>, changedFiles: string[] | undefined
 const reasons = (items: readonly DaemonText[] | undefined) =>
   (items ?? []).map((f) => renderMessage(f, "ja"));
 
-const noCommand = (item: Record<string, unknown>) =>
+const noCommandReport = (flakyFailures: unknown) =>
   extractFinalReview(
     `\`\`\`json\n${JSON.stringify({
       "sacty-final-review": {
         viewpoints: [{ id: "REQ", verified: true, reason: "満たす" }],
         remarks: [],
-        tests: { flakyFailures: [item] },
+        tests: { flakyFailures },
         humanChecks: [],
         summary: "要約",
       },
@@ -54,6 +54,8 @@ const noCommand = (item: Record<string, unknown>) =>
     [],
     { changedFiles: ["src/a.ts"] },
   );
+
+const noCommand = (item: Record<string, unknown>) => noCommandReport([item]);
 
 describe("不安定な失敗の申告（PBI-310）", () => {
   it("確かめられた不安定な失敗だけなら、不合格にしない", () => {
@@ -278,6 +280,33 @@ describe("不安定な失敗の申告（PBI-310）", () => {
     expect(ng.passed).toBe(false);
     expect(ng.ciFlakyFailures).toBeUndefined();
     expect(reasons(ng.rejectedCiFlakyFailures)[0]).toContain("実行し直しが");
+  });
+
+  it.each([
+    ["オブジェクト", flaky({ runs: 1, passes: 0 })],
+    ["文", "ui.spec.ts > 保存"],
+    ["数", 3],
+    ["真偽", true],
+  ])("一覧でない申告（%s）は、申告なしとして捨てず、認めない", (_, item) => {
+    const withCommand = read({ exitCode: 0, flakyFailures: item });
+    expect(withCommand.passed).toBe(false);
+    expect(reasons(withCommand.tests?.rejectedFlakyFailures)[0]).toContain("読めない");
+    const without = noCommandReport(item);
+    expect(without.passed).toBe(false);
+    expect(reasons(without.rejectedCiFlakyFailures)[0]).toContain("読めない");
+  });
+
+  it.each([
+    ["未指定", undefined],
+    ["null", null],
+    ["空の一覧", []],
+    ["空の文", ""],
+    ["なし", "なし"],
+    ["なしの一覧", ["なし"]],
+  ])("申告が無い（%s）なら、確かめずに通す", (_, item) => {
+    const review = read({ exitCode: 0, flakyFailures: item });
+    expect(review.passed).toBe(true);
+    expect(review.tests?.rejectedFlakyFailures).toBeUndefined();
   });
 
   it("一覧でない・崩れた項目でも落ちない", () => {
