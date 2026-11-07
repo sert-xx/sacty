@@ -145,7 +145,7 @@
 
 ## 不安定なテストの台帳
 
-最終レビューが認めた不安定な失敗（`FinalReviewed` の `tests.flakyFailures`。[工程の仕様](tasks-and-steps.md)）を、プロジェクトごとに集計する。
+最終レビューが認めた不安定な失敗（`FinalReviewed` の `tests.flakyFailures` と、テストのコマンドが無いタスクで CI の結果から認めた `ciFlakyFailures`。[工程の仕様](tasks-and-steps.md)）を、プロジェクトごとに集計する。
 監査の実行とは別のもので、監査の予算を使わない。
 
 - 新しい保存先は持たず、作業履歴から導く。

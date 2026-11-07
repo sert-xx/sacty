@@ -43,6 +43,7 @@ import {
   REWORK_STEPS,
   rerunEditableBody,
   resumeNoteSections,
+  reviewFlakyFailures,
   SKIPPABLE_STEPS,
   TASK_BODY_MAX,
   testsMadeNoProgress,
@@ -1699,8 +1700,9 @@ export function applyEvent(
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
       task.unreadableReviews = undefined;
-      // lastReview は回ごとに置き換わるので、認めた不安定な失敗は全部の回の分を残す（台帳に使う。PBI-312）
-      const sightings = (event.payload.tests?.flakyFailures ?? []).map((f) => ({
+      // lastReview は回ごとに置き換わるので、認めた不安定な失敗は全部の回の分を残す（台帳に使う。PBI-312）。
+      // テストのコマンドが無いタスクで CI の結果から認めた分（ciFlakyFailures）も入れる
+      const sightings = reviewFlakyFailures(event.payload).map((f) => ({
         name: f.name,
         file: f.file,
         reason: f.reason,

@@ -122,7 +122,7 @@ Code: `apps/daemon/src/service.ts` (`adoptAuditProposal`, `createAuditFixTask`, 
 
 ## The flaky test ledger
 
-sacty counts, per project, the flaky failures the final review accepted (`tests.flakyFailures` of `FinalReviewed`; [the step specification](tasks-and-steps.en.md)).
+sacty counts, per project, the flaky failures the final review accepted (`tests.flakyFailures` of `FinalReviewed`, and `ciFlakyFailures`, accepted from the CI results for a task with no test command; [the step specification](tasks-and-steps.en.md)).
 This is separate from running audits and does not use the audit budget.
 
 - There is no new store; the ledger is derived from the activity log.
