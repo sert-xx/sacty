@@ -309,6 +309,44 @@ describe("不安定な失敗の申告（PBI-310）", () => {
     expect(review.tests?.rejectedFlakyFailures).toBeUndefined();
   });
 
+  it.each([
+    ["未指定", undefined],
+    ["整数でない", "127"],
+  ])("終了コードが%sでも申告を確かめ、ツール不足の合格で捨てない", (_, exitCode) => {
+    const report = (flakyFailures: unknown) =>
+      extractFinalReview(
+        `\`\`\`json\n${JSON.stringify({
+          "sacty-final-review": {
+            viewpoints: [{ id: "REQ", verified: true, reason: "満たす" }],
+            remarks: [],
+            tests: {
+              command: "go test",
+              output: "",
+              exitCode,
+              missingCommands: ["go"],
+              flakyFailures,
+            },
+            humanChecks: [],
+            summary: "要約",
+          },
+        })}\n\`\`\``,
+        ["REQ"],
+        [],
+        { testCommand: "go test", documentsOnly: true, changedFiles: ["README.md"] },
+      );
+    const ng = report([flaky({ runs: 1, passes: 0 })]);
+    expect(ng.passed).toBe(false);
+    expect(reasons(ng.tests?.rejectedFlakyFailures)[0]).toContain("実行し直しが");
+    const ok = report([flaky()]);
+    expect(ok.passed).toBe(true);
+    expect(ok.tests?.flakyFailures).toHaveLength(1);
+  });
+
+  it("終了コードが無ければ、認めた申告だけではテストを通ったものにしない", () => {
+    const review = read({ exitCode: undefined, flakyFailures: [flaky()] });
+    expect(review.passed).toBe(false);
+  });
+
   it("一覧でない・崩れた項目でも落ちない", () => {
     expect(read({ flakyFailures: "なし" }).tests?.rejectedFlakyFailures).toBeUndefined();
     expect(read({ flakyFailures: [3] }).passed).toBe(false);
