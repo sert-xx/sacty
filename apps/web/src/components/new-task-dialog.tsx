@@ -62,6 +62,7 @@ export function NewTaskDialog({
   projectId,
   projectName,
   hasTargets,
+  prefill,
 }: {
   projectId: string;
   projectName: string;
@@ -70,6 +71,17 @@ export function NewTaskDialog({
    * （対象の範囲かどうかはデーモンが確かめる）。
    */
   hasTargets: boolean;
+  /**
+   * 提案から開くときの、入れておく内容と開くボタンの文言（PBI-312）。人が確かめて、直して、作成を押す。
+   * flakyFixTest は、作ったタスクが直す不安定なテストの識別子（台帳の id。名前は伏せた値なので送らない）。
+   */
+  prefill?: {
+    label: string;
+    title: string;
+    body: string;
+    repo: string;
+    flakyFixTest: string;
+  };
 }) {
   const [state, formAction, pending] = useActionState(createTaskAction, initial);
   const messages = useMessages();
@@ -136,10 +148,13 @@ export function NewTaskDialog({
         loadCandidates(projectId, hasTargets, t.repositoriesNoAnswer, setCandidates);
       }}
     >
-      <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
+      <DialogTrigger render={<Button size={prefill ? "default" : "lg"} />}>
+        {prefill?.label ?? t.create}
+      </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
+          {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
           {/* 工程ごとの指定は、別の画面で選び、ここから送る（画面を切り替えても、入力中の題・内容を残すため、どちらの画面も消さずに隠す） */}
           {customizable &&
             Object.entries(chosen.images).map(([step, name]) => (
@@ -183,9 +198,13 @@ export function NewTaskDialog({
                 openRef: stepsOpener,
               }}
               // 候補が1つなら入れておく
-              repoDefault={state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")}
-              titleDefault={state.values?.title}
-              bodyDefault={state.values?.body}
+              repoDefault={
+                state.values?.repo ??
+                prefill?.repo ??
+                (repositories.length === 1 ? repositories[0] : "")
+              }
+              titleDefault={state.values?.title ?? prefill?.title}
+              bodyDefault={state.values?.body ?? prefill?.body}
               titleError={state.fieldErrors?.title?.[0]}
               bodyError={state.fieldErrors?.body?.[0]}
               autoFocus

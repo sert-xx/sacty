@@ -1,10 +1,17 @@
+import type { Project } from "@sacty/core";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AuditScreen } from "@/components/audit-screen";
 import { DaemonError } from "@/components/daemon-error";
+import { FlakyTestsCard } from "@/components/flaky-tests";
 import { FollowProject } from "@/components/shell/follow-project";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getProjectAudits, listProjects } from "@/lib/daemon";
+import {
+  DaemonUnavailableError,
+  getProjectAudits,
+  getProjectFlakyTests,
+  listProjects,
+} from "@/lib/daemon";
 
 /**
  * プロジェクトの監査の画面（PBI-124）。表示するプロジェクトは URL の ID で決め、表示しているプロジェクト（cookie）を
@@ -22,12 +29,18 @@ export default async function ProjectAuditPage({ params }: { params: Promise<{ i
 async function Audit({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const m = (await getMessages()).audit;
-  let projectName: string | undefined;
+  let project: Project | undefined;
   let data: Awaited<ReturnType<typeof getProjectAudits>>;
+  let flaky: Awaited<ReturnType<typeof getProjectFlakyTests>>;
   try {
-    const [projects, audits] = await Promise.all([listProjects(), getProjectAudits(id)]);
-    projectName = projects.find((p) => p.id === id)?.name;
+    const [projects, audits, ledger] = await Promise.all([
+      listProjects(),
+      getProjectAudits(id),
+      getProjectFlakyTests(id),
+    ]);
+    project = projects.find((p) => p.id === id);
     data = audits;
+    flaky = ledger;
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (
@@ -39,15 +52,28 @@ async function Audit({ params }: { params: Promise<{ id: string }> }) {
     }
     throw error;
   }
-  if (!data || projectName === undefined) notFound();
+  if (!data || !flaky || project === undefined) notFound();
   return (
     <>
       <FollowProject projectId={id} />
       <div className="flex flex-col gap-1">
-        <p className="text-sm text-muted-foreground">{m.screen.project(projectName)}</p>
+        <p className="text-sm text-muted-foreground">{m.screen.project(project.name)}</p>
         <h1 className="text-2xl font-bold">{m.title}</h1>
       </div>
-      <AuditScreen data={data} today={new Date().toISOString().slice(0, 10)} />
+      <AuditScreen
+        data={data}
+        today={new Date().toISOString().slice(0, 10)}
+        flaky={
+          <FlakyTestsCard
+            tests={flaky.tests}
+            project={{
+              id: project.id,
+              name: project.name,
+              hasTargets: project.targets.length > 0,
+            }}
+          />
+        }
+      />
     </>
   );
 }

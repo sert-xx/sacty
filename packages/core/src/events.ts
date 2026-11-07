@@ -570,6 +570,9 @@ export type AuditAdoptNote = z.infer<typeof AuditAdoptNote>;
 /** 監査の改修の提案から作ったタスクの、元の提案（PBI-125）。 */
 const AuditFixLink = z.object({ taskId: z.string().min(1), proposalId: z.string().min(1) });
 
+/** 不安定なテストの台帳の提案から作ったタスクが直すテスト（リポジトリはタスクのもの。PBI-312）。 */
+const FlakyFixLink = z.object({ name: z.string().min(1), file: z.string().min(1) });
+
 /**
  * セキュリティチェックの指摘の区分。dependency：依存の脆弱性、supply-chain：サプライチェーン（CI・取得元・固定の仕方）、
  * code：コードの脆弱性、secret：秘密情報の混入、config：設定・IaC。対応のタスクは区分ごとに1つ作る。
@@ -706,6 +709,8 @@ const TaskCreated = z.object({
     fix: DeploymentFix.optional(),
     /** 監査の改修の提案を採用して作ったタスクの、元の提案（start: audit。PBI-125）。 */
     auditFix: AuditFixLink.optional(),
+    /** 不安定なテストの台帳の提案から人が作った、そのテストを直すタスク（PBI-312）。 */
+    flakyFix: FlakyFixLink.optional(),
     /** セキュリティチェックのレポートの区分から作った、対応のタスクの元（start: security）。 */
     securityFix: SecurityFixLink.optional(),
     /**
@@ -1379,7 +1384,8 @@ const RemarkReview = z.object({
 /** ゴールガーディアンが最終レビューの中で実行したテスト（ゴールガーディアンの申告）。 */
 /**
  * 差分と無関係で、実行し直すと結果が変わった失敗（PBI-310）。ゴールガーディアンの申告を sacty が確かめたものだけを
- * 記録する（`extractFinalReview`）。runs は実行し直した回数、passes はそのうち通った回数。
+ * 記録する（`extractFinalReview`）。runs は実行し直した回数、passes はそのうち通った回数。既知の不安定なテストで
+ * 実行し直しを省いたものは、どちらも 0（PBI-312）。
  */
 export const FlakyFailure = z.object({
   name: z.string(),
@@ -1443,6 +1449,8 @@ export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boole
 export const FLAKY_MIN_RERUNS = 2;
 /** ゴールガーディアンに許す、実行し直しの回数の上限（PBI-310）。 */
 export const FLAKY_MAX_RERUNS = 3;
+/** 既知の不安定なテストと見なし、直すタスクを提案するのに要る、不安定と認めたタスクの数（PBI-312）。 */
+export const FLAKY_KNOWN_MIN_TASKS = 3;
 
 /** 最終レビューが認めた不安定な失敗（PBI-310）。テストのコマンドが無いタスクの CI の失敗の申告も含める。 */
 export function reviewFlakyFailures(review: {
@@ -1454,7 +1462,11 @@ export function reviewFlakyFailures(review: {
 
 /** 人が確かめることに出す、認めた不安定な失敗の1行（PBI-310）。 */
 export function flakyFailureLine(f: FlakyFailure): string {
-  return `${f.name}（${f.file}。実行し直して ${f.runs} 回中 ${f.passes} 回通った）：${f.reason}`;
+  const how =
+    f.runs === 0
+      ? "既知の不安定なテストで、実行し直しを省いた"
+      : `実行し直して ${f.runs} 回中 ${f.passes} 回通った`;
+  return `${f.name}（${f.file}。${how}）：${f.reason}`;
 }
 
 /** 記録する、失敗したテスト・検査の名前の数の上限（PBI-308）。 */
@@ -3331,6 +3343,11 @@ export const CreateTaskInput = z.object({
    * だけを指定できる。書いていない工程は config.yaml で決まる。
    */
   agents: StepAgentMap.optional(),
+  /**
+   * 不安定なテストの台帳の提案から作るときの、直すテストの識別子（PBI-312。台帳の `id`）。画面の名前は伏せた値なので、
+   * デーモンが台帳から元の名前とファイルを探して `flakyFix` にする。
+   */
+  flakyFixTest: z.string().min(1).max(64).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 
