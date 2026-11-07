@@ -350,6 +350,38 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     );
   });
 
+  it("テストのコマンドが無いタスクの CI の失敗も、直す対象か分けて伝え、人が確かめることに出す（PBI-310）", () => {
+    const flaky = { name: "ui", file: "tests/ui.spec.ts", runs: 3, passes: 2, reason: "別の画面" };
+    const failed = review({
+      passed: false,
+      tests: undefined,
+      viewpoints: [{ viewpointId: "REQ", verified: false, reason: "形だけ" }],
+      ciFlakyFailures: [flaky],
+    });
+    const prompt = buildPrompt(
+      task({ verifyFeedback: { kind: "review", review: failed } } as Partial<Task>),
+      "implement",
+    );
+    expect(prompt).toContain(
+      "差分と無関係で不安定と判断した CI の失敗（実装で直す対象ではありません）：\n- ui（tests/ui.spec.ts。",
+    );
+    const rejected = review({
+      passed: false,
+      tests: undefined,
+      rejectedCiFlakyFailures: [{ code: "review.flakyNoDiff", params: { name: "ui" } }],
+    });
+    expect(
+      buildPrompt(
+        task({ verifyFeedback: { kind: "review", review: rejected } } as Partial<Task>),
+        "implement",
+      ),
+    ).toContain("- ui：差分のファイルを読めず、無関係と確かめられない");
+    const lines = chatJudgementLines(
+      task({ lastReview: review({ tests: undefined, ciFlakyFailures: [flaky] }) } as Partial<Task>),
+    );
+    expect(lines.some((l) => l.includes("不安定と判断したテストの失敗：ui（"))).toBe(true);
+  });
+
   it("質問への答えに渡す判定に、環境による失敗と人が確かめることを含める", () => {
     const lines = chatJudgementLines(task({ lastReview: review() } as Partial<Task>));
     expect(lines).toContain(`  - 環境によると判断したテストの失敗：${FAILURE}`);

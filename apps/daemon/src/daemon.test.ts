@@ -10662,7 +10662,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await drain(service);
       const task = service.get(id)?.task;
       expect(task?.lastReview?.tests?.flakyFailures).toBeUndefined();
-      expect(task?.lastReview?.tests?.rejectedFlakyFailures?.[0]).toContain("満たない");
+      expect(ja(task?.lastReview?.tests?.rejectedFlakyFailures?.[0])).toContain("満たない");
       expect(finalReviewPrompt(executor)).not.toContain("--- 既知の不安定なテスト ---");
       activity.close();
     });
@@ -10690,7 +10690,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await drain(service);
       const tests = service.get(id)?.task.lastReview?.tests;
       expect(tests?.flakyFailures).toBeUndefined();
-      expect(tests?.rejectedFlakyFailures?.[0]).toContain("差分に含まれる");
+      expect(ja(tests?.rejectedFlakyFailures?.[0])).toContain("差分に含まれる");
       activity.close();
     });
 
