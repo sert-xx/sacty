@@ -2786,7 +2786,8 @@ export type CiFailure = z.infer<typeof CiFailure>;
 /**
  * 最終レビューの前に作った実装の PR（PullRequestPublished の verifying）の、先頭のコミットの CI の結果。passed：すべて
  * 通った、failed：失敗があった、none：CI が無い、timed_out：時間内に終わらない・読めない。最終レビューで、ゴールガーディアンに
- * 判断の材料として渡す（sacty は CI の結果だけでは不合格にしない）。
+ * 判断の材料として渡す（sacty は CI の結果だけでは不合格にしない）。rerunSkipped は、失敗したジョブを再実行できなかった
+ * （PBI-311。権限不足・ネットワークの失敗・Actions 以外のチェックだけの失敗。理由はデーモンのログにある）。
  */
 const PullRequestCiFinished = z.object({
   type: z.literal("PullRequestCiFinished"),
@@ -2794,6 +2795,21 @@ const PullRequestCiFinished = z.object({
     commit: z.string().min(1),
     result: z.enum(["passed", "failed", "none", "timed_out"]),
     checks: z.array(CiCheck).default([]),
+    failures: z.array(CiFailure).default([]),
+    rerunSkipped: z.literal(true).optional(),
+  }),
+});
+
+/**
+ * 実装の PR の CI の失敗を受けて、失敗したワークフローの実行の失敗したジョブを再実行する（PBI-311）。GitHub に頼む前に
+ * 記録する（頼んだ後に再起動しても、2回頼まない）。runs は頼む実行と、頼む前の試行の回数（再実行が始まったかを見分ける）。
+ * failures は元の失敗で、再実行で通っても最終レビューに渡す。待つ時間は、この時刻から数え直す。
+ */
+const PullRequestCiRerunRequested = z.object({
+  type: z.literal("PullRequestCiRerunRequested"),
+  payload: z.object({
+    commit: z.string().min(1),
+    runs: z.array(z.object({ id: z.number().int(), attempt: z.number().int().optional() })).min(1),
     failures: z.array(CiFailure).default([]),
   }),
 });
@@ -3227,6 +3243,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IntegrationReviewed,
   PullRequestPublished,
   PullRequestCiFinished,
+  PullRequestCiRerunRequested,
   VerificationOverridden,
   NoChangesFound,
   ContinuedFeedbackPassed,

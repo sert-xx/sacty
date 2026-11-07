@@ -101,6 +101,7 @@ import {
   PULL_REQUEST_CI_GRACE_MS,
   PULL_REQUEST_CI_TIMEOUT_MS,
   PULL_REQUEST_NO_CI_GRACE_MS,
+  type PullRequestCi,
   type PullRequestMerge,
   type PullRequestTemplateUse,
   parseOrgUrl,
@@ -190,7 +191,13 @@ import {
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
-import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
+import {
+  CI_FAILURES_MAX,
+  type CiStatusReader,
+  isFailedConclusion,
+  redactLog,
+  rerunNotStarted,
+} from "./ci.js";
 import {
   COMMIT_CONVENTION_FILES,
   type CommitKind,
@@ -478,6 +485,8 @@ const REVIEW_DIFF_FILE = "pr.diff";
 
 /** 共用の compose の取得の失敗の理由（git の出力）の上限（PBI-70）。 */
 const SHARED_FETCH_DETAIL_MAX = 2000;
+/** デーモンのログに出す、CI を再実行できなかった理由の上限（文字数。伏せた後に切り詰める。PBI-311）。 */
+const CI_RERUN_REASON_MAX = 500;
 
 /**
  * 取り込みの1つの検索に入れる対象（repo:・org:）の数の上限（PBI-140）。GitHub の検索は 80 個でも答えるが、URL の長さに
@@ -1768,6 +1777,7 @@ export class TaskService {
   /**
    * 最終レビューの前に作った（更新した）実装の PR の CI を待っているタスクの CI を読み、終わっていれば結果を記録する。
    * PR の確認（60秒ごと）から呼ぶ。一時停止したタスクは読まない（再開すると続ける。待つ時間は PR を作った時刻から数える）。
+   * 失敗で終わったら、コミットごとに1回だけ失敗したジョブを再実行して待ち直す（PBI-311。待つ時間は再実行の時刻から数え直す）。
    * 記録すると、最終レビューに進む。1つのタスクの失敗は、ほかのタスクを止めない。
    */
   async checkVerificationCi(): Promise<void> {
@@ -1779,36 +1789,63 @@ export class TaskService {
       if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) continue;
       const pauses = this.pauseCounts.get(task.id) ?? 0;
       const usedSecrets: string[] = [];
+      // 読んでいる間に一時停止・中止した、実装をやり直した、再実行を頼んだなら記録しない（再開した後の確認で取り直す）
+      const unchangedSince = (read: PullRequestCi): Task | undefined => {
+        const latest = this.tasks.get(task.id);
+        return latest?.status !== "idle" ||
+          !awaitingPullRequestCi(latest) ||
+          latest.pullRequestCi?.commit !== read.commit ||
+          latest.pullRequestCi?.rerun?.at !== read.rerun?.at ||
+          this.cancelling.has(task.id) ||
+          this.pauseRequested.has(task.id) ||
+          (this.pauseCounts.get(task.id) ?? 0) !== pauses
+          ? undefined
+          : latest;
+      };
       // PR の向き先。引き継いだ既存の PR は、作業領域のベースブランチではなく PR の向き先
       const baseBranch = task.continuedPullRequest?.baseBranch ?? task.repository?.baseBranch;
       try {
+        // 同じコミットの待ち直しで戻した再実行は、今の待ち時間に関係しない
+        const awaited = ci.rerun?.restored ? undefined : ci.rerun;
+        const sinceRerun = awaited ? this.now() - Date.parse(awaited.at) : undefined;
         const result = await this.readCi(task, {
           repo,
           commit: ci.commit,
-          elapsed: this.now() - Date.parse(ci.startedAt),
+          elapsed: sinceRerun ?? this.now() - Date.parse(ci.startedAt),
           key: `${task.id} pr`,
           graceMs: PULL_REQUEST_CI_GRACE_MS,
           timeoutMs: PULL_REQUEST_CI_TIMEOUT_MS,
           usedSecrets,
+          // 再実行が始まらないまま猶予を過ぎたら（頼めなかったまま再起動したなど）、今の失敗を結果にする
+          ...(awaited && (sinceRerun as number) < PULL_REQUEST_CI_GRACE_MS
+            ? { rerunRuns: awaited.runs }
+            : {}),
           ...(baseBranch ? { noCi: { graceMs: PULL_REQUEST_NO_CI_GRACE_MS, baseBranch } } : {}),
         });
         if (!result) continue;
-        // 読んでいる間に一時停止・中止した、実装をやり直したなら記録しない（再開した後の確認で取り直す）
-        const latest = this.tasks.get(task.id);
+        const latest = unchangedSince(ci);
+        if (!latest) continue;
+        let finished: typeof result & { rerunSkipped?: true } = result;
         if (
-          latest?.status !== "idle" ||
-          !awaitingPullRequestCi(latest) ||
-          latest.pullRequestCi?.commit !== ci.commit ||
-          this.cancelling.has(task.id) ||
-          this.pauseRequested.has(task.id) ||
-          (this.pauseCounts.get(task.id) ?? 0) !== pauses
+          result.result === "failed" &&
+          !latest.pullRequestCiReruns?.some((r) => r.commit === ci.commit)
         ) {
-          continue;
+          const rerun = await this.rerunFailedCi(
+            task,
+            ci,
+            repo,
+            result.failures,
+            usedSecrets,
+            unchangedSince,
+          );
+          if (rerun.outcome !== "skipped") continue;
+          finished = { ...result, rerunSkipped: true };
+          if (!unchangedSince(rerun.read)) continue;
         }
-        this.append(latest, [
+        this.append(this.mustGet(task.id), [
           {
             actor: "sacty",
-            event: { type: "PullRequestCiFinished", payload: { commit: ci.commit, ...result } },
+            event: { type: "PullRequestCiFinished", payload: { commit: ci.commit, ...finished } },
           },
         ]);
       } catch (error) {
@@ -1817,6 +1854,83 @@ export class TaskService {
         );
       }
     }
+  }
+
+  /**
+   * 実装の PR の CI の失敗したジョブを再実行する（PBI-311）。できなければスキップする（タスクを止めない・失敗にしない）。
+   * 頼む前に PullRequestCiRerunRequested を記録する（頼んだ後に再起動しても、2回頼まない）。1つでも頼めたら requested、
+   * 読んでいる間・頼む間にタスクが変わったなら changed（残りは頼まない）、1つも頼めなければ skipped（read は、確かめ直す基準の
+   * CI の記録）。
+   */
+  private async rerunFailedCi(
+    task: Task,
+    ci: PullRequestCi,
+    repo: string,
+    failures: CiFailure[],
+    usedSecrets: string[],
+    unchangedSince: (read: PullRequestCi) => Task | undefined,
+  ): Promise<{ outcome: "requested" | "changed" } | { outcome: "skipped"; read: PullRequestCi }> {
+    // 伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
+    const reasonOf = (error: unknown): string =>
+      redactLog(renderMessage(redactText(errorText(error), usedSecrets), "ja"), usedSecrets).slice(
+        0,
+        CI_RERUN_REASON_MAX,
+      );
+    const reader = this.deps.ci;
+    let token: string;
+    let runs: { id: number; attempt?: number }[];
+    try {
+      if (!reader) throw new Error("CI/CD の状態を読む口がありません");
+      token = await this.githubToken(task, repo, usedSecrets);
+      const snapshot = await reader.snapshot({ repo, token, commit: ci.commit });
+      runs = snapshot.failedRuns.map(({ id, attempt }) => ({
+        id,
+        ...(attempt !== undefined ? { attempt } : {}),
+      }));
+      if (runs.length === 0) throw new Error("GitHub Actions 以外のチェックだけの失敗です");
+    } catch (error) {
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI を再実行できませんでした。再実行せずに進みます：${reasonOf(error)}`,
+      );
+      return { outcome: "skipped", read: ci };
+    }
+    const latest = unchangedSince(ci);
+    if (!latest) return { outcome: "changed" };
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "PullRequestCiRerunRequested",
+          payload: { commit: ci.commit, runs, failures },
+        },
+      },
+    ]);
+    const read = this.mustGet(task.id).pullRequestCi as PullRequestCi;
+    let requested = 0;
+    for (const run of runs) {
+      // 前の実行の応答を待つ間に止めたなら、残りを頼まない
+      if (!unchangedSince(read)) return { outcome: "changed" };
+      try {
+        await reader.rerunFailedJobs({ repo, token, runId: run.id });
+        requested += 1;
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} の PR の CI の実行 ${run.id} を再実行できませんでした：${reasonOf(error)}`,
+        );
+      }
+    }
+    if (requested === 0) {
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI を1つも再実行できませんでした。再実行せずに進みます`,
+      );
+      return { outcome: "skipped", read };
+    }
+    if (requested < runs.length) {
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI の再実行を ${runs.length} 件中 ${requested} 件だけ頼めました。頼めた再実行を待ちます`,
+      );
+    }
+    return { outcome: "requested" };
   }
 
   /**
@@ -1992,7 +2106,8 @@ export class TaskService {
    * 待つなら undefined。読めない（認証・ネットワーク）なら待ち、時間の上限（timeoutMs）を過ぎていれば時間切れ。1つも無ければ
    * graceMs を過ぎるまで待ってから none（noCi があれば、その短い猶予を過ぎた所でリポジトリに CI が無いと確かめられても
    * none。PBI-309）。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。
-   * 失敗があれば、失敗したジョブとログの抜粋を読む。
+   * 失敗があれば、失敗したジョブとログの抜粋を読む。rerunRuns があれば、その実行の再実行が始まるまで待つ（PBI-311。頼んだ
+   * 直後の答えの古い失敗を、結果にしない）。
    */
   private async readCi(
     task: Task,
@@ -2004,6 +2119,7 @@ export class TaskService {
       graceMs: number;
       timeoutMs: number;
       usedSecrets: string[];
+      rerunRuns?: readonly { id: number; attempt?: number }[];
       noCi?: { graceMs: number; baseBranch: string };
     },
   ): Promise<
@@ -2029,6 +2145,7 @@ export class TaskService {
         ? { result: "timed_out", checks: [], failures: [] }
         : undefined;
     }
+    if (input.rerunRuns && rerunNotStarted(snapshot, input.rerunRuns)) return undefined;
     // 記録するのは、失敗・終わっていないものを先に 50 件まで（作業履歴を膨らませない）
     const checks = [...snapshot.checks]
       .sort(

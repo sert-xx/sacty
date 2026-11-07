@@ -227,8 +227,8 @@ export const verify = {
   height: 940,
   title: t("実装の検証から承認待ちまで", "From implementation to awaiting approval"),
   desc: t(
-    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作って CI を待ち（変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
-    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.",
+    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作って CI を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行し、変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
+    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (on failure it reruns the failed jobs once when it can, and with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.",
   ),
   items: [
     {
@@ -270,7 +270,7 @@ export const verify = {
       tone: "amber",
       title: t("PR の CI を待つ", "Wait for the PR's CI"),
       lines: [
-        t("sacty が読む（上限 60 分）", "sacty reads it (up to 60 min)"),
+        t("sacty が読む。失敗なら1回再実行", "sacty reads it; on failure, reruns once"),
         { as: "code", text: "PullRequestCiFinished" },
       ],
     },

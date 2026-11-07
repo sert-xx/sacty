@@ -67,11 +67,30 @@ export type PreviousReview = NonNullable<
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 /**
  * 最終レビューの前に作った実装の PR の CI（PullRequestPublished の verifying と PullRequestCiFinished）。startedAt は PR を
- * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。
+ * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。rerun は、失敗した
+ * ジョブの再実行を頼んだ記録（PBI-311。PullRequestCiRerunRequested）。あれば、待つ時間は rerun.at から数える。restored は、
+ * 同じコミットの待ち直しで戻した記録で、元の失敗を渡すためだけのもの（待つ時間は startedAt から数える）。
  */
 export type PullRequestCi = { commit: string; startedAt: string } & Partial<
   Omit<PayloadOf<"PullRequestCiFinished">, "commit">
-> & { finishedAt?: string };
+> & {
+    finishedAt?: string;
+    rerun?: Omit<PayloadOf<"PullRequestCiRerunRequested">, "commit"> & {
+      at: string;
+      restored?: true;
+    };
+  };
+
+/**
+ * 同じコミットの CI を待ち直すときに、前の再実行の記録を戻す（PBI-311）。戻さないと、再実行で通った結果だけが最終レビューに
+ * 渡り、元の失敗が消える。1つも頼めなかった再実行は、無かったものとする。
+ */
+function restoredCiRerun(task: Task, commit: string): Pick<PullRequestCi, "rerun"> {
+  const past = task.pullRequestCiReruns?.find((r) => r.commit === commit);
+  if (!past || past.skipped) return {};
+  const { commit: _commit, skipped: _skipped, ...rerun } = past;
+  return { rerun: { ...rerun, restored: true } };
+}
 
 /**
  * 人が、ゴールガーディアンの不合格のまま実装の承認へ進められるか（VerificationOverridden）。実装の検証が続けて通らずに
@@ -631,6 +650,14 @@ export type Task = {
    * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
    */
   pullRequestCi?: PullRequestCi;
+  /**
+   * CI の失敗ジョブの再実行の記録（PBI-311）。コミットごとに1件。実装をやり直しても消さない（同じコミットのまま CI を待ち直しても、
+   * コミットごとに1回だけ頼み、元の失敗を最終レビューに渡す）。skipped は、1つも頼めずに元の失敗のまま進んだ。
+   */
+  pullRequestCiReruns?: (NonNullable<PullRequestCi["rerun"]> & {
+    commit: string;
+    skipped?: true;
+  })[];
   /**
    * 承認待ちの PR の今の head に付いた AI のレビューの状況（PBI-302 D1）。作業履歴からは復元しない。デーモンが画面に返すときだけ
    * 足す（`TaskService.view`）。
@@ -1744,7 +1771,11 @@ export function applyEvent(
         task.pullRequestState = event.payload.number ? "open" : undefined;
         task.pullRequestMerge = undefined;
         task.pullRequestConflict = undefined;
-        task.pullRequestCi = { commit: event.payload.commit, startedAt: event.at };
+        task.pullRequestCi = {
+          commit: event.payload.commit,
+          startedAt: event.at,
+          ...restoredCiRerun(task, event.payload.commit),
+        };
         break;
       }
       // 実装の工程の中で、検証に通った実装の PR を作った（PBI-110）
@@ -1772,6 +1803,31 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "not the commit of the pull request");
       }
       task.pullRequestCi = { ...ci, ...event.payload, finishedAt: event.at };
+      if (event.payload.rerunSkipped) {
+        task.pullRequestCiReruns = task.pullRequestCiReruns?.map((r) =>
+          r.commit === ci.commit ? { ...r, skipped: true } : r,
+        );
+      }
+      break;
+    }
+
+    case "PullRequestCiRerunRequested": {
+      const ci = task.pullRequestCi;
+      if (!ci || ci.result !== undefined || task.verification === undefined) {
+        throw new ActivityIntegrityError(event, "the pull request CI is not awaited");
+      }
+      const { commit, ...rerun } = event.payload;
+      if (ci.commit !== commit) {
+        throw new ActivityIntegrityError(event, "not the commit of the pull request");
+      }
+      if (task.pullRequestCiReruns?.some((r) => r.commit === commit)) {
+        throw new ActivityIntegrityError(event, "the commit was already rerun");
+      }
+      task.pullRequestCi = { ...ci, rerun: { ...rerun, at: event.at } };
+      task.pullRequestCiReruns = [
+        ...(task.pullRequestCiReruns ?? []),
+        { commit, ...rerun, at: event.at },
+      ];
       break;
     }
 

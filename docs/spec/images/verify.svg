@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 940" width="1040" height="940" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">実装の検証から承認待ちまで</title>
-  <desc id="desc">実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作って CI を待ち（変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
+  <desc id="desc">実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作って CI を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行し、変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -70,7 +70,7 @@
   <rect x="260" y="270" width="300" height="104" rx="10" class="card" style=""/>
   <svg x="276" y="284" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="312" y="302" class="title">PR の CI を待つ</text>
-  <text x="276" y="330" class="sub">sacty が読む（上限 60 分）</text>
+  <text x="276" y="330" class="sub">sacty が読む。失敗なら1回再実行</text>
   <rect x="276" y="339" width="160.9" height="21" rx="5" class="pill"/>
   <text x="284" y="354" class="code">PullRequestCiFinished</text>
   <rect x="260" y="405" width="300" height="56" rx="10" class="card" style=""/>

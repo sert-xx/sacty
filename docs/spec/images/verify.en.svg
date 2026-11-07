@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 940" width="1040" height="940" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">From implementation to awaiting approval</title>
-  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
+  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (on failure it reruns the failed jobs once when it can, and with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -70,7 +70,7 @@
   <rect x="260" y="270" width="300" height="104" rx="10" class="card" style=""/>
   <svg x="276" y="284" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--amber)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
   <text x="312" y="302" class="title">Wait for the PR's CI</text>
-  <text x="276" y="330" class="sub">sacty reads it (up to 60 min)</text>
+  <text x="276" y="330" class="sub">sacty reads it; on failure, reruns once</text>
   <rect x="276" y="339" width="160.9" height="21" rx="5" class="pill"/>
   <text x="284" y="354" class="code">PullRequestCiFinished</text>
   <rect x="260" y="405" width="300" height="56" rx="10" class="card" style=""/>

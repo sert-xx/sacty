@@ -20,6 +20,7 @@ import type { DaemonText } from "./message-code.js";
 import {
   applyEvent,
   awaitingGathering,
+  awaitingPullRequestCi,
   awaitingRepository,
   awaitingTicketTriage,
   canDecideTests,
@@ -3707,6 +3708,106 @@ describe("ベースブランチの取り込み", () => {
     expect(merged?.baseMerge?.commit).toBe("n1");
     expect(merged?.pullRequestCi).toBeUndefined();
     expect(merged?.verification).toBeDefined();
+  });
+
+  describe("CI の再実行（PBI-311）", () => {
+    const published = (commit: string) =>
+      ev("t1", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit,
+          url: "https://github.com/acme/app/pull/7",
+          number: 7,
+          verifying: true,
+        },
+      });
+    const failures = [{ workflow: "CI", job: "test", conclusion: "failure" }];
+    const rerun = (commit: string) =>
+      ev("t1", {
+        type: "PullRequestCiRerunRequested",
+        payload: { commit, runs: [{ id: 1, attempt: 1 }], failures },
+      });
+
+    it("頼んだ後も CI を待ち続け、結果が出ても元の失敗を残す", () => {
+      seq = 0;
+      const events = [...prepared("t1"), ...implemented("t1"), published("c1"), rerun("c1")];
+      const waiting = project(events).get("t1");
+      expect(waiting && awaitingPullRequestCi(waiting)).toBe(true);
+      expect(waiting?.pullRequestCi?.rerun).toMatchObject({
+        at: expect.any(String),
+        runs: [{ id: 1, attempt: 1 }],
+        failures,
+      });
+      expect(waiting?.pullRequestCiReruns?.map((r) => r.commit)).toEqual(["c1"]);
+      const done = project([
+        ...events,
+        ev("t1", {
+          type: "PullRequestCiFinished",
+          payload: { commit: "c1", result: "passed", checks: [], failures: [] },
+        }),
+      ]).get("t1");
+      expect(done?.pullRequestCi).toMatchObject({ result: "passed", rerun: { failures } });
+    });
+
+    it("同じコミットの2回目・待っていないコミットは記録できない", () => {
+      seq = 0;
+      const events = [...prepared("t1"), ...implemented("t1"), published("c1")];
+      expect(() => project([...events, rerun("c2")])).toThrow(/not the commit/);
+      expect(() => project([...events, rerun("c1"), rerun("c1")])).toThrow(/already rerun/);
+      seq = 0;
+      expect(() => project([...prepared("t1"), ...implemented("t1"), rerun("c1")])).toThrow(
+        /not awaited/,
+      );
+    });
+
+    it("取り込みで CI を待ち直しても、頼んだコミットの記録は残す", () => {
+      seq = 0;
+      const task = project([
+        ...prepared("t1"),
+        ...implemented("t1"),
+        published("c1"),
+        rerun("c1"),
+        merged1("t1"),
+      ]).get("t1");
+      expect(task?.pullRequestCi).toBeUndefined();
+      expect(task?.pullRequestCiReruns?.map((r) => r.commit)).toEqual(["c1"]);
+    });
+
+    it("同じコミットの CI を待ち直すと、元の失敗を戻す。別のコミットには戻さない", () => {
+      const base = () => {
+        seq = 0;
+        return [
+          ...prepared("t1"),
+          ...implemented("t1"),
+          published("c1"),
+          rerun("c1"),
+          merged1("t1"),
+        ];
+      };
+      const same = project([...base(), published("c1")]).get("t1");
+      expect(same?.pullRequestCi?.rerun).toMatchObject({ failures, runs: [{ id: 1, attempt: 1 }] });
+      expect(same?.pullRequestCi?.rerun).not.toHaveProperty("commit");
+      expect(project([...base(), published("c2")]).get("t1")?.pullRequestCi?.rerun).toBeUndefined();
+    });
+
+    it("1つも頼めなかった再実行は、待ち直しても戻さず、2回目も頼まない", () => {
+      seq = 0;
+      const task = project([
+        ...prepared("t1"),
+        ...implemented("t1"),
+        published("c1"),
+        rerun("c1"),
+        ev("t1", {
+          type: "PullRequestCiFinished",
+          payload: { commit: "c1", result: "failed", checks: [], failures, rerunSkipped: true },
+        }),
+        merged1("t1"),
+        published("c1"),
+      ]).get("t1");
+      expect(task?.pullRequestCi?.rerun).toBeUndefined();
+      expect(task?.pullRequestCiReruns?.[0]).toMatchObject({ commit: "c1", skipped: true });
+    });
   });
 
   it("競合の目印が残っていると、検証に進まず実装をやり直す。レビューへは進められない", () => {

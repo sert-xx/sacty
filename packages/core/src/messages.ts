@@ -497,6 +497,7 @@ const PARAMS = {
       "addLabel",
       "draftPr",
       "readChecks",
+      "rerunChecks",
       "listEvents",
     ]),
     status: z.number(),
@@ -696,6 +697,7 @@ const githubActionJa = {
   addLabel: "PR にラベルを付けられませんでした",
   draftPr: "PR のドラフトを切り替えられませんでした",
   readChecks: "CI/CD の状態を読めませんでした",
+  rerunChecks: "CI の失敗したジョブを再実行できませんでした",
   listEvents: "PR のできごと（レビューの依頼など）を読めませんでした",
 } as const;
 const githubActionEn = {
@@ -715,6 +717,7 @@ const githubActionEn = {
   addLabel: "Could not add the label to the PR",
   draftPr: "Could not switch the draft state of the PR",
   readChecks: "Could not read the CI/CD status",
+  rerunChecks: "Could not rerun the failed CI jobs",
   listEvents: "Could not read the PR events (such as review requests)",
 } as const;
 const githubHintJa = {

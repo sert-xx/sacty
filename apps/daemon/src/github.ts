@@ -996,6 +996,7 @@ export function apiError(
     | "postReview"
     | "searchIssues"
     | "readChecks"
+    | "rerunChecks"
     | "listEvents"
     | "getLabel"
     | "createLabel"
