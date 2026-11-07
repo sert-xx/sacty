@@ -2,6 +2,8 @@
  * 画面の文言：タスクの部品（task-bits・test-viewpoints・implementation・proposals・pull-request・resume-form・
  * change-decision-form・daemon-error）。英語の用語は labels.ts の用語集に合わせる。仕組みは *Hint に書く（PBI-117）。
  */
+import type { FlakyFailure } from "@sacty/core";
+
 const ja = {
   bits: {
     steps: "工程",
@@ -32,8 +34,8 @@ const ja = {
     notRun: "未実行",
     testsPassed: "テスト合格",
     testsPassedEnvironment: "テスト合格（環境による失敗のみ）",
-    environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean) =>
-      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : "失敗がすべて環境によるものとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
+    environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean, flaky = false) =>
+      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わるものだけとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
     testsFailed: "テスト不合格",
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
@@ -66,6 +68,16 @@ const ja = {
     humanChecksHint:
       "ゴールガーディアンが作業領域では確かめられなかったことです。実装の PR をマージする前に確かめてください。",
     environmentFailure: (detail: string) => `環境によると判断したテストの失敗：${detail}`,
+    flakyFailure: (f: FlakyFailure) =>
+      `不安定と判断したテストの失敗：${f.name}（${f.file}。実行し直して ${f.runs} 回中 ${f.passes} 回通った）：${f.reason}`,
+    flakyOnly: "不安定な失敗あり",
+    flakyOnlyHint:
+      "差分と無関係で、実行し直すと結果が変わった失敗があります。テストは通ったものとしました。",
+    testsPassedFlaky: "テスト合格（不安定な失敗あり）",
+    rejectedFlakyFailures: "不安定な失敗として認めなかった申告：",
+    environmentMixed: "環境による失敗あり",
+    environmentMixedHint:
+      "終了コードは 0 ではありませんが、ゴールガーディアンが失敗を環境によるものか不安定なものと判断したため、テストは通ったものとしました。",
     environmentOnly: "環境による失敗だけ",
     environmentOnlyHint:
       "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
@@ -318,8 +330,8 @@ const en: PartsMessages = {
     notRun: "Not run",
     testsPassed: "Tests passed",
     testsPassedEnvironment: "Tests passed (environment failures only)",
-    environmentPassNote: (exitCode, workspaceOnly) =>
-      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : 'the Goal Guardian judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
+    environmentPassNote: (exitCode, workspaceOnly, flaky = false) =>
+      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : flaky ? 'the Goal Guardian judged every failure to be environmental, or unrelated to the diff with a result that changes when rerun (the failures are listed under "For a person to check")' : 'the Goal Guardian judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
     testsFailed: "Tests failed",
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",
@@ -349,6 +361,16 @@ const en: PartsMessages = {
     humanChecks: "For a person to check",
     humanChecksHint:
       "The Goal Guardian could not check these in the workspace. Check them before merging the implementation PR.",
+    flakyFailure: (f) =>
+      `Test failure judged flaky: ${f.name} (${f.file}; passed ${f.passes} of ${f.runs} reruns): ${f.reason}`,
+    flakyOnly: "Flaky failures",
+    flakyOnlyHint:
+      "Some failures are unrelated to the diff and changed when rerun. The tests count as passed.",
+    testsPassedFlaky: "Tests passed (flaky failures)",
+    rejectedFlakyFailures: "Reports not accepted as flaky failures:",
+    environmentMixed: "Environment failures",
+    environmentMixedHint:
+      "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment or flaky, so the tests count as passed.",
     environmentFailure: (detail) =>
       `Test failure judged to be caused by the environment: ${detail}`,
     environmentOnly: "Environment failures only",

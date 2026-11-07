@@ -9406,8 +9406,18 @@ export class TaskService {
           ...(uncheckedInternalNames.length > 0 ? { uncheckedInternalNames } : {}),
           internalAllowance: internalNameAllowance(current),
           ...(documentsOnly ? { documentsOnly } : {}),
+          ...(changedFiles ? { changedFiles } : {}),
         },
       );
+    // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
+    const changedFiles = outcome.output.includes("flakyFailures")
+      ? await this.changedFiles(current, dir)
+      : undefined;
+    // 差分を読む間に人間が止めたなら、判定を記録しない（合格を記録すると、再開で最終レビューをやり直さずに公開へ進む）
+    if (this.stopRequested(task.id)) {
+      recordStopped();
+      return;
+    }
     let { missingCommands, unreadable, ...review } = extractReview(false);
     // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
     // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
@@ -9555,6 +9565,20 @@ export class TaskService {
    * タスクの差分（起点からの変更）が、文書のファイルだけか（PBI-158）。名前の変更は変更元と変更先に分けて見るので、コードを
    * 文書の名前に変えても通らない。差分を取れなければ、文書だけとは見なさない（止める側に倒す）。
    */
+  private async changedFiles(task: Task, dir: string): Promise<string[] | undefined> {
+    if (!task.repository) return undefined;
+    try {
+      const changes = await this.deps.repos.diffStats(
+        dir,
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+      return changes.map((c) => c.path);
+    } catch {
+      return undefined;
+    }
+  }
+
   private async changesOnlyDocuments(task: Task, dir: string): Promise<boolean> {
     if (!task.repository) return false;
     try {

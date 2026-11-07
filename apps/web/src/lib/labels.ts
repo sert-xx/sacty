@@ -5,7 +5,9 @@ import {
   awaitingRepository,
   awaitingTicketTriage,
   contextLabel,
+  type DaemonText,
   deliveredWithoutChanges,
+  type FlakyFailure,
   formatUsd,
   GATED_STEPS,
   gatePullRequest,
@@ -147,6 +149,10 @@ export type TestRunView = {
   byGuardian?: true;
   /** 環境によるとゴールガーディアンが判断したテストの失敗（PBI-155）。 */
   environmentFailures?: string[];
+  /** 差分と無関係で、実行し直すと結果が変わった失敗（PBI-310）。 */
+  flakyFailures?: FlakyFailure[];
+  /** 不安定な失敗として認めなかった申告と理由（PBI-310）。 */
+  rejectedFlakyFailures?: DaemonText[];
   /** イメージにツールが無くて実行できなかった検証（差分が文書だけで、止めずに進めたとき。PBI-158）。 */
   missingCommands?: string[];
   /** ゴールガーディアンが実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。元の段。 */
@@ -177,6 +183,10 @@ export function verificationResults(task: Task): {
         output: review.tests.output,
         ...(review.tests.environmentFailures
           ? { environmentFailures: review.tests.environmentFailures }
+          : {}),
+        ...(review.tests.flakyFailures ? { flakyFailures: review.tests.flakyFailures } : {}),
+        ...(review.tests.rejectedFlakyFailures
+          ? { rejectedFlakyFailures: review.tests.rejectedFlakyFailures }
           : {}),
         ...(review.tests.missingCommands ? { missingCommands: review.tests.missingCommands } : {}),
         ...(review.tests.reusedFrom ? { reusedFrom: review.tests.reusedFrom } : {}),

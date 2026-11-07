@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  type DaemonText,
   displayTestNames,
   humanVisibleEnvironmentFailures,
   isCompleted,
+  reviewFlakyFailures,
   SCOPE_VIEWPOINT,
   type Task,
 } from "@sacty/core";
@@ -43,6 +45,7 @@ function HumanChecks({ review }: { review: NonNullable<Task["lastReview"]> }) {
     ...humanVisibleEnvironmentFailures(review.tests?.environmentFailures).map((f) =>
       m.environmentFailure(f),
     ),
+    ...reviewFlakyFailures(review).map((f) => m.flakyFailure(f)),
   ];
   if (items.length === 0) return null;
   return (
@@ -56,6 +59,24 @@ function HumanChecks({ review }: { review: NonNullable<Task["lastReview"]> }) {
           // biome-ignore lint/suspicious/noArrayIndexKey: 記録の順のまま変わらない一覧
           <li key={i} className="break-words">
             {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 不安定な失敗として認めなかった申告と理由（PBI-310）。テストが不合格になった原因。 */
+function RejectedFlakyFailures({ items }: { items: readonly DaemonText[] }) {
+  const messages = useMessages();
+  return (
+    <div className="mt-2 text-sm" data-testid="rejected-flaky-failures">
+      <p>{messages.parts.implementation.rejectedFlakyFailures}</p>
+      <ul className="ml-4 list-disc">
+        {items.map((item, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 記録の順のまま変わらない一覧
+          <li key={i} className="break-words">
+            {messages.labels.text(item)}
           </li>
         ))}
       </ul>
@@ -207,9 +228,11 @@ export function Implementation({ task }: { task: Task }) {
                         ) : tests.passed && list.length > 0 ? (
                           // 終了コードが 0 でないのに合格にしたときは、「合格」とだけ出さず、その理由を添える（PBI-302 A2）
                           <Pill tone={OK}>
-                            {tests.environmentFailures && tests.exitCode !== 0
-                              ? m.testsPassedEnvironment
-                              : m.testsPassed}
+                            {tests.flakyFailures && tests.exitCode !== 0
+                              ? m.testsPassedFlaky
+                              : tests.environmentFailures && tests.exitCode !== 0
+                                ? m.testsPassedEnvironment
+                                : m.testsPassed}
                           </Pill>
                         ) : (
                           <Pill tone={NG}>{m.testsFailed}</Pill>
@@ -253,11 +276,22 @@ export function Implementation({ task }: { task: Task }) {
             )}
             {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
-            {/* 環境による失敗だけで、テストは通ったものとした（PBI-155） */}
+            {/* 環境による失敗（不安定な失敗と混ざることもある）で、テストは通ったものとした（PBI-155） */}
             {tests.environmentFailures && (
               <>
-                <Pill tone={NG}>{m.environmentOnly}</Pill>
-                <Hint text={m.environmentOnlyHint} />{" "}
+                <Pill tone={NG}>
+                  {tests.flakyFailures ? m.environmentMixed : m.environmentOnly}
+                </Pill>
+                <Hint
+                  text={tests.flakyFailures ? m.environmentMixedHint : m.environmentOnlyHint}
+                />{" "}
+              </>
+            )}
+            {/* 差分と無関係な不安定な失敗があり、テストは通ったものとした（PBI-310） */}
+            {tests.flakyFailures && (
+              <>
+                <Pill tone={NG}>{m.flakyOnly}</Pill>
+                <Hint text={m.flakyOnlyHint} />{" "}
               </>
             )}
             {/* 同じ内容で前の段が実行した結果を使い回した（PBI-305） */}
@@ -283,13 +317,18 @@ export function Implementation({ task }: { task: Task }) {
           </summary>
           <p className="mt-2 font-mono text-xs break-all">{tests.command}</p>
           {/* 終了コードが 0 でないのに合格にした理由（PBI-302 A2）。失敗の中身は「人が確かめること」に出る */}
-          {tests.environmentFailures && tests.exitCode !== 0 && (
+          {(tests.environmentFailures || tests.flakyFailures) && tests.exitCode !== 0 && (
             <p className="mt-2 text-sm" data-testid="environment-pass-note">
               {m.environmentPassNote(
                 tests.exitCode,
-                humanVisibleEnvironmentFailures(tests.environmentFailures).length === 0,
+                humanVisibleEnvironmentFailures(tests.environmentFailures).length === 0 &&
+                  !tests.flakyFailures,
+                Boolean(tests.flakyFailures),
               )}
             </p>
+          )}
+          {tests.rejectedFlakyFailures && (
+            <RejectedFlakyFailures items={tests.rejectedFlakyFailures} />
           )}
           {tests.note && <p className="mt-2 text-warn">{messages.labels.text(tests.note)}</p>}
           <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
@@ -322,6 +361,9 @@ export function Implementation({ task }: { task: Task }) {
           </p>
           {review.summary && <p className="break-words">{messages.labels.text(review.summary)}</p>}
           <HumanChecks review={review} />
+          {review.rejectedCiFlakyFailures && (
+            <RejectedFlakyFailures items={review.rejectedCiFlakyFailures} />
+          )}
           {review.viewpoints
             .filter((v) => v.viewpointId === SCOPE_VIEWPOINT && !v.verified)
             .map((v) => (

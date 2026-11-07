@@ -10465,6 +10465,131 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
   });
 
+  it("観点の不合格で戻るとき、認めた不安定な失敗は直す対象でないと伝える（PBI-310）", async () => {
+    const ng = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: false, reason: "満たさない" },
+            { id: "TV-2", verified: true, reason: "満たす" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+          tests: {
+            command: "npm test",
+            exitCode: 1,
+            output: "1 failed",
+            failedTests: ["ui"],
+            flakyFailures: [
+              { name: "ui", file: "tests/ui.spec.ts", runs: 2, passes: 1, reason: "別の画面" },
+            ],
+          },
+          humanChecks: [],
+          summary: "観点が不合格",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      ng,
+      implement("# v2"),
+    ]);
+    await drain(service);
+    expect(service.get(id)?.task.failedTests).toBeUndefined();
+    const prompts = executor.calls.map((c) => c.command.join(" "));
+    expect(
+      prompts.some((p) =>
+        p.includes("不安定と判断したテストの失敗（実装で直す対象ではありません）"),
+      ),
+    ).toBe(true);
+    activity.close();
+  });
+
+  for (const mode of ["pause", "cancel"] as const) {
+    it(`不安定な失敗を確かめる差分を読む間に${mode === "pause" ? "一時停止" : "中止"}されたら、判定を記録しない（PBI-310）`, async () => {
+      const flaky = out(
+        block({
+          "sacty-final-review": {
+            viewpoints: [
+              { id: "TV-1", verified: true, reason: "満たす" },
+              { id: "TV-2", verified: true, reason: "満たす" },
+            ],
+            remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+            tests: {
+              command: "npm test",
+              exitCode: 1,
+              output: "1 failed",
+              failedTests: ["ui"],
+              flakyFailures: [
+                { name: "ui", file: "tests/ui.spec.ts", runs: 2, passes: 1, reason: "別の画面" },
+              ],
+            },
+            humanChecks: [],
+            summary: "要求を満たす",
+          },
+        }),
+      );
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      const read = repos.diffStats.bind(repos);
+      repos.diffStats = async () => {
+        entered.resolve();
+        await gate.promise;
+        return read();
+      };
+      const { activity, service, id } = await toImplement([implement("# v1"), flaky], { repos });
+      const running = drain(service);
+      await entered.promise;
+      const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+      gate.resolve();
+      await stopping;
+      await running;
+      expect(types(service, id)).not.toContain("FinalReviewed");
+      expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+      activity.close();
+    });
+  }
+
+  it("差分と無関係な不安定な失敗は実装に戻さず、人が確かめることに出す（PBI-310）", async () => {
+    const flaky = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "満たす" },
+            { id: "TV-2", verified: true, reason: "満たす" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "再発なし" }],
+          tests: {
+            command: "npm test",
+            exitCode: 1,
+            output: "1 failed",
+            failedTests: ["ui.spec.ts > 保存"],
+            flakyFailures: [
+              {
+                name: "ui.spec.ts > 保存",
+                file: "tests/ui.spec.ts",
+                runs: 3,
+                passes: 2,
+                reason: "差分と別の画面",
+              },
+            ],
+          },
+          humanChecks: [],
+          summary: "要求を満たす",
+        },
+      }),
+    );
+    const { activity, service, pulls, id } = await toImplement([implement("# v1"), flaky]);
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+    expect(types(service, id).filter((t) => t === "FinalReviewed")).toHaveLength(1);
+    expect(pulls.calls.at(-1)?.body ?? "").toContain(
+      "不安定と判断したテストの失敗：ui.spec.ts > 保存",
+    );
+    activity.close();
+  });
+
   describe("差分が文書だけなら、ツールが無くても止めずに人の確認へ回す（PBI-158）", () => {
     /** go が無くてテストを実行できなかったと申告する最終レビュー（観点はすべて検証済み）。 */
     const missingGo = (exitCode = 127) =>

@@ -184,6 +184,92 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
       tests,
     });
 
+  it("不安定な失敗で合格にしたことと、失敗の内容を出す（PBI-310）", () => {
+    const flaky = {
+      name: "ui.spec.ts > 保存",
+      file: "tests/ui.spec.ts",
+      runs: 3,
+      passes: 2,
+      reason: "差分と別の画面",
+    };
+    const task = designed(
+      reviewed({ command: "npm test", exitCode: 1, output: "", flakyFailures: [flaky] }),
+    );
+    const html = render(task);
+    expect(html).toContain("テスト合格（不安定な失敗あり）");
+    expect(html).toContain("不安定と判断したテストの失敗：ui.spec.ts &gt; 保存");
+    expect(html).toContain('data-testid="environment-pass-note"');
+    expect(render(task, "en")).toContain("passed 2 of 3 reruns");
+  });
+
+  it("環境と不安定が混ざるときは「環境による失敗だけ」と出さない（PBI-310）", () => {
+    const flaky = { name: "ui", file: "tests/ui.spec.ts", runs: 3, passes: 2, reason: "別の画面" };
+    const task = designed(
+      reviewed({
+        command: "npm test",
+        exitCode: 1,
+        output: "",
+        environmentFailures: [FAILURE],
+        flakyFailures: [flaky],
+      }),
+    );
+    const html = render(task);
+    expect(html).toContain("環境による失敗あり");
+    expect(html).not.toContain("環境による失敗だけ");
+    expect(render(task, "en")).not.toContain("Environment failures only");
+  });
+
+  it("不安定な失敗として認めなかった申告と理由を、テストの結果に出す（PBI-310）", () => {
+    const html = render(
+      designed(
+        reviewed({
+          command: "npm test",
+          exitCode: 1,
+          output: "",
+          rejectedFlakyFailures: ["ui：実行し直しが 2 回に満たない（1 回）"],
+        }),
+      ),
+    );
+    expect(html).toContain('data-testid="rejected-flaky-failures"');
+    expect(html).toContain("ui：実行し直しが 2 回に満たない（1 回）");
+  });
+
+  it("テストのコマンドが無いタスクの CI の失敗も、人が確かめることと認めなかった理由に出す（PBI-310）", () => {
+    const flaky = { name: "ui", file: "tests/ui.spec.ts", runs: 3, passes: 2, reason: "別の画面" };
+    const html = render(
+      designed(
+        review({
+          viewpoints: [{ viewpointId: "TV-1", verified: true, reason: "検証している" }],
+          humanChecks: undefined,
+          tests: undefined,
+          ciFlakyFailures: [flaky],
+          rejectedCiFlakyFailures: ["ci：差分に含まれる"],
+        }),
+      ),
+    );
+    expect(html).toContain("tests/ui.spec.ts");
+    expect(html).toContain('data-testid="rejected-flaky-failures"');
+    expect(html).toContain("ci：差分に含まれる");
+  });
+
+  it("認めなかった理由は、画面の言語で出し、長い名前を折り返す（PBI-310）", () => {
+    const html = render(
+      designed(
+        reviewed({
+          command: "npm test",
+          exitCode: 1,
+          output: "",
+          rejectedFlakyFailures: [
+            { code: "review.flakyTooFewRuns", params: { name: "ui", min: 2, runs: 1 } },
+          ],
+        }),
+      ),
+      "en",
+    );
+    expect(html).toContain("ui: rerun fewer than 2 times (1)");
+    expect(html).toContain('class="break-words"');
+  });
+
   it("観点ごとの「テスト合格」に、環境による失敗だけで合格にしたことを添え、理由を日英で出す", () => {
     const html = render(
       designed(

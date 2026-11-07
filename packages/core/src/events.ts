@@ -1377,6 +1377,19 @@ const RemarkReview = z.object({
 
 /** ゴールガーディアンの最終レビュー。観点ごと・人間の指摘ごとに判定する。 */
 /** ゴールガーディアンが最終レビューの中で実行したテスト（ゴールガーディアンの申告）。 */
+/**
+ * 差分と無関係で、実行し直すと結果が変わった失敗（PBI-310）。ゴールガーディアンの申告を sacty が確かめたものだけを
+ * 記録する（`extractFinalReview`）。runs は実行し直した回数、passes はそのうち通った回数。
+ */
+export const FlakyFailure = z.object({
+  name: z.string(),
+  file: z.string(),
+  runs: z.number().int().min(0),
+  passes: z.number().int().min(0),
+  reason: z.string(),
+});
+export type FlakyFailure = z.infer<typeof FlakyFailure>;
+
 export const GuardianTests = z.object({
   command: z.string(),
   /** 終了コード（申告が無い・読めなければ無い）。 */
@@ -1393,6 +1406,10 @@ export const GuardianTests = z.object({
    * 1つも直らなければ止める（`testsMadeNoProgress`）。申告が無い・`FAILED_TESTS_MAX` を超えた・それより前の版の記録には無い。
    */
   failedTests: z.array(z.string()).optional(),
+  /** 認めた不安定な失敗（PBI-310）。これと環境による失敗で全件を説明できれば、テストは通ったものとして扱う。 */
+  flakyFailures: z.array(FlakyFailure).optional(),
+  /** 不安定な失敗の申告のうち、認めなかったものと理由（PBI-310）。あれば、テストは通っていないものとして扱う。 */
+  rejectedFlakyFailures: z.array(DaemonText).optional(),
   /**
    * テストのコマンドに書いたツールのうち、イメージに無くて実行できなかったもの（PBI-158）。sacty が、差分が文書の
    * ファイルだけと確かめたときだけ記録する（コードを含む差分では、止めて記録しない）。あれば、実行できなかった検証は
@@ -1411,9 +1428,33 @@ export const GuardianTests = z.object({
  * 差分が文書だけで、ツールが無くて実行できなかった検証があるとき（PBI-158）も、通ったものとして扱う。
  */
 export function guardianTestsPassed(tests: z.infer<typeof GuardianTests>): boolean {
+  // 不安定な失敗の申告を認めなかったら、本当の失敗が残っている恐れがあるので、ほかの理由より優先する（PBI-310）
+  if ((tests.rejectedFlakyFailures?.length ?? 0) > 0) return false;
   if ((tests.missingCommands?.length ?? 0) > 0) return true;
   if (tests.exitCode === undefined) return false;
-  return tests.exitCode === 0 || (tests.environmentFailures?.length ?? 0) > 0;
+  return (
+    tests.exitCode === 0 ||
+    (tests.environmentFailures?.length ?? 0) > 0 ||
+    (tests.flakyFailures?.length ?? 0) > 0
+  );
+}
+
+/** 不安定な失敗と認めるのに要る、実行し直しの回数（PBI-310）。 */
+export const FLAKY_MIN_RERUNS = 2;
+/** ゴールガーディアンに許す、実行し直しの回数の上限（PBI-310）。 */
+export const FLAKY_MAX_RERUNS = 3;
+
+/** 最終レビューが認めた不安定な失敗（PBI-310）。テストのコマンドが無いタスクの CI の失敗の申告も含める。 */
+export function reviewFlakyFailures(review: {
+  tests?: { flakyFailures?: readonly FlakyFailure[] };
+  ciFlakyFailures?: readonly FlakyFailure[];
+}): FlakyFailure[] {
+  return [...(review.tests?.flakyFailures ?? []), ...(review.ciFlakyFailures ?? [])];
+}
+
+/** 人が確かめることに出す、認めた不安定な失敗の1行（PBI-310）。 */
+export function flakyFailureLine(f: FlakyFailure): string {
+  return `${f.name}（${f.file}。実行し直して ${f.runs} 回中 ${f.passes} 回通った）：${f.reason}`;
 }
 
 /** 記録する、失敗したテスト・検査の名前の数の上限（PBI-308）。 */
@@ -1454,6 +1495,13 @@ const FinalReviewed = z.object({
     summary: DaemonText,
     /** ゴールガーディアンが実行したテスト（テストのコマンドがあるとき。それより前の版の記録には無い）。 */
     tests: GuardianTests.optional(),
+    /**
+     * テストのコマンドが無いタスクで、CI の失敗の申告のうち認めた不安定な失敗（PBI-310）。`tests` が無いので、ここに持つ。
+     * `humanChecks` に混ぜると種別を失い、次の回へ引き継がれるので、分ける。
+     */
+    ciFlakyFailures: z.array(FlakyFailure).optional(),
+    /** テストのコマンドが無いタスクで、CI の失敗の申告のうち認めなかったものと理由（PBI-310）。あれば不合格。 */
+    rejectedCiFlakyFailures: z.array(DaemonText).optional(),
     /**
      * ゴールガーディアンが最終レビューで扱った検証の記録（PBI-305）。自分で実行したものと、前の段（実装のセルフレビュー・
      * PR の CI）から使い回したもの。commit は sacty が付ける（最終レビューの前に作った実装の PR のコミット）。PR のレビューが、
