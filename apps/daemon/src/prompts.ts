@@ -4844,17 +4844,16 @@ export function extractFinalReview(
   const failedTests = failedNames.length <= FAILED_TESTS_MAX ? failedNames : [];
   // 不安定な失敗（PBI-310）。1件でも認めなければ本当の失敗が残っているので、環境による失敗の申告でも通さない。
   // 全件を説明できるかは、記録しなかった上限超えの一覧も含めて確かめる
-  // 作業領域のテストが通ったときの申告は、CI の失敗のもの。全件の説明は確かめないが、ほかの条件は同じに確かめて残す
-  const flaky =
-    exitCode !== undefined
-      ? checkFlakyFailures(raw.flakyFailures, {
-          failedTests: exitCode !== 0 ? failedNames : undefined,
-          unreadableFailedTests: exitCode !== 0 ? unreadableFailedTests(raw.failedTests) : 0,
-          environmentNames: exitCode !== 0 ? reportedEnvironmentNames(raw.environmentFailures) : [],
-          changedFiles: options.changedFiles,
-          knownFlaky: options.knownFlaky ?? [],
-        })
-      : { accepted: [], rejected: [] };
+  // 作業領域のテストの失敗が申告されていないときの申告は、CI の失敗のもの。全件の説明は確かめないが、ほかの条件は同じに
+  // 確かめて残す。終了コードの申告が無くても確かめる（ツール不足で合格になる経路で、認めない申告を捨てない）
+  const testsFailed = exitCode !== undefined && exitCode !== 0;
+  const flaky = checkFlakyFailures(raw.flakyFailures, {
+    failedTests: testsFailed ? failedNames : undefined,
+    unreadableFailedTests: testsFailed ? unreadableFailedTests(raw.failedTests) : 0,
+    environmentNames: testsFailed ? reportedEnvironmentNames(raw.environmentFailures) : [],
+    changedFiles: options.changedFiles,
+    knownFlaky: options.knownFlaky ?? [],
+  });
   const environmentFailures = flaky.rejected.length > 0 ? [] : reportedEnvironment;
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
