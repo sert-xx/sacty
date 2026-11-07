@@ -1800,7 +1800,9 @@ export class TaskService {
       // PR の向き先。引き継いだ既存の PR は、作業領域のベースブランチではなく PR の向き先
       const baseBranch = task.continuedPullRequest?.baseBranch ?? task.repository?.baseBranch;
       try {
-        const sinceRerun = ci.rerun ? this.now() - Date.parse(ci.rerun.at) : undefined;
+        // 同じコミットの待ち直しで戻した再実行は、今の待ち時間に関係しない
+        const awaited = ci.rerun?.restored ? undefined : ci.rerun;
+        const sinceRerun = awaited ? this.now() - Date.parse(awaited.at) : undefined;
         const result = await this.readCi(task, {
           repo,
           commit: ci.commit,
@@ -1810,8 +1812,8 @@ export class TaskService {
           timeoutMs: PULL_REQUEST_CI_TIMEOUT_MS,
           usedSecrets,
           // 再実行が始まらないまま猶予を過ぎたら（頼めなかったまま再起動したなど）、今の失敗を結果にする
-          ...(ci.rerun && (sinceRerun as number) < PULL_REQUEST_CI_GRACE_MS
-            ? { rerunRuns: ci.rerun.runs }
+          ...(awaited && (sinceRerun as number) < PULL_REQUEST_CI_GRACE_MS
+            ? { rerunRuns: awaited.runs }
             : {}),
           ...(baseBranch ? { noCi: { graceMs: PULL_REQUEST_NO_CI_GRACE_MS, baseBranch } } : {}),
         });
@@ -1819,7 +1821,10 @@ export class TaskService {
         const latest = unchangedSince(ci);
         if (!latest) continue;
         let finished: typeof result & { rerunSkipped?: true } = result;
-        if (result.result === "failed" && !latest.pullRequestCiRerunCommits?.includes(ci.commit)) {
+        if (
+          result.result === "failed" &&
+          !latest.pullRequestCiReruns?.some((r) => r.commit === ci.commit)
+        ) {
           const rerun = await this.rerunFailedCi(
             task,
             ci,
@@ -1849,7 +1854,8 @@ export class TaskService {
   /**
    * 実装の PR の CI の失敗したジョブを再実行する（PBI-311）。できなければスキップする（タスクを止めない・失敗にしない）。
    * 頼む前に PullRequestCiRerunRequested を記録する（頼んだ後に再起動しても、2回頼まない）。1つでも頼めたら requested、
-   * 読んでいる間にタスクが変わったなら changed、1つも頼めなければ skipped（read は、確かめ直す基準の CI の記録）。
+   * 読んでいる間・頼む間にタスクが変わったなら changed（残りは頼まない）、1つも頼めなければ skipped（read は、確かめ直す基準の
+   * CI の記録）。
    */
   private async rerunFailedCi(
     task: Task,
@@ -1859,16 +1865,12 @@ export class TaskService {
     usedSecrets: string[],
     unchangedSince: (read: PullRequestCi) => Task | undefined,
   ): Promise<{ outcome: "requested" | "changed" } | { outcome: "skipped"; read: PullRequestCi }> {
-    const skip = (error: unknown): void => {
-      // 伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
-      const reason = redactLog(
-        renderMessage(redactText(errorText(error), usedSecrets), "ja"),
-        usedSecrets,
-      ).slice(0, CI_RERUN_REASON_MAX);
-      console.warn(
-        `[daemon] タスク ${task.id} の PR の CI を再実行できませんでした。再実行せずに進みます：${reason}`,
+    // 伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
+    const reasonOf = (error: unknown): string =>
+      redactLog(renderMessage(redactText(errorText(error), usedSecrets), "ja"), usedSecrets).slice(
+        0,
+        CI_RERUN_REASON_MAX,
       );
-    };
     const reader = this.deps.ci;
     let token: string;
     let runs: { id: number; attempt?: number }[];
@@ -1882,7 +1884,9 @@ export class TaskService {
       }));
       if (runs.length === 0) throw new Error("GitHub Actions 以外のチェックだけの失敗です");
     } catch (error) {
-      skip(error);
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI を再実行できませんでした。再実行せずに進みます：${reasonOf(error)}`,
+      );
       return { outcome: "skipped", read: ci };
     }
     const latest = unchangedSince(ci);
@@ -1897,16 +1901,31 @@ export class TaskService {
       },
     ]);
     const read = this.mustGet(task.id).pullRequestCi as PullRequestCi;
-    let requested = false;
+    let requested = 0;
     for (const run of runs) {
+      // 前の実行の応答を待つ間に止めたなら、残りを頼まない
+      if (!unchangedSince(read)) return { outcome: "changed" };
       try {
         await reader.rerunFailedJobs({ repo, token, runId: run.id });
-        requested = true;
+        requested += 1;
       } catch (error) {
-        skip(error);
+        console.warn(
+          `[daemon] タスク ${task.id} の PR の CI の実行 ${run.id} を再実行できませんでした：${reasonOf(error)}`,
+        );
       }
     }
-    return requested ? { outcome: "requested" } : { outcome: "skipped", read };
+    if (requested === 0) {
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI を1つも再実行できませんでした。再実行せずに進みます`,
+      );
+      return { outcome: "skipped", read };
+    }
+    if (requested < runs.length) {
+      console.warn(
+        `[daemon] タスク ${task.id} の PR の CI の再実行を ${runs.length} 件中 ${requested} 件だけ頼めました。頼めた再実行を待ちます`,
+      );
+    }
+    return { outcome: "requested" };
   }
 
   /**

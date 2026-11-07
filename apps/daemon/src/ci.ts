@@ -48,6 +48,9 @@ export const CI_LOG_BYTES = 2_000_000;
 /** 一覧を読むページの上限。 */
 const MAX_PAGES = 10;
 
+/** 再実行の依頼の、応答の本文を読み終えるまでの期限（ミリ秒。PBI-311）。止まると PR の巡回全体が止まる。 */
+const CI_RERUN_REQUEST_TIMEOUT_MS = 30_000;
+
 /** 結論が失敗か（PBI-89）。 */
 export const isFailedConclusion = isFailedCiCheck;
 
@@ -715,6 +718,7 @@ export class GitHubCiStatus implements CiStatusReader {
     const res = await this.fetchImpl(`${base}/actions/runs/${input.runId}/rerun-failed-jobs`, {
       method: "POST",
       headers: this.headers(input.token),
+      signal: AbortSignal.timeout(CI_RERUN_REQUEST_TIMEOUT_MS),
     });
     if (res.ok) return;
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;

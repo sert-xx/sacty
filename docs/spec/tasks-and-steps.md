@@ -1248,11 +1248,11 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     マージの後の監視は、この短い猶予を使わない。
   - 一時停止したタスクは読まない（再開すると待ち続ける）。
   - 結果が `failed` なら、最終レビューに進む前に、失敗したワークフローの実行の失敗したジョブを再実行する（`rerunFailedCi`・`CiStatusReader.rerunFailedJobs`。`POST /repos/{repo}/actions/runs/{id}/rerun-failed-jobs`）。
-    - コミットごとに1回だけ頼む（`Task.pullRequestCiRerunCommits`。実装をやり直して同じコミットの CI を待ち直しても頼まない）。
+    - コミットごとに1回だけ頼む（`Task.pullRequestCiReruns`。実装をやり直して同じコミットの CI を待ち直しても頼まず、元の失敗をこの記録から `pullRequestCi.rerun` に戻す。1つも頼めなかった再実行は戻さない）。
     - 頼む前に `PullRequestCiRerunRequested` を記録する（頼む実行と試行の回数、元の失敗）ので、再起動しても2回頼まない。記録の後は CI を待ち続ける。
     - 頼んだ実行が頼む前の試行のまま失敗していれば、再実行が始まっていないものとして、結果にしない（`rerunNotStarted`）。`PULL_REQUEST_CI_GRACE_MS`（5分）たっても始まらなければ（頼む前に止まったときなど）、今の失敗を結果にする。
     - 頼めなければスキップして、元の `failed` のまま進む（`PullRequestCiFinished` の `rerunSkipped`）。タスクは止めない。権限不足（403）・404・ネットワークの失敗・再実行の前に状態を読めないとき・GitHub Actions の実行が無い（ほかのアプリのチェック・コミットの状態だけの）失敗が当たる。理由はデーモンのログに、秘密情報を伏せてから切り詰めて出す。
-    - 実行が複数あれば、1つでも頼めたら再実行を待つ。
+    - 実行が複数あれば、1つでも頼めたら再実行を待つ。`PULL_REQUEST_CI_GRACE_MS` は開始待ちの猶予で、過ぎても実行中のチェックがあれば `PULL_REQUEST_CI_TIMEOUT_MS` まで待つ。依頼には応答の本文を読み終えるまでの期限があり（30秒）、前の依頼の応答を待つ間に止めたなら、残りを頼まない。
     - 読んでいる間に一時停止・中止・実装のやり直しがあれば、頼まず、古い結果も記録しない。
     - マージの後の監視は再実行しない。
   - 結果（`passed`・`failed`・`none`・`timed_out`）を `PullRequestCiFinished` に記録して、最終レビューに進む。
@@ -1274,7 +1274,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - PR の本文は、検証中であること（最終レビューの前のドラフト）を書く（`PullRequestBodyStage`）。
   検証に通ったら、最終レビューの結果で書き直す。
 
-コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`rerunFailedCi`・`readCi`・`repositoryHasNoCi`）、`apps/daemon/src/ci.ts`（`CiStatusReader`・`GitHubCiStatus.rerunFailedJobs`・`GitHubCiStatus.repositoryHasNoCi`・`rerunNotStarted`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`rerunLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`pullRequestCiRerunCommits`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PullRequestCiRerunRequested`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
+コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`rerunFailedCi`・`readCi`・`repositoryHasNoCi`）、`apps/daemon/src/ci.ts`（`CiStatusReader`・`GitHubCiStatus.rerunFailedJobs`・`GitHubCiStatus.repositoryHasNoCi`・`rerunNotStarted`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`rerunLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`pullRequestCiReruns`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PullRequestCiRerunRequested`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
 
 ### 同じ内容の検証の使い回し
 

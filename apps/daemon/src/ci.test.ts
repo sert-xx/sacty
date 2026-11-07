@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CI_EXCERPT_MAX,
   CI_LOG_BYTES,
@@ -876,6 +876,28 @@ describe("CI の失敗ジョブの再実行（PBI-311）", () => {
         auth: "Bearer t",
       },
     ]);
+  });
+
+  it.each([
+    ["応答が返らない", false],
+    ["エラーの本文を読み終わらない", true],
+  ])("%sと、期限で例外を投げる", async (_, answered) => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(1));
+    const aborted = (signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+    const ci = new GitHubCiStatus((async (_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal;
+      if (!answered) return aborted(signal);
+      return { ok: false, status: 500, json: () => aborted(signal) } as unknown as Response;
+    }) as typeof fetch);
+    await expect(
+      ci.rerunFailedJobs({ repo: "https://github.com/acme/app", token: "t", runId: 42 }),
+    ).rejects.toThrow();
+    expect(spy).toHaveBeenCalledOnce();
+    spy.mockRestore();
   });
 
   it.each([403, 404, 500])("%i なら例外を投げる", async (status) => {

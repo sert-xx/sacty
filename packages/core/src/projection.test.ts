@@ -3739,7 +3739,7 @@ describe("ベースブランチの取り込み", () => {
         runs: [{ id: 1, attempt: 1 }],
         failures,
       });
-      expect(waiting?.pullRequestCiRerunCommits).toEqual(["c1"]);
+      expect(waiting?.pullRequestCiReruns?.map((r) => r.commit)).toEqual(["c1"]);
       const done = project([
         ...events,
         ev("t1", {
@@ -3771,7 +3771,42 @@ describe("ベースブランチの取り込み", () => {
         merged1("t1"),
       ]).get("t1");
       expect(task?.pullRequestCi).toBeUndefined();
-      expect(task?.pullRequestCiRerunCommits).toEqual(["c1"]);
+      expect(task?.pullRequestCiReruns?.map((r) => r.commit)).toEqual(["c1"]);
+    });
+
+    it("同じコミットの CI を待ち直すと、元の失敗を戻す。別のコミットには戻さない", () => {
+      const base = () => {
+        seq = 0;
+        return [
+          ...prepared("t1"),
+          ...implemented("t1"),
+          published("c1"),
+          rerun("c1"),
+          merged1("t1"),
+        ];
+      };
+      const same = project([...base(), published("c1")]).get("t1");
+      expect(same?.pullRequestCi?.rerun).toMatchObject({ failures, runs: [{ id: 1, attempt: 1 }] });
+      expect(same?.pullRequestCi?.rerun).not.toHaveProperty("commit");
+      expect(project([...base(), published("c2")]).get("t1")?.pullRequestCi?.rerun).toBeUndefined();
+    });
+
+    it("1つも頼めなかった再実行は、待ち直しても戻さず、2回目も頼まない", () => {
+      seq = 0;
+      const task = project([
+        ...prepared("t1"),
+        ...implemented("t1"),
+        published("c1"),
+        rerun("c1"),
+        ev("t1", {
+          type: "PullRequestCiFinished",
+          payload: { commit: "c1", result: "failed", checks: [], failures, rerunSkipped: true },
+        }),
+        merged1("t1"),
+        published("c1"),
+      ]).get("t1");
+      expect(task?.pullRequestCi?.rerun).toBeUndefined();
+      expect(task?.pullRequestCiReruns?.[0]).toMatchObject({ commit: "c1", skipped: true });
     });
   });
 

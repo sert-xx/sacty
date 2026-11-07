@@ -13219,7 +13219,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await settleCi(service);
         expect(ci.reruns).toEqual([1, 2]);
         expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+        expect(logged).toContain("実行 2 を再実行できませんでした：403");
+        expect(logged).toContain("2 件中 1 件だけ頼めました");
+        expect(logged).not.toContain("再実行せずに進みます");
         warn.mockRestore();
+        activity.close();
+      });
+
+      it("1件目の応答を待つ間に止めたら、残りの実行を頼まない", async () => {
+        const { activity, service, ci, id } = await untilRerun();
+        ci.snap = {
+          ...failing(),
+          failedRuns: [
+            { id: 1, name: "CI", conclusion: "failure", attempt: 1 },
+            { id: 2, name: "E2E", conclusion: "failure", attempt: 1 },
+          ],
+        };
+        await service.checkPullRequests(); // 1回目は並びを覚えるだけ
+        const rerun = ci.rerunFailedJobs.bind(ci);
+        ci.rerunFailedJobs = async (input) => {
+          await rerun(input);
+          if (input.runId === 1) await service.pause(id);
+        };
+        ci.rerunAnswer = undefined;
+        await service.checkPullRequests();
+        expect(ci.reruns).toEqual([1]);
         activity.close();
       });
 
@@ -13373,8 +13398,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await service.runNext(id); // PR を更新する（内容は同じ）
         expect(service.get(id)?.task.pullRequestCi).toMatchObject({ commit });
         expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        // 戻した再実行は今の待ちのものではないので、頼む前の試行の失敗も、始まるのを待たずに結果にする
+        ci.snap = failing();
         await settleCi(service);
         expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        // 元の失敗を、最終レビューに渡す
+        expect(service.get(id)?.task.pullRequestCi?.rerun?.failures).toHaveLength(1);
         expect(service.get(id)?.task.pullRequestCi?.rerunSkipped).toBeUndefined();
         expect(ci.reruns).toEqual([1]);
         activity.close();
