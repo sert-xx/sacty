@@ -683,6 +683,11 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestCiFinished(
         event.payload.result,
         event.payload.failures.map((f) => (f.job ? `${f.workflow} / ${f.job}` : f.workflow)),
+        event.payload.rerunSkipped === true,
+      );
+    case "PullRequestCiRerunRequested":
+      return e.PullRequestCiRerunRequested(
+        event.payload.failures.map((f) => (f.job ? `${f.workflow} / ${f.job}` : f.workflow)),
       );
     case "VerificationOverridden":
       return e.VerificationOverridden;

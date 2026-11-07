@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CI_EXCERPT_MAX,
   CI_LOG_BYTES,
@@ -8,6 +8,7 @@ import {
   readTail,
   redactLog,
   redactUrlCredentials,
+  rerunNotStarted,
 } from "./ci.js";
 import { resolveInRepository } from "./deployment.js";
 
@@ -853,5 +854,104 @@ describe("ジョブのログを、末尾の上限の分だけ持って読む（P
     });
     expect(failure?.excerpt?.split("\n").at(-1)).toBe("FAIL at the end");
     expect(failure?.excerpt).not.toContain("secret");
+  });
+});
+
+describe("CI の失敗ジョブの再実行（PBI-311）", () => {
+  it("POST で rerun-failed-jobs を呼ぶ", async () => {
+    const calls: { url: string; method?: string; auth?: string }[] = [];
+    const ci = new GitHubCiStatus((async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        ...(init?.method ? { method: init.method } : {}),
+        auth: (init?.headers as Record<string, string> | undefined)?.authorization as string,
+      });
+      return new Response(JSON.stringify({}), { status: 201 });
+    }) as typeof fetch);
+    await ci.rerunFailedJobs({ repo: "https://github.com/acme/app", token: "t", runId: 42 });
+    expect(calls).toEqual([
+      {
+        url: "https://api.github.com/repos/acme/app/actions/runs/42/rerun-failed-jobs",
+        method: "POST",
+        auth: "Bearer t",
+      },
+    ]);
+  });
+
+  it.each([
+    ["応答が返らない", false],
+    ["エラーの本文を読み終わらない", true],
+  ])("%sと、期限で例外を投げる", async (_, answered) => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => timeout(1));
+    const aborted = (signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+    const ci = new GitHubCiStatus((async (_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal;
+      if (!answered) return aborted(signal);
+      return { ok: false, status: 500, json: () => aborted(signal) } as unknown as Response;
+    }) as typeof fetch);
+    await expect(
+      ci.rerunFailedJobs({ repo: "https://github.com/acme/app", token: "t", runId: 42 }),
+    ).rejects.toThrow();
+    expect(spy).toHaveBeenCalledOnce();
+    spy.mockRestore();
+  });
+
+  it.each([403, 404, 500])("%i なら例外を投げる", async (status) => {
+    const ci = new GitHubCiStatus(
+      (async () => new Response(JSON.stringify({ message: "nope" }), { status })) as typeof fetch,
+    );
+    await expect(
+      ci.rerunFailedJobs({ repo: "https://github.com/acme/app", token: "t", runId: 42 }),
+    ).rejects.toThrow();
+  });
+
+  it("失敗した実行の試行の回数を読む", async () => {
+    const ci = new GitHubCiStatus((async (input: string | URL | Request) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.includes("/actions/runs")
+            ? {
+                workflow_runs: [
+                  {
+                    id: 9,
+                    name: "CI",
+                    workflow_id: 1,
+                    run_attempt: 2,
+                    status: "completed",
+                    conclusion: "failure",
+                  },
+                ],
+              }
+            : url.includes("/check-runs")
+              ? { check_runs: [] }
+              : { statuses: [] },
+        ),
+        { status: 200 },
+      );
+    }) as typeof fetch);
+    const snapshot = await ci.snapshot({
+      repo: "https://github.com/acme/app",
+      token: "t",
+      commit: "c",
+    });
+    expect(snapshot.failedRuns).toEqual([{ id: 9, name: "CI", conclusion: "failure", attempt: 2 }]);
+  });
+
+  it("頼んだ実行が同じ試行のまま失敗していれば、まだ始まっていない", () => {
+    const run = { id: 1, name: "CI", conclusion: "failure" };
+    const requested = [{ id: 1, attempt: 1 }];
+    expect(rerunNotStarted({ failedRuns: [{ ...run, attempt: 1 }] }, requested)).toBe(true);
+    expect(rerunNotStarted({ failedRuns: [{ ...run, attempt: 2 }] }, requested)).toBe(false);
+    // 失敗でなくなった（動いている・通った）
+    expect(rerunNotStarted({ failedRuns: [] }, requested)).toBe(false);
+    // 頼んでいない実行の失敗は見ない
+    expect(rerunNotStarted({ failedRuns: [{ ...run, id: 2, attempt: 1 }] }, requested)).toBe(false);
+    // 試行の回数が読めなければ1回目として比べる
+    expect(rerunNotStarted({ failedRuns: [run] }, [{ id: 1 }])).toBe(true);
   });
 });
