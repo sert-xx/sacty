@@ -10,7 +10,12 @@ import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { initContextRepo } from "@sacty/daemon/context-template";
 import { ALREADY_RUNNING_EXIT_CODE } from "@sacty/daemon/exit-codes";
-import { buildImage, imageBuildSettings, imageBuildTargets } from "@sacty/daemon/image";
+import {
+  buildImage,
+  imageBuildSettings,
+  imageBuildTargets,
+  pruneOldImages,
+} from "@sacty/daemon/image";
 import {
   isOnePasswordRef,
   KEYCHAIN_SERVICE,
@@ -45,7 +50,8 @@ const USAGE = `Usage:
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
   sacty image build [<名前>...]
       エージェント実行用のコンテナイメージを作ります。名前を省くと、既定のイメージと config.yaml の images に
-      書いたすべての言語ごとのイメージを作ります（default は既定のイメージ）。`;
+      書いたすべての言語ごとのイメージを作ります（default は既定のイメージ）。作れたら、古い版のイメージと
+      使っていないビルドキャッシュを片付けます。`;
 
 /** 終了コードを返して終わる子プロセスを、入出力をつないだまま実行する。 */
 function runInherit(command: string, args: string[], cwd?: string): Promise<number> {
@@ -53,6 +59,19 @@ function runInherit(command: string, args: string[], cwd?: string): Promise<numb
     const child = spawn(command, args, { stdio: "inherit", cwd });
     child.on("error", reject);
     child.on("close", (code) => resolve(code ?? 1));
+  });
+}
+
+/** 子プロセスを実行して、終了コードと標準出力を返す。標準エラーは捨てる。 */
+function runCapture(command: string, args: string[]): Promise<{ code: number; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", () => resolve({ code: 1, stdout }));
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout }));
   });
 }
 
@@ -165,6 +184,21 @@ async function imageBuild(names: string[]): Promise<void> {
     if (failure) throw new Error(failure);
     console.log(`[sacty] イメージ ${tag} を作成しました。`);
   }
+  // 版を上げるたびに増えるので、作り終えたら古い版を片付ける（PBI-313）。失敗しても作成は失敗にしない
+  const pruned = await pruneOldImages({
+    kept: [image, ...Object.values(images).map((language) => language.image)],
+    run: (args) => runCapture("docker", args),
+  });
+  if (pruned.removed.length > 0) {
+    console.log(`[sacty] 古い版のイメージを消しました：${pruned.removed.join("、")}`);
+  }
+  if (pruned.failed.length > 0) {
+    console.log(
+      `[sacty] 消せなかった古い版のイメージがあります（コンテナが使っていることがあります）：${pruned.failed.join("、")}`,
+    );
+  }
+  if (pruned.listFailed) console.log("[sacty] 古い版のイメージを確かめられませんでした。");
+  if (pruned.cacheFailed) console.log("[sacty] 古いビルドキャッシュを消せませんでした。");
 }
 
 async function contextPreview(
