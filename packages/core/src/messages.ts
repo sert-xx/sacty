@@ -56,6 +56,7 @@ const PARAMS = {
   "task.repositoryUnknown": z.object({ project: z.string() }),
   "task.templateRepositoryRequired": null,
   "task.reviewPlanNeedsPullRequest": null,
+  "task.flakyTestNotFound": null,
   "task.stepSettingsNeedPlan": null,
   "task.stepSettingOutsidePlan": null,
   "task.cancelled": null,
@@ -785,6 +786,8 @@ const ja: MessageDictionary = {
     `対象リポジトリを、プロジェクト「${project}」の対象（Org・リポジトリ）の中から選んでください。`,
   "task.templateRepositoryRequired":
     "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
+  "task.flakyTestNotFound":
+    "直す不安定なテストが、対象リポジトリの台帳に見つかりません。画面を読み込み直してから作ってください。",
   "task.reviewPlanNeedsPullRequest":
     "進め方「レビューだけ」は、対象リポジトリを選び、そのリポジトリの PR のリンクを題か内容に書いたときだけ選べます。",
   "task.stepSettingsNeedPlan":
@@ -1504,6 +1507,8 @@ const en: MessageDictionary = {
     `Choose the target repository from the targets (organizations or repositories) of the project "${project}".`,
   "task.templateRepositoryRequired":
     "Choose a target repository for this template (it cannot be created without one).",
+  "task.flakyTestNotFound":
+    "The flaky test to fix is not in the ledger of the target repository. Reload the page, then create the task.",
   "task.reviewPlanNeedsPullRequest":
     'The plan "Review only" needs a target repository and a link to a pull request of that repository in the title or description.',
   "task.stepSettingsNeedPlan":

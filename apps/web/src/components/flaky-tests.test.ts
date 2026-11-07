@@ -9,9 +9,10 @@ let locale: Locale = "ja";
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 vi.mock("@/app/actions", () => ({ createTaskAction: async () => ({}) }));
 
-const { FlakyTestsCard, flakyFixDraft } = await import("./flaky-tests");
+const { FlakyTestsCard, cut, flakyFixDraft } = await import("./flaky-tests");
 
 const test1 = (patch: Partial<FlakyTest> = {}): FlakyTest => ({
+  id: "t-ui",
   name: "ui > 保存",
   file: "tests/ui.spec.ts",
   repo: "https://github.com/acme/app",
@@ -115,5 +116,14 @@ describe("直すタスクの下書き（PBI-312）", () => {
     );
     expect(title).toHaveLength(TASK_TITLE_MAX);
     expect(body).toHaveLength(TASK_BODY_MAX);
+  });
+
+  it("サロゲートペアの途中では切らない", () => {
+    const text = `${"a".repeat(8)}😀${"b".repeat(10)}`;
+    const short = cut(text, 10);
+    expect(short).toBe(`${"a".repeat(8)}…`);
+    expect(short.length).toBeLessThanOrEqual(10);
+    expect(cut(text, 11)).toBe(`${"a".repeat(8)}😀…`);
+    expect(cut("短い", 10)).toBe("短い");
   });
 });

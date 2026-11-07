@@ -93,15 +93,13 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
         form({
           title: "直す",
           projectId: "project-a",
-          flakyFixName: "ui > 保存",
-          flakyFixFile: "tests/ui.spec.ts",
+          flakyFixTest: "t-ui",
         }),
       ),
     ).rejects.toThrow("redirect:/tasks/t1");
-    expect(createTask.mock.calls[0]?.[0].flakyFix).toEqual({
-      name: "ui > 保存",
-      file: "tests/ui.spec.ts",
-    });
+    // 画面の名前は伏せた値なので、識別子だけを送る
+    expect(createTask.mock.calls[0]?.[0].flakyFixTest).toBe("t-ui");
+    expect(createTask.mock.calls[0]?.[0]).not.toHaveProperty("flakyFix");
   });
 
   it("作成先が無い・見つからなければ、理由を返して作らない", async () => {

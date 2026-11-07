@@ -10726,11 +10726,57 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         projectId: "default",
         title: "不安定なテストを直す",
         body: "本文",
-        flakyFix: UI,
+        flakyFixTest: ledger?.tests[0]?.id,
       });
       expect(fix.flakyFix).toEqual(UI);
       const after = await service.projectFlakyTests("default");
       expect(after?.tests[0]?.fixTask).toEqual({ taskId: fix.id, title: "不安定なテストを直す" });
+      // 中止して同じリポジトリでやり直すと、直すテストを引き継ぐ
+      await service.cancel(fix.id);
+      const rerun = service.rerunTask(fix.id, {
+        title: "もう一度直す",
+        body: "本文",
+        repo: fix.repo ?? null,
+      });
+      expect(rerun.flakyFix).toEqual(UI);
+      expect((await service.projectFlakyTests("default"))?.tests[0]?.fixTask?.taskId).toBe(
+        rerun.id,
+      );
+      // リポジトリを指定せずにやり直すと引き継がない
+      await service.cancel(rerun.id);
+      const elsewhere = service.rerunTask(rerun.id, {
+        title: "別の所で",
+        body: "本文",
+        repo: null,
+      });
+      expect(elsewhere.flakyFix).toBeUndefined();
+      activity.close();
+    });
+
+    it("台帳に無い識別子では、直すタスクを作らない", async () => {
+      const { activity, service, id } = await toImplement([implement("# v1"), reported()]);
+      seed(service, id, 3);
+      const before = service.list().length;
+      expect(() =>
+        service.createTask({
+          projectId: "default",
+          title: "直す",
+          body: "本文",
+          flakyFixTest: "nope",
+        }),
+      ).toThrow(/台帳に見つかりません/);
+      // テストのあるリポジトリと違う所（リポジトリを指定しない）では作らない
+      const ledger = await service.projectFlakyTests("default");
+      expect(() =>
+        service.createTask({
+          projectId: "default",
+          title: "直す",
+          body: "本文",
+          repo: null,
+          flakyFixTest: ledger?.tests[0]?.id,
+        }),
+      ).toThrow(/台帳に見つかりません/);
+      expect(service.list()).toHaveLength(before);
       activity.close();
     });
 

@@ -3343,8 +3343,11 @@ export const CreateTaskInput = z.object({
    * だけを指定できる。書いていない工程は config.yaml で決まる。
    */
   agents: StepAgentMap.optional(),
-  /** 不安定なテストの台帳の提案から作るときの、直すテスト（PBI-312）。 */
-  flakyFix: FlakyFixLink.optional(),
+  /**
+   * 不安定なテストの台帳の提案から作るときの、直すテストの識別子（PBI-312。台帳の `id`）。画面の名前は伏せた値なので、
+   * デーモンが台帳から元の名前とファイルを探して `flakyFix` にする。
+   */
+  flakyFixTest: z.string().min(1).max(64).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 

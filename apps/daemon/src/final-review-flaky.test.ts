@@ -389,6 +389,15 @@ describe("既知の不安定なテストの申告（PBI-312）", () => {
       { testCommand: COMMAND, ...options },
     );
 
+  it.each([
+    ["両方が欠けた", { runs: undefined, passes: undefined }],
+    ["runs が整数でない", { runs: 1.5, passes: 0 }],
+    ["passes が文字", { runs: 0, passes: "0" }],
+  ])("既知でも、回数が%s申告は、実行し直しを省いたものと認めない", (_, o) => {
+    const review = readKnown({ flakyFailures: [skipped(o)] });
+    expect(review.passed).toBe(false);
+  });
+
   it("台帳にあり差分に含まれなければ、実行し直しを省いた申告を認める", () => {
     const review = readKnown({ flakyFailures: [skipped()] });
     expect(review.passed).toBe(true);

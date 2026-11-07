@@ -127,25 +127,28 @@ This is separate from running audits and does not use the audit budget.
 
 - There is no new store; the ledger is derived from the activity log.
   Because `lastReview` is replaced on each round, `flakySightings` in the task state folds in the accepted failures of every round.
-- A test is the combination of the repository, the file (without a leading `./` or `/`), and the name.
+- A test is the combination of the repository, the file (without a leading `/`, with `.` and any `..` that can go back removed, and `\` changed to `/`), and the name.
   The same name in another repository or file counts as another test.
   Tasks of other projects are not counted.
-- Each entry has the name, file, repository, the number of tasks that saw it, when it was last seen, the last reason, and the tasks (newest first, with links to the task and PR).
+- Each entry has an identifier (`id`; a hash of the repository, file, and name, from which the name cannot be read), the name, file, repository, the number of tasks that saw it, when it was last seen, the last reason, and the tasks (newest first, with links to the task and PR).
   Several times in the same task count as one.
 - A test seen in `FLAKY_KNOWN_MIN_TASKS` (3) or more tasks is known.
   - Known tests are passed to the final review prompt (only those of the task's repository).
-  - For a known test, the screen proposes a task to fix it.
+  - For a known test, the screen proposes a task to fix it. The screen shows the repository along with the name and file.
 - A proposal only opens the task creation dialog with the title, description, and target repository filled in.
   No task is created until a person presses create, and the created task runs as a normal task.
   - Reading the ledger records nothing.
   - sacty does not quarantine or disable tests automatically.
   - The description has no PR links (a PR in a task's description is read as the PR the task is about).
 - A task created from a proposal is linked to the ledger by `flakyFix` of `TaskCreated` (the test's name and file). The repository is the task's.
+  - Because the name on the screen is redacted, the create input sends only the identifier (`flakyFixTest`). sacty looks up the unredacted name and file in the ledger and records them.
+    No task is created for an identifier not in the ledger, or for a repository other than the test's (including a task with no repository).
+  - When a cancelled task is rerun in the same repository, `flakyFix` is carried over. It is not carried over to another repository.
   - While such a task is unfinished, no second proposal is shown; a link to the task is shown instead.
   - If the task is cancelled or finishes without merging a PR, the test is proposed again.
-  - Once its PR is merged, records from before the merge are not counted. Later records are counted anew.
+  - Once its PR is merged, records from before the merge are not counted. Later records are counted anew. When the task was split, merges of PRs of its descendant tasks count too.
 
-Code: `packages/core/src/flaky-tests.ts` (`flakyTests`, `knownFlakyTests`), `packages/core/src/projection.ts` (`flakySightings`), `apps/daemon/src/service.ts` (`projectFlakyTests`),
+Code: `packages/core/src/flaky-tests.ts` (`flakyTests`, `knownFlakyTests`, `findFlakyTest`, `repoPath`), `packages/core/src/projection.ts` (`flakySightings`), `apps/daemon/src/service.ts` (`projectFlakyTests`, `createTask`, `rerunTask`),
 `apps/web/src/components/flaky-tests.tsx` (`FlakyTestsCard`, `flakyFixDraft`), `apps/web/src/components/new-task-dialog.tsx` (`NewTaskDialog`)
 
 ## Audit budget

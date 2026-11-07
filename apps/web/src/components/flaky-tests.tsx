@@ -10,8 +10,14 @@ import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 import { taskPath } from "@/lib/paths";
 
-const cut = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+/** 上限の長さ（UTF-16 の単位）に切り詰める。サロゲートペアの途中では切らない。 */
+export const cut = (text: string, max: number) => {
+  if (text.length <= max) return text;
+  let end = max - 1;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)}…`;
+};
 
 /**
  * 提案から作るタスクに入れておく題と内容（人が直してから作る）。内容に PR のリンクは書かない（タスクの内容にある PR は、
@@ -53,7 +59,7 @@ export function FlakyTestsCard({
         <ul className="flex flex-col gap-2">
           {tests.map((test) => (
             <li
-              key={`${test.repo}\n${test.file}\n${test.name}`}
+              key={test.id}
               data-testid="flaky-test"
               className="flex flex-col gap-1.5 rounded-lg border border-border px-3 py-2.5"
             >
@@ -72,6 +78,13 @@ export function FlakyTestsCard({
               </div>
               <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 {test.file}
+              </p>
+              {/* 台帳はリポジトリごとに数えるので、同じ名前・パスのテストを区別できるようにする */}
+              <p
+                data-testid="flaky-test-repo"
+                className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+              >
+                {test.repo}
               </p>
               <p className="text-xs text-muted-foreground">
                 {m.lastSeen}{" "}
@@ -126,7 +139,7 @@ export function FlakyTestsCard({
                       prefill={{
                         label: m.createFix,
                         repo: test.repo,
-                        flakyFix: { name: test.name, file: test.file },
+                        flakyFixTest: test.id,
                         ...flakyFixDraft(test, m),
                       }}
                     />

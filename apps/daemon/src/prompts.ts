@@ -3460,7 +3460,8 @@ function checkFlakyFailures(
     const reason = hideItem(oneLine(text(o.reason)));
     const runs = typeof o.runs === "number" && Number.isInteger(o.runs) ? o.runs : 0;
     const passes = typeof o.passes === "number" && Number.isInteger(o.passes) ? o.passes : 0;
-    const rerunSkipped = runs === 0 && passes === 0 && isKnown(name, file);
+    // 省けるのは、両方を 0 と明示した申告だけ（欠けた・整数でない回数を 0 と読んで、省いたことにしない）
+    const rerunSkipped = o.runs === 0 && o.passes === 0 && isKnown(name, file);
     if (!name || !file || !reason)
       rejected.push(message("review.flakyIncomplete", name ? { name } : {}));
     else if (runs < FLAKY_MIN_RERUNS && !rerunSkipped)
@@ -5048,7 +5049,7 @@ function environmentPassNote(tests: {
 }): string {
   const failures = tests.environmentFailures ?? [];
   if (tests.exitCode !== 0 && (tests.flakyFailures?.length ?? 0) > 0) {
-    return "。終了コードは 0 でないが、失敗は環境によるものか、差分と無関係で実行し直すと結果が変わるものだけと判断して合格にした。下の「人が確かめること」";
+    return "。終了コードは 0 でないが、失敗は環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけと判断して合格にした。下の「人が確かめること」";
   }
   if (failures.length === 0 || tests.exitCode === 0) return "";
   return humanVisibleEnvironmentFailures(failures).length === 0

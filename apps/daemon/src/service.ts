@@ -60,6 +60,7 @@ import {
   excludedRepositories,
   exportDue,
   exportSteps,
+  findFlakyTest,
   fixDecisionPending,
   fixTaskOpen,
   flakyTests,
@@ -6340,6 +6341,16 @@ export class TaskService {
       throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
     const stepSettings = this.requestedStepSettings(plan, input.images, input.agents);
+    // 直す不安定なテスト（PBI-312）。画面の名前は伏せた値なので、識別子で台帳から元のテストを探す
+    const flakyFix = input.flakyFixTest
+      ? findFlakyTest([...this.tasks.values()], projectId, input.flakyFixTest)
+      : undefined;
+    if (
+      input.flakyFixTest &&
+      (!flakyFix || repo === undefined || repoKey(repo) !== repoKey(flakyFix.repo))
+    ) {
+      throw new InvalidOperationError(message("task.flakyTestNotFound"));
+    }
     return {
       projectId,
       payload: {
@@ -6351,7 +6362,7 @@ export class TaskService {
         budgetCapUsd,
         ...(plan ? { plan } : {}),
         ...stepSettings,
-        ...(input.flakyFix ? { flakyFix: input.flakyFix } : {}),
+        ...(flakyFix ? { flakyFix: { name: flakyFix.name, file: flakyFix.file } } : {}),
       },
     };
   }
@@ -6515,6 +6526,13 @@ export class TaskService {
             // レポートの区分から作った対応のタスクは、元のレポート・区分・指摘の全件も引き継ぐ（説明に入りきらなかった
             // 指摘を、再実行で落とさないため）
             ...(previous.securityFix ? { securityFix: previous.securityFix } : {}),
+            // 不安定なテストを直すタスクは、同じリポジトリでやり直すときだけ、直すテストを引き継ぐ（PBI-312。引き継がないと、
+            // 再実行先の PR をマージしても台帳の古い記録が残る）
+            ...(previous.flakyFix &&
+            repo !== undefined &&
+            sameRepo(repo, previous.repository?.url ?? previous.repo ?? "")
+              ? { flakyFix: previous.flakyFix }
+              : {}),
           },
         },
       },

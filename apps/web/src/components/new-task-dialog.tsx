@@ -73,14 +73,14 @@ export function NewTaskDialog({
   hasTargets: boolean;
   /**
    * 提案から開くときの、入れておく内容と開くボタンの文言（PBI-312）。人が確かめて、直して、作成を押す。
-   * flakyFix は、作ったタスクが直す不安定なテスト。
+   * flakyFixTest は、作ったタスクが直す不安定なテストの識別子（台帳の id。名前は伏せた値なので送らない）。
    */
   prefill?: {
     label: string;
     title: string;
     body: string;
     repo: string;
-    flakyFix: { name: string; file: string };
+    flakyFixTest: string;
   };
 }) {
   const [state, formAction, pending] = useActionState(createTaskAction, initial);
@@ -154,12 +154,7 @@ export function NewTaskDialog({
       <DialogContent className="sm:max-w-xl">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
-          {prefill && (
-            <>
-              <input type="hidden" name="flakyFixName" value={prefill.flakyFix.name} />
-              <input type="hidden" name="flakyFixFile" value={prefill.flakyFix.file} />
-            </>
-          )}
+          {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
           {/* 工程ごとの指定は、別の画面で選び、ここから送る（画面を切り替えても、入力中の題・内容を残すため、どちらの画面も消さずに隠す） */}
           {customizable &&
             Object.entries(chosen.images).map(([step, name]) => (

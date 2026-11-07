@@ -19,6 +19,11 @@ export type FlakyTestTask = {
 
 /** 台帳の1件。 */
 export type FlakyTest = {
+  /**
+   * テストを指す識別子（リポジトリ・ファイル・名前から作る）。画面の name・file は秘密情報を伏せた値なので、直すタスクを作る
+   * ときは、これでデーモンが元のテストを探す。
+   */
+  id: string;
   name: string;
   file: string;
   repo: string;
@@ -38,18 +43,52 @@ export type FlakyTest = {
 /** プロジェクトの不安定なテストの台帳（監査の画面）。既知のものを先に、新しい順。 */
 export type ProjectFlakyTests = { projectId: string; tests: FlakyTest[] };
 
-/** ファイルのパスを比べられる形にする（先頭の ./ と / を除く）。 */
-export const repoPath = (path: string) =>
-  path
-    .trim()
-    .replace(/^(?:\.\/)+/, "")
-    .replace(/^\/+/, "");
+/**
+ * ファイルのパスを比べられる形にする。先頭の / を除き、途中の . と .. を解決する（最終レビューの確かめ方とそろえる。
+ * 先頭からはみ出す .. は残す）。
+ */
+export const repoPath = (path: string) => {
+  const parts: string[] = [];
+  for (const part of path.trim().replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === ".." && parts.length > 0 && parts.at(-1) !== "..") parts.pop();
+    else parts.push(part);
+  }
+  return parts.join("/");
+};
 
 /** タスクの作業するリポジトリ。 */
 const taskRepo = (task: Task) => task.repository?.url ?? task.source?.repo ?? task.repo;
 
 const testKey = (repo: string, file: string, name: string) =>
   JSON.stringify([repoKey(repo), repoPath(file), name]);
+
+/** 識別子（cyrb53。秘密情報を含みうる元の値を、画面に出さずに指すため）。 */
+function flakyTestId(key: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < key.length; i++) {
+    const c = key.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/** 分割で作った子孫のタスク（直すタスクの PR は、分割すると子にだけ記録される）。 */
+function descendants(task: Task, children: ReadonlyMap<string, Task[]>): Task[] {
+  const out: Task[] = [];
+  const queue = [...(children.get(task.id) ?? [])];
+  while (queue.length > 0) {
+    const child = queue.shift() as Task;
+    if (out.includes(child)) continue;
+    out.push(child);
+    queue.push(...(children.get(child.id) ?? []));
+  }
+  return out;
+}
 
 /**
  * プロジェクトの不安定なテストを集計する。そのテストを直すタスク（`flakyFix`）の PR をマージしたら、それより前の記録は
@@ -61,6 +100,11 @@ export function flakyTests(
   hide: (text: string) => string = (text) => text,
 ): FlakyTest[] {
   const own = tasks.filter((t) => t.projectId === projectId);
+  const children = new Map<string, Task[]>();
+  for (const task of own) {
+    if (task.parent)
+      children.set(task.parent.taskId, [...(children.get(task.parent.taskId) ?? []), task]);
+  }
   const fixes = new Map<string, Task[]>();
   for (const task of own) {
     const repo = taskRepo(task);
@@ -86,6 +130,7 @@ export function flakyTests(
   for (const [key, { repo, file, name, seen }] of groups) {
     const fixing = fixes.get(key) ?? [];
     const mergedAt = fixing
+      .flatMap((t) => [t, ...descendants(t, children)])
       .flatMap((t) => t.pullRequestMerge?.at ?? [])
       .sort()
       .at(-1);
@@ -101,6 +146,7 @@ export function flakyTests(
     if (!last) continue;
     const open = fixing.filter((t) => !t.pullRequestMerge && !isFinished(t)).at(-1);
     tests.push({
+      id: flakyTestId(key),
       name: hide(name),
       file: hide(file),
       repo,
@@ -120,6 +166,18 @@ export function flakyTests(
   return tests.sort(
     (a, b) => Number(b.known) - Number(a.known) || b.lastSeenAt.localeCompare(a.lastSeenAt),
   );
+}
+
+/**
+ * 識別子から、伏せる前のテストを探す（直すタスクを作るとき）。repo はテストのリポジトリ。台帳に無ければ undefined。
+ */
+export function findFlakyTest(
+  tasks: readonly Task[],
+  projectId: string,
+  id: string,
+): { name: string; file: string; repo: string } | undefined {
+  const test = flakyTests(tasks, projectId).find((t) => t.id === id);
+  return test && { name: test.name, file: test.file, repo: test.repo };
 }
 
 /** ゴールガーディアンに渡す、既知の不安定なテスト。 */

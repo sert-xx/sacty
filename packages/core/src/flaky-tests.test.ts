@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FLAKY_KNOWN_MIN_TASKS, flakyFailureLine } from "./events.js";
-import { flakyTests, knownFlakyTests } from "./flaky-tests.js";
+import { findFlakyTest, flakyTests, knownFlakyTests } from "./flaky-tests.js";
 import type { Task } from "./projection.js";
 
 // 認めた不安定な失敗を、作業履歴（タスクの状態）からプロジェクトごとに集計する（PBI-312）
@@ -36,6 +36,7 @@ describe("不安定なテストの集計（PBI-312）", () => {
     const pr = { url: `${REPO}/pull/7` } as Task["pullRequest"];
     expect(flakyTests([seenIn("a", "2026-01-01", { pullRequest: pr })], "p1")).toEqual([
       {
+        id: expect.any(String),
         name: "ui > 保存",
         file: "tests/ui.spec.ts",
         repo: REPO,
@@ -89,11 +90,11 @@ describe("不安定なテストの集計（PBI-312）", () => {
     expect(test?.tasks).toHaveLength(1);
   });
 
-  it("./ の有無はそろえ、ファイルかリポジトリが違えば別のテストと数える", () => {
+  it("./ の有無と途中の . と .. はそろえ、ファイルかリポジトリが違えば別のテストと数える", () => {
     const list = flakyTests(
       [
         seenIn("a", "2026-01-01"),
-        task("b", { flakySightings: [seen("2026-01-02", { file: "./tests/ui.spec.ts" })] }),
+        task("b", { flakySightings: [seen("2026-01-02", { file: "./tests/sub/../ui.spec.ts" })] }),
         task("c", { flakySightings: [seen("2026-01-03", { file: "tests/other.spec.ts" })] }),
         seenIn("d", "2026-01-04", { repo: "https://github.com/acme/other" }),
         seenIn("e", "2026-01-05", { repo: "https://github.com/ACME/app.git" }),
@@ -132,11 +133,19 @@ describe("不安定なテストの集計（PBI-312）", () => {
     expect(knownFlakyTests(three, task("x", { repo: undefined }))).toEqual([]);
   });
 
-  it("画面に出す文は伏せる", () => {
+  it("画面に出す文は伏せる。識別子で伏せる前のテストを探せ、識別子に名前は出ない", () => {
     const [test] = flakyTests([seenIn("a", "2026-01-01")], "p1", (text) => `伏せた ${text}`);
     expect(test?.tasks[0]?.taskTitle).toBe("伏せた タスク a");
     expect(test?.reason).toBe("伏せた 別の画面");
     expect(test?.name).toBe("伏せた ui > 保存");
+    expect(test?.id).not.toContain("ui");
+    expect(findFlakyTest([seenIn("a", "2026-01-01")], "p1", test?.id ?? "")).toEqual({
+      name: "ui > 保存",
+      file: "tests/ui.spec.ts",
+      repo: REPO,
+    });
+    expect(findFlakyTest([seenIn("a", "2026-01-01")], "p1", "nope")).toBeUndefined();
+    expect(findFlakyTest([seenIn("a", "2026-01-01")], "p2", test?.id ?? "")).toBeUndefined();
   });
 
   describe("そのテストを直すタスク", () => {
@@ -183,6 +192,20 @@ describe("不安定なテストの集計（PBI-312）", () => {
       const [again] = flakyTests([...three, merged, seenIn("d", "2026-01-04")], "p1");
       expect(again).toMatchObject({ taskCount: 1, known: false });
       expect(again?.fixTask).toBeUndefined();
+    });
+
+    it("分割したら、子孫の PR のマージで数え直す", () => {
+      const parent = task("fix", { flakyFix, status: "completed" as Task["status"] });
+      const child = task("c1", { parent: { taskId: "fix", dependsOn: [] } });
+      const grandchild = task("c2", {
+        parent: { taskId: "c1", dependsOn: [] },
+        pullRequestMerge: { at: "2026-01-03" } as Task["pullRequestMerge"],
+      });
+      expect(flakyTests([...three, parent, child], "p1")[0]?.known).toBe(true);
+      expect(flakyTests([...three, parent, child, grandchild], "p1")).toEqual([]);
+      // 別のプロジェクトの子は数えない
+      const other = { ...grandchild, projectId: "p2" } as Task;
+      expect(flakyTests([...three, parent, child, other], "p1")[0]?.known).toBe(true);
     });
   });
 });
