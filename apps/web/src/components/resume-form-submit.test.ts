@@ -136,6 +136,10 @@ describe("再開の欄の補足と、タスクのイメージ・工程のエー�
     expect(select("agent:implement")?.value).toBe("claude");
     // 統合レビューは、エージェントを変えられない
     expect(select("agent:integrate")).toBeNull();
+    // 狭い幅では列の見出しを出さないので、行ごとにエージェントの選択だとわかる見出しを出す（広い幅では隠す）
+    const rowLabel = container.querySelector('[data-testid="resume-step-agent-label-implement"]');
+    expect(rowLabel?.textContent).toBe(messagesFor("ja").parts.resume.stepAgent);
+    expect(rowLabel?.className).toContain("@sm:hidden");
     const imageSelect = select("image");
     if (imageSelect) imageSelect.value = "java";
     const agent = select("agent:implement");

@@ -197,7 +197,7 @@ A task has one image. Every step, the tests, and the final review of the task ru
   4. The orchestrator's choice (the default image if `images` is not configured)
 - For a PR-review-only task ([Intake](intake.en.md)) too, if no image is specified, the orchestrator chooses the task image from `images`. The review runs the project's verification such as tests and lint, so the orchestrator is asked to choose an image that has those tools. If `images` is not configured, the review runs in the default image without the orchestrator.
 - The chosen image and the reason are recorded in the Activity. If a name not in `images` is chosen or specified, sacty stops and shows the reason.
-- A task created by an earlier version of sacty may have an image decided per step. Such a task keeps running each step in that step's image. The task details show "per step (older version)" and which step ran with which image. Once you choose a task image, every step runs in that image from then on.
+- A task created by an earlier version of sacty may have an image decided per step. Such a task keeps running each step in that step's image. The task details show "per step (older version)" and, for each step, the image set last and the images used in its runs. A step whose image set last is not in `images` stops when it runs, so a warning is shown; choose the task image again. Once you choose a task image, every step runs in that image from then on.
 
 ### Changing the task image
 

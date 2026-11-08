@@ -162,6 +162,7 @@ function StepChoiceRow({
   chosenAgent?: string;
 }) {
   const m = useMessages();
+  const r = m.parts.resume;
   const label = m.labels.step[s.step];
   const agentCurrent = s.agent?.current;
   const agentKnown = s.agent?.options?.some((o) => o.id === agentCurrent);
@@ -174,6 +175,14 @@ function StepChoiceRow({
     >
       <span className="flex min-h-9 items-center text-sm font-medium">{label}</span>
       <div className="flex min-w-0 flex-col gap-1">
+        {/* 狭い幅では列の見出しを出さないので、行ごとにエージェントの選択だとわかるようにする */}
+        <span
+          aria-hidden="true"
+          className="text-xs text-muted-foreground @sm:hidden"
+          data-testid={`${idPrefix}-agent-label-${s.step}`}
+        >
+          {r.stepAgent}
+        </span>
         {s.agent?.options ? (
           <>
             {agentCurrent && (

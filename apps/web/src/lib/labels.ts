@@ -1135,8 +1135,17 @@ export type ImageSource =
   | { by: "orchestrator"; default?: string; unexplained?: true }
   | { by: "none" };
 
-/** 古い版（PBI-318 より前）の作業履歴の、工程のイメージの1行（どの工程がどのイメージで動いたか）。 */
-export type LegacyStepImageRow = { step: StepKey; image: string; source: ImageSource };
+/**
+ * 古い版（PBI-318 より前）の作業履歴の、工程のイメージの1行。image は最後に設定した名前（これから実行するときに使う。
+ * タスクのイメージを選ぶまで）。runs は、その工程を実行したときに使った名前（作業履歴から復元。重ねない。まだ実行して
+ * いなければ空）。
+ */
+export type LegacyStepImageRow = {
+  step: StepKey;
+  image: string;
+  source: ImageSource;
+  runs: string[];
+};
 
 /** タスクの詳細の「タスクのイメージ」（PBI-318）。 */
 export type TaskImageInfo = {
@@ -1160,8 +1169,11 @@ export function taskImageOf(task: Task): string | undefined {
   return task.image ?? (hasLegacyStepImages(task) ? undefined : "default");
 }
 
-/** タスクのイメージと、選んだ元・古い版の工程ごとのイメージ（PBI-318）。 */
-export function taskImageInfo(task: Task): TaskImageInfo {
+/**
+ * タスクのイメージと、選んだ元・古い版の工程ごとのイメージ（PBI-318）。activity（タスクの作業履歴）があれば、古い版の
+ * 工程ごとに、実行したときに使ったイメージも出す。
+ */
+export function taskImageInfo(task: Task, activity: readonly ActivityEvent[] = []): TaskImageInfo {
   const image = taskImageOf(task);
   const change = task.imageChange;
   const source: ImageSource = change
@@ -1173,12 +1185,65 @@ export function taskImageInfo(task: Task): TaskImageInfo {
         : task.image
           ? { by: task.imageSource ?? "orchestrator" }
           : { by: "none" };
-  return { ...(image ? { image } : {}), source, legacy: legacyStepImageRows(task) };
+  return { ...(image ? { image } : {}), source, legacy: legacyStepImageRows(task, activity) };
 }
 
-/** 古い版の作業履歴の、工程ごとのイメージと選んだ元（PBI-106 の表示のまま）。古い版の記録が無ければ空。 */
-function legacyStepImageRows(task: Task): LegacyStepImageRow[] {
+/**
+ * 工程ごとに、実行したとき（AgentRunStarted を足したとき）に使ったイメージの名前を、作業履歴をたどって復元する。
+ * 実行の記録にはイメージの名前が無いので、そのときのタスクのイメージ・工程ごとのイメージ（投影と同じ規則）から決める。
+ */
+export function stepRunImages(
+  activity: readonly ActivityEvent[],
+): Partial<Record<StepKey, string[]>> {
+  let requested: Partial<Record<StepKey, string>> = {};
+  let images: Partial<Record<StepKey, string>> = {};
+  let image: string | undefined;
+  const runs: Partial<Record<StepKey, string[]>> = {};
+  for (const event of activity) {
+    switch (event.type) {
+      case "TaskCreated":
+        requested = event.payload.images ?? {};
+        break;
+      case "StepsChosen": {
+        const chosen = Object.entries(requested).filter(([step]) =>
+          event.payload.steps.includes(step as StepKey),
+        );
+        images = { ...event.payload.images, ...Object.fromEntries(chosen) };
+        image = event.payload.image;
+        break;
+      }
+      case "StepImageChanged":
+        images = { ...images, [event.payload.step]: event.payload.to };
+        break;
+      case "TaskImageChanged":
+        image = event.payload.to;
+        break;
+      case "TaskResumed":
+        // 工程の選択からやり直すと、選んだ工程に結びつくイメージは消える（投影の clearChosenSteps と同じ）
+        if (event.payload.rechooseSteps) {
+          images = {};
+          image = undefined;
+        }
+        break;
+      case "AgentRunStarted": {
+        const step = event.payload.step;
+        const name = image ?? images[step] ?? "default";
+        const seen = runs[step] ?? [];
+        if (seen.at(-1) !== name) runs[step] = [...seen, name];
+        break;
+      }
+    }
+  }
+  return runs;
+}
+
+/**
+ * 古い版の作業履歴の、工程ごとの最後に設定したイメージと選んだ元（PBI-106 の表示のまま）と、実行で使ったイメージ。古い版の
+ * 記録が無ければ空。
+ */
+function legacyStepImageRows(task: Task, activity: readonly ActivityEvent[]): LegacyStepImageRow[] {
   if (!hasLegacyStepImages(task)) return [];
+  const runs = stepRunImages(activity);
   return task.steps.map((s) => {
     const image = task.images?.[s.key] ?? "default";
     const change = task.imageChanges?.[s.key];
@@ -1196,7 +1261,7 @@ function legacyStepImageRows(task: Task): LegacyStepImageRow[] {
             : task.images?.[s.key]
               ? { by: task.imageSource ?? "orchestrator" }
               : { by: "none" };
-    return { step: s.key, image, source };
+    return { step: s.key, image, source, runs: runs[s.key] ?? [] };
   });
 }
 

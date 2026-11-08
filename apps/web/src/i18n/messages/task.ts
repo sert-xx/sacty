@@ -151,7 +151,12 @@ const ja = {
     none: "指定なし",
     when: "すべての工程の次の実行から使います。テスト・最終レビューも同じイメージです",
     perStep: "工程ごと（古い版）",
-    legacyTitle: "古い版で工程ごとに決めたイメージ。どの工程がどのイメージで動いたかを示します",
+    legacyTitle:
+      "古い版で工程ごとに決めたイメージです。最後に設定した名前と、実行したときに使った名前を示します",
+    legacyRuns: (names: string) => `実行で使ったイメージ：${names}`,
+    legacyNotRun: "まだ実行していません",
+    legacyMissingHint:
+      "images に無い名前のままでは、その工程を実行するときに止まります。タスクのイメージを選ぶと、すべての工程でそれを使います。",
     label: "タスクのイメージ",
     change: "変える",
     changing: "変えています…",
@@ -645,7 +650,11 @@ const en: TaskMessages = {
     when: "Used from the next run of every step. The tests and the final review use the same image",
     perStep: "per step (older version)",
     legacyTitle:
-      "Images chosen per step in an older version. Shows which step ran with which image",
+      "Images chosen per step in an older version. Shows the name set last and the names used when the steps ran",
+    legacyRuns: (names) => `Image used in runs: ${names}`,
+    legacyNotRun: "Not run yet",
+    legacyMissingHint:
+      "With a name not in images, the step stops when it runs. Choosing a task image makes every step use it.",
     label: "Task image",
     change: "Change",
     changing: "Changing…",

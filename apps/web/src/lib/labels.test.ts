@@ -13,6 +13,7 @@ import {
   statusText as statusTextIn,
   statusTone,
   stepImageOptions,
+  stepRunImages,
   taskImageInfo,
   taskImageOf,
   testCommandOfNoTests,
@@ -2110,7 +2111,7 @@ describe("タスクのイメージの表示（PBI-318）", () => {
     });
   });
 
-  it("古い版の工程ごとのイメージ（PBI-106）は、どの工程がどのイメージで動いたかを工程ごとに出す", () => {
+  it("古い版の工程ごとのイメージ（PBI-106）は、工程ごとに最後に設定した名前と選んだ元を出す", () => {
     const legacy = task({
       status: "running",
       steps,
@@ -2130,12 +2131,14 @@ describe("タスクのイメージの表示（PBI-318）", () => {
           step: "requirements",
           image: "default",
           source: { by: "orchestrator", unexplained: true },
+          runs: [],
         },
-        { step: "design", image: "java", source: { by: "request" } },
+        { step: "design", image: "java", source: { by: "request" }, runs: [] },
         {
           step: "implement",
           image: "playwright",
           source: { by: "person", at: T_CHANGED, from: "java" },
+          runs: [],
         },
       ],
     });
@@ -2152,6 +2155,88 @@ describe("タスクのイメージの表示（PBI-318）", () => {
       source: { by: "person", at: "2026-10-16T00:00:00.000Z" },
     });
     expect(moved.source).not.toHaveProperty("from");
+  });
+
+  it("実行で使ったイメージは、作業履歴をたどって、実行を始めたときの名前を工程ごとに出す（最後の設定とは別）", () => {
+    let seq = 0;
+    const ev = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+      ({
+        ...e,
+        seq: ++seq,
+        id: `e${seq}`,
+        taskId: "t1",
+        projectId: "p1",
+        at: "2026-10-10T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const run = (step: string) =>
+      ev({
+        type: "AgentRunStarted",
+        payload: { runId: `r${seq}`, step, agentId: "a", authMode: "subscription" },
+      } as Pick<ActivityEvent, "type" | "payload">);
+    const activity = [
+      ev({
+        type: "TaskCreated",
+        payload: { title: "t", body: "", start: "sacty", images: { implement: "java" } },
+      } as Pick<ActivityEvent, "type" | "payload">),
+      ev({
+        type: "StepsChosen",
+        payload: { steps: ["design", "implement"], images: { design: "python" } },
+      } as Pick<ActivityEvent, "type" | "payload">),
+      run("design"),
+      // 実行の後に変えても、実行で使った名前は変わらない
+      ev({
+        type: "StepImageChanged",
+        payload: { step: "design", from: "python", to: "go" },
+      } as Pick<ActivityEvent, "type" | "payload">),
+      run("implement"),
+      run("implement"),
+      run("design"),
+      // タスクのイメージに変えた後は、どの工程もタスクのイメージで動く
+      ev({ type: "TaskImageChanged", payload: { to: "rust" } } as Pick<
+        ActivityEvent,
+        "type" | "payload"
+      >),
+      run("implement"),
+    ];
+    expect(stepRunImages(activity)).toEqual({
+      design: ["python", "go"],
+      implement: ["java", "rust"],
+    });
+    // 指定の無い工程は既定のイメージ。工程の選択からやり直すと、選んだ工程のイメージは消える
+    expect(
+      stepRunImages([
+        activity[0] as ActivityEvent,
+        activity[1] as ActivityEvent,
+        ev({ type: "TaskResumed", payload: { retry: true, rechooseSteps: true } } as Pick<
+          ActivityEvent,
+          "type" | "payload"
+        >),
+        ev({ type: "StepsChosen", payload: { steps: ["design", "review"] } } as Pick<
+          ActivityEvent,
+          "type" | "payload"
+        >),
+        run("design"),
+        run("review"),
+      ]),
+    ).toEqual({ design: ["default"], review: ["default"] });
+    // 古い版の行は、最後に設定した名前と、実行で使った名前を分けて持つ（まだ実行していない工程は空）
+    const rows = taskImageInfo(
+      task({
+        steps: [
+          { key: "design", state: "done" },
+          { key: "implement", state: "active" },
+          { key: "deployment", state: "todo" },
+        ],
+        images: { design: "go", implement: "java" },
+      }),
+      activity.slice(0, 7),
+    ).legacy;
+    expect(rows.map((r) => [r.step, r.image, r.runs])).toEqual([
+      ["design", "go", ["python", "go"]],
+      ["implement", "java", ["java"]],
+      ["deployment", "default", []],
+    ]);
   });
 });
 

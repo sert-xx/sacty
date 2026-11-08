@@ -812,7 +812,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
 - チケットから取り込んだタスクは、工程を選ぶ前に、情報収集がチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`。上の「トリアージを兼ねる」）。
 - PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
-  - `images` を設定していて、プロジェクトの対象・再実行でイメージを決めていないときだけ、オーケストレーターにタスクのイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
+  - `images` を設定していて、再実行・作成時の人の指定・プロジェクトの対象でイメージを決めていないときだけ（`pinnedImage`）、オーケストレーターにタスクのイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
     指示では、PR が触るコードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。
   - 選んだら `StepsChosen` をオーケストレーターの記録にし（`imageSource: orchestrator`・`imageReason`・実行の費用）、既定のイメージなら上と同じく `defaultImageReason` か `imageUnexplained` を記録する。
     理由の文は `review.reviewOnlyImageChosen`。
@@ -895,10 +895,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   候補を確かめられない・`images` に無い名前を使っているときは、見落とさないよう開いて出す。
 - 古い版の作業履歴（工程ごとの `images` を持つ `StepsChosen`、`StepImageChanged`）は、そのまま読む。
   投影は工程ごとの `images` と `imageChanges` を持ち、タスクのイメージが無ければ、工程の実行はその工程のイメージで、最終レビューは実装の工程のイメージ（無ければ再現の工程のイメージ）で動く。
-  画面は、タスクのイメージの代わりに「工程ごと（古い版）」と、どの工程がどのイメージで動いたかを出す。
-  人がタスクのイメージを選ぶと、それからはすべての工程でタスクのイメージを使う（工程ごとのイメージは、動いた記録として残る）。
+  画面は、タスクのイメージの代わりに「工程ごと（古い版）」と、工程ごとに最後に設定したイメージと選んだ元、実行で使ったイメージ（まだ実行していなければその旨）を出す。
+  実行の記録（`AgentRunStarted`）にはイメージの名前が無いので、実行で使ったイメージは、作業履歴をたどってそのときのタスクのイメージ・工程ごとのイメージから求める（`stepRunImages`）。
+  タスクのイメージが無いあいだ、最後に設定したイメージが `images` に無い工程があれば、その工程に警告を出し、実行するときに止まることと、タスクのイメージを選べば全工程でそれを使うことを案内する（欄は開いて出す）。
+  人がタスクのイメージを選ぶと、それからはすべての工程でタスクのイメージを使う（工程ごとのイメージは、最後の設定として残る）。
 
-コード: `apps/daemon/src/service.ts`（`changeTaskImage`・`taskImageChange`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskImageChanged`・`ChangeTaskImageInput`・`StepImageChanged`）、`packages/core/src/projection.ts`（`stepRunning`・`stepImageOf`・`verificationImageOf`）、`apps/web/src/lib/labels.ts`（`taskImageInfo`・`stepImageOptions`）
+コード: `apps/daemon/src/service.ts`（`changeTaskImage`・`taskImageChange`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskImageChanged`・`ChangeTaskImageInput`・`StepImageChanged`）、`packages/core/src/projection.ts`（`stepRunning`・`stepImageOf`・`verificationImageOf`）、`apps/web/src/lib/labels.ts`（`taskImageInfo`・`stepRunImages`・`stepImageOptions`）
 
 ## 工程のエージェントを人が変える
 

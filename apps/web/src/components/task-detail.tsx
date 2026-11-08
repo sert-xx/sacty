@@ -1339,7 +1339,9 @@ function StepsChoice({ task, data }: { task: Task; data: TaskDetailData }) {
         </div>
       )}
       {/* タスクのイメージと、選んだ元。いつでも変えられ、すべての工程の次の実行から使う（PBI-318） */}
-      {task.steps.length > 0 && <TaskImage task={task} imageStatus={data.imageStatus} />}
+      {task.steps.length > 0 && (
+        <TaskImage task={task} activity={data.activity} imageStatus={data.imageStatus} />
+      )}
       {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
       {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
     </section>
@@ -1427,19 +1429,24 @@ function ImageSourceText({ source }: { source: ImageSource }) {
  */
 function TaskImage({
   task,
+  activity,
   imageStatus,
 }: {
   task: Task;
+  activity: TaskDetailData["activity"];
   imageStatus: TaskDetailData["imageStatus"];
 }) {
   const { task: t, labels } = useMessages();
   const m = t.images;
-  const info = taskImageInfo(task);
+  const info = taskImageInfo(task, activity);
   // 選べるのは、既定のイメージと images の名前（説明も出す）。取得できない・設定を読めないときは、候補を確かめられない
   // ことを出し、消した名前の警告と変更の操作は出さない（一時的な失敗を、設定から消したことと取り違えない）
   const options = stepImageOptions(imageStatus, m.defaultDescription);
   const missing = (name: string) => options !== undefined && !options.some((o) => o.name === name);
-  const attention = !options || (info.image !== undefined && missing(info.image));
+  // 古い版の工程ごとのイメージで動くあいだ（タスクのイメージが無い）は、工程ごとの最後の設定も確かめる（消した名前のまま
+  // だと、その工程を実行するときに止まるので、先にタスクのイメージを選び直せるよう案内する）
+  const legacyMissing = info.image === undefined && info.legacy.some((row) => missing(row.image));
+  const attention = !options || (info.image !== undefined && missing(info.image)) || legacyMissing;
   return (
     <StepSettings title={m.title} hint={m.hint} open={attention} testId="task-image">
       {!options && (
@@ -1482,13 +1489,27 @@ function TaskImage({
                 <span className="font-medium">{labels.step[row.step]}</span>
                 {m.sep}
                 <span className="font-mono">{row.image}</span>
+                {info.image === undefined && missing(row.image) && (
+                  <span className="text-warn">{m.missing}</span>
+                )}
                 <span className="text-muted-foreground">
                   {" ・ "}
                   <ImageSourceText source={row.source} />
                 </span>
+                <span
+                  className="block text-xs text-muted-foreground"
+                  data-testid={`legacy-step-image-runs-${row.step}`}
+                >
+                  {row.runs.length > 0 ? m.legacyRuns(row.runs.join(" → ")) : m.legacyNotRun}
+                </span>
               </li>
             ))}
           </ul>
+          {legacyMissing && (
+            <p className="text-xs text-warn" data-testid="legacy-step-images-missing">
+              {m.legacyMissingHint}
+            </p>
+          )}
         </div>
       )}
     </StepSettings>
