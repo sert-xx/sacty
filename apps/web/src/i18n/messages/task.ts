@@ -139,7 +139,7 @@ const ja = {
     save: "変える",
     saving: "変えています…",
     cancel: "やめる",
-    hint: "この後の工程の指示・コミット・通知・PR の本文から、新しい題を使います。すでに作った PR の題とブランチ名は変わりません。",
+    hint: "この後の工程の指示・通知・PR の本文と、この後に出す成果のコミットから、新しい題を使います。すでに作った PR の題とブランチ名は変わりません。",
   },
   /** 工程のイメージ（PBI-41）と、人が変える操作（PBI-106）。 */
   images: {
@@ -646,7 +646,7 @@ const en: TaskMessages = {
     save: "Rename",
     saving: "Renaming…",
     cancel: "Cancel",
-    hint: "The new title is used from now on in step instructions, commits, notifications, and PR descriptions. The title of a PR already created and the branch name don't change.",
+    hint: "The new title is used from now on in step instructions, notifications, PR descriptions, and commits of results submitted from now on. The title of a PR already created and the branch name don't change.",
   },
   images: {
     title: "Task image",
