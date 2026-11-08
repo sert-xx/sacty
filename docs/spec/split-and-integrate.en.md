@@ -4,19 +4,54 @@
 
 With the `split` plan, an agent creates child tasks based on the approved design. When all child tasks are settled, Integration review checks whether the child tasks' results meet the parent's requirements. If it does not pass, the agent adds fix child tasks.
 
-Related ADRs: none
+Related ADRs: [Dependent child tasks start stacked on the dependency's PR branch once that PR passes the final review](../adr/20261108-0615-stack-dependent-subtasks-on-reviewed-pull-requests.md)
 
 ## Splitting
 
 - The number of child tasks is from `MIN_SPLIT_CHILDREN` (2) to `MAX_SPLIT_CHILDREN` (10). From the second round, which adds fix child tasks, a single one can be created.
 - The agent's answer (heading `sacty-split`) is checked for the count, duplicate `key` values, missing dependencies, self-dependencies, and dependency cycles. If it cannot be read, the task is paused.
 - Child tasks are created with `start: split` and `parent` (the parent's ID and `dependsOn`). The body includes the parent's approved requirements and design, and the information the parent gathered at the start of the task (if any). Child tasks do not gather information again ([Tasks and steps](tasks-and-steps.en.md#information-gathering)). Child tasks without dependencies start waiting to run; child tasks with dependencies start as `blocked` and become waiting to run once all their dependencies are settled (`TaskUnblocked`).
+  When a dependency's PR passes the final review, a child task may also start stacked on that PR without waiting for it to be settled (see "Child tasks stacked on a dependency's PR" below).
 - A child task's repository is the child task's `repo`, or the parent's repository if absent. When splitting a parent without a repository, each child task's `repo` is checked against the project's targets; if it is missing or not in the targets, sacty does not use the split and stops the task. The instructions tell the agent to complete each child task within one repository, and to split changes across repositories and connect them with `dependsOn`.
 - Splitting is one level only (child tasks cannot choose `split`).
 - The parent waits for child tasks in `waiting_children`. When all child tasks are settled (completed, or canceled with a person's acknowledgment), it moves to the next step with `SplitCompleted`.
 - When a child task is canceled, the parent is paused (`child_cancelled`). Resuming the parent counts as acknowledging that cancellation.
 
 Code: `apps/daemon/src/service.ts` (`settleSplit`, `childSettled`, `splitWithRepositories`), `apps/daemon/src/prompts.ts` (`extractSplitPlan`, `buildChildBody`, `splitRepositoryLines`), `packages/core/src/events.ts` (`MIN_SPLIT_CHILDREN`, `MAX_SPLIT_CHILDREN`)
+
+## Child tasks stacked on a dependency's PR
+
+A child task with dependencies starts, without waiting for the merge, from the branch of a dependency's implementation PR once that PR passes the final review (stacked PRs; PBI-317).
+
+- Deciding whether to start (`blockedStart`; in the parent's `settleSplit`, for each `blocked` child task): dependencies are sorted into the following.
+  - Settled: completed, or canceled with a person's acknowledgment (as before)
+  - Merged: the implementation PR has been merged (`implementationMerged`; the after-merge watch is under way). It is in the base branch, so it is treated the same as settled
+  - Stackable: an open implementation PR made after passing the final review, with the task waiting for approval of the implementation (`reviewedPullRequest`). A PR made for the verification wait (`verifying`), the PR of the current submission that a person moved to review despite a failed final review, and a person's PR that was taken over are excluded. Only those in the same repository as the child task
+  - Others
+- How it starts:
+  - When all dependencies are settled, or all of those not settled are merged, it starts from the base branch (`TaskUnblocked`; not stacked).
+  - When one of the remaining dependencies (X) is stackable, and all other remaining dependencies are ones X is stacked on (the chain followed from X through the tasks it is stacked on; `stackChain`), it starts stacked on X (`stackedOn` of `TaskUnblocked`: X's ID, PR branch, and passing commit). The starting point is decided by this rule also when there are two or more dependencies.
+  - Otherwise (two or more mutually independent dependencies remain, another repository, not passed), it waits as before.
+- Starting point: a stacked child task (`Task.stack`), when its workspace is first prepared, clones X's PR branch and checks out the passing commit (`prepareRepositoryNow`).
+  The recorded starting branch (`repository.baseBranch`) is X's PR branch, and the base commit is the passing commit. The workspace is not prepared again on the base branch the orchestrator chose.
+- Merging in (`syncBase`): it merges at the same points as the base branch merge ([Merging the base branch](tasks-and-steps.en.md#merging-the-base-branch)). While stacked, it merges X's PR's passing commit instead of the base branch (when X was fixed and passed again).
+  It fetches X's PR branch, and does a three-way merge of the passing commit (not the branch head), with the commit the workspace is currently based on as the common ancestor. It is recorded as `BaseBranchMerged`.
+  It does not merge when X has no passing PR (being reworked, or closed) or when the passing commit is the current base. Conflicts and failures are handled the same as in the base branch merge. It does not merge while waiting for approval.
+- PR (`publish`): a stacked child task's implementation PR targets X's PR branch, and stays a draft while waiting for approval even after passing verification (to keep the merge order; GitHub cannot merge a draft PR).
+  The target is also sent when the PR is updated (`retarget` of `PullRequests.upsert`), and it is recorded in `baseBranch` of `PullRequestPublished`. It is not recorded for the PRs of tasks that are not stacked (their target stays the base branch decided when the PR was made).
+  At the top of the body (at the top of the summary when following a template), it writes X's PR number, URL, and the child task's title, that it must not be merged before X, and that sacty changes the target to the base branch and marks it ready for review once X is merged (`stackedBodyLines`; not cut by the body length limit).
+- When X's PR is merged (`merged` of `stackAction`): sacty records `StackedDependencyMerged` on the child task and changes the starting branch to the branch X's PR went into (X's starting branch). If X was itself still stacked on another dependency (a person marked it ready and merged it first), the child task is stacked again on that dependency (`stackedOn`). Otherwise it is no longer stacked.
+  The recorded base commit and merge are not changed, so the next merge takes in the latest of the new branch with X's passing commit as the common ancestor.
+  It is recorded even when the child task is completed.
+- Changing the target of a PR waiting for approval (`retargetDue`, `retargetPullRequest`): at each PR check (every 60 seconds; `checkPullRequests`), when the recorded target of the PR of a child task waiting for approval differs from the current starting branch, sacty changes the target of the PR on GitHub and rewrites the body. When it is no longer stacked, it marks the PR ready for review (it is a PR that passed verification). It records `PullRequestRetargeted`.
+  On failure, it records nothing, writes it to the daemon log, and tries again at the next check (the task is not stopped). The PR of a child task that is not waiting for approval is changed the next time the PR is updated.
+- When X is canceled (`cancelled` of `stackAction`; something in the chain of tasks it is stacked on was canceled): when the child task is waiting to run, idle, or waiting for approval, it is paused (`stack.dependencyCancelled`). When it is running, it is stopped after that run ends.
+  It was built on top of X's changes, so resuming is not accepted (it can be canceled; the parent's `child_cancelled` handling is as before). When X is canceled before passing, the child task does not start, as before (it stays `blocked`; once a person acknowledges the cancellation, it starts from the base branch).
+- Merge order: when a person marks the child task's PR ready and merges it before X, the merge is taken as the approval, as before (the child task's changes go into X's PR branch).
+- The state is derived from the activity log (`stackedOn` of `TaskUnblocked`, `StackedDependencyMerged`, `baseBranch` of `PullRequestPublished`, `PullRequestRetargeted`, `BaseBranchMerged`), so it is not lost when the daemon restarts.
+- Child tasks without dependencies and tasks that are not split have neither a stacked target nor a recorded PR target, and their behavior does not change.
+
+Code: `apps/daemon/src/service.ts` (`blockedStart`, `stackChain`, `cancelledInStack`, `stackAction`, `settleStack`, `retargetDue`, `retargetPullRequest`, `recordsPullRequestBase`, `stackedPullRequest`, `prepareRepositoryNow`, `syncBase`, `publish`, `resume`), `apps/daemon/src/prompts.ts` (`stackedBodyLines`), `apps/daemon/src/github.ts` (`GitHubPullRequests.upsert`), `packages/core/src/events.ts` (`TaskUnblocked`, `StackedDependencyMerged`, `PullRequestRetargeted`), `packages/core/src/projection.ts` (`stack`, `reviewedPullRequest`, `implementationMerged`)
 
 ## Integration review
 

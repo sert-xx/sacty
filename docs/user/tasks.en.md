@@ -377,6 +377,23 @@ Even if another task or a person's PR is merged into the base branch (main and t
 - Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.
 - A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) pushes to a person's PR branch, so it does not merge the base branch.
 
+### PRs of dependent child tasks (stacked PRs)
+
+In a task split, a child task that depends on other child tasks can start without waiting for the dependency's PR to be merged. This keeps later child tasks moving while the dependency's PR is reviewed and merged.
+
+- When the dependency's implementation PR passes the final review and waits for approval, the dependent child task starts from that PR's branch.
+  When the dependency is completed or its cancellation is acknowledged, it starts from the base branch as before.
+- The dependent child task's PR targets the dependency PR's branch (its base is the dependency's branch). The diff on GitHub shows only that child task's changes.
+  - The top of the PR body says which PR it is stacked on and that it must not be merged before that PR.
+  - Until the dependency's PR is merged, it stays a draft even after passing verification (GitHub does not let you merge a draft PR). You can review and comment on it while it is a draft.
+  - If you want to merge it before the dependency's PR, mark it ready for review on GitHub and merge it. The child task's changes then go into the dependency PR's branch, and the merge is taken as the approval.
+- When the dependency's PR is merged, sacty changes the base of the child task's PR to the base branch, rewrites the body, and marks it ready for review (at the PR check every minute).
+  You can merge the retargeted PR as it is. When the dependency was squash-merged, the diff can show the dependency's changes on top. When you send it back or write a comment on the PR, sacty merges in the base branch and redoes it, and the diff goes back to only the child task's changes.
+- When the dependency's PR is fixed (sent back or commented on) and passes the final review again, the dependent child task takes in the new content when its implementation is redone. How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.
+- When the dependency is canceled, the child task built on top of it is paused and can no longer be resumed. Cancel the child task (what is missing may be added as fix child tasks by the integration review).
+- When there are two or more dependencies, the child task starts stacked on a dependency only when exactly one dependency is not merged (or all other dependencies are stacked under that one). Otherwise it waits for the dependencies as before.
+- A child task in a different repository from the dependency waits for the dependency instead of being stacked.
+
 ### When the final review verdict cannot be read
 
 Common breakage in the final review's JSON output, such as double quotes inside strings or a missing closing `}` of the nested `tests`, is repaired when reading.

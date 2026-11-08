@@ -497,6 +497,12 @@ const ja = {
     TaskSplit: (count: number, reason: string, repos: string[] = []) =>
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}${repos.length > 0 ? `・リポジトリ：${repos.join("・")}` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
+    TaskUnblockedStacked: (branch: string, commit: string) =>
+      `依存先の子タスクの PR が最終レビューに合格したため、そのブランチ（${branch}・${commit}）に重ねて実行待ちにした`,
+    StackedDependencyMerged: (branch: string, stacked: boolean) =>
+      `重ねていた依存先の PR がマージされたため、起点のブランチを ${branch} に付け替えた${stacked ? "（その依存先の PR に重ね直した）" : ""}`,
+    PullRequestRetargeted: (number: number, branch: string, ready: boolean) =>
+      `PR #${number} の向き先を ${branch} に付け替えた${ready ? "・ドラフトを外した" : ""}`,
     SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
     IntegrationReviewed: (
       passed: boolean,
@@ -1063,6 +1069,12 @@ const en: LabelMessages = {
     TaskSplit: (count, reason, repos = []) =>
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}${repos.length > 0 ? `; repositories: ${repos.join(", ")}` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
+    TaskUnblockedStacked: (branch, commit) =>
+      `Queued on top of the branch (${branch}, ${commit}) of a subtask it depends on, because that subtask's PR passed the final review`,
+    StackedDependencyMerged: (branch, stacked) =>
+      `The PR it was stacked on was merged, so the starting branch was changed to ${branch}${stacked ? " (stacked again on that subtask's PR)" : ""}`,
+    PullRequestRetargeted: (number, branch, ready) =>
+      `Changed the base of PR #${number} to ${branch}${ready ? " and marked it ready for review" : ""}`,
     SplitCompleted: "All subtasks are done, so the task split is complete",
     IntegrationReviewed: (passed, branch, commit, findings, repaired = "") =>
       `Integration review (${branch} · ${commit}): ${passed ? "passed · awaiting approval" : `failed (${findings})`}${repaired ? `. ${repaired}` : ""}`,

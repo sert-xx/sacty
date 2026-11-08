@@ -22118,6 +22118,410 @@ describe("タスク分割（PBI-27）", () => {
   });
 });
 
+describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const design = out(
+    `# 設計\n\n${block({ "sacty-test-viewpoints": [{ title: "t", input: "i", expected: "e" }] })}`,
+  );
+  const splitOutput = (children: unknown[]) =>
+    out(`分け方\n\n${block({ "sacty-split": { reason: "機能ごとに分ける", children } })}`);
+  const implement = (text: string) =>
+    out(
+      [text, block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["a.test.ts › t"] }] })].join(
+        "\n\n",
+      ),
+    );
+  /** 最終レビューの合格。remarks は、差し戻しの指摘の ID（再発していない）。 */
+  const review = (remarks: string[] = []) =>
+    out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [{ id: "REQ", verified: true, reason: "満たす" }],
+          remarks: remarks.map((id) => ({ id, notRecurred: true, reason: "直った" })),
+          tests: { command: "npm test", exitCode: 0, output: "1 passed" },
+          summary: "所見",
+        },
+      }),
+    );
+  /** 親は分割、子は実装だけを選ぶ。 */
+  const planner = async (task: Task) =>
+    task.parent
+      ? {
+          steps: ["implement" as const],
+          plan: "direct" as const,
+          reason: "子",
+          fallback: false,
+          testCommand: "npm test",
+          // 重ねた子タスクでは、ベースブランチの選択を使わない
+          baseBranch: "main",
+          costUsd: 0,
+          estimated: false,
+        }
+      : {
+          steps: ["requirements" as const, "design" as const, "split" as const],
+          plan: "split" as const,
+          reason: "大きいので分ける",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        };
+  const chain = [
+    { key: "A", title: "決済の API", body: "- API を作る", dependsOn: [] },
+    { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: ["A"] },
+  ];
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
+
+  /** 親タスクを、子タスクを作るところまで進める。repos・pulls は、再起動の後も同じ偽物を使えるように外から渡す。 */
+  async function splitParent(
+    children: unknown[],
+    outcomes: AgentOutcome[],
+    repos = new FakeRepos(),
+    pulls = new FakePulls(),
+  ) {
+    // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
+    repos.remote.main = "base123";
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(
+      activity,
+      [out("# 要求要件"), design, splitOutput(children), ...outcomes],
+      { planner, repos, pulls, mergeBase: true },
+    );
+    const { service } = made;
+    const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    const ids = service.get(id)?.task.split?.children.map((c) => c.taskId) ?? [];
+    return { ...made, activity, id, ids };
+  }
+  /** 実行待ちを、止まるまで進める（親の子タスクの開始も含む）。 */
+  async function drain(service: TaskService, max = 12) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+  const merge = (pulls: FakePulls, svc: TaskService, id: string) => {
+    const pr = taskOf(svc, id).pullRequest;
+    pulls.states[pr?.number ?? 0] = {
+      state: "merged",
+      mergedBy: "reviewer",
+      headSha: pr?.commit,
+      mergeCommit: "m".repeat(40),
+    };
+  };
+
+  it("依存先の PR が最終レビューに合格したら、マージを待たずに、その PR のブランチの合格したコミットから子を始め、重ねた PR をドラフトで出す", async () => {
+    const { activity, service, repos, pulls, id, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const depTask = taskOf(service, a);
+    const dep = depTask.pullRequest;
+    // 依存先は、ベースブランチに向けた普通の PR（向き先を記録しない・付け替えない。今までどおり）
+    expect(depTask.gate).toEqual({ step: "implement", submission: 1 });
+    expect(dep).toMatchObject({ number: 7 });
+    expect(dep?.baseBranch).toBeUndefined();
+    expect(depTask.stack).toBeUndefined();
+    expect(pulls.calls[0]).toMatchObject({ baseBranch: "main" });
+    expect(pulls.calls[0]?.retarget).toBeUndefined();
+    expect(pulls.drafts[7]).toBe(false);
+
+    // 子は、依存先の承認待ち（マージ前）に始まり、依存先の PR のブランチの合格したコミットで用意する
+    const child = taskOf(service, b);
+    const unblocked = service.get(b)?.activity.find((e) => e.type === "TaskUnblocked");
+    expect(unblocked?.payload).toEqual({
+      stackedOn: { taskId: a, branch: dep?.branch, commit: dep?.commit },
+    });
+    expect(repos.prepared.at(-1)).toMatchObject({ baseBranch: dep?.branch, recorded: dep?.commit });
+    expect(child.repository).toMatchObject({ baseBranch: dep?.branch, baseCommit: dep?.commit });
+    // オーケストレーターが選んだベースブランチ（main）では用意し直さない
+    expect(types(service, b).filter((t) => t === "RepositoryPrepared")).toHaveLength(1);
+    // 子の PR は、依存先の PR のブランチに向け、検証に通った後もドラフトのまま承認待ちにする
+    expect(child.gate).toEqual({ step: "implement", submission: 1 });
+    expect(pulls.calls[1]).toMatchObject({ baseBranch: dep?.branch, draft: true, retarget: true });
+    expect(pulls.drafts[8]).toBe(true);
+    expect(pulls.draftChanges).toEqual([]);
+    expect(child.pullRequest).toMatchObject({ number: 8, draft: true, baseBranch: dep?.branch });
+    // 本文で、どの PR に重ねたか、マージの順序を伝える
+    expect(pulls.calls[1]?.body).toContain("この PR は #7（https://github.com/acme/app/pull/7");
+    expect(pulls.calls[1]?.body).toContain("#7 より先にマージしないでください");
+    expect(pulls.calls[0]?.body).not.toContain("重ねています");
+    // 依存先の合格したコミットと同じなので、取り込まない
+    expect(repos.merges).toEqual([]);
+    expect(taskOf(service, id).status).toBe("waiting_children");
+    activity.close();
+  });
+
+  it("依存先が直されて合格し直したら、子の実装のやり直しの前に、新しい合格したコミットを取り込む（衝突はベースブランチと同じ扱い）", async () => {
+    const { activity, service, repos, pulls, executor, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+      implement("# A の実装 v2"),
+      review(["implement-1-1"]),
+      implement("# B の実装 v2"),
+      review(["implement-1-1"]),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const first = taskOf(service, a).pullRequest?.commit ?? "";
+    // 依存先を差し戻す。作り直しの間（合格し直す前）は、子は取り込まない
+    service.requestChanges(a, { step: "implement", submission: 1, comments: ["金額の検査が無い"] });
+    await service.runNext(a); // A の実装のやり直し
+    expect(repos.merges).toEqual([]);
+    await drain(service);
+    const second = taskOf(service, a).pullRequest?.commit ?? "";
+    expect(second).not.toBe(first);
+    expect(taskOf(service, a).gate).toEqual({ step: "implement", submission: 2 });
+
+    // 依存先の PR のブランチが、合格したコミットより先に進んでいても（人が積んだなど）、取り込むのは合格したコミット
+    repos.remote[taskOf(service, a).pullRequest?.branch ?? ""] = "9".repeat(40);
+    // 子を差し戻すと、やり直しの前に、依存先の新しい合格したコミットを取り込む。衝突すれば目印を残して解消させる
+    repos.mergeResult = { status: "conflicted", conflicts: ["src/pay.ts"] };
+    repos.markers = ["src/pay.ts"];
+    const runs = service.get(b)?.activity.length ?? 0;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await service.runNext(b);
+    expect(repos.merges).toMatchObject([{ base: first, target: second }]);
+    expect(repos.fetchedBranches.at(-1)?.branch).toBe(taskOf(service, a).pullRequest?.branch);
+    const child = taskOf(service, b);
+    expect(child.baseMerge).toMatchObject({
+      from: first,
+      commit: second,
+      conflicts: ["src/pay.ts"],
+    });
+    expect(
+      service
+        .get(b)
+        ?.activity.slice(runs)
+        .map((e) => e.type),
+    ).toContain("BaseBranchMerged");
+    const prompt = executor.calls.at(-1)?.command.join(" ") ?? "";
+    expect(prompt).toContain("ベースブランチとの競合");
+    repos.markers = [];
+    await drain(service);
+    // 取り込んだ先頭を第2の親にしたコミットで、同じ PR（依存先に向けたまま）を更新する
+    expect(repos.publishInputs.at(-1)).toEqual({ baseCommit: second, merge: second });
+    expect(taskOf(service, b).gate).toEqual({ step: "implement", submission: 2 });
+    expect(pulls.calls.at(-1)).toMatchObject({
+      number: 8,
+      baseBranch: taskOf(service, a).pullRequest?.branch,
+    });
+    activity.close();
+  });
+
+  it("依存先の PR が合格した状態でなければ（閉じられたなど）、子のやり直しでも依存先のブランチを取り込まない", async () => {
+    const { activity, service, repos, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+      implement("# B の実装 v2"),
+      review(["implement-1-1"]),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const branch = taskOf(service, a).pullRequest?.branch ?? "";
+    // 人が依存先の PR を閉じ、そのブランチは先に進んだ
+    pulls.states[7] = { state: "closed" };
+    await service.checkPullRequests();
+    expect(taskOf(service, a).pullRequestState).toBe("closed");
+    repos.remote[branch] = "9".repeat(40);
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await drain(service);
+    expect(repos.merges).toEqual([]);
+    expect(types(service, b)).not.toContain("BaseBranchMerged");
+    expect(taskOf(service, b).gate).toEqual({ step: "implement", submission: 2 });
+    activity.close();
+  });
+
+  it("依存先の PR がマージされたら、子の起点のブランチをベースブランチに付け替え、承認待ちの PR の向き先を付け替えてドラフトを外し、次のやり直しでベースブランチを取り込む", async () => {
+    const { activity, service, repos, pulls, id, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+      implement("# B の実装 v2"),
+      review(["implement-1-1"]),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const depCommit = taskOf(service, a).pullRequest?.commit ?? "";
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    expect(taskOf(service, a).pullRequestState).toBe("merged");
+    // 子は記録だけで付け替える（GitHub の PR の向き先は、PR の確認で付け替える）
+    await drain(service);
+    let child = taskOf(service, b);
+    expect(types(service, b)).toContain("StackedDependencyMerged");
+    expect(child.stack).toBeUndefined();
+    expect(child.repository).toMatchObject({ baseBranch: "main", baseCommit: depCommit });
+    expect(child.pullRequest?.baseBranch).toBe(taskOf(service, a).pullRequest?.branch);
+    const calls = pulls.calls.length;
+    await service.checkPullRequests();
+    child = taskOf(service, b);
+    expect(pulls.calls.slice(calls)).toMatchObject([
+      { number: 8, baseBranch: "main", retarget: true },
+    ]);
+    expect(pulls.calls.at(-1)?.body).not.toContain("重ねています");
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    expect(child.pullRequest).toMatchObject({ number: 8, baseBranch: "main" });
+    expect(child.pullRequest?.draft).toBeUndefined();
+    expect(types(service, b).at(-1)).toBe("PullRequestRetargeted");
+    // もう一度確かめても、付け替え直さない
+    await service.checkPullRequests();
+    expect(pulls.calls.filter((c) => c.retarget && c.number === 8)).toHaveLength(1);
+
+    // 子を差し戻すと、ベースブランチの最新を、依存先の合格したコミットを共通の祖先にして取り込み、PR はドラフトを外したまま
+    repos.remote.main = "f".repeat(40);
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await drain(service);
+    expect(repos.merges).toMatchObject([{ base: depCommit, target: "f".repeat(40) }]);
+    expect(repos.fetchedBranches.at(-1)?.branch).toBe("main");
+    expect(pulls.calls.at(-1)).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
+    expect(pulls.drafts[8]).toBe(false);
+    // 子のマージで、親の子タスクがすべて片付く
+    merge(pulls, service, b);
+    await service.checkPullRequests();
+    expect(
+      taskOf(service, id).split?.children.every((c) => isCompleted(taskOf(service, c.taskId))),
+    ).toBe(true);
+    activity.close();
+  });
+
+  it("重ねた後にデーモンを再起動しても、起点・PR の向き先を失わず、マージの後に付け替える", async () => {
+    const repos = new FakeRepos();
+    const pulls = new FakePulls();
+    const { activity, service, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), review(), implement("# B の実装"), review()],
+      repos,
+      pulls,
+    );
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    const before = taskOf(service, b);
+    activity.close();
+
+    const reopened = new SqliteActivityStore(dbPath);
+    const { service: restarted } = makeService(reopened, [], {
+      planner,
+      repos,
+      pulls,
+      mergeBase: true,
+    });
+    const child = taskOf(restarted, b);
+    expect(child.stack).toEqual(before.stack);
+    expect(child.repository).toEqual(before.repository);
+    expect(child.pullRequest).toEqual(before.pullRequest);
+    expect(restarted.queuedTaskIds()).toEqual([]);
+    merge(pulls, restarted, a);
+    await restarted.checkPullRequests();
+    await drain(restarted);
+    await restarted.checkPullRequests();
+    expect(taskOf(restarted, b).pullRequest).toMatchObject({ baseBranch: "main" });
+    expect(pulls.drafts[8]).toBe(false);
+    reopened.close();
+  });
+
+  it("重ねていた依存先が中止されたら、子を止め、再開させない（中止はできる）", async () => {
+    const { activity, service, ids, id } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    expect(taskOf(service, b).gate).toEqual({ step: "implement", submission: 1 });
+    await service.cancel(a);
+    await drain(service);
+    const child = taskOf(service, b);
+    expect(child.status).toBe("paused");
+    expect(renderMessage(child.pausedMessage, "ja")).toContain("「決済の API」が中止されたので");
+    expect(() => service.resume(b, {})).toThrow(/中止されたので/);
+    // 親は今までどおり、中止を人が認めるのを待つ。認めても、重ねた子は止まったまま
+    expect(taskOf(service, id).pausedReason).toBe("child_cancelled");
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, b).status).toBe("paused");
+    await service.cancel(b);
+    expect(taskOf(service, b).status).toBe("cancelled");
+    activity.close();
+  });
+
+  it("依存先が合格する前に中止されたら、今までどおり子を始めない", async () => {
+    const { activity, service, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+    ]);
+    const [a, b] = ids as [string, string];
+    await service.cancel(a);
+    await drain(service);
+    expect(taskOf(service, b).status).toBe("blocked");
+    expect(taskOf(service, b).stack).toBeUndefined();
+    activity.close();
+  });
+
+  it("依存先が2つあるときは、重ねる先を1つに決められるときだけ重ねて始める（決められなければ待つ）", async () => {
+    // C は A と B に依存する。A と B は互いに依存しない
+    const { activity, service, pulls, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: [] },
+        { key: "C", title: "c", body: "", dependsOn: ["A", "B"] },
+      ],
+      // A と B は並べて進む（実装・実装・最終レビュー・最終レビューの順に実行する）
+      [implement("# A"), implement("# B"), review(), review(), implement("# C"), review()],
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await drain(service);
+    // A も B も合格したが、マージされていない依存先が2つあり、どちらにも重ねられない
+    expect(taskOf(service, a).gate?.step).toBe("implement");
+    expect(taskOf(service, b).gate?.step).toBe("implement");
+    expect(taskOf(service, c).status).toBe("blocked");
+    // A がマージされると、残りは B だけなので、B に重ねる
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: b });
+    expect(taskOf(service, c).repository?.baseBranch).toBe(taskOf(service, b).pullRequest?.branch);
+    activity.close();
+  });
+
+  it("依存先が重ねの連なり（C は A と B に、B は A に依存）なら、いちばん後の依存先に重ねる", async () => {
+    const { activity, service, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+        { key: "C", title: "c", body: "", dependsOn: ["A", "B"] },
+      ],
+      [implement("# A"), review(), implement("# B"), review(), implement("# C"), review()],
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await drain(service);
+    expect(taskOf(service, b).stack).toMatchObject({ taskId: a });
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: b });
+    expect(taskOf(service, c).gate?.step).toBe("implement");
+    activity.close();
+  });
+});
+
 describe("統合レビュー（PBI-31）", () => {
   const out = (text: string, output = 1): AgentOutcome => ({
     kind: "completed",

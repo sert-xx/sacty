@@ -809,10 +809,36 @@ const ReproductionChecked = z.object({
   }),
 });
 
-/** 依存先の子タスクがすべて完了したので、子タスクを実行待ちにする（PBI-27）。 */
+/**
+ * 依存先の子タスクがすべて完了したので、子タスクを実行待ちにする（PBI-27）。stackedOn があれば、依存先の1つ（taskId）の
+ * 実装の PR が最終レビューに合格して承認待ちになったので、マージを待たずに、その PR のブランチ（branch）の、合格した
+ * コミット（commit）を起点にして始める（重ねた PR。PBI-317）。
+ */
 const TaskUnblocked = z.object({
   type: z.literal("TaskUnblocked"),
-  payload: z.object({}),
+  payload: z.object({
+    stackedOn: z
+      .object({
+        taskId: z.string().min(1),
+        branch: z.string().min(1),
+        commit: z.string().min(1),
+      })
+      .optional(),
+  }),
+});
+
+/**
+ * 重ねていた依存先（taskId）の実装の PR がマージされた（PBI-317）。子タスクの起点のブランチ（PR の向き先・取り込む元）を、
+ * 依存先の PR が入ったブランチ（baseBranch）に付け替える。依存先もまだ別の依存先に重ねていた（人がドラフトを外して先に
+ * マージした）なら、その依存先に重ね直す（stackedOn）。無ければ、ベースブランチに戻る（重ねていない子タスクと同じ）。
+ */
+const StackedDependencyMerged = z.object({
+  type: z.literal("StackedDependencyMerged"),
+  payload: z.object({
+    taskId: z.string().min(1),
+    baseBranch: z.string().min(1),
+    stackedOn: z.object({ taskId: z.string().min(1), branch: z.string().min(1) }).optional(),
+  }),
 });
 
 /**
@@ -2173,6 +2199,24 @@ const PullRequestPublished = z.object({
     verifying: z.literal(true).optional(),
     /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
     draft: z.literal(true).optional(),
+    /**
+     * PR の向き先のブランチ（PBI-317）。依存先の PR に重ねた子タスクの PR だけ記録する（重ねている間は依存先の PR の
+     * ブランチ、付け替えた後はベースブランチ）。それ以外の PR には無い（向き先はベースブランチ）。
+     */
+    baseBranch: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * 重ねた子タスクの、承認待ちの実装の PR の向き先（base）を、sacty が GitHub で付け替えた（PBI-317。依存先の PR が
+ * マージされた後）。ready は、重ねるのをやめたのでドラフト（マージの順序を守らせるため）を外したこと。
+ */
+const PullRequestRetargeted = z.object({
+  type: z.literal("PullRequestRetargeted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    baseBranch: z.string().min(1),
+    ready: z.literal(true).optional(),
   }),
 });
 
@@ -3236,6 +3280,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TaskCreated,
   TaskSplit,
   TaskUnblocked,
+  StackedDependencyMerged,
   SplitCompleted,
   ReproductionChecked,
   StepCompleted,
@@ -3288,6 +3333,7 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  PullRequestRetargeted,
   PullRequestCiFinished,
   PullRequestCiRerunRequested,
   VerificationOverridden,

@@ -206,6 +206,18 @@ describe("GitHub の PR（PBI-10b）", () => {
     );
   });
 
+  it("更新で retarget なら、向き先（base）も baseBranch に付け替える。無ければ向き先を送らない（PBI-317）", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    await client.upsert({ ...input, number: 7, baseBranch: "main", retarget: true });
+    await client.upsert({ ...input, number: 7, baseBranch: "main" });
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: { body: "本文", base: "main" } });
+    expect(calls[1]?.body).toEqual({ body: "本文" });
+  });
+
   it("番号があれば本文を更新し、失敗は理由つきのエラーにする（トークンは含めない）", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },

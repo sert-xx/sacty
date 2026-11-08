@@ -356,6 +356,8 @@ const PARAMS = {
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
+  // 依存先の PR に重ねた子タスク（PBI-317）
+  "stack.dependencyCancelled": z.object({ title: z.string() }),
   "split.repoMissing": z.object({ key: z.string() }),
   "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
@@ -1173,6 +1175,8 @@ const ja: MessageDictionary = {
     `子タスク「${key}」に付けたリポジトリ（${repo}）は、プロジェクトの対象にありません。再開すると、分割をやり直します（対象のリポジトリから選び直します）。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
+  "stack.dependencyCancelled": ({ title }) =>
+    `重ねていた依存先の子タスク「${title}」が中止されたので、この子タスクは進めません（依存先の変更の上に作ったため）。中止してください。親タスクを再開して依存先の中止を認めると、中止したこの子タスクに依存する子タスクは、ベースブランチから始めます。`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
   "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
@@ -1898,6 +1902,8 @@ const en: MessageDictionary = {
     `The repository given to subtask "${key}" (${repo}) is not a target of the project. Resume to redo the split (choosing from the target repositories).`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
+  "stack.dependencyCancelled": ({ title }) =>
+    `The subtask it was stacked on, "${title}", was cancelled, so this subtask does not go on (it was built on top of that subtask's changes). Cancel it. When you resume the parent task and accept the cancellations, the subtasks that depend on this one start from the base branch.`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
   "integrate.unreadable": "Could not read the verdicts from the integration review output.",

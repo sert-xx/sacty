@@ -6,7 +6,7 @@
 子タスクがすべて片付いたら、統合レビューで、子タスクの成果が親の要求要件を満たすかを確かめる。
 通らなければ、修正の子タスクを足す。
 
-関係する ADR: なし
+関係する ADR: [依存のある子タスクは、依存先の PR が最終レビューに合格した時点で、その PR のブランチに重ねて始める](../adr/20261108-0615-stack-dependent-subtasks-on-reviewed-pull-requests.md)
 
 ## 分割
 
@@ -18,6 +18,7 @@
   本文には、親の承認済みの要求要件・設計と、親がタスクの開始時に集めた情報（あれば）を添える。
   子タスクは情報を集め直さない（[タスクと工程](tasks-and-steps.md#情報収集)）。
   依存の無い子タスクは実行待ち、依存のある子タスクは `blocked` で始まり、依存先がすべて片付いたら実行待ちになる（`TaskUnblocked`）。
+  依存先の PR が最終レビューに合格したら、片付くのを待たずに、その PR に重ねて始めることもある（下の「依存先の PR に重ねる子タスク」）。
 - 子タスクのリポジトリは、子タスクの `repo`、無ければ親のリポジトリ。
   リポジトリの無い親の分割では、子タスクごとの `repo` をプロジェクトの対象と照らし、無い・対象に無いときは分割を使わずに止める。
   エージェントには、1つの子タスクは1つのリポジトリで完結させ、またがる変更は分けて `dependsOn` でつなぐよう指示する。
@@ -28,6 +29,40 @@
   親を再開すると、その中止を認めたことになる。
 
 コード: `apps/daemon/src/service.ts`（`settleSplit`・`childSettled`・`splitWithRepositories`）、`apps/daemon/src/prompts.ts`（`extractSplitPlan`・`buildChildBody`・`splitRepositoryLines`）、`packages/core/src/events.ts`（`MIN_SPLIT_CHILDREN`・`MAX_SPLIT_CHILDREN`）
+
+## 依存先の PR に重ねる子タスク
+
+依存のある子タスクは、依存先の実装の PR が最終レビューに合格した時点で、マージを待たずに、その PR のブランチを起点にして始める（重ねた PR。PBI-317）。
+
+- 始めるかの判定（`blockedStart`。親の `settleSplit` で、`blocked` の子タスクごとに）：依存先を次に分ける。
+  - 片付いた：完了した・中止を人が認めた（今までどおり）
+  - マージ済み：実装の PR がマージされた（`implementationMerged`。マージの後の監視の途中）。ベースブランチに入っているので、片付いたものと同じに扱う
+  - 重ねられる：最終レビューに合格して作った、開いている実装の PR で、実装の承認待ち（`reviewedPullRequest`）。検証の待ちのために作った PR（`verifying`）・人が不合格のままレビューへ進めた今の提出の PR・引き継いだ人の PR は除く。子タスクと同じリポジトリのものだけ
+  - それ以外
+- 始め方：
+  - 依存先がすべて片付いたか、片付いていないものがすべてマージ済みなら、ベースブランチから始める（`TaskUnblocked`。重ねない）。
+  - 残りの依存先のうち1つ（X）が重ねられ、ほかの残りがすべて X が重ねている依存先（X から重ねた先をたどった連なり。`stackChain`）なら、X に重ねて始める（`TaskUnblocked` の `stackedOn`。X の ID・PR のブランチ・合格したコミット）。依存先が2つ以上のときも、この規則で起点を決める。
+  - それ以外（互いに独立した依存先が2つ以上残る・別のリポジトリ・合格していない）は、今までどおり待つ。
+- 起点：重ねた子タスク（`Task.stack`）は、初めて作業領域を用意するとき、X の PR のブランチを clone して、合格したコミットにする（`prepareRepositoryNow`）。
+  記録する起点のブランチ（`repository.baseBranch`）は X の PR のブランチ、起点のコミットは合格したコミット。オーケストレーターが選んだベースブランチでは用意し直さない。
+- 取り込み（`syncBase`）：取り込む時点はベースブランチの取り込みと同じ（[ベースブランチの取り込み](tasks-and-steps.md#ベースブランチの取り込み)）。重ねている間は、ベースブランチではなく X の PR の合格したコミットを取り込む（X が直されて合格し直したとき）。
+  X の PR のブランチを取得し、合格したコミット（ブランチの先頭ではない）を、作業領域が今ベースにしているコミットを共通の祖先にして 3 方向でマージする。記録は `BaseBranchMerged`。
+  X に合格した PR が無い（作り直しの途中・閉じられた）ときと、合格したコミットが今のベースと同じときは、取り込まない。衝突・失敗の扱いは、ベースブランチの取り込みと同じ。承認待ちの間は取り込まない。
+- PR（`publish`）：重ねた子タスクの実装の PR は、向き先を X の PR のブランチにし、検証に通った後もドラフトのまま承認待ちにする（マージの順序を守らせるため。ドラフトの PR は GitHub でマージできない）。
+  PR を更新するときも向き先を送り（`PullRequests.upsert` の `retarget`）、向き先を `PullRequestPublished` の `baseBranch` に記録する。重ねていないタスクの PR には記録しない（向き先は作るときに決めたベースブランチのまま）。
+  本文の先頭（テンプレートに沿わせるときは目的の先頭）に、X の PR の番号・URL・子タスクの題と、X より先にマージしないこと、X がマージされたら sacty が向き先をベースブランチに付け替えてドラフトを外すことを書く（`stackedBodyLines`。長さの上限でも省かない）。
+- X の PR がマージされたら（`stackAction` の `merged`）：子タスクに `StackedDependencyMerged` を記録し、起点のブランチを、X の PR が入ったブランチ（X の起点のブランチ）に付け替える。X もまだ別の依存先に重ねていた（人がドラフトを外して先にマージした）なら、その依存先に重ね直す（`stackedOn`）。そうでなければ重ねるのをやめる。
+  記録した起点のコミット・取り込みは変えないので、次の取り込みで、付け替えた先の最新を、X の合格したコミットを共通の祖先にして取り込む。
+  子タスクが完了していても記録する。
+- 承認待ちの PR の向き先の付け替え（`retargetDue`・`retargetPullRequest`）：PR の確認（60秒ごと。`checkPullRequests`）で、承認待ちの子タスクの PR の向き先（記録）が今の起点のブランチと違えば、GitHub の PR の向き先を付け替え、本文を書き直す。重ねるのをやめたなら、ドラフトを外す（検証に通った PR なので）。`PullRequestRetargeted` を記録する。
+  失敗したら記録せず、デーモンのログに出して、次の確認でやり直す（タスクは止めない）。承認待ちでない子タスクの PR は、次に PR を更新するときに付け替える。
+- X が中止されたら（`stackAction` の `cancelled`。重ねた先の連なりのどこかが中止された）：子タスクが実行待ち・待機・承認待ちなら、一時停止する（`stack.dependencyCancelled`）。実行中なら、その実行が終わった後に止める。
+  X の変更の上に作ったので、再開は受け付けない（中止はできる。親の `child_cancelled` の扱いは今までどおり）。合格する前に X が中止されたときは、今までどおり子タスクを始めない（`blocked` のまま。中止を人が認めたら、ベースブランチから始める）。
+- マージの順序：人がドラフトを外して、子タスクの PR を X より先にマージしたら、今までと同じく、マージを承認として扱う（子タスクの変更は X の PR のブランチに入る）。
+- 状態は作業履歴（`TaskUnblocked` の `stackedOn`・`StackedDependencyMerged`・`PullRequestPublished` の `baseBranch`・`PullRequestRetargeted`・`BaseBranchMerged`）から導くので、デーモンを起動し直しても失わない。
+- 依存の無い子タスク・分割しないタスクには、重ねた先も PR の向き先の記録も無く、振る舞いは変わらない。
+
+コード: `apps/daemon/src/service.ts`（`blockedStart`・`stackChain`・`cancelledInStack`・`stackAction`・`settleStack`・`retargetDue`・`retargetPullRequest`・`recordsPullRequestBase`・`stackedPullRequest`・`prepareRepositoryNow`・`syncBase`・`publish`・`resume`）、`apps/daemon/src/prompts.ts`（`stackedBodyLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`）、`packages/core/src/events.ts`（`TaskUnblocked`・`StackedDependencyMerged`・`PullRequestRetargeted`）、`packages/core/src/projection.ts`（`stack`・`reviewedPullRequest`・`implementationMerged`）
 
 ## 統合レビュー
 

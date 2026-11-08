@@ -40,6 +40,7 @@ import {
   gatePullRequest,
   heldReview,
   humanAsks,
+  implementationMerged,
   isCompleted,
   isFinished,
   isRepoless,
@@ -50,6 +51,7 @@ import {
   pullRequestConflict,
   questionBlocked,
   resumeNoteRoom,
+  reviewedPullRequest,
   reworkingPullRequest,
   reworkTargets,
   skippableSteps,
@@ -5731,5 +5733,110 @@ describe("承認待ちでの一時停止（PBI-301）", () => {
         ev("t", { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
       ]),
     ).toThrow(/status paused/);
+  });
+});
+
+describe("依存先の PR に重ねた子タスク（PBI-317）", () => {
+  const child = (taskId: string) =>
+    ev(
+      taskId,
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "子",
+          body: "body",
+          start: "split",
+          parent: { taskId: "parent", dependsOn: ["dep"] },
+        },
+      },
+      "sacty",
+    );
+  const stackedOn = { taskId: "dep", branch: "sacty/dep", commit: "d".repeat(40) };
+  const prepared = () =>
+    ev("c", {
+      type: "RepositoryPrepared",
+      payload: {
+        url: "https://github.com/acme/app.git",
+        baseBranch: "sacty/dep",
+        baseCommit: stackedOn.commit,
+      },
+    });
+  const stackedEvents = () => [
+    child("c"),
+    ev("c", { type: "TaskUnblocked", payload: { stackedOn } }),
+    prepared(),
+  ];
+  const merge = (taskId: string, extra: Record<string, unknown> = {}) =>
+    ev("c", {
+      type: "StackedDependencyMerged",
+      payload: { taskId, baseBranch: "main", ...extra },
+    } as EventInput);
+
+  it("重ねて始めると、重ねた先を持ち、依存先の PR のマージで起点のブランチを付け替える（作業領域の起点は変えない）", () => {
+    const task = project(stackedEvents()).get("c") as Task;
+    expect(task.status).toBe("queued");
+    expect(task.stack).toEqual(stackedOn);
+    const merged = project([...stackedEvents(), merge("dep")]).get("c") as Task;
+    expect(merged.stack).toBeUndefined();
+    expect(merged.repository).toEqual({
+      url: "https://github.com/acme/app.git",
+      baseBranch: "main",
+      baseCommit: stackedOn.commit,
+    });
+    // 依存先がまだ別の依存先に重ねていたなら、そこに重ね直す
+    const restacked = project([
+      ...stackedEvents(),
+      merge("dep", {
+        baseBranch: "sacty/first",
+        stackedOn: { taskId: "first", branch: "sacty/first" },
+      }),
+    ]).get("c") as Task;
+    expect(restacked.stack).toEqual({
+      taskId: "first",
+      branch: "sacty/first",
+      commit: stackedOn.commit,
+    });
+    expect(restacked.repository?.baseBranch).toBe("sacty/first");
+  });
+
+  it("重ねていない・違う依存先のマージは、作業履歴の矛盾にする", () => {
+    const plain = [child("c"), ev("c", { type: "TaskUnblocked", payload: {} }), prepared()];
+    expect((project(plain).get("c") as Task).stack).toBeUndefined();
+    expect(() => project([...plain, merge("dep")])).toThrow(/not stacked/);
+    expect(() => project([...stackedEvents(), merge("other")])).toThrow(/not stacked/);
+  });
+
+  it("合格した PR だけを重ねる先にする（検証の待ちの PR・人が不合格のまま進めた PR・マージ後は使わない）", () => {
+    const base = {
+      ...(project([child("c")]).get("c") as Task),
+      status: "awaiting_approval" as const,
+      pullRequest: { branch: "sacty/c", commit: "c".repeat(40), number: 7, url: "u" },
+      pullRequestState: "open" as const,
+      submissions: { implement: 1 },
+    };
+    expect(reviewedPullRequest(base)).toEqual({
+      branch: "sacty/c",
+      commit: "c".repeat(40),
+      number: 7,
+      url: "u",
+    });
+    expect(
+      reviewedPullRequest({ ...base, pullRequest: { ...base.pullRequest, verifying: true } }),
+    ).toBeUndefined();
+    expect(
+      reviewedPullRequest({ ...base, verificationOverride: { at: "t", submission: 1 } }),
+    ).toBeUndefined();
+    // 前の提出を人が進めた後、合格し直した提出なら使う
+    expect(
+      reviewedPullRequest({
+        ...base,
+        submissions: { implement: 2 },
+        verificationOverride: { at: "t", submission: 1 },
+      }),
+    ).toBeDefined();
+    expect(reviewedPullRequest({ ...base, pullRequestState: "merged" })).toBeUndefined();
+    expect(implementationMerged({ ...base, pullRequestState: "merged" })).toBe(true);
+    expect(implementationMerged({ ...base, pullRequestState: "merged_outdated" })).toBe(true);
+    expect(implementationMerged(base)).toBe(false);
   });
 });
