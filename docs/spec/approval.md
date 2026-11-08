@@ -298,6 +298,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 3. 承認済みの要求要件（再現のタスクは不具合の再現。`approvedBasisLines`）
    - 全文は載せず、最初の段落の頭と、全文のある場所にする（`approvedBasisDigest`）。
      全文のある場所は、マージで承認した要求要件・設計の PR の URL とファイルのパス。PR が無ければ「全文は sacty のタスクの画面で確かめてください。」と書く。
+     リンクの形は下の「前の工程の成果物へのリンク」のとおり。
    - 要求要件の工程を省いたタスクと、セキュリティ対応の修正の範囲は、短い文なので従来のとおり。
 4. 「変更」：実装の工程の出力（作り直した後は、PR 全体の説明）から、結論の変更の要約に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-301 A7。実験 S16・S19 の F3 の再発）。残りに見出し以外の中身が無ければ（要約と同じだけの出力・見出しだけが残る出力）節ごと出さない。最初の段落が切り詰められて結論に載ったときは、全文を出す。出力が無ければ見出しも入れない。出力の残りが自分で見出し（`#`・`##`）から始まるときは、中身の無い「変更」の見出しを重ねず、その見出しから出す（PBI-302 C2。実験 S2 の r5：「## 変更」の直下に「## 変更内容」が続いた）。テンプレートに沿わせる本文の「変更」は、結論の要約が無いので全文のまま。
 5. 「最後の直し」：作り直した後だけ。最後の直しの説明から、結論の「最後の直し」に載せた最初の段落を除いた残り（結論と同じ文を重ねない。PBI-302 C2。実験 S2・S14・S18 の r5）。最後の直しが結論の1段落に収まるときは節ごと出さない（下の「作り直しの後の本文」）。
@@ -373,7 +374,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 書き出した成果とゴールガーディアンの最終レビューの続き・再発の確認は「sacty の記録」にする。
   - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
-  - 目的：何の工程の成果か（と承認済みの前の工程）
+  - 目的：何の工程の成果か（と承認済みの前の工程。リンクの形は下の「前の工程の成果物へのリンク」のとおり）
   - 変更：成果のファイルと指摘への対応
   - 関係する Issue：`#<番号>`（参照だけ。タスクブランチへのマージでは閉じない）
   - テストは無い。
@@ -405,7 +406,14 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - タスクの画面の PR の欄に「本文」として出す。
     この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`withoutProgressReport`・`finalReviewMore`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+- 前の工程の成果物へのリンク（実装の PR の承認済みの要求要件の全文のある場所と、要求要件・設計の PR の承認済みの前の工程。`stepArtifactLink`。PBI-322）
+  - 工程ごとに1行、「`- <工程>：`」に続けて、成果のファイルのパスのインラインのコードを `<リポジトリ>/blob/<コミット>/<パス>` へのリンクにし、全角の括弧の中に「PR：」と、PR の URL へのリンク（文字は `#<番号>`）を置く。
+  - ファイルのリンクは、マージされた内容のコミット（PR の先頭のコミット。人が直してマージしたなら、人が直した最終のコミット）を指す。記録が無ければ、sacty が PR に出したコミット。PR の先頭のコミットは GitHub が PR の参照に残すので、PR・タスクのブランチが消えても読める。マージのコミットは、タスクブランチが消えると辿れないことがあるので使わない。
+  - PR の URL も明示的なリンクにする。PR の URL の直後に全角の括弧などを続けると、GitHub の自動リンクがそれも URL に含め、`/pull/<番号>（…` を開いて compare の画面になるため。
+  - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
+  - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
+
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`・`finalReviewMore`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 

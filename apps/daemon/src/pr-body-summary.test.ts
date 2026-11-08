@@ -6,6 +6,8 @@ import {
   buildPullRequestBody,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
+  buildStepPullRequestBodyParts,
+  buildStepPullRequestBodyText,
   extractBlocks,
   withoutProgressReport,
 } from "./prompts.js";
@@ -108,12 +110,16 @@ const task = (extra: Record<string, unknown> = {}) =>
         step: "requirements",
         state: "merged",
         url: "https://github.com/acme/app/pull/7",
+        number: 7,
+        commit: "a".repeat(40),
         path: "docs/sacty/t-1/requirements.md",
       },
       {
         step: "design",
         state: "merged",
         url: "https://github.com/acme/app/pull/8",
+        number: 8,
+        commit: "b".repeat(40),
         path: "docs/sacty/t-1/design.md",
       },
     ],
@@ -226,10 +232,10 @@ describe("実装の PR の本文：要求要件・設計は全文を載せない
       "利用者が API と予約一覧の画面から予約をキャンセルできるようにする。 キャンセルした予約は日時と理由を持ったまま残る。",
     );
     expect(body).toContain(
-      "- 要求要件：https://github.com/acme/app/pull/7（`docs/sacty/t-1/requirements.md`）",
+      `- 要求要件：[\`docs/sacty/t-1/requirements.md\`](https://github.com/acme/app/blob/${"a".repeat(40)}/docs/sacty/t-1/requirements.md)（PR：[#7](https://github.com/acme/app/pull/7)）`,
     );
     expect(body).toContain(
-      "- 設計：https://github.com/acme/app/pull/8（`docs/sacty/t-1/design.md`）",
+      `- 設計：[\`docs/sacty/t-1/design.md\`](https://github.com/acme/app/blob/${"b".repeat(40)}/docs/sacty/t-1/design.md)（PR：[#8](https://github.com/acme/app/pull/8)）`,
     );
     expect(body).not.toContain("R-99");
     expect(body).not.toContain("確認したいこと");
@@ -734,5 +740,92 @@ describe("要約・短縮の前に秘密の値を伏せる（PBI-264）", () => 
   it("秘密の値を渡さなければ、本文は従来どおり", () => {
     const t = task();
     expect(buildPullRequestBodyText(t, { secrets: [] })).toEqual(buildPullRequestBodyText(t));
+  });
+});
+
+describe("前の工程の成果物へのリンク（PBI-322）", () => {
+  // 本物のコミットの形（16進の40文字）。秘密の値を伏せる処理に消されないことも確かめる
+  const SHA = "3f9a1c0b7d2e4f6a8b0c1d2e3f4a5b6c7d8e9f01";
+  const HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+  const requirementsPr = (extra: Record<string, unknown> = {}) => ({
+    step: "requirements",
+    state: "merged",
+    url: "https://github.com/acme/app/pull/7",
+    number: 7,
+    commit: SHA,
+    path: "docs/sacty/t-1/requirements.md",
+    ...extra,
+  });
+  const LINK = `[\`docs/sacty/t-1/requirements.md\`](https://github.com/acme/app/blob/${SHA}/docs/sacty/t-1/requirements.md)（PR：[#7](https://github.com/acme/app/pull/7)）`;
+
+  it("PR の URL の直後に全角の文字を続けない（GitHub の自動リンクが `/pull/7（…` を開いて compare の画面になる）", () => {
+    const bodies = [
+      buildPullRequestBody(task({ stepPullRequests: [requirementsPr()] })),
+      buildStepPullRequestBodyText(
+        task({ stepPullRequests: [requirementsPr()] }),
+        "design",
+        "docs/sacty/t-1/design.md",
+      ).main,
+      buildStepPullRequestBodyParts(
+        task({ stepPullRequests: [requirementsPr()] }),
+        "design",
+        "docs/sacty/t-1/design.md",
+      ).summary,
+    ];
+    for (const body of bodies) {
+      expect(body).toContain(`- 要求要件：${LINK}`);
+      // 裸の URL（自動リンクになるもの）は残さない
+      expect(body).not.toMatch(/(?<!\]\()https:\/\/github\.com\/acme\/app\/pull\/7/);
+      expect(body).not.toContain("pull/7（");
+    }
+  });
+
+  it("秘密の値を伏せても、コミットのリンクは残る。GitHub Enterprise のホストと末尾のスラッシュの URL も読む", () => {
+    const body = buildPullRequestBody(
+      task({
+        stepPullRequests: [requirementsPr({ url: "https://ghe.example.com/acme/app/pull/7/" })],
+      }),
+      { secrets: ["ghp_0123456789abcdefghijklmnopqrstuvwxyz"] },
+    );
+    expect(body).toContain(
+      `[\`docs/sacty/t-1/requirements.md\`](https://ghe.example.com/acme/app/blob/${SHA}/docs/sacty/t-1/requirements.md)（PR：[#7](https://ghe.example.com/acme/app/pull/7/)）`,
+    );
+  });
+
+  it("人が直してマージしたなら、マージされた内容のコミットを指す", () => {
+    const body = buildPullRequestBody(
+      task({
+        stepPullRequests: [
+          requirementsPr({
+            merge: { at: "2026-11-08T00:00:00Z", commit: HEAD, mergeCommit: "e".repeat(40) },
+          }),
+        ],
+      }),
+    );
+    expect(body).toContain(
+      `https://github.com/acme/app/blob/${HEAD}/docs/sacty/t-1/requirements.md`,
+    );
+    expect(body).not.toContain(`blob/${SHA}`);
+    expect(body).not.toContain(`blob/${"e".repeat(40)}`);
+  });
+
+  it("パスの空白・括弧は符号にし、バッククォートを含むパスもコードのまま崩さない", () => {
+    const body = buildPullRequestBody(
+      task({ stepPullRequests: [requirementsPr({ path: "docs/要件 (案)/a`b.md" })] }),
+    );
+    expect(body).toContain(
+      `[\`\` docs/要件 (案)/a\`b.md \`\`](https://github.com/acme/app/blob/${SHA}/docs/${encodeURIComponent("要件")}%20%28${encodeURIComponent("案")}%29/a%60b.md)`,
+    );
+  });
+
+  it("PR の URL が読めない形なら、ファイルのパスと URL を自動リンクの括弧で囲んで載せる", () => {
+    const odd = buildPullRequestBody(
+      task({ stepPullRequests: [requirementsPr({ url: "https://example.test/x" })] }),
+    );
+    expect(odd).toContain(
+      "- 要求要件：`docs/sacty/t-1/requirements.md`（PR：<https://example.test/x>）",
+    );
+    const none = buildPullRequestBody(task({ stepPullRequests: [requirementsPr({ url: "" })] }));
+    expect(none).toContain("- 要求要件：`docs/sacty/t-1/requirements.md`\n");
   });
 });

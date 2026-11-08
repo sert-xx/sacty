@@ -264,6 +264,7 @@ The implementation PR body is written to be read short, conclusion first. The fu
    - What a person should confirm (if any; `humanCheckBodyLines`)
 3. The approved requirements (the bug reproduction for a reproduce task; `approvedBasisLines`)
    - The full text is not included; only the head of the first paragraph and where the full text is (`approvedBasisDigest`). The full text is at the URL and file path of the requirements and design PRs approved by merging. With no PR, "全文は sacty のタスクの画面で確かめてください。" is written.
+     The form of the links is as in "Links to earlier steps' outputs" below.
    - A task that skipped the requirements step, and the fix scope of a security fix, are short, so they stay as before.
 4. "変更" (Changes): the Implementation step's output (after a redo, the description of the whole PR) without the first paragraph that the conclusion's change summary already carries (so the conclusion's sentences are not repeated; PBI-301 A7; the F3 recurrence in experiments S16 and S19). When nothing but headings is left (the output is only the summary, or only headings remain), the whole section is left out. When the first paragraph was cut short in the conclusion, the full text is shown. When there is no output, the heading is left out too. When the rest of the output itself starts with a heading (`#` or `##`), the empty "変更" heading is not put in front of it and the output starts from that heading (PBI-302 C2; experiment S2, r5, where "## 変更" was directly followed by "## 変更内容"). In a body that follows a template, "変更" is the full text, because there is no summary in it.
 5. "最後の直し" (The last fix): only after a redo. The description of the last fix without the first paragraph that the conclusion's "最後の直し" line already carries (so the conclusion's sentences are not repeated; PBI-302 C2; experiments S2, S14, and S18, r5). When the last fix fits in one paragraph of the conclusion, the whole section is left out (see "Body after a redo" below).
@@ -324,7 +325,7 @@ A template is judged absent or unusable as follows.
   - The exported results and the rest of the Goal Guardian's final review (the continuation and the recurrence check) go into "the sacty record".
   - What a person should confirm and the record that a person moved on despite the failure go into the last part (footer).
 - Content of the requirements and design PRs (`buildStepPullRequestBodyParts`)
-  - Purpose: which step's result it is (and the approved earlier steps)
+  - Purpose: which step's result it is (and the approved earlier steps; the form of the links is as in "Links to earlier steps' outputs" below)
   - Changes: the result's file and the responses to comments
   - Related Issue: `#<number>` (a reference only; merging into the task branch does not close it)
   - There are no tests.
@@ -347,7 +348,14 @@ A template is judged absent or unusable as follows.
   - `truncated` if it was cut
   - It is shown as "Body" in the PR section of the task screen. Records from before this version do not have it (nothing is shown in the web UI).
 
-Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`, `resultTableLines`, `approvedBasisLines`, `withoutProgressReport`, `finalReviewMore`), `packages/core/src/test-names.ts` (`displayTestNames`, `dedupeTestNames`, `withoutFormatPlaceholders`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
+- Links to earlier steps' outputs (where the full approved requirements are in the implementation PR, and the approved earlier steps in the requirements and design PRs; `stepArtifactLink`; PBI-322)
+  - One line per step: after `- <step>：`, the path of the output file as inline code linked to `<repository>/blob/<commit>/<path>`, then, in full-width brackets, `PR：` and a link to the PR URL (with the text `#<number>`).
+  - The file link points to the commit of the merged content (the head commit of the PR; if a person edited and merged it, the person's final commit). Without that record, it points to the commit sacty pushed to the PR. GitHub keeps the head commit of a PR in the PR's ref, so it stays readable after the PR and task branches are deleted. The merge commit is not used, because it may become unreachable once the task branch is deleted.
+  - The PR URL is also an explicit link. If full-width brackets or other characters follow the PR URL directly, GitHub's autolink includes them in the URL, opens `/pull/<number>（…`, and lands on the compare page.
+  - The path is encoded segment by segment (parentheses too, so the link target does not close early), and the link text is the path as inline code (wrapped in a longer run of backticks if it contains backticks).
+  - If the PR URL is not in the form `<repository>/pull/<number>`, the line is the path as inline code and, in full-width brackets, `PR：` and the URL in angle brackets (an autolink). Without a URL, only the path.
+
+Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`, `resultTableLines`, `approvedBasisLines`, `stepArtifactLink`, `withoutProgressReport`, `finalReviewMore`), `packages/core/src/test-names.ts` (`displayTestNames`, `dedupeTestNames`, `withoutFormatPlaceholders`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
 
 ## Importing PR comments
 

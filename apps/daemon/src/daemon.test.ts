@@ -26848,8 +26848,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     // 全文は載せず、マージで承認した PR へのリンクにする（PBI-264）
     expect(pulls.calls[2]?.body).toContain("## 要求要件（人間が承認済み）");
     expect(pulls.calls[2]?.body).toContain("全文は、マージで承認した次の PR にあります。");
-    expect(pulls.calls[2]?.body).toContain("- 要求要件：https://github.com/acme/app/pull/7");
-    expect(pulls.calls[2]?.body).toContain("- 設計：https://github.com/acme/app/pull/8");
+    // 成果物は PR に出したコミットのファイルへ、PR は番号のリンクにする（PBI-322）
+    expect(pulls.calls[2]?.body).toMatch(
+      /- 要求要件：\[`docs\/sacty\/[^`]+\/requirements\.md`\]\(https:\/\/github\.com\/acme\/app\/blob\/[0-9a-z]+\/docs\/sacty\/[^)]+\/requirements\.md\)（PR：\[#7\]\(https:\/\/github\.com\/acme\/app\/pull\/7\)）/,
+    );
+    expect(pulls.calls[2]?.body).toMatch(
+      /- 設計：\[`docs\/sacty\/[^`]+\/design\.md`\]\(https:\/\/github\.com\/acme\/app\/blob\/[0-9a-z]+\/docs\/sacty\/[^)]+\/design\.md\)（PR：\[#8\]\(https:\/\/github\.com\/acme\/app\/pull\/8\)）/,
+    );
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     expect(task.pullRequest).toMatchObject({ number: 9, branch: taskBranch });
@@ -32324,8 +32329,11 @@ describe("PR テンプレート（PBI-87）", () => {
     expect(requirements).toContain(`## スクリーンショット\n\n${NOT_APPLICABLE}`);
     expect(requirements).toContain(`sacty task ${id}`);
     expect(requirements).toContain("この PR をマージすると、要求要件を承認したことになり");
-    expect(designPr).toContain(
-      "承認済みの前の工程：\n- 要求要件：https://github.com/acme/app/pull/7",
+    // 前の工程の成果物は、PR に出したコミットのファイルへのリンクにし、PR へのリンクも添える（PBI-322）
+    expect(designPr).toMatch(
+      new RegExp(
+        `承認済みの前の工程：\\n- 要求要件：\\[\`docs/sacty/${id.slice(0, 8)}/requirements\\.md\`\\]\\(https://github\\.com/acme/app/blob/[0-9a-z]+/docs/sacty/${id.slice(0, 8)}/requirements\\.md\\)（PR：\\[#7\\]\\(https://github\\.com/acme/app/pull/7\\)）`,
+      ),
     );
     // 実装の PR：目的・変更・テストをそれぞれの見出しに入れ、最終レビューは sacty の記録にする
     expect(impl).toContain(
@@ -32333,8 +32341,9 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     expect(impl).toContain("最終レビュー：合格。所見");
     expect(impl).toContain(
-      "**要求要件（人間が承認済み）**\n\n全文は、マージで承認した次の PR にあります。\n\n- 要求要件：https://github.com/acme/app/pull/7",
+      "**要求要件（人間が承認済み）**\n\n全文は、マージで承認した次の PR にあります。\n\n- 要求要件：[`docs/sacty/",
     );
+    expect(impl).toContain("（PR：[#7](https://github.com/acme/app/pull/7)）");
     expect(impl).toContain("## 変更内容\n\n# 実装の説明");
     expect(impl).toContain("## テスト\n\n| 観点 | テスト | 最終レビュー |");
     expect(impl).toContain("テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）");
