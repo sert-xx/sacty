@@ -9604,7 +9604,8 @@ export class TaskService {
           // 関係するテストだけの記録を、全件の結果として使い回させない（PBI-316）。CI の結果の前の最終レビュー（PBI-314）が
           // 全件を実行していれば、その使い回しは認める（reusedFrom に、その段を表す値が無いため）
           previousPartialTestsOnly:
-            partialTestsOnly(current.implementVerification) && !fullTestsRecorded(reviewedBefore),
+            partialTestsOnly(current.implementVerification, testCommand) &&
+            !fullTestsRecorded(reviewedBefore),
         },
       );
     // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む

@@ -4116,7 +4116,7 @@ export function buildFinalReviewPrompt(
           reuse.length > 0,
           // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せるので出さない
           // テスト以外の検証（lint など）だけの記録は、今までどおり使い回させる（テストの結果が関係するテストだけのときに限る）
-          partialTestsOnly(options.implementVerification) &&
+          partialTestsOnly(options.implementVerification, testCommand) &&
             !fullTestsRecorded(options.reviewBeforeCiVerification),
         )
       : []),

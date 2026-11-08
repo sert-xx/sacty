@@ -440,6 +440,14 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     expect(partialTestsOnly({ commands: [related, fullTest] })).toBe(false);
     expect(partialTestsOnly({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
     expect(partialTestsOnly(undefined)).toBe(false);
+    // テストのコマンドと同じコマンドを全体で実行した記録があれば、関係するテストが混ざっていても、そのコマンドは使い回せる
+    const lint = { ...fullTest, kind: "lint" as const, command: "yamllint ." };
+    expect(partialTestsOnly({ commands: [lint, related] }, "yamllint .")).toBe(false);
+    expect(partialTestsOnly({ commands: [lint, related] }, " yamllint . ")).toBe(false);
+    expect(partialTestsOnly({ commands: [lint, related] }, "make test")).toBe(true);
+    expect(partialTestsOnly({ commands: [lint, related] })).toBe(true);
+    // 関係するテストだけの記録は、コマンドが同じでも使い回せない
+    expect(partialTestsOnly({ commands: [related] }, related.command)).toBe(true);
   });
 
   it("実装の工程の記録にテストの全件の結果が無ければ、最終レビューにテストのコマンドを実行させる", () => {
@@ -471,6 +479,22 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     });
     expect(lintOnly).not.toContain(line);
     expect(lintOnly).toContain("reusedFrom に元の段（self-review か ci）を書く");
+    // lint の全体の記録と関係するテストの記録が混ざっていても、テストのコマンドが lint だけなら使い回させる
+    const mixed = {
+      commands: [{ ...fullTest, kind: "lint" as const, command: "yamllint ." }, related],
+    };
+    expect(
+      buildFinalReviewPrompt(implementTask(), "diff", {
+        testCommand: "yamllint .",
+        implementVerification: mixed,
+      }),
+    ).not.toContain(line);
+    expect(
+      buildFinalReviewPrompt(implementTask(), "diff", {
+        testCommand: "make test",
+        implementVerification: mixed,
+      }),
+    ).toContain(line);
   });
 
   it("全件の結果が無いのに、テストを実装の工程から使い回したと申告したら、判定として扱わない", () => {
