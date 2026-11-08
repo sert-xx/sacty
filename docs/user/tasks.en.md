@@ -160,7 +160,7 @@ The task details look like this.
 
 ## Information gathering at the start of a task
 
-When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary. If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on). It also reads the target repository's code and writes the places in the code related to the task and their current behavior in the summary.
+When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary (if you renamed the task before that, the title stays as you changed it). If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten; if you renamed the task, the title stays as you changed it). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on). It also reads the target repository's code and writes the places in the code related to the task and their current behavior in the summary.
 
 - For a task whose repository to work in is decided, the repository is prepared before information gathering, and it reads that code. If it cannot be prepared, the task stops before information gathering. It also summarizes how tests are written (the framework, the command to run them, where they are placed, and examples of existing tests). Tests are not necessarily written just because the summary describes them. The Orchestrator decides how tests are handled.
 - For a task whose repository is not decided (a task created without a repository, or a ticket task before its repository is chosen), it picks out a few likely relevant repositories (at most 3) from the project's targets and reads their code through the GitHub read relay (`gh api`). To let it read them, choose the GitHub account for that host in the project settings ([GitHub account in project settings](project-settings.en.md#github-account)). Repositories it could not read, and Orgs whose repository list could not be read (expired credentials, missing permissions, and so on), are written in the summary as sources that could not be read.
@@ -770,6 +770,19 @@ In the following cases, check every item.
 | --- | --- |
 | No subagent could be started, so the author sorted the items itself | The classification may be lenient |
 | No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
+
+## Renaming a task
+
+Use "Rename the task" (the pencil button) next to the title at the top of the task details to change the title.
+You can rename a task in any state: in progress, waiting for approval, paused, or finished (a cancelled task can't be renamed).
+
+- Type the new title in the input and press "Rename". "Cancel" or the Esc key closes it without a change. Esc does not close it while saving or while Japanese input is being converted.
+- An empty title and a title longer than 200 characters can't be used. Spaces around the title are removed.
+- The new title is used from now on in step instructions, notifications, PR descriptions, and commits of results submitted from now on. A running step is not stopped. A commit of a result submitted before the rename has the previous title in its message, even if it is the first commit (such as when the task stopped after the result was submitted and before a PR was created, and you rename it and then resume). A PR created after that gets the new title.
+- The title of a PR already created and the branch name don't change. If you also want to change the PR title, edit it on GitHub.
+- A link in the title to a PR of the target repository decides the PR the task works on (the PR it reviews or fixes). So you can't remove the link from the title, change it to another PR, or add a new one. Keep the link when you rename it.
+  However, a task taken in from a GitHub PR (such as a task that reviews a PR) always works on the PR it was taken in from, so you can change the PR link in its title.
+- The Activity records who changed it and from what to what.
 
 ## Changing the task image
 

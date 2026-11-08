@@ -615,6 +615,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       );
     case "TaskImageChanged":
       return e.TaskImageChanged(event.payload.from, event.payload.to, actor);
+    case "TaskRenamed":
+      return e.TaskRenamed(event.payload.from, event.payload.to, actor);
     case "TaskResumed":
       return event.payload.rechooseSteps ? e.TaskResumedRechoose(actor) : e.TaskResumed(actor);
     case "TestsDecided":

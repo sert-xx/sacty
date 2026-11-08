@@ -30,6 +30,7 @@ vi.mock("@/app/actions", () => {
     decideChangeAction: action,
     gateAction: action,
     pauseTaskAction: action,
+    renameTaskAction: action,
     rereviewTaskAction: action,
     resumeTaskAction: action,
     retryExportAction: action,
@@ -235,6 +236,33 @@ describe("タスクの詳細：裏で起きた変化が、操作しなくても�
     expect(text()).toContain("実行中");
     // 画面のリロード（router.refresh）はしない
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("題を編集している間に、裏で題が変わっても、フォームを閉じず入力した題を消さない（PBI-323・PR #330 レビュー指摘）", async () => {
+    const before = task({ status: "paused", pausedReason: "manual", title: "決済API" });
+    server = detail(before);
+    render(
+      h(LiveTaskDetail, { id: "t1", initial: detail(before), initialVersion: liveVersion(server) }),
+    );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click(),
+    );
+    const input = container.querySelector<HTMLInputElement>(
+      "input[name=title]",
+    ) as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "入力中の題",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    server = detail({ ...before, title: "トリアージの題" });
+    await wait();
+    expect(container.querySelector('[data-testid="task-title-form"]')).not.toBeNull();
+    expect(container.querySelector<HTMLInputElement>("input[name=title]")?.value).toBe(
+      "入力中の題",
+    );
   });
 
   it("一時停止のタスクを再開すると、再開のフォームが消えて実行待ちになる", async () => {

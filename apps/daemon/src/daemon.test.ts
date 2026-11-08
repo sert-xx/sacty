@@ -63,8 +63,10 @@ import {
   STEP_PLANS,
   stepRunning,
   TASK_BODY_MAX,
+  TASK_TITLE_MAX,
 } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ZodError } from "zod";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
@@ -4416,6 +4418,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ci?: CiStatusReader;
       sessionLogs?: SessionLogStore;
       secretStore?: ServiceDeps["secrets"];
+      /** PR テンプレートを探す（PBI-87）。 */
+      templates?: ServiceDeps["templates"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -6132,6 +6136,196 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(changed.image).toBe("default");
       expect(changed.images).toEqual({ requirements: "java", design: "playwright" });
       expect(changes(service, id)).toEqual([{ actor: "person", to: "default" }]);
+      activity.close();
+    });
+  });
+
+  describe("タスクの題を人が変える（PBI-323）", () => {
+    const renames = (service: TaskService, id: string) =>
+      service
+        .get(id)
+        ?.activity.filter((e) => e.type === "TaskRenamed")
+        .map((e) => ({ actor: e.actor, ...(e.type === "TaskRenamed" ? e.payload : {}) }));
+    /** 最後の実行に渡した指示（標準入力か、コマンドの引数）。 */
+    const lastPrompt = (executor: FakeExecutor) =>
+      `${executor.stdins.at(-1) ?? ""}\n${executor.calls.at(-1)?.command.join(" ") ?? ""}`;
+
+    it("承認待ちで変え、作業履歴に人が・何から何に変えたかを残し、差し戻しのやり直しの指示から新しい題を使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [
+        out("# 要求要件 v1"),
+        out("# 要求要件 v2"),
+      ]);
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(lastPrompt(executor)).toContain("# 決済API");
+      // 前後の空白は除く。状態は変えない
+      const renamed = service.renameTask(id, { title: "  決済APIの返金  " });
+      expect(renamed.title).toBe("決済APIの返金");
+      expect(renamed.status).toBe("awaiting_approval");
+      expect(renamed.titleChange).toMatchObject({ from: "決済API", to: "決済APIの返金" });
+      expect(renames(service, id)).toEqual([
+        { actor: "person", from: "決済API", to: "決済APIの返金" },
+      ]);
+      service.requestChanges(id, { step: "requirements", submission: 1, comments: ["足りない"] });
+      await service.runNext(id);
+      expect(lastPrompt(executor)).toContain("# 決済APIの返金");
+      // 作業履歴を読み直しても（デーモンの再起動）、新しい題のまま
+      const { service: restarted } = makeService(activity, []);
+      expect(restarted.get(id)?.task.title).toBe("決済APIの返金");
+      activity.close();
+    });
+
+    it("実行中・一時停止中でも変えられ、今の実行は止めない。中止したタスクは断る", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const repos = new FakeRepos();
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "落ちた" }, out("# 要求要件")],
+        { repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(service.renameTask(id, { title: "一時停止中に変えた題" }).status).toBe("paused");
+      service.resume(id, {});
+      // 作業領域を消して、実行を始めた後の準備（用意し直し）で待たせる
+      rmSync(join(dir, "workspaces", id), { recursive: true, force: true });
+      const gate = Promise.withResolvers<void>();
+      repos.prepareGate = gate.promise;
+      repos.prepareStarted = Promise.withResolvers<void>();
+      const running = service.runNext(id);
+      await repos.prepareStarted.promise;
+      expect(service.get(id)?.task.status).toBe("running");
+      expect(service.renameTask(id, { title: "実行中に変えた題" }).status).toBe("running");
+      gate.resolve();
+      await running;
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      expect(service.get(id)?.task.title).toBe("実行中に変えた題");
+      await service.cancel(id);
+      expect(() => service.renameTask(id, { title: "中止した後の題" })).toThrow(
+        new InvalidOperationError(message("task.cancelled")),
+      );
+      expect(renames(service, id)?.map((r) => r.to)).toEqual([
+        "一時停止中に変えた題",
+        "実行中に変えた題",
+      ]);
+      activity.close();
+    });
+
+    it("空・空白だけ・長すぎる題は入力の誤り、今と同じ題・無いタスクは理由を示して断り、何も記録しない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件")]);
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(() => service.renameTask(id, { title: "" })).toThrow(ZodError);
+      expect(() => service.renameTask(id, { title: "   " })).toThrow(ZodError);
+      expect(() => service.renameTask(id, { title: "あ".repeat(TASK_TITLE_MAX + 1) })).toThrow(
+        ZodError,
+      );
+      expect(() => service.renameTask(id, {})).toThrow(ZodError);
+      expect(() => service.renameTask(id, { title: "x", extra: 1 })).toThrow(ZodError);
+      expect(() => service.renameTask(id, { title: " 決済API " })).toThrow(
+        new InvalidOperationError(message("title.unchanged")),
+      );
+      expect(() => service.renameTask("missing", { title: "x" })).toThrow(
+        new InvalidOperationError(message("task.notFound")),
+      );
+      expect(renames(service, id)).toEqual([]);
+      // 上限ちょうどの題は変えられる
+      const longest = "あ".repeat(TASK_TITLE_MAX);
+      expect(service.renameTask(id, { title: longest }).title).toBe(longest);
+      activity.close();
+    });
+
+    it("題にある PR のリンク（レビュー・引き継ぎの対象）が変わる・無くなる変更は断る。リンクを残せば変えられる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件")]);
+      service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "https://github.com/acme/app/pull/12 の指摘に返信して",
+        plan: "direct",
+      });
+      await service.runNext(id);
+      expect(service.get(id)?.task.repository).toBeDefined();
+      for (const title of [
+        "指摘に返信して",
+        "https://github.com/acme/app/pull/13 の指摘に返信して",
+      ]) {
+        expect(() => service.renameTask(id, { title })).toThrow(
+          new InvalidOperationError(message("title.pullRequestChanged", { number: 12 })),
+        );
+      }
+      expect(
+        service.renameTask(id, { title: "https://github.com/acme/app/pull/12 の指摘に返信する" })
+          .title,
+      ).toBe("https://github.com/acme/app/pull/12 の指摘に返信する");
+      activity.close();
+    });
+
+    it("作業するリポジトリを用意する前（作成の直後）も、題の PR のリンクの変更・削除・追加を断る（PR #330 レビュー指摘）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, []);
+      service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const linked = service.createTask({
+        projectId: "default",
+        title: "https://github.com/acme/app/pull/12 をレビューする",
+      });
+      expect(service.get(linked.id)?.task.repository).toBeUndefined();
+      for (const title of ["https://github.com/acme/app/pull/13 をレビューする", "レビューする"]) {
+        expect(() => service.renameTask(linked.id, { title })).toThrow(
+          new InvalidOperationError(message("title.pullRequestChanged", { number: 12 })),
+        );
+      }
+      const plain = service.createTask({ projectId: "default", title: "決済API" });
+      expect(() =>
+        service.renameTask(plain.id, { title: "https://github.com/acme/app/pull/13 を直す" }),
+      ).toThrow(new InvalidOperationError(message("title.pullRequestChanged", { number: 13 })));
+      // 別のリポジトリの PR のリンクは、対象を決めないので変えられる
+      expect(
+        service.renameTask(plain.id, { title: "https://github.com/acme/other/pull/1 を参考に直す" })
+          .title,
+      ).toBe("https://github.com/acme/other/pull/1 を参考に直す");
+      activity.close();
+    });
+
+    it("API で変えられ、空の題は 400、同じ題は 409 で理由を返す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件")]);
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      const app = createApp(service, "tok");
+      const post = (body: unknown) =>
+        app.request(`/api/tasks/${id}/title`, {
+          method: "POST",
+          headers: { authorization: "Bearer tok", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      const ok = await post({ title: "返金API" });
+      expect(ok.status).toBe(200);
+      expect(((await ok.json()) as { task: Task }).task.title).toBe("返金API");
+      const empty = await post({ title: " " });
+      expect(empty.status).toBe(400);
+      expect(await empty.json()).toMatchObject({
+        error: "invalid_input",
+        issues: [{ path: ["title"], message: { code: "input.titleRequired" } }],
+      });
+      const same = await post({ title: "返金API" });
+      expect(same.status).toBe(409);
+      expect(await same.json()).toEqual({
+        error: "invalid_operation",
+        messages: [message("title.unchanged")],
+      });
       activity.close();
     });
   });
@@ -12672,6 +12866,29 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("プッシュの途中に人が題を変えたら、作る PR の題と本文は新しい題にする（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      repos.publishGate = gate.promise;
+      const { activity, service, pulls, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const before = service.get(id)?.task.title ?? "";
+      const publishing = service.runNext(id);
+      await repos.publishStarted.promise;
+      service.renameTask(id, { title: "途中で変えた題" });
+      gate.resolve();
+      await publishing;
+      expect(pulls.calls).toHaveLength(1);
+      expect(pulls.calls[0]?.title).toBe("途中で変えた題");
+      expect(pulls.calls[0]?.body).toContain("途中で変えた題");
+      expect(pulls.calls[0]?.body).not.toContain(`「${before}」`);
+      activity.close();
+    });
+
     it("PR を作れずに止まったら、再開すると実装をやり直さずに PR を作り直す", async () => {
       const pulls = new FakePulls();
       pulls.fail = "boom";
@@ -12689,6 +12906,77 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await drain(service);
       expect(executor.calls).toHaveLength(runs);
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("PR テンプレートを読む間に人が題を変えても、PR の本文は新しい題で書く（PBI-323・PR #330 レビュー指摘）", async () => {
+      let rename = () => {};
+      const { activity, service, pulls, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        {
+          templates: {
+            find: async () => {
+              rename();
+              return { kind: "none" };
+            },
+          },
+        },
+      );
+      rename = () => {
+        rename = () => {};
+        service.renameTask(id, { title: "テンプレートの間に変えた題" });
+      };
+      await drain(service);
+      expect(pulls.calls.at(-1)?.title).toBe("テンプレートの間に変えた題");
+      expect(pulls.calls.at(-1)?.body).toContain("「テンプレートの間に変えた題」");
+      activity.close();
+    });
+
+    it("PR を作れずに止まった後に題を変えて再開しても、同じ提出のコミットは同じメッセージにし、PR は新しい題で作る（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const pulls = new FakePulls();
+      pulls.fail = "boom";
+      const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()], {
+        pulls,
+        repos,
+      });
+      await drain(service);
+      expect(service.get(id)?.task.publishPending).toBe(true);
+      const before = service.get(id)?.task.title ?? "";
+      const first = repos.published.at(-1)?.message;
+      expect(first).toContain(before);
+      service.renameTask(id, { title: "止まった後に変えた題" });
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      // 同じ日時・同じ題で作り直すので、プッシュ済みのコミットと同じになる（別のコミットはプッシュを断られる）
+      expect(repos.published.at(-1)?.message).toBe(first);
+      expect(pulls.calls.at(-1)?.title).toBe("止まった後に変えた題");
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("時計が戻った後に題を変えても、同じ提出のコミットは同じメッセージにする（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const pulls = new FakePulls();
+      pulls.fail = "boom";
+      const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()], {
+        pulls,
+        repos,
+      });
+      await drain(service);
+      const first = repos.published.at(-1)?.message;
+      // 題の変更の記録の日時が、コミットの日時より前になる（時計が戻った）
+      const clock = activity as unknown as { now: () => Date };
+      const now = clock.now;
+      clock.now = () => new Date(0);
+      service.renameTask(id, { title: "時計が戻った後の題" });
+      clock.now = now;
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      expect(repos.published.at(-1)?.message).toBe(first);
+      expect(pulls.calls.at(-1)?.title).toBe("時計が戻った後の題");
       activity.close();
     });
   });

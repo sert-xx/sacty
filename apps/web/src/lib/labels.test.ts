@@ -2490,3 +2490,25 @@ describe("差し戻しの判断の文は、作業履歴の行に要点、詳細�
     expect(dropped.text).not.toContain("詳しい理由");
   });
 });
+
+describe("タスクの題の変更の作業履歴（PBI-323）", () => {
+  const renamed = {
+    seq: 1,
+    id: "e1",
+    taskId: "t1",
+    projectId: "default",
+    at: "2026-10-10T00:00:00.000Z",
+    actor: "person",
+    type: "TaskRenamed",
+    payload: { from: "決済API", to: "返金API" },
+  } as ActivityEvent;
+
+  it("何から何に、誰が変えたかを出す（日英）", () => {
+    expect(describeIn(renamed, labels.ja)).toBe(
+      "タスクの題を「決済API」から「返金API」に変更（人間）",
+    );
+    expect(describeIn(renamed, labels.en)).toBe(
+      'Task renamed from "決済API" to "返金API" (person)',
+    );
+  });
+});

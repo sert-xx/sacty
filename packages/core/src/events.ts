@@ -1069,6 +1069,17 @@ const TaskImageChanged = z.object({
 });
 
 /**
+ * 人が、タスクの詳細でタスクの題を変えた（PBI-323）。from は変える前の題、to は新しい題（前後の空白を除いた、空でない
+ * TASK_TITLE_MAX 文字以内の題）。中止したタスクのほかは、状態を問わない。この後の工程の指示・コミット・通知・PR の本文などは新しい題を使う。
+ * すでに作った PR の題やブランチ名は変えない（ブランチ名に題は使わない）。actor は person。
+ */
+const TaskRenamed = z.object({
+  type: z.literal("TaskRenamed"),
+  // 上限は TASK_TITLE_MAX と同じ（定義がこの後にあるため数で書く）
+  payload: z.object({ from: z.string(), to: z.string().min(1).max(200) }),
+});
+
+/**
  * 人が、タスクの詳細で工程のエージェントを変えた（PBI-121）。from は変える前の名前（指定が無ければ config.yaml で決まる名前）、
  * to は config.yaml の agents の名前。その工程の次の実行から使う（config.yaml の step_agents より優先）。actor は person。
  */
@@ -3287,6 +3298,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsSkipped,
   StepImageChanged,
   TaskImageChanged,
+  TaskRenamed,
   StepAgentChanged,
   ServicesStarted,
   InformationGathered,
@@ -3674,6 +3686,18 @@ export const ChangeTaskImageInput = z.object({
   image: z.string().trim().min(1).max(100),
 });
 export type ChangeTaskImageInput = z.infer<typeof ChangeTaskImageInput>;
+
+/** タスクの詳細で、タスクの題を変える入力（PBI-323）。作成と同じく、前後の空白を除き、空・長すぎる題は断る。 */
+export const RenameTaskInput = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, code("input.titleRequired"))
+      .max(TASK_TITLE_MAX, code("input.titleTooLong")),
+  })
+  .strict();
+export type RenameTaskInput = z.infer<typeof RenameTaskInput>;
 
 /**
  * タスクの詳細で、工程のエージェントを変える入力（PBI-121）。agent は config.yaml の agents の名前。名前は config.yaml の

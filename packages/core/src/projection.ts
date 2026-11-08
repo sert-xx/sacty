@@ -925,6 +925,8 @@ export type Task = {
   defaultImageReason?: string;
   /** images の候補を見せたのに、理由が無いまま既定のイメージにした（PBI-318）。 */
   imageUnexplained?: true;
+  /** 人が変えた、タスクの題（PBI-323）。最後の変更。チケットのトリアージは、人が変えた題を書き換えない。 */
+  titleChange?: { from: string; to: string; at: string };
   /** 人が変えた、タスクのイメージ（PBI-318）。最後の変更。from が無いのは、古い版の工程ごとのイメージから変えたとき。 */
   imageChange?: { from?: string; to: string; at: string };
   /** 古い版（PBI-318 より前）の作業履歴の、既定のイメージにした工程ごとの理由（PBI-105）。 */
@@ -2470,7 +2472,8 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "not a ticket task waiting for triage");
       }
       task.repo = event.payload.repo;
-      if (event.payload.title) task.title = event.payload.title;
+      // 人がタスクの題を変えていれば（PBI-323）、トリアージで決めた題で書き換えない（人の変更を優先する）
+      if (event.payload.title && !task.titleChange) task.title = event.payload.title;
       if (event.payload.body !== undefined) {
         // 再開のときに人が足した補足は、トリアージで書いた概要に置き換えず、後ろに残す（後の工程に届くように）。補足は
         // 作業履歴の TaskResumed から貯めたものを使い、説明の見出しからは読み直さない。概要（チケットから書いたもの）に
@@ -2830,6 +2833,12 @@ export function applyEvent(
       task.imageChange = { ...(from ? { from } : {}), to, at: event.at };
       break;
     }
+
+    // 人がタスクの題を変えた（PBI-323）。中止したタスクのほかは状態を問わず、この後に題を使うもの（指示・コミット・通知など）から使う
+    case "TaskRenamed":
+      task.title = event.payload.to;
+      task.titleChange = { from: event.payload.from, to: event.payload.to, at: event.at };
+      break;
 
     // 人が工程のエージェントを変えた（PBI-121）。工程の状態は問わず、その工程を次に実行するときから使う
     case "StepAgentChanged": {

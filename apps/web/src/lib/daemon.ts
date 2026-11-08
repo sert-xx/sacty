@@ -723,7 +723,19 @@ export async function changeTaskImage(id: string, image: string): Promise<OpResu
   return postOp(`/api/tasks/${encodeURIComponent(id)}/image`, { image });
 }
 
-async function postOp(path: string, body: unknown): Promise<OpResult> {
+/**
+ * タスクの詳細で、タスクの題を変える（PBI-323）。題の欄の誤り（空・長すぎる）は、欄の名前を添えずに返す（題の入力の
+ * すぐ下に出すため）。
+ */
+export async function renameTask(id: string, title: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/title`, { title }, { path: false });
+}
+
+async function postOp(
+  path: string,
+  body: unknown,
+  options: { path?: boolean } = {},
+): Promise<OpResult> {
   const res = await daemonFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -733,7 +745,7 @@ async function postOp(path: string, body: unknown): Promise<OpResult> {
     return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400) {
-    return { ok: false, message: await inputMessage(res) };
+    return { ok: false, message: await inputMessage(res, options) };
   }
   await ensureOk(res);
   return { ok: true };
@@ -851,7 +863,10 @@ async function operationMessage(res: Response): Promise<string> {
  * 入力の誤り（400）の理由を、画面の言語の文にする。デーモンは誤りを文言のコードと引数で返す（PBI-11）。
  * どの項目の誤りかが分かるように、場所（例：repositories.0.baseBranch）を添える。
  */
-async function inputMessage(res: Response, options: { file?: boolean } = {}): Promise<string> {
+async function inputMessage(
+  res: Response,
+  options: { file?: boolean; path?: boolean } = {},
+): Promise<string> {
   const m = await getMessages();
   const json = (await res.json()) as { issues?: { message?: unknown; path?: unknown[] }[] };
   const issue = json.issues?.[0];
@@ -860,7 +875,9 @@ async function inputMessage(res: Response, options: { file?: boolean } = {}): Pr
     : options.file
       ? m.common.daemon.checkFile
       : m.common.daemon.checkInput;
-  return issue?.path?.length ? m.common.daemon.atPath(text, issue.path.join(".")) : text;
+  return issue?.path?.length && options.path !== false
+    ? m.common.daemon.atPath(text, issue.path.join("."))
+    : text;
 }
 
 /** エージェントの実行のセッションログの記録（デーモンの SessionLogMeta。PBI-62）。 */

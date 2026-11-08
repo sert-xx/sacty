@@ -117,6 +117,7 @@ import {
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
+  RenameTaskInput,
   RepoUrl,
   RequestChangesInput,
   RequestSecurityFixInput,
@@ -7332,12 +7333,13 @@ export class TaskService {
         sameRepo,
       );
       const stage = { secrets: usedSecrets, aiReview, ...(stackedOn ? { stackedOn } : {}) };
+      // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
         pr.repo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, stage),
-        buildPullRequestBodyParts(task, stage),
+        () => buildPullRequestBodyText(this.latestTitled(task), stage),
+        () => buildPullRequestBodyParts(this.latestTitled(task), stage),
       );
       // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
       if (!unchanged()) return;
@@ -10199,7 +10201,8 @@ export class TaskService {
         parent,
         files: { [path]: buildStepDocument(current, step) },
         branch,
-        message: `${await this.commitSubjectFor(current, "docs", buildStepPullRequestTitle(current, step))}\n\nsacty task ${current.id}`,
+        // 題は、コミットの日時（成果を出した時刻）のときの題にする（再試行で同じコミットにする。PBI-323）
+        message: `${await this.commitSubjectFor(current, "docs", buildStepPullRequestTitle({ ...current, title: this.titleAt(current, this.outputAt(current, step)) }, step))}\n\nsacty task ${current.id}`,
         date: this.outputAt(current, step),
         // 新しい PR には、内容が同じでもコミットが要る（差分のコミットが無いと PR を作れない）
         allowEmpty: !reuse,
@@ -10236,15 +10239,17 @@ export class TaskService {
         repo,
         token,
         usedSecrets,
-        buildStepPullRequestBodyText(current, step, path, aiReview),
-        buildStepPullRequestBodyParts(current, step, path, aiReview),
+        // 待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
+        () => buildStepPullRequestBodyText(this.latestTitled(current), step, path, aiReview),
+        () => buildStepPullRequestBodyParts(this.latestTitled(current), step, path, aiReview),
       );
       const pr = await this.deps.pulls.upsert({
         repo,
         token,
         branch,
         baseBranch: taskBranch.branch,
-        title: buildStepPullRequestTitle(current, step),
+        // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
+        title: buildStepPullRequestTitle(this.latestTitled(current), step),
         body,
         ...(reuse ? { number: reuse.number } : {}),
       });
@@ -10292,24 +10297,33 @@ export class TaskService {
    * PR の本文（PBI-87）。PR を作るリポジトリ（無ければ Org の .github リポジトリ）に PR テンプレートがあれば、その
    * 見出し・項目の形に沿って sacty の内容で埋める。無い・読めない・使えないときは、sacty の決まった形の本文にする
    * （PR の作成は止めない）。どちらにしたかを template として返す（台帳に残す）。本文は長さの上限に収め、
-   * 使った秘密の値を伏せる。
+   * 使った秘密の値を伏せる。本文の材料（fallback・parts）は、テンプレートを読んだ後に作る（待つ間に人が変えた題を
+   * 使うため。PBI-323）。
    */
   private async pullRequestBody(
     repo: string,
     token: string,
     usedSecrets: readonly string[],
-    fallback: BodyText,
-    parts: BodyParts,
+    makeFallback: () => BodyText,
+    makeParts: () => BodyParts,
   ): Promise<{ body: string; template: PullRequestTemplateUse }> {
     let template: PullRequestTemplateUse;
+    let found: TemplateLookup | undefined;
+    let failed: unknown;
+    try {
+      found = this.deps.templates
+        ? await this.deps.templates.find({ repo, token })
+        : { kind: "none" };
+    } catch (error) {
+      failed = error;
+    }
+    const fallback = makeFallback();
     // テンプレートが無い・使えないときも、省けない部分（タスクの ID・Closes・承認の案内）を分けて持つ（PR #99 レビュー指摘）
     let text = fallback;
     try {
-      const found: TemplateLookup = this.deps.templates
-        ? await this.deps.templates.find({ repo, token })
-        : { kind: "none" };
+      if (!found) throw failed;
       if (found.kind === "found") {
-        text = fillTemplate(found.template.text, parts);
+        text = fillTemplate(found.template.text, makeParts());
         template = { repo: found.template.repo, path: found.template.path };
       } else if (found.kind === "unusable") {
         template = {
@@ -10449,6 +10463,9 @@ export class TaskService {
           }
         }
       }
+      const date = verifying
+        ? this.outputAt(task, "implement")
+        : (task.lastReview?.at ?? task.createdAt);
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
@@ -10458,13 +10475,12 @@ export class TaskService {
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), task.title)}\n\nsacty task ${task.id}`,
+        // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
+        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), this.titleAt(task, date))}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
         // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
         // 内容が同じなので、そのコミットのままになる
-        date: verifying
-          ? this.outputAt(task, "implement")
-          : (task.lastReview?.at ?? task.createdAt),
+        date,
         authEnv,
         ...(keep ? { keep } : {}),
       });
@@ -10501,22 +10517,25 @@ export class TaskService {
       // 重ねている間は、検証に通った後もドラフトのままにする（依存先より先にマージさせない）
       const stackedOn = this.stackedPullRequest(task);
       const stacked = this.recordsPullRequestBase(task);
+      // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, {
-          verifying,
-          secrets: usedSecrets,
-          aiReview,
-          ...(stackedOn ? { stackedOn } : {}),
-        }),
-        buildPullRequestBodyParts(task, {
-          verifying,
-          secrets: usedSecrets,
-          aiReview,
-          ...(stackedOn ? { stackedOn } : {}),
-        }),
+        () =>
+          buildPullRequestBodyText(this.latestTitled(task), {
+            verifying,
+            secrets: usedSecrets,
+            aiReview,
+            ...(stackedOn ? { stackedOn } : {}),
+          }),
+        () =>
+          buildPullRequestBodyParts(this.latestTitled(task), {
+            verifying,
+            secrets: usedSecrets,
+            aiReview,
+            ...(stackedOn ? { stackedOn } : {}),
+          }),
       );
       // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
@@ -10527,7 +10546,8 @@ export class TaskService {
         token,
         branch,
         baseBranch: task.repository.baseBranch,
-        title: task.title,
+        // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
+        title: this.latestTitled(task).title,
         body,
         number,
         ...(verifying || task.stack ? { draft: true } : {}),
@@ -10672,7 +10692,14 @@ export class TaskService {
     if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
-      const subject = await this.commitSubjectFor(task, this.implementCommitKind(task), task.title);
+      // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
+      const date = task.lastReview?.at ?? task.createdAt;
+      // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
+      const subject = await this.commitSubjectFor(
+        task,
+        this.implementCommitKind(task),
+        this.titleAt(task, date),
+      );
       const push = () =>
         this.deps.repos.publish({
           dir,
@@ -10681,8 +10708,7 @@ export class TaskService {
           parent,
           branch,
           message: `${subject}\n\nsacty task ${task.id}`,
-          // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-          date: task.lastReview?.at ?? task.createdAt,
+          date,
           authEnv,
         });
       let commit: string;
@@ -12626,7 +12652,61 @@ export class TaskService {
     return true;
   }
 
-  /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
+  /**
+   * 待つ間に人がタスクの題を変えていれば（PBI-323）、題だけを最新にしたタスク。公開は始めたときのタスクを持ったまま
+   * 認証・プッシュなどを待つので、コミットのメッセージ・PR の題と本文を作る直前に、題を読み直す。
+   */
+  private latestTitled(task: Task): Task {
+    const title = this.tasks.get(task.id)?.title;
+    return title === undefined || title === task.title ? task : { ...task, title };
+  }
+
+  /**
+   * その時刻（at）のタスクの題（PBI-323）。コミットは、提出ごとに決まる日時で作り、再試行しても同じコミットになるように
+   * している。メッセージの題も、その日時のときの題にする（日時より後に人が題を変えても、同じ提出の再試行で別のコミットに
+   * ならないように。別のコミットになると、プッシュ済みのブランチに積めない）。日時より後の最初の変更の前の題を使う。
+   * 「後」は、日時の元になった記録（その日時の、題の変更でない最初の記録）より後に足した記録かで決める（時計が戻った・同じミリ秒の
+   * 変更でも、同じ提出の再試行で題が変わらないように）。元の記録が見つからなければ、日時が同じか後の変更を使う。
+   */
+  private titleAt(task: Task, at: string): string {
+    const events = this.deps.activity.forTask(task.id);
+    const anchor = events.find((e) => e.type !== "TaskRenamed" && e.at === at);
+    const later = events.find(
+      (e) => e.type === "TaskRenamed" && (anchor ? e.seq > anchor.seq : e.at >= at),
+    );
+    if (later?.type === "TaskRenamed") return later.payload.from;
+    return this.latestTitled(task).title;
+  }
+
+  /**
+   * 人が、タスクの詳細でタスクの題を変える（PBI-323）。中止したタスク（以降の操作は受け付けない）のほかは、状態を問わない
+   * （実行中・承認待ち・一時停止中・終わったタスクも変えられる）。今の実行は止めず、この後に題を使うもの（工程の指示・コミット・通知・PR の本文など）から使う。
+   * すでに作った PR の題は書き換えない。空・長すぎる題は入力の誤り、今と同じ題は理由を示して断る。
+   */
+  renameTask(id: string, raw: unknown): Task {
+    const { title } = RenameTaskInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (task.title === title) throw new InvalidOperationError(message("title.unchanged"));
+    // 題にある PR のリンクは、レビュー・引き継ぎの対象を決める（referencedPullRequest）。題を変えて対象の PR が変わる・
+    // 無くなると、途中から別の PR を扱うことになるので断る（PR から取り込んだタスクは、取り込んだ PR が対象なので問わない）
+    // 作業するリポジトリを用意する前（作成の直後・準備に失敗した後）も、決まっているリポジトリ（repo）で確かめる
+    const repoUrl = task.repository?.url ?? task.repo ?? task.source?.repo;
+    if (repoUrl && task.source?.kind !== "github_pull_request") {
+      const before = pullRequestInText(repoUrl, `${task.title}\n${task.body}`);
+      const after = pullRequestInText(repoUrl, `${title}\n${task.body}`);
+      if (before?.number !== after?.number) {
+        throw new InvalidOperationError(
+          message("title.pullRequestChanged", { number: before?.number ?? after?.number ?? 0 }),
+        );
+      }
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "TaskRenamed", payload: { from: task.title, to: title } } },
+    ]);
+  }
+
   /**
    * 人が、タスクの詳細でタスクのイメージを変える（PBI-318）。工程の状態は問わない（実行中・終わった工程があっても変えられる）。
    * 今の実行は止めず、すべての工程の次の実行から使う（実行の開始で、そのときのイメージを決める）。テスト・最終レビューも、
