@@ -776,7 +776,7 @@ In the following cases, check every item.
 Use "Rename the task" (the pencil button) next to the title at the top of the task details to change the title.
 You can rename a task in any state: in progress, waiting for approval, paused, or finished (a cancelled task can't be renamed).
 
-- Type the new title in the input and press "Rename". "Cancel" or the Esc key closes it without a change.
+- Type the new title in the input and press "Rename". "Cancel" or the Esc key closes it without a change. Esc does not close it while saving or while Japanese input is being converted.
 - An empty title and a title longer than 200 characters can't be used. Spaces around the title are removed.
 - The new title is used from now on in step instructions, commits, notifications, and PR descriptions. A running step is not stopped. When a result already submitted is committed again (such as resuming after creating a PR failed), that commit message keeps the previous title.
 - The title of a PR already created and the branch name don't change. If you also want to change the PR title, edit it on GitHub.

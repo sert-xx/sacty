@@ -12955,6 +12955,30 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
       activity.close();
     });
+
+    it("時計が戻った後に題を変えても、同じ提出のコミットは同じメッセージにする（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const pulls = new FakePulls();
+      pulls.fail = "boom";
+      const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()], {
+        pulls,
+        repos,
+      });
+      await drain(service);
+      const first = repos.published.at(-1)?.message;
+      // 題の変更の記録の日時が、コミットの日時より前になる（時計が戻った）
+      const clock = activity as unknown as { now: () => Date };
+      const now = clock.now;
+      clock.now = () => new Date(0);
+      service.renameTask(id, { title: "時計が戻った後の題" });
+      clock.now = now;
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      expect(repos.published.at(-1)?.message).toBe(first);
+      expect(pulls.calls.at(-1)?.title).toBe("時計が戻った後の題");
+      activity.close();
+    });
   });
 
   it("実装の承認待ちの間、プロジェクトの gh のアカウントで PR を見守り、閉じられたら記録して待ち、マージで完了する（PBI-14a）", async () => {

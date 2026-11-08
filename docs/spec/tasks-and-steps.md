@@ -963,12 +963,13 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   今の実行は止めない。
   PR の公開（実装・要求要件・設計）と、PR の向き先の付け替えは、始めたときのタスクを持ったまま待つので、作る PR の題と PR の本文は、使う直前に題を読み直す（`latestTitled`）。
   本文は、PR テンプレートを読んだ後に作る（`pullRequestBody`）。
-  コミットのメッセージの題は、コミットの日時（提出ごとに決まる日時）のときの題にする（`titleAt`。その日時より後の最初の `TaskRenamed` の `from`）。
+  コミットのメッセージの題は、コミットの日時（提出ごとに決まる日時）のときの題にする（`titleAt`。その日時の元になった記録より後に足した最初の `TaskRenamed` の `from`。「後」は記録の順で決め、時計の値では決めないので、時計が戻っても変わらない。元の記録が見つからなければ、日時が同じか後の変更を使う）。
   PR の作成に失敗した後に題を変えて再開しても、同じ提出のコミットは同じになり、プッシュ済みのブランチに積める。
 - すでに作った PR の題は書き換えない（PR の更新は本文と向き先だけ）。
   ブランチ名はタスクの ID から作るので、題を変えても変わらない。
 - 画面は、題の横の「題を変える」で、今の題を入れた入力を開く（`TaskTitle`）。
   断られたら理由を出し、入力した題は消さない。
+  保存の途中と、日本語の変換中は、Esc で閉じない。閉じたら「題を変える」にフォーカスを戻す。
   作業履歴は、誰が・何から何に変えたかを出す。
 
 コード: `apps/daemon/src/service.ts`（`renameTask`・`latestTitled`・`titleAt`・`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`

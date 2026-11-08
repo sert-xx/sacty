@@ -12666,11 +12666,15 @@ export class TaskService {
    * その時刻（at）のタスクの題（PBI-323）。コミットは、提出ごとに決まる日時で作り、再試行しても同じコミットになるように
    * している。メッセージの題も、その日時のときの題にする（日時より後に人が題を変えても、同じ提出の再試行で別のコミットに
    * ならないように。別のコミットになると、プッシュ済みのブランチに積めない）。日時より後の最初の変更の前の題を使う。
+   * 「後」は、日時の元になった記録（その日時の、題の変更でない最初の記録）より後に足した記録かで決める（時計が戻った・同じミリ秒の
+   * 変更でも、同じ提出の再試行で題が変わらないように）。元の記録が見つからなければ、日時が同じか後の変更を使う。
    */
   private titleAt(task: Task, at: string): string {
-    const later = this.deps.activity
-      .forTask(task.id)
-      .find((e) => e.type === "TaskRenamed" && e.at > at);
+    const events = this.deps.activity.forTask(task.id);
+    const anchor = events.find((e) => e.type !== "TaskRenamed" && e.at === at);
+    const later = events.find(
+      (e) => e.type === "TaskRenamed" && (anchor ? e.seq > anchor.seq : e.at >= at),
+    );
     if (later?.type === "TaskRenamed") return later.payload.from;
     return this.latestTitled(task).title;
   }

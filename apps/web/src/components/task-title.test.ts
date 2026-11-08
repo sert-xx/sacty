@@ -41,6 +41,18 @@ const type = (input: HTMLInputElement, value: string) =>
     setter?.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+/** 入力で Esc を押す。変換中（isComposing・keyCode 229）も渡せる。 */
+const pressEscape = (init: { isComposing?: boolean; keyCode?: number } = {}) =>
+  act(async () => {
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      isComposing: init.isComposing ?? false,
+    });
+    if (init.keyCode !== undefined)
+      Object.defineProperty(event, "keyCode", { value: init.keyCode });
+    q<HTMLInputElement>("input[name=title]")?.dispatchEvent(event);
+  });
 const submit = async () => {
   await act(async () => q<HTMLFormElement>("form")?.requestSubmit());
   await wait();
@@ -120,25 +132,52 @@ describe("タスクの詳細の題を変える", () => {
     expect(q('[role="alert"]')).toBeNull();
   });
 
-  it("保存の途中で閉じて開き直したら、先の保存が終わっても、開き直したフォームを閉じない（PR #330 レビュー指摘）", async () => {
+  it("保存の途中は Esc で閉じず、断られたら理由を出す（PR #330 レビュー指摘）", async () => {
     const saving = Promise.withResolvers<{ message?: string }>();
     renameTaskAction.mockReturnValueOnce(saving.promise);
     await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: true }));
     await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
     await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "先に送った題");
     await act(async () => q<HTMLFormElement>("form")?.requestSubmit());
-    await act(async () =>
-      (q<HTMLInputElement>("input[name=title]") as HTMLInputElement).dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-      ),
-    );
-    expect(q("form")).toBeNull();
-    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
-    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "後で入力中の題");
-    await act(async () => saving.resolve({}));
-    await wait();
+    await pressEscape();
     expect(q("form")).not.toBeNull();
-    expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("後で入力中の題");
+    await act(async () => saving.resolve({ message: "タスクの題は変わっていません。" }));
+    await wait();
+    expect(q('[role="alert"]')?.textContent).toBe("タスクの題は変わっていません。");
+    expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("先に送った題");
+  });
+
+  it("日本語の変換中の Esc では閉じない（PR #330 レビュー指摘）", async () => {
+    await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: true }));
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "へんかんちゅう");
+    await pressEscape({ isComposing: true });
+    expect(q("form")).not.toBeNull();
+    await pressEscape({ keyCode: 229 });
+    expect(q("form")).not.toBeNull();
+    expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("へんかんちゅう");
+    await pressEscape();
+    expect(q("form")).toBeNull();
+  });
+
+  it("Esc・やめる・変えられたときのどれで閉じても、「題を変える」にフォーカスを戻す（PR #330 レビュー指摘）", async () => {
+    await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: true }));
+    const edit = () => q<HTMLButtonElement>('[data-testid="task-title-edit"]');
+    await act(async () => edit()?.click());
+    expect(document.activeElement).toBe(q("input[name=title]"));
+    await pressEscape();
+    expect(document.activeElement).toBe(edit());
+    await act(async () => edit()?.click());
+    const cancel = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "やめる",
+    );
+    await act(async () => cancel?.click());
+    expect(document.activeElement).toBe(edit());
+    await act(async () => edit()?.click());
+    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "返金API");
+    await submit();
+    expect(q("form")).toBeNull();
+    expect(document.activeElement).toBe(edit());
   });
 
   it("中止したタスク（editable が false）には、題を変える操作を出さない", async () => {
