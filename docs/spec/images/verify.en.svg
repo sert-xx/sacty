@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1100" width="1040" height="1100" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">From implementation to awaiting approval</title>
-  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the goal guardian runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, the final review runs again with the CI result. Three failures in a row pause the task, and a person can also move it to review.</desc>
+  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the goal guardian runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed on the first try or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, timed out, or passed on a rerun, the final review runs again with the CI result. Three failures in a row pause the task, and a person can also move it to review.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -145,10 +145,10 @@
   <text x="775" y="52" class="label" text-anchor="middle">not yet (redo)</text>
   <rect x="263" y="626" width="33.9" height="18" rx="4" class="label-bg"/>
   <text x="280" y="639" class="label" text-anchor="middle">pass</text>
-  <rect x="195" y="797" width="88.4" height="18" rx="4" class="label-bg"/>
-  <text x="200" y="810" class="label" text-anchor="start">passed / no CI</text>
-  <rect x="63.5" y="532" width="153.1" height="18" rx="4" class="label-bg"/>
-  <text x="140" y="545" class="label" text-anchor="middle">failed (review again with it)</text>
+  <rect x="195" y="797" width="144.1" height="18" rx="4" class="label-bg"/>
+  <text x="200" y="810" class="label" text-anchor="start">passed first time / no CI</text>
+  <rect x="40" y="532" width="200" height="18" rx="4" class="label-bg"/>
+  <text x="140" y="545" class="label" text-anchor="middle">failed / timed out / passed on rerun</text>
   <rect x="495" y="648" width="98.1" height="18" rx="4" class="label-bg"/>
   <text x="500" y="661" class="label" text-anchor="start">pass, no changes</text>
   <rect x="446" y="819" width="98.1" height="18" rx="4" class="label-bg"/>

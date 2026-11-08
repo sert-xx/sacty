@@ -9252,8 +9252,8 @@ export class TaskService {
       ]);
       return;
     }
-    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI を待つ（PR の確認が CI を読み、終わったら最終レビューに
-    // 進む）。CI の結果は、最終レビューでゴールガーディアンの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
+    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI の結果を待たずに最終レビューに進む（PBI-314。PR の確認が
+    // CI を並べて読む）。CI が終わっていれば、その結果を最終レビューの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
     if (!task.pullRequestCi && this.draftsPullRequest(task)) {
       const drafted = await this.publish(task, config.config, { verifying: true });
       if (drafted !== "no_changes") return;

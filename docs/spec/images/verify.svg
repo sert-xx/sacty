@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1100" width="1040" height="1100" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">実装の検証から承認待ちまで</title>
-  <desc id="desc">実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作り（変更が無ければ PR を作らずに進み）、PR の CI を待たずに、ゴールガーディアンが手元のテストで最終レビューする（CI の結果が出ていれば合わせて判定する）。合格したら CI の結果を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行する）、通った・CI が無ければ sacty がドラフトを外してラベルを付け、承認待ちにする。CI が落ちたら、CI の結果を渡して最終レビューをし直す。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
+  <desc id="desc">実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作り（変更が無ければ PR を作らずに進み）、PR の CI を待たずに、ゴールガーディアンが手元のテストで最終レビューする（CI の結果が出ていれば合わせて判定する）。合格したら CI の結果を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行する）、初回で通った・CI が無ければ sacty がドラフトを外してラベルを付け、承認待ちにする。CI が落ちた・時間切れ・再実行で通ったなら、CI の結果を渡して最終レビューをし直す。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -145,10 +145,10 @@
   <text x="775" y="52" class="label" text-anchor="middle">まだ（やり直す）</text>
   <rect x="263.5" y="626" width="33" height="18" rx="4" class="label-bg"/>
   <text x="280" y="639" class="label" text-anchor="middle">合格</text>
-  <rect x="195" y="797" width="96.7" height="18" rx="4" class="label-bg"/>
-  <text x="200" y="810" class="label" text-anchor="start">通った・CI 無し</text>
-  <rect x="48.8" y="532" width="182.5" height="18" rx="4" class="label-bg"/>
-  <text x="140" y="545" class="label" text-anchor="middle">落ちた（結果を渡してやり直す）</text>
+  <rect x="195" y="797" width="131.2" height="18" rx="4" class="label-bg"/>
+  <text x="200" y="810" class="label" text-anchor="start">初回で通った・CI 無し</text>
+  <rect x="43" y="532" width="194" height="18" rx="4" class="label-bg"/>
+  <text x="140" y="545" class="label" text-anchor="middle">落ちた・時間切れ・再実行で通った</text>
   <rect x="495" y="648" width="90.5" height="18" rx="4" class="label-bg"/>
   <text x="500" y="661" class="label" text-anchor="start">合格・変更なし</text>
   <rect x="467" y="819" width="56" height="18" rx="4" class="label-bg"/>
