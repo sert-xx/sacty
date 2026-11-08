@@ -7333,12 +7333,14 @@ export class TaskService {
         sameRepo,
       );
       const stage = { secrets: usedSecrets, aiReview, ...(stackedOn ? { stackedOn } : {}) };
+      // 本文は、待つ間に人が変えた題で書く（PBI-323）
+      const titled = this.latestTitled(task);
       const { body } = await this.pullRequestBody(
         pr.repo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, stage),
-        buildPullRequestBodyParts(task, stage),
+        buildPullRequestBodyText(titled, stage),
+        buildPullRequestBodyParts(titled, stage),
       );
       // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
       if (!unchanged()) return;
@@ -10459,7 +10461,8 @@ export class TaskService {
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), task.title)}\n\nsacty task ${task.id}`,
+        // 待つ間に人が題を変えていれば、新しい題にする（PBI-323）
+        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), this.latestTitled(task).title)}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
         // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
         // 内容が同じなので、そのコミットのままになる
@@ -10502,17 +10505,19 @@ export class TaskService {
       // 重ねている間は、検証に通った後もドラフトのままにする（依存先より先にマージさせない）
       const stackedOn = this.stackedPullRequest(task);
       const stacked = this.recordsPullRequestBase(task);
+      // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（PBI-323）
+      const titled = this.latestTitled(task);
       const { body, template } = await this.pullRequestBody(
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBodyText(task, {
+        buildPullRequestBodyText(titled, {
           verifying,
           secrets: usedSecrets,
           aiReview,
           ...(stackedOn ? { stackedOn } : {}),
         }),
-        buildPullRequestBodyParts(task, {
+        buildPullRequestBodyParts(titled, {
           verifying,
           secrets: usedSecrets,
           aiReview,
@@ -10528,7 +10533,8 @@ export class TaskService {
         token,
         branch,
         baseBranch: task.repository.baseBranch,
-        title: task.title,
+        // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
+        title: this.latestTitled(task).title,
         body,
         number,
         ...(verifying || task.stack ? { draft: true } : {}),
@@ -10673,7 +10679,12 @@ export class TaskService {
     if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
-      const subject = await this.commitSubjectFor(task, this.implementCommitKind(task), task.title);
+      // 待つ間に人が題を変えていれば、新しい題にする（PBI-323）
+      const subject = await this.commitSubjectFor(
+        task,
+        this.implementCommitKind(task),
+        this.latestTitled(task).title,
+      );
       const push = () =>
         this.deps.repos.publish({
           dir,
@@ -12629,6 +12640,15 @@ export class TaskService {
 
   /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
   /**
+   * 待つ間に人がタスクの題を変えていれば（PBI-323）、題だけを最新にしたタスク。公開は始めたときのタスクを持ったまま
+   * 認証・プッシュなどを待つので、コミットのメッセージ・PR の題と本文を作る直前に、題を読み直す。
+   */
+  private latestTitled(task: Task): Task {
+    const title = this.tasks.get(task.id)?.title;
+    return title === undefined || title === task.title ? task : { ...task, title };
+  }
+
+  /**
    * 人が、タスクの詳細でタスクの題を変える（PBI-323）。中止したタスク（以降の操作は受け付けない）のほかは、状態を問わない
    * （実行中・承認待ち・一時停止中・終わったタスクも変えられる）。今の実行は止めず、この後に題を使うもの（工程の指示・コミット・通知・PR の本文など）から使う。
    * すでに作った PR の題は書き換えない。空・長すぎる題は入力の誤り、今と同じ題は理由を示して断る。
@@ -12641,9 +12661,11 @@ export class TaskService {
     if (task.title === title) throw new InvalidOperationError(message("title.unchanged"));
     // 題にある PR のリンクは、レビュー・引き継ぎの対象を決める（referencedPullRequest）。題を変えて対象の PR が変わる・
     // 無くなると、途中から別の PR を扱うことになるので断る（PR から取り込んだタスクは、取り込んだ PR が対象なので問わない）
-    if (task.repository && task.source?.kind !== "github_pull_request") {
-      const before = pullRequestInText(task.repository.url, `${task.title}\n${task.body}`);
-      const after = pullRequestInText(task.repository.url, `${title}\n${task.body}`);
+    // 作業するリポジトリを用意する前（作成の直後・準備に失敗した後）も、決まっているリポジトリ（repo）で確かめる
+    const repoUrl = task.repository?.url ?? task.repo ?? task.source?.repo;
+    if (repoUrl && task.source?.kind !== "github_pull_request") {
+      const before = pullRequestInText(repoUrl, `${task.title}\n${task.body}`);
+      const after = pullRequestInText(repoUrl, `${title}\n${task.body}`);
       if (before?.number !== after?.number) {
         throw new InvalidOperationError(
           message("title.pullRequestChanged", { number: before?.number ?? after?.number ?? 0 }),

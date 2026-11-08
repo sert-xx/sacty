@@ -86,6 +86,40 @@ describe("タスクの詳細の題を変える", () => {
     expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("決済API");
   });
 
+  it("編集中にほかの所で題が変わっても、フォームを閉じず、入力した題を消さない（PR #330 レビュー指摘）", async () => {
+    await render(h(TaskTitle, { key: "t1", taskId: "t1", title: "決済API", editable: true }));
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "入力中の題");
+    // 画面の自動の更新で、新しい題が届く（タスクの詳細と同じく、key はタスクの ID）
+    await render(
+      h(TaskTitle, { key: "t1", taskId: "t1", title: "トリアージの題", editable: true }),
+    );
+    expect(q("form")).not.toBeNull();
+    expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("入力中の題");
+    const cancel = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "やめる",
+    );
+    await act(async () => cancel?.click());
+    expect(q("h1")?.textContent).toBe("トリアージの題");
+  });
+
+  it("断られた後に閉じて開き直すと、前の理由を出さない（PR #330 レビュー指摘）", async () => {
+    renameTaskAction.mockResolvedValueOnce({ message: "タスクの題は変わっていません。" });
+    await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: true }));
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    await submit();
+    expect(q('[role="alert"]')?.textContent).toBe("タスクの題は変わっていません。");
+    await act(async () =>
+      (q<HTMLInputElement>("input[name=title]") as HTMLInputElement).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    expect(q("form")).toBeNull();
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    expect(q("form")).not.toBeNull();
+    expect(q('[role="alert"]')).toBeNull();
+  });
+
   it("中止したタスク（editable が false）には、題を変える操作を出さない", async () => {
     await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: false }));
     expect(q("h1")?.textContent).toBe("決済API");

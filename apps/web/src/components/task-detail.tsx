@@ -233,9 +233,9 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {/* 変えた後に、入力を新しい題で始める（題が変わったら作り直す） */}
+              {/* 編集中にほかの所で題が変わっても作り直さない（入力した題を消さない） */}
               <TaskTitle
-                key={task.title}
+                key={task.id}
                 taskId={task.id}
                 title={task.title}
                 editable={task.status !== "cancelled"}

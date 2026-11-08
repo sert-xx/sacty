@@ -6267,6 +6267,36 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("作業するリポジトリを用意する前（作成の直後）も、題の PR のリンクの変更・削除・追加を断る（PR #330 レビュー指摘）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, []);
+      service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const linked = service.createTask({
+        projectId: "default",
+        title: "https://github.com/acme/app/pull/12 をレビューする",
+      });
+      expect(service.get(linked.id)?.task.repository).toBeUndefined();
+      for (const title of ["https://github.com/acme/app/pull/13 をレビューする", "レビューする"]) {
+        expect(() => service.renameTask(linked.id, { title })).toThrow(
+          new InvalidOperationError(message("title.pullRequestChanged", { number: 12 })),
+        );
+      }
+      const plain = service.createTask({ projectId: "default", title: "決済API" });
+      expect(() =>
+        service.renameTask(plain.id, { title: "https://github.com/acme/app/pull/13 を直す" }),
+      ).toThrow(new InvalidOperationError(message("title.pullRequestChanged", { number: 13 })));
+      // 別のリポジトリの PR のリンクは、対象を決めないので変えられる
+      expect(
+        service.renameTask(plain.id, { title: "https://github.com/acme/other/pull/1 を参考に直す" })
+          .title,
+      ).toBe("https://github.com/acme/other/pull/1 を参考に直す");
+      activity.close();
+    });
+
     it("API で変えられ、空の題は 400、同じ題は 409 で理由を返す", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(activity, [out("# 要求要件")]);
@@ -12831,6 +12861,29 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await drain(service);
       expect(pulls.calls).toHaveLength(1);
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("プッシュの途中に人が題を変えたら、作る PR の題と本文は新しい題にする（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      repos.publishGate = gate.promise;
+      const { activity, service, pulls, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const before = service.get(id)?.task.title ?? "";
+      const publishing = service.runNext(id);
+      await repos.publishStarted.promise;
+      service.renameTask(id, { title: "途中で変えた題" });
+      gate.resolve();
+      await publishing;
+      expect(pulls.calls).toHaveLength(1);
+      expect(pulls.calls[0]?.title).toBe("途中で変えた題");
+      expect(pulls.calls[0]?.body).toContain("途中で変えた題");
+      expect(pulls.calls[0]?.body).not.toContain(`「${before}」`);
       activity.close();
     });
 

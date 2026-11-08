@@ -11,8 +11,10 @@ import { useMessages } from "@/i18n/client";
 const initial: RenameTaskState = {};
 
 /**
- * タスクの詳細の題と、題を変える操作（PBI-323）。中止したタスク（editable が false）のほかは、状態を問わず変えられる。入力は制御したまま持つ（断られたときも、
- * 自動の更新でも、入力した題を消さない）。変えられたら入力を閉じる。空・長すぎる題・同じ題は、デーモンが理由を示して断る。
+ * タスクの詳細の題と、題を変える操作（PBI-323）。中止したタスク（editable が false）のほかは、状態を問わず変えられる。
+ * 入力は開いたときの題から始め、開いている間は、ほかの所で題が変わっても（トリアージ・別の画面）入力した題を消さない。
+ * フォームは閉じると外れるので、開き直すと作り直され、前に開いたときの断られた理由を残さない。変えられたら入力を閉じる。空・長すぎる題・同じ題は、
+ * デーモンが理由を示して断る。
  */
 export function TaskTitle({
   taskId,
@@ -24,17 +26,8 @@ export function TaskTitle({
   editable: boolean;
 }) {
   const m = useMessages().task.rename;
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(title);
-  const [state, formAction, pending] = useActionState(
-    async (prev: RenameTaskState, formData: FormData) => {
-      const result = await renameTaskAction(prev, formData);
-      if (!result.message) setEditing(false);
-      return result;
-    },
-    initial,
-  );
-  if (!editing || !editable) {
+  const [editing, setEditing] = useState<string | undefined>(undefined);
+  if (editing === undefined || !editable) {
     // 題・状態の並び（見出しの親）は変えないよう、包まずに出す
     return (
       <>
@@ -48,8 +41,7 @@ export function TaskTitle({
             title={m.edit}
             data-testid="task-title-edit"
             onClick={() => {
-              setValue(title);
-              setEditing(true);
+              setEditing(title);
             }}
           >
             <PencilIcon aria-hidden />
@@ -58,6 +50,38 @@ export function TaskTitle({
       </>
     );
   }
+  return (
+    <TaskTitleForm
+      taskId={taskId}
+      title={title}
+      start={editing}
+      onClose={() => setEditing(undefined)}
+    />
+  );
+}
+
+function TaskTitleForm({
+  taskId,
+  title,
+  start,
+  onClose,
+}: {
+  taskId: string;
+  title: string;
+  start: string;
+  onClose: () => void;
+}) {
+  const m = useMessages().task.rename;
+  // 入力は制御したまま持つ（断られたときも、自動の更新でも、入力した題を消さない）
+  const [value, setValue] = useState(start);
+  const [state, formAction, pending] = useActionState(
+    async (prev: RenameTaskState, formData: FormData) => {
+      const result = await renameTaskAction(prev, formData);
+      if (!result.message) onClose();
+      return result;
+    },
+    initial,
+  );
   const id = "task-title-input";
   return (
     <form
@@ -77,7 +101,7 @@ export function TaskTitle({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setEditing(false);
+            if (e.key === "Escape") onClose();
           }}
           maxLength={TASK_TITLE_MAX}
           required
@@ -93,7 +117,7 @@ export function TaskTitle({
           variant="outline"
           disabled={pending}
           className="min-h-9"
-          onClick={() => setEditing(false)}
+          onClick={onClose}
         >
           {m.cancel}
         </Button>

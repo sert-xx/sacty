@@ -760,6 +760,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   - リポジトリが候補にあり、概要があれば、`TicketTriaged`（actor は `gatherer`）。
     費用は `InformationGathered` に入れたので、`TicketTriaged` は費用を持たない。
     タスクの題と内容は、書いた題と概要になる。
+    ただし、人がその前に題を変えていれば（`TaskRenamed`。[タスクの題を人が変える](#タスクの題を人が変える)）、題は人が変えたままにする。
   - 決められなかった（リポジトリが空・候補に無い・概要が無い・答えが無い）ら、理由を記録して止める（`ticket.triageFailed`）。
     集めた情報は残す。
     人がリポジトリを選んで再開でき、再開するとチケットのトリアージ（`triageTicket`）だけをやり直す（集め直さない）。
@@ -954,18 +955,20 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 今と同じ題（`title.unchanged`）
   - 題にある PR のリンク（レビュー・既存の PR の引き継ぎの対象。`referencedPullRequest`）が変わる・無くなる・新しくできる（`title.pullRequestChanged`）。
     PR から取り込んだタスクは、取り込んだ PR が対象なので問わない。
+    作業するリポジトリを用意する前（作成の直後・準備に失敗した後）も、決まっているリポジトリ（`repo`・取り込み元の `source.repo`）の PR で確かめる。
 - 変えたら `TaskRenamed`（`from`・`to`。actor は `person`）を足す。
   投影はタスクの `title` を `to` にし、`titleChange` に最後の変更（`from`・`to`・時刻）を持つ。
   チケットのトリアージ（`TicketTriaged`）は、人が変えた題を書き換えない。
 - 変えた題は、この後に題を使うものから使う（工程の指示・コミットのメッセージ・通知・PR の本文の更新・書き出しなど）。
   今の実行は止めない。
+  実装の PR の公開と、PR の向き先の付け替えは、始めたときのタスクを持ったまま待つので、コミットのメッセージ・作る PR の題・PR の本文を作る直前に題を読み直す（`latestTitled`）。
 - すでに作った PR の題は書き換えない（PR の更新は本文と向き先だけ）。
   ブランチ名はタスクの ID から作るので、題を変えても変わらない。
 - 画面は、題の横の「題を変える」で、今の題を入れた入力を開く（`TaskTitle`）。
   断られたら理由を出し、入力した題は消さない。
   作業履歴は、誰が・何から何に変えたかを出す。
 
-コード: `apps/daemon/src/service.ts`（`renameTask`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`
+コード: `apps/daemon/src/service.ts`（`renameTask`・`latestTitled`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`
 
 ## 「PR作成」の工程があった版のタスク
 
