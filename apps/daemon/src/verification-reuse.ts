@@ -164,10 +164,21 @@ export function partialTestsOnly(
   testCommand?: string,
 ): boolean {
   if (!record?.commands.some((c) => c.kind === "test" && c.coverage === "partial")) return false;
-  if (fullTestsRecorded(record)) return false;
+  return !fullRunRecorded(record, testCommand);
+}
+
+/**
+ * 記録に、最終レビューのテストのコマンドの全体の結果として使い回せるものがあるか（PBI-316）。テストの全件（fullTestsRecorded）か、
+ * testCommand と同じコマンドを全体（coverage が full）で実行した記録（lint などテスト以外の検証のコマンドのとき）。
+ */
+export function fullRunRecorded(
+  record: VerificationRecord | undefined,
+  testCommand?: string,
+): boolean {
+  if (fullTestsRecorded(record)) return true;
   const command = testCommand?.trim();
-  return !(
-    command && record.commands.some((c) => c.coverage === "full" && c.command.trim() === command)
+  return Boolean(
+    command && record?.commands.some((c) => c.coverage === "full" && c.command.trim() === command),
   );
 }
 

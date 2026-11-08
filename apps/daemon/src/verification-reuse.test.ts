@@ -12,6 +12,7 @@ import {
 } from "./prompts.js";
 import {
   extractVerificationRecord,
+  fullRunRecorded,
   fullTestsRecorded,
   partialTestsOnly,
   reuseVerificationLines,
@@ -446,6 +447,13 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     expect(partialTestsOnly({ commands: [lint, related] }, " yamllint . ")).toBe(false);
     expect(partialTestsOnly({ commands: [lint, related] }, "make test")).toBe(true);
     expect(partialTestsOnly({ commands: [lint, related] })).toBe(true);
+    // CI の結果の前の最終レビューの記録にも使う：テストの全件か、テストのコマンドと同じコマンドの全体の結果
+    expect(fullRunRecorded({ commands: [fullTest] })).toBe(true);
+    expect(fullRunRecorded({ commands: [lint] }, "yamllint .")).toBe(true);
+    expect(fullRunRecorded({ commands: [lint] }, "make test")).toBe(false);
+    expect(fullRunRecorded({ commands: [lint] })).toBe(false);
+    expect(fullRunRecorded({ commands: [related] }, related.command)).toBe(false);
+    expect(fullRunRecorded(undefined, "yamllint .")).toBe(false);
     // 関係するテストだけの記録は、コマンドが同じでも使い回せない
     expect(partialTestsOnly({ commands: [related] }, related.command)).toBe(true);
   });
@@ -495,6 +503,16 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
         implementVerification: mixed,
       }),
     ).toContain(line);
+    // CI の結果の前の最終レビューが、テストのコマンドと同じコマンドを全体で実行していれば、使い回させる
+    expect(
+      buildFinalReviewPrompt(implementTask(), "diff", {
+        testCommand: "yamllint .",
+        implementVerification: { commands: [related] },
+        reviewBeforeCiVerification: {
+          commands: [{ ...fullTest, kind: "lint", command: "yamllint .", by: "guardian" }],
+        },
+      }),
+    ).not.toContain(line);
   });
 
   it("全件の結果が無いのに、テストを実装の工程から使い回したと申告したら、判定として扱わない", () => {

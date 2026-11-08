@@ -13214,6 +13214,66 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("実装の工程の記録が関係するテストだけでも、CI の結果の前の最終レビューがテストのコマンドと同じコマンドを全体で実行していれば、し直す最終レビューはその結果を使い回せる（PBI-316）", async () => {
+        const partial = block({
+          "sacty-verification": {
+            commands: [
+              {
+                kind: "test",
+                command: "npm test -- pay.test.ts",
+                coverage: "partial",
+                note: "関係するテストだけ",
+                status: "passed",
+              },
+            ],
+          },
+        });
+        // CI の結果の前の最終レビューは、テストのコマンドそのもの（このタスクでは npm test）を全体で実行した（テスト以外の検証として記録）
+        const sameCommand = block({
+          "sacty-verification": {
+            commands: [
+              {
+                kind: "lint",
+                command: "npm test",
+                coverage: "full",
+                status: "passed",
+                by: "guardian",
+              },
+            ],
+          },
+        });
+        const reused = review();
+        const { activity, service, ci, id } = await drafted([
+          implement(["# 実装の説明", partial].join("\n\n")),
+          out([review().output, sameCommand].join("\n\n")),
+          out(
+            (reused.kind === "completed" ? reused.output : "").replace(
+              '"output":"2 passed"',
+              '"output":"2 passed","reusedFrom":"self-review"',
+            ),
+          ),
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装（関係するテストだけ）
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー
+        expect(service.get(id)?.task.testCommand).toBe("npm test");
+        expect(service.get(id)?.task.implementVerification?.commands[0]?.coverage).toBe("partial");
+        ci.snap = failing();
+        ci.failuresList = [
+          { workflow: "CI", job: "test", conclusion: "failure", excerpt: "1 failed" },
+        ];
+        await settleCi(service);
+        await settleCi(service);
+        await service.runNext(id); // CI の結果を見た最終レビュー
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
+        activity.close();
+      });
+
       it("CI を待つ間に不合格なら、CI を待たずに実装に戻し、やり直した実装で PR を更新して CI を待ち直す", async () => {
         const { activity, service, executor, ci, pulls, id } = await drafted([
           implement("# 実装 v1"),

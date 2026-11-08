@@ -128,7 +128,7 @@ import { localForwards, type StartedService } from "./services.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 import {
   extractVerificationRecord,
-  fullTestsRecorded,
+  fullRunRecorded,
   guardianVerificationRecordLines,
   implementVerificationRecordLines,
   partialTestsOnly,
@@ -4117,7 +4117,7 @@ export function buildFinalReviewPrompt(
           // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せるので出さない
           // テスト以外の検証（lint など）だけの記録は、今までどおり使い回させる（テストの結果が関係するテストだけのときに限る）
           partialTestsOnly(options.implementVerification, testCommand) &&
-            !fullTestsRecorded(options.reviewBeforeCiVerification),
+            !fullRunRecorded(options.reviewBeforeCiVerification, testCommand),
         )
       : []),
     ...reuse,

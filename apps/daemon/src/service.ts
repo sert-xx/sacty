@@ -473,7 +473,7 @@ import {
 import type { UpdateStatus } from "./update-check.js";
 import {
   extractVerificationRecord,
-  fullTestsRecorded,
+  fullRunRecorded,
   partialTestsOnly,
   withoutStepDocuments,
 } from "./verification-reuse.js";
@@ -9605,7 +9605,7 @@ export class TaskService {
           // 全件を実行していれば、その使い回しは認める（reusedFrom に、その段を表す値が無いため）
           previousPartialTestsOnly:
             partialTestsOnly(current.implementVerification, testCommand) &&
-            !fullTestsRecorded(reviewedBefore),
+            !fullRunRecorded(reviewedBefore, testCommand),
         },
       );
     // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
