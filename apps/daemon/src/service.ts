@@ -11571,13 +11571,12 @@ export class TaskService {
 
   /**
    * 依存のある子タスク（blocked）を、いま始められるか（PBI-27・PBI-317）。始められるなら TaskUnblocked の payload、まだ
-   * 待つなら undefined。決められなければ待つ。
+   * 待つなら undefined。確かめられなければ待つ。
    * - 依存先がすべてベースブランチに入った（`landed`）なら、ベースブランチから始める（重ねない）
    * - 依存先のうち1つ（X）が重ねられ（最終レビューに合格して承認待ち。`reviewedPullRequest`）、子と同じリポジトリで、
-   *   ほかの依存先がすべて、X の合格したコミットに入っていると確かめられる（X が待った依存先で、ベースブランチに入ったか、
-   *   X が重ねている連なりにある）なら、X の PR のブランチの合格したコミットに重ねて始める
-   * - それ以外（重ねる先を1つに決められない・別のリポジトリ・合格していない）は、待つ。たとえば、互いに依存しない A・B に
-   *   依存する子は、A がマージされても B の合格したコミットには A の変更が入っていないので、B もマージされるまで待つ
+   *   ほかの依存先の今の変更がすべて X の合格したコミットに入っていると、記録から確かめられる（`covers`）なら、X の PR の
+   *   ブランチの合格したコミットに重ねて始める
+   * - それ以外は待つ
    */
   private blockedStart(
     parent: Task,
@@ -11593,17 +11592,38 @@ export class TaskService {
       if (!dep || !reviewed || dep.status !== "awaiting_approval") continue;
       if (dep.gate?.step !== "implement" || !dep.repository) continue;
       if (!repo || this.taskRepo(dep) !== repo) continue;
-      const waited = this.waitedOn(parent, id);
-      const chain = this.stackChain(dep);
-      const covered = child.dependsOn.every(
-        (d) => d === id || (waited.has(d) && (this.landed(parent, d) || chain.includes(d))),
-      );
-      if (!covered) continue;
+      if (!child.dependsOn.every((d) => d === id || this.covers(parent, dep, d))) continue;
       return {
         stackedOn: { taskId: dep.id, branch: reviewed.branch, commit: reviewed.commit },
       };
     }
     return undefined;
+  }
+
+  /**
+   * 承認待ちの X の合格したコミットに、依存先の子タスク d の今の変更が入っていると、記録から確かめられるか（PBI-317）。
+   * - d がベースブランチに入った：X が d を（依存の依存も含めて）待ち、一度も重ねずにベースブランチから始めたとき（X を
+   *   始めた時点で、d はもうベースブランチに入っていた）。X が重ねて始めたなら、確かめられない（重ねた先の古い内容から
+   *   作ったかもしれない）
+   * - d がまだ入っていない：X から重ねた先をたどって d に着き、各段の作業領域のベースが、1つ下の依存先の今の合格した
+   *   コミットと同じとき（下の依存先が直されて合格し直したのに、まだ取り込んでいなければ、確かめられない）
+   */
+  private covers(parent: Task, x: Task, d: string): boolean {
+    if (this.landed(parent, d)) {
+      return this.waitedOn(parent, x.id).has(d) && !x.stack && x.stackedBase === undefined;
+    }
+    const seen = new Set<string>();
+    let current = x;
+    while (current.stack && !seen.has(current.id)) {
+      seen.add(current.id);
+      const below = this.tasks.get(current.stack.taskId);
+      const reviewed = below && reviewedPullRequest(below);
+      if (!below || !reviewed || !current.repository) return false;
+      if (workBaseCommit(current.repository, current.baseMerge) !== reviewed.commit) return false;
+      if (below.id === d) return true;
+      current = below;
+    }
+    return false;
   }
 
   /**
@@ -11653,14 +11673,19 @@ export class TaskService {
 
   /**
    * 依存先の PR に重ねた子タスクで、sacty が進めることがあるか（PBI-317）。
-   * - merged：重ねていた依存先の PR がマージされた（起点のブランチを付け替える）
+   * - merged：重ねていた依存先の PR が、ベースブランチにマージされた（起点のブランチを付け替える。依存先も重ねたまま先に
+   *   マージされたときは、その依存先が付け替わるまで待つ）
    * - cancelled：重ねている依存先の連なりに、中止されたものがある（子タスクを止める）
    * どちらも記録するだけ（GitHub の PR の向き先の付け替えは、PR の確認で行う。`retargetDue`）。
    */
   private stackAction(task: Task): "merged" | "cancelled" | undefined {
     if (task.status === "cancelled") return undefined;
     const dep = task.stack && this.tasks.get(task.stack.taskId);
-    if (dep?.repository && dep.status !== "cancelled" && implementationMerged(dep)) return "merged";
+    // 依存先も重ねたまま先にマージされた（変更は、依存先が重ねた先の PR のブランチに入った）ときは、付け替えずに待つ。
+    // 重ねた先がマージされて、依存先が付け替わったら付け替える（重ね直すと、作業領域のベースと取り込む先が合わない）
+    if (dep?.repository && !dep.stack && dep.status !== "cancelled" && implementationMerged(dep)) {
+      return "merged";
+    }
     if (
       task.stack &&
       this.cancelledInStack(task) &&
@@ -11693,22 +11718,13 @@ export class TaskService {
     const action = this.stackAction(task);
     if (action === "merged" && task.stack) {
       const dep = this.mustGet(task.stack.taskId);
-      // 依存先の PR が入ったブランチ。依存先もまだ重ねていた（人がドラフトを外して先にマージした）なら、その先に重ね直す
-      const baseBranch = dep.repository?.baseBranch ?? dep.stack?.branch;
+      // 依存先の PR が入ったブランチ（依存先は、もう重ねていない）
+      const baseBranch = dep.repository?.baseBranch;
       if (!baseBranch) return;
       this.append(task, [
         {
           actor: "sacty",
-          event: {
-            type: "StackedDependencyMerged",
-            payload: {
-              taskId: dep.id,
-              baseBranch,
-              ...(dep.stack
-                ? { stackedOn: { taskId: dep.stack.taskId, branch: dep.stack.branch } }
-                : {}),
-            },
-          },
+          event: { type: "StackedDependencyMerged", payload: { taskId: dep.id, baseBranch } },
         },
       ]);
       return;

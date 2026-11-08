@@ -828,16 +828,15 @@ const TaskUnblocked = z.object({
 });
 
 /**
- * 重ねていた依存先（taskId）の実装の PR がマージされた（PBI-317）。子タスクの起点のブランチ（PR の向き先・取り込む元）を、
- * 依存先の PR が入ったブランチ（baseBranch）に付け替える。依存先もまだ別の依存先に重ねていた（人がドラフトを外して先に
- * マージした）なら、その依存先に重ね直す（stackedOn）。無ければ、ベースブランチに戻る（重ねていない子タスクと同じ）。
+ * 重ねていた依存先（taskId）の実装の PR が、ベースブランチ（baseBranch）にマージされた（PBI-317）。子タスクの起点のブランチ
+ * （PR の向き先・取り込む元）を baseBranch に付け替え、重ねるのをやめる（重ねていない子タスクと同じ）。依存先がまだ別の
+ * 依存先に重ねたまま先にマージされたときは記録しない（重ねた先がマージされるまで待つ）。
  */
 const StackedDependencyMerged = z.object({
   type: z.literal("StackedDependencyMerged"),
   payload: z.object({
     taskId: z.string().min(1),
     baseBranch: z.string().min(1),
-    stackedOn: z.object({ taskId: z.string().min(1), branch: z.string().min(1) }).optional(),
   }),
 });
 

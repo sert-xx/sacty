@@ -23193,6 +23193,149 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     activity.close();
   });
 
+  it("A→B→C と重ね、A が合格し直した後に B を A より先にマージしても、C を A に重ね直さず、A がマージされてから取り込む（B の変更を失わない）", async () => {
+    const { activity, service, repos, pulls, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+        { key: "C", title: "c", body: "", dependsOn: ["B"] },
+      ],
+      [
+        implement("# A"),
+        review(),
+        implement("# B"),
+        review(),
+        implement("# C"),
+        review(),
+        implement("# A v2"),
+        review(["implement-1-1"]),
+        implement("# C v2"),
+        review(["implement-1-1"]),
+        implement("# C v3"),
+        review(["implement-1-1", "implement-2-1"]),
+      ],
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await drain(service);
+    const b1 = taskOf(service, b).pullRequest?.commit ?? "";
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: b, commit: b1 });
+    // A を直して合格し直す（A2）。B はまだ A1 の上のまま
+    service.requestChanges(a, { step: "implement", submission: 1, comments: ["直す"] });
+    await settle(service, a);
+    const a2 = taskOf(service, a).pullRequest?.commit ?? "";
+    expect(taskOf(service, a).gate).toEqual({ step: "implement", submission: 2 });
+    // 人が B のドラフトを外し、A より先にマージする（B の変更は A の PR のブランチに入る）
+    merge(pulls, service, b);
+    await service.checkPullRequests();
+    await drain(service);
+    expect(taskOf(service, b).pullRequestState).toBe("merged");
+    // C は A に重ね直さない（起点は B1 のまま。B1 を共通の祖先にして、B を含まない A2 を取り込まない）
+    expect(types(service, c)).not.toContain("StackedDependencyMerged");
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: b, commit: b1 });
+    service.requestChanges(c, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await drain(service);
+    expect(taskOf(service, c).gate).toEqual({ step: "implement", submission: 2 });
+    expect(repos.merges.filter((m) => m.target === a2)).toEqual([]);
+    expect(repos.merges).toEqual([]);
+    // A がマージされると、B を付け替え、続けて C もベースブランチに付け替える。次のやり直しで、B1 を共通の祖先にして
+    // ベースブランチ（A と B の変更が入った）を取り込む
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    expect(taskOf(service, b).stack).toBeUndefined();
+    expect(taskOf(service, c).stack).toBeUndefined();
+    expect(taskOf(service, c).repository?.baseBranch).toBe("main");
+    repos.remote.main = "f".repeat(40);
+    service.requestChanges(c, { step: "implement", submission: 2, comments: ["もう一度"] });
+    await drain(service);
+    expect(repos.merges).toMatchObject([{ base: b1, target: "f".repeat(40) }]);
+    activity.close();
+  });
+
+  it("重ねていた依存先が直されてマージされた後は、まだ取り込んでいない合格したコミットに重ねない（ベースブランチに入るまで待つ）", async () => {
+    // C は A と B に、B は A に依存する
+    const { activity, service, pulls, id, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+        { key: "C", title: "c", body: "", dependsOn: ["A", "B"] },
+      ],
+      [
+        implement("# A"),
+        review(),
+        implement("# B"),
+        review(),
+        implement("# A v2"),
+        review(["implement-1-1"]),
+        implement("# C"),
+        review(),
+      ],
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await settle(service, a);
+    await settle(service, id); // B を A1 に重ねて始める
+    await settle(service, b); // B1（A1 の上）で承認待ち。C はまだ見ない
+    expect(taskOf(service, b).stack).toMatchObject({ taskId: a });
+    // A を直して A2 で合格し直し、マージする。B は承認待ちのまま（A2 を取り込んでいない）
+    service.requestChanges(a, { step: "implement", submission: 1, comments: ["直す"] });
+    await settle(service, a);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await settle(service, b); // B の起点をベースブランチに付け替える
+    expect(taskOf(service, b).stack).toBeUndefined();
+    expect(taskOf(service, b).gate).toEqual({ step: "implement", submission: 1 });
+    // A は入ったが、B1 に A2 が入っているとは確かめられないので、C は B に重ねずに待つ
+    await drain(service);
+    expect(taskOf(service, c).status).toBe("blocked");
+    // B もマージされたら、ベースブランチから始める
+    merge(pulls, service, b);
+    await service.checkPullRequests();
+    await drain(service);
+    const unblocked = service.get(c)?.activity.find((e) => e.type === "TaskUnblocked");
+    expect(unblocked?.payload).toEqual({});
+    activity.close();
+  });
+
+  it("重ねた先の依存先が合格し直したのに、まだ取り込んでいなければ、その上に重ねない（取り込んで合格し直したら重ねる）", async () => {
+    // C は A と B に、B は A に依存する
+    const { activity, service, id, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+        { key: "C", title: "c", body: "", dependsOn: ["A", "B"] },
+      ],
+      [
+        implement("# A"),
+        review(),
+        implement("# B"),
+        review(),
+        implement("# A v2"),
+        review(["implement-1-1"]),
+        implement("# B v2"),
+        review(["implement-1-1"]),
+        implement("# C"),
+        review(),
+      ],
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await settle(service, a);
+    await settle(service, id);
+    await settle(service, b);
+    service.requestChanges(a, { step: "implement", submission: 1, comments: ["直す"] });
+    await settle(service, a);
+    const a2 = taskOf(service, a).pullRequest?.commit;
+    // B1 は A1 の上。A2 を取り込んでいないので、C は待つ
+    await settle(service, id);
+    expect(taskOf(service, c).status).toBe("blocked");
+    // B を差し戻すと A2 を取り込んで合格し直す。そうしたら C を B に重ねる
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await settle(service, b);
+    expect(taskOf(service, b).baseMerge).toMatchObject({ commit: a2 });
+    await drain(service);
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: b });
+    activity.close();
+  });
+
   it("依存先が重ねの連なり（C は A と B に、B は A に依存）なら、いちばん後の依存先に重ねる", async () => {
     const { activity, service, ids } = await splitParent(
       [

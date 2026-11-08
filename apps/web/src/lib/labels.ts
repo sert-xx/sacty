@@ -883,7 +883,7 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           )
         : e.TaskUnblocked;
     case "StackedDependencyMerged":
-      return e.StackedDependencyMerged(event.payload.baseBranch, !!event.payload.stackedOn);
+      return e.StackedDependencyMerged(event.payload.baseBranch);
     case "PullRequestRetargeted":
       return e.PullRequestRetargeted(
         event.payload.number,

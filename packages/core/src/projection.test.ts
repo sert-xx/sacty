@@ -5783,20 +5783,6 @@ describe("依存先の PR に重ねた子タスク（PBI-317）", () => {
       baseBranch: "main",
       baseCommit: stackedOn.commit,
     });
-    // 依存先がまだ別の依存先に重ねていたなら、そこに重ね直す
-    const restacked = project([
-      ...stackedEvents(),
-      merge("dep", {
-        baseBranch: "sacty/first",
-        stackedOn: { taskId: "first", branch: "sacty/first" },
-      }),
-    ]).get("c") as Task;
-    expect(restacked.stack).toEqual({
-      taskId: "first",
-      branch: "sacty/first",
-      commit: stackedOn.commit,
-    });
-    expect(restacked.repository?.baseBranch).toBe("sacty/first");
   });
 
   it("作業領域を用意する前に依存先の PR がマージされたら、付け替えた起点のブランチを持つ（用意したときの起点になる）", () => {

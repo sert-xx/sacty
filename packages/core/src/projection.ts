@@ -2766,8 +2766,8 @@ export function applyEvent(
       if (!stack || stack.taskId !== event.payload.taskId) {
         throw new ActivityIntegrityError(event, "the task is not stacked on the dependency");
       }
-      const { stackedOn, baseBranch } = event.payload;
-      task.stack = stackedOn ? { ...stackedOn, commit: stack.commit } : undefined;
+      const { baseBranch } = event.payload;
+      task.stack = undefined;
       // 作業領域をまだ用意していなければ、初めて用意するときの起点のブランチとして持つ
       task.stackedBase = baseBranch;
       if (task.repository) task.repository = { ...task.repository, baseBranch };

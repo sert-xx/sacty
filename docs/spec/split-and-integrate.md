@@ -41,8 +41,10 @@
   - それ以外
 - 始め方：
   - 依存先がすべてベースブランチに入ったなら、ベースブランチから始める（`TaskUnblocked`。重ねない）。
-  - 依存先のうち1つ（X）が重ねられ、ほかの依存先がすべて X の合格したコミットに入っていると確かめられるなら、X に重ねて始める（`TaskUnblocked` の `stackedOn`。X の ID・PR のブランチ・合格したコミット）。
-    入っていると確かめられるのは、X が（依存の依存も含めて）待った依存先（`waitedOn`）で、ベースブランチに入ったか、X が重ねている連なり（X から重ねた先をたどった連なり。`stackChain`）にあるもの。依存先が2つ以上のときも、この規則で起点を決める。
+  - 依存先のうち1つ（X）が重ねられ、ほかの依存先の今の変更がすべて X の合格したコミットに入っていると、記録から確かめられるなら、X に重ねて始める（`TaskUnblocked` の `stackedOn`。X の ID・PR のブランチ・合格したコミット）。依存先が2つ以上のときも、この規則で起点を決める。
+    確かめ方（`covers`）は次のとおり。どれにも当たらなければ、確かめられないものとして待つ。
+    - ベースブランチに入った依存先：X がその依存先を（依存の依存も含めて）待ち（`waitedOn`）、一度も重ねずにベースブランチから始めた（`Task.stack`・`Task.stackedBase` が無い）とき。X を始めた時点で、その依存先はもうベースブランチに入っていた。X が重ねて始めたなら、重ねた先の古い内容から作ったかもしれないので、確かめられない（X もベースブランチに入るまで待つ）。
+    - まだ入っていない依存先：X から重ねた先をたどってその依存先に着き、各段の作業領域のベース（`workBaseCommit`）が、1つ下の依存先の今の合格したコミットと同じとき。下の依存先が直されて合格し直したのに、まだ取り込んでいなければ、確かめられない（取り込んで合格し直すまで待つ）。
   - それ以外（重ねる先を1つに決められない・別のリポジトリ・合格していない）は、待つ。
     たとえば、互いに依存しない A・B に依存する子タスクは、A がマージされても、B の合格したコミットには A の変更が入っていないので B に重ねず、B もベースブランチに入るまで待つ。
 - 起点：重ねた子タスク（`Task.stack`）は、初めて作業領域を用意するとき、X の PR のブランチを clone して、合格したコミットにする（`prepareRepositoryNow`）。
@@ -55,7 +57,8 @@
   ドラフトにできなければ、承認待ちにせずに止める（`pr.stackDraftFailed`）。リポジトリがドラフトを使えなくても、ドラフトでない PR にしない（`PullRequests.upsert` の `requireDraft`。作れずに `pr.failed` で止める）。更新した PR をドラフトに戻せない・戻した答えがドラフトでないときも止める。再開すると、PR を作る・更新するところからやり直す。
   PR を更新するときも向き先を送り（`PullRequests.upsert` の `retarget`）、向き先を `PullRequestPublished` の `baseBranch` に記録する。重ねていないタスクの PR には記録しない（向き先は作るときに決めたベースブランチのまま）。
   本文の先頭（テンプレートに沿わせるときは目的の先頭）に、X の PR の番号・URL・子タスクの題と、X より先にマージしないこと、X がマージされたら sacty が向き先をベースブランチに付け替えてドラフトを外すことを書く（`stackedBodyLines`。長さの上限でも省かない）。
-- X の PR がマージされたら（`stackAction` の `merged`）：子タスクに `StackedDependencyMerged` を記録し、起点のブランチを、X の PR が入ったブランチ（X の起点のブランチ）に付け替える。X もまだ別の依存先に重ねていた（人がドラフトを外して先にマージした）なら、その依存先に重ね直す（`stackedOn`）。そうでなければ重ねるのをやめる。
+- X の PR がマージされたら（`stackAction` の `merged`）：子タスクに `StackedDependencyMerged` を記録し、起点のブランチを、X の PR が入ったブランチ（X の起点のブランチ）に付け替えて、重ねるのをやめる。
+  X もまだ別の依存先に重ねたまま、先にマージされた（人がドラフトを外した）ときは、付け替えずに待つ（X の変更は、X が重ねた先の PR のブランチにしか入っていない。重ね直すと、作業領域のベース（X の合格したコミット）と取り込む先（X の変更を含まないことがある）が合わず、取り込みで X の変更が消えうる）。待つ間は、X に合格した PR が無いので取り込まない。X が重ねた先がマージされて X が付け替わったら、この子タスクも付け替える。
   記録した起点のコミット・取り込みは変えないので、次の取り込みで、付け替えた先の最新を、X の合格したコミットを共通の祖先にして取り込む。
   子タスクが完了していても記録する。
 - 承認待ちの PR の向き先の付け替え（`retargetDue`・`retargetPullRequest`）：PR の確認（60秒ごと。`checkPullRequests`）で、承認待ちの子タスクの PR の向き先（記録）が今の起点のブランチと違えば、GitHub の PR の向き先を付け替え、本文を書き直す。重ねるのをやめたなら、ドラフトを外す（検証に通った PR なので）。`PullRequestRetargeted` を記録する。
@@ -72,7 +75,7 @@
 - 状態は作業履歴（`TaskUnblocked` の `stackedOn`・`StackedDependencyMerged`・`PullRequestPublished` の `baseBranch`・`PullRequestRetargeted`・`BaseBranchMerged`）から導くので、デーモンを起動し直しても失わない。
 - 依存の無い子タスク・分割しないタスクには、重ねた先も PR の向き先の記録も無く、振る舞いは変わらない。
 
-コード: `apps/daemon/src/service.ts`（`blockedStart`・`landed`・`waitedOn`・`stackChain`・`cancelledInStack`・`stackAction`・`settleStack`・`retargetDue`・`retargetPullRequest`・`recordsPullRequestBase`・`stackedPullRequest`・`prepareRepositoryNow`・`syncBase`・`publish`・`resume`）、`apps/daemon/src/prompts.ts`（`stackedBodyLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`）、`packages/core/src/events.ts`（`TaskUnblocked`・`StackedDependencyMerged`・`PullRequestRetargeted`）、`packages/core/src/projection.ts`（`stack`・`stackedBase`・`reviewedPullRequest`・`implementationMerged`）
+コード: `apps/daemon/src/service.ts`（`blockedStart`・`landed`・`covers`・`waitedOn`・`stackChain`・`cancelledInStack`・`stackAction`・`settleStack`・`retargetDue`・`retargetPullRequest`・`recordsPullRequestBase`・`stackedPullRequest`・`prepareRepositoryNow`・`syncBase`・`publish`・`resume`）、`apps/daemon/src/prompts.ts`（`stackedBodyLines`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`）、`packages/core/src/events.ts`（`TaskUnblocked`・`StackedDependencyMerged`・`PullRequestRetargeted`）、`packages/core/src/projection.ts`（`stack`・`stackedBase`・`reviewedPullRequest`・`implementationMerged`）
 
 ## 統合レビュー
 
