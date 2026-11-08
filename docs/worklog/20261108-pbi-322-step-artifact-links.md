@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-322
-- PR: #<番号>
+- PR: #329
 - ブランチ: feat/issue-322-step-artifact-links
 - 関係する ADR: なし
 
