@@ -7333,12 +7333,22 @@ export class TaskService {
       const ready = !task.stack;
       if (!unchanged()) return;
       if (ready) {
-        await this.deps.pulls.setDraft({
-          repo: pr.repo,
-          token,
-          number: pr.number,
-          draft: false,
-        });
+        try {
+          await this.deps.pulls.setDraft({
+            repo: pr.repo,
+            token,
+            number: pr.number,
+            draft: false,
+          });
+        } catch (error) {
+          // 答えを受け取れなくても、GitHub ではドラフトが外れているかもしれない。待つ間にタスクが変わったなら、ドラフトに
+          // 戻しておく（変わったタスクは付け替えの対象から外れうるので、次の確認では直らない）。変わっていなければ、次の確認で
+          // やり直す（記録していないので）
+          if (!unchanged()) {
+            await this.redraftAfterRetarget(task.id, pr.repo, token, pr.number, usedSecrets);
+          }
+          throw error;
+        }
       }
       const latest = unchanged();
       if (!latest) {

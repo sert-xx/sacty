@@ -23052,6 +23052,39 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     activity.close();
   });
 
+  it("付け替えで、ドラフトを外す操作の答えを受け取れず、その間にタスクが変わっていたら、ドラフトに戻して記録しない", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    const gate = Promise.withResolvers<void>();
+    pulls.setDraftGate = gate.promise;
+    // GitHub ではドラフトが外れるが、答えを受け取れない
+    pulls.setDraftAnswerLost = "socket hang up";
+    const checking = service.checkPullRequests();
+    await pulls.setDraftStarted.promise;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    pulls.setDraftGate = undefined;
+    gate.resolve();
+    await checking;
+    pulls.setDraftAnswerLost = undefined;
+    expect(pulls.draftChanges).toEqual([
+      { number: 8, draft: false },
+      { number: 8, draft: true },
+    ]);
+    expect(pulls.drafts[8]).toBe(true);
+    expect(types(service, b)).not.toContain("PullRequestRetargeted");
+    expect(taskOf(service, b).pullRequest?.draft).toBe(true);
+    activity.close();
+  });
+
   it("重ねた PR をドラフトにできなければ（ドラフトを使えないリポジトリ・切り替えの失敗）、普通の PR のまま承認待ちにせずに止める", async () => {
     const { activity, service, pulls, ids } = await splitParent(chain, [
       implement("# A の実装"),
