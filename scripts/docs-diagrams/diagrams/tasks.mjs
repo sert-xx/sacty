@@ -224,11 +224,11 @@ export const verify = {
   name: "verify",
   outputs: ["spec"],
   width: 1040,
-  height: 940,
+  height: 1100,
   title: t("実装の検証から承認待ちまで", "From implementation to awaiting approval"),
   desc: t(
-    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作って CI を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行し、変更が無ければ PR を作らずに進み）、ゴールガーディアンが手元のテストと PR の CI の結果から判定する。合格なら sacty がドラフトを外してラベルを付け、承認待ちにする。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
-    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain), opens the implementation PR as a draft, and waits for its CI (on failure it reruns the failed jobs once when it can, and with no changes it goes on without a PR); the goal guardian judges from the tests it runs and the PR's CI. On a pass sacty marks the PR ready, adds the label, and waits for approval. Three failures in a row pause the task, and a person can also move it to review.",
+    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作り（変更が無ければ PR を作らずに進み）、PR の CI を待たずに、ゴールガーディアンが手元のテストで最終レビューする（CI の結果が出ていれば合わせて判定する）。合格したら CI の結果を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行する）、通った・CI が無ければ sacty がドラフトを外してラベルを付け、承認待ちにする。CI が落ちたら、CI の結果を渡して最終レビューをし直す。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
+    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the goal guardian runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, the final review runs again with the CI result. Three failures in a row pause the task, and a person can also move it to review.",
   ),
   items: [
     {
@@ -268,10 +268,10 @@ export const verify = {
       h: 104,
       icon: "clock",
       tone: "amber",
-      title: t("PR の CI を待つ", "Wait for the PR's CI"),
+      title: t("PR の CI が動き出す", "The PR's CI starts"),
       lines: [
-        t("sacty が読む。失敗なら1回再実行", "sacty reads it; on failure, reruns once"),
-        { as: "code", text: "PullRequestCiFinished" },
+        t("結果を待たずに最終レビューへ進む", "Goes on to the final review without waiting"),
+        t("（CI の結果は並べて待つ）", "(the CI result is awaited alongside)"),
       ],
     },
     {
@@ -310,8 +310,8 @@ export const verify = {
       title: t("最終レビュー", "Final review"),
       lines: [
         t("ゴールガーディアンが手元で", "The goal guardian runs the tests"),
-        t("テストを実行し、PR の CI と", "here, and with the PR's CI"),
-        t("合わせて観点ごとに判定する", "judges each viewpoint"),
+        t("テストを実行し、観点ごとに判定", "here and judges each viewpoint"),
+        t("（CI の結果が出ていれば合わせる）", "(with the CI result, if in)"),
       ],
     },
     {
@@ -358,9 +358,24 @@ export const verify = {
     },
     {
       kind: "card",
-      id: "ready",
+      id: "cires",
       x: 40,
       y: 670,
+      w: 300,
+      h: 110,
+      icon: "clock",
+      tone: "amber",
+      title: t("CI の結果を待つ", "Wait for the CI result"),
+      lines: [
+        t("失敗なら1回再実行。出ていれば進む", "Reruns once on failure; goes on if in"),
+        { as: "code", text: "PullRequestCiFinished" },
+      ],
+    },
+    {
+      kind: "card",
+      id: "ready",
+      x: 40,
+      y: 830,
       w: 300,
       h: 110,
       icon: "merge",
@@ -386,7 +401,7 @@ export const verify = {
       kind: "card",
       id: "wait",
       x: 40,
-      y: 840,
+      y: 1000,
       w: 300,
       h: 76,
       icon: "user",
@@ -497,7 +512,7 @@ export const verify = {
     {
       kind: "edge",
       from: "fr",
-      to: "ready",
+      to: "cires",
       fromSide: "b",
       toSide: "t",
       fromOffset: -40,
@@ -507,6 +522,30 @@ export const verify = {
       ],
       label: t("合格", "pass"),
       labelAt: [280, 639],
+    },
+    {
+      kind: "edge",
+      from: "cires",
+      to: "ready",
+      fromSide: "b",
+      toSide: "t",
+      straight: true,
+      label: t("通った・CI 無し", "passed / no CI"),
+      labelAt: [200, 810],
+      labelAnchor: "start",
+    },
+    {
+      kind: "edge",
+      from: "cires",
+      to: "fr",
+      fromSide: "l",
+      toSide: "l",
+      via: [
+        [20, 725],
+        [20, 563],
+      ],
+      label: t("落ちた（結果を渡してやり直す）", "failed (review again with it)"),
+      labelAt: [140, 545],
     },
     {
       kind: "edge",
@@ -532,7 +571,7 @@ export const verify = {
       style: "muted",
       via: [
         [350, 840],
-        [350, 745],
+        [350, 905],
       ],
       toOffset: 20,
       label: t("人の判断", "a person decides"),

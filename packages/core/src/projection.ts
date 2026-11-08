@@ -679,8 +679,9 @@ export type Task = {
    */
   publishPending?: true;
   /**
-   * 最終レビューの前に作った（更新した）実装の PR の CI（PullRequestPublished の verifying）。result が無い間は CI を待っていて、
-   * 最終レビューに進まない。実装をやり直す（実装の AgentRunCompleted）か、前の工程からやり直すと無くなる。
+   * 最終レビューの前に作った（更新した）実装の PR の CI（PullRequestPublished の verifying）。result が無い間は CI を待っている。
+   * 最終レビューは CI を待たずに並べて行い、合格したら result を待つ（reviewedBeforeResult。PBI-314）。実装をやり直す（実装の
+   * AgentRunCompleted）か、最終レビューが不合格か、前の工程からやり直すと無くなる（不合格では、待っている CI だけを捨てる）。
    */
   pullRequestCi?: PullRequestCi;
   /**
@@ -1796,7 +1797,7 @@ export function applyEvent(
       break;
 
     case "PullRequestPublished":
-      // 最終レビューの前に、実装の PR を作った（更新した）。CI を待ってから最終レビューに進む（承認待ちにはしない）
+      // 最終レビューの前に、実装の PR を作った（更新した）。CI を待たずに、並べて最終レビューに進む（承認待ちにはしない。PBI-314）
       if (event.payload.verifying) {
         if (
           task.status !== "idle" ||

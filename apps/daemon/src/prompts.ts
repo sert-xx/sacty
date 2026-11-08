@@ -5785,8 +5785,8 @@ function resultTableLines(task: Task): string[] {
 }
 
 /**
- * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI を待ってから
- * 最終レビューをする）。
+ * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI と並べて
+ * 最終レビューをする。PBI-314）。
  */
 export type PullRequestBodyStage = {
   verifying?: boolean;

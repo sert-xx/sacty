@@ -12966,6 +12966,52 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("CI を待つ間の最終レビューで予算の上限を超えても、合格なら止めず、CI が通ったら承認待ちにする（費用のかからない公開は進める）", async () => {
+        const { activity, service, ci, id } = await drafted([
+          implement("# 実装の説明"),
+          review(undefined, undefined, 1_000_000), // $15（上限を超える）
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー（合格）
+        const reviewed = service.get(id)?.task;
+        expect(reviewed?.budget.usedUsd).toBeGreaterThan(reviewed?.budget.capUsd ?? Infinity);
+        expect(reviewed?.budget.warned).toBe(true);
+        expect(reviewed?.status).toBe("idle");
+        expect(types(service, id)).not.toContain("TaskPaused");
+        ci.snap = passing();
+        await settleCi(service);
+        expect(service.get(id)?.task.publishPending).toBe(true);
+        await service.runNext(id); // ドラフトを外して、承認待ちにする
+        expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+        activity.close();
+      });
+
+      it("CI を待つ間の最終レビューで予算の上限を超えた後に CI が落ちたら、最終レビューをし直す前に予算で止める", async () => {
+        const { activity, service, executor, ci, id } = await drafted([
+          implement("# 実装の説明"),
+          review(undefined, undefined, 1_000_000), // $15（上限を超える）
+          review(),
+        ]);
+        ci.snap = running();
+        await service.runNext(id);
+        await service.runNext(id);
+        await service.runNext(id);
+        expect(service.get(id)?.task.status).toBe("idle");
+        ci.snap = failing();
+        await settleCi(service); // 再実行は頼めない（403）ので、失敗で終わる
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(executor.calls.length).toBe(runs);
+        const stopped = service.get(id)?.task;
+        expect(stopped?.status).toBe("paused");
+        expect(stopped?.pausedReason).toBe("budget");
+        activity.close();
+      });
+
       it("CI を待つ間の最終レビューの前には、ベースブランチを取り込まない（CI を待っているコミットを見る）", async () => {
         const repos = new FakeRepos();
         const { activity, service, ci, id } = await drafted([implement("# 実装の説明"), review()], {

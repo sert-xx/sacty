@@ -725,7 +725,7 @@ export type ServiceDeps = {
    */
   stepPullRequests?: boolean;
   /**
-   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI を待ってから最終レビューに進むか。既定は作る。
+   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI と並べて最終レビューに進むか。既定は作る。
    * false なら、検証に通った後に PR を作る（PR の CI を待たない流れを確かめるテストで切る）。
    */
   draftPullRequests?: boolean;
@@ -9718,7 +9718,10 @@ export class TaskService {
         },
       },
     ]);
-    if (review.passed) this.checkBudget(reviewed);
+    // CI を待つ間に合格したら、CI の結果だけを待つ（費用はかからない）。予算の上限に達していても止めず、警告だけ記録する。
+    // CI が落ちて最終レビューをし直すときは、実行の前に予算で止める（PBI-314）
+    if (review.passed && awaitingCiAfterReview(reviewed)) this.warnIfNeeded(reviewed);
+    else if (review.passed) this.checkBudget(reviewed);
     else this.pauseIfVerificationKeepsFailing(reviewed);
   }
 
