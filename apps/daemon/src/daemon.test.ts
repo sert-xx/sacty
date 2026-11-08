@@ -4766,6 +4766,179 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("実装の工程の記録に関係するテストだけ（partial）しか無いのに、テストを実装の工程から使い回したと申告した最終レビューは、記録せずにやり直す（PBI-316）", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        // 実装の工程は、最後の変更の後に関係するテストだけを実行した（全件の結果が無い）
+        const partial = block({
+          "sacty-verification": {
+            commands: [
+              {
+                kind: "test",
+                command: "npm test -- pay.test.ts",
+                coverage: "partial",
+                note: "関係するテストだけ：変えたファイルのテスト",
+                status: "passed",
+              },
+            ],
+          },
+        });
+        // 実行せずに、実装の工程の結果を使い回したと申告する
+        const reviewed0 = review();
+        const claimed = out(
+          (reviewed0.kind === "completed" ? reviewed0.output : "").replace(
+            '"output":"2 passed"',
+            '"output":"2 passed","reusedFrom":"self-review"',
+          ),
+        );
+        expect(claimed.kind === "completed" && claimed.output).toContain(
+          '"reusedFrom":"self-review"',
+        );
+        const { activity, service, executor, id } = await toCiFinished(
+          [
+            out(
+              [
+                "# 実装",
+                partial,
+                block({
+                  "sacty-test-map": [
+                    { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                    { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+                  ],
+                }),
+              ].join("\n\n"),
+            ),
+            claimed,
+            review(),
+          ],
+          repos,
+        );
+        expect(service.get(id)?.task.implementVerification?.commands[0]?.coverage).toBe("partial");
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        // 判定として記録せず（実装に戻さず）、最終レビューを出し直させる
+        const failed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewFailed");
+        expect(failed?.type === "FinalReviewFailed" && failed.payload.verdictUnreadable).toBe(true);
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        // 最終レビューの指示は、実装の工程のテストの結果を使い回させない
+        expect(promptOf(executor, runs)).toContain(
+          "実装の工程の記録には、テストの全件の結果がありません",
+        );
+        await drain(service);
+        // 出し直した最終レビュー（テストを実行した）は、記録する
+        expect(types(service, id)).toContain("FinalReviewed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(
+          reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom,
+        ).toBeFalsy();
+        activity.close();
+      });
+
+      it("実装の工程の記録がテスト以外の検証（lint など）だけなら、実装の工程から使い回したという申告を、今までどおり判定として記録する（PBI-316）", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        // 実装の工程は、テスト以外の検証を全体で実行した（テストの記録は無い）
+        const lintOnly = block({
+          "sacty-verification": {
+            commands: [{ kind: "lint", command: "yamllint .", coverage: "full", status: "passed" }],
+          },
+        });
+        const reviewed0 = review();
+        const claimed = out(
+          (reviewed0.kind === "completed" ? reviewed0.output : "").replace(
+            '"output":"2 passed"',
+            '"output":"2 passed","reusedFrom":"self-review"',
+          ),
+        );
+        const { activity, service, executor, id } = await toCiFinished(
+          [
+            out(
+              [
+                "# 実装",
+                lintOnly,
+                block({
+                  "sacty-test-map": [
+                    { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                    { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+                  ],
+                }),
+              ].join("\n\n"),
+            ),
+            claimed,
+          ],
+          repos,
+        );
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(promptOf(executor, runs)).not.toContain(
+          "実装の工程の記録には、テストの全件の結果がありません",
+        );
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
+        activity.close();
+      });
+
+      it("テストのコマンドと同じコマンドを全体で実行した記録があれば、関係するテストだけの記録が混ざっていても、使い回したという申告を判定として記録する（PBI-316）", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        // 実装の工程は、テスト以外の検証を全体で実行した（テストの記録は無い）
+        const mixed = block({
+          "sacty-verification": {
+            commands: [
+              // テストのコマンドそのもの（このタスクでは npm test）を全体で実行した
+              { kind: "build", command: "npm test", coverage: "full", status: "passed" },
+              {
+                kind: "test",
+                command: "npm test -- pay.test.ts",
+                coverage: "partial",
+                note: "関係するテストだけ",
+                status: "passed",
+              },
+            ],
+          },
+        });
+        const reviewed0 = review();
+        const claimed = out(
+          (reviewed0.kind === "completed" ? reviewed0.output : "").replace(
+            '"output":"2 passed"',
+            '"output":"2 passed","reusedFrom":"self-review"',
+          ),
+        );
+        const { activity, service, executor, id } = await toCiFinished(
+          [
+            out(
+              [
+                "# 実装",
+                mixed,
+                block({
+                  "sacty-test-map": [
+                    { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                    { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+                  ],
+                }),
+              ].join("\n\n"),
+            ),
+            claimed,
+          ],
+          repos,
+        );
+        expect(service.get(id)?.task.testCommand).toBe("npm test");
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(promptOf(executor, runs)).not.toContain(
+          "実装の工程の記録には、テストの全件の結果がありません",
+        );
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
+        activity.close();
+      });
+
       it("PR の CI の結果が出た後（競合で止まって再開した場合を含む）にベースブランチが進んで競合していたら、古いコードで最終レビューをせず、競合したファイルを渡して実装をやり直す", async () => {
         const repos = new FakeRepos();
         repos.remote.main = "base123";
@@ -13019,6 +13192,99 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         const task = service.get(id)?.task;
         expect(task?.lastReview?.beforeCi).toBeUndefined();
         expect(task?.publishPending).toBe(true);
+        activity.close();
+      });
+
+      it("実装の工程の記録に全件が無くても、CI の結果の前の最終レビューが全件を実行していれば、し直す最終レビューはその結果を使い回せる（PBI-316）", async () => {
+        const reused = review();
+        const { activity, service, ci, id } = await drafted([
+          implement("# 実装の説明"),
+          out([review().output, recorded("guardian")].join("\n\n")),
+          // CI の結果の前の最終レビューの全件の結果を使い回したと申告する
+          out(
+            (reused.kind === "completed" ? reused.output : "").replace(
+              '"output":"2 passed"',
+              '"output":"2 passed","reusedFrom":"self-review"',
+            ),
+          ),
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装（検証の記録なし）
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー（全件を実行した）
+        expect(service.get(id)?.task.implementVerification).toBeUndefined();
+        ci.snap = failing();
+        ci.failuresList = [
+          { workflow: "CI", job: "test", conclusion: "failure", excerpt: "1 failed" },
+        ];
+        await settleCi(service);
+        await settleCi(service);
+        await service.runNext(id); // CI の結果を見た最終レビュー
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        activity.close();
+      });
+
+      it("実装の工程の記録が関係するテストだけでも、CI の結果の前の最終レビューがテストのコマンドと同じコマンドを全体で実行していれば、し直す最終レビューはその結果を使い回せる（PBI-316）", async () => {
+        const partial = block({
+          "sacty-verification": {
+            commands: [
+              {
+                kind: "test",
+                command: "npm test -- pay.test.ts",
+                coverage: "partial",
+                note: "関係するテストだけ",
+                status: "passed",
+              },
+            ],
+          },
+        });
+        // CI の結果の前の最終レビューは、テストのコマンドそのもの（このタスクでは npm test）を全体で実行した（テスト以外の検証として記録）
+        const sameCommand = block({
+          "sacty-verification": {
+            commands: [
+              {
+                kind: "lint",
+                command: "npm test",
+                coverage: "full",
+                status: "passed",
+                by: "guardian",
+              },
+            ],
+          },
+        });
+        const reused = review();
+        const { activity, service, ci, id } = await drafted([
+          implement(["# 実装の説明", partial].join("\n\n")),
+          out([review().output, sameCommand].join("\n\n")),
+          out(
+            (reused.kind === "completed" ? reused.output : "").replace(
+              '"output":"2 passed"',
+              '"output":"2 passed","reusedFrom":"self-review"',
+            ),
+          ),
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装（関係するテストだけ）
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー
+        expect(service.get(id)?.task.testCommand).toBe("npm test");
+        expect(service.get(id)?.task.implementVerification?.commands[0]?.coverage).toBe("partial");
+        ci.snap = failing();
+        ci.failuresList = [
+          { workflow: "CI", job: "test", conclusion: "failure", excerpt: "1 failed" },
+        ];
+        await settleCi(service);
+        await settleCi(service);
+        await service.runNext(id); // CI の結果を見た最終レビュー
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
         activity.close();
       });
 
