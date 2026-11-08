@@ -28,5 +28,11 @@
 - `npx vitest run apps/daemon/src/agents`：167 件通った。引数を足す行を外すと 3 件落ちることを確かめた。
 - `npm run -s lint`・`npm run -s typecheck`・`npx vitest run tests/docs`（93 件）：通った。
 - `npx vitest run --no-file-parallelism`：212 ファイル、4480 件が通った（3 件は既存のスキップ）。
-- 確かめていないこと（PR のレビューの実行で確かめる）：実際のイメージと認証で、工程の実行が Bash を拒まれないこと（init の `permissionMode` が `bypassPermissions`、`permission_denials` が空）。
-- 確かめていないこと：このモードで、コンテキストの `settings.json` の `permissions.deny`・`ask` がどう効くか（既定のコンテキストには Claude Code の `permissions` を置いていない）。
+- 実際のイメージと認証：このブランチで Sacty を起動し、この PR のレビューのタスク（118f4b41）を動かした。Claude Code の4回の実行の init の `permissionMode` がすべて `bypassPermissions`、result の `permission_denials` は空だった。
+- 設定の個別の `ask`・`deny` の規則は、このモードでも効く（Claude Code の公式の文書。実行では確かめていない。既定のコンテキストには Claude Code の `permissions` を置いていない）。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| Sacty のレビュー 1回目（提案）：「どの設定ファイルよりも優先される」は、明示的な `ask`・`deny` の規則も避けられると読める。公式の文書では、それらは `bypassPermissions` でも効く | 優先されるのは設定の既定のモード（`permissions.defaultMode`）だと書き、個別の `ask`・`deny` の規則はこのモードでも効くと補った。仕様（日英）・ADR・実装のコメントをそろえた |

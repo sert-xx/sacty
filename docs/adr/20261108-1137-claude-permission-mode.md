@@ -17,7 +17,7 @@ Codex は、Codex の中のサンドボックスを作れず、隔離は sacty �
 
 ## 決定
 
-- Claude Code の実行に、`--permission-mode bypassPermissions` を引数で渡す（`CLAUDE_PERMISSION_MODE`）。引数は、コンテキストや対象のリポジトリの `.claude/settings.json` の設定よりも優先される。
+- Claude Code の実行に、`--permission-mode bypassPermissions` を引数で渡す（`CLAUDE_PERMISSION_MODE`）。引数は、コンテキストや対象のリポジトリの `.claude/settings.json` の既定のモード（`permissions.defaultMode`）よりも優先される。設定の個別の `ask`・`deny` の規則は、このモードでも効く。
 - 使わせないツール（`--disallowedTools`）は、今までどおり渡す。
 
 ## 理由

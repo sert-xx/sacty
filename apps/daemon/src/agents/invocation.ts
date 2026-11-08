@@ -189,7 +189,8 @@ export async function buildInvocation(
       const command = ["claude", "-p", "--output-format", "stream-json", "--verbose"];
       // 権限の確認を求めないモードを明示する。-p では確認に答える人がいないので、確認の要るツール（Bash など）は
       // 拒まれる。既定のモードは CLI の版で変わる（2.1.318 で auto から default になり、テストのコマンドが拒まれた）ので、
-      // どの設定ファイル（コンテキストや対象リポジトリの .claude/settings.json）よりも優先される引数で渡す。
+      // 設定ファイル（コンテキストや対象リポジトリの .claude/settings.json）の既定のモード（permissions.defaultMode）より
+      // 優先される引数で渡す。設定の個別の ask・deny の規則は、このモードでも効く。
       // 隔離は sacty のコンテナが受け持つ（Codex の --sandbox danger-full-access と同じ。PBI-40・PBI-320）。
       // エージェントは node ユーザーで動くので、root では使えないこのモードを使える
       command.push("--permission-mode", CLAUDE_PERMISSION_MODE);
