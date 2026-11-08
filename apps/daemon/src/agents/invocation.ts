@@ -30,6 +30,8 @@ export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
  * コマンドの実行で `--sandbox-policy-cwd` を認識できずに終了することがあるので、/tmp の外に置く（PBI-40）。
  */
 export const CONTAINER_CODEX_HOME = "/.codex";
+/** Claude Code が XDG_CACHE_HOME の下に置く、自身のキャッシュ（ログなど）のディレクトリの名前（PBI-319）。 */
+export const CLAUDE_CACHE_DIR = "claude-cli-nodejs";
 
 /** コンテナで実行するコマンドと、コンテナに渡す環境変数・ファイル。 */
 export type Invocation = {
@@ -62,6 +64,16 @@ export type Invocation = {
    * 作業領域（PR 由来のファイルやリンクを含む）の中には置かない。
    */
   mounts?: { hostPath: string; containerPath: string; readOnly: boolean }[];
+  /**
+   * タスクごとの依存のキャッシュ（ホストのパス。PBI-319）。あれば、コンテナの決まった場所にマウントし、XDG_CACHE_HOME を
+   * そこに向ける。無ければ（キャッシュを使わない役割・用意できなかった）、これまでどおり。
+   */
+  taskCache?: string;
+  /**
+   * XDG_CACHE_HOME の下の、エージェントの CLI 自身のキャッシュ（ログなど）の名前（PBI-319）。タスクのキャッシュに残さず、
+   * 実行ごとにコンテナの中だけの場所にする。
+   */
+  agentCacheDirs?: string[];
   parser: "claude-json" | "codex-jsonl";
   /**
    * claude-json で、本文にする result の目印（レビューの工程の判定の塊の、引用符で囲んだ見出し。名前に触れただけの文で当たらないように。PBI-154）。result が何回も出たら、この文字列を
@@ -225,6 +237,8 @@ export async function buildInvocation(
         parser: "claude-json",
         ...(session ? { resumed: true } : {}),
         sessionFiles: "claude-code",
+        // Claude Code は、XDG_CACHE_HOME の下の claude-cli-nodejs にログなどを置く（2.1.318 の本体の env-paths で確かめた）
+        agentCacheDirs: [CLAUDE_CACHE_DIR],
       };
     }
 

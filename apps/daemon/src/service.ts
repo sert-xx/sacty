@@ -463,6 +463,7 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
+import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
 import { templateTask } from "./task-templates.js";
 import { findTestFiles, isDocumentsOnly, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
@@ -484,6 +485,8 @@ import {
   overlapsMounts,
   RUN_SCRATCH_DIRS,
   removeEntry,
+  TASK_CACHE_DIR,
+  taskCachePath,
   taskWorkspacePaths,
   workspaceRetirable,
 } from "./workspace-cleanup.js";
@@ -880,6 +883,11 @@ type ExecuteRun = {
   contextMcp?: readonly (GatewayMcpServer | HostedMcpRelay)[];
   /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
   mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
+  /**
+   * タスクごとの依存のキャッシュを使う（PBI-319）。タスクのイメージで対象のリポジトリを扱う実行（工程・最終レビュー・
+   * 統合レビュー）だけ。
+   */
+  taskCache?: true;
   /** 作業領域の外で読ませるディレクトリ（コンテナの中のパス。質問への答えの各実行のセッションログ。PBI-91）。 */
   readDirs?: readonly string[];
   /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
@@ -3014,6 +3022,8 @@ export class TaskService {
       onRunId?: (runId: string) => void;
       /** 追加でマウントする、sacty が管理するディレクトリ（質問への答えの各実行のセッションログ。PBI-91）。 */
       mounts?: ExecuteRun["mounts"];
+      /** タスクごとの依存のキャッシュを使う（最終レビュー。PBI-319）。 */
+      taskCache?: true;
       readDirs?: ExecuteRun["readDirs"];
       /** エージェントの形式に変換したコンテキストと、その MCP サーバー（オーケストレーター。PBI-146）。 */
       context?: ExecuteRun["context"];
@@ -7128,6 +7138,7 @@ export class TaskService {
     const taskIds = new Set([
       ...idEntries(root),
       ...idEntries(join(root, "_git"), ".git").map((name) => name.slice(0, -".git".length)),
+      ...idEntries(join(root, TASK_CACHE_DIR)),
     ]);
     const mounts = await this.containerMounts();
     if (mounts === undefined) {
@@ -7144,8 +7155,18 @@ export class TaskService {
     }
     for (const taskId of taskIds) {
       // 完了したタスクは、完了の後と同じく消す（その間に質問などが作業領域を使い始めても、消し終わるのを待つ）。
-      // 中止したタスクは、中止の片付けに任せる
-      if (this.tasks.has(taskId)) {
+      // 中止したタスクは、中止の片付けに任せる（依存のキャッシュだけは、ここでも消す）
+      const task = this.tasks.get(taskId);
+      if (task) {
+        // 中止したタスクの依存のキャッシュ（中止の片付けの途中で止まったなど）は、もう使わないので消す（PBI-319）。
+        // 完了したタスクと同じく、作業領域・退避した git のメタデータ・キャッシュのどれかがマウントと重なれば残す
+        if (
+          task.status === "cancelled" &&
+          !this.workspaceBusy(taskId) &&
+          !taskWorkspacePaths(root, taskId).some((path) => overlapsMounts(path, mounts))
+        ) {
+          removed += await this.removeWorkspacePaths([taskCachePath(root, taskId)], mounts);
+        }
         removed += await this.retireWorkspace(taskId, mounts);
         continue;
       }
@@ -8367,6 +8388,7 @@ export class TaskService {
         taskId: task.id,
         image: (services?.ok && services.image) || imageName,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
+        taskCache: true,
         ...(started ? serviceConnection(started) : {}),
         runId,
         prompt: [
@@ -9654,6 +9676,7 @@ export class TaskService {
           agent,
           image: services?.image || testImage.image,
           imageEnv: testImage.env,
+          taskCache: true,
           runId,
           ...(include ? { include } : {}),
           prompt: [
@@ -10996,7 +11019,10 @@ export class TaskService {
       },
       {
         target: "workspace",
-        present: existsSync(workspace) || existsSync(this.trustedGitDir(task)),
+        present:
+          existsSync(workspace) ||
+          existsSync(this.trustedGitDir(task)) ||
+          existsSync(taskCachePath(this.deps.workspaceRoot, task.id)),
         detail: workspace,
       },
       // オーケストレーターのセッション（PBI-67）。工程のエージェントは実行ごとに空の設定で起動するので、保存しない
@@ -11199,7 +11225,16 @@ export class TaskService {
         try {
           await rm(workspace, { recursive: true, force: true });
           await rm(gitDir, { recursive: true, force: true });
-          cleanup.push({ target: "workspace", result: existed ? "done" : "skipped" });
+          // タスクごとの依存のキャッシュも消す（PBI-319）。リンクならリンクだけを消し、途中の _task-cache がリンクなら
+          // その先を消さずに失敗にする
+          const cached = await (this.deps.removeWorkspaceEntry ?? removeEntry)(
+            this.deps.workspaceRoot,
+            taskCachePath(this.deps.workspaceRoot, latest.id),
+          );
+          cleanup.push({
+            target: "workspace",
+            result: existed || cached ? "done" : "skipped",
+          });
         } catch (error) {
           cleanup.push({
             target: "workspace",
@@ -11331,6 +11366,7 @@ export class TaskService {
         taskId: task.id,
         image: stepImage.ok ? stepImage.image : config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
+        taskCache: true,
         runId,
         prompt: buildIntegrationReviewPrompt(latest, subtasks, {
           baseBranch,
@@ -12278,11 +12314,20 @@ export class TaskService {
           gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
         }
       }
+      // タスクごとの依存のキャッシュ（PBI-319）。用意できなければ、キャッシュを使わずに実行する。渡すときは、使い方の案内を
+      // 指示に足す（既定の規則が渡らない最終レビュー・統合レビューにも届くように）
+      const taskCache = run.taskCache
+        ? await prepareTaskCache(this.deps.workspaceRoot, run.taskId)
+        : undefined;
       const invocation = await buildInvocation(
         run.agent,
-        gatewayRun && githubHosts.length > 0
-          ? [run.prompt, "", ...githubPromptLines(githubHosts, run.role)].join("\n")
-          : run.prompt,
+        [
+          run.prompt,
+          ...(gatewayRun && githubHosts.length > 0
+            ? ["", ...githubPromptLines(githubHosts, run.role)]
+            : []),
+          ...(taskCache ? ["", ...taskCachePromptLines()] : []),
+        ].join("\n"),
         this.deps.secrets,
         (value) => usedSecrets.push(value),
         run.role,
@@ -12311,6 +12356,7 @@ export class TaskService {
         invocation.hostGateway = true;
       }
       if (run.mounts && run.mounts.length > 0) invocation.mounts = [...run.mounts];
+      if (taskCache) invocation.taskCache = taskCache;
       // 決まった見出しの塊を答えに含める役割は、その塊を含む最後の result を答えにする（最終の答えの後の通知への返答を、
       // 答えや投稿の本文にしない。PBI-154・PR #213 レビュー指摘）
       const marker = answerMarker(run.role);

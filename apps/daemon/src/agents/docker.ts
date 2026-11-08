@@ -34,6 +34,48 @@ export const CONTAINER_WORKSPACE = "/workspace";
 export const CONTAINER_REVIEW_DIR = "/sacty-review";
 /** 要求要件・設計の工程で、出典の分類の担当に読ませる Input を読み取り専用で置くディレクトリ（作業領域の外）。 */
 export const CONTAINER_INPUT_DIR = "/sacty-input";
+/**
+ * タスクごとの依存のキャッシュを置くディレクトリ（作業領域の外。PBI-319）。XDG_CACHE_HOME をここに向け、ツールのキャッシュ
+ * （パッケージのダウンロードなど）を、同じタスクの工程・実行の間で使い回す。
+ */
+export const CONTAINER_TASK_CACHE = "/sacty-cache";
+
+/** 依存のキャッシュに書けなかったときの知らせの先頭（標準エラー出力に出し、デーモンのログにも写す。PBI-319）。 */
+export const TASK_CACHE_NOTICE_PREFIX = "[sacty] 依存のキャッシュ：";
+
+/**
+ * 依存のキャッシュの場所を、確かめのスクリプトに渡す環境変数（PBI-319）。スクリプトが exec の前に外し、コマンドには渡さない。
+ */
+export const TASK_CACHE_ENV = "SACTY_TASK_CACHE";
+
+/**
+ * 依存のキャッシュに、コンテナの実行ユーザーが書けるかを確かめてからコマンドを実行する（PBI-319）。書けたときだけ、
+ * XDG_CACHE_HOME をキャッシュの場所に向ける。書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、
+ * 知らせを標準エラー出力に出し、XDG_CACHE_HOME には触れない（イメージの ENV・images の env の値・未設定のどれも、
+ * そのまま残る。キャッシュを使わずに、これまでどおり動く）。PID と標準入出力は、exec でそのままコマンドに渡す。
+ */
+export const TASK_CACHE_PROBE_SCRIPT = [
+  `cache="$${TASK_CACHE_ENV}"`,
+  `unset ${TASK_CACHE_ENV}`,
+  'probe="$cache/.sacty-probe-$$"',
+  'if ( : > "$probe" ) 2>/dev/null; then',
+  '  rm -f "$probe"',
+  '  XDG_CACHE_HOME="$cache"; export XDG_CACHE_HOME',
+  "else",
+  `  printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$cache に書けないので、使わずに実行します" >&2`,
+  "fi",
+  "unset cache probe",
+  'exec "$@"',
+].join("\n");
+
+export function withTaskCacheProbe(command: string[]): string[] {
+  return ["sh", "-c", TASK_CACHE_PROBE_SCRIPT, "sh", ...command];
+}
+
+/** 標準エラー出力から、依存のキャッシュの知らせを取り出す（デーモンのログに写す）。 */
+export function taskCacheNotices(stderr: string): string[] {
+  return stderr.split("\n").filter((line) => line.startsWith(TASK_CACHE_NOTICE_PREFIX));
+}
 
 /**
  * 診断に使う出力（標準エラー出力）の、先頭と末尾だけを持つ（PBI-62）。長い実行でも、デーモンのメモリが出力の大きさに
@@ -275,6 +317,8 @@ export function dockerRunArgs(input: {
   network?: string;
   /** 標準入力をコンテナにつなぐ（エージェントへの指示を標準入力で渡す。PBI-149）。 */
   interactive?: boolean;
+  /** コンテナの中だけの一時的な場所（コンテナを消せば消える）にするディレクトリ（コンテナの中のパス。PBI-319）。 */
+  tmpfs?: readonly string[];
 }): string[] {
   return [
     "run",
@@ -297,6 +341,7 @@ export function dockerRunArgs(input: {
       "-v",
       `${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`,
     ]),
+    ...(input.tmpfs ?? []).flatMap((path) => ["--tmpfs", path]),
     "-w",
     CONTAINER_WORKSPACE,
     ...input.envNames.flatMap((name) => ["-e", name]),
@@ -365,7 +410,23 @@ export class DockerExecutor implements AgentExecutor {
     // デーモンを止め始めた後は、新しく起動しない（作業領域を非同期で写している間に止められたとき。PBI-156）
     if (this.aborting)
       return { kind: "failed", reason: "error", message: message("run.daemonStopped") };
-    const env = { ...imageEnv, ...invocation.env };
+    const env: Record<string, string> = { ...imageEnv, ...invocation.env };
+    // タスクごとの依存のキャッシュ（PBI-319）。場所は別の変数で渡し、コンテナの中で書けたときだけ、確かめのスクリプトが
+    // XDG_CACHE_HOME をそこに向ける（イメージの env の値より優先する。書けなければ XDG_CACHE_HOME には触れない）。
+    // エージェントの CLI 自身のキャッシュ（ログなど）は、タスクのキャッシュに残さず、コンテナの中だけの場所にする
+    const tmpfs: string[] = [];
+    if (invocation.taskCache) {
+      env[TASK_CACHE_ENV] = CONTAINER_TASK_CACHE;
+      for (const name of invocation.agentCacheDirs ?? []) {
+        // 前の実行が置いたもの（リンク・ファイルを含む）は消す（リンクはリンクだけを消す）。重ねてマウントできるように
+        try {
+          rmSync(join(invocation.taskCache, name), { recursive: true, force: true });
+        } catch {
+          // 消せなくても、上に重ねる場所で隠れる
+        }
+        tmpfs.push(`${CONTAINER_TASK_CACHE}/${name}`);
+      }
+    }
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
     // ディレクトリごとマウントする（ファイル単体だと親ディレクトリがroot所有になり書き込めないため）
     const staging = invocation.stage ? mkdtempSync(join(tmpdir(), "sacty-run-")) : null;
@@ -437,6 +498,13 @@ export class DockerExecutor implements AgentExecutor {
 
     // 追加のマウント（レビューの差分の全体など。sacty が管理する場所だけ。PBI-65）
     mounts.push(...(invocation.mounts ?? []));
+    if (invocation.taskCache) {
+      mounts.push({
+        hostPath: invocation.taskCache,
+        containerPath: CONTAINER_TASK_CACHE,
+        readOnly: false,
+      });
+    }
 
     const args = dockerRunArgs({
       runId,
@@ -444,9 +512,16 @@ export class DockerExecutor implements AgentExecutor {
       workspaceDir,
       envNames: Object.keys(env),
       mounts,
+      ...(tmpfs.length > 0 ? { tmpfs } : {}),
       ...(network ? { network } : {}),
       // 出力は中継を通して受け取る（標準出力が非ブロッキングにされても、コマンドが EAGAIN で落ちないように。PBI-64）
-      command: withOutputRelay(withLocalForwards(invocation.command, forwards)),
+      // 依存のキャッシュに書けるかは、コンテナの中で確かめる（ホストの権限だけでは分からない。PBI-319）
+      command: withOutputRelay(
+        withLocalForwards(
+          invocation.taskCache ? withTaskCacheProbe(invocation.command) : invocation.command,
+          forwards,
+        ),
+      ),
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
         : {}),
@@ -454,6 +529,8 @@ export class DockerExecutor implements AgentExecutor {
     });
 
     const containerName = `sacty-run-${runId}`;
+    // 標準エラー出力の先頭と末尾。転送・依存のキャッシュの知らせを、時間切れを含むどの終わり方でもデーモンのログに写す
+    const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
     this.containers.register(containerName);
     let outcome: AgentOutcome;
     // 時間切れで止めたときのエラー（止めるまでに読めた使用量を、後で添える。PBI-281）
@@ -485,7 +562,6 @@ export class DockerExecutor implements AgentExecutor {
         // 読まない）。コンテナが先に終わって書けなくても、結果は終了コードと出力で判断する（書き込みの失敗で落とさない）
         child.stdin.on("error", () => {});
         child.stdin.end(invocation.stdin ?? "");
-        const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
         // 届いた分の境目で、複数バイトの文字が壊れないようにつなげて読む
         const outText = new StringDecoder("utf8");
         const errText = new StringDecoder("utf8");
@@ -526,9 +602,6 @@ export class DockerExecutor implements AgentExecutor {
         });
       });
 
-      // 転送しなかったポート（すでに使われていたなど。PBI-60）は、デーモンのログに残す
-      for (const notice of forwardNotices(stderr))
-        console.warn(`[daemon] ${containerName}：${notice}`);
       if (this.aborting) {
         // デーモンを止めるために止めた実行も、止めるまでに読めた使用量は残す。全体は分からない（PBI-281）
         const partial = reader.finish(exitCode, stderr);
@@ -565,6 +638,11 @@ export class DockerExecutor implements AgentExecutor {
           new Promise<void>((resolve) => setTimeout(resolve, TIMEOUT_DRAIN_MS).unref()),
         ]);
       }
+      // 転送しなかったポート（すでに使われていたなど。PBI-60）と、依存のキャッシュを使えなかったこと（PBI-319）は、
+      // デーモンのログに残す（時間切れ・停止の確認の失敗でも、それまでに受け取った分から）
+      const received = err.toString();
+      for (const notice of [...forwardNotices(received), ...taskCacheNotices(received)])
+        console.warn(`[daemon] ${containerName}：${notice}`);
       // それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない）。時間切れと停止の確認の失敗で共有する
       const partial = timedOut.error || !stopped ? reader.finish(1) : undefined;
       if (!stopped) {

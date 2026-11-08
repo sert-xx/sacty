@@ -17,7 +17,7 @@
   - `--add-host host.docker.internal:<ホストのアドレス>`：ゲートウェイを使う実行。
     アドレスは `gateway.host_address`（既定 `host-gateway`）。
   - 追加のマウント：sacty が用意する場所だけ。
-    設定の場所・レビューの差分 `/sacty-review` の読み取り専用・質問への答えの各実行のセッションログ `/sacty-logs` の読み取り専用・メモリー `/sacty-memory/project`・`/sacty-memory/repository` の読み取り専用（[メモリー](memory.md)）など。
+    設定の場所・レビューの差分 `/sacty-review` の読み取り専用・質問への答えの各実行のセッションログ `/sacty-logs` の読み取り専用・メモリー `/sacty-memory/project`・`/sacty-memory/repository` の読み取り専用（[メモリー](memory.md)）・依存のキャッシュ `/sacty-cache`（下の「依存のキャッシュ」）など。
 - 動かすユーザーは、イメージの `USER node`（`--user` は付けない）。
 - 環境変数は、引数には名前だけ（`-e NAME`）を書き、値は docker コマンドのプロセスの環境から渡す（`ps` に値を出さない）。
   - docker コマンドのプロセスに残すホストの環境変数は `PATH`・`HOME`・`DOCKER_HOST`・`DOCKER_CONTEXT`・`DOCKER_CONFIG`・`TMPDIR` だけ。
@@ -37,6 +37,40 @@
 - 標準エラー出力は先頭 64KB と末尾 256KB だけを持つ。
 
 コード: `apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`dockerClientEnv`・`DockerExecutor`・`RunningContainers`）、`apps/daemon/src/context.ts`（`AGENT_RUN_TIMEOUT_MS`）、`apps/daemon/src/run-timeouts.ts`（`agentTimeoutMs`・`RUN_TIMEOUT_ROLES`）、`apps/daemon/src/service.ts`（`executeLogged`）
+
+## 依存のキャッシュ
+
+同じタスクの工程・実行の間で、依存の準備（パッケージのダウンロード・ビルドのキャッシュなど）の結果を使い回す（PBI-319）。
+
+- 置き場所：作業領域の根の下の `_task-cache/<タスク ID>`（`0700`）。タスクごとに分け、別のタスクのコンテナにはマウントしない。
+- 渡す実行：対象のリポジトリをタスクのイメージで扱う実行だけ（工程・最終レビュー・統合レビュー）。
+  ゴールガーディアンの判定・オーケストレーター・情報収集・質問への答え・書き出し・外部作業・マージの後の監視には渡さない。
+- 渡し方：
+  - `-v <置き場所>:/sacty-cache` でマウントし、場所を `SACTY_TASK_CACHE=/sacty-cache` で下の確かめに渡す。
+    `XDG_CACHE_HOME` は `-e` で上書きしない。書けたときだけ、確かめのスクリプトが `/sacty-cache` に向ける（イメージの `ENV`・`env` より優先）。
+  - `HOME`・`XDG_CONFIG_HOME` は変えない（認証の設定ファイルは、コンテナを消すと消える）。
+  - エージェントの CLI 自身のキャッシュ（Claude Code の `claude-cli-nodejs`）は `--tmpfs /sacty-cache/claude-cli-nodejs` でコンテナの中だけの場所にする。
+    置き場所の `claude-cli-nodejs` に前の実行が残したもの（リンクを含む）は、実行の前に消す（リンクはリンクだけ）。
+  - コンテナの中で、実行ユーザーが `/sacty-cache` に書けるかを確かめてから、コマンドを `exec` する（`withTaskCacheProbe`。出力の中継・ポートの転送の内側）。
+    書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、`[sacty] 依存のキャッシュ：` で始まる知らせを標準エラー出力に出し、`XDG_CACHE_HOME` には触れずに実行する（イメージの `ENV`・`env` の値も、未設定も、そのまま残る。キャッシュを使わない、これまでどおりの実行）。
+    `SACTY_TASK_CACHE` は、`exec` の前に外し、コマンドには渡さない。
+    知らせは、時間切れ・停止の確認の失敗を含むどの終わり方でも、それまでに受け取った標準エラー出力から、デーモンのログにも写す（`taskCacheNotices`）。
+    書ける条件は作業領域（`/workspace`）と同じ：sacty はどちらも持ち主を変えず、`--user` も付けないので、Linux のふつうのバインドマウントでは、デーモンの UID とイメージの `node` の UID が同じときだけ書ける（作業領域は `0755`、キャッシュは `0700` で、持ち主のほかは書けない点は同じ）。
+    Docker Desktop・Rancher Desktop など、仮想マシンへファイルを共有する環境では、コンテナの実行ユーザーの持ち物として見えるので書ける。
+- キャッシュを渡す実行の指示の終わりに、使い方の短い案内（`## 依存のキャッシュ`）を足し、エージェントに次を求める（`taskCachePromptLines`）。
+  実行の共通の経路で足すので、既定の規則が渡らない最終レビュー・統合レビューにも届く。キャッシュを渡さない実行には足さない。
+  - ツールのキャッシュを `XDG_CACHE_HOME` に置く。見ないツールは、そのツールのキャッシュの場所の設定で `XDG_CACHE_HOME` の下に向ける（リポジトリのファイルは変えない）。
+  - 認証の設定ファイル・秘密の値を置かない。
+  - キャッシュのせいで失敗するように見えたら、使わずに進める。
+- 実行の前に用意する（`prepareTaskCache`）。
+  - 無ければ作る。
+  - タスクの置き場所がディレクトリでない（リンク・ファイル）・読み書きできないなら、消して作り直す（リンクはリンクだけ）。
+  - `_task-cache` がディレクトリでない（リンク・ファイル）・作り直せないときは、理由をデーモンのログに残し、キャッシュを渡さずに実行する（タスクを止めない）。
+- 消すとき：タスクの作業領域と同じ（[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)）。
+
+関係する ADR: [依存の準備の結果を、タスクごとのキャッシュのディレクトリで工程・実行の間で使い回す](../adr/20261108-0739-task-dependency-cache.md)
+
+コード: `apps/daemon/src/task-cache.ts`（`prepareTaskCache`・`taskCachePromptLines`）、`apps/daemon/src/workspace-cleanup.ts`（`TASK_CACHE_DIR`・`taskCachePath`・`taskWorkspacePaths`）、`apps/daemon/src/agents/docker.ts`（`CONTAINER_TASK_CACHE`・`DockerExecutor`・`withTaskCacheProbe`・`taskCacheNotices`）、`apps/daemon/src/agents/invocation.ts`（`CLAUDE_CACHE_DIR`）、`apps/daemon/src/service.ts`（`ExecuteRun`）
 
 ## 実行のコマンド
 

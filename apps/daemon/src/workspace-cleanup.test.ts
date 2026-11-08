@@ -129,8 +129,8 @@ describe("作業領域の片付けの部品（PBI-157）", () => {
     expect(workspaceRetirable({ ...base, unstoppedRuns: ["r1"] } as Task)).toBe(false);
   });
 
-  it("タスクの作業領域と、退避した git のメタデータの場所", () => {
-    expect(taskWorkspacePaths("/w", "t")).toEqual(["/w/t", "/w/_git/t.git"]);
+  it("タスクの作業領域と、退避した git のメタデータと、依存のキャッシュの場所（PBI-319）", () => {
+    expect(taskWorkspacePaths("/w", "t")).toEqual(["/w/t", "/w/_git/t.git", "/w/_task-cache/t"]);
   });
 
   it("起動時の片付けが終わるまで始めず、その間に止め始めていれば始めない", async () => {

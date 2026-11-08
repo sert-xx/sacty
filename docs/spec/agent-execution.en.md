@@ -11,7 +11,7 @@ Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty n
 - The container starts with `docker run --rm --name sacty-run-<run ID> --security-opt no-new-privileges --cap-drop ALL --init -v <workspace>:/workspace -w /workspace`. `--init` makes PID 1 an init that reaps finished child processes (zombies); when the agent's CLI is PID 1 they are not reaped, and tests that check process cleanup fail because of the environment (PBI-155). sacty adds the following when needed.
   - `--network <network>`: runs that started docker compose services ([Services](services.en.md)).
   - `--add-host host.docker.internal:<host address>`: runs that use the gateway. The address is `gateway.host_address` (default `host-gateway`).
-  - Extra mounts: only locations sacty prepares. These include the config location, the review diff `/sacty-review` read-only, the session logs of each run for answers to questions `/sacty-logs` read-only, and memories `/sacty-memory/project` and `/sacty-memory/repository` read-only ([Memory](memory.en.md)).
+  - Extra mounts: only locations sacty prepares. These include the config location, the review diff `/sacty-review` read-only, the session logs of each run for answers to questions `/sacty-logs` read-only, memories `/sacty-memory/project` and `/sacty-memory/repository` read-only ([Memory](memory.en.md)), and the dependency cache `/sacty-cache` ("Dependency cache" below).
 - The user is the image's `USER node` (`--user` is not passed).
 - For environment variables, the arguments contain only the name (`-e NAME`), and sacty passes the values through the environment of the docker command's process (so they do not appear in `ps`).
   - The only host environment variables kept in the docker command's process are `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, and `TMPDIR`.
@@ -30,6 +30,40 @@ Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty n
 - sacty keeps only the first 64KB and the last 256KB of standard error.
 
 Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `DockerExecutor`, `RunningContainers`), `apps/daemon/src/context.ts` (`AGENT_RUN_TIMEOUT_MS`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`, `RUN_TIMEOUT_ROLES`), `apps/daemon/src/service.ts` (`executeLogged`)
+
+## Dependency cache
+
+Within one task, the results of preparing dependencies (package downloads, build caches, and so on) are reused across steps and runs (PBI-319).
+
+- Location: `_task-cache/<task-id>` under the workspace root (`0700`). It is separate per task and never mounted into another task's container.
+- Runs that get it: only runs that work on the target repository with the task's image (steps, the final review, the integration review).
+  The Goal Guardian's judgments, the Orchestrator, information gathering, answers to questions, export, external work, and the after-merge watch do not get it.
+- How it is passed:
+  - It is mounted with `-v <location>:/sacty-cache`, and the location is passed to the check below in `SACTY_TASK_CACHE=/sacty-cache`.
+    `XDG_CACHE_HOME` is not overridden with `-e`. Only when the location is writable does the check script point it to `/sacty-cache` (taking precedence over the image's `ENV` and `env`).
+  - `HOME` and `XDG_CONFIG_HOME` are not changed (auth config files disappear when the container is removed).
+  - The agent CLI's own cache (Claude Code's `claude-cli-nodejs`) is made a container-only location with `--tmpfs /sacty-cache/claude-cli-nodejs`.
+    Anything a previous run left at `claude-cli-nodejs` in the location (including a link) is removed before the run (a link is removed by itself).
+  - Inside the container, sacty checks that the user can write to `/sacty-cache` before it `exec`s the command (`withTaskCacheProbe`, inside the output relay and the port forwarding).
+    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs without touching `XDG_CACHE_HOME` (a value from the image's `ENV` or `env`, or no value, stays as it is; the usual run, without the cache).
+    `SACTY_TASK_CACHE` is unset before the `exec`, so it is not passed to the command.
+    The notice is copied to the daemon's log too, from the standard error received so far, however the run ends, including a timeout or a failure to confirm the stop (`taskCacheNotices`).
+    The condition for writing is the same as for the workspace (`/workspace`): sacty changes the owner of neither and passes no `--user`, so with an ordinary Linux bind mount the container can write only when the daemon's UID equals the UID of the image's `node` (the workspace is `0755` and the cache is `0700`; in both, only the owner can write).
+    In environments that share files into a virtual machine, such as Docker Desktop and Rancher Desktop, they appear as owned by the container's user, so it can write.
+- sacty appends a short guide (`## 依存のキャッシュ`) at the end of the instructions of runs that get the cache, asking the agent to do the following (`taskCachePromptLines`).
+  It is added in the common path of runs, so it also reaches the final review and the integration review, which do not get the default rules. Runs without the cache do not get it.
+  - Put tool caches in `XDG_CACHE_HOME`. For tools that do not read it, point the tool's cache location setting under `XDG_CACHE_HOME` (without changing the repository's files).
+  - Not put auth config files or secret values there.
+  - Go on without the cache if a failure looks caused by it.
+- It is prepared before the run (`prepareTaskCache`).
+  - If missing, it is created.
+  - If the task's location is not a directory (a link or a file) or cannot be read and written, it is removed and created again (a link is removed by itself).
+  - If `_task-cache` is not a directory (a link or a file) or the location cannot be created again, the reason goes to the daemon's log and the run proceeds without the cache (the task is not stopped).
+- When it is removed: the same as the task's workspace ([Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)).
+
+Related ADRs: [Reuse the results of preparing dependencies across steps and runs, in a per-task cache directory](../adr/20261108-0739-task-dependency-cache.md)
+
+Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`, `taskCachePromptLines`), `apps/daemon/src/workspace-cleanup.ts` (`TASK_CACHE_DIR`, `taskCachePath`, `taskWorkspacePaths`), `apps/daemon/src/agents/docker.ts` (`CONTAINER_TASK_CACHE`, `DockerExecutor`, `withTaskCacheProbe`, `taskCacheNotices`), `apps/daemon/src/agents/invocation.ts` (`CLAUDE_CACHE_DIR`), `apps/daemon/src/service.ts` (`ExecuteRun`)
 
 ## Run commands
 

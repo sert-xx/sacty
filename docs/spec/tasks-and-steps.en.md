@@ -1008,13 +1008,13 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
   2. Delete the Orchestrator session.
   3. Close the implementation PR sacty opened and the open requirements and design PRs (without merging).
   4. Delete sacty's branches (the implementation PR's branch, the task branch, and step branches).
-  5. Delete the workspace (not deleted if the containers cannot be confirmed as stopped).
+  5. Delete the workspace, including the dependency cache (not deleted if the containers cannot be confirmed as stopped).
 
 Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`, `runNextInner`), `apps/daemon/src/config.ts` (`ConfigFile`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`, `RESUME_NOTE_HEADING`, `bodyWithResumeNote`, `resumeNoteSections`, `withoutResumeNoteHeadings`, `normalizeNewlines`), `packages/core/src/projection.ts` (`project`, `resumeNoteRoom`, `rerunnableKind`), `packages/core/src/cost.ts` (`budgetState`), `apps/daemon/src/prompts.ts` (`resumeNotePromptLines`, `resumeNoteJudgeLines`, `resumeNoteLines`), `apps/web/src/components/resume-form.tsx` (`ResumeForm`), `apps/web/src/lib/step-options.ts` (`changedStepChoices`)
 
 ### Cleaning up the workspaces of finished tasks
 
-A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`workspaces/_git/<task-id>.git`) are removed not only on cancel, but also when a completed task no longer uses them.
+A task's workspace (`workspaces/<task-id>`), its set-aside git metadata (`workspaces/_git/<task-id>.git`), and its dependency cache (`workspaces/_task-cache/<task-id>`; [Agent execution](agent-execution.en.md#dependency-cache)) are removed not only on cancel, but also when a completed task no longer uses them.
 
 - A task that no longer uses them (`workspaceRetirable`): one that meets all of the following.
   - It has finished all steps and stopped (`idle` and `isCompleted`).
@@ -1026,7 +1026,10 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - When a run or the answer to a question ends (if a run is in progress, they are removed at its end).
   - When the daemon starts ([Daemon startup and shutdown](daemon-lifecycle.en.md#daemon-startup-order)).
 - At startup, the following are removed too.
-  - Workspaces that belong to no task.
+  - Workspaces, set-aside git metadata, and dependency caches that belong to no task.
+  - Dependency caches of cancelled tasks (for example, when the daemon stopped in the middle of the cancel's cleanup).
+    As for completed tasks, it is not removed if any of the workspace, the set-aside git metadata, and the cache overlaps a mount.
+    The dependency cache of a task in progress is kept and reused after the restart.
   - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_input`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
     They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.
   - The candidates are fixed when the cleanup starts (before listening for the API and starting the worker). Ones of runs, questions, and tasks started during the cleanup are not removed.
@@ -1035,10 +1038,10 @@ A task's workspace (`workspaces/<task-id>`) and its set-aside git metadata (`wor
   - A link is removed by itself; its target is not followed.
   - Nothing that overlaps a place mounted by a running container (not only sacty's) is removed.
     If Docker cannot be queried, nothing is removed (checked again at the next start).
-  - If either a task's workspace or its set-aside git metadata overlaps a mount, both are kept.
+  - If any of a task's workspace, its set-aside git metadata, and its dependency cache overlaps a mount, all of them are kept.
   - Nothing is removed if anything on the way from the workspace root to its parent is a link or not a directory (even if `_git` is a link, its target is not removed).
 - If something cannot be removed (permissions and so on), the reason is logged and the rest is removed. Neither the daemon startup nor the task's progress is stopped.
-  So only one of a workspace and its set-aside git metadata may be left.
+  So only some of a workspace, its set-aside git metadata, and its dependency cache may be left.
   A directory whose listing cannot be read is logged too.
 - Session logs (`runs/`), `sessions/`, `memory/`, and `sacty.db` are not removed.
 - They are not removed while something uses the workspace (a run, answering a question, cleaning up a cancel, preparing it, or another task's integration review reading it), but when that ends.

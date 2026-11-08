@@ -23734,6 +23734,9 @@ describe("統合レビュー（PBI-31）", () => {
     expect(executor.images[5]).toEqual({ image: java.image, env: java.env });
     expect(executor.images[8]).toEqual({ image: playwright.image, env: playwright.env });
     expect(executor.images).toHaveLength(9);
+    // 統合レビューは、親のタスクの依存のキャッシュを使う（PBI-319）
+    expect(executor.calls[5]?.taskCache).toBe(join(dir, "workspaces", "_task-cache", id));
+    expect(executor.calls[5]?.command.join(" ")).toContain("## 依存のキャッシュ");
     // 統合レビューの実行の記録にも、始めたときに使った名前を残す（PBI-318 レビュー指摘）
     expect(
       service
@@ -23946,6 +23949,14 @@ describe("再現の工程（PBI-29）", () => {
       { image: "sacty-agent-go:test", env: { TOOL: "go" } },
     ]);
     expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
+    // 再現・実装・最終レビューは、タスクごとの依存のキャッシュを使い回す（PBI-319）
+    expect(executor.calls.map((c) => c.taskCache)).toEqual(
+      executor.calls.map(() => join(dir, "workspaces", "_task-cache", id)),
+    );
+    // 既定の規則が渡らない最終レビューにも、キャッシュの使い方の案内を届ける（PBI-319 レビュー指摘）
+    expect(executor.calls.map((c) => c.command.join(" ").includes("## 依存のキャッシュ"))).toEqual(
+      executor.calls.map(() => true),
+    );
     // どの実行の記録にも、使ったイメージの名前を残す（記録し忘れた所があれば落ちる。PBI-318 レビュー指摘）
     const runs = service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted") ?? [];
     expect(runs.length).toBeGreaterThan(0);
@@ -41164,6 +41175,166 @@ describe("終わったタスクと、中断された実行の作業領域の片�
       expect(warn.mock.calls.flat().join("\n")).toContain(
         `作業領域を消せませんでした：${join(root(), "_guardian", failing)}：EACCES`,
       );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("タスクごとの依存のキャッシュ（PBI-319）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const root = () => join(dir, "workspaces");
+  const cacheOf = (id: string) => join(root(), "_task-cache", id);
+
+  /** 要求要件だけのタスクを作り、要求要件の承認待ちにする。実行の間に、キャッシュに置いてあったものを記録する。 */
+  async function submittedTask(db = dbPath) {
+    const activity = new SqliteActivityStore(db);
+    const made = makeService(activity, [], {
+      planner: async () => ({
+        steps: ["requirements" as const],
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    const seen: (string[] | undefined)[] = [];
+    made.executor.respond = (invocation) => {
+      // 依存のインストールの代わりに、キャッシュに書く
+      if (invocation.taskCache) {
+        seen.push(readdirSync(invocation.taskCache).sort());
+        writeFileSync(join(invocation.taskCache, `pkg-${seen.length}`), "downloaded");
+      } else {
+        seen.push(undefined);
+      }
+      return out("# 要求要件");
+    };
+    const { id } = made.service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await made.service.runNext(id);
+    return { ...made, activity, id, seen };
+  }
+
+  it("工程の実行は、同じタスクでは同じキャッシュを使い回し、別のタスクとは分ける", async () => {
+    const { service, executor, id, seen } = await submittedTask();
+    expect(executor.calls[0]?.taskCache).toBe(cacheOf(id));
+    // キャッシュを渡す実行には、使い方の案内を指示に足す
+    expect(executor.calls[0]?.command.join(" ")).toContain("## 依存のキャッシュ");
+    // 差し戻して出し直した実行は、前の実行が置いたものを使う
+    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["直して"] });
+    await service.runNext(id);
+    expect(executor.calls[1]?.taskCache).toBe(cacheOf(id));
+    expect(seen).toEqual([[], ["pkg-1"]]);
+    // 別のタスクは、別の空のキャッシュ
+    const other = await submittedTask(join(dir, "other.db"));
+    expect(other.executor.calls[0]?.taskCache).toBe(cacheOf(other.id));
+    expect(other.seen).toEqual([[]]);
+    other.activity.close();
+  });
+
+  it("タスクのリポジトリを扱わない実行（質問への答え）には渡さない", async () => {
+    const { service, executor, id } = await submittedTask();
+    executor.respond = () => out("承認待ちです。");
+    await service.askQuestion(id, { text: "いまは？" }).answered;
+    expect(executor.calls.at(-1)?.taskCache).toBeUndefined();
+    expect(executor.calls.at(-1)?.env.XDG_CACHE_HOME).toBeUndefined();
+    expect(executor.calls.at(-1)?.command.join(" ")).not.toContain("## 依存のキャッシュ");
+  });
+
+  it("完了したら消す", async () => {
+    const { service, id } = await submittedTask();
+    expect(existsSync(cacheOf(id))).toBe(true);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.workspaceCleanupsSettled();
+    expect(existsSync(cacheOf(id))).toBe(false);
+  });
+
+  it("中止したら消し、片付けの結果に作業領域として含める", async () => {
+    const { service, id } = await submittedTask();
+    expect(service.cleanupPlan(id)?.find((c) => c.target === "workspace")?.present).toBe(true);
+    await service.cancel(id);
+    expect(existsSync(cacheOf(id))).toBe(false);
+    // 作業領域が先に無くても、キャッシュが残っていれば消す
+    const other = await submittedTask(join(dir, "other.db"));
+    rmSync(join(root(), other.id), { recursive: true, force: true });
+    rmSync(join(root(), "_git", `${other.id}.git`), { recursive: true, force: true });
+    expect(
+      other.service.cleanupPlan(other.id)?.find((c) => c.target === "workspace")?.present,
+    ).toBe(true);
+    const cancelled = await other.service.cancel(other.id);
+    expect(existsSync(cacheOf(other.id))).toBe(false);
+    expect(cancelled.cancelled?.cleanup).toContainEqual({ target: "workspace", result: "done" });
+    other.activity.close();
+  });
+
+  it("起動時に、どのタスクのものでもない・中止したタスクのキャッシュを消し、進行中のタスクのものは残す", async () => {
+    const { service, activity, id: open } = await submittedTask();
+    const { id: cancelled } = service.createTask({ projectId: "default", title: "請求", body: "" });
+    await service.runNext(cancelled);
+    await service.cancel(cancelled);
+    activity.close();
+    // 中止の片付けの途中で止まった（キャッシュが残った）ものとして、作り直して起動し直す
+    mkdirSync(join(cacheOf(cancelled), "pip"), { recursive: true });
+    const orphan = randomUUID();
+    mkdirSync(join(cacheOf(orphan), "pip"), { recursive: true });
+    // ID の形でない名前は消さない
+    mkdirSync(join(root(), "_task-cache", "not-a-task"), { recursive: true });
+    const restarted = makeService(new SqliteActivityStore(dbPath));
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(2);
+    expect(existsSync(cacheOf(cancelled))).toBe(false);
+    expect(existsSync(cacheOf(orphan))).toBe(false);
+    expect(existsSync(join(root(), "_task-cache", "not-a-task"))).toBe(true);
+    // 進行中のタスクのキャッシュは、再起動しても使い回す
+    expect(readdirSync(cacheOf(open))).toEqual(["pkg-1"]);
+  });
+
+  it("起動時に、中止したタスクの作業領域がマウントされていれば、キャッシュも消さない（PBI-319 レビュー指摘）", async () => {
+    const { service, activity, id } = await submittedTask();
+    await service.cancel(id);
+    activity.close();
+    // 中止の片付けで消せなかった作業領域を、動いているコンテナがまだマウントしている
+    mkdirSync(join(root(), id, "repo"), { recursive: true });
+    mkdirSync(join(cacheOf(id), "pip"), { recursive: true });
+    const mounted = [join(root(), id, "repo")];
+    const restarted = makeService(new SqliteActivityStore(dbPath), [], {
+      containerMounts: async () => mounted,
+    });
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(0);
+    expect(existsSync(cacheOf(id))).toBe(true);
+    // マウントが無くなれば、次の起動で消す
+    mounted.length = 0;
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(1);
+    expect(existsSync(cacheOf(id))).toBe(false);
+  });
+
+  it("キャッシュが壊れていたら作り直し、用意できなければキャッシュを使わずに実行する", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // 壊れた（ファイルになった）キャッシュは作り直す
+      const first = await submittedTask();
+      rmSync(cacheOf(first.id), { recursive: true });
+      writeFileSync(cacheOf(first.id), "broken");
+      first.service.requestChanges(first.id, {
+        step: "requirements",
+        submission: 1,
+        comments: ["直して"],
+      });
+      await first.service.runNext(first.id);
+      expect(first.executor.calls.at(-1)?.taskCache).toBe(cacheOf(first.id));
+      expect(first.seen.at(-1)).toEqual([]);
+      // キャッシュの根がリンクなら、使わずに進める（リンクの先には書かない）
+      const outside = join(dir, "outside");
+      mkdirSync(outside);
+      rmSync(join(root(), "_task-cache"), { recursive: true, force: true });
+      symlinkSync(outside, join(root(), "_task-cache"));
+      const second = await submittedTask(join(dir, "second.db"));
+      expect(second.executor.calls[0]?.taskCache).toBeUndefined();
+      expect(second.service.get(second.id)?.task.status).toBe("awaiting_approval");
+      expect(readdirSync(outside)).toEqual([]);
+      expect(warn.mock.calls.flat().join("\n")).toContain("キャッシュを使わずに実行します");
+      second.activity.close();
     } finally {
       warn.mockRestore();
     }
