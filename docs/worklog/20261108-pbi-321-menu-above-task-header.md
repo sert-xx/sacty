@@ -35,7 +35,8 @@
 | 指摘 | 対応 |
 | --- | --- |
 | （セルフレビュー）`z-50` を外した `POPUP` が、Positioner の外で使われていないか | 3つのメニューの Popup だけで使い、どれも `z-50` を付けた Positioner の中。ほかの Positioner は `hint.tsx` だけで、もとから `z-50` を付けている |
+| （Sacty のレビュー・提案）この変更を戻しても検出できるよう、Chromium で、メニューと見出しが重なる座標でメニューが最前面にあることを確かめる回帰テストを足す | `apps/web/src/components/shell/menus.browser.test.ts` を足した。実際の3つのメニューと、タスク詳細の見出しと同じ `sticky top-16 z-20` の見出しを Vite で Chromium に載せ、各メニューを開いて、見出しと重なる範囲の6点で `elementFromPoint` がメニューを指すことを確かめる。CSS は `@tailwindcss/node` で、部品とテストの画面のクラスから実際の Tailwind で作る（間接の依存だったので `apps/web` の devDependencies に明示した）。直した後は3件とも合格、`menus.tsx` を main の版に戻すと3件とも失敗することを確かめた |
 
 ## 残したこと
 
-- 重なりの順をブラウザーで確かめる自動のテストは無い（jsdom では重なりを計算しないため）。
+なし
