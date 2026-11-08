@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-draft-pull-request-before-final-review.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -963,7 +963,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 ![実装の検証から承認待ちまで](images/verify.svg)
 
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になる。
-  sacty は、実装の PR をドラフトで作って CI を待ち（下の「最終レビューの前の実装の PR と CI」）、差分を取って、ゴールガーディアンの最終レビューに進む。
+  sacty は、実装の PR をドラフトで作り、CI の結果を待たずに差分を取って、ゴールガーディアンの最終レビューに進む（CI と並べて進める。下の「最終レビューの前の実装の PR と CI」）。
   sacty はテストを別のコンテナで実行しない（テストは、ゴールガーディアンが最終レビューの中で実行する）。
   差分を取れなければ、最終レビューをせずに一時停止する（`verify.diffUnavailable`。再開すると差分の取得からやり直す）。
 - 最終レビューは、実装後の作業領域の使い捨ての写しで、実装の工程のイメージ（無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して動かす。
@@ -1176,7 +1176,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 取り込む時点（`syncBase`）：
   - 実装の実行を始める前（`runNextInner`）。初回も、差し戻し・PR の指摘の取り込み・再レビューで実装をやり直すときも同じ。
   - 最終レビューの前（`syncBeforeVerify`）。実装の実行の間にベースブランチが進んだときのため。最終レビューは取り込んだ後のコードで行う。
-    PR の CI を待つ間は最終レビューに進まないので、取り込まない。CI の結果が出た後（競合で一時停止したタスクを再開して、実装をやり直さずに最終レビューへ戻ったときも）にベースブランチが進んでいれば、このとき取り込む。競合すれば実装をやり直し、競合しなければ `BaseBranchMerged` が前の CI の結果（`pullRequestCi`）を捨てて、PR をマージコミットで作り直して CI を待ち直す。
+    PR の CI を待つ間の最終レビュー（PBI-314）は、CI を待っているコミットを見るので、取り込まない。CI の結果を受けて最終レビューを実行するとき（CI が落ちて最終レビューをし直す・競合で一時停止したタスクを再開して、実装をやり直さずに最終レビューへ戻ったときなど）に、ベースブランチが進んでいれば取り込む。CI と並べた最終レビューに合格した後に CI が初回で通った・CI が無いときは、最終レビューをし直さずに承認待ちへ進むので、取り込まない。競合すれば実装をやり直し、競合しなければ `BaseBranchMerged` が前の CI の結果（`pullRequestCi`）を捨てて、PR をマージコミットで作り直して CI を待ち直す。
     予算の上限に達しているとき、作業領域が無いときは、取り込まない。
   - 承認待ちの間は取り込まない（人が差し戻す・PR の指摘を書くと、実装のやり直しの前に取り込む）。承認待ちの PR が競合したことは、画面に出す（[ベースブランチとの競合の表示](approval.md#ベースブランチとの競合の表示)）。
   - 設定 `ServiceDeps.mergeBase` が `false` のときは取り込まない（テスト用。既定は取り込む）。
@@ -1233,8 +1233,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     再開すると、PR の作成からやり直す。
   - 既存の PR を引き継ぐタスク（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）は、最終レビューの前には積まない（検証に通った後に積む）。
 - 作った PR の先頭のコミットの CI を、sacty が待つ（`Task.pullRequestCi`）。
-  待つ間は最終レビューに進まず、費用もかからない。
-  画面の状態は「PR の CI を待っている」。
+  待つ間も、CI の終わりを待たずに最終レビューを進める（PBI-314。下の「CI と並べる最終レビュー」）。
+  最終レビューに合格した後、CI の結果だけを待つ間は、費用がかからない。画面の状態は「PR の CI を待っている」。
   - PR の確認（60秒ごと）のたびに読む（`checkVerificationCi`）。
     読み方と判定は、マージの後の監視と同じ（`readCi`。[マージの後の監視](deployment-watch.md#cicd-の監視)）。
   - CI が1つも現れないまま `PULL_REQUEST_CI_GRACE_MS`（5分）たったら `none`、終わらない・読めないまま `PULL_REQUEST_CI_TIMEOUT_MS`（60分）たったら `timed_out`。
@@ -1259,7 +1259,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - 実行が複数あれば、1つでも頼めたら再実行を待つ。`PULL_REQUEST_CI_GRACE_MS` は開始待ちの猶予で、過ぎても実行中のチェックがあれば `PULL_REQUEST_CI_TIMEOUT_MS` まで待つ。依頼には応答の本文を読み終えるまでの期限があり（30秒）、前の依頼の応答を待つ間に止めたなら、残りを頼まない。
     - 読んでいる間に一時停止・中止・実装のやり直しがあれば、頼まず、古い結果も記録しない。
     - マージの後の監視は再実行しない。
-  - 結果（`passed`・`failed`・`none`・`timed_out`）を `PullRequestCiFinished` に記録して、最終レビューに進む。
+  - 結果（`passed`・`failed`・`none`・`timed_out`）を `PullRequestCiFinished` に記録する。CI と並べた最終レビューがまだなら、最終レビューに進む。
     失敗なら、失敗したジョブとログの抜粋も持つ。
     再実行した後の結果なら、元の失敗は `pullRequestCi.rerun` に残る。
 - 最終レビューの指示（`pullRequestCiLines`）に、PR の URL と CI の結果を、指示ではない JSON のデータとして渡す。
@@ -1275,10 +1275,21 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     差分と関係が無いと確かめられたら、`humanChecks` に書かせる。
     同じテストが作業領域のテストのコマンドでも失敗したときだけ `tests.flakyFailures` に書かせ、`runs`・`passes` には作業領域で実行し直した回数だけを書かせる（`checkFlakyFailures` の基準は変えない）。
   - sacty は、CI の結果だけでは不合格にしない。
+- CI と並べる最終レビュー（PBI-314。`awaitingCiAfterReview`・`ciConfirmsReview`）：
+  - CI が終わっていなければ、最終レビューの指示に、CI がまだ終わっていないことだけを伝える（`PENDING_CI_LINES`）。CI を待たせず、CI の状態を判定に使わせない。
+    記録する `FinalReviewed` に、待っていた CI のコミット（`beforeCi`）を付ける。
+  - 不合格なら、CI を待たずに実装に戻す。待っている CI は捨てる（やり直した実装で PR を更新して待ち直す）。終わった CI の結果は、今までどおり実装のやり直しまで残す。
+  - 合格したら、CI の結果だけを待つ（`pullRequestCi.reviewedBeforeResult`）。
+    - CI が初回で通った・CI が無い（`none`）なら、最終レビューをし直さずに承認待ちへ進める。
+    - CI が落ちた・時間切れ・失敗したジョブの再実行で通ったなら、CI の結果を見て、上のとおりの最終レビューをし直す。前の回の検証の記録を「CI の結果の前の最終レビュー」として渡し、同じ内容の検証を使い回させる（[同じ内容の検証の使い回し](#同じ内容の検証の使い回し)）。
+    - 最終レビューの間に CI が終わっていたら、記録したときの CI の結果で同じように決める。
+    - 待っていた CI のコミットでなければ（取り込みで PR を作り直したなど）、確定せずに最終レビューし直す。
+  - 合格した後に CI の結果だけを待つ間は、費用がかからないので、最終レビューで予算の上限に達していても一時停止しない（警告は記録する）。CI が初回で通った・CI が無ければ、そのまま承認待ちへ進める（費用のかからない公開は、予算の上限に達していても行う）。CI が落ちて最終レビューをし直すときは、実行の前に予算を確かめ、上限に達していれば一時停止する。
+  - 状態は作業履歴（`beforeCi` と `PullRequestCiFinished`）から導くので、デーモンを起動し直しても、合格した最終レビューを2回しない。
 - PR の本文は、検証中であること（最終レビューの前のドラフト）を書く（`PullRequestBodyStage`）。
   検証に通ったら、最終レビューの結果で書き直す。
 
-コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`rerunFailedCi`・`readCi`・`repositoryHasNoCi`）、`apps/daemon/src/ci.ts`（`CiStatusReader`・`GitHubCiStatus.rerunFailedJobs`・`GitHubCiStatus.repositoryHasNoCi`・`rerunNotStarted`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`rerunLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`pullRequestCiReruns`・`awaitingPullRequestCi`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PullRequestCiRerunRequested`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
+コード: `apps/daemon/src/service.ts`（`verify`・`publish`・`draftsPullRequest`・`checkVerificationCi`・`rerunFailedCi`・`readCi`・`repositoryHasNoCi`）、`apps/daemon/src/ci.ts`（`CiStatusReader`・`GitHubCiStatus.rerunFailedJobs`・`GitHubCiStatus.repositoryHasNoCi`・`rerunNotStarted`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/prompts.ts`（`pullRequestCiLines`・`PENDING_CI_LINES`・`rerunLines`・`buildPullRequestBodyText`）、`packages/core/src/projection.ts`（`pullRequestCi`・`pullRequestCiReruns`・`awaitingPullRequestCi`・`awaitingCiAfterReview`・`ciConfirmsReview`）、`packages/core/src/events.ts`（`PullRequestCiFinished`・`PullRequestCiRerunRequested`・`PULL_REQUEST_CI_GRACE_MS`・`PULL_REQUEST_CI_TIMEOUT_MS`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）
 
 ### 同じ内容の検証の使い回し
 

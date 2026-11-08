@@ -15,6 +15,7 @@ import {
   activeStep,
   applyEvent,
   auditOpen,
+  awaitingCiAfterReview,
   awaitingDeploymentCheck,
   awaitingDeploymentCi,
   awaitingGathering,
@@ -576,8 +577,9 @@ function awaitingVerification(task: Task): boolean {
     task.status === "idle" &&
     task.verification !== undefined &&
     !openProposal(task) &&
-    // 最終レビューの前に作った実装の PR の CI を待つ間は、最終レビューに進まない（PR の確認が CI を読む）
-    !awaitingPullRequestCi(task)
+    // 最終レビューの前に作った実装の PR の CI を待つ間も、最終レビューは並べて進める（PBI-314）。合格した後は、CI の結果だけを
+    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）
+    !awaitingCiAfterReview(task)
   );
 }
 
@@ -723,7 +725,7 @@ export type ServiceDeps = {
    */
   stepPullRequests?: boolean;
   /**
-   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI を待ってから最終レビューに進むか。既定は作る。
+   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI と並べて最終レビューに進むか。既定は作る。
    * false なら、検証に通った後に PR を作る（PR の CI を待たない流れを確かめるテストで切る）。
    */
   draftPullRequests?: boolean;
@@ -7579,7 +7581,8 @@ export class TaskService {
       return this.postGitHubComments(initial, submittedComments, "submitted");
     }
     if (initial && awaitingVerification(initial)) {
-      if (!(await this.syncBeforeVerify(initial))) return;
+      // CI を待つ間の最終レビュー（PBI-314）は、CI を待っている PR のコミットを見るので、ベースブランチを取り込まない
+      if (!awaitingPullRequestCi(initial) && !(await this.syncBeforeVerify(initial))) return;
       return this.verify(this.mustGet(taskId));
     }
     // 要求要件・設計の成果を、タスクブランチへの PR にして承認待ちにする（PBI-57）
@@ -9249,13 +9252,20 @@ export class TaskService {
       ]);
       return;
     }
-    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI を待つ（PR の確認が CI を読み、終わったら最終レビューに
-    // 進む）。CI の結果は、最終レビューでゴールガーディアンの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
+    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI の結果を待たずに最終レビューに進む（PBI-314。PR の確認が
+    // CI を並べて読む）。CI が終わっていれば、その結果を最終レビューの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
     if (!task.pullRequestCi && this.draftsPullRequest(task)) {
       const drafted = await this.publish(task, config.config, { verifying: true });
       if (drafted !== "no_changes") return;
     }
     const prCi = this.mustGet(task.id).pullRequestCi;
+    // CI の結果を待たずに行う最終レビュー（PBI-314）。CI の結果は、届いてから sacty が合わせて判定する
+    const ciPending = prCi !== undefined && prCi.result === undefined;
+    // CI の結果を待たずに合格した最終レビューの検証の記録。CI が落ちて最終レビューし直すときに使い回させる（作業領域は同じ）
+    const reviewedBefore =
+      prCi?.reviewedBeforeResult && task.lastReview?.beforeCi?.commit === prCi.commit
+        ? task.lastReview.verificationRecord
+        : undefined;
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
     // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
     const viewpointIds = finalReviewViewpointIds(task);
@@ -9438,6 +9448,8 @@ export class TaskService {
               ...(current.implementVerification
                 ? { implementVerification: current.implementVerification }
                 : {}),
+              ...(reviewedBefore ? { reviewBeforeCiVerification: reviewedBefore } : {}),
+              ...(ciPending ? { pullRequestCiPending: true } : {}),
               ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
               ...(prCi?.result
                 ? {
@@ -9687,6 +9699,7 @@ export class TaskService {
           type: "FinalReviewed",
           payload: {
             ...review,
+            ...(ciPending && prCi ? { beforeCi: { commit: prCi.commit } } : {}),
             ...(verification
               ? {
                   verificationRecord: {
@@ -9705,7 +9718,10 @@ export class TaskService {
         },
       },
     ]);
-    if (review.passed) this.checkBudget(reviewed);
+    // CI を待つ間に合格したら、CI の結果だけを待つ（費用はかからない）。予算の上限に達していても止めず、警告だけ記録する。
+    // CI が落ちて最終レビューをし直すときは、実行の前に予算で止める（PBI-314）
+    if (review.passed && awaitingCiAfterReview(reviewed)) this.warnIfNeeded(reviewed);
+    else if (review.passed) this.checkBudget(reviewed);
     else this.pauseIfVerificationKeepsFailing(reviewed);
   }
 

@@ -3934,6 +3934,19 @@ const FLAKY_EXCLUSION_LINE =
  * 変更によるものかをゴールガーディアンに判断させる（sacty は CI の結果だけでは不合格にしない）。変更と関係の無い失敗と
  * 確かめられたものは、人が確かめること（humanChecks）に回させる。
  */
+/**
+ * CI の結果を待たずに行う最終レビューの指示（PBI-314）。CI は sacty が後で読み、通れば確定し、落ちれば CI の結果を見て
+ * 最終レビューし直す。待たせない（並べて進めるため）。
+ */
+const PENDING_CI_LINES = [
+  "## 実装の PR の CI",
+  "",
+  "sacty は、この実装を PR（ドラフト）にプッシュしました。CI はまだ終わっていません。",
+  "- CI の終わりを待たない。CI の状態を読んで判定の材料にしない（終わっていない結果は何も確かめていない）",
+  "- 作業領域の実装とテストの結果だけで判定する。CI の結果は sacty が後で読み、落ちたら CI の結果を見てもう一度最終レビューする",
+  "",
+];
+
 export function pullRequestCiLines(
   pr: { url?: string; ci: PullRequestCi },
   withTests = true,
@@ -4038,6 +4051,12 @@ export function buildFinalReviewPrompt(
     implementVerification?: VerificationRecord;
     /** プロジェクトの台帳の、既知の不安定なテスト（PBI-312）。 */
     knownFlaky?: readonly KnownFlakyTest[];
+    /** 実装の PR の CI がまだ終わっていない（PBI-314。CI の結果を待たずに最終レビューする）。 */
+    pullRequestCiPending?: boolean;
+    /**
+     * CI の結果を待たずに合格した、同じ内容の最終レビューの検証の記録（PBI-314）。CI が落ちて最終レビューし直すときに渡す。
+     */
+    reviewBeforeCiVerification?: VerificationRecord;
   } = {},
 ): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
@@ -4063,14 +4082,24 @@ export function buildFinalReviewPrompt(
   const places = stepDocumentPlaces(task);
   const reuse = reuseVerificationLines({
     stage: "guardian",
-    records: options.implementVerification
-      ? [
-          {
-            label: "実装の工程のセルフレビュー（self-review）",
-            record: options.implementVerification,
-          },
-        ]
-      : [],
+    records: [
+      ...(options.implementVerification
+        ? [
+            {
+              label: "実装の工程のセルフレビュー（self-review）",
+              record: options.implementVerification,
+            },
+          ]
+        : []),
+      ...(options.reviewBeforeCiVerification
+        ? [
+            {
+              label: "CI の結果の前の最終レビュー（final-review）",
+              record: options.reviewBeforeCiVerification,
+            },
+          ]
+        : []),
+    ],
     ...(options.pullRequest ? { ci: options.pullRequest.ci } : {}),
     ...(places ? { missingInPrevious: places.dirs.map((d) => `${d}/`) } : {}),
   });
@@ -4147,6 +4176,7 @@ export function buildFinalReviewPrompt(
     ...baseMergeLines(task),
     ...outOfScopeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest, Boolean(testCommand)) : []),
+    ...(options.pullRequestCiPending ? PENDING_CI_LINES : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
       ? [
@@ -5779,8 +5809,8 @@ function resultTableLines(task: Task): string[] {
 }
 
 /**
- * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI を待ってから
- * 最終レビューをする）。
+ * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI と並べて
+ * 最終レビューをする。PBI-314）。
  */
 export type PullRequestBodyStage = {
   verifying?: boolean;
