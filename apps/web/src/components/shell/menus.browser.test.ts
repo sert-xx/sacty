@@ -68,7 +68,7 @@ beforeAll(async () => {
   const css = await tailwindCss();
   server = await createServer({
     configFile: false,
-    envFile: false,
+    envDir: false,
     server: { host: "127.0.0.1", port: 0 },
     resolve: {
       alias: {
