@@ -474,9 +474,14 @@ describe("既知の不安定なテストの申告（PBI-312）", () => {
       remarks: [],
       steps: [],
     } as unknown as Parameters<typeof buildFinalReviewPrompt>[0];
-    const prompt = (knownFlaky: typeof known, testCommand?: string) =>
+    const prompt = (
+      knownFlaky: typeof known,
+      testCommand?: string,
+      pullRequest?: NonNullable<Parameters<typeof buildFinalReviewPrompt>[2]>["pullRequest"],
+    ) =>
       buildFinalReviewPrompt(task, "diff", {
         ...(testCommand ? { testCommand } : {}),
+        ...(pullRequest ? { pullRequest } : {}),
         knownFlaky,
       });
 
@@ -491,9 +496,21 @@ describe("既知の不安定なテストの申告（PBI-312）", () => {
       expect(text).toContain("runs：0、passes：0");
     });
 
-    it("0 件・テストのコマンドが無ければ節を出さない", () => {
+    it("0 件・テストのコマンドも PR も無ければ節を出さない", () => {
       expect(prompt([], COMMAND)).not.toContain("既知の不安定なテスト");
       expect(prompt(known)).not.toContain("既知の不安定なテスト");
+    });
+
+    it("テストのコマンドが無くても、PR の CI を見るなら既知のテストと省き方を渡す", () => {
+      const ci = {
+        commit: "c".repeat(40),
+        startedAt: "2026-10-27T00:00:00Z",
+        result: "failed" as const,
+      };
+      const text = prompt(known, undefined, { url: "https://github.com/acme/app/pull/1", ci });
+      expect(text).toContain("--- 既知の不安定なテスト ---");
+      expect(text).toContain("runs：0、passes：0");
+      expect(text).toContain("flakyFailures");
     });
   });
 });

@@ -4110,7 +4110,8 @@ export function buildFinalReviewPrompt(
     "",
     ...verificationScopeLines(task, options.stepDocumentsIncluded === true),
     ...humanCheckLines(Boolean(testCommand)),
-    ...(testCommand ? knownFlakyLines(options.knownFlaky ?? []) : []),
+    // テストのコマンドが無くても、PR の CI の失敗は不安定な失敗として申告させるので、既知の一覧を渡す（PBI-312）
+    ...(testCommand || options.pullRequest ? knownFlakyLines(options.knownFlaky ?? []) : []),
     ...carriedHumanCheckLines(task),
     ...environmentOnlyLines(task),
     ...workspaceInternalLines(
