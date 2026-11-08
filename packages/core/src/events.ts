@@ -1062,6 +1062,11 @@ const AgentRunStarted = z.object({
     /** モデル・リーズニングエフォート（PBI-46）。 */
     model: AgentSetting.model,
     reasoningEffort: AgentSetting.reasoningEffort,
+    /**
+     * この実行で使ったイメージの名前（PBI-318。images の名前か default）。これより前の記録には無い（作業履歴をたどって
+     * そのときのイメージから求める）。
+     */
+    image: TaskImageName.optional(),
   }),
 });
 
@@ -2892,7 +2897,12 @@ function DeploymentCheckPart<const T extends readonly [string, ...string[]]>(res
 /** デプロイの確認のエージェントの実行を始めた（PBI-89）。 */
 const DeploymentCheckStarted = z.object({
   type: z.literal("DeploymentCheckStarted"),
-  payload: z.object({ runId: z.string(), skill: z.string() }),
+  payload: z.object({
+    runId: z.string(),
+    skill: z.string(),
+    /** この確認で使ったイメージの名前（PBI-318。AgentRunStarted と同じ。これより前の記録には無い）。 */
+    image: TaskImageName.optional(),
+  }),
 });
 
 /**

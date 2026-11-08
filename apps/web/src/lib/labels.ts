@@ -1189,8 +1189,9 @@ export function taskImageInfo(task: Task, activity: readonly ActivityEvent[] = [
 }
 
 /**
- * 工程ごとに、実行したとき（AgentRunStarted を足したとき）に使ったイメージの名前を、作業履歴をたどって復元する。
- * 実行の記録にはイメージの名前が無いので、そのときのタスクのイメージ・工程ごとのイメージ（投影と同じ規則）から決める。
+ * 工程ごとに、実行したとき（AgentRunStarted、マージの後の監視の確認は DeploymentCheckStarted）に使ったイメージの名前。
+ * 実行の記録に名前があればそれを使う（PBI-318）。名前の無い古い記録は、作業履歴をたどって、そのときのタスクのイメージ・
+ * 工程ごとのイメージ（投影・デーモンと同じ規則）から求める。
  */
 export function stepRunImages(
   activity: readonly ActivityEvent[],
@@ -1198,7 +1199,12 @@ export function stepRunImages(
   let requested: Partial<Record<StepKey, string>> = {};
   let images: Partial<Record<StepKey, string>> = {};
   let image: string | undefined;
+  let chosenSteps: readonly StepKey[] = [];
   const runs: Partial<Record<StepKey, string[]>> = {};
+  const ran = (step: StepKey, name: string) => {
+    const seen = runs[step] ?? [];
+    if (seen.at(-1) !== name) runs[step] = [...seen, name];
+  };
   for (const event of activity) {
     switch (event.type) {
       case "TaskCreated":
@@ -1210,6 +1216,7 @@ export function stepRunImages(
         );
         images = { ...event.payload.images, ...Object.fromEntries(chosen) };
         image = event.payload.image;
+        chosenSteps = event.payload.steps;
         break;
       }
       case "StepImageChanged":
@@ -1223,13 +1230,18 @@ export function stepRunImages(
         if (event.payload.rechooseSteps) {
           images = {};
           image = undefined;
+          chosenSteps = [];
         }
         break;
       case "AgentRunStarted": {
         const step = event.payload.step;
-        const name = image ?? images[step] ?? "default";
-        const seen = runs[step] ?? [];
-        if (seen.at(-1) !== name) runs[step] = [...seen, name];
+        ran(step, event.payload.image ?? image ?? images[step] ?? "default");
+        break;
+      }
+      case "DeploymentCheckStarted": {
+        // 工程の無い PBI-116 より前のタスクの監視は、実装の工程のイメージで確かめた
+        const legacy = chosenSteps.includes("deployment") ? images.deployment : images.implement;
+        ran("deployment", event.payload.image ?? image ?? legacy ?? "default");
         break;
       }
     }

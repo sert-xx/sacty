@@ -1765,6 +1765,8 @@ describe("工程の実行と費用", () => {
         authMode: plain.auth.mode,
         model: "gpt-sol",
         reasoningEffort: "high",
+        // 使ったイメージの名前（PBI-318）
+        image: "default",
       },
     ]);
     // 秘密情報の名前（認証の設定）は記録しない
@@ -5751,6 +5753,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(executor.images[3]).toEqual(used(java));
       expect(executor.images[4]).toEqual(used(playwright));
       expect(changes(service, id)).toEqual([{ actor: "person", from: "java", to: "playwright" }]);
+      // 実行の記録には、実行を始めたときに使った名前を残す（PBI-318 レビュー指摘）
+      expect(
+        service
+          .get(id)
+          ?.activity.flatMap((e) =>
+            e.type === "AgentRunStarted" && e.payload.step === "implement" ? [e.payload.image] : [],
+          ),
+      ).toEqual(["java"]);
       activity.close();
     });
 
@@ -5923,8 +5933,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id);
-      // どの工程がどのイメージで動いたか：要求要件は java、設計は人が変えた playwright
+      // どの工程がどのイメージで動いたか：要求要件は java、設計は人が変えた playwright。実行の記録にも残す
       expect(executor.images).toEqual([used(java), used(playwright)]);
+      expect(
+        service
+          .get(id)
+          ?.activity.flatMap((e) => (e.type === "AgentRunStarted" ? [e.payload.image] : [])),
+      ).toEqual(["java", "playwright"]);
       // タスクのイメージに変えると、変える前の名前は持たず（工程ごとに違うため）、工程ごとの記録は残る
       const changed = service.changeTaskImage(id, { image: "default" });
       expect(changed.image).toBe("default");
@@ -22483,6 +22498,14 @@ describe("統合レビュー（PBI-31）", () => {
     expect(executor.images[5]).toEqual({ image: java.image, env: java.env });
     expect(executor.images[8]).toEqual({ image: playwright.image, env: playwright.env });
     expect(executor.images).toHaveLength(9);
+    // 統合レビューの実行の記録にも、始めたときに使った名前を残す（PBI-318 レビュー指摘）
+    expect(
+      service
+        .get(id)
+        ?.activity.flatMap((e) =>
+          e.type === "AgentRunStarted" && e.payload.step === "integrate" ? [e.payload.image] : [],
+        ),
+    ).toEqual(["java", "playwright"]);
     activity.close();
   });
 
@@ -22687,6 +22710,12 @@ describe("再現の工程（PBI-29）", () => {
       { image: "sacty-agent-go:test", env: { TOOL: "go" } },
     ]);
     expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
+    // どの実行の記録にも、使ったイメージの名前を残す（記録し忘れた所があれば落ちる。PBI-318 レビュー指摘）
+    const runs = service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted") ?? [];
+    expect(runs.length).toBeGreaterThan(0);
+    expect(runs.map((e) => e.type === "AgentRunStarted" && e.payload.image)).toEqual(
+      runs.map(() => "go"),
+    );
     activity.close();
   });
 
@@ -32453,6 +32482,11 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     await t.merge(id);
     await t.service.runNext(id);
     expect(t.executor.images.at(-1)?.image).toBe("sacty-agent-web:test");
+    // 確認の記録にも使った名前を残す（画面が deployment の実行として出す。PBI-318 レビュー指摘）
+    const checks = t.service.get(id)?.activity.filter((e) => e.type === "DeploymentCheckStarted");
+    expect(checks?.map((e) => e.type === "DeploymentCheckStarted" && e.payload.image)).toEqual([
+      "web",
+    ]);
     t.activity.close();
   });
 
@@ -34016,6 +34050,62 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
       "valid",
     ]);
     expect(restarted.executor.calls[0]?.command.join(" ")).toContain("claude-sonnet-5-5");
+    activity.close();
+  });
+
+  it("外部作業の接続先を用意している間にイメージを変えたら、変えた後のイメージで始め、その名前を実行の記録に残す（PBI-318 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const base = configOf(agent(), 1, [calendar()]);
+    const image = (name: string) => ({
+      name,
+      image: `sacty-agent-${name}:test`,
+      description: name,
+      env: { IMAGE_NAME: name },
+    });
+    const config = (): ConfigResult => {
+      const loaded = base() as { ok: true; config: SactyConfig };
+      return {
+        ok: true,
+        config: { ...loaded.config, images: { java: image("java"), web: image("web") } },
+      };
+    };
+    const { service } = makeService(activity, [], { config, gateway: fakeGateway() });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: [...STEP_PLANS.operation],
+              plan: "operation",
+              reason: "予定更新",
+              operation,
+              image: "java",
+            },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [success], { config, gateway: fakeGateway() });
+    const svc = restarted.service as unknown as {
+      findPlatform: (...args: unknown[]) => Promise<unknown>;
+    };
+    const find = svc.findPlatform.bind(svc);
+    vi.spyOn(svc, "findPlatform").mockImplementationOnce(async (...args) => {
+      const found = await find(...args);
+      restarted.service.changeTaskImage(id, { image: "web" });
+      return found;
+    });
+    await restarted.service.runNext(id);
+    expect(restarted.executor.images).toEqual([
+      { image: "sacty-agent-web:test", env: { IMAGE_NAME: "web" } },
+    ]);
+    const started = restarted.service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted");
+    expect(started?.map((e) => e.type === "AgentRunStarted" && e.payload.image)).toEqual(["web"]);
     activity.close();
   });
 

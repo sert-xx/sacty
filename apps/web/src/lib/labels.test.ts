@@ -2238,6 +2238,57 @@ describe("タスクのイメージの表示（PBI-318）", () => {
       ["deployment", "default", []],
     ]);
   });
+
+  it("実行の記録にイメージの名前があればそれを使い、監視の確認（DeploymentCheckStarted）も deployment の実行として数える", () => {
+    let seq = 0;
+    const ev = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+      ({
+        ...e,
+        seq: ++seq,
+        id: `e${seq}`,
+        taskId: "t1",
+        projectId: "p1",
+        at: "2026-10-10T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    const run = (step: string, image?: string) =>
+      ev({
+        type: "AgentRunStarted",
+        payload: {
+          runId: `r${seq}`,
+          step,
+          agentId: "a",
+          authMode: "subscription",
+          ...(image ? { image } : {}),
+        },
+      } as Pick<ActivityEvent, "type" | "payload">);
+    const check = (image?: string) =>
+      ev({
+        type: "DeploymentCheckStarted",
+        payload: { runId: `c${seq}`, skill: "watch", ...(image ? { image } : {}) },
+      } as Pick<ActivityEvent, "type" | "payload">);
+    const chosen = (steps: string[], images: Record<string, string>) =>
+      ev({ type: "StepsChosen", payload: { steps, images } } as Pick<
+        ActivityEvent,
+        "type" | "payload"
+      >);
+    // 記録の名前は、再生で求めた名前（python）より優先する（準備中に変えたときなど）
+    expect(
+      stepRunImages([chosen(["deployment"], { deployment: "python" }), run("deployment", "go")]),
+    ).toEqual({ deployment: ["go"] });
+    // 監視の確認も deployment の実行。記録の名前があればそれ、無い古い記録は再生で求める
+    expect(
+      stepRunImages([
+        chosen(["implement", "deployment"], { implement: "java", deployment: "python" }),
+        check(),
+        check("rust"),
+      ]),
+    ).toEqual({ deployment: ["python", "rust"] });
+    // deployment の工程が無い古いタスクの監視は、実装の工程のイメージで確かめた
+    expect(stepRunImages([chosen(["implement"], { implement: "java" }), check()])).toEqual({
+      deployment: ["java"],
+    });
+  });
 });
 
 const T_CHANGED = "2026-10-15T01:00:00.000Z";

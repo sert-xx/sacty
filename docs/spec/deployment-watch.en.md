@@ -122,7 +122,7 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
   - The image is the task image (for per-step images in activity from an older version, the image of this step). As for other steps, the Orchestrator chooses it and a person can change it. If there is none, the default image is used.
   - The workspace is a copy of the code at the merge commit, written to `workspaces/_deployment/<run ID>` (deleted afterward).
   - The project's context (external PFs and MCP servers) is passed in the same way as for step agents.
-- Before the run, `DeploymentCheckStarted` (run ID and skill) is recorded.
+- Before the run, `DeploymentCheckStarted` (run ID, skill, and the name of the image it uses) is recorded. The image is fixed when this record is appended (a change while the check is being prepared afterward does not change this check).
 - The instructions (`buildDeploymentPrompt`) ask the agent to read and follow the skill. What to check (CI/CD, the deployment, or both) and how to check it follow the skill. The CI/CD runs and checks sacty saw (up to 50) are passed as JSON data that is not instructions. The information gathered at the start of the task, if any, is added as background ([Tasks and steps](tasks-and-steps.en.md#information-gathering)). The agent is also asked to do the following.
   - Only check and change nothing (no re-running CI/CD, no redeploying, no rollback)
   - Not write secrets

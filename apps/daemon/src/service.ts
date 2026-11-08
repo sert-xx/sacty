@@ -2493,8 +2493,20 @@ export class TaskService {
     const agent = this.usableAgent(config, chosen.agent, task.id, "deployment");
     const runId = randomUUID();
     const setting = { agentId: agent.id, ...agentSetting(agent), runId };
+    // マージの後の監視の工程のイメージ（タスクのイメージ。PBI-318）。古い版の作業履歴の工程ごとのイメージなら、その工程の
+    // イメージ（工程の無い PBI-116 より前のタスクは、実装の工程のイメージ）。無い・images に無い名前なら既定のイメージ。
+    // 確認を始めるときに決め、使う名前を記録に残す（画面が、どのイメージで動いたかを出す）
+    const atStart = this.mustGet(task.id);
+    const watchStepped = atStart.steps.some((s) => s.key === "deployment");
+    const imageName =
+      atStart.image ?? (watchStepped ? atStart.images?.deployment : atStart.images?.implement);
+    const image = resolveImage(config, imageName);
+    const usedImage = image.ok ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
     this.append(task, [
-      { actor: "sacty", event: { type: "DeploymentCheckStarted", payload: { runId, skill } } },
+      {
+        actor: "sacty",
+        event: { type: "DeploymentCheckStarted", payload: { runId, skill, image: usedImage } },
+      },
     ]);
     type Payload = Extract<EventInput, { type: "DeploymentChecked" }>["payload"];
     const record = (actor: Actor, payload: Payload) => {
@@ -2563,12 +2575,6 @@ export class TaskService {
       if (context) {
         this.append(this.mustGet(task.id), [this.contextResolved(runId, context, platforms)]);
       }
-      // マージの後の監視の工程のイメージ（タスクのイメージ。PBI-318）。古い版の作業履歴の工程ごとのイメージなら、その工程の
-      // イメージ（工程の無い PBI-116 より前のタスクは、実装の工程のイメージ）。無ければ既定のイメージ
-      const image = resolveImage(
-        config,
-        current.image ?? (stepped ? current.images?.deployment : current.images?.implement),
-      );
       if (stopped()) return interrupted({ costUsd: 0, estimated: false });
       executed = await this.execute({
         agent,
@@ -7907,18 +7913,24 @@ export class TaskService {
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config.config, chosen.agent, task.id, step);
     const runId = randomUUID();
+    // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106・
+    // PBI-318）。使う名前を実行の記録に残す（画面が、どのイメージで動いたかを出す）
+    const runImageName = stepImageOf(this.mustGet(task.id), step);
     this.append(task, [
       {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            ...agentSetting(agent),
+            image: runImageName ?? DEFAULT_IMAGE_NAME,
+          },
         },
       },
     ]);
-    // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106・
-    // PBI-318）
-    const runImageName = stepImageOf(this.mustGet(task.id), step);
 
     // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
@@ -8732,6 +8744,14 @@ export class TaskService {
       // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
       // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
       if (latest.agents?.[step] !== chosenName) return;
+      // イメージは、実行を始めるときのもの（準備の間に人が変えたら、変えた後のもの）に決め、使う名前を実行の記録に残す
+      // （PBI-318。画面が、どのイメージで動いたかを出す）
+      const runImageName = stepImageOf(latest, step);
+      const runImage = resolveImage(config, runImageName);
+      if (!runImage.ok) {
+        pause(runImage.message);
+        return;
+      }
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [
@@ -8739,7 +8759,13 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AgentRunStarted",
-            payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              image: runImageName ?? DEFAULT_IMAGE_NAME,
+            },
           },
         },
       ]);
@@ -8749,8 +8775,8 @@ export class TaskService {
         taskId: task.id,
         runId,
         role: step,
-        image: image.image,
-        imageEnv: image.env,
+        image: runImage.image,
+        imageEnv: runImage.env,
         workspaceDir,
         prompt: [
           buildPrompt(latest, step),
@@ -10983,17 +11009,24 @@ export class TaskService {
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config, selected, task.id, step);
     const runId = randomUUID();
+    // 統合レビューのイメージは、実行を始めたときのものに決める（実行の間に変えても、次の実行から。PBI-106・PBI-318）。
+    // 使う名前を実行の記録に残す
+    const runImageName = stepImageOf(this.mustGet(task.id), step);
     this.append(task, [
       {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            ...agentSetting(agent),
+            image: runImageName ?? DEFAULT_IMAGE_NAME,
+          },
         },
       },
     ]);
-    // 統合レビューのイメージは、実行を始めたときのものに決める（実行の間に変えても、次の実行から。PBI-106・PBI-318）
-    const runImageName = stepImageOf(this.mustGet(task.id), step);
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     const subtasks = this.subtaskSummaries(task);
     let baseBranch = task.repository?.baseBranch ?? "";
