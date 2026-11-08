@@ -66,6 +66,7 @@ import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskChat } from "@/components/task-chat";
 import { TaskControls } from "@/components/task-controls";
 import { TaskImageForm } from "@/components/task-image-form";
+import { TaskTitle } from "@/components/task-title";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
@@ -232,7 +233,13 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <h1 className="text-xl font-bold text-balance">{task.title}</h1>
+              {/* 変えた後に、入力を新しい題で始める（題が変わったら作り直す） */}
+              <TaskTitle
+                key={task.title}
+                taskId={task.id}
+                title={task.title}
+                editable={task.status !== "cancelled"}
+              />
               <StatusLabel task={task} />
             </div>
             <StepChips task={task} />

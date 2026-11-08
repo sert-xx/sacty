@@ -604,6 +604,19 @@ Code: `apps/daemon/src/service.ts` (`changeTaskImage`, `taskImageChange`, `runNe
 
 Code: `apps/daemon/src/service.ts` (`changeStepAgent`, `pauseForMissingAgent`, `status`), `apps/daemon/src/config.ts` (`stepAgentFor`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepAgentChanged`, `ChangeStepAgentInput`), `apps/web/src/lib/labels.ts` (`stepAgentRows`, `stepAgentOptions`)
 
+## Renaming a task
+
+- In the task details, a person can change the task title (`POST /api/tasks/:id/title`; the input is `title` of `RenameTaskInput`). The state does not matter (running, waiting for approval, paused, or finished). A cancelled task cannot be renamed.
+- As at creation, spaces around the title are trimmed, and an empty title or one longer than `TASK_TITLE_MAX` (200 characters) is an input error (400; `input.titleRequired`, `input.titleTooLong`). It is refused with a reason (409) when:
+  - The title is the same as now (`title.unchanged`)
+  - The PR link in the title (the target of a review or of continuing an existing PR; `referencedPullRequest`) would change, disappear, or newly appear (`title.pullRequestChanged`). Tasks taken in from a PR are not checked, because their target is the PR they were taken in from.
+- A change adds `TaskRenamed` (`from`, `to`; actor `person`). The projection sets the task's `title` to `to` and keeps the last change (`from`, `to`, time) in `titleChange`. Ticket triage (`TicketTriaged`) does not overwrite a title a person changed.
+- The new title is used from then on wherever the title is used (step instructions, commit messages, notifications, updates of the PR description, exports, and so on). A running run is not stopped.
+- The title of a PR already created is not rewritten (a PR update changes only the description and the base). The branch name is made from the task ID, so it does not change with the title.
+- On the screen, "Rename the task" next to the title opens an input with the current title (`TaskTitle`). When it is refused, the reason is shown and the typed title is kept. The Activity shows who changed it and from what to what.
+
+Code: `apps/daemon/src/service.ts` (`renameTask`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`TaskRenamed`, `RenameTaskInput`), `packages/core/src/projection.ts`, `apps/web/src/components/task-title.tsx`
+
 ## Tasks from the version with the "PR作成" step
 
 Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. That step was removed, with no compatibility layer. Its records can't be read as a step name, so at daemon startup, before the Activity is read, tasks with those records are deleted from the Activity (`purgeLegacyPrStepTasks`).

@@ -51,6 +51,7 @@ import {
   prefetchSecrets,
   previewProjectContext,
   rejectAuditProposal,
+  renameTask,
   requestChanges,
   requestSecurityFix,
   rereviewTask,
@@ -404,6 +405,27 @@ export async function voidRemarkAction(formData: FormData): Promise<void> {
   const remarkId = String(formData.get("remarkId") ?? "");
   await voidRemark(taskId, remarkId);
   refresh();
+}
+
+export type RenameTaskState = { message?: string };
+
+/** タスクの詳細で、タスクの題を変える（PBI-323）。空・長すぎる・同じ題は、デーモンが理由を示して断る。 */
+export async function renameTaskAction(
+  _prev: RenameTaskState,
+  formData: FormData,
+): Promise<RenameTaskState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const title = String(formData.get("title") ?? "");
+  let result: Awaited<ReturnType<typeof renameTask>>;
+  try {
+    result = await renameTask(taskId, title);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
 }
 
 export type ChangeTaskImageState = { message?: string };

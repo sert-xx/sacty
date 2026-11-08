@@ -14,6 +14,7 @@ import {
   rerunEditableBody,
   STEP_PLANS,
   TASK_BODY_MAX,
+  TASK_TITLE_MAX,
   testsMadeNoProgress,
 } from "./events.js";
 import type { DaemonText } from "./message-code.js";
@@ -4296,6 +4297,91 @@ describe("チケットのトリアージと再開の補足", () => {
     ]).get("t1");
     expect(task?.resumeNotes).toEqual(["人の補足"]);
     expect(task?.body).toBe(`概要\n概要に写された見出し\n\n${H}\n\n人の補足`);
+  });
+});
+
+describe("人がタスクの題を変える（PBI-323）", () => {
+  const rename = (taskId: string, from: string, to: string) =>
+    ev(taskId, { type: "TaskRenamed", payload: { from, to } }, "person");
+
+  it("題を新しい題にし、最後の変更を持つ。工程の状態は変えない", () => {
+    const task = project([
+      created("r1"),
+      steps("r1"),
+      started("r1", "run-1"),
+      rename("r1", "title r1", "新しい題"),
+      rename("r1", "新しい題", "もっと新しい題"),
+    ]).get("r1");
+    expect(task?.title).toBe("もっと新しい題");
+    expect(task?.titleChange).toEqual({
+      from: "新しい題",
+      to: "もっと新しい題",
+      at: "2026-10-10T00:00:00.000Z",
+    });
+    expect(task?.status).toBe("running");
+    expect(task?.steps[0]?.state).toBe("active");
+  });
+
+  it("空・長すぎる題の記録は受け付けない", () => {
+    expect(() => rename("r1", "a", "")).toThrow();
+    expect(() => rename("r1", "a", "あ".repeat(TASK_TITLE_MAX + 1))).toThrow();
+    expect(rename("r1", "a", "あ".repeat(TASK_TITLE_MAX)).type).toBe("TaskRenamed");
+  });
+
+  it("中止したタスクの題を変える記録は、作業履歴の誤り", () => {
+    expect(() =>
+      project([
+        created("r2"),
+        ev("r2", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
+        rename("r2", "title r2", "x"),
+      ]),
+    ).toThrow(/the task is cancelled/);
+  });
+
+  it("チケットのトリアージは、人が変えた題を書き換えない（変えていなければ、トリアージの題にする）", () => {
+    const ticket = (id: string) =>
+      ev(
+        id,
+        {
+          type: "TaskCreated",
+          payload: {
+            title: "PAY-1",
+            body: "本文",
+            start: "jira",
+            ticket: {
+              platform: "jira",
+              service: "jira-server",
+              key: "PAY-1",
+              url: "https://jira.example.com/browse/PAY-1",
+            },
+          },
+        },
+        "person",
+      );
+    const triaged = (id: string) =>
+      ev(
+        id,
+        {
+          type: "TicketTriaged",
+          payload: {
+            repo: "https://github.com/acme/app",
+            title: "トリアージの題",
+            body: "概要",
+            reason: "理由",
+          },
+        },
+        "orchestrator",
+      );
+    const tasks = project([
+      ticket("k1"),
+      rename("k1", "PAY-1", "人が決めた題"),
+      triaged("k1"),
+      ticket("k2"),
+      triaged("k2"),
+    ]);
+    expect(tasks.get("k1")?.title).toBe("人が決めた題");
+    expect(tasks.get("k1")?.body).toBe("概要");
+    expect(tasks.get("k2")?.title).toBe("トリアージの題");
   });
 });
 

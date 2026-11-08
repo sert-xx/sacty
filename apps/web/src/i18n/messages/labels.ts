@@ -334,6 +334,9 @@ const ja = {
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
     TaskImageChanged: (from: string | undefined, to: string, actor: string) =>
       `タスクのイメージを ${from ?? "工程ごとのイメージ"} から ${to} に変更（${actor}）`,
+    /** 人がタスクの題を変えた（PBI-323）。 */
+    TaskRenamed: (from: string, to: string, actor: string) =>
+      `タスクの題を「${from}」から「${to}」に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskResumedWithNote: (text: string) => `${text}・補足あり`,
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
@@ -948,6 +951,7 @@ const en: LabelMessages = {
       `${step} image changed from ${from} to ${to} (${actor})`,
     TaskImageChanged: (from, to, actor) =>
       `Task image changed from ${from ?? "the per-step images"} to ${to} (${actor})`,
+    TaskRenamed: (from, to, actor) => `Task renamed from "${from}" to "${to}" (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskResumedWithNote: (text) => `${text}, with notes`,
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,

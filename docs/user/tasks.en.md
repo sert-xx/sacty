@@ -771,6 +771,18 @@ In the following cases, check every item.
 | No subagent could be started, so the author sorted the items itself | The classification may be lenient |
 | No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
+## Renaming a task
+
+Use "Rename the task" (the pencil button) next to the title at the top of the task details to change the title.
+You can rename a task in any state: in progress, waiting for approval, paused, or finished (a cancelled task can't be renamed).
+
+- Type the new title in the input and press "Rename". "Cancel" or the Esc key closes it without a change.
+- An empty title and a title longer than 200 characters can't be used. Spaces around the title are removed.
+- The new title is used from now on in step instructions, commits, notifications, and PR descriptions. A running step is not stopped.
+- The title of a PR already created and the branch name don't change. If you also want to change the PR title, edit it on GitHub.
+- In a task with a PR link in its title (a task that reviews or fixes that PR), you can't remove the link or change it to another PR. Keep the link when you rename it. You also can't add a PR link to a title.
+- The Activity records who changed it and from what to what.
+
 ## Changing the task image
 
 The "Step settings" tab of the task detail shows the task image (one image used for every step) and where it came from ("chosen by the Orchestrator", "set on the project target", "set by a person at creation", "set by a person on rerun", "changed by a person from …", "not set", and so on). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).

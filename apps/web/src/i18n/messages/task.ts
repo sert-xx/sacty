@@ -132,6 +132,15 @@ const ja = {
     title: "外部に直接書いたページ",
     hint: "タスクの説明の指示に従って、エージェントが外部に直接作った・直したページです。これが成果物で、承認の後に書き出しはしません。差し戻すと、これらのページを直します。",
   },
+  /** タスクの題を変える操作（PBI-323）。 */
+  rename: {
+    edit: "題を変える",
+    label: "タスクの題",
+    save: "変える",
+    saving: "変えています…",
+    cancel: "やめる",
+    hint: "この後の工程の指示・コミット・通知・PR の本文から、新しい題を使います。すでに作った PR の題とブランチ名は変わりません。",
+  },
   /** 工程のイメージ（PBI-41）と、人が変える操作（PBI-106）。 */
   images: {
     title: "タスクのイメージ",
@@ -630,6 +639,14 @@ const en: TaskMessages = {
   documentPages: {
     title: "Pages written externally",
     hint: "Pages the agent created or edited directly in external services, as the task description instructed. They are the deliverable, and nothing is exported after approval. When you request changes, the agent edits these pages.",
+  },
+  rename: {
+    edit: "Rename the task",
+    label: "Task title",
+    save: "Rename",
+    saving: "Renaming…",
+    cancel: "Cancel",
+    hint: "The new title is used from now on in step instructions, commits, notifications, and PR descriptions. The title of a PR already created and the branch name don't change.",
   },
   images: {
     title: "Task image",

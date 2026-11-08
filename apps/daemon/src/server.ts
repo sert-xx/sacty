@@ -532,6 +532,17 @@ export function createApp(
     }
   });
 
+  // タスクの詳細で、タスクの題を変える（PBI-323）。この後に題を使うものから新しい題を使う
+  app.post("/api/tasks/:id/title", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.renameTask(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // タスクの詳細で、タスクのイメージを変える（PBI-318）。すべての工程の次の実行から使う
   app.post("/api/tasks/:id/image", async (c) => {
     const json = await readJson(c);

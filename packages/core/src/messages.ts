@@ -238,6 +238,9 @@ const PARAMS = {
   // タスクのイメージを人が指定する・変える（PBI-106・PBI-318）
   "image.notInImages": z.object({ name: z.string() }),
   "image.unchanged": z.object({ name: z.string() }),
+  // タスクの題を人が変える（PBI-323）
+  "title.unchanged": null,
+  "title.pullRequestChanged": z.object({ number: z.number() }),
   "image.configUnavailable": z.object({ detail: TextParam }),
   "image.stepsNotChosen": null,
   // docker compose のサービス（PBI-47）
@@ -1090,6 +1093,9 @@ const ja: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
   "image.unchanged": ({ name }) => `タスクのイメージは、すでに「${name}」です。`,
+  "title.unchanged": "タスクの題は変わっていません。違う題を入力してください。",
+  "title.pullRequestChanged": ({ number }) =>
+    `題を変えると、このタスクが扱う PR（#${number}）が変わるため、変えられません。題の PR のリンクは、足したり消したり変えたりせずに、そのままにしてください。`,
   "image.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、タスクのイメージを指定・変更できません（images の名前を確かめられません）。設定を直してから、もう一度選んでください：${text(detail)}`,
   "image.stepsNotChosen":
@@ -1820,6 +1826,9 @@ const en: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
   "image.unchanged": ({ name }) => `The task already uses the image "${name}".`,
+  "title.unchanged": "The task title hasn't changed. Enter a different title.",
+  "title.pullRequestChanged": ({ number }) =>
+    `The title can't be changed this way because it would change the PR this task works on (#${number}). Don't add, remove, or change a PR link in the title; keep it as it is.`,
   "image.configUnavailable": ({ detail }, text) =>
     `The task image can't be set or changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then choose it again: ${text(detail)}`,
   "image.stepsNotChosen":

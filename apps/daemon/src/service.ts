@@ -117,6 +117,7 @@ import {
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
+  RenameTaskInput,
   RepoUrl,
   RequestChangesInput,
   RequestSecurityFixInput,
@@ -12627,6 +12628,33 @@ export class TaskService {
   }
 
   /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
+  /**
+   * 人が、タスクの詳細でタスクの題を変える（PBI-323）。中止したタスク（以降の操作は受け付けない）のほかは、状態を問わない
+   * （実行中・承認待ち・一時停止中・終わったタスクも変えられる）。今の実行は止めず、この後に題を使うもの（工程の指示・コミット・通知・PR の本文など）から使う。
+   * すでに作った PR の題は書き換えない。空・長すぎる題は入力の誤り、今と同じ題は理由を示して断る。
+   */
+  renameTask(id: string, raw: unknown): Task {
+    const { title } = RenameTaskInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (task.title === title) throw new InvalidOperationError(message("title.unchanged"));
+    // 題にある PR のリンクは、レビュー・引き継ぎの対象を決める（referencedPullRequest）。題を変えて対象の PR が変わる・
+    // 無くなると、途中から別の PR を扱うことになるので断る（PR から取り込んだタスクは、取り込んだ PR が対象なので問わない）
+    if (task.repository && task.source?.kind !== "github_pull_request") {
+      const before = pullRequestInText(task.repository.url, `${task.title}\n${task.body}`);
+      const after = pullRequestInText(task.repository.url, `${title}\n${task.body}`);
+      if (before?.number !== after?.number) {
+        throw new InvalidOperationError(
+          message("title.pullRequestChanged", { number: before?.number ?? after?.number ?? 0 }),
+        );
+      }
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "TaskRenamed", payload: { from: task.title, to: title } } },
+    ]);
+  }
+
   /**
    * 人が、タスクの詳細でタスクのイメージを変える（PBI-318）。工程の状態は問わない（実行中・終わった工程があっても変えられる）。
    * 今の実行は止めず、すべての工程の次の実行から使う（実行の開始で、そのときのイメージを決める）。テスト・最終レビューも、

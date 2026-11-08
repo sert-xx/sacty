@@ -944,6 +944,29 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `apps/daemon/src/service.ts`（`changeStepAgent`・`pauseForMissingAgent`・`status`）、`apps/daemon/src/config.ts`（`stepAgentFor`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepAgentChanged`・`ChangeStepAgentInput`）、`apps/web/src/lib/labels.ts`（`stepAgentRows`・`stepAgentOptions`）
 
+## タスクの題を人が変える
+
+- タスクの詳細で、タスクの題を人が変えられる（`POST /api/tasks/:id/title`、入力は `RenameTaskInput` の `title`）。
+  状態は問わない（実行中・承認待ち・一時停止中・終わったタスクのどれでも）。
+  中止したタスクは変えられない。
+- 題は作成と同じく、前後の空白を除き、空・`TASK_TITLE_MAX`（200文字）を超える題は入力の誤りにする（400。`input.titleRequired`・`input.titleTooLong`）。
+  次のときは、理由を示して断る（409）。
+  - 今と同じ題（`title.unchanged`）
+  - 題にある PR のリンク（レビュー・既存の PR の引き継ぎの対象。`referencedPullRequest`）が変わる・無くなる・新しくできる（`title.pullRequestChanged`）。
+    PR から取り込んだタスクは、取り込んだ PR が対象なので問わない。
+- 変えたら `TaskRenamed`（`from`・`to`。actor は `person`）を足す。
+  投影はタスクの `title` を `to` にし、`titleChange` に最後の変更（`from`・`to`・時刻）を持つ。
+  チケットのトリアージ（`TicketTriaged`）は、人が変えた題を書き換えない。
+- 変えた題は、この後に題を使うものから使う（工程の指示・コミットのメッセージ・通知・PR の本文の更新・書き出しなど）。
+  今の実行は止めない。
+- すでに作った PR の題は書き換えない（PR の更新は本文と向き先だけ）。
+  ブランチ名はタスクの ID から作るので、題を変えても変わらない。
+- 画面は、題の横の「題を変える」で、今の題を入れた入力を開く（`TaskTitle`）。
+  断られたら理由を出し、入力した題は消さない。
+  作業履歴は、誰が・何から何に変えたかを出す。
+
+コード: `apps/daemon/src/service.ts`（`renameTask`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`
+
 ## 「PR作成」の工程があった版のタスク
 
 以前の版には、実装の後に「PR作成」の工程（`pr`）があった。
