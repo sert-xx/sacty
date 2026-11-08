@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、apps/daemon/src/memory.ts、apps/daemon/default-context/skills/memory/SKILL.md、packages/core/src/audit.ts -->
+<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、apps/web/src/components/flaky-tests.tsx、packages/core/src/flaky-tests.ts、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、apps/daemon/src/memory.ts、apps/daemon/default-context/skills/memory/SKILL.md、packages/core/src/audit.ts -->
 
 **日本語** | [English](audit.en.md)
 
@@ -98,12 +98,38 @@ SACTY_AUDIT_MOCK=1 npx sacty up
   - 再発を先に、目立たせて出します。
 - **改修の提案**：判断待ちを先に出します。
   どのタスクの監査で出た提案かも出し、ここからも採用・却下できます。
+- **不安定なテスト**：最終レビューが認めた不安定なテストの台帳です（[不安定なテストの台帳](#不安定なテストの台帳)）。
 - **監査したタスク**：状態・差し戻しと指摘の件数・費用・監査の完了の時刻です。
 - **レポート**：開始日と終了日を選んで「レポートを出力する」を押すと、期間に完了した監査の原因・提案・判断を Markdown のファイルでダウンロードします。
   見出しは画面の言語で、監査の結果の文は訳しません。
   日時は UTC です。
 
 監査の結果は、プロジェクトをまたいでまとめません。
+
+## 不安定なテストの台帳
+
+最終レビューが、差分と無関係で不安定と認めたテストを、プロジェクトごとに集計して、監査の画面に出します。
+監査の予算は使いません。
+設定も要りません。
+
+![監査の画面の不安定なテスト（既知のテストと、直すタスクの提案）](images/audit-flaky-tests.png)
+
+- テストの名前・ファイル・見たタスクの数・最後に見た日時と、見たタスクと PR へのリンクを出します。
+- 同じタスクで何度認めても、1タスクと数えます。
+  リポジトリかファイルが違えば、別のテストとして数えます。
+  ほかのプロジェクトの記録は混ざりません。
+- 3 タスク以上で見たテストには「既知」が付きます。
+  差分に含まれなければ、ゴールガーディアンは、このテストの実行し直しを省いて申告できます。
+  sacty は台帳と差分で確かめ、差分に含まれるテストは既知でも認めません。
+  認めた失敗は、これまでどおり「人が確かめること」に出ます。
+- 既知のテストには、そのテストを直すタスクの提案が出ます。
+  「直すタスクを作る」を押すと、題と内容を入れたタスクの作成のダイアログが開きます。
+  内容を確かめて作成を押すと、通常のタスクとして進みます。
+  - 提案は自動では実行しません。
+  - sacty は、テストの隔離・無効化を自動では行いません。
+- 直すタスクが終わっていない間は、提案の代わりにそのタスクへのリンクを出します。
+  タスクを中止すると、また提案します。
+  PR をマージすると、それより前の記録は数えなくなります。
 
 ## ダッシュボード
 

@@ -3223,6 +3223,45 @@ describe("実装の検証（ゴールガーディアンがテストを実行す�
       "guardian",
     );
 
+  it("認めた不安定な失敗は、テストの結果の分も CI の結果の分も、全部の回を台帳の材料に残す（PBI-312）", () => {
+    seq = 0;
+    const flaky = (name: string) => ({
+      name,
+      file: "tests/ui.spec.ts",
+      runs: 3,
+      passes: 2,
+      reason: "別の画面",
+    });
+    const review = (payload: Record<string, unknown>) =>
+      ev(
+        "f1",
+        {
+          type: "FinalReviewed",
+          payload: {
+            passed: true,
+            viewpoints: [],
+            remarks: [],
+            summary: "ok",
+            agentId: "g",
+            ...payload,
+          },
+        } as EventInput,
+        "guardian",
+      );
+    const task = project([
+      created("f1"),
+      steps("f1"),
+      ...verifiedImplementation("f1").slice(0, 3),
+      review({
+        tests: { command: "npm test", exitCode: 1, output: "", flakyFailures: [flaky("a")] },
+      }),
+      ...implemented("f1", "i2"),
+      // テストのコマンドが無く、CI の結果だけから認めた分
+      review({ ciFlakyFailures: [flaky("b")] }),
+    ]).get("f1");
+    expect(task?.flakySightings?.map((s) => s.name)).toEqual(["a", "b"]);
+  });
+
   describe("同じ失敗が続いたら止める（PBI-308）", () => {
     const start = (id: string) => [
       created(id),

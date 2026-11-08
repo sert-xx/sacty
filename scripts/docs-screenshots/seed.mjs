@@ -160,7 +160,7 @@ function task(id, projectId) {
     approve(hoursAgo, step, next) {
       add(hoursAgo, "person", "StepApproved", { step, next });
     },
-    review(hoursAgo, viewpoints) {
+    review(hoursAgo, viewpoints, tests = {}) {
       add(hoursAgo, "guardian", "FinalReviewed", {
         passed: true,
         viewpoints: viewpoints.map((viewpointId) => ({
@@ -170,7 +170,7 @@ function task(id, projectId) {
         })),
         remarks: [],
         summary: L("すべての観点を満たしている。", "All viewpoints are satisfied."),
-        tests: { command: "npm test", exitCode: 0, output: "Tests  42 passed (42)" },
+        tests: { command: "npm test", exitCode: 0, output: "Tests  42 passed (42)", ...tests },
         agentId: "codex_standard",
         authMode: "api-key",
         model: "gpt-6.1-sol",
@@ -557,6 +557,44 @@ const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], su
   t.run(5.8, "implement", implementation, 0.61, sub);
   t.add(5.4, "sacty", "TaskPaused", { reason: "budget" });
 }
+
+// 9. 同じテストが不安定だった、過去のタスク（監査の画面の「不安定なテスト」）
+[
+  ["c9e1a3b5-0009", 240, L("請求書の番号の桁を増やす", "Widen the invoice number"), 96],
+  ["d0f2b4c6-0010", 216, L("返金の通知の文面を直す", "Fix the refund notice text"), 103],
+  ["e1a3c5d7-0011", 192, L("決済の履歴を CSV で出す", "Export the payment history as CSV"), 111],
+].forEach(([id, hoursAgo, title, number], i) => {
+  const t = task(id, PAY);
+  t.create(hoursAgo, title, title, { repo: PAY_REPO });
+  t.repo(hoursAgo - 0.1, PAY_REPO);
+  t.plan(hoursAgo - 0.2, "direct", ["investigate", "implement"], title, {
+    testCommand: "npm test",
+  });
+  t.run(hoursAgo - 0.3, "investigate", investigation, 0.1);
+  t.complete(hoursAgo - 0.7, "investigate");
+  t.run(hoursAgo - 0.8, "implement", implementation, 0.2, { selfReview });
+  const name = "e2e/checkout.spec.ts > Checkout > shows the receipt";
+  t.review(hoursAgo - 1.2, ["REQ"], {
+    exitCode: 1,
+    output: "Tests  1 failed | 41 passed (42)",
+    failedTests: [name],
+    flakyFailures: [
+      {
+        name,
+        file: "e2e/checkout.spec.ts",
+        runs: 3,
+        passes: 2,
+        reason: L(
+          "差分と別の画面のテストで、待ち時間によって結果が変わる",
+          "A test of another page; the result depends on timing",
+        ),
+      },
+    ],
+  });
+  t.pr(hoursAgo - 1.4 - i * 0.01, PAY_REPO, number);
+  t.submit(hoursAgo - 1.4 - i * 0.01, "implement");
+  t.add(hoursAgo - 2, "person", "TaskCancelled", { cleanup: [] });
+});
 
 // 作業履歴が投影できることを確かめる（デーモンの起動と同じ読み方）
 const tasks = project(activity.all());

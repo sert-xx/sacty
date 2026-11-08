@@ -14,6 +14,7 @@ import {
   type Project,
   type ProjectAudits,
   type ProjectDefinitionInput,
+  type ProjectFlakyTests,
   type RerunTaskInput,
   type ReworkCause,
   renderMessage,
@@ -789,6 +790,14 @@ export async function getProjectAudits(projectId: string): Promise<ProjectAudits
   if (res.status === 404) return null;
   await ensureOk(res);
   return (await res.json()) as ProjectAudits;
+}
+
+/** プロジェクトの不安定なテストの台帳（PBI-312）。プロジェクトが無ければ null。 */
+export async function getProjectFlakyTests(projectId: string): Promise<ProjectFlakyTests | null> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(projectId)}/flaky-tests`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return (await res.json()) as ProjectFlakyTests;
 }
 
 /** ダッシュボードの監査の指標（PBI-124）。 */

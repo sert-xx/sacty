@@ -81,4 +81,9 @@ export const SHOTS = [
     maxHeight: 1100,
   },
   { name: "audit", path: "/projects/payments/audit", height: 1000 },
+  {
+    name: "audit-flaky-tests",
+    path: "/projects/payments/audit",
+    selector: 'section[aria-labelledby="audit-flaky-tests"]',
+  },
 ];

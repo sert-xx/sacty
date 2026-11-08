@@ -51,7 +51,9 @@ const CONFIG = `providers:
       secret: openai-api-key
     available_models:
       gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
+      gpt-6.1-terra: { input: 0.5, cached_input: 0.05, output: 4 }
       gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+      gpt-6-astra: { input: 2.5, cached_input: 0.25, output: 20 }
 images:
   java17:
     description: Java 17・Maven・Gradle

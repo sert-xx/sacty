@@ -643,6 +643,12 @@ export function createApp(
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
   });
 
+  // プロジェクトの不安定なテストの台帳（PBI-312）。読むだけで、何も記録しない
+  app.get("/api/projects/:id/flaky-tests", async (c) => {
+    const found = await service.projectFlakyTests(c.req.param("id"));
+    return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
   // ダッシュボードの監査の指標（件数だけ。PBI-124）
   app.get("/api/audits/dashboard", (c) => c.json(audits.dashboard()));
 
