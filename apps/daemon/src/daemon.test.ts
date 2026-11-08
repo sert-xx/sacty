@@ -34053,61 +34053,81 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
-  it("外部作業の接続先を用意している間にイメージを変えたら、変えた後のイメージで始め、その名前を実行の記録に残す（PBI-318 レビュー指摘）", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const base = configOf(agent(), 1, [calendar()]);
-    const image = (name: string) => ({
-      name,
-      image: `sacty-agent-${name}:test`,
-      description: name,
-      env: { IMAGE_NAME: name },
-    });
-    const config = (): ConfigResult => {
-      const loaded = base() as { ok: true; config: SactyConfig };
-      return {
-        ok: true,
-        config: { ...loaded.config, images: { java: image("java"), web: image("web") } },
+  it.each([
+    ["今の設定にあるイメージ", false],
+    ["準備の間に config.yaml に足したイメージ", true],
+  ])(
+    "外部作業の接続先を用意している間に%sに変えたら、止めずに実行待ちのまま戻し、次の実行で変えた後のイメージで始めて、その名前を実行の記録に残す（PBI-318 レビュー指摘）",
+    async (_, addedDuringPreparation) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const base = configOf(agent(), 1, [calendar()]);
+      const image = (name: string) => ({
+        name,
+        image: `sacty-agent-${name}:test`,
+        description: name,
+        env: { IMAGE_NAME: name },
+      });
+      let added = !addedDuringPreparation;
+      const config = (): ConfigResult => {
+        const loaded = base() as { ok: true; config: SactyConfig };
+        return {
+          ok: true,
+          config: {
+            ...loaded.config,
+            images: { java: image("java"), ...(added ? { web: image("web") } : {}) },
+          },
+        };
       };
-    };
-    const { service } = makeService(activity, [], { config, gateway: fakeGateway() });
-    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
-    activity.append({
-      taskId: id,
-      projectId: "default",
-      events: [
-        {
-          actor: "sacty",
-          event: {
-            type: "StepsChosen",
-            payload: {
-              steps: [...STEP_PLANS.operation],
-              plan: "operation",
-              reason: "予定更新",
-              operation,
-              image: "java",
+      const { service } = makeService(activity, [], { config, gateway: fakeGateway() });
+      const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "StepsChosen",
+              payload: {
+                steps: [...STEP_PLANS.operation],
+                plan: "operation",
+                reason: "予定更新",
+                operation,
+                image: "java",
+              },
             },
           },
-        },
-      ],
-    });
-    const restarted = makeService(activity, [success], { config, gateway: fakeGateway() });
-    const svc = restarted.service as unknown as {
-      findPlatform: (...args: unknown[]) => Promise<unknown>;
-    };
-    const find = svc.findPlatform.bind(svc);
-    vi.spyOn(svc, "findPlatform").mockImplementationOnce(async (...args) => {
-      const found = await find(...args);
-      restarted.service.changeTaskImage(id, { image: "web" });
-      return found;
-    });
-    await restarted.service.runNext(id);
-    expect(restarted.executor.images).toEqual([
-      { image: "sacty-agent-web:test", env: { IMAGE_NAME: "web" } },
-    ]);
-    const started = restarted.service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted");
-    expect(started?.map((e) => e.type === "AgentRunStarted" && e.payload.image)).toEqual(["web"]);
-    activity.close();
-  });
+        ],
+      });
+      const restarted = makeService(activity, [success], { config, gateway: fakeGateway() });
+      const svc = restarted.service as unknown as {
+        findPlatform: (...args: unknown[]) => Promise<unknown>;
+      };
+      const find = svc.findPlatform.bind(svc);
+      vi.spyOn(svc, "findPlatform").mockImplementationOnce(async (...args) => {
+        const found = await find(...args);
+        added = true;
+        restarted.service.changeTaskImage(id, { image: "web" });
+        return found;
+      });
+      await restarted.service.runNext(id);
+      // この実行では始めない（古いイメージでも、読み直していない設定でも始めず、止めもしない）
+      expect(restarted.executor.images).toEqual([]);
+      expect(restarted.service.get(id)?.task.status).toBe("queued");
+      expect(restarted.service.get(id)?.activity.some((e) => e.type === "AgentRunStarted")).toBe(
+        false,
+      );
+      await restarted.service.runNext(id);
+      expect(restarted.executor.images).toEqual([
+        { image: "sacty-agent-web:test", env: { IMAGE_NAME: "web" } },
+      ]);
+      const started = restarted.service
+        .get(id)
+        ?.activity.filter((e) => e.type === "AgentRunStarted");
+      expect(started?.map((e) => e.type === "AgentRunStarted" && e.payload.image)).toEqual(["web"]);
+      activity.close();
+    },
+  );
 
   it("外部作業の接続先を調べている間に、config.yaml に足した名前を選んだら、古い設定で止めずに次の実行で最新の設定から始める（PR #131 再々レビュー指摘）", async () => {
     const activity = new SqliteActivityStore(dbPath);

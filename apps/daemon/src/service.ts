@@ -8744,14 +8744,11 @@ export class TaskService {
       // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
       // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
       if (latest.agents?.[step] !== chosenName) return;
-      // イメージは、実行を始めるときのもの（準備の間に人が変えたら、変えた後のもの）に決め、使う名前を実行の記録に残す
-      // （PBI-318。画面が、どのイメージで動いたかを出す）
+      // 準備の間に人がイメージを変えたなら、エージェントと同じく、実行待ちのまま戻し、次の実行で最新の設定から決め直す
+      // （その間に config.yaml に足した名前を、この実行が読んだ設定で解決して止めない。PR #322 レビュー指摘）
       const runImageName = stepImageOf(latest, step);
-      const runImage = resolveImage(config, runImageName);
-      if (!runImage.ok) {
-        pause(runImage.message);
-        return;
-      }
+      if (runImageName !== stepImageOf(task, step)) return;
+      // 使う名前（準備の前に確かめたもの）を実行の記録に残す（PBI-318。画面が、どのイメージで動いたかを出す）
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [
@@ -8775,8 +8772,8 @@ export class TaskService {
         taskId: task.id,
         runId,
         role: step,
-        image: runImage.image,
-        imageEnv: runImage.env,
+        image: image.image,
+        imageEnv: image.env,
         workspaceDir,
         prompt: [
           buildPrompt(latest, step),
