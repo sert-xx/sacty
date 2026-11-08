@@ -4820,6 +4820,53 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity.close();
       });
 
+      it("実装の工程の記録がテスト以外の検証（lint など）だけなら、実装の工程から使い回したという申告を、今までどおり判定として記録する（PBI-316）", async () => {
+        const repos = new FakeRepos();
+        repos.remote.main = "base123";
+        // 実装の工程は、テスト以外の検証を全体で実行した（テストの記録は無い）
+        const lintOnly = block({
+          "sacty-verification": {
+            commands: [{ kind: "lint", command: "yamllint .", coverage: "full", status: "passed" }],
+          },
+        });
+        const reviewed0 = review();
+        const claimed = out(
+          (reviewed0.kind === "completed" ? reviewed0.output : "").replace(
+            '"output":"2 passed"',
+            '"output":"2 passed","reusedFrom":"self-review"',
+          ),
+        );
+        const { activity, service, executor, id } = await toCiFinished(
+          [
+            out(
+              [
+                "# 実装",
+                lintOnly,
+                block({
+                  "sacty-test-map": [
+                    { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+                    { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+                  ],
+                }),
+              ].join("\n\n"),
+            ),
+            claimed,
+          ],
+          repos,
+        );
+        const runs = executor.calls.length;
+        await service.runNext(id);
+        expect(promptOf(executor, runs)).not.toContain(
+          "実装の工程の記録には、テストの全件の結果がありません",
+        );
+        expect(types(service, id)).not.toContain("FinalReviewFailed");
+        const reviewed = service.get(id)?.activity.findLast((e) => e.type === "FinalReviewed");
+        expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.reusedFrom).toBe(
+          "self-review",
+        );
+        activity.close();
+      });
+
       it("PR の CI の結果が出た後（競合で止まって再開した場合を含む）にベースブランチが進んで競合していたら、古いコードで最終レビューをせず、競合したファイルを渡して実装をやり直す", async () => {
         const repos = new FakeRepos();
         repos.remote.main = "base123";

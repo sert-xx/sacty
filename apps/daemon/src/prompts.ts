@@ -131,6 +131,7 @@ import {
   fullTestsRecorded,
   guardianVerificationRecordLines,
   implementVerificationRecordLines,
+  partialTestsOnly,
   reuseVerificationLines,
 } from "./verification-reuse.js";
 
@@ -2024,7 +2025,7 @@ function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string
     ...(task.documentsOnly === true
       ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
       : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
-    ...implementVerificationRecordLines(task.documentsOnly !== true),
+    ...implementVerificationRecordLines(runsTests(task)),
   ];
 }
 
@@ -4114,8 +4115,8 @@ export function buildFinalReviewPrompt(
           personTestCommand(task) === testCommand,
           reuse.length > 0,
           // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せるので出さない
-          options.implementVerification !== undefined &&
-            !fullTestsRecorded(options.implementVerification) &&
+          // テスト以外の検証（lint など）だけの記録は、今までどおり使い回させる（テストの結果が関係するテストだけのときに限る）
+          partialTestsOnly(options.implementVerification) &&
             !fullTestsRecorded(options.reviewBeforeCiVerification),
         )
       : []),
@@ -4589,11 +4590,17 @@ function implementVerificationLines(task: Task): string[] {
           `- 実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）のファイルも入る。リポジトリ全体を対象にする検証は、そのファイルも検査する。作業領域では実行できないので、検査の対象に入るかを設定（除外の定義など）で確かめ、落ちたときの直し方は、最終レビューの指摘に従う`,
         ]
       : []),
-    // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行しない
-    ...(task.documentsOnly === true ? [] : IMPLEMENT_TEST_SCOPE_LINES),
+    // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行せず、テストの仕組みが
+    // 無いタスク（noTestsReason）は実行するテストが無いので出さない（要求されていないテストの環境を足させない）
+    ...(runsTests(task) ? IMPLEMENT_TEST_SCOPE_LINES : []),
     "- 実行しなかった検証、実行できなかった検証（ツールが環境に無いなど）は、その検証と理由を実装の説明に書く。理由を書かずに省かない",
     "- 検証を通すために、検証の設定やテストを弱めない",
   ];
+}
+
+/** 実装・修正の工程で、テストを実行するタスクか（PBI-316）。文書だけの依頼と、テストの仕組みが無いタスク（noTestsReason）は実行しない。 */
+function runsTests(task: Task): boolean {
+  return task.documentsOnly !== true && !task.noTestsReason;
 }
 
 /**
@@ -4816,10 +4823,11 @@ export function extractFinalReview(
      */
     hide?: (text: string) => string;
     /**
-     * 前の段の記録（実装の工程・CI の結果の前の最終レビュー）に、テストの全件の結果がある（fullTestsRecorded。PBI-316）。
-     * 無ければ、テストの結果を前の段から使い回した（reusedFrom が self-review）という申告を認めない（reuseRejected）。
+     * 前の段の記録（実装の工程・CI の結果の前の最終レビュー）のテストの結果が、関係するテストだけ（partial）で、全件の結果が
+     * 無い（partialTestsOnly。PBI-316）。そのときは、前の段から使い回した（reusedFrom が self-review）という申告を認めない
+     * （reuseRejected）。テストを記録していない（lint だけなど）なら、今までどおり認める。
      */
-    previousFullTests?: boolean;
+    previousPartialTestsOnly?: boolean;
   } = {},
 ): Pick<
   FinalReview,
@@ -5030,7 +5038,7 @@ export function extractFinalReview(
     missingCommands,
     unreadable: found === undefined,
     // 関係するテストだけの記録を、全件の結果として使い回させない（全件を飛ばす経路を残さない）
-    reuseRejected: reusedFrom === "self-review" && options.previousFullTests !== true,
+    reuseRejected: reusedFrom === "self-review" && options.previousPartialTestsOnly === true,
   };
 }
 

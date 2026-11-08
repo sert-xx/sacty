@@ -154,6 +154,17 @@ export function fullTestsRecorded(record: VerificationRecord | undefined): boole
 }
 
 /**
+ * 記録のテストの結果が、関係するテストだけ（kind が test で coverage が partial）で、全件の結果が無いか（PBI-316）。そのときは、
+ * テストの結果を全件の結果として使い回させない。テストを記録していない（lint だけなど）記録は当てはまらない。
+ */
+export function partialTestsOnly(record: VerificationRecord | undefined): boolean {
+  return (
+    record?.commands.some((c) => c.kind === "test" && c.coverage === "partial") === true &&
+    !fullTestsRecorded(record)
+  );
+}
+
+/**
  * 実装・修正の工程の、検証の記録の申告の指示（PBI-305）。最後の変更の後に実行した検証だけを申告させ、提出の前の検証と
  * セルフレビューの検証を、同じ内容で重ねて実行させない。tests：テストを実行するタスクか（文書だけの依頼は実行しない）。
  * 実行するなら、関係するテストだけの実行を partial にさせ、全件と区別させる（PBI-316）。

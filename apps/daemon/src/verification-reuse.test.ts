@@ -13,6 +13,7 @@ import {
 import {
   extractVerificationRecord,
   fullTestsRecorded,
+  partialTestsOnly,
   reuseVerificationLines,
   VERIFICATION_HEADING,
   withoutStepDocuments,
@@ -352,7 +353,6 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
   it("実装の指示は、途中は関係するテストだけ、全件は最後の変更の後に1回と伝え、選べなければ全件にさせる", () => {
     for (const task of [
       implementTask(),
-      implementTask({ noTestsReason: "テストの仕組みが無い" }),
       implementTask({ approved: {}, steps: [{ key: "implement", state: "active" }] }),
     ]) {
       const prompt = buildPrompt(task, "implement");
@@ -369,10 +369,35 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     }
   });
 
-  it("文書だけの依頼は、テストを実行しないので、テストの範囲の指示を出さない", () => {
-    const prompt = buildPrompt(implementTask({ documentsOnly: true }), "implement");
-    for (const line of IMPLEMENT_TEST_SCOPE_LINES) expect(prompt).not.toContain(line);
-    expect(prompt).not.toContain("関係するテストだけの結果は partial");
+  it("文書だけの依頼・テストの仕組みが無いタスクは、実行するテストが無いので、テストの範囲の指示を出さない", () => {
+    for (const task of [
+      implementTask({ documentsOnly: true }),
+      implementTask({ noTestsReason: "テストの仕組みが無い" }),
+    ]) {
+      const prompt = buildPrompt(task, "implement");
+      for (const line of IMPLEMENT_TEST_SCOPE_LINES) expect(prompt).not.toContain(line);
+      expect(prompt).not.toContain("関係するテストだけの結果は partial");
+    }
+  });
+
+  it("既定のスキルの全件の規則は、scope が all で実行するテストがあるときだけに当てはめる", () => {
+    const selfReview = readFileSync(
+      join(DEFAULT_CONTEXT_DIR, "skills/review/review-dispatch/references/self-review.md"),
+      "utf8",
+    );
+    const rule = selfReview.slice(
+      selfReview.indexOf("提出の前にテストの全件を 1 回実行する") - 200,
+    );
+    expect(rule).toContain("`scope` が `all` で、実行するテストがあるとき");
+    expect(rule).toContain("`scope` が `docs` のとき");
+    expect(rule).toContain("テストの仕組みが無いときは、この規則は当てはまらない");
+    const run = readFileSync(
+      join(DEFAULT_CONTEXT_DIR, "skills/review/review-dispatch/references/verification-run.md"),
+      "utf8",
+    );
+    expect(run).toContain(
+      "実行するテストが無い（テストの仕組みが無いリポジトリ）ときは当てはまらない",
+    );
   });
 
   it("テストの範囲の指示は、特定の言語・テストの実行器に寄せない", () => {
@@ -410,6 +435,11 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     // テスト以外の全体の記録は、テストの全件の結果ではない
     expect(fullTestsRecorded({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
     expect(fullTestsRecorded(undefined)).toBe(false);
+    // 関係するテストだけで全件が無いときだけ、使い回させない。テストを記録していない（lint だけ）記録は当てはまらない
+    expect(partialTestsOnly({ commands: [related] })).toBe(true);
+    expect(partialTestsOnly({ commands: [related, fullTest] })).toBe(false);
+    expect(partialTestsOnly({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
+    expect(partialTestsOnly(undefined)).toBe(false);
   });
 
   it("実装の工程の記録にテストの全件の結果が無ければ、最終レビューにテストのコマンドを実行させる", () => {
@@ -434,27 +464,33 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
       reviewBeforeCiVerification: { commands: [{ ...fullTest, by: "guardian" }] },
     });
     expect(before).not.toContain(line);
+    // テスト以外の検証（lint など）だけの記録は、今までどおり使い回させる
+    const lintOnly = buildFinalReviewPrompt(implementTask(), "diff", {
+      testCommand: "yamllint .",
+      implementVerification: { commands: [{ ...fullTest, kind: "lint", command: "yamllint ." }] },
+    });
+    expect(lintOnly).not.toContain(line);
+    expect(lintOnly).toContain("reusedFrom に元の段（self-review か ci）を書く");
   });
 
   it("全件の結果が無いのに、テストを実装の工程から使い回したと申告したら、判定として扱わない", () => {
     const options = { testCommand: "make test" };
-    // 実装の工程の記録に全件が無い（関係するテストだけ・記録が無い）
-    expect(
-      extractFinalReview(reviewOutput("self-review"), ["REQ"], [], options).reuseRejected,
-    ).toBe(true);
+    // 実装の工程の記録のテストが、関係するテストだけで全件が無い
     expect(
       extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
         ...options,
-        previousFullTests: false,
+        previousPartialTestsOnly: true,
       }).reuseRejected,
     ).toBe(true);
-    // 全件の結果があれば、使い回しを認める
-    const accepted = extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
-      ...options,
-      previousFullTests: true,
-    });
-    expect(accepted.reuseRejected).toBe(false);
-    expect(accepted.passed).toBe(true);
+    // 全件の結果がある・テストを記録していない（lint だけなど）なら、今までどおり使い回しを認める
+    for (const previousPartialTestsOnly of [false, undefined]) {
+      const accepted = extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
+        ...options,
+        ...(previousPartialTestsOnly === false ? { previousPartialTestsOnly } : {}),
+      });
+      expect(accepted.reuseRejected).toBe(false);
+      expect(accepted.passed).toBe(true);
+    }
     // 自分で実行した・CI から使い回したものは、実装の工程の記録にかかわらず判定として扱う
     for (const reused of [undefined, "ci"]) {
       expect(extractFinalReview(reviewOutput(reused), ["REQ"], [], options).reuseRejected).toBe(

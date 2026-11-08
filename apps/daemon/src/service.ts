@@ -474,6 +474,7 @@ import type { UpdateStatus } from "./update-check.js";
 import {
   extractVerificationRecord,
   fullTestsRecorded,
+  partialTestsOnly,
   withoutStepDocuments,
 } from "./verification-reuse.js";
 import {
@@ -9602,8 +9603,8 @@ export class TaskService {
           ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
           // 関係するテストだけの記録を、全件の結果として使い回させない（PBI-316）。CI の結果の前の最終レビュー（PBI-314）が
           // 全件を実行していれば、その使い回しは認める（reusedFrom に、その段を表す値が無いため）
-          previousFullTests:
-            fullTestsRecorded(current.implementVerification) || fullTestsRecorded(reviewedBefore),
+          previousPartialTestsOnly:
+            partialTestsOnly(current.implementVerification) && !fullTestsRecorded(reviewedBefore),
         },
       );
     // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
