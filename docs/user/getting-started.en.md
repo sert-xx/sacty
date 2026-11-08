@@ -92,9 +92,11 @@ npx sacty up
 
 - sacty stores the activity log, settings, and workspaces in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.
 - Workspaces (`~/.sacty/workspaces/`) are each task's clone of the target repository and per-run temporary copies of the code.
+  sacty also keeps a per-task dependency cache there (`~/.sacty/workspaces/_task-cache/`). It lets the steps and runs of the same task reuse the results of package downloads and the like, and it is not shared with other tasks.
   sacty removes the ones it no longer needs by itself.
   - A completed task's workspace is removed once it is no longer used (for an audited task, after the audit ends).
     A cancelled task's workspace is removed on cancel, as before.
+  - The dependency cache is removed at the same time as the task's workspace. One left because the daemon stopped in the middle of a cancel is removed the next time the daemon starts.
   - Temporary copies left when the daemon was stopped or restarted during a run are removed the next time the daemon starts.
     Workspaces of tasks completed before this release are removed at the same time.
   - The activity log (session logs in `~/.sacty/runs/`), Orchestrator sessions, memories, and `sacty.db` are not removed.

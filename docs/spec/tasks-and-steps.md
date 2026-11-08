@@ -1562,13 +1562,14 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   2. オーケストレーターのセッションを消す。
   3. sacty が作った実装の PR と、開いている要求要件・設計の PR を閉じる（マージはしない）。
   4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
-  5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
+  5. 作業領域（依存のキャッシュを含む）を消す（コンテナが止まったことを確かめられなければ消さない）。
 
 コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`・`runNextInner`）、`apps/daemon/src/config.ts`（`ConfigFile`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`・`RESUME_NOTE_HEADING`・`bodyWithResumeNote`・`resumeNoteSections`・`withoutResumeNoteHeadings`・`normalizeNewlines`）、`packages/core/src/projection.ts`（`project`・`resumeNoteRoom`・`rerunnableKind`）、`packages/core/src/cost.ts`（`budgetState`）、`apps/daemon/src/prompts.ts`（`resumeNotePromptLines`・`resumeNoteJudgeLines`・`resumeNoteLines`）、`apps/web/src/components/resume-form.tsx`（`ResumeForm`）、`apps/web/src/lib/step-options.ts`（`changedStepChoices`）
 
 ### 終わったタスクの作業領域の片付け
 
-タスクの作業領域（`workspaces/<タスク ID>`）と退避した git のメタデータ（`workspaces/_git/<タスク ID>.git`）は、
+タスクの作業領域（`workspaces/<タスク ID>`）と退避した git のメタデータ（`workspaces/_git/<タスク ID>.git`）と
+依存のキャッシュ（`workspaces/_task-cache/<タスク ID>`。[エージェントの実行](agent-execution.md#依存のキャッシュ)）は、
 中止のほか、完了したタスクがもう使わなくなったときにも消す。
 
 - もう使わないタスク（`workspaceRetirable`）：次をすべて満たすもの。
@@ -1581,7 +1582,9 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - 実行・質問への答えが終わったとき（実行の途中なら、その終わりに消す）。
   - デーモンの起動のとき（[デーモンの起動と終了](daemon-lifecycle.md#デーモンの起動の順序)）。
 - 起動のときには、次も消す。
-  - どのタスクのものでもない作業領域。
+  - どのタスクのものでもない作業領域・退避した git のメタデータ・依存のキャッシュ。
+  - 中止したタスクの依存のキャッシュ（中止の片付けの途中でデーモンが止まったときなど）。
+    進行中のタスクの依存のキャッシュは残し、再起動の後も使い回す。
   - 実行ごとの一時領域（`_guardian`・`_snapshots`・`_review`・`_input`・`_audit-logs`・`_audit-ledger`・`_deployment`・`_export`・`_handoff`・`_question-logs` の下の `<実行 ID>`）のうち、
     動いている実行・停止を確かめられなかった実行のものでないもの。
     実行の終わりに消すが、実行中にデーモンを止めると残り、再起動の後は新しい実行 ID でやり直すので二度と使わない。
@@ -1591,10 +1594,10 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   - リンクはリンクだけを消し、先はたどらない。
   - 動いているコンテナ（sacty のものに限らない）がマウントしている場所と重なれば消さない。
     Docker に問い合わせられなければ、どれも消さない（次の起動で確かめ直す）。
-  - タスクの作業領域と退避した git のメタデータは、どちらかがマウントと重なれば、両方とも残す。
+  - タスクの作業領域・退避した git のメタデータ・依存のキャッシュは、どれかがマウントと重なれば、すべて残す。
   - 作業領域の根から消すものの親までの途中に、リンク・ディレクトリでないものがあれば消さない（`_git` がリンクでも、その先を消さない）。
 - 消せなければ（権限など）、理由をログに残して、残りは消す。デーモンの起動とタスクの進行は止めない。
-  そのため、作業領域と退避した git のメタデータの片方だけが残ることがある。
+  そのため、作業領域・退避した git のメタデータ・依存のキャッシュの一部だけが残ることがある。
   一覧を読めないディレクトリも、理由をログに残す。
 - セッションログ（`runs/`）・`sessions/`・`memory/`・`sacty.db` は消さない。
 - 作業領域を使う処理（実行・質問への答え・中止の片付け・用意の途中、ほかのタスクの統合レビューが読んでいる間）の間は消さず、終わったときに消す。

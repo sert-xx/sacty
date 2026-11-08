@@ -14,7 +14,8 @@ import { dockerClientEnv } from "./agents/docker.js";
 /**
  * 実行ごとの一時領域（作業領域の根の下。`<名前>/<runId>`）。実行の finally で消すが、実行中にデーモンを止めると残る。
  * 再起動の後、実行は新しい runId でやり直すので、残ったものは二度と使わない。共用の compose（`_shared-compose`）は
- * shared-compose.ts で消す。キャッシュ（`_cache`）と、退避した git のメタデータ（`_git`）は含めない。
+ * shared-compose.ts で消す。キャッシュ（`_cache`）と、退避した git のメタデータ（`_git`）と、タスクごとの依存のキャッシュ
+ * （`_task-cache`。タスクの作業領域と一緒に消す）は含めない。
  */
 export const RUN_SCRATCH_DIRS = [
   "_guardian",
@@ -166,9 +167,23 @@ export async function runningContainerMounts(timeoutMs = 15_000): Promise<string
   return sources.split("\n").filter((line) => line.trim() !== "");
 }
 
-/** 作業領域の根の下の、タスクの作業領域と退避した git のメタデータの場所。 */
+/**
+ * タスクごとの依存のキャッシュを置く場所（作業領域の根の下。`_task-cache/<タスクの ID>`。PBI-319）。同じタスクの工程・実行の
+ * 間で、依存の準備（パッケージのダウンロードなど）の結果を使い回す。タスクの作業領域と一緒に消す。
+ */
+export const TASK_CACHE_DIR = "_task-cache";
+
+export function taskCachePath(workspaceRoot: string, taskId: string): string {
+  return join(workspaceRoot, TASK_CACHE_DIR, taskId);
+}
+
+/** 作業領域の根の下の、タスクの作業領域・退避した git のメタデータ・依存のキャッシュ（PBI-319）の場所。 */
 export function taskWorkspacePaths(workspaceRoot: string, taskId: string): string[] {
-  return [join(workspaceRoot, taskId), join(workspaceRoot, "_git", `${taskId}.git`)];
+  return [
+    join(workspaceRoot, taskId),
+    join(workspaceRoot, "_git", `${taskId}.git`),
+    taskCachePath(workspaceRoot, taskId),
+  ];
 }
 
 /**
