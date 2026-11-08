@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-317
-- PR: なし
+- PR: #324
 - ブランチ: feat/issue-317-stacked-child-tasks
 - 関係する ADR: [依存のある子タスクは、依存先の PR が最終レビューに合格した時点で、その PR のブランチに重ねて始める](../adr/20261108-0615-stack-dependent-subtasks-on-reviewed-pull-requests.md)
 
