@@ -40,15 +40,18 @@ Within one task, the results of preparing dependencies (package downloads, build
   The Goal Guardian's judgments, the Orchestrator, information gathering, answers to questions, export, external work, and the after-merge watch do not get it.
 - How it is passed:
   - It is mounted with `-v <location>:/sacty-cache`, and `XDG_CACHE_HOME=/sacty-cache` is passed (taking precedence over the image's `env`).
+    The value before the override (one set in the image's `env` and so on) is passed to the check below in `SACTY_PREVIOUS_XDG_CACHE_HOME`, with `SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET=1` showing that it was set.
   - `HOME` and `XDG_CONFIG_HOME` are not changed (auth config files disappear when the container is removed).
   - The agent CLI's own cache (Claude Code's `claude-cli-nodejs`) is made a container-only location with `--tmpfs /sacty-cache/claude-cli-nodejs`.
     Anything a previous run left at `claude-cli-nodejs` in the location (including a link) is removed before the run (a link is removed by itself).
   - Inside the container, sacty checks that the user can write to `/sacty-cache` before it `exec`s the command (`withTaskCacheProbe`, inside the output relay and the port forwarding).
-    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs with `XDG_CACHE_HOME` removed (the usual run, without the cache).
-    The notice is copied to the daemon's log too (`taskCacheNotices`).
+    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs with `XDG_CACHE_HOME` restored to the value before the override (removed if there was none; the usual run, without the cache).
+    `SACTY_PREVIOUS_XDG_CACHE_HOME` and `SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET`, used for the check, are not passed to the command.
+    The notice is copied to the daemon's log too, from the standard error received so far, however the run ends, including a timeout or a failure to confirm the stop (`taskCacheNotices`).
     The condition for writing is the same as for the workspace (`/workspace`): sacty changes the owner of neither and passes no `--user`, so with an ordinary Linux bind mount the container can write only when the daemon's UID equals the UID of the image's `node` (the workspace is `0755` and the cache is `0700`; in both, only the owner can write).
     In environments that share files into a virtual machine, such as Docker Desktop and Rancher Desktop, they appear as owned by the container's user, so it can write.
-- The default rules (`rules.md`) ask the agent to do the following.
+- sacty appends a short guide (`## 依存のキャッシュ`) at the end of the instructions of runs that get the cache, asking the agent to do the following (`taskCachePromptLines`).
+  It is added in the common path of runs, so it also reaches the final review and the integration review, which do not get the default rules. Runs without the cache do not get it.
   - Put tool caches in `XDG_CACHE_HOME`. For tools that do not read it, point the tool's cache location setting under `XDG_CACHE_HOME` (without changing the repository's files).
   - Not put auth config files or secret values there.
   - Go on without the cache if a failure looks caused by it.
@@ -60,7 +63,7 @@ Within one task, the results of preparing dependencies (package downloads, build
 
 Related ADRs: [Reuse the results of preparing dependencies across steps and runs, in a per-task cache directory](../adr/20261108-0739-task-dependency-cache.md)
 
-Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`), `apps/daemon/src/workspace-cleanup.ts` (`TASK_CACHE_DIR`, `taskCachePath`, `taskWorkspacePaths`), `apps/daemon/src/agents/docker.ts` (`CONTAINER_TASK_CACHE`, `DockerExecutor`, `withTaskCacheProbe`, `taskCacheNotices`), `apps/daemon/src/agents/invocation.ts` (`CLAUDE_CACHE_DIR`), `apps/daemon/src/service.ts` (`ExecuteRun`), `apps/daemon/default-context/rules.md`
+Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`, `taskCachePromptLines`), `apps/daemon/src/workspace-cleanup.ts` (`TASK_CACHE_DIR`, `taskCachePath`, `taskWorkspacePaths`), `apps/daemon/src/agents/docker.ts` (`CONTAINER_TASK_CACHE`, `DockerExecutor`, `withTaskCacheProbe`, `taskCacheNotices`), `apps/daemon/src/agents/invocation.ts` (`CLAUDE_CACHE_DIR`), `apps/daemon/src/service.ts` (`ExecuteRun`)
 
 ## Run commands
 

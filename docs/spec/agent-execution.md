@@ -47,15 +47,18 @@
   ゴールガーディアンの判定・オーケストレーター・情報収集・質問への答え・書き出し・外部作業・マージの後の監視には渡さない。
 - 渡し方：
   - `-v <置き場所>:/sacty-cache` でマウントし、`XDG_CACHE_HOME=/sacty-cache` を渡す（イメージの `env` より優先）。
+    上書きする前の値（イメージの `env` などで指定されていたもの）は、`SACTY_PREVIOUS_XDG_CACHE_HOME` と、設定があったことを示す `SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET=1` で、下の確かめに渡す。
   - `HOME`・`XDG_CONFIG_HOME` は変えない（認証の設定ファイルは、コンテナを消すと消える）。
   - エージェントの CLI 自身のキャッシュ（Claude Code の `claude-cli-nodejs`）は `--tmpfs /sacty-cache/claude-cli-nodejs` でコンテナの中だけの場所にする。
     置き場所の `claude-cli-nodejs` に前の実行が残したもの（リンクを含む）は、実行の前に消す（リンクはリンクだけ）。
   - コンテナの中で、実行ユーザーが `/sacty-cache` に書けるかを確かめてから、コマンドを `exec` する（`withTaskCacheProbe`。出力の中継・ポートの転送の内側）。
-    書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、`[sacty] 依存のキャッシュ：` で始まる知らせを標準エラー出力に出し、`XDG_CACHE_HOME` を外して実行する（キャッシュを使わない、これまでどおりの実行）。
-    知らせはデーモンのログにも写す（`taskCacheNotices`）。
+    書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、`[sacty] 依存のキャッシュ：` で始まる知らせを標準エラー出力に出し、`XDG_CACHE_HOME` を上書きする前の値に戻して実行する（元が無ければ外す。キャッシュを使わない、これまでどおりの実行）。
+    確かめに使った `SACTY_PREVIOUS_XDG_CACHE_HOME`・`SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET` は、コマンドには渡さない。
+    知らせは、時間切れ・停止の確認の失敗を含むどの終わり方でも、それまでに受け取った標準エラー出力から、デーモンのログにも写す（`taskCacheNotices`）。
     書ける条件は作業領域（`/workspace`）と同じ：sacty はどちらも持ち主を変えず、`--user` も付けないので、Linux のふつうのバインドマウントでは、デーモンの UID とイメージの `node` の UID が同じときだけ書ける（作業領域は `0755`、キャッシュは `0700` で、持ち主のほかは書けない点は同じ）。
     Docker Desktop・Rancher Desktop など、仮想マシンへファイルを共有する環境では、コンテナの実行ユーザーの持ち物として見えるので書ける。
-- 既定の規則（`rules.md`）で、エージェントに次を求める。
+- キャッシュを渡す実行の指示の終わりに、使い方の短い案内（`## 依存のキャッシュ`）を足し、エージェントに次を求める（`taskCachePromptLines`）。
+  実行の共通の経路で足すので、既定の規則が渡らない最終レビュー・統合レビューにも届く。キャッシュを渡さない実行には足さない。
   - ツールのキャッシュを `XDG_CACHE_HOME` に置く。見ないツールは、そのツールのキャッシュの場所の設定で `XDG_CACHE_HOME` の下に向ける（リポジトリのファイルは変えない）。
   - 認証の設定ファイル・秘密の値を置かない。
   - キャッシュのせいで失敗するように見えたら、使わずに進める。
@@ -67,7 +70,7 @@
 
 関係する ADR: [依存の準備の結果を、タスクごとのキャッシュのディレクトリで工程・実行の間で使い回す](../adr/20261108-0739-task-dependency-cache.md)
 
-コード: `apps/daemon/src/task-cache.ts`（`prepareTaskCache`）、`apps/daemon/src/workspace-cleanup.ts`（`TASK_CACHE_DIR`・`taskCachePath`・`taskWorkspacePaths`）、`apps/daemon/src/agents/docker.ts`（`CONTAINER_TASK_CACHE`・`DockerExecutor`・`withTaskCacheProbe`・`taskCacheNotices`）、`apps/daemon/src/agents/invocation.ts`（`CLAUDE_CACHE_DIR`）、`apps/daemon/src/service.ts`（`ExecuteRun`）、`apps/daemon/default-context/rules.md`
+コード: `apps/daemon/src/task-cache.ts`（`prepareTaskCache`・`taskCachePromptLines`）、`apps/daemon/src/workspace-cleanup.ts`（`TASK_CACHE_DIR`・`taskCachePath`・`taskWorkspacePaths`）、`apps/daemon/src/agents/docker.ts`（`CONTAINER_TASK_CACHE`・`DockerExecutor`・`withTaskCacheProbe`・`taskCacheNotices`）、`apps/daemon/src/agents/invocation.ts`（`CLAUDE_CACHE_DIR`）、`apps/daemon/src/service.ts`（`ExecuteRun`）
 
 ## 実行のコマンド
 

@@ -23736,6 +23736,7 @@ describe("統合レビュー（PBI-31）", () => {
     expect(executor.images).toHaveLength(9);
     // 統合レビューは、親のタスクの依存のキャッシュを使う（PBI-319）
     expect(executor.calls[5]?.taskCache).toBe(join(dir, "workspaces", "_task-cache", id));
+    expect(executor.calls[5]?.command.join(" ")).toContain("## 依存のキャッシュ");
     // 統合レビューの実行の記録にも、始めたときに使った名前を残す（PBI-318 レビュー指摘）
     expect(
       service
@@ -23951,6 +23952,10 @@ describe("再現の工程（PBI-29）", () => {
     // 再現・実装・最終レビューは、タスクごとの依存のキャッシュを使い回す（PBI-319）
     expect(executor.calls.map((c) => c.taskCache)).toEqual(
       executor.calls.map(() => join(dir, "workspaces", "_task-cache", id)),
+    );
+    // 既定の規則が渡らない最終レビューにも、キャッシュの使い方の案内を届ける（PBI-319 レビュー指摘）
+    expect(executor.calls.map((c) => c.command.join(" ").includes("## 依存のキャッシュ"))).toEqual(
+      executor.calls.map(() => true),
     );
     // どの実行の記録にも、使ったイメージの名前を残す（記録し忘れた所があれば落ちる。PBI-318 レビュー指摘）
     const runs = service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted") ?? [];
@@ -41215,6 +41220,8 @@ describe("タスクごとの依存のキャッシュ（PBI-319）", () => {
   it("工程の実行は、同じタスクでは同じキャッシュを使い回し、別のタスクとは分ける", async () => {
     const { service, executor, id, seen } = await submittedTask();
     expect(executor.calls[0]?.taskCache).toBe(cacheOf(id));
+    // キャッシュを渡す実行には、使い方の案内を指示に足す
+    expect(executor.calls[0]?.command.join(" ")).toContain("## 依存のキャッシュ");
     // 差し戻して出し直した実行は、前の実行が置いたものを使う
     service.requestChanges(id, { step: "requirements", submission: 1, comments: ["直して"] });
     await service.runNext(id);
@@ -41233,6 +41240,7 @@ describe("タスクごとの依存のキャッシュ（PBI-319）", () => {
     await service.askQuestion(id, { text: "いまは？" }).answered;
     expect(executor.calls.at(-1)?.taskCache).toBeUndefined();
     expect(executor.calls.at(-1)?.env.XDG_CACHE_HOME).toBeUndefined();
+    expect(executor.calls.at(-1)?.command.join(" ")).not.toContain("## 依存のキャッシュ");
   });
 
   it("完了したら消す", async () => {

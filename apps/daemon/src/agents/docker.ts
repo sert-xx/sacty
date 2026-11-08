@@ -44,17 +44,30 @@ export const CONTAINER_TASK_CACHE = "/sacty-cache";
 export const TASK_CACHE_NOTICE_PREFIX = "[sacty] 依存のキャッシュ：";
 
 /**
+ * 上書きする前の XDG_CACHE_HOME（イメージの env などで指定されていた値）を、確かめのスクリプトに渡す環境変数（PBI-319）。
+ * 指定されていたときだけ、WAS_SET を 1 にする。コマンドには渡さない（スクリプトが外す）。
+ */
+export const PREVIOUS_XDG_CACHE_HOME_ENV = "SACTY_PREVIOUS_XDG_CACHE_HOME";
+export const PREVIOUS_XDG_CACHE_HOME_SET_ENV = "SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET";
+
+/**
  * 依存のキャッシュに、コンテナの実行ユーザーが書けるかを確かめてからコマンドを実行する（PBI-319）。書けなければ
  * （Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、知らせを標準エラー出力に出し、XDG_CACHE_HOME を
- * 外して実行する（ツールが書けない場所に向いたまま失敗しないように。キャッシュを使わずに、これまでどおり動く）。
- * PID と標準入出力は、exec でそのままコマンドに渡す。
+ * 上書きする前の値に戻して実行する（元が無ければ外す。ツールが書けない場所に向いたまま失敗しないように、キャッシュを
+ * 使わずにこれまでどおり動く）。PID と標準入出力は、exec でそのままコマンドに渡す。
  */
 export const TASK_CACHE_PROBE_SCRIPT = [
   'probe="$XDG_CACHE_HOME/.sacty-probe-$$"',
   'if ( : > "$probe" ) 2>/dev/null; then rm -f "$probe"; else',
-  `  printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに実行します" >&2`,
-  "  unset XDG_CACHE_HOME",
+  `  if [ "$${PREVIOUS_XDG_CACHE_HOME_SET_ENV}" = 1 ]; then`,
+  `    printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに元の XDG_CACHE_HOME で実行します" >&2`,
+  `    XDG_CACHE_HOME="$${PREVIOUS_XDG_CACHE_HOME_ENV}"; export XDG_CACHE_HOME`,
+  "  else",
+  `    printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに実行します" >&2`,
+  "    unset XDG_CACHE_HOME",
+  "  fi",
   "fi",
+  `unset ${PREVIOUS_XDG_CACHE_HOME_ENV} ${PREVIOUS_XDG_CACHE_HOME_SET_ENV}`,
   'exec "$@"',
 ].join("\n");
 
@@ -405,6 +418,11 @@ export class DockerExecutor implements AgentExecutor {
     // エージェントの CLI 自身のキャッシュ（ログなど）は、タスクのキャッシュに残さず、コンテナの中だけの場所にする
     const tmpfs: string[] = [];
     if (invocation.taskCache) {
+      // 上書きする前の値は、書けなかったときに戻せるように、確かめのスクリプトに渡す
+      if (env.XDG_CACHE_HOME !== undefined) {
+        env[PREVIOUS_XDG_CACHE_HOME_ENV] = env.XDG_CACHE_HOME;
+        env[PREVIOUS_XDG_CACHE_HOME_SET_ENV] = "1";
+      }
       env.XDG_CACHE_HOME = CONTAINER_TASK_CACHE;
       for (const name of invocation.agentCacheDirs ?? []) {
         // 前の実行が置いたもの（リンク・ファイルを含む）は消す（リンクはリンクだけを消す）。重ねてマウントできるように
@@ -518,6 +536,8 @@ export class DockerExecutor implements AgentExecutor {
     });
 
     const containerName = `sacty-run-${runId}`;
+    // 標準エラー出力の先頭と末尾。転送・依存のキャッシュの知らせを、時間切れを含むどの終わり方でもデーモンのログに写す
+    const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
     this.containers.register(containerName);
     let outcome: AgentOutcome;
     // 時間切れで止めたときのエラー（止めるまでに読めた使用量を、後で添える。PBI-281）
@@ -549,7 +569,6 @@ export class DockerExecutor implements AgentExecutor {
         // 読まない）。コンテナが先に終わって書けなくても、結果は終了コードと出力で判断する（書き込みの失敗で落とさない）
         child.stdin.on("error", () => {});
         child.stdin.end(invocation.stdin ?? "");
-        const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
         // 届いた分の境目で、複数バイトの文字が壊れないようにつなげて読む
         const outText = new StringDecoder("utf8");
         const errText = new StringDecoder("utf8");
@@ -590,9 +609,6 @@ export class DockerExecutor implements AgentExecutor {
         });
       });
 
-      // 転送しなかったポート（すでに使われていたなど。PBI-60）は、デーモンのログに残す
-      for (const notice of [...forwardNotices(stderr), ...taskCacheNotices(stderr)])
-        console.warn(`[daemon] ${containerName}：${notice}`);
       if (this.aborting) {
         // デーモンを止めるために止めた実行も、止めるまでに読めた使用量は残す。全体は分からない（PBI-281）
         const partial = reader.finish(exitCode, stderr);
@@ -629,6 +645,11 @@ export class DockerExecutor implements AgentExecutor {
           new Promise<void>((resolve) => setTimeout(resolve, TIMEOUT_DRAIN_MS).unref()),
         ]);
       }
+      // 転送しなかったポート（すでに使われていたなど。PBI-60）と、依存のキャッシュを使えなかったこと（PBI-319）は、
+      // デーモンのログに残す（時間切れ・停止の確認の失敗でも、それまでに受け取った分から）
+      const received = err.toString();
+      for (const notice of [...forwardNotices(received), ...taskCacheNotices(received)])
+        console.warn(`[daemon] ${containerName}：${notice}`);
       // それまでに出力された分から使用量を拾う（結果が出る前に止めたので、全体は分からない）。時間切れと停止の確認の失敗で共有する
       const partial = timedOut.error || !stopped ? reader.finish(1) : undefined;
       if (!stopped) {

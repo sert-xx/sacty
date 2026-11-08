@@ -463,7 +463,7 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
-import { prepareTaskCache } from "./task-cache.js";
+import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
 import { templateTask } from "./task-templates.js";
 import { findTestFiles, isDocumentsOnly, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
@@ -12314,11 +12314,20 @@ export class TaskService {
           gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
         }
       }
+      // タスクごとの依存のキャッシュ（PBI-319）。用意できなければ、キャッシュを使わずに実行する。渡すときは、使い方の案内を
+      // 指示に足す（既定の規則が渡らない最終レビュー・統合レビューにも届くように）
+      const taskCache = run.taskCache
+        ? await prepareTaskCache(this.deps.workspaceRoot, run.taskId)
+        : undefined;
       const invocation = await buildInvocation(
         run.agent,
-        gatewayRun && githubHosts.length > 0
-          ? [run.prompt, "", ...githubPromptLines(githubHosts, run.role)].join("\n")
-          : run.prompt,
+        [
+          run.prompt,
+          ...(gatewayRun && githubHosts.length > 0
+            ? ["", ...githubPromptLines(githubHosts, run.role)]
+            : []),
+          ...(taskCache ? ["", ...taskCachePromptLines()] : []),
+        ].join("\n"),
         this.deps.secrets,
         (value) => usedSecrets.push(value),
         run.role,
@@ -12347,11 +12356,7 @@ export class TaskService {
         invocation.hostGateway = true;
       }
       if (run.mounts && run.mounts.length > 0) invocation.mounts = [...run.mounts];
-      // タスクごとの依存のキャッシュ（PBI-319）。用意できなければ、キャッシュを使わずに実行する
-      if (run.taskCache) {
-        const cache = await prepareTaskCache(this.deps.workspaceRoot, run.taskId);
-        if (cache) invocation.taskCache = cache;
-      }
+      if (taskCache) invocation.taskCache = taskCache;
       // 決まった見出しの塊を答えに含める役割は、その塊を含む最後の result を答えにする（最終の答えの後の通知への返答を、
       // 答えや投稿の本文にしない。PBI-154・PR #213 レビュー指摘）
       const marker = answerMarker(run.role);
