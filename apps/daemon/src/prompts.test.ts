@@ -4798,6 +4798,17 @@ describe("タスクの開始時に集めた情報", () => {
       ),
     ).not.toContain("集めた情報");
   });
+
+  it("依存のある子タスクの内容は、依存先の PR がマージ済みと言い切らない（重ねて始めることがある。PBI-317）", () => {
+    const body = buildChildBody(
+      taskOf(false),
+      { key: "b", title: "画面", body: "画面を作る", dependsOn: ["a"] },
+      new Map([["a", "API"]]),
+    );
+    expect(body).toContain("子タスク 「API」 に依存します");
+    expect(body).toContain("最終レビューに合格した依存先の PR のブランチ");
+    expect(body).not.toContain("マージされています");
+  });
 });
 
 describe("答えにする result の目印（PBI-154・PR #213 レビュー指摘）", () => {

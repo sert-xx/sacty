@@ -876,7 +876,20 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         ...new Set(event.payload.children.flatMap((c) => (c.repo ? [c.repo] : []))),
       ]);
     case "TaskUnblocked":
-      return e.TaskUnblocked;
+      return event.payload.stackedOn
+        ? e.TaskUnblockedStacked(
+            event.payload.stackedOn.branch,
+            event.payload.stackedOn.commit.slice(0, 7),
+          )
+        : e.TaskUnblocked;
+    case "StackedDependencyMerged":
+      return e.StackedDependencyMerged(event.payload.baseBranch);
+    case "PullRequestRetargeted":
+      return e.PullRequestRetargeted(
+        event.payload.number,
+        event.payload.baseBranch,
+        event.payload.ready === true,
+      );
     case "SplitCompleted":
       return e.SplitCompleted;
     case "IntegrationReviewed":

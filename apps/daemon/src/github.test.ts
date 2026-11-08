@@ -86,6 +86,21 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(calls.map((c) => (c.body as { draft?: boolean }).draft)).toEqual([true, undefined]);
   });
 
+  it("requireDraft なら、リポジトリがドラフトの PR を使えなくても、ドラフトでない PR にしない（PBI-317）", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 422,
+        json: { message: "Draft pull requests are not supported in this repository." },
+      },
+      // 同じブランチの開いた PR は無い
+      { status: 200, json: [] },
+    ]);
+    await expect(
+      new GitHubPullRequests(impl).upsert({ ...input, draft: true, requireDraft: true }),
+    ).rejects.toThrow();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+
   it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
@@ -204,6 +219,18 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(calls[1]?.url).toBe(
       "https://api.github.com/repos/acme/app/pulls?state=open&head=acme%3Asacty%2Ftask-1234abcd",
     );
+  });
+
+  it("更新で retarget なら、向き先（base）も baseBranch に付け替える。無ければ向き先を送らない（PBI-317）", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    await client.upsert({ ...input, number: 7, baseBranch: "main", retarget: true });
+    await client.upsert({ ...input, number: 7, baseBranch: "main" });
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: { body: "本文", base: "main" } });
+    expect(calls[1]?.body).toEqual({ body: "本文" });
   });
 
   it("番号があれば本文を更新し、失敗は理由つきのエラーにする（トークンは含めない）", async () => {
