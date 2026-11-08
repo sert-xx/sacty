@@ -131,6 +131,8 @@ describe("認証方式ごとの環境変数", () => {
       "--output-format",
       "stream-json",
       "--verbose",
+      "--permission-mode",
+      "bypassPermissions",
       "--disallowedTools",
       "ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger",
       "--add-dir",
@@ -188,7 +190,7 @@ describe("認証方式ごとの環境変数", () => {
     expect(claude.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
     // 出力から取り除けるように、取り出した値を知らせる
     expect(used).toContain("ghp-value");
-    expect(claude.command.slice(7)).toEqual([
+    expect(claude.command.slice(9)).toEqual([
       "--mcp-config",
       "/tmp/sacty-claude-config/mcp.json",
       "--strict-mcp-config",
@@ -275,8 +277,10 @@ describe("認証方式ごとの環境変数", () => {
     expect(inv.command.slice(0, 2)).toEqual(["claude", "-p"]);
     // 途中の出来事も出させる（セッションログ。PBI-62）。-p で stream-json を使うには --verbose が要る
     expect(inv.command.slice(2, 5)).toEqual(["--output-format", "stream-json", "--verbose"]);
+    // -p では確認に答える人がいないので、権限の確認を求めないモードを明示する（CLI の既定に任せない。PBI-320）
+    expect(inv.command.slice(5, 7)).toEqual(["--permission-mode", "bypassPermissions"]);
     // 一度きりの実行なので、後で起こす予約・定期の実行は使わせない（PBI-154）
-    expect(inv.command.slice(5, 7)).toEqual([
+    expect(inv.command.slice(7, 9)).toEqual([
       "--disallowedTools",
       "ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger",
     ]);

@@ -6,7 +6,7 @@
 テストは、sacty が別のコンテナで実行しない。
 ゴールガーディアン（最終レビュー）・再現の工程・PR のレビューの工程のエージェントが、それぞれのコンテナの中で実行する。
 
-関係する ADR: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)
+関係する ADR: [Claude Code の実行に、権限の確認を求めないモードを明示して渡す](../adr/20261108-1137-claude-permission-mode.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)
 
 ## コンテナ
 
@@ -76,7 +76,7 @@
 
 | runtime | コマンド | 設定の場所 |
 | --- | --- | --- |
-| `claude-code` | `claude -p --output-format stream-json --verbose --disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger`（指示は標準入力。一度きりの実行なので、後で起こす予約・定期の実行のツールは使わせない（予約が残ると、最終の答えの後も終わらずに待つ）。作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `claude-code` | `claude -p --output-format stream-json --verbose --permission-mode bypassPermissions --disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger`（指示は標準入力。権限の確認を求めないモードを、設定ファイルの既定のモード（`permissions.defaultMode`）よりも優先される引数で明示する（設定ファイルの個別の `ask`・`deny` の規則は、このモードでも効く。`-p` では確認に答える人がいないので、確認の要るツールは拒まれる。既定のモードは CLI の版で変わる。隔離は sacty のコンテナが受け持ち、エージェントは root ではない `node` ユーザーで動く。`CLAUDE_PERMISSION_MODE`）。一度きりの実行なので、後で起こす予約・定期の実行のツールは使わせない（予約が残ると、最終の答えの後も終わらずに待つ）。作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に `--` と `-`（指示は標準入力）） | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'`（設定の `stub` の出力を返す。AI は呼ばない） | なし |
 
