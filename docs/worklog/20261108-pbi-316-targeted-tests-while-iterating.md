@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-316
-- PR: なし
+- PR: #323
 - ブランチ: feat/issue-316-targeted-tests-while-iterating
 - 関係する ADR: [実装の途中は関係するテストだけを実行し、全件は最後の変更の後に実装の工程で1回実行する](../adr/20261108-0602-targeted-tests-while-iterating-full-run-once.md)
 
