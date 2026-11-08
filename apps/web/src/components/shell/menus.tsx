@@ -11,8 +11,11 @@ import { DASHBOARD_PATH, projectTasksPath, switchPath } from "@/lib/paths";
 import { applyTheme, readTheme, type ThemePreference, writeTheme } from "@/lib/theme";
 import { ExternalMark } from "../action-link";
 
+// 重なりの順は Positioner に付ける。Positioner は位置を transform で決めるので、それ自体が重なりの文脈を作り、
+// 中の Popup に付けた z-index はその外に効かない（タスク詳細の sticky な見出しの下に隠れていた。PBI-321）
+const POSITIONER = "z-50";
 const POPUP =
-  "z-50 max-h-[min(70dvh,32rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-lg outline-none";
+  "max-h-[min(70dvh,32rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-lg outline-none";
 const ITEM =
   "flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground";
 const TRIGGER =
@@ -64,7 +67,7 @@ export function ProjectMenu({
         <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={8} align="start">
+        <Menu.Positioner sideOffset={8} align="start" className={POSITIONER}>
           <Menu.Popup className={cn(POPUP, "w-72 p-1.5")}>
             <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t.switch}</p>
             <Menu.LinkItem
@@ -160,7 +163,7 @@ export function NotificationsMenu({
         <Count n={total} className="absolute -top-1.5 -right-1.5 border-2 border-chrome" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={8} align="end">
+        <Menu.Positioner sideOffset={8} align="end" className={POSITIONER}>
           <Menu.Popup className={cn(POPUP, "w-80 p-1.5")}>
             <p className="flex items-center justify-between px-3 pt-2 pb-1 text-sm font-semibold">
               {t.title}
@@ -220,7 +223,7 @@ export function UserMenu({ language }: { language: LanguagePreference }) {
         <UserRoundIcon aria-hidden="true" className="size-5" />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={8} align="end">
+        <Menu.Positioner sideOffset={8} align="end" className={POSITIONER}>
           <Menu.Popup className={cn(POPUP, "w-60 p-1.5")}>
             {/* sacty 全体の設定（プロジェクトとは別。PBI-26） */}
             <Menu.LinkItem href="/settings" className={ITEM}>
