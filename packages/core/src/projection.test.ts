@@ -19,6 +19,7 @@ import {
 import type { DaemonText } from "./message-code.js";
 import {
   applyEvent,
+  awaitingCiAfterReview,
   awaitingGathering,
   awaitingPullRequestCi,
   awaitingRepository,
@@ -3898,6 +3899,110 @@ describe("ベースブランチの取り込み", () => {
     expect(merged?.baseMerge?.commit).toBe("n1");
     expect(merged?.pullRequestCi).toBeUndefined();
     expect(merged?.verification).toBeDefined();
+  });
+
+  describe("CI と並べる最終レビュー（PBI-314）", () => {
+    const published = (commit: string) =>
+      ev("t1", {
+        type: "PullRequestPublished",
+        payload: {
+          branch: "sacty/t",
+          commit,
+          url: "https://github.com/acme/app/pull/7",
+          number: 7,
+          verifying: true,
+        },
+      });
+    const reviewed = (passed: boolean, beforeCi?: string) =>
+      ev(
+        "t1",
+        {
+          type: "FinalReviewed",
+          payload: {
+            passed,
+            viewpoints: [],
+            remarks: [],
+            summary: "ok",
+            agentId: "g",
+            ...(beforeCi ? { beforeCi: { commit: beforeCi } } : {}),
+          },
+        },
+        "guardian",
+      );
+    const finished = (commit: string, result: "passed" | "failed" | "none" | "timed_out") =>
+      ev("t1", {
+        type: "PullRequestCiFinished",
+        payload: { commit, result, checks: [], failures: [] },
+      });
+    const rerun = (commit: string) =>
+      ev("t1", {
+        type: "PullRequestCiRerunRequested",
+        payload: {
+          commit,
+          runs: [{ id: 1, attempt: 1 }],
+          failures: [{ workflow: "CI", job: "test", conclusion: "failure" }],
+        },
+      });
+    const base = () => {
+      seq = 0;
+      return [...prepared("t1"), ...implemented("t1"), published("c1")];
+    };
+
+    it("CI を待つ間に合格したら、CI の結果だけを待ち、初回で通ったら承認待ちへ進める", () => {
+      const waiting = project([...base(), reviewed(true, "c1")]).get("t1");
+      expect(waiting?.verification).toBe("pending");
+      expect(waiting?.publishPending).toBeUndefined();
+      expect(waiting && awaitingCiAfterReview(waiting)).toBe(true);
+      const done = project([...base(), reviewed(true, "c1"), finished("c1", "passed")]).get("t1");
+      expect(done?.publishPending).toBe(true);
+      expect(done?.status).toBe("queued");
+      expect(done?.verification).toBeUndefined();
+    });
+
+    it("CI が無ければ確定し、落ちた・時間切れ・再実行で通ったなら、CI の結果を見て最終レビューし直す", () => {
+      const none = project([...base(), reviewed(true, "c1"), finished("c1", "none")]).get("t1");
+      expect(none?.publishPending).toBe(true);
+      for (const tail of [
+        [finished("c1", "failed")],
+        [finished("c1", "timed_out")],
+        [rerun("c1"), finished("c1", "passed")],
+      ]) {
+        const again = project([...base(), reviewed(true, "c1"), ...tail]).get("t1");
+        expect(again?.publishPending).toBeUndefined();
+        expect(again?.verification).toBe("pending");
+        expect(again?.pullRequestCi?.reviewedBeforeResult).toBe(true);
+        expect(again && awaitingCiAfterReview(again)).toBe(false);
+      }
+    });
+
+    it("最終レビューの間に CI が終わっていたら、記録した時点の CI の結果で決める", () => {
+      const passed = project([...base(), finished("c1", "passed"), reviewed(true, "c1")]).get("t1");
+      expect(passed?.publishPending).toBe(true);
+      const failed = project([...base(), finished("c1", "failed"), reviewed(true, "c1")]).get("t1");
+      expect(failed?.publishPending).toBeUndefined();
+      expect(failed?.pullRequestCi?.reviewedBeforeResult).toBe(true);
+    });
+
+    it("待っていた CI のコミットでなければ確定せず、最終レビューし直す", () => {
+      const other = project([...base(), reviewed(true, "c0")]).get("t1");
+      expect(other?.publishPending).toBeUndefined();
+      expect(other?.verification).toBe("pending");
+      expect(other?.pullRequestCi?.reviewedBeforeResult).toBeUndefined();
+    });
+
+    it("CI を待つ間に不合格なら、待っている CI を捨てて実装に戻す。終わった CI の結果は残す", () => {
+      const failed = project([...base(), reviewed(false, "c1")]).get("t1");
+      expect(failed?.status).toBe("queued");
+      expect(failed?.verification).toBeUndefined();
+      expect(failed?.pullRequestCi).toBeUndefined();
+      const after = project([...base(), finished("c1", "failed"), reviewed(false)]).get("t1");
+      expect(after?.pullRequestCi?.result).toBe("failed");
+    });
+
+    it("CI の結果を見た最終レビュー（beforeCi が無い）は、今までどおり合格で承認待ちへ進める", () => {
+      const done = project([...base(), finished("c1", "failed"), reviewed(true)]).get("t1");
+      expect(done?.publishPending).toBe(true);
+    });
   });
 
   describe("CI の再実行（PBI-311）", () => {

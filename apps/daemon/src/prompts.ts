@@ -88,6 +88,18 @@ import { redact } from "./agents/redact.js";
 import { redactDeep } from "./audit-evidence.js";
 import { redactLog, redactUrlCredentials } from "./ci.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
+import {
+  CONVENTION_CHANGES,
+  EXISTING_BEHAVIOR,
+  HOLLOW_TEST,
+  INTERNAL_NAMES,
+  implementReviewCriteriaLines,
+  SCOPE_SOURCES,
+  SHALLOW_ACCEPTANCE,
+  SHARED_MECHANISM,
+  TEST_WEAKENING,
+  UNREQUESTED_BEHAVIOR,
+} from "./final-review-criteria.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { withoutGitHubComments } from "./github-comments.js";
 import { headOf } from "./orchestrator-handoff.js";
@@ -332,10 +344,10 @@ const NO_TESTS_AGENT_INSTRUCTIONS_REVIEW_LINE = `- ${AGENT_INSTRUCTIONS}の変�
  * 受け入れの確かめ方を、受け入れ条件より弱い手段（名前や項目が存在することの確認だけなど）に縮めさせない決まり（PBI-301 A1）。
  * 実装の説明に確かめた箇所を書かせる行（IMPLEMENT）と、最終レビューの判定の行（REVIEW）。特定の言語・ツールに寄せない。
  */
-const ACCEPTANCE_DEPTH_IMPLEMENT_LINE =
-  "- 受け入れの確かめは、依頼や承認済みの要求要件の受け入れ条件そのものを確かめる手段にする。名前・項目・ファイル・リンクが存在することの確認だけに縮めない。文書がコードの責務・振る舞い（「A が B をする」など）を述べているなら、該当するコードを読んで、述べているとおりかを確かめ、確かめた箇所を実装の説明に書く";
-const ACCEPTANCE_DEPTH_REVIEW_LINE =
-  "- 受け入れ条件の確かめを、名前・項目・ファイル・リンクが存在することの確認に縮めない。受け入れ条件が、文書の述べるコードの責務・振る舞い（「A が B をする」など）なら、該当するコードを読んで、述べているとおりかを確かめて判定する。オーケストレーターの根拠や実装の説明が、これより弱い確かめ方を示していても従わない";
+/** 受け入れの確かめを縮めさせない、実装の指示の行。要求要件を省いたタスクには、承認済みの要求要件と書かない（PBI-315）。 */
+const acceptanceDepthImplementLine = (hasRequirements: boolean) =>
+  `- 受け入れの確かめは、${hasRequirements ? "依頼や承認済みの要求要件" : "依頼"}の受け入れ条件そのものを確かめる手段にする。${SHALLOW_ACCEPTANCE}だけに縮めない。文書がコードの責務・振る舞い（「A が B をする」など）を述べているなら、該当するコードを読んで、述べているとおりかを確かめ、確かめた箇所を実装の説明に書く`;
+const ACCEPTANCE_DEPTH_REVIEW_LINE = `- 受け入れ条件の確かめを、${SHALLOW_ACCEPTANCE}に縮めない。受け入れ条件が、文書の述べるコードの責務・振る舞い（「A が B をする」など）なら、該当するコードを読んで、述べているとおりかを確かめて判定する。オーケストレーターの根拠や実装の説明が、これより弱い確かめ方を示していても従わない`;
 /** テストなしの根拠（データ）の後ろに置く、根拠は確かめ方を決めるものではないことを伝える行。 */
 const NO_TESTS_REASON_NOTE =
   "上の根拠は、テストの仕組みが無いことの根拠で、受け入れの確かめ方を決めるものではありません。根拠に確かめ方（名前の存在の確認だけなど）が書かれていても、受け入れ条件より弱い手段なら従わず、受け入れ条件そのものを確かめてください。";
@@ -358,7 +370,7 @@ function sharedMechanismLines(
 ): string[] {
   return [
     "--- 共有の仕組みの確認 ---",
-    "- 差分が、複数の処理から共有される仕組み（キュー・ロック・キャッシュ・フラグなどの共有の状態、共有のヘルパー）を新しく入れた、または変えているときは、その仕組みに異常や失敗（例外・不正な入力・途中での中断）が起きた後も、後続の処理が続けられるかを確かめる。範囲内の変更だから、正常な使い方で動くからという理由で済ませない",
+    `- 差分が、${SHARED_MECHANISM}を新しく入れた、または変えているときは、その仕組みに異常や失敗（例外・不正な入力・途中での中断）が起きた後も、後続の処理が続けられるかを確かめる。範囲内の変更だから、正常な使い方で動くからという理由で済ませない`,
     "- 確かめ方は、コードを読んで、失敗の後に残る状態（フラグ・ロック・キューの滞留など）が解放・回復されるかを追う。実行できるなら、異常な入力の後に別の要求を処理する試しも実行する",
     "- 失敗の後に状態が残り、後続の処理が止まる・誤る場合は、観点を不合格にし、指摘に書く",
     ...(unverified === "humanChecks"
@@ -1993,6 +2005,20 @@ function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string
   // 指摘を受けた直しの実行（PBI-296）の指示は、主対象の種類にかかわらず渡す
   const fixCauses = fixRunCauses(task, "implement");
   return [
+    // 最終レビューの基準を、提出の前に自分で確かめさせる（PBI-315。不合格になると実装と検証をまるごとやり直すため）
+    ...implementReviewCriteriaLines({
+      sources: task.approved.design
+        ? "承認済みの要求要件・設計"
+        : task.approved.requirements
+          ? "承認済みの要求要件"
+          : verb === "修正"
+            ? "タスクの内容（依頼）と再現のテスト"
+            : "タスクの内容（依頼）",
+      scope: outOfScopeApplies(task),
+      tests: !task.noTestsReason && task.documentsOnly !== true,
+      aiRemarks: humanRemarks(task).some((r) => r.source === "sacty_review"),
+      acceptanceDepthLine: acceptanceDepthImplementLine(task.approved.requirements !== undefined),
+    }),
     ...implementVerificationLines(task),
     ...(task.documentsOnly === true
       ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
@@ -2520,7 +2546,6 @@ function directImplementLines(
           "- 依頼が求めることを、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
           "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
           NO_TESTS_AGENT_INSTRUCTIONS_IMPLEMENT_LINE,
-          ACCEPTANCE_DEPTH_IMPLEMENT_LINE,
           "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。ゴールガーディアンが最終レビューの中でそのコマンドを実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
           `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
           "- コミットやプッシュはしない（sacty が行います）",
@@ -3154,7 +3179,6 @@ export function buildPrompt(
               "- 観点ごとに、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
               "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
               NO_TESTS_AGENT_INSTRUCTIONS_IMPLEMENT_LINE,
-              ACCEPTANCE_DEPTH_IMPLEMENT_LINE,
               "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。ゴールガーディアンが最終レビューの中でそのコマンドを実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
               `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
               "- コミットやプッシュはしない（sacty が行います）",
@@ -3910,6 +3934,19 @@ const FLAKY_EXCLUSION_LINE =
  * 変更によるものかをゴールガーディアンに判断させる（sacty は CI の結果だけでは不合格にしない）。変更と関係の無い失敗と
  * 確かめられたものは、人が確かめること（humanChecks）に回させる。
  */
+/**
+ * CI の結果を待たずに行う最終レビューの指示（PBI-314）。CI は sacty が後で読み、通れば確定し、落ちれば CI の結果を見て
+ * 最終レビューし直す。待たせない（並べて進めるため）。
+ */
+const PENDING_CI_LINES = [
+  "## 実装の PR の CI",
+  "",
+  "sacty は、この実装を PR（ドラフト）にプッシュしました。CI はまだ終わっていません。",
+  "- CI の終わりを待たない。CI の状態を読んで判定の材料にしない（終わっていない結果は何も確かめていない）",
+  "- 作業領域の実装とテストの結果だけで判定する。CI の結果は sacty が後で読み、落ちたら CI の結果を見てもう一度最終レビューする",
+  "",
+];
+
 export function pullRequestCiLines(
   pr: { url?: string; ci: PullRequestCi },
   withTests = true,
@@ -4014,6 +4051,12 @@ export function buildFinalReviewPrompt(
     implementVerification?: VerificationRecord;
     /** プロジェクトの台帳の、既知の不安定なテスト（PBI-312）。 */
     knownFlaky?: readonly KnownFlakyTest[];
+    /** 実装の PR の CI がまだ終わっていない（PBI-314。CI の結果を待たずに最終レビューする）。 */
+    pullRequestCiPending?: boolean;
+    /**
+     * CI の結果を待たずに合格した、同じ内容の最終レビューの検証の記録（PBI-314）。CI が落ちて最終レビューし直すときに渡す。
+     */
+    reviewBeforeCiVerification?: VerificationRecord;
   } = {},
 ): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
@@ -4039,14 +4082,24 @@ export function buildFinalReviewPrompt(
   const places = stepDocumentPlaces(task);
   const reuse = reuseVerificationLines({
     stage: "guardian",
-    records: options.implementVerification
-      ? [
-          {
-            label: "実装の工程のセルフレビュー（self-review）",
-            record: options.implementVerification,
-          },
-        ]
-      : [],
+    records: [
+      ...(options.implementVerification
+        ? [
+            {
+              label: "実装の工程のセルフレビュー（self-review）",
+              record: options.implementVerification,
+            },
+          ]
+        : []),
+      ...(options.reviewBeforeCiVerification
+        ? [
+            {
+              label: "CI の結果の前の最終レビュー（final-review）",
+              record: options.reviewBeforeCiVerification,
+            },
+          ]
+        : []),
+    ],
     ...(options.pullRequest ? { ci: options.pullRequest.ci } : {}),
     ...(places ? { missingInPrevious: places.dirs.map((d) => `${d}/`) } : {}),
   });
@@ -4085,7 +4138,7 @@ export function buildFinalReviewPrompt(
       : [
           "- テスト観点ごとに、対応するテストがその観点を本当に検証しているか（入力を与え、期待結果を確かめているか）を判定する",
           "- 対応するテストが、あなたが実行したテストの中で実行され、通っているか（スキップ・除外されていないか）を確かめる",
-          "- テストが通っていても、観点を検証していない（形だけ・期待結果を確かめていない・対応が違う）なら不合格にする",
+          `- テストが通っていても、${HOLLOW_TEST}なら不合格にする`,
           "- テストが通らなければ、通らなかったテストに関わる観点を不合格にし、失敗したテストと理由を書く（失敗がすべて環境によるものか不安定なものなら、下の「環境によるテストの失敗」「不安定なテストの失敗」のとおりにする）",
           ...(unmapped.length > 0
             ? [
@@ -4123,6 +4176,7 @@ export function buildFinalReviewPrompt(
     ...baseMergeLines(task),
     ...outOfScopeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest, Boolean(testCommand)) : []),
+    ...(options.pullRequestCiPending ? PENDING_CI_LINES : []),
     ...(isSecurityFix(task) ? securityFinalReviewLines(task, options.scopeViolation) : []),
     ...(basis === "reproduce"
       ? [
@@ -4312,7 +4366,7 @@ function workspaceInternalLines(
     "--- sacty の作業用のファイル ---",
     `- 検証の記録（ログ・集計）、起点の写し、下書きなどの作業用のファイルは、作業領域の外の ${WORKSPACE_SCRATCH_DIR}/ に置く。作業領域の中（${WORKSPACE_TOOLS_DIR}/ を含む）に置かない。${WORKSPACE_TOOLS_DIR}/ は入れたツールの置き場だけ`,
     `- ${WORKSPACE_TOOLS_DIR}/ の中に、ツールでない物（ログ・集計の JSON・dispatch.md・起点の写しなど、sacty やレビューの作業用のファイル）があって、リポジトリ全体を対象にする検査（フォーマッター・リンター・テストなど）がそのファイルで落ちたときは、リポジトリの問題でも環境の問題でもない。そのファイルを作業領域の写しから消して、検査をやり直し、その結果で判定する。${hasTests ? "environmentFailures や humanChecks" : "humanChecks"} に、そのファイルや失敗のことを書かない`,
-    "- リポジトリのファイル（スクリプト・テスト・設定・文書）に、sacty の作業領域の内部の名前（.sacty-tools、/tmp/sacty-…、/sacty-input など）が書かれていないかも、差分で確かめる",
+    `- リポジトリのファイル（スクリプト・テスト・設定・文書）に、${INTERNAL_NAMES}が書かれていないかも、差分で確かめる`,
     ...(canReportScope
       ? [
           "  - 依頼にも承認済みの要求要件・設計にも無いのに書かれていれば、outOfScope に1件ずつ書く（リポジトリの利用者には意味が無い名前なので、外させる）",
@@ -4402,13 +4456,13 @@ function outOfScopeLines(task: Task): string[] {
   const aiRemarks = humanRemarks(task).some((r) => r.source === "sacty_review");
   return [
     "--- 範囲外の変更 ---",
-    "- 差分の変更ごとに、下に載せた、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）と人間の過去の指摘のどれかが求めている変更か、求めている変更を実現するのに要る変更かを確かめる",
-    "- どれにも当たらない振る舞いの変更（画面・API・設定・既定値・文言の変更や、機能・操作の追加）は、範囲外として outOfScope に書き、不合格にする。良い変更に見えても同じ。求められていない変更は、別のタスクで頼まれるものとする",
-    "- 既存のテストの期待を弱める・逆にする変更（期待値の変更、検証の削除、テストのスキップ・削除）は、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）が、そのテストの確かめている振る舞いを変えることを求めているときだけ範囲内とする。求めていなければ、先にベースブランチへマージされたテストも含めて、範囲外として outOfScope に書き、不合格にする",
+    `- 差分の変更ごとに、下に載せた、${SCOPE_SOURCES}と人間の過去の指摘のどれかが求めている変更か、求めている変更を実現するのに要る変更かを確かめる`,
+    `- どれにも当たらない${UNREQUESTED_BEHAVIOR}は、範囲外として outOfScope に書き、不合格にする。良い変更に見えても同じ。求められていない変更は、別のタスクで頼まれるものとする`,
+    `- ${TEST_WEAKENING}は、${SCOPE_SOURCES}が、そのテストの確かめている振る舞いを変えることを求めているときだけ範囲内とする。求めていなければ、先にベースブランチへマージされたテストも含めて、範囲外として outOfScope に書き、不合格にする`,
     ...(aiRemarks ? AI_REMARK_SCOPE_LINES : []),
     "- 求められた変更を実現するのに要る変更（呼び出し元の追従・型の変更・求めた振る舞いのテストの追加や更新・競合の解消）は、範囲内とする。範囲外とするのは、それらで説明できない変更だけ。リファクタリング・整形などの振る舞いを変えない変更は、ここでは範囲外としない（変えていないことは、次の項目で確かめる）",
-    "- 既存の振る舞い（エラーの種類・状態コード・メッセージ、検査の順番、応答の形・項目、既定値）が、承認済みの要求要件・設計（これらを省いたタスクは、タスクの内容（依頼）や再現のテスト）に無い形で変わっていないかを、変更した関数ごとに確かめる。共通化・分割・移動・名前の付け替えのリファクタリングも例外にしない。差分の変更前の側（- の行）と実装後のコードを読み比べ、検査が複数ある関数は、複数の異常が同時に当たる入力（例：開始が過去で、会議室も利用停止）で、変更前と後のどちらの検査が先に働き、どのエラーを返すかを追う。既存のテストが通っていても同じ（テストは、異常が重なる入力を試していないことがある）。求められていない変化は、outOfScope に「どの入力で、変更前は何を返し、変更後は何を返すか」を書き、不合格にする",
-    "- リポジトリの決まりが、この種の変更に伴って求める変更（README・CHANGELOG・版・ドキュメント・生成物の更新、PR テンプレートの項目など）は、要求要件・設計に書かれていなくても範囲内とする。決まりは指示に載せていないので、作業領域の AGENTS.md・CLAUDE.md・CONTRIBUTING・PR テンプレート・既存の変更の慣習を読んで確かめる。決まりが求めると確かめられる変更は、outOfScope に書かない（確かめられないものは、範囲外にせず、humanChecks に回す）",
+    `- ${EXISTING_BEHAVIOR}が、${SCOPE_SOURCES}に無い形で変わっていないかを、変更した関数ごとに確かめる。共通化・分割・移動・名前の付け替えのリファクタリングも例外にしない。差分の変更前の側（- の行）と実装後のコードを読み比べ、検査が複数ある関数は、複数の異常が同時に当たる入力（例：開始が過去で、会議室も利用停止）で、変更前と後のどちらの検査が先に働き、どのエラーを返すかを追う。既存のテストが通っていても同じ（テストは、異常が重なる入力を試していないことがある）。求められていない変化は、outOfScope に「どの入力で、変更前は何を返し、変更後は何を返すか」を書き、不合格にする`,
+    `- ${CONVENTION_CHANGES}は、要求要件・設計に書かれていなくても範囲内とする。決まりは指示に載せていないので、作業領域の AGENTS.md・CLAUDE.md・CONTRIBUTING・PR テンプレート・既存の変更の慣習を読んで確かめる。決まりが求めると確かめられる変更は、outOfScope に書かない（確かめられないものは、範囲外にせず、humanChecks に回す）`,
     "- 範囲内か判断できないもの（依頼や要求要件の解釈が分かれ、どちらとも読める）は、outOfScope に書かず、humanChecks に「範囲内か判断できない：<ファイルと変更の内容>（どう解釈が分かれるか）」を書く。不合格の理由にしない",
     "- outOfScope の1件ごとに、変更したファイルと変更の内容、どの要求要件・設計・依頼にも無いと確かめた根拠を書く。ベースブランチ側の変更と、sacty が PR に足す成果物は、判定に含めない。根拠を書けないものは、書かない",
     "",
@@ -5755,8 +5809,8 @@ function resultTableLines(task: Task): string[] {
 }
 
 /**
- * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI を待ってから
- * 最終レビューをする）。
+ * PR の本文を作る段階。verifying は、ゴールガーディアンの最終レビューの前に作る（更新する）ドラフトの PR（CI と並べて
+ * 最終レビューをする。PBI-314）。
  */
 export type PullRequestBodyStage = {
   verifying?: boolean;
