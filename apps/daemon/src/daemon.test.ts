@@ -40532,6 +40532,51 @@ describe("タスクの作成時に、タスクのイメージ・工程ごとの�
     activity.close();
   });
 
+  it("古い版で作成時に一部の工程だけイメージを指定したタスクは、オーケストレーターがイメージを決めなくても、既定のイメージをタスクのイメージにしてすべての工程をそろえる（PR #322 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = randomUUID();
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "画面の設計",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              budgetCapUsd: 10,
+              plan: "design-only",
+              images: { requirements: "java" },
+            },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [completed(100), completed(100)], {
+      config: configured,
+      // オーケストレーターはイメージを決めない
+      planner: async () => ({
+        steps: ["requirements", "design"],
+        plan: "design-only",
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.image).toBe("default");
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    // 要求要件だけ java、設計は既定、にならない（どちらもタスクのイメージ）
+    expect(executor.images.map((i) => i.image)).toEqual(["sacty-agent:test", "sacty-agent:test"]);
+    activity.close();
+  });
+
   it("エージェントの名前は、タスクの詳細で変えるときと同じく長さを限らない", () => {
     const activity = new SqliteActivityStore(dbPath);
     const long = agent({ id: "a".repeat(101) });

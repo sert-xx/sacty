@@ -3691,13 +3691,24 @@ export class TaskService {
     const exported = this.withExports(withShared, exports.destinations);
     // 古い版の作業履歴で、すべての工程のイメージを人が指定したタスクは、タスクのイメージを決めない（投影が人の指定を入れる）
     const { image: _picked, ...withoutImage } = exported;
-    return this.withImages(
+    const decided = this.withImages(
       allRequested ? withoutImage : exported,
       config,
       allRequested ? undefined : pinned,
       // images の候補を見せたら、既定のイメージで動かすときの理由を確かめる（PBI-105・PBI-318）
       candidates.length > 0 && !repoless,
     );
+    // 古い版の作業履歴で、一部の工程だけイメージを人が指定したタスクは、イメージが決まらなくても既定のイメージをタスクの
+    // イメージとして確かめる。決めないと、投影が古い工程ごとの指定を入れ、工程の間でイメージがそろわない（PR #322 レビュー指摘）
+    if (
+      !("failure" in decided) &&
+      !allRequested &&
+      !decided.image &&
+      Object.keys(task.requestedImages ?? {}).length > 0
+    ) {
+      return { ...decided, image: DEFAULT_IMAGE_NAME };
+    }
+    return decided;
   }
 
   /**
