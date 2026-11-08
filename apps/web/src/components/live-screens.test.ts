@@ -25,7 +25,7 @@ vi.mock("@/app/actions", () => {
     followProjectAction,
     askQuestionAction: action,
     cancelTaskAction: action,
-    changeStepImageAction: action,
+    changeTaskImageAction: action,
     createTaskAction: action,
     decideChangeAction: action,
     gateAction: action,
@@ -372,9 +372,9 @@ describe("タスクの詳細：自動の更新で、操作の途中の状態を�
     // 承認済みの調査の欄（details）を開く
     const details = container.querySelector("details") as HTMLDetailsElement;
     details.open = true;
-    // 工程のイメージを選ぶ（まだ変えない）
+    // タスクのイメージを選ぶ（まだ変えない）
     const select = container.querySelector(
-      '[data-testid="step-image-implement"]',
+      '[data-testid="task-image-select"]',
     ) as HTMLSelectElement;
     select.value = "python";
     // チャットのパネル（ダイアログ）を開き、質問を書きかけて、フォーカスを置いたままにする
@@ -416,7 +416,7 @@ describe("タスクの詳細：自動の更新で、操作の途中の状態を�
 
     expect(container.querySelector("details")).toBe(details);
     expect(details.open).toBe(true);
-    expect(container.querySelector('[data-testid="step-image-implement"]')).toBe(select);
+    expect(container.querySelector('[data-testid="task-image-select"]')).toBe(select);
     expect(select.value).toBe("python");
     expect(document.getElementById("question")).toBe(question);
     expect(question.value).toBe("テストはどこ？");

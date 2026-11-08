@@ -25,7 +25,7 @@ import {
   BUDGET_WARN_RATIO,
   budgetState,
   ChangeStepAgentInput,
-  ChangeStepImageInput,
+  ChangeTaskImageInput,
   type CiCheck,
   type CiFailure,
   type CleanupTarget,
@@ -145,6 +145,7 @@ import {
   skippableSteps,
   stepAgentChangeable,
   stepDocumentPath,
+  stepImageOf,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
   type Task,
@@ -157,6 +158,7 @@ import {
   exportProject as toProjectExport,
   unreflectedImplementRemarks,
   type VerificationRecord,
+  verificationImageOf,
   workBaseCommit,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -536,7 +538,7 @@ export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
 };
 
 /** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
-type PinnedImage = { name: string; source: "project" | "rerun" };
+type PinnedImage = { name: string; source: "project" | "rerun" | "request" };
 
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
@@ -2325,21 +2327,14 @@ export class TaskService {
   }
 
   /**
-   * 工程の選択に、マージの後の監視の工程をするかを足す（PBI-116）。飛ばすなら、その工程の既定のイメージの理由・理由が
-   * 無いことは記録しない（実行しないので）。
+   * 工程の選択に、マージの後の監視の工程をするかを足す（PBI-116）。イメージはタスクに1つなので（PBI-318）、飛ばしても
+   * 既定のイメージの理由・理由が無いことはそのまま残す（ほかの工程がそのイメージで動く）。
    */
   private withDeploymentChoice(
-    chosen: ChosenSteps,
+    _chosen: ChosenSteps,
     deployment: NonNullable<ChosenSteps["deployment"]>,
   ): Partial<ChosenSteps> {
-    if (!("skipped" in deployment)) return { deployment };
-    const { deployment: _reason, ...reasons } = chosen.defaultImageReasons ?? {};
-    const unexplained = (chosen.imagesUnexplained ?? []).filter((step) => step !== "deployment");
-    return {
-      deployment,
-      defaultImageReasons: Object.keys(reasons).length > 0 ? reasons : undefined,
-      imagesUnexplained: unexplained.length > 0 ? unexplained : undefined,
-    };
+    return { deployment };
   }
 
   /** マージのコミットの、デプロイの確認のスキル（PBI-89）。コミットを取得できなければ retry。 */
@@ -2498,8 +2493,20 @@ export class TaskService {
     const agent = this.usableAgent(config, chosen.agent, task.id, "deployment");
     const runId = randomUUID();
     const setting = { agentId: agent.id, ...agentSetting(agent), runId };
+    // マージの後の監視の工程のイメージ（タスクのイメージ。PBI-318）。古い版の作業履歴の工程ごとのイメージなら、その工程の
+    // イメージ（工程の無い PBI-116 より前のタスクは、実装の工程のイメージ）。無い・images に無い名前なら既定のイメージ。
+    // 確認を始めるときに決め、使う名前を記録に残す（画面が、どのイメージで動いたかを出す）
+    const atStart = this.mustGet(task.id);
+    const watchStepped = atStart.steps.some((s) => s.key === "deployment");
+    const imageName =
+      atStart.image ?? (watchStepped ? atStart.images?.deployment : atStart.images?.implement);
+    const image = resolveImage(config, imageName);
+    const usedImage = image.ok ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
     this.append(task, [
-      { actor: "sacty", event: { type: "DeploymentCheckStarted", payload: { runId, skill } } },
+      {
+        actor: "sacty",
+        event: { type: "DeploymentCheckStarted", payload: { runId, skill, image: usedImage } },
+      },
     ]);
     type Payload = Extract<EventInput, { type: "DeploymentChecked" }>["payload"];
     const record = (actor: Actor, payload: Payload) => {
@@ -2568,12 +2575,6 @@ export class TaskService {
       if (context) {
         this.append(this.mustGet(task.id), [this.contextResolved(runId, context, platforms)]);
       }
-      // マージの後の監視の工程のイメージ（ほかの工程と同じく、オーケストレーターか人が選ぶ。PBI-116）。工程の無い
-      // PBI-116 より前のタスクは、実装の工程のイメージ。無ければ既定のイメージ
-      const image = resolveImage(
-        config,
-        stepped ? current.images?.deployment : current.images?.implement,
-      );
       if (stopped()) return interrupted({ costUsd: 0, estimated: false });
       executed = await this.execute({
         agent,
@@ -2982,7 +2983,7 @@ export class TaskService {
       platforms?: readonly Platform[];
       /** 実行の ID（止めるために、呼ぶ側で決めるとき。PBI-54）。 */
       runId?: string;
-      /** イメージの環境変数（言語ごとのイメージの env。最終レビューは実装の工程のイメージで動く。PBI-41）。 */
+      /** イメージの環境変数（言語ごとのイメージの env。最終レビューはタスクのイメージで動く。PBI-41・PBI-318）。 */
       imageEnv?: Record<string, string>;
       /** つなぐネットワークと、localhost に転送するポート（最終レビューでテストに使うサービス。PBI-47・PBI-60）。 */
       network?: ExecuteRun["network"];
@@ -3619,12 +3620,10 @@ export class TaskService {
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
   > {
-    // プロジェクトの対象でイメージを指定していれば、オーケストレーターに選ばせない（PBI-41）。人が作成時に、進め方の
-    // すべての工程のイメージを指定したときも選ばせない
+    // 再実行・作成時に人が指定した・プロジェクトの対象で指定したイメージがあれば、オーケストレーターに選ばせない（PBI-41・
+    // PBI-318）。古い版の作業履歴で、人が作成時に進め方のすべての工程のイメージを指定したタスクも選ばせない
     const pinned = this.pinnedImage(task);
-    const allRequested =
-      task.requestedPlan !== undefined &&
-      STEP_PLANS[task.requestedPlan].every((step) => task.requestedImages?.[step]);
+    const allRequested = legacyAllRequested(task);
     const candidates =
       pinned || allRequested
         ? []
@@ -3689,14 +3688,27 @@ export class TaskService {
     };
     const withShared = this.withSharedCompose(choice, shared);
     if ("failure" in withShared) return withShared;
-    return this.withImages(
-      this.withExports(withShared, exports.destinations),
+    const exported = this.withExports(withShared, exports.destinations);
+    // 古い版の作業履歴で、すべての工程のイメージを人が指定したタスクは、タスクのイメージを決めない（投影が人の指定を入れる）
+    const { image: _picked, ...withoutImage } = exported;
+    const decided = this.withImages(
+      allRequested ? withoutImage : exported,
       config,
-      pinned,
-      // images の候補を見せたら、既定のイメージで動かす工程の理由を確かめる（PBI-105）
+      allRequested ? undefined : pinned,
+      // images の候補を見せたら、既定のイメージで動かすときの理由を確かめる（PBI-105・PBI-318）
       candidates.length > 0 && !repoless,
-      task.requestedImages,
     );
+    // 古い版の作業履歴で、一部の工程だけイメージを人が指定したタスクは、イメージが決まらなくても既定のイメージをタスクの
+    // イメージとして確かめる。決めないと、投影が古い工程ごとの指定を入れ、工程の間でイメージがそろわない（PR #322 レビュー指摘）
+    if (
+      !("failure" in decided) &&
+      !allRequested &&
+      !decided.image &&
+      Object.keys(task.requestedImages ?? {}).length > 0
+    ) {
+      return { ...decided, image: DEFAULT_IMAGE_NAME };
+    }
+    return decided;
   }
 
   /**
@@ -4235,11 +4247,12 @@ export class TaskService {
   }
 
   /**
-   * すべての工程で使うと決まっているイメージの名前と、決めた元。再実行で人が指定したもの（優先する）か、プロジェクトの
-   * 対象で指定したもの（PBI-41）。
+   * オーケストレーターに選ばせずに決まっているタスクのイメージの名前と、決めた元。優先の順に、再実行で人が指定したもの・
+   * 作成時に人が指定したもの（PBI-318）・プロジェクトの対象で指定したもの（PBI-41）。
    */
   private pinnedImage(task: Task): PinnedImage | undefined {
     if (task.rerun?.image) return { name: task.rerun.image, source: "rerun" };
+    if (task.requestedImage) return { name: task.requestedImage, source: "request" };
     const repo = task.source
       ? task.source.repo
       : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
@@ -4249,43 +4262,38 @@ export class TaskService {
   }
 
   /**
-   * 工程ごとのイメージを決める（PBI-41）。対象の指定があれば、すべての工程でそれを使う。無ければオーケストレーターの
-   * 選択（選んだ工程の分だけ）。images に無い名前なら、理由を示して止める（再開すると選び直す）。
-   * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かす工程ごとに、
-   * images のどれも合わない理由を記録し、理由が無い工程（書かなかった・default と書いて理由が無い）も記録する（PBI-105。
-   * 既定のイメージに黙って倒さない）。
-   * requested（人が作成時に工程ごとに指定したイメージ）の工程は、ここでは決めない（記録にも入れない）。投影が、選んだ工程の
-   * 分だけ requested を優先して入れる。名前は作成時に確かめ、実行のときにも確かめる。
+   * タスクのイメージを決める（PBI-41・PBI-318）。決まっているイメージ（pinned）があれば、それを使う。無ければ
+   * オーケストレーターの選択。images に無い名前なら、理由を示して止める（再開すると選び直す）。
+   * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かすときに、images のどれも合わない理由を
+   * 記録し、理由が無い（書かなかった・default と書いて理由が無い）ことも記録する（PBI-105 の考え方。既定のイメージに黙って
+   * 倒さない）。
    */
   private withImages(
     choice: ChosenSteps,
     config: SactyConfig,
     pinned: PinnedImage | undefined,
     offered = false,
-    requested?: StepSettingMap,
   ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
     const {
-      images: picked,
+      image: picked,
       imageReason,
-      defaultImageReasons: reasons,
-      imagesUnexplained: _unexplained,
+      defaultImageReason: reason,
+      imageUnexplained: _unexplained,
+      // 古い版の工程ごとのイメージは、新しい記録には書かない
+      images: _images,
+      defaultImageReasons: _reasons,
+      imagesUnexplained: _stepsUnexplained,
       ...rest
     } = choice;
-    const steps = choice.steps.filter((step) => !requested?.[step]);
-    const images = pinned
-      ? Object.fromEntries(steps.map((step) => [step, pinned.name]))
-      : Object.fromEntries(
-          Object.entries(picked ?? {}).filter(([step]) => steps.includes(step as StepKey)),
-        );
-    const unknown = Object.values(images).find((name) => !resolveImage(config, name).ok);
-    if (unknown) {
+    const image = pinned ? pinned.name : picked;
+    if (image && !resolveImage(config, image).ok) {
       return {
         failure: {
           reason: "error",
           message: pinned
-            ? message("image.unknown", { name: unknown })
+            ? message("image.unknown", { name: image })
             : message("orchestrator.failed", {
-                detail: message("image.unknown", { name: unknown }),
+                detail: message("image.unknown", { name: image }),
               }),
           agentId: choice.agentId ?? "unknown",
           ...(choice.authMode ? { authMode: choice.authMode } : {}),
@@ -4300,11 +4308,17 @@ export class TaskService {
         },
       };
     }
-    const defaults = offered && !pinned ? defaultImagesOf(steps, images, reasons) : {};
-    if (Object.keys(images).length === 0) return { ...rest, ...defaults };
+    const onDefault = !image || image === DEFAULT_IMAGE_NAME;
+    const defaults =
+      offered && !pinned && onDefault
+        ? reason
+          ? { defaultImageReason: reason }
+          : { imageUnexplained: true as const }
+        : {};
+    if (!image) return { ...rest, ...defaults };
     return {
       ...rest,
-      images,
+      image,
       imageSource: pinned ? pinned.source : "orchestrator",
       ...(!pinned && imageReason ? { imageReason } : {}),
       ...defaults,
@@ -4451,9 +4465,9 @@ export class TaskService {
     return this.withImages(
       {
         ...reviewOnlySteps(via, true),
-        images: { review: chosen.image },
+        image: chosen.image,
         ...(chosen.reason ? { imageReason: chosen.reason } : {}),
-        ...(chosen.defaultReason ? { defaultImageReasons: { review: chosen.defaultReason } } : {}),
+        ...(chosen.defaultReason ? { defaultImageReason: chosen.defaultReason } : {}),
         ...ran.cost,
       },
       config,
@@ -4599,9 +4613,9 @@ export class TaskService {
         ...(chosen.noTests ? { noTestsReason: chosen.noTests } : {}),
         ...(chosen.documentsOnly ? { documentsOnly: true as const } : {}),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
-        ...(chosen.images ? { images: chosen.images } : {}),
+        ...(chosen.image ? { image: chosen.image } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
-        ...(chosen.defaultReasons ? { defaultImageReasons: chosen.defaultReasons } : {}),
+        ...(chosen.defaultReason ? { defaultImageReason: chosen.defaultReason } : {}),
         ...(chosen.services ? { services: chosen.services } : {}),
         ...(chosen.servicesReason ? { servicesReason: chosen.servicesReason } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
@@ -6342,7 +6356,7 @@ export class TaskService {
     ) {
       throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
-    const stepSettings = this.requestedStepSettings(plan, input.images, input.agents);
+    const stepSettings = this.requestedStepSettings(plan, input.image, input.agents);
     // 直す不安定なテスト（PBI-312）。画面の名前は伏せた値なので、識別子で台帳から元のテストを探す
     const flakyFix = input.flakyFixTest
       ? findFlakyTest([...this.tasks.values()], projectId, input.flakyFixTest)
@@ -6370,21 +6384,20 @@ export class TaskService {
   }
 
   /**
-   * 作成時に指定した、工程ごとのイメージ・エージェントを確かめる。進め方を選んだときだけ、その工程だけを指定できる
-   * （エージェントは、統合レビューを除く）。名前は config.yaml の images（か default）・agents にあるものだけ。
+   * 作成時に指定した、タスクのイメージ（PBI-318）と工程ごとのエージェントを確かめる。進め方を選んだときだけ指定でき、
+   * エージェントはその工程だけ（統合レビューを除く）。名前は config.yaml の images（か default）・agents にあるものだけ。
    * 何も指定していなければ、何も返さない。
    */
   private requestedStepSettings(
     plan: StepPlan | undefined,
-    images: StepSettingMap | undefined,
+    image: string | undefined,
     agents: StepSettingMap | undefined,
-  ): { images?: StepSettingMap; agents?: StepSettingMap } {
-    const imageSteps = Object.keys(images ?? {}) as StepKey[];
+  ): { image?: string; agents?: StepSettingMap } {
     const agentSteps = Object.keys(agents ?? {}) as StepKey[];
-    if (imageSteps.length === 0 && agentSteps.length === 0) return {};
+    if (image === undefined && agentSteps.length === 0) return {};
     if (!plan) throw new InvalidOperationError(message("task.stepSettingsNeedPlan"));
     const steps: readonly StepKey[] = STEP_PLANS[plan];
-    if ([...imageSteps, ...agentSteps].some((step) => !steps.includes(step))) {
+    if (agentSteps.some((step) => !steps.includes(step))) {
       throw new InvalidOperationError(message("task.stepSettingOutsidePlan"));
     }
     // 統合レビューは、ゴールガーディアンが実行する（タスクの詳細で変えるときと同じく断る）
@@ -6395,15 +6408,13 @@ export class TaskService {
     const config = this.deps.config();
     if (!config.ok) {
       throw new InvalidOperationError(
-        imageSteps.length > 0
+        image !== undefined
           ? message("image.configUnavailable", { detail: config.problem })
           : message("agent.configUnavailable", { detail: config.problem }),
       );
     }
-    for (const name of Object.values(images ?? {})) {
-      if (!resolveImage(config.config, name).ok) {
-        throw new InvalidOperationError(message("image.notInImages", { name }));
-      }
+    if (image !== undefined && !resolveImage(config.config, image).ok) {
+      throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
     for (const name of Object.values(agents ?? {})) {
       if (!definedAgent(config.config, name)) {
@@ -6411,7 +6422,7 @@ export class TaskService {
       }
     }
     return {
-      ...(imageSteps.length > 0 ? { images } : {}),
+      ...(image !== undefined ? { image } : {}),
       ...(agentSteps.length > 0 ? { agents } : {}),
     };
   }
@@ -7209,9 +7220,9 @@ export class TaskService {
         url: `${repo}.git`,
         ...(task.repository ? { baseBranch: task.repository.baseBranch } : {}),
         ...(task.testCommand ? { testCommand: task.testCommand } : {}),
-        // テストは、確かめる工程のイメージで実行する（PBI-41）。実装のイメージ（無ければ再現のイメージ）。
+        // テストは、タスクのイメージで実行する（PBI-318。古い版の作業履歴なら、確かめる工程のイメージ）。
         // images から消した名前なら既定のイメージにしておき、テストを実行するところで理由を示して止める
-        ...testImageOf(config, task.images?.implement ?? task.images?.reproduce),
+        ...testImageOf(config, verificationImageOf(task)),
         pullRequest: { provider: "github" as const, repo },
       },
     };
@@ -7913,17 +7924,24 @@ export class TaskService {
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config.config, chosen.agent, task.id, step);
     const runId = randomUUID();
+    // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106・
+    // PBI-318）。使う名前を実行の記録に残す（画面が、どのイメージで動いたかを出す）
+    const runImageName = stepImageOf(this.mustGet(task.id), step);
     this.append(task, [
       {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            ...agentSetting(agent),
+            image: runImageName ?? DEFAULT_IMAGE_NAME,
+          },
         },
       },
     ]);
-    // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106）
-    const runImageName = this.mustGet(task.id).images?.[step];
 
     // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
@@ -8121,7 +8139,7 @@ export class TaskService {
           };
         }
       }
-      // 工程のイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
+      // 工程のイメージ（タスクのイメージ。PBI-41・PBI-318）。images から消した名前なら、実行せずに理由を示して止める
       const stepImage = resolveImage(config.config, runImageName);
       if (!stepImage.ok) {
         executed ??= {
@@ -8697,7 +8715,7 @@ export class TaskService {
     }
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config, chosen.agent, task.id, step);
-    const image = resolveImage(config, task.images?.[step]);
+    const image = resolveImage(config, stepImageOf(task, step));
     if (!image.ok) {
       pause(image.message);
       return;
@@ -8737,6 +8755,11 @@ export class TaskService {
       // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
       // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
       if (latest.agents?.[step] !== chosenName) return;
+      // 準備の間に人がイメージを変えたなら、エージェントと同じく、実行待ちのまま戻し、次の実行で最新の設定から決め直す
+      // （その間に config.yaml に足した名前を、この実行が読んだ設定で解決して止めない。PR #322 レビュー指摘）
+      const runImageName = stepImageOf(latest, step);
+      if (runImageName !== stepImageOf(task, step)) return;
+      // 使う名前（準備の前に確かめたもの）を実行の記録に残す（PBI-318。画面が、どのイメージで動いたかを出す）
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [
@@ -8744,7 +8767,13 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "AgentRunStarted",
-            payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              image: runImageName ?? DEFAULT_IMAGE_NAME,
+            },
           },
         },
       ]);
@@ -9178,7 +9207,7 @@ export class TaskService {
   }
 
   /**
-   * 実装を検証する。ゴールガーディアンが新しいセッションで、実装の工程のイメージ・サービスにつないだ実装後のコードの写しで
+   * 実装を検証する。ゴールガーディアンが新しいセッションで、タスクのイメージ・サービスにつないだ実装後のコードの写しで
    * テスト（検証）のコマンドを実行し、その結果と差分・コードから最終レビューする（sacty はテストを別に実行しない）。
    * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
    */
@@ -9219,9 +9248,9 @@ export class TaskService {
     // テストの仕組みが無いタスク（PBI-94）は、実装が用意して申告したテストのコマンドがあれば、それで検証する
     const testCommand =
       repo.testCommand ?? (task.noTestsReason ? task.addedTestCommand : undefined);
-    // 最終レビューは、実装（不具合の修正では再現）の工程のイメージで実行する（テストを実行するため。PBI-41）。
-    // images から消えていれば、実行せずに理由を示して止める
-    const imageName = task.images?.implement ?? task.images?.reproduce;
+    // 最終レビューは、タスクのイメージで実行する（テストを実行するため。PBI-318。古い版の作業履歴なら、実装（不具合の修正
+    // では再現）の工程のイメージ）。images から消えていれば、実行せずに理由を示して止める
+    const imageName = verificationImageOf(task);
     const testImage = resolveImage(config.config, imageName);
     if (!testImage.ok) {
       this.append(task, [
@@ -10988,17 +11017,24 @@ export class TaskService {
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config, selected, task.id, step);
     const runId = randomUUID();
+    // 統合レビューのイメージは、実行を始めたときのものに決める（実行の間に変えても、次の実行から。PBI-106・PBI-318）。
+    // 使う名前を実行の記録に残す
+    const runImageName = stepImageOf(this.mustGet(task.id), step);
     this.append(task, [
       {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            ...agentSetting(agent),
+            image: runImageName ?? DEFAULT_IMAGE_NAME,
+          },
         },
       },
     ]);
-    // 統合レビューのイメージは、実行を始めたときのものに決める（実行の間に変えても、次の実行から。PBI-106）
-    const runImageName = this.mustGet(task.id).images?.[step];
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     const subtasks = this.subtaskSummaries(task);
     let baseBranch = task.repository?.baseBranch ?? "";
@@ -12126,28 +12162,29 @@ export class TaskService {
 
   /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
   /**
-   * 人が、タスクの詳細で工程のイメージを変える（PBI-106）。工程の状態は問わない（実行中・終わった工程も変えられる）。
-   * 今の実行は止めず、その工程を次に実行するときから使う（実行の開始で、そのときのイメージを決める）。テストの実行も、
-   * 実行を始めるときの実装（再現）の工程のイメージを使う。プロジェクトの対象の指定より、人の変更を優先する。
+   * 人が、タスクの詳細でタスクのイメージを変える（PBI-318）。工程の状態は問わない（実行中・終わった工程があっても変えられる）。
+   * 今の実行は止めず、すべての工程の次の実行から使う（実行の開始で、そのときのイメージを決める）。テスト・最終レビューも、
+   * 実行を始めるときのタスクのイメージを使う。再実行・作成時・プロジェクトの対象の指定より、人の変更を優先する。
    * images に無い名前（config.yaml から消した名前など）は、理由を示して断る。
    */
-  changeStepImage(id: string, raw: unknown): Task {
-    const { step, image } = ChangeStepImageInput.parse(raw);
+  changeTaskImage(id: string, raw: unknown): Task {
+    const { image } = ChangeTaskImageInput.parse(raw);
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
-    const event = this.stepImageChange(task, step, image);
+    const event = this.taskImageChange(task, image);
     if (!event) throw new InvalidOperationError(message("image.unchanged", { name: image }));
     return this.append(task, [{ actor: "person", event }]);
   }
 
   /**
-   * 工程のイメージを変えるイベント（タスクの詳細で変えるときと、再開と一緒に変えるときで共通）。今と同じ名前なら undefined。
-   * 選んでいない工程・images に無い名前・設定を読めないときは、理由を示して断る。
+   * タスクのイメージを変えるイベント（タスクの詳細で変えるときと、再開・差し戻しと一緒に変えるときで共通）。今と同じ名前なら
+   * undefined。工程が決まっていない・images に無い名前・設定を読めないときは、理由を示して断る。古い版の作業履歴で工程ごとの
+   * イメージを持ち、タスクのイメージが無ければ、変える前の名前を持たない（工程ごとに違いうるため）。
    */
-  private stepImageChange(task: Task, step: StepKey, image: string): EventInput | undefined {
-    if (!task.steps.some((s) => s.key === step)) {
-      throw new InvalidOperationError(message("image.stepMissing"));
+  private taskImageChange(task: Task, image: string): EventInput | undefined {
+    if (task.steps.length === 0) {
+      throw new InvalidOperationError(message("image.stepsNotChosen"));
     }
     const config = this.deps.config();
     // 設定を読めない・解析できなければ、名前を確かめられないので、その理由を示して断る（名前の誤りと取り違えないため）
@@ -12159,13 +12196,14 @@ export class TaskService {
     if (!resolveImage(config.config, image).ok) {
       throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
-    const from = task.images?.[step] ?? DEFAULT_IMAGE_NAME;
+    const legacy = task.image === undefined && Object.keys(task.images ?? {}).length > 0;
+    const from = task.image ?? (legacy ? undefined : DEFAULT_IMAGE_NAME);
     if (from === image) return undefined;
-    return { type: "StepImageChanged", payload: { step, from, to: image } };
+    return { type: "TaskImageChanged", payload: { ...(from ? { from } : {}), to: image } };
   }
 
   /**
-   * 人が、タスクの詳細で工程のエージェントを変える（PBI-121）。工程のイメージ（PBI-106）と同じく、工程の状態は問わず、
+   * 人が、タスクの詳細で工程のエージェントを変える（PBI-121）。タスクのイメージ（PBI-318）と同じく、工程の状態は問わず、
    * 今の実行は止めず、その工程を次に実行するときから使う。config.yaml の step_agents より優先する。agents に無い名前は断る。
    */
   changeStepAgent(id: string, raw: unknown): Task {
@@ -12205,16 +12243,16 @@ export class TaskService {
   }
 
   /**
-   * 再開・差し戻しと一緒に変える工程のイメージ・エージェントのイベント（今と同じ名前は除く）。誤った名前・工程があれば、
-   * 理由を示して断る（何も記録しない）。
+   * 再開・差し戻しと一緒に変えるタスクのイメージ（PBI-318）・工程のエージェントのイベント（今と同じ名前は除く）。誤った
+   * 名前・工程があれば、理由を示して断る（何も記録しない）。
    */
   private stepSettingChanges(
     task: Task,
-    input: { images?: Partial<Record<StepKey, string>>; agents?: Partial<Record<StepKey, string>> },
+    input: { image?: string; agents?: Partial<Record<StepKey, string>> },
   ): { actor: Actor; event: EventInput }[] {
     const events: { actor: Actor; event: EventInput }[] = [];
-    for (const [step, image] of Object.entries(input.images ?? {}) as [StepKey, string][]) {
-      const event = this.stepImageChange(task, step, image);
+    if (input.image !== undefined) {
+      const event = this.taskImageChange(task, input.image);
       if (event) events.push({ actor: "person", event });
     }
     for (const [step, agent] of Object.entries(input.agents ?? {}) as [StepKey, string][]) {
@@ -14246,10 +14284,10 @@ export class TaskService {
       events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
     }
     const rechooseSteps = !input.tests && canRechooseSteps(task);
-    // 再開と一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
+    // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
     // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
     const settingCount =
-      Object.keys(input.images ?? {}).length + Object.keys(input.agents ?? {}).length;
+      (input.image !== undefined ? 1 : 0) + Object.keys(input.agents ?? {}).length;
     if (rechooseSteps && settingCount > 0) {
       throw new InvalidOperationError(message("resume.stepSettingsRechoose"));
     }
@@ -14373,7 +14411,7 @@ export class TaskService {
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
       throw new InvalidOperationError(message("gate.remarksRequired"));
     }
-    // 差し戻しと一緒に、工程のイメージ・エージェントを変える（タスクの詳細で変えるのと同じ）。差し戻しの前に同じ書き込みで
+    // 差し戻しと一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。差し戻しの前に同じ書き込みで
     // 記録し、やり直す工程から使う。上限でエスカレーションするときも記録する（人の指定を黙って失わないため）
     const settings = this.stepSettingChanges(task, input);
     // 回の番号と指摘の ID は、AI のレビューだけの回も含めて続ける（人の差し戻しの回数とは別）
@@ -14578,23 +14616,15 @@ function repositoryDirName(repo: string, index: number): string {
 }
 
 /**
- * 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）。工程のイメージが無い・default なら
- * 既定のイメージで動く。理由は、既定のイメージで動く工程の分だけ残す。
+ * 古い版（PBI-318 より前）の作業履歴で、人が作成時に、進め方のすべての工程のイメージを指定したタスクか。工程を選び直すときは、
+ * その指定を工程のイメージにする（投影が入れる）ので、タスクのイメージを決めない。
  */
-function defaultImagesOf(
-  steps: readonly StepKey[],
-  images: Partial<Record<StepKey, string>>,
-  reasons: Partial<Record<StepKey, string>> | undefined,
-): { defaultImageReasons?: Partial<Record<StepKey, string>>; imagesUnexplained?: StepKey[] } {
-  const onDefault = steps.filter((step) => !images[step] || images[step] === DEFAULT_IMAGE_NAME);
-  const explained = Object.fromEntries(
-    onDefault.flatMap((step) => (reasons?.[step] ? [[step, reasons[step]]] : [])),
-  ) as Partial<Record<StepKey, string>>;
-  const unexplained = onDefault.filter((step) => !reasons?.[step]);
-  return {
-    ...(Object.keys(explained).length > 0 ? { defaultImageReasons: explained } : {}),
-    ...(unexplained.length > 0 ? { imagesUnexplained: unexplained } : {}),
-  };
+function legacyAllRequested(task: Task): boolean {
+  return (
+    task.requestedImage === undefined &&
+    task.requestedPlan !== undefined &&
+    STEP_PLANS[task.requestedPlan].every((step) => task.requestedImages?.[step])
+  );
 }
 
 /**

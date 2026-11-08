@@ -17,7 +17,7 @@ Related ADR: [Make the after-merge watch a step, decide per task by whether the 
   - If found, `deployment` in `StepsChosen` holds `skill` (the path).
   - If it is missing, unusable, or cannot be looked up, it holds `skipped` (`deploy.stepSkipped`), and this step is set to `skip`. The detailed reason is `deploy.noSkill`, `deploy.skillOutside`, `deploy.skillUnreadable`, or `deploy.skillLookupFailed`.
   - When skipped, CI/CD is not watched either.
-- When skipped, the reason for the default image of this step and the lack of one (`defaultImageReasons`, `imagesUnexplained`) are not recorded.
+- Even when skipped, the reason for the default image and the lack of one (`defaultImageReason`, `imageUnexplained`) are recorded as they are (the image is one per task, and the other steps run on it).
 - The Orchestrator's instructions say, in the description of the combinations, that sacty decides it only when there is a skill (the AI does not decide it).
 - When the skill is added or removed after the decision, sacty handles it as follows.
   - Added (the implementation PR adds the skill): this task does not watch (the step stays skipped). Later tasks do.
@@ -118,11 +118,11 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
 - Tasks that have a skill and are waiting for the check (`awaitingDeploymentCheck`) are picked up by the worker as queued work (paused tasks are not picked up). The limit on concurrent runs is the same as for other runs.
 - If the budget limit has been reached, the check does not run and `DeploymentWatchSkipped` (`budget`) is recorded (the task is not stopped).
 - The run environment
-  - The AI is the agent a person set for this step (set when creating the task, or changed in the task details, when resuming a paused task, or when requesting changes; see [Step images and agents specified at creation](tasks-and-steps.en.md#step-images-and-agents-specified-at-creation) and [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)). Otherwise it is `step_agents.deployment`, or `default_agent` if that is not set either.
-  - The image is the image of this step. As for other steps, the Orchestrator chooses it and a person can change it. If there is none, the default image is used.
+  - The AI is the agent a person set for this step (set when creating the task, or changed in the task details, when resuming a paused task, or when requesting changes; see [Task image and step agents specified at creation](tasks-and-steps.en.md#task-image-and-step-agents-specified-at-creation) and [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)). Otherwise it is `step_agents.deployment`, or `default_agent` if that is not set either.
+  - The image is the task image (for per-step images in activity from an older version, the image of this step). As for other steps, the Orchestrator chooses it and a person can change it. If there is none, the default image is used.
   - The workspace is a copy of the code at the merge commit, written to `workspaces/_deployment/<run ID>` (deleted afterward).
   - The project's context (external PFs and MCP servers) is passed in the same way as for step agents.
-- Before the run, `DeploymentCheckStarted` (run ID and skill) is recorded.
+- Before the run, `DeploymentCheckStarted` (run ID, skill, and the name of the image it uses) is recorded. The image is fixed when this record is appended (a change while the check is being prepared afterward does not change this check).
 - The instructions (`buildDeploymentPrompt`) ask the agent to read and follow the skill. What to check (CI/CD, the deployment, or both) and how to check it follow the skill. The CI/CD runs and checks sacty saw (up to 50) are passed as JSON data that is not instructions. The information gathered at the start of the task, if any, is added as background ([Tasks and steps](tasks-and-steps.en.md#information-gathering)). The agent is also asked to do the following.
   - Only check and change nothing (no re-running CI/CD, no redeploying, no rollback)
   - Not write secrets
@@ -226,7 +226,7 @@ Code: `apps/daemon/src/service.ts` (`pause`, `resume`, `cancel`, `recoverInterru
 
 - Activity from before PBI-116 (no `deployment` step, and `DeploymentWatchStarted` on a completed task) is read as is, without rewriting it.
 - Such a watch proceeds as before, with the task staying completed (steps and status do not change).
-  - The image for the check is the image of the Implementation step.
+  - The image for the check is the task image (or the image of the Implementation step if absent).
   - A check that was stopped or interrupted by the daemon stopping ends as not determined (`deploy.stopped`, `run.daemonStopped`; `check_unknown`) and is not retried.
   - The answer format is the current one.
 - The project setting `deploymentWatch` is not read. It is dropped from saved definitions, and if an older export file has it, it is dropped without stopping the import ([Export and import](export.en.md)).
@@ -235,7 +235,7 @@ Code: `packages/core/src/projection.ts` (`applyEvent`), `apps/daemon/src/service
 
 ## Web UI
 
-- The task's steps show "After-merge watch" (and that it was skipped, if so). The image of the step can be changed as for other steps.
+- The task's steps show "After-merge watch" (and that it was skipped, if so). Changing the task image also applies from the next run of this step.
 - "After-merge watch" in the task details
   - Before the watch starts: that it is waiting for the merge and the skill to use. If skipped, the reason (the reason from when the steps were chosen, or that the implementation was approved with no changes).
   - After it starts

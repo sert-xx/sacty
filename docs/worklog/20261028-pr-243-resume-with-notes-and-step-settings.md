@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #243
 - ブランチ: ccr-98b90f80-bl3gz2
-- 関係する ADR: [一時停止したタスクの再開のときに、補足を足し、工程のイメージ・エージェントを一緒に変えられる](../adr/20261028-0342-resume-with-notes-and-step-settings.md)
+- 関係する ADR: [一時停止したタスクの再開のときに、補足を足し、工程のイメージ・エージェントを一緒に変えられる](../adr/20261028-0342-superseded-resume-with-notes-and-step-settings.md)
 
 ## 目的
 

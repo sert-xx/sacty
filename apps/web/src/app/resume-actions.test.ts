@@ -22,7 +22,7 @@ const { resumeTaskAction } = await import("./actions");
 const { messagesFor } = await import("@/i18n");
 const a = messagesFor("ja").common.action;
 /** 補足も工程の設定も無いときに、デーモンへ渡す値。 */
-const NONE = { note: "", images: {}, agents: {} };
+const NONE = { note: "", agents: {} };
 
 const form = (values: Record<string, string>) => {
   const data = new FormData();
@@ -95,19 +95,17 @@ describe("タスクの再開のテストの扱い", () => {
 });
 
 describe("タスクの再開の補足と工程の設定", () => {
-  it("補足（前後の空白を除く）と、人が変えた工程のイメージ・エージェントだけを渡す（今と同じ・空の選択・不正な工程は渡さない）", async () => {
+  it("補足（前後の空白を除く）と、人が変えたタスクのイメージ・工程のエージェントだけを渡す（今と同じ・空の選択・不正な工程は渡さない）", async () => {
     await resumeTaskAction(
       {},
       form({
         taskId: "t1",
         note: "  ACME_TOKEN を使う ",
-        "image-from:implement": "default",
-        "image:implement": "java",
-        // 触っていない工程（描いたときの今の名前のまま）は渡さない（その間にタスクの詳細で変えた名前を戻さない）
-        "image-from:requirements": "default",
-        "image:requirements": "default",
-        "image:design": "",
-        "image:nope": "java",
+        "image-from": "default",
+        image: "java",
+        // 古い版の工程ごとのイメージの項目は読まない
+        "image:design": "python",
+        "agent:nope": "java",
         "agent-from:implement": "claude",
         "agent:implement": "strong",
         "agent-from:requirements": "claude",
@@ -116,7 +114,7 @@ describe("タスクの再開の補足と工程の設定", () => {
     );
     expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
       note: "ACME_TOKEN を使う",
-      images: { implement: "java" },
+      image: "java",
       agents: { implement: "strong" },
     });
   });
@@ -128,17 +126,17 @@ describe("タスクの再開の補足と工程の設定", () => {
       form({
         taskId: "t1",
         note,
-        "image-from:implement": "default",
-        "image:implement": "java",
+        "image-from": "default",
+        image: "java",
         "agent-from:implement": "claude",
         "agent:implement": "strong",
         // 触っていない工程は返さない（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
-        "image-from:requirements": "default",
-        "image:requirements": "default",
+        "agent-from:requirements": "claude",
+        "agent:requirements": "claude",
       }),
     );
     expect(state).toMatchObject({ message: a.resumeNoteTooLong(10_000), note });
-    expect(state.images).toEqual({ implement: "java" });
+    expect(state.image).toBe("java");
     expect(state.agents).toEqual({ implement: "strong" });
     expect(resumeTask).not.toHaveBeenCalled();
   });
@@ -149,16 +147,15 @@ describe("タスクの再開の補足と工程の設定", () => {
       {},
       form({
         taskId: "t1",
-        "image-from:implement": "default",
-        "image:implement": "java",
-        "image-from:requirements": "default",
-        "image:requirements": "default",
+        "image-from": "default",
+        image: "default",
         "agent-from:requirements": "claude",
         "agent:requirements": "claude",
       }),
     );
     expect(state).toMatchObject({ message: "断られた" });
-    expect(state.images).toEqual({ implement: "java" });
+    // 触っていないタスクのイメージは返さない
+    expect(state.image).toBeUndefined();
     expect(state.agents).toEqual({});
   });
 
@@ -167,7 +164,6 @@ describe("タスクの再開の補足と工程の設定", () => {
     await resumeTaskAction({}, form({ taskId: "t1", note }));
     expect(resumeTask).toHaveBeenCalledWith("t1", undefined, undefined, {
       note: `${"あ".repeat(4_999)}\n${"い".repeat(5_000)}`,
-      images: {},
       agents: {},
     });
   });

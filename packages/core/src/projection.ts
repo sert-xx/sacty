@@ -552,8 +552,13 @@ export type Task = {
   /** 人がタスクの作成時に指定した工程の組み合わせ（進め方）。無ければオーケストレーターが選ぶ。 */
   requestedPlan?: StepPlan;
   /**
-   * 人がタスクの作成時に、進め方の工程ごとに指定したイメージ。工程を選んだ（選び直した）ときに、プロジェクトの対象の指定・
-   * オーケストレーターの選択より優先して images に入れる。
+   * 人がタスクの作成時に指定した、タスクのイメージ（PBI-318）。デーモンが工程を選ぶ（選び直す）ときに、プロジェクトの
+   * 対象の指定・オーケストレーターの選択より優先して、工程の選択（StepsChosen の image）に入れる。
+   */
+  requestedImage?: string;
+  /**
+   * 古い版（PBI-318 より前）の作業履歴の、作成時に工程ごとに指定したイメージ。工程を選んだ（選び直した）ときに、
+   * ほかの決め方より優先して images（古い版の工程ごとのイメージ）に入れる。
    */
   requestedImages?: StepSettingMap;
   /**
@@ -864,17 +869,32 @@ export type Task = {
    * 工程には無い。
    */
   provenances?: Partial<Record<StepKey, Provenance | null>>;
+  /**
+   * タスクのイメージ（config.yaml の images の名前か default。PBI-318）。すべての工程・テスト・最終レビューで使う
+   * （stepImageOf・verificationImageOf）。無ければ既定のイメージ（古い版の作業履歴なら、工程ごとの images）。
+   */
+  image?: string;
+  /**
+   * 古い版（PBI-318 より前）の作業履歴の、工程ごとのイメージ（PBI-41）。古い版で選んだ・変えた工程のイメージを、
+   * どの工程がどのイメージで動いたかとして残す。タスクのイメージ（image）があれば、そちらを使う。
+   */
   images?: Partial<Record<StepKey, string>>;
   /**
-   * 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）、再実行で人が
-   * 指定したものか。
+   * 工程を選んだときにイメージを決めたのが、再実行で人が指定したものか、作成時に人が指定したもの（request）か、
+   * プロジェクトの対象の指定か、オーケストレーターか（PBI-41・PBI-318）。
    */
-  imageSource?: "project" | "orchestrator" | "rerun";
-  /** オーケストレーターが既定のイメージにした工程と、images のどれも合わない理由（PBI-105）。 */
+  imageSource?: "project" | "orchestrator" | "rerun" | "request";
+  /** オーケストレーターが既定のイメージにした、images のどれも合わない理由（PBI-318）。 */
+  defaultImageReason?: string;
+  /** images の候補を見せたのに、理由が無いまま既定のイメージにした（PBI-318）。 */
+  imageUnexplained?: true;
+  /** 人が変えた、タスクのイメージ（PBI-318）。最後の変更。from が無いのは、古い版の工程ごとのイメージから変えたとき。 */
+  imageChange?: { from?: string; to: string; at: string };
+  /** 古い版（PBI-318 より前）の作業履歴の、既定のイメージにした工程ごとの理由（PBI-105）。 */
   defaultImageReasons?: Partial<Record<StepKey, string>>;
-  /** images の候補を見せたのに、理由が無いまま既定のイメージにした工程（PBI-105）。 */
+  /** 古い版（PBI-318 より前）の作業履歴の、理由が無いまま既定のイメージにした工程（PBI-105）。 */
   imagesUnexplained?: StepKey[];
-  /** 人がタスクの詳細で変えた、工程のイメージ（PBI-106）。工程ごとに最後の変更。 */
+  /** 古い版（PBI-318 より前）の作業履歴の、人が変えた工程のイメージ（PBI-106）。工程ごとに最後の変更。 */
   imageChanges?: Partial<Record<StepKey, { from: string; to: string; at: string }>>;
   /** 人が選んだ、工程のエージェント（config.yaml の agents の名前。PBI-121）。無い工程は config.yaml で決まる。 */
   agents?: Partial<Record<StepKey, string>>;
@@ -1143,6 +1163,7 @@ export function applyEvent(
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
+      ...(event.payload.image ? { requestedImage: event.payload.image } : {}),
       ...(event.payload.images ? { requestedImages: event.payload.images } : {}),
       ...(event.payload.agents
         ? { requestedAgents: event.payload.agents, agents: event.payload.agents }
@@ -1224,8 +1245,11 @@ export function applyEvent(
       if (event.payload.documentsOnly) task.documentsOnly = true;
       if (event.payload.steps.includes("operation")) task.operation = event.payload.operation;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
+      // タスクのイメージ（PBI-318）。作成時の人の指定は、デーモンが決めて image に入れている
+      if (event.payload.image) task.image = event.payload.image;
       {
-        // 人が作成時に指定したイメージは、選んだ工程の分だけ、プロジェクトの対象の指定・オーケストレーターの選択より優先する
+        // 古い版の作業履歴：人が作成時に工程ごとに指定したイメージは、選んだ工程の分だけ、プロジェクトの対象の指定・
+        // オーケストレーターの選択より優先する
         const requested = Object.entries(task.requestedImages ?? {}).filter(([step]) =>
           event.payload.steps.includes(step as StepKey),
         );
@@ -1233,9 +1257,13 @@ export function applyEvent(
           task.images = { ...event.payload.images, ...Object.fromEntries(requested) };
         }
       }
-      if (event.payload.images && event.payload.imageSource) {
+      if ((event.payload.image || event.payload.images) && event.payload.imageSource) {
         task.imageSource = event.payload.imageSource;
       }
+      if (event.payload.defaultImageReason) {
+        task.defaultImageReason = event.payload.defaultImageReason;
+      }
+      if (event.payload.imageUnexplained) task.imageUnexplained = true;
       if (event.payload.defaultImageReasons) {
         task.defaultImageReasons = event.payload.defaultImageReasons;
       }
@@ -2712,7 +2740,7 @@ export function applyEvent(
       break;
     }
 
-    // 人が工程のイメージを変えた（PBI-106）。工程の状態は問わず、変えず、その工程を次に実行するときから使う
+    // 古い版の作業履歴：人が工程のイメージを変えた（PBI-106）。工程の状態は問わず、変えず、その工程を次に実行するときから使う
     case "StepImageChanged": {
       const { step, from, to } = event.payload;
       if (!task.steps.some((s) => s.key === step)) {
@@ -2720,6 +2748,18 @@ export function applyEvent(
       }
       task.images = { ...task.images, [step]: to };
       task.imageChanges = { ...task.imageChanges, [step]: { from, to, at: event.at } };
+      break;
+    }
+
+    // 人がタスクのイメージを変えた（PBI-318）。工程の状態は問わず、変えず、すべての工程の次の実行から使う。古い版の工程ごとの
+    // イメージ（images）は、どの工程がどのイメージで動いたかとして残す（使うのはタスクのイメージ）
+    case "TaskImageChanged": {
+      if (task.steps.length === 0) {
+        throw new ActivityIntegrityError(event, "steps are not chosen");
+      }
+      const { from, to } = event.payload;
+      task.image = to;
+      task.imageChange = { ...(from ? { from } : {}), to, at: event.at };
       break;
     }
 
@@ -3716,6 +3756,25 @@ export function canRechooseSteps(task: Task): boolean {
   );
 }
 
+/**
+ * 工程を実行するイメージの名前（PBI-318）。タスクのイメージ。無ければ、古い版の作業履歴の工程ごとのイメージ。どちらも
+ * 無ければ undefined（既定のイメージ）。
+ */
+export function stepImageOf(
+  task: Pick<Task, "image" | "images">,
+  step: StepKey,
+): string | undefined {
+  return task.image ?? task.images?.[step];
+}
+
+/**
+ * テストと最終レビューを実行するイメージの名前（PBI-318）。タスクのイメージ。無ければ、古い版の作業履歴の確かめる工程
+ * （実装。無ければ再現）のイメージ。どちらも無ければ undefined（既定のイメージ）。
+ */
+export function verificationImageOf(task: Pick<Task, "image" | "images">): string | undefined {
+  return task.image ?? task.images?.implement ?? task.images?.reproduce;
+}
+
 /** 工程の選択（StepsChosen）で決めたものを消す（工程の選択からやり直す）。予算の上限は残す。 */
 function clearChosenSteps(task: Task): void {
   task.steps = [];
@@ -3727,13 +3786,17 @@ function clearChosenSteps(task: Task): void {
   task.testsDecidedBy = undefined;
   task.operation = undefined;
   task.investigation = undefined;
+  task.image = undefined;
   task.images = undefined;
-  // 人が工程ごとに変えたイメージ・エージェントも、選んだ工程に結びつくので消す
+  // 人が変えたイメージ・工程ごとに変えたエージェントも、選んだ工程に結びつくので消す（作成時の指定は、選び直しで入れ直す）
+  task.imageChange = undefined;
   task.imageChanges = undefined;
   // 作成時に指定したエージェントは、選び直した工程でも使う（イメージは、工程を選んだときに入れ直す）
   task.agents = task.requestedAgents;
   task.agentChanges = undefined;
   task.imageSource = undefined;
+  task.defaultImageReason = undefined;
+  task.imageUnexplained = undefined;
   task.defaultImageReasons = undefined;
   task.imagesUnexplained = undefined;
   task.services = undefined;

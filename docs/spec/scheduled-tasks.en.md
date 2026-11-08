@@ -36,8 +36,8 @@ Code: `packages/core/src/schedules.ts` (`ScheduleRule`, `ScheduleInput`, `Schedu
 
 ## The contents of the task
 
-The contents of the task to create use the same fields as "Create task" in the web UI, except that they do not hold the image and agent for each step ("Set per step")
-(`ScheduledTaskSettings` has no `images` or `agents`). The images and agents of the created task's steps are decided as for a task with nothing set.
+The contents of the task to create use the same fields as "Create task" in the web UI, except that they do not hold the task image and the agent for each step ("Set per step")
+(`ScheduledTaskSettings` has no `image` or `agents`). The image and the step agents of the created task are decided as for a task with nothing set.
 
 - With a template (`template`), the title and description come from the template (no title, description, or plan is kept).
   If the target repository is omitted and the project's targets are exactly one repository, that one is used.

@@ -53,10 +53,12 @@ import {
   reworkingPullRequest,
   reworkTargets,
   skippableSteps,
+  stepImageOf,
   stepRunning,
   type Task,
   testToolsMissing,
   unreflectedImplementRemarks,
+  verificationImageOf,
   workBaseCommit,
 } from "./projection.js";
 
@@ -2217,6 +2219,155 @@ describe("工程のイメージを人が変える（PBI-106）", () => {
     expect(() => project([created("i2"), steps("i2"), change("i2", "reproduce", "java")])).toThrow(
       /not chosen/,
     );
+  });
+});
+
+describe("タスクのイメージ（PBI-318）", () => {
+  const changeTask = (taskId: string, to: string, from?: string) =>
+    ev(taskId, { type: "TaskImageChanged", payload: { ...(from ? { from } : {}), to } }, "person");
+
+  it("工程の選択でタスクに1つのイメージを持ち、すべての工程・テスト・最終レビューで使う", () => {
+    const task = project([
+      created("n1"),
+      ev("n1", {
+        type: "StepsChosen",
+        payload: {
+          steps: [...MVP_STEPS],
+          image: "default",
+          imageSource: "orchestrator",
+          defaultImageReason: "文書だけを書く",
+        },
+      }),
+    ]).get("n1");
+    expect(task?.image).toBe("default");
+    expect(task?.imageSource).toBe("orchestrator");
+    expect(task?.defaultImageReason).toBe("文書だけを書く");
+    expect(task?.images).toBeUndefined();
+    for (const step of MVP_STEPS) expect(task && stepImageOf(task, step)).toBe("default");
+    expect(task && verificationImageOf(task)).toBe("default");
+    const unexplained = project([
+      created("n2"),
+      ev("n2", {
+        type: "StepsChosen",
+        payload: {
+          steps: [...MVP_STEPS],
+          image: "default",
+          imageSource: "orchestrator",
+          imageUnexplained: true,
+        },
+      }),
+    ]).get("n2");
+    expect(unexplained?.imageUnexplained).toBe(true);
+  });
+
+  it("作成時に人が指定したイメージを持つ", () => {
+    const task = project([
+      ev(
+        "n3",
+        {
+          type: "TaskCreated",
+          payload: { title: "t", body: "", start: "sacty", plan: "direct", image: "java" },
+        },
+        "person",
+      ),
+    ]).get("n3");
+    expect(task?.requestedImage).toBe("java");
+  });
+
+  it("人が変えると、実行中でも工程の状態は変えず、変えた記録（いつ・何から何に）を持つ", () => {
+    const task = project([
+      created("n4"),
+      ev("n4", {
+        type: "StepsChosen",
+        payload: { steps: [...MVP_STEPS], image: "java", imageSource: "project" },
+      }),
+      started("n4", "r1"),
+      changeTask("n4", "playwright", "java"),
+    ]).get("n4");
+    expect(task?.status).toBe("running");
+    expect(task?.image).toBe("playwright");
+    expect(task?.imageChange).toEqual({
+      from: "java",
+      to: "playwright",
+      at: "2026-10-10T00:00:00.000Z",
+    });
+    expect(task?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo"]);
+    expect(task && stepImageOf(task, "design")).toBe("playwright");
+  });
+
+  it("工程が決まる前に変えたら、作業履歴の誤りにする", () => {
+    expect(() => project([created("n5"), changeTask("n5", "java")])).toThrow(/not chosen/);
+  });
+
+  it("古い版の工程ごとのイメージ（images）は、そのまま工程ごとに使い、人がタスクのイメージに変えたらそれを使う", () => {
+    const legacy = [
+      created("n6"),
+      ev("n6", {
+        type: "StepsChosen",
+        payload: {
+          steps: ["reproduce", "implement"],
+          images: { reproduce: "python", implement: "java" },
+          imageSource: "orchestrator",
+          testCommand: "npm test",
+        },
+      }),
+      ev(
+        "n6",
+        { type: "StepImageChanged", payload: { step: "implement", from: "java", to: "go" } },
+        "person",
+      ),
+    ];
+    const old = project(legacy).get("n6");
+    expect(old?.image).toBeUndefined();
+    expect(old && stepImageOf(old, "reproduce")).toBe("python");
+    expect(old && stepImageOf(old, "implement")).toBe("go");
+    // テストは実装の工程のイメージ（無ければ再現の工程）
+    expect(old && verificationImageOf(old)).toBe("go");
+    expect(old && verificationImageOf({ images: { reproduce: "python" } })).toBe("python");
+    expect(old && verificationImageOf({})).toBeUndefined();
+    const moved = project([...legacy, changeTask("n6", "rust")]).get("n6");
+    expect(moved?.image).toBe("rust");
+    expect(moved?.imageChange).toEqual({ to: "rust", at: "2026-10-10T00:00:00.000Z" });
+    expect(moved && stepImageOf(moved, "reproduce")).toBe("rust");
+    expect(moved && verificationImageOf(moved)).toBe("rust");
+    // どの工程がどのイメージで動いたかは残す
+    expect(moved?.images).toEqual({ reproduce: "python", implement: "go" });
+  });
+
+  it("工程の選択からやり直すと、タスクのイメージ・変えた記録・既定のイメージにした理由を消す（作成時の指定は残す）", () => {
+    seq = 0;
+    const task = project([
+      ev(
+        "n7",
+        {
+          type: "TaskCreated",
+          payload: { title: "t", body: "", start: "sacty", plan: "direct", image: "java" },
+        },
+        "person",
+      ),
+      ev("n7", {
+        type: "StepsChosen",
+        payload: {
+          steps: [...STEP_PLANS.direct],
+          image: "default",
+          imageSource: "request",
+          defaultImageReason: "r",
+          imageUnexplained: true,
+        },
+      }),
+      changeTask("n7", "go", "default"),
+      ev("n7", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: { code: "orchestrator.testCommandUnknown" } },
+      }),
+      ev("n7", { type: "TaskResumed", payload: { retry: true, rechooseSteps: true } }, "person"),
+    ]).get("n7");
+    expect(task?.steps).toEqual([]);
+    expect(task?.image).toBeUndefined();
+    expect(task?.imageChange).toBeUndefined();
+    expect(task?.defaultImageReason).toBeUndefined();
+    expect(task?.imageUnexplained).toBeUndefined();
+    expect(task?.requestedImage).toBe("java");
   });
 });
 

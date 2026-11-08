@@ -115,10 +115,10 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
   });
 });
 
-describe("タスクの作成で、進め方の工程ごとのイメージ・エージェント", () => {
+describe("タスクの作成で、タスクのイメージと進め方の工程ごとのエージェント（PBI-318）", () => {
   beforeEach(() => createTask.mockReset());
 
-  it("進め方を選んだときだけ、指定した工程の分を渡す（空欄は指定しない）", async () => {
+  it("進め方を選んだときだけ、タスクのイメージと指定した工程のエージェントを渡す（空欄は指定しない）", async () => {
     createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
     await expect(
       createTaskAction(
@@ -127,9 +127,9 @@ describe("タスクの作成で、進め方の工程ごとのイメージ・エ�
           title: "決済",
           projectId: "project-a",
           plan: "standard",
-          "image:design": "java",
-          "image:implement": "",
+          image: "java",
           "agent:implement": "strong",
+          "agent:design": "",
         }),
       ),
     ).rejects.toThrow("redirect:/tasks/t1");
@@ -138,14 +138,14 @@ describe("タスクの作成で、進め方の工程ごとのイメージ・エ�
       body: "",
       repo: null,
       plan: "standard",
-      images: { design: "java" },
+      image: "java",
       agents: { implement: "strong" },
       projectId: "project-a",
     });
     createTask.mockClear();
     // 進め方が自動なら送らない（工程が決まっていないため）
     await expect(
-      createTaskAction({}, form({ title: "決済", projectId: "project-a", "image:design": "java" })),
+      createTaskAction({}, form({ title: "決済", projectId: "project-a", image: "java" })),
     ).rejects.toThrow("redirect:/tasks/t1");
     expect(createTask).toHaveBeenCalledWith({
       title: "決済",
@@ -155,18 +155,18 @@ describe("タスクの作成で、進め方の工程ごとのイメージ・エ�
     });
   });
 
-  it("工程ごとの指定が正しくなければ、作らずに理由を出す（項目の誤りとしては出せないため）", async () => {
+  it("タスクのイメージ・工程ごとの指定が正しくなければ、作らずに理由を出す（項目の誤りとしては出せないため）", async () => {
     const state = await createTaskAction(
       {},
       form({
         title: "決済",
         projectId: "project-a",
         plan: "standard",
-        "image:design": "x".repeat(101),
+        image: "x".repeat(101),
       }),
     );
     expect(state.message).toBe(
-      "工程ごとのイメージ・エージェントの指定が正しくありません。選び直してください。",
+      "タスクのイメージか、工程ごとのエージェントの指定が正しくありません。選び直してください。",
     );
     expect(createTask).not.toHaveBeenCalled();
   });
@@ -459,7 +459,7 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     expect(order).toEqual(["refresh", "redirect"]);
   });
 
-  it("差し戻しでは、人が変えた工程の設定だけを渡し、断られたら選んだ設定を戻す", async () => {
+  it("差し戻しでは、人が変えたタスクのイメージ・工程のエージェントだけを渡し、断られたら選んだ設定を戻す", async () => {
     requestChanges.mockResolvedValue({ ok: false, message: "断られた" });
     const data = form({
       taskId: "t1",
@@ -467,9 +467,9 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
       decision: "request",
       submission: "1",
       comments: "直す\n\n足りない",
-      // 変えた工程と、触っていない工程（今の名前のまま）
-      "image:requirements": "java",
-      "image-from:requirements": "default",
+      // 変えたものと、触っていない工程（今の名前のまま）
+      image: "java",
+      "image-from": "default",
       "agent:requirements": "claude",
       "agent-from:requirements": "claude",
       "agent:design": "strong",
@@ -478,7 +478,7 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     expect(await gateAction({}, data)).toEqual({
       message: "断られた",
       comments: "直す\n\n足りない",
-      images: { requirements: "java" },
+      image: "java",
       agents: { design: "strong" },
     });
     expect(requestChanges).toHaveBeenCalledWith("t1", {
@@ -486,7 +486,7 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
       submission: 1,
       comments: ["直す", "足りない"],
       continueOverLimit: false,
-      images: { requirements: "java" },
+      image: "java",
       agents: { design: "strong" },
     });
   });

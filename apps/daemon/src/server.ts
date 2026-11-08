@@ -532,12 +532,12 @@ export function createApp(
     }
   });
 
-  // タスクの詳細で、工程のイメージを変える（PBI-106）。その工程を次に実行するときから使う
-  app.post("/api/tasks/:id/images", async (c) => {
+  // タスクの詳細で、タスクのイメージを変える（PBI-318）。すべての工程の次の実行から使う
+  app.post("/api/tasks/:id/image", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ task: service.changeStepImage(c.req.param("id"), json.body) });
+      return c.json({ task: service.changeTaskImage(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }

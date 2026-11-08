@@ -319,8 +319,8 @@ function stepNames(names: Partial<Record<StepKey, string>>, l: LabelMessages): s
 }
 
 /**
- * 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。理由が無いまま既定のイメージで動かす工程も、
- * そのことを出す（黙って既定のイメージにしない）。
+ * 既定のイメージで動かすときの、images のどれも合わない理由（PBI-318。古い版の作業履歴では工程ごと。PBI-105）。理由が無い
+ * まま既定のイメージで動かすときも、そのことを出す（黙って既定のイメージにしない）。
  */
 function defaultImagesChoice(
   payload: Extract<ActivityEvent, { type: "StepsChosen" }>["payload"],
@@ -330,6 +330,8 @@ function defaultImagesChoice(
   const reasons = Object.entries(payload.defaultImageReasons ?? {});
   const unexplained = payload.imagesUnexplained ?? [];
   return (
+    (payload.defaultImageReason ? e.stepsDefaultImages(payload.defaultImageReason) : "") +
+    (payload.imageUnexplained ? e.imageUnexplained : "") +
     (reasons.length > 0
       ? e.stepsDefaultImages(
           reasons
@@ -462,7 +464,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
           event.payload.rerun !== undefined,
           event.payload.derivedFrom !== undefined,
         ) +
-        // 作成時に、進め方の工程ごとに指定したイメージ・エージェント
+        // 作成時に指定したタスクのイメージ（PBI-318。古い版の作業履歴では工程ごと）・工程ごとのエージェント
+        (event.payload.image ? e.createdImages(event.payload.image) : "") +
         (event.payload.images ? e.createdImages(stepNames(event.payload.images, l)) : "") +
         (event.payload.agents ? e.createdAgents(stepNames(event.payload.agents, l)) : "")
       );
@@ -471,12 +474,20 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin),
         event.payload.reason === undefined ? undefined : l.text(event.payload.reason),
       );
-      // 工程ごとのイメージ（PBI-41）。書いていない工程は既定のイメージ
+      // タスクのイメージ（PBI-318）か、古い版の作業履歴の工程ごとのイメージ（PBI-41）。無ければ既定のイメージ
       const images = Object.entries(event.payload.images ?? {});
+      const image = event.payload.image;
       // 工程ごとの書き出し先と理由（PBI-56）
       const exports = Object.entries(event.payload.exports ?? {});
       return (
         chosen +
+        (image
+          ? e.stepsImages(
+              image,
+              event.payload.imageSource ?? "orchestrator",
+              event.payload.imageReason,
+            )
+          : "") +
         (images.length > 0
           ? e.stepsImages(
               images
@@ -602,6 +613,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.to,
         actor,
       );
+    case "TaskImageChanged":
+      return e.TaskImageChanged(event.payload.from, event.payload.to, actor);
     case "TaskResumed":
       return event.payload.rechooseSteps ? e.TaskResumedRechoose(actor) : e.TaskResumed(actor);
     case "TestsDecided":
@@ -1106,37 +1119,150 @@ export function testCommandOfNoTests(
   return m.testCommandNone;
 }
 
-/** タスクの詳細の「工程のイメージ」の1行（PBI-106）。 */
-export type StepImageRow = {
-  step: StepKey;
-  /** 使うイメージの名前（指定が無ければ default）。 */
-  image: string;
-  /** 選んだ元。人が変えたら、いつ・何から変えたか。 */
-  source:
-    | { by: "person"; at: string; from: string }
-    | { by: "project" }
-    /** 再実行で人が指定した（すべての工程で同じイメージ）。 */
-    | { by: "rerun" }
-    /** 作成時に、人が工程ごとに指定した。 */
-    | { by: "request" }
-    /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
-    | { by: "orchestrator"; default?: string; unexplained?: true }
-    | { by: "none" };
-  /** 変えたイメージをいつから使うか。running：次の実行から（今の実行はそのまま）、done：やり直し・手戻りから、next：次の実行から。 */
-  when: "running" | "done" | "next";
-};
+/** 変えたもの（エージェント）をいつから使うか。running：次の実行から（今の実行はそのまま）、done：やり直し・手戻りから、next：次の実行から。 */
+export type StepWhen = "running" | "done" | "next";
+
+/** タスクのイメージ・工程のイメージを選んだ元（PBI-106・PBI-318）。人が変えたら、いつ・何から変えたか。 */
+export type ImageSource =
+  /** from が無いのは、古い版の工程ごとのイメージから変えたとき。 */
+  | { by: "person"; at: string; from?: string }
+  | { by: "project" }
+  /** 再実行で人が指定した。 */
+  | { by: "rerun" }
+  /** 作成時に、人が指定した。 */
+  | { by: "request" }
+  /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
+  | { by: "orchestrator"; default?: string; unexplained?: true }
+  | { by: "none" };
 
 /**
- * 工程ごとのイメージと、選んだ元・変えたらいつから使うか（PBI-106）。工程の状態を問わず、すべての工程を変えられる。
+ * 古い版（PBI-318 より前）の作業履歴の、工程のイメージの1行。image は最後に設定した名前（これから実行するときに使う。
+ * タスクのイメージを選ぶまで）。runs は、その工程を実行したときに使った名前（作業履歴から復元。重ねない。まだ実行して
+ * いなければ空）。
  */
-export function stepImageRows(task: Task): StepImageRow[] {
+export type LegacyStepImageRow = {
+  step: StepKey;
+  image: string;
+  source: ImageSource;
+  runs: string[];
+};
+
+/** タスクの詳細の「タスクのイメージ」（PBI-318）。 */
+export type TaskImageInfo = {
+  /** 使うイメージの名前（指定が無ければ default）。古い版の工程ごとのイメージで、タスクのイメージが無ければ undefined。 */
+  image?: string;
+  source: ImageSource;
+  /** 古い版の作業履歴の、工程ごとのイメージ。無ければ空。 */
+  legacy: LegacyStepImageRow[];
+};
+
+/** 古い版（PBI-318 より前）の作業履歴の、工程ごとのイメージを持つか。 */
+function hasLegacyStepImages(task: Task): boolean {
+  return Object.keys(task.images ?? {}).length > 0;
+}
+
+/**
+ * 今のタスクのイメージの名前（PBI-318。指定が無ければ default）。古い版の作業履歴の工程ごとのイメージを持ち、タスクの
+ * イメージが無ければ undefined（工程ごとに違いうる）。
+ */
+export function taskImageOf(task: Task): string | undefined {
+  return task.image ?? (hasLegacyStepImages(task) ? undefined : "default");
+}
+
+/**
+ * タスクのイメージと、選んだ元・古い版の工程ごとのイメージ（PBI-318）。activity（タスクの作業履歴）があれば、古い版の
+ * 工程ごとに、実行したときに使ったイメージも出す。
+ */
+export function taskImageInfo(task: Task, activity: readonly ActivityEvent[] = []): TaskImageInfo {
+  const image = taskImageOf(task);
+  const change = task.imageChange;
+  const source: ImageSource = change
+    ? { by: "person", at: change.at, ...(change.from ? { from: change.from } : {}) }
+    : task.defaultImageReason
+      ? { by: "orchestrator", default: task.defaultImageReason }
+      : task.imageUnexplained
+        ? { by: "orchestrator", unexplained: true }
+        : task.image
+          ? { by: task.imageSource ?? "orchestrator" }
+          : { by: "none" };
+  return { ...(image ? { image } : {}), source, legacy: legacyStepImageRows(task, activity) };
+}
+
+/**
+ * 工程ごとに、実行したとき（AgentRunStarted、マージの後の監視の確認は DeploymentCheckStarted）に使ったイメージの名前。
+ * 実行の記録に名前があればそれを使う（PBI-318）。名前の無い古い記録は、作業履歴をたどって、そのときのタスクのイメージ・
+ * 工程ごとのイメージ（投影・デーモンと同じ規則）から求める。
+ */
+export function stepRunImages(
+  activity: readonly ActivityEvent[],
+): Partial<Record<StepKey, string[]>> {
+  let requested: Partial<Record<StepKey, string>> = {};
+  let images: Partial<Record<StepKey, string>> = {};
+  let image: string | undefined;
+  let chosenSteps: readonly StepKey[] = [];
+  const runs: Partial<Record<StepKey, string[]>> = {};
+  const ran = (step: StepKey, name: string) => {
+    const seen = runs[step] ?? [];
+    if (seen.at(-1) !== name) runs[step] = [...seen, name];
+  };
+  for (const event of activity) {
+    switch (event.type) {
+      case "TaskCreated":
+        requested = event.payload.images ?? {};
+        break;
+      case "StepsChosen": {
+        const chosen = Object.entries(requested).filter(([step]) =>
+          event.payload.steps.includes(step as StepKey),
+        );
+        images = { ...event.payload.images, ...Object.fromEntries(chosen) };
+        image = event.payload.image;
+        chosenSteps = event.payload.steps;
+        break;
+      }
+      case "StepImageChanged":
+        images = { ...images, [event.payload.step]: event.payload.to };
+        break;
+      case "TaskImageChanged":
+        image = event.payload.to;
+        break;
+      case "TaskResumed":
+        // 工程の選択からやり直すと、選んだ工程に結びつくイメージは消える（投影の clearChosenSteps と同じ）
+        if (event.payload.rechooseSteps) {
+          images = {};
+          image = undefined;
+          chosenSteps = [];
+        }
+        break;
+      case "AgentRunStarted": {
+        const step = event.payload.step;
+        ran(step, event.payload.image ?? image ?? images[step] ?? "default");
+        break;
+      }
+      case "DeploymentCheckStarted": {
+        // 工程の無い PBI-116 より前のタスクの監視は、実装の工程のイメージで確かめた
+        const legacy = chosenSteps.includes("deployment") ? images.deployment : images.implement;
+        ran("deployment", event.payload.image ?? image ?? legacy ?? "default");
+        break;
+      }
+    }
+  }
+  return runs;
+}
+
+/**
+ * 古い版の作業履歴の、工程ごとの最後に設定したイメージと選んだ元（PBI-106 の表示のまま）と、実行で使ったイメージ。古い版の
+ * 記録が無ければ空。
+ */
+function legacyStepImageRows(task: Task, activity: readonly ActivityEvent[]): LegacyStepImageRow[] {
+  if (!hasLegacyStepImages(task)) return [];
+  const runs = stepRunImages(activity);
   return task.steps.map((s) => {
     const image = task.images?.[s.key] ?? "default";
     const change = task.imageChanges?.[s.key];
     // 既定のイメージにした理由（PBI-105）は、人が変えるまで出す（人が変えたら、人の変更を出す）
     const defaultReason = task.defaultImageReasons?.[s.key];
     const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
-    const source: StepImageRow["source"] = change
+    const source: ImageSource = change
       ? { by: "person", at: change.at, from: change.from }
       : task.requestedImages?.[s.key]
         ? { by: "request" }
@@ -1147,17 +1273,12 @@ export function stepImageRows(task: Task): StepImageRow[] {
             : task.images?.[s.key]
               ? { by: task.imageSource ?? "orchestrator" }
               : { by: "none" };
-    const when: StepImageRow["when"] = stepRunning(task, s.key)
-      ? "running"
-      : s.state === "done" || s.state === "skip"
-        ? "done"
-        : "next";
-    return { step: s.key, image, source, when };
+    return { step: s.key, image, source, runs: runs[s.key] ?? [] };
   });
 }
 
 /**
- * 工程のイメージの選択肢（PBI-106）。既定のイメージと images の名前（説明つき）。デーモンの状態を取得できない・設定を
+ * タスクのイメージの選択肢（PBI-106・PBI-318）。既定のイメージと images の名前（説明つき）。デーモンの状態を取得できない・設定を
  * 読めないときは undefined（候補を確かめられない。images から消した名前と取り違えないため。PR #116 レビュー指摘）。
  */
 export function stepImageOptions(
@@ -1183,8 +1304,8 @@ export type StepAgentRow = {
   agent?: string;
   /** 決めた元。人が変えたら、いつ・何から変えたか。 */
   source: { by: "person"; at: string; from: string } | { by: "request" } | { by: "config" };
-  /** 変えたエージェントをいつから使うか（工程のイメージと同じ）。 */
-  when: StepImageRow["when"];
+  /** 変えたエージェントをいつから使うか。 */
+  when: StepWhen;
 };
 
 /**

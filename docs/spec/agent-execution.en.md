@@ -182,7 +182,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
   - No name, or the name `default`: the default image.
   - A name in `images`: that entry.
   - An unknown name: the run stops (`image.unknown`).
-- A person can change a step's image on the task detail, and the new image is used from the next run of the step ("Changing a step's image" in [Tasks and steps](tasks-and-steps.en.md)).
+- Steps run on the task image (one image, the same for every step). A person can change it on the task detail, and the new image is used from the next run of every step ("Changing the task image" in [Tasks and steps](tasks-and-steps.en.md)). A task whose activity from an older version has per-step images runs each step on that step's image when it has no task image.
 - `sacty image build [<name>...]` runs `docker build` on `packages/cli/docker/Dockerfile`. Without names it builds the default and everything in `images`. If there is no config file it builds with the defaults; if there is any other error it builds nothing.
   - Once everything is built, it cleans up old versions (`pruneOldImages`).
     For `sacty-agent` and `sacty-agent-<name>` images with `X.Y.Z` tags, it keeps the two newest versions of each name and removes the rest without forcing.
@@ -226,7 +226,7 @@ Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_
   - The Reproduce step's agent runs the reproduction test.
   - The Goal Guardian and the Reproduce step's agent report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
   - The PR review step's agent fetches dependencies in the copy of the PR's code and runs verification such as formatters, linters, type checks, tests, and builds. For verification that could not run, it writes the command and why it stopped in the review body ([Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)).
-- The final review runs on the Implementation step's image (or the Reproduce step's if absent), with that image's `env`. It runs on a disposable copy of the implemented working tree (the copy's .git is a copy of the saved metadata). If the implementation uses services, it is connected to them ([Services](services.en.md)).
+- The final review runs on the task image (for per-step images in activity from an older version, the Implementation step's image, or the Reproduce step's if absent), with that image's `env`. It runs on a disposable copy of the implemented working tree (the copy's .git is a copy of the saved metadata). If the implementation uses services, it is connected to them ([Services](services.en.md)).
 - The test code (in a PR review, including the PR's dependency install scripts and tests) runs inside the container of the agent that runs the tests. So, as in any other agent run, it can reach the agent's authentication values in the container. In runs that use the gateway, it can also reach the per-run gateway token.
 - The time limit is that of the role running the tests ("Container" above; without a role override, `agent_minutes` + `test_minutes`).
 

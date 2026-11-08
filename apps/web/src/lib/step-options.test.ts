@@ -1,16 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   agentField,
+  agentFromField,
+  changedStepChoices,
   chosenForPlan,
   customizedSteps,
   fetchStepOptions,
-  imageField,
+  IMAGE_FIELD,
+  IMAGE_FROM_FIELD,
   planStepSettings,
   stepChoicesFrom,
   stepOptionsLoader,
 } from "./step-options";
 
-describe("タスクの作成で、工程ごとに指定するイメージ・エージェント", () => {
+describe("タスクの作成で指定するタスクのイメージと、工程ごとのエージェント（PBI-318）", () => {
   it("進め方の工程を並べ、統合レビューのエージェントは指定できない", () => {
     expect(planStepSettings("split")).toEqual([
       { step: "requirements", agent: true },
@@ -20,36 +23,42 @@ describe("タスクの作成で、工程ごとに指定するイメージ・エ�
     ]);
   });
 
-  it("進め方を選び直しても工程ごとの指定は残し、今の進め方の工程の分だけを送る", () => {
-    const images = { design: "java", implement: "java", investigate: "python" };
-    const agents = { implement: "strong", integrate: "strong" };
-    expect(chosenForPlan("standard", images, agents)).toEqual({
-      images: { design: "java", implement: "java" },
-      agents: { implement: "strong" },
-    });
-    expect(chosenForPlan("direct", images, agents)).toEqual({
-      images: { implement: "java" },
-      agents: { implement: "strong" },
-    });
+  it("進め方を選び直してもエージェントの指定は残し、今の進め方の工程の分だけを送る", () => {
+    const agents = { implement: "strong", integrate: "strong", investigate: "fast" };
+    expect(chosenForPlan("standard", agents)).toEqual({ implement: "strong" });
+    expect(chosenForPlan("direct", agents)).toEqual({ implement: "strong" });
     // 統合レビューのエージェントは送らない
-    expect(chosenForPlan("split", images, agents)).toEqual({
-      images: { design: "java" },
-      agents: {},
-    });
-    expect(customizedSteps("standard", images, agents)).toEqual(["design", "implement"]);
-    expect(customizedSteps("investigate", {}, {})).toEqual([]);
+    expect(chosenForPlan("split", agents)).toEqual({});
+    expect(customizedSteps("standard", agents)).toEqual(["implement"]);
+    expect(customizedSteps("investigate", {})).toEqual([]);
   });
 
-  it("フォームの工程ごとの項目を読み、空欄は指定しないことにする", () => {
+  it("フォームのタスクのイメージ（1つ）と工程ごとのエージェントを読み、空欄は指定しないことにする", () => {
     const data = new FormData();
-    data.set(imageField("design"), "java");
-    data.set(imageField("implement"), "");
+    data.set(IMAGE_FIELD, "java");
     data.set(agentField("implement"), "strong");
-    data.set("image:bogus", "x");
-    expect(stepChoicesFrom(data)).toEqual({
-      images: { design: "java" },
-      agents: { implement: "strong" },
-    });
+    data.set(agentField("design"), "");
+    // 古い版の工程ごとのイメージの項目は読まない
+    data.set("image:design", "python");
+    expect(stepChoicesFrom(data)).toEqual({ image: "java", agents: { implement: "strong" } });
+    const empty = new FormData();
+    empty.set(IMAGE_FIELD, "");
+    expect(stepChoicesFrom(empty)).toEqual({ agents: {} });
+  });
+
+  it("再開・差し戻しでは、描いたときの今の名前から変えたものだけを返す", () => {
+    const data = new FormData();
+    data.set(IMAGE_FROM_FIELD, "default");
+    data.set(IMAGE_FIELD, "default");
+    data.set(agentFromField("implement"), "claude");
+    data.set(agentField("implement"), "strong");
+    expect(changedStepChoices(data)).toEqual({ agents: { implement: "strong" } });
+    data.set(IMAGE_FIELD, "java");
+    expect(changedStepChoices(data)).toEqual({ image: "java", agents: { implement: "strong" } });
+    // 今の名前が無い（古い版の工程ごとのイメージ）ときに選んだら、変えたことにする
+    const legacy = new FormData();
+    legacy.set(IMAGE_FIELD, "default");
+    expect(changedStepChoices(legacy)).toEqual({ image: "default", agents: {} });
   });
 
   it("候補を読み、読めなければ理由を返す（投げない）", async () => {

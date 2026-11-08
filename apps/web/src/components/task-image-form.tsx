@@ -1,44 +1,41 @@
 "use client";
 
-import type { StepKey } from "@sacty/core";
 import { useActionState } from "react";
-import { type ChangeStepImageState, changeStepImageAction } from "@/app/actions";
+import { type ChangeTaskImageState, changeTaskImageAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { useMessages } from "@/i18n/client";
 import { useSelectValue } from "@/lib/use-select-value";
 
-const initial: ChangeStepImageState = {};
+const initial: ChangeTaskImageState = {};
 
 /**
- * 工程のイメージを変えるフォーム（PBI-106）。選べるのは images の名前と既定のイメージ。今のイメージが
- * images から消えていれば、選択肢には出さない（選び直してもらう）。説明が長いと選択肢も長くなるので、
- * 選択肢は名前だけにして、選んだイメージの説明は下に折り返して出す。
+ * タスクのイメージを変えるフォーム（PBI-318。PBI-106 の工程のイメージのフォームから）。選べるのは images の名前と既定の
+ * イメージ。今のイメージが images から消えていた・古い版の工程ごとのイメージ（current が無い）なら、選択肢には出さない
+ * （選び直してもらう）。説明が長いと選択肢も長くなるので、選択肢は名前だけにして、選んだイメージの説明は下に折り返して出す。
  */
-export function StepImageForm({
+export function TaskImageForm({
   taskId,
-  step,
   current,
   options,
 }: {
   taskId: string;
-  step: StepKey;
-  current: string;
+  current?: string;
   options: { name: string; description: string }[];
 }) {
   const messages = useMessages();
   const m = messages.task.images;
-  const [state, formAction, pending] = useActionState(changeStepImageAction, initial);
-  const id = `step-image-${step}`;
-  const initialImage = options.some((o) => o.name === current) ? current : "";
+  const [state, formAction, pending] = useActionState(changeTaskImageAction, initial);
+  const id = "task-image-select";
+  const known = current !== undefined && options.some((o) => o.name === current);
+  const initialImage = known ? current : "";
   // 選択肢は非制御のまま（自動の更新で、選んでいる途中の値を消さない。PBI-108）。説明だけ、実際の選択を追って出す
   const [selected, selectRef] = useSelectValue(initialImage);
   const description = options.find((o) => o.name === selected)?.description;
   return (
     <form action={formAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="taskId" value={taskId} />
-      <input type="hidden" name="step" value={step} />
       <label htmlFor={id} className="sr-only">
-        {m.label(messages.labels.step[step])}
+        {m.label}
       </label>
       <select
         id={id}
@@ -50,9 +47,9 @@ export function StepImageForm({
         data-testid={id}
         className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 font-mono text-sm"
       >
-        {!options.some((o) => o.name === current) && (
+        {!known && (
           <option value="" disabled>
-            {current}
+            {current ?? m.perStep}
           </option>
         )}
         {options.map((o) => (

@@ -333,42 +333,45 @@
 
 コード: `packages/core/src/events.ts`（`CreateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`pinnedPlanLines`・`pullRequestInText`）、`apps/web/src/components/new-task-dialog.tsx`
 
-### 作成時に指定した工程のイメージ・エージェント
+### 作成時に指定したタスクのイメージ・工程のエージェント
 
-人は、進め方を指定したときだけ、その工程ごとのイメージとエージェントも指定できる（`CreateTaskInput` の `images`・`agents`。工程から名前への対応）。
-指定は `TaskCreated` の `images`・`agents` に記録し、タスクの `requestedImages`・`requestedAgents` になる。
+人は、進め方を指定したときだけ、タスクのイメージ（1つ。すべての工程で使う）と、工程ごとのエージェントも指定できる（`CreateTaskInput` の `image`・`agents`。`agents` は工程から名前への対応）。
+指定は `TaskCreated` の `image`・`agents` に記録し、タスクの `requestedImage`・`requestedAgents` になる。
 
 - 作成の時に確かめ、次のときは理由を示して断る（`requestedStepSettings`）。
   何も指定しなければ（空の指定を含む）、今までどおり作り、設定は読まない。
-  - 進め方を指定していない（`task.stepSettingsNeedPlan`）
-  - 指定した進め方に無い工程（`task.stepSettingOutsidePlan`）
+  - 進め方を指定していない（`task.stepSettingsNeedPlan`。イメージだけを指定したときも）
+  - 指定した進め方に無い工程のエージェント（`task.stepSettingOutsidePlan`）
   - 統合レビューのエージェント（`agent.stepNotChangeable`）
   - `images` に無いイメージの名前（`image.notInImages`）、使えるエージェントに無い名前（`agent.notInAgents`）
   - config.yaml を読めない（`image.configUnavailable`・`agent.configUnavailable`）
-- イメージ：工程を選ぶとき、指定した工程は、プロジェクトの対象の指定とオーケストレーターの選択から除く（`withImages`）。
-  `StepsChosen` の `images`・`defaultImageReasons`・`imagesUnexplained` には入れない。
-  投影は、`StepsChosen` で選んだ工程の分だけ、指定をタスクの `images` に入れる。
-  進め方のすべての工程を指定したときは、オーケストレーターに `images` の候補を見せない（`chooseSteps`）。
+- イメージ：工程を選ぶとき、作成時の指定は、プロジェクトの対象の指定とオーケストレーターの選択より優先する（再実行の指定の次。`pinnedImage`）。
+  オーケストレーターには `images` の候補を見せず、`StepsChosen` の `image` に指定を、`imageSource` に `request` を記録する（`withImages`）。
 - エージェント：投影は、作成のときから指定をタスクの `agents` に入れる。
   タスクの詳細で人が選んだときと同じく、config.yaml の `step_agents` より優先する（`stepAgentFor`）。
 - 工程の選択からやり直すとき（`clearChosenSteps`）は、人がタスクの詳細で変えた分を消し、作成時の指定に戻す。
   イメージは、工程を選び直したときに入れ直す。
-- 作成の後も、タスクの詳細・一時停止したタスクの再開・差し戻しで変えられる（下の「工程のイメージを人が変える」「工程のエージェントを人が変える」）。
-  そのときの `StepImageChanged`・`StepAgentChanged` の `from` は、作成時の指定になる。
-  作業履歴の「タスクを作成」の行に、指定した工程と名前を出す。
+- 作成の後も、タスクの詳細・一時停止したタスクの再開・差し戻しで変えられる（下の「タスクのイメージを人が変える」「工程のエージェントを人が変える」）。
+  そのときの `TaskImageChanged`・`StepAgentChanged` の `from` は、作成時の指定になる。
+  作業履歴の「タスクを作成」の行に、指定したイメージと、エージェントを指定した工程と名前を出す。
 - 指定した名前が実行の時に設定から消えていれば、タスクの詳細で選んだ名前と同じく、理由を示して一時停止する。
 - 分割で作った子タスクには引き継がない。
+- 古い版の作業履歴で、工程ごとのイメージを指定したタスク（`TaskCreated` の `images`。タスクの `requestedImages`）は、そのまま読む。
+  投影は、`StepsChosen` で選んだ工程の分だけ、指定をタスクの `images` に入れる。
+  進め方のすべての工程を指定していれば、タスクのイメージを決めず（オーケストレーターに候補も見せない。`legacyAllRequested`）、工程ごとの指定で動かす。
+  一部の工程だけなら、工程を選ぶときに決めたタスクのイメージが優先する。イメージが決まらなかった（オーケストレーターが選ばなかった）ときも、既定のイメージ（`default`）をタスクのイメージにして、指定の残る工程とそうでない工程でイメージが分かれないようにする。
 
 作成のダイアログは、基本の入力と「工程ごとの設定」の2つの画面を切り替える（工程ごとの選択肢で基本の入力を長くしないため）。
 
 - 基本の入力では、進め方を選ぶと、工程の並びと指定の要約を出し、指定した工程に印を付ける（`StepFlowSummary`）。
   進め方が自動のとき・テンプレートを選んだときは出さない。
-- 「工程ごとに設定」で別の画面に移り、工程を行、イメージとエージェントを列にした表で選ぶ（`TaskStepSettings`）。
+- 「工程ごとに設定」で別の画面に移り、上でタスクのイメージを1つ選び、その下の、工程を行・エージェントを列にした表で選ぶ（`TaskStepSettings`）。
   イメージは「自動」か、`default` と `images` の名前。
   エージェントは「既定」（config.yaml で決まる名前を添える）か、使えるエージェントの名前。
   統合レビューのエージェントは選ばせない。
   選んだ項目には、イメージの説明・エージェントのモデルとリーズニングエフォートを下に出す。
-  指定した工程は、印と「既定に戻す」を出す。
+  指定したイメージと工程は、印を出し、工程には「既定に戻す」を出す。
+  基本の入力の要約には、指定したイメージと、エージェントを指定した工程の数を出す。
 - 画面を切り替えても、選んだものと入力中の題・内容は残す（どちらの画面も消さずに隠す）。
   切り替えたら、移った先の見出し（戻ったときは開いたボタン）にフォーカスを移す。
 - 候補は、工程ごとの設定を開いたときに読む（`GET /step-options`。デーモンの状態から、タスクの詳細と同じ選択肢を作る。`stepImageOptions`・`stepAgentOptions`）。
@@ -785,21 +788,22 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 | `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みも検証のコマンドも無いと判断した根拠（1〜2000 文字）。実装する組み合わせでは、`testCommand` か `noTests` のどちらかを必ず書かせる（パッケージの設定・Makefile・CI の設定・README などの開発の手順・テストのファイルを調べさせ、見つからなければ根拠を書かせる。スキルやドキュメントを置くだけのリポジトリもこれに当たる）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
 | `documentsOnly` | `true` のときだけ読む。依頼の成果物が文書のファイルだけ（拡張子が `md`・`markdown`・`rst`・`adoc`・`asciidoc`・`org`。コード・コード中のコメント・設定・`txt`・画像の変更を含むなら文書だけではない。迷うときは書かせない）。実装を含み、不具合の修正でない組み合わせのときだけ `StepsChosen` の `documentsOnly` に記録する（それ以外は捨てる）。持つタスクは、`noTests` を答えたときに起点のコードにテストのファイルがあっても止めず（下の「テストの仕組みが無いタスク」）、実装の差分に文書のファイル以外があれば最終レビューの前に止める（下の「実装の検証」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
-| `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |
-| `defaultReasons` | 既定のイメージ（`default`）を使う工程ごとの、`images` のどれも合わない理由（下の「工程のイメージ」） |
+| `image`・`imageReason` | タスクのイメージ（1つ。すべての工程・テスト・最終レビューで使う）と理由。決まっているイメージ（再実行・作成時の指定・プロジェクトの対象）があれば、選ばせずにそれを使う。`images` に無い名前なら止める |
+| `defaultReason` | 既定のイメージ（`default`）を使うときの、`images` のどれも合わない理由（下の「タスクのイメージ」） |
 | `services`・`servicesReason` | 起動する compose のファイル・サービス・工程（[サービス](services.md)）。共用の compose は名前で選ぶ（無い名前なら止める） |
 | `exports` | 工程ごとの書き出し先と理由（[書き出し](export.md)） |
 | `operation` | 単発作業の実行設定（`via`・`name`・`target`・`change`・`verification`）。独立した成果物ではなく工程選択の一部。対象が不明なら省略し、実行開始前に停止する。 |
 | `documentsDir` | 要求要件・設計のファイルを置くディレクトリ（[承認と差し戻し](approval.md)） |
 | `repo`・`repoReason` | リポジトリの無いタスクで、リポジトリが要る組み合わせを選んだときの作業するリポジトリ |
 
-- 工程のイメージ（`images` を設定していて、プロジェクトの対象でイメージを指定していないとき）
-  - 指示では、選んだ組み合わせの工程それぞれに `images` から選ばせる。
-    既定のイメージは候補に並べず、`images` のどれも合わないときの最後の手段（Node.js・npm・git・Claude Code・Codex と、作業用の CLI（`jq`・`rg`・`fd`・`tree`・`curl`・`zip`・`make`・`python3`・`sqlite3`・`shellcheck` ほか）、`drawio`・`osv-scanner`・`gitleaks` が入り、Go・Java・pnpm・yarn・C のコンパイラ・`golangci-lint` などのほかの言語のツール、テストのブラウザ、DB のクライアント（`sqlite3` を除く）、`kustomize`・`helm` などの検証のツールは無い。中身は `packages/cli/docker/` のイメージを作る手順と一致させる）と説明し、使う工程には `defaultReasons` に理由を書かせる。
-    テストを実行するイメージ（実装、不具合の修正では再現も）は、`testCommand` とリポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせ、`testCommand` のツールを持つイメージを優先させる。どのイメージにも無いときだけ、`testCommand` は書いたうえで、`imageReason` にその理由を書かせる。
-  - 既定のイメージで動く工程（選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば `StepsChosen` の `defaultImageReasons` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imagesUnexplained` に記録する。
-    理由が無くても止めずに既定のイメージで進め、作業履歴（タスクの画面）に理由が無いことを出す。
-  - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスクでは、どちらも記録しない。
+- タスクのイメージ（`images` を設定していて、イメージが決まっていないとき）
+  - 指示では、タスクに1つ、`images` から選ばせる（工程ごとには選ばせない）。古い版の工程ごとの答え（`images`・`defaultReasons`）は読まない。
+    既定のイメージは候補に並べず、`images` のどれも合わないときの最後の手段（Node.js・npm・git・Claude Code・Codex と、作業用の CLI（`jq`・`rg`・`fd`・`tree`・`curl`・`zip`・`make`・`python3`・`sqlite3`・`shellcheck` ほか）、`drawio`・`osv-scanner`・`gitleaks` が入り、Go・Java・pnpm・yarn・C のコンパイラ・`golangci-lint` などのほかの言語のツール、テストのブラウザ、DB のクライアント（`sqlite3` を除く）、`kustomize`・`helm` などの検証のツールは無い。中身は `packages/cli/docker/` のイメージを作る手順と一致させる）と説明し、使うときは `defaultReason` に理由を1つ書かせる。
+    テストもこのイメージで実行するので、`testCommand` とリポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせ、`testCommand` のツールを持つイメージを優先させる。どのイメージにも無いときだけ、`testCommand` は書いたうえで、`imageReason` にその理由を書かせる。
+  - 既定のイメージで動く（イメージが無いか `default`）なら、理由があれば `StepsChosen` の `defaultImageReason` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imageUnexplained` に記録する。
+    理由が無くても止めずに既定のイメージで進め、作業履歴とタスクの詳細に理由が無いことを出す。
+  - `images` を設定していない・イメージが決まっている・リポジトリの無いまま進めるタスクでは、どちらも記録しない。
+  - 選んだ・決まったイメージは `StepsChosen` の `image` と、選んだ元の `imageSource`（`orchestrator`・`project`・`request`・`rerun`）に記録する。オーケストレーターが選んだときは `imageReason` も記録する。
 - リポジトリの無いタスクで、リポジトリが要る工程を選んだら、`repo` をプロジェクトの対象と照らして `RepositoryChosen` を記録し、リポジトリを用意してからもう一度選ばせる。
   対象に無い・空なら止まり、画面で人がリポジトリを選んで再開できる（一時停止中でリポジトリを待っているときだけ）。
   リポジトリの要らない組み合わせなら、`testCommand`・`baseBranch`・`services`・`documentsDir` を捨てる。
@@ -808,15 +812,15 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
 - チケットから取り込んだタスクは、工程を選ぶ前に、情報収集がチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`。上の「トリアージを兼ねる」）。
 - PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
-  - `images` を設定していて、プロジェクトの対象・再実行でイメージを決めていないときだけ、オーケストレーターに `review` の工程のイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
+  - `images` を設定していて、再実行・作成時の人の指定・プロジェクトの対象でイメージを決めていないときだけ（`pinnedImage`）、オーケストレーターにタスクのイメージだけを選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。
     指示では、PR が触るコードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。
-  - 選んだら `StepsChosen` をオーケストレーターの記録にし（`imageSource: orchestrator`・`imageReason`・実行の費用）、既定のイメージなら上と同じく `defaultImageReasons` か `imagesUnexplained` を記録する。
+  - 選んだら `StepsChosen` をオーケストレーターの記録にし（`imageSource: orchestrator`・`imageReason`・実行の費用）、既定のイメージなら上と同じく `defaultImageReason` か `imageUnexplained` を記録する。
     理由の文は `review.reviewOnlyImageChosen`。
   - 実行に失敗した・答えを読めない・`images` に無い名前なら、工程の選択と同じく `OrchestratorFailed` を記録して止める（代わりのエージェントがあれば、それで選び直す）。
   - それ以外（`images` が無い・イメージを決めている）は、オーケストレーターを使わない（`StepsChosen` は sacty の記録で、費用は 0）。
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
-コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`pinnedImage`・`legacyAllRequested`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
 
 ## 工程の見直し
 
@@ -854,46 +858,53 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `packages/core/src/events.ts`（`SKIPPABLE_STEPS`・`StepsSkipped`）、`packages/core/src/projection.ts`（`skippableSteps`・`advance`・`reworkTargets`）、`apps/daemon/src/service.ts`（`runNextInner`・`reviewSteps`）、`apps/daemon/src/prompts.ts`（`buildStepReviewPrompt`・`extractStepReview`・`withoutRequirements`・`directImplementLines`・`verificationBasis`）
 
-## 工程のイメージを人が変える
+## タスクのイメージを人が変える
 
-- タスクの詳細で、工程ごとのイメージを人が変えられる（`POST /api/tasks/:id/images`、入力は `ChangeStepImageInput` の `step`・`image`）。
-  工程の状態は問わない（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程のどれでも）。
+- タスクの詳細で、タスクのイメージを人が変えられる（`POST /api/tasks/:id/image`、入力は `ChangeTaskImageInput` の `image`）。
+  工程が決まっていれば、工程の状態は問わない（実行中・失敗や一時停止・承認待ちのどれでも）。
   中止したタスクは変えられない。
-- 一時停止したタスクの再開（[予算・一時停止・再開・中止](#予算一時停止再開中止)）と差し戻し（[差し戻し](approval.md#差し戻し)）でも、一緒に変えられる（`ResumeTaskInput`・`RequestChangesInput` の `images`。`stepSettingChanges`）。
-  確かめと記録（`StepImageChanged`）は、タスクの詳細で変えるときと同じ。
+- 一時停止したタスクの再開（[予算・一時停止・再開・中止](#予算一時停止再開中止)）と差し戻し（[差し戻し](approval.md#差し戻し)）でも、一緒に変えられる（`ResumeTaskInput`・`RequestChangesInput` の `image`。`stepSettingChanges`）。
+  確かめと記録（`TaskImageChanged`）は、タスクの詳細で変えるときと同じ。
 - 選べるのは `images` の名前と `default`（既定のイメージ）。
   画面の選択肢は名前だけにし、選んだイメージの説明（`images` の `description`）を下に出す（長い説明で選択肢が広がらないように）。
-  工程はすべて変えられる。
   次のときは、理由を示して断る（409）。
   - `images` に無い名前（config.yaml から消した名前を含む。`image.notInImages`）
   - 今と同じ名前（`image.unchanged`）
-  - タスクの工程に無い工程（`image.stepMissing`）
+  - 工程がまだ決まっていない（`image.stepsNotChosen`）
   - config.yaml を読めない・解析できない。
     名前を確かめられないので、設定の問題として断る（`image.configUnavailable`。`default` も）
 - 画面は、デーモンの状態を取得できない・設定を読めないとき、候補を確かめられないことを出し、`images` に無い名前の警告と変える操作は出さない（`stepImageOptions`。一時的な失敗を、設定から消したことと取り違えない）。
-- 変えたら `StepImageChanged`（`step`・`from`・`to`。actor は `person`）を足す。
-  `from` は変える前の名前（指定が無ければ `default`）。
-  投影はその工程の `images` を `to` にし、`imageChanges` に工程ごとの最後の変更（`from`・`to`・時刻）を持つ。
+- 変えたら `TaskImageChanged`（`from`・`to`。actor は `person`）を足す。
+  `from` は変える前の名前（指定が無ければ `default`。古い版の工程ごとのイメージのタスクでは無い）。
+  投影はタスクの `image` を `to` にし、`imageChange` に最後の変更（`from`・`to`・時刻）を持つ。
   `StepsChosen` は書き換えない。
-- 変えたイメージは、その工程を次に実行するときから使う（まだ始まっていない工程の開始、やり直し、手戻りでの再実行）。
+- 変えたイメージは、すべての工程の次の実行から使う（まだ始まっていない工程の開始、やり直し、手戻りでの再実行）。
   今の実行は止めない。
-  工程の実行は、`AgentRunStarted` を足したときのイメージに決める（実行の準備の間に変えても、その実行は変えない）。
+  工程の実行は、`AgentRunStarted` を足したときのイメージに決める（実行の準備の間に変えても、その実行は変えない。`stepImageOf`）。
   統合レビューも同じ。
-- テストを実行する最終レビューも、最終レビューを始めるときの実装の工程のイメージで行う（下の「実装の検証」）。
-  実装の工程の実行中に実装のイメージを変えたら、その実行の後の最終レビューから変えたイメージを使う。
+  外部作業（運用）は、接続先・コンテキストを用意する前に決めて確かめる。準備の間にイメージを変えたら、エージェントと同じく、その実行では始めずに止めもせず、実行待ちのまま戻し、次の実行で最新の設定から決め直す（準備の間に config.yaml に足した名前でも止めない）。
+  マージの後の監視の確認は、`DeploymentCheckStarted` を足したときのイメージに決める。
+  `AgentRunStarted`・`DeploymentCheckStarted` の `image` に、その実行で使うイメージの名前（`images` の名前か `default`）を残す（これより前の記録には無い）。
+- テストを実行する最終レビューも、最終レビューを始めるときのタスクのイメージで行う（下の「実装の検証」。`verificationImageOf`）。
+  実装の工程の実行中に変えたら、その実行の後の最終レビューから変えたイメージを使う。
 - プロジェクトの対象でイメージを指定しているタスクも変えられる。
-  人の変更を、その工程だけ優先する（ほかの工程は対象の指定のまま。作成時に人が指定した工程は、その指定のまま。[作成時に指定した工程のイメージ・エージェント](#作成時に指定した工程のイメージエージェント)）。
   対象の指定を変えても、工程を決めたタスクのイメージは変わらない。
-- 画面は、工程ごとにイメージ・選んだ元（人が変えた時刻と変える前の名前、作成時の人の指定、プロジェクトの対象の指定、再実行での人の指定、オーケストレーター、指定なし）・変えたらいつから使うか（実行中なら次の実行から、終わった工程ならやり直し・手戻りから）を出す（`stepImageRows`）。
-  実行中は、エージェントの実行中・実装の検証の間・再現の確かめの間（`stepRunning`）。
-  作業履歴は、誰が・いつ・どの工程を・何から何に変えたかを出す。
-- オーケストレーターが既定のイメージにした工程は、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReasons`）か、理由の記載が無いこと（`imagesUnexplained`）を出す。
+- 画面は、タスクのイメージ・選んだ元（人が変えた時刻と変える前の名前、作成時の人の指定、プロジェクトの対象の指定、再実行での人の指定、オーケストレーター、指定なし）・変えたらいつから使うか（すべての工程の次の実行から）を出す（`taskImageInfo`）。
+  作業履歴は、誰が・いつ・何から何に変えたかを出す。
+- オーケストレーターが既定のイメージにしたときは、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReason`）か、理由の記載が無いこと（`imageUnexplained`）を出す。
   人が変えたら、人の変更を出す。
-  作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る（その後の `StepImageChanged` の行で、変えたことがわかる）。
-- 画面の「工程のイメージ」は、普段は変えないので見出しだけを出して閉じる。
+  作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る（その後の `TaskImageChanged` の行で、変えたことがわかる）。
+- 画面の「タスクのイメージ」は、普段は変えないので見出しだけを出して閉じる。
   候補を確かめられない・`images` に無い名前を使っているときは、見落とさないよう開いて出す。
+- 古い版の作業履歴（工程ごとの `images` を持つ `StepsChosen`、`StepImageChanged`）は、そのまま読む。
+  投影は工程ごとの `images` と `imageChanges` を持ち、タスクのイメージが無ければ、工程の実行はその工程のイメージで、最終レビューは実装の工程のイメージ（無ければ再現の工程のイメージ）で動く。
+  画面は、タスクのイメージの代わりに「工程ごと（古い版）」と、工程ごとに最後に設定したイメージと選んだ元、実行で使ったイメージ（まだ実行していなければその旨）を出す。
+  実行で使ったイメージは、実行の記録（`AgentRunStarted`、監視の工程は `DeploymentCheckStarted`）の `image` から出す（`stepRunImages`）。
+  `image` の無い古い記録は、作業履歴をたどってそのときのタスクのイメージ・工程ごとのイメージから求める（監視の工程の無い古いタスクの確認は、実装の工程のイメージ）。
+  タスクのイメージが無いあいだ、最後に設定したイメージが `images` に無い工程があれば、その工程に警告を出し、実行するときに止まることと、タスクのイメージを選べば全工程でそれを使うことを案内する（欄は開いて出す）。
+  人がタスクのイメージを選ぶと、それからはすべての工程でタスクのイメージを使う（工程ごとのイメージは、最後の設定として残る）。
 
-コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`・`stepImageOptions`）
+コード: `apps/daemon/src/service.ts`（`changeTaskImage`・`taskImageChange`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskImageChanged`・`ChangeTaskImageInput`・`StepImageChanged`）、`packages/core/src/projection.ts`（`stepRunning`・`stepImageOf`・`verificationImageOf`）、`apps/web/src/lib/labels.ts`（`taskImageInfo`・`stepRunImages`・`stepImageOptions`）
 
 ## 工程のエージェントを人が変える
 
@@ -966,7 +977,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   sacty は、実装の PR をドラフトで作り、CI の結果を待たずに差分を取って、ゴールガーディアンの最終レビューに進む（CI と並べて進める。下の「最終レビューの前の実装の PR と CI」）。
   sacty はテストを別のコンテナで実行しない（テストは、ゴールガーディアンが最終レビューの中で実行する）。
   差分を取れなければ、最終レビューをせずに一時停止する（`verify.diffUnavailable`。再開すると差分の取得からやり直す）。
-- 最終レビューは、実装後の作業領域の使い捨ての写しで、実装の工程のイメージ（無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して動かす。
+- 最終レビューは、実装後の作業領域の使い捨ての写しで、タスクのイメージ（古い版の作業履歴で工程ごとのイメージなら、実装の工程のイメージ。無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して動かす。
   写しの .git は、作業領域の .git ではなく、エージェントが触る前に退避したメタデータの写し（テストが git を参照できる。実装の変更は起点からの変更に見える）。
   要求要件・設計の成果物を PR に足すタスクでは、写しに成果物のファイルも入れる（下の、成果物を PR に足すタスクの項）。
   そのイメージが `images` から消えていれば、実行せずに一時停止する（`verify.testsUnavailable`）。
@@ -1470,7 +1481,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 | 役割 | 読むもの | 判定 |
 | --- | --- | --- |
 | 変更の申し出の判定 | 起点のコード | `approved`・`rejected`・`undecidable`。読めない・失敗なら `undecidable` で、人間の判断（エスカレーション）になる |
-| 最終レビュー | 実装後のコードと差分、自分で実行したテスト（テスト（検証）のコマンドがあるとき。実装の工程のイメージで動く）（テストの仕組みが無いタスクは、タスクの目的と実装の説明も） | 合格・不合格（上の「実装の検証」） |
+| 最終レビュー | 実装後のコードと差分、自分で実行したテスト（テスト（検証）のコマンドがあるとき。タスクのイメージで動く）（テストの仕組みが無いタスクは、タスクの目的と実装の説明も） | 合格・不合格（上の「実装の検証」） |
 | PR の指摘の戻し先の判断 | 実装の PR なら実装後のコード、要求要件・設計の PR なら起点のコード | 戻す工程か `undecidable`（[承認と差し戻し](approval.md)） |
 | 統合レビュー | ベースブランチの最新 | `step_agents.integrate` が無ければこの AI（[タスク分割と統合レビュー](split-and-integrate.md)） |
 
@@ -1504,7 +1515,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
 - 再開：止まる前の状態が実行待ちなら、止まった工程を実行し直す。
   ただし、開始済みの作業は再開を拒否し、停止を維持する。
   実装の作り直しの間に実装の PR へ届いた指摘は、一時停止の間に未反映として残し（予算・エラー・人が止めたなど、理由を問わない）、再開したあと、止まった工程を実行し直す前に、ゴールガーディアンの判断で反映する。指摘が無ければ今までどおり（[一時停止の間に届いた指摘](approval.md#一時停止の間に届いた指摘)）。
-- 再開のときの補足と工程の設定：人は再開と一緒に、次のものを渡せる（`ResumeTaskInput` の `note`・`images`・`agents`）。
+- 再開のときの補足と工程の設定：人は再開と一緒に、次のものを渡せる（`ResumeTaskInput` の `note`・`image`・`agents`）。
   - 補足（10000 文字まで。`RESUME_NOTE_MAX`）は `TaskResumed` の `note` に記録し、投影がタスクの説明の後に `## 補足（再開で人が足したもの）`（`RESUME_NOTE_HEADING`）の見出しを付けて足す（`bodyWithResumeNote`）。
     オーケストレーターと工程は説明を読むので、これから実行する工程にそのまま届く。
     説明を入れない経路（承認済みの要求要件・設計を渡す実装と最終レビュー）には、投影の `resumeNotes` を別の節として渡す（`resumeNotePromptLines`。承認済みの文書と食い違えば補足を優先させ、変更の申し出の指示でも、食い違う箇所は補足に従って作り、承認済みの成果物を合わせる変更を申し出させる）。
@@ -1519,13 +1530,13 @@ AI は `guardian_agent`（無ければ `default_agent`）。
     確かめるのは再開の時点の説明で、チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある。
   - チケットのトリアージを待って止まったタスクでは、補足をトリアージ（`buildTicketTriagePrompt`）に判断の材料として渡し（概要には写させない）、`TicketTriaged` で説明を概要に書き換えるときに、補足（`resumeNotes`）を概要の後ろに残す。
     トリアージの概要に補足の見出しの行があれば除く（チケットの文を人の補足に見せかけない）。
-  - 工程ごとのイメージ・エージェントは、タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を `TaskResumed` の前に記録する。
-    今と同じ名前の工程は記録しない。
+  - タスクのイメージ・工程ごとのエージェントは、タスクの詳細で変えるとき（`changeTaskImage`・`changeStepAgent`）と同じ確かめをして、`TaskImageChanged`・`StepAgentChanged` を `TaskResumed` の前に記録する。
+    今と同じ名前は記録しない。
     選んでいない工程・設定に無い名前・統合レビューのエージェント・設定（config.yaml）を読めないときは、1つでもあれば何も記録せずに断る。
   - テストを決めずに再開して工程の選択からやり直すとき（`rechooseSteps`）は、選んだ工程に結びつく変更が消えるので、工程の設定は断る（`resume.stepSettingsRechoose`）。
-  - 画面の再開の欄には、補足の入力欄と、まだ終わっていない工程のイメージ・エージェントの選択（折りたたみ。今の名前を初めに選ぶ）を出す。
-    描いたときの今の名前も一緒に送り、Server Action は人が変えた工程だけをデーモンへ渡す（`changedStepChoices`。触っていない工程の古い名前で、その間に変えた名前を戻さない）。
-    再開が断られたときに戻す選択も、人が変えた工程だけにする。
+  - 画面の再開の欄には、補足の入力欄と、まだ終わっていない工程があればタスクのイメージとその工程のエージェントの選択（折りたたみ。今の名前を初めに選ぶ。古い版の工程ごとのイメージなら空の選択）を出す。
+    描いたときの今の名前も一緒に送り、Server Action は人が変えたものだけをデーモンへ渡す（`changedStepChoices`。触っていないものの古い名前で、その間に変えた名前を戻さない）。
+    再開が断られたときに戻す選択も、人が変えたものだけにする。
     補足の欄の上限は、足せる補足の長さにする。足せる長さが 1000 文字を下回ったときだけ残りを出し、足せなければ欄を使えなくして、補足なしで再開するか中止して再実行で内容を直すよう案内する。
     作業履歴の再開の行には、補足を足したことを出し、補足の本文を詳細に出す。
 - 中止：ゴールガーディアンの判定中は中止できない。

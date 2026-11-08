@@ -55,7 +55,7 @@ describe("タスクの作成のダイアログの、リポジトリの候補（P
 
 const { StepFlowSummary, TaskStepSettings } = await import("./task-step-settings");
 
-describe("タスクの作成の、進め方の工程ごとの設定", () => {
+describe("タスクの作成の、タスクのイメージと進め方の工程ごとのエージェント（PBI-318）", () => {
   const loaded = {
     status: "loaded" as const,
     images: [
@@ -73,7 +73,7 @@ describe("タスクの作成の、進め方の工程ごとの設定", () => {
       createElement(TaskStepSettings, {
         plan: "split",
         options: loaded,
-        images: {},
+        image: "",
         agents: {},
         onImage: () => {},
         onAgent: () => {},
@@ -104,15 +104,32 @@ describe("タスクの作成の、進め方の工程ごとの設定", () => {
         onOpen: () => {},
       }),
     );
-    expect(some).toContain(t.stepsSummaryCustomized(1));
+    expect(some).toContain(t.stepsSummaryCustomized(undefined, 1));
     expect(some.match(/data-customized/g)).toHaveLength(1);
+    // タスクのイメージだけを指定したときも、要約に出す（工程には印を付けない）
+    const imageOnly = renderToStaticMarkup(
+      createElement(StepFlowSummary, {
+        id: "n",
+        plan: "standard",
+        image: "java17",
+        customized: [],
+        onOpen: () => {},
+      }),
+    );
+    expect(imageOnly).toContain(t.stepsSummaryCustomized("java17", 0));
+    expect(imageOnly).not.toContain("data-customized");
   });
 
-  it("工程ごとに、自動・既定（config.yaml で決まる名前）と候補を出し、統合レビューのエージェントは選ばせない", () => {
+  it("タスクのイメージを1つと、工程ごとのエージェント（既定は config.yaml で決まる名前）を出し、統合レビューのエージェントは選ばせない", () => {
     const t = messagesFor("ja").forms.task;
     const html = settings();
     expect(html).toContain(t.stepsTitle);
+    expect(html).toContain(t.taskImage);
+    expect(html).toContain(t.taskImageNote);
     expect(html).toContain(t.stepImageAuto);
+    // イメージの選択は1つだけ（工程ごとには無い）
+    expect(html.match(/data-testid="task-image"/g)).toHaveLength(1);
+    expect(html).not.toContain("task-step-image-");
     expect(html).toContain(t.stepAgentDefault("codex_standard"));
     expect(html).toContain('value="java17"');
     expect(html).toContain('value="codex_advanced"');
@@ -123,10 +140,11 @@ describe("タスクの作成の、進め方の工程ごとの設定", () => {
     expect(html).toMatch(new RegExp(`disabled=""[^>]*>${t.stepsResetAll}<`));
   });
 
-  it("指定した工程には、印・戻す操作・選んだものの説明を出す", () => {
+  it("指定したタスクのイメージ・工程には、印・戻す操作・選んだものの説明を出す", () => {
     const t = messagesFor("ja").forms.task;
-    const html = settings({ images: { design: "java17" }, agents: { design: "codex_advanced" } });
-    expect(html.match(/data-customized="true"/g)).toHaveLength(1);
+    const html = settings({ image: "java17", agents: { design: "codex_advanced" } });
+    // タスクのイメージと、設計の工程
+    expect(html.match(/data-customized="true"/g)).toHaveLength(2);
     expect(html).toContain(`aria-label="設計：${t.stepReset}"`);
     expect(html).not.toMatch(new RegExp(`disabled=""[^>]*>${t.stepsResetAll}<`));
     expect(html).toContain("Java 17・Maven");
@@ -142,7 +160,7 @@ describe("タスクの作成の、進め方の工程ごとの設定", () => {
     expect(failed).toContain(t.stepOptionsFailed("読めません"));
     expect(failed).toContain(t.stepOptionsFailedNote);
     // 前に選んだ値は、候補を読めなくても見せる
-    expect(settings({ options: { status: "loading" }, images: { split: "java17" } })).toContain(
+    expect(settings({ options: { status: "loading" }, image: "java17" })).toContain(
       'value="java17"',
     );
   });

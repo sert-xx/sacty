@@ -586,10 +586,10 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 | `question_answer` | sacty の質問（成果物の「確認したいこと」）への答えだけのコメント。新しい要望ではない。要求要件・設計の PR だけ |
 | `base_changed` | ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物そのものの不備ではない |
 
-- 人は差し戻しと一緒に、工程のイメージ・エージェントを変えられる（`RequestChangesInput` の `images`・`agents`）。
-  タスクの詳細で変えるとき（`changeStepImage`・`changeStepAgent`）と同じ確かめをして、`StepImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
+- 人は差し戻しと一緒に、タスクのイメージ・工程のエージェントを変えられる（`RequestChangesInput` の `image`・`agents`）。
+  タスクの詳細で変えるとき（`changeTaskImage`・`changeStepAgent`）と同じ確かめをして、`TaskImageChanged`・`StepAgentChanged` を差し戻し（`ChangesRequested`）・上限でのエスカレーション（`TaskEscalated`）の前に同じ書き込みで記録する（今と同じ名前は記録しない）。
   1つでも誤っていれば、差し戻しも含めて何も記録せずに断る。
-  画面は、やり直す工程とそれより後の工程（飛ばした工程を除く）を出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えた工程だけを送る（`changedStepChoices`）。
+  画面は、タスクのイメージと、やり直す工程とそれより後の工程（飛ばした工程を除く）のエージェントを出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えたものだけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
 コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`ReworkAnswer`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`・`isAnswerOnlyRework`・`answerOnlyReworkLines`・`answerOnlyCheckLines`・`lineContextText`・`lineContextNote`）、`apps/daemon/src/github.ts`（`lineContextOf`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）

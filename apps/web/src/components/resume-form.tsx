@@ -10,8 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 import { usd } from "@/lib/labels";
-import type { StepChoices } from "@/lib/step-options";
-import { type StepChoiceSetting, StepChoiceTable } from "./step-choice-table";
+import type { TaskChoices } from "@/lib/step-options";
+import { type StepChoiceSetting, StepChoiceTable, type TaskImageChoice } from "./step-choice-table";
 
 const initial: ResumeState = {};
 
@@ -34,6 +34,7 @@ export function ResumeForm({
   tests,
   toReview = false,
   steps = [],
+  image,
   noteRoom = RESUME_NOTE_MAX,
 }: {
   taskId: string;
@@ -61,8 +62,10 @@ export function ResumeForm({
   tests?: { bugfix: boolean; rechoose: boolean; current?: string };
   /** 実装の検証が続けて通らずに止まったタスク。人の判断で、レビュー（実装の承認）へ進められる。 */
   toReview?: boolean;
-  /** 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。 */
+  /** 再開と一緒にエージェントを変えられる工程（まだ終わっていない工程）。 */
   steps?: ResumeStepSetting[];
+  /** 再開と一緒に変えられるタスクのイメージ（PBI-318。まだ終わっていない工程があるときだけ）。 */
+  image?: TaskImageChoice;
   /**
    * 足せる補足の長さ（resumeNoteRoom）。説明が長いと、再実行の画面で直せる長さに収まるよう短くなる。0 以下なら、補足を
    * 足せない（補足なしで再開するか、中止して再実行で内容を直す）。
@@ -223,8 +226,9 @@ export function ResumeForm({
             </p>
           )}
         </div>
-        {steps.length > 0 && (
+        {image && (
           <ResumeStepSettings
+            image={image}
             steps={steps}
             rechoose={Boolean(tests?.rechoose) && testsChoice === ""}
             chosen={state}
@@ -270,23 +274,24 @@ export function ResumeForm({
 }
 
 /**
- * 再開と一緒に変える工程のイメージ・エージェント。普段は変えないので、折りたたんで出す。工程の選択からやり直すときは、
+ * 再開と一緒に変えるタスクのイメージ・工程のエージェント。普段は変えないので、折りたたんで出す。工程の選択からやり直すときは、
  * 変えられないことだけを出す。chosen は、エラーで戻ってきたときに人が選んでいた名前。
  */
 function ResumeStepSettings({
+  image,
   steps,
   rechoose,
   chosen,
 }: {
+  image: TaskImageChoice;
   steps: ResumeStepSetting[];
   rechoose: boolean;
-  chosen: { images?: StepChoices; agents?: StepChoices };
+  chosen: Partial<TaskChoices>;
 }) {
   const m = useMessages();
   const r = m.parts.resume;
-  const unavailable = steps.some(
-    (s) => !s.imageOptions || (s.agent !== undefined && !s.agent.options),
-  );
+  const unavailable =
+    !image.options || steps.some((s) => s.agent !== undefined && !s.agent.options);
   return (
     <details
       className="w-full rounded-md border border-warn-line bg-card"
@@ -308,7 +313,7 @@ function ResumeStepSettings({
                 {r.stepsUnavailable}
               </p>
             )}
-            <StepChoiceTable steps={steps} chosen={chosen} idPrefix="resume-step" />
+            <StepChoiceTable image={image} steps={steps} chosen={chosen} idPrefix="resume-step" />
           </>
         )}
       </div>

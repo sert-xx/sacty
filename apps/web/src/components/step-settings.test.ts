@@ -20,7 +20,7 @@ vi.mock("@/app/actions", () => {
     resumeTaskAction: action,
     gateAction: action,
     voidRemarkAction: action,
-    changeStepImageAction: action,
+    changeTaskImageAction: action,
     changeStepAgentAction: action,
     decideChangeAction: action,
     followProjectAction: action,
@@ -133,11 +133,11 @@ function detail(patch: Partial<TaskDetailData> = {}, task = taskOf(history())): 
 const section = (div: HTMLElement, id: string) =>
   div.querySelector(`[data-testid="${id}"]`) as HTMLDetailsElement | null;
 
-describe("タスク詳細：工程のイメージ・工程のエージェントの折りたたみ（PBI-138）", () => {
+describe("タスク詳細：タスクのイメージ・工程のエージェントの折りたたみ（PBI-138・PBI-318）", () => {
   it("確かめが要らなければ、見出し（補足の印を含む）だけを出して閉じ、中身は開けば読める", () => {
     const div = detail();
     for (const [id, row, title] of [
-      ["step-images", "step-image-row-", "工程のイメージ"],
+      ["task-image", "task-image-row", "タスクのイメージ"],
       ["step-agents", "step-agent-row-", "工程のエージェント"],
     ] as const) {
       const box = section(div, id);
@@ -152,22 +152,74 @@ describe("タスク詳細：工程のイメージ・工程のエージェント�
     }
   });
 
-  it("イメージの候補を確かめられないときは、工程のイメージを開いて出す", () => {
+  it("イメージの候補を確かめられないときは、タスクのイメージを開いて出す", () => {
     const div = detail({ imageStatus: undefined });
-    expect(section(div, "step-images")?.open).toBe(true);
+    expect(section(div, "task-image")?.open).toBe(true);
     expect(section(div, "step-agents")?.open).toBe(false);
   });
 
-  it("images に無いイメージを使っているときは、工程のイメージを開いて出す", () => {
-    const task = { ...taskOf(history()), images: { implement: "ruby" } };
+  it("images に無いイメージを使っているときは、タスクのイメージを開いて出す", () => {
+    const task = { ...taskOf(history()), image: "ruby" };
     const div = detail({}, task);
-    expect(section(div, "step-images")?.open).toBe(true);
+    expect(section(div, "task-image")?.open).toBe(true);
+  });
+
+  it("タスクのイメージは1つだけ出し、古い版の作業履歴なら工程ごとにどのイメージで動いたかも出す", () => {
+    const div = detail();
+    expect(div.querySelectorAll('[data-testid="task-image-row"]')).toHaveLength(1);
+    expect(section(div, "task-image")?.textContent).toContain("default");
+    expect(div.querySelector('[data-testid="legacy-step-images"]')).toBeNull();
+    const legacy = { ...taskOf(history()), images: { implement: "python" } };
+    const old = detail({}, legacy);
+    expect(old.querySelector('[data-testid="legacy-step-image-implement"]')?.textContent).toContain(
+      "python",
+    );
+    expect(
+      old.querySelector('[data-testid="legacy-step-image-requirements"]')?.textContent,
+    ).toContain("default");
+    // タスクのイメージが無い（工程ごとに違いうる）ことを出す
+    expect(old.querySelector('[data-testid="task-image-row"]')?.textContent).toContain(
+      "工程ごと（古い版）",
+    );
+  });
+
+  it("古い版の工程ごとのイメージは、実行で使った名前（作業履歴から）とまだ実行していないことを出す", () => {
+    const legacy = { ...taskOf(history()), images: { implement: "python" } };
+    const old = detail({}, legacy);
+    // 要求要件は、指定の無いまま既定のイメージで1度実行した。実装はまだ
+    expect(
+      old.querySelector('[data-testid="legacy-step-image-runs-requirements"]')?.textContent,
+    ).toBe("実行で使ったイメージ：default");
+    expect(old.querySelector('[data-testid="legacy-step-image-runs-implement"]')?.textContent).toBe(
+      "まだ実行していません",
+    );
+  });
+
+  it("古い版の工程ごとのイメージが images に無ければ、警告と選び直しの案内を出し、欄を開いて出す", () => {
+    const legacy = { ...taskOf(history()), images: { implement: "ruby" } };
+    const div = detail({}, legacy);
+    expect(section(div, "task-image")?.open).toBe(true);
+    expect(div.querySelector('[data-testid="legacy-step-image-implement"]')?.textContent).toContain(
+      "images にありません",
+    );
+    expect(
+      div.querySelector('[data-testid="legacy-step-image-requirements"]')?.textContent,
+    ).not.toContain("images にありません");
+    expect(div.querySelector('[data-testid="legacy-step-images-missing"]')).not.toBeNull();
+    // 名前がそろっていれば、閉じたまま
+    const ok = detail({}, { ...taskOf(history()), images: { implement: "python" } });
+    expect(section(ok, "task-image")?.open).toBe(false);
+    expect(ok.querySelector('[data-testid="legacy-step-images-missing"]')).toBeNull();
+    // タスクのイメージを選んだ後は、古い版の設定で警告しない
+    const moved = detail({}, { ...legacy, image: "node" });
+    expect(section(moved, "task-image")?.open).toBe(false);
+    expect(moved.querySelector('[data-testid="legacy-step-images-missing"]')).toBeNull();
   });
 
   it("エージェントの候補を確かめられないときは、工程のエージェントを開いて出す", () => {
     const div = detail({ agentStatus: undefined });
     expect(section(div, "step-agents")?.open).toBe(true);
-    expect(section(div, "step-images")?.open).toBe(false);
+    expect(section(div, "task-image")?.open).toBe(false);
   });
 
   it("使えるエージェントに無い名前を使っているときは、工程のエージェントを開いて出す", () => {
