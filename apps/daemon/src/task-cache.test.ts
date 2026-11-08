@@ -185,6 +185,24 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
   });
 
+  it("設定に XDG_CACHE_HOME が無ければ（Dockerfile の ENV だけにある場合を含む）、Docker の引数に XDG_CACHE_HOME を足さない", async () => {
+    const cache = join(dir, "_task-cache", taskId);
+    const docker = fakeDocker();
+    await new DockerExecutor(60_000, docker.spawnImpl).run({
+      runId: "r5",
+      image: "img",
+      workspaceDir: join(dir, "ws"),
+      imageEnv: {},
+      invocation: invocation({ taskCache: cache, env: {} }),
+    });
+    const [run] = docker.runs;
+    // イメージの ENV を -e で消さないよう、XDG_CACHE_HOME は名前も値も渡さない（書けたときだけ、コンテナの中で向ける）
+    expect(run?.args).not.toContain("XDG_CACHE_HOME");
+    expect(run?.args.some((a) => a.startsWith("XDG_CACHE_HOME="))).toBe(false);
+    expect(run?.env).not.toHaveProperty("XDG_CACHE_HOME");
+    expect(run?.env[TASK_CACHE_ENV]).toBe(CONTAINER_TASK_CACHE);
+  });
+
   it("コンテナの中で書けなかった知らせは、デーモンのログにも残す", async () => {
     const notice = "[sacty] 依存のキャッシュ：/sacty-cache に書けないので、使わずに実行します";
     const docker = fakeDocker(`${notice}\n`);
