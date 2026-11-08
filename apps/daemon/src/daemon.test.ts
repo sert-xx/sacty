@@ -730,10 +730,13 @@ class FakePulls implements PullRequests {
   nextNumber = 7;
   /** あれば、PR の作成を、これが解決するまで終わらせない（PR の作成中の一時停止のテスト。PBI-110）。 */
   upsertGate?: Promise<void>;
+  /** あれば、upsertGate で待たせるのは、この番号の PR の更新だけ（PBI-317）。 */
+  upsertGateNumber?: number;
   upsertStarted = Promise.withResolvers<void>();
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
-    this.upsertStarted.resolve();
-    if (this.upsertGate) await this.upsertGate;
+    const gated = this.upsertGateNumber === undefined || input.number === this.upsertGateNumber;
+    if (gated) this.upsertStarted.resolve();
+    if (this.upsertGate && gated) await this.upsertGate;
     if (this.fail) throw new Error(this.fail);
     // ドラフトにしかできない PR（requireDraft。PBI-317）は、ドラフトを使えないリポジトリでは作らない
     if (!input.number && input.draft && input.requireDraft && this.draftUnsupported) {
@@ -756,12 +759,19 @@ class FakePulls implements PullRequests {
   setDraftFail?: string;
   /** あれば、切り替えは GitHub で済むが、答えを受け取れずに失敗する。 */
   setDraftAnswerLost?: string;
+  /** あれば、ドラフトの切り替えを済ませた後、答えを返す前に、これが解決するまで待つ（PBI-317）。 */
+  setDraftGate?: Promise<void>;
+  setDraftStarted = Promise.withResolvers<void>();
   async setDraft(input: Parameters<PullRequests["setDraft"]>[0]) {
     if (this.setDraftFail) throw new Error(this.setDraftFail);
     if ((this.drafts[input.number] ?? false) !== input.draft) {
       this.draftChanges.push({ number: input.number, draft: input.draft });
     }
     this.drafts[input.number] = input.draft;
+    if (this.setDraftGate) {
+      this.setDraftStarted.resolve();
+      await this.setDraftGate;
+    }
     if (this.setDraftAnswerLost) throw new Error(this.setDraftAnswerLost);
     return { draft: input.draft };
   }
@@ -22187,7 +22197,11 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     outcomes: AgentOutcome[],
     repos = new FakeRepos(),
     pulls = new FakePulls(),
-    options: { planner?: ServiceDeps["planner"]; draftPullRequests?: boolean } = {},
+    options: {
+      planner?: ServiceDeps["planner"];
+      draftPullRequests?: boolean;
+      templates?: ServiceDeps["templates"];
+    } = {},
   ) {
     // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
     repos.remote.main = "base123";
@@ -22201,6 +22215,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
         pulls,
         mergeBase: true,
         ...(options.draftPullRequests ? { draftPullRequests: true } : {}),
+        ...(options.templates ? { templates: options.templates } : {}),
       },
     );
     const { service } = made;
@@ -22636,6 +22651,138 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(taskOf(service, b).gate).toEqual({ step: "implement", submission: 2 });
     expect(pulls.calls.at(-1)).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
     expect(taskOf(service, b).pullRequest).toMatchObject({ baseBranch: "main" });
+    activity.close();
+  });
+
+  it("PR の確認で、前の子の付け替えを待つ間にやり直して出し直した後の子は、古い状態で付け替えない（最新のタスクで決める）", async () => {
+    // B も C も A に依存し、A に重ねる
+    const lookups: string[] = [];
+    const templates = {
+      async find(input: { repo: string; token: string }): Promise<TemplateLookup> {
+        lookups.push(input.repo);
+        return { kind: "none" };
+      },
+    };
+    const { activity, service, pulls, ids } = await splitParent(
+      [
+        { key: "A", title: "a", body: "", dependsOn: [] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+        { key: "C", title: "c", body: "", dependsOn: ["A"] },
+      ],
+      [
+        implement("# A"),
+        review(),
+        implement("# B"),
+        implement("# C"),
+        review(),
+        review(),
+        implement("# C v2"),
+        review(["implement-1-1"]),
+      ],
+      new FakeRepos(),
+      new FakePulls(),
+      { templates },
+    );
+    const [a, b, c] = ids as [string, string, string];
+    await drain(service);
+    expect(taskOf(service, b).stack).toMatchObject({ taskId: a });
+    expect(taskOf(service, c).stack).toMatchObject({ taskId: a });
+    const bNumber = taskOf(service, b).pullRequest?.number as number;
+    const cNumber = taskOf(service, c).pullRequest?.number as number;
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    expect(taskOf(service, b).repository?.baseBranch).toBe("main");
+    expect(taskOf(service, c).repository?.baseBranch).toBe("main");
+    // B の付け替えの PR の更新を待たせ、その間に C を差し戻して、やり直した PR を出し直す
+    const gate = Promise.withResolvers<void>();
+    pulls.upsertGate = gate.promise;
+    pulls.upsertGateNumber = bNumber;
+    pulls.upsertStarted = Promise.withResolvers<void>();
+    const checking = service.checkPullRequests();
+    await pulls.upsertStarted.promise;
+    service.requestChanges(c, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    await settle(service, c);
+    expect(taskOf(service, c).gate).toEqual({ step: "implement", submission: 2 });
+    expect(taskOf(service, c).pullRequest?.baseBranch).toBe("main");
+    const calls = pulls.calls.length;
+    const looked = lookups.length;
+    gate.resolve();
+    await checking;
+    // C は、もう付け替えが要らない。古い C で認証・本文を用意せず、PR も更新しない
+    expect(pulls.calls.slice(calls).filter((x) => x.number === cNumber)).toEqual([]);
+    expect(lookups.length - looked).toBe(0);
+    expect(types(service, c).filter((t) => t === "PullRequestRetargeted")).toEqual([]);
+    // B は付け替えた
+    expect(taskOf(service, b).pullRequest).toMatchObject({ baseBranch: "main" });
+    activity.close();
+  });
+
+  it("付け替えで、本文の用意を待つ間に差し戻されたら、PR を更新しない", async () => {
+    let hold: Promise<void> | undefined;
+    const started = Promise.withResolvers<void>();
+    const templates = {
+      async find(): Promise<TemplateLookup> {
+        if (hold) {
+          started.resolve();
+          await hold;
+        }
+        return { kind: "none" };
+      },
+    };
+    const { activity, service, pulls, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), review(), implement("# B の実装"), review()],
+      new FakeRepos(),
+      new FakePulls(),
+      { templates },
+    );
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    const gate = Promise.withResolvers<void>();
+    hold = gate.promise;
+    const checking = service.checkPullRequests();
+    await started.promise;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    const calls = pulls.calls.length;
+    gate.resolve();
+    await checking;
+    expect(pulls.calls.slice(calls)).toEqual([]);
+    expect(pulls.draftChanges).toEqual([]);
+    expect(types(service, b)).not.toContain("PullRequestRetargeted");
+    activity.close();
+  });
+
+  it("付け替えで、ドラフトを外す操作を待つ間に差し戻されたら、ドラフトに戻して記録しない", async () => {
+    const { activity, service, pulls, ids } = await splitParent(chain, [
+      implement("# A の実装"),
+      review(),
+      implement("# B の実装"),
+      review(),
+    ]);
+    const [a, b] = ids as [string, string];
+    await drain(service);
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drain(service);
+    const gate = Promise.withResolvers<void>();
+    pulls.setDraftGate = gate.promise;
+    const checking = service.checkPullRequests();
+    await pulls.setDraftStarted.promise;
+    service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
+    pulls.setDraftGate = undefined;
+    gate.resolve();
+    await checking;
+    expect(pulls.draftChanges).toEqual([
+      { number: 8, draft: false },
+      { number: 8, draft: true },
+    ]);
+    expect(pulls.drafts[8]).toBe(true);
+    expect(types(service, b)).not.toContain("PullRequestRetargeted");
+    expect(taskOf(service, b).pullRequest?.draft).toBe(true);
     activity.close();
   });
 

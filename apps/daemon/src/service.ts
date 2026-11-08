@@ -1128,8 +1128,10 @@ export class TaskService {
     // 実装の作り直しの間に、実装の PR がマージされたタスクは、作り直しを止めて承認として進める（PBI-276）
     await this.checkReworkMerges();
     // 重ねた子タスクの承認待ちの PR の向き先を、依存先の PR のマージの後のブランチに付け替える（PBI-317）
-    for (const task of [...this.tasks.values()]) {
-      if (this.retargetDue(task) && !this.cancelling.has(task.id) && !this.inflight.has(task.id)) {
+    // 前のタスクの GitHub の操作を待つ間に、後のタスクが変わりうるので、ID ごとにその時点の最新で決める
+    for (const id of [...this.tasks.keys()]) {
+      const task = this.tasks.get(id);
+      if (task && this.retargetDue(task) && !this.cancelling.has(id) && !this.inflight.has(id)) {
         await this.retargetPullRequest(task);
       }
     }
@@ -7264,8 +7266,12 @@ export class TaskService {
   /**
    * 重ねた子タスクの、承認待ちの実装の PR の向き先を、今の起点のブランチに付け替える（PBI-317。依存先の PR がマージされた
    * 後）。本文も書き直し（重ねた先が変わる・無くなる）、重ねるのをやめたなら、ドラフトを外す（検証に通った PR なので）。
-   * 失敗したら、記録せずに次の確認でやり直す（承認待ちのまま。タスクは止めない）。GitHub を待つ間に、差し戻し・一時停止・
-   * 中止などでタスクが変わったら、ドラフトを外さず・記録しない（再提出が、そのときの向き先・ドラフトで PR を更新する）。
+   * 失敗したら、記録せずに次の確認でやり直す（承認待ちのまま。タスクは止めない）。付け替えの間は、そのタスクを実行しない。
+   * 差し戻し・一時停止・中止などでタスクが変わったら（`unchanged`）、次のようにする。どれも記録しない（やり直しの提出が、
+   * そのときの向き先・ドラフトで PR を更新する）。
+   * - 認証・本文の用意の後（PR の更新の前）に見つけたら、PR を更新しない
+   * - PR の更新を待つ間に変わったら、ドラフトを外さない
+   * - ドラフトを外す操作を待つ間に変わったら、ドラフトに戻す（台帳はドラフトのまま。中止・完了したタスクは戻さない）
    */
   private async retargetPullRequest(task: Task): Promise<void> {
     const pr = task.pullRequest;
@@ -7307,6 +7313,8 @@ export class TaskService {
         buildPullRequestBodyText(task, stage),
         buildPullRequestBodyParts(task, stage),
       );
+      // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
+      if (!unchanged()) return;
       await this.deps.pulls.upsert({
         repo: pr.repo,
         token,
@@ -7328,7 +7336,10 @@ export class TaskService {
         });
       }
       const latest = unchanged();
-      if (!latest) return;
+      if (!latest) {
+        if (ready) await this.redraftAfterRetarget(task.id, pr.repo, token, pr.number, usedSecrets);
+        return;
+      }
       this.append(latest, [
         {
           actor: "sacty",
@@ -7349,6 +7360,28 @@ export class TaskService {
     } finally {
       this.retargeting.delete(task.id);
     }
+  }
+
+  /**
+   * 付け替えでドラフトを外す操作を待つ間にタスクが変わったとき、PR をドラフトに戻す（PBI-317。記録しなかったので、台帳の
+   * ドラフトにそろえる。安全側）。中止・完了したタスクの PR は戻さない。戻せなければログに出す（やり直しの提出が、その
+   * ときのドラフトで PR を更新する）。
+   */
+  private async redraftAfterRetarget(
+    taskId: string,
+    repo: string,
+    token: string,
+    number: number,
+    usedSecrets: readonly string[],
+  ): Promise<void> {
+    const latest = this.tasks.get(taskId);
+    if (!latest || latest.status === "cancelled" || isCompleted(latest)) return;
+    if (latest.pullRequest?.number !== number) return;
+    await this.deps.pulls.setDraft({ repo, token, number, draft: true }).catch((error: unknown) => {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    });
   }
 
   /**
