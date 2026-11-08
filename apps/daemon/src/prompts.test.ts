@@ -1636,7 +1636,14 @@ describe("要求要件・設計の PR（PBI-57）", () => {
         },
       ],
       stepPullRequests: [
-        { step: "requirements", state: "merged", url: "https://github.com/acme/app/pull/7" },
+        {
+          step: "requirements",
+          state: "merged",
+          url: "https://github.com/acme/app/pull/7",
+          number: 7,
+          commit: "c0ffee",
+          path: "docs/sacty/t1/requirements.md",
+        },
       ],
     } as unknown as Task;
     expect(buildStepDocument(task, "requirements")).toBe(
@@ -1648,7 +1655,9 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     const body = buildStepPullRequestBody(task, "design", "docs/sacty/t1/design.md");
     expect(body).toContain("成果のファイル：`docs/sacty/t1/design.md`");
     expect(body).toContain("この PR をマージすると、設計を承認したことになり");
-    expect(body).toContain("- 要求要件：https://github.com/acme/app/pull/7");
+    expect(body).toContain(
+      "- 要求要件：[`docs/sacty/t1/requirements.md`](https://github.com/acme/app/blob/c0ffee/docs/sacty/t1/requirements.md)（PR：[#7](https://github.com/acme/app/pull/7)）",
+    );
     expect(body).toContain("- [design-1-1] 観点が足りない\n  - 対応：足した");
   });
 

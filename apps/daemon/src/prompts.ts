@@ -6534,7 +6534,40 @@ export function buildPullRequestBodyParts(
 function mergedStepPullRequests(task: Task): string[] {
   return task.stepPullRequests
     .filter((p) => p.state === "merged")
-    .map((p) => `- ${STEP_NAME[p.step]}：${p.url}（\`${p.path}\`）`);
+    .map((p) => `- ${STEP_NAME[p.step]}：${stepArtifactLink(p)}`);
+}
+
+/**
+ * 要求要件・設計の成果のファイルと、その PR へのリンク（PBI-322）。PR の URL の後に全角の括弧や文字を続けると、GitHub の
+ * 自動リンクがそれも URL に含め、`/pull/<番号>（…` を開いて compare の画面になるので、どちらも明示的な Markdown のリンクにする。
+ * ファイルは、PR に出したコミットを指す `/blob/<コミット>/<パス>` にする。PR の先頭のコミットは GitHub が PR の参照に残すので、
+ * PR・タスクのブランチが消えても、マージの前後どちらでも読める（マージのコミットはタスクブランチの上にあり、消えると辿れない
+ * ことがあるので使わない）。マージ済みなら、マージされた内容（人が直してマージしたなら、人が直した最終のコミット）を指す。
+ */
+function stepArtifactLink(p: Task["stepPullRequests"][number]): string {
+  const web = /^(https?:\/\/[^\s?#]+?)\/pull\/(\d+)\/?$/.exec(p.url ?? "");
+  const file = markdownCode(p.path);
+  if (!web) return p.url ? `${file}（PR：<${p.url}>）` : file;
+  const ref = p.merge?.commit ?? p.commit;
+  const path = p.path.split("/").map(urlPathSegment).join("/");
+  const artifact = ref ? `[${file}](${web[1]}/blob/${urlPathSegment(ref)}/${path})` : file;
+  return `${artifact}（PR：[#${p.number ?? web[2]}](${p.url})）`;
+}
+
+/** URL のパスの1区切り。Markdown のリンク先を閉じる括弧も符号にする。 */
+function urlPathSegment(text: string): string {
+  return encodeURIComponent(text).replace(
+    /[()]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/** インラインのコード。中にバッククォートがあれば、それより長いバッククォートで囲む。 */
+function markdownCode(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const pad = longest > 0 ? " " : "";
+  return `${fence}${pad}${text}${pad}${fence}`;
 }
 
 /** 要求要件・設計の PR の題（PBI-57）。 */
@@ -6650,7 +6683,7 @@ function respondedLines(task: Task, step: StepPullRequestKey): string[] {
 function earlierStepLines(task: Task, step: StepPullRequestKey): string[] {
   return task.stepPullRequests
     .filter((p) => p.step !== step && p.state === "merged")
-    .map((p) => `- ${STEP_NAME[p.step]}：${p.url}`);
+    .map((p) => `- ${STEP_NAME[p.step]}：${stepArtifactLink(p)}`);
 }
 
 /**
