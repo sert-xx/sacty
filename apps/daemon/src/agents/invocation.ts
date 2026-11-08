@@ -108,6 +108,9 @@ export const CLAUDE_DISALLOWED_TOOLS = [
   "RemoteTrigger",
 ];
 
+/** Claude Code の実行の権限のモード（PBI-320）。確認を求めずに実行し、隔離は sacty のコンテナが受け持つ。 */
+export const CLAUDE_PERMISSION_MODE = "bypassPermissions";
+
 /** 再開するセッション（PBI-67）。 */
 export type OrchestratorSessionResume = { resume: string; fork?: boolean; filesDir: string };
 
@@ -184,6 +187,12 @@ export async function buildInvocation(
       // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
       // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む。指示は引数に入れず、標準入力で渡す（PBI-149）
       const command = ["claude", "-p", "--output-format", "stream-json", "--verbose"];
+      // 権限の確認を求めないモードを明示する。-p では確認に答える人がいないので、確認の要るツール（Bash など）は
+      // 拒まれる。既定のモードは CLI の版で変わる（2.1.318 で auto から default になり、テストのコマンドが拒まれた）ので、
+      // どの設定ファイル（コンテキストや対象リポジトリの .claude/settings.json）よりも優先される引数で渡す。
+      // 隔離は sacty のコンテナが受け持つ（Codex の --sandbox danger-full-access と同じ。PBI-40・PBI-320）。
+      // エージェントは node ユーザーで動くので、root では使えないこのモードを使える
+      command.push("--permission-mode", CLAUDE_PERMISSION_MODE);
       // 一度きりの実行なので、後で起こす予約・定期の実行は使わせない。予約が残ると、最終の答えの後も終わらずに待ち、
       // 起きた後の返答が最後の result になる（PBI-154）
       command.push("--disallowedTools", CLAUDE_DISALLOWED_TOOLS.join(","));

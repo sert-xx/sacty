@@ -4,7 +4,7 @@
 
 sacty carries out steps, information gathering, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The agents of the Goal Guardian (the final review), the Reproduce step, and the PR review step run them inside their own containers.
 
-Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md)
+Related ADRs: [Claude Code runs get a mode that asks for no permission confirmations, passed explicitly](../adr/20261108-1137-claude-permission-mode.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md)
 
 ## Container
 
@@ -69,7 +69,7 @@ Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`, `taskCachePromptLines
 
 | runtime | Command | Config location |
 | --- | --- | --- |
-| `claude-code` | `claude -p --output-format stream-json --verbose --disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger` (the instructions go to stdin. A run is one-shot, so the tools that schedule a later wake-up or a recurring run are not allowed (a pending schedule keeps the run waiting after the final answer). `--add-dir <location>` if there is a location outside the workspace to read; only `/sacty-logs` for answers to questions. Resume is `--resume <ID>`, fork is `--fork-session`. With MCP, `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<name>,…`. `--model` (on Bedrock, the environment variable `ANTHROPIC_MODEL`), `--effort`) | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `claude-code` | `claude -p --output-format stream-json --verbose --permission-mode bypassPermissions --disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,RemoteTrigger` (the instructions go to stdin. The mode that asks for no permission confirmations is passed explicitly, as an argument that takes precedence over every settings file (under `-p` nobody can answer a confirmation, so tools that need one are denied, and the default mode changes between CLI versions. The sacty container provides the isolation, and the agent runs as the non-root `node` user. `CLAUDE_PERMISSION_MODE`). A run is one-shot, so the tools that schedule a later wake-up or a recurring run are not allowed (a pending schedule keeps the run waiting after the final answer). `--add-dir <location>` if there is a location outside the workspace to read; only `/sacty-logs` for answers to questions. Resume is `--resume <ID>`, fork is `--fork-session`. With MCP, `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<name>,…`. `--model` (on Bedrock, the environment variable `ANTHROPIC_MODEL`), `--effort`) | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. Last come `--` and `-` (the instructions go to stdin)) | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'` (returns the output of the `stub` setting; no AI is called) | None |
 
