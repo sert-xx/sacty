@@ -146,10 +146,19 @@ const RECORD_FORMAT_LINES = [
 ];
 
 /**
- * 実装・修正の工程の、検証の記録の申告の指示（PBI-305）。最後の変更の後に実行した検証だけを申告させ、提出の前の検証と
- * セルフレビューの検証を、同じ内容で重ねて実行させない。
+ * 記録に、テストの全件（kind が test で coverage が full）の結果があるか（PBI-316）。関係するテストだけ（partial）の記録は、
+ * 全件の結果として使い回させない。
  */
-export function implementVerificationRecordLines(): string[] {
+export function fullTestsRecorded(record: VerificationRecord | undefined): boolean {
+  return record?.commands.some((c) => c.kind === "test" && c.coverage === "full") === true;
+}
+
+/**
+ * 実装・修正の工程の、検証の記録の申告の指示（PBI-305）。最後の変更の後に実行した検証だけを申告させ、提出の前の検証と
+ * セルフレビューの検証を、同じ内容で重ねて実行させない。tests：テストを実行するタスクか（文書だけの依頼は実行しない）。
+ * 実行するなら、関係するテストだけの実行を partial にさせ、全件と区別させる（PBI-316）。
+ */
+export function implementVerificationRecordLines(tests = true): string[] {
   return [
     "",
     "--- 実行した検証の記録 ---",
@@ -157,6 +166,11 @@ export function implementVerificationRecordLines(): string[] {
     "- 上の「提出の前の検証」とセルフレビューの検証（references/verification-run.md）は、同じ内容なら1回の実行で両方に使う。作業領域を変えていないのに、同じコマンドを重ねて実行しない（セルフレビューの再レビューでも、変えた後の内容で1回だけ実行する）",
     "- 作業領域を最後に変えた後に実行した検証だけを、次の形式で必ず報告する（sacty が読み、本文からは取り除く）。最後の変更より前に実行した結果（セルフレビューの前の回など）は書かない",
     ...RECORD_FORMAT_LINES,
+    ...(tests
+      ? [
+          "- テストの全件の結果は coverage を full に、関係するテストだけの結果は partial にし、note に選び方と実行したテストを書く（後の段は、partial のテストを全件の結果として使い回さず、全件を実行する）",
+        ]
+      : []),
     ...exampleLines("implement"),
   ];
 }

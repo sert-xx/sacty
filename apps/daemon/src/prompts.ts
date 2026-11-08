@@ -128,6 +128,7 @@ import { localForwards, type StartedService } from "./services.js";
 import { CHANGE_DOCUMENT_EXTENSION_LIST } from "./test-files.js";
 import {
   extractVerificationRecord,
+  fullTestsRecorded,
   guardianVerificationRecordLines,
   implementVerificationRecordLines,
   reuseVerificationLines,
@@ -2023,7 +2024,7 @@ function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string
     ...(task.documentsOnly === true
       ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
       : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
-    ...implementVerificationRecordLines(),
+    ...implementVerificationRecordLines(task.documentsOnly !== true),
   ];
 }
 
@@ -4108,7 +4109,15 @@ export function buildFinalReviewPrompt(
     ...guardianCodeLines(task, "implemented"),
     "",
     ...(testCommand
-      ? testRunLines(testCommand, personTestCommand(task) === testCommand, reuse.length > 0)
+      ? testRunLines(
+          testCommand,
+          personTestCommand(task) === testCommand,
+          reuse.length > 0,
+          // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せるので出さない
+          options.implementVerification !== undefined &&
+            !fullTestsRecorded(options.implementVerification) &&
+            !fullTestsRecorded(options.reviewBeforeCiVerification),
+        )
       : []),
     ...reuse,
     ...(noTests
@@ -4580,10 +4589,22 @@ function implementVerificationLines(task: Task): string[] {
           `- 実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）のファイルも入る。リポジトリ全体を対象にする検証は、そのファイルも検査する。作業領域では実行できないので、検査の対象に入るかを設定（除外の定義など）で確かめ、落ちたときの直し方は、最終レビューの指摘に従う`,
         ]
       : []),
+    // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行しない
+    ...(task.documentsOnly === true ? [] : IMPLEMENT_TEST_SCOPE_LINES),
     "- 実行しなかった検証、実行できなかった検証（ツールが環境に無いなど）は、その検証と理由を実装の説明に書く。理由を書かずに省かない",
     "- 検証を通すために、検証の設定やテストを弱めない",
   ];
 }
+
+/**
+ * 実装・修正の工程の、テストの範囲（PBI-316）。途中（実装と確かめの繰り返し・セルフレビューの各回）は変更に関係するテストだけを
+ * 実行させ、全件は最後の変更の後に1回だけ実行させる（その記録を、最終レビューが同じ内容の結果として使い回す）。関係するテストの
+ * 選び方は、リポジトリのテストの実行器の絞り込みから決めさせ、決められなければ全件にさせる。特定の言語・実行器に寄せない。
+ */
+export const IMPLEMENT_TEST_SCOPE_LINES = [
+  "- テストは、作業の途中（実装と確かめの繰り返し・セルフレビューの各回）では、変更に関係するテスト（変えたファイルのテスト・足したテスト・変えたコードを使うテスト）だけを実行してよい。選び方は、リポジトリのテストの実行器の絞り込み（ファイル・ディレクトリ・パッケージ・テストの名前の指定など）で決め、決められなければ全件を実行する",
+  "- 最後の変更の後（セルフレビューを終え、もう作業領域を変えないとき）に、テストの全件を1回実行し、通してから提出する。関係するテストだけの結果で提出しない。全件の失敗を直したら、直した後にもう1回全件を実行する",
+];
 
 /** 前の回の人が確かめること（PBI-294）の1項目を、指示に載せるときの上限（文字）。引き継ぐ本文は切り詰めない。 */
 const CARRIED_CHECK_PROMPT_MAX = 1_000;
@@ -4713,7 +4734,13 @@ function baseMergeLines(task: Task): string[] {
  * ゴールガーディアンが、最終レビューの中でテスト（検証）のコマンドを実行する手順。前の段の結果を使い回せるとき（PBI-305）は、
  * 全体が覆われていれば実行せずに、使い回した結果で申告させる。
  */
-function testRunLines(command: string, byPerson = false, reusable = false): string[] {
+function testRunLines(
+  command: string,
+  byPerson = false,
+  reusable = false,
+  /** 実装の工程の記録はあるが、テストの全件の結果が無い（関係するテストだけなど。PBI-316）。 */
+  selfReviewPartialTests = false,
+): string[] {
   return [
     "--- テスト（検証）の実行 ---",
     `判定の前に、次のテスト（検証）のコマンド${byPerson ? "（人が再開のときに指定したもの）" : ""}を、作業領域（カレントディレクトリ）で実行してください。`,
@@ -4723,6 +4750,11 @@ function testRunLines(command: string, byPerson = false, reusable = false): stri
     ...(reusable
       ? [
           "- ただし、下の「前の段で実行した検証の使い回し」で、このコマンドが定める対象の全体を、同じ内容で前の段が実行して結果が出ていると確かめられたら、実行し直さない。tests の exitCode・output には使い回した結果を書き、reusedFrom に元の段（self-review か ci）を書く。一部だけが覆われているなら、残りだけを実行し、合わせた結果を書く（reusedFrom は書かない）",
+          ...(selfReviewPartialTests
+            ? [
+                "- 実装の工程の記録には、テストの全件の結果がありません（partial のものだけ）。実装の工程のテストの結果を、このコマンドの結果として使い回さない（reusedFrom を self-review にしない）。CI が全体を覆うと確かめられなければ、このコマンドを実行する",
+              ]
+            : []),
         ]
       : []),
     "- 必要なら、先にリポジトリの手順にあるセットアップ（依存関係の取得など）をしてから実行する",
@@ -4783,6 +4815,11 @@ export function extractFinalReview(
      * JSON の文字列のエスケープも伏せているので当てない）。読めなかった理由の、壊れた所の前後の文字にも使う。
      */
     hide?: (text: string) => string;
+    /**
+     * 前の段の記録（実装の工程・CI の結果の前の最終レビュー）に、テストの全件の結果がある（fullTestsRecorded。PBI-316）。
+     * 無ければ、テストの結果を前の段から使い回した（reusedFrom が self-review）という申告を認めない（reuseRejected）。
+     */
+    previousFullTests?: boolean;
   } = {},
 ): Pick<
   FinalReview,
@@ -4808,6 +4845,11 @@ export function extractFinalReview(
    * すべて不合格の形になっているが、ゴールガーディアンの判定ではないので、呼び出し元は記録せず、最終レビューを出し直させる。
    */
   unreadable: boolean;
+  /**
+   * テストの結果を実装の工程から使い回したと申告したが、実装の工程の記録にテストの全件の結果が無い（PBI-316）。テストの全件を
+   * 誰も実行していないので、判定として扱わない。呼び出し元は、unreadable と同じく記録せず、最終レビューを出し直させる。
+   */
+  reuseRejected: boolean;
 } {
   const found = findBlock(output, FINAL_REVIEW_HEADING, FINAL_REVIEW_SHAPE, options.hide);
   const verdicts = readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
@@ -4901,6 +4943,7 @@ export function extractFinalReview(
         verdicts.passed && viewpoints.every((v) => v.verified) && ciFlaky.rejected.length === 0,
       missingCommands: [],
       unreadable: found === undefined,
+      reuseRejected: false,
     };
   }
   const reported = found?.raw.tests;
@@ -4986,6 +5029,8 @@ export function extractFinalReview(
     tests,
     missingCommands,
     unreadable: found === undefined,
+    // 関係するテストだけの記録を、全件の結果として使い回させない（全件を飛ばす経路を残さない）
+    reuseRejected: reusedFrom === "self-review" && options.previousFullTests !== true,
   };
 }
 

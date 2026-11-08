@@ -1,13 +1,18 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PullRequestCi, Task, VerificationCommand, VerificationRecord } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_CONTEXT_DIR } from "./context.js";
 import {
   buildFinalReviewPrompt,
   buildPrompt,
   extractBlocks,
   extractFinalReview,
+  IMPLEMENT_TEST_SCOPE_LINES,
 } from "./prompts.js";
 import {
   extractVerificationRecord,
+  fullTestsRecorded,
   reuseVerificationLines,
   VERIFICATION_HEADING,
   withoutStepDocuments,
@@ -310,5 +315,151 @@ describe("成果物のファイルが無い写しで実行した記録（PBI-305
     ).toBe(true);
     expect(withoutStepDocuments(record, [])).toBe(record);
     expect(withoutStepDocuments(undefined, ["x"])).toBeUndefined();
+  });
+});
+
+/*
+ * 実装の繰り返しの途中は関係するテストだけ、全件は最後の変更の後に1回（PBI-316）。関係するテストだけの記録は、全件の結果として
+ * 使い回させない。全件の結果が無ければ、最終レビューが全件を実行する。
+ */
+describe("途中は関係するテストだけ、全件は最後の変更の後に1回（PBI-316）", () => {
+  const related: VerificationCommand = {
+    kind: "test",
+    command: "make test TESTS=pay",
+    coverage: "partial",
+    note: "関係するテストだけ：変えたファイルのテスト",
+    status: "passed",
+    excerpt: "3 passed",
+    by: "self-review",
+  };
+  const fullTest = { ...related, command: "make test", coverage: "full" as const, note: "" };
+  const reviewOutput = (reusedFrom?: string) =>
+    `\`\`\`json\n${JSON.stringify({
+      "sacty-final-review": {
+        viewpoints: [{ id: "REQ", verified: true, reason: "ok" }],
+        remarks: [],
+        tests: {
+          command: "make test",
+          exitCode: 0,
+          output: "120 passed",
+          ...(reusedFrom ? { reusedFrom } : {}),
+        },
+        humanChecks: [],
+        summary: "ok",
+      },
+    })}\n\`\`\``;
+
+  it("実装の指示は、途中は関係するテストだけ、全件は最後の変更の後に1回と伝え、選べなければ全件にさせる", () => {
+    for (const task of [
+      implementTask(),
+      implementTask({ noTestsReason: "テストの仕組みが無い" }),
+      implementTask({ approved: {}, steps: [{ key: "implement", state: "active" }] }),
+    ]) {
+      const prompt = buildPrompt(task, "implement");
+      const section = prompt.slice(
+        prompt.indexOf("--- 提出の前の検証 ---"),
+        prompt.indexOf("--- 提出の前のセルフレビュー ---"),
+      );
+      for (const line of IMPLEMENT_TEST_SCOPE_LINES) expect(section).toContain(line);
+      expect(section).toContain("決められなければ全件を実行する");
+      expect(section).toContain("関係するテストだけの結果で提出しない");
+      // 記録では、関係するテストだけの結果を partial にさせ、全件と区別させる
+      const record = prompt.slice(prompt.indexOf("--- 実行した検証の記録 ---"));
+      expect(record).toContain("関係するテストだけの結果は partial にし、note に選び方");
+    }
+  });
+
+  it("文書だけの依頼は、テストを実行しないので、テストの範囲の指示を出さない", () => {
+    const prompt = buildPrompt(implementTask({ documentsOnly: true }), "implement");
+    for (const line of IMPLEMENT_TEST_SCOPE_LINES) expect(prompt).not.toContain(line);
+    expect(prompt).not.toContain("関係するテストだけの結果は partial");
+  });
+
+  it("テストの範囲の指示は、特定の言語・テストの実行器に寄せない", () => {
+    const skill = readFileSync(
+      join(DEFAULT_CONTEXT_DIR, "skills/review/review-dispatch/references/verification-run.md"),
+      "utf8",
+    );
+    const start = skill.indexOf("`self-review` で `scope` が `all` のときのテスト");
+    const added = skill.slice(start, skill.indexOf("以降の 1〜4 は"));
+    expect(start).toBeGreaterThan(0);
+    for (const text of [IMPLEMENT_TEST_SCOPE_LINES.join("\n"), added]) {
+      expect(text).not.toMatch(
+        /sacty|npm|node|vitest|jest|mocha|pytest|cargo|gradle|maven|go test|rspec|\.ts\b/i,
+      );
+    }
+    // スキルも、選べなければ全件・全件の結果が無いまま提出しない、を持つ
+    expect(added).toContain("決められなければ全件を実行する");
+    expect(added).toContain("全件の結果が無いまま提出しない");
+  });
+
+  it("関係するテストだけの記録は partial として読み、全件の結果とは区別する", () => {
+    const { record: read } = extractVerificationRecord(
+      block({
+        commands: [
+          { ...related, coverage: undefined },
+          { kind: "test", command: "make test", coverage: "full", status: "passed" },
+        ],
+      }),
+      "implement",
+    );
+    expect(read?.commands.map((c) => c.coverage)).toEqual(["partial", "full"]);
+    expect(read?.commands[0]?.note).toBe("関係するテストだけ：変えたファイルのテスト");
+    expect(fullTestsRecorded({ commands: [related] })).toBe(false);
+    expect(fullTestsRecorded({ commands: [related, fullTest] })).toBe(true);
+    // テスト以外の全体の記録は、テストの全件の結果ではない
+    expect(fullTestsRecorded({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
+    expect(fullTestsRecorded(undefined)).toBe(false);
+  });
+
+  it("実装の工程の記録にテストの全件の結果が無ければ、最終レビューにテストのコマンドを実行させる", () => {
+    const line = "実装の工程の記録には、テストの全件の結果がありません";
+    const partial = buildFinalReviewPrompt(implementTask(), "diff", {
+      testCommand: "make test",
+      implementVerification: { commands: [related] },
+    });
+    expect(partial).toContain(line);
+    expect(partial).toContain("reusedFrom を self-review にしない");
+    // 全件の結果があれば、今までどおり使い回させる
+    const full = buildFinalReviewPrompt(implementTask(), "diff", {
+      testCommand: "make test",
+      implementVerification: { commands: [related, fullTest] },
+    });
+    expect(full).not.toContain(line);
+    expect(full).toContain("reusedFrom に元の段（self-review か ci）を書く");
+    // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せる
+    const before = buildFinalReviewPrompt(implementTask(), "diff", {
+      testCommand: "make test",
+      implementVerification: { commands: [related] },
+      reviewBeforeCiVerification: { commands: [{ ...fullTest, by: "guardian" }] },
+    });
+    expect(before).not.toContain(line);
+  });
+
+  it("全件の結果が無いのに、テストを実装の工程から使い回したと申告したら、判定として扱わない", () => {
+    const options = { testCommand: "make test" };
+    // 実装の工程の記録に全件が無い（関係するテストだけ・記録が無い）
+    expect(
+      extractFinalReview(reviewOutput("self-review"), ["REQ"], [], options).reuseRejected,
+    ).toBe(true);
+    expect(
+      extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
+        ...options,
+        previousFullTests: false,
+      }).reuseRejected,
+    ).toBe(true);
+    // 全件の結果があれば、使い回しを認める
+    const accepted = extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
+      ...options,
+      previousFullTests: true,
+    });
+    expect(accepted.reuseRejected).toBe(false);
+    expect(accepted.passed).toBe(true);
+    // 自分で実行した・CI から使い回したものは、実装の工程の記録にかかわらず判定として扱う
+    for (const reused of [undefined, "ci"]) {
+      expect(extractFinalReview(reviewOutput(reused), ["REQ"], [], options).reuseRejected).toBe(
+        false,
+      );
+    }
   });
 });
