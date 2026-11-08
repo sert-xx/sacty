@@ -611,6 +611,11 @@ export type Task = {
    * 依存先の PR がマージされ、ベースブランチに付け替えると無くなる。
    */
   stack?: { taskId: string; branch: string; commit: string };
+  /**
+   * 重ねていた依存先の PR がマージされて付け替えた、起点のブランチ（PBI-317）。作業領域をまだ用意していない子タスクが、
+   * 初めて用意するときに使う（用意した後は repository.baseBranch）。
+   */
+  stackedBase?: string;
   /** タスク分割で決めた子タスク（PBI-27）。 */
   split?: {
     /**
@@ -2763,6 +2768,8 @@ export function applyEvent(
       }
       const { stackedOn, baseBranch } = event.payload;
       task.stack = stackedOn ? { ...stackedOn, commit: stack.commit } : undefined;
+      // 作業領域をまだ用意していなければ、初めて用意するときの起点のブランチとして持つ
+      task.stackedBase = baseBranch;
       if (task.repository) task.repository = { ...task.repository, baseBranch };
       break;
     }

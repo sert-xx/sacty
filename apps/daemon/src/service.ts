@@ -959,6 +959,11 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /**
+   * PR の向き先を付け替えている途中のタスク（PBI-317）。その間は実行しない（差し戻しの後の再提出と、付け替え・ドラフトの
+   * 切り替えが混ざらないように。付け替えは、実行中のタスクでは始めない）。
+   */
+  private readonly retargeting = new Set<string>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -1124,7 +1129,7 @@ export class TaskService {
     await this.checkReworkMerges();
     // 重ねた子タスクの承認待ちの PR の向き先を、依存先の PR のマージの後のブランチに付け替える（PBI-317）
     for (const task of [...this.tasks.values()]) {
-      if (this.retargetDue(task) && !this.cancelling.has(task.id)) {
+      if (this.retargetDue(task) && !this.cancelling.has(task.id) && !this.inflight.has(task.id)) {
         await this.retargetPullRequest(task);
       }
     }
@@ -7259,13 +7264,31 @@ export class TaskService {
   /**
    * 重ねた子タスクの、承認待ちの実装の PR の向き先を、今の起点のブランチに付け替える（PBI-317。依存先の PR がマージされた
    * 後）。本文も書き直し（重ねた先が変わる・無くなる）、重ねるのをやめたなら、ドラフトを外す（検証に通った PR なので）。
-   * 失敗したら、記録せずに次の確認でやり直す（承認待ちのまま。タスクは止めない）。
+   * 失敗したら、記録せずに次の確認でやり直す（承認待ちのまま。タスクは止めない）。GitHub を待つ間に、差し戻し・一時停止・
+   * 中止などでタスクが変わったら、ドラフトを外さず・記録しない（再提出が、そのときの向き先・ドラフトで PR を更新する）。
    */
   private async retargetPullRequest(task: Task): Promise<void> {
     const pr = task.pullRequest;
     const repository = task.repository;
     if (!pr?.number || !pr.repo || !repository) return;
     const usedSecrets: string[] = [];
+    // 付け替えを始めたときと同じ承認待ちのままか（同じ PR・同じコミット・同じ提出・同じ起点のブランチ・重ねているか）
+    const unchanged = (): Task | undefined => {
+      const latest = this.tasks.get(task.id);
+      const now = latest?.pullRequest;
+      const same =
+        latest?.status === "awaiting_approval" &&
+        now?.number === pr.number &&
+        now?.commit === pr.commit &&
+        !now?.verifying &&
+        latest.gate?.step === "implement" &&
+        latest.gate.submission === task.gate?.submission &&
+        latest.repository?.baseBranch === repository.baseBranch &&
+        latest.stack?.taskId === task.stack?.taskId &&
+        !this.cancelling.has(task.id);
+      return same ? latest : undefined;
+    };
+    this.retargeting.add(task.id);
     try {
       const token = await this.githubToken(task, pr.repo, usedSecrets);
       const stackedOn = this.stackedPullRequest(task);
@@ -7295,6 +7318,7 @@ export class TaskService {
         retarget: true,
       });
       const ready = !task.stack;
+      if (!unchanged()) return;
       if (ready) {
         await this.deps.pulls.setDraft({
           repo: pr.repo,
@@ -7303,8 +7327,8 @@ export class TaskService {
           draft: false,
         });
       }
-      const latest = this.tasks.get(task.id);
-      if (latest?.pullRequest?.number !== pr.number || latest.status === "cancelled") return;
+      const latest = unchanged();
+      if (!latest) return;
       this.append(latest, [
         {
           actor: "sacty",
@@ -7322,6 +7346,8 @@ export class TaskService {
       console.warn(
         `[daemon] PR #${pr.number}（${pr.repo}）の向き先を ${repository.baseBranch} に付け替えられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
+    } finally {
+      this.retargeting.delete(task.id);
     }
   }
 
@@ -7449,8 +7475,10 @@ export class TaskService {
     // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する。
     // 初めて用意するときは、ブランチを指定せずに既定のブランチを clone する
     const url = task.repository?.url ?? repo?.url ?? "";
-    // 依存先の PR に重ねた子タスクは、初めて用意するとき、その PR のブランチの合格したコミットで用意する（PBI-317）
-    const branch = rebase?.branch ?? task.repository?.baseBranch ?? task.stack?.branch;
+    // 依存先の PR に重ねた子タスクは、初めて用意するとき、その PR のブランチの合格したコミットで用意する（PBI-317）。用意する
+    // 前に依存先がマージされたなら、付け替えた起点のブランチ（stackedBase）の最新で用意する
+    const branch =
+      rebase?.branch ?? task.repository?.baseBranch ?? task.stack?.branch ?? task.stackedBase;
     const usedSecrets: string[] = [];
     try {
       const prepared = await this.deps.repos.prepare(
@@ -7585,7 +7613,8 @@ export class TaskService {
     if (
       this.cancelling.has(taskId) ||
       this.pauseRequested.has(taskId) ||
-      this.mergeStopping.has(taskId)
+      this.mergeStopping.has(taskId) ||
+      this.retargeting.has(taskId)
     ) {
       return;
     }
@@ -7838,9 +7867,10 @@ export class TaskService {
       // 用意できなければ、既定のブランチのまま進め、そのことを理由に添える
       const prepared = this.mustGet(taskId).repository;
       // 依存先の PR に重ねた子タスクは、起点のブランチを依存先で決めるので、ベースブランチの選択は使わない（PBI-317）
+      const stacked = this.mustGet(taskId);
       const rebaseTo = continuing?.ok
         ? continuing.pr.branch
-        : this.mustGet(taskId).stack
+        : stacked.stack || stacked.stackedBase !== undefined
           ? undefined
           : baseBranch;
       const rebased =
@@ -10421,25 +10451,41 @@ export class TaskService {
         body,
         number,
         ...(verifying || task.stack ? { draft: true } : {}),
+        // 重ねている間は、ドラフトを使えないリポジトリでも、ドラフトでない PR にしない（PBI-317）
+        ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
       });
       let draft = pr.draft;
+      let draftError: unknown;
       const baseRecord = stacked ? { baseBranch: task.repository.baseBranch } : {};
       if (verifying || task.stack) {
         // 前の提出でレビューへ進めた PR を更新した（PR の指摘で実装をやり直した）なら、検証の間はドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
-        // ドラフトにする（PBI-317）
-        if (number && !draft) {
+        // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
+        if ((number || task.stack) && !draft) {
           draft = await this.deps.pulls
             .setDraft({ repo: prRepo, token, number: pr.number, draft: true })
             .then((r) => r.draft)
             .catch((error: unknown) => {
+              draftError = error;
               console.warn(
                 `[daemon] PR #${pr.number}（${prRepo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
               );
               return false;
             });
         }
+      }
+      // 依存先の PR に重ねている間は、ドラフトにできなければ、記録せずに止める（ドラフトでない重ねた PR で承認待ちにすると、
+      // 依存先より先にマージされうる。再開すると、ここからやり直す。PBI-317）
+      if (task.stack && !draft) {
+        return fail(
+          message("pr.stackDraftFailed", {
+            detail:
+              draftError === undefined
+                ? message("pr.notDraft", { number: pr.number })
+                : errorText(draftError),
+          }),
+        );
       }
       if (verifying) {
         this.append(task, [
@@ -11468,39 +11514,66 @@ export class TaskService {
 
   /**
    * 依存のある子タスク（blocked）を、いま始められるか（PBI-27・PBI-317）。始められるなら TaskUnblocked の payload、まだ
-   * 待つなら undefined。依存先を、片付いた（完了・中止を認めた）・実装の PR がマージされた（マージの後の監視の途中）・
-   * 重ねられる（最終レビューに合格して承認待ち。`reviewedPullRequest`）・それ以外に分ける。
-   * - 依存先がすべて片付いたか、片付いていないものがすべてマージ済みなら、ベースブランチから始める（重ねない）
-   * - 残りの依存先のうち1つ（X）が重ねられ、子と同じリポジトリで、ほかの残りがすべて X が重ねている依存先（X の重ねの
-   *   連なり）なら、X の PR のブランチの合格したコミットに重ねて始める
-   * - それ以外（重ねる先を1つに決められない・別のリポジトリ・合格していない）は、待つ
+   * 待つなら undefined。決められなければ待つ。
+   * - 依存先がすべてベースブランチに入った（`landed`）なら、ベースブランチから始める（重ねない）
+   * - 依存先のうち1つ（X）が重ねられ（最終レビューに合格して承認待ち。`reviewedPullRequest`）、子と同じリポジトリで、
+   *   ほかの依存先がすべて、X の合格したコミットに入っていると確かめられる（X が待った依存先で、ベースブランチに入ったか、
+   *   X が重ねている連なりにある）なら、X の PR のブランチの合格したコミットに重ねて始める
+   * - それ以外（重ねる先を1つに決められない・別のリポジトリ・合格していない）は、待つ。たとえば、互いに依存しない A・B に
+   *   依存する子は、A がマージされても B の合格したコミットには A の変更が入っていないので、B もマージされるまで待つ
    */
   private blockedStart(
     parent: Task,
     child: { taskId: string; dependsOn: string[] },
   ): Extract<EventInput, { type: "TaskUnblocked" }>["payload"] | undefined {
-    if (child.dependsOn.every((d) => this.childSettled(parent, d))) return {};
-    const remaining = child.dependsOn.filter((d) => {
-      if (this.childSettled(parent, d)) return false;
-      const dep = this.tasks.get(d);
-      return !(dep && dep.status !== "cancelled" && implementationMerged(dep));
-    });
-    if (remaining.length === 0) return {};
+    if (child.dependsOn.every((d) => this.landed(parent, d))) return {};
     const current = this.tasks.get(child.taskId);
     const repo = current && this.taskRepo(current);
-    for (const id of remaining) {
+    for (const id of child.dependsOn) {
+      if (this.landed(parent, id)) continue;
       const dep = this.tasks.get(id);
       const reviewed = dep && reviewedPullRequest(dep);
       if (!dep || !reviewed || dep.status !== "awaiting_approval") continue;
       if (dep.gate?.step !== "implement" || !dep.repository) continue;
       if (!repo || this.taskRepo(dep) !== repo) continue;
+      const waited = this.waitedOn(parent, id);
       const chain = this.stackChain(dep);
-      if (!remaining.every((r) => r === id || chain.includes(r))) continue;
+      const covered = child.dependsOn.every(
+        (d) => d === id || (waited.has(d) && (this.landed(parent, d) || chain.includes(d))),
+      );
+      if (!covered) continue;
       return {
         stackedOn: { taskId: dep.id, branch: reviewed.branch, commit: reviewed.commit },
       };
     }
     return undefined;
+  }
+
+  /**
+   * 依存先の子タスクの変更が、ベースブランチに入ったか（PBI-317）。完了・中止を認めた（片付いた）か、実装の PR がマージ
+   * された（マージの後の監視の途中）もので、ほかの PR に重ねていないもの。重ねたまま PR がマージされた（人が依存先より先に
+   * マージした）なら、変更は重ねた先の PR のブランチにしか入っていないので、まだ入っていない（重ねた先がマージされて、
+   * 付け替えると入る）。
+   */
+  private landed(parent: Task, childId: string): boolean {
+    if (parent.split?.acceptedCancellations.includes(childId)) return true;
+    const dep = this.tasks.get(childId);
+    if (!dep || dep.stack) return false;
+    return isCompleted(dep) || (dep.status !== "cancelled" && implementationMerged(dep));
+  }
+
+  /** 子タスクが（依存の依存も含めて）待った依存先の子タスク（PBI-317）。 */
+  private waitedOn(parent: Task, childId: string): Set<string> {
+    const children = new Map((parent.split?.children ?? []).map((c) => [c.taskId, c.dependsOn]));
+    const waited = new Set<string>();
+    const next = [...(children.get(childId) ?? [])];
+    while (next.length > 0) {
+      const id = next.pop() as string;
+      if (waited.has(id)) continue;
+      waited.add(id);
+      next.push(...(children.get(id) ?? []));
+    }
+    return waited;
   }
 
   /** タスクが重ねている依存先を、近い順にたどった ID（重ねていなければ空。PBI-317）。 */

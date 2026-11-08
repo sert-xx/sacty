@@ -5799,6 +5799,16 @@ describe("依存先の PR に重ねた子タスク（PBI-317）", () => {
     expect(restacked.repository?.baseBranch).toBe("sacty/first");
   });
 
+  it("作業領域を用意する前に依存先の PR がマージされたら、付け替えた起点のブランチを持つ（用意したときの起点になる）", () => {
+    const unprepared = [child("c"), ev("c", { type: "TaskUnblocked", payload: { stackedOn } })];
+    const merged = project([...unprepared, merge("dep", { baseBranch: "release" })]).get(
+      "c",
+    ) as Task;
+    expect(merged.stack).toBeUndefined();
+    expect(merged.repository).toBeUndefined();
+    expect(merged.stackedBase).toBe("release");
+  });
+
   it("重ねていない・違う依存先のマージは、作業履歴の矛盾にする", () => {
     const plain = [child("c"), ev("c", { type: "TaskUnblocked", payload: {} }), prepared()];
     expect((project(plain).get("c") as Task).stack).toBeUndefined();

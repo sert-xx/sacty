@@ -20,6 +20,11 @@ export interface PullRequests {
      */
     draft?: boolean;
     /**
+     * draft で、リポジトリがドラフトを使えなくても、ドラフトでない PR にしない（作らずに失敗にする。依存先の PR に重ねた
+     * 子タスクの PR。PBI-317）。
+     */
+    requireDraft?: boolean;
+    /**
      * 更新（number）でも、PR の向き先を baseBranch にする（依存先の PR に重ねた子タスクの PR。PBI-317）。無ければ、更新では
      * 向き先を変えない。
      */
@@ -894,7 +899,7 @@ export class GitHubPullRequests implements PullRequests {
       });
     let { res, json } = await create(input.draft === true);
     // リポジトリがドラフトの PR を使えない（GitHub のプランなど）なら、ドラフトでない PR にする
-    if (input.draft && res.status === 422 && draftUnsupported(json)) {
+    if (input.draft && !input.requireDraft && res.status === 422 && draftUnsupported(json)) {
       ({ res, json } = await create(false));
     }
     if (res.ok) return result(json);

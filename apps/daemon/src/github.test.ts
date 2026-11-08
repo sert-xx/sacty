@@ -86,6 +86,21 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(calls.map((c) => (c.body as { draft?: boolean }).draft)).toEqual([true, undefined]);
   });
 
+  it("requireDraft なら、リポジトリがドラフトの PR を使えなくても、ドラフトでない PR にしない（PBI-317）", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 422,
+        json: { message: "Draft pull requests are not supported in this repository." },
+      },
+      // 同じブランチの開いた PR は無い
+      { status: 200, json: [] },
+    ]);
+    await expect(
+      new GitHubPullRequests(impl).upsert({ ...input, draft: true, requireDraft: true }),
+    ).rejects.toThrow();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+
   it("ドラフトを外すときは、PR の node_id で GraphQL の markPullRequestReadyForReview を呼ぶ", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: true, node_id: "PR_node" } },
