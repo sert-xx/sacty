@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-319
-- PR: なし
+- PR: #325
 - ブランチ: feat/issue-319-reuse-dependency-setup
 - 関係する ADR: [依存の準備の結果を、タスクごとのキャッシュのディレクトリで工程・実行の間で使い回す](../adr/20261108-0739-task-dependency-cache.md)
 
