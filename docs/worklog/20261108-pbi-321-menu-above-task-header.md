@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-321
-- PR: なし
+- PR: #328
 - ブランチ: feat/issue-321-menu-above-task-header
 - 関係する ADR: なし
 
