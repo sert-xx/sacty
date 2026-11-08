@@ -471,7 +471,12 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import type { UpdateStatus } from "./update-check.js";
-import { extractVerificationRecord, withoutStepDocuments } from "./verification-reuse.js";
+import {
+  extractVerificationRecord,
+  fullRunRecorded,
+  partialTestsOnly,
+  withoutStepDocuments,
+} from "./verification-reuse.js";
 import {
   idEntries,
   overlapsMounts,
@@ -9596,6 +9601,11 @@ export class TaskService {
           ...(documentsOnly ? { documentsOnly } : {}),
           ...(changedFiles ? { changedFiles } : {}),
           ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
+          // 関係するテストだけの記録を、全件の結果として使い回させない（PBI-316）。CI の結果の前の最終レビュー（PBI-314）が
+          // 全件を実行していれば、その使い回しは認める（reusedFrom に、その段を表す値が無いため）
+          previousPartialTestsOnly:
+            partialTestsOnly(current.implementVerification, testCommand) &&
+            !fullRunRecorded(reviewedBefore, testCommand),
         },
       );
     // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
@@ -9607,16 +9617,19 @@ export class TaskService {
       recordStopped();
       return;
     }
-    let { missingCommands, unreadable, ...review } = extractReview(false);
+    let { missingCommands, unreadable, reuseRejected, ...review } = extractReview(false);
     // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
     // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
-    // 実装の問題ではないので、止めて人に知らせる（再開すると最終レビューからやり直す）
-    if (unreadable) {
+    // 実装の問題ではないので、止めて人に知らせる（再開すると最終レビューからやり直す）。
+    // テストの全件の結果が無いのに、実装の工程から使い回したと申告したとき（PBI-316）も、誰も全件を実行していないので同じにする
+    if (unreadable || reuseRejected) {
       const count = (this.mustGet(task.id).unreadableReviews ?? 0) + 1;
       const path = `runs/${task.id}/${runId}.jsonl`;
       const stop = count >= MAX_UNREADABLE_REVIEWS;
       // 何が読めなかったか（JSON の何行目の何文字目で壊れているか。PBI-298）。秘密情報は伏せる
-      const detail = finalReviewUnreadableDetail(outcome.output, hide);
+      const detail = unreadable
+        ? finalReviewUnreadableDetail(outcome.output, hide)
+        : message("verify.partialTestsReused");
       const failure = stop
         ? message("verify.finalReviewUnreadableStopped", {
             max: MAX_UNREADABLE_REVIEWS,
@@ -9676,7 +9689,8 @@ export class TaskService {
         recordStopped();
         return;
       }
-      if (documentsOnly) ({ missingCommands, unreadable, ...review } = extractReview(true));
+      if (documentsOnly)
+        ({ missingCommands, unreadable, reuseRejected, ...review } = extractReview(true));
     }
     // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
     // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
