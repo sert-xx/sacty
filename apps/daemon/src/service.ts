@@ -7141,8 +7141,13 @@ export class TaskService {
       // 中止したタスクは、中止の片付けに任せる（依存のキャッシュだけは、ここでも消す）
       const task = this.tasks.get(taskId);
       if (task) {
-        // 中止したタスクの依存のキャッシュ（中止の片付けの途中で止まったなど）は、もう使わないので消す（PBI-319）
-        if (task.status === "cancelled" && !this.workspaceBusy(taskId)) {
+        // 中止したタスクの依存のキャッシュ（中止の片付けの途中で止まったなど）は、もう使わないので消す（PBI-319）。
+        // 完了したタスクと同じく、作業領域・退避した git のメタデータ・キャッシュのどれかがマウントと重なれば残す
+        if (
+          task.status === "cancelled" &&
+          !this.workspaceBusy(taskId) &&
+          !taskWorkspacePaths(root, taskId).some((path) => overlapsMounts(path, mounts))
+        ) {
           removed += await this.removeWorkspacePaths([taskCachePath(root, taskId)], mounts);
         }
         removed += await this.retireWorkspace(taskId, mounts);

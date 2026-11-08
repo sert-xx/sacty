@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   chmodSync,
@@ -14,8 +15,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CONTAINER_TASK_CACHE, DockerExecutor, dockerRunArgs } from "./agents/docker.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  CONTAINER_TASK_CACHE,
+  DockerExecutor,
+  dockerRunArgs,
+  TASK_CACHE_PROBE_SCRIPT,
+  taskCacheNotices,
+  withTaskCacheProbe,
+} from "./agents/docker.js";
 import { CLAUDE_CACHE_DIR, type Invocation } from "./agents/invocation.js";
 import { prepareTaskCache } from "./task-cache.js";
 
@@ -111,7 +119,7 @@ describe("依存のキャッシュの用意（PBI-319）", () => {
 });
 
 /** docker run の偽物。引数と環境を記録し、すぐに終わる。 */
-function fakeDocker() {
+function fakeDocker(stderr = "") {
   const runs: { args: string[]; env: Record<string, string> }[] = [];
   const spawnImpl = ((_cmd: string, args: string[], options: { env: Record<string, string> }) => {
     if (args[0] === "run") runs.push({ args, env: options.env });
@@ -121,7 +129,10 @@ function fakeDocker() {
       stdin: { on: () => child.stdin, end: () => {} },
       kill: () => true,
     });
-    setTimeout(() => child.emit("close", 0), 0);
+    setTimeout(() => {
+      if (stderr) child.stderr.emit("data", stderr);
+      child.emit("close", 0);
+    }, 0);
     return child;
   }) as never;
   return { spawnImpl, runs };
@@ -157,9 +168,30 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
     expect(run?.args.join(" ")).toContain(`--tmpfs ${CONTAINER_TASK_CACHE}/${CLAUDE_CACHE_DIR} `);
     expect(run?.args).toContain("XDG_CACHE_HOME");
     expect(run?.env.XDG_CACHE_HOME).toBe(CONTAINER_TASK_CACHE);
+    // 書けるかをコンテナの中で確かめてから、エージェントのコマンドを実行する
+    expect(run?.args.join("\u0000")).toContain(
+      ["sh", "-c", TASK_CACHE_PROBE_SCRIPT, "sh", "claude", "-p"].join("\u0000"),
+    );
     expect(existsSync(join(cache, CLAUDE_CACHE_DIR))).toBe(false);
     expect(existsSync(join(cache, "pip"))).toBe(true);
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
+  });
+
+  it("コンテナの中で書けなかった知らせは、デーモンのログにも残す", async () => {
+    const notice = "[sacty] 依存のキャッシュ：/sacty-cache に書けないので、使わずに実行します";
+    const docker = fakeDocker(`${notice}\n`);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await new DockerExecutor(60_000, docker.spawnImpl).run({
+        runId: "r4",
+        image: "img",
+        workspaceDir: join(dir, "ws"),
+        invocation: invocation({ taskCache: join(dir, "_task-cache", taskId) }),
+      });
+      expect(warn.mock.calls.flat().join("\n")).toContain(`sacty-run-r4：${notice}`);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("キャッシュが無い実行は、これまでどおり（マウントも XDG_CACHE_HOME も足さない）", async () => {
@@ -173,6 +205,7 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
     const [run] = docker.runs;
     expect(run?.args.join(" ")).not.toContain(CONTAINER_TASK_CACHE);
     expect(run?.args).not.toContain("--tmpfs");
+    expect(run?.args).not.toContain(TASK_CACHE_PROBE_SCRIPT);
     expect(run?.env.XDG_CACHE_HOME).toBeUndefined();
   });
 
@@ -189,5 +222,47 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
     expect(args.join(" ")).toContain(
       `-v /w:/workspace -v /c:${CONTAINER_TASK_CACHE} --tmpfs ${CONTAINER_TASK_CACHE}/x -w /workspace`,
     );
+  });
+});
+
+describe("依存のキャッシュに書けるかを、コンテナの中で確かめる（PBI-319 レビュー指摘）", () => {
+  /** 確かめのスクリプトを、この環境の sh で動かす（コンテナの中と同じ）。 */
+  const probe = (cache: string) => {
+    // 外されたら unset と出す（sh の既定値の展開を、テンプレートの書き方と紛れない形で書く）
+    const show =
+      'if [ -n "$XDG_CACHE_HOME" ]; then printf "%s" "$XDG_CACHE_HOME"; else printf unset; fi; exit 7';
+    const [command, ...args] = withTaskCacheProbe(["sh", "-c", show]);
+    return spawnSync(command as string, args, {
+      env: { PATH: process.env.PATH ?? "", XDG_CACHE_HOME: cache },
+      encoding: "utf8",
+    });
+  };
+
+  it("書ければ XDG_CACHE_HOME のまま実行し、確かめに使ったファイルを残さない。終了コードはコマンドのもの", () => {
+    const cache = join(dir, "cache");
+    mkdirSync(cache);
+    const result = probe(cache);
+    expect(result.stdout).toBe(cache);
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(7);
+    expect(readdirSync(cache)).toEqual([]);
+  });
+
+  it("書けなければ（UID の違うユーザーなど）、知らせを出して XDG_CACHE_HOME を外して実行する", () => {
+    if (process.getuid?.() === 0) return; // root は権限で拒まれない
+    const cache = join(dir, "cache");
+    mkdirSync(cache, { mode: 0o500 });
+    try {
+      const result = probe(cache);
+      expect(result.stdout).toBe("unset");
+      expect(result.status).toBe(7);
+      expect(taskCacheNotices(result.stderr)).toEqual([
+        `[sacty] 依存のキャッシュ：${cache} に書けないので、使わずに実行します`,
+      ]);
+      // 無い場所（マウントできなかったなど）も同じ
+      expect(probe(join(dir, "missing")).stdout).toBe("unset");
+    } finally {
+      chmodSync(cache, 0o700);
+    }
   });
 });

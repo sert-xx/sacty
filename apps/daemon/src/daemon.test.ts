@@ -40312,6 +40312,25 @@ describe("タスクごとの依存のキャッシュ（PBI-319）", () => {
     expect(readdirSync(cacheOf(open))).toEqual(["pkg-1"]);
   });
 
+  it("起動時に、中止したタスクの作業領域がマウントされていれば、キャッシュも消さない（PBI-319 レビュー指摘）", async () => {
+    const { service, activity, id } = await submittedTask();
+    await service.cancel(id);
+    activity.close();
+    // 中止の片付けで消せなかった作業領域を、動いているコンテナがまだマウントしている
+    mkdirSync(join(root(), id, "repo"), { recursive: true });
+    mkdirSync(join(cacheOf(id), "pip"), { recursive: true });
+    const mounted = [join(root(), id, "repo")];
+    const restarted = makeService(new SqliteActivityStore(dbPath), [], {
+      containerMounts: async () => mounted,
+    });
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(0);
+    expect(existsSync(cacheOf(id))).toBe(true);
+    // マウントが無くなれば、次の起動で消す
+    mounted.length = 0;
+    expect(await restarted.service.cleanupWorkspacesAtStartup()).toBe(1);
+    expect(existsSync(cacheOf(id))).toBe(false);
+  });
+
   it("キャッシュが壊れていたら作り直し、用意できなければキャッシュを使わずに実行する", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

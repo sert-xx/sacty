@@ -50,6 +50,11 @@
   - `HOME`・`XDG_CONFIG_HOME` は変えない（認証の設定ファイルは、コンテナを消すと消える）。
   - エージェントの CLI 自身のキャッシュ（Claude Code の `claude-cli-nodejs`）は `--tmpfs /sacty-cache/claude-cli-nodejs` でコンテナの中だけの場所にする。
     置き場所の `claude-cli-nodejs` に前の実行が残したもの（リンクを含む）は、実行の前に消す（リンクはリンクだけ）。
+  - コンテナの中で、実行ユーザーが `/sacty-cache` に書けるかを確かめてから、コマンドを `exec` する（`withTaskCacheProbe`。出力の中継・ポートの転送の内側）。
+    書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、`[sacty] 依存のキャッシュ：` で始まる知らせを標準エラー出力に出し、`XDG_CACHE_HOME` を外して実行する（キャッシュを使わない、これまでどおりの実行）。
+    知らせはデーモンのログにも写す（`taskCacheNotices`）。
+    書ける条件は作業領域（`/workspace`）と同じ：sacty はどちらも持ち主を変えず、`--user` も付けないので、Linux のふつうのバインドマウントでは、デーモンの UID とイメージの `node` の UID が同じときだけ書ける（作業領域は `0755`、キャッシュは `0700` で、持ち主のほかは書けない点は同じ）。
+    Docker Desktop・Rancher Desktop など、仮想マシンへファイルを共有する環境では、コンテナの実行ユーザーの持ち物として見えるので書ける。
 - 既定の規則（`rules.md`）で、エージェントに次を求める。
   - ツールのキャッシュを `XDG_CACHE_HOME` に置く。見ないツールは、そのツールのキャッシュの場所の設定で `XDG_CACHE_HOME` の下に向ける（リポジトリのファイルは変えない）。
   - 認証の設定ファイル・秘密の値を置かない。
@@ -62,7 +67,7 @@
 
 関係する ADR: [依存の準備の結果を、タスクごとのキャッシュのディレクトリで工程・実行の間で使い回す](../adr/20261108-0739-task-dependency-cache.md)
 
-コード: `apps/daemon/src/task-cache.ts`（`prepareTaskCache`）、`apps/daemon/src/workspace-cleanup.ts`（`TASK_CACHE_DIR`・`taskCachePath`・`taskWorkspacePaths`）、`apps/daemon/src/agents/docker.ts`（`CONTAINER_TASK_CACHE`・`DockerExecutor`）、`apps/daemon/src/agents/invocation.ts`（`CLAUDE_CACHE_DIR`）、`apps/daemon/src/service.ts`（`ExecuteRun`）、`apps/daemon/default-context/rules.md`
+コード: `apps/daemon/src/task-cache.ts`（`prepareTaskCache`）、`apps/daemon/src/workspace-cleanup.ts`（`TASK_CACHE_DIR`・`taskCachePath`・`taskWorkspacePaths`）、`apps/daemon/src/agents/docker.ts`（`CONTAINER_TASK_CACHE`・`DockerExecutor`・`withTaskCacheProbe`・`taskCacheNotices`）、`apps/daemon/src/agents/invocation.ts`（`CLAUDE_CACHE_DIR`）、`apps/daemon/src/service.ts`（`ExecuteRun`）、`apps/daemon/default-context/rules.md`
 
 ## 実行のコマンド
 

@@ -40,6 +40,33 @@ export const CONTAINER_INPUT_DIR = "/sacty-input";
  */
 export const CONTAINER_TASK_CACHE = "/sacty-cache";
 
+/** 依存のキャッシュに書けなかったときの知らせの先頭（標準エラー出力に出し、デーモンのログにも写す。PBI-319）。 */
+export const TASK_CACHE_NOTICE_PREFIX = "[sacty] 依存のキャッシュ：";
+
+/**
+ * 依存のキャッシュに、コンテナの実行ユーザーが書けるかを確かめてからコマンドを実行する（PBI-319）。書けなければ
+ * （Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、知らせを標準エラー出力に出し、XDG_CACHE_HOME を
+ * 外して実行する（ツールが書けない場所に向いたまま失敗しないように。キャッシュを使わずに、これまでどおり動く）。
+ * PID と標準入出力は、exec でそのままコマンドに渡す。
+ */
+export const TASK_CACHE_PROBE_SCRIPT = [
+  'probe="$XDG_CACHE_HOME/.sacty-probe-$$"',
+  'if ( : > "$probe" ) 2>/dev/null; then rm -f "$probe"; else',
+  `  printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに実行します" >&2`,
+  "  unset XDG_CACHE_HOME",
+  "fi",
+  'exec "$@"',
+].join("\n");
+
+export function withTaskCacheProbe(command: string[]): string[] {
+  return ["sh", "-c", TASK_CACHE_PROBE_SCRIPT, "sh", ...command];
+}
+
+/** 標準エラー出力から、依存のキャッシュの知らせを取り出す（デーモンのログに写す）。 */
+export function taskCacheNotices(stderr: string): string[] {
+  return stderr.split("\n").filter((line) => line.startsWith(TASK_CACHE_NOTICE_PREFIX));
+}
+
 /**
  * 診断に使う出力（標準エラー出力）の、先頭と末尾だけを持つ（PBI-62）。長い実行でも、デーモンのメモリが出力の大きさに
  * 比例して増えないように。先頭には起動の失敗（イメージが無い・転送の知らせ）、末尾には終わりの原因が出る。
@@ -477,7 +504,13 @@ export class DockerExecutor implements AgentExecutor {
       ...(tmpfs.length > 0 ? { tmpfs } : {}),
       ...(network ? { network } : {}),
       // 出力は中継を通して受け取る（標準出力が非ブロッキングにされても、コマンドが EAGAIN で落ちないように。PBI-64）
-      command: withOutputRelay(withLocalForwards(invocation.command, forwards)),
+      // 依存のキャッシュに書けるかは、コンテナの中で確かめる（ホストの権限だけでは分からない。PBI-319）
+      command: withOutputRelay(
+        withLocalForwards(
+          invocation.taskCache ? withTaskCacheProbe(invocation.command) : invocation.command,
+          forwards,
+        ),
+      ),
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
         : {}),
@@ -558,7 +591,7 @@ export class DockerExecutor implements AgentExecutor {
       });
 
       // 転送しなかったポート（すでに使われていたなど。PBI-60）は、デーモンのログに残す
-      for (const notice of forwardNotices(stderr))
+      for (const notice of [...forwardNotices(stderr), ...taskCacheNotices(stderr)])
         console.warn(`[daemon] ${containerName}：${notice}`);
       if (this.aborting) {
         // デーモンを止めるために止めた実行も、止めるまでに読めた使用量は残す。全体は分からない（PBI-281）

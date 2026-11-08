@@ -1027,6 +1027,7 @@ A task's workspace (`workspaces/<task-id>`), its set-aside git metadata (`worksp
 - At startup, the following are removed too.
   - Workspaces, set-aside git metadata, and dependency caches that belong to no task.
   - Dependency caches of cancelled tasks (for example, when the daemon stopped in the middle of the cancel's cleanup).
+    As for completed tasks, it is not removed if any of the workspace, the set-aside git metadata, and the cache overlaps a mount.
     The dependency cache of a task in progress is kept and reused after the restart.
   - Per-run scratch directories (`<run-id>` under `_guardian`, `_snapshots`, `_review`, `_input`, `_audit-logs`, `_audit-ledger`, `_deployment`, `_export`, `_handoff`, `_question-logs`) that do not belong to a running run or a run whose stop could not be confirmed.
     They are removed at the end of the run, but are left if the daemon is stopped during the run; after a restart the run starts over with a new run ID, so they are never used again.

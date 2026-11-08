@@ -43,6 +43,11 @@ Within one task, the results of preparing dependencies (package downloads, build
   - `HOME` and `XDG_CONFIG_HOME` are not changed (auth config files disappear when the container is removed).
   - The agent CLI's own cache (Claude Code's `claude-cli-nodejs`) is made a container-only location with `--tmpfs /sacty-cache/claude-cli-nodejs`.
     Anything a previous run left at `claude-cli-nodejs` in the location (including a link) is removed before the run (a link is removed by itself).
+  - Inside the container, sacty checks that the user can write to `/sacty-cache` before it `exec`s the command (`withTaskCacheProbe`, inside the output relay and the port forwarding).
+    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs with `XDG_CACHE_HOME` removed (the usual run, without the cache).
+    The notice is copied to the daemon's log too (`taskCacheNotices`).
+    The condition for writing is the same as for the workspace (`/workspace`): sacty changes the owner of neither and passes no `--user`, so with an ordinary Linux bind mount the container can write only when the daemon's UID equals the UID of the image's `node` (the workspace is `0755` and the cache is `0700`; in both, only the owner can write).
+    In environments that share files into a virtual machine, such as Docker Desktop and Rancher Desktop, they appear as owned by the container's user, so it can write.
 - The default rules (`rules.md`) ask the agent to do the following.
   - Put tool caches in `XDG_CACHE_HOME`. For tools that do not read it, point the tool's cache location setting under `XDG_CACHE_HOME` (without changing the repository's files).
   - Not put auth config files or secret values there.
@@ -55,7 +60,7 @@ Within one task, the results of preparing dependencies (package downloads, build
 
 Related ADRs: [Reuse the results of preparing dependencies across steps and runs, in a per-task cache directory](../adr/20261108-0739-task-dependency-cache.md)
 
-Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`), `apps/daemon/src/workspace-cleanup.ts` (`TASK_CACHE_DIR`, `taskCachePath`, `taskWorkspacePaths`), `apps/daemon/src/agents/docker.ts` (`CONTAINER_TASK_CACHE`, `DockerExecutor`), `apps/daemon/src/agents/invocation.ts` (`CLAUDE_CACHE_DIR`), `apps/daemon/src/service.ts` (`ExecuteRun`), `apps/daemon/default-context/rules.md`
+Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`), `apps/daemon/src/workspace-cleanup.ts` (`TASK_CACHE_DIR`, `taskCachePath`, `taskWorkspacePaths`), `apps/daemon/src/agents/docker.ts` (`CONTAINER_TASK_CACHE`, `DockerExecutor`, `withTaskCacheProbe`, `taskCacheNotices`), `apps/daemon/src/agents/invocation.ts` (`CLAUDE_CACHE_DIR`), `apps/daemon/src/service.ts` (`ExecuteRun`), `apps/daemon/default-context/rules.md`
 
 ## Run commands
 
