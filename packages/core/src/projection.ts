@@ -128,6 +128,32 @@ export function workBaseCommit(
   return baseMerge?.commit ?? repository.baseCommit;
 }
 
+/**
+ * 依存のある子タスクが重ねて取り込める、実装の PR の合格したコミット（PBI-317）。最終レビューに合格して作った（ドラフトを
+ * 外す段の）開いている PR だけ。検証の待ちのために作り直した PR（verifying）・人が不合格のままレビューへ進めた PR・引き継いだ
+ * 人の PR・マージ・クローズした PR は使わない。作り直しの間（差し戻し・指摘の取り込み）も、次の PR を作るまでは前の合格した
+ * コミットを返す。
+ */
+export function reviewedPullRequest(
+  task: Task,
+): { branch: string; commit: string; number: number; url?: string } | undefined {
+  const pr = task.pullRequest;
+  if (!pr?.number || pr.verifying || task.pullRequestState !== "open") return undefined;
+  if (task.status === "cancelled" || task.continuedPullRequest) return undefined;
+  if (task.verificationOverride?.submission === task.submissions.implement) return undefined;
+  return {
+    branch: pr.branch,
+    commit: pr.commit,
+    number: pr.number,
+    ...(pr.url ? { url: pr.url } : {}),
+  };
+}
+
+/** 実装の PR がマージされたか（重ねた子タスクの付け替え。PBI-317）。 */
+export function implementationMerged(task: Task): boolean {
+  return task.pullRequestState === "merged" || task.pullRequestState === "merged_outdated";
+}
+
 /** 最終レビューの前に作った実装の PR の CI を待っているか（待つ間も、最終レビューは並べて進める。PBI-314）。 */
 export function awaitingPullRequestCi(task: Task): boolean {
   return Boolean(task.pullRequestCi && task.pullRequestCi.result === undefined);
@@ -579,6 +605,17 @@ export type Task = {
   status: TaskStatus;
   /** 分割で作った子タスクの親と、依存先の子タスク（PBI-27）。 */
   parent?: { taskId: string; dependsOn: string[] };
+  /**
+   * 依存先の子タスク（taskId）の実装の PR に重ねて始めた子タスクの、重ねている先（PBI-317）。branch はその PR のブランチ
+   * （子タスクの起点のブランチ・PR の向き先・取り込む元）、commit は始めたときの依存先の合格したコミット（作業領域の起点）。
+   * 依存先の PR がマージされ、ベースブランチに付け替えると無くなる。
+   */
+  stack?: { taskId: string; branch: string; commit: string };
+  /**
+   * 重ねていた依存先の PR がマージされて付け替えた、起点のブランチ（PBI-317）。作業領域をまだ用意していない子タスクが、
+   * 初めて用意するときに使う（用意した後は repository.baseBranch）。
+   */
+  stackedBase?: string;
   /** タスク分割で決めた子タスク（PBI-27）。 */
   split?: {
     /**
@@ -1866,6 +1903,20 @@ export function applyEvent(
       task.status = "idle";
       break;
 
+    case "PullRequestRetargeted": {
+      // 重ねた子タスクの承認待ちの PR の向き先を、GitHub で付け替えた（PBI-317）
+      const pr = task.pullRequest;
+      if (!pr || pr.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      const { draft: _draft, ...rest } = pr;
+      task.pullRequest = {
+        ...(event.payload.ready ? rest : pr),
+        baseBranch: event.payload.baseBranch,
+      };
+      break;
+    }
+
     case "PullRequestCiFinished": {
       const ci = task.pullRequestCi;
       if (!ci || ci.result !== undefined || task.verification === undefined) {
@@ -2704,7 +2755,24 @@ export function applyEvent(
       if (task.status !== "blocked")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = "queued";
+      // 依存先の PR に重ねて始める（PBI-317）
+      if (event.payload.stackedOn) task.stack = event.payload.stackedOn;
       break;
+
+    case "StackedDependencyMerged": {
+      // 重ねていた依存先の PR がマージされたので、起点のブランチを付け替える（PBI-317）。作業領域の起点のコミット・取り込みは
+      // そのまま（次の取り込みで、付け替えた先の最新を取り込む）
+      const stack = task.stack;
+      if (!stack || stack.taskId !== event.payload.taskId) {
+        throw new ActivityIntegrityError(event, "the task is not stacked on the dependency");
+      }
+      const { baseBranch } = event.payload;
+      task.stack = undefined;
+      // 作業領域をまだ用意していなければ、初めて用意するときの起点のブランチとして持つ
+      task.stackedBase = baseBranch;
+      if (task.repository) task.repository = { ...task.repository, baseBranch };
+      break;
+    }
 
     case "SplitCompleted":
       if (task.status !== "waiting_children" || activeStep(task) !== "split") {

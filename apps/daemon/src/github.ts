@@ -5,7 +5,7 @@ import { githubGraphqlUrl } from "./github-relay.js";
 
 /** PRを作る口。テストでは偽物に差し替える。repo はリポジトリの URL（https://<ホスト>/<owner>/<name>。PBI-40）。 */
 export interface PullRequests {
-  /** PRを作る。number があれば、そのPRの本文を更新する。 */
+  /** PRを作る。number があれば、そのPRの本文（retarget なら向き先も）を更新する。 */
   upsert(input: {
     repo: string;
     token: string;
@@ -19,6 +19,16 @@ export interface PullRequests {
      * false）。更新（number）では、ドラフトの状態は変えない（setDraft で変える）。
      */
     draft?: boolean;
+    /**
+     * draft で、リポジトリがドラフトを使えなくても、ドラフトでない PR にしない（作らずに失敗にする。依存先の PR に重ねた
+     * 子タスクの PR。PBI-317）。
+     */
+    requireDraft?: boolean;
+    /**
+     * 更新（number）でも、PR の向き先を baseBranch にする（依存先の PR に重ねた子タスクの PR。PBI-317）。無ければ、更新では
+     * 向き先を変えない。
+     */
+    retarget?: boolean;
   }): Promise<{ url: string; number: number; draft: boolean }>;
   /**
    * PR をドラフトにする・ドラフトを外す（レビューへ進める）。すでにその状態なら何もしない。GitHub の REST API では
@@ -867,7 +877,10 @@ export class GitHubPullRequests implements PullRequests {
     if (input.number) {
       const { res, json } = await call(`${base}/${input.number}`, {
         method: "PATCH",
-        body: JSON.stringify({ body: input.body }),
+        body: JSON.stringify({
+          body: input.body,
+          ...(input.retarget ? { base: input.baseBranch } : {}),
+        }),
       });
       if (res.ok) return result(json);
       throw apiError("updatePr", res.status, json);
@@ -886,7 +899,7 @@ export class GitHubPullRequests implements PullRequests {
       });
     let { res, json } = await create(input.draft === true);
     // リポジトリがドラフトの PR を使えない（GitHub のプランなど）なら、ドラフトでない PR にする
-    if (input.draft && res.status === 422 && draftUnsupported(json)) {
+    if (input.draft && !input.requireDraft && res.status === 422 && draftUnsupported(json)) {
       ({ res, json } = await create(false));
     }
     if (res.ok) return result(json);

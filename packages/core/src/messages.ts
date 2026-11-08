@@ -356,6 +356,8 @@ const PARAMS = {
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
+  // 依存先の PR に重ねた子タスク（PBI-317）
+  "stack.dependencyCancelled": z.object({ title: z.string() }),
   "split.repoMissing": z.object({ key: z.string() }),
   "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
@@ -456,6 +458,8 @@ const PARAMS = {
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
   "pr.readyFailed": z.object({ detail: TextParam }),
+  "pr.stackDraftFailed": z.object({ detail: TextParam }),
+  "pr.notDraft": z.object({ number: z.number() }),
   // PR テンプレート（PBI-87）。status が 0 なら、HTTP の応答が無かった（通信の失敗・時間切れ）
   "pr.templateFailed": z.object({ path: z.string(), status: z.number(), detail: TextParam }),
   "pr.templateTooLarge": z.object({ path: z.string(), size: Count, limit: Count }),
@@ -1175,6 +1179,8 @@ const ja: MessageDictionary = {
     `子タスク「${key}」に付けたリポジトリ（${repo}）は、プロジェクトの対象にありません。再開すると、分割をやり直します（対象のリポジトリから選び直します）。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
+  "stack.dependencyCancelled": ({ title }) =>
+    `重ねていた依存先の子タスク「${title}」が中止されたので、この子タスクは進めません（依存先の変更の上に作ったため）。中止してください。親タスクを再開して依存先の中止を認めると、中止したこの子タスクに依存する子タスクは、ベースブランチから始めます。`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
   "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
@@ -1325,6 +1331,9 @@ const ja: MessageDictionary = {
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
   "pr.readyFailed": ({ detail }, text) =>
     `PR のドラフトを外せませんでした（レビューへ進められません）：${text(detail)}`,
+  "pr.notDraft": ({ number }) => `PR #${number} がドラフトになっていません`,
+  "pr.stackDraftFailed": ({ detail }, text) =>
+    `依存先の PR に重ねた PR を、ドラフトにできませんでした（依存先より先にマージされないように、承認待ちにせずに止めました）：${text(detail)}。再開するとやり直します。依存先の PR がマージされた後に再開すると、ドラフトにせずに進めます。`,
   "pr.continuedBranchMoved": ({ branch, number }, text) =>
     `引き継いだ PR #${number} のブランチ（${text(branch)}）が、sacty が作業を始めた後に進んだため、実装を積めませんでした（強制プッシュはしません）。PR の新しいコミットを含めて直すには、このタスクを中止し、PR の指摘への対応を新しいタスクにしてください。`,
   "pr.continuedNotOpen": ({ number }) =>
@@ -1902,6 +1911,8 @@ const en: MessageDictionary = {
     `The repository given to subtask "${key}" (${repo}) is not a target of the project. Resume to redo the split (choosing from the target repositories).`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
+  "stack.dependencyCancelled": ({ title }) =>
+    `The subtask it was stacked on, "${title}", was cancelled, so this subtask does not go on (it was built on top of that subtask's changes). Cancel it. When you resume the parent task and accept the cancellations, the subtasks that depend on this one start from the base branch.`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
   "integrate.unreadable": "Could not read the verdicts from the integration review output.",
@@ -2055,6 +2066,9 @@ const en: MessageDictionary = {
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
   "pr.readyFailed": ({ detail }, text) =>
     `Could not mark the PR as ready for review (the task cannot move to review): ${text(detail)}`,
+  "pr.notDraft": ({ number }) => `PR #${number} is not a draft`,
+  "pr.stackDraftFailed": ({ detail }, text) =>
+    `Could not make the PR stacked on a dependency's PR a draft, so the task stopped instead of waiting for approval (so that it is not merged before the dependency): ${text(detail)}. Resume to try again. If you resume after the dependency's PR is merged, it goes on without a draft.`,
   "pr.continuedBranchMoved": ({ branch, number }, text) =>
     `The branch of the taken-over PR #${number} (${text(branch)}) moved after Sacty started working, so the implementation could not be pushed (Sacty does not force-push). To fix it including the new commits, cancel this task and create a new task for the PR feedback.`,
   "pr.continuedNotOpen": ({ number }) =>

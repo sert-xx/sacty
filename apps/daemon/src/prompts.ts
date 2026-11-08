@@ -5874,7 +5874,22 @@ export type PullRequestBodyStage = {
   secrets?: readonly string[];
   /** 更新する head に、sacty の AI のレビューが付いているか（PBI-302 D1）。本文を作った時点の状況。 */
   aiReview?: AiReviewOfHead;
+  /** 依存先の子タスクの PR に重ねている（PBI-317）。重ねた先の PR と、その子タスクの題。 */
+  stackedOn?: { number: number; url: string; title: string };
 };
+
+/**
+ * PR の本文の、依存先の PR に重ねたことの案内（PBI-317）。本文の長さの上限でも省かれないよう、決まった形の本文では冒頭に
+ * 置いて `keep` にし、テンプレートに沿わせる本文では目的（summary）の先頭に置く。
+ */
+export function stackedBodyLines(stage: PullRequestBodyStage): string[] {
+  const on = stage.stackedOn;
+  if (!on) return [];
+  return [
+    `**この PR は #${on.number}（${on.url}。子タスク「${on.title}」の PR）に重ねています。** 向き先（base）は #${on.number} のブランチで、差分はこの子タスクの変更だけです。`,
+    `#${on.number} より先にマージしないでください（それまでドラフトにしています）。#${on.number} がマージされると、sacty が向き先をベースブランチに付け替えて、ドラフトを外します。`,
+  ];
+}
 
 /**
  * 本文の、AI のレビューの状況の1行（PBI-302 D1）。本文は PR を作った（更新した）時点のものなので、その後に付いたレビューは
@@ -6422,9 +6437,11 @@ export function buildPullRequestBodyText(
   const override = overrideBodyLines(task).join("\n").trim();
   const human = humanCheckBodyLines(task).join("\n").trim();
   const moreReview = finalReviewMore(task, stage);
+  const stacked = stackedBodyLines(stage).join("\n");
   const main = [
     intro,
     "",
+    ...(stacked ? [stacked, ""] : []),
     ...(closesLines(task).length > 0 ? [...closesLines(task), ""] : []),
     "## 結論",
     "",
@@ -6455,7 +6472,13 @@ export function buildPullRequestBodyText(
       ...implementApprovalLines(task, stage),
     ].join("\n"),
     // タスクの ID と、マージで Issue を閉じる行、人が確かめること（PBI-155）は、省いても残す
-    keep: [intro, ...closesLines(task), ...(override ? [override] : []), ...(human ? [human] : [])],
+    keep: [
+      intro,
+      ...(stacked ? [stacked] : []),
+      ...closesLines(task),
+      ...(override ? [override] : []),
+      ...(human ? [human] : []),
+    ],
   };
 }
 
@@ -6482,6 +6505,7 @@ export function buildPullRequestBodyParts(
   ];
   return {
     summary: [
+      ...(stackedBodyLines(stage).length > 0 ? [stackedBodyLines(stage).join("\n"), ""] : []),
       `sacty のタスク「${task.title}」の成果物です。`,
       "",
       `最終レビュー：${finalReviewLead(task, stage)}`,
@@ -8021,7 +8045,12 @@ export function buildChildBody(
     parent.split
       ? `このタスクは、親タスク「${parent.title}」の統合レビューの指摘を直す、修正の子タスクです。親の要求要件と設計のうち、このタスクの範囲だけを直してください。`
       : `このタスクは、親タスク「${parent.title}」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
-    ...(deps.length > 0 ? [`先に、子タスク ${deps.join("・")} の PR がマージされています。`] : []),
+    // 依存先の PR は、まだマージされていないことがある（最終レビューに合格した依存先の PR に重ねて始める。PBI-317）
+    ...(deps.length > 0
+      ? [
+          `このタスクは、子タスク ${deps.join("・")} に依存します。作業領域には、依存先の変更が入っています（依存先の PR がマージされたベースブランチか、最終レビューに合格した依存先の PR のブランチから始めます。中止された依存先を除く）。`,
+        ]
+      : []),
     "",
     "## 親タスクの要求要件（承認済み）",
     "",
