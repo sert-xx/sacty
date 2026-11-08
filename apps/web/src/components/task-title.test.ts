@@ -120,6 +120,27 @@ describe("タスクの詳細の題を変える", () => {
     expect(q('[role="alert"]')).toBeNull();
   });
 
+  it("保存の途中で閉じて開き直したら、先の保存が終わっても、開き直したフォームを閉じない（PR #330 レビュー指摘）", async () => {
+    const saving = Promise.withResolvers<{ message?: string }>();
+    renameTaskAction.mockReturnValueOnce(saving.promise);
+    await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: true }));
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "先に送った題");
+    await act(async () => q<HTMLFormElement>("form")?.requestSubmit());
+    await act(async () =>
+      (q<HTMLInputElement>("input[name=title]") as HTMLInputElement).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    expect(q("form")).toBeNull();
+    await act(async () => q<HTMLButtonElement>('[data-testid="task-title-edit"]')?.click());
+    await type(q<HTMLInputElement>("input[name=title]") as HTMLInputElement, "後で入力中の題");
+    await act(async () => saving.resolve({}));
+    await wait();
+    expect(q("form")).not.toBeNull();
+    expect(q<HTMLInputElement>("input[name=title]")?.value).toBe("後で入力中の題");
+  });
+
   it("中止したタスク（editable が false）には、題を変える操作を出さない", async () => {
     await render(h(TaskTitle, { taskId: "t1", title: "決済API", editable: false }));
     expect(q("h1")?.textContent).toBe("決済API");

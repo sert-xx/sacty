@@ -2,7 +2,7 @@
 
 import { TASK_TITLE_MAX } from "@sacty/core";
 import { PencilIcon } from "lucide-react";
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { type RenameTaskState, renameTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,8 @@ const initial: RenameTaskState = {};
 /**
  * タスクの詳細の題と、題を変える操作（PBI-323）。中止したタスク（editable が false）のほかは、状態を問わず変えられる。
  * 入力は開いたときの題から始め、開いている間は、ほかの所で題が変わっても（トリアージ・別の画面）入力した題を消さない。
- * フォームは閉じると外れるので、開き直すと作り直され、前に開いたときの断られた理由を残さない。変えられたら入力を閉じる。空・長すぎる題・同じ題は、
+ * フォームは閉じると外れるので、開き直すと作り直され、前に開いたときの断られた理由を残さない。保存の途中で閉じて開き直したら、
+ * 先の保存が終わっても、開き直したフォームは閉じない（開いた回ごとに見分ける）。変えられたら入力を閉じる。空・長すぎる題・同じ題は、
  * デーモンが理由を示して断る。
  */
 export function TaskTitle({
@@ -26,7 +27,9 @@ export function TaskTitle({
   editable: boolean;
 }) {
   const m = useMessages().task.rename;
-  const [editing, setEditing] = useState<string | undefined>(undefined);
+  // 開いている編集（開いた回の番号と、開いたときの題）。無ければ閉じている
+  const [editing, setEditing] = useState<{ round: number; start: string } | undefined>(undefined);
+  const rounds = useRef(0);
   if (editing === undefined || !editable) {
     // 題・状態の並び（見出しの親）は変えないよう、包まずに出す
     return (
@@ -41,7 +44,8 @@ export function TaskTitle({
             title={m.edit}
             data-testid="task-title-edit"
             onClick={() => {
-              setEditing(title);
+              rounds.current += 1;
+              setEditing({ round: rounds.current, start: title });
             }}
           >
             <PencilIcon aria-hidden />
@@ -50,12 +54,15 @@ export function TaskTitle({
       </>
     );
   }
+  const round = editing.round;
   return (
     <TaskTitleForm
+      key={round}
       taskId={taskId}
       title={title}
-      start={editing}
-      onClose={() => setEditing(undefined)}
+      start={editing.start}
+      // その回の編集が開いているときだけ閉じる（先に閉じた回の保存が、後で開いた回を閉じないように）
+      onClose={() => setEditing((now) => (now?.round === round ? undefined : now))}
     />
   );
 }

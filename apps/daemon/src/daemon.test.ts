@@ -4418,6 +4418,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ci?: CiStatusReader;
       sessionLogs?: SessionLogStore;
       secretStore?: ServiceDeps["secrets"];
+      /** PR テンプレートを探す（PBI-87）。 */
+      templates?: ServiceDeps["templates"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -12903,6 +12905,53 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       service.resume(id, {});
       await drain(service);
       expect(executor.calls).toHaveLength(runs);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
+      activity.close();
+    });
+
+    it("PR テンプレートを読む間に人が題を変えても、PR の本文は新しい題で書く（PBI-323・PR #330 レビュー指摘）", async () => {
+      let rename = () => {};
+      const { activity, service, pulls, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        {
+          templates: {
+            find: async () => {
+              rename();
+              return { kind: "none" };
+            },
+          },
+        },
+      );
+      rename = () => {
+        rename = () => {};
+        service.renameTask(id, { title: "テンプレートの間に変えた題" });
+      };
+      await drain(service);
+      expect(pulls.calls.at(-1)?.title).toBe("テンプレートの間に変えた題");
+      expect(pulls.calls.at(-1)?.body).toContain("「テンプレートの間に変えた題」");
+      activity.close();
+    });
+
+    it("PR を作れずに止まった後に題を変えて再開しても、同じ提出のコミットは同じメッセージにし、PR は新しい題で作る（PBI-323・PR #330 レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const pulls = new FakePulls();
+      pulls.fail = "boom";
+      const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()], {
+        pulls,
+        repos,
+      });
+      await drain(service);
+      expect(service.get(id)?.task.publishPending).toBe(true);
+      const before = service.get(id)?.task.title ?? "";
+      const first = repos.published.at(-1)?.message;
+      expect(first).toContain(before);
+      service.renameTask(id, { title: "止まった後に変えた題" });
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      // 同じ日時・同じ題で作り直すので、プッシュ済みのコミットと同じになる（別のコミットはプッシュを断られる）
+      expect(repos.published.at(-1)?.message).toBe(first);
+      expect(pulls.calls.at(-1)?.title).toBe("止まった後に変えた題");
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
       activity.close();
     });

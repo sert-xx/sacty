@@ -961,14 +961,17 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   チケットのトリアージ（`TicketTriaged`）は、人が変えた題を書き換えない。
 - 変えた題は、この後に題を使うものから使う（工程の指示・コミットのメッセージ・通知・PR の本文の更新・書き出しなど）。
   今の実行は止めない。
-  実装の PR の公開と、PR の向き先の付け替えは、始めたときのタスクを持ったまま待つので、コミットのメッセージ・作る PR の題・PR の本文を作る直前に題を読み直す（`latestTitled`）。
+  PR の公開（実装・要求要件・設計）と、PR の向き先の付け替えは、始めたときのタスクを持ったまま待つので、作る PR の題と PR の本文は、使う直前に題を読み直す（`latestTitled`）。
+  本文は、PR テンプレートを読んだ後に作る（`pullRequestBody`）。
+  コミットのメッセージの題は、コミットの日時（提出ごとに決まる日時）のときの題にする（`titleAt`。その日時より後の最初の `TaskRenamed` の `from`）。
+  PR の作成に失敗した後に題を変えて再開しても、同じ提出のコミットは同じになり、プッシュ済みのブランチに積める。
 - すでに作った PR の題は書き換えない（PR の更新は本文と向き先だけ）。
   ブランチ名はタスクの ID から作るので、題を変えても変わらない。
 - 画面は、題の横の「題を変える」で、今の題を入れた入力を開く（`TaskTitle`）。
   断られたら理由を出し、入力した題は消さない。
   作業履歴は、誰が・何から何に変えたかを出す。
 
-コード: `apps/daemon/src/service.ts`（`renameTask`・`latestTitled`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`
+コード: `apps/daemon/src/service.ts`（`renameTask`・`latestTitled`・`titleAt`・`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`TaskRenamed`・`RenameTaskInput`）、`packages/core/src/projection.ts`、`apps/web/src/components/task-title.tsx`
 
 ## 「PR作成」の工程があった版のタスク
 
