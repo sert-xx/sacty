@@ -13,7 +13,8 @@ import {
   statusText as statusTextIn,
   statusTone,
   stepImageOptions,
-  stepImageRows,
+  taskImageInfo,
+  taskImageOf,
   testCommandOfNoTests,
   usesTestCommand,
   verificationResults,
@@ -2055,110 +2056,102 @@ describe("テストの無い観点を、今の提出について目的から判�
   });
 });
 
-describe("工程のイメージの表示（PBI-106）", () => {
-  it("工程ごとのイメージ・選んだ元・いつから使うかを出す。すべての工程を出す", () => {
-    const rows = stepImageRows(
-      task({
-        status: "running",
-        steps: [
-          { key: "requirements", state: "done" },
-          { key: "design", state: "active" },
-          { key: "implement", state: "todo" },
-        ],
-        images: { design: "java", implement: "playwright" },
-        imageSource: "orchestrator",
-        imageChanges: {
-          implement: { from: "java", to: "playwright", at: "2026-10-15T01:02:00.000Z" },
-        },
-      }),
+describe("タスクのイメージの表示（PBI-318）", () => {
+  const steps = [
+    { key: "requirements" as const, state: "done" as const },
+    { key: "design" as const, state: "active" as const },
+    { key: "implement" as const, state: "todo" as const },
+  ];
+
+  it("タスクに1つのイメージと、選んだ元を出す。工程ごとの行は出さない", () => {
+    const info = taskImageInfo(
+      task({ status: "running", steps, image: "java", imageSource: "orchestrator" }),
     );
-    expect(rows).toEqual([
-      { step: "requirements", image: "default", source: { by: "none" }, when: "done" },
-      { step: "design", image: "java", source: { by: "orchestrator" }, when: "running" },
-      {
-        step: "implement",
-        image: "playwright",
-        source: { by: "person", at: "2026-10-15T01:02:00.000Z", from: "java" },
-        when: "next",
-      },
-    ]);
+    expect(info).toEqual({ image: "java", source: { by: "orchestrator" }, legacy: [] });
+    for (const by of ["project", "rerun", "request"] as const) {
+      expect(taskImageInfo(task({ steps, image: "go", imageSource: by })).source).toEqual({ by });
+    }
   });
 
-  it("既定のイメージにした理由（PBI-105）は人が変えるまで出し、人が変えたら人の変更を出す", () => {
-    const steps = [
-      { key: "investigate" as const, state: "done" as const },
-      { key: "requirements" as const, state: "active" as const },
-      { key: "design" as const, state: "todo" as const },
-    ];
+  it("指定が無ければ default、工程が決まる前は選んだ元を出さない", () => {
+    expect(taskImageOf(task({ steps: [] }))).toBe("default");
+    expect(taskImageInfo(task({ steps: [] }))).toEqual({
+      image: "default",
+      source: { by: "none" },
+      legacy: [],
+    });
+  });
+
+  it("既定のイメージにした理由（PBI-105）・理由が無いことは、人が変えるまで出し、人が変えたら人の変更を出す", () => {
     const chosen = {
       status: "awaiting_approval" as const,
       steps,
-      images: { requirements: "default" },
+      image: "default",
       imageSource: "orchestrator" as const,
-      defaultImageReasons: { requirements: "文書だけを書く" },
-      imagesUnexplained: ["investigate" as const, "design" as const],
     };
-    expect(stepImageRows(task(chosen)).map((r) => r.source)).toEqual([
-      { by: "orchestrator", unexplained: true },
+    expect(taskImageInfo(task({ ...chosen, defaultImageReason: "文書だけを書く" })).source).toEqual(
       { by: "orchestrator", default: "文書だけを書く" },
-      { by: "orchestrator", unexplained: true },
-    ]);
-    const changed = stepImageRows(
+    );
+    expect(taskImageInfo(task({ ...chosen, imageUnexplained: true })).source).toEqual({
+      by: "orchestrator",
+      unexplained: true,
+    });
+    const changed = taskImageInfo(
       task({
         ...chosen,
-        images: { requirements: "playwright", design: "java" },
-        imageChanges: {
-          requirements: { from: "default", to: "playwright", at: "2026-10-15T01:00:00.000Z" },
-          design: { from: "default", to: "java", at: "2026-10-15T01:01:00.000Z" },
-        },
+        image: "playwright",
+        defaultImageReason: "文書だけを書く",
+        imageChange: { from: "default", to: "playwright", at: T_CHANGED },
       }),
     );
-    expect(changed.map((r) => [r.image, r.source.by])).toEqual([
-      ["default", "orchestrator"],
-      ["playwright", "person"],
-      ["java", "person"],
-    ]);
-  });
-
-  it("実装の検証（テスト）の間は実行中、止まっている工程は次の実行から。プロジェクトの指定はその旨を出す", () => {
-    const steps = [{ key: "implement" as const, state: "active" as const }];
-    const testing = task({ status: "idle", verification: "pending", steps });
-    expect(stepImageRows(testing)[0]?.when).toBe("running");
-    const paused = task({
-      status: "paused",
-      steps,
-      images: { implement: "java" },
-      imageSource: "project",
+    expect(changed).toMatchObject({
+      image: "playwright",
+      source: { by: "person", at: T_CHANGED, from: "default" },
     });
-    expect(stepImageRows(paused)[0]).toMatchObject({ when: "next", source: { by: "project" } });
   });
-});
 
-describe("作成時に指定した工程のイメージの表示", () => {
-  it("人が作成時に指定した工程は、そのことを出し、後で人が変えたら人の変更を出す", () => {
-    const steps = [
-      { key: "requirements" as const, state: "active" as const },
-      { key: "implement" as const, state: "todo" as const },
-    ];
-    const requested = {
-      status: "awaiting_approval" as const,
+  it("古い版の工程ごとのイメージ（PBI-106）は、どの工程がどのイメージで動いたかを工程ごとに出す", () => {
+    const legacy = task({
+      status: "running",
       steps,
-      requestedImages: { implement: "java" },
-      images: { requirements: "playwright", implement: "java" },
-      imageSource: "orchestrator" as const,
-    };
-    expect(stepImageRows(task(requested)).map((r) => r.source)).toEqual([
-      { by: "orchestrator" },
-      { by: "request" },
-    ]);
-    const changed = stepImageRows(
+      images: { design: "java", implement: "playwright" },
+      imageSource: "orchestrator",
+      requestedImages: { design: "java" },
+      imagesUnexplained: ["requirements"],
+      imageChanges: {
+        implement: { from: "java", to: "playwright", at: T_CHANGED },
+      },
+    });
+    expect(taskImageOf(legacy)).toBeUndefined();
+    expect(taskImageInfo(legacy)).toEqual({
+      source: { by: "none" },
+      legacy: [
+        {
+          step: "requirements",
+          image: "default",
+          source: { by: "orchestrator", unexplained: true },
+        },
+        { step: "design", image: "java", source: { by: "request" } },
+        {
+          step: "implement",
+          image: "playwright",
+          source: { by: "person", at: T_CHANGED, from: "java" },
+        },
+      ],
+    });
+    // 古い版のタスクを、人がタスクのイメージに変えた後（from は無い）
+    const moved = taskImageInfo(
       task({
-        ...requested,
-        images: { requirements: "playwright", implement: "default" },
-        imageChanges: { implement: { from: "java", to: "default", at: T_CHANGED } },
+        ...legacy,
+        image: "go",
+        imageChange: { to: "go", at: "2026-10-16T00:00:00.000Z" },
       }),
     );
-    expect(changed[1]?.source).toEqual({ by: "person", at: T_CHANGED, from: "java" });
+    expect(moved).toMatchObject({
+      image: "go",
+      source: { by: "person", at: "2026-10-16T00:00:00.000Z" },
+    });
+    expect(moved.source).not.toHaveProperty("from");
   });
 });
 

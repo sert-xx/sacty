@@ -34,7 +34,7 @@ import {
   type ContextPreviewResult,
   cancelTask,
   changeStepAgent,
-  changeStepImage,
+  changeTaskImage,
   chooseTicketRepository,
   createTask,
   decideChange,
@@ -87,8 +87,8 @@ export async function createTaskAction(
   const template = TaskTemplate.safeParse(formData.get("template"));
   // テンプレートで作る（PBI-90）。題と説明は sacty が決めるので、リポジトリだけを渡す
   if (template.success) return createTemplateTask(template.data, repo, formData);
-  // 進め方の工程ごとのイメージ・エージェント。進め方を選んだときだけ送る（名前と工程は、デーモンが検査する）
-  const { images, agents } = stepChoicesFrom(formData);
+  // タスクのイメージ（PBI-318）と、進め方の工程ごとのエージェント。進め方を選んだときだけ送る（名前と工程は、デーモンが検査する）
+  const { image, agents } = stepChoicesFrom(formData);
   // 不安定なテストの台帳の提案から開いたダイアログなら、直すテスト（PBI-312）
   const flakyFixTest = String(formData.get("flakyFixTest") ?? "");
   const values = {
@@ -98,7 +98,7 @@ export async function createTaskAction(
     ...(repo ? { repo } : {}),
     // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。タスクの形で選べるかは、デーモンが検査する
     ...(plan ? { plan } : {}),
-    ...(plan && Object.keys(images).length > 0 ? { images } : {}),
+    ...(plan && image ? { image } : {}),
     ...(plan && Object.keys(agents).length > 0 ? { agents } : {}),
     ...(flakyFixTest ? { flakyFixTest } : {}),
   };
@@ -118,9 +118,9 @@ export async function createTaskAction(
       }
       if (issue.path[0] === "body") fieldErrors.body = [a.bodyTooLong(TASK_BODY_MAX)];
     }
-    // 工程ごとの指定は、ダイアログの別の画面で選ぶので、項目ではなく理由として出す
+    // タスクのイメージ・工程ごとの指定は、ダイアログの別の画面で選ぶので、項目ではなく理由として出す
     const stepSettings = parsed.error.issues.some(
-      (issue) => issue.path[0] === "images" || issue.path[0] === "agents",
+      (issue) => issue.path[0] === "image" || issue.path[0] === "agents",
     );
     return {
       fieldErrors,
@@ -242,9 +242,9 @@ export type ResumeState = {
   tests?: "command" | "none";
   testCommand?: string;
   noTestsReason?: string;
-  /** 再開のときに足す補足と、選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
+  /** 再開のときに足す補足と、選んだタスクのイメージ・工程のエージェント（エラーのときに戻す）。 */
   note?: string;
-  images?: StepChoices;
+  image?: string;
   agents?: StepChoices;
 };
 
@@ -273,14 +273,14 @@ export async function resumeTaskAction(
   const note = normalizeNewlines(String(formData.get("note") ?? "")).trim();
   // 人が変えた工程の設定だけを、デーモンへ渡し、エラーのときに戻す（React はフォームの送信の後に、非制御の選択を初めの値に
   // 戻す）。触っていない工程は戻さず、今の名前から始める（エラーの後にタスクの詳細で変えた名前を、古い名前で戻さない）
-  const { images, agents } = changedStepChoices(formData);
+  const { image, agents } = changedStepChoices(formData);
   const kept: ResumeState = {
     capUsd: capText,
     ...(choice === "command" || choice === "none" ? { tests: choice } : {}),
     testCommand,
     noTestsReason,
     note,
-    images,
+    ...(image ? { image } : {}),
     agents,
   };
   if (note.length > RESUME_NOTE_MAX) {
@@ -305,7 +305,11 @@ export async function resumeTaskAction(
       const chosen = await chooseTicketRepository(taskId, repo);
       if (!chosen.ok) return { ...kept, message: chosen.message };
     }
-    const result = await resumeTask(taskId, capUsd, tests, { note, images, agents });
+    const result = await resumeTask(taskId, capUsd, tests, {
+      note,
+      ...(image ? { image } : {}),
+      agents,
+    });
     if (!result.ok) return { ...kept, message: result.message };
   } catch {
     return { ...kept, message: a.resumeFailed };
@@ -337,8 +341,8 @@ export type GateState = {
   target?: StepKey;
   /** 差し戻しの原因（エラーのときに戻す。PBI-268）。 */
   cause?: ReworkCause;
-  /** 差し戻しと一緒に選んだ工程のイメージ・エージェント（エラーのときに戻す）。 */
-  images?: StepChoices;
+  /** 差し戻しと一緒に選んだタスクのイメージ・工程のエージェント（エラーのときに戻す）。 */
+  image?: string;
   agents?: StepChoices;
 };
 
@@ -355,8 +359,8 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   // 原因は、選ばなければ決めない。知らない値も決めない（見逃しにしない。PBI-268）
   const cause = ReworkCause.safeParse(formData.get("cause")).data;
   // 差し戻しと一緒に変える工程の設定は、人が変えた工程だけを渡し、エラーのときに戻す（再開の欄と同じ）
-  const { images, agents } = changedStepChoices(formData);
-  const kept = { comments, images, agents, cause };
+  const { image, agents } = changedStepChoices(formData);
+  const kept = { comments, ...(image ? { image } : {}), agents, cause };
   if (!step.success || (rawTarget !== null && !target)) {
     return { ...kept, message: a.invalidStep };
   }
@@ -380,7 +384,7 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
         ...(cause ? { cause } : {}),
         comments: lines,
         continueOverLimit: decision === "continue",
-        images,
+        ...(image ? { image } : {}),
         agents,
       });
     }
@@ -402,21 +406,19 @@ export async function voidRemarkAction(formData: FormData): Promise<void> {
   refresh();
 }
 
-export type ChangeStepImageState = { message?: string };
+export type ChangeTaskImageState = { message?: string };
 
-/** タスクの詳細で、工程のイメージを変える（PBI-106）。images に無い名前は、デーモンが理由を示して断る。 */
-export async function changeStepImageAction(
-  _prev: ChangeStepImageState,
+/** タスクの詳細で、タスクのイメージを変える（PBI-318）。images に無い名前は、デーモンが理由を示して断る。 */
+export async function changeTaskImageAction(
+  _prev: ChangeTaskImageState,
   formData: FormData,
-): Promise<ChangeStepImageState> {
+): Promise<ChangeTaskImageState> {
   const a = (await getMessages()).common.action;
   const taskId = String(formData.get("taskId") ?? "");
-  const step = StepKey.safeParse(formData.get("step"));
   const image = String(formData.get("image") ?? "");
-  if (!step.success) return { message: a.invalidStep };
-  let result: Awaited<ReturnType<typeof changeStepImage>>;
+  let result: Awaited<ReturnType<typeof changeTaskImage>>;
   try {
-    result = await changeStepImage(taskId, step.data, image);
+    result = await changeTaskImage(taskId, image);
   } catch {
     return { message: a.daemonDown };
   }

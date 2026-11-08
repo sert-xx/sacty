@@ -93,7 +93,7 @@ step_agents:
 
 ## Viewing it on the web UI
 
-- The task's steps show "After-merge watch" (if skipped, that it was skipped and why). You can change the step's image like other steps.
+- The task's steps show "After-merge watch" (if skipped, that it was skipped and why). Like other steps, this step runs in the task image (changing the task image applies from the next run of this step).
 - "After-merge watch" in the task's details shows the following. While waiting, the page refreshes automatically.
   - The state (Waiting, Passed, Failed, Skipped, Timed out) and the reason
   - The commit

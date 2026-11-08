@@ -26,7 +26,7 @@ import {
   agentField,
   chosenForPlan,
   customizedSteps,
-  imageField,
+  IMAGE_FIELD,
   type StepChoices,
   type StepOptions,
   stepOptionsLoader,
@@ -100,10 +100,10 @@ export function NewTaskDialog({
   const [template, setTemplate] = useState<TaskTemplate | "">("");
   // 工程の組み合わせ（進め方）。空なら自動（オーケストレーターが選ぶ）。送信の後も選んだままにする
   const [plan, setPlan] = useState<StepPlan | "">("");
-  // 進め方の工程ごとのイメージ・エージェント。基本の入力とは別の画面（工程ごとの設定）で選ぶ。進め方を選び直しても
-  // 工程ごとに残し、今の進め方の工程の分だけを送る。送信の後も選んだままにする
+  // タスクのイメージ（PBI-318）と、進め方の工程ごとのエージェント。基本の入力とは別の画面（工程ごとの設定）で選ぶ。進め方を
+  // 選び直しても残し、エージェントは今の進め方の工程の分だけを送る。送信の後も選んだままにする
   const [view, setView] = useState<"main" | "steps">("main");
-  const [stepImages, setStepImages] = useState<StepChoices>({});
+  const [taskImage, setTaskImage] = useState("");
   const [stepAgents, setStepAgents] = useState<StepChoices>({});
   // 選べるイメージ・エージェント。工程ごとの設定を開いたときに読む（既定のまま作るときは読まない）
   const [stepOptions, setStepOptions] = useState<StepOptions>({ status: "idle" });
@@ -129,7 +129,7 @@ export function NewTaskDialog({
         return name ? { ...rest, [step]: name } : rest;
       });
   const customizable = !template && plan !== "";
-  const chosen = plan ? chosenForPlan(plan, stepImages, stepAgents) : { images: {}, agents: {} };
+  const chosenAgents = plan ? chosenForPlan(plan, stepAgents) : {};
 
   return (
     <Dialog
@@ -139,7 +139,7 @@ export function NewTaskDialog({
         setTemplate("");
         setPlan("");
         setView("main");
-        setStepImages({});
+        setTaskImage("");
         setStepAgents({});
         // 候補は、開き直すたびに読み直す（config.yaml を直した後に、古い候補を見せない）
         setStepOptions({ status: "idle" });
@@ -156,17 +156,11 @@ export function NewTaskDialog({
           <input type="hidden" name="projectId" value={target.id} />
           {prefill && <input type="hidden" name="flakyFixTest" value={prefill.flakyFixTest} />}
           {/* 工程ごとの指定は、別の画面で選び、ここから送る（画面を切り替えても、入力中の題・内容を残すため、どちらの画面も消さずに隠す） */}
+          {customizable && taskImage && (
+            <input type="hidden" name={IMAGE_FIELD} value={taskImage} />
+          )}
           {customizable &&
-            Object.entries(chosen.images).map(([step, name]) => (
-              <input
-                key={`image:${step}`}
-                type="hidden"
-                name={imageField(step as StepKey)}
-                value={name}
-              />
-            ))}
-          {customizable &&
-            Object.entries(chosen.agents).map(([step, name]) => (
+            Object.entries(chosenAgents).map(([step, name]) => (
               <input
                 key={`agent:${step}`}
                 type="hidden"
@@ -193,7 +187,8 @@ export function NewTaskDialog({
               plan={plan}
               onPlan={setPlan}
               steps={{
-                customized: plan ? customizedSteps(plan, stepImages, stepAgents) : [],
+                ...(taskImage ? { image: taskImage } : {}),
+                customized: plan ? customizedSteps(plan, stepAgents) : [],
                 onOpen: () => show("steps"),
                 openRef: stepsOpener,
               }}
@@ -228,12 +223,12 @@ export function NewTaskDialog({
               <TaskStepSettings
                 plan={plan}
                 options={stepOptions}
-                images={stepImages}
+                image={taskImage}
                 agents={stepAgents}
-                onImage={choose(setStepImages)}
+                onImage={setTaskImage}
                 onAgent={choose(setStepAgents)}
                 onResetAll={() => {
-                  setStepImages({});
+                  setTaskImage("");
                   setStepAgents({});
                 }}
                 onBack={() => show("main")}
@@ -277,10 +272,11 @@ export function TaskFields({
   plan: StepPlan | "";
   onPlan: (plan: StepPlan | "") => void;
   /**
-   * 進め方の工程ごとの設定（タスクの作成のダイアログだけ）。指定した工程と、工程ごとの設定を開く操作。無ければ、工程の
-   * 並びだけを出す（スケジュールタスク）。
+   * 進め方の工程ごとの設定（タスクの作成のダイアログだけ）。指定したタスクのイメージ・エージェントを指定した工程と、工程ごとの
+   * 設定を開く操作。無ければ、工程の並びだけを出す（スケジュールタスク）。
    */
   steps?: {
+    image?: string;
     customized: readonly StepKey[];
     onOpen: () => void;
     openRef?: Ref<HTMLButtonElement>;
@@ -419,6 +415,7 @@ export function TaskFields({
               <StepFlowSummary
                 id={`${idPrefix}-plan-note`}
                 plan={plan}
+                {...(steps.image ? { image: steps.image } : {})}
                 customized={steps.customized}
                 onOpen={steps.onOpen}
                 openRef={steps.openRef}

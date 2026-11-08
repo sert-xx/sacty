@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #180
 - ブランチ: claude/pr-review-triage-orchestrator-spk66d
-- 関係する ADR: [PR のレビューだけのタスクでも、images があり、イメージを決めていなければ、レビューの工程のイメージだけをオーケストレーターに選ばせる](../adr/20261021-0320-review-only-image-by-orchestrator.md)
+- 関係する ADR: [PR のレビューだけのタスクでも、images があり、イメージを決めていなければ、レビューの工程のイメージだけをオーケストレーターに選ばせる](../adr/20261021-0320-superseded-review-only-image-by-orchestrator.md)
 
 ## 目的
 

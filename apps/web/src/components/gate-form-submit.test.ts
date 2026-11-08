@@ -50,13 +50,13 @@ afterEach(() => {
 });
 
 const steps: GateStepSetting[] = [
-  { step: "requirements", image: "default", agentChangeable: true },
-  { step: "design", image: "default", agentChangeable: true, agent: "strong" },
-  { step: "implement", image: "java", agentChangeable: true },
-  { step: "integrate", image: "default", agentChangeable: false },
+  { step: "requirements", agentChangeable: true },
+  { step: "design", agentChangeable: true, agent: "strong" },
+  { step: "implement", agentChangeable: true },
+  { step: "integrate", agentChangeable: false },
 ];
 
-function renderForm(withSteps: GateStepSetting[] = steps) {
+function renderForm(withSteps: GateStepSetting[] = steps, image: string | null = "default") {
   act(() =>
     root.render(
       h(GateForm, {
@@ -69,6 +69,7 @@ function renderForm(withSteps: GateStepSetting[] = steps) {
         maxChanges: 3,
         pendingComments: [],
         steps: withSteps,
+        ...(image ? { image } : {}),
       }),
     ),
   );
@@ -127,22 +128,23 @@ describe("差し戻しの原因（PBI-268）", () => {
   });
 });
 
-describe("差し戻しと一緒に変える工程の設定", () => {
-  it("開くまで候補を読まず、開くとやり直す工程から後ろの工程を、今の名前を選んで出す", async () => {
+describe("差し戻しと一緒に変えるタスクのイメージ・工程のエージェント（PBI-318）", () => {
+  it("開くまで候補を読まず、開くとタスクのイメージ（1つ）と、やり直す工程から後ろの工程のエージェントを、今の名前を選んで出す", async () => {
     renderForm();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(select("image:design")).toBeNull();
+    expect(select("image")).toBeNull();
     await openSteps();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(select("image")?.value).toBe("default");
+    // 工程ごとのイメージの選択は無い
+    expect(select("image:design")).toBeNull();
     // やり直す工程（設計）より前の要求要件は出さない
-    expect(select("image:requirements")).toBeNull();
-    expect(select("image:design")?.value).toBe("default");
+    expect(select("agent:requirements")).toBeNull();
     // 人が選んだエージェントが無ければ、config.yaml で決まるもの
     expect(select("agent:design")?.value).toBe("strong");
     expect(select("agent:implement")?.value).toBe("claude");
-    expect(select("image:implement")?.value).toBe("java");
     // 統合レビューは、エージェントを変えられない
-    expect(select("image:integrate")).not.toBeNull();
+    expect(container.querySelector('[data-testid="gate-step-integrate"]')).not.toBeNull();
     expect(select("agent:integrate")).toBeNull();
   });
 
@@ -153,37 +155,44 @@ describe("差し戻しと一緒に変える工程の設定", () => {
       'input[name="target"][value="requirements"]',
     );
     act(() => radio?.click());
-    expect(select("image:requirements")?.value).toBe("default");
     expect(select("agent:requirements")?.value).toBe("claude");
   });
 
-  it("選び直した工程の設定を、描いたときの今の名前と一緒に送る", async () => {
+  it("選び直したタスクのイメージ・工程のエージェントを、描いたときの今の名前と一緒に送る", async () => {
     renderForm();
     await openSteps();
-    const image = select("image:design");
+    const image = select("image");
     if (image) image.value = "java";
     const agent = select("agent:implement");
     if (agent) agent.value = "strong";
     expect(await submit()).toMatchObject({
       target: "design",
-      "image:design": "java",
-      "image-from:design": "default",
+      image: "java",
+      "image-from": "default",
       "agent:implement": "strong",
       "agent-from:implement": "claude",
     });
   });
 
-  it("差し戻しに失敗したら、選んでいた工程の設定を戻す", async () => {
+  it("古い版の工程ごとのイメージ（今の名前が無い）なら、空の選択から選び直してもらう", async () => {
+    renderForm(steps, null);
+    await openSteps();
+    expect(select("image")?.value).toBe("");
+    const sent = await submit();
+    expect(sent).not.toHaveProperty("image-from");
+  });
+
+  it("差し戻しに失敗したら、選んでいたタスクのイメージ・工程のエージェントを戻す", async () => {
     gateAction.mockResolvedValueOnce({
       message: "断られた",
-      images: { design: "java" },
+      image: "java",
       agents: { design: "claude" },
     } as never);
     renderForm();
     await openSteps();
     await submit();
     expect(container.textContent).toContain("断られた");
-    expect(select("image:design")?.value).toBe("java");
+    expect(select("image")?.value).toBe("java");
     expect(select("agent:design")?.value).toBe("claude");
   });
 
@@ -195,7 +204,7 @@ describe("差し戻しと一緒に変える工程の設定", () => {
     await openSteps();
     expect(container.textContent).toContain("設定を読めない");
     expect(container.textContent).toContain("工程の設定は変えずに差し戻せます");
-    expect(select("image:design")).toBeNull();
+    expect(select("image")).toBeNull();
   });
 });
 

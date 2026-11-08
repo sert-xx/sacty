@@ -62,10 +62,10 @@ import { SecurityFixesCard } from "@/components/security-fixes";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
-import { StepImageForm } from "@/components/step-image-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskChat } from "@/components/task-chat";
 import { TaskControls } from "@/components/task-controls";
+import { TaskImageForm } from "@/components/task-image-form";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
@@ -73,13 +73,15 @@ import {
   canControl,
   describeEventParts,
   formatStamp,
+  type ImageSource,
   needsTicketRepositories,
   personAction,
   statusText,
   stepAgentOptions,
   stepAgentRows,
   stepImageOptions,
-  stepImageRows,
+  taskImageInfo,
+  taskImageOf,
   testCommandOfNoTests,
   usd,
   usesTestCommand,
@@ -310,7 +312,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             : {})}
           reason={task.pausedReason}
           toReview={canOverrideVerification(task)}
-          steps={resumeStepSettings(task, data, m.images.defaultDescription)}
+          steps={resumeStepSettings(task, data)}
+          {...(task.steps.some((s) => s.state !== "done" && s.state !== "skip")
+            ? { image: resumeTaskImage(task, data, m.images.defaultDescription) }
+            : {})}
           noteRoom={resumeNoteRoom(task)}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
@@ -1333,8 +1338,8 @@ function StepsChoice({ task, data }: { task: Task; data: TaskDetailData }) {
           </ul>
         </div>
       )}
-      {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
-      {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
+      {/* タスクのイメージと、選んだ元。いつでも変えられ、すべての工程の次の実行から使う（PBI-318） */}
+      {task.steps.length > 0 && <TaskImage task={task} imageStatus={data.imageStatus} />}
       {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
       {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
     </section>
@@ -1360,112 +1365,132 @@ export function EventText({ event }: { event: ActivityEvent }) {
 }
 
 /**
- * 再開と一緒にイメージ・エージェントを変えられる工程（まだ終わっていない工程）。候補は、タスクの詳細の工程の設定と同じ
- * ものを使う（取得できない・設定を読めなければ undefined）。
+ * 再開と一緒にエージェントを変えられる工程（まだ終わっていない工程）。候補は、タスクの詳細の工程の設定と同じものを使う
+ * （取得できない・設定を読めなければ undefined）。
  */
 function resumeStepSettings(
   task: Task,
-  data: Pick<TaskDetailData, "imageStatus" | "agentStatus">,
-  defaultDescription: string,
+  data: Pick<TaskDetailData, "agentStatus">,
 ): ResumeStepSetting[] {
-  const imageOptions = stepImageOptions(data.imageStatus, defaultDescription);
-  const agents = new Map(
-    stepAgentRows(task, data.agentStatus?.stepAgents).map((row) => [row.step, row.agent]),
-  );
-  return stepImageRows(task)
+  return stepAgentRows(task, data.agentStatus?.stepAgents)
     .filter((row) => row.when !== "done")
     .map((row) => {
-      const agentChangeable = agents.has(row.step);
-      const current = agents.get(row.step);
-      const options = stepAgentOptions(data.agentStatus, current);
+      const options = stepAgentOptions(data.agentStatus, row.agent);
       return {
         step: row.step,
-        image: row.image,
-        ...(imageOptions ? { imageOptions } : {}),
-        ...(agentChangeable
-          ? { agent: { ...(current ? { current } : {}), ...(options ? { options } : {}) } }
-          : {}),
+        agent: { ...(row.agent ? { current: row.agent } : {}), ...(options ? { options } : {}) },
       };
     });
 }
 
-/** 工程のイメージ（PBI-41）と、選んだ元・いつから使うか。中止していなければ、どの工程も変えられる（PBI-106）。 */
-function StepImages({
+/** 再開と一緒に変えられるタスクのイメージ（PBI-318）。候補は、タスクの詳細のタスクのイメージと同じものを使う。 */
+function resumeTaskImage(
+  task: Task,
+  data: Pick<TaskDetailData, "imageStatus">,
+  defaultDescription: string,
+): { current?: string; options?: { name: string; description: string }[] } {
+  const current = taskImageOf(task);
+  const options = stepImageOptions(data.imageStatus, defaultDescription);
+  return { ...(current ? { current } : {}), ...(options ? { options } : {}) };
+}
+
+/** イメージを選んだ元の文言（PBI-106・PBI-318）。 */
+function ImageSourceText({ source }: { source: ImageSource }) {
+  const { task: t, locale } = useMessages();
+  const m = t.images;
+  return (
+    <>
+      {source.by === "person"
+        ? source.from
+          ? m.byPerson(formatStamp(source.at, locale), source.from)
+          : m.byPersonFromSteps(formatStamp(source.at, locale))
+        : source.by === "project"
+          ? m.byProject
+          : source.by === "rerun"
+            ? m.byRerun
+            : source.by === "request"
+              ? m.byRequest
+              : source.by === "orchestrator"
+                ? source.default
+                  ? m.byOrchestratorDefault(source.default)
+                  : source.unexplained
+                    ? m.byOrchestratorUnexplained
+                    : m.byOrchestrator
+                : m.none}
+    </>
+  );
+}
+
+/**
+ * タスクのイメージ（PBI-318）と、選んだ元。中止していなければ変えられ、すべての工程の次の実行から使う（テスト・最終レビューも）。
+ * 古い版の作業履歴で工程ごとのイメージを持つタスクは、どの工程がどのイメージで動いたかも出す。
+ */
+function TaskImage({
   task,
   imageStatus,
 }: {
   task: Task;
   imageStatus: TaskDetailData["imageStatus"];
 }) {
-  const { task: t, labels, locale } = useMessages();
+  const { task: t, labels } = useMessages();
   const m = t.images;
-  const rows = stepImageRows(task);
-  if (rows.length === 0) return null;
+  const info = taskImageInfo(task);
   // 選べるのは、既定のイメージと images の名前（説明も出す）。取得できない・設定を読めないときは、候補を確かめられない
   // ことを出し、消した名前の警告と変更の操作は出さない（一時的な失敗を、設定から消したことと取り違えない）
   const options = stepImageOptions(imageStatus, m.defaultDescription);
-  const attention = !options || rows.some((row) => !options.some((o) => o.name === row.image));
+  const missing = (name: string) => options !== undefined && !options.some((o) => o.name === name);
+  const attention = !options || (info.image !== undefined && missing(info.image));
   return (
-    <StepSettings title={m.title} hint={m.hint} open={attention} testId="step-images">
+    <StepSettings title={m.title} hint={m.hint} open={attention} testId="task-image">
       {!options && (
-        <p role="status" className="text-warn" data-testid="step-images-unavailable">
+        <p role="status" className="text-warn" data-testid="task-image-unavailable">
           {m.unavailable}
         </p>
       )}
-      <ul className="flex flex-col gap-2">
-        {rows.map((row) => (
-          <li
-            key={row.step}
-            className="flex flex-col gap-1 [overflow-wrap:anywhere]"
-            data-testid={`step-image-row-${row.step}`}
-          >
-            <span>
-              <span className="font-medium">{labels.step[row.step]}</span>
-              {m.sep}
-              <span className="font-mono">{row.image}</span>
-              {options && !options.some((o) => o.name === row.image) && (
-                <span className="text-warn">{m.missing}</span>
-              )}
-              <span className="text-muted-foreground">
-                {" ・ "}
-                {row.source.by === "person"
-                  ? m.byPerson(formatStamp(row.source.at, locale), row.source.from)
-                  : row.source.by === "project"
-                    ? m.byProject
-                    : row.source.by === "rerun"
-                      ? m.byRerun
-                      : row.source.by === "request"
-                        ? m.byRequest
-                        : row.source.by === "orchestrator"
-                          ? row.source.default
-                            ? m.byOrchestratorDefault(row.source.default)
-                            : row.source.unexplained
-                              ? m.byOrchestratorUnexplained
-                              : m.byOrchestrator
-                          : m.none}
-              </span>
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {row.when === "running"
-                ? m.whenRunning
-                : row.when === "done"
-                  ? m.whenDone
-                  : m.whenNext}
-              {(row.step === "implement" || row.step === "reproduce") && <> ・ {m.testNote}</>}
-            </span>
-            {options && task.status !== "cancelled" && (
-              // 変えた後に、選択を今のイメージに合わせる（フォームのリセットが前のイメージに戻すため、作り直す）
-              <StepImageForm
-                key={`${row.step}:${row.image}`}
-                taskId={task.id}
-                step={row.step}
-                current={row.image}
-                options={options}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col gap-1 [overflow-wrap:anywhere]" data-testid="task-image-row">
+        <span>
+          <span className="font-mono">{info.image ?? m.perStep}</span>
+          {info.image !== undefined && missing(info.image) && (
+            <span className="text-warn">{m.missing}</span>
+          )}
+          <span className="text-muted-foreground">
+            {" ・ "}
+            <ImageSourceText source={info.source} />
+          </span>
+        </span>
+        <span className="text-xs text-muted-foreground">{m.when}</span>
+        {options && task.status !== "cancelled" && (
+          // 変えた後に、選択を今のイメージに合わせる（フォームのリセットが前のイメージに戻すため、作り直す）
+          <TaskImageForm
+            key={info.image ?? ""}
+            taskId={task.id}
+            {...(info.image ? { current: info.image } : {})}
+            options={options}
+          />
+        )}
+      </div>
+      {info.legacy.length > 0 && (
+        <div className="flex flex-col gap-1 pt-2" data-testid="legacy-step-images">
+          <p className="text-xs text-muted-foreground">{m.legacyTitle}</p>
+          <ul className="flex flex-col gap-1">
+            {info.legacy.map((row) => (
+              <li
+                key={row.step}
+                className="[overflow-wrap:anywhere]"
+                data-testid={`legacy-step-image-${row.step}`}
+              >
+                <span className="font-medium">{labels.step[row.step]}</span>
+                {m.sep}
+                <span className="font-mono">{row.image}</span>
+                <span className="text-muted-foreground">
+                  {" ・ "}
+                  <ImageSourceText source={row.source} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </StepSettings>
   );
 }
@@ -1482,7 +1507,6 @@ function StepAgents({
   const m = t.agents;
   const rows = stepAgentRows(task, agentStatus?.stepAgents);
   if (rows.length === 0) return null;
-  const images = t.images;
   const unavailable = stepAgentOptions(agentStatus, undefined) === undefined;
   const missing = (agent: string | undefined) =>
     stepAgentOptions(agentStatus, agent) !== undefined &&
@@ -1527,10 +1551,10 @@ function StepAgents({
               </span>
               <span className="text-xs text-muted-foreground">
                 {row.when === "running"
-                  ? images.whenRunning
+                  ? m.whenRunning
                   : row.when === "done"
-                    ? images.whenDone
-                    : images.whenNext}
+                    ? m.whenDone
+                    : m.whenNext}
               </span>
               {options && task.status !== "cancelled" && (
                 <StepAgentForm

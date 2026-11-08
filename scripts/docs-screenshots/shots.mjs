@@ -15,7 +15,7 @@ export const SHOTS = [
     selector: '[role="dialog"]',
   },
   {
-    // 進め方を選び、工程ごとの設定で設計のイメージと実装のエージェントを指定したところ
+    // 進め方を選び、工程ごとの設定でタスクのイメージ（PBI-318）と実装のエージェントを指定したところ
     name: "new-task-steps",
     path: "/projects/payments/tasks",
     prepare: async (page) => {
@@ -25,10 +25,10 @@ export const SHOTS = [
       await dialog.locator("select[name=plan]").selectOption("standard");
       await dialog.getByTestId("step-settings-open").click();
       await dialog
-        .getByTestId("task-step-image-design")
+        .getByTestId("task-image")
         .locator("option", { hasText: "java17" })
         .waitFor({ state: "attached" });
-      await dialog.getByTestId("task-step-image-implement").selectOption("java17");
+      await dialog.getByTestId("task-image").selectOption("java17");
       await dialog.getByTestId("task-step-agent-implement").selectOption("codex_advanced");
       await page.waitForTimeout(500);
     },

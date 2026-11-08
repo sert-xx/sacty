@@ -14,18 +14,22 @@ const SELECT =
   "h-9 w-full min-w-0 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60";
 
 /**
- * タスクの作成のダイアログの、基本の入力に置く進め方の工程の並び。工程ごとに指定したものに印を付け、指定の要約と、
- * 工程ごとの設定を開くボタンを出す（工程ごとの選択肢そのものは、別の画面に分けて、基本の入力を短く保つ）。
+ * タスクの作成のダイアログの、基本の入力に置く進め方の工程の並び。エージェントを指定した工程に印を付け、指定の要約
+ * （タスクのイメージ・エージェントを指定した工程の数）と、工程ごとの設定を開くボタンを出す（選択肢そのものは、別の画面に
+ * 分けて、基本の入力を短く保つ）。
  */
 export function StepFlowSummary({
   id,
   plan,
+  image,
   customized,
   onOpen,
   openRef,
 }: {
   id: string;
   plan: StepPlan;
+  /** 指定したタスクのイメージ（PBI-318）。無ければ、いつもどおり決める。 */
+  image?: string;
   customized: readonly StepKey[];
   onOpen: () => void;
   openRef?: Ref<HTMLButtonElement>;
@@ -66,8 +70,8 @@ export function StepFlowSummary({
       </ol>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs leading-5 text-muted-foreground" data-testid="step-flow-summary">
-          {customized.length > 0
-            ? t.stepsSummaryCustomized(customized.length)
+          {image || customized.length > 0
+            ? t.stepsSummaryCustomized(image, customized.length)
             : t.stepsSummaryDefault}
         </span>
         <Button
@@ -87,13 +91,14 @@ export function StepFlowSummary({
 }
 
 /**
- * 工程ごとの設定（ダイアログの中の別の画面）。進め方の工程を順に並べ、工程ごとにイメージとエージェントを選ぶ。空欄（自動・
- * 既定）は、いつもどおり決める。選んだ値は親が持ち、基本の入力に戻っても残す（作成で送る）。
+ * 工程ごとの設定（ダイアログの中の別の画面）。タスクのイメージ（PBI-318。すべての工程で使う）を1つ選び、進め方の工程を
+ * 順に並べて工程ごとにエージェントを選ぶ。空欄（自動・既定）は、いつもどおり決める。選んだ値は親が持ち、基本の入力に
+ * 戻っても残す（作成で送る）。
  */
 export function TaskStepSettings({
   plan,
   options,
-  images,
+  image,
   agents,
   onImage,
   onAgent,
@@ -103,9 +108,9 @@ export function TaskStepSettings({
 }: {
   plan: StepPlan;
   options: StepOptions;
-  images: StepChoices;
+  image: string;
   agents: StepChoices;
-  onImage: (step: StepKey, name: string) => void;
+  onImage: (name: string) => void;
   onAgent: (step: StepKey, name: string) => void;
   onResetAll: () => void;
   onBack: () => void;
@@ -116,7 +121,10 @@ export function TaskStepSettings({
   const m = messages.task;
   const steps = planStepSettings(plan);
   const loaded = options.status === "loaded" ? options : undefined;
-  const anyCustom = steps.some(({ step, agent }) => images[step] || (agent && agents[step]));
+  const anyCustom = Boolean(image) || steps.some(({ step, agent }) => agent && agents[step]);
+  // 選べる候補（読み込めていなければ、選んである値だけ。読み直しで候補から消えても、選んだ値は見せる）
+  const imageNames = loaded?.images.map((o) => o.name) ?? [];
+  const imageNote = loaded?.images.find((o) => o.name === image)?.description;
   return (
     <div className="flex flex-col gap-4" data-testid="step-settings">
       {/* 右上の閉じるボタンと重ならないよう、右を空ける */}
@@ -156,29 +164,54 @@ export function TaskStepSettings({
           <p className="text-xs">{t.stepOptionsFailedNote}</p>
         </div>
       )}
-      {/* 工程を行に、イメージ・エージェントを列にした表（見出しは1回だけ。説明は選んだ項目にだけ出し、行を低く保つ） */}
+      <p className="text-xs leading-5 text-muted-foreground">{t.stepsLegend}</p>
+      {/* タスクのイメージ（すべての工程・テスト・最終レビューで使う。PBI-318） */}
+      <div className="flex flex-col gap-1" data-customized={image ? true : undefined}>
+        <label htmlFor="task-image" className="text-sm font-medium">
+          {t.taskImage}
+        </label>
+        <select
+          id="task-image"
+          value={image}
+          disabled={!loaded}
+          onChange={(e) => onImage(e.target.value)}
+          aria-describedby={imageNote ? "task-image-note task-image-scope" : "task-image-scope"}
+          data-testid="task-image"
+          className={SELECT}
+        >
+          <option value="">{t.stepImageAuto}</option>
+          {image && !imageNames.includes(image) && <option value={image}>{image}</option>}
+          {loaded?.images.map((o) => (
+            <option key={o.name} value={o.name} title={o.description}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+        {imageNote && (
+          <p id="task-image-note" className="text-xs leading-5 wrap-anywhere text-muted-foreground">
+            {imageNote}
+          </p>
+        )}
+        <p id="task-image-scope" className="text-xs leading-5 text-muted-foreground">
+          {t.taskImageNote}
+        </p>
+      </div>
+      {/* 工程を行に、エージェントを列にした表（見出しは1回だけ。説明は選んだ項目にだけ出し、行を低く保つ） */}
       <div className="flex flex-col gap-1">
-        <p className="text-xs leading-5 text-muted-foreground">{t.stepsLegend}</p>
         <div
           aria-hidden="true"
-          className="grid grid-cols-2 gap-x-2 px-2 text-xs font-medium text-muted-foreground sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1.3fr)]"
+          className="grid grid-cols-1 gap-x-2 px-2 text-xs font-medium text-muted-foreground sm:grid-cols-[8.5rem_minmax(0,1fr)]"
         >
           <span className="hidden sm:block" />
-          <span>{t.stepImage}</span>
           <span>{t.stepAgent}</span>
         </div>
-        <ol className="-mx-1 flex max-h-[min(26rem,55vh)] flex-col gap-1 overflow-y-auto px-1">
+        <ol className="-mx-1 flex max-h-[min(22rem,45vh)] flex-col gap-1 overflow-y-auto px-1">
           {steps.map(({ step, agent }, i) => {
-            const image = images[step] ?? "";
             const chosenAgent = agent ? (agents[step] ?? "") : "";
-            const custom = Boolean(image || chosenAgent);
+            const custom = Boolean(chosenAgent);
             const label = messages.labels.step[step];
-            const imageId = `task-step-image-${step}`;
             const agentId = `task-step-agent-${step}`;
-            // 選べる候補（読み込めていなければ、選んである値だけ。読み直しで候補から消えても、選んだ値は見せる）
-            const imageNames = loaded?.images.map((o) => o.name) ?? [];
             const agentOption = loaded?.agents.find((o) => o.id === chosenAgent);
-            const imageNote = loaded?.images.find((o) => o.name === image)?.description;
             const agentNote = agentOption
               ? [agentOption.model, agentOption.reasoningEffort].filter(Boolean).join("・")
               : undefined;
@@ -188,11 +221,11 @@ export function TaskStepSettings({
                 data-testid={`step-setting-${step}`}
                 data-customized={custom || undefined}
                 className={cn(
-                  "grid grid-cols-2 items-start gap-x-2 gap-y-1 rounded-md border-l-2 py-2 pr-2 pl-2 transition-colors sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(0,1.3fr)]",
+                  "grid grid-cols-1 items-start gap-x-2 gap-y-1 rounded-md border-l-2 py-2 pr-2 pl-2 transition-colors sm:grid-cols-[8.5rem_minmax(0,1fr)]",
                   custom ? "border-primary bg-primary/5" : "border-transparent",
                 )}
               >
-                <div className="col-span-2 flex min-h-9 items-center gap-1.5 sm:col-span-1 sm:flex-col sm:items-start sm:justify-center sm:gap-0">
+                <div className="flex min-h-9 items-center gap-1.5 sm:flex-col sm:items-start sm:justify-center sm:gap-0">
                   <span className="flex items-baseline gap-1.5 font-medium">
                     <span aria-hidden="true" className="text-xs tabular-nums text-muted-foreground">
                       {i + 1}
@@ -206,42 +239,11 @@ export function TaskStepSettings({
                       variant="link"
                       size="xs"
                       className="h-auto px-0 text-xs"
-                      onClick={() => {
-                        onImage(step, "");
-                        onAgent(step, "");
-                      }}
+                      onClick={() => onAgent(step, "")}
                       aria-label={`${label}：${t.stepReset}`}
                     >
                       {t.stepReset}
                     </Button>
-                  )}
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <select
-                    id={imageId}
-                    value={image}
-                    disabled={!loaded}
-                    onChange={(e) => onImage(step, e.target.value)}
-                    aria-label={m.images.label(label)}
-                    aria-describedby={imageNote ? `${imageId}-note` : undefined}
-                    data-testid={imageId}
-                    className={SELECT}
-                  >
-                    <option value="">{t.stepImageAuto}</option>
-                    {image && !imageNames.includes(image) && <option value={image}>{image}</option>}
-                    {loaded?.images.map((o) => (
-                      <option key={o.name} value={o.name} title={o.description}>
-                        {o.name}
-                      </option>
-                    ))}
-                  </select>
-                  {imageNote && (
-                    <p
-                      id={`${imageId}-note`}
-                      className="text-xs leading-5 wrap-anywhere text-muted-foreground"
-                    >
-                      {imageNote}
-                    </p>
                   )}
                 </div>
                 <div className="flex min-w-0 flex-col gap-1">

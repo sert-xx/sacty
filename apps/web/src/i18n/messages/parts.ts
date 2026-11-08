@@ -193,12 +193,12 @@ const ja = {
       `タスクの内容が長いため、補足は${room.toLocaleString("ja-JP")}文字まで足せます。`,
     noteNoRoom:
       "タスクの内容が長いため、補足を足せません。補足なしで再開するか、中止して再実行で内容を直してください。",
-    stepsTitle: "工程のイメージ・エージェントを変える",
-    stepsHint:
-      "タスクの詳細で変えるのと同じです。再開と一緒に記録し、その工程を次に実行するときから使います。",
+    stepsTitle: "タスクのイメージ・工程のエージェントを変える",
+    stepsHint: "タスクの詳細で変えるのと同じです。再開と一緒に記録し、次の実行から使います。",
     stepsRechoose: "テストを決めずに再開すると工程の選択からやり直すため、ここでは変えられません。",
     stepsUnavailable: "設定を読めないため、候補を確かめられません。",
-    stepImage: "イメージ",
+    taskImage: "タスクのイメージ",
+    taskImageNote: "すべての工程の次の実行から使います。",
     stepAgent: "エージェント",
     toReview: "レビューへ進める",
     toReviewing: "進めています…",
@@ -486,13 +486,14 @@ const en: PartsMessages = {
       `The task description is long, so up to ${room.toLocaleString("en-US")} character${room === 1 ? "" : "s"} of notes can be added.`,
     noteNoRoom:
       "The task description is too long to add notes. Resume without notes, or cancel and fix the description in a rerun.",
-    stepsTitle: "Change step images and agents",
+    stepsTitle: "Change the task image and step agents",
     stepsHint:
-      "The same as changing them in the task details. Recorded with the resume and used from the next run of each step.",
+      "The same as changing them in the task details. Recorded with the resume and used from the next run.",
     stepsRechoose:
       "Resuming without deciding the tests chooses the steps again, so they can't be changed here.",
     stepsUnavailable: "The settings can't be read, so the options can't be checked.",
-    stepImage: "Image",
+    taskImage: "Task image",
+    taskImageNote: "Used from the next run of every step.",
     stepAgent: "Agent",
     toReview: "Move to review",
     toReviewing: "Moving…",

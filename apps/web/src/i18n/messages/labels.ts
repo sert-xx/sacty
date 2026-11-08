@@ -241,20 +241,26 @@ const ja = {
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
     TaskCreated: (actor: string, template?: string, rerun?: boolean, derived?: boolean) =>
       `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}${rerun ? "・中止したタスクの再実行" : ""}${derived ? "・完了したタスクの続き" : ""}）`,
-    /** 作成時に、進め方の工程ごとに人が指定したイメージ・エージェント。 */
+    /** 作成時に人が指定したタスクのイメージ（古い版の作業履歴では工程ごと）・工程ごとのエージェント。 */
     createdImages: (images: string) => ` / イメージの指定：${images}`,
     createdAgents: (agents: string) => ` / エージェントの指定：${agents}`,
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
-    stepsImages: (images: string, source: "project" | "orchestrator" | "rerun", reason?: string) =>
-      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
+    stepsImages: (
+      images: string,
+      source: "project" | "orchestrator" | "rerun" | "request",
+      reason?: string,
+    ) =>
+      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : source === "request" ? "作成時に人が指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
     stepsDefaultImages: (reasons: string) => ` / 既定のイメージ：${reasons}`,
     stepDefaultImage: (step: string, reason: string) => `${step}＝${reason}`,
-    /** images の候補があるのに、理由が無いまま既定のイメージで動かす工程（PBI-105）。 */
+    /** images の候補があるのに、理由が無いまま既定のイメージで動かす工程（PBI-105。古い版の作業履歴）。 */
     stepsImagesUnexplained: (steps: string) => ` / 理由なく既定のイメージ：${steps}`,
+    /** images の候補があるのに、理由が無いまま既定のイメージで動かす（PBI-318）。 */
+    imageUnexplained: " / 理由なく既定のイメージ",
     imagesJoin: "、",
     stepsExports: (exports: string) => ` / 書き出し：${exports}`,
     /** テストの仕組みが無いと判断した根拠（PBI-94）。 */
@@ -326,6 +332,8 @@ const ja = {
       `${step}のエージェントを ${from} から ${to} に変更（${actor}）`,
     StepImageChanged: (step: string, from: string, to: string, actor: string) =>
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
+    TaskImageChanged: (from: string | undefined, to: string, actor: string) =>
+      `タスクのイメージを ${from ?? "工程ごとのイメージ"} から ${to} に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskResumedWithNote: (text: string) => `${text}・補足あり`,
     /** テストのコマンドが決まらずに止まったタスクを、テストを決めずに再開し、工程の選択からやり直した。 */
@@ -879,11 +887,12 @@ const en: LabelMessages = {
     createdAgents: (agents) => ` / agents set: ${agents}`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsImages: (images, source, reason) =>
-      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
+      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : source === "request" ? "set by a person at creation" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     stepsDefaultImages: (reasons) => ` / Default image: ${reasons}`,
     stepDefaultImage: (step, reason) => `${step}: ${reason}`,
     stepsImagesUnexplained: (steps) => ` / Default image without a reason: ${steps}`,
+    imageUnexplained: " / Default image without a reason",
     imagesJoin: ", ",
     stepsExports: (exports) => ` / Export: ${exports}`,
     stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,
@@ -931,6 +940,8 @@ const en: LabelMessages = {
       `Changed the agent for ${step} from ${from} to ${to} (${actor})`,
     StepImageChanged: (step, from, to, actor) =>
       `${step} image changed from ${from} to ${to} (${actor})`,
+    TaskImageChanged: (from, to, actor) =>
+      `Task image changed from ${from ?? "the per-step images"} to ${to} (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskResumedWithNote: (text) => `${text}, with notes`,
     TaskResumedRechoose: (actor) => `Resumed (${actor}): choosing the steps again`,

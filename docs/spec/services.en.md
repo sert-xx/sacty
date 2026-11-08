@@ -35,10 +35,10 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
 6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes, and built images.
 
 - Pinning the agent image
-  - In steps that use services, before starting them, sacty pins the agent image (the step's image) to its image ID with `docker image inspect`, and the run uses that ID. The run keeps the pinned image even if the tag changes after the services start.
+  - In steps that use services, before starting them, sacty pins the agent image (the task image) to its image ID with `docker image inspect`, and the run uses that ID. The run keeps the pinned image even if the tag changes after the services start.
   - If the ID cannot be read or the check does not finish within 30 seconds (`IMAGE_ID_TIMEOUT_MS`), the run uses the name.
   - If a person stops the task (pause or cancel) while it waits, sacty stops `docker image inspect` and starts neither the services nor the agent.
-  - The final review that runs the tests also pins the Implementation step's image the same way before starting them.
+  - The final review that runs the tests also pins the final review's image (the task image) the same way before starting them.
   - Steps that do not use services do not check.
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, sacty removes projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label). If `ps` cannot be read, nothing is removed.

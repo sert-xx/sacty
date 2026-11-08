@@ -38,6 +38,7 @@ import { TestViewpoints } from "@/components/test-viewpoints";
 import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
+import { taskImageOf } from "@/lib/labels";
 import { useLiveData } from "@/lib/use-live-data";
 
 /** レビューのデータを取り直す先（PBI-108）。 */
@@ -278,10 +279,10 @@ export function ReviewView({ task }: { task: Task }) {
               .filter((s) => s.state !== "skip")
               .map((s) => ({
                 step: s.key,
-                image: task.images?.[s.key] ?? "default",
                 agentChangeable: stepAgentChangeable(s.key),
                 ...(task.agents?.[s.key] ? { agent: task.agents[s.key] } : {}),
               }))}
+            image={taskImageOf(task)}
             pullRequest={
               // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）。PR のマージで承認する
               watched?.step === step

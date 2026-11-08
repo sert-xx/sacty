@@ -55,7 +55,7 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 | Security check | Investigate | Checking for vulnerabilities and supply chain problems ("Security checks and fixes" below) |
 | Security fix | Investigate → Implement → After-merge watch | Fixing a specific security problem with the smallest change |
 
-- When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual (you can also set the images and agents in "Set the image and agent for each step" below).
+- When you specify a plan, the Orchestrator does not choose again and does not skip steps in the review after each step. It still decides the base branch, the test command, the images, and so on as usual (you can also set the image and the agents in "Set the task image and the agent for each step" below).
 - "Review only" can be chosen only when you choose a target repository and put a link to a PR of that repository in the title or description. Otherwise, the reason appears when you create the task. The review runs the PR's code in the agent's container, so do not choose PRs you do not trust (see [PR reviews](intake.en.md#pr-reviews)).
 - You can also choose a plan that implements (Standard, Implement directly, and so on) without choosing a repository. The Orchestrator chooses a repository from the targets and then proceeds with the plan you specified.
 - With "Auto", when the request has verifiable acceptance criteria in place and there is nothing for you to confirm, the Orchestrator skips Requirements and chooses "Implement directly". The reason for skipping is written in the reason for the plan.
@@ -70,17 +70,17 @@ To proceed differently from how the Orchestrator would choose, pick a plan in "P
 - For an "Investigate only" task, if you write the form of the result (a table, sections, items, and so on) in the description, it reports in that form. Otherwise, it reports the conclusion, the evidence, the related places, and the open questions, in that order.
 - When you choose a template, you cannot choose a plan.
 
-#### Set the image and agent for each step
+#### Set the task image and the agent for each step
 
-When you pick a plan, "Set per step" appears below the sequence of steps. Press it to switch the dialog to the step settings, where you can choose the image and the agent for each step.
+When you pick a plan, "Set per step" appears below the sequence of steps. Press it to switch the dialog to the step settings, where you can choose the task image (one image) and the agent for each step.
 
 ![The "Step settings" view](images/new-task-steps.en.png)
 
-- For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
+- For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). Every step, the tests, and the final review of the task run in this image. If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
 - For the agent, choose the name of an available agent (see [Settings](config.en.md)). If you leave it as "Default", the agent decided by `step_agents` (or `default_agent`) is used. Integration review can't be chosen, because the Goal Guardian runs it.
-- A step you set is marked, and "Reset to default" undoes it. "Done" or the back button at the top left returns to the main form. The sequence of steps in the main form also marks the steps you set.
+- A step whose agent you set is marked, and "Reset to default" undoes it. "Done" or the back button at the top left returns to the main form. The sequence of steps in the main form also marks the steps whose agent you set, and the summary shows the image you set.
 - Switching views keeps the title and description you are typing and your choices. Choosing another plan keeps the choices for the same steps (only those for the steps of the current plan are used).
-- The images and agents you set take precedence over the Orchestrator's choice and `step_agents`. After creating the task, you can still change them in "Step images" and "Step agents" on the task page (they show "set by a person at creation").
+- The image and agents you set take precedence over the Orchestrator's choice and `step_agents`. After creating the task, you can still change them in "Task image" and "Step agents" on the task page (they show "set by a person at creation").
 - You can't set them with the "Automatic" plan or when you choose a template (the steps are not decided yet).
 - When the choices can't be loaded (for example, `config.yaml` can't be read), the reason is shown. You can still create the task without setting them.
 
@@ -149,7 +149,7 @@ The task details look like this.
 | Overview | Results related to the task, such as the cleanup after cancelling, the description, deliverables, the PR, and follow-up tasks |
 | Activity | The whole Activity (newest first; open the run log from an agent run line) |
 | Costs | The amount used and the cap, the cost per step, and the Orchestrator session |
-| Step settings | The steps and why they were chosen, the base branch, the test command, export destinations, step images, and step agents |
+| Step settings | The steps and why they were chosen, the base branch, the test command, export destinations, the task image, and step agents |
 | Audit | The audit result (only for completed tasks; if not audited yet, it says so; [Audit](audit.en.md)) |
 
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
@@ -298,7 +298,7 @@ The exception is a step that is approved by merging its PR (implementation, requ
 
 ## Test (verification) commands
 
-To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the Implementation step's image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
+To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
 
 sacty does not run the tests separately.
 
@@ -460,7 +460,7 @@ Check them before merging the PR.
 
 ### When the verification tool is not in the image
 
-If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the Implementation step's image), the Goal Guardian reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
+If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the task image), the Goal Guardian reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
 
 Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the implementation.
 
@@ -479,7 +479,7 @@ However, when every changed file is a document (such as `.md` or `.rst`), the ta
    ```
 
 2. Rebuild the image with `npx sacty image build <name>`.
-3. If you added a new image, change the image of the Implementation step under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
+3. If you added a new image, change the task image under "Task image" in the task details ([Changing the task image](images.en.md#changing-the-task-image)).
 
 In a task whose test command is decided, if you want to go on without fixing the image (for example, when the verification need not run in that image), you can instead resume with "Tests" in the resume section: specify the test command again, or proceed without tests (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding redoes the final review from where it stopped). When you proceed without tests, tests are not run and the Goal Guardian judges by the task's goal. A bug fix cannot proceed without tests.
 
@@ -751,11 +751,11 @@ In the following cases, check every item.
 | No subagent could be started, so the author sorted the items itself | The classification may be lenient |
 | No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
-## Changing a step's image
+## Changing the task image
 
-The "Step settings" tab of the task detail shows the image of each step and where it came from ("chosen by the Orchestrator", "set on the project target", "set by a person at creation", "set by a person on rerun", "changed by a person from …", "not set", and so on). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
+The "Step settings" tab of the task detail shows the task image (one image used for every step) and where it came from ("chosen by the Orchestrator", "set on the project target", "set by a person at creation", "set by a person on rerun", "changed by a person from …", "not set", and so on). It is usually left as is, so only its heading is shown, collapsed (click the heading to open it).
 
-If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run). When resuming a paused task ([Pause, resume, and cancel](#pause-resume-and-cancel)) and when requesting changes on the approval screen, you can also choose the image again together, under "Change step images and agents" (open it to use it; [Changing a step's agent](#changing-a-steps-agent)). See [Container images](images.en.md#changing-a-steps-image) for details.
+If the image doesn't fit the task, you can choose again there. The changed image is used from the next run of every step (for a running step, from the next run). When resuming a paused task ([Pause, resume, and cancel](#pause-resume-and-cancel)) and when requesting changes on the approval screen, you can also choose the image again together, under "Change the task image and step agents" (open it to use it; [Changing a step's agent](#changing-a-steps-agent)). A task created by an earlier version of sacty with images decided per step shows "per step (older version)" and which step ran with which image. See [Container images](images.en.md#changing-the-task-image) for details.
 
 ## Changing a step's agent
 
@@ -765,8 +765,8 @@ For example, you can rerun only a step that stopped on an error or was sent back
 
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
 - Who changed what, when, and from what to what is kept in the Activity.
-- When requesting changes on the approval screen, you can also choose again the images and agents of the step to redo and the steps after it, under "Change step images and agents" (open it to use it). The current settings are selected at first, and only the steps you changed are recorded, only when you request changes (not when you approve).
-- When resuming a paused task, you can also choose again the images and agents of the steps not yet finished in the resume form ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+- When requesting changes on the approval screen, you can also choose again the task image and the agents of the step to redo and the steps after it, under "Change the task image and step agents" (open it to use it). The current settings are selected at first, and only what you changed is recorded, only when you request changes (not when you approve).
+- When resuming a paused task, you can also choose again the task image and the agents of the steps not yet finished in the resume form ([Pause, resume, and cancel](#pause-resume-and-cancel)).
 - If the chosen agent can no longer be used (you deleted it from config.yaml, removed its price, and so on), the task pauses when the step runs. Choose again, then resume.
 - Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
 
@@ -774,12 +774,12 @@ For example, you can rerun only a step that stopped on an error or was sent back
 
 The details of a task stopped by the budget limit show a field for the new cumulative limit and "Change cap and resume".
 
-![Details of a task paused at the budget limit (the cost, the notes field, the "Change step images and agents" section, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
+![Details of a task paused at the budget limit (the cost, the notes field, the "Change the task image and step agents" section, the new limit field, and "Change cap and resume")](images/task-budget-paused.en.png)
 
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see [config.yaml settings](config.en.md#budget)).
 - In the resume section, you can change the following along with the resume.
   - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the Orchestrator and the steps still to run read them. When the task description is long and only a little can be added, the length of notes you can add is shown below the field (to stay within what can be edited when rerunning). If no notes can be added, the field is disabled; resume without notes, or cancel and fix the description in a rerun.
-  - **Change step images and agents** (open it to use): for each step not finished yet, you can choose the image and the agent again. The current settings are selected first, only the changed steps are recorded, and each change is used from the next run of that step. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
+  - **Change the task image and step agents** (open it to use): you can choose again the task image and the agent for each step not finished yet. The current settings are selected first, only what you changed is recorded, and it is used from the next run. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
 - A task waiting for approval (waiting for a PR merge) can also be paused with "Pause". The approval screen and the task details stay as they are. A task in escalation cannot be paused.
   - While paused, you cannot approve or send it back. When you resume, it returns to waiting for approval and you can use the approval screen again.
   - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume has the Goal Guardian decide where to send the task back.

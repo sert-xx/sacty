@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #241
 - ブランチ: ccr-68ee7161-algbvl
-- 関係する ADR: [タスクの作成時に、進め方の工程ごとのイメージとエージェントを指定でき、ダイアログの中の別の画面で選ぶ](../adr/20261028-0049-create-task-step-image-and-agent.md)
+- 関係する ADR: [タスクの作成時に、進め方の工程ごとのイメージとエージェントを指定でき、ダイアログの中の別の画面で選ぶ](../adr/20261028-0049-superseded-create-task-step-image-and-agent.md)
 
 ## 目的
 

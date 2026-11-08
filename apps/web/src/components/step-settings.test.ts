@@ -20,7 +20,7 @@ vi.mock("@/app/actions", () => {
     resumeTaskAction: action,
     gateAction: action,
     voidRemarkAction: action,
-    changeStepImageAction: action,
+    changeTaskImageAction: action,
     changeStepAgentAction: action,
     decideChangeAction: action,
     followProjectAction: action,
@@ -133,11 +133,11 @@ function detail(patch: Partial<TaskDetailData> = {}, task = taskOf(history())): 
 const section = (div: HTMLElement, id: string) =>
   div.querySelector(`[data-testid="${id}"]`) as HTMLDetailsElement | null;
 
-describe("タスク詳細：工程のイメージ・工程のエージェントの折りたたみ（PBI-138）", () => {
+describe("タスク詳細：タスクのイメージ・工程のエージェントの折りたたみ（PBI-138・PBI-318）", () => {
   it("確かめが要らなければ、見出し（補足の印を含む）だけを出して閉じ、中身は開けば読める", () => {
     const div = detail();
     for (const [id, row, title] of [
-      ["step-images", "step-image-row-", "工程のイメージ"],
+      ["task-image", "task-image-row", "タスクのイメージ"],
       ["step-agents", "step-agent-row-", "工程のエージェント"],
     ] as const) {
       const box = section(div, id);
@@ -152,22 +152,41 @@ describe("タスク詳細：工程のイメージ・工程のエージェント�
     }
   });
 
-  it("イメージの候補を確かめられないときは、工程のイメージを開いて出す", () => {
+  it("イメージの候補を確かめられないときは、タスクのイメージを開いて出す", () => {
     const div = detail({ imageStatus: undefined });
-    expect(section(div, "step-images")?.open).toBe(true);
+    expect(section(div, "task-image")?.open).toBe(true);
     expect(section(div, "step-agents")?.open).toBe(false);
   });
 
-  it("images に無いイメージを使っているときは、工程のイメージを開いて出す", () => {
-    const task = { ...taskOf(history()), images: { implement: "ruby" } };
+  it("images に無いイメージを使っているときは、タスクのイメージを開いて出す", () => {
+    const task = { ...taskOf(history()), image: "ruby" };
     const div = detail({}, task);
-    expect(section(div, "step-images")?.open).toBe(true);
+    expect(section(div, "task-image")?.open).toBe(true);
+  });
+
+  it("タスクのイメージは1つだけ出し、古い版の作業履歴なら工程ごとにどのイメージで動いたかも出す", () => {
+    const div = detail();
+    expect(div.querySelectorAll('[data-testid="task-image-row"]')).toHaveLength(1);
+    expect(section(div, "task-image")?.textContent).toContain("default");
+    expect(div.querySelector('[data-testid="legacy-step-images"]')).toBeNull();
+    const legacy = { ...taskOf(history()), images: { implement: "python" } };
+    const old = detail({}, legacy);
+    expect(old.querySelector('[data-testid="legacy-step-image-implement"]')?.textContent).toContain(
+      "python",
+    );
+    expect(
+      old.querySelector('[data-testid="legacy-step-image-requirements"]')?.textContent,
+    ).toContain("default");
+    // タスクのイメージが無い（工程ごとに違いうる）ことを出す
+    expect(old.querySelector('[data-testid="task-image-row"]')?.textContent).toContain(
+      "工程ごと（古い版）",
+    );
   });
 
   it("エージェントの候補を確かめられないときは、工程のエージェントを開いて出す", () => {
     const div = detail({ agentStatus: undefined });
     expect(section(div, "step-agents")?.open).toBe(true);
-    expect(section(div, "step-images")?.open).toBe(false);
+    expect(section(div, "task-image")?.open).toBe(false);
   });
 
   it("使えるエージェントに無い名前を使っているときは、工程のエージェントを開いて出す", () => {

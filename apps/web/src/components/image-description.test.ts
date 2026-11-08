@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 }));
 // 変更は失敗させる（失敗しても、React は送信の後にフォームを初期値に戻す）
 vi.mock("@/app/actions", () => ({
-  changeStepImageAction: vi.fn(async () => ({ message: "変えられませんでした" })),
+  changeTaskImageAction: vi.fn(async () => ({ message: "変えられませんでした" })),
   rerunTaskAction: vi.fn(async () => ({})),
 }));
 vi.mock("@/lib/repository-candidates", () => ({
@@ -17,7 +17,7 @@ vi.mock("@/lib/repository-candidates", () => ({
 }));
 
 const { I18nProvider } = await import("@/i18n/client");
-const { StepImageForm } = await import("./step-image-form");
+const { TaskImageForm } = await import("./task-image-form");
 const { RerunDialog } = await import("./rerun-dialog");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,8 +58,8 @@ const describedBy = (select: HTMLSelectElement) => {
 };
 
 describe("選んだイメージの説明は、実際の選択と食い違わない", () => {
-  it("工程のイメージ：選び直すと説明も変わり、変更に失敗してフォームが戻ったら、説明も戻る", async () => {
-    await render(h(StepImageForm, { taskId: "t1", step: "implement", current: "node", options }));
+  it("タスクのイメージ：選び直すと説明も変わり、変更に失敗してフォームが戻ったら、説明も戻る", async () => {
+    await render(h(TaskImageForm, { taskId: "t1", current: "node", options }));
     const select = container.querySelector("select") as HTMLSelectElement;
     expect(describedBy(select)).toBe("Node.js 24");
 

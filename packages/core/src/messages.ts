@@ -235,11 +235,11 @@ const PARAMS = {
   "config.imageRepo": null,
   "config.imageRepoPackages": null,
   "image.unknown": z.object({ name: z.string() }),
-  // 工程のイメージを人が変える（PBI-106）
+  // タスクのイメージを人が指定する・変える（PBI-106・PBI-318）
   "image.notInImages": z.object({ name: z.string() }),
   "image.unchanged": z.object({ name: z.string() }),
   "image.configUnavailable": z.object({ detail: TextParam }),
-  "image.stepMissing": null,
+  "image.stepsNotChosen": null,
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
@@ -791,9 +791,9 @@ const ja: MessageDictionary = {
   "task.reviewPlanNeedsPullRequest":
     "進め方「レビューだけ」は、対象リポジトリを選び、そのリポジトリの PR のリンクを題か内容に書いたときだけ選べます。",
   "task.stepSettingsNeedPlan":
-    "工程ごとのイメージ・エージェントは、進め方を選んだときだけ指定できます（自動では、工程が決まっていないため）。",
+    "タスクのイメージ・工程ごとのエージェントは、進め方を選んだときだけ指定できます（自動では、工程が決まっていないため）。",
   "task.stepSettingOutsidePlan":
-    "選んだ進め方に無い工程の、イメージ・エージェントは指定できません。進め方を選び直してから、もう一度指定してください。",
+    "選んだ進め方に無い工程の、エージェントは指定できません。進め方を選び直してから、もう一度指定してください。",
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
@@ -850,7 +850,7 @@ const ja: MessageDictionary = {
       ? `補足を足すと、タスクの内容が${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます（再実行で直せなくなります）。補足は${room.toLocaleString("ja-JP")}文字以内にしてください。`
       : `タスクの内容が長いため、補足を足せません（再実行で直せる${TASK_BODY_MAX.toLocaleString("ja-JP")}文字を超えます）。補足なしで再開するか、中止して再実行で内容を直してください。`,
   "resume.stepSettingsRechoose":
-    "テストを決めずに再開すると工程の選択からやり直すため、工程のイメージ・エージェントは一緒に変えられません。テストの扱いを決めるか、工程を選び直した後に変えてください。",
+    "テストを決めずに再開すると工程の選択からやり直すため、タスクのイメージ・工程のエージェントは一緒に変えられません。テストの扱いを決めるか、工程を選び直した後に変えてください。",
   "resume.capTooLow": ({ usedUsd }) =>
     `新しい上限は、使用済み（${formatUsd(usedUsd)}）より大きい金額にしてください。`,
   "containers.notStopped": ({ names }) =>
@@ -1083,10 +1083,11 @@ const ja: MessageDictionary = {
     `共用の compose「${name}」の compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "image.notInImages": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
-  "image.unchanged": ({ name }) => `工程のイメージは、すでに「${name}」です。`,
+  "image.unchanged": ({ name }) => `タスクのイメージは、すでに「${name}」です。`,
   "image.configUnavailable": ({ detail }, text) =>
-    `config.yaml を読めないため、工程のイメージを変えられません（images の名前を確かめられません）。設定を直してから、もう一度変えてください：${text(detail)}`,
-  "image.stepMissing": "その工程は、このタスクの工程にありません。",
+    `config.yaml を読めないため、タスクのイメージを指定・変更できません（images の名前を確かめられません）。設定を直してから、もう一度選んでください：${text(detail)}`,
+  "image.stepsNotChosen":
+    "工程がまだ決まっていないため、タスクのイメージを変えられません。工程が決まってから変えてください。",
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -1512,9 +1513,9 @@ const en: MessageDictionary = {
   "task.reviewPlanNeedsPullRequest":
     'The plan "Review only" needs a target repository and a link to a pull request of that repository in the title or description.',
   "task.stepSettingsNeedPlan":
-    "Step images and agents can be set only when you choose a plan (with the automatic plan, the steps are not decided yet).",
+    "The task image and step agents can be set only when you choose a plan (with the automatic plan, the steps are not decided yet).",
   "task.stepSettingOutsidePlan":
-    "Images and agents can't be set for steps that are not in the chosen plan. Choose the plan again, then set them again.",
+    "Agents can't be set for steps that are not in the chosen plan. Choose the plan again, then set them again.",
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
@@ -1572,7 +1573,7 @@ const en: MessageDictionary = {
       ? `With the notes, the task description would exceed ${TASK_BODY_MAX.toLocaleString("en-US")} characters (and could no longer be edited when rerunning). Keep the notes within ${room.toLocaleString("en-US")} character${room === 1 ? "" : "s"}.`
       : `The task description is too long to add notes (it would exceed the ${TASK_BODY_MAX.toLocaleString("en-US")} characters that can be edited when rerunning). Resume without notes, or cancel and fix the description in a rerun.`,
   "resume.stepSettingsRechoose":
-    "Resuming without deciding the tests chooses the steps again, so the step images and agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",
+    "Resuming without deciding the tests chooses the steps again, so the task image and step agents can't be changed with it. Decide the tests, or change them after the steps are chosen again.",
   "resume.capTooLow": ({ usedUsd }) =>
     `Set a new cap greater than the amount used (${formatUsd(usedUsd)}).`,
   "containers.notStopped": ({ names }) =>
@@ -1805,10 +1806,11 @@ const en: MessageDictionary = {
     `Could not start the services in the compose file (${file}) of the shared compose "${name}". End of the output: ${detail}`,
   "image.notInImages": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
-  "image.unchanged": ({ name }) => `The step already uses the image "${name}".`,
+  "image.unchanged": ({ name }) => `The task already uses the image "${name}".`,
   "image.configUnavailable": ({ detail }, text) =>
-    `The step image can't be changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then change it again: ${text(detail)}`,
-  "image.stepMissing": "This task does not have that step.",
+    `The task image can't be set or changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then choose it again: ${text(detail)}`,
+  "image.stepsNotChosen":
+    "The task image can't be changed because the steps are not decided yet. Change it after the steps are decided.",
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",

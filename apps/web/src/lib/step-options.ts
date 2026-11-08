@@ -1,7 +1,7 @@
 import { STEP_PLANS, StepKey, type StepPlan, stepAgentChangeable } from "@sacty/core";
 
 /**
- * タスクの作成のダイアログで、進め方の工程ごとに選べるイメージ・エージェント。
+ * タスクの作成のダイアログで選べる、タスクのイメージ（PBI-318）と、進め方の工程ごとのエージェント。
  *
  * 候補は、ダイアログの「工程ごとに設定」を開いたときに読む（普段は既定のまま作るので、ダイアログを開くたび・画面の自動の
  * 更新のたびには読まない）。
@@ -20,14 +20,17 @@ export type StepOptions =
     }
   | { status: "failed"; message: string };
 
-/** 工程ごとの指定（イメージ・エージェント）。書いていない工程は、いつもどおり決める。 */
+/** 工程ごとの指定（エージェント）。書いていない工程は、いつもどおり決める。 */
 export type StepChoices = Partial<Record<StepKey, string>>;
+
+/** 人が選んだタスクのイメージ（PBI-318）と、工程ごとのエージェント。イメージが無ければ、いつもどおり決める。 */
+export type TaskChoices = { image?: string; agents: StepChoices };
 
 /** 候補を返す画面のパス（apps/web/src/app/step-options/route.ts）。 */
 export const STEP_OPTIONS_PATH = "/step-options";
 
-/** フォームの項目の名前（工程ごと）。 */
-export const imageField = (step: StepKey) => `image:${step}`;
+/** フォームの項目の名前（タスクのイメージは1つ、エージェントは工程ごと）。 */
+export const IMAGE_FIELD = "image";
 export const agentField = (step: StepKey) => `agent:${step}`;
 
 /**
@@ -93,68 +96,51 @@ export function planStepSettings(plan: StepPlan): { step: StepKey; agent: boolea
 }
 
 /**
- * 進め方の工程のうち、指定したもの（作成で送るもの）。進め方を選び直しても、工程ごとの指定は残し、今の進め方にある
- * 工程の分だけを使う（ほかの進め方に戻したときに、選び直さなくてよいように）。
+ * 進め方の工程のうち、エージェントを指定したもの（作成で送るもの）。進め方を選び直しても、工程ごとの指定は残し、今の
+ * 進め方にある工程の分だけを使う（ほかの進め方に戻したときに、選び直さなくてよいように）。
  */
-export function chosenForPlan(
-  plan: StepPlan,
-  images: StepChoices,
-  agents: StepChoices,
-): { images: StepChoices; agents: StepChoices } {
-  const steps = planStepSettings(plan);
-  return {
-    images: Object.fromEntries(
-      steps.flatMap(({ step }) => (images[step] ? [[step, images[step]]] : [])),
+export function chosenForPlan(plan: StepPlan, agents: StepChoices): StepChoices {
+  return Object.fromEntries(
+    planStepSettings(plan).flatMap(({ step, agent }) =>
+      agent && agents[step] ? [[step, agents[step]]] : [],
     ),
-    agents: Object.fromEntries(
-      steps.flatMap(({ step, agent }) => (agent && agents[step] ? [[step, agents[step]]] : [])),
-    ),
-  };
+  );
 }
 
-/** 指定した工程（イメージかエージェントのどちらかを指定した工程）。 */
-export function customizedSteps(
-  plan: StepPlan,
-  images: StepChoices,
-  agents: StepChoices,
-): StepKey[] {
-  const chosen = chosenForPlan(plan, images, agents);
-  return STEP_PLANS[plan].filter((step) => chosen.images[step] || chosen.agents[step]);
+/** エージェントを指定した工程。 */
+export function customizedSteps(plan: StepPlan, agents: StepChoices): StepKey[] {
+  const chosen = chosenForPlan(plan, agents);
+  return STEP_PLANS[plan].filter((step) => chosen[step]);
 }
 
-/** フォームから、工程ごとの指定を読む（空欄は、指定しない）。 */
-export function stepChoicesFrom(formData: FormData): {
-  images: StepChoices;
-  agents: StepChoices;
-} {
-  const read = (field: (step: StepKey) => string) =>
-    Object.fromEntries(
-      StepKey.options.flatMap((step) => {
-        const value = formData.get(field(step));
-        return typeof value === "string" && value !== "" ? [[step, value]] : [];
-      }),
-    ) as StepChoices;
-  return { images: read(imageField), agents: read(agentField) };
+/** フォームから、タスクのイメージと工程ごとのエージェントを読む（空欄は、指定しない）。 */
+export function stepChoicesFrom(formData: FormData): TaskChoices {
+  const agents = Object.fromEntries(
+    StepKey.options.flatMap((step) => {
+      const value = formData.get(agentField(step));
+      return typeof value === "string" && value !== "" ? [[step, value]] : [];
+    }),
+  ) as StepChoices;
+  const image = formData.get(IMAGE_FIELD);
+  return { ...(typeof image === "string" && image !== "" ? { image } : {}), agents };
 }
 
-/** 再開の欄で、描いたときの今の名前を送る項目の名前（工程ごと）。 */
-export const imageFromField = (step: StepKey) => `image-from:${step}`;
+/** 再開の欄で、描いたときの今の名前を送る項目の名前（タスクのイメージは1つ、エージェントは工程ごと）。 */
+export const IMAGE_FROM_FIELD = "image-from";
 export const agentFromField = (step: StepKey) => `agent-from:${step}`;
 
 /**
- * 再開の欄の工程ごとの選択から、人が変えた工程だけを返す（描いたときの今の名前と同じ工程は除く）。触っていない工程の
+ * 再開・差し戻しの欄の選択から、人が変えたものだけを返す（描いたときの今の名前と同じものは除く）。触っていないものの
  * 古い名前を送り、その間にタスクの詳細で変えた名前を黙って戻さないため。
  */
-export function changedStepChoices(formData: FormData): {
-  images: StepChoices;
-  agents: StepChoices;
-} {
-  const { images, agents } = stepChoicesFrom(formData);
-  const changed = (choices: StepChoices, from: (step: StepKey) => string) =>
-    Object.fromEntries(
-      Object.entries(choices).filter(
-        ([step, name]) => formData.get(from(step as StepKey)) !== name,
+export function changedStepChoices(formData: FormData): TaskChoices {
+  const { image, agents } = stepChoicesFrom(formData);
+  return {
+    ...(image !== undefined && formData.get(IMAGE_FROM_FIELD) !== image ? { image } : {}),
+    agents: Object.fromEntries(
+      Object.entries(agents).filter(
+        ([step, name]) => formData.get(agentFromField(step as StepKey)) !== name,
       ),
-    ) as StepChoices;
-  return { images: changed(images, imageFromField), agents: changed(agents, agentFromField) };
+    ) as StepChoices,
+  };
 }

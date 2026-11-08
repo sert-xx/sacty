@@ -14,6 +14,7 @@ vi.mock("@/app/actions", () => ({ resumeTaskAction }));
 
 const { ResumeForm } = await import("./resume-form");
 type ResumeStepSetting = import("./resume-form").ResumeStepSetting;
+type TaskImageChoice = import("./step-choice-table").TaskImageChoice;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,7 +33,7 @@ afterEach(() => {
   container.remove();
 });
 
-function renderForm(bugfix = false, steps?: ResumeStepSetting[]) {
+function renderForm(bugfix = false, steps?: ResumeStepSetting[], image?: TaskImageChoice) {
   act(() =>
     root.render(
       h(ResumeForm, {
@@ -42,6 +43,7 @@ function renderForm(bugfix = false, steps?: ResumeStepSetting[]) {
         capUsd: 10,
         tests: { bugfix, rechoose: true },
         ...(steps ? { steps } : {}),
+        ...(image ? { image } : {}),
       }),
     ),
   );
@@ -107,98 +109,92 @@ describe("テストが決まらずに止まったタスクの再開の欄", () =
   });
 });
 
-describe("再開の欄の補足と工程の設定", () => {
+describe("再開の欄の補足と、タスクのイメージ・工程のエージェント（PBI-318）", () => {
   const images = [
     { name: "default", description: "既定" },
     { name: "java", description: "Java 17" },
   ];
+  const image: TaskImageChoice = { current: "default", options: images };
   const agents = [{ id: "claude" }, { id: "strong" }];
   const steps: ResumeStepSetting[] = [
-    {
-      step: "implement",
-      image: "default",
-      imageOptions: images,
-      agent: { current: "claude", options: agents },
-    },
-    { step: "integrate", image: "default", imageOptions: images },
+    { step: "implement", agent: { current: "claude", options: agents } },
+    { step: "integrate" },
   ];
   const select = (name: string) =>
     container.querySelector<HTMLSelectElement>(`select[name="${name}"]`);
 
-  it("補足と、選び直した工程のイメージ・エージェントを送る（今の名前を初めに選んでおく）", async () => {
-    renderForm(false, steps);
+  it("補足と、選び直したタスクのイメージ（1つ）・工程のエージェントを送る（今の名前を初めに選んでおく）", async () => {
+    renderForm(false, steps, image);
     act(() => radio("command")?.click());
     const command = container.querySelector<HTMLInputElement>("#test-command");
     if (command) act(() => typeInto(command, "npm test"));
     const note = container.querySelector<HTMLTextAreaElement>("#resume-note");
     if (note) act(() => typeInto(note, "ACME_TOKEN を使う"));
-    expect(select("image:implement")?.value).toBe("default");
+    expect(select("image")?.value).toBe("default");
+    // 工程ごとのイメージの選択は無い
+    expect(select("image:implement")).toBeNull();
     expect(select("agent:implement")?.value).toBe("claude");
     // 統合レビューは、エージェントを変えられない
     expect(select("agent:integrate")).toBeNull();
-    const image = select("image:implement");
-    if (image) image.value = "java";
+    const imageSelect = select("image");
+    if (imageSelect) imageSelect.value = "java";
     const agent = select("agent:implement");
     if (agent) agent.value = "strong";
-    // 描いたときの今の名前も送り、Server Action が人の変えた工程だけを選ぶ
+    // 描いたときの今の名前も送り、Server Action が人の変えたものだけを選ぶ
     expect(await submit()).toMatchObject({
       note: "ACME_TOKEN を使う",
-      "image:implement": "java",
-      "image-from:implement": "default",
+      image: "java",
+      "image-from": "default",
       "agent:implement": "strong",
       "agent-from:implement": "claude",
-      "image:integrate": "default",
     });
   });
 
-  it("今の名前が変わったら（タスクの詳細で変えた後）、選択を今の名前に合わせる", () => {
-    renderForm(false, steps);
+  it("古い版の工程ごとのイメージ（今の名前が無い）なら、空の選択から選び直してもらい、今の名前は送らない", async () => {
+    renderForm(false, steps, { options: images });
     act(() => radio("command")?.click());
-    expect(select("image:implement")?.value).toBe("default");
-    renderForm(false, [
-      { ...steps[0], image: "java" } as ResumeStepSetting,
-      steps[1] as ResumeStepSetting,
-    ]);
-    expect(select("image:implement")?.value).toBe("java");
+    const command = container.querySelector<HTMLInputElement>("#test-command");
+    if (command) act(() => typeInto(command, "npm test"));
+    expect(select("image")?.value).toBe("");
+    expect(container.textContent).toContain(messagesFor("ja").task.images.perStep);
+    const sent = await submit();
+    expect(sent).not.toHaveProperty("image-from");
   });
 
-  it("再開に失敗した後にタスクの詳細で変えた工程は、触らずに送り直しても古い名前に戻さない", async () => {
-    // 人は何も変えずに送り、断られた（触っていない工程は、戻す選択に入らない）
-    resumeTaskAction.mockResolvedValueOnce({
-      message: "断られた",
-      images: {},
-      agents: {},
-    } as never);
-    renderForm(false, steps);
+  it("今の名前が変わったら（タスクの詳細で変えた後）、選択を今の名前に合わせる", () => {
+    renderForm(false, steps, image);
+    act(() => radio("command")?.click());
+    expect(select("image")?.value).toBe("default");
+    renderForm(false, steps, { ...image, current: "java" });
+    expect(select("image")?.value).toBe("java");
+  });
+
+  it("再開に失敗した後にタスクの詳細で変えたイメージは、触らずに送り直しても古い名前に戻さない", async () => {
+    // 人は何も変えずに送り、断られた（触っていないものは、戻す選択に入らない）
+    resumeTaskAction.mockResolvedValueOnce({ message: "断られた", agents: {} } as never);
+    renderForm(false, steps, image);
     act(() => radio("command")?.click());
     const command = container.querySelector<HTMLInputElement>("#test-command");
     if (command) act(() => typeInto(command, "npm test"));
     await submit();
-    // 断られた理由を見て、タスクの詳細で implement のイメージを java に変えた
-    renderForm(false, [
-      { ...steps[0], image: "java" } as ResumeStepSetting,
-      steps[1] as ResumeStepSetting,
-    ]);
-    expect(select("image:implement")?.value).toBe("java");
-    // 触らずに送り直すと、今の名前のまま（Server Action は、描いたときの名前と同じ工程を渡さない）
+    // 断られた理由を見て、タスクの詳細でイメージを java に変えた
+    renderForm(false, steps, { ...image, current: "java" });
+    expect(select("image")?.value).toBe("java");
     const again = container.querySelector<HTMLInputElement>("#test-command");
     if (again) act(() => typeInto(again, "npm test"));
     const sent = await submit();
     expect(resumeTaskAction).toHaveBeenCalledTimes(2);
-    expect(sent?.["image:implement"]).toBe("java");
-    expect(sent?.["image-from:implement"]).toBe("java");
+    expect(sent?.image).toBe("java");
+    expect(sent?.["image-from"]).toBe("java");
   });
 
-  it("同じ工程のイメージが別の所で変わっても、選んでいる途中のエージェントは消さない", () => {
-    renderForm(false, steps);
+  it("タスクのイメージが別の所で変わっても、選んでいる途中のエージェントは消さない", () => {
+    renderForm(false, steps, image);
     act(() => radio("command")?.click());
     const agent = select("agent:implement");
     if (agent) agent.value = "strong";
-    renderForm(false, [
-      { ...steps[0], image: "java" } as ResumeStepSetting,
-      steps[1] as ResumeStepSetting,
-    ]);
-    expect(select("image:implement")?.value).toBe("java");
+    renderForm(false, steps, { ...image, current: "java" });
+    expect(select("image")?.value).toBe("java");
     expect(select("agent:implement")?.value).toBe("strong");
   });
 
@@ -245,24 +241,24 @@ describe("再開の欄の補足と工程の設定", () => {
   it("再開に失敗したら、選んでいた工程の設定を戻す", async () => {
     resumeTaskAction.mockResolvedValueOnce({
       message: "断られた",
-      images: { implement: "java" },
+      image: "java",
       agents: { implement: "strong" },
     } as never);
-    renderForm(false, steps);
+    renderForm(false, steps, image);
     act(() => radio("command")?.click());
     const command = container.querySelector<HTMLInputElement>("#test-command");
     if (command) act(() => typeInto(command, "npm test"));
     await submit();
     expect(container.textContent).toContain("断られた");
-    expect(select("image:implement")?.value).toBe("java");
+    expect(select("image")?.value).toBe("java");
     expect(select("agent:implement")?.value).toBe("strong");
   });
 
   it("テストを決めずに再開する（工程の選択からやり直す）ときは、工程の設定を出さない", async () => {
-    renderForm(false, steps);
+    renderForm(false, steps, image);
     expect(container.querySelector('[data-testid="resume-steps-rechoose"]')).not.toBeNull();
-    expect(select("image:implement")).toBeNull();
+    expect(select("image")).toBeNull();
     act(() => radio("command")?.click());
-    expect(select("image:implement")).not.toBeNull();
+    expect(select("image")).not.toBeNull();
   });
 });

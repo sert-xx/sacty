@@ -12,13 +12,11 @@ import { type StepOptions, stepOptionsLoader } from "@/lib/step-options";
 import { type StepChoiceSetting, StepChoiceTable } from "./step-choice-table";
 
 /**
- * 差し戻しと一緒にイメージ・エージェントを変えられる工程（飛ばした工程を除く、タスクの工程の順）。image は今のイメージ、
- * agent は人が選んだエージェント（無ければ config.yaml で決まるもの）。agentChangeable でない工程（統合レビュー）は、
- * エージェントを変えられない。
+ * 差し戻しと一緒にエージェントを変えられる工程（飛ばした工程を除く、タスクの工程の順）。agent は人が選んだエージェント
+ * （無ければ config.yaml で決まるもの）。agentChangeable でない工程（統合レビュー）は、エージェントを変えられない。
  */
 export type GateStepSetting = {
   step: StepKey;
-  image: string;
   agentChangeable: boolean;
   agent?: string;
 };
@@ -39,6 +37,7 @@ export function GateForm({
   notReproduced = false,
   noChanges = false,
   steps = [],
+  image,
 }: {
   taskId: string;
   step: StepKey;
@@ -67,8 +66,10 @@ export function GateForm({
   notReproduced?: boolean;
   /** 実装に変更が無く、PR を作らなかった実装の承認（PBI-90・PBI-110）。承認すると変更なしで完了する。 */
   noChanges?: boolean;
-  /** 差し戻しと一緒にイメージ・エージェントを変えられる工程。やり直す工程から後ろの分を出す。 */
+  /** 差し戻しと一緒にエージェントを変えられる工程。やり直す工程から後ろの分を出す。 */
   steps?: GateStepSetting[];
+  /** 差し戻しと一緒に変えられる、今のタスクのイメージ（PBI-318。古い版の工程ごとのイメージなら undefined）。 */
+  image?: string;
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -223,6 +224,7 @@ export function GateForm({
           />
           {steps.length > 0 && (
             <GateStepSettings
+              image={image}
               steps={steps.slice(
                 Math.max(
                   steps.findIndex((s) => s.step === target),
@@ -272,10 +274,18 @@ export function GateForm({
 }
 
 /**
- * 差し戻しと一緒に変える工程のイメージ・エージェント。普段は変えないので、折りたたんで出し、開いたときに候補を読む
+ * 差し戻しと一緒に変えるタスクのイメージ・工程のエージェント。普段は変えないので、折りたたんで出し、開いたときに候補を読む
  * （タスクの作成のダイアログと同じ。画面の自動の更新のたびには読まない）。差し戻すときだけ記録する。
  */
-function GateStepSettings({ steps, chosen }: { steps: GateStepSetting[]; chosen: GateState }) {
+function GateStepSettings({
+  image,
+  steps,
+  chosen,
+}: {
+  image: string | undefined;
+  steps: GateStepSetting[];
+  chosen: GateState;
+}) {
   const m = useMessages();
   const t = m.review.gate;
   const [options, setOptions] = useState<StepOptions>({ status: "idle" });
@@ -286,8 +296,6 @@ function GateStepSettings({ steps, chosen }: { steps: GateStepSetting[]; chosen:
           const current = s.agent ?? options.stepAgents[s.step];
           return {
             step: s.step,
-            image: s.image,
-            imageOptions: options.images,
             ...(s.agentChangeable
               ? { agent: { ...(current ? { current } : {}), options: options.agents } }
               : {}),
@@ -317,7 +325,12 @@ function GateStepSettings({ steps, chosen }: { steps: GateStepSetting[]; chosen:
           </p>
         )}
         {options.status === "loaded" && (
-          <StepChoiceTable steps={rows} chosen={chosen} idPrefix="gate-step" />
+          <StepChoiceTable
+            image={{ ...(image ? { current: image } : {}), options: options.images }}
+            steps={rows}
+            chosen={chosen}
+            idPrefix="gate-step"
+          />
         )}
       </div>
     </details>

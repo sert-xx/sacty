@@ -88,13 +88,16 @@ export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
 /**
- * 工程ごとの名前（イメージ・エージェント）の指定。名前は config.yaml のキーのまま持つ（空白を除いたり長さで切ったり
- * しない。別の名前を選んだことにしないため）。制約は、タスクの詳細で変える入力（ChangeStepImageInput・
+ * 工程ごとの名前（エージェント。古い版の作業履歴ではイメージも）の指定。名前は config.yaml のキーのまま持つ（空白を除いたり
+ * 長さで切ったりしない。別の名前を選んだことにしないため）。制約は、タスクの詳細で変える入力（ChangeTaskImageInput・
  * ChangeStepAgentInput）とそろえる（イメージは100文字まで、エージェントは長さを限らない）。
  */
 export type StepSettingMap = Partial<Record<StepKey, string>>;
+/** 古い版（PBI-318 より前）の作業履歴の、工程ごとのイメージの指定。新しい記録には書かない。 */
 export const StepImageMap = z.partialRecord(StepKey, z.string().min(1).max(100));
 export const StepAgentMap = z.partialRecord(StepKey, z.string().min(1));
+/** タスクのイメージの名前（config.yaml の images の名前か default。PBI-318）。すべての工程・最終レビューで使う。 */
+export const TaskImageName = z.string().min(1).max(100);
 
 /**
  * 工程の完了の後に、オーケストレーターが飛ばせる工程（工程の見直し）。実装の前に置く、文書やテストを作る工程だけ。
@@ -734,9 +737,14 @@ const TaskCreated = z.object({
      */
     plan: StepPlan.optional(),
     /**
-     * 人がタスクの作成時に、進め方（plan）の工程ごとに指定したイメージ（config.yaml の images の名前か default）。
-     * 指定した工程は、プロジェクトの対象の指定・オーケストレーターの選択より優先する（工程を選び直しても使う）。
-     * plan があるときだけ持ち、plan の工程だけを書く。
+     * 人がタスクの作成時に指定した、タスクのイメージ（config.yaml の images の名前か default。PBI-318）。プロジェクトの
+     * 対象の指定・オーケストレーターの選択より優先する（工程を選び直しても使う。再実行の指定は無いタスクだけ）。
+     * plan があるときだけ持つ。
+     */
+    image: TaskImageName.optional(),
+    /**
+     * 古い版（PBI-318 より前）の作業履歴の、作成時に工程ごとに指定したイメージ。新しい記録には書かない（読むだけ）。
+     * 指定した工程は、その工程を選んだときに、ほかの決め方より優先して工程のイメージにする。
      */
     images: StepImageMap.optional(),
     /**
@@ -885,24 +893,36 @@ const StepsChosen = z.object({
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**
-     * 工程ごとに使うイメージの名前（config.yaml の images の名前か default。PBI-41）。書いていない工程は
-     * 既定のイメージ（images の候補を見せたときは、理由か理由が無いことを defaultImageReasons・imagesUnexplained に残す。PBI-105）。
-     * テストの実行は、確かめる工程（実装・再現）のイメージで行う。
+     * タスクのイメージの名前（config.yaml の images の名前か default。PBI-318）。すべての工程・テスト・最終レビューを、
+     * このイメージで実行する。無ければ既定のイメージ（images の候補を見せたときは、理由か理由が無いことを
+     * defaultImageReason・imageUnexplained に残す）。
+     */
+    image: z.string().min(1).optional(),
+    /**
+     * 古い版（PBI-318 より前）の作業履歴の、工程ごとのイメージの名前（PBI-41）。新しい記録には書かない（読むだけ）。
+     * 書いていない工程は既定のイメージ。テストの実行は、確かめる工程（実装・再現）のイメージ。
      */
     images: z.partialRecord(StepKey, z.string().min(1)).optional(),
-    /** イメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか、再実行で人が指定したものか。 */
-    imageSource: z.enum(["project", "orchestrator", "rerun"]).optional(),
+    /**
+     * イメージを決めたのが、再実行で人が指定したものか、作成時に人が指定したもの（request。PBI-318）か、プロジェクトの
+     * 対象の指定か、オーケストレーターか。
+     */
+    imageSource: z.enum(["project", "orchestrator", "rerun", "request"]).optional(),
     /** オーケストレーターがイメージを選んだ理由。 */
     imageReason: z.string().max(1000).optional(),
     /**
-     * 既定のイメージ（default）で動かす工程と、images のどれも合わない理由（PBI-105）。images の候補をオーケストレーターに
-     * 見せたときだけ持つ。理由が書かれなかった工程（イメージを書かなかった・default と書いて理由が無い）は、imagesUnexplained に入る。
+     * 既定のイメージ（default）で動かすときの、images のどれも合わない理由（PBI-318。考え方は PBI-105 と同じ）。images の
+     * 候補をオーケストレーターに見せたときだけ持つ。理由が書かれなかった（イメージを書かなかった・default と書いて理由が
+     * 無い）なら、imageUnexplained を持つ。
      */
-    defaultImageReasons: z.partialRecord(StepKey, z.string().min(1).max(1000)).optional(),
+    defaultImageReason: z.string().min(1).max(1000).optional(),
     /**
-     * images の候補を見せたのに、理由が無いまま既定のイメージで動かす工程（PBI-105）。オーケストレーターが工程のイメージを
-     * 書かなかった・default と書いて理由を書かなかった。作業履歴とタスクの画面に、理由が無いことを出す。
+     * images の候補を見せたのに、理由が無いまま既定のイメージで動かす（PBI-318）。作業履歴とタスクの画面に、理由が無いことを出す。
      */
+    imageUnexplained: z.literal(true).optional(),
+    /** 古い版（PBI-318 より前）の作業履歴の、既定のイメージで動かす工程ごとの理由（PBI-105）。読むだけ。 */
+    defaultImageReasons: z.partialRecord(StepKey, z.string().min(1).max(1000)).optional(),
+    /** 古い版（PBI-318 より前）の作業履歴の、理由が無いまま既定のイメージで動かす工程（PBI-105）。読むだけ。 */
     imagesUnexplained: z.array(StepKey).optional(),
     /**
      * 工程・テストの実行の前に起動する docker compose のサービス（DB・モック API など。PBI-47）。file は作業領域からの
@@ -1004,13 +1024,23 @@ const StepsSkipped = z.object({
 });
 
 /**
- * 人が、タスクの詳細で工程のイメージを変えた（PBI-106）。from は変える前の名前（指定が無ければ default）、to は
- * config.yaml の images の名前か default。その工程の次の実行から使う（テストのイメージも）。終わった工程・実行中の
- * 工程は変えない。actor は person。
+ * 古い版（PBI-318 より前）の作業履歴の、人が工程のイメージを変えた記録（PBI-106）。新しい記録には書かない（読むだけ）。
+ * from は変える前の名前（指定が無ければ default）、to は config.yaml の images の名前か default。actor は person。
  */
 const StepImageChanged = z.object({
   type: z.literal("StepImageChanged"),
   payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
+});
+
+/**
+ * 人が、タスクのイメージを変えた（PBI-318。タスクの詳細・再開・差し戻しで）。to は config.yaml の images の名前か default。
+ * from は変える前のタスクのイメージ（指定が無ければ default）。古い版の作業履歴で工程ごとのイメージを持つタスクを、タスクの
+ * イメージを決めずに変えたときは持たない。すべての工程の次の実行から使う（テスト・最終レビューも）。実行中の実行は変えない。
+ * actor は person。
+ */
+const TaskImageChanged = z.object({
+  type: z.literal("TaskImageChanged"),
+  payload: z.object({ from: z.string().min(1).optional(), to: z.string().min(1) }),
 });
 
 /**
@@ -3197,6 +3227,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsChosen,
   StepsSkipped,
   StepImageChanged,
+  TaskImageChanged,
   StepAgentChanged,
   ServicesStarted,
   InformationGathered,
@@ -3334,10 +3365,10 @@ export const CreateTaskInput = z.object({
    */
   plan: StepPlan.optional(),
   /**
-   * 進め方の工程ごとのイメージ（config.yaml の images の名前か default）。plan を選んだときだけ、その工程だけを指定できる。
-   * 書いていない工程は、いつもどおり決める（プロジェクトの対象の指定かオーケストレーター）。
+   * タスクのイメージ（config.yaml の images の名前か default。PBI-318）。すべての工程で使う。plan を選んだときだけ指定できる。
+   * 省略すると、いつもどおり決める（プロジェクトの対象の指定かオーケストレーター）。
    */
-  images: StepImageMap.optional(),
+  image: TaskImageName.optional(),
   /**
    * 進め方の工程ごとのエージェント（config.yaml の agents の名前）。plan を選んだときだけ、その工程（統合レビューを除く）
    * だけを指定できる。書いていない工程は config.yaml で決まる。
@@ -3528,10 +3559,10 @@ export const ResumeTaskInput = z.object({
     .pipe(z.string().trim().max(RESUME_NOTE_MAX, code("input.resumeNoteTooLong")))
     .optional(),
   /**
-   * 再開と一緒に変える工程のイメージ・エージェント（タスクの詳細で変えるのと同じ。StepImageChanged・StepAgentChanged）。
-   * 選んだ工程だけを指定でき、今と同じ名前は変えない。
+   * 再開と一緒に変えるタスクのイメージ（PBI-318）と工程のエージェント（タスクの詳細で変えるのと同じ。TaskImageChanged・
+   * StepAgentChanged）。エージェントは選んだ工程だけを指定でき、今と同じ名前は変えない。
    */
-  images: StepImageMap.optional(),
+  image: TaskImageName.optional(),
   agents: StepAgentMap.optional(),
 });
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
@@ -3560,10 +3591,10 @@ export const RequestChangesInput = z.object({
   /** エスカレーションの後、上限を超えて差し戻しを続けるか。 */
   continueOverLimit: z.boolean().default(false),
   /**
-   * 差し戻しと一緒に変える工程のイメージ・エージェント（タスクの詳細で変えるのと同じ。StepImageChanged・StepAgentChanged）。
-   * 選んだ工程だけを指定でき、今と同じ名前は変えない。
+   * 差し戻しと一緒に変えるタスクのイメージ（PBI-318）と工程のエージェント（タスクの詳細で変えるのと同じ。TaskImageChanged・
+   * StepAgentChanged）。エージェントは選んだ工程だけを指定でき、今と同じ名前は変えない。
    */
-  images: StepImageMap.optional(),
+  image: TaskImageName.optional(),
   agents: StepAgentMap.optional(),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
@@ -3578,12 +3609,11 @@ export const AskQuestionInput = z.object({
 });
 export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
 
-/** タスクの詳細で、工程のイメージを変える入力（PBI-106）。image は config.yaml の images の名前か default。 */
-export const ChangeStepImageInput = z.object({
-  step: StepKey,
+/** タスクの詳細で、タスクのイメージを変える入力（PBI-318）。image は config.yaml の images の名前か default。 */
+export const ChangeTaskImageInput = z.object({
   image: z.string().trim().min(1).max(100),
 });
-export type ChangeStepImageInput = z.infer<typeof ChangeStepImageInput>;
+export type ChangeTaskImageInput = z.infer<typeof ChangeTaskImageInput>;
 
 /**
  * タスクの詳細で、工程のエージェントを変える入力（PBI-121）。agent は config.yaml の agents の名前。名前は config.yaml の

@@ -35,22 +35,26 @@ const ja = {
       "指定すると、オーケストレーターは組み合わせを選び直さず、途中で工程を省きません。ベースブランチ・テストのコマンド・イメージは、オーケストレーターが決めます。",
     /** 工程ごとの設定があるとき（タスクの作成のダイアログ）の補足。スケジュールタスクには工程ごとの設定が無いので planHint を使う。 */
     planStepsHint:
-      "指定すると、オーケストレーターは組み合わせを選び直さず、途中で工程を省きません。ベースブランチ・テストのコマンドはオーケストレーターが決めます。イメージとエージェントは「工程ごとに設定」で指定でき、指定しなければいつもどおり決めます。",
-    // 進め方の工程ごとのイメージ・エージェント。ダイアログの中の別の画面（工程ごとの設定）で選ぶ
+      "指定すると、オーケストレーターは組み合わせを選び直さず、途中で工程を省きません。ベースブランチ・テストのコマンドはオーケストレーターが決めます。タスクのイメージと工程ごとのエージェントは「工程ごとに設定」で指定でき、指定しなければいつもどおり決めます。",
+    // タスクのイメージと、進め方の工程ごとのエージェント。ダイアログの中の別の画面（工程ごとの設定）で選ぶ
     steps: "工程ごとに設定",
     stepsSummaryDefault: "イメージとエージェントは、いつもどおり決めます",
-    stepsSummaryCustomized: (count: number) => `${count}つの工程で、イメージかエージェントを指定`,
+    stepsSummaryCustomized: (image: string | undefined, count: number) =>
+      [image ? `イメージ：${image}` : "", count > 0 ? `${count}つの工程でエージェントを指定` : ""]
+        .filter(Boolean)
+        .join("・"),
     stepsTitle: "工程ごとの設定",
     stepsPlan: (plan: string) => `進め方：${plan}`,
     stepsHint:
-      "指定しない項目は、いつもどおり決めます（イメージはプロジェクトの対象の指定かオーケストレーター、エージェントは config.yaml の step_agents）。作成の後も、タスクの詳細の「工程のイメージ」「工程のエージェント」で変えられます。",
+      "指定しない項目は、いつもどおり決めます（イメージはプロジェクトの対象の指定かオーケストレーター、エージェントは config.yaml の step_agents）。作成の後も、タスクの詳細の「タスクのイメージ」「工程のエージェント」で変えられます。",
     stepsLegend: "「自動」「既定」のままの項目は、いつもどおり決めます。",
     stepsBack: "基本の入力に戻る",
     stepsDone: "完了",
     stepsResetAll: "すべて既定に戻す",
     stepReset: "既定に戻す",
     stepCustomized: "指定あり",
-    stepImage: "イメージ",
+    taskImage: "タスクのイメージ",
+    taskImageNote: "すべての工程・テスト・最終レビューを、このイメージで実行します。",
     stepAgent: "エージェント",
     stepImageAuto: "自動",
     stepAgentDefault: (name?: string) => (name ? `既定：${name}` : "既定"),
@@ -120,22 +124,28 @@ const en: FormsMessages = {
     planHint:
       "When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch, the test command, and the images.",
     planStepsHint:
-      'When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch and the test command. You can set the images and agents in "Set per step"; anything unset is decided as usual.',
+      'When you choose one, the Orchestrator keeps it and does not skip steps along the way. It still decides the base branch and the test command. You can set the task image and the agents per step in "Set per step"; anything unset is decided as usual.',
     steps: "Set per step",
     stepsSummaryDefault: "Images and agents are decided as usual",
-    stepsSummaryCustomized: (count) =>
-      `Image or agent set for ${count} ${count === 1 ? "step" : "steps"}`,
+    stepsSummaryCustomized: (image, count) =>
+      [
+        image ? `Image: ${image}` : "",
+        count > 0 ? `Agent set for ${count} ${count === 1 ? "step" : "steps"}` : "",
+      ]
+        .filter(Boolean)
+        .join(", "),
     stepsTitle: "Step settings",
     stepsPlan: (plan) => `Plan: ${plan}`,
     stepsHint:
-      "Anything you leave unset is decided as usual (images by the project target or the Orchestrator, agents by step_agents in config.yaml). After creating the task, you can still change them in Step images and Step agents on the task page.",
+      "Anything you leave unset is decided as usual (the image by the project target or the Orchestrator, agents by step_agents in config.yaml). After creating the task, you can still change them in Task image and Step agents on the task page.",
     stepsLegend: "Items left as Automatic or Default are decided as usual.",
     stepsBack: "Back to the main form",
     stepsDone: "Done",
     stepsResetAll: "Reset all to default",
     stepReset: "Reset to default",
     stepCustomized: "set",
-    stepImage: "Image",
+    taskImage: "Task image",
+    taskImageNote: "All the steps, the tests, and the final review run with this image.",
     stepAgent: "Agent",
     stepImageAuto: "Automatic",
     stepAgentDefault: (name) => (name ? `Default: ${name}` : "Default"),

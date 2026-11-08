@@ -640,10 +640,10 @@ export async function submitTaskForReview(
   return { ok: true };
 }
 
-/** 再開と一緒に渡す補足と、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */
+/** 再開と一緒に渡す補足と、人が変えたタスクのイメージ・工程のエージェント（無い・空なら何も変えない）。 */
 export type ResumeOptions = {
   note: string;
-  images: Partial<Record<StepKey, string>>;
+  image?: string;
   agents: Partial<Record<StepKey, string>>;
 };
 
@@ -661,7 +661,7 @@ export async function resumeTask(
       ...(capUsd === undefined ? {} : { capUsd }),
       ...(tests ? { tests } : {}),
       ...(options.note ? { note: options.note } : {}),
-      images: options.images,
+      ...(options.image ? { image: options.image } : {}),
       agents: options.agents,
     }),
   });
@@ -718,9 +718,9 @@ export async function changeStepAgent(id: string, step: StepKey, agent: string):
   return postOp(`/api/tasks/${encodeURIComponent(id)}/agents`, { step, agent });
 }
 
-/** タスクの詳細で、工程のイメージを変える（PBI-106）。image は images の名前か default。 */
-export async function changeStepImage(id: string, step: StepKey, image: string): Promise<OpResult> {
-  return postOp(`/api/tasks/${encodeURIComponent(id)}/images`, { step, image });
+/** タスクの詳細で、タスクのイメージを変える（PBI-318）。image は images の名前か default。 */
+export async function changeTaskImage(id: string, image: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/image`, { image });
 }
 
 async function postOp(path: string, body: unknown): Promise<OpResult> {
@@ -753,8 +753,8 @@ export function requestChanges(
     cause?: ReworkCause;
     comments: string[];
     continueOverLimit: boolean;
-    /** 差し戻しと一緒に、人が変えた工程のイメージ・エージェント（空なら何も変えない）。 */
-    images: Partial<Record<StepKey, string>>;
+    /** 差し戻しと一緒に、人が変えたタスクのイメージ・工程のエージェント（無い・空なら何も変えない）。 */
+    image?: string;
     agents: Partial<Record<StepKey, string>>;
   },
 ): Promise<OpResult> {

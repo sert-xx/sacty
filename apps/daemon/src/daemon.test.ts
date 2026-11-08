@@ -4971,13 +4971,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
     });
 
-    it("オーケストレーターに候補を見せて工程ごとに選ばせ、工程とテストをそのイメージ・環境変数で実行する", async () => {
+    it("オーケストレーターに候補を見せてタスクに1つ選ばせ、すべての工程をそのイメージ・環境変数で実行する（PBI-318）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
         [
           planOutput(
-            ', "images": {"investigate": "java", "requirements": "default", "implement": "java", "pr": "java", "bogus": "java", "reproduce": "java"}, "imageReason": "pom.xml が Java 17"',
+            ', "image": "java", "images": {"requirements": "default"}, "imageReason": "pom.xml が Java 17"',
           ),
           completed(10),
         ],
@@ -4987,35 +4987,38 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(task.id);
       const prompt = executor.calls[0]?.command.join(" ") ?? "";
       expect(prompt).toContain("- java：Java 17・Maven");
+      // 工程ごとには選ばせない
+      expect(prompt).toContain('"image": "イメージの名前"');
+      expect(prompt).not.toContain('"images":');
       // 既定のイメージは候補に並べない（PBI-105）
       expect(prompt).not.toContain("- default：既定のイメージ");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
-      // 工程の名前でないもの（bogus・無くした工程 pr）と、選んだ工程に無いもの（reproduce・investigate）は捨てる
-      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
-        requirements: "default",
-        implement: "java",
-      });
+      // 工程ごとのイメージ（古い版の答えの形）は読まず、記録にも書かない
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        image: "java",
         imageSource: "orchestrator",
         imageReason: "pom.xml が Java 17",
-        // 要求要件は default と書いて理由が無い、設計は書かなかった（PBI-105）
-        imagesUnexplained: ["requirements", "design"],
       });
-      // オーケストレーターは既定のイメージ。要求要件は default を選んだので既定のイメージ（環境変数なし）
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty("images");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "imageUnexplained",
+      );
+      // オーケストレーターは既定のイメージ。要求要件もタスクのイメージ（java とその環境変数）
       expect(executor.images.slice(0, 2)).toEqual([
         { image: "sacty-agent:test" },
-        { image: "sacty-agent:test" },
+        { image: java.image, env: java.env },
       ]);
+      expect(service.get(task.id)?.task.image).toBe("java");
       activity.close();
     });
 
-    it("images の候補を見せたら、既定のイメージで動かす工程ごとに、合わない理由か、理由が無いことを記録する（PBI-105）", async () => {
+    it("images の候補を見せて既定のイメージを選んだら、合わない理由を1つ記録する（PBI-318）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
         [
           planOutput(
-            ', "images": {"requirements": "default", "implement": "java"}, "imageReason": "pom.xml", "defaultReasons": {"requirements": "文書だけで、Java のツールは要らない", "implement": "java を選んだ工程の理由は捨てる", "pr": "PR 作成は対象外", "reproduce": "選んでいない工程"}',
+            ', "image": "default", "imageReason": "pom.xml", "defaultReason": "文書だけで、Java のツールは要らない"',
           ),
           completed(10),
         ],
@@ -5024,38 +5027,64 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const task = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(task.id);
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload.defaultImageReasons).toEqual({
-        requirements: "文書だけで、Java のツールは要らない",
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        image: "default",
+        defaultImageReason: "文書だけで、Java のツールは要らない",
       });
-      // 設計はイメージを書かなかった。PR 作成は対象にしない
-      expect(chosen?.type === "StepsChosen" && chosen.payload.imagesUnexplained).toEqual([
-        "design",
-      ]);
-      // 理由が無くても止めずに、既定のイメージで進める（作業履歴と画面に出す）
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "imageUnexplained",
+      );
+      expect(service.get(task.id)?.task.defaultImageReason).toBe(
+        "文書だけで、Java のツールは要らない",
+      );
       expect(executor.images[1]).toEqual({ image: "sacty-agent:test" });
       activity.close();
     });
 
-    it("イメージを1つも書かなかったら、PR 作成を除く工程すべてを、理由が無いまま既定のイメージで動かすと記録する（PBI-105）", async () => {
+    it("images の候補を見せて java を選んだら、既定のイメージの理由は書いても記録しない（PBI-318）", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(activity, [planOutput(""), completed(10)], {
-        realPlanner: true,
-        config: withImages(),
-      });
+      const { service } = makeService(
+        activity,
+        [planOutput(', "image": "java", "defaultReason": "要らない理由"'), completed(10)],
+        { realPlanner: true, config: withImages() },
+      );
       const task = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(task.id);
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
-        imagesUnexplained: ["requirements", "design", "implement"],
-      });
-      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toBeUndefined();
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "defaultImageReason",
+      );
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "imageUnexplained",
+      );
       activity.close();
     });
 
+    it("イメージを書かなかった・default と書いて理由が無いなら、理由が無いまま既定のイメージで動かすと記録する（PBI-318）", async () => {
+      for (const extra of ["", ', "image": "default"']) {
+        const activity = new SqliteActivityStore(join(dir, `unexplained-${extra.length}.db`));
+        const { service, executor } = makeService(activity, [planOutput(extra), completed(10)], {
+          realPlanner: true,
+          config: withImages(),
+        });
+        const task = service.createTask({ projectId: "default", title: "決済API" });
+        await service.runNext(task.id);
+        const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+        expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+          imageUnexplained: true,
+        });
+        expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+          "defaultImageReason",
+        );
+        expect(service.get(task.id)?.task.imageUnexplained).toBe(true);
+        // 理由が無くても止めずに、既定のイメージで進める（作業履歴と画面に出す）
+        expect(executor.images[1]).toEqual({ image: "sacty-agent:test" });
+        activity.close();
+      }
+    });
+
     it("images が無い・プロジェクトの対象でイメージを指定しているときは、既定のイメージの理由を求めず、記録もしない（PBI-105）", async () => {
-      const output = planOutput(
-        ', "images": {"implement": "default"}, "defaultReasons": {"implement": "x"}',
-      );
+      const output = planOutput(', "image": "default", "defaultReason": "x"');
       // images が無い
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(activity, [output, completed(10)], {
@@ -5064,14 +5093,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const task = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(task.id);
       const prompt = executor.calls[0]?.command.join(" ") ?? "";
-      expect(prompt).not.toContain("defaultReasons");
+      expect(prompt).not.toContain("defaultReason");
       expect(prompt).not.toContain("最後の手段");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
-        "defaultImageReasons",
+        "defaultImageReason",
       );
       expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
-        "imagesUnexplained",
+        "imageUnexplained",
       );
       activity.close();
 
@@ -5094,17 +5123,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         repo: "https://github.com/acme/app",
       });
       await made.service.runNext(pinned.id);
-      expect(made.executor.calls[0]?.command.join(" ") ?? "").not.toContain("defaultReasons");
+      expect(made.executor.calls[0]?.command.join(" ") ?? "").not.toContain("defaultReason");
       const picked = made.service.get(pinned.id)?.activity.find((e) => e.type === "StepsChosen");
       expect(picked?.type === "StepsChosen" && picked.payload).toMatchObject({
         imageSource: "project",
-        images: { implement: "default" },
+        image: "default",
       });
       expect(picked?.type === "StepsChosen" && picked.payload).not.toHaveProperty(
-        "defaultImageReasons",
+        "defaultImageReason",
       );
       expect(picked?.type === "StepsChosen" && picked.payload).not.toHaveProperty(
-        "imagesUnexplained",
+        "imageUnexplained",
       );
       second.close();
     });
@@ -5118,14 +5147,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           testCommand: "mvn test",
           costUsd: 0,
           estimated: false,
-          images: { design: "java", implement: "java" },
+          image: "java",
         }),
       });
       await drain(service);
-      // 要求要件（2回）は既定、設計・実装は java、最終レビュー（ゴールガーディアンがテストを実行する）も実装の java
+      // 要求要件（2回）・設計・実装・最終レビュー（ゴールガーディアンがテストを実行する）は、すべてタスクの java
       expect(executor.images.slice(0, 5)).toEqual([
-        { image: "sacty-agent:test" },
-        { image: "sacty-agent:test" },
+        { image: java.image, env: java.env },
+        { image: java.image, env: java.env },
         { image: java.image, env: java.env },
         { image: java.image, env: java.env },
         { image: java.image, env: java.env },
@@ -5136,7 +5165,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("プロジェクトの対象でイメージを指定したら、オーケストレーターに選ばせず、すべての工程でそれを使う", async () => {
+    it("プロジェクトの対象でイメージを指定したら、オーケストレーターに選ばせず、タスクのイメージにする", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const projects = new MemoryProjectStore();
       projects.put("default", {
@@ -5149,7 +5178,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       const { service, executor } = makeService(
         activity,
-        [planOutput(', "images": {"implement": "default"}'), completed(10)],
+        [planOutput(', "image": "default"'), completed(10)],
         { realPlanner: true, config: withImages(), projects },
       );
       const task = service.createTask({
@@ -5161,13 +5190,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 候補を見せない（リポジトリの対象の指定が、Org の対象の指定より優先する）
       expect(executor.calls[0]?.command.join(" ") ?? "").not.toContain("- java：");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
-        requirements: "java",
-        design: "java",
-        implement: "java",
-        // マージの後の監視の工程も、ほかの工程と同じく対象の指定を使う（PBI-116）
-        deployment: "java",
-      });
+      expect(chosen?.type === "StepsChosen" && chosen.payload.image).toBe("java");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty("images");
       expect(chosen?.type === "StepsChosen" && chosen.payload.imageSource).toBe("project");
       expect(executor.images[1]).toEqual({ image: java.image, env: java.env });
       activity.close();
@@ -5200,11 +5224,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     it("images に無いイメージを選んだ・指定したら、工程を決めずに理由を示して止まる", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(
-        activity,
-        [planOutput(', "images": {"implement": "python"}')],
-        { realPlanner: true, config: withImages() },
-      );
+      const { service } = makeService(activity, [planOutput(', "image": "python"')], {
+        realPlanner: true,
+        config: withImages(),
+      });
       const task = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(task.id);
       const latest = service.get(task.id);
@@ -5243,7 +5266,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           testCommand: "mvn test",
           costUsd: 0,
           estimated: false,
-          images: { design: "java" },
+          image: "java",
         }),
       });
       const task = service.createTask({ projectId: "default", title: "決済API" });
@@ -5262,7 +5285,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
   });
 
-  describe("工程のイメージを人が変える（PBI-106）", () => {
+  describe("タスクのイメージを人が変える（PBI-318）", () => {
     const image = (name: string, description: string) => ({
       name,
       image: `sacty-agent-${name}:test`,
@@ -5283,60 +5306,56 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       image: i.image,
       env: i.env,
     });
-    const plan =
-      (images: Partial<Record<StepKey, string>> = { design: "java" }) =>
-      async () => ({
-        steps: [...MVP_STEPS],
-        fallback: false,
-        testCommand: "npm test",
-        costUsd: 0,
-        estimated: false,
-        images,
-      });
+    const plan = (chosen?: string) => async () => ({
+      steps: [...MVP_STEPS],
+      fallback: false,
+      testCommand: "npm test",
+      costUsd: 0,
+      estimated: false,
+      ...(chosen ? { image: chosen } : {}),
+    });
     const changes = (service: TaskService, id: string) =>
       service
         .get(id)
-        ?.activity.filter((e) => e.type === "StepImageChanged")
-        .map((e) => ({ actor: e.actor, ...(e.type === "StepImageChanged" ? e.payload : {}) }));
+        ?.activity.filter((e) => e.type === "TaskImageChanged")
+        .map((e) => ({ actor: e.actor, ...(e.type === "TaskImageChanged" ? e.payload : {}) }));
 
-    it("これから実行する工程・承認待ちの工程・終わった工程を変え、次の実行（手戻りを含む）から使う", async () => {
+    it("承認待ちの工程・終わった工程があっても変え、すべての工程の次の実行（手戻りを含む）から使う", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
         [out("# 要求要件 v1"), out("# 要求要件 v2"), design],
-        { config: withImages(), planner: plan() },
+        { config: withImages(), planner: plan("java") },
       );
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(id);
       expect(service.get(id)?.task.status).toBe("awaiting_approval");
-      // これから実行する工程（設計）と、承認待ちの工程（要求要件）を変える
-      service.changeStepImage(id, { step: "design", image: "playwright" });
-      service.changeStepImage(id, { step: "requirements", image: "java" });
+      // 承認待ちの工程（要求要件）があっても変えられる
+      service.changeTaskImage(id, { image: "playwright" });
       // 手戻り（差し戻し）でやり直す要求要件は、変えたイメージで実行する
       service.requestChanges(id, { step: "requirements", submission: 1, comments: ["足りない"] });
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 2 });
-      // 終わった工程も変えられる
-      service.changeStepImage(id, { step: "requirements", image: "default" });
+      // 終わった工程があっても変えられ、次の工程（設計）から使う
+      service.changeTaskImage(id, { image: "default" });
       await service.runNext(id);
-      expect(executor.images).toEqual([DEFAULT, used(java), used(playwright)]);
-      // 台帳に、人が・どの工程を・何から何に変えたかを、新しいイベントで足す（工程を決めた記録は変えない）
+      expect(executor.images).toEqual([used(java), used(playwright), DEFAULT]);
+      // 台帳に、人が・何から何に変えたかを、新しいイベントで足す（工程を決めた記録は変えない）
       expect(changes(service, id)).toEqual([
-        { actor: "person", step: "design", from: "java", to: "playwright" },
-        { actor: "person", step: "requirements", from: "default", to: "java" },
-        { actor: "person", step: "requirements", from: "java", to: "default" },
+        { actor: "person", from: "java", to: "playwright" },
+        { actor: "person", from: "playwright", to: "default" },
       ]);
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({ design: "java" });
+      expect(chosen?.type === "StepsChosen" && chosen.payload.image).toBe("java");
       const task = service.get(id)?.task;
-      expect(task?.images).toEqual({ design: "playwright", requirements: "default" });
+      expect(task?.image).toBe("default");
+      expect(task?.images).toBeUndefined();
       expect(task?.imageSource).toBe("orchestrator");
-      expect(task?.imageChanges?.design).toMatchObject({ from: "java", to: "playwright" });
-      expect(task?.imageChanges?.requirements).toMatchObject({ from: "java", to: "default" });
+      expect(task?.imageChange).toMatchObject({ from: "playwright", to: "default" });
       activity.close();
     });
 
-    it("実行中の工程を変えても今の実行は変えず、次の実行から使う", async () => {
+    it("実行中に変えても今の実行は変えず、次の実行から使う", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const repos = new FakeRepos();
       const { service, executor } = makeService(
@@ -5357,8 +5376,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const during = service.get(id)?.task;
       expect(during?.status).toBe("running");
       expect(during && stepRunning(during, "requirements")).toBe(true);
-      // 実行中の工程も変えられる
-      service.changeStepImage(id, { step: "requirements", image: "java" });
+      // 実行中でも変えられる
+      service.changeTaskImage(id, { image: "java" });
       gate.resolve();
       await running;
       // 今の実行は、始めたときのイメージ（既定）のまま
@@ -5370,7 +5389,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("失敗して一時停止した工程を変えて、やり直しで変えたイメージで実行する", async () => {
+    it("失敗して一時停止したタスクのイメージを変えて、やり直しで変えたイメージで実行する", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
@@ -5380,7 +5399,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(id);
       expect(service.get(id)?.task.status).toBe("paused");
-      service.changeStepImage(id, { step: "requirements", image: "playwright" });
+      service.changeTaskImage(id, { image: "playwright" });
       service.resume(id, {});
       await service.runNext(id);
       expect(executor.images).toEqual([DEFAULT, used(playwright)]);
@@ -5388,7 +5407,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("再開と一緒にイメージ・エージェントを変え、補足を説明に足して、やり直しから使う", async () => {
+    it("再開と一緒にタスクのイメージ・工程のエージェントを変え、補足を説明に足して、やり直しから使う", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const strong = agent({ id: "strong", model: "claude-opus-5-5" });
       const config = (): ConfigResult => {
@@ -5415,21 +5434,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.get(id)?.task.status).toBe("paused");
       service.resume(id, {
         note: "Playwright のイメージを使ってください。",
-        // 今と同じ名前（設計の java）は変えない
-        images: { requirements: "playwright", design: "java" },
+        image: "playwright",
         agents: { requirements: "strong" },
       });
       const after = service.get(id);
-      // 工程の設定の変更を、再開より前に記録する
+      // 設定の変更を、再開より前に記録する
       expect(
         after?.activity
-          .filter((e) => ["StepImageChanged", "StepAgentChanged", "TaskResumed"].includes(e.type))
+          .filter((e) => ["TaskImageChanged", "StepAgentChanged", "TaskResumed"].includes(e.type))
           .map((e) => ({ type: e.type, actor: e.actor, payload: e.payload })),
       ).toEqual([
         {
-          type: "StepImageChanged",
+          type: "TaskImageChanged",
           actor: "person",
-          payload: { step: "requirements", from: "default", to: "playwright" },
+          payload: { from: "default", to: "playwright" },
         },
         {
           type: "StepAgentChanged",
@@ -5452,7 +5470,22 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("再開の工程の設定・補足が1つでも誤っていれば、正しいものも含めて何も記録せずに断る", async () => {
+    it("再開と一緒に今と同じイメージを指定したら、変更を記録しない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "失敗" }],
+        { config: withImages(), planner: plan("java") },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      service.resume(id, { image: "java" });
+      expect(changes(service, id)).toEqual([]);
+      expect(service.get(id)?.task.status).toBe("queued");
+      activity.close();
+    });
+
+    it("再開の設定・補足が1つでも誤っていれば、正しいものも含めて何も記録せずに断る", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
         activity,
@@ -5468,16 +5501,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         );
       // 正しいイメージの変更と、誤ったエージェント
       rejects(
-        {
-          note: "補足",
-          images: { requirements: "playwright" },
-          agents: { requirements: "missing" },
-        },
+        { note: "補足", image: "playwright", agents: { requirements: "missing" } },
         "agent.notInAgents",
       );
-      rejects({ images: { requirements: "missing" } }, "image.notInImages");
+      rejects({ image: "missing" }, "image.notInImages");
       // 選んでいない工程（統合レビューのエージェントは、選んだ工程でも stepAgentChange が断る）
-      rejects({ images: { integrate: "playwright" } }, "image.stepMissing");
       rejects({ agents: { integrate: "claude-subscription" } }, "agent.stepMissing");
       // 補足の長さ（入力の上限と、説明に足した後の上限）
       expect(() => service.resume(id, { note: "あ".repeat(10_001) })).toThrow(
@@ -5486,12 +5514,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const after = service.get(id);
       expect(after?.activity.length).toBe(before?.activity.length);
       expect(after?.task).toMatchObject({ status: "paused", body: "説明" });
-      expect(after?.task.images).toEqual(before?.task.images);
+      expect(after?.task.image).toEqual(before?.task.image);
       expect(after?.task.agents).toEqual(before?.task.agents);
       activity.close();
     });
 
-    it("差し戻しと一緒にイメージ・エージェントを変え、やり直しから使う", async () => {
+    it("差し戻しと一緒にタスクのイメージ・工程のエージェントを変え、やり直しから使う", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const strong = agent({ id: "strong", model: "claude-opus-5-5" });
       const config = (): ConfigResult => {
@@ -5507,7 +5535,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const { service, executor } = makeService(
         activity,
         [out("# 要求要件 v1"), out("# 要求要件 v2")],
-        { config, planner: plan() },
+        { config, planner: plan("java") },
       );
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(id);
@@ -5516,32 +5544,31 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         step: "requirements",
         submission: 1,
         comments: ["足りない"],
-        // 今と同じ名前（設計の java）は変えない
-        images: { requirements: "playwright", design: "java" },
+        image: "playwright",
         agents: { requirements: "strong" },
       });
       const after = service.get(id);
-      // 工程の設定の変更を、差し戻しより前に記録する
+      // 設定の変更を、差し戻しより前に記録する
       expect(
         after?.activity
           .filter((e) =>
-            ["StepImageChanged", "StepAgentChanged", "ChangesRequested"].includes(e.type),
+            ["TaskImageChanged", "StepAgentChanged", "ChangesRequested"].includes(e.type),
           )
           .map((e) => ({ type: e.type, actor: e.actor })),
       ).toEqual([
-        { type: "StepImageChanged", actor: "person" },
+        { type: "TaskImageChanged", actor: "person" },
         { type: "StepAgentChanged", actor: "person" },
         { type: "ChangesRequested", actor: "person" },
       ]);
-      expect(after?.task.images).toMatchObject({ requirements: "playwright", design: "java" });
+      expect(after?.task.image).toBe("playwright");
       expect(after?.task.agents).toEqual({ requirements: "strong" });
       await service.runNext(id);
-      expect(executor.images).toEqual([DEFAULT, used(playwright)]);
+      expect(executor.images).toEqual([used(java), used(playwright)]);
       expect(promptOf(executor, 1)).toContain("claude-opus-5-5");
       activity.close();
     });
 
-    it("差し戻しの工程の設定が誤っていれば、差し戻しも含めて何も記録せずに断る", async () => {
+    it("差し戻しの設定が誤っていれば、差し戻しも含めて何も記録せずに断る", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(activity, [out("# 要求要件")], {
         config: withImages(),
@@ -5554,7 +5581,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(() =>
         service.requestChanges(id, {
           ...request,
-          images: { requirements: "playwright" },
+          image: "playwright",
           agents: { requirements: "missing" },
         }),
       ).toThrow(
@@ -5562,21 +5589,19 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           messages: [expect.objectContaining({ code: "agent.notInAgents" })],
         }),
       );
-      expect(() =>
-        service.requestChanges(id, { ...request, images: { integrate: "playwright" } }),
-      ).toThrow(
+      expect(() => service.requestChanges(id, { ...request, image: "python" })).toThrow(
         expect.objectContaining({
-          messages: [expect.objectContaining({ code: "image.stepMissing" })],
+          messages: [expect.objectContaining({ code: "image.notInImages" })],
         }),
       );
       const after = service.get(id);
       expect(after?.activity.length).toBe(before?.activity.length);
       expect(after?.task.status).toBe("awaiting_approval");
-      expect(after?.task.images).toEqual(before?.task.images);
+      expect(after?.task.image).toEqual(before?.task.image);
       activity.close();
     });
 
-    it("差し戻しが上限でエスカレーションになるときも、工程の設定をその前に記録する（誤っていれば何も記録しない）", async () => {
+    it("差し戻しが上限でエスカレーションになるときも、設定をその前に記録する（誤っていれば何も記録しない）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const outputs = Array.from({ length: MAX_CHANGE_REQUESTS + 1 }, (_, i) =>
         out(`# 要求要件 v${i + 1}`),
@@ -5601,7 +5626,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(() =>
         service.requestChanges(id, {
           ...request,
-          images: { requirements: "playwright" },
+          image: "playwright",
           agents: { requirements: "missing" },
         }),
       ).toThrow(
@@ -5612,7 +5637,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.get(id)?.activity.length).toBe(before?.activity.length);
       expect(service.get(id)?.task.status).toBe("awaiting_approval");
 
-      service.requestChanges(id, { ...request, images: { requirements: "playwright" } });
+      service.requestChanges(id, { ...request, image: "playwright" });
       const after = service.get(id);
       expect(after?.task.status).toBe("escalated");
       expect(after?.task.escalation).toMatchObject({ reason: "too_many_changes" });
@@ -5621,10 +5646,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           .slice(before?.activity.length)
           .map((e) => ({ type: e.type, actor: e.actor })),
       ).toEqual([
-        { type: "StepImageChanged", actor: "person" },
+        { type: "TaskImageChanged", actor: "person" },
         { type: "TaskEscalated", actor: "sacty" },
       ]);
-      expect(after?.task.images).toMatchObject({ requirements: "playwright" });
+      expect(after?.task.image).toBe("playwright");
       activity.close();
     });
 
@@ -5683,21 +5708,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("実装の工程を変えたら、実装と、そのテストを実行する最終レビューを変えたイメージで実行する", async () => {
+    it("タスクのイメージを変えたら、実装と、そのテストを実行する最終レビューを変えたイメージで実行する", async () => {
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
         {
           config: withImages(),
-          planner: plan({ implement: "java" }),
+          planner: plan("java"),
         },
       );
-      service.changeStepImage(id, { step: "implement", image: "playwright" });
+      service.changeTaskImage(id, { image: "playwright" });
       await drain(service);
-      // 要求要件（2回）・設計は既定、実装と最終レビュー（ゴールガーディアンがテストを実行する）は変えたイメージ
+      // 要求要件（2回）・設計は java、変えた後の実装と最終レビュー（ゴールガーディアンがテストを実行する）は変えたイメージ
       expect(executor.images.slice(0, 5)).toEqual([
-        DEFAULT,
-        DEFAULT,
-        DEFAULT,
+        used(java),
+        used(java),
+        used(java),
         used(playwright),
         used(playwright),
       ]);
@@ -5709,14 +5734,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         [implement("# 実装"), review()],
         {
           config: withImages(),
-          planner: plan({ implement: "java" }),
+          planner: plan("java"),
         },
       );
       // 実装のコンテナを起動した（イメージを決めた）後、実行の最中に変える
       let during: Task | undefined;
       executor.respond = () => {
         if (executor.calls.length === 4) {
-          during = service.changeStepImage(id, { step: "implement", image: "playwright" });
+          during = service.changeTaskImage(id, { image: "playwright" });
         }
         return undefined;
       };
@@ -5725,13 +5750,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 今の実装は始めたときのイメージ（java）、その後のテスト（最終レビュー）は変えたイメージ（playwright）
       expect(executor.images[3]).toEqual(used(java));
       expect(executor.images[4]).toEqual(used(playwright));
-      expect(changes(service, id)).toEqual([
-        { actor: "person", step: "implement", from: "java", to: "playwright" },
-      ]);
+      expect(changes(service, id)).toEqual([{ actor: "person", from: "java", to: "playwright" }]);
       activity.close();
     });
 
-    it("プロジェクトの対象の指定より、人の変更を優先する（ほかの工程は指定のまま）", async () => {
+    it("プロジェクトの対象の指定より、人の変更を優先する", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const projects = new MemoryProjectStore();
       projects.put("default", {
@@ -5749,89 +5772,84 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         repo: "https://github.com/acme/app",
       });
       await service.runNext(id);
-      service.changeStepImage(id, { step: "design", image: "playwright" });
+      service.changeTaskImage(id, { image: "playwright" });
       service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id);
       expect(executor.images).toEqual([used(java), used(playwright)]);
       const task = service.get(id)?.task;
       expect(task?.imageSource).toBe("project");
-      expect(task?.images?.implement).toBe("java");
-      expect(task?.images?.design).toBe("playwright");
+      expect(task?.image).toBe("playwright");
+      expect(task?.imageChange).toMatchObject({ from: "java", to: "playwright" });
       activity.close();
     });
 
-    it("images に無い名前・同じ名前・工程に無い工程・中止したタスクは、理由を示して断る（日本語・英語）", async () => {
+    it("images に無い名前・同じ名前・工程が決まる前・中止したタスクは、理由を示して断る（日本語・英語）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       let config = withImages();
       const { service } = makeService(activity, [out("# 要求要件")], {
         config: () => config(),
-        planner: plan(),
+        planner: plan("java"),
       });
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
-      // 工程を決める前は、工程が無い
-      expect(() => service.changeStepImage(id, { step: "design", image: "java" })).toThrow(
-        "その工程は、このタスクの工程にありません。",
-      );
-      await service.runNext(id);
       const reject = (input: unknown) => {
         try {
-          service.changeStepImage(id, input);
+          service.changeTaskImage(id, input);
         } catch (error) {
           if (!(error instanceof InvalidOperationError)) throw error;
           return error.messages.map((m) => [ja(m), renderMessage(m, "en")]);
         }
         throw new Error("not rejected");
       };
-      expect(reject({ step: "design", image: "python" })).toEqual([
+      // 工程を決める前は、変えても工程の選択で上書きされるので断る
+      expect(reject({ image: "playwright" })).toEqual([
+        [
+          "工程がまだ決まっていないため、タスクのイメージを変えられません。工程が決まってから変えてください。",
+          "The task image can't be changed because the steps are not decided yet. Change it after the steps are decided.",
+        ],
+      ]);
+      await service.runNext(id);
+      expect(reject({ image: "python" })).toEqual([
         [
           "イメージ「python」は config.yaml の images にありません。images の名前か default を選んでください。",
           'The image "python" is not in images in config.yaml. Choose a name in images, or default.',
         ],
       ]);
-      expect(reject({ step: "design", image: "java" })).toEqual([
-        ["工程のイメージは、すでに「java」です。", 'The step already uses the image "java".'],
+      expect(reject({ image: "java" })).toEqual([
+        ["タスクのイメージは、すでに「java」です。", 'The task already uses the image "java".'],
       ]);
-      expect(reject({ step: "reproduce", image: "java" })[0]?.[1]).toBe(
-        "This task does not have that step.",
-      );
       // config.yaml の images から消した名前も断る（既定のイメージには戻せる）
       config = configOf(agent());
-      expect(reject({ step: "requirements", image: "java" })[0]?.[0]).toContain(
-        "イメージ「java」は config.yaml の images にありません",
+      expect(reject({ image: "playwright" })[0]?.[0]).toContain(
+        "イメージ「playwright」は config.yaml の images にありません",
       );
-      expect(service.changeStepImage(id, { step: "design", image: "default" }).images?.design).toBe(
-        "default",
-      );
+      expect(service.changeTaskImage(id, { image: "default" }).image).toBe("default");
       // config.yaml を読めない・解析できないときは、名前の誤りではなく、設定の問題として断る（PR #116 レビュー指摘）
       config = () => ({
         ok: false,
         problem: message("config.missing", { path: "/x/config.yaml" }),
       });
       for (const name of ["playwright", "default"]) {
-        const [[jaText, enText] = []] = reject({ step: "design", image: name });
-        expect(jaText).toMatch(/^config\.yaml を読めないため、工程のイメージを変えられません/);
+        const [[jaText, enText] = []] = reject({ image: name });
+        expect(jaText).toMatch(
+          /^config\.yaml を読めないため、タスクのイメージを指定・変更できません/,
+        );
         expect(jaText).toContain("/x/config.yaml");
         expect(jaText).not.toContain("images にありません");
         expect(enText).toMatch(
-          /^The step image can't be changed because config\.yaml can't be read/,
+          /^The task image can't be set or changed because config\.yaml can't be read/,
         );
       }
       config = withImages();
-      // 入力の形が違えば、入力の誤り。「PR作成」の工程（pr）は無くしたので、工程の名前として受け付けない（PBI-110）
-      expect(() => service.changeStepImage(id, { step: "deploy", image: "java" })).toThrow();
-      expect(() => service.changeStepImage(id, { step: "pr", image: "java" })).toThrow();
-      expect(() => service.changeStepImage(id, { step: "design", image: " " })).toThrow();
+      // 入力の形が違えば、入力の誤り
+      expect(() => service.changeTaskImage(id, { image: " " })).toThrow();
+      expect(() => service.changeTaskImage(id, {})).toThrow();
       await service.cancel(id);
-      expect(reject({ step: "design", image: "default" })[0]?.[0]).toBe(
-        ja(message("task.cancelled")),
-      );
-      expect(changes(service, id)).toEqual([
-        { actor: "person", step: "design", from: "java", to: "default" },
-      ]);
+      expect(reject({ image: "playwright" })[0]?.[0]).toBe(ja(message("task.cancelled")));
+      expect(changes(service, id)).toEqual([{ actor: "person", from: "java", to: "default" }]);
       activity.close();
     });
 
-    it("API で変えられ、images に無い名前は 409 で理由を返す", async () => {
+    it("API で変えられ、images に無い名前は 409 で理由を返す。工程ごとの古い API は無い", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(activity, [out("# 要求要件")], {
         config: withImages(),
@@ -5840,22 +5858,78 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const { id } = service.createTask({ projectId: "default", title: "決済API" });
       await service.runNext(id);
       const app = createApp(service, "tok");
-      const post = (body: unknown) =>
-        app.request(`/api/tasks/${id}/images`, {
+      const post = (body: unknown, path = "image") =>
+        app.request(`/api/tasks/${id}/${path}`, {
           method: "POST",
           headers: { authorization: "Bearer tok", "content-type": "application/json" },
           body: JSON.stringify(body),
         });
-      const ok = await post({ step: "design", image: "playwright" });
+      const ok = await post({ image: "playwright" });
       expect(ok.status).toBe(200);
-      expect(((await ok.json()) as { task: Task }).task.images?.design).toBe("playwright");
-      const ng = await post({ step: "design", image: "python" });
+      expect(((await ok.json()) as { task: Task }).task.image).toBe("playwright");
+      const ng = await post({ image: "python" });
       expect(ng.status).toBe(409);
       expect(await ng.json()).toEqual({
         error: "invalid_operation",
         messages: [message("image.notInImages", { name: "python" })],
       });
-      expect((await post({ step: "nope", image: "java" })).status).toBe(400);
+      expect((await post({ image: "" })).status).toBe(400);
+      expect((await post({ step: "design", image: "java" }, "images")).status).toBe(404);
+      activity.close();
+    });
+
+    it("古い版の作業履歴（工程ごとのイメージ）を読み込んでも止まらず、工程ごとのイメージで続け、タスクのイメージに変えられる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service: before } = makeService(activity, [], { config: withImages() });
+      const { id } = before.createTask({ projectId: "default", title: "決済API" });
+      // 古い版が書いた工程の選択（工程ごとのイメージ）と、人が工程のイメージを変えた記録
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "orchestrator",
+            event: {
+              type: "StepsChosen",
+              payload: {
+                steps: [...MVP_STEPS],
+                fallback: false,
+                testCommand: "npm test",
+                costUsd: 0,
+                estimated: false,
+                images: { requirements: "java", design: "default" },
+                imageSource: "orchestrator",
+                defaultImageReasons: { design: "文書だけ" },
+                imagesUnexplained: ["implement"],
+              },
+            },
+          },
+          {
+            actor: "person",
+            event: {
+              type: "StepImageChanged",
+              payload: { step: "design", from: "default", to: "playwright" },
+            },
+          },
+        ],
+      });
+      // 再起動して読み込む
+      const { service, executor } = makeService(activity, [out("# 要求要件"), design], {
+        config: withImages(),
+      });
+      const loaded = service.get(id)?.task;
+      expect(loaded?.images).toEqual({ requirements: "java", design: "playwright" });
+      expect(loaded?.image).toBeUndefined();
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      // どの工程がどのイメージで動いたか：要求要件は java、設計は人が変えた playwright
+      expect(executor.images).toEqual([used(java), used(playwright)]);
+      // タスクのイメージに変えると、変える前の名前は持たず（工程ごとに違うため）、工程ごとの記録は残る
+      const changed = service.changeTaskImage(id, { image: "default" });
+      expect(changed.image).toBe("default");
+      expect(changed.images).toEqual({ requirements: "java", design: "playwright" });
+      expect(changes(service, id)).toEqual([{ actor: "person", to: "default" }]);
       activity.close();
     });
   });
@@ -19077,7 +19151,7 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     const [task] = service.importIssues([pr(30, ["sacty-review"])]);
     await service.runNext(task?.id ?? "");
     const chosen = service.get(task?.id ?? "")?.activity.find((e) => e.type === "StepsChosen");
-    expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({ review: "java" });
+    expect(chosen?.type === "StepsChosen" && chosen.payload.image).toBe("java");
     expect(executor.images[0]).toEqual({ image: java.image, env: java.env });
 
     // 無い名前を指定していたら、工程を決めずに止まる
@@ -19136,12 +19210,12 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
         steps: ["review"],
         plan: "review",
-        images: { review: "java" },
+        image: "java",
         imageSource: "orchestrator",
         imageReason: "pom.xml が Java 17",
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
-        "imagesUnexplained",
+        "imageUnexplained",
       );
       expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toBe(
         "レビュー用のラベルの付いた PR なので、レビューだけを行います（オーケストレーターは、レビューの工程のイメージだけを選びます）。",
@@ -19161,13 +19235,13 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
         answer({ image: "default", reason: "r", defaultReason: "Rust で、合うものが無い" }),
       ]);
       expect(first.chosen?.type === "StepsChosen" && first.chosen.payload).toMatchObject({
-        images: { review: "default" },
-        defaultImageReasons: { review: "Rust で、合うものが無い" },
+        image: "default",
+        defaultImageReason: "Rust で、合うものが無い",
       });
       first.activity.close();
       const second = await run([answer({ image: "default" })], join(dir, "second.db"));
       expect(second.chosen?.type === "StepsChosen" && second.chosen.payload).toMatchObject({
-        imagesUnexplained: ["review"],
+        imageUnexplained: true,
       });
       second.activity.close();
     });
@@ -19239,7 +19313,7 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       await service.runNext(id);
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
-        images: { review: "java" },
+        image: "java",
         agentId: "claude-api",
       });
       expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
@@ -21931,17 +22005,17 @@ describe("統合レビュー（PBI-31）", () => {
     repos = new FakeRepos(),
     options: {
       config?: () => ConfigResult;
-      images?: Record<string, string>;
+      image?: string;
       secretStore?: ServiceDeps["secrets"];
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], {
       ...(options.secretStore ? { secretStore: options.secretStore } : {}),
-      // 工程ごとのイメージ（PBI-41）は、親の工程の選択に足す
+      // タスクのイメージ（PBI-318）は、親の工程の選択に足す
       planner: async (task) => ({
         ...(await planner(task)),
-        ...(options.images && !task.parent ? { images: options.images } : {}),
+        ...(options.image && !task.parent ? { image: options.image } : {}),
       }),
       repos,
       ...(options.config ? { config: options.config } : {}),
@@ -22230,11 +22304,11 @@ describe("統合レビュー（PBI-31）", () => {
         integration(true),
       ],
       new ChangingRepos(),
-      { config, images: { integrate: "java" } },
+      { config, image: "java" },
     );
     let during: Task | undefined;
     change = () => {
-      during = service.changeStepImage(id, { step: "integrate", image: "playwright" });
+      during = service.changeTaskImage(id, { image: "playwright" });
     };
     await drain(service, id);
     const parent = service.get(id)?.task;
@@ -22268,7 +22342,7 @@ describe("統合レビュー（PBI-31）", () => {
     const { service, executor, activity, id } = await splitParent(
       [splitOutput(twoChildren), out("# A の調査"), out("# B の調査"), integration(true)],
       new FakeRepos(),
-      { config, images: { integrate: "java" } },
+      { config, image: "java" },
     );
     await drain(service, id);
     expect(service.get(id)?.task.gate).toEqual({ step: "integrate", submission: 1 });
@@ -22280,7 +22354,7 @@ describe("統合レビュー（PBI-31）", () => {
     const second = await splitParent(
       [splitOutput(twoChildren), out("# A の調査"), out("# B の調査")],
       new FakeRepos(),
-      { config, images: { integrate: "java" } },
+      { config, image: "java" },
     );
     images = {};
     const calls = () => second.executor.calls.length;
@@ -22418,7 +22492,7 @@ describe("再現の工程（PBI-29）", () => {
     }
   }
 
-  it("再現は再現の工程のイメージで、実装の検証（テストを実行する最終レビュー）は実装の工程のイメージで動く（PBI-41）", async () => {
+  it("再現・実装・実装の検証（テストを実行する最終レビュー）は、すべてタスクのイメージで動く（PBI-318）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const image = (name: string) => ({
       name,
@@ -22438,15 +22512,60 @@ describe("再現の工程（PBI-29）", () => {
             images: { go: image("go"), node: image("node") },
           },
         }),
-        planner: async () => ({
-          ...(await planner()),
-          images: { reproduce: "go", implement: "node" },
-        }),
+        planner: async () => ({ ...(await planner()), image: "go" }),
       },
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     await drain(service);
     // 再現・実装・最終レビュー（テストのコンテナは起動しない）
+    expect(executor.images).toEqual([
+      { image: "sacty-agent-go:test", env: { TOOL: "go" } },
+      { image: "sacty-agent-go:test", env: { TOOL: "go" } },
+      { image: "sacty-agent-go:test", env: { TOOL: "go" } },
+    ]);
+    expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
+    activity.close();
+  });
+
+  it("古い版の作業履歴（工程ごとのイメージ）なら、再現は再現の工程のイメージ、最終レビューは実装の工程のイメージで動く（PBI-41）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const image = (name: string) => ({
+      name,
+      image: `sacty-agent-${name}:test`,
+      description: name,
+      baseImage: name,
+      env: { TOOL: name },
+    });
+    const config = (): ConfigResult => ({
+      ok: true,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images: { go: image("go"), node: image("node") },
+      },
+    });
+    const { service: before } = makeService(activity, [], { config });
+    const { id } = before.createTask({ projectId: "default", title: "二重に決済される" });
+    // 古い版が書いた工程の選択（工程ごとのイメージ）
+    const chosen = await planner();
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { ...chosen, images: { reproduce: "go", implement: "node" } },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(
+      activity,
+      [reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
+      { config, planner },
+    );
+    await drain(service);
     expect(executor.images).toEqual([
       { image: "sacty-agent-go:test", env: { TOOL: "go" } },
       { image: "sacty-agent-node:test", env: { TOOL: "node" } },
@@ -32146,7 +32265,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     t.activity.close();
   });
 
-  it("マージの後の監視の工程は、ほかの工程と同じく、工程のイメージで確かめる（PBI-116）", async () => {
+  it("マージの後の監視の工程は、ほかの工程と同じく、タスクのイメージで確かめる（PBI-116・PBI-318）", async () => {
     const repos = new FakeRepos();
     repos.files[MERGE] = { [SKILL]: "# skill" };
     const ci = new FakeCi();
@@ -32165,8 +32284,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     const t = setup({ ci, repos, config, outcomes: [checkOut(answer("healthy"))] });
     const id = t.create();
     await t.service.runNext(id);
-    t.service.changeStepImage(id, { step: "implement", image: "java" });
-    t.service.changeStepImage(id, { step: "deployment", image: "web" });
+    t.service.changeTaskImage(id, { image: "web" });
     await t.merge(id);
     await t.service.runNext(id);
     expect(t.executor.images.at(-1)?.image).toBe("sacty-agent-web:test");
@@ -32324,9 +32442,8 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBeUndefined();
     expect(executor.calls).toHaveLength(1);
-    // 工程の選択からやり直すので、工程のイメージ・エージェントは一緒に変えられない（人の指定を黙って失わない）
-    const step = task.steps[0]?.key ?? "investigate";
-    expect(() => service.resume(id, { images: { [step]: "default" } })).toThrow(
+    // 工程の選択からやり直すので、タスクのイメージ・工程のエージェントは一緒に変えられない（人の指定を黙って失わない）
+    expect(() => service.resume(id, { image: "default" })).toThrow(
       expect.objectContaining({ messages: [message("resume.stepSettingsRechoose")] }),
     );
     // テストを決めずに再開すると、同じ工程のまま進めず（費用をかけた後の検証で止まらないように）、工程の選択からやり直す
@@ -38508,9 +38625,10 @@ describe("中止したタスクの再実行", () => {
     await service.runNext(rerun.id);
     const chosen = service.get(rerun.id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
-      images: Object.fromEntries(MVP_STEPS.map((s) => [s, "java"])),
+      image: "java",
       imageSource: "rerun",
     });
+    expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty("images");
     activity.close();
   });
 
@@ -39887,7 +40005,7 @@ describe("セキュリティチェックとセキュリティ対応", () => {
   });
 });
 
-describe("タスクの作成時に、進め方の工程ごとのイメージ・エージェントを指定する", () => {
+describe("タスクの作成時に、タスクのイメージ・工程ごとのエージェントを指定する", () => {
   const base = agent();
   const strong = agent({ id: "strong", model: "claude-opus-5-5", reasoning_effort: "high" });
   const java = { name: "java", image: "sacty-agent-java:test", description: "Java 17" };
@@ -39905,8 +40023,8 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
     fallback: false,
     costUsd: 0,
     estimated: false,
-    // オーケストレーターは、どちらの工程にも playwright を選ぶ
-    images: { requirements: "playwright", design: "playwright" },
+    // オーケストレーターは playwright を選ぶ
+    image: "playwright",
     imageReason: "画面のテストがある",
   });
   const reject = (service: TaskService, raw: Record<string, unknown>) => {
@@ -39918,9 +40036,9 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
     return undefined;
   };
 
-  it("指定した工程は、オーケストレーターの選択と step_agents より優先し、作業履歴の作成に残す", async () => {
+  it("指定したイメージは、オーケストレーターの選択より優先し、すべての工程で使う。エージェントは step_agents より優先する。作業履歴の作成に残す", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor } = makeService(activity, [completed(100)], {
+    const { service, executor } = makeService(activity, [completed(100), completed(100)], {
       config: configured,
       planner: designOnly,
     });
@@ -39928,41 +40046,49 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
       projectId: "default",
       title: "画面の設計",
       plan: "design-only",
-      images: { design: "java" },
+      image: "java",
       agents: { requirements: "strong" },
     });
     expect(task).toMatchObject({
-      requestedImages: { design: "java" },
+      requestedImage: "java",
       requestedAgents: { requirements: "strong" },
       agents: { requirements: "strong" },
     });
     const created = activity.forTask(task.id).find((e) => e.type === "TaskCreated");
     expect(created?.payload).toMatchObject({
       plan: "design-only",
-      images: { design: "java" },
+      image: "java",
       agents: { requirements: "strong" },
     });
+    expect(created?.payload).not.toHaveProperty("images");
     await service.runNext(task.id);
-    // 工程を決めた記録には、オーケストレーターが決めた工程（指定の無い工程）だけを入れる
+    // 工程を決めた記録に、作成時に人が指定したイメージを、決めた元とともに入れる
     const chosen = activity.forTask(task.id).find((e) => e.type === "StepsChosen");
-    expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
-      requirements: "playwright",
+    expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+      image: "java",
+      imageSource: "request",
     });
+    // 人の指定なので、オーケストレーターの理由は残さない
+    expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty("imageReason");
     const latest = service.get(task.id)?.task;
-    expect(latest?.images).toEqual({ requirements: "playwright", design: "java" });
-    expect(executor.images[0]).toEqual({ image: "sacty-agent-pw:test" });
+    expect(latest?.image).toBe("java");
+    expect(latest?.images).toBeUndefined();
+    expect(executor.images[0]).toEqual({ image: "sacty-agent-java:test" });
     const started = activity.forTask(task.id).find((e) => e.type === "AgentRunStarted");
     expect(started?.type === "AgentRunStarted" && started.payload.agentId).toBe("strong");
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.images[1]).toEqual({ image: "sacty-agent-java:test" });
     activity.close();
   });
 
-  it("進め方のすべての工程のイメージを指定したら、オーケストレーターにイメージの候補を見せない（一部だけなら見せる）", async () => {
+  it("イメージを指定したら、オーケストレーターにイメージの候補を見せず、既定のイメージの理由も求めない", async () => {
     const planOutput = {
       kind: "completed" as const,
       output: `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "design-only", reason: "r" } })}\n\`\`\``,
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
     };
-    const promptFor = async (images: Record<string, string>) => {
+    const promptFor = async (image?: string) => {
       rmSync(dbPath, { force: true });
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(activity, [planOutput, completed(100)], {
@@ -39973,7 +40099,7 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
         projectId: "default",
         title: "画面の設計",
         plan: "design-only",
-        images,
+        ...(image ? { image } : {}),
       });
       await service.runNext(id);
       const prompt = executor.calls[0]?.command.join(" ") ?? "";
@@ -39982,16 +40108,153 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
       activity.close();
       return { prompt, chosen, task };
     };
-    const all = await promptFor({ requirements: "default", design: "java" });
-    expect(all.prompt).not.toContain("- java：Java 17");
+    const requested = await promptFor("default");
+    expect(requested.prompt).not.toContain("- java：Java 17");
     // 既定のイメージにした理由を求めない（人が指定したため）
-    expect(all.chosen?.type === "StepsChosen" && all.chosen.payload).not.toHaveProperty(
-      "imagesUnexplained",
+    expect(requested.chosen?.type === "StepsChosen" && requested.chosen.payload).not.toHaveProperty(
+      "imageUnexplained",
     );
-    expect(all.task?.images).toEqual({ requirements: "default", design: "java" });
-    const some = await promptFor({ design: "java" });
-    expect(some.prompt).toContain("- java：Java 17");
-    expect(some.task?.images).toEqual({ design: "java" });
+    expect(requested.task?.image).toBe("default");
+    expect(requested.task?.imageSource).toBe("request");
+    const auto = await promptFor();
+    expect(auto.prompt).toContain("- java：Java 17");
+    expect(auto.task?.imageUnexplained).toBe(true);
+  });
+
+  it("タスクのイメージは、再実行の指定・作成時の人の指定・プロジェクトの対象の指定・オーケストレーターの選択の順に優先する", async () => {
+    const go = { name: "go", image: "sacty-agent-go:test", description: "Go" };
+    const rust = { name: "rust", image: "sacty-agent-rust:test", description: "Rust" };
+    const config = (): ConfigResult => {
+      const loaded = (configured() as { ok: true; config: SactyConfig }).config;
+      return { ok: true, config: { ...loaded, images: { java, playwright, go, rust } } };
+    };
+    const repo = "https://github.com/acme/app";
+    const chooseFor = async (payload: {
+      rerunImage?: string;
+      requested?: string;
+      project?: string;
+    }) => {
+      rmSync(dbPath, { force: true });
+      const activity = new SqliteActivityStore(dbPath);
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [
+          {
+            scope: "repo",
+            target: repo,
+            ...(payload.project ? { image: payload.project } : {}),
+          },
+        ],
+        githubAccounts: { "github.com": "me" },
+      });
+      // 画面・API では再実行と作成時の指定を同時に持たないので、優先の順を確かめるために記録を直接作る
+      const id = randomUUID();
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "決済API",
+                body: "",
+                start: "sacty",
+                repo,
+                budgetCapUsd: 10,
+                plan: "design-only",
+                ...(payload.rerunImage
+                  ? { rerun: { taskId: "old", image: payload.rerunImage } }
+                  : {}),
+                ...(payload.requested ? { image: payload.requested } : {}),
+              },
+            },
+          },
+        ],
+      });
+      const { service, executor } = makeService(activity, [completed(100)], {
+        config,
+        projects,
+        // オーケストレーターは rust を選ぶ
+        planner: async () => ({
+          steps: ["requirements", "design"],
+          plan: "design-only",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          image: "rust",
+          imageReason: "Cargo.toml",
+        }),
+      });
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      const result = {
+        image: task?.image,
+        source: task?.imageSource,
+        ran: executor.images[0]?.image,
+      };
+      activity.close();
+      return result;
+    };
+    expect(await chooseFor({ rerunImage: "java", requested: "playwright", project: "go" })).toEqual(
+      { image: "java", source: "rerun", ran: java.image },
+    );
+    expect(await chooseFor({ requested: "playwright", project: "go" })).toEqual({
+      image: "playwright",
+      source: "request",
+      ran: playwright.image,
+    });
+    expect(await chooseFor({ project: "go" })).toEqual({
+      image: "go",
+      source: "project",
+      ran: go.image,
+    });
+    expect(await chooseFor({})).toEqual({ image: "rust", source: "orchestrator", ran: rust.image });
+  });
+
+  it("古い版で作成時に工程ごとのイメージを指定したタスクは、工程を選んだときにその工程のイメージにする（PBI-318 より前の作業履歴）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const id = randomUUID();
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: "画面の設計",
+              body: "",
+              start: "sacty",
+              noRepo: true,
+              budgetCapUsd: 10,
+              plan: "design-only",
+              images: { requirements: "java", design: "default" },
+            },
+          },
+        },
+      ],
+    });
+    const { service, executor } = makeService(activity, [completed(100), completed(100)], {
+      config: configured,
+      planner: designOnly,
+    });
+    expect(service.get(id)?.task.requestedImages).toEqual({
+      requirements: "java",
+      design: "default",
+    });
+    await service.runNext(id);
+    // すべての工程を指定していたので、オーケストレーターの選択でタスクのイメージを決めない（古い版と同じ）
+    const task = service.get(id)?.task;
+    expect(task?.image).toBeUndefined();
+    expect(task?.images).toEqual({ requirements: "java", design: "default" });
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(executor.images.map((i) => i.image)).toEqual([java.image, "sacty-agent:test"]);
+    activity.close();
   });
 
   it("エージェントの名前は、タスクの詳細で変えるときと同じく長さを限らない", () => {
@@ -40021,32 +40284,30 @@ describe("タスクの作成時に、進め方の工程ごとのイメージ・�
       config: () =>
         ok ? configured() : { ok: false, problem: message("config.missing", { path: "x" }) },
     });
-    expect(reject(service, { images: { design: "java" } })).toEqual(
-      message("task.stepSettingsNeedPlan"),
-    );
+    expect(reject(service, { image: "java" })).toEqual(message("task.stepSettingsNeedPlan"));
     expect(reject(service, { plan: "direct", agents: { design: "strong" } })).toEqual(
       message("task.stepSettingOutsidePlan"),
     );
     expect(reject(service, { plan: "split", agents: { integrate: "strong" } })).toEqual(
       message("agent.stepNotChangeable"),
     );
-    expect(reject(service, { plan: "direct", images: { implement: "ruby" } })).toEqual(
+    expect(reject(service, { plan: "direct", image: "ruby" })).toEqual(
       message("image.notInImages", { name: "ruby" }),
     );
     expect(reject(service, { plan: "direct", agents: { implement: "toString" } })).toEqual(
       message("agent.notInAgents", { name: "toString" }),
     );
     ok = false;
-    expect(reject(service, { plan: "direct", images: { implement: "java" } })).toMatchObject({
+    expect(reject(service, { plan: "direct", image: "java" })).toMatchObject({
       code: "image.configUnavailable",
     });
     expect(reject(service, { plan: "direct", agents: { implement: "strong" } })).toMatchObject({
       code: "agent.configUnavailable",
     });
     // 何も指定しなければ、設定を読めなくても今と同じく作る（空の指定も同じ）
-    const task = service.createTask({ projectId: "default", title: "A", images: {}, agents: {} });
-    expect(task.requestedImages).toBeUndefined();
-    expect(activity.forTask(task.id)[0]?.payload).not.toHaveProperty("images");
+    const task = service.createTask({ projectId: "default", title: "A", agents: {} });
+    expect(task.requestedImage).toBeUndefined();
+    expect(activity.forTask(task.id)[0]?.payload).not.toHaveProperty("image");
     expect(service.list().filter((t) => t.title === "A")).toHaveLength(1);
     activity.close();
   });
