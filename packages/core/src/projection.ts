@@ -72,9 +72,15 @@ export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
  * ジョブの再実行を頼んだ記録（PBI-311。PullRequestCiRerunRequested）。あれば、待つ時間は rerun.at から数える。restored は、
  * 同じコミットの待ち直しで戻した記録で、元の失敗を渡すためだけのもの（待つ時間は startedAt から数える）。
  */
-export type PullRequestCi = { commit: string; startedAt: string } & Partial<
-  Omit<PayloadOf<"PullRequestCiFinished">, "commit">
-> & {
+export type PullRequestCi = {
+  commit: string;
+  startedAt: string;
+  /**
+   * CI の結果を待たずに行った最終レビューが、このコミットで合格した（PBI-314）。CI が通れば（CI が無ければ）承認待ちに進み、
+   * 落ちた・時間内に終わらなければ、CI の結果を見てもう一度最終レビューする。
+   */
+  reviewedBeforeResult?: true;
+} & Partial<Omit<PayloadOf<"PullRequestCiFinished">, "commit">> & {
     finishedAt?: string;
     rerun?: Omit<PayloadOf<"PullRequestCiRerunRequested">, "commit"> & {
       at: string;
@@ -122,9 +128,35 @@ export function workBaseCommit(
   return baseMerge?.commit ?? repository.baseCommit;
 }
 
-/** 最終レビューの前に作った実装の PR の CI を待っているか（待つ間は、最終レビューに進まない）。 */
+/** 最終レビューの前に作った実装の PR の CI を待っているか（待つ間も、最終レビューは並べて進める。PBI-314）。 */
 export function awaitingPullRequestCi(task: Task): boolean {
   return Boolean(task.pullRequestCi && task.pullRequestCi.result === undefined);
+}
+
+/**
+ * CI の結果を待たずに合格した最終レビューを、CI の結果だけで確定できるか（PBI-314）。CI が初回で通った・CI が無いなら確定する。
+ * 落ちた・時間内に終わらなかった・失敗したジョブの再実行で通った（PBI-311。元の失敗を不安定な失敗の候補として渡す）なら、
+ * CI の結果を見て最終レビューし直す。
+ */
+export function ciConfirmsReview(ci: PullRequestCi | undefined): boolean {
+  return ci?.result === "none" || (ci?.result === "passed" && ci.rerun === undefined);
+}
+
+/** 最終レビューに合格した後、CI の結果だけを待っているか（PBI-314。待つ間は最終レビューに進まない）。 */
+export function awaitingCiAfterReview(task: Task): boolean {
+  return Boolean(task.pullRequestCi?.reviewedBeforeResult && awaitingPullRequestCi(task));
+}
+
+/**
+ * 検証に通った。実装の工程の中で、sacty が実装の PR を作るので、実行待ちにする（PBI-110。工程は進めない。PR を作ったら
+ * 実装の承認待ちになり、PR のマージで実装を承認する）。
+ */
+function passVerification(task: Task): void {
+  task.verification = undefined;
+  resetVerifyFailures(task);
+  task.verifyFeedback = undefined;
+  task.publishPending = true;
+  task.status = "queued";
 }
 export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
@@ -1720,15 +1752,24 @@ export function applyEvent(
         failVerification(task, { kind: "review", review });
         task.failedTests = failedTests?.length ? failedTests : undefined;
         task.verifyStalled = stalled ? previous : undefined;
+        // CI を待たずに不合格にした（PBI-314）。待っている CI は、やり直した実装で新しい PR のコミットになるので捨てる
+        if (awaitingPullRequestCi(task)) task.pullRequestCi = undefined;
         break;
       }
-      // 検証に通った。実装の工程の中で、sacty が実装の PR を作るので、実行待ちにする（PBI-110。工程は進めない。
-      // PR を作ったら実装の承認待ちになり、PR のマージで実装を承認する）
-      task.verification = undefined;
-      resetVerifyFailures(task);
-      task.verifyFeedback = undefined;
-      task.publishPending = true;
-      task.status = "queued";
+      const before = event.payload.beforeCi;
+      if (before) {
+        // CI の結果を待たずに合格した（PBI-314）。CI が通っていれば（無ければ）確定し、まだなら待つ。落ちた・時間内に終わら
+        // なかったなら、CI の結果を見て最終レビューし直す。待っていた CI でなければ（取り込みで PR を作り直したなど）、
+        // 確定せずに最終レビューし直す
+        const ci = task.pullRequestCi;
+        if (ci?.commit === before.commit && ciConfirmsReview(ci)) {
+          passVerification(task);
+        } else if (ci?.commit === before.commit) {
+          task.pullRequestCi = { ...ci, reviewedBeforeResult: true };
+        }
+        break;
+      }
+      passVerification(task);
       break;
     }
 
@@ -1810,6 +1851,9 @@ export function applyEvent(
           r.commit === ci.commit ? { ...r, skipped: true } : r,
         );
       }
+      // 最終レビューは、CI の結果を待たずに合格している（PBI-314）。CI が通った（無い）なら確定する。落ちた・時間内に
+      // 終わらなかったなら、検証を待つままにし、CI の結果を見て最終レビューし直す
+      if (ci.reviewedBeforeResult && ciConfirmsReview(task.pullRequestCi)) passVerification(task);
       break;
     }
 

@@ -1,7 +1,7 @@
 import {
   type ActivityEvent,
   activeStep,
-  awaitingPullRequestCi,
+  awaitingCiAfterReview,
   awaitingRepository,
   awaitingTicketTriage,
   contextLabel,
@@ -46,8 +46,9 @@ export function statusText(task: Task, l: LabelMessages): string {
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）
     return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
   }
-  // 最終レビューの前に作った実装の PR の CI を待っている（sacty が待つ。人の出番ではない）
-  if (task.status === "idle" && task.verification === "pending" && awaitingPullRequestCi(task)) {
+  // 最終レビューに合格し、実装の PR の CI の結果を待っている（sacty が待つ。人の出番ではない）。CI を待つ間の最終レビュー
+  // （PBI-314）は、下の検証中にする
+  if (task.status === "idle" && task.verification === "pending" && awaitingCiAfterReview(task)) {
     return l.state.waitingPullRequestCi;
   }
   if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;

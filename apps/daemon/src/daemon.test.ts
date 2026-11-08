@@ -12782,7 +12782,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     }
     async function drafted(
       outcomes: AgentOutcome[],
-      options: { pulls?: FakePulls; repos?: FakeRepos } = {},
+      options: { pulls?: FakePulls; repos?: FakeRepos; mergeBase?: boolean } = {},
     ) {
       const ci = new FakeCi();
       // 記録の時刻は実際の時計なので、待つ時間はいまから進める
@@ -12809,7 +12809,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       };
     }
 
-    it("実装の後、最終レビューの前に PR をドラフトで作って CI を待ち、合格したらドラフトを外してラベルを付け、承認待ちにする", async () => {
+    it("実装の後、最終レビューの前に PR をドラフトで作り、CI と並べて最終レビューする。合格して CI が通ったらドラフトを外してラベルを付け、承認待ちにする（PBI-314）", async () => {
       const repos = new FakeRepos();
       const { activity, service, pulls, executor, ci, id } = await drafted(
         [implement("# 実装の説明"), review()],
@@ -12825,12 +12825,22 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(waiting?.pullRequestCi?.result).toBeUndefined();
       expect(pulls.calls[0]?.draft).toBe(true);
       expect(pulls.calls[0]?.body).toContain("検証中です");
-      // ラベルは、レビューへ進めるときに付ける。CI を待つ間は、最終レビューに進まない
+      // ラベルは、レビューへ進めるときに付ける。CI を待つ間も、最終レビューは並べて進める
       expect(types(service, id).slice(-3)).toEqual([
         "AgentRunCompleted",
         "BranchPushed",
         "PullRequestPublished",
       ]);
+      expect(service.queuedTaskIds()).toContain(id);
+      await service.runNext(id); // 最終レビュー（CI はまだ終わっていない）
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("CI はまだ終わっていません");
+      expect(prompt).not.toContain("結果：すべて通った");
+      const reviewed = service.get(id)?.task;
+      expect(reviewed?.lastReview?.beforeCi).toEqual({ commit: waiting?.pullRequest?.commit });
+      // 合格しても、CI の結果を待つ（承認待ちにも、最終レビューのやり直しにも進まない）
+      expect(reviewed?.publishPending).toBeUndefined();
+      expect(reviewed?.pullRequestCi?.reviewedBeforeResult).toBe(true);
       expect(service.queuedTaskIds()).not.toContain(id);
       const runs = executor.calls.length;
       await service.runNext(id);
@@ -12842,21 +12852,19 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         commit: waiting?.pullRequest?.commit,
       });
       expect(service.get(id)?.task.pullRequestCi?.result).toBe("passed");
+      expect(service.get(id)?.task.publishPending).toBe(true);
       expect(service.queuedTaskIds()).toContain(id);
-      await service.runNext(id); // 最終レビュー（CI の結果を渡す）
-      const prompt = promptOf(executor, executor.calls.length - 1);
-      expect(prompt).toContain("## 実装の PR の CI");
-      expect(prompt).toContain("https://github.com/acme/app/pull/7");
-      expect(prompt).toContain("結果：すべて通った");
-      await service.runNext(id); // ドラフトを外して、承認待ちにする
+      await service.runNext(id); // ドラフトを外して、承認待ちにする（最終レビューはし直さない）
+      expect(executor.calls.length).toBe(runs);
       const gated = service.get(id)?.task;
       expect(gated?.gate).toEqual({ step: "implement", submission: 1 });
       expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
       expect(pulls.calls).toHaveLength(2);
       expect(pulls.calls[1]).toMatchObject({ number: 7 });
       expect(pulls.calls[1]?.draft).toBeUndefined();
-      expect(types(service, id).slice(-4)).toEqual([
+      expect(types(service, id).slice(-5)).toEqual([
         "FinalReviewed",
+        "PullRequestCiFinished",
         "PullRequestPublished",
         "StepSubmitted",
         "PullRequestLabeled",
@@ -12867,6 +12875,114 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(repos.published).toHaveLength(1);
       expect(repos.published[0]?.parent).toBe(waiting?.repository?.baseCommit);
       activity.close();
+    });
+
+    describe("CI と並べる最終レビュー（PBI-314）", () => {
+      const recorded = (by: string) =>
+        block({
+          "sacty-verification": {
+            commands: [
+              { kind: "test", command: "npm test", coverage: "full", status: "passed", by },
+            ],
+          },
+        });
+
+      it("合格した後に CI が落ちたら、CI の結果と前の回の検証の記録を渡して最終レビューし直し、合格したら承認待ちにする", async () => {
+        const { activity, service, executor, ci, id } = await drafted([
+          implement("# 実装の説明"),
+          out([review().output, recorded("guardian")].join("\n\n")),
+          review(),
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー
+        expect(service.get(id)?.task.pullRequestCi?.reviewedBeforeResult).toBe(true);
+        ci.snap = failing();
+        ci.failuresList = [
+          { workflow: "CI", job: "test", conclusion: "failure", excerpt: "1 failed" },
+        ];
+        await settleCi(service); // 再実行は頼めない（403）ので、失敗で終わる
+        await settleCi(service);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBe("failed");
+        expect(service.queuedTaskIds()).toContain(id);
+        const runs = executor.calls.length;
+        await service.runNext(id); // CI の結果を見た最終レビュー
+        expect(executor.calls.length).toBe(runs + 1);
+        const prompt = promptOf(executor, runs);
+        expect(prompt).toContain("結果：失敗");
+        expect(prompt).toContain("CI の結果の前の最終レビュー（final-review）");
+        expect(prompt).not.toContain("CI はまだ終わっていません");
+        const task = service.get(id)?.task;
+        expect(task?.lastReview?.beforeCi).toBeUndefined();
+        expect(task?.publishPending).toBe(true);
+        activity.close();
+      });
+
+      it("CI を待つ間に不合格なら、CI を待たずに実装に戻し、やり直した実装で PR を更新して CI を待ち直す", async () => {
+        const { activity, service, executor, ci, pulls, id } = await drafted([
+          implement("# 実装 v1"),
+          review([["TV-1", false]]),
+          implement("# 実装 v2"),
+        ]);
+        ci.snap = running();
+        await service.runNext(id); // 実装
+        await service.runNext(id); // ドラフトの PR
+        await service.runNext(id); // CI と並べた最終レビュー（不合格）
+        const failed = service.get(id)?.task;
+        expect(failed?.lastReview?.passed).toBe(false);
+        expect(failed?.pullRequestCi).toBeUndefined();
+        expect(failed?.status).toBe("queued");
+        // 捨てた CI は読まない
+        const reads = ci.calls.length;
+        await settleCi(service);
+        expect(ci.calls.length).toBe(reads);
+        const runs = executor.calls.length;
+        await service.runNext(id); // 実装のやり直し
+        expect(executor.calls.length).toBe(runs + 1);
+        expect(promptOf(executor, runs)).toContain("TV-1");
+        await service.runNext(id); // PR の更新
+        expect(pulls.calls.length).toBeGreaterThanOrEqual(2);
+        expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
+        activity.close();
+      });
+
+      it("デーモンを起動し直しても、合格した最終レビューを2回せず、CI が通ったら承認待ちにする", async () => {
+        const { activity, service, executor, ci, restart, id } = await drafted([
+          implement("# 実装の説明"),
+          review(),
+        ]);
+        ci.snap = running();
+        await service.runNext(id);
+        await service.runNext(id);
+        await service.runNext(id);
+        const runs = executor.calls.length;
+        const again = restart();
+        expect(again.queuedTaskIds()).not.toContain(id);
+        ci.snap = passing();
+        await settleCi(again);
+        expect(again.get(id)?.task.publishPending).toBe(true);
+        expect(executor.calls.length).toBe(runs);
+        activity.close();
+      });
+
+      it("CI を待つ間の最終レビューの前には、ベースブランチを取り込まない（CI を待っているコミットを見る）", async () => {
+        const repos = new FakeRepos();
+        const { activity, service, ci, id } = await drafted([implement("# 実装の説明"), review()], {
+          repos,
+          mergeBase: true,
+        });
+        ci.snap = running();
+        await service.runNext(id);
+        await service.runNext(id);
+        const syncs = repos.merges.length;
+        expect(syncs).toBeGreaterThan(0); // 実装の前には取り込んでいる
+        repos.remote.main = "advanced";
+        await service.runNext(id); // CI と並べた最終レビュー
+        expect(repos.merges.length).toBe(syncs);
+        expect(service.get(id)?.task.lastReview?.beforeCi).toBeDefined();
+        activity.close();
+      });
     });
 
     it("PR の CI を待つ間に一時停止して、指摘が届いたタスクは、再開すると CI の完了を待たずに指摘を判断して反映する（PBI-279）", async () => {
@@ -13274,7 +13390,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           runs: [{ id: 1, attempt: 1 }],
           failures: [originalFailure],
         });
-        expect(service.queuedTaskIds()).not.toContain(id);
+        // CI を待つ間も、最終レビューは並べて進められる（PBI-314。ここでは CI が終わってから行う）
+        expect(service.queuedTaskIds()).toContain(id);
         await settleCi(service); // まだ動いている
         expect(service.get(id)?.task.pullRequestCi?.result).toBeUndefined();
         ci.snap = passing();
@@ -25368,8 +25485,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     await merge(made, "requirements");
     await service.runNext(id);
     await merge(made, "design");
-    await drain(service);
+    // 最終レビューは CI と並べて進むので（PBI-314）、実装と最終レビューの前に取得を失敗させる
     repos.fetchFail = "network down";
+    await drain(service);
     await service.checkPullRequests();
     await service.checkPullRequests();
     await drain(service);
@@ -25389,8 +25507,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     await merge(made, "requirements");
     await service.runNext(id);
     await merge(made, "design");
-    await drain(service);
+    // 最終レビューは CI と並べて進むので（PBI-314）、実装と最終レビューの前に読めなくする
     repos.readFail = true;
+    await drain(service);
     await service.checkPullRequests();
     await service.checkPullRequests();
     await drain(service);
