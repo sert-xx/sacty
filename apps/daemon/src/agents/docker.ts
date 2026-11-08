@@ -44,30 +44,27 @@ export const CONTAINER_TASK_CACHE = "/sacty-cache";
 export const TASK_CACHE_NOTICE_PREFIX = "[sacty] 依存のキャッシュ：";
 
 /**
- * 上書きする前の XDG_CACHE_HOME（イメージの env などで指定されていた値）を、確かめのスクリプトに渡す環境変数（PBI-319）。
- * 指定されていたときだけ、WAS_SET を 1 にする。コマンドには渡さない（スクリプトが外す）。
+ * 依存のキャッシュの場所を、確かめのスクリプトに渡す環境変数（PBI-319）。スクリプトが exec の前に外し、コマンドには渡さない。
  */
-export const PREVIOUS_XDG_CACHE_HOME_ENV = "SACTY_PREVIOUS_XDG_CACHE_HOME";
-export const PREVIOUS_XDG_CACHE_HOME_SET_ENV = "SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET";
+export const TASK_CACHE_ENV = "SACTY_TASK_CACHE";
 
 /**
- * 依存のキャッシュに、コンテナの実行ユーザーが書けるかを確かめてからコマンドを実行する（PBI-319）。書けなければ
- * （Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、知らせを標準エラー出力に出し、XDG_CACHE_HOME を
- * 上書きする前の値に戻して実行する（元が無ければ外す。ツールが書けない場所に向いたまま失敗しないように、キャッシュを
- * 使わずにこれまでどおり動く）。PID と標準入出力は、exec でそのままコマンドに渡す。
+ * 依存のキャッシュに、コンテナの実行ユーザーが書けるかを確かめてからコマンドを実行する（PBI-319）。書けたときだけ、
+ * XDG_CACHE_HOME をキャッシュの場所に向ける。書けなければ（Linux で、デーモンとコンテナの実行ユーザーの UID が違うなど）、
+ * 知らせを標準エラー出力に出し、XDG_CACHE_HOME には触れない（イメージの ENV・images の env の値・未設定のどれも、
+ * そのまま残る。キャッシュを使わずに、これまでどおり動く）。PID と標準入出力は、exec でそのままコマンドに渡す。
  */
 export const TASK_CACHE_PROBE_SCRIPT = [
-  'probe="$XDG_CACHE_HOME/.sacty-probe-$$"',
-  'if ( : > "$probe" ) 2>/dev/null; then rm -f "$probe"; else',
-  `  if [ "$${PREVIOUS_XDG_CACHE_HOME_SET_ENV}" = 1 ]; then`,
-  `    printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに元の XDG_CACHE_HOME で実行します" >&2`,
-  `    XDG_CACHE_HOME="$${PREVIOUS_XDG_CACHE_HOME_ENV}"; export XDG_CACHE_HOME`,
-  "  else",
-  `    printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$XDG_CACHE_HOME に書けないので、使わずに実行します" >&2`,
-  "    unset XDG_CACHE_HOME",
-  "  fi",
+  `cache="$${TASK_CACHE_ENV}"`,
+  `unset ${TASK_CACHE_ENV}`,
+  'probe="$cache/.sacty-probe-$$"',
+  'if ( : > "$probe" ) 2>/dev/null; then',
+  '  rm -f "$probe"',
+  '  XDG_CACHE_HOME="$cache"; export XDG_CACHE_HOME',
+  "else",
+  `  printf '%s\\n' "${TASK_CACHE_NOTICE_PREFIX}$cache に書けないので、使わずに実行します" >&2`,
   "fi",
-  `unset ${PREVIOUS_XDG_CACHE_HOME_ENV} ${PREVIOUS_XDG_CACHE_HOME_SET_ENV}`,
+  "unset cache probe",
   'exec "$@"',
 ].join("\n");
 
@@ -414,16 +411,12 @@ export class DockerExecutor implements AgentExecutor {
     if (this.aborting)
       return { kind: "failed", reason: "error", message: message("run.daemonStopped") };
     const env: Record<string, string> = { ...imageEnv, ...invocation.env };
-    // タスクごとの依存のキャッシュ（PBI-319）。XDG_CACHE_HOME をそこに向ける（イメージの env の値より優先する）。
+    // タスクごとの依存のキャッシュ（PBI-319）。場所は別の変数で渡し、コンテナの中で書けたときだけ、確かめのスクリプトが
+    // XDG_CACHE_HOME をそこに向ける（イメージの env の値より優先する。書けなければ XDG_CACHE_HOME には触れない）。
     // エージェントの CLI 自身のキャッシュ（ログなど）は、タスクのキャッシュに残さず、コンテナの中だけの場所にする
     const tmpfs: string[] = [];
     if (invocation.taskCache) {
-      // 上書きする前の値は、書けなかったときに戻せるように、確かめのスクリプトに渡す
-      if (env.XDG_CACHE_HOME !== undefined) {
-        env[PREVIOUS_XDG_CACHE_HOME_ENV] = env.XDG_CACHE_HOME;
-        env[PREVIOUS_XDG_CACHE_HOME_SET_ENV] = "1";
-      }
-      env.XDG_CACHE_HOME = CONTAINER_TASK_CACHE;
+      env[TASK_CACHE_ENV] = CONTAINER_TASK_CACHE;
       for (const name of invocation.agentCacheDirs ?? []) {
         // 前の実行が置いたもの（リンク・ファイルを含む）は消す（リンクはリンクだけを消す）。重ねてマウントできるように
         try {

@@ -20,8 +20,7 @@ import {
   CONTAINER_TASK_CACHE,
   DockerExecutor,
   dockerRunArgs,
-  PREVIOUS_XDG_CACHE_HOME_ENV,
-  PREVIOUS_XDG_CACHE_HOME_SET_ENV,
+  TASK_CACHE_ENV,
   TASK_CACHE_PROBE_SCRIPT,
   taskCacheNotices,
   withTaskCacheProbe,
@@ -166,19 +165,17 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
       runId: "r1",
       image: "img",
       workspaceDir: join(dir, "ws"),
-      // イメージの env の XDG_CACHE_HOME より、タスクのキャッシュを優先する
+      // イメージの env の XDG_CACHE_HOME は、書けなかったときのために上書きせずに渡す
       imageEnv: { XDG_CACHE_HOME: "/elsewhere" },
       invocation: invocation({ taskCache: cache, agentCacheDirs: [CLAUDE_CACHE_DIR] }),
     });
     const [run] = docker.runs;
     expect(run?.args.join(" ")).toContain(`-v ${cache}:${CONTAINER_TASK_CACHE} `);
     expect(run?.args.join(" ")).toContain(`--tmpfs ${CONTAINER_TASK_CACHE}/${CLAUDE_CACHE_DIR} `);
-    expect(run?.args).toContain("XDG_CACHE_HOME");
-    expect(run?.env.XDG_CACHE_HOME).toBe(CONTAINER_TASK_CACHE);
-    // 上書きする前の値は、書けなかったときに戻せるよう、確かめのスクリプトに渡す
-    expect(run?.env[PREVIOUS_XDG_CACHE_HOME_ENV]).toBe("/elsewhere");
-    expect(run?.env[PREVIOUS_XDG_CACHE_HOME_SET_ENV]).toBe("1");
-    expect(run?.args).toContain(PREVIOUS_XDG_CACHE_HOME_SET_ENV);
+    // キャッシュの場所は別の変数で渡し、XDG_CACHE_HOME は上書きしない（書けたときだけ、コンテナの中で向ける）
+    expect(run?.args).toContain(TASK_CACHE_ENV);
+    expect(run?.env[TASK_CACHE_ENV]).toBe(CONTAINER_TASK_CACHE);
+    expect(run?.env.XDG_CACHE_HOME).toBe("/elsewhere");
     // 書けるかをコンテナの中で確かめてから、エージェントのコマンドを実行する
     expect(run?.args.join("\u0000")).toContain(
       ["sh", "-c", TASK_CACHE_PROBE_SCRIPT, "sh", "claude", "-p"].join("\u0000"),
@@ -236,7 +233,7 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
     expect(run?.args).not.toContain("--tmpfs");
     expect(run?.args).not.toContain(TASK_CACHE_PROBE_SCRIPT);
     expect(run?.env.XDG_CACHE_HOME).toBeUndefined();
-    expect(run?.env[PREVIOUS_XDG_CACHE_HOME_SET_ENV]).toBeUndefined();
+    expect(run?.env[TASK_CACHE_ENV]).toBeUndefined();
   });
 
   it("コンテナの中だけの場所は、作業領域の後に --tmpfs で渡す", () => {
@@ -256,69 +253,62 @@ describe("依存のキャッシュをコンテナに渡す（PBI-319）", () => 
 });
 
 describe("依存のキャッシュに書けるかを、コンテナの中で確かめる（PBI-319 レビュー指摘）", () => {
-  /** 確かめのスクリプトを、この環境の sh で動かす（コンテナの中と同じ）。 */
-  const probe = (cache: string, extra: Record<string, string> = {}) => {
-    // 外されたら unset と出す（sh の既定値の展開を、テンプレートの書き方と紛れない形で書く）。確かめのための変数が
-    // コマンドに残っていれば、その名前を標準エラー出力に出す
+  /**
+   * 確かめのスクリプトを、この環境の sh で動かす（コンテナの中と同じ）。コマンドは、XDG_CACHE_HOME が無ければ unset、
+   * あれば set:<値>（空の文字列も見分ける）を出す。キャッシュの場所を渡す変数がコマンドに残っていれば、標準エラー出力に出す。
+   */
+  const probe = (cache: string, xdg?: string) => {
     const show = [
-      `env | grep '^${PREVIOUS_XDG_CACHE_HOME_ENV}' >&2`,
-      'if [ -n "$XDG_CACHE_HOME" ]; then printf "%s" "$XDG_CACHE_HOME"; else printf unset; fi; exit 7',
+      `env | grep '^${TASK_CACHE_ENV}=' >&2`,
+      "if env | grep -q '^XDG_CACHE_HOME='; then printf 'set:%s' \"$XDG_CACHE_HOME\"; else printf unset; fi",
+      "exit 7",
     ].join("; ");
     const [command, ...args] = withTaskCacheProbe(["sh", "-c", show]);
     return spawnSync(command as string, args, {
-      env: { PATH: process.env.PATH ?? "", XDG_CACHE_HOME: cache, ...extra },
+      env: {
+        PATH: process.env.PATH ?? "",
+        [TASK_CACHE_ENV]: cache,
+        ...(xdg !== undefined ? { XDG_CACHE_HOME: xdg } : {}),
+      },
       encoding: "utf8",
     });
   };
+  /** 元の XDG_CACHE_HOME の3通り（未設定・空の文字列・値あり）と、それぞれのコマンドの出力。 */
+  const before: [string | undefined, string][] = [
+    [undefined, "unset"],
+    ["", "set:"],
+    ["/home/node/custom-cache", "set:/home/node/custom-cache"],
+  ];
 
-  it("書ければ XDG_CACHE_HOME のまま実行し、確かめに使ったファイルを残さない。終了コードはコマンドのもの", () => {
+  it("書ければ XDG_CACHE_HOME をキャッシュに向けて実行し、確かめに使ったファイルと場所の変数を残さない。終了コードはコマンドのもの", () => {
     const cache = join(dir, "cache");
     mkdirSync(cache);
-    const result = probe(cache);
-    expect(result.stdout).toBe(cache);
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(7);
+    for (const [xdg] of before) {
+      const result = probe(cache, xdg);
+      expect(result.stdout, String(xdg)).toBe(`set:${cache}`);
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(7);
+    }
     expect(readdirSync(cache)).toEqual([]);
-    // 書ければ、上書きする前の値は使わず、確かめのための変数も渡さない
-    const kept = probe(cache, {
-      [PREVIOUS_XDG_CACHE_HOME_ENV]: "/home/node/custom-cache",
-      [PREVIOUS_XDG_CACHE_HOME_SET_ENV]: "1",
-    });
-    expect(kept.stdout).toBe(cache);
-    expect(kept.stderr).toBe("");
   });
 
-  it("書けなければ（UID の違うユーザーなど）、知らせを出して XDG_CACHE_HOME を外して実行する", () => {
+  it("書けなければ（UID の違うユーザーなど）、知らせを出し、元の XDG_CACHE_HOME（未設定・空・値あり）をそのまま残す", () => {
     if (process.getuid?.() === 0) return; // root は権限で拒まれない
     const cache = join(dir, "cache");
     mkdirSync(cache, { mode: 0o500 });
     try {
-      const result = probe(cache);
-      expect(result.stdout).toBe("unset");
-      expect(result.status).toBe(7);
-      expect(taskCacheNotices(result.stderr)).toEqual([
-        `[sacty] 依存のキャッシュ：${cache} に書けないので、使わずに実行します`,
-      ]);
+      for (const [xdg, shown] of before) {
+        const result = probe(cache, xdg);
+        expect(result.stdout, String(xdg)).toBe(shown);
+        expect(result.status).toBe(7);
+        expect(taskCacheNotices(result.stderr)).toEqual([
+          `[sacty] 依存のキャッシュ：${cache} に書けないので、使わずに実行します`,
+        ]);
+        expect(result.stderr).not.toContain(`${TASK_CACHE_ENV}=`);
+      }
       // 無い場所（マウントできなかったなど）も同じ
       expect(probe(join(dir, "missing")).stdout).toBe("unset");
-      // 上書きする前の値（イメージの env など）があれば、それに戻す。確かめのための変数はコマンドに渡さない
-      const restored = probe(cache, {
-        [PREVIOUS_XDG_CACHE_HOME_ENV]: "/home/node/custom-cache",
-        [PREVIOUS_XDG_CACHE_HOME_SET_ENV]: "1",
-      });
-      expect(restored.stdout).toBe("/home/node/custom-cache");
-      expect(restored.status).toBe(7);
-      expect(taskCacheNotices(restored.stderr)).toEqual([
-        `[sacty] 依存のキャッシュ：${cache} に書けないので、使わずに元の XDG_CACHE_HOME で実行します`,
-      ]);
-      expect(restored.stderr).not.toContain(`${PREVIOUS_XDG_CACHE_HOME_ENV}=`);
-      // 元の値が空の文字列でも、設定があったものとして戻す
-      const empty = probe(cache, {
-        [PREVIOUS_XDG_CACHE_HOME_ENV]: "",
-        [PREVIOUS_XDG_CACHE_HOME_SET_ENV]: "1",
-      });
-      expect(empty.stdout).toBe("unset");
-      expect(empty.stderr).toContain("元の XDG_CACHE_HOME で実行します");
+      expect(probe(join(dir, "missing"), "/keep").stdout).toBe("set:/keep");
     } finally {
       chmodSync(cache, 0o700);
     }

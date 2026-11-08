@@ -39,14 +39,14 @@ Within one task, the results of preparing dependencies (package downloads, build
 - Runs that get it: only runs that work on the target repository with the task's image (steps, the final review, the integration review).
   The Goal Guardian's judgments, the Orchestrator, information gathering, answers to questions, export, external work, and the after-merge watch do not get it.
 - How it is passed:
-  - It is mounted with `-v <location>:/sacty-cache`, and `XDG_CACHE_HOME=/sacty-cache` is passed (taking precedence over the image's `env`).
-    The value before the override (one set in the image's `env` and so on) is passed to the check below in `SACTY_PREVIOUS_XDG_CACHE_HOME`, with `SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET=1` showing that it was set.
+  - It is mounted with `-v <location>:/sacty-cache`, and the location is passed to the check below in `SACTY_TASK_CACHE=/sacty-cache`.
+    `XDG_CACHE_HOME` is not overridden with `-e`. Only when the location is writable does the check script point it to `/sacty-cache` (taking precedence over the image's `ENV` and `env`).
   - `HOME` and `XDG_CONFIG_HOME` are not changed (auth config files disappear when the container is removed).
   - The agent CLI's own cache (Claude Code's `claude-cli-nodejs`) is made a container-only location with `--tmpfs /sacty-cache/claude-cli-nodejs`.
     Anything a previous run left at `claude-cli-nodejs` in the location (including a link) is removed before the run (a link is removed by itself).
   - Inside the container, sacty checks that the user can write to `/sacty-cache` before it `exec`s the command (`withTaskCacheProbe`, inside the output relay and the port forwarding).
-    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs with `XDG_CACHE_HOME` restored to the value before the override (removed if there was none; the usual run, without the cache).
-    `SACTY_PREVIOUS_XDG_CACHE_HOME` and `SACTY_PREVIOUS_XDG_CACHE_HOME_WAS_SET`, used for the check, are not passed to the command.
+    If it cannot write (for example, on Linux when the daemon's UID differs from the container user's), it writes a notice starting with `[sacty] 依存のキャッシュ：` to standard error and runs without touching `XDG_CACHE_HOME` (a value from the image's `ENV` or `env`, or no value, stays as it is; the usual run, without the cache).
+    `SACTY_TASK_CACHE` is unset before the `exec`, so it is not passed to the command.
     The notice is copied to the daemon's log too, from the standard error received so far, however the run ends, including a timeout or a failure to confirm the stop (`taskCacheNotices`).
     The condition for writing is the same as for the workspace (`/workspace`): sacty changes the owner of neither and passes no `--user`, so with an ordinary Linux bind mount the container can write only when the daemon's UID equals the UID of the image's `node` (the workspace is `0755` and the cache is `0700`; in both, only the owner can write).
     In environments that share files into a virtual machine, such as Docker Desktop and Rancher Desktop, they appear as owned by the container's user, so it can write.
