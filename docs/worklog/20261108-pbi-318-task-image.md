@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-08（UTC）
 - タスク: PBI-318
-- PR: 未作成
+- PR: #322
 - ブランチ: feat/issue-318-task-image
 - 関係する ADR: [実行のイメージを工程ごとではなくタスクに1つにし、オーケストレーター・作成・タスクの詳細・再開・差し戻しで選ぶのもタスクのイメージにする](../adr/20261108-0334-task-image.md)
 
@@ -64,8 +64,8 @@
 - `npx tsc -b packages/core`：通った
 - `npm run -s lint`：通った
 - `npm run -s typecheck`：通った
-- `npx vitest run tests/docs`：作業履歴の `PR: 未作成` の1件だけ落ちる（ほかは通った）
-- `npx vitest run --no-file-parallelism`：1件だけ落ちた（4384 passed・3 skipped）。落ちたのは `tests/docs` の作業履歴の規則で、この作業履歴の `PR: 未作成` が「`#<番号>` か `なし`」に合わないため（指示どおり `未作成` にしている）。そのほかは通った（性能に敏感なテストも落ちなかった）
+- `npx vitest run tests/docs`：PR の番号を書いた後に通った
+- `npx vitest run --no-file-parallelism`：main（#320・#321）を取り込んだ後に、作業履歴の PR 欄（PR を作る前で番号が無かった）の1件だけ落ち、4412件成功・3件スキップ。PR の番号を書いた後に `tests/docs` が通ることを確かめた
 
 ## レビューの指摘と対応
 
