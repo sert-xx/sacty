@@ -48,6 +48,8 @@
   - 確かめる中で、既定のコンテキストのファイルの層の名前が `sacty-default@<コミット>` の形で、渡さないファイルの知らせから外す判定が合っていないことが分かり、直した（テストの例も同じ形にした）。
 - `npm run lint`：成功。
 - `npm run typecheck`：成功。
+- `npm run build`：成功。
+- 直したテスト（既定のコンテキストのファイルを注意から外す）は、判定を戻すと失敗することを確かめた。
 - `npx vitest run apps/daemon/src/local-launch.test.ts packages/cli`：成功。`npx vitest run apps/daemon/src/daemon.test.ts -t "ローカルのセッション"`：4 件成功。
 - `npx vitest run`（全体）：7 ファイル・19 件が失敗。うち 6 ファイル・17 件（`repository.test.ts` の `git merge-tree`、`agent-sessions.test.ts`・`context-mcp.test.ts` の読めないファイル、`host-mcp-processes.test.ts`、画面の 2 つの browser テストの Chromium が無いこと）は、変更を退避した元のコードでも同じく失敗した（この環境の git の版・root での実行・ブラウザが無いことによる）。残りの `daemon.test.ts` の「タスクの並行実行」の 2 件は、単独で 3 回流して 3 回とも成功し、全体を流した 1 回目でも失敗していなかったので、負荷による揺れとみた。
 - `npx vitest run tests/docs`：3 ファイル・93 件すべて成功。
