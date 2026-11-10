@@ -16,7 +16,9 @@ Related ADRs: none
 | `packages/cli` | `sacty` command | Commands such as `sacty up`, and the Dockerfile of the image for running agents (`packages/cli/docker/Dockerfile`) | `@sacty/core`, `@sacty/daemon`, `@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | The desktop app for macOS (Electron). It runs the `sacty` command as a separate process and displays the web UI ([Desktop app](desktop.en.md)) | None (packaging bundles the build output of cli, daemon, and web) |
 
-`npm run cli:install` (in the root `package.json`; the checks are `checkLink` and `findOnPath` in `scripts/cli-install.mjs`) builds and then runs `npm link` on `packages/cli`, putting the `sacty` command in npm's global bin (the link points to `packages/cli`). After installing, it checks the following.
+`npm run cli:install` (in the root `package.json`; the checks are `checkLink`, `findOnPath`, and `globalPrefix` in `scripts/cli-install.mjs`) builds and then runs `npm link` on `packages/cli`, putting the `sacty` command in npm's global bin (the link points to `packages/cli`).
+npm's global location is taken from the environment variable `npm_config_global_prefix` that `npm run` passes (npm masks strings shaped like a UUID in its own output as `***`, so the output of `npm prefix -g` cannot be used when the path contains a UUID). Only when the variable is missing (the script was run directly) does it use `npm prefix -g`.
+After installing, it checks the following.
 - The `sacty` in npm's global bin points to this repository's `packages/cli/bin/sacty.js`. Otherwise exit code 1.
 - Its `sacty --version` (which shows the version in `packages/cli/package.json`) matches this repository's version. Otherwise exit code 1.
 - The first `sacty` found in `PATH` points to this repository. It gives a warning when npm's global bin is not in `PATH` or another `sacty` comes first (the exit code is 0).

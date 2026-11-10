@@ -19,7 +19,8 @@ sacty は、5つのパッケージでできている。
 | `packages/cli` | `sacty` コマンド | `sacty up` などのコマンドと、エージェント実行用のイメージの Dockerfile（`packages/cli/docker/Dockerfile`） | `@sacty/core`・`@sacty/daemon`・`@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | macOS 向けのデスクトップ版（Electron）。`sacty` コマンドを別のプロセスで動かし、画面を表示する（[デスクトップ版](desktop.md)） | なし（作るときに cli・daemon・web の成果物を同梱する） |
 
-`npm run cli:install`（ルートの `package.json`。確かめるのは `scripts/cli-install.mjs` の `checkLink`・`findOnPath`）は、ビルドの後に `packages/cli` を `npm link` して、`sacty` コマンドを npm のグローバルの bin に入れる（リンクは `packages/cli` を指す）。
+`npm run cli:install`（ルートの `package.json`。確かめるのは `scripts/cli-install.mjs` の `checkLink`・`findOnPath`・`globalPrefix`）は、ビルドの後に `packages/cli` を `npm link` して、`sacty` コマンドを npm のグローバルの bin に入れる（リンクは `packages/cli` を指す）。
+npm のグローバルの場所は、`npm run` が渡す環境変数 `npm_config_global_prefix` から求める（npm は自分の出力の中の UUID の形の文字列を `***` に伏せるので、`npm prefix -g` の出力はパスに UUID があると使えない）。環境変数が無い（スクリプトを直接実行した）ときだけ `npm prefix -g` を使う。
 入れた後に、次を確かめる。
 - npm のグローバルの bin の `sacty` が、このリポジトリの `packages/cli/bin/sacty.js` を指すこと。違えば終了コード 1。
 - その `sacty --version`（`packages/cli/package.json` の版を出す）が、このリポジトリの版と同じこと。違えば終了コード 1。
