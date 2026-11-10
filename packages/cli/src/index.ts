@@ -38,6 +38,8 @@ import { UpStopper } from "./up-stop.js";
 const require = createRequire(import.meta.url);
 
 const USAGE = `Usage:
+  sacty --version
+      sacty の版を表示します。
   sacty up [--port <web port>] [--daemon-port <daemon port>]
       デーモンと画面（Next.js）を起動します。Ctrl+C で両方を終了します。
   sacty config init [--force]
@@ -359,6 +361,7 @@ async function main() {
       port: { type: "string", default: "4700" },
       "daemon-port": { type: "string", default: "4710" },
       help: { type: "boolean", short: "h", default: false },
+      version: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       runtime: { type: "string", default: "claude-code" },
       json: { type: "boolean", default: false },
@@ -370,6 +373,11 @@ async function main() {
   const [command, sub, arg] = positionals;
   if (values.help) {
     console.log(USAGE);
+    return;
+  }
+  if (values.version) {
+    // どのリポジトリの sacty が動いているかを確かめるため（npm run cli:install が、リンクした sacty の版を確かめる）
+    console.log((require("../package.json") as { version: string }).version);
     return;
   }
   if (command === "config" && sub === "init") return configInit(values.force);

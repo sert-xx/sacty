@@ -33,6 +33,23 @@ npx sacty config init   # ~/.sacty/config.yaml を作る
    イメージが無いまま起動すると、`sacty up` の出力と画面の上に、作るコマンドが出ます。
    Docker が起動していないときも、そのことが出ます。
 
+### どのディレクトリでも sacty を使う
+
+`npx sacty` は、sacty のリポジトリの中でだけ使えます。
+ほかのディレクトリ（対象リポジトリの手元の clone など）でも `sacty` と打って使うには、sacty のリポジトリで次を実行します。
+
+```sh
+npm run cli:install
+```
+
+ビルド（`npm run build`）の後に `npm link` で `sacty` コマンドを入れ、`sacty --version` がこのリポジトリの版を出すことを確かめます。
+
+- 入れた `sacty` は、このリポジトリを指します。sacty を更新してビルドし直せば、新しい版で動きます。
+- 何度実行してもかまいません。別の場所に clone した sacty で実行すると、`sacty` はその clone を指すように切り替わります。
+- npm のグローバルの bin が `PATH` に無いとき、または `PATH` で先に別の `sacty` が見つかるときは、`[sacty] 注意：` で知らせます。
+- シェルの `alias` で `sacty` を定義していると、そちらが先に使われます。
+- 消すときは `npm uninstall -g @sacty/cli` を実行します。
+
 ## 起動する
 
 ```sh
@@ -90,6 +107,8 @@ npm run build
 npx sacty image build
 npx sacty up
 ```
+
+`npm run cli:install` で `sacty` を入れた場合も、同じ手順で新しい版になります（`npm run build` の代わりに `npm run cli:install` を実行してもかまいません）。
 
 `npm ci` は、`package-lock.json` のとおりに依存を入れ直します。`package-lock.json` を書き換えないので、
 npm のレジストリを設定で変えていても作業ツリーに差分が残らず、次の `git pull` がぶつかりません。

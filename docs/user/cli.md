@@ -1,11 +1,12 @@
-<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE） -->
+<!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、scripts/cli-install.mjs、packages/cli/src/context-preview.ts、packages/cli/src/launch.ts、apps/daemon/src/local-launch.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE） -->
 
 **日本語** | [English](cli.en.md)
 
 # CLI（sacty コマンド）
 
-`npx sacty <コマンド>` で使います。
-`npx sacty --help`（`-h`）で使い方を表示します。
+`npx sacty <コマンド>` で使います（sacty のリポジトリの中で）。
+`npm run cli:install` で入れれば、どのディレクトリでも `sacty <コマンド>` で使えます（[はじめに](getting-started.md#どのディレクトリでも-sacty-を使う)）。
+`npx sacty --help`（`-h`）で使い方を、`npx sacty --version` で版を表示します。
 知らないコマンドを指定すると、使い方を表示して失敗で終わります。
 
 ## sacty up
