@@ -105,7 +105,7 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
 
 ## 影響
 
-- 実装のときに、実際の CLI で次を確かめた（[作業履歴](../worklog/20261110-local-agent-launch.md)）。
+- 実装のときに、実際の CLI で次を確かめた（[作業履歴](../worklog/20261110-pr-332-local-agent-launch.md)）。
   - Claude Code 2.1.321：既定のコンテキストを合成して組み立てた引数で `-p` で動かし、規則が入ること、`--add-dir` の `.claude/skills/` のスキルが名前のまま使えること、`--agents` の段階がサブエージェントとして使えることを確かめた。設定に `permissions.defaultMode: bypassPermissions` を書いても、`--permission-mode default` を付けるとコマンドの実行に承認を求めることを確かめた。
   - Codex 0.167.0：同じく組み立てた `-c` で、規則とスキルの一覧がモデルへの入力に入ること、段階が「Available roles」に出ること、MCP サーバーが加わり、利用者の MCP サーバーが止まることを、ログインせずに確かめた（`codex debug prompt-input`・`codex mcp list`）。ログインした対話の起動では確かめていない。
 - `--` の後の引数で、sacty が渡した引数と同じものを渡したときにどちらが効くかは AI の CLI の決まりによる（確かめてユーザードキュメントに書く）。
