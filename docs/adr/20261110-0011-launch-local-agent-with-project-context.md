@@ -63,7 +63,8 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
 - Codex
   - `CODEX_HOME` は CLI が作る一時ディレクトリにし、合成したもの（`AGENTS.md`・`config.toml`・`agents/`・`skills/`）を置く。利用者の `~/.codex/config.toml` は読ませない。
   - 利用者のログインは、利用者の `CODEX_HOME`（無ければ `~/.codex`）の `auth.json` を一時ディレクトリに写して使い、Codex が更新したら終わった後に書き戻す（工程の実行の `syncBack` と同じ扱い。リンクはたどらない）。
-  - `auth.json` が無く、`OPENAI_API_KEY`・`CODEX_API_KEY` も無いときは、起動せずに止め、理由を表示する。
+  - 利用者の `config.toml` の `cli_auth_credentials_store` が `keyring` のとき、または `auth.json` が無く `OPENAI_API_KEY`・`CODEX_API_KEY` も無いとき（`auto` でキーチェーンに置いたときを含む）は、起動せずに止める。
+    理由（キーチェーンのログインは `CODEX_HOME` を変えると使えないこと）と、使える方法（`cli_auth_credentials_store = "file"` でログインし直す・API キーの環境変数を使う）を表示する。
   - `--sandbox workspace-write` と `--ask-for-approval on-request` を渡す（合成した設定より優先させる）。
 
 ### 安全のための扱い
@@ -78,6 +79,7 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
 - 利用者のログインのままにしたのは、手元の対話は利用者自身の作業で、sacty の API キーをホストのプロセスの環境変数に出さずに済み、費用も利用者の契約のまま扱えるため。比べた案：工程と同じく sacty の認証で起動する。キーがホストのプロセスに出るので採らなかった。
 - Claude Code で設定の場所を変えないのは、変えると利用者のログインが使えなくなるおそれがあり、合成したものはすべて引数で渡せるため（Claude Code 2.1.321 の `--help` で、`--settings`・`--mcp-config`・`--strict-mcp-config`・`--append-system-prompt-file`・`--agents`・`--add-dir`・`--plugin-dir` があることを確かめた）。
 - Codex で `CODEX_HOME` を一時ディレクトリにするのは、スキル・`AGENTS.md`・段階のサブエージェントを引数で渡す方法を確かめられず、工程の実行と同じ置き方なら合成したものをそのまま使えるため。`auth.json` を写すのは、工程の実行の `subscription` の認証で同じ扱いをしているため。
+- キーチェーンのログインのときに止めるのは、`CODEX_HOME` を変えると Codex がキーチェーンのログインを見つけられず、ログインできなくなることを、実際に使って確かめたため。一時ディレクトリでログインし直させると、ログインが利用者の `CODEX_HOME` に残らず、セッションのたびにやり直しになる。比べた案：Codex でも `CODEX_HOME` を変えずに `-c` で上書きする。スキル・`AGENTS.md`・段階のサブエージェントを渡す方法を確かめられていないので採らなかった（渡せると分かれば、この ADR を置き換えてキーチェーンのログインも使えるようにする）。
 - ゲートウェイを通すのは、MCP と外部 PF の秘密情報をホストのプロセスに出さず、セッションを終えればトークンを無効にできるため。
 - MCP を `--strict-mcp-config` でプロジェクトのコンテキストのものだけにしたのは、工程のエージェントと同じ道具で試せるようにし、利用者の個人の MCP サーバーと名前がぶつからないようにするため。
 - 権限を広げないのは、コンテナの隔離が無く、層の設定やプロンプトインジェクションでホストを壊せるようにしないため。
@@ -87,10 +89,11 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
 
 - 実装のときに、次を実際の CLI で確かめる。確かめられなければ、この ADR を置き換える。
   - Claude Code：`--add-dir` で渡したディレクトリの `.claude/skills/` のスキルが使えるか。使えなければ `--plugin-dir`（スキルの名前に接頭辞が付く）にする。`--agents` の JSON が、対話の起動で引数の長さの上限を超えないか。`--permission-mode default` が設定の `permissions.defaultMode` より優先されるか。
-  - Codex：認証をキーチェーンに置く設定（`cli_auth_credentials_store`）のとき、`CODEX_HOME` を変えるとログインが使えなくなるか（使えなくなるなら、止めて理由を表示する）。
+  - Codex：`cli_auth_credentials_store` が `auto` のときに、ログインがキーチェーンと `auth.json` のどちらにあるかを、`auth.json` があるかで見分けてよいか。
 - `--` の後の引数で、sacty が渡した引数と同じものを渡したときにどちらが効くかは AI の CLI の決まりによる（確かめてユーザードキュメントに書く）。
 - 合成した `settings.json`・`config.toml` のうち sacty が決める項目（`RESERVED_SETTINGS`）は、工程の実行と同じく取り除かれたまま渡る。
 - 強制終了などで終える API が呼ばれなかったセッションは、ゲートウェイのトークンとホストで起動した MCP サーバーが、`sacty up` を止めるまで残る。トークンは 127.0.0.1 でだけ使える。
+- 認証をキーチェーンに置いている Codex の利用者は、`file` でログインし直すか、API キーの環境変数を使わないと `sacty launch --runtime codex` を使えない（ユーザードキュメントに書く）。
 - `via_gateway: false` の MCP サーバーの秘密情報は、工程の実行でコンテナの環境変数に渡すのと同じく、ホストの AI の CLI のプロセスの環境変数に渡る。
 - 利用者のログインで直接つなぐので、sacty の予算・費用の記録・ゲートウェイのリトライは効かない。
 - 仕様は実装の PR で [コンテキストの合成](../spec/context.md) に、利用者向けは [CLI](../user/cli.md) に書く。

@@ -21,14 +21,15 @@
 
 - `claude --help`（Claude Code 2.1.321）で、`--settings`・`--mcp-config`・`--strict-mcp-config`・`--append-system-prompt-file`・`--agents`・`--add-dir`・`--plugin-dir` があることを確かめた。
 - ゲートウェイが 127.0.0.1 で待ち受けること（`gateway.ts` の `listen`）をコードで確かめた。
-- Codex はこの環境に入っておらず、公式の文書（developers.openai.com）もこの環境のネットワークの設定で開けなかったため、Codex の引数・認証の保存先（`cli_auth_credentials_store`）と `CODEX_HOME` の関係は確かめられていない（ADR の影響に、実装のときに確かめることとして書いた）。
+- Codex はこの環境に入っておらず、公式の文書（developers.openai.com）もこの環境のネットワークの設定で開けなかったため、Codex の引数はこの環境では確かめられていない（ADR の影響に、実装のときに確かめることとして書いた）。
+- 認証をキーチェーンに置く設定（`cli_auth_credentials_store`）で `CODEX_HOME` を変えるとログインできなくなることは、依頼者が実際に使って確かめていた。
 - `npx vitest run tests/docs`：3 ファイル・93 件すべて成功。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | なし |
+| 依頼者：キーチェーンのログインは、`CODEX_HOME` を変えると使えなくなることを実際に確かめている | ADR の決定・理由・影響を、確かめたこととして直した（キーチェーンのときは止めて、使える方法を表示する） |
 
 ## 残したこと
 
