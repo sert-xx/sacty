@@ -19,7 +19,13 @@ sacty は、5つのパッケージでできている。
 | `packages/cli` | `sacty` コマンド | `sacty up` などのコマンドと、エージェント実行用のイメージの Dockerfile（`packages/cli/docker/Dockerfile`） | `@sacty/core`・`@sacty/daemon`・`@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | macOS 向けのデスクトップ版（Electron）。`sacty` コマンドを別のプロセスで動かし、画面を表示する（[デスクトップ版](desktop.md)） | なし（作るときに cli・daemon・web の成果物を同梱する） |
 
-コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`、`apps/desktop/package.json`
+`npm run cli:install`（ルートの `package.json`。確かめるのは `scripts/cli-install.mjs` の `checkLink`・`findOnPath`）は、ビルドの後に `packages/cli` を `npm link` して、`sacty` コマンドを npm のグローバルの bin に入れる（リンクは `packages/cli` を指す）。
+入れた後に、次を確かめる。
+- npm のグローバルの bin の `sacty` が、このリポジトリの `packages/cli/bin/sacty.js` を指すこと。違えば終了コード 1。
+- その `sacty --version`（`packages/cli/package.json` の版を出す）が、このリポジトリの版と同じこと。違えば終了コード 1。
+- `PATH` で最初に見つかる `sacty` が、このリポジトリを指すこと。npm のグローバルの bin が `PATH` に無い・先に別の `sacty` があるときは注意を出す（終了コードは 0）。
+
+コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`、`apps/desktop/package.json`、`packages/cli/src/index.ts`（`main`）
 
 ## プロセスと通信
 

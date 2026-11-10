@@ -27,6 +27,22 @@ npx sacty config init   # creates ~/.sacty/config.yaml
 2. Put the authentication tokens and API keys in the Keychain or 1Password ([Secrets](secrets.en.md)). If you keep the template as is, save your OpenAI API key using `npx sacty secret set openai-api-key`.
 3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry, write `image_build` before you build it ([Container images](images.en.md)). If you start without the image, the output of `sacty up` and the top of the screen show the command to create it. They also tell you when Docker is not running.
 
+### Using sacty in any directory
+
+`npx sacty` works only inside the sacty repository. To use it by typing `sacty` in other directories as well (such as your local clone of a target repository), run the following in the sacty repository.
+
+```sh
+npm run cli:install
+```
+
+After building (`npm run build`), it installs the `sacty` command with `npm link` and checks that `sacty --version` shows this repository's version.
+
+- The installed `sacty` points to this repository. After you update sacty and build again, it runs the new version.
+- You can run it any number of times. If you run it in a sacty clone in another location, `sacty` switches to point to that clone.
+- If npm's global bin is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- If you define `sacty` with a shell `alias`, that one is used first.
+- To remove it, run `npm uninstall -g @sacty/cli`.
+
 ## Start
 
 ```sh
@@ -73,6 +89,8 @@ npm run build
 npx sacty image build
 npx sacty up
 ```
+
+If you installed `sacty` with `npm run cli:install`, the same steps bring you to the new version (you may run `npm run cli:install` instead of `npm run build`).
 
 `npm ci` reinstalls the dependencies exactly as written in `package-lock.json`. It does not rewrite `package-lock.json`, so even if you changed the npm registry in your settings, no changes are left in the working tree and the next `git pull` does not conflict.
 

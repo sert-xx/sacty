@@ -1,10 +1,10 @@
-<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE) -->
+<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), scripts/cli-install.mjs, packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE) -->
 
 [日本語](cli.md) | **English**
 
 # CLI (the sacty command)
 
-Run it as `npx sacty <command>`. `npx sacty --help` (`-h`) shows the usage. If you specify an unknown command, it shows the usage and exits with a failure.
+Run it as `npx sacty <command>` (inside the sacty repository). If you install it with `npm run cli:install`, you can use it as `sacty <command>` in any directory ([Getting started](getting-started.en.md#using-sacty-in-any-directory)). `npx sacty --help` (`-h`) shows the usage, and `npx sacty --version` shows the version. If you specify an unknown command, it shows the usage and exits with a failure.
 
 ## sacty up
 
