@@ -19,6 +19,10 @@
       "types": "./dist/exit-codes.d.ts",
       "default": "./dist/exit-codes.js"
     },
+    "./local-launch": {
+      "types": "./dist/local-launch.d.ts",
+      "default": "./dist/local-launch.js"
+    },
     "./image": {
       "types": "./dist/image.d.ts",
       "default": "./dist/image.js"

@@ -6,7 +6,7 @@
 sacty はコンテキストを層を重ねて合成し、実行のたびに Claude Code・Codex の設定の場所に置く。
 層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その継承の鎖）。
 
-関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)、[コンテキストのリポジトリのサブモジュールを取得し、組織で別に管理するスキルなどを写さずに使えるようにする](../adr/20261022-1503-context-submodules.md)
+関係する ADR: [プロジェクトのコンテキストで、ホストの Claude Code・Codex を利用者のログインのまま対話で起動する CLI を足し、作業履歴には記録しない](../adr/20261110-0011-launch-local-agent-with-project-context.md)、[コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)、[コンテキストのリポジトリのサブモジュールを取得し、組織で別に管理するスキルなどを写さずに使えるようにする](../adr/20261022-1503-context-submodules.md)
 
 ## 層
 
@@ -475,3 +475,61 @@ MCP サーバーの動く場所と、エージェントに渡すものは、次�
 - プロジェクトを保存するときも、コンテキストを指定していれば同じ合成を試し、誤りを返す（保存はする）。
 
 コード: `apps/daemon/src/server.ts`（`PreviewRequest`）、`apps/daemon/src/service.ts`（`projectContextPreview`・`checkProjectContext`・`ContextPreviewView`）、`apps/daemon/src/context.ts`（`previewContext`・`ContextPreview`・`PREVIEW_FILE_MAX_BYTES`・`PREVIEW_TOTAL_MAX_BYTES`）、`packages/cli/src/context-preview.ts`（`fetchContextPreview`・`previewOutput`）
+
+## ローカルのセッション（sacty launch）
+
+プロジェクトのコンテキストで、ホストの Claude Code・Codex を対話で起動する。
+AI の CLI は利用者のログインと設定（設定の場所 `CLAUDE_CONFIG_DIR`・`CODEX_HOME` は変えない）で動き、sacty の AI の定義と認証の秘密情報は使わない。
+作業履歴には何も記録しない（`ContextResolved` も記録しない）。
+
+- 窓口（daemon のトークンを持つものだけが呼べる。画面からは呼ばない）
+  - `POST /api/projects/:id/local-sessions`（`{ runtime, dir }`）：セッションを作る。`dir` は CLI が作った一時ディレクトリの絶対パス。
+    返すのは `{ session: { id, runtime, files, env, mcpServers, warnings } }`。`files` は置くファイル（パス・層・base64 の中身）、`env` は AI の CLI に渡す環境変数（秘密情報とゲートウェイのトークンの値を含む）。
+    取得・設定の誤りは 200 で `{ error }` を返す。プロジェクトが無ければ 404。
+  - `DELETE /api/local-sessions/:id`：セッションを終える。無ければ 404。
+- 合成
+  - プレビュー・実行と同じ組み立て（`prepareContext`）で作る。違うのは次だけ。
+    - ゲートウェイの起点はホストから見たもの（`http://127.0.0.1:<ポート>`。`hostOrigin`）。
+    - 実行の上限が無いので、MCP の時間切れの警告（`context.mcpTimeoutOverRun`）は出さない。
+    - 設定の場所は `dir`（Codex の `AGENTS.md` のスキルの一覧の場所は、`dir` の絶対パスになる）。
+  - 段階のサブエージェントは、プレビューと同じ親（その runtime の `default_agent` など）で選ぶ。
+    親の認証が `bedrock`・`provider` のときは、接続先ごとのモデルの名前が手元のログインで使えないことがあるので置かず、`local.tiersSkipped` を注意に入れる。
+  - ホストで起動するコマンド型の MCP サーバーは、実行と同じく確保して準備を待ち、ホストの MCP サーバーの準備も待つ（準備ができないものは注意にする）。
+  - MCP（ゲートウェイ経由のもの）・外部 PF のどれかがあれば、ゲートウェイにこのセッション用の実行を登録し、そのトークンを `env` に入れる（ホストの MCP の認証のヘッダー・`SACTY_PF_URL`）。AI の呼び出しと GitHub の読み取りの中継は登録しない。
+  - 外部 PF があれば、使い方の案内（`platformPromptLines`）を規則（`CLAUDE.md`・`AGENTS.md`）の後ろに足す。
+  - `via_gateway: false` の MCP サーバーの秘密情報は、取り出した値を `env` に入れる。
+  - 取得した層は、置くファイルの中身を読んだら消す。
+  - セッションを終えると、ゲートウェイの登録を閉じ、ホストで起動したコマンド型の MCP サーバーを手放す。終えずに残ったセッションは、デーモンが止まるまで残る。
+- `sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <ディレクトリ>] [-- <引数>...]`
+  - `SACTY_HOME/daemon.json` の接続先に問い合わせる。プロジェクトは ID か名前。`--cwd` の既定は今のディレクトリ。
+  - 一時ディレクトリ（`sacty-launch-*`。権限 0700、ファイルは 0600）を作り、セッションを作ってファイルを置き、AI の CLI を端末の標準入出力と利用者の環境変数（`env` を上に重ねる）で起動する。
+    `--` の後の引数は、sacty が組み立てた引数の後に足す。
+  - 起動している間、Ctrl+C（SIGINT）では止まらず、SIGTERM・SIGHUP は AI の CLI に渡す。AI の CLI が終わったら（失敗でも）、セッションを終えて一時ディレクトリを消し、その終了コードで終わる。
+  - 注意（`warnings`）と、渡さなかったファイルを表示する。
+- Claude Code への渡し方
+
+  | 合成したもの | 渡し方 |
+  | --- | --- |
+  | `CLAUDE.md` | `--append-system-prompt-file` |
+  | `settings.json` | `--settings` |
+  | `mcp.json`（無ければ空の `{ "mcpServers": {} }`） | `--mcp-config` と `--strict-mcp-config` |
+  | `agents/<名前>.md` | `--agents`（JSON。frontmatter の `name`・`description`・`model` と本文。`effort` は渡さない） |
+  | `skills/` | `dir` の `.claude/skills/` に置き、`--add-dir` で `dir` を渡す |
+
+  - 最後に `--permission-mode default` を足す（設定の `permissions.defaultMode` より優先する）。
+- Codex への渡し方（すべて `-c`）
+
+  | 合成したもの | 渡し方 |
+  | --- | --- |
+  | `AGENTS.md` | `developer_instructions`（`CODEX_INSTRUCTIONS_MAX_BYTES` を超えたら起動せずに止める） |
+  | `config.toml` の `mcp_servers` | `mcp_servers.<名前>=<インラインの表>` |
+  | `config.toml` のほか | 葉のキーごとに `<キー>=<値>`。`approvals_reviewer` は渡さない。`agents.<名前>.config_file` は `dir` の絶対パスにする |
+  | `agents/<名前>.toml` | `agents.<名前>.config_file`（`dir` の絶対パス）・`agents.<名前>.description` |
+  | `skills/` | `dir` に置く（規則のスキルの一覧から場所を示す） |
+
+  - 利用者の MCP サーバー（`CODEX_HOME`、無ければ `~/.codex` の `config.toml` と、`--cwd` から `.git` のあるディレクトリまでの `.codex/config.toml`）のうち、コンテキストに無いものは `mcp_servers.<名前>.enabled=false` にする。
+  - `.` を含む・空のキーは渡せないので止める。
+  - 最後に `--sandbox workspace-write` と `--ask-for-approval on-request` を足す。
+- どちらも、上のほかのファイル（Claude Code の `commands/`、Codex の `rules/` など）は渡さず、既定のコンテキスト（`sacty-default`）のもののほかは、渡さなかったことを表示する。
+
+コード: `apps/daemon/src/server.ts`（`LocalSessionRequest`）、`apps/daemon/src/service.ts`（`createLocalSession`・`closeLocalSession`・`LocalSessionView`・`mcpRouting`）、`apps/daemon/src/gateway.ts`（`hostOrigin`・`platformsUrl`）、`apps/daemon/src/local-launch.ts`（`claudeLaunch`・`codexLaunch`・`codexUserMcpServers`・`CODEX_INSTRUCTIONS_MAX_BYTES`）、`packages/cli/src/launch.ts`（`launch`・`splitLaunchArgs`・`writeLaunchFiles`）

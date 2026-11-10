@@ -661,6 +661,8 @@ const PARAMS = {
     parent: z.string(),
   }),
   "context.reservedTierFile": z.object({ from: z.string(), path: z.string() }),
+  // ローカルのセッション（sacty launch）
+  "local.tiersSkipped": z.object({ parent: z.string(), mode: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -1516,6 +1518,8 @@ const ja: MessageDictionary = {
     `段階「${tier}」（${id}）は、工程のエージェント（${parent}）と認証・接続先が違うため、サブエージェントの定義を置きませんでした。`,
   "context.reservedTierFile": ({ from, path }) =>
     `${from} の ${path} は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
+  "local.tiersSkipped": ({ parent, mode }) =>
+    `段階のサブエージェントは、Sacty の AI（${parent}）の接続先（${mode}）のモデルの名前で作るため、手元のログインでは使えないことがあり、渡しませんでした。`,
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -2253,6 +2257,8 @@ const en: MessageDictionary = {
     `The tier "${tier}" (${id}) uses a different authentication or endpoint from the step agent (${parent}), so its subagent definition was not placed.`,
   "context.reservedTierFile": ({ from, path }) =>
     `${path} of ${from} was not copied because Sacty writes it as the subagent definition of a tier.`,
+  "local.tiersSkipped": ({ parent, mode }) =>
+    `The tier subagents were not passed because Sacty builds them with the model names of the endpoint (${mode}) of its AI (${parent}), which may not work with your own login.`,
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;

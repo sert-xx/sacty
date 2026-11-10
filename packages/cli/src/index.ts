@@ -31,6 +31,7 @@ import {
   readDaemonFile,
   removeDaemonFile,
 } from "./context-preview.js";
+import { launch, splitLaunchArgs } from "./launch.js";
 import { daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
 import { UpStopper } from "./up-stop.js";
 
@@ -46,6 +47,9 @@ const USAGE = `Usage:
   sacty context preview <プロジェクト> [--runtime claude-code|codex] [--json] [--no-content]
       プロジェクト（ID か名前）のコンテキストの合成の結果（実行のときに置くファイルと、層・警告など）を表示します。
       起動中の sacty（sacty up）に問い合わせます。秘密情報は参照の名前だけを表示します。
+  sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <dir>] [-- <AI の CLI に渡す引数>...]
+      プロジェクトのコンテキストで、手元の Claude Code か Codex を対話で起動します（ログインは手元のものを使います）。
+      起動中の sacty（sacty up）に問い合わせます。--cwd の既定は今のディレクトリです。作業履歴には記録しません。
   sacty secret set <name>
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
   sacty image build [<名前>...]
@@ -221,6 +225,28 @@ async function contextPreview(
   if ("error" in result) process.exitCode = 1;
 }
 
+async function launchCommand(
+  project: string | undefined,
+  runtime: string,
+  cwd: string | undefined,
+  extraArgs: string[],
+): Promise<void> {
+  if (!project) throw new Error("プロジェクトの ID か名前を指定してください。");
+  if (runtime !== "claude-code" && runtime !== "codex") {
+    throw new Error(`--runtime は claude-code か codex で指定してください（指定：${runtime}）。`);
+  }
+  const endpoint = readDaemonFile(resolveHome());
+  if (!endpoint) {
+    throw new Error("起動中の sacty が見つかりません。`sacty up` で起動してから実行してください。");
+  }
+  process.exitCode = await launch(endpoint, {
+    project,
+    runtime,
+    cwd: resolve(cwd ?? "."),
+    extraArgs,
+  });
+}
+
 async function waitForDaemon(url: string, token: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -322,7 +348,10 @@ async function up(webPort: number, daemonPort: number) {
 }
 
 async function main() {
+  // `sacty launch` の `--` の後は、AI の CLI に渡す（sacty では解釈しない）
+  const { own, extra } = splitLaunchArgs(process.argv.slice(2));
   const { positionals, values } = parseArgs({
+    args: own,
     allowPositionals: true,
     options: {
       port: { type: "string", default: "4700" },
@@ -332,6 +361,7 @@ async function main() {
       runtime: { type: "string", default: "claude-code" },
       json: { type: "boolean", default: false },
       "no-content": { type: "boolean", default: false },
+      cwd: { type: "string" },
     },
   });
 
@@ -345,6 +375,7 @@ async function main() {
   if (command === "context" && sub === "preview") {
     return contextPreview(arg, values.runtime, values.json, !values["no-content"]);
   }
+  if (command === "launch") return launchCommand(sub, values.runtime, values.cwd, extra);
   if (command === "secret" && sub === "set") return secretSet(arg);
   if (command === "image" && sub === "build") return imageBuild(positionals.slice(2));
   if (command !== "up") {

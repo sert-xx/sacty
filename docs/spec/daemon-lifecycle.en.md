@@ -13,7 +13,7 @@ Related ADRs: [The web UI is usable only from browsers that signed in with the p
   - The token used between the daemon and the web UI (32 random bytes in hex)
   - The web UI sign-in secret (32 random bytes in base64url; separate from the daemon token)
 - It starts the daemon with the environment variables `SACTY_DAEMON_PORT`, `SACTY_DAEMON_TOKEN`, and `SACTY_WEB_URL` (`http://127.0.0.1:<web-ui-port>`; used for links in notifications). It removes the web UI sign-in secret `SACTY_WEB_TOKEN` from the daemon's environment even if the user's shell has it. It then waits up to 15 seconds for `GET /api/health` to respond (checking every 200 milliseconds), and stops the daemon if it does not respond.
-- Once the daemon responds, it writes the daemon's address and token to `SACTY_HOME/daemon.json` (mode 0600), which `sacty context preview` reads.
+- Once the daemon responds, it writes the daemon's address and token to `SACTY_HOME/daemon.json` (mode 0600), which `sacty context preview` and `sacty launch` read.
   - If the file already holds another sacty's address and that address responds with its token, it does not overwrite the file and shows a warning.
   - When exiting, it removes the file only if it wrote it (the address and token are the same).
 - Next, it starts the web UI with `next start -H 127.0.0.1 -p <web-ui-port>`. The environment variables are `SACTY_DAEMON_URL`, `SACTY_DAEMON_TOKEN`, `SACTY_WEB_TOKEN` (the web UI sign-in secret), and `SACTY_WEB_PORT` (the web UI port).

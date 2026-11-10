@@ -27,6 +27,10 @@ async function readJson(c: Context): Promise<{ ok: true; body: unknown } | { ok:
 /** コンテキストのプレビューの AI の種類（PBI-76）。省けば Claude Code。 */
 const PreviewRuntime = z.enum(["claude-code", "codex"]).default("claude-code");
 /** 保存していない設定でのプレビュー（PBI-76）。definition を省けば、保存した設定で作る。 */
+/** ローカルのセッション（sacty launch）を作る。dir は CLI が作った一時ディレクトリの絶対パス。 */
+const LocalSessionRequest = z
+  .object({ runtime: PreviewRuntime, dir: z.string().min(1).max(4096).startsWith("/") })
+  .strict();
 const PreviewRequest = z
   .object({ runtime: PreviewRuntime, definition: ProjectDefinition.optional() })
   .strict();
@@ -277,6 +281,25 @@ export function createApp(
     } catch (error) {
       return handleError(c, error);
     }
+  });
+
+  // ローカルのセッション（sacty launch）。返す環境変数には、秘密情報とゲートウェイのトークンの値を含む（daemon のトークンを
+  // 持つ本人の CLI だけが呼ぶ）。作業履歴には記録しない
+  app.post("/api/projects/:id/local-sessions", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      const { runtime, dir } = LocalSessionRequest.parse(json.body);
+      const result = await service.createLocalSession(c.req.param("id"), runtime, dir);
+      if (!result) return c.json({ error: "not_found" }, 404);
+      return c.json(result);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+  app.delete("/api/local-sessions/:id", (c) => {
+    if (!service.closeLocalSession(c.req.param("id"))) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
   });
 
   app.post("/api/projects", async (c) => {

@@ -299,6 +299,12 @@ export class AiGateway {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
+  /** ホスト（同じマシンのプロセス）から見たゲートウェイの起点（ローカルのセッション）。 */
+  hostOrigin(): string {
+    if (!this.server) throw new Error("the gateway is not listening");
+    return `http://127.0.0.1:${this.port}`;
+  }
+
   /** コンテナから見たゲートウェイの起点。 */
   containerOrigin(): string {
     if (!this.server) throw new Error("the gateway is not listening");
@@ -469,8 +475,8 @@ export class AiGateway {
   }
 
   /** コンテナから見た、実行の組織内 PF の API の起点（PBI-35）。 */
-  platformsUrl(token: string): string {
-    return `${this.containerOrigin()}/r/${token}/pf`;
+  platformsUrl(token: string, origin: string = this.containerOrigin()): string {
+    return `${origin}/r/${token}/pf`;
   }
 
   /**

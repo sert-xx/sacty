@@ -33,9 +33,11 @@
 
 ### デーモンの API
 
-- ローカルのセッションを作る API（`POST /api/projects/:id/local-sessions`、runtime を受ける）と、終える API（`DELETE /api/local-sessions/:id`）を足す。
+- ローカルのセッションを作る API（`POST /api/projects/:id/local-sessions`、runtime と、CLI が作った一時ディレクトリの絶対パスを受ける）と、終える API（`DELETE /api/local-sessions/:id`）を足す。
 - 合成は、プレビュー・実行と同じ組み立て（`buildContext`：層の取得 → 合成 → MCP の置き換え → 置くファイルの一覧）で作る。ローカル用の別の作り方はしない。
-  違うのは、ゲートウェイの起点を `http://127.0.0.1:<ポート>` にすることだけ。
+  違うのは、ゲートウェイの起点を `http://127.0.0.1:<ポート>` にすること、設定の場所を CLI の一時ディレクトリにすること（Codex の規則のスキルの場所が、その絶対パスになる）、実行の上限が無いので MCP の時間切れの警告を出さないことだけ。
+- 段階のサブエージェントは、プレビューと同じ親で選ぶ。親の認証が `bedrock`・`provider` のときは置かず、注意（`local.tiersSkipped`）にする。
+- 外部 PF があれば、工程では指示に足している使い方の案内（`platformPromptLines`）を、規則の後ろに足す。
 - 作るときに、ゲートウェイにそのセッション用の実行を登録してトークンを発行し、MCP（層のゲートウェイ経由のもの・ホストで起動するコマンド型・ホストの MCP サーバー）と、プロジェクトのコンテキストの外部 PF を、そのトークンで使えるようにする。
   AI の呼び出しの中継と GitHub の読み取りの中継は登録しない（AI は利用者のログインで直接つなぎ、GitHub はホストの gh を使える）。
 - 返すのは、置くファイル（パスと中身）・環境変数（MCP の時間切れ・外部 PF の URL・秘密情報の参照を取り出した値）・セッションの ID。
@@ -55,8 +57,8 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
     | --- | --- |
     | `CLAUDE.md`（規則） | `--append-system-prompt-file` |
     | `settings.json` | `--settings` |
-    | `mcp.json` | `--mcp-config` と `--strict-mcp-config`（利用者の MCP サーバーは使わず、プロジェクトのコンテキストのものだけにする） |
-    | `agents/<段階>.md` | `--agents`（JSON。段階の名前を変えずに渡す） |
+    | `mcp.json` | `--mcp-config` と `--strict-mcp-config`（利用者の MCP サーバーは使わず、プロジェクトのコンテキストのものだけにする。コンテキストに MCP サーバーが無ければ、空の設定を渡す） |
+    | `agents/<段階>.md` | `--agents`（JSON。段階の名前を変えずに渡す。`--agents` の形に無い `effort` は渡さない） |
     | `skills/` | 一時ディレクトリの `.claude/skills/` に置き、`--add-dir` で渡す |
 
   - `--permission-mode default` を渡す（合成した設定の `permissions.defaultMode` より優先させる）。
@@ -75,6 +77,8 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
   - 利用者の MCP サーバーは使わず、プロジェクトのコンテキストのものだけにする（Claude Code の `--strict-mcp-config` に合わせる）。Codex には一度に止める引数が無いので、利用者の `config.toml`（`CODEX_HOME`、無ければ `~/.codex`）と、`--cwd` から対象リポジトリの根までの `.codex/config.toml` にある MCP サーバーの名前を読み、コンテキストに無い名前ごとに `-c mcp_servers.<名前>.enabled=false` を渡す。
   - 層の設定の `approvals_reviewer`（既定のコンテキストでは、人のいない実行のための `auto_review`）は渡さない。承認を誰がするかは、利用者の設定のままにする。
   - `--sandbox workspace-write` と `--ask-for-approval on-request` を渡す（合成した設定より優先させる）。
+
+- どちらも、引数で渡せないファイル（Claude Code の `commands/`、Codex の `rules/` など）は渡さず、渡さなかったことを表示する。既定のコンテキストのもの（今は、コメントだけの Codex の `rules/sacty.rules`）は表示しない。
 
 ### 安全のための扱い
 
@@ -96,13 +100,14 @@ sacty の AI の定義（`agents`）と認証の秘密情報は使わない。�
 - ゲートウェイを通すのは、MCP と外部 PF の秘密情報をホストのプロセスに出さず、セッションを終えればトークンを無効にできるため。
 - MCP を `--strict-mcp-config` でプロジェクトのコンテキストのものだけにしたのは、工程のエージェントと同じ道具で試せるようにし、利用者の個人の MCP サーバーと名前がぶつからないようにするため。
 - 権限を広げないのは、コンテナの隔離が無く、層の設定やプロンプトインジェクションでホストを壊せるようにしないため。
+- Bedrock・providers の親の段階を置かないのは、段階のモデルの名前が接続先ごとのもの（Bedrock の推論プロファイル ID など）で、利用者のログインでは使えないことがあるため。
 - 作業履歴に記録しないのは、ローカルのセッションはタスクの外の利用者自身の作業で、作業履歴（タスクの経過と費用）に入れる実行ではないため。費用も sacty からは分からない（利用者のログインで直接つなぐ）。
 
 ## 影響
 
-- 実装のときに、次を実際の CLI で確かめる。確かめられなければ、この ADR を置き換える。
-  - Claude Code：`--add-dir` で渡したディレクトリの `.claude/skills/` のスキルが使えるか。使えなければ `--plugin-dir`（スキルの名前に接頭辞が付く）にする。`--agents` の JSON が、対話の起動で引数の長さの上限を超えないか。`--permission-mode default` が設定の `permissions.defaultMode` より優先されるか。
-  - Codex：実際にログインした対話の起動で、規則・スキル・段階のサブエージェント・MCP サーバーが使えるか（ここまでの確認は、ログインせずにモデルへの入力と MCP サーバーの一覧を見ただけ）。
+- 実装のときに、実際の CLI で次を確かめた（[作業履歴](../worklog/20261110-local-agent-launch.md)）。
+  - Claude Code 2.1.321：既定のコンテキストを合成して組み立てた引数で `-p` で動かし、規則が入ること、`--add-dir` の `.claude/skills/` のスキルが名前のまま使えること、`--agents` の段階がサブエージェントとして使えることを確かめた。設定に `permissions.defaultMode: bypassPermissions` を書いても、`--permission-mode default` を付けるとコマンドの実行に承認を求めることを確かめた。
+  - Codex 0.167.0：同じく組み立てた `-c` で、規則とスキルの一覧がモデルへの入力に入ること、段階が「Available roles」に出ること、MCP サーバーが加わり、利用者の MCP サーバーが止まることを、ログインせずに確かめた（`codex debug prompt-input`・`codex mcp list`）。ログインした対話の起動では確かめていない。
 - `--` の後の引数で、sacty が渡した引数と同じものを渡したときにどちらが効くかは AI の CLI の決まりによる（確かめてユーザードキュメントに書く）。
 - 合成した `settings.json`・`config.toml` のうち sacty が決める項目（`RESERVED_SETTINGS`）は、工程の実行と同じく取り除かれたまま渡る。
 - 強制終了などで終える API が呼ばれなかったセッションは、ゲートウェイのトークンとホストで起動した MCP サーバーが、`sacty up` を止めるまで残る。トークンは 127.0.0.1 でだけ使える。
