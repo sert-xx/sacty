@@ -41,7 +41,7 @@ sacty は、5つのパッケージでできている。
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`・`GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
-| プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
+| プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/:id/local-sessions`・`DELETE /api/local-sessions/:id`・`POST /api/projects/import` |
 | スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
 | 監査 | `GET /api/tasks/:id/audit`・`POST /api/tasks/:id/audit/resume`・`GET /api/projects/:id/audits`・`GET /api/audits/dashboard`・`POST /api/audits/proposals/:id/{adopt,reject}`・`POST /api/audits/memories/:id/delete` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`GET /api/notifications`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
@@ -366,7 +366,7 @@ sacty は、5つのパッケージでできている。
 | `config.yaml` | sacty の設定（AI・認証・イメージ・ゲートウェイなど）。デーモンは使うたびに読み直す |
 | `sacty.db` | SQLite。作業履歴（イベント）・プロジェクト・スケジュールタスク・sacty の設定（画面の「sacty の設定」） |
 | `daemon.lock`・`daemon-owner.json` | 二重の起動の判定と表示（[デーモンの起動と終了](daemon-lifecycle.md)） |
-| `daemon.json` | `sacty context preview` が問い合わせる、起動中のデーモンの接続先とトークン |
+| `daemon.json` | `sacty context preview`・`sacty launch` が問い合わせる、起動中のデーモンの接続先とトークン |
 | `workspaces/` | 作業領域。`<タスク ID>/repo`（対象リポジトリの clone）・`<タスク ID>/empty`（リポジトリの無いタスク）・`_git/<タスク ID>.git`（clone 直後の git のメタデータの退避。どのコンテナにもマウントしない）・実行ごとの `_guardian/<実行 ID>`・`_snapshots/<実行 ID>`・`_review/<実行 ID>`・`_input/<実行 ID>`・`_export/<実行 ID>`・`_deployment/<実行 ID>`・`_handoff/<実行 ID>`・`_question-logs/<実行 ID>`・`_audit-logs/<実行 ID>`・`_audit-ledger/<実行 ID>`・`_shared-compose/<実行 ID>`（実行の終わりに消す。中断で残ったものは起動のときに消す。`_shared-compose` は起動のときにまとめて消す）・`_cache/`・`_task-cache/<タスク ID>`（タスクごとの依存のキャッシュ。[エージェントの実行](agent-execution.md#依存のキャッシュ)）。完了したタスクの `<タスク ID>` と `_git/<タスク ID>.git` と `_task-cache/<タスク ID>` は、もう使わなくなったら消す（[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)） |
 | `runs/` | エージェントの実行ごとのセッションログ |
 | `sessions/` | タスクごとのオーケストレーターのセッション（使い回しのためのキャッシュ） |

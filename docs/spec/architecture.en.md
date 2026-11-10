@@ -35,7 +35,7 @@ The main APIs are as follows (`apps/daemon/src/server.ts`).
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`, `GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
-| Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
+| Projects | `GET/POST /api/projects`, `GET/PUT/DELETE /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/:id/local-sessions`, `DELETE /api/local-sessions/:id`, `POST /api/projects/import` |
 | Scheduled tasks | `GET/POST /api/projects/:id/schedules`, `GET/PUT/DELETE /api/schedules/:id` |
 | Audit | `GET /api/tasks/:id/audit`, `POST /api/tasks/:id/audit/resume`, `GET /api/projects/:id/audits`, `GET /api/audits/dashboard`, `POST /api/audits/proposals/:id/{adopt,reject}`, `POST /api/audits/memories/:id/delete` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `GET /api/notifications`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
@@ -291,7 +291,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | `config.yaml` | sacty configuration (AI, authentication, images, gateway, and so on). The daemon rereads it every time it uses it |
 | `sacty.db` | SQLite. Activity log (events), projects, scheduled tasks, sacty settings ("sacty settings" on the web UI) |
 | `daemon.lock`, `daemon-owner.json` | Detecting and reporting a second start ([Daemon startup and shutdown](daemon-lifecycle.en.md)) |
-| `daemon.json` | The running daemon's address and token, queried by `sacty context preview` |
+| `daemon.json` | The running daemon's address and token, queried by `sacty context preview` and `sacty launch` |
 | `workspaces/` | Workspaces. `<task-id>/repo` (clone of the target repository), `<task-id>/empty` (tasks without a repository), `_git/<task-id>.git` (git metadata set aside right after the clone; never mounted into any container), per-run `_guardian/<run-id>`, `_snapshots/<run-id>`, `_review/<run-id>`, `_input/<run-id>`, `_export/<run-id>`, `_deployment/<run-id>`, `_handoff/<run-id>`, `_question-logs/<run-id>`, `_audit-logs/<run-id>`, `_audit-ledger/<run-id>`, `_shared-compose/<run-id>` (removed at the end of the run; ones left by an interruption are removed at startup; all of `_shared-compose` is removed at startup), `_cache/`, and `_task-cache/<task-id>` (the per-task dependency cache; [Agent execution](agent-execution.en.md#dependency-cache)). A completed task's `<task-id>`, `_git/<task-id>.git`, and `_task-cache/<task-id>` are removed once they are no longer used ([Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)) |
 | `runs/` | Session logs for each agent run |
 | `sessions/` | The Orchestrator's session for each task (a cache for reuse) |

@@ -1913,6 +1913,8 @@ export async function prepareContext(
   hostedMcp: HostedContextMcp[];
   /** 層で定義した外部 PF（PBI-74。from にどの層のものか）。認証は秘密情報の名前のまま。 */
   platforms: Platform[];
+  /** dir に置いたファイル（dir からの相対パスと、どの層のものか。sacty が作ったものには from が無い）。 */
+  files: { path: string; from?: string }[];
   dispose: () => void;
 }> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
@@ -1939,6 +1941,7 @@ export async function prepareContext(
       gatewayMcp: built.gatewayMcp,
       hostedMcp: built.hostedMcp,
       platforms: built.composed.platforms,
+      files: built.files.map((f) => ({ path: f.path, ...(f.from ? { from: f.from } : {}) })),
       dispose,
     };
   } catch (error) {

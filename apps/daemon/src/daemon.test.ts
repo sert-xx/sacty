@@ -131,6 +131,7 @@ import { createApp } from "./server.js";
 import {
   awaitingIssueComment,
   InvalidOperationError,
+  type LocalSessionView,
   MEMORY_STEP_ROLES,
   type ServiceDeps,
   TaskService,
@@ -36764,6 +36765,149 @@ describe("エージェントの段階のサブエージェント（PBI-119）", 
     const codex = await service.projectContextPreview("default", "codex");
     expect(codex && "preview" in codex && codex.preview.files.map((f) => f.path)).not.toContain(
       "agents/standard.toml",
+    );
+    activity.close();
+  });
+
+  /** ホストから見た起点を持つゲートウェイの偽物（登録と閉じたことを記録する）。 */
+  const localGateway = () => {
+    const registered: { mcp: unknown; platforms: unknown }[] = [];
+    let closed = 0;
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      ...fakeGateway(),
+      hostOrigin: () => "http://127.0.0.1:5001",
+      platformsUrl: (token, origin = "http://host.docker.internal:5001") =>
+        `${origin}/r/${token}/pf`,
+      register: (_route, mcp, platforms) => {
+        registered.push({ mcp, platforms });
+        return {
+          token: "sacty-gw-local",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {
+            closed += 1;
+          },
+        };
+      },
+    };
+    return { gateway, registered, closed: () => closed };
+  };
+  const text = (session: LocalSessionView, path: string) => {
+    const file = session.files.find((f) => f.path === path);
+    return file ? Buffer.from(file.content, "base64").toString("utf8") : undefined;
+  };
+
+  it("ローカルのセッション：実行と同じ組み立てでコンテキストと段階を用意し、作業履歴には何も記録しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], {
+      config: tiered(agent()),
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    const before = activity.all().length;
+    const result = await service.createLocalSession(
+      "default",
+      "claude-code",
+      "/tmp/sacty-launch-a",
+    );
+    expect(result && "session" in result).toBe(true);
+    if (!result || !("session" in result)) return;
+    const { session } = result;
+    expect(session.runtime).toBe("claude-code");
+    const paths = session.files.map((f) => f.path);
+    expect(paths).toContain("CLAUDE.md");
+    expect(paths).toContain("agents/standard.md");
+    expect(paths).not.toContain("agents/lite.md");
+    expect(text(session, "CLAUDE.md")?.length).toBeGreaterThan(0);
+    expect(activity.all()).toHaveLength(before);
+    expect(service.closeLocalSession(session.id)).toBe(true);
+    expect(service.closeLocalSession(session.id)).toBe(false);
+    expect(await service.createLocalSession("missing", "claude-code", "/tmp/x")).toBeUndefined();
+    activity.close();
+  });
+
+  it("ローカルのセッション：Codex の規則のスキルの場所は、CLI の一時ディレクトリの絶対パスで書く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { defaultContext: DEFAULT_CONTEXT_DIR });
+    const result = await service.createLocalSession("default", "codex", "/tmp/sacty-launch-b");
+    if (!result || !("session" in result)) throw new Error("no session");
+    expect(text(result.session, "AGENTS.md")).toContain("/tmp/sacty-launch-b/skills/");
+    activity.close();
+  });
+
+  it("ローカルのセッション：外部 PF は、このセッションのトークンの URL と案内で渡し、ゲートウェイを使えなければ注意にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const local = localGateway();
+    const withGateway = makeService(activity, [], {
+      config: configOf(agent(), 1, [jiraPlatform()]),
+      gateway: local.gateway,
+    }).service;
+    const ok = await withGateway.createLocalSession(
+      "default",
+      "claude-code",
+      "/tmp/sacty-launch-e",
+    );
+    if (!ok || !("session" in ok)) throw new Error("no session");
+    expect(ok.session.env.SACTY_PF_URL).toBe("http://127.0.0.1:5001/r/sacty-gw-local/pf");
+    expect(text(ok.session, "CLAUDE.md")).toContain("$SACTY_PF_URL/jira");
+    expect(ok.session.warnings).not.toContainEqual(message("local.platformsUnavailable"));
+    const without = makeService(activity, [], {
+      config: configOf(agent(), 1, [jiraPlatform()]),
+    }).service;
+    const none = await without.createLocalSession("default", "claude-code", "/tmp/sacty-launch-f");
+    if (!none || !("session" in none)) throw new Error("no session");
+    expect(none.session.env.SACTY_PF_URL).toBeUndefined();
+    expect(none.session.warnings).toContainEqual(message("local.platformsUnavailable"));
+    activity.close();
+  });
+
+  it("ローカルのセッション：ホストの MCP サーバーは、ホストから見たゲートウェイの URL と、このセッションのトークンで渡し、終えたら登録を閉じる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const local = localGateway();
+    const { service } = makeService(activity, [], {
+      config: configOf(agent(), 1, [], [cloud]),
+      gateway: local.gateway,
+    });
+    const result = await service.createLocalSession(
+      "default",
+      "claude-code",
+      "/tmp/sacty-launch-c",
+    );
+    if (!result || !("session" in result)) throw new Error("no session");
+    const { session } = result;
+    expect(JSON.parse(text(session, "mcp.json") ?? "{}").mcpServers["private-cloud"]).toMatchObject(
+      {
+        type: "http",
+        url: "http://127.0.0.1:5001/mcp/private-cloud",
+      },
+    );
+    expect(session.env.SACTY_MCP_SECRET_0).toBe("Bearer sacty-gw-local");
+    expect(session.mcpServers).toEqual(["private-cloud"]);
+    expect(local.registered).toHaveLength(1);
+    expect(local.closed()).toBe(0);
+    service.closeLocalSession(session.id);
+    expect(local.closed()).toBe(1);
+    activity.close();
+  });
+
+  it("ローカルのセッション：Bedrock の AI の段階は、手元のログインで使えないことがあるので渡さず、注意にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const bedrock = agent({
+      id: "claude-bedrock",
+      auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2" },
+    });
+    const { service } = makeService(activity, [], {
+      config: tiered(bedrock),
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    const result = await service.createLocalSession(
+      "default",
+      "claude-code",
+      "/tmp/sacty-launch-d",
+    );
+    if (!result || !("session" in result)) throw new Error("no session");
+    expect(result.session.files.some((f) => f.path.startsWith("agents/"))).toBe(false);
+    expect(result.session.warnings).toContainEqual(
+      message("local.tiersSkipped", { parent: "claude-bedrock", mode: "bedrock" }),
     );
     activity.close();
   });

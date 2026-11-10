@@ -4,7 +4,7 @@
 
 The context is the rules, skills, MCP servers, external PFs, and agent settings given to a step's agent, information gathering, and the Orchestrator. sacty composes the context by stacking layers, and on every run places it in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its inheritance chain).
 
-Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md), [Fetch the submodules of a context repository so that skills and other items managed separately by an organization can be used without copying them](../adr/20261022-1503-context-submodules.md)
+Related ADRs: [Add a CLI that starts the host's Claude Code or Codex interactively with a project's context under the user's own login, without recording it in the activity log](../adr/20261110-0011-launch-local-agent-with-project-context.md), [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md), [Allow the current contents of a local directory and a directory inside a monorepo as the context, and add relative paths to extends](../adr/20261022-0626-context-local-path-and-monorepo.md), [Fetch the submodules of a context repository so that skills and other items managed separately by an organization can be used without copying them](../adr/20261022-1503-context-submodules.md)
 
 ## Layers
 
@@ -353,3 +353,56 @@ Code: `apps/daemon/src/context-template.ts` (`CONTEXT_TEMPLATE_FILES`, `initCont
 - When a project is saved with a context specified, the same composition is also tried and errors are returned (the project is still saved).
 
 Code: `apps/daemon/src/server.ts` (`PreviewRequest`), `apps/daemon/src/service.ts` (`projectContextPreview`, `checkProjectContext`, `ContextPreviewView`), `apps/daemon/src/context.ts` (`previewContext`, `ContextPreview`, `PREVIEW_FILE_MAX_BYTES`, `PREVIEW_TOTAL_MAX_BYTES`), `packages/cli/src/context-preview.ts` (`fetchContextPreview`, `previewOutput`)
+
+## Local sessions (sacty launch)
+
+This starts the host's Claude Code or Codex interactively with a project's context. The AI CLI runs with the user's own login and settings (the config locations `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are not changed), and sacty's AI definitions and authentication secrets are not used. Nothing is recorded in the activity log (`ContextResolved` is not recorded either).
+
+- Endpoints (only holders of the daemon token can call them; the web app does not call them)
+  - `POST /api/projects/:id/local-sessions` (`{ runtime, dir }`): creates a session. `dir` is the absolute path of the temporary directory the CLI created. It returns `{ session: { id, runtime, files, env, mcpServers, warnings } }`. `files` are the files to place (path, layer, and base64 contents), and `env` is the environment variables to give the AI CLI (including the values of secrets and the gateway token). Fetch and settings errors return 200 with `{ error }`. 404 if the project does not exist.
+  - `DELETE /api/local-sessions/:id`: ends a session. 404 if it does not exist.
+- Composition
+  - It is built with the same assembly as the preview and runs (`prepareContext`). Only the following differ.
+    - The gateway origin is the one seen from the host (`http://127.0.0.1:<port>`, `hostOrigin`).
+    - There is no run limit, so MCP timeout warnings (`context.mcpTimeoutOverRun`) are not given.
+    - The config location is `dir` (the skill locations in Codex's `AGENTS.md` become absolute paths under `dir`).
+  - Tier subagents are chosen with the same parent as the preview (the runtime's `default_agent` and so on). When the parent's authentication is `bedrock` or `provider`, they are not placed because model names specific to the endpoint may not work with the user's own login, and `local.tiersSkipped` is added to the warnings.
+  - Command-type MCP servers started on the host are leased and awaited as in a run, and the host MCP servers are awaited too (those not ready become warnings).
+  - If there is any MCP server routed through the gateway or any external PF, a run for this session is registered with the gateway, and its token is put in `env` (the authentication header of host MCP servers and `SACTY_PF_URL`). AI calls and GitHub read relaying are not registered.
+  - If there are external PFs, the usage guide (`platformPromptLines`) is appended to the rules (`CLAUDE.md` or `AGENTS.md`). When the gateway is not available, the external PFs are not passed, and `local.platformsUnavailable` is added to the warnings.
+  - For MCP servers with `via_gateway: false`, the resolved secret values are put in `env`.
+  - The fetched layers are deleted once the contents of the files to place have been read.
+  - Ending a session closes the gateway registration and releases the command-type MCP servers started on the host. Sessions that are never ended remain until the daemon stops.
+- `sacty launch <project> [--runtime claude-code|codex] [--cwd <directory>] [-- <arguments>...]`
+  - Arguments are split at `--` only for `launch` (the arguments of other commands are not split).
+  - It queries the endpoint in `SACTY_HOME/daemon.json`. The project is an ID or a name. `--cwd` defaults to the current directory.
+  - It creates a temporary directory (`sacty-launch-*`, mode 0700, files 0600), creates a session, places the files, and starts the AI CLI with the terminal's standard input and output and the user's environment variables (with `env` layered on top). Arguments after `--` are added after the arguments sacty assembles.
+  - While the AI CLI runs, Ctrl+C (SIGINT) does not stop sacty, and SIGTERM and SIGHUP are passed to the AI CLI. When the AI CLI ends (even on failure), it ends the session, deletes the temporary directory, and exits with the AI CLI's exit code.
+  - It shows the warnings (`warnings`) and the files it did not pass.
+- How it passes things to Claude Code
+
+  | Composed item | How it is passed |
+  | --- | --- |
+  | `CLAUDE.md` | `--append-system-prompt-file` |
+  | `settings.json` | `--settings` |
+  | `mcp.json` (an empty `{ "mcpServers": {} }` if absent) | `--mcp-config` and `--strict-mcp-config` |
+  | `agents/<name>.md` | `--agents` (JSON: the frontmatter's `name`, `description`, and `model` and the body; `effort` is not passed) |
+  | `skills/` | Placed in `.claude/skills/` under `dir`, with `dir` passed by `--add-dir` |
+
+  - `--permission-mode default` is added at the end (it takes precedence over `permissions.defaultMode` in settings).
+- How it passes things to Codex (all with `-c`)
+
+  | Composed item | How it is passed |
+  | --- | --- |
+  | `AGENTS.md` | `developer_instructions` (it stops without starting if this exceeds `CODEX_INSTRUCTIONS_MAX_BYTES`) |
+  | `mcp_servers` in `config.toml` | `mcp_servers.<name>=<inline table>` |
+  | The rest of `config.toml` | `<key>=<value>` for each leaf key. `approvals_reviewer` is not passed. `agents.<name>.config_file` becomes an absolute path under `dir` |
+  | `agents/<name>.toml` | `agents.<name>.config_file` (absolute path under `dir`) and `agents.<name>.description` |
+  | `skills/` | Placed in `dir` (their locations are given in the skill list in the rules) |
+
+  - Among the user's MCP servers (in `config.toml` under `CODEX_HOME`, or `~/.codex` if unset, and in `.codex/config.toml` from `--cwd` up to the directory that has `.git`), those not in the context are set to `mcp_servers.<name>.enabled=false`.
+  - Keys that contain `.` or are empty cannot be passed, so it stops.
+  - `--sandbox workspace-write` and `--ask-for-approval on-request` are added at the end. If the arguments after `--` include `--sandbox` (`-s`) or `--ask-for-approval` (`-a`), sacty does not add the same argument (Codex does not start when the same argument is given twice).
+- For both, other files (Claude Code's `commands/`, Codex's `rules/`, and so on) are not passed, and it shows that they were not passed, except for files from the default context (`sacty-default`).
+
+Code: `apps/daemon/src/server.ts` (`LocalSessionRequest`), `apps/daemon/src/service.ts` (`createLocalSession`, `closeLocalSession`, `LocalSessionView`, `mcpRouting`), `apps/daemon/src/gateway.ts` (`hostOrigin`, `platformsUrl`), `apps/daemon/src/local-launch.ts` (`claudeLaunch`, `codexLaunch`, `codexUserMcpServers`, `CODEX_INSTRUCTIONS_MAX_BYTES`), `packages/cli/src/launch.ts` (`launch`, `splitLaunchArgs`, `writeLaunchFiles`)

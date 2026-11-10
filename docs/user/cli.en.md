@@ -1,4 +1,4 @@
-<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), packages/cli/src/context-preview.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE) -->
+<!-- Code: packages/cli/src/index.ts (USAGE, main, parsePort), packages/cli/src/context-preview.ts, packages/cli/src/launch.ts, apps/daemon/src/local-launch.ts, apps/daemon/src/context-template.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE) -->
 
 [日本語](cli.md) | **English**
 
@@ -85,6 +85,33 @@ It shows secrets only as reference names. However, it shows values written in th
 | `--no-content` | None | Omit file contents |
 
 If the context has an error, it exits with exit code 1.
+
+## sacty launch
+
+```sh
+npx sacty launch <project> [--runtime claude-code|codex] [--cwd <directory>] [-- <arguments for the AI CLI>...]
+```
+
+This command starts your local Claude Code or Codex interactively with the context of a project (by ID or name): its rules, skills, MCP servers, external PFs, agent settings, and tier subagents. It queries the running sacty (`sacty up`) (it stops if sacty is not running).
+
+- The AI uses the account you are logged in with locally (for both Claude Code and Codex, whether the login is stored in the keychain or in a file) and your local settings as they are. It does not use the `agents` settings of sacty or the API keys saved in sacty.
+- The working directory is `--cwd` (the current directory by default). Clone the target repository locally beforehand.
+- Only the MCP servers in the project's context are used. The MCP servers written in your local settings files (Claude Code's settings and `.mcp.json`, and Codex's `config.toml` and the target repository's `.codex/config.toml`) are not used. MCP servers added in other ways, such as plugins, may not be stopped.
+- sacty does not pass settings that skip permission checks. Claude Code starts in the mode that asks for permission (`--permission-mode default`), and Codex starts with the sandbox that can write only to the workspace and the policy that asks for approval when needed (`--sandbox workspace-write --ask-for-approval on-request`).
+- Arguments after `--` are passed to the AI CLI as they are (for example `-- --model claude-opus-5-5`). If you pass the same argument as one sacty passes, the one after `--` takes effect (Claude Code uses the one given later, and Codex's `-c` uses the one given later. For Codex's `--sandbox` and `--ask-for-approval`, sacty does not pass its own when you pass them).
+- Nothing is recorded in the activity log. sacty does not count costs or budgets for it either.
+- When you quit the AI CLI, sacty also exits and deletes the temporary files it placed. Ctrl+C goes to the AI CLI.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `--runtime` | `claude-code` | Which AI to start (`claude-code` or `codex`) |
+| `--cwd` | Current directory | The directory the AI works in |
+
+If something cannot be passed locally, it is shown with `[sacty] 注意：` before starting.
+
+- When sacty's AI definition uses Bedrock or a `providers` endpoint, tier subagents are not passed (their model names may not work with your local login).
+- Files that cannot be passed as arguments, such as `commands/` in `agents/claude/` of the context repository, are not passed.
+- With Codex, if the rules and the skill list are too large to pass as an argument, it stops without starting.
 
 ## Environment variables
 

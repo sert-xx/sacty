@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -541,6 +541,19 @@ function contextContainerDir(runtime: "claude-code" | "codex"): string {
 }
 
 /**
+ * ローカルのセッション（`sacty launch`）。置くファイル（設定のディレクトリからの相対パス・どの層のものか・base64 の中身）、
+ * AI の CLI に渡す環境変数（MCP の秘密情報とゲートウェイのトークンの値を含む）、MCP サーバーの名前、注意。
+ */
+export type LocalSessionView = {
+  id: string;
+  runtime: "claude-code" | "codex";
+  files: { path: string; from?: string; content: string }[];
+  env: Record<string, string>;
+  mcpServers: string[];
+  warnings: DaemonText[];
+};
+
+/**
  * プロジェクトのコンテキストのプレビュー（PBI-76）。platforms は、ホストの PF とあわせた使える外部 PF の要約（秘密情報の
  * 名前・値は含めない）。
  */
@@ -693,7 +706,8 @@ export type ServiceDeps = {
   /** 作業領域の根の下のものを消す口（PBI-157。テストで、消せないときを作るために差し替える）。無ければ removeEntry。 */
   removeWorkspaceEntry?: (root: string, path: string) => Promise<boolean>;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
-  gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl" | "githubUrl">;
+  gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl" | "githubUrl"> &
+    Partial<Pick<AiGateway, "hostOrigin">>;
   /** 認証情報を用意できない組織内 PF の理由（画面の状態に出す。PBI-35）。 */
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
@@ -4001,6 +4015,188 @@ export class TaskService {
     } catch (error) {
       return { error: redactText(errorText(error), usedSecrets) };
     }
+  }
+
+  /** ローカルのセッション（`sacty launch`）ごとの後片付け（ゲートウェイの登録・ホストの MCP サーバー・一時ディレクトリ）。 */
+  private readonly localSessions = new Map<string, () => void>();
+
+  /**
+   * ローカルのセッション（`sacty launch`）を作る。プロジェクトのコンテキストを、実行・プレビューと同じ組み立てで、ゲートウェイの
+   * 起点をホストから見たもの（127.0.0.1）にして作り、置くファイル（中身）と環境変数を返す。dir は CLI が作った一時ディレクトリ
+   * （Codex の規則のスキルの場所を、その絶対パスで書くため）。MCP と外部 PF は、このセッション用に登録したゲートウェイの
+   * トークンで使える（closeLocalSession で閉じる）。作業履歴には記録しない。プロジェクトが無ければ undefined。
+   */
+  async createLocalSession(
+    projectId: string,
+    runtime: "claude-code" | "codex",
+    dir: string,
+  ): Promise<{ session: LocalSessionView } | { error: DaemonText } | undefined> {
+    const project = this.deps.projects.get(projectId);
+    if (!project) return undefined;
+    const loaded = this.deps.config();
+    const config = loaded.ok ? loaded.config : undefined;
+    const usedSecrets: string[] = [];
+    const cleanups: (() => void)[] = [];
+    const cleanup = () => {
+      for (const fn of cleanups.splice(0).reverse()) {
+        try {
+          fn();
+        } catch {
+          // 後片付けの失敗で、ほかの後片付けを止めない
+        }
+      }
+    };
+    try {
+      const gateway = this.deps.gateway;
+      const origin = gateway?.hostOrigin?.();
+      // ゲートウェイの起点はホストから見たもの。手元のセッションには実行の上限が無いので、時間切れの警告は出さない
+      const routing: McpRouting = origin
+        ? { ...this.mcpRouting(config, undefined, origin), runLimitMs: Number.POSITIVE_INFINITY }
+        : { runLimitMs: Number.POSITIVE_INFINITY };
+      // 段階のサブエージェントは、sacty の AI の定義のモデルで作る。Bedrock・providers の接続先のモデルの名前は、手元の
+      // ログインでは使えないので置かない
+      const parent = config ? this.previewParent(config, runtime) : undefined;
+      const warnings: DaemonText[] = [];
+      let tiers: { entries: PlacedTier[]; warnings: DaemonText[] } = { entries: [], warnings: [] };
+      if (parent && config) {
+        if (parent.auth.mode === "bedrock" || parent.auth.mode === "provider") {
+          warnings.push(
+            message("local.tiersSkipped", { parent: parent.id, mode: parent.auth.mode }),
+          );
+        } else {
+          tiers = this.tiersFor(parent, config);
+        }
+      }
+      const prepared = await prepareContext(
+        this.deps.contexts,
+        project.context,
+        runtime,
+        dir,
+        (repo) => this.gitAuth({ projectId }, repo, usedSecrets),
+        this.deps.defaultContext,
+        routing.hostMcp ?? [],
+        routing.gatewayOrigin,
+        undefined,
+        routing.hostCommands,
+        tierFiles(runtime, tiers.entries),
+        routing.runLimitMs,
+      );
+      cleanups.push(prepared.dispose);
+      warnings.push(...prepared.warnings, ...tiers.warnings);
+      // 層の command の MCP サーバーは、実行と同じくホストで起動する（PBI-84）
+      const relays: (GatewayMcpServer | HostedMcpRelay)[] = [...prepared.gatewayMcp];
+      if (prepared.hostedMcp.length > 0 && this.deps.contextMcp) {
+        const lease = this.deps.contextMcp.lease(
+          projectId,
+          prepared.hostedMcp,
+          project.name ?? projectId,
+        );
+        cleanups.push(() => lease.release());
+        relays.push(...lease.relays);
+        warnings.push(...(await this.deps.contextMcp.ready(lease.keys)));
+      }
+      // 使えるホストの MCP サーバーの準備を待つ（PBI-77）。準備ができないものは注意にする
+      const hostNames = (routing.hostMcp ?? []).map((m) => m.name);
+      if (hostNames.length > 0 && this.deps.hostMcpReady) {
+        warnings.push(...(await this.deps.hostMcpReady(hostNames)));
+      }
+      const platforms = mergePlatforms(config?.platforms ?? [], prepared.platforms);
+      warnings.push(...platforms.warnings);
+      const env: Record<string, string> = { ...prepared.placed.env };
+      const tokenEnvs = prepared.placed.secrets.filter((s) => s.secret === GATEWAY_TOKEN_SECRET);
+      let token: string | undefined;
+      if (gateway && origin && (tokenEnvs.length > 0 || platforms.platforms.length > 0)) {
+        // MCP の中継先（ヘッダーの秘密情報はホストで取り出し、ゲートウェイだけに持たせる。PBI-49）
+        const contextMcp: Record<string, ContextMcpRoute> = {};
+        for (const server of relays) {
+          if ("host" in server) {
+            contextMcp[server.name] = { host: server.host };
+            continue;
+          }
+          const headers: Record<string, string> = {};
+          for (const [name, value] of Object.entries(server.headers)) {
+            if (typeof value === "string") {
+              headers[name] = value;
+              continue;
+            }
+            const secret = await this.deps.secrets.get(value.secret);
+            usedSecrets.push(secret);
+            headers[name] = `${value.prefix}${secret}`;
+          }
+          const timeoutSec = Math.max(
+            server.startup_timeout_sec ?? 0,
+            server.tool_timeout_sec ?? 0,
+          );
+          contextMcp[server.name] = {
+            url: server.url,
+            headers,
+            ...(timeoutSec > 0 ? { timeoutMs: timeoutSec * 1000 } : {}),
+          };
+        }
+        // AI の呼び出しと GitHub の読み取りは中継しない（AI は利用者のログインで直接つなぎ、GitHub はホストの gh を使える）
+        const registered = gateway.register(
+          undefined,
+          contextMcp,
+          platforms.platforms.filter((p) => p.from !== undefined),
+        );
+        cleanups.push(() => registered.close());
+        token = registered.token;
+        for (const s of tokenEnvs) env[s.env] = `${s.prefix}${token}`;
+        if (platforms.platforms.length > 0) env.SACTY_PF_URL = gateway.platformsUrl(token, origin);
+      }
+      // via_gateway: false の MCP サーバーの秘密情報は、実行のときにコンテナへ渡すのと同じく、環境変数で渡す
+      for (const s of prepared.placed.secrets) {
+        if (s.secret === GATEWAY_TOKEN_SECRET) continue;
+        const value = await this.deps.secrets.get(s.secret);
+        usedSecrets.push(value);
+        env[s.env] = `${s.prefix}${value}`;
+      }
+      // ゲートウェイを使えなければ、外部 PF は渡せない（ホストから見た起点が無い）。黙って落とさず、注意にする
+      if (!token && platforms.platforms.length > 0) {
+        warnings.push(message("local.platformsUnavailable"));
+      }
+      // 置いたファイルの中身。規則には、使える外部 PF の案内を足す（工程では指示に足しているもの。PBI-35）
+      const rulesPath = runtime === "codex" ? "AGENTS.md" : "CLAUDE.md";
+      const pfLines = token ? platformPromptLines(platforms.platforms) : [];
+      const files: LocalSessionView["files"] = prepared.files.map((f) => ({
+        path: f.path,
+        ...(f.from ? { from: f.from } : {}),
+        content: readFileSync(join(prepared.dir, f.path)).toString("base64"),
+      }));
+      // 中身を読んだら、取得した層は要らない（ホストで起動する MCP サーバーは、確保のときに層を写してある）
+      prepared.dispose();
+      if (pfLines.length > 0) {
+        const existing = files.find((f) => f.path === rulesPath);
+        const before = existing ? Buffer.from(existing.content, "base64").toString("utf8") : "";
+        const content = Buffer.from(`${before}${pfLines.join("\n")}\n`).toString("base64");
+        if (existing) existing.content = content;
+        else files.push({ path: rulesPath, content });
+      }
+      const id = randomUUID();
+      this.localSessions.set(id, cleanup);
+      return {
+        session: {
+          id,
+          runtime,
+          files,
+          env,
+          mcpServers: prepared.placed.mcpServers,
+          warnings: warnings.map((w) => redactText(w, usedSecrets)),
+        },
+      };
+    } catch (error) {
+      cleanup();
+      return { error: redactText(errorText(error), usedSecrets) };
+    }
+  }
+
+  /** ローカルのセッションを終える（ゲートウェイの登録を閉じ、ホストで起動した MCP サーバーを手放す）。無ければ false。 */
+  closeLocalSession(id: string): boolean {
+    const cleanup = this.localSessions.get(id);
+    if (!cleanup) return false;
+    this.localSessions.delete(id);
+    cleanup();
+    return true;
   }
 
   /**
@@ -8855,11 +9051,13 @@ export class TaskService {
     config: Pick<SactyConfig, "hostMcp" | "runTimeouts"> | undefined,
     /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
     role?: string,
+    /** ゲートウェイの起点（既定はコンテナから見たもの。ローカルのセッションはホストから見たもの）。 */
+    originOverride?: string,
   ): McpRouting {
     const runLimitMs = agentTimeoutMs(config?.runTimeouts, role);
     const gatewayForMcp = this.deps.gateway;
     if (!gatewayForMcp) return { runLimitMs };
-    const origin = gatewayForMcp.containerOrigin();
+    const origin = originOverride ?? gatewayForMcp.containerOrigin();
     return {
       runLimitMs,
       hostMcp: (config?.hostMcp ?? []).map((m) => ({

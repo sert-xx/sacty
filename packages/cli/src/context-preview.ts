@@ -135,34 +135,45 @@ export function withoutContent(result: PreviewResult): PreviewResult {
   };
 }
 
-type Fetch = (url: string, init: { headers: Record<string, string> }) => Promise<Response>;
+export type Fetch = (
+  url: string,
+  init: { headers: Record<string, string>; method?: string; body?: string },
+) => Promise<Response>;
 
-/**
- * プロジェクト（ID か名前）のコンテキストのプレビューを、デーモンの API（GET /api/projects/:id/context-preview）から
- * 取る。プロジェクトが無ければ、その理由で例外にする。
- */
-export async function fetchContextPreview(
+/** デーモンの API を呼ぶ。つながらない・認証できないときは、その理由で例外にする。 */
+export async function daemonRequest(
+  endpoint: DaemonEndpoint,
+  path: string,
+  fetcher: Fetch = fetch,
+  init: { method?: string; body?: unknown } = {},
+): Promise<Response> {
+  const headers: Record<string, string> = { authorization: `Bearer ${endpoint.token}` };
+  if (init.body !== undefined) headers["content-type"] = "application/json";
+  let res: Response;
+  try {
+    res = await fetcher(`${endpoint.url}${path}`, {
+      headers,
+      ...(init.method ? { method: init.method } : {}),
+      ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    });
+  } catch {
+    throw new Error(
+      "デーモンにつながりません。`sacty up` で起動しているか確かめてください（止めたままなら、起動し直してください）。",
+    );
+  }
+  if (res.status === 401) {
+    throw new Error("デーモンに認証できません。`sacty up` で起動し直してください。");
+  }
+  return res;
+}
+
+/** プロジェクト（ID か名前）の ID。無い・名前が重なるときは、その理由で例外にする。 */
+export async function resolveProjectId(
   endpoint: DaemonEndpoint,
   project: string,
-  runtime: "claude-code" | "codex",
   fetcher: Fetch = fetch,
-): Promise<PreviewResult> {
-  const headers = { authorization: `Bearer ${endpoint.token}` };
-  const get = async (path: string) => {
-    let res: Response;
-    try {
-      res = await fetcher(`${endpoint.url}${path}`, { headers });
-    } catch {
-      throw new Error(
-        "デーモンにつながりません。`sacty up` で起動しているか確かめてください（止めたままなら、起動し直してください）。",
-      );
-    }
-    if (res.status === 401) {
-      throw new Error("デーモンに認証できません。`sacty up` で起動し直してください。");
-    }
-    return res;
-  };
-  const list = await get("/api/projects");
+): Promise<string> {
+  const list = await daemonRequest(endpoint, "/api/projects", fetcher);
   if (!list.ok) throw new Error(`デーモンが ${list.status} を返しました。`);
   const { projects } = (await list.json()) as { projects: { id: string; name: string }[] };
   // ID が合えばそれ、無ければ名前で探す
@@ -178,9 +189,24 @@ export async function fetchContextPreview(
       `同じ名前のプロジェクトが複数あります。ID で指定してください（${found.map((p) => p.id).join("・")}）。`,
     );
   }
-  const id = found[0]?.id ?? "";
-  const res = await get(
+  return found[0]?.id ?? "";
+}
+
+/**
+ * プロジェクト（ID か名前）のコンテキストのプレビューを、デーモンの API（GET /api/projects/:id/context-preview）から
+ * 取る。プロジェクトが無ければ、その理由で例外にする。
+ */
+export async function fetchContextPreview(
+  endpoint: DaemonEndpoint,
+  project: string,
+  runtime: "claude-code" | "codex",
+  fetcher: Fetch = fetch,
+): Promise<PreviewResult> {
+  const id = await resolveProjectId(endpoint, project, fetcher);
+  const res = await daemonRequest(
+    endpoint,
     `/api/projects/${encodeURIComponent(id)}/context-preview?runtime=${encodeURIComponent(runtime)}`,
+    fetcher,
   );
   if (!res.ok) throw new Error(`デーモンが ${res.status} を返しました。`);
   return (await res.json()) as PreviewResult;
