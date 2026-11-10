@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-10（UTC）
 - タスク: なし
-- PR: なし
+- PR: #334
 - ブランチ: ccr-805f354d-tec1x2
 - 関係する ADR: [sacty コマンドを npm link で入れる npm run cli:install を足し、入れた後にリンクの向き先と版を確かめる](../adr/20261110-0908-cli-install-with-npm-link.md)
 
