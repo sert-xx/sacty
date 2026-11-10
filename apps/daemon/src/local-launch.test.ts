@@ -135,6 +135,16 @@ describe("codexLaunch", () => {
     ]);
   });
 
+  it("利用者が `--` の後でサンドボックス・承認の方針を渡したら、sacty の同じ引数は渡さない（2 回渡すと Codex が起動しない）", () => {
+    const plan = codexLaunch(
+      "/tmp/l",
+      [],
+      [],
+      ["-s", "danger-full-access", "--ask-for-approval=never"],
+    );
+    expect(plan.args).toEqual(["-s", "danger-full-access", "--ask-for-approval=never"]);
+  });
+
   it("規則が引数で渡せる大きさを超えたら、起動せずに止める", () => {
     expect(() =>
       codexLaunch("/tmp/l", [file("AGENTS.md", "あ".repeat(CODEX_INSTRUCTIONS_MAX_BYTES))]),

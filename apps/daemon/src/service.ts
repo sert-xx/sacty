@@ -541,10 +541,6 @@ function contextContainerDir(runtime: "claude-code" | "codex"): string {
 }
 
 /**
- * プロジェクトのコンテキストのプレビュー（PBI-76）。platforms は、ホストの PF とあわせた使える外部 PF の要約（秘密情報の
- * 名前・値は含めない）。
- */
-/**
  * ローカルのセッション（`sacty launch`）。置くファイル（設定のディレクトリからの相対パス・どの層のものか・base64 の中身）、
  * AI の CLI に渡す環境変数（MCP の秘密情報とゲートウェイのトークンの値を含む）、MCP サーバーの名前、注意。
  */
@@ -557,6 +553,10 @@ export type LocalSessionView = {
   warnings: DaemonText[];
 };
 
+/**
+ * プロジェクトのコンテキストのプレビュー（PBI-76）。platforms は、ホストの PF とあわせた使える外部 PF の要約（秘密情報の
+ * 名前・値は含めない）。
+ */
 export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
   platforms: PlatformSummary[];
 };
@@ -4150,6 +4150,10 @@ export class TaskService {
         const value = await this.deps.secrets.get(s.secret);
         usedSecrets.push(value);
         env[s.env] = `${s.prefix}${value}`;
+      }
+      // ゲートウェイを使えなければ、外部 PF は渡せない（ホストから見た起点が無い）。黙って落とさず、注意にする
+      if (!token && platforms.platforms.length > 0) {
+        warnings.push(message("local.platformsUnavailable"));
       }
       // 置いたファイルの中身。規則には、使える外部 PF の案内を足す（工程では指示に足しているもの。PBI-35）
       const rulesPath = runtime === "codex" ? "AGENTS.md" : "CLAUDE.md";

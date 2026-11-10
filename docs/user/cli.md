@@ -115,9 +115,9 @@ npx sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <デ�
 
 - AI には、手元でログインしているアカウント（Claude Code・Codex のどちらも、キーチェーンでもファイルでも）と、手元の設定をそのまま使います。sacty の `agents` の設定と、sacty に保存した API キーは使いません。
 - 作業するディレクトリは `--cwd`（既定は今のディレクトリ）です。対象リポジトリを手元に clone しておいてください。
-- MCP サーバーは、プロジェクトのコンテキストのものだけを使います（手元で設定した MCP サーバーは使いません）。
+- MCP サーバーは、プロジェクトのコンテキストのものだけを使います。手元の設定ファイルに書いた MCP サーバー（Claude Code の設定と `.mcp.json`、Codex の `config.toml` と対象リポジトリの `.codex/config.toml`）は使いません。プラグインなど、ほかの方法で入れた MCP サーバーは止めないことがあります。
 - sacty は、権限の確認を省く設定を渡しません。Claude Code は権限の確認を求めるモード（`--permission-mode default`）、Codex は作業領域だけに書けるサンドボックスと、必要なときに承認を求める方針（`--sandbox workspace-write --ask-for-approval on-request`）で起動します。
-- `--` の後の引数は、そのまま AI の CLI に渡します（例 `-- --model claude-opus-5-5`）。sacty が渡した引数と同じものを渡したときにどちらが効くかは、AI の CLI の決まりによります。
+- `--` の後の引数は、そのまま AI の CLI に渡します（例 `-- --model claude-opus-5-5`）。sacty が渡す引数と同じものを渡したときは、`--` の後のものが効きます（Claude Code は後に渡したもの、Codex の `-c` は後に渡したもの。Codex の `--sandbox`・`--ask-for-approval` は、渡したら sacty からは渡しません）。
 - 作業履歴には記録しません。費用・予算も sacty では数えません。
 - AI の CLI を終えると、sacty も終わり、置いた一時ファイルを消します。Ctrl+C は AI の CLI が受け取ります。
 

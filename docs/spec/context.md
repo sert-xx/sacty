@@ -497,10 +497,12 @@ AI の CLI は利用者のログインと設定（設定の場所 `CLAUDE_CONFIG
   - ホストで起動するコマンド型の MCP サーバーは、実行と同じく確保して準備を待ち、ホストの MCP サーバーの準備も待つ（準備ができないものは注意にする）。
   - MCP（ゲートウェイ経由のもの）・外部 PF のどれかがあれば、ゲートウェイにこのセッション用の実行を登録し、そのトークンを `env` に入れる（ホストの MCP の認証のヘッダー・`SACTY_PF_URL`）。AI の呼び出しと GitHub の読み取りの中継は登録しない。
   - 外部 PF があれば、使い方の案内（`platformPromptLines`）を規則（`CLAUDE.md`・`AGENTS.md`）の後ろに足す。
+    ゲートウェイを使えないときは、外部 PF を渡さず、`local.platformsUnavailable` を注意に入れる。
   - `via_gateway: false` の MCP サーバーの秘密情報は、取り出した値を `env` に入れる。
   - 取得した層は、置くファイルの中身を読んだら消す。
   - セッションを終えると、ゲートウェイの登録を閉じ、ホストで起動したコマンド型の MCP サーバーを手放す。終えずに残ったセッションは、デーモンが止まるまで残る。
 - `sacty launch <プロジェクト> [--runtime claude-code|codex] [--cwd <ディレクトリ>] [-- <引数>...]`
+  - `--` で分けるのは `launch` のときだけ（ほかのコマンドの引数は分けない）。
   - `SACTY_HOME/daemon.json` の接続先に問い合わせる。プロジェクトは ID か名前。`--cwd` の既定は今のディレクトリ。
   - 一時ディレクトリ（`sacty-launch-*`。権限 0700、ファイルは 0600）を作り、セッションを作ってファイルを置き、AI の CLI を端末の標準入出力と利用者の環境変数（`env` を上に重ねる）で起動する。
     `--` の後の引数は、sacty が組み立てた引数の後に足す。
@@ -530,6 +532,7 @@ AI の CLI は利用者のログインと設定（設定の場所 `CLAUDE_CONFIG
   - 利用者の MCP サーバー（`CODEX_HOME`、無ければ `~/.codex` の `config.toml` と、`--cwd` から `.git` のあるディレクトリまでの `.codex/config.toml`）のうち、コンテキストに無いものは `mcp_servers.<名前>.enabled=false` にする。
   - `.` を含む・空のキーは渡せないので止める。
   - 最後に `--sandbox workspace-write` と `--ask-for-approval on-request` を足す。
+    `--` の後の引数に `--sandbox`（`-s`）・`--ask-for-approval`（`-a`）があれば、sacty の同じ引数は足さない（Codex は同じ引数を2回渡すと起動しない）。
 - どちらも、上のほかのファイル（Claude Code の `commands/`、Codex の `rules/` など）は渡さず、既定のコンテキスト（`sacty-default`）のもののほかは、渡さなかったことを表示する。
 
 コード: `apps/daemon/src/server.ts`（`LocalSessionRequest`）、`apps/daemon/src/service.ts`（`createLocalSession`・`closeLocalSession`・`LocalSessionView`・`mcpRouting`）、`apps/daemon/src/gateway.ts`（`hostOrigin`・`platformsUrl`）、`apps/daemon/src/local-launch.ts`（`claudeLaunch`・`codexLaunch`・`codexUserMcpServers`・`CODEX_INSTRUCTIONS_MAX_BYTES`）、`packages/cli/src/launch.ts`（`launch`・`splitLaunchArgs`・`writeLaunchFiles`）

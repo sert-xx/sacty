@@ -348,8 +348,10 @@ async function up(webPort: number, daemonPort: number) {
 }
 
 async function main() {
-  // `sacty launch` の `--` の後は、AI の CLI に渡す（sacty では解釈しない）
-  const { own, extra } = splitLaunchArgs(process.argv.slice(2));
+  // `sacty launch` の `--` の後は、AI の CLI に渡す（sacty では解釈しない）。ほかのコマンドの引数は分けない
+  const argv = process.argv.slice(2);
+  const { own, extra } =
+    argv[0] === "launch" ? splitLaunchArgs(argv) : { own: argv, extra: [] as string[] };
   const { positionals, values } = parseArgs({
     args: own,
     allowPositionals: true,

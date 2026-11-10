@@ -369,11 +369,12 @@ This starts the host's Claude Code or Codex interactively with a project's conte
   - Tier subagents are chosen with the same parent as the preview (the runtime's `default_agent` and so on). When the parent's authentication is `bedrock` or `provider`, they are not placed because model names specific to the endpoint may not work with the user's own login, and `local.tiersSkipped` is added to the warnings.
   - Command-type MCP servers started on the host are leased and awaited as in a run, and the host MCP servers are awaited too (those not ready become warnings).
   - If there is any MCP server routed through the gateway or any external PF, a run for this session is registered with the gateway, and its token is put in `env` (the authentication header of host MCP servers and `SACTY_PF_URL`). AI calls and GitHub read relaying are not registered.
-  - If there are external PFs, the usage guide (`platformPromptLines`) is appended to the rules (`CLAUDE.md` or `AGENTS.md`).
+  - If there are external PFs, the usage guide (`platformPromptLines`) is appended to the rules (`CLAUDE.md` or `AGENTS.md`). When the gateway is not available, the external PFs are not passed, and `local.platformsUnavailable` is added to the warnings.
   - For MCP servers with `via_gateway: false`, the resolved secret values are put in `env`.
   - The fetched layers are deleted once the contents of the files to place have been read.
   - Ending a session closes the gateway registration and releases the command-type MCP servers started on the host. Sessions that are never ended remain until the daemon stops.
 - `sacty launch <project> [--runtime claude-code|codex] [--cwd <directory>] [-- <arguments>...]`
+  - Arguments are split at `--` only for `launch` (the arguments of other commands are not split).
   - It queries the endpoint in `SACTY_HOME/daemon.json`. The project is an ID or a name. `--cwd` defaults to the current directory.
   - It creates a temporary directory (`sacty-launch-*`, mode 0700, files 0600), creates a session, places the files, and starts the AI CLI with the terminal's standard input and output and the user's environment variables (with `env` layered on top). Arguments after `--` are added after the arguments sacty assembles.
   - While the AI CLI runs, Ctrl+C (SIGINT) does not stop sacty, and SIGTERM and SIGHUP are passed to the AI CLI. When the AI CLI ends (even on failure), it ends the session, deletes the temporary directory, and exits with the AI CLI's exit code.
@@ -401,7 +402,7 @@ This starts the host's Claude Code or Codex interactively with a project's conte
 
   - Among the user's MCP servers (in `config.toml` under `CODEX_HOME`, or `~/.codex` if unset, and in `.codex/config.toml` from `--cwd` up to the directory that has `.git`), those not in the context are set to `mcp_servers.<name>.enabled=false`.
   - Keys that contain `.` or are empty cannot be passed, so it stops.
-  - `--sandbox workspace-write` and `--ask-for-approval on-request` are added at the end.
+  - `--sandbox workspace-write` and `--ask-for-approval on-request` are added at the end. If the arguments after `--` include `--sandbox` (`-s`) or `--ask-for-approval` (`-a`), sacty does not add the same argument (Codex does not start when the same argument is given twice).
 - For both, other files (Claude Code's `commands/`, Codex's `rules/`, and so on) are not passed, and it shows that they were not passed, except for files from the default context (`sacty-default`).
 
 Code: `apps/daemon/src/server.ts` (`LocalSessionRequest`), `apps/daemon/src/service.ts` (`createLocalSession`, `closeLocalSession`, `LocalSessionView`, `mcpRouting`), `apps/daemon/src/gateway.ts` (`hostOrigin`, `platformsUrl`), `apps/daemon/src/local-launch.ts` (`claudeLaunch`, `codexLaunch`, `codexUserMcpServers`, `CODEX_INSTRUCTIONS_MAX_BYTES`), `packages/cli/src/launch.ts` (`launch`, `splitLaunchArgs`, `writeLaunchFiles`)

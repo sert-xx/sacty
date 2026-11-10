@@ -53,6 +53,8 @@
 - `npx vitest run apps/daemon/src/local-launch.test.ts packages/cli`：成功。`npx vitest run apps/daemon/src/daemon.test.ts -t "ローカルのセッション"`：4 件成功。
 - `npx vitest run`（全体）：7 ファイル・19 件が失敗。うち 6 ファイル・17 件（`repository.test.ts` の `git merge-tree`、`agent-sessions.test.ts`・`context-mcp.test.ts` の読めないファイル、`host-mcp-processes.test.ts`、画面の 2 つの browser テストの Chromium が無いこと）は、変更を退避した元のコードでも同じく失敗した（この環境の git の版・root での実行・ブラウザが無いことによる）。残りの `daemon.test.ts` の「タスクの並行実行」の 2 件は、単独で 3 回流して 3 回とも成功し、全体を流した 1 回目でも失敗していなかったので、負荷による揺れとみた。
 - `npx vitest run tests/docs`：3 ファイル・93 件すべて成功。
+- レビューの対応の後：`npm run lint`・`npm run typecheck` が成功。`npx vitest run apps/daemon/src/local-launch.test.ts packages/cli`（28 件）と `daemon.test.ts` の「ローカルのセッション」（5 件）が成功。足したテスト（Codex のサンドボックスの引数・外部 PF の注意）は、修正を戻すと失敗することを確かめた。
+- Codex 0.167.0：`--sandbox`・`--ask-for-approval` を 2 回渡すと「cannot be used multiple times」で起動しない。`-c` を 2 回渡すと後のものが入力に入る。Claude Code 2.1.321：`--permission-mode default --permission-mode bypassPermissions` では後のものが効き、`touch` が実行された。
 
 ## レビューの指摘と対応
 
@@ -61,9 +63,14 @@
 | 依頼者：キーチェーンのログインは、`CODEX_HOME` を変えると使えなくなることを実際に確かめている | ADR の決定・理由・影響を、確かめたこととして直した（キーチェーンのときは止めて、使える方法を表示する） |
 | 依頼者：Codex のキーチェーンのログインも使えるようにしてほしい | `CODEX_HOME` を変えず、合成したものを `-c` で渡すことにした（上の「確かめたこと」の Codex の確認）。キーチェーンのときに止める決定は消した |
 | 依頼者：sacty が取り出した認証の情報を、環境変数で Codex に渡すのはどうか | 採らなかった。ChatGPT のアカウントのログインは更新用トークンが使うたびに新しくなり、一時ディレクトリの Codex が更新すると利用者のログインが切れるため（ADR の理由に、比べた案として書いた） |
+| sacty のレビュー：`server.ts`・`service.ts` で、新しい定義が既存の JSDoc とその対象の間に入り、`PreviewRequest`・`ContextPreviewView` の説明が離れた | 新しい定義を後ろに移し、説明を元の対象の直前に戻した |
+| sacty のレビュー：`--` の分割を、`launch` 以外のコマンドにも適用している | `launch` のときだけ分けるようにした |
+| sacty のレビュー：ゲートウェイを使えないと、MCP・外部 PF があっても注意が出ない | MCP は、ゲートウェイが無いと実行と同じく直接つなぐ形で合成され（ゲートウェイのトークンを参照しない）、起きないことをコードで確かめた。外部 PF は黙って渡らなかったので、注意（`local.platformsUnavailable`）を足した |
+| sacty のレビュー：sacty だけに SIGINT を送ると、子も sacty も止まらない | 直さなかった。端末の Ctrl+C は子にも届き、sacty が先に止まると後片付けができないため。SIGTERM・SIGHUP は子に渡している |
+| sacty のレビュー：ADR の「`--` の後の引数の優先順位を確かめて書く」が残っている。ADR の `buildContext` と仕様書の `prepareContext` が違う。ADR の関係する PR が「なし」 | 優先順位を確かめた（Claude Code は後のもの、Codex の `-c` は後のもの。Codex の `--sandbox`・`--ask-for-approval` は 2 回渡すと起動しないので、利用者が渡したら sacty の分を渡さないように直した）。ユーザードキュメントと ADR に書いた。`buildContext` は `prepareContext`・プレビューが共に呼ぶ組み立てで、ADR の書き方のままで合っている。この ADR はこの PR で足したもので、まだマージしていないので、関係する PR を #332 にした |
+| sacty のレビュー：「手元で設定した MCP サーバーは使いません」が強い | 止める範囲（設定ファイルに書いたもの）を明記し、プラグインなどで入れたものは止めないことがあると書いた |
 
 ## 残したこと
 
 - Codex を、実際にログインした対話で起動しての確認（この環境では Codex にログインできない）。
 - macOS（sacty の対象の OS）での起動の確認（この環境は Linux）。
-- `--` の後の引数で、sacty が渡した引数と同じものを渡したときにどちらが効くかの確認（ユーザードキュメントには、AI の CLI の決まりによると書いた）。

@@ -663,6 +663,7 @@ const PARAMS = {
   "context.reservedTierFile": z.object({ from: z.string(), path: z.string() }),
   // ローカルのセッション（sacty launch）
   "local.tiersSkipped": z.object({ parent: z.string(), mode: z.string() }),
+  "local.platformsUnavailable": null,
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -1520,6 +1521,8 @@ const ja: MessageDictionary = {
     `${from} の ${path} は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
   "local.tiersSkipped": ({ parent, mode }) =>
     `段階のサブエージェントは、Sacty の AI（${parent}）の接続先（${mode}）のモデルの名前で作るため、手元のログインでは使えないことがあり、渡しませんでした。`,
+  "local.platformsUnavailable":
+    "ゲートウェイを使えないため、外部 PF（$SACTY_PF_URL）は渡しませんでした。sacty up で起動し直してから、もう一度実行してください。",
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -2259,6 +2262,8 @@ const en: MessageDictionary = {
     `${path} of ${from} was not copied because Sacty writes it as the subagent definition of a tier.`,
   "local.tiersSkipped": ({ parent, mode }) =>
     `The tier subagents were not passed because Sacty builds them with the model names of the endpoint (${mode}) of its AI (${parent}), which may not work with your own login.`,
+  "local.platformsUnavailable":
+    "The external PFs ($SACTY_PF_URL) were not passed because the gateway is not available. Restart sacty with sacty up, then run this again.",
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;

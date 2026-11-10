@@ -36833,6 +36833,32 @@ describe("エージェントの段階のサブエージェント（PBI-119）", 
     activity.close();
   });
 
+  it("ローカルのセッション：外部 PF は、このセッションのトークンの URL と案内で渡し、ゲートウェイを使えなければ注意にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const local = localGateway();
+    const withGateway = makeService(activity, [], {
+      config: configOf(agent(), 1, [jiraPlatform()]),
+      gateway: local.gateway,
+    }).service;
+    const ok = await withGateway.createLocalSession(
+      "default",
+      "claude-code",
+      "/tmp/sacty-launch-e",
+    );
+    if (!ok || !("session" in ok)) throw new Error("no session");
+    expect(ok.session.env.SACTY_PF_URL).toBe("http://127.0.0.1:5001/r/sacty-gw-local/pf");
+    expect(text(ok.session, "CLAUDE.md")).toContain("$SACTY_PF_URL/jira");
+    expect(ok.session.warnings).not.toContainEqual(message("local.platformsUnavailable"));
+    const without = makeService(activity, [], {
+      config: configOf(agent(), 1, [jiraPlatform()]),
+    }).service;
+    const none = await without.createLocalSession("default", "claude-code", "/tmp/sacty-launch-f");
+    if (!none || !("session" in none)) throw new Error("no session");
+    expect(none.session.env.SACTY_PF_URL).toBeUndefined();
+    expect(none.session.warnings).toContainEqual(message("local.platformsUnavailable"));
+    activity.close();
+  });
+
   it("ローカルのセッション：ホストの MCP サーバーは、ホストから見たゲートウェイの URL と、このセッションのトークンで渡し、終えたら登録を閉じる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));

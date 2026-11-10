@@ -27,12 +27,12 @@ async function readJson(c: Context): Promise<{ ok: true; body: unknown } | { ok:
 /** コンテキストのプレビューの AI の種類（PBI-76）。省けば Claude Code。 */
 const PreviewRuntime = z.enum(["claude-code", "codex"]).default("claude-code");
 /** 保存していない設定でのプレビュー（PBI-76）。definition を省けば、保存した設定で作る。 */
+const PreviewRequest = z
+  .object({ runtime: PreviewRuntime, definition: ProjectDefinition.optional() })
+  .strict();
 /** ローカルのセッション（sacty launch）を作る。dir は CLI が作った一時ディレクトリの絶対パス。 */
 const LocalSessionRequest = z
   .object({ runtime: PreviewRuntime, dir: z.string().min(1).max(4096).startsWith("/") })
-  .strict();
-const PreviewRequest = z
-  .object({ runtime: PreviewRuntime, definition: ProjectDefinition.optional() })
   .strict();
 
 function handleError(c: Context, error: unknown) {

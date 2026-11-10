@@ -185,12 +185,14 @@ export function codexLaunch(
   for (const name of userMcp) {
     if (!contextMcp.has(name)) overrides.push(`${keyPath(["mcp_servers", name, "enabled"])}=false`);
   }
+  // Codex は --sandbox・--ask-for-approval を 2 回渡すと起動しない（0.167.0 で確かめた）。利用者が `--` の後で渡したら、
+  // sacty の分は渡さず、利用者の指定を効かせる
+  const given = (long: string, short: string) =>
+    extraArgs.some((a) => a === long || a === short || a.startsWith(`${long}=`));
   const args = [
     ...overrides.flatMap((o) => ["-c", o]),
-    "--sandbox",
-    "workspace-write",
-    "--ask-for-approval",
-    "on-request",
+    ...(given("--sandbox", "-s") ? [] : ["--sandbox", "workspace-write"]),
+    ...(given("--ask-for-approval", "-a") ? [] : ["--ask-for-approval", "on-request"]),
     ...extraArgs,
   ];
   return { command: "codex", args, files: out, notApplied: notAppliedOf(skipped) };
