@@ -59,6 +59,16 @@ function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: "utf8", ...options });
 }
 
+/**
+ * npm のグローバルの場所。`npm run` が渡す npm_config_global_prefix を先に使う。npm は自分の出力の中の UUID の形の
+ * 文字列を `***` に伏せるので、`npm prefix -g` の出力は、パスに UUID があると実在しないパスになる（環境変数は伏せない）。
+ * 直接実行して環境変数が無いときだけ `npm prefix -g` に戻る。
+ */
+export function globalPrefix({ env = process.env, npmPrefix }) {
+  const fromEnv = env.npm_config_global_prefix?.trim();
+  return fromEnv ? fromEnv : npmPrefix();
+}
+
 function main() {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const cliDir = join(repo, "packages", "cli");
@@ -73,7 +83,7 @@ function main() {
     );
     process.exit(1);
   }
-  const prefix = run(npm, ["prefix", "-g"]).stdout.trim();
+  const prefix = globalPrefix({ npmPrefix: () => run(npm, ["prefix", "-g"]).stdout.trim() });
   const globalBin = join(prefix, "bin", "sacty");
   const onPath = findOnPath("sacty");
   const { errors, warnings } = checkLink({ expected, globalBin, onPath });

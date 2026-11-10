@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkLink, findOnPath } from "../../scripts/cli-install.mjs";
+import { checkLink, findOnPath, globalPrefix } from "../../scripts/cli-install.mjs";
 
 const expected = "/repo/packages/cli/bin/sacty.js";
 const globalBin = "/usr/local/bin/sacty";
@@ -62,5 +62,29 @@ describe("findOnPath", () => {
     chmodSync(join(c ?? "", "sacty"), 0o755);
     expect(findOnPath("sacty", [a, b, c].join(delimiter))).toBe(join(b ?? "", "sacty"));
     expect(findOnPath("sacty", "")).toBeUndefined();
+  });
+});
+
+describe("globalPrefix", () => {
+  const withUuid = "/tmp/3f2b8c1e-9d4a-4b7e-8f0c-1a2b3c4d5e6f/npm-prefix";
+
+  it("npm run が渡す npm_config_global_prefix を、npm prefix -g より先に使う（npm は出力の UUID を *** に伏せる）", () => {
+    let called = false;
+    const prefix = globalPrefix({
+      env: { npm_config_global_prefix: withUuid },
+      npmPrefix: () => {
+        called = true;
+        return "/tmp/***/npm-prefix";
+      },
+    });
+    expect(prefix).toBe(withUuid);
+    expect(called).toBe(false);
+  });
+
+  it("環境変数が無い・空のとき（直接実行）は npm prefix -g に戻る", () => {
+    expect(globalPrefix({ env: {}, npmPrefix: () => "/usr/local" })).toBe("/usr/local");
+    expect(
+      globalPrefix({ env: { npm_config_global_prefix: "  " }, npmPrefix: () => "/usr/local" }),
+    ).toBe("/usr/local");
   });
 });
