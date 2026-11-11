@@ -35,6 +35,7 @@ import { z } from "zod";
 import { AGENT_TIERS, tierFilePath } from "./agents/tier-names.js";
 import { errorText, MessageError } from "./errors.js";
 import { spawnStoppable } from "./fetch-processes.js";
+import { LanguageImageFile, languageImagesFile } from "./image-schema.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { DEFAULT_AGENT_TIMEOUT_MINUTES } from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
@@ -50,6 +51,8 @@ import { SecretRef } from "./secrets.js";
  * - `mcp.yaml`：MCP サーバー（名前ごとに、下位が上書きする）。秘密情報は値を書かず、名前で参照する
  * - `platforms.yaml`：ゲートウェイの外部 PF（名前ごとに、下位が上書きする。書き方は config.yaml の gateway.platforms と
  *   同じ。PBI-74）。認証は秘密情報の名前で参照し、値はホストのゲートウェイだけが取り出して付ける
+ * - `images.yaml`：エージェントを動かすイメージ（名前ごとに、下位が上書きする。書き方は config.yaml の images と同じ。
+ *   PBI-325）。sacty が起動した後に、デーモンがプロジェクトごとに作る
  * - `agents/codex/config.toml`・`agents/claude/settings.json`：エージェントの設定（キーごとに、下位が上書きする。PBI-24）
  */
 const NamedItems = z
@@ -57,6 +60,7 @@ const NamedItems = z
     skills: z.array(z.string()).default([]),
     mcp: z.array(z.string()).default([]),
     platforms: z.array(z.string()).default([]),
+    images: z.array(z.string()).default([]),
   })
   .prefault({});
 const ContextManifest = z
@@ -169,6 +173,23 @@ const PlatformsFile = z
 /** 層の外部 PF のファイル名（PBI-74）。 */
 export const PLATFORMS_FILE = "platforms.yaml";
 
+/**
+ * 層のイメージ（PBI-325）。config.yaml の images と同じ形。作るイメージの名前（image）は書けない（sacty がプロジェクトと
+ * 定義の中身から決める。ほかのプロジェクトのイメージとぶつからないように）。
+ */
+const ImagesFile = z
+  .object({
+    images: languageImagesFile(LanguageImageFile.omit({ image: true }).strict()).default({}),
+  })
+  .strict()
+  .prefault({});
+
+/** 層のイメージのファイル名（PBI-325）。 */
+export const IMAGES_FILE = "images.yaml";
+
+/** 層のイメージの定義（PBI-325）。 */
+export type ContextImageFile = z.output<typeof ImagesFile>["images"][string];
+
 /** コンテキストの層の指定。path はリポジトリの中のディレクトリ（無ければリポジトリの根）。 */
 export type ContextRef = { repo: string; ref?: string; path?: string };
 
@@ -183,6 +204,8 @@ export type ContextLayer = ContextRef & {
   platforms: Record<string, z.output<typeof PlatformFile>>;
   /** この層のエージェントの設定（`agents/` の下。無ければ空）。 */
   agents: AgentSettings;
+  /** この層のイメージ（`images.yaml`。PBI-325）。無ければ空。 */
+  images: Record<string, ContextImageFile>;
 };
 
 /** MCP サーバーを書いた層（PBI-84）。dir は取得した層のディレクトリ（実行の後に消える）。 */
@@ -525,12 +548,13 @@ export async function resolveContext(
 function readLayer(
   dir: string,
   key: string,
-): Pick<ContextLayer, "manifest" | "mcp" | "platforms" | "agents"> {
+): Pick<ContextLayer, "manifest" | "mcp" | "platforms" | "agents" | "images"> {
   assertPlainEntries(dir, key);
   return {
     manifest: readManifest(dir, key),
     mcp: readYaml(dir, "mcp.yaml", key, McpFile).servers,
     platforms: readYaml(dir, PLATFORMS_FILE, key, PlatformsFile).platforms,
+    images: readYaml(dir, IMAGES_FILE, key, ImagesFile).images,
     agents: {
       codex: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.codex, parseToml),
       claude: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.claude, JSON.parse),
@@ -580,6 +604,7 @@ const CONTEXT_ENTRIES = [
   "sacty-context.yaml",
   "mcp.yaml",
   PLATFORMS_FILE,
+  IMAGES_FILE,
   "rules.md",
   "rules",
   "skills",
@@ -905,7 +930,7 @@ function layerAgentFiles(layer: ContextLayer, kind: keyof AgentSettings): string
 }
 
 /** 名前のある項目の種類（スキル・MCP サーバー・外部 PF）。 */
-export type ContextItemKind = "skills" | "mcp" | "platforms";
+export type ContextItemKind = "skills" | "mcp" | "platforms" | "images";
 
 /**
  * locked・remove の効果（PBI-76）。removed は by の層が取り除いた（of は取り除かれた項目の層）、locked は by の層で上書き
@@ -935,6 +960,8 @@ export type ComposedContext = {
    * （値はホストのゲートウェイだけが取り出す）。
    */
   platforms: Platform[];
+  /** イメージ（名前ごと。どの層のものか。PBI-325）。 */
+  images: { name: string; image: ContextImageFile; from: string }[];
   /** エージェントの設定（上位から重ねたもの。sacty が決める項目は除いてある）。 */
   agents: AgentSettings;
   /**
@@ -1123,6 +1150,14 @@ export function composeContext(
     warnings,
     effects,
   );
+  // イメージも、MCP サーバーと同じ規則で合わせる（PBI-325）
+  const images = mergeNamed(
+    layers,
+    "images",
+    (layer) => Object.entries(layer.images).map(([name, value]) => ({ name, value })),
+    warnings,
+    effects,
+  );
   const agentsFrom: Record<keyof AgentSettings, string[]> = { codex: [], claude: [] };
   const agents: AgentSettings = { codex: {}, claude: {} };
   const files = { codex: new Map(), claude: new Map() } as Record<
@@ -1192,6 +1227,7 @@ export function composeContext(
       layer: m.value.layer,
     })),
     platforms: platforms.map((p) => ({ ...toPlatform(p.name, p.value), from: p.from })),
+    images: images.map((i) => ({ name: i.name, image: i.value, from: i.from })),
     agents,
     agentFiles: {
       codex: [...files.codex.entries()].map(([path, f]) => ({ path, ...f })),
@@ -2270,6 +2306,38 @@ export async function contextPlatforms(
         w.params?.kind === "platforms",
     );
     return { platforms: composed.platforms, warnings };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/**
+ * プロジェクトのコンテキストで合成したイメージと、合成の警告（PBI-325）。デーモンがイメージを作るために読む（工程の実行の
+ * 外で読む。取得したリポジトリは、読んだら消す）。layers は、使った層（どの commit のものか）。
+ */
+export async function contextImages(
+  fetcher: ContextFetcher,
+  root: ContextRef,
+  auth?: ContextAuth,
+  defaultDir?: string,
+  signal?: AbortSignal,
+): Promise<{
+  images: { name: string; image: ContextImageFile; from: string }[];
+  warnings: DaemonText[];
+  layers: { repo: string; ref?: string; path?: string; commit: string }[];
+}> {
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const layers = await loadLayers(fetcher, root, work, auth, defaultDir, signal);
+    const composed = composeContext(layers);
+    // イメージに関わる警告だけを返す（ほかの警告は、工程の実行で出す）
+    const warnings = composed.warnings.filter(
+      (w) =>
+        typeof w !== "string" &&
+        (w.code === "context.lockedOverride" || w.code === "context.lockedRemove") &&
+        w.params?.kind === "images",
+    );
+    return { images: composed.images, warnings, layers: layers.map(layerRecord) };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

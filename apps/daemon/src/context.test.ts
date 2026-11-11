@@ -21,6 +21,7 @@ import {
   type ContextFetcher,
   type ContextRef,
   composeContext,
+  contextImages,
   contextPlatforms,
   DEFAULT_CONTEXT_DIR,
   GATEWAY_TOKEN_SECRET,
@@ -1380,6 +1381,83 @@ const place = (root: string, files: Record<string, string>) => {
   return root;
 };
 
+describe("イメージの合成（PBI-325）", () => {
+  const companyImages = {
+    "images.yaml": [
+      "images:",
+      "  node-pw:",
+      "    description: Node.js 26・Playwright（会社）",
+      "    base_image: registry.example.com/ci/node:26",
+      "    run: [npx -y playwright@1.61.1 install-deps chromium]",
+      "  java:",
+      "    description: Java 17",
+      "    base_image: registry.example.com/ci/java:17",
+      "  old:",
+      "    description: 古いイメージ",
+      "    base_image: registry.example.com/ci/old:1",
+    ].join("\n"),
+    "sacty-context.yaml": "locked:\n  images: [java]\n",
+  };
+  const teamImages = {
+    "images.yaml": [
+      "images:",
+      "  node-pw:",
+      "    description: Node.js 26・Playwright（チーム）",
+      "    base_image: registry.example.com/ci/node:26",
+      "    packages: [git]",
+      "  java:",
+      "    description: 上書き禁止に当たる",
+      "    base_image: registry.example.com/ci/java:21",
+    ].join("\n"),
+    "sacty-context.yaml": "extends: https://example.com/company.git\nremove:\n  images: [old]\n",
+  };
+  const fetcher = () =>
+    new FakeFetcher({ "https://example.com/company.git": companyImages, "team.git": teamImages });
+
+  it("名前ごとに下位が上書きし、上書き禁止は守り、取り除ける。どの層のものかを持つ", async () => {
+    const result = await contextImages(fetcher(), { repo: "team.git" });
+    const byName = Object.fromEntries(result.images.map((i) => [i.name, i]));
+    expect(Object.keys(byName).sort()).toEqual(["java", "node-pw"]);
+    expect(byName["node-pw"]?.image).toMatchObject({
+      description: "Node.js 26・Playwright（チーム）",
+      packages: ["git"],
+    });
+    expect(byName["node-pw"]?.from).toMatch(/^team\.git@/);
+    expect(byName.java?.image.base_image).toBe("registry.example.com/ci/java:17");
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        code: "context.lockedOverride",
+        params: expect.objectContaining({ kind: "images", name: "java" }),
+      }),
+    ]);
+    expect(result.layers.map((l) => l.repo)).toEqual([
+      "https://example.com/company.git",
+      "team.git",
+    ]);
+  });
+
+  it("images.yaml が無ければ、イメージは無い", async () => {
+    const result = await contextImages(new FakeFetcher({ "x.git": { "rules.md": "r" } }), {
+      repo: "x.git",
+    });
+    expect(result.images).toEqual([]);
+  });
+
+  it("作るイメージの名前（image）と、知らない項目は書けない", async () => {
+    const bad = (yaml: string) =>
+      contextImages(new FakeFetcher({ "x.git": { "images.yaml": yaml } }), { repo: "x.git" });
+    await expect(
+      bad(
+        "images:\n  a:\n    description: A\n    base_image: node:26\n    image: registry.example.com/x:1\n",
+      ),
+    ).rejects.toThrow(/images\.yaml/);
+    await expect(bad("images:\n  a:\n    description: A\n")).rejects.toThrow(/images\.yaml/);
+    await expect(
+      bad("images:\n  default:\n    description: A\n    base_image: node:26\n"),
+    ).rejects.toThrow(/images\.yaml/);
+  });
+});
+
 describe("sacty の既定のコンテキスト（PBI-24）", () => {
   it("同梱の既定のコンテキストを読める（秘密情報とサブエージェントの規則を含む）", () => {
     const layer = loadDefaultContext(DEFAULT_CONTEXT_DIR);
@@ -2261,12 +2339,12 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       expect.objectContaining({
         repo: "https://example.com/company.git",
         ref: "main",
-        locked: { skills: [], mcp: ["github"], platforms: [] },
+        locked: { skills: [], mcp: ["github"], platforms: [], images: [] },
       }),
       expect.objectContaining({
         repo: "https://example.com/team.git",
-        remove: { skills: ["old"], mcp: ["github"], platforms: [] },
-        locked: { skills: ["review"], mcp: [], platforms: [] },
+        remove: { skills: ["old"], mcp: ["github"], platforms: [], images: [] },
+        locked: { skills: ["review"], mcp: [], platforms: [], images: [] },
       }),
     ]);
     expect(preview.effects).toEqual([

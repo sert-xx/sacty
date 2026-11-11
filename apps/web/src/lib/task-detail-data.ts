@@ -20,7 +20,7 @@ import {
   listProjectRepositories,
   listTasks,
 } from "@/lib/daemon";
-import { canControl, needsTicketRepositories } from "@/lib/labels";
+import { canControl, needsTicketRepositories, projectImages } from "@/lib/labels";
 
 /** タスクの詳細に出すもの（画面が取り直す。PBI-108）。 */
 export type TaskDetailData = {
@@ -148,7 +148,15 @@ export async function loadTaskDetail(
     ...(securityFindings !== undefined ? { securityFindings } : {}),
     ...(securityReport ? { securityReport: securityReport.task } : {}),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
-    ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),
+    // 選べるイメージは、タスクのプロジェクトのコンテキストのイメージも（PBI-325）
+    ...(status
+      ? {
+          imageStatus: {
+            problems: status.problems,
+            ...(status.images ? { images: projectImages(status, task.projectId) } : {}),
+          },
+        }
+      : {}),
     ...(status
       ? {
           agentStatus: {

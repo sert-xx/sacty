@@ -82,7 +82,7 @@ const ja = {
       `${kind}「${name}」：${by} が取り除きました${of ? `（${of} のもの）` : ""}`,
     lockedBy: (kind: string, name: string, by: string, of?: string) =>
       `${kind}「${name}」：${by} で上書き禁止${of ? `（${of} のもの）` : ""}`,
-    kind: { skills: "スキル", mcp: "MCP", platforms: "外部 PF" },
+    kind: { skills: "スキル", mcp: "MCP", platforms: "外部 PF", images: "イメージ" },
     rules: "規約",
     agentSettings: "エージェントの設定",
     none: "なし",
@@ -306,7 +306,7 @@ const en: ProjectsMessages = {
       `${kind} "${name}": removed by ${by}${of ? ` (from ${of})` : ""}`,
     lockedBy: (kind, name, by, of) =>
       `${kind} "${name}": locked by ${by}${of ? ` (from ${of})` : ""}`,
-    kind: { skills: "Skill", mcp: "MCP", platforms: "External platform" },
+    kind: { skills: "Skill", mcp: "MCP", platforms: "External platform", images: "Image" },
     rules: "Rules",
     agentSettings: "Agent settings",
     none: "None",

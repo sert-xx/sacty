@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/context-mcp.ts (ContextMcpServers), apps/daemon/src/context.ts (ContextManifest, McpServer, McpTimeouts, PlatformsFile, composeContext, RESERVED_SETTINGS, RESERVED_FILES), apps/daemon/src/context-template.ts, apps/daemon/src/platforms.ts, packages/cli/src/index.ts (contextInit, contextPreview), packages/cli/src/context-preview.ts -->
+<!-- Code: apps/daemon/src/context-mcp.ts (ContextMcpServers), apps/daemon/src/context.ts (ContextManifest, McpServer, McpTimeouts, PlatformsFile, ImagesFile, composeContext, RESERVED_SETTINGS, RESERVED_FILES), apps/daemon/src/context-template.ts, apps/daemon/src/platforms.ts, packages/cli/src/index.ts (contextInit, contextPreview), packages/cli/src/context-preview.ts -->
 
 [日本語](context.md) | **English**
 
@@ -52,6 +52,7 @@ You can put the context in a git repository, in a local directory, or in a direc
 | `skills/<name>/SKILL.md` | Skills. A directory without SKILL.md is a group (`skills/<group>/<name>/SKILL.md` is also the skill named `<name>`) | A lower layer overrides by name |
 | `mcp.yaml` | MCP servers ([mcp.yaml](#mcpyaml)) | A lower layer overrides by name |
 | `platforms.yaml` | External platforms available only to this project ([platforms.yaml](#platformsyaml)) | A lower layer overrides by name |
+| `images.yaml` | Agent images available only to this project ([images.yaml](#imagesyaml)) | A lower layer overrides by name |
 | `agents/codex/`, `agents/claude/` | Files copied into Codex's `CODEX_HOME` and Claude Code's `CLAUDE_CONFIG_DIR` | A lower layer overrides the same path. `config.toml` and `settings.json` are merged key by key |
 | `sacty-context.yaml` | Inheritance, locking, and removal ([sacty-context.yaml](#sacty-contextyaml)) | |
 
@@ -93,14 +94,16 @@ git commit -m "Bring in the organization's skills"
 
 ```yaml
 extends: git@github.com:acme/sacty-context.git#main   # parent (upper layer) context repository. Specify a ref with URL#ref (forms below)
-locked:            # skills, MCP servers, and external platforms that lower layers cannot override or remove
+locked:            # skills, MCP servers, external platforms, and images that lower layers cannot override or remove
   skills: [review]
   mcp: [docs]
   platforms: [ticket]
-remove:            # remove skills, MCP servers, and external platforms inherited from upper layers
+  images: [node-pw]
+remove:            # remove skills, MCP servers, external platforms, and images inherited from upper layers
   skills: []
   mcp: []
   platforms: []
+  images: []
 ```
 
 - Write one of the following in `extends`.
@@ -278,6 +281,33 @@ platforms:
 - You can also choose a platform from the project's context as the connection for ticket intake and result export. sacty fetches the context to look for it only when the name is not among the host's platforms.
 - "Available external platforms" in the project settings in the web UI shows the name, where each platform is defined, its description, and the APIs it allows (secret names and values are not shown). They are also shown in the "Context prepared" entry of the Activity.
 - For platforms written in a context repository, the host adds the secrets written there and sends them to the upstream and token endpoint written there. As with `mcp.yaml`, make sure only trusted people can change the context repository ([Trust assumptions](#trust-assumptions)).
+
+## images.yaml
+
+When features or repositories need different tools (Playwright browsers, language tools, and so on), you can write the images this project uses in the context repository.
+Like `images` in each person's `config.yaml`, the orchestrator can then choose them as the task image.
+
+```yaml
+images:
+  node-pw:
+    description: Node.js 26・Playwright（Chromium）。ブラウザでの動作確認ができる
+    base_image: node:26-bookworm-slim
+    run:
+      - npx -y playwright@1.61.1 install-deps chromium
+      - npx -y playwright@1.61.1 install chromium
+```
+
+- The format is the same as `images` in `config.yaml` ([Per-language images](images.en.md#per-language-images)).
+  - You cannot write the name of the image to build (`image`).
+    Sacty decides the name `sacty-ctx-<project>-<name>:<hash>` from the project and the content of the definition.
+  - The name `default` cannot be used.
+- `sacty image build` does not build these.
+  Sacty builds them in the background after you start it with `sacty up` ([Context images](images.en.md#context-images)).
+- If `images` in `config.yaml` has the same name, Sacty uses the one in `config.yaml` (it does not build the context one, and leaves a warning).
+- The npm registry, authentication, and so on for building come from `image_build` in each person's `config.yaml`.
+- `run` runs as root when the image is built.
+  Make sure only people you trust as much as `config.yaml` can change the context repository ([Trust assumptions](#trust-assumptions)).
+  It stays in the image, so do not write secrets in it.
 
 ## Checking the composed result
 

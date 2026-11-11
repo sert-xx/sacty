@@ -195,7 +195,7 @@ Code: `apps/daemon/default-context/skills/drawio/SKILL.md`, `apps/daemon/default
 
 ## Context repository files
 
-Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
+Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `images.yaml`, `rules.md, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
 
 - If any of these contains something that is not a regular file or directory (a symbolic link, for example), composition stops (`context.notPlainFile`).
 - A missing YAML file means the defaults.
@@ -207,10 +207,11 @@ Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `
 | `skills/` | A directory with `SKILL.md` is one skill (its name is the directory name). A directory without one is treated as a group and searched. If names collide within the same layer, the first one is used with a warning |
 | `mcp.yaml` | `servers.<name>` (`^[A-Za-z0-9_-]+$`). Either the command type (`command`, `args`, `env`, `via_gateway` (default `true`)) or the URL type (`url`, `headers`, `via_gateway` (default `true`)). Common to both: `startup_timeout_sec` (1 to 3600) and `tool_timeout_sec` (1 to 86400). Values are a string or `{ secret, prefix }`. Strings cannot contain `${` |
 | `platforms.yaml` | `platforms.<name>`. The fields are the same as `gateway.platforms` ([Gateway](gateway.en.md)) |
-| `sacty-context.yaml` | `extends`, `locked`, and `remove` (each a list of names for `skills`, `mcp`, and `platforms`) |
+| `images.yaml` | `images.<name>`. The fields and checks are the same as `images` in `config.yaml` ([Configuration](configuration.en.md#validation-of-image-settings)), except that `image` and unknown fields cannot be written. The daemon builds them ([Daemon startup and shutdown](daemon-lifecycle.en.md#building-context-images)) |
+| `sacty-context.yaml` | `extends`, `locked`, and `remove` (each a list of names for `skills`, `mcp`, `platforms`, and `images`) |
 | `agents/codex/config.toml`, `agents/claude/settings.json` | Agent settings. Other files under `agents/codex/` and `agents/claude/` are copied by path |
 
-Code: `apps/daemon/src/context.ts` (`CONTEXT_ENTRIES`, `assertPlainEntries`, `readYaml`, `layerRules`, `layerSkills`, `McpFile`, `McpServer`, `McpValue`, `PlatformsFile`, `ContextManifest`, `AGENT_SETTINGS_FILES`)
+Code: `apps/daemon/src/context.ts` (`CONTEXT_ENTRIES`, `assertPlainEntries`, `readYaml`, `layerRules`, `layerSkills`, `McpFile`, `McpServer`, `McpValue`, `PlatformsFile`, `ImagesFile`, `ContextManifest`, `AGENT_SETTINGS_FILES`, `contextImages`)
 
 ## Composition rules
 

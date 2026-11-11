@@ -311,6 +311,15 @@ const PARAMS = {
     key: z.string(),
     command: z.string(),
   }),
+  // コンテキストリポジトリの images.yaml のイメージ（PBI-325）。デーモンが起動した後に作る
+  "contextImage.building": z.object({ project: z.string(), name: z.string() }),
+  "contextImage.failed": z.object({ project: z.string(), name: z.string(), detail: TextParam }),
+  "contextImage.buildFailed": z.object({ detail: z.string() }),
+  "contextImage.waitTimedOut": z.object({ project: z.string(), minutes: z.number() }),
+  "contextImage.loadFailed": z.object({ project: z.string(), detail: TextParam }),
+  "contextImage.configOverride": z.object({ project: z.string(), name: z.string() }),
+  "contextImage.notFailed": z.object({ name: z.string() }),
+  "contextImage.notFound": z.object({ name: z.string() }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   // オーケストレーターのセッションを、実行の設定の場所に戻せなかった（PBI-67）
@@ -539,13 +548,13 @@ const PARAMS = {
   "context.localExtendsFromRemote": z.object({ key: z.string(), value: z.string() }),
   "context.lockedOverride": z.object({
     from: z.string(),
-    kind: z.enum(["skills", "mcp", "platforms"]),
+    kind: z.enum(["skills", "mcp", "platforms", "images"]),
     name: z.string(),
     lockedBy: z.string(),
   }),
   "context.lockedRemove": z.object({
     from: z.string(),
-    kind: z.enum(["skills", "mcp", "platforms"]),
+    kind: z.enum(["skills", "mcp", "platforms", "images"]),
     name: z.string(),
     lockedBy: z.string(),
   }),
@@ -743,7 +752,12 @@ const githubHintEn = {
   token: " (the token is invalid)",
   permission: " (check the token's permissions or the repository name)",
 } as const;
-const contextKindJa = { skills: "スキル", mcp: "MCP サーバー", platforms: "外部 PF" } as const;
+const contextKindJa = {
+  skills: "スキル",
+  mcp: "MCP サーバー",
+  platforms: "外部 PF",
+  images: "イメージ",
+} as const;
 
 /** どのプロジェクトのコンテキストの MCP サーバーか（PBI-92。古い記録には無い）。 */
 const projectJa = (project: string | undefined) =>
@@ -754,6 +768,7 @@ const contextKindEn = {
   skills: "skill",
   mcp: "MCP server",
   platforms: "external platform",
+  images: "image",
 } as const;
 
 type RepairParams = z.infer<typeof OutputRepaired>["repairs"];
@@ -1142,6 +1157,20 @@ const ja: MessageDictionary = {
     "docker コマンドが見つかりません。Docker をインストールし、docker コマンドを PATH に通してください。それまで、タスクを実行できません。",
   "image.outdated": ({ image, expected, key, command }) =>
     `config.yaml の ${key}（${image}）が、動いている Sacty の版のイメージ（${expected}）と違います。config.yaml の ${key} の値を \`${expected}\` に直してから \`${command}\` で作成してください。`,
+  "contextImage.building": ({ project, name }) =>
+    `プロジェクト「${project}」のコンテキストのイメージ「${name}」を作成しています。作り終えるまで、このイメージで動く工程は始めません。`,
+  "contextImage.failed": ({ project, name, detail }, text) =>
+    `プロジェクト「${project}」のコンテキストのイメージ「${name}」を作成できませんでした（${text(detail)}）。画面の「イメージの作成」で原因を確かめ、images.yaml を直して push するか、「作り直す」を押してから再開してください。`,
+  "contextImage.buildFailed": ({ detail }) => detail,
+  "contextImage.waitTimedOut": ({ project, minutes }) =>
+    `プロジェクト「${project}」のコンテキストのイメージの作成が、${minutes}分たっても終わりませんでした。画面の「イメージの作成」で進み具合を確かめ、作り終えてから再開してください。`,
+  "contextImage.loadFailed": ({ project, detail }, text) =>
+    `プロジェクト「${project}」のコンテキストのイメージ（images.yaml）を読めませんでした（${text(detail)}）。`,
+  "contextImage.configOverride": ({ project, name }) =>
+    `プロジェクト「${project}」のコンテキストのイメージ「${name}」は、config.yaml の images に同じ名前があるので、config.yaml のものを使います（コンテキストのものは作りません）。`,
+  "contextImage.notFailed": ({ name }) =>
+    `イメージ「${name}」は、作成に失敗していないので作り直せません。`,
+  "contextImage.notFound": ({ name }) => `コンテキストのイメージ「${name}」がありません。`,
   "run.authFileUnreadable": ({ path }) =>
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
@@ -1881,6 +1910,20 @@ const en: MessageDictionary = {
     "The docker command was not found. Install Docker and put the docker command on PATH. Tasks cannot run until then.",
   "image.outdated": ({ image, expected, key, command }) =>
     `${key} in config.yaml (${image}) does not match the image for the running version of Sacty (${expected}). Change the value of ${key} in config.yaml to \`${expected}\`, then create it with \`${command}\`.`,
+  "contextImage.building": ({ project, name }) =>
+    `Building the context image "${name}" for project "${project}". Steps that run in this image wait until it is built.`,
+  "contextImage.failed": ({ project, name, detail }, text) =>
+    `Could not build the context image "${name}" for project "${project}" (${text(detail)}). Check the cause under "Image builds" on the screen, then fix images.yaml and push it, or press "Rebuild", and resume.`,
+  "contextImage.buildFailed": ({ detail }) => detail,
+  "contextImage.waitTimedOut": ({ project, minutes }) =>
+    `The context images for project "${project}" were not built within ${minutes} minutes. Check the progress under "Image builds" on the screen, and resume once they are built.`,
+  "contextImage.loadFailed": ({ project, detail }, text) =>
+    `Could not read the context images (images.yaml) of project "${project}" (${text(detail)}).`,
+  "contextImage.configOverride": ({ project, name }) =>
+    `The context image "${name}" of project "${project}" has the same name as an image in images of config.yaml, so Sacty uses the one in config.yaml (and does not build the context one).`,
+  "contextImage.notFailed": ({ name }) =>
+    `The image "${name}" has not failed to build, so it cannot be rebuilt.`,
+  "contextImage.notFound": ({ name }) => `There is no context image "${name}".`,
   "run.authFileUnreadable": ({ path }) =>
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>

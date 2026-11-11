@@ -209,7 +209,32 @@ export type DaemonStatus = {
   /** config.yaml で決まる、工程ごとのエージェントの名前（PBI-121）。古いデーモンには無い。 */
   stepAgents?: Partial<Record<StepKey, string>>;
   /** sacty の新しい版（PBI-135・PBI-147）。最新のリリースの版・動いている版・リリースのページ。最新・確かめられない・OFF のときと、古いデーモンには無い。 */
-  update?: { latest: string; current: string; releaseUrl: string };
+  update?: {
+    latest: string;
+    current: string;
+    releaseUrl: string;
+  } /** コンテキストのイメージの作成の状況（PBI-325）。コンテキストのイメージが無いときと、古いデーモンには無い。 */;
+  contextImages?: ContextImagesView[];
+};
+
+/** コンテキストのイメージ（images.yaml）の作成の状況（PBI-325）。プロジェクトごと。 */
+export type ContextImagesView = {
+  projectId: string;
+  projectName: string;
+  loading: boolean;
+  loadError?: DaemonText;
+  warnings: DaemonText[];
+  images: {
+    name: string;
+    description: string;
+    from: string;
+    image: string;
+    state: "queued" | "building" | "ready" | "failed";
+    error?: DaemonText;
+    log?: string;
+    startedAt?: string;
+    finishedAt?: string;
+  }[];
 };
 
 export type ProjectView = {
@@ -293,8 +318,8 @@ export type ContextPreview = {
     ref?: string;
     path?: string;
     commit: string;
-    locked: { skills: string[]; mcp: string[]; platforms: string[] };
-    remove: { skills: string[]; mcp: string[]; platforms: string[] };
+    locked: { skills: string[]; mcp: string[]; platforms: string[]; images?: string[] };
+    remove: { skills: string[]; mcp: string[]; platforms: string[]; images?: string[] };
   }[];
   files: {
     path: string;
@@ -332,7 +357,7 @@ export type ContextPreview = {
   rules: string[];
   agentSettings: string[];
   effects: {
-    kind: "skills" | "mcp" | "platforms";
+    kind: "skills" | "mcp" | "platforms" | "images";
     name: string;
     effect: "removed" | "locked";
     by: string;
@@ -520,6 +545,14 @@ export async function getSecurityFindings(id: string): Promise<SecurityFinding[]
 /** 承認したセキュリティチェックのレポートの区分から、セキュリティ対応のタスクを作る。 */
 export function requestSecurityFix(id: string, category: SecurityCategory): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/security-fixes`, { category });
+}
+
+/** 作成に失敗したコンテキストのイメージを作り直す（PBI-325）。作り終えるのは待たない。 */
+export function rebuildContextImage(projectId: string, name: string): Promise<OpResult> {
+  return postOp(
+    `/api/projects/${encodeURIComponent(projectId)}/context-images/${encodeURIComponent(name)}/rebuild`,
+    {},
+  );
 }
 
 /** 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。書き出しは待たない。 */

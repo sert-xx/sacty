@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/install-security-tools.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeTaskImage, withImages, pinnedImage, stepSettingChanges), apps/web/src/components/task-image-form.tsx -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/docker/install-tools.sh, packages/cli/docker/install-drawio.sh, packages/cli/docker/install-security-tools.sh, packages/cli/docker/drawio-shim.cjs, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeTaskImage, withImages, pinnedImage, stepSettingChanges), apps/web/src/components/task-image-form.tsx, apps/daemon/src/context-images.ts, apps/daemon/src/main.ts, apps/web/src/components/shell/context-images-notice-view.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -181,9 +181,55 @@ npx sacty image build java17     # build by name (default is the default image)
 
   You can check the repo IDs in the base image with `docker run --rm --user root --entrypoint dnf <base image> repolist --all`.
 
+## Context images
+
+Images written in `images.yaml` of the project's context repository ([images.yaml](context.en.md#imagesyaml)) can be used only by that project's tasks.
+`sacty image build` builds only the images in `config.yaml`; Sacty builds the context images in the background after you start it with `sacty up`.
+
+- Sacty starts building at these times:
+  - When `sacty up` starts (after it fetches the secrets together)
+  - When you save the project settings
+  - Every 5 minutes (a definition you push to the context repository starts building within this interval at the latest)
+- Images that are already on the machine are not built.
+  When the definition, `image_build` in `config.yaml`, or the Sacty version changes, Sacty builds it again under a new name.
+- To keep the load on Docker down, Sacty builds them one at a time.
+- Context images that are no longer used (from old definitions or deleted projects) are removed after builds finish.
+  Images that containers use are kept.
+
+### While images are being built
+
+On every screen, "Image builds" appears above the content with the images being built or queued and the tail of the build log.
+When they are built, it goes away without reloading.
+
+While they are being built, tasks that may use those images do not start (they stay queued).
+
+- Tasks that have not chosen an image yet (before the steps are chosen) wait.
+  The orchestrator chooses after the images are built, so a build in progress never leads to a mismatched image.
+- Tasks that are set to use the default image or an image in `config.yaml` do not wait.
+- If the images are not built within 60 minutes, the task pauses with the reason.
+  Resume it after they are built.
+- You can pause or cancel a task while it waits.
+
+### When an image could not be built
+
+"Image builds" shows the image that could not be built, the reason, the tail of the log, and "Rebuild".
+
+- Images that failed are not rebuilt automatically (so the same failure is not repeated).
+  - For a temporary failure (such as the network), press "Rebuild".
+  - For a mistake in the definition, fix `images.yaml` and push it.
+    Sacty builds it again with the new definition.
+  - Only when Docker was not reachable does Sacty check again the next time it reads the context (every 5 minutes).
+- An image that failed can still be chosen as the task image.
+  Steps that run in that image do not run; the task pauses with the reason.
+  Resume it after rebuilding.
+- If `images.yaml` cannot be read (for example, the context repository cannot be fetched), a warning appears.
+  If an earlier definition was read, Sacty keeps using it.
+
 ## Which image a task runs in
 
 A task has one image. Every step, the tests, and the final review of the task run in the same image.
+
+The orchestrator and people can choose from `images` in `config.yaml` and the [context images](#context-images) of the task's project.
 
 - When the orchestrator chooses the steps, it picks one image for the task from `images`. To choose, it reads the repository (`pom.xml`, `go.mod`, `pyproject.toml`, `package.json`, and so on; in a monorepo, the directories the work touches). The orchestrator itself runs in the default image.
 - Tests also run in the task image (the Goal Guardian runs them in the final review; for bug fixes, the reproduce agent runs them too). So the orchestrator is asked to choose the image from the test command and the repository's dependencies (browser tests such as Playwright, DB clients, and so on). An image that has the tools of the test command is preferred; only when no image has them does the orchestrator write the test command anyway and note that in the reason for its image choice.

@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/context-mcp.ts（ContextMcpServers）、apps/daemon/src/context.ts（ContextManifest・McpServer・McpTimeouts・PlatformsFile・composeContext・RESERVED_SETTINGS・RESERVED_FILES）、apps/daemon/src/context-template.ts、apps/daemon/src/platforms.ts、packages/cli/src/index.ts（contextInit・contextPreview）、packages/cli/src/context-preview.ts -->
+<!-- 対応するコード: apps/daemon/src/context-mcp.ts（ContextMcpServers）、apps/daemon/src/context.ts（ContextManifest・McpServer・McpTimeouts・PlatformsFile・ImagesFile・composeContext・RESERVED_SETTINGS・RESERVED_FILES）、apps/daemon/src/context-template.ts、apps/daemon/src/platforms.ts、packages/cli/src/index.ts（contextInit・contextPreview）、packages/cli/src/context-preview.ts -->
 
 **日本語** | [English](context.en.md)
 
@@ -73,6 +73,7 @@ npx sacty context init sacty-context   # 指定したディレクトリ（省略
 | `skills/<名前>/SKILL.md` | スキル。SKILL.md の無いディレクトリはグループ（`skills/<グループ>/<名前>/SKILL.md` も名前 `<名前>` のスキル） | 名前ごとに下位が上書きする |
 | `mcp.yaml` | MCP サーバー（[mcp.yaml](#mcpyaml)） | 名前ごとに下位が上書きする |
 | `platforms.yaml` | このプロジェクトだけで使える外部 PF（[platforms.yaml](#platformsyaml)） | 名前ごとに下位が上書きする |
+| `images.yaml` | このプロジェクトだけで使えるエージェントのイメージ（[images.yaml](#imagesyaml)） | 名前ごとに下位が上書きする |
 | `agents/codex/`・`agents/claude/` | Codex の `CODEX_HOME`・Claude Code の `CLAUDE_CONFIG_DIR` に写すファイル | 同じパスは下位が上書きする。`config.toml`・`settings.json` はキーごとに重ねる |
 | `sacty-context.yaml` | 継承と、上書き禁止・取り除き（[sacty-context.yaml](#sacty-contextyaml)） | |
 
@@ -120,14 +121,16 @@ git commit -m "組織のスキルを取り込む"
 
 ```yaml
 extends: git@github.com:acme/sacty-context.git#main   # 親（上位の層）のコンテキストリポジトリ。URL#ref で ref を指定できる（書き方は下）
-locked:            # 下位の層で上書き・取り除きできないスキル・MCP サーバー・外部 PF
+locked:            # 下位の層で上書き・取り除きできないスキル・MCP サーバー・外部 PF・イメージ
   skills: [review]
   mcp: [docs]
   platforms: [ticket]
-remove:            # 上位の層から引き継いだスキル・MCP サーバー・外部 PF を取り除く
+  images: [node-pw]
+remove:            # 上位の層から引き継いだスキル・MCP サーバー・外部 PF・イメージを取り除く
   skills: []
   mcp: []
   platforms: []
+  images: []
 ```
 
 - `extends` には、次のどれかを書きます。
@@ -335,6 +338,34 @@ platforms:
   作業履歴の「コンテキストを用意」にも出します。
 - コンテキストリポジトリに書いた PF では、書いた秘密情報を、書いた転送先・トークンの窓口に、ホストが付けて送ります。
   `mcp.yaml` と同じく、コンテキストリポジトリは信頼できる人だけが変えられるようにしてください（[信頼の前提](#信頼の前提)）。
+
+## images.yaml
+
+機能やリポジトリごとに要るツールが違うとき（Playwright のブラウザ、言語のツールなど）は、そのプロジェクトで使うイメージを
+コンテキストリポジトリに書けます。
+各自の `config.yaml` の `images` と同じように、オーケストレーターがタスクのイメージとして選べるようになります。
+
+```yaml
+images:
+  node-pw:
+    description: Node.js 26・Playwright（Chromium）。ブラウザでの動作確認ができる
+    base_image: node:26-bookworm-slim
+    run:
+      - npx -y playwright@1.61.1 install-deps chromium
+      - npx -y playwright@1.61.1 install chromium
+```
+
+- 書き方は、`config.yaml` の `images` と同じです（[言語ごとのイメージ](images.md#言語ごとのイメージ)）。
+  - 作るイメージの名前（`image`）は書けません。
+    sacty が、プロジェクトと定義の中身から `sacty-ctx-<プロジェクト>-<名前>:<ハッシュ>` という名前を決めます。
+  - `default` という名前は使えません。
+- `sacty image build` では作りません。
+  `sacty up` で起動した後に、sacty が裏で作ります（[コンテキストのイメージ](images.md#コンテキストのイメージ)）。
+- `config.yaml` の `images` に同じ名前があれば、`config.yaml` のものを使います（コンテキストのものは作らず、警告を残します）。
+- 作るときの npm のレジストリ・認証などは、各自の `config.yaml` の `image_build` を使います。
+- `run` はイメージを作るときに root で実行されます。
+  コンテキストリポジトリは、`config.yaml` と同じくらい信頼できる人だけが変更できるようにしてください（[信頼の前提](#信頼の前提)）。
+  イメージに残るので、秘密情報は書かないでください。
 
 ## 合成の結果を確かめる
 

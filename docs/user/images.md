@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/install-security-tools.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeTaskImage・withImages・pinnedImage・stepSettingChanges）、apps/web/src/components/task-image-form.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/docker/install-tools.sh、packages/cli/docker/install-drawio.sh、packages/cli/docker/install-security-tools.sh、packages/cli/docker/drawio-shim.cjs、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeTaskImage・withImages・pinnedImage・stepSettingChanges）、apps/web/src/components/task-image-form.tsx、apps/daemon/src/context-images.ts、apps/daemon/src/main.ts、apps/web/src/components/shell/context-images-notice-view.tsx -->
 
 **日本語** | [English](images.en.md)
 
@@ -221,9 +221,55 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 
   元のイメージにある repo の ID は `docker run --rm --user root --entrypoint dnf <元のイメージ> repolist --all` で確かめられます。
 
+## コンテキストのイメージ
+
+プロジェクトのコンテキストリポジトリの `images.yaml` に書いたイメージ（[images.yaml](context.md#imagesyaml)）は、そのプロジェクトのタスクだけで使えます。
+`sacty image build` は `config.yaml` のイメージだけを作り、コンテキストのイメージは `sacty up` で起動した後に sacty が裏で作ります。
+
+- 作り始めるのは、次のときです。
+  - `sacty up` の起動のとき（秘密情報をまとめて取り出した後）
+  - プロジェクトの設定を保存したとき
+  - 5分ごと（コンテキストリポジトリに push した定義は、遅くともこの間隔で作り始めます）
+- 手元にあるイメージは作りません。
+  定義・`config.yaml` の `image_build`・sacty の版のどれかが変わると、新しい名前で作り直します。
+- Docker の負荷を抑えるため、1つずつ順に作ります。
+- 使わなくなったコンテキストのイメージ（古い定義のもの、消したプロジェクトのもの）は、作り終えた後に消します。
+  コンテナが使っているものは残ります。
+
+### 作っている間
+
+画面には、どの画面でも中身の上に「イメージの作成」として、作成中・順番待ちのイメージと、作成中のログの末尾が出ます。
+作り終えると、リロードせずに消えます。
+
+作っている間は、そのイメージを使うかもしれないタスクは始まりません（実行待ちのままです）。
+
+- イメージをまだ選んでいないタスク（工程を選ぶ前）は待ちます。
+  作り終えてからオーケストレーターが選ぶので、作成中のために合わないイメージが選ばれることはありません。
+- 既定のイメージや `config.yaml` のイメージを使うと決まっているタスクは待ちません。
+- 60分たっても作り終えなければ、理由を示して一時停止します。
+  作り終えてから再開してください。
+- 待っている間も、一時停止・中止はできます。
+
+### 作れなかったとき
+
+「イメージの作成」に、作れなかったイメージ・理由・ログの末尾と「作り直す」が出ます。
+
+- 作れなかったイメージは、自動では作り直しません（同じ失敗を繰り返さないためです）。
+  - 一時的な失敗（ネットワークなど）なら、「作り直す」を押します。
+  - 定義の誤りなら、`images.yaml` を直して push します。
+    新しい定義で作り直します。
+  - Docker に接続できなかったときだけは、次に読み直すとき（5分ごと）に確かめ直します。
+- 作れなかったイメージも、タスクのイメージとして選べます。
+  そのイメージで動く工程は、実行せずに理由を示して一時停止します。
+  作り直してから再開してください。
+- `images.yaml` を読めなかった（コンテキストリポジトリを取得できないなど）ときは、警告に出ます。
+  前に読めた定義があれば、それを使い続けます。
+
 ## どのイメージで動くか
 
 タスクのイメージは1つです。タスクのすべての工程・テスト・最終レビューが、同じイメージで動きます。
+
+オーケストレーター・人が選べるのは、`config.yaml` の `images` と、タスクのプロジェクトの[コンテキストのイメージ](#コンテキストのイメージ)です。
 
 - オーケストレーターは、工程を選ぶときに、タスクのイメージを `images` から1つ選びます。
   選ぶときは、リポジトリ（`pom.xml`・`go.mod`・`pyproject.toml`・`package.json` など。モノレポなら作業で触るディレクトリ）を読みます。

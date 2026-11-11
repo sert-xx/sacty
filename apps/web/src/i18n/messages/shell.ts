@@ -41,6 +41,20 @@ const ja = {
     title: "Docker を使える状態ではありません",
     recheck: "Sacty は1分ごとに確かめ直します。直すと、この表示は消えます。",
   },
+  /** コンテキストのイメージ（images.yaml）の作成（PBI-325）。 */
+  contextImages: {
+    title: "イメージの作成",
+    building: "作成中",
+    queued: "順番待ち",
+    failed: "作成に失敗",
+    project: (name: string) => `プロジェクト「${name}」`,
+    from: (layer: string) => `定義：${layer}`,
+    waiting: "作り終えるまで、このイメージを使うかもしれないタスクは始まりません。",
+    log: "ログ（末尾）",
+    rebuild: "作り直す",
+    rebuilding: "受け付けています…",
+    fix: "images.yaml を直して push すると、新しい定義で作り直します。",
+  },
   /** ブラウザのデスクトップ通知。 */
   desktop: {
     kind: {
@@ -100,6 +114,19 @@ const en: ShellMessages = {
   docker: {
     title: "Docker is not ready",
     recheck: "Sacty checks again every minute. This notice goes away once it is fixed.",
+  },
+  contextImages: {
+    title: "Image builds",
+    building: "Building",
+    queued: "Queued",
+    failed: "Failed",
+    project: (name) => `Project "${name}"`,
+    from: (layer) => `Defined in: ${layer}`,
+    waiting: "Tasks that may use these images do not start until they are built.",
+    log: "Log (tail)",
+    rebuild: "Rebuild",
+    rebuilding: "Accepting…",
+    fix: "Fix images.yaml and push it to build again with the new definition.",
   },
   desktop: {
     kind: {

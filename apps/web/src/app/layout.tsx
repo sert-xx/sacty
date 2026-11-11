@@ -8,6 +8,7 @@ import "@fontsource/ibm-plex-sans-jp/700.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import { Suspense } from "react";
+import { ContextImagesNotice } from "@/components/shell/context-images-notice";
 import { DesktopNotifications } from "@/components/shell/desktop-notifications";
 import { DockerNotice } from "@/components/shell/docker-notice";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
@@ -53,6 +54,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Suspense fallback={null}>
                 <Localized>
                   <DockerNotice />
+                </Localized>
+              </Suspense>
+              {/* コンテキストのイメージ（images.yaml）を作っている・作れなかった（PBI-325）。どの画面でも、中身の上に出す */}
+              <Suspense fallback={null}>
+                <Localized>
+                  <ContextImagesNotice />
                 </Localized>
               </Suspense>
               {/* sacty の新しい版（PBI-135）。どの画面でも、中身の上に出す */}

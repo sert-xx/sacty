@@ -1,5 +1,6 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { renderMessage } from "@sacty/core";
 import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
@@ -8,6 +9,11 @@ import { MockAuditService } from "./audits.js";
 import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
+import {
+  ContextImageBuilder,
+  removeStaleContextImages,
+  runDockerStreaming,
+} from "./context-images.js";
 import { ContextMcpServers } from "./context-mcp.js";
 import { ALREADY_RUNNING_EXIT_CODE, FORCE_STOP_SIGNAL } from "./exit-codes.js";
 import { stopFetchProcessesSync } from "./fetch-processes.js";
@@ -16,6 +22,7 @@ import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { HostMcpProcesses } from "./host-mcp-processes.js";
+import { buildImage } from "./image.js";
 import {
   ImagePresenceChecker,
   imageTargets,
@@ -173,6 +180,49 @@ const images = new ImagePresenceChecker({
   ping: (signal) => pingDocker({ signal }),
   inspect: (image, signal) => inspectImage(image, { signal }),
 });
+// コンテキストリポジトリの images.yaml のイメージ（PBI-325）。sacty image build は config.yaml のイメージだけを作り、
+// コンテキストのイメージは、起動の後に裏で作る（作り方は sacty image build と同じ Dockerfile）。Dockerfile の場所は、
+// sacty up が渡す（無ければ、リポジトリの中の場所）
+const dockerDir =
+  process.env.SACTY_DOCKER_DIR ??
+  fileURLToPath(new URL("../../../packages/cli/docker", import.meta.url));
+const contextImageBuilder = new ContextImageBuilder({
+  // service はこの後に作る（読むときには作ってある）
+  projects: () => service.contextImageProjects(),
+  load: (projectId, signal) => service.loadContextImages(projectId, signal),
+  config: () => {
+    const c = config();
+    return c.ok ? c.config : undefined;
+  },
+  inspect: (image, signal) => inspectImage(image, { signal }),
+  build: (language, build, onOutput, signal) => {
+    if (!existsSync(join(dockerDir, "Dockerfile"))) {
+      return Promise.resolve(`イメージを作る Dockerfile が見つかりません（${dockerDir}）。`);
+    }
+    return buildImage({
+      image: language.image,
+      build,
+      dockerDir,
+      secrets,
+      run: (args) => runDockerStreaming(args, onOutput, signal),
+      language,
+    });
+  },
+  removeStale: async (keep) => {
+    const removed = await removeStaleContextImages(keep, (args) => {
+      let stdout = "";
+      return runDockerStreaming(args, (chunk) => {
+        stdout += chunk;
+      }).then((code) => ({ code, stdout }));
+    });
+    if (removed.length > 0) {
+      console.log(
+        `[daemon] 使わなくなったコンテキストのイメージを消しました：${removed.join("、")}`,
+      );
+    }
+  },
+  log: (line) => console.log(line),
+});
 const service = new TaskService({
   activity,
   // 完了したタスクを監査する（PBI-125）
@@ -206,6 +256,7 @@ const service = new TaskService({
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),
   imageProblems: () => images.problems(),
+  contextImages: contextImageBuilder,
   // 実行の前に、使うホストの MCP サーバーを設定と突き合わせ、足したものは起動を待つ（PBI-77）
   hostMcpReady: (names) => hostMcp.ready(names),
   contextMcp,
@@ -304,6 +355,8 @@ function startServices(): void {
   // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
   hostMcp.start();
   contextMcp.start();
+  // コンテキストのイメージも、秘密情報をまとめて取り出した後に読む（コンテキストの取得の認証を、個別に問い合わせないため）
+  contextImageBuilder.start();
   for (const platform of platforms()) {
     credentials.header(platform).catch((error) => {
       console.warn(
@@ -334,6 +387,7 @@ const shutdown = async () => {
   stopMemoryCleanup();
   stopUpdateCheck();
   stopImageCheck();
+  contextImageBuilder.stop();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = waitNamed(
