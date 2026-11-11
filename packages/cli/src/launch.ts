@@ -120,6 +120,11 @@ export async function launch(
         `[sacty] 注意：${file.from ? `${file.from} の ` : ""}${file.path} は、手元の起動では渡せないため渡しませんでした。`,
       );
     }
+    for (const { from, to } of plan.renamed ?? []) {
+      log(
+        `[sacty] 注意：MCP サーバー「${from}」は、手元の Codex の設定に同じ名前があるため、「${to}」として渡しました（手元の「${from}」は使いません）。`,
+      );
+    }
     writeLaunchFiles(dir, plan.files);
     const env = { ...process.env, ...session.env };
     const start =

@@ -21,6 +21,11 @@ export type LaunchPlan = {
   files: { path: string; content: Buffer }[];
   /** 手元の起動では渡せないため、渡さなかったファイル（既定のコンテキストのものは含めない）。 */
   notApplied: { path: string; from?: string }[];
+  /**
+   * 利用者の設定と名前がぶつかったため、別の名前で渡したコンテキストの MCP サーバー（Codex）。Codex の `-c` は表を置き換えずに
+   * 重ねるので、同じ名前のままだと利用者の設定と混ざる（コマンド型と URL 型が混ざると Codex が起動しない）。
+   */
+  renamed?: { from: string; to: string }[];
 };
 
 /** Codex の規則（developer_instructions）として 1 つの引数で渡せる大きさの上限（バイト。Linux の 1 つの引数の上限）。 */
@@ -121,9 +126,10 @@ function claudeAgent(
 
 /**
  * Codex の起動。規則（AGENTS.md。スキルの一覧の場所は dir の絶対パス）は -c developer_instructions、層の設定と MCP サーバーは
- * 葉のキーごとの -c、サブエージェントは -c agents.<名前>.config_file・description で渡す。コンテキストに無い利用者の MCP サーバー
- * （userMcp）は -c mcp_servers.<名前>.enabled=false で止める。層の approvals_reviewer は渡さない。サンドボックスと承認の方針を
- * 明示する。extraArgs（`--` の後の引数）は最後に足す。
+ * 葉のキーごとの -c、サブエージェントは -c agents.<名前>.config_file・description で渡す。利用者の MCP サーバー（userMcp）は
+ * -c mcp_servers.<名前>.enabled=false で止める。利用者のものと同じ名前のコンテキストの MCP サーバーは、別の名前（<名前>-sacty）で
+ * 渡す（renamed）。層の approvals_reviewer は渡さない。サンドボックスと承認の方針を明示する。extraArgs（`--` の後の引数）は
+ * 最後に足す。
  */
 export function codexLaunch(
   dir: string,
@@ -134,7 +140,8 @@ export function codexLaunch(
   const out: LaunchPlan["files"] = [];
   const skipped: LaunchFile[] = [];
   const overrides: string[] = [];
-  const contextMcp = new Set<string>();
+  const user = new Set(userMcp);
+  const renamed: { from: string; to: string }[] = [];
   const agents: { name: string; path: string; description: string }[] = [];
   for (const file of files) {
     const content = decode(file);
@@ -153,9 +160,16 @@ export function codexLaunch(
       const servers = config.mcp_servers;
       delete config.mcp_servers;
       if (isTable(servers)) {
+        const taken = new Set([...user, ...Object.keys(servers)]);
         for (const [name, server] of Object.entries(servers)) {
-          contextMcp.add(name);
-          overrides.push(`${keyPath(["mcp_servers", name])}=${tomlValue(server)}`);
+          let key = name;
+          if (user.has(name)) {
+            key = `${name}-sacty`;
+            for (let i = 2; taken.has(key); i++) key = `${name}-sacty-${i}`;
+            taken.add(key);
+            renamed.push({ from: name, to: key });
+          }
+          overrides.push(`${keyPath(["mcp_servers", key])}=${tomlValue(server)}`);
         }
       }
       // 層が宣言したサブエージェントの config_file は、設定の場所からの相対パスなので、dir の絶対パスにする
@@ -182,9 +196,7 @@ export function codexLaunch(
       `${keyPath(["agents", agent.name, "description"])}=${tomlValue(agent.description)}`,
     );
   }
-  for (const name of userMcp) {
-    if (!contextMcp.has(name)) overrides.push(`${keyPath(["mcp_servers", name, "enabled"])}=false`);
-  }
+  for (const name of userMcp) overrides.push(`${keyPath(["mcp_servers", name, "enabled"])}=false`);
   // Codex は --sandbox・--ask-for-approval を 2 回渡すと起動しない（0.167.0 で確かめた）。利用者が `--` の後で渡したら、
   // sacty の分は渡さず、利用者の指定を効かせる
   const given = (long: string, short: string) =>
@@ -195,7 +207,13 @@ export function codexLaunch(
     ...(given("--ask-for-approval", "-a") ? [] : ["--ask-for-approval", "on-request"]),
     ...extraArgs,
   ];
-  return { command: "codex", args, files: out, notApplied: notAppliedOf(skipped) };
+  return {
+    command: "codex",
+    args,
+    files: out,
+    notApplied: notAppliedOf(skipped),
+    ...(renamed.length > 0 ? { renamed } : {}),
+  };
 }
 
 /** Codex のサブエージェントの定義（name・description）。name が無ければファイルの名前。 */

@@ -529,7 +529,9 @@ AI の CLI は利用者のログインと設定（設定の場所 `CLAUDE_CONFIG
   | `agents/<名前>.toml` | `agents.<名前>.config_file`（`dir` の絶対パス）・`agents.<名前>.description` |
   | `skills/` | `dir` に置く（規則のスキルの一覧から場所を示す） |
 
-  - 利用者の MCP サーバー（`CODEX_HOME`、無ければ `~/.codex` の `config.toml` と、`--cwd` から `.git` のあるディレクトリまでの `.codex/config.toml`）のうち、コンテキストに無いものは `mcp_servers.<名前>.enabled=false` にする。
+  - 利用者の MCP サーバー（`CODEX_HOME`、無ければ `~/.codex` の `config.toml` と、`--cwd` から `.git` のあるディレクトリまでの `.codex/config.toml`）は、すべて `mcp_servers.<名前>.enabled=false` にする。
+    Codex の `-c` は表を置き換えずに重ね、キーを消すこともできない。そのため、利用者のものと同じ名前のコンテキストの MCP サーバーは、同じ名前のままだと利用者の設定と混ざる（コマンド型と URL 型が混ざると、Codex は「url is not supported for stdio」で起動しない）。
+    同じ名前のものは `<名前>-sacty`（それも使われていれば `<名前>-sacty-2`・`-3`…）で渡し、名前を変えたことを表示する（`renamed`）。
   - `.` を含む・空のキーは渡せないので止める。
   - 最後に `--sandbox workspace-write` と `--ask-for-approval on-request` を足す。
     `--` の後の引数に `--sandbox`（`-s`）・`--ask-for-approval`（`-a`）があれば、sacty の同じ引数は足さない（Codex は同じ引数を2回渡すと起動しない）。
