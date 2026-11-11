@@ -394,7 +394,8 @@ const shutdown = async () => {
   stopMemoryCleanup();
   stopUpdateCheck();
   stopImageCheck();
-  contextImageBuilder.stop();
+  // 作成中の docker build を止め、後片付け（npm の認証を書いた一時ファイルを消す）を待つ（下の draining で待つ。PBI-325）
+  const stoppingContextImages = contextImageBuilder.stop();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = waitNamed(
@@ -404,6 +405,7 @@ const shutdown = async () => {
       取り込み: intake.stop(),
       "PR の確認": prWatcher.stop(),
       スケジュールタスクの確認: scheduleRunner.stop(),
+      コンテキストのイメージの作成: stoppingContextImages,
     },
     DRAIN_REPORT_MS,
     log,

@@ -178,6 +178,7 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
     While removing, a reread does not check which images are present; it checks after the removal finishes.
     If images get queued during the removal, it builds them after the removal finishes.
   - When the daemon stops, it stops the interval and the docker build in progress (`SIGTERM`).
+    It waits for the stopped build's cleanup (removing the temporary file with npm authentication) together with the other cleanup (up to the same 20 seconds).
 - Status: listed in `contextImages` of `GET /api/status` (only projects with images); read failures and same-name images go into `warnings`.
   - On every screen, images being built, queued, or failed appear above the content as "Image builds" (`ContextImagesNotice`).
     The log of a build in progress is shown open; failed images show the reason, the log, and "Rebuild".

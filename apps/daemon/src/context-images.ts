@@ -215,11 +215,15 @@ export class ContextImageBuilder {
     this.timer.unref();
   }
 
-  /** 読み直すのをやめ、作成中の docker を止める（デーモンを止めるとき）。待っているものは返す。 */
-  stop(): void {
+  /**
+   * 読み直すのをやめ、作成中の docker を止める（デーモンを止めるとき）。待っているものは返す。返す Promise は、止めた作成・
+   * 読み込み・片付けの終わり（作成の後片付けで、npm の認証を書いた一時ファイルを消すまで）。
+   */
+  stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.controller.abort();
     this.notify();
+    return this.idle().catch(() => {});
   }
 
   /**
@@ -328,8 +332,8 @@ export class ContextImageBuilder {
 
   /** 作り終えるまで待つ（テスト・片付けのため）。 */
   async idle(): Promise<void> {
-    while (this.working || this.refreshing.size > 0) {
-      await Promise.all([this.working, ...this.refreshing.values()]);
+    while (this.working || this.refreshing.size > 0 || this.pruning) {
+      await Promise.all([this.working, this.pruning, ...this.refreshing.values()]);
     }
   }
 

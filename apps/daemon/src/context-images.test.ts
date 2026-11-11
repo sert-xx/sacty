@@ -456,6 +456,29 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
     expect(built).toEqual(["node-pw", "other"]);
   });
 
+  it("止めるときは、作成中の docker を止め、作成の後片付けが終わるまで待つ", async () => {
+    let cleaned = false;
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({ images: one, warnings: [] }),
+      config: () => baseConfig(),
+      inspect: async () => "missing",
+      build: (_l, _b, _o, signal) =>
+        new Promise((r) =>
+          signal.addEventListener("abort", () =>
+            setTimeout(() => {
+              cleaned = true;
+              r("止めました");
+            }, 10),
+          ),
+        ),
+    });
+    await builder.refresh();
+    expect(builder.images("p1")[0]?.state).toBe("building");
+    await builder.stop();
+    expect(cleaned).toBe(true);
+  });
+
   it("デーモンの印を名前に入れ、片付けはその印のものだけを消す", async () => {
     const prefixes: string[] = [];
     const builder = new ContextImageBuilder({
