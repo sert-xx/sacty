@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-12（UTC）
 - タスク: PBI-326
-- PR: なし
+- PR: #340
 - ブランチ: feat/issue-326-review-repo-guidance
 - 関係する ADR: [既定の review スキルは、対象のリポジトリのレビュー用のスキルを追加の担当として実行し、開発向けの指示への準拠を観点 X-3 で見る](../adr/20261112-0040-review-uses-repo-skills-and-instructions.md)
 
