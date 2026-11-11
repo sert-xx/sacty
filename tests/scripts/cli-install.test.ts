@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  checkMise,
   checkPath,
   findOnPath,
   globalPrefix,
+  installWithMise,
   LAUNCHER_MARK,
   launcherDir,
   launcherScript,
+  miseToolDir,
+  useMise,
 } from "../../scripts/cli-install.mjs";
 
 describe("launcherScript", () => {
@@ -137,5 +141,61 @@ describe("globalPrefix", () => {
     expect(
       globalPrefix({ env: { npm_config_global_prefix: "  " }, npmPrefix: () => "/usr/local" }),
     ).toBe("/usr/local");
+  });
+});
+
+describe("mise で入れる", () => {
+  it("PATH に mise があり、SACTY_BIN_DIR を指定していなければ mise を使う", () => {
+    expect(useMise({ env: {}, hasMise: true })).toBe(true);
+    expect(useMise({ env: {}, hasMise: false })).toBe(false);
+    expect(useMise({ env: { SACTY_BIN_DIR: "/opt/bin" }, hasMise: true })).toBe(false);
+  });
+
+  it("入口は、版ごとのディレクトリ（XDG_DATA_HOME、無ければ ~/.local/share の下）に置く", () => {
+    expect(miseToolDir({ version: "1.22.1", env: {}, home: "/home/u" })).toBe(
+      "/home/u/.local/share/sacty/mise/1.22.1",
+    );
+    expect(
+      miseToolDir({ version: "1.22.1", env: { XDG_DATA_HOME: "/data" }, home: "/home/u" }),
+    ).toBe("/data/sacty/mise/1.22.1");
+  });
+
+  it("mise link で版を登録してから、mise use --global でその版にする。失敗したら、どのコマンドが失敗したかを返す", () => {
+    const calls: string[][] = [];
+    const ok = installWithMise({
+      version: "1.22.1",
+      dir: "/d",
+      run: (_command: string, args: string[]) => {
+        calls.push(args);
+        return { status: 0 };
+      },
+    });
+    expect(ok).toEqual({ ok: true });
+    expect(calls).toEqual([
+      ["link", "--force", "sacty@1.22.1", "/d"],
+      ["use", "--global", "sacty@1.22.1"],
+    ]);
+    const failed = installWithMise({
+      version: "1.22.1",
+      dir: "/d",
+      run: () => ({ status: 1, stderr: "unknown tool" }),
+    });
+    expect(failed.ok).toBe(false);
+    expect(failed.error).toContain("mise link --force sacty@1.22.1 /d");
+    expect(failed.error).toContain("unknown tool");
+  });
+
+  it("mise が選ぶ sacty が入口でない・見つからないときは、注意にする", () => {
+    const launcher = "/home/u/.local/share/sacty/mise/1.22.1/bin/sacty";
+    const same = (p: string) => (p.includes("installs") ? launcher : p);
+    expect(
+      checkMise({ launcher, found: "/mise/installs/sacty/1.22.1/bin/sacty", resolveReal: same }),
+    ).toEqual({ warnings: [] });
+    expect(checkMise({ launcher, found: undefined, resolveReal: same }).warnings[0]).toContain(
+      "見つけられません",
+    );
+    expect(
+      checkMise({ launcher, found: "/other/sacty", resolveReal: (p: string) => p }).warnings[0],
+    ).toContain("/other/sacty");
   });
 });

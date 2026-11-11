@@ -15,6 +15,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -118,6 +119,70 @@ function fail(message) {
   process.exit(1);
 }
 
+/**
+ * mise で入れた後の確かめ。found（mise which sacty の結果）が launcher（置いた入口）か。注意を warnings で返す。
+ */
+export function checkMise({ launcher, found, resolveReal = real }) {
+  const warnings = [];
+  if (!found) {
+    warnings.push(
+      "mise が sacty を見つけられません。mise activate かシムの設定を確かめてください（mise ls sacty で、登録した版を確かめられます）。",
+    );
+  } else if (resolveReal(found) !== resolveReal(launcher)) {
+    warnings.push(
+      `mise が選ぶ sacty（${found}）は、いま置いた入口ではありません。mise.toml で sacty の版を指定していないか確かめてください。`,
+    );
+  }
+  return { warnings };
+}
+
+/** mise で入れるか（PATH に mise があり、SACTY_BIN_DIR で置き場所を指定していないとき）。 */
+export function useMise({ env = process.env, hasMise }) {
+  return !env.SACTY_BIN_DIR?.trim() && hasMise;
+}
+
+/** mise に登録する、版ごとの入口のディレクトリ（XDG_DATA_HOME、無ければ ~/.local/share の下）。中の bin/sacty が入口。 */
+export function miseToolDir({ version, env = process.env, home = homedir() }) {
+  const data = env.XDG_DATA_HOME?.trim() || join(home, ".local", "share");
+  return join(data, "sacty", "mise", version);
+}
+
+/**
+ * mise に、dir を sacty の版 version として登録し（mise link）、利用者全体で使う版にする（mise use --global）。
+ * 失敗したら、どのコマンドがどう失敗したかを返す。
+ */
+export function installWithMise({ version, dir, run }) {
+  for (const args of [
+    ["link", "--force", `sacty@${version}`, dir],
+    ["use", "--global", `sacty@${version}`],
+  ]) {
+    const result = run("mise", args);
+    if (result.status !== 0) {
+      const detail = `${result.stderr ?? ""}${result.stdout ?? ""}`.trim();
+      return {
+        ok: false,
+        error: `mise ${args.join(" ")} に失敗しました${detail ? `：${detail}` : ""}`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/** 入口を書く。置き場所に、sacty の入口でないファイル・リンクがあれば上書きしない（false）。 */
+function writeLauncher(launcher, content) {
+  if (existsSync(launcher) || isSymlink(launcher)) {
+    const current = isSymlink(launcher) ? "" : safeRead(launcher);
+    if (!current.includes(LAUNCHER_MARK)) return false;
+  }
+  mkdirSync(dirname(launcher), { recursive: true });
+  // 書きかけの入口を使わせないよう、隣に書いてから置き換える
+  const temp = `${launcher}.tmp-${process.pid}`;
+  writeFileSync(temp, content, { mode: 0o755 });
+  chmodSync(temp, 0o755);
+  renameSync(temp, launcher);
+  return true;
+}
+
 function main() {
   if (process.platform === "win32")
     fail("npm run cli:install は Windows では使えません（macOS・Linux だけ）。");
@@ -127,24 +192,40 @@ function main() {
   const version = JSON.parse(readFileSync(join(cliDir, "package.json"), "utf8")).version;
   // このスクリプトを動かしている Node.js（リポジトリで mise などが選んだ版）
   const node = process.execPath;
-  const dir = launcherDir();
-  const launcher = join(dir, "sacty");
+  const content = launcherScript({ node, entry, repo });
+  const binLauncher = join(launcherDir(), "sacty");
 
-  // 置く場所に、sacty の入口でないファイルがあれば上書きしない
-  if (existsSync(launcher) || isSymlink(launcher)) {
-    const current = isSymlink(launcher) ? "" : safeRead(launcher);
-    if (!current.includes(LAUNCHER_MARK)) {
+  // mise があれば、版ごとのディレクトリに入口を置いて mise に登録する。登録できなければ、置き場所（~/.local/bin など）に置く
+  let launcher;
+  let via = "bin";
+  if (useMise({ hasMise: Boolean(findOnPath("mise")) })) {
+    const toolDir = miseToolDir({ version });
+    const miseLauncher = join(toolDir, "bin", "sacty");
+    if (!writeLauncher(miseLauncher, content)) {
       fail(
-        `${launcher} に、sacty の入口でないファイル（またはリンク）があります。消すか、SACTY_BIN_DIR で別の置き場所を指定してから、もう一度実行してください。`,
+        `${miseLauncher} に、sacty の入口でないファイル（またはリンク）があります。消してから、もう一度実行してください。`,
       );
     }
+    const installed = installWithMise({ version, dir: toolDir, run });
+    if (installed.ok) {
+      launcher = miseLauncher;
+      via = "mise";
+    } else {
+      console.warn(`[sacty] 注意：${installed.error}。mise を使わずに ${binLauncher} に置きます。`);
+    }
   }
-  mkdirSync(dir, { recursive: true });
-  // 書きかけの入口を使わせないよう、隣に書いてから置き換える
-  const temp = `${launcher}.tmp-${process.pid}`;
-  writeFileSync(temp, launcherScript({ node, entry, repo }), { mode: 0o755 });
-  chmodSync(temp, 0o755);
-  renameSync(temp, launcher);
+  if (!launcher) {
+    if (!writeLauncher(binLauncher, content)) {
+      fail(
+        `${binLauncher} に、sacty の入口でないファイル（またはリンク）があります。消すか、SACTY_BIN_DIR で別の置き場所を指定してから、もう一度実行してください。`,
+      );
+    }
+    launcher = binLauncher;
+  } else if (existsSync(binLauncher) && safeRead(binLauncher).includes(LAUNCHER_MARK)) {
+    // mise で入れたら、前に置き場所に置いた入口は消す（PATH で mise のものより先に見つかるのを防ぐ）
+    rmSync(binLauncher, { force: true });
+    console.log(`[sacty] 前に置いた入口（${binLauncher}）を消しました（mise で入れたため）。`);
+  }
 
   // 前のやり方（npm link）で、いまの Node.js のグローバルに入れたこのリポジトリの sacty があれば外す（PATH で先に
   // 見つかって、別の Node.js の版で動くのを防ぐ）。ほかのリポジトリ・ほかのパッケージのものは触らない
@@ -169,10 +250,16 @@ function main() {
       `入れた sacty の版（${shown || "表示されません"}）が、このリポジトリの版（${version}）と違います。npm run build を確かめてください。`,
     );
   }
-  const { warnings } = checkPath({ launcher, onPath: findOnPath("sacty") });
+  // mise で入れたら、mise が選ぶ sacty が入口か（シムを使う設定では、PATH にはシムが見つかるため、mise に尋ねる）
+  const { warnings } =
+    via === "mise"
+      ? checkMise({ launcher, found: run("mise", ["which", "sacty"]).stdout?.trim() || undefined })
+      : checkPath({ launcher, onPath: findOnPath("sacty") });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   console.log(
-    `[sacty] sacty ${version} を入れました（${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`,
+    via === "mise"
+      ? `[sacty] sacty ${version} を mise で入れました（mise use --global sacty@${version}、${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`
+      : `[sacty] sacty ${version} を入れました（${launcher} → ${cliDir}、Node.js ${process.version}：${node}）。`,
   );
   console.log(
     "[sacty] 動いている sacty up は前の版のままです。止めてから起動し直してください（シェルの alias で sacty を定義していれば、そちらが先に使われます）。",

@@ -17,6 +17,7 @@
 - `scripts/cli-install.mjs`：`npm link` をやめ、`SACTY_BIN_DIR`（無ければ `~/.local/bin`）に、`cli:install` を動かした Node.js の絶対パスで `packages/cli/bin/sacty.js` を動かす入口を置くようにした（`launcherScript`・`launcherDir`・`checkPath`）。入口の Node.js・`sacty.js` が無いときのやり直しの案内、sacty のものでないファイルを上書きしない確かめ、前のやり方のリンク（いまの Node.js のもの）を外す処理を足した。`globalPrefix`・`findOnPath` は残した。
 - `tests/scripts/cli-install.test.ts`：入口を実際に `sh` で動かし、`PATH` の先頭の別の `node` を使わずに、書いた Node.js へ引数をそのまま渡すこと（パスの空白・引用符・`$` を含めて）、Node.js が無いときに知らせて失敗することを確かめるテストに書き直した。
 - ドキュメント：仕様書（`docs/spec/architecture.md` のパッケージ）とユーザードキュメント（`docs/user/getting-started.md`・`docs/user/cli.md`）を日英で直した。`cli.md` には、PR #334 のレビューの提案（`--help`・`--version` はどのコマンドの後ろでも効き、`sacty launch` の `--` の後ろのものは AI の CLI に渡る）を、次にコードを直すときに入れると返していたので、あわせて書いた。
+- 依頼者の求めで、mise があれば mise で入れるやり方を足した（`useMise`・`miseToolDir`・`installWithMise`・`checkMise`）。入口を版ごとのディレクトリに置き、`mise link --force sacty@<版>` と `mise use --global sacty@<版>` で登録する。登録に失敗したら `~/.local/bin` などに置き、mise で入れたら前に `~/.local/bin` などに置いた入口を消す。`mise use --global` で Node.js の版を固定する案も話に出たが、困っているのはプロジェクトの `mise.toml` で別の版を指定したディレクトリで、そこではグローバルの設定が効かないので採らなかった。
 - ADR：前の ADR（`npm link`）を置き換える ADR を足し、前の ADR の名前を `superseded` に変えて、切れたリンク（作業履歴の 2 つ）を直した。
 
 ## 確かめたこと
@@ -29,7 +30,12 @@
   - 置き場所に sacty のものでない `sacty` があると、上書きせずに終了コード 1（ファイルは変わらない）。
   - リポジトリのパスに空白・二重引用符・`$HOME` を含む clone で実行しても、入口が動き、`1.22.1` を出した。
 - 足したテストは、入口を `PATH` の `node` で動かすように戻すと失敗することを確かめた。
+- mise のやり方は、この環境に mise を入れることが許可されず、mise の文書のサイト（mise.jdx.dev）もネットワークの設定で開けなかったので、偽の `mise`（引数を記録し、`link`・`use --global`・`which` をまねるもの）を `PATH` の先頭に置いて確かめた。
+  - mise があるとき：`~/.local/share/sacty/mise/1.22.1/bin/sacty` に入口を置き、`mise link --force sacty@1.22.1 <ディレクトリ>`・`mise use --global sacty@1.22.1`・`mise which sacty` の順に呼び、前に `~/.local/bin` に置いた入口を消して、終了コード 0。
+  - `mise link` が失敗するとき：理由を注意に出して、`~/.local/bin/sacty` に置き、終了コード 0。
+  - `SACTY_BIN_DIR` を指定したとき：mise を呼ばずに、指定した場所に置いた。
 - `npm run lint`・`npm run typecheck`：成功。`npx vitest run tests/scripts tests/docs packages/cli`：121 件すべて成功。
+- mise のやり方を足した後：`npx vitest run tests/scripts`（12 件）・`npx vitest run tests/docs`（93 件）：成功。`npm run lint`・`npm run typecheck`：成功。
 
 ## レビューの指摘と対応
 
@@ -39,4 +45,4 @@
 
 ## 残したこと
 
-- mise を使う macOS での確認（この環境は Linux で、mise は入っていない。版の違う Node.js は、偽の `node` で代わりにした）。
+- mise を使う macOS での確認（この環境は Linux で、mise は入っていない。版の違う Node.js は偽の `node`、mise は偽の `mise` で代わりにした）。実際の mise で、レジストリに無い名前で `mise link` できるか、登録した道具がシム・`mise activate` で `PATH` に載るか。

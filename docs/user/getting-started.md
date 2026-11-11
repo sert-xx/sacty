@@ -42,16 +42,20 @@ npx sacty config init   # ~/.sacty/config.yaml を作る
 npm run cli:install
 ```
 
-ビルド（`npm run build`）の後に、`~/.local/bin/sacty`（起動の入口）を置き、`sacty --version` がこのリポジトリの版を出すことを確かめます。
+ビルド（`npm run build`）の後に、`sacty` の起動の入口を置き、`sacty --version` がこのリポジトリの版を出すことを確かめます。
+
+- mise を使っていれば、入口を mise に登録します（`mise use --global sacty@<版>`。`mise ls sacty` で確かめられます）。登録できなければ、理由を知らせて `~/.local/bin/sacty` に置きます。
+- mise を使っていなければ、`~/.local/bin/sacty` に置きます。
+
 
 - 入口は、実行したときの Node.js（sacty のリポジトリで mise などが選んだ版）で sacty を動かします。mise などでディレクトリごとに Node.js の版が違っても、どのディレクトリでも同じように動きます。
 - 入口は、このリポジトリを指します。sacty を更新してビルドし直せば、新しい版で動きます。
 - sacty の更新で Node.js の版が変わったら（`mise.toml`）、もう一度実行してください。入口の Node.js が新しい版に切り替わります。古い版の Node.js を消した後に実行し忘れると、`sacty` がやり直しを知らせます。
 - 何度実行してもかまいません。別の場所に clone した sacty で実行すると、`sacty` はその clone を指すように切り替わります。
-- 置き場所は、環境変数 `SACTY_BIN_DIR` で変えられます。置き場所が `PATH` に無いとき、または `PATH` で先に別の `sacty` が見つかるときは、`[sacty] 注意：` で知らせます。
+- 環境変数 `SACTY_BIN_DIR` を指定すると、mise を使わずに、その中に置きます。置き場所が `PATH` に無いとき、または `PATH` で先に別の `sacty` が見つかるときは、`[sacty] 注意：` で知らせます。
 - 前に `npm link` で入れた `sacty`（いまの Node.js の版のもの）は、外します。ほかの Node.js の版で入れたものが残っていると、その版が有効なディレクトリで先に見つかることがあります。その版で `npm rm -g @sacty/cli` を実行して消してください。
 - シェルの `alias` で `sacty` を定義していると、そちらが先に使われます。
-- 消すときは `~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
+- 消すときは、mise で入れたなら、mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消し、`~/.local/share/sacty/mise` を消します。mise を使っていなければ `~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
 
 ## 起動する
 
