@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-11（UTC）
 - タスク: なし
-- PR: なし
+- PR: #338
 - ブランチ: ccr-805f354d-tec1x2
 - 関係する ADR: [プロジェクトのコンテキストで、ホストの Claude Code・Codex を利用者のログインのまま対話で起動する CLI を足し、作業履歴には記録しない](../adr/20261110-0011-launch-local-agent-with-project-context.md)
 

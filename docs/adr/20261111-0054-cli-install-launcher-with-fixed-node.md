@@ -2,7 +2,7 @@
 
 - 日時: 2026-11-11 00:54 UTC
 - ステータス: 採用
-- 関係する PR・タスク: なし
+- 関係する PR・タスク: #338
 - 置き換え元: [sacty コマンドを npm link で入れる npm run cli:install を足し、入れた後にリンクの向き先と版を確かめる](20261110-0908-superseded-cli-install-with-npm-link.md)
 - 置き換え先: なし
 
