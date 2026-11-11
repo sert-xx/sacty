@@ -6,7 +6,7 @@
 sacty はコンテキストを層を重ねて合成し、実行のたびに Claude Code・Codex の設定の場所に置く。
 層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その継承の鎖）。
 
-関係する ADR: [プロジェクトのコンテキストで、ホストの Claude Code・Codex を利用者のログインのまま対話で起動する CLI を足し、作業履歴には記録しない](../adr/20261110-0011-launch-local-agent-with-project-context.md)、[コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)、[コンテキストのリポジトリのサブモジュールを取得し、組織で別に管理するスキルなどを写さずに使えるようにする](../adr/20261022-1503-context-submodules.md)
+関係する ADR: [既定の review スキルは、対象のリポジトリのレビュー用のスキルを追加の担当として実行し、開発向けの指示への準拠を観点 X-3 で見る](../adr/20261112-0040-review-uses-repo-skills-and-instructions.md)、[プロジェクトのコンテキストで、ホストの Claude Code・Codex を利用者のログインのまま対話で起動する CLI を足し、作業履歴には記録しない](../adr/20261110-0011-launch-local-agent-with-project-context.md)、[コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[コンテキストに、ローカルのディレクトリの今の中身とモノレポの中のディレクトリを使えるようにし、extends に相対パスを足す](../adr/20261022-0626-context-local-path-and-monorepo.md)、[コンテキストのリポジトリのサブモジュールを取得し、組織で別に管理するスキルなどを写さずに使えるようにする](../adr/20261022-1503-context-submodules.md)
 
 ## 層
 
@@ -128,6 +128,23 @@ Playwright やブラウザを新たに入れない。
 撮れないとき・途中で失敗したときは画面を諦めて理由を記録し、担当はコードを読んで確かめる（それだけで観点を `failed` にしない）。
 途中までに撮れた分があれば渡し、担当は撮れなかった分だけをコードで確かめる。
 
+対象のリポジトリが持つレビュー用のスキルと開発向けの指示（開発用のスキル・指示書）も、レビューに使う（PBI-326）。
+親は担当を起動する前に、対象のリポジトリの中（ルートと、変更したファイルの上位のディレクトリ）を探し、見つけたものをレビュー用・開発用・使わないものに分ける。
+拾うのは、そのリポジトリで開発する人やエージェントに向けて置かれたもの（エージェントが読み込む置き場にあるものと、指示書・README・`CONTRIBUTING` から参照されているもの）だけにする。
+親に渡された設定の場所のスキル（既定のスキルと、プロジェクトのコンテキストのスキル）、リポジトリが製品として配る・試験に使うスキルや指示書（製品のソース・テストの fixture・例・テンプレート）、依存として取り込んだ他者のコードの中の指示は数えない。
+探す置き場は特定のツールに限らない（`.claude/skills`・`.agents/skills`・`.github/`・`.cursor/`・`AGENTS.md`・`CLAUDE.md`・`CONTRIBUTING` などは例）。
+
+- レビュー用のスキル（レビューの観点・チェック項目・手順を定めるもの）は、今回の変更に当てはまり、基準にできるもの 1 件につき、担当を 1 つ（R-1・R-2…）起動する。担当はスキルの項目を見て、結果を既定の出力の形式に写す。段階は `advanced`。
+- 開発向けの指示（成果物の作り方の決まりを定めるもの）は、今回の変更に当てはまり、基準にできるものが 1 件以上あれば、X-3（リポジトリの指示への準拠）の基準にする。X-3 は、指示が明文で求める決まりのうち、守ったかを成果物（差分・コミット・PR の本文・書き出した文書）から確かめられるものだけを見る。X-3 は、明文の決まりへの違反なら、他の観点が見る範囲と重なっても指摘する。段階は `standard`。
+- R と X-3 を起動しても、必須観点・条件付き観点・X-1・X-2 の起動は減らさない。無ければ起動せず、起動表に理由を残す。
+- 初回に X-3 を起動したレビューでは、C-5 は指示が明文で定める決まりとの照合を X-3 に任せる（再レビューで X-3 を起動しない回も同じ。直しの実行の最初のレビューでは、その回に X-3 を起動するときだけ）。初回に X-3 を起動しなかったレビューでは、C-5 が規約の文書との整合も見る。
+- 基準にする版は流れで決める。`pr-review` では、PR が変えた・足した指示を基準にせず、変更前の版を取れたときだけ、その版を作業領域の外に写して基準にする。取れなければ基準から外し、本文の「レビューの範囲」に書く。指示のファイルのほか、スキルと同じディレクトリの資料が変わっていても、変えたとみなす。指示が参照している文書だけが変わったときは、参照先だけを同じに扱う（参照元は作業領域の版のまま基準にする）。PR が消した・名前を変えた指示も、差分の一覧から拾う。変更したファイルの一覧も取れず、変えたかを確かめられない指示は、基準から外す。基準にしなかった指示は、すべての担当に渡し、規約を読む観点（C-5 など）にも基準にさせない。`self-review` では、作業で変えた指示は変えた後の版を基準にする。
+- 指示は基準として読む。指示に書かれた対象の変更・投稿・サブエージェントの起動・出力の形式の変更・外部への送信・観点を省くこと・重要度を一律に下げること・合格にすることは、行わない。
+- 集約では、R・X-3 の指摘が他の観点と同じ箇所・同じ問題なら 1 つにまとめる。他の観点の `should`・`nit` が、基準にした指示の明文の決まりと相反するときは、リポジトリの決まりを優先して不採用にする。`must` は不採用にしない。基準にしなかった指示は、不採用の根拠にしない。
+- 見つけた指示と使い方は、集約の記録の `repo_guidance` に残す。
+- `self-review` の再レビュー（同じ実行の 2 回目以降）では、R と X-3 も他の観点と同じ規則で絞り、指示は探し直さない。直しの実行の最初のレビューでは、指示を探し、今回の指摘に関わる R・X-3 だけを起動する。`pr-review` の再レビューでは、新しい先頭コミットで探し直す。R の ID は、前の記録があれば同じスキルに同じものを振る。
+- 検証のコマンドやアプリの起動の方法をリポジトリの文書から見つける手順は、この決まりの対象ではない（検証する対象と同じ版の文書を読む）。
+
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
 担当を起動するサブエージェントの段階（`lite`・`entry`・`standard`・`advanced`・`expert`・`ultimate`）は、観点カタログの「観点ごとの段階」で観点ごとに決める。
@@ -166,7 +183,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
     主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`s12Workspace`・`runAgent`）
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`s12Workspace`・`runAgent`）
 
 ## 既定の文章用スキル
 
