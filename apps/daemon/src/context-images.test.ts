@@ -6,6 +6,7 @@ import {
   type ContextImagesDeps,
   contextImageTag,
   removeStaleContextImages,
+  runDockerStreaming,
 } from "./context-images.js";
 import type { ImageState } from "./image-presence.js";
 
@@ -303,25 +304,38 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
 
   it("名前を決めたときの image_build で作る（順番待ちの間に設定が変わっても、名前と中身を一致させる）", async () => {
     let build: SactyConfig["imageBuild"] = { npmRegistry: "https://a.example.com/" };
-    const used: SactyConfig["imageBuild"][] = [];
+    const used: { name: string; build: SactyConfig["imageBuild"] }[] = [];
     let release = () => {};
     const builder = new ContextImageBuilder({
       projects: () => [{ id: "p1", name: "p" }],
-      load: async () => ({ images: one, warnings: [] }),
+      load: async () => ({
+        images: [
+          { name: "a", image: def("A"), from: "acme" },
+          { name: "b", image: def("B"), from: "acme" },
+        ],
+        warnings: [],
+      }),
       config: () => ({ ...baseConfig(), imageBuild: build }),
       inspect: async () => "missing",
-      build: (_l, b) => {
-        used.push(b);
+      build: (language, b) => {
+        used.push({ name: language.name, build: b });
+        if (language.name === "b") return Promise.resolve(undefined);
+        // 先の作成で順番を塞ぐ（b は名前を決めたまま、順番待ちになる）
         return new Promise((r) => {
           release = () => r(undefined);
         });
       },
     });
     await builder.refresh();
+    expect(builder.images("p1").map((e) => e.state)).toEqual(["building", "queued"]);
+    // b の名前を決めた後に、設定を変える
     build = { npmRegistry: "https://b.example.com/" };
     release();
     await builder.idle();
-    expect(used).toEqual([{ npmRegistry: "https://a.example.com/" }]);
+    expect(used).toEqual([
+      { name: "a", build: { npmRegistry: "https://a.example.com/" } },
+      { name: "b", build: { npmRegistry: "https://a.example.com/" } },
+    ]);
   });
 
   it("作るのが上限の時間を過ぎたら止めて失敗にし、後のものを作る", async () => {
@@ -479,6 +493,98 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
     expect(cleaned).toBe(true);
   });
 
+  it("設定を読めないときは、片付けない（定義を確かめていない空の一覧で消さないように）", async () => {
+    let removed = 0;
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({ images: one, warnings: [] }),
+      config: () => undefined,
+      inspect: async () => "present",
+      build: async () => undefined,
+      removeStale: async () => {
+        removed++;
+      },
+    });
+    await builder.refresh();
+    await builder.idle();
+    builder.rebuild("p1", "node-pw");
+    await builder.idle();
+    expect(removed).toBe(0);
+    expect(builder.pending("p1")).toBe(false);
+  });
+
+  it("片付けが上限の時間を過ぎたら止めて、読み直しと作成を先に進める", async () => {
+    let aborted = false;
+    let images = one;
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({ images, warnings: [] }),
+      config: () => baseConfig(),
+      inspect: async () => "present",
+      build: async () => undefined,
+      removeStale: (_keep, _prefix, signal) =>
+        new Promise(() => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+          });
+        }),
+      pruneTimeoutMs: 20,
+    });
+    await builder.refresh();
+    await builder.idle();
+    expect(aborted).toBe(true);
+    images = [{ name: "other", image: def("y"), from: "acme" }];
+    await builder.refresh();
+    expect(builder.images("p1").map((e) => e.name)).toEqual(["other"]);
+  });
+
+  it("config.yaml に無い constructor などの名前を、同じ名前と取り違えない", async () => {
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({
+        images: [{ name: "constructor", image: def("x"), from: "acme" }],
+        warnings: [],
+      }),
+      config: () => baseConfig(),
+      inspect: async () => "present",
+      build: async () => undefined,
+    });
+    await builder.refresh();
+    expect(builder.images("p1").map((e) => e.name)).toEqual(["constructor"]);
+    expect(builder.view()[0]?.warnings).toEqual([]);
+  });
+
+  it("読んでいる途中に読み直しを求められたら、読み終えた後にもう一度読んでから待ちを解く", async () => {
+    let images = one;
+    let releaseFirst = () => {};
+    let loads = 0;
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => {
+        loads++;
+        if (loads === 1) {
+          await new Promise<void>((r) => {
+            releaseFirst = r;
+          });
+          return { images: one, warnings: [] };
+        }
+        return { images, warnings: [] };
+      },
+      config: () => baseConfig(),
+      inspect: async () => "present",
+      build: async () => undefined,
+    });
+    const first = builder.refresh();
+    await new Promise((r) => setImmediate(r));
+    // 保存で定義が変わり、読み直しを求める
+    images = [{ name: "other", image: def("y"), from: "acme" }];
+    const second = builder.refresh("p1");
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(loads).toBe(2);
+    expect(builder.images("p1").map((e) => e.name)).toEqual(["other"]);
+  });
+
   it("デーモンの印を名前に入れ、片付けはその印のものだけを消す", async () => {
     const prefixes: string[] = [];
     const builder = new ContextImageBuilder({
@@ -496,6 +602,34 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
     await builder.idle();
     expect(builder.images("p1")[0]?.image).toMatch(/^sacty-ctx-abc123-p1-node-pw:/);
     expect(prefixes).toEqual(["sacty-ctx-abc123-"]);
+  });
+});
+
+describe("docker の実行（PBI-325）", () => {
+  it("止めるときは SIGTERM を送り、終わらなければ SIGKILL を送ってから、終わりを返す", async () => {
+    const { EventEmitter } = await import("node:events");
+    const signals: string[] = [];
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: (signal: string) => {
+        signals.push(signal);
+        // SIGTERM では終わらず、SIGKILL で終わる
+        if (signal === "SIGKILL") setImmediate(() => child.emit("close", null));
+        return true;
+      },
+    });
+    const controller = new AbortController();
+    const running = runDockerStreaming(
+      ["build", "."],
+      () => {},
+      controller.signal,
+      (() => child) as unknown as typeof import("node:child_process").spawn,
+      10,
+    );
+    controller.abort();
+    await expect(running).resolves.toBe(1);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 });
 
@@ -526,5 +660,17 @@ describe("使わなくなったコンテキストのイメージの片付け（P
       "sacty-ctx-aaaa-",
     );
     expect(removed).toEqual(["sacty-ctx-aaaa-p1-a:1"]);
+  });
+});
+
+describe("images の名前の判定（PBI-325 レビュー指摘）", () => {
+  it("継承したプロパティ（constructor など）を、images の名前と取り違えない", async () => {
+    const { imageDefined, resolveImage } = await import("./config.js");
+    const config = baseConfig();
+    expect(imageDefined(config, "constructor")).toBe(false);
+    expect(resolveImage(config, "constructor")).toEqual({
+      ok: false,
+      message: { code: "image.unknown", params: { name: "constructor" } },
+    });
   });
 });

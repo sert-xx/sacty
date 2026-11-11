@@ -211,8 +211,9 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
 - 読むとき：起動の 11 で始めるとき・プロジェクトを保存（作成・変更・取り込み）・削除したとき・5分ごと（`CONTEXT_IMAGES_REFRESH_MS`）。
   - コンテキストのあるプロジェクトだけを、1つずつ順に読む（`contextImages`。継承の鎖を合成し、`locked`・`remove` も効かせる）。
     1つのプロジェクトの取得を5分（`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`）待っても終わらなければ、取得を止めて読めなかったことにする（`contextImage.loadTimedOut`）。
-  - 設定（`config.yaml`）を読めなければ、作らない。
-  - `config.yaml` の `images` と同じ名前のものは作らず、`contextImage.configOverride` の警告にする。
+  - 設定（`config.yaml`）を読めなければ、作らない（片付けもしない）。
+  - 読んでいる途中に読み直しを求められたら（プロジェクトの保存など）、読み終えてから、もう一度読む。
+  - `config.yaml` の `images` と同じ名前のものは作らず、`contextImage.configOverride` の警告にする（自身のプロパティだけを比べる。`hasImage`）。
   - 読めなければ、前に読んだもの（あれば）を使い続け、`contextImage.loadFailed` の警告にする。
 - 名前：`sacty-ctx-<印>-<プロジェクトの ID>-<名前>:<ハッシュ>`（`contextImageTag`）。
   印は `SACTY_HOME` の SHA-256 の先頭8文字（同じ Docker を使う別の `SACTY_HOME` のデーモンのイメージと見分ける）。
@@ -232,10 +233,12 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
   - 失敗したら `failed`（`contextImage.buildFailed`）にする。
     自動では作り直さない。
     `POST /api/projects/:id/context-images/:name/rebuild`（画面の「作り直す」）で `queued` に戻す（失敗していないものは `contextImage.notFailed`、無いものは `contextImage.notFound` で断る）。
-  - すべて作り終え、どのプロジェクトも読めていれば、今の定義の名前以外の、自分の印の `sacty-ctx-<印>-` のイメージを `docker image rm` で消す（強制では消さない）。
+  - すべて作り終え、設定を読めて、どのプロジェクトも今の定義を読めていれば、今の定義の名前以外の、自分の印の `sacty-ctx-<印>-` のイメージを `docker image rm` で消す（強制では消さない）。
+    2分（`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`）で終わらなければ、止めて先に進む。
     消している間は、読み直しが手元にあるかを確かめず、消し終えてから確かめる。
     消している間に順番待ちが増えたら、消し終えてから作る。
-  - デーモンを止めるときは、間隔を止め、作成中の docker を止める（`SIGTERM`）。
+  - デーモンを止めるとき・作成の時間切れのときは、docker に `SIGTERM` を送り、10 秒（`DOCKER_KILL_GRACE_MS`）で終わらなければ `SIGKILL` を送る（`runDockerStreaming`）。
+  - デーモンを止めるときは、間隔を止め、作成中の docker を止める。
     止めた作成の後片付け（npm の認証を書いた一時ファイルを消す）が終わるのを、ほかの後処理と一緒に待つ（上限は後処理と同じ 20 秒）。
 - 状況：`GET /api/status` の `contextImages`（イメージのあるプロジェクトだけ）に載せ、読めなかった・同じ名前だったことは `warnings` に載せる。
   - 画面は、どの画面でも中身の上に、作成中・順番待ち・失敗したものを「イメージの作成」として出す（`ContextImagesNotice`）。
@@ -251,8 +254,8 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
   - 待っている間の一時停止・中止は、実行していないタスクと同じにすぐ効く。
   - ワーカーは、待っているタスクを実行の対象から除いてから、同時に実行する数を数える（`runnableTaskIds`。後の実行できるタスクの枠を塞がない）。
 
-コード: `apps/daemon/src/context-images.ts`（`ContextImageBuilder`・`contextImageTag`・`contextImagePrefix`・`contextLanguageImage`・`runDockerStreaming`・`removeStaleContextImages`・`CONTEXT_IMAGES_REFRESH_MS`・`CONTEXT_IMAGE_LOG_MAX`・`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`・`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`）、
-`apps/daemon/src/context.ts`（`contextImages`）、`apps/daemon/src/config.ts`（`resolveImage`・`imageDefined`）、
+コード: `apps/daemon/src/context-images.ts`（`ContextImageBuilder`・`contextImageTag`・`contextImagePrefix`・`contextLanguageImage`・`runDockerStreaming`・`removeStaleContextImages`・`CONTEXT_IMAGES_REFRESH_MS`・`CONTEXT_IMAGE_LOG_MAX`・`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`・`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`・`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`・`DOCKER_KILL_GRACE_MS`）、
+`apps/daemon/src/context.ts`（`contextImages`）、`apps/daemon/src/config.ts`（`resolveImage`・`imageDefined`・`hasImage`）、
 `apps/daemon/src/service.ts`（`projectImagesConfig`・`awaitingContextImages`・`runnableTaskIds`・`mayUseContextImage`・`loadContextImages`・`rebuildContextImage`・`refreshContextImages`・`CONTEXT_IMAGES_WAIT_MS`）、
 `apps/daemon/src/server.ts`、`apps/daemon/src/main.ts`、`apps/daemon/src/worker.ts`（`Worker`）、`packages/cli/src/up-env.ts`（`daemonEnv`）、
 `apps/web/src/components/shell/context-images-notice-view.tsx`（`ContextImagesNoticeView`）、`apps/web/src/components/shell/context-images-notice-live.tsx`（`CONTEXT_IMAGES_LIVE_INTERVAL_MS`）、`apps/web/src/lib/labels.ts`（`projectImages`）

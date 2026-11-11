@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { type DaemonMessage, type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv } from "./agents/docker.js";
-import { DEFAULT_IMAGE, type LanguageImage, type SactyConfig } from "./config.js";
+import { DEFAULT_IMAGE, hasImage, type LanguageImage, type SactyConfig } from "./config.js";
 import type { ContextImageFile } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import type { ImageState } from "./image-presence.js";
@@ -34,6 +34,10 @@ export const CONTEXT_IMAGE_BUILD_TIMEOUT_MS = 60 * 60_000;
  * ため、過ぎたら止めて読めなかったことにする。
  */
 export const CONTEXT_IMAGES_LOAD_TIMEOUT_MS = 5 * 60_000;
+/** 片付け（docker image ls・rm）を待つ上限（2分）。過ぎたら止めて、読み直しと作成を先に進める。 */
+export const CONTEXT_IMAGES_PRUNE_TIMEOUT_MS = 2 * 60_000;
+/** 止めるときに SIGTERM を送ってから、終わらなければ SIGKILL を送るまでの時間（10秒）。 */
+export const DOCKER_KILL_GRACE_MS = 10_000;
 
 /** 作る順番待ち・作成中・作成済み・失敗。 */
 export type ContextImageState = "queued" | "building" | "ready" | "failed";
@@ -68,6 +72,11 @@ type ProjectImages = {
   loading: boolean;
   /** 一度でも読み終えた（読めなかったときも含む）。 */
   loaded: boolean;
+  /**
+   * 設定と定義を読めて、entries が今の定義を表している（設定を読めずに読み終えたことにしたときは false。片付けは、すべての
+   * プロジェクトがこの状態のときだけ行う。空の一覧で、作ったイメージを消さないように）。
+   */
+  current: boolean;
   loadError?: DaemonText;
   warnings: DaemonText[];
   entries: ContextImageEntry[];
@@ -116,7 +125,9 @@ export type ContextImagesDeps = {
     signal: AbortSignal,
   ) => Promise<string | undefined>;
   /** keep 以外の、sacty が作ったコンテキストのイメージを消す（使っているものは消えなくてよい）。 */
-  removeStale?: (keep: readonly string[], prefix: string) => Promise<void>;
+  removeStale?: (keep: readonly string[], prefix: string, signal: AbortSignal) => Promise<void>;
+  /** 片付けを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGES_PRUNE_TIMEOUT_MS。 */
+  pruneTimeoutMs?: number;
   /**
    * イメージの名前に入れる、このデーモンの印（SACTY_HOME から作る）。同じ Docker を使う別の SACTY_HOME のデーモンのイメージを、
    * 片付けで消さないように、名前で見分ける。
@@ -198,6 +209,8 @@ function appendTail(log: string, chunk: string): string {
 export class ContextImageBuilder {
   private readonly projects = new Map<string, ProjectImages>();
   private readonly refreshing = new Map<string, Promise<void>>();
+  /** 読んでいる途中に、読み直しを求められたプロジェクト。 */
+  private readonly reloadRequested = new Set<string>();
   /** 状態が変わったら呼ぶ（作り終えるのを待つもの）。 */
   private readonly listeners = new Set<() => void>();
   private working: Promise<void> | undefined;
@@ -347,8 +360,18 @@ export class ContextImageBuilder {
 
   private refreshProject(id: string, name: string): Promise<void> {
     const running = this.refreshing.get(id);
-    if (running) return running;
-    const work = this.load(id, name).finally(() => {
+    if (running) {
+      // 読んでいる途中に読み直しを求められたら（プロジェクトの保存など）、今の読み込みを終えてから、もう一度読む（保存の
+      // 前の定義のまま、待ちを解かないように）
+      this.reloadRequested.add(id);
+      return running;
+    }
+    const work = (async () => {
+      do {
+        this.reloadRequested.delete(id);
+        await this.load(id, name);
+      } while (this.reloadRequested.has(id) && !this.controller.signal.aborted);
+    })().finally(() => {
       this.refreshing.delete(id);
       this.notify();
     });
@@ -362,6 +385,7 @@ export class ContextImageBuilder {
       name,
       loading: true,
       loaded: false,
+      current: false,
       warnings: [],
       entries: [],
     };
@@ -371,9 +395,11 @@ export class ContextImageBuilder {
     this.notify();
     const config = this.deps.config();
     if (!config) {
-      // 設定を読めなければ作らない（設定の誤りは、別に知らせている）。待たせないよう、読み終えたことにする
+      // 設定を読めなければ作らない（設定の誤りは、別に知らせている）。待たせないよう、読み終えたことにする。定義は
+      // 確かめていないので、片付けはしない
       project.loading = false;
       project.loaded = true;
+      project.current = false;
       return;
     }
     let loaded: Awaited<ReturnType<ContextImagesDeps["load"]>>;
@@ -399,7 +425,7 @@ export class ContextImageBuilder {
     const toInspect: ContextImageEntry[] = [];
     for (const item of loaded.images) {
       // config.yaml の images と同じ名前なら、config.yaml のものを使う（gateway.mcp_servers と mcp.yaml と同じ）
-      if (config.images?.[item.name]) {
+      if (hasImage(config, item.name)) {
         warnings.push(message("contextImage.configOverride", { project: name, name: item.name }));
         continue;
       }
@@ -457,6 +483,7 @@ export class ContextImageBuilder {
     delete project.loadError;
     project.loading = false;
     project.loaded = true;
+    project.current = true;
   }
 
   /** 順番待ちのものを、1つずつ作る（作っている途中なら、その続きで作る）。 */
@@ -580,17 +607,33 @@ export class ContextImageBuilder {
     const removeStale = this.deps.removeStale;
     if (!removeStale || this.controller.signal.aborted || this.pruning) return;
     const projects = [...this.projects.values()];
-    if (projects.some((p) => p.loadError || !p.loaded || p.loading)) return;
+    if (!this.deps.config()) return;
+    if (projects.some((p) => p.loadError || !p.loaded || p.loading || !p.current)) return;
     if (this.refreshing.size > 0) return;
     const keep = projects.flatMap((p) => p.entries.map((e) => e.image));
     // 片付けている間は、読み直しが手元にあるかを確かめない（確かめた後に消さないように。load が待つ）
-    this.pruning = removeStale(keep, contextImagePrefix(this.deps.owner))
-      .catch(() => {
+    // 片付けにも上限を設ける（docker が応答しないと、読み直しと作成が待ち続けるため）。過ぎたら止めて先に進む
+    const local = new AbortController();
+    const onStop = () => local.abort();
+    this.controller.signal.addEventListener("abort", onStop, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        local.abort();
+        resolve();
+      }, this.deps.pruneTimeoutMs ?? CONTEXT_IMAGES_PRUNE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    this.pruning = Promise.race([
+      removeStale(keep, contextImagePrefix(this.deps.owner), local.signal).catch(() => {
         // 片付けられなくても、作成には関わらない
-      })
-      .finally(() => {
-        this.pruning = undefined;
-      });
+      }),
+      timeout,
+    ]).finally(() => {
+      clearTimeout(timer);
+      this.controller.signal.removeEventListener("abort", onStop);
+      this.pruning = undefined;
+    });
     await this.pruning;
   }
 }
@@ -604,6 +647,7 @@ export function runDockerStreaming(
   onOutput: (chunk: string) => void,
   signal?: AbortSignal,
   spawnImpl: typeof spawn = spawn,
+  killGraceMs: number = DOCKER_KILL_GRACE_MS,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -614,15 +658,24 @@ export function runDockerStreaming(
       env: dockerClientEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const onAbort = () => child.kill("SIGTERM");
+    // 止めるときは SIGTERM を送り、終わらなければ SIGKILL を送る（docker が応答しなくても、終わりを待てるように。
+    // 作成の後片付けで、npm の認証を書いた一時ファイルを消すのは、終わった後のため）
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+      killTimer.unref?.();
+    };
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (chunk) => onOutput(String(chunk)));
     child.stderr?.on("data", (chunk) => onOutput(String(chunk)));
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
     child.on("close", (code) => {
+      clearTimeout(killTimer);
       signal?.removeEventListener("abort", onAbort);
       resolve(code ?? 1);
     });

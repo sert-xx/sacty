@@ -211,14 +211,18 @@ const contextImageBuilder = new ContextImageBuilder({
   },
   // 同じ Docker を使う別の SACTY_HOME のデーモンのイメージを消さないよう、名前に SACTY_HOME から作った印を入れる
   owner: createHash("sha256").update(home).digest("hex").slice(0, 8),
-  removeStale: async (keep, prefix) => {
+  removeStale: async (keep, prefix, signal) => {
     const removed = await removeStaleContextImages(
       keep,
       (args) => {
         let stdout = "";
-        return runDockerStreaming(args, (chunk) => {
-          stdout += chunk;
-        }).then((code) => ({ code, stdout }));
+        return runDockerStreaming(
+          args,
+          (chunk) => {
+            stdout += chunk;
+          },
+          signal,
+        ).then((code) => ({ code, stdout }));
       },
       prefix,
     );

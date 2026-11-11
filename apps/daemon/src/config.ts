@@ -734,7 +734,8 @@ export function resolveImage(
   name: string | undefined,
 ): { ok: true; image: string; env: Record<string, string> } | { ok: false; message: DaemonText } {
   if (!name || name === DEFAULT_IMAGE_NAME) return { ok: true, image: config.image, env: {} };
-  const image = config.images?.[name];
+  // 継承したプロパティ（constructor など）を images の名前と取り違えない（PBI-325 レビュー指摘）
+  const image = hasImage(config, name) ? config.images?.[name] : undefined;
   if (!image) return { ok: false, message: message("image.unknown", { name }) };
   if (image.unavailable) return { ok: false, message: image.unavailable };
   return { ok: true, image: image.image, env: image.env };
@@ -745,7 +746,12 @@ export function resolveImage(
  * 人やオーケストレーターが選べる名前かを確かめるときに使う（使えるかは、実行のときに resolveImage で確かめる）。
  */
 export function imageDefined(config: SactyConfig, name: string): boolean {
-  return name === DEFAULT_IMAGE_NAME || Boolean(config.images?.[name]);
+  return name === DEFAULT_IMAGE_NAME || hasImage(config, name);
+}
+
+/** images に、その名前のイメージがあるか（自身のプロパティだけを見る。constructor などの名前も書けるため）。 */
+export function hasImage(config: Pick<SactyConfig, "images">, name: string): boolean {
+  return config.images !== undefined && Object.hasOwn(config.images, name);
 }
 
 /** 言語ごとのイメージの、既定の名前（タグ）。既定のイメージと同じ版にする。 */

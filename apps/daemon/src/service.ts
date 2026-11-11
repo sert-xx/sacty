@@ -221,6 +221,7 @@ import {
   definedAgent,
   fallbackAgentFor,
   githubRepoOf,
+  hasImage,
   imageDefined,
   type LanguageImage,
   resolveImage,
@@ -4523,7 +4524,7 @@ export class TaskService {
     const project = this.deps.projects.get(projectId)?.name ?? projectId;
     const added: Record<string, LanguageImage> = {};
     for (const entry of entries) {
-      if (config.images?.[entry.name]) continue;
+      if (hasImage(config, entry.name)) continue;
       added[entry.name] = {
         ...entry.language,
         ...(entry.state === "ready"
@@ -4598,7 +4599,7 @@ export class TaskService {
       ...Object.values(task.images ?? {}),
     ].filter((n): n is string => typeof n === "string");
     if (names.length === 0) return task.steps.length === 0;
-    return names.some((n) => n !== DEFAULT_IMAGE_NAME && !config.images?.[n]);
+    return names.some((n) => n !== DEFAULT_IMAGE_NAME && !hasImage(config, n));
   }
 
   /**
