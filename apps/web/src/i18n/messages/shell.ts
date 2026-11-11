@@ -54,6 +54,8 @@ const ja = {
     rebuild: "作り直す",
     rebuilding: "受け付けています…",
     fix: "images.yaml を直して push すると、新しい定義で作り直します。",
+    summary: (building: number, queued: number, failed: number) =>
+      `イメージの作成：作成中 ${building} 件・順番待ち ${queued} 件・失敗 ${failed} 件`,
   },
   /** ブラウザのデスクトップ通知。 */
   desktop: {
@@ -127,6 +129,8 @@ const en: ShellMessages = {
     rebuild: "Rebuild",
     rebuilding: "Accepting…",
     fix: "Fix images.yaml and push it to build again with the new definition.",
+    summary: (building, queued, failed) =>
+      `Image builds: ${building} building, ${queued} queued, ${failed} failed`,
   },
   desktop: {
     kind: {

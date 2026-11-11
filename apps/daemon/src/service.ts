@@ -5043,7 +5043,9 @@ export class TaskService {
         signal,
       );
     } catch (error) {
-      throw new Error(renderMessage(redactText(errorText(error), usedSecrets), "ja"));
+      // 文言のコードのまま返す（画面の言語で出す）。取得のエラー文の認証のトークンは伏せる
+      const text = redactText(errorText(error), usedSecrets);
+      throw typeof text === "string" ? new Error(text) : new MessageError(text as DaemonMessage);
     }
   }
 
@@ -5092,7 +5094,6 @@ export class TaskService {
         // 設定ファイルが無くても Docker と既定のイメージは確かめるので、その注意は載せる（PR #166 レビュー指摘。PBI-148）
         docker: this.deps.imageProblems?.() ?? [],
         ...this.contextImagesStatus(),
-        ...this.contextImagesStatus(),
         intake: null,
         images: [],
         platforms: [],
@@ -5122,6 +5123,7 @@ export class TaskService {
       ],
       // Docker が動いていない・手元に無い・版の違うエージェントのイメージ（PBI-148）。画面はどの画面でも出す
       docker: this.deps.imageProblems?.() ?? [],
+      ...this.contextImagesStatus(),
       // 取り込みは、設定ファイルを読めれば動く（PBI-100。以前は github: が要った）
       intake: this.intakeStatusOf(),
       images: Object.values(config.config.images ?? {}).map(({ name, description }) => ({
@@ -7183,6 +7185,17 @@ export class TaskService {
     config?: SactyConfig,
   ): ActivityItem {
     return this.fallBack(taskId, failed, reason, config) ?? pause;
+  }
+
+  /**
+   * ワーカーが、いま実行を始めてよいタスク（PBI-325）。実行待ちのうち、コンテキストのイメージを作り終えるのを待っている
+   * ものを除く（実行の枠を数える前に除き、待っているタスクが、後の実行できるタスクの枠を塞がないように）。
+   */
+  runnableTaskIds(): string[] {
+    return this.queuedTaskIds().filter((id) => {
+      const task = this.tasks.get(id);
+      return !(task && !this.inflight.has(id) && this.awaitingContextImages(task));
+    });
   }
 
   queuedTaskIds(): string[] {

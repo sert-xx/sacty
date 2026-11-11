@@ -4,7 +4,7 @@ import { type DaemonMessage, type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv } from "./agents/docker.js";
 import { DEFAULT_IMAGE, type LanguageImage, type SactyConfig } from "./config.js";
 import type { ContextImageFile } from "./context.js";
-import { errorText } from "./errors.js";
+import { errorText, MessageError } from "./errors.js";
 import type { ImageState } from "./image-presence.js";
 
 /**
@@ -24,6 +24,16 @@ export const CONTEXT_IMAGES_REFRESH_MS = 5 * 60_000;
 export const CONTEXT_IMAGE_LOG_MAX = 16 * 1024;
 /** sacty が作るコンテキストのイメージの名前の頭（古いものを片付けるときに、これで見分ける）。 */
 export const CONTEXT_IMAGE_REPOSITORY_PREFIX = "sacty-ctx-";
+/**
+ * 1つのイメージを作るのを待つ上限（60分）。Docker やレジストリが応答しないと、1つずつ作るので後のすべてが作られないため、
+ * 過ぎたら止めて失敗にする。
+ */
+export const CONTEXT_IMAGE_BUILD_TIMEOUT_MS = 60 * 60_000;
+/**
+ * 1つのプロジェクトのコンテキストを読むのを待つ上限（5分）。git の取得が応答しないと、後のプロジェクトを読めず作り始めない
+ * ため、過ぎたら止めて読めなかったことにする。
+ */
+export const CONTEXT_IMAGES_LOAD_TIMEOUT_MS = 5 * 60_000;
 
 /** 作る順番待ち・作成中・作成済み・失敗。 */
 export type ContextImageState = "queued" | "building" | "ready" | "failed";
@@ -38,6 +48,8 @@ export type ContextImageEntry = {
   image: string;
   /** 作るための定義（config.yaml の images と同じ形にしたもの）。 */
   language: LanguageImage;
+  /** 名前（ハッシュ）を決めたときの image_build。作るときも、これを使う（名前と中身を一致させる）。 */
+  build: SactyConfig["imageBuild"];
   state: ContextImageState;
   /** 失敗の理由。 */
   error?: DaemonText;
@@ -104,7 +116,16 @@ export type ContextImagesDeps = {
     signal: AbortSignal,
   ) => Promise<string | undefined>;
   /** keep 以外の、sacty が作ったコンテキストのイメージを消す（使っているものは消えなくてよい）。 */
-  removeStale?: (keep: readonly string[]) => Promise<void>;
+  removeStale?: (keep: readonly string[], prefix: string) => Promise<void>;
+  /**
+   * イメージの名前に入れる、このデーモンの印（SACTY_HOME から作る）。同じ Docker を使う別の SACTY_HOME のデーモンのイメージを、
+   * 片付けで消さないように、名前で見分ける。
+   */
+  owner?: string;
+  /** 1つのイメージを作るのを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGE_BUILD_TIMEOUT_MS。 */
+  buildTimeoutMs?: number;
+  /** 1つのプロジェクトのコンテキストを読むのを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGES_LOAD_TIMEOUT_MS。 */
+  loadTimeoutMs?: number;
   now?: () => Date;
   log?: (line: string) => void;
 };
@@ -120,21 +141,30 @@ function slug(value: string, max: number): string {
   return cleaned || createHash("sha256").update(value).digest("hex").slice(0, max);
 }
 
+/** このデーモンが作るコンテキストのイメージの名前の頭（owner があれば `sacty-ctx-<owner>-`）。 */
+export function contextImagePrefix(owner?: string): string {
+  return owner
+    ? `${CONTEXT_IMAGE_REPOSITORY_PREFIX}${slug(owner, 12)}-`
+    : CONTEXT_IMAGE_REPOSITORY_PREFIX;
+}
+
 /**
- * 作るイメージの名前（PBI-325）。`sacty-ctx-<プロジェクト>-<名前>:<定義の中身のハッシュ>`。ハッシュには、定義・image_build
- * （認証の値は含めず、秘密情報の名前だけ）・sacty の版（既定のイメージの名前）を含める（どれかが変われば作り直す）。
+ * 作るイメージの名前（PBI-325）。`sacty-ctx-[<デーモンの印>-]<プロジェクト>-<名前>:<定義の中身のハッシュ>`。ハッシュには、
+ * 定義・image_build（認証の値は含めず、秘密情報の名前だけ）・sacty の版（既定のイメージの名前）を含める（どれかが変われば
+ * 作り直す）。
  */
 export function contextImageTag(
   projectId: string,
   name: string,
   image: ContextImageFile,
   build: SactyConfig["imageBuild"],
+  owner?: string,
 ): string {
   const hash = createHash("sha256")
     .update(JSON.stringify({ version: DEFAULT_IMAGE, projectId, name, image, build }))
     .digest("hex")
     .slice(0, 16);
-  return `${CONTEXT_IMAGE_REPOSITORY_PREFIX}${slug(projectId, 12)}-${slug(name, 40)}:${hash}`;
+  return `${contextImagePrefix(owner)}${slug(projectId, 12)}-${slug(name, 40)}:${hash}`;
 }
 
 /** 層の定義を、config.yaml の images と同じ形（作るときに使う）にする。 */
@@ -171,6 +201,8 @@ export class ContextImageBuilder {
   /** 状態が変わったら呼ぶ（作り終えるのを待つもの）。 */
   private readonly listeners = new Set<() => void>();
   private working: Promise<void> | undefined;
+  /** 片付けている途中（その間は、手元にあるかを確かめず、片付け終えてから確かめる）。 */
+  private pruning: Promise<void> | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly controller = new AbortController();
 
@@ -342,7 +374,7 @@ export class ContextImageBuilder {
     }
     let loaded: Awaited<ReturnType<ContextImagesDeps["load"]>>;
     try {
-      loaded = await this.deps.load(id, signal);
+      loaded = await this.loadWithTimeout(id);
     } catch (error) {
       // 読めなければ、前に読んだもの（あれば）を使い続ける
       project.loadError = message("contextImage.loadFailed", {
@@ -355,6 +387,8 @@ export class ContextImageBuilder {
       return;
     }
     if (signal.aborted) return;
+    // 片付けている途中なら、終えてから確かめる（片付けが、確かめた後のイメージを消さないように）
+    while (this.pruning) await this.pruning;
     const warnings = [...loaded.warnings];
     const previous = new Map(project.entries.map((e) => [e.image, e]));
     const entries: ContextImageEntry[] = [];
@@ -365,12 +399,15 @@ export class ContextImageBuilder {
         warnings.push(message("contextImage.configOverride", { project: name, name: item.name }));
         continue;
       }
-      const tag = contextImageTag(id, item.name, item.image, config.imageBuild);
+      const tag = contextImageTag(id, item.name, item.image, config.imageBuild, this.deps.owner);
       const kept = previous.get(tag);
       if (kept) {
         kept.from = item.from;
         entries.push(kept);
-        if (kept.state === "failed" && kept.retryOnRefresh) toInspect.push(kept);
+        // 作成済みのものも、消えていないかを確かめ直す（docker image prune などで消えたら、作り直す）
+        if (kept.state === "ready" || (kept.state === "failed" && kept.retryOnRefresh)) {
+          toInspect.push(kept);
+        }
         continue;
       }
       const entry: ContextImageEntry = {
@@ -379,6 +416,7 @@ export class ContextImageBuilder {
         from: item.from,
         image: tag,
         language: contextLanguageImage(item.name, tag, item.image),
+        build: config.imageBuild,
         // 手元にあるかを確かめるまでは、順番待ちとして扱う（作り始めるのは確かめた後）
         state: "queued",
         log: "",
@@ -389,6 +427,11 @@ export class ContextImageBuilder {
     await Promise.all(
       toInspect.map(async (entry) => {
         const state = await this.deps.inspect(entry.image, signal);
+        // 作成済みのものは、無くなったときだけ作り直す（確かめられないときは、そのまま）
+        if (entry.state === "ready") {
+          if (state === "missing") entry.state = "queued";
+          return;
+        }
         if (state === "present") {
           entry.state = "ready";
           delete entry.error;
@@ -417,7 +460,43 @@ export class ContextImageBuilder {
     if (this.working || this.controller.signal.aborted) return;
     this.working = this.work().finally(() => {
       this.working = undefined;
+      // 片付けている間に、読み直し・作り直しで順番待ちが増えていれば、続けて作る
+      if (this.next()) this.kick();
     });
+  }
+
+  /** コンテキストを読む（上限の時間を過ぎたら、取得を止めて失敗にする）。 */
+  private async loadWithTimeout(
+    id: string,
+  ): Promise<Awaited<ReturnType<ContextImagesDeps["load"]>>> {
+    const limit = this.deps.loadTimeoutMs ?? CONTEXT_IMAGES_LOAD_TIMEOUT_MS;
+    const local = new AbortController();
+    const onStop = () => local.abort();
+    this.controller.signal.addEventListener("abort", onStop, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new MessageError(
+            message("contextImage.loadTimedOut", {
+              minutes: Math.max(1, Math.round(limit / 60_000)),
+            }),
+          ),
+        );
+        // 時間切れとして先に決めてから、取得を止める
+        local.abort();
+      }, limit);
+      timer.unref?.();
+    });
+    const loading = this.deps.load(id, local.signal);
+    // 時間切れで止めた取得の失敗は、時間切れとして扱う
+    loading.catch(() => {});
+    try {
+      return await Promise.race([loading, timeout]);
+    } finally {
+      clearTimeout(timer);
+      this.controller.signal.removeEventListener("abort", onStop);
+    }
   }
 
   private next(): { projectId: string; entry: ContextImageEntry } | undefined {
@@ -434,8 +513,6 @@ export class ContextImageBuilder {
     const signal = this.controller.signal;
     for (let next = this.next(); next && !signal.aborted; next = this.next()) {
       const { projectId, entry } = next;
-      const config = this.deps.config();
-      if (!config) return;
       entry.state = "building";
       entry.log = "";
       entry.startedAt = this.now();
@@ -446,20 +523,39 @@ export class ContextImageBuilder {
         `[daemon] context image "${entry.name}" (project "${projectName}"): building ${entry.image}`,
       );
       let failure: DaemonText | undefined;
+      // 作るのにも上限を設ける（応答しない Docker・レジストリで、後のすべてが止まらないように）
+      const limit = this.deps.buildTimeoutMs ?? CONTEXT_IMAGE_BUILD_TIMEOUT_MS;
+      const local = new AbortController();
+      const onStop = () => local.abort();
+      signal.addEventListener("abort", onStop, { once: true });
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        local.abort();
+      }, limit);
+      timer.unref?.();
       try {
         const detail = await this.deps.build(
           entry.language,
-          config.imageBuild,
+          entry.build,
           (chunk) => {
             entry.log = appendTail(entry.log, chunk);
           },
-          signal,
+          local.signal,
         );
         if (detail) failure = message("contextImage.buildFailed", { detail });
       } catch (error) {
         failure = errorText(error);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onStop);
       }
       if (signal.aborted) return;
+      if (timedOut) {
+        failure = message("contextImage.buildTimedOut", {
+          minutes: Math.max(1, Math.round(limit / 60_000)),
+        });
+      }
       entry.finishedAt = this.now();
       if (failure) {
         entry.state = "failed";
@@ -477,16 +573,21 @@ export class ContextImageBuilder {
 
   /** 使っていない、sacty が作ったコンテキストのイメージを消す。読めなかったプロジェクトがあれば消さない。 */
   private async prune(): Promise<void> {
-    if (!this.deps.removeStale || this.controller.signal.aborted) return;
+    const removeStale = this.deps.removeStale;
+    if (!removeStale || this.controller.signal.aborted || this.pruning) return;
     const projects = [...this.projects.values()];
     if (projects.some((p) => p.loadError || !p.loaded || p.loading)) return;
     if (this.refreshing.size > 0) return;
     const keep = projects.flatMap((p) => p.entries.map((e) => e.image));
-    try {
-      await this.deps.removeStale(keep);
-    } catch {
-      // 片付けられなくても、作成には関わらない
-    }
+    // 片付けている間は、読み直しが手元にあるかを確かめない（確かめた後に消さないように。load が待つ）
+    this.pruning = removeStale(keep, contextImagePrefix(this.deps.owner))
+      .catch(() => {
+        // 片付けられなくても、作成には関わらない
+      })
+      .finally(() => {
+        this.pruning = undefined;
+      });
+    await this.pruning;
   }
 }
 
@@ -524,19 +625,20 @@ export function runDockerStreaming(
   });
 }
 
-/** keep 以外の、sacty が作ったコンテキストのイメージ（名前の頭が sacty-ctx-）を消す。 */
+/**
+ * keep 以外の、このデーモンが作ったコンテキストのイメージ（名前の頭が prefix。既定は sacty-ctx-）を消す。
+ */
 export async function removeStaleContextImages(
   keep: readonly string[],
   run: (args: string[]) => Promise<{ code: number; stdout: string }>,
+  prefix: string = CONTEXT_IMAGE_REPOSITORY_PREFIX,
 ): Promise<string[]> {
   const list = await run(["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]);
   if (list.code !== 0) return [];
   const stale = list.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter(
-      (image) => image.startsWith(CONTEXT_IMAGE_REPOSITORY_PREFIX) && !image.endsWith(":<none>"),
-    )
+    .filter((image) => image.startsWith(prefix) && !image.endsWith(":<none>"))
     .filter((image) => !keep.includes(image));
   const removed: string[] = [];
   for (const image of stale) {

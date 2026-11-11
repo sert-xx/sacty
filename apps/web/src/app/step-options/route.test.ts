@@ -53,4 +53,27 @@ describe("タスクの作成で、工程ごとに選べるイメージ・エー�
     getStatus.mockRejectedValue(new Error("x"));
     expect((await GET()).status).toBe(502);
   });
+
+  it("project を指定すると、そのプロジェクトのコンテキストのイメージも返す（PBI-325）", async () => {
+    getStatus.mockResolvedValue({
+      agent: { id: "claude", runtime: "claude-code", authMode: "subscription" },
+      problems: [],
+      images: [{ name: "java", description: "Java 17" }],
+      contextImages: [
+        {
+          projectId: "p1",
+          images: [{ name: "node-pw", description: "Playwright", state: "ready" }],
+        },
+        { projectId: "p2", images: [{ name: "other", description: "別", state: "ready" }] },
+      ],
+      agents: [{ id: "claude", runtime: "claude-code" }],
+      stepAgents: {},
+    });
+    const res = await GET(new Request("http://localhost/step-options?project=p1"));
+    expect((await res.json()).images).toEqual([
+      { name: "default", description: m.task.images.defaultDescription },
+      { name: "java", description: "Java 17" },
+      { name: "node-pw", description: "Playwright" },
+    ]);
+  });
 });

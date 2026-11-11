@@ -28,11 +28,14 @@ export function ContextImagesNoticeView({
     .map((p) => ({ ...p, images: p.images.filter((i) => i.state !== "ready") }))
     .filter((p) => p.images.length > 0);
   if (shown.length === 0) return null;
-  const failed = shown.some((p) => p.images.some((i) => i.state === "failed"));
+  const all = shown.flatMap((p) => p.images);
+  const building = all.filter((i) => i.state === "building").length;
+  const queued = all.filter((i) => i.state === "queued").length;
+  const failedCount = all.filter((i) => i.state === "failed").length;
+  const failed = failedCount > 0;
   const pending = shown.some((p) => p.images.some((i) => i.state !== "failed"));
   return (
     <section
-      role={failed ? "alert" : "status"}
       aria-labelledby="sacty-context-images"
       className={`flex flex-col gap-3 rounded-xl border p-4 text-sm leading-6 ${
         failed ? "border-warn-line bg-warn-soft text-warn" : "border-border bg-muted"
@@ -41,6 +44,10 @@ export function ContextImagesNoticeView({
       <h2 id="sacty-context-images" className="font-semibold">
         {t.title}
       </h2>
+      {/* 状態の変化だけを読み上げる（5秒ごとに変わるログ・ボタンは、ライブ領域に入れない） */}
+      <p role={failed ? "alert" : "status"} className="sr-only">
+        {t.summary(building, queued, failedCount)}
+      </p>
       {shown.map((project) => (
         <div key={project.projectId} className="flex flex-col gap-2">
           <h3 className="font-medium">{t.project(project.projectName)}</h3>

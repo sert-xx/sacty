@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -208,13 +209,19 @@ const contextImageBuilder = new ContextImageBuilder({
       language,
     });
   },
-  removeStale: async (keep) => {
-    const removed = await removeStaleContextImages(keep, (args) => {
-      let stdout = "";
-      return runDockerStreaming(args, (chunk) => {
-        stdout += chunk;
-      }).then((code) => ({ code, stdout }));
-    });
+  // 同じ Docker を使う別の SACTY_HOME のデーモンのイメージを消さないよう、名前に SACTY_HOME から作った印を入れる
+  owner: createHash("sha256").update(home).digest("hex").slice(0, 8),
+  removeStale: async (keep, prefix) => {
+    const removed = await removeStaleContextImages(
+      keep,
+      (args) => {
+        let stdout = "";
+        return runDockerStreaming(args, (chunk) => {
+          stdout += chunk;
+        }).then((code) => ({ code, stdout }));
+      },
+      prefix,
+    );
     if (removed.length > 0) {
       console.log(
         `[daemon] 使わなくなったコンテキストのイメージを消しました：${removed.join("、")}`,

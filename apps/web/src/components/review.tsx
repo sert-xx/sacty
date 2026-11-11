@@ -266,6 +266,7 @@ export function ReviewView({ task }: { task: Task }) {
           </h2>
           <GateForm
             taskId={task.id}
+            projectId={task.projectId}
             step={step}
             submission={submission}
             targets={targets}

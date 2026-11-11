@@ -191,10 +191,12 @@ Images written in `images.yaml` of the project's context repository ([images.yam
   - When you save the project settings
   - Every 5 minutes (a definition you push to the context repository starts building within this interval at the latest)
 - Images that are already on the machine are not built.
+  If a built image has disappeared (`docker image prune`, for example), Sacty builds it again on the next read.
   When the definition, `image_build` in `config.yaml`, or the Sacty version changes, Sacty builds it again under a new name.
 - To keep the load on Docker down, Sacty builds them one at a time.
 - Context images that are no longer used (from old definitions or deleted projects) are removed after builds finish.
-  Images that containers use are kept.
+  Images that containers use, and images built by Sacty for another `SACTY_HOME` on the same Docker, are kept.
+- If fetching one project's context repository does not finish within 5 minutes, Sacty stops it and treats it as unreadable (other projects go ahead).
 
 ### While images are being built
 
@@ -203,6 +205,7 @@ When they are built, it goes away without reloading.
 
 While they are being built, tasks that may use those images do not start (they stay queued).
 
+- Waiting tasks do not count toward the number of tasks run at the same time (other tasks go ahead).
 - Tasks that have not chosen an image yet (before the steps are chosen) wait.
   The orchestrator chooses after the images are built, so a build in progress never leads to a mismatched image.
 - Tasks that are set to use the default image or an image in `config.yaml` do not wait.
@@ -215,6 +218,8 @@ While they are being built, tasks that may use those images do not start (they s
 "Image builds" shows the image that could not be built, the reason, the tail of the log, and "Rebuild".
 
 - Images that failed are not rebuilt automatically (so the same failure is not repeated).
+  - When you start `sacty up` again, Sacty builds them again (failures are not recorded).
+  - If building one image does not finish within 60 minutes, Sacty stops it and marks it failed (so the later images can be built).
   - For a temporary failure (such as the network), press "Rebuild".
   - For a mistake in the definition, fix `images.yaml` and push it.
     Sacty builds it again with the new definition.

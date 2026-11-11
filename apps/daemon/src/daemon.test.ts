@@ -42618,6 +42618,50 @@ describe("コンテキストのイメージ（PBI-325）", () => {
     activity.close();
   });
 
+  it("設定を読めるときの状態に、作成の状況を載せる（PBI-325 レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: false, entries: [entry("building")] });
+    const view = [
+      {
+        projectId: "default",
+        projectName: "既定",
+        loading: false,
+        warnings: [],
+        images: [
+          {
+            name: "node-pw",
+            description: "Node.js・Playwright",
+            from: "acme",
+            image: "sacty-ctx-default-node-pw:0123456789abcdef",
+            state: "building" as const,
+          },
+        ],
+      },
+    ];
+    fake.images.view = () => view;
+    const { service } = makeService(activity, [], { contextImages: fake.images });
+    expect(service.status().contextImages).toEqual(view);
+    activity.close();
+  });
+
+  it("イメージを待っているタスクは、ワーカーの実行の対象から除き、後の実行できるタスクの枠を塞がない（PBI-325 レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: true, entries: [entry("building")] });
+    const { service } = makeService(activity, [], { contextImages: fake.images });
+    const waiting = service.createTask({ projectId: "default", title: "画面のテスト" });
+    const runnable = service.createTask({
+      projectId: "default",
+      title: "文書",
+      plan: "standard",
+      image: "default",
+    });
+    expect(service.queuedTaskIds()).toEqual([waiting.id, runnable.id]);
+    expect(service.runnableTaskIds()).toEqual([runnable.id]);
+    fake.state.pending = false;
+    expect(service.runnableTaskIds()).toEqual([waiting.id, runnable.id]);
+    activity.close();
+  });
+
   it("作成時に、コンテキストのイメージの名前を指定できる。無い名前は断る", () => {
     const activity = new SqliteActivityStore(dbPath);
     const fake = fakeImages({ pending: false, entries: [entry("ready")] });

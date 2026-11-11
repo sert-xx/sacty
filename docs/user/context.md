@@ -350,14 +350,20 @@ images:
   node-pw:
     description: Node.js 26・Playwright（Chromium）。ブラウザでの動作確認ができる
     base_image: node:26-bookworm-slim
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright   # タスクの実行のときにブラウザを探す場所
     run:
       - npx -y playwright@1.61.1 install-deps chromium
-      - npx -y playwright@1.61.1 install chromium
+      - PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright npx -y playwright@1.61.1 install chromium
 ```
+
+- Playwright のブラウザは、既定ではキャッシュの場所（`XDG_CACHE_HOME`）に入ります。
+  タスクの実行のときは `XDG_CACHE_HOME` がタスクごとの場所に変わるので、イメージに入れたブラウザが見つかりません。
+  例のように、`env` とインストールのコマンドの両方で、`PLAYWRIGHT_BROWSERS_PATH` を同じ場所にしてください。
 
 - 書き方は、`config.yaml` の `images` と同じです（[言語ごとのイメージ](images.md#言語ごとのイメージ)）。
   - 作るイメージの名前（`image`）は書けません。
-    sacty が、プロジェクトと定義の中身から `sacty-ctx-<プロジェクト>-<名前>:<ハッシュ>` という名前を決めます。
+    sacty が、プロジェクトと定義の中身から `sacty-ctx-<印>-<プロジェクト>-<名前>:<ハッシュ>` という名前を決めます（`<印>` は `SACTY_HOME` ごとに決まります）。
   - `default` という名前は使えません。
 - `sacty image build` では作りません。
   `sacty up` で起動した後に、sacty が裏で作ります（[コンテキストのイメージ](images.md#コンテキストのイメージ)）。

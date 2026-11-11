@@ -320,6 +320,8 @@ const PARAMS = {
   "contextImage.configOverride": z.object({ project: z.string(), name: z.string() }),
   "contextImage.notFailed": z.object({ name: z.string() }),
   "contextImage.notFound": z.object({ name: z.string() }),
+  "contextImage.buildTimedOut": z.object({ minutes: z.number() }),
+  "contextImage.loadTimedOut": z.object({ minutes: z.number() }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   // オーケストレーターのセッションを、実行の設定の場所に戻せなかった（PBI-67）
@@ -1171,6 +1173,10 @@ const ja: MessageDictionary = {
   "contextImage.notFailed": ({ name }) =>
     `イメージ「${name}」は、作成に失敗していないので作り直せません。`,
   "contextImage.notFound": ({ name }) => `コンテキストのイメージ「${name}」がありません。`,
+  "contextImage.buildTimedOut": ({ minutes }) =>
+    `イメージの作成が${minutes}分で終わらなかったので止めました。Docker とレジストリに届くかを確かめてから作り直してください。`,
+  "contextImage.loadTimedOut": ({ minutes }) =>
+    `コンテキストリポジトリの取得が${minutes}分で終わらなかったので止めました。`,
   "run.authFileUnreadable": ({ path }) =>
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
@@ -1924,6 +1930,10 @@ const en: MessageDictionary = {
   "contextImage.notFailed": ({ name }) =>
     `The image "${name}" has not failed to build, so it cannot be rebuilt.`,
   "contextImage.notFound": ({ name }) => `There is no context image "${name}".`,
+  "contextImage.buildTimedOut": ({ minutes }) =>
+    `Building the image did not finish within ${minutes} minutes, so Sacty stopped it. Check that Docker and the registry are reachable, then rebuild.`,
+  "contextImage.loadTimedOut": ({ minutes }) =>
+    `Fetching the context repository did not finish within ${minutes} minutes, so Sacty stopped it.`,
   "run.authFileUnreadable": ({ path }) =>
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>

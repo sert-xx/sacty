@@ -7,13 +7,16 @@ import { projectImages, stepAgentOptions, stepImageOptions } from "@/lib/labels"
  * タスクの作成のダイアログ・差し戻しのフォームで、工程ごとに選べるイメージ・エージェント。ダイアログの「工程ごとに設定」・
  * 差し戻しのフォームの工程の設定の折りたたみを開いたときにだけ読む。選択肢はタスクの詳細で変えるときと同じ（設定を読めないときは、選べない理由を返す。消えた名前と取り違えないため）。
  */
-export async function GET() {
+export async function GET(request?: Request) {
   const m = await getMessages();
   const t = m.forms.task;
   try {
     const status = await getStatus();
-    // 選んでいるプロジェクト（タスクを作る・差し戻すプロジェクト）のコンテキストのイメージも選べる（PBI-325）
-    const project = await currentProjectId().catch(() => undefined);
+    // タスクを作る・差し戻すタスクのプロジェクトのコンテキストのイメージも選べる（PBI-325）。指定が無ければ、選んでいる
+    // プロジェクト
+    const project =
+      (request ? new URL(request.url).searchParams.get("project") : null) ??
+      (await currentProjectId().catch(() => undefined));
     const images = stepImageOptions(
       { problems: status.problems, images: projectImages(status, project) },
       m.task.images.defaultDescription,

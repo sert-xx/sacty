@@ -39,9 +39,14 @@ export const agentField = (step: StepKey) => `agent:${step}`;
 export async function fetchStepOptions(
   noAnswer: string,
   fetchImpl: typeof fetch = fetch,
+  /** 候補を選ぶプロジェクト（タスクを作るプロジェクト・差し戻すタスクのプロジェクト。PBI-325）。 */
+  projectId?: string,
 ): Promise<Extract<StepOptions, { status: "loaded" | "failed" }>> {
   try {
-    const res = await fetchImpl(STEP_OPTIONS_PATH, { cache: "no-store" });
+    const url = projectId
+      ? `${STEP_OPTIONS_PATH}?project=${encodeURIComponent(projectId)}`
+      : STEP_OPTIONS_PATH;
+    const res = await fetchImpl(url, { cache: "no-store" });
     const body = (await res.json().catch(() => undefined)) as
       | { images?: unknown; agents?: unknown; stepAgents?: unknown; message?: unknown }
       | undefined;
@@ -69,15 +74,26 @@ export async function fetchStepOptions(
  * 工程ごとの設定を開くたびに候補を読む（読み込み中・読めたなら読み直さない。読めなかったなら読み直す）。ダイアログを
  * 開き直したら cancel で前の読み込みの結果を捨てる（遅れて届いた結果で、今の状態を上書きしない）。
  */
-export function stepOptionsLoader(load = fetchStepOptions) {
+export function stepOptionsLoader(
+  load: (
+    noAnswer: string,
+    fetchImpl?: typeof fetch,
+    projectId?: string,
+  ) => Promise<Extract<StepOptions, { status: "loaded" | "failed" }>> = fetchStepOptions,
+) {
   let latest = 0;
   let state: StepOptions["status"] = "idle";
-  const start = (noAnswer: string, set: (options: StepOptions) => void): void => {
+  const start = (
+    noAnswer: string,
+    set: (options: StepOptions) => void,
+    /** 候補を選ぶプロジェクト（PBI-325）。 */
+    projectId?: string,
+  ): void => {
     if (state === "loading" || state === "loaded") return;
     const current = ++latest;
     state = "loading";
     set({ status: "loading" });
-    void load(noAnswer).then((result) => {
+    void load(noAnswer, undefined, projectId).then((result) => {
       if (latest !== current) return;
       state = result.status;
       set(result);
