@@ -1,45 +1,96 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkLink, findOnPath, globalPrefix } from "../../scripts/cli-install.mjs";
+import {
+  checkPath,
+  findOnPath,
+  globalPrefix,
+  LAUNCHER_MARK,
+  launcherDir,
+  launcherScript,
+} from "../../scripts/cli-install.mjs";
 
-const expected = "/repo/packages/cli/bin/sacty.js";
-const globalBin = "/usr/local/bin/sacty";
+describe("launcherScript", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
-describe("checkLink", () => {
-  it("グローバルの bin と PATH の sacty がこのリポジトリを指せば、誤りも注意も無い", () => {
-    const resolveReal = () => expected;
-    expect(checkLink({ expected, globalBin, onPath: globalBin, resolveReal })).toEqual({
-      errors: [],
+  it("書いた Node.js で、引数をそのまま渡して sacty を動かす（PATH の node は使わない。パスの空白・引用符・$ も崩さない）", () => {
+    const root = mkdtempSync(join(tmpdir(), "sacty-launcher-"));
+    dirs.push(root);
+    const odd = join(root, `my "repo" $HOME 'x'`);
+    mkdirSync(odd);
+    // 引数と、どの node で動いたかを出す偽の Node.js と entry
+    const node = join(odd, "node");
+    writeFileSync(node, '#!/bin/sh\nprintf "%s\\n" "real-node" "$@"\n');
+    chmodSync(node, 0o755);
+    const entry = join(odd, "sacty.js");
+    writeFileSync(entry, "");
+    const launcher = join(root, "sacty");
+    writeFileSync(launcher, launcherScript({ node, entry, repo: odd }), { mode: 0o755 });
+    const wrongNode = join(root, "path-bin");
+    mkdirSync(wrongNode);
+    writeFileSync(join(wrongNode, "node"), "#!/bin/sh\necho wrong-node\nexit 42\n");
+    chmodSync(join(wrongNode, "node"), 0o755);
+    const run = spawnSync(launcher, ["launch", "acme", "--", "a b"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${wrongNode}${delimiter}${process.env.PATH ?? ""}` },
+    });
+    expect(run.status).toBe(0);
+    expect(run.stdout.split("\n").filter(Boolean)).toEqual([
+      "real-node",
+      entry,
+      "launch",
+      "acme",
+      "--",
+      "a b",
+    ]);
+    expect(readFileSync(launcher, "utf8")).toContain(LAUNCHER_MARK);
+  });
+
+  it("書いた Node.js が無くなったら、npm run cli:install のやり直しを知らせて失敗する", () => {
+    const root = mkdtempSync(join(tmpdir(), "sacty-launcher-"));
+    dirs.push(root);
+    const launcher = join(root, "sacty");
+    writeFileSync(
+      launcher,
+      launcherScript({ node: join(root, "gone"), entry: join(root, "x.js"), repo: root }),
+      { mode: 0o755 },
+    );
+    const run = spawnSync(launcher, ["--version"], { encoding: "utf8" });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("npm run cli:install をやり直してください");
+  });
+});
+
+describe("launcherDir", () => {
+  it("SACTY_BIN_DIR があればそこ、無ければ ~/.local/bin", () => {
+    expect(launcherDir({ env: {}, home: "/home/u" })).toBe("/home/u/.local/bin");
+    expect(launcherDir({ env: { SACTY_BIN_DIR: "/opt/bin" }, home: "/home/u" })).toBe("/opt/bin");
+  });
+});
+
+describe("checkPath", () => {
+  const launcher = "/home/u/.local/bin/sacty";
+
+  it("PATH で最初に見つかるのが置いた入口なら、注意は無い", () => {
+    expect(checkPath({ launcher, onPath: launcher, resolveReal: (p: string) => p })).toEqual({
       warnings: [],
     });
   });
 
-  it("グローバルの bin がこのリポジトリを指さなければ誤りにする（前の clone のまま・別のパッケージ）", () => {
-    const resolveReal = () => "/old/packages/cli/bin/sacty.js";
-    const result = checkLink({ expected, globalBin, onPath: globalBin, resolveReal });
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toContain("/old/packages/cli/bin/sacty.js");
-  });
-
-  it("PATH に無い・PATH で先に別の sacty が見つかるときは、注意にする", () => {
-    const missing = checkLink({
-      expected,
-      globalBin,
-      onPath: undefined,
-      resolveReal: () => expected,
-    });
-    expect(missing.errors).toEqual([]);
+  it("PATH に無い・PATH で先に別の sacty（前のやり方の npm link など）が見つかるときは、注意にする", () => {
+    const missing = checkPath({ launcher, onPath: undefined, resolveReal: (p: string) => p });
     expect(missing.warnings[0]).toContain("PATH にありません");
-    const shadowed = checkLink({
-      expected,
-      globalBin,
-      onPath: "/opt/other/sacty",
-      resolveReal: (p: string) => (p === globalBin ? expected : p),
+    const shadowed = checkPath({
+      launcher,
+      onPath: "/mise/installs/node/20/bin/sacty",
+      resolveReal: (p: string) => p,
     });
-    expect(shadowed.errors).toEqual([]);
-    expect(shadowed.warnings[0]).toContain("/opt/other/sacty");
+    expect(shadowed.warnings[0]).toContain("/mise/installs/node/20/bin/sacty");
   });
 });
 

@@ -4,7 +4,7 @@
 
 # CLI (the sacty command)
 
-Run it as `npx sacty <command>` (inside the sacty repository). If you install it with `npm run cli:install`, you can use it as `sacty <command>` in any directory ([Getting started](getting-started.en.md#using-sacty-in-any-directory)). `npx sacty --help` (`-h`) shows the usage, and `npx sacty --version` shows the version. If you specify an unknown command, it shows the usage and exits with a failure.
+Run it as `npx sacty <command>` (inside the sacty repository). If you install it with `npm run cli:install`, you can use it as `sacty <command>` in any directory ([Getting started](getting-started.en.md#using-sacty-in-any-directory)). `npx sacty --help` (`-h`) shows the usage, and `npx sacty --version` shows the version. `--help` and `--version` show the usage or the version without running the command, whichever command they follow (those written after `--` of `sacty launch` are passed to the AI CLI). If you specify an unknown command, it shows the usage and exits with a failure.
 
 ## sacty up
 

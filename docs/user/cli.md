@@ -7,6 +7,7 @@
 `npx sacty <コマンド>` で使います（sacty のリポジトリの中で）。
 `npm run cli:install` で入れれば、どのディレクトリでも `sacty <コマンド>` で使えます（[はじめに](getting-started.md#どのディレクトリでも-sacty-を使う)）。
 `npx sacty --help`（`-h`）で使い方を、`npx sacty --version` で版を表示します。
+`--help`・`--version` は、どのコマンドの後ろに付けても、そのコマンドを実行せずに使い方・版を出します（`sacty launch` の `--` の後ろに書いたものは、AI の CLI に渡します）。
 知らないコマンドを指定すると、使い方を表示して失敗で終わります。
 
 ## sacty up

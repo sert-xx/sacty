@@ -16,12 +16,14 @@ Related ADRs: none
 | `packages/cli` | `sacty` command | Commands such as `sacty up`, and the Dockerfile of the image for running agents (`packages/cli/docker/Dockerfile`) | `@sacty/core`, `@sacty/daemon`, `@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | The desktop app for macOS (Electron). It runs the `sacty` command as a separate process and displays the web UI ([Desktop app](desktop.en.md)) | None (packaging bundles the build output of cli, daemon, and web) |
 
-`npm run cli:install` (in the root `package.json`; the checks are `checkLink`, `findOnPath`, and `globalPrefix` in `scripts/cli-install.mjs`) builds and then runs `npm link` on `packages/cli`, putting the `sacty` command in npm's global bin (the link points to `packages/cli`).
-npm's global location is taken from the environment variable `npm_config_global_prefix` that `npm run` passes (npm masks strings shaped like a UUID in its own output as `***`, so the output of `npm prefix -g` cannot be used when the path contains a UUID). Only when the variable is missing (the script was run directly) does it use `npm prefix -g`.
-After installing, it checks the following.
-- The `sacty` in npm's global bin points to this repository's `packages/cli/bin/sacty.js`. Otherwise exit code 1.
-- Its `sacty --version` (which shows the version in `packages/cli/package.json`) matches this repository's version. Otherwise exit code 1.
-- The first `sacty` found in `PATH` points to this repository. It gives a warning when npm's global bin is not in `PATH` or another `sacty` comes first (the exit code is 0).
+`npm run cli:install` (in the root `package.json`; the processing is `launcherScript`, `launcherDir`, `checkPath`, `findOnPath`, and `globalPrefix` in `scripts/cli-install.mjs`) builds and then places a launcher (a shell script) for `sacty`.
+- The location is `SACTY_BIN_DIR`, or `~/.local/bin` if unset (a place independent of the Node.js version; it is not placed in npm's global bin, which tools such as mise split per version).
+- The launcher runs this repository's `packages/cli/bin/sacty.js` with the absolute path of the Node.js that ran the script (`process.execPath`, the version that mise or a similar tool chose in the sacty repository). It does not use `node` from `PATH`, so sacty runs with this Node.js even when the Node.js version differs per directory.
+- If the launcher's Node.js or `sacty.js` is gone, the launcher tells you to run `npm run cli:install` again and exits with exit code 1.
+- If the location has a file or link without the launcher's mark (`LAUNCHER_MARK`), it does not overwrite it and exits with exit code 1. The launcher is written next to it and then replaces it.
+- If `@sacty/cli` installed with the previous approach (`npm link`) in the current Node.js's npm global points to this repository, it is removed with `npm rm -g @sacty/cli` (ones from other repositories are left alone). npm's global location is taken from the environment variable `npm_config_global_prefix` that `npm run` passes (npm masks strings shaped like a UUID in its own output as `***`, so the output of `npm prefix -g` cannot be used when the path contains a UUID). Only when the variable is missing (the script was run directly) does it use `npm prefix -g`.
+- After placing it, it checks that the launcher's `sacty --version` (which shows the version in `packages/cli/package.json`) matches this repository's version (otherwise exit code 1). It gives a warning when the first `sacty` found in `PATH` is not the placed launcher or the location is not in `PATH` (the exit code is 0).
+- It cannot be used on Windows (exit code 1).
 
 Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/package.json`, `packages/cli/package.json`, `apps/desktop/package.json`, `packages/cli/src/index.ts` (`main`)
 
