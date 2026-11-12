@@ -41068,6 +41068,47 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
     expect(readdirSync(join(repoDir(), "references"))).toEqual([`${moving?.id}.md`]);
   });
 
+  it("監査の後に中止したタスクのメモリーも、起動のときに上限を超えれば消し、人も消せる（PBI-335）", async () => {
+    const { service, activity, audit } = setup();
+    audit.register = () => [{ ...memory, title: "古い知見" }];
+    const a = await completeAndAudit(service, "A");
+    audit.register = () => [{ ...memory, title: "新しい知見" }];
+    const b = await completeAndAudit(service, "B");
+    audit.register = () => [{ ...memory, title: "人が消す知見" }];
+    const c = await completeAndAudit(service, "C");
+    const older = service.get(a)?.task.audit?.memories[0];
+    const newer = service.get(b)?.task.audit?.memories[0];
+    const byPerson = service.get(c)?.task.audit?.memories[0];
+    // 監査の後に、レビューのやり直しなどで中止になった
+    for (const id of [a, c]) {
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [{ actor: "person", event: { type: "TaskCancelled", payload: { cleanup: [] } } }],
+      });
+    }
+
+    const restarted = makeService(new SqliteActivityStore(dbPath), [], {
+      audit: true,
+      memory: true,
+      memoryLimit: 2,
+    }).service;
+    expect(restarted.get(a)?.task.status).toBe("cancelled");
+    expect(() => restarted.syncMemories()).not.toThrow();
+    expect(restarted.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("capacity");
+    expect(restarted.get(a)?.task.status).toBe("cancelled");
+    expect(readdirSync(join(projectDir(), "references")).sort()).toEqual(
+      [`${newer?.id}.md`, `${byPerson?.id}.md`].sort(),
+    );
+    restarted.deleteAuditMemory(byPerson?.id ?? "");
+    expect(restarted.get(c)?.task.audit?.memories[0]?.deleted?.reason).toBe("person");
+    expect(readdirSync(join(projectDir(), "references"))).toEqual([`${newer?.id}.md`]);
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      type: "AuditMemoryDeleted",
+      payload: { memoryId: older?.id, reason: "capacity" },
+    });
+  });
+
   it("別の監査が先に移していれば、記録の時点で移さない（PR #138 レビュー指摘）", async () => {
     const { service, activity, executor, audit } = setup({ held: true });
     audit.register = () => [memory];
