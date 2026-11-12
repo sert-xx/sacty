@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-12（UTC）
 - タスク: PBI-334
-- PR: なし
+- PR: #354
 - ブランチ: claude/kind-hawking-3yd1ju
 - 関係する ADR: [人が sacty の PR に足したコミットを作業領域に取り込み、人が直した PR の本文を3方向でマージして残す](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
 
