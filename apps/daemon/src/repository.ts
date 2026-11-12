@@ -956,11 +956,21 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           message("git.failed", { command: "write-tree", detail: "unexpected output" }),
         );
       }
-      // 外すパスがあれば、共通の祖先と target を、そのパスを除いたツリーにしてマージする（作業領域の側からも除く）
+      // 外すパスがあれば、共通の祖先と target を、そのパスを除いたツリーにしてマージする（作業領域の側からも除く）。ツリーの
+      // 加工は別の一時インデックスで行う（作業領域のファイルの状態を持つインデックスを読み替えると、最後の read-tree -m -u が
+      // 作業領域のファイルを最新でないと見なして失敗する）
       const exclude = input.exclude ?? [];
+      const side = exclude.length > 0 ? mkdtempSync(join(tmpdir(), "sacty-git-")) : undefined;
+      const sideRun = (label: string, args: string[]) =>
+        git(
+          label,
+          // rm は作業ツリーを要るが、--cached なので作業領域のファイルには触れない
+          ["--git-dir", input.gitDir, "--work-tree", input.dir, ...SAFE_CONFIG, ...args],
+          isolatedEnv(join(side ?? "", "index")),
+        );
       const without = async (treeish: string) => {
-        await run("read-tree", ["read-tree", treeish]);
-        await run("rm", [
+        await sideRun("read-tree", ["read-tree", treeish]);
+        await sideRun("rm", [
           "rm",
           "--cached",
           "-r",
@@ -969,78 +979,79 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           "--",
           ...exclude.map((p) => `:(literal)${p}`),
         ]);
-        return (await run("write-tree", ["write-tree"])).trim();
+        return (await sideRun("write-tree", ["write-tree"])).trim();
       };
-      const mergeBaseTree = exclude.length > 0 ? await without(input.base) : input.base;
-      const targetTree = exclude.length > 0 ? await without(input.target) : input.target;
-      const mineTree = exclude.length > 0 ? await without(mine) : mine;
-      // 最後の read-tree -m -u は、インデックスが作業領域の内容（mine）であることを前提にする
-      if (exclude.length > 0) await run("read-tree", ["read-tree", mine]);
-      // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
-      // 目印を入れたファイルを含む結果のツリーができる
-      const merged = await gitResult(
-        [
-          "--git-dir",
-          input.gitDir,
-          ...SAFE_CONFIG,
-          "merge-tree",
-          "--write-tree",
-          "--no-messages",
-          "--name-only",
-          "-z",
-          `--merge-base=${mergeBaseTree}`,
-          mineTree,
-          targetTree,
-        ],
-        isolatedEnv("/dev/null"),
-      );
-      // 129 は使い方の誤り（--write-tree が無い古い git）
-      if (merged.code === 129) throw new MessageError(message("git.mergeTreeUnsupported"));
-      if (merged.code !== 0 && merged.code !== 1) {
-        throw new MessageError(
-          message("git.failed", {
-            command: "merge-tree",
-            detail: merged.err || `exit ${merged.code}`,
-          }),
+      try {
+        const mergeBaseTree = exclude.length > 0 ? await without(input.base) : input.base;
+        const targetTree = exclude.length > 0 ? await without(input.target) : input.target;
+        const mineTree = exclude.length > 0 ? await without(mine) : mine;
+        // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
+        // 目印を入れたファイルを含む結果のツリーができる
+        const merged = await gitResult(
+          [
+            "--git-dir",
+            input.gitDir,
+            ...SAFE_CONFIG,
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--name-only",
+            "-z",
+            `--merge-base=${mergeBaseTree}`,
+            mineTree,
+            targetTree,
+          ],
+          isolatedEnv("/dev/null"),
         );
-      }
-      const [tree, ...names] = merged.out.split("\0").filter((x) => x !== "");
-      if (!tree || !COMMIT_RE.test(tree)) {
-        throw new MessageError(
-          message("git.failed", { command: "merge-tree", detail: "unexpected output" }),
-        );
-      }
-      const conflicts = [...new Set(names)];
-      // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
-      if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
-        throw new MessageError(
-          message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
-        );
-      }
-      // 外したパスは、作業領域の内容（mine）のものを戻す（マージの結果のツリーには無い）
-      let result = tree;
-      if (exclude.length > 0) {
-        await run("read-tree", ["read-tree", tree]);
-        const listed = await run("ls-tree", ["ls-tree", "-r", "-z", mine, "--", ...exclude]);
-        for (const entry of listed.split("\0").filter(Boolean)) {
-          const match = entry.match(/^(\d+) (?:blob|commit) ([0-9a-f]+)\t(.+)$/s);
-          if (!match) continue;
-          await run("update-index", [
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            `${match[1]},${match[2]},${match[3]}`,
-          ]);
+        // 129 は使い方の誤り（--write-tree が無い古い git）
+        if (merged.code === 129) throw new MessageError(message("git.mergeTreeUnsupported"));
+        if (merged.code !== 0 && merged.code !== 1) {
+          throw new MessageError(
+            message("git.failed", {
+              command: "merge-tree",
+              detail: merged.err || `exit ${merged.code}`,
+            }),
+          );
         }
-        result = (await run("write-tree", ["write-tree"])).trim();
-        await run("read-tree", ["read-tree", mine]);
+        const [tree, ...names] = merged.out.split("\0").filter((x) => x !== "");
+        if (!tree || !COMMIT_RE.test(tree)) {
+          throw new MessageError(
+            message("git.failed", { command: "merge-tree", detail: "unexpected output" }),
+          );
+        }
+        const conflicts = [...new Set(names)];
+        // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
+        if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
+          throw new MessageError(
+            message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
+          );
+        }
+        // 外したパスは、作業領域の内容（mine）のものを戻す（マージの結果のツリーには無い）
+        let result = tree;
+        if (exclude.length > 0) {
+          await sideRun("read-tree", ["read-tree", tree]);
+          const listed = await sideRun("ls-tree", ["ls-tree", "-r", "-z", mine, "--", ...exclude]);
+          for (const entry of listed.split("\0").filter(Boolean)) {
+            const match = entry.match(/^(\d+) (?:blob|commit) ([0-9a-f]+)\t(.+)$/s);
+            if (!match) continue;
+            await sideRun("update-index", [
+              "update-index",
+              "--add",
+              "--cacheinfo",
+              `${match[1]},${match[2]},${match[3]}`,
+            ]);
+          }
+          result = (await sideRun("write-tree", ["write-tree"])).trim();
+        }
+        // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
+        if (result !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, result]);
+        return {
+          status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
+          conflicts,
+        };
+      } finally {
+        if (side) rmSync(side, { recursive: true, force: true });
       }
-      // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
-      if (result !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, result]);
-      return {
-        status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
-        conflicts,
-      };
     });
   }
 
