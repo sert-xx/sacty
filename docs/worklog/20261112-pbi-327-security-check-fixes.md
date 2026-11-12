@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-12（UTC）
 - タスク: PBI-327
-- PR: なし
+- PR: #342
 - ブランチ: feat/issue-327-security-check-fixes
 - 関係する ADR: なし
 
