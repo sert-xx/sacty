@@ -158,6 +158,38 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
     expect(() => project(events)).toThrow(ActivityIntegrityError);
   });
 
+  it("監査の後に中止したタスクでも、登録したメモリーは消せる。ほかの監査の記録は足せない（PBI-335）", () => {
+    const registered = [
+      ...completed(),
+      ev("AuditQueued", { auditId: "a1", capUsd: 1 }),
+      surveyed([{ step: "document", reason: "r" }]),
+      ev("AuditDeepDived", {
+        auditId: "a1",
+        step: "document",
+        summary: "",
+        findings: [],
+        memories: [{ id: "m1", scope: "project", title: "t", summary: "s", body: "b" }],
+        ...run,
+      }),
+      ev("AuditCompleted", { auditId: "a1" }),
+      ev("TaskCancelled", { cleanup: [] }),
+    ];
+    const deleted = [
+      ...registered,
+      ev("AuditMemoryDeleted", { memoryId: "m1", reason: "capacity" }),
+    ];
+    const task = project(deleted).get("t1");
+    expect(task?.status).toBe("cancelled");
+    expect(task?.audit?.memories[0]?.deleted).toMatchObject({ reason: "capacity" });
+    // 消したメモリーをもう一度は消せない。提案の判断など、ほかの監査の記録は足せない
+    expect(() =>
+      project([...deleted, ev("AuditMemoryDeleted", { memoryId: "m1", reason: "expired" })]),
+    ).toThrow(ActivityIntegrityError);
+    expect(() =>
+      project([...registered, ev("AuditProposalRejected", { proposalId: "x", reason: "r" })]),
+    ).toThrow(/the task is cancelled/);
+  });
+
   it("提案の判断は1回だけ。予算で止めて上限を上げると、止まりが外れる", () => {
     const finding = {
       causeKey: "k",

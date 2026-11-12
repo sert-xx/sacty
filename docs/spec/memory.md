@@ -39,6 +39,7 @@
 正本は作業履歴。
 デーモンは、登録を深掘りの結果（`AuditDeepDived` の `memories`）に、削除を `AuditMemoryDeleted`（`memoryId`・`reason`）に記録する。
 どちらも、メモリーを登録した監査のタスクの作業履歴に追記する。
+監査の後にそのタスクが中止になっていても、削除は同じタスクに追記する（中止したタスクにも `AuditMemoryDeleted` は追記できる）。
 `reason` は次のどれか。
 
 | 値 | 消した理由 |

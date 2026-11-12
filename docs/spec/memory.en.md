@@ -30,7 +30,7 @@ Code: `apps/daemon/src/memory.ts` (`memoryLayerDir`, `repositoryMemoryKey`, `ren
 
 ## Source of truth and writing
 
-The activity log is the source of truth. The daemon records registrations in the deep-dive result (`memories` of `AuditDeepDived`) and deletions in `AuditMemoryDeleted` (`memoryId`, `reason`). It appends both to the activity log of the audited task that registered the memory. `reason` is one of the following.
+The activity log is the source of truth. The daemon records registrations in the deep-dive result (`memories` of `AuditDeepDived`) and deletions in `AuditMemoryDeleted` (`memoryId`, `reason`). It appends both to the activity log of the audited task that registered the memory. Even if that task was cancelled after the audit, it appends the deletion to the same task (`AuditMemoryDeleted` can be appended to a cancelled task). `reason` is one of the following.
 
 | Value | Why it was deleted |
 | --- | --- |

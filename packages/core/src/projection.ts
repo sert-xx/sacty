@@ -1280,10 +1280,13 @@ export function applyEvent(
   if (!current) throw new ActivityIntegrityError(event, "unknown task");
   // 写したエージェントのファイルの記録（PBI-66）は、中止の後にも受け付ける（中止で止めた実行の後に写すため）
   // オーケストレーターのセッションの記録（PBI-67）も同じ（中止で止めた実行の後に記録する）
+  // 監査が登録したメモリーの削除（PBI-126）も受け付ける（監査の後に中止したタスクのメモリーも、上限・残す日数・昇格・人の
+  // 操作で消す。タスクの状態は変えない。受け付けないと、起動のときの削除でデーモンが起動できなくなる。PBI-335）
   if (
     current.status === "cancelled" &&
     event.type !== "AgentSessionArchived" &&
-    event.type !== "OrchestratorSessionUsed"
+    event.type !== "OrchestratorSessionUsed" &&
+    event.type !== "AuditMemoryDeleted"
   ) {
     throw new ActivityIntegrityError(event, "the task is cancelled");
   }
