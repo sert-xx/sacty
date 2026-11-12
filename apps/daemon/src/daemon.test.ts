@@ -182,7 +182,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const ja = (text: unknown) => renderMessage(text, "ja");
 
 /**
- * 以前の版（最終レビュー・CI の待ちがあった版）が台帳に残した記録を、タスクに足す（PBI-334。今の版では作らない記録の
+ * 以前の版（最終レビュー・CI の待ちがあった版）が台帳に残した記録を、タスクに足す（PBI-336。今の版では作らない記録の
  * 読み込みと、新しい流れへの移行を確かめるため）。
  */
 function appendLegacy(
@@ -9043,7 +9043,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
-  it("sacty はテストを実行せず、最終レビューもせずに、実装の工程の中で PR を作って実装の承認待ちで止まる（PBI-334）", async () => {
+  it("sacty はテストを実行せず、最終レビューもせずに、実装の工程の中で PR を作って実装の承認待ちで止まる（PBI-336）", async () => {
     const { activity, service, executor, id } = await toImplement([implement("# 実装の説明")]);
     await drain(service);
 
@@ -10538,7 +10538,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     });
   });
 
-  it("実装の承認待ちで差し戻すと、実装をやり直して同じPRを更新する。最終レビューをしないので見逃しは記録しない（PBI-10b・PBI-334）", async () => {
+  it("実装の承認待ちで差し戻すと、実装をやり直して同じPRを更新する。最終レビューをしないので見逃しは記録しない（PBI-10b・PBI-336）", async () => {
     const { activity, service, executor, repos, pulls, id } = await toImplementGate([
       out(
         [
@@ -10625,7 +10625,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
-  describe("以前の版の最終レビューで止まったタスク（PBI-334）", () => {
+  describe("以前の版の最終レビューで止まったタスク（PBI-336）", () => {
     it("検証が続けて通らずに止まったタスクは、人がレビューへ進められ、最終レビューをせずに実装の PR を作って承認待ちにする", async () => {
       const { activity, service, pulls, executor, id } = await toImplement([implement("# 実装 1")]);
       await service.runNext(id); // 実装
@@ -10759,7 +10759,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
           "全体として、失敗時のログが足りない",
         ],
       });
-      // 最終レビューをしないので、見逃しは記録しない（PBI-334）
+      // 最終レビューをしないので、見逃しは記録しない（PBI-336）
       expect(events.slice(-2).map((e) => [e.type, e.actor])).toEqual([
         ["ReworkJudged", "agent"],
         ["ChangesRequested", "person"],
@@ -11021,7 +11021,7 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await service.checkPullRequests();
       const events = service.get(id)?.activity ?? [];
       expect(events.some((e) => e.type === "TaskEscalated")).toBe(false);
-      // 最終レビューをしないので、見逃しは記録しない（PBI-334）
+      // 最終レビューをしないので、見逃しは記録しない（PBI-336）
       expect(events.slice(-2).map((e) => [e.type, e.actor])).toEqual([
         ["ReworkJudged", "agent"],
         ["ChangesRequested", "person"],
@@ -14408,7 +14408,7 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     activity.close();
   });
 
-  it("テストのコマンドが分からなくても、sacty はテストを実行しないので止めずに進める。調査だけのタスクも止めない（PBI-334）", async () => {
+  it("テストのコマンドが分からなくても、sacty はテストを実行しないので止めずに進める。調査だけのタスクも止めない（PBI-336）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(
       activity,
@@ -31285,7 +31285,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
-  it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストの無いタスクとして記録しない。sacty はテストを実行しないので、止めずに進める（PBI-334）", async () => {
+  it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストの無いタスクとして記録しない。sacty はテストを実行しないので、止めずに進める（PBI-336）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [plan(), out("# 要求要件")], {
       realPlanner: true,

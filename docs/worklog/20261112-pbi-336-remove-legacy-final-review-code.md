@@ -1,9 +1,9 @@
 # 以前の版の最終レビューの仕組み（依存 `finalReview`）のコードを消す
 
 - 日付: 2026-11-12（UTC）
-- タスク: PBI-334
+- タスク: PBI-336
 - PR: #355
-- ブランチ: feat/issue-334-remove-final-review
+- ブランチ: feat/issue-334-remove-final-review（PBI の番号が PR #354 と重なったので 336 にした。開いている PR のブランチなので名前は変えていない）
 - 関係する ADR: [以前の版の最終レビューの仕組み（依存 `finalReview`）のコードを消す](../adr/20261112-1420-remove-legacy-final-review-code.md)
 
 ## 目的
