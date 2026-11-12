@@ -36,16 +36,11 @@
 - `cn@0.4.0`：npm の登録者は shadcn、SLSA の provenance は `github.com/shadcn-ui/cn` の `release.yml`（main）でビルドされたもの。`npm audit signatures` で、署名と attestation が検証できた。
 - Node.js 26.12.1（`mise exec`）で `npm run lint`・`npm run typecheck`・`npx vitest run`。
 
-## セルフレビューの指摘と対応
-
-| 指摘 | 対応 |
-| --- | --- |
-| `;` を区切りに使う上流では、`?a=1;_method=DELETE` が通る | `;` も区切りとして読み、テストを足した |
-
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
+| セルフレビュー：`;` を区切りに使う上流では、`?a=1;_method=DELETE` が通る | `;` も区切りとして読み、テストを足した |
 | `?%20_method=`・`?_method%00x=` は判定を通るが、PHP は名前の先頭の空白を除き、NUL で切るので `_method` と読む | NUL より後ろを捨て、前後の空白を除いてから比べ、テストを足した（修正を戻すと失敗する） |
 | 仕様書の判定の順が、実装（クエリの検査が `allow` の照合より先）と合わない | 日英の仕様書に判定の順を書き、項目の並びも合わせた |
 | レビューの環境で `git merge-tree` の `--merge-base` が無い・全件のテストが時間切れ | レビューの環境の git の版と時間の上限によるもので、この PR の変更とは関係しない。手元で全件を確かめた |
