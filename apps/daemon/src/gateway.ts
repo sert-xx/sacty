@@ -65,6 +65,28 @@ const DROP_REQUEST = new Set([
 ]);
 /** 転送しないリクエストのヘッダーか。`_` の綴りも同じに扱う（CGI などの上流は `-` と `_` を区別しない）。 */
 const dropsRequestHeader = (name: string) => DROP_REQUEST.has(name.replaceAll("_", "-"));
+/**
+ * メソッドを上書きするクエリの名前（`-`・`_`・`.`・空白をそろえ、小文字にした形）。上流が解釈すると、ヘッダーと同じく
+ * 確かめたメソッドと違う操作になる（PBI-327）。
+ */
+const METHOD_OVERRIDE_QUERY = new Set([
+  "-method",
+  "x-http-method-override",
+  "x-http-method",
+  "x-method-override",
+]);
+/**
+ * クエリにメソッドを上書きする名前があるか。名前はデコードしてから比べ、`_method[]` のような配列の形も見る。
+ * `.`・空白も比べる前にそろえる（PHP は名前の `.`・空白を `_` に変える）。`;` も区切りとして読む（区切りに使う上流がある）。
+ */
+export function overridesMethodInQuery(query: string): boolean {
+  if (!query) return false;
+  for (const key of new URLSearchParams(query.slice(1).replaceAll(";", "&")).keys()) {
+    const name = key.replace(/\[.*$/, "").toLowerCase().replace(/[_. ]/g, "-");
+    if (METHOD_OVERRIDE_QUERY.has(name)) return true;
+  }
+  return false;
+}
 /** 転送しない応答のヘッダー（fetch が展開した後の本文を流すので、長さ・圧縮は付け直させる）。 */
 const DROP_RESPONSE = new Set([
   "content-encoding",
@@ -513,6 +535,14 @@ export class AiGateway {
         res,
         400,
         `sacty gateway: the path "${target.path}" changes when sent as a URL (remove characters such as #)`,
+      );
+    }
+    // クエリの _method などは送らずに断る。取り除いて送ると、判定したクエリと送るクエリが変わる
+    if (overridesMethodInQuery(target.query)) {
+      return fail(
+        res,
+        400,
+        `sacty gateway: query parameters that override the HTTP method (such as _method) are not relayed for "${platform.name}"`,
       );
     }
     if (run.readOnly && method !== "GET" && method !== "HEAD") {
