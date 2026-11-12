@@ -39,8 +39,8 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 | `run_timeout.agent_minutes` | `30` | Limit of one agent run (minutes; an integer from 1 to 720; PBI-150). When it passes, the container is stopped and the run times out (`run.timeout`) ([Agent execution](agent-execution.en.md#container)) |
-| `run_timeout.test_minutes` | `20` | The amount added to the limit of the roles that run tests (`final-review`, `reproduce`, `review`) (minutes; an integer from 1 to 720). Without a `roles` override for that role, the limit is `agent_minutes` + `test_minutes` ([Agent execution](agent-execution.en.md#container)) |
-| `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `gather`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors |
+| `run_timeout.test_minutes` | `20` | The amount added to the limit of the roles that run tests (`reproduce`, `review`; this also includes the earlier version's final review role `final-review`, which no longer runs) (minutes; an integer from 1 to 720). Without a `roles` override for that role, the limit is `agent_minutes` + `test_minutes` ([Agent execution](agent-execution.en.md#container)) |
+| `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `gather`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors. `guardian` and `final-review` are roles from earlier versions; writing them is not an error, but they are no longer used |
 | `update_check` | `true` | Check for a newer sacty (the latest GitHub release) and tell the web UI. `false` does not contact GitHub (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-for-a-newer-version)) |
 
 The following are also errors.
@@ -110,7 +110,7 @@ The items of `agents` in `config.yaml` (`AgentFile`) are as follows.
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
 | `fallback` | The names of the agents used instead when a run fails (for any reason) (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
 | `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
-| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the final review, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
+| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
 
 - For a name that is in the defaults, only the items written are laid over the default (items not written keep the default). A name not in the defaults adds that agent.
 - Writing `auth`, `provider`, or `via_gateway` on an agent is an error. Writing `price_per_mtok_usd` on an agent other than `stub` is also an error (`config.agentLegacyKey`). That error says to write them in `auth`, `via_gateway`, and `available_models` of `providers`. The former format is not converted automatically.

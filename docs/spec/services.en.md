@@ -2,24 +2,19 @@
 
 # Services (docker compose)
 
-When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the agent containers (steps, and the final review that runs the tests) to their network. Agents are not given Docker permissions. The compose file is either the target repository's own or a shared compose (in another repository) written in the project, never both.
+When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the step agent containers to their network. Agents are not given Docker permissions. The compose file is either the target repository's own or a shared compose (in another repository) written in the project, never both.
 
 Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md), [Information gathering sorts the services needed for tests and manual checks; the Orchestrator starts only the dependencies based on it, and the step starts the target apps inside its container](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)
 
 ## When services start
 
 - The Orchestrator decides which services of which compose file are used in which step when it chooses the steps ([Tasks and steps](tasks-and-steps.en.md)). The steps that can use them are `investigate` (only when investigating a bug), `reproduce`, and `implement`. It chooses dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. It is told not to choose services that run this repository's code (the apps the step changes or checks); the step agent starts those inside its container and connects them to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (instructions; not enforced). If the information gathering summary has a grouping, the Orchestrator bases its choice on it and settles it after checking the compose file and other files ([Tasks and steps](tasks-and-steps.en.md#execution-environment-and-services)).
-- The instructions for a step (and the final review that runs the tests) add, along with the service connection details, that this repository's apps are started inside the container without docker and connected to the services (`servicePromptLines`).
+- The instructions for a step add, along with the service connection details, that this repository's apps are started inside the container without docker and connected to the services (`servicePromptLines`).
 - Services start for each step agent run, and are removed afterward.
-- In verifying the implementation, a final review with a test (verification) command works as follows.
-  - The Implementation step's services start before the final review agent runs. The workspace is the implementation's workspace. `forTests` of `ServicesStarted` is `true`, meaning a start for the verification (the tests in the final review).
-  - The final review agent's container is connected, and the connection details are added to the prompt.
-  - When the run ends, the services are removed.
-  - If they cannot start, the task is paused without running the final review agent (`verify.testsUnavailable`). Resuming redoes the final review.
-  - If a person stops the task while it waits for them to start, nothing is recorded.
+- No services are started for tests after the Implementation step (sacty does not run the tests. [Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)). Records of starts for the earlier version's final review (`forTests` of `ServicesStarted` is `true`) are kept only to be read.
 - A shared compose does not start just by being written in the project. It is fetched and started only when the Orchestrator chooses it by name (only for tasks that have a target repository). If a name not in the settings is chosen, the step stops (`services.sharedUnknown`).
 
-Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `verify`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`, `servicePromptLines`)
+Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`, `servicePromptLines`)
 
 ## Starting and stopping
 
@@ -38,7 +33,6 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
   - In steps that use services, before starting them, sacty pins the agent image (the task image) to its image ID with `docker image inspect`, and the run uses that ID. The run keeps the pinned image even if the tag changes after the services start.
   - If the ID cannot be read or the check does not finish within 30 seconds (`IMAGE_ID_TIMEOUT_MS`), the run uses the name.
   - If a person stops the task (pause or cancel) while it waits, sacty stops `docker image inspect` and starts neither the services nor the agent.
-  - The final review that runs the tests also pins the final review's image (the task image) the same way before starting them.
   - Steps that do not use services do not check.
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, sacty removes projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label). If `ps` cannot be read, nothing is removed.

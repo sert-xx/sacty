@@ -8,14 +8,14 @@ Related ADRs: none
 
 ## Event shape
 
-- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 106 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their decisions, verification, git and PRs, CI of the draft PR before the final review, reviews, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
+- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 106 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their decisions, verification, git and PRs, CI of the draft PR before the final review in an earlier version, reviews, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds the following to the shape for writing.
   - `seq` (increasing monotonically across the whole activity log)
   - `id` (UUID)
   - `taskId`, `projectId`
   - `at` (events in the same append share the same time)
   - `actor`
-- `actor` is one of `person`, `sacty`, `orchestrator`, `gatherer` (information gathering at the start of a task; [Tasks and steps](tasks-and-steps.en.md#information-gathering)), `guardian` (the final review, and the AI verdicts of earlier versions), `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
+- `actor` is one of `person`, `sacty`, `orchestrator`, `gatherer` (information gathering at the start of a task; [Tasks and steps](tasks-and-steps.en.md#information-gathering)), `guardian` (the final review and the AI verdicts of earlier versions), `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
 - Most events that used AI carry the following.
   - Token counts (`usage`: `input`, `cacheRead`, `cacheWrite`, `output`)
   - Cost (`costUsd`), whether it is estimated (`estimated`), and whether the usage of the whole run could not be read (`costUnknown`; only on events that can record a failure)
@@ -55,7 +55,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   - Step outputs and approved results, the pending approval (`gate`)
   - Remarks (`remarks`), change proposals (`proposals`), budget (`budget`)
   - The ID of the run in progress
-  - Results of verification, tests, the final review, and the integration review
+  - Results of verification, tests, and the integration review (and of the final review in an earlier version)
   - The PR and task branch, split parent and children
   - The pause reason, questions, export, the Orchestrator session
   - The after-merge watch (`deployment`) and the origin of a fix task (`fix`)

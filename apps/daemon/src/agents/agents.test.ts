@@ -1984,66 +1984,6 @@ echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,
   });
 });
 
-describe("判定を読み取れなかったときの文言（PBI-11b レビュー指摘）", () => {
-  it("sacty が補う説明はコードで返し、AI が書いた理由はそのまま返す", async () => {
-    const { extractFinalReview } = await import("../prompts.js");
-    const none = extractFinalReview("出力なし", ["TV-1"], ["r-1"]);
-    expect(none.viewpoints[0]?.reason).toEqual({ code: "review.unreadable" });
-    expect(none.remarks[0]?.reason).toEqual({ code: "review.unreadable" });
-    expect(none.summary).toEqual({ code: "review.unreadable" });
-    const partial = extractFinalReview(
-      '```json\n{"sacty-final-review": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "確認済み"}], "remarks": [], "summary": "所見"}}\n```',
-      ["TV-1", "TV-2"],
-      [],
-    );
-    expect(partial.viewpoints.map((v) => v.reason)).toEqual([
-      "確認済み",
-      { code: "review.verdictMissing" },
-    ]);
-    expect(renderMessage(partial.viewpoints[1]?.reason, "en")).toBe("No verdict was given.");
-    expect(partial.summary).toBe("所見");
-  });
-});
-
-describe("最終レビューの出力から判定を読み取れなかったかの区別（PBI-277）", () => {
-  const IDS: [string[], string[]] = [["TV-1"], ["r-1"]];
-  it("判定のオブジェクトを読み取れなければ unreadable、読めて判定が足りないだけなら unreadable ではない", async () => {
-    const { extractFinalReview } = await import("../prompts.js");
-    // 実際の出力の形：viewpoints の配列を閉じる `]` が抜けていて、JSON として読めない
-    const broken =
-      '説明\n```json\n{"sacty-final-review":{"viewpoints":[{"id":"TV-1","verified":true,"reason":"満たす"},"remarks":[{"id":"r-1","notRecurred":true,"reason":"なし"}],"summary":"合格"}}\n```';
-    for (const output of ["", "出力なし", broken]) {
-      for (const options of [{}, { testCommand: "npm test" }]) {
-        const review = extractFinalReview(output, ...IDS, options);
-        expect(review.unreadable, JSON.stringify(output)).toBe(true);
-        expect(review.passed).toBe(false);
-      }
-    }
-    const readable = (b: Record<string, unknown>) =>
-      `\`\`\`json\n${JSON.stringify({ "sacty-final-review": b })}\n\`\`\``;
-    for (const body of [
-      { viewpoints: [], remarks: [], summary: "判定が空" },
-      { viewpoints: [{ id: "TV-1", verified: false, reason: "未検証" }], remarks: [] },
-      {},
-    ]) {
-      for (const options of [{}, { testCommand: "npm test" }]) {
-        const review = extractFinalReview(readable(body), ...IDS, options);
-        expect(review.unreadable, JSON.stringify(body)).toBe(false);
-        expect(review.passed).toBe(false);
-      }
-    }
-    const ok = extractFinalReview(
-      readable({
-        viewpoints: [{ id: "TV-1", verified: true, reason: "満たす" }],
-        remarks: [{ id: "r-1", notRecurred: true, reason: "なし" }],
-        summary: "合格",
-      }),
-      ...IDS,
-    );
-    expect(ok).toMatchObject({ passed: true, unreadable: false });
-  });
-});
-
 describe("PR の指摘の戻し先の判断（PBI-14b）", () => {
   it("選べる工程のうちの戻し先と理由を読み、読めなければ判断できなかったものにする", async () => {
     const { extractRework } = await import("../prompts.js");

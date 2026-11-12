@@ -5,7 +5,7 @@ import { budgetFlow, questionFlow } from "./budget-question.mjs";
 import { contextLayers, contextMcp, contextMerge } from "./context.mjs";
 import gateway from "./gateway.mjs";
 import gatewayPf from "./gateway-pf.mjs";
-import { approvalBranches, tasksFlow, verify } from "./tasks.mjs";
+import { approvalBranches, tasksFlow } from "./tasks.mjs";
 import {
   auditUser,
   composeUser,
@@ -27,7 +27,6 @@ export const DIAGRAMS = [
   contextMerge,
   contextMcp,
   tasksFlow,
-  verify,
   approvalBranches,
   budgetFlow,
   questionFlow,

@@ -76,7 +76,7 @@ When you pick a plan, "Set per step" appears below the sequence of steps. Press 
 
 ![The "Step settings" view](images/new-task-steps.en.png)
 
-- For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). Every step, the tests, and the final review of the task run in this image. If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
+- For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). Every step and the tests of the task run in this image. If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
 - For the agent, choose the name of an available agent (see [Settings](config.en.md)). If you leave it as "Default", the agent decided by `step_agents` (or `default_agent`) is used. The integration review agent can't be chosen, because it is decided by `step_agents.integrate` in `config.yaml` (or `default_agent` if absent).
 - A step whose agent you set is marked, and "Reset to default" undoes it. "Done" or the back button at the top left returns to the main form. The sequence of steps in the main form also marks the steps whose agent you set, and the summary shows the image you set.
 - Switching views keeps the title and description you are typing and your choices. Choosing another plan keeps the choices for the same steps (only those for the steps of the current plan are used).
@@ -169,7 +169,7 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
   Even a document that is not referenced, if it sets behavior or premises related to the request (data freshness, operational rules, and so on), is written in the gathered information.
 - Information gathered from outside the target repository (the code or documents of another repository such as the one the target was imported from, or external URLs) is written with its origin (repository name or URL) and an explicit "対象のリポジトリの外" (outside the target repository), in an item separate from the target repository's documents. A lack of documents in the target repository is not written as if outside documents made up for it. The later steps are also told not to treat outside information as the target repository's conventions or decisions.
 - The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.
-- The summary is given to the Orchestrator and every step. It is also given to the final review, Integration review, and deciding where to send PR comments back to.
+- The summary is given to the Orchestrator and every step. It is also given to Integration review and deciding where to send PR comments back to.
   These judgments use it only to understand the background; the basis of the verdicts stays the approved deliverables.
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)). The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
 - If it cannot summarize, the task is paused. Resuming gathers again.
@@ -313,72 +313,37 @@ The Implementation step's agent still runs tests while it works.
    If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again at every PR check. To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub. When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it.
 
 - In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
-- A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it).
-- "Test (verification) commands" and "The implementation PR and CI" after this section, and the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image", describe the final review of older versions. The current version does not do them.
-  "When the base branch moves ahead" and "PRs of dependent child tasks (stacked PRs)" describe the current version.
-  The "Move to review" operation and the flaky test ledger are not shown on the screen either.
-
-## Test (verification) commands
-
-This section and "The implementation PR and CI" below it describe the final review of older versions ([Review of the implementation PR](#review-of-the-implementation-pr)). So do the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image".
-
-To verify the implementation, the final review agent runs the test (verification) command that the orchestrator chose by reading the repository. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The final review agent uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
-
-sacty does not run the tests separately.
-
-Even a repository without test code uses a check that mechanically validates its artifacts, if there is one.
-
-- sacty uses what CI, a Makefile or pre-commit runs, or what the shape of the repository decides (`kustomize build` when there is a `kustomization.yaml`, and so on).
-  - For a repository of Kubernetes manifests, `kustomize build`, `helm lint` or `kubeconform`
-  - For Terraform, `terraform validate`
-  - For YAML, `yamllint`, and so on
-- The chosen command appears as "Test command" on the "Step settings" tab of the task details, and as "Tests" in the properties in the right column.
-- The command, exit code, and an excerpt of the result of the tests the final review agent ran appear under "Tests run in the final review" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）". When an earlier stage's result was reused, the heading becomes "Tests the final review judged with", and the test line of the PR body reads like "（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード N）".
-- In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the final review agent ran).
-  - The final review agent reports neither exit code 0 nor that every failure is caused by the environment
-  - There is a viewpoint the implementation did not map to a test
-  - There is a change that neither the request nor the approved requirements and design call for ([Out-of-scope changes](#out-of-scope-changes))
-- For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the final review's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
-- The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the final review agent reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
-- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The final review agent checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
-- Separately from the test command, the final review agent runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration) (results an earlier stage got by running the whole on the same content are reused).
-  A failure caused by the change fails the final review. Verification that could not run, for example because a tool is missing from the image, remains in "人が確かめること" with the reason.
-  The implementation agent also makes the same verification pass before submitting, and writes the reason in the implementation's description for any verification it did not run.
-- The check of acceptance cannot shrink to confirming that a name, item, file, or link exists.
-  When a document describes a responsibility or behavior of the code ("A does B"), the final review agent reads the relevant code and checks that it does so.
-- When the diff newly adds or changes a mechanism shared by several processes (a queue, a lock, a cache, a flag, and so on), the final review agent checks that later processing still continues after an anomaly or failure in that mechanism.
-  What could not be checked remains in "人が確かめること" (in the integration review, it is written in the explanation of the verdict).
-- The final review's findings and "人が確かめること" are written in the language the task's title and content are written in. They do not switch to English because the command output or the diff is in English.
-- In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
-
-### The implementation PR and CI
-
-When the Implementation step finishes, sacty opens the implementation PR as a draft before the final review.
-Behavior that only CI can check (fixing a workflow, for example) is part of the final review's judgment too.
-
-1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The child task that reviews the PR is not created yet. While it is a draft, please wait before reviewing or merging.
-2. sacty waits for the PR's CI. Without waiting for the CI to finish, the final review agent starts the final review in the workspace (the CI time and the final review time overlap). If the review fails, the implementation is redone without waiting for the CI. If it passes, only the CI result is awaited, and the task's status is "Waiting for the PR's CI". In a repository confirmed to have no CI it moves on after 1 minute, if no CI appears, after 5 minutes, and if CI does not finish, after up to 60 minutes. If a GitHub Actions run fails, sacty reruns the failed jobs once per commit and waits for them to finish (the waiting time is counted again from the rerun). If it cannot rerun them (a lack of permission, for example), it goes on without rerunning. The task does not stop.
-3. If the CI passed on the first try, or there is no CI, the task moves on without another final review. If the CI failed, did not finish in time, or passed after a rerun, the final review agent does the final review again from the tests it ran in the workspace together with the PR's CI result (verification of the same content is reused).
-   - If a CI failure is caused by the change, the review fails and the implementation is redone.
-   - If a failure is unrelated to the change (the CI environment, an external service, a missing secret, and so on), the review does not fail for it, and it goes into "For a person to check".
-   - If the rerun passes, the CI result counts as passed. The original failures also reach the final review, which checks them as candidates for flaky failures. Those confirmed to be unrelated to the diff go into "For a person to check", and a failure involving tests or code the diff changed fails the review.
-4. On a pass, sacty marks the PR ready for review, creates a child task that reviews the PR, and the task waits for implementation approval ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
+- Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR.
+  If the draft cannot be removed, sacty tries again at the next PR check.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
-- A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
-- So that the same verification is not run again on the same content, the final review agent reuses the results of the verification the Implementation step ran last and the PR's CI results.
-  Only results of running the whole are reused. What ran only in part, or what CI cannot be confirmed to cover, is run again. In a repository without CI, CI results are not relied on.
-  The child task that reviews the PR also reuses the results the final review handled on the same commit and the CI results.
-  When the test command was reused, "Tests the final review judged with" in the implementation deliverable shows "Reused the implementation step's result" or "Reused the PR's CI result".
-- Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR. If marking it ready fails, the task stops with the reason. Fix the cause and press "Resume" to start again from marking it ready.
-- Rerunning CI needs write access to the repository's Actions for the project's GitHub account (the `repo` scope of a token, or Actions: Read and write for a fine-grained token). Without it, sacty just does not rerun: the activity shows "it could not be rerun", and the reason goes to the daemon log. Failures of only checks other than GitHub Actions or commit statuses are not rerun.
+- A task that takes over an existing PR does not make it a draft, because it is your PR, and pushes to the PR it took over ([Fixing an existing PR](#fixing-an-existing-pr)).
+- A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it) ([Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review)).
+
+### Test commands
+
+When choosing the steps, the orchestrator reads the repository and decides the test (verification) command.
+sacty does not run this command.
+The Implementation step's agent runs the tests and checks it decides from the repository's procedures itself before submitting.
+
+- Even a repository without test code uses a check that mechanically validates its artifacts, if there is one, as the test command.
+  - For the check command, sacty uses what CI, a Makefile, or pre-commit runs, or what follows from the shape of the repository (`kustomize build` if there is a `kustomization.yaml`, for example).
+  - For a repository of Kubernetes manifests: `kustomize build`, `helm lint`, `kubeconform`
+  - For Terraform: `terraform validate`
+  - For YAML: `yamllint`, and so on
+- The decided command appears as "Test command" in the "Step settings" tab of the task details and as "Tests" in the properties in the right column.
+- The decided command is passed to the child task that reviews the PR as a candidate verification command. It is also passed to the Reproduce step of a bug fix.
+- Besides the tests, the Implementation step's agent runs the checks the repository defines, such as formatters, linters, and type checks, on every change that goes into the PR (code, tests, documents, configuration).
+  For a check it did not run, it writes the reason in the implementation's description.
+- In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself, confirms that it fails because of the bug, and reports it.
+  If it does not report that it confirmed this, the task stops as not reproduced.
+  If you write clues for reproducing it in a comment and send it back, the reproduction is redone.
 
 ### When the base branch moves ahead
 
 Even if another task or a person's PR is merged into the base branch (main and the like) first, sacty handles it automatically so that the implementation PR does not stay in conflict with the base branch.
 
-- sacty merges the latest base branch into the implementation workspace before the implementation starts (older versions also merged it before the final review).
+- sacty merges the latest base branch into the implementation workspace before the implementation starts.
   When the implementation is redone after a rejection or after PR comments, it merges before redoing it.
   It does not merge on its own while the task waits for approval. To fix a PR after the base branch moved, reject it or write a comment on the PR.
 - If another PR is merged while the task waits for approval and the implementation PR conflicts with the base branch, sacty notices and shows it (when GitHub says it conflicts; the PR check that runs every minute finds out).
@@ -393,9 +358,9 @@ Even if another task or a person's PR is merged into the base branch (main and t
 - If there is a conflict, the conflicting files keep markers (`<<<<<<<`, `=======`, `>>>>>>>`).
   sacty gives the list of conflicting files to the implementation agent and has it resolve them so that both changes survive.
   The resolved content is added to the PR as the merge commit.
-- If the implementation ends with markers still left, no PR is opened (in older versions, the final review does not start). The implementation is redone with the conflicting files.
+- If the implementation ends with markers still left, no PR is opened. The implementation is redone with the conflicting files.
   If it cannot be resolved three times in a row, the task pauses and the conflicting files appear as the reason.
-  "Resume" redoes the implementation with the files that have markers (in older versions too, an implementation with markers left cannot be moved to review with "Move to review").
+  "Resume" redoes the implementation with the files that have markers.
 - If the latest base branch cannot be fetched or merged (a network failure, for example), the task pauses with the reason.
   Fix the cause and press "Resume" to start again from the merge.
 - Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.
@@ -405,7 +370,7 @@ Even if another task or a person's PR is merged into the base branch (main and t
 
 In a task split, a child task that depends on other child tasks can start without waiting for the dependency's PR to be merged. This keeps later child tasks moving while the dependency's PR is reviewed and merged.
 
-- When the PR's review child task gives the dependency's implementation PR "no findings" and sacty removes the draft, the dependent child task starts from that PR's branch (in older versions, when the PR passed the final review).
+- When the PR's review child task gives the dependency's implementation PR "no findings" and sacty removes the draft, the dependent child task starts from that PR's branch.
   The dependent child task's PR is reviewed by its review child task after the dependency is merged and the PR is retargeted, and the draft is removed at "no findings".
   When the dependency is completed or its cancellation is acknowledged, it starts from the base branch as before.
 - The dependent child task's PR targets the dependency PR's branch (its base is the dependency's branch). The diff on GitHub shows only that child task's changes.
@@ -414,169 +379,76 @@ In a task split, a child task that depends on other child tasks can start withou
   - When it cannot be made a draft (the repository cannot use draft PRs, or the change failed), sacty does not make it a regular PR and pauses the child task. Resuming tries again. If you resume after the dependency's PR is merged, sacty opens the PR as a draft without stacking it, like any other PR (the draft is removed when the PR review child task reports no findings).
   - If you want to merge it before the dependency's PR, mark it ready for review on GitHub and merge it. The child task's changes then go into the dependency PR's branch, and the merge is taken as the approval. They are not in the base branch yet, so child tasks that depend on that child task wait until the dependency's PR is merged. A child task stacked on that child task's PR also waits, without its base being changed, until the dependency's PR is merged.
 - When the dependency's PR is merged, sacty changes the base of the child task's PR to the base branch and rewrites the body (at the PR check every minute).
-  After the base is changed, the PR's review child task reviews it, and sacty marks it ready for review at "no findings" (in older versions, when the base was changed).
+  After the base is changed, the PR's review child task reviews it, and sacty marks it ready for review at "no findings".
   When you send the child task back while the base is being changed, sacty does not record the change and updates the PR with the reworked submission. If you sent it back while the PR was being marked ready, sacty turns it back into a draft. When the child task had not started yet, it starts from the branch the dependency's PR was merged into.
   After the review child task finds no findings and the draft is removed, approve the retargeted PR by merging it. When the dependency was squash-merged, the diff can show the dependency's changes on top. When you send it back or write a comment on the PR, sacty merges in the base branch and redoes it, and the diff goes back to only the child task's changes.
-- When the dependency's PR is fixed (sent back or commented on) and the PR's review child task gives it "no findings" again (in older versions, when it passed the final review again), the dependent child task takes in the new content when its implementation is redone. How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.
+- When the dependency's PR is fixed (sent back or commented on) and the PR's review child task gives it "no findings" again, the dependent child task takes in the new content when its implementation is redone. How it is merged in and how conflicts are handled are the same as in [When the base branch moves ahead](#when-the-base-branch-moves-ahead). It is not merged in while waiting for approval.
 - When the dependency is canceled, the child task built on top of it is paused and can no longer be resumed. Cancel the child task (what is missing may be added as fix child tasks by the integration review).
 - When there are two or more dependencies, the child task starts stacked on a dependency only when the current changes of all other dependencies can be confirmed to be in that dependency's PR. They can be confirmed when the other dependencies are stacked under it and their fixes have been merged in, or when that dependency started without being stacked after the other dependencies got into the base branch. Otherwise it waits until all dependencies are in the base branch.
   For example, a child task that depends on A and B, which do not depend on each other, is not stacked on B when A is merged, and waits until B is also merged (B's PR does not contain A's changes).
 - A child task in a different repository from the dependency waits for the dependency instead of being stacked.
 
-### When the final review verdict cannot be read
-
-Common breakage in the final review's JSON output, such as double quotes inside strings or a missing closing `}` of the nested `tests`, is repaired when reading.
-When the output was read with repairs, the "Final review" line of the activity history says what was repaired and where.
-When there is more than one way to repair it, or the repaired result does not have the expected shape, sacty does not guess.
-
-When the verdicts still cannot be read from the final review output, the task is not failed and the implementation is not redone. Past comments are not counted as having recurred either.
-The reason says at which line and column of the JSON the output is broken.
-Only the final review is run again.
-If the verdicts cannot be read three times in a row, the task pauses and shows where the output is (the daemon's `runs/<task ID>/<run ID>.jsonl`; it can also be read in the run log on the screen).
-After you check the output, "Resume" redoes the final review.
-
-### When verification keeps failing
-
-If the implementation fails the tests or the final review three times in a row, the task pauses.
-When the names of the failed tests can be compared between the previous and current runs, the task pauses without waiting for the three times if redoing the implementation fixed none of the previous failures.
-If all the previous failures remain after you resume, the task pauses at the next final review.
-When the names are not reported, or there are too many failures to record the list, they cannot be compared, and the three times decide.
-Conflict markers with the base branch left in the workspace count the same three times ([When the base branch moves ahead](#when-the-base-branch-moves-ahead)).
-In the task details, you can choose one of the following.
-
-- "Resume": redoes the implementation.
-- "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, creates a child task that reviews the PR, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
-
-### Out-of-scope changes
-
-For each change in the diff, the final review agent checks whether the request, the approved requirements and design, or a person's earlier comment calls for it, or whether it is needed to make a requested change.
-If either of the following exists, the final review fails (viewpoint `SCOPE`) and the implementation is redone to remove the out-of-scope changes.
-A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Security checks and fixes](#security-checks-and-fixes)) looks at the same thing.
-
-- A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
-- A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
-- A change to existing behavior (the kind of error, the status code, the message, the order of checks, the shape and fields of a response, a default value) that the requirements and design do not call for. This includes one caused by refactoring that merges, splits, or moves code. The final review agent reads the code before and after the change, and for a function with several checks it traces which check fires first for an input that breaks several rules at once. It is out of scope even if the existing tests pass.
-
-Treated as in scope:
-
-- Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
-- Formatting or refactoring that does not change behavior (that it does not is checked by the comparison above)
-- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The final review agent reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
-- Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
-
-What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
-
-A past comment from the AI review has not been approved by a person, so it is not treated like a person's comment. A change that answers an AI comment is in scope if it fixes a defect against the requirements and design (for a task that skips them, the request), meaning something they ask for that is not met or is broken. A change beyond that which alters behavior (adding a feature or operation the requirements and design do not have, or changing existing behavior) does not fail the review; it stays in "For a person to check", with a note on which AI comment it answers. A change that weakens or reverses what an existing test expects is in scope only when the requirements or design ask for it, even if it answers an AI comment.
-
-The reason for the failure and the out-of-scope changes appear in the final review of the implementation deliverable.
-The redo is told to remove only the out-of-scope changes and keep every other change. It puts them back to the current comparison base (after the base branch has been merged in, the merged head, so the base branch's changes stay).
-If the review does not pass three times in a row, the task pauses, like any other failure.
-If you judge that the changes are in scope, use "Move to review" ([When verification keeps failing](#when-verification-keeps-failing)).
-For a task that takes over an existing PR, however, "Move to review" is not available. This judgment applies to that task too, so if a change is wrongly treated as out of scope, use "Resume" and write in the supplement why you judge it in scope.
-
-### For a person to check
-
-What cannot be checked in the workspace (container) does not fail the final review; it is left as items a person checks before merging.
-
-- Test failures caused by the environment: when the final review agent judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
-  If even one failure can be explained neither as caused by the environment nor as flaky, the review fails as before.
-- Flaky test failures: when a rerun of the failed tests changes the result and the final review agent judges the failure unrelated to the diff, the tests also count as passed.
-  The failures appear under "For a person to check". A failure of a test changed in the diff is not treated as flaky.
-  A known flaky test seen in 3 or more tasks may skip the rerun ([The flaky test ledger](audit.en.md#the-flaky-test-ledger)).
-- Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
-  The Requirements step also writes the acceptance checks split into "what automated tests check" and "what a person checks". For a task that writes or changes a document of instructions for agents, such as a skill or AGENTS.md, it writes the requirements as what the document should say, and the acceptance checks as checking the document's content in the diff.
-
-- Items carried over from the previous round: when the final review is redone, the items the previous round listed under "For a person to check" (including changes it called "cannot be judged as in scope") stay in the next round.
-  The exceptions are test failures judged to be caused by the environment or judged flaky, which are not carried over and are judged again from that round's test results, and the item for verification that could not run because a tool is missing, which is not carried over and is created again only when the same condition applies in that round.
-  The final review agent can drop one only after confirming that its concern is resolved in the current code, or that the previous judgment was wrong, and writing the reason.
-  The dropped item and its reason are kept in the final review record. An item whose code has not changed is not dropped.
-  Items with the same purpose across rounds are merged into one. When the final review agent rewrites an item of the previous round for the current state, or when items with the same heading overlap, such as 「この環境だけの結果」, only the newest wording stays. The wording before merging is kept in the final review record.
-- Verification passed with tools the agent installed itself: when something the tests need, such as a browser, is not in the run environment (image), the implementing agent may install it under `.sacty-tools/` in the workspace and verify with it. When it does, it writes what it installed, the verification it passed, and what it did not check in an environment without it, in the 「この環境だけの結果」 ("results only in this environment") section of the implementation description (which goes into the PR body).
-  The final review agent leaves this as an item for a person, "この環境だけの結果: …", and also writes it in the final review summary. Installing alone is not a reason to fail.
-  Tools installed under `.sacty-tools/` do not go into the PR or the commit (anything installed elsewhere goes into the PR unless the repository's `.gitignore` ignores it). Check with an image that has the tools, or, if needed, change to an image that includes them ([Container images](images.en.md)).
-  `.sacty-tools/` is only for installed tools. Working files of sacty and the agent, such as verification records, copies of the base, and drafts, are put outside the workspace (`/tmp/agent-scratch/`), because inside the workspace a formatter or linter would check them and fail. When a repository file (a script, test, or setting) contains a name from inside the workspace (such as `.sacty-tools`), sacty finds it in the diff, and unless the request or the approved requirements or design mention it, the final review fails it as an out-of-scope change.
-- Checks of things inside sacty's workspace (tools under `.sacty-tools/`, temporary files, paths inside the container, and so on) for whether they exist or work are not in this list, because a person has no way to check them. A check failure caused by such a file does not appear in this list or in the PR body either (the final review reruns the check without that file and judges by that).
-  What could not be verified in the workspace but a person can check in their own environment (such as the result of redoing it in an environment without the tool) is included as before.
-- Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
-
-These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
-The tests run in the final review show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
-When the exit code is not 0 but the tests passed with environment failures only, the result of each viewpoint reads "Tests passed (environment failures only)" with the exit code and the reason it passed. The test line of the PR body gives the same reason, so it never says just "passed".
-Check them before merging the PR.
-
-### When the verification tool is not in the image
-
-If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the task image), the final review agent reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
-
-Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the implementation.
-
-However, when every changed file is a document (such as `.md` or `.rst`), the task does not stop. It goes on to final approval, and the verification that could not run appears under "For a person to check" ([For a person to check](#for-a-person-to-check)). If even one changed file is not a document, such as code, the task stops here.
-
-1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands). If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too ([Container images](images.en.md#per-language-images)).
-
-   ```yaml
-   images:
-     k8s:
-       description: kubectl・kustomize・helm・kubeconform
-       base_image: registry.example.com/ci/k8s-tools:1.31
-       run:
-         - curl -fsSL https://downloads.example.com/kubeconform-linux-amd64.tar.gz -o /tmp/kubeconform.tar.gz
-         - tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
-   ```
-
-2. Rebuild the image with `npx sacty image build <name>`.
-3. If you added a new image, change the task image under "Task image" in the task details ([Changing the task image](images.en.md#changing-the-task-image)).
-
-In a task whose test command is decided, if you want to go on without fixing the image (for example, when the verification need not run in that image), you can instead resume with "Tests" in the resume section: specify the test command again, or proceed without tests (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding redoes the final review from where it stopped). When you proceed without tests, tests are not run and the final review agent judges by the task's goal. A bug fix cannot proceed without tests.
-
-A task in a repository without tests that verifies with the test command the implementation prepared ([Repositories without tests](#repositories-without-tests)) does not have this field. The message when it stops does not mention it either, so fix the image and resume.
-
-If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the final review agent runs the tests).
-
 ### Documents-only requests
 
-When a request's artifacts are only document files (such as `.md`, `.rst`, or `.adoc`), the orchestrator does not put code checks (tests, lint, type checking, build) that the document changes do not reach into the test command. For a request that also changes code, it still includes all the checks that cover the changes, as before.
+When a request's artifacts are only document files (such as `.md`, `.rst`, or `.adoc`), the orchestrator does not put code checks (tests, lint, type checking, build) that the document changes do not reach into the test command.
+For a request that also changes code, it still includes all the checks that cover the changes, as before.
 
 - If the repository has a document check such as link checking, markdown lint, or document formatting, only that becomes the test command.
-- If there is no such check, the test command is left empty and the task goes on without tests (the basis is kept as in [Repositories without tests](#repositories-without-tests)). In this case the task does not stop even if the repository has test files.
-- Document files are those with the extension `.md`, `.markdown`, `.rst`, `.adoc`, `.asciidoc`, or `.org`. A request that changes code, comments in code, configuration files, `.txt`, or images is not treated as documents only.
-- When the orchestrator judged a request to be documents only but the implementation's diff has files that are not documents, the current sacty does not stop (it does not run the final review, and the review child task of the PR reviews the diff). An earlier version paused the task before the final review, because the code changes would go unverified; the task details show "The orchestrator judged this request to change documents only…" and the files that are not documents. For a task that is still paused, in "Tests" in the resume section, specify a command that verifies the changed code, or choose to proceed without tests, and resume (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding no longer stops it).
+- If there is no such check, the test command is left empty and the task goes on without tests (the basis is kept as in [Repositories without tests](#repositories-without-tests)).
+  In this case the judgment of no tests is used even if the repository has test files.
+- Document files are those with the extension `.md`, `.markdown`, `.rst`, `.adoc`, `.asciidoc`, or `.org`.
+  A request that changes code, comments in code, configuration files, `.txt`, or images is not treated as documents only.
+- When the orchestrator judged a request to be documents only but the implementation's diff has files that are not documents, the task does not stop (the review child task of the PR reviews the diff).
 
 ## Repositories without tests
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
 
-- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests. A repository that collects agent skills or only holds documents also falls under this. The "Step settings" tab of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
-- sacty does not run tests. The PR review child task checks the PR from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description, and sacty fixes the implementation when there are findings (as for a task with tests).
-- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests, check the content of the changes yourself before you approve.
+- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests.
+  A repository that collects agent skills or only holds documents also falls under this.
+  The "Step settings" tab of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
+- sacty does not run tests.
+  The PR review child task checks the PR from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description, and sacty fixes the implementation when there are findings (as for a task with tests).
+- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests".
+  The test line of the PR body also includes the basis, with "テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。" (it proceeded as a repository without tests, so it was not verified by tests).
+  Because nothing was checked by tests, check the content of the changes yourself before you approve.
 - When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, the agent of the Implementation step runs those tests, and the PR review child task checks the PR including their results (sacty does not run tests).
-  - If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON), the task is paused with an error. Resuming redoes the implementation.
-  - For a task that had the final review in an earlier version, the result of verifying with those tests ("Verified by the tests added in the implementation" or "The tests added in the implementation failed") is shown on the screen.
-- For a task that was redoing the implementation after failing the final review in an earlier version, the previous implementation's test results and final review are shown under headings such as "… for the previous submission". The hint mark next to them says that nothing has run or been judged for the current submission yet. They are not results for the current implementation (this is the same for tasks with tests).
-- A bug fix (Reproduce → Implementation) confirms the reproduction with tests, so it is not chosen for a repository without tests. If it is chosen, the task stops.
+  - If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON), the task is paused with an error.
+    Resuming redoes the implementation.
+- Even when the Orchestrator judges that there are no tests, the judgment is not used in the following cases.
+  The task does not stop, and goes on with neither a test command nor the judgment of no tests (the Implementation step's agent decides the tests from the repository and runs them).
+  - A bug fix (Reproduce → Implementation) is chosen (a reproduction is confirmed by tests, so it is not chosen for a repository without tests)
+  - The repository has files that look like tests
+  - It could not be confirmed that there are no test files, because there are too many files, a directory cannot be read, and so on
 
-### When the task stopped instead of proceeding without tests
+  The following files count as files that look like tests.
+  Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/README.md` does not match).
 
-The current sacty does not run tests (the agent of the implementation step decides them from the repository and runs them, and the review child task reviews the PR), so the task does not stop when the test command cannot be determined. A task that an earlier version paused in the following cases, instead of proceeding without tests, stays paused (the reason appears in the task details). You do not need to create the task again. In "Tests" of the resume section of the task details, choose one of the following and resume.
+  - Files inside `test`, `tests`, and `__tests__` directories
+  - Files with names like `*.test.*`, `*.spec.*`, `*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`
 
-- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`). It is passed to the agent of the implementation step as the test command a person decided.
-- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents. The reason remains in the Activity, the task details, and the PR body as a reason decided by a person. It cannot be chosen for a bug fix.
-- **Resume without deciding**: the task continues from where it stopped (the steps are not chosen again). It no longer stops because the test command cannot be determined.
+### Deciding the tests on resume
 
-| Why it stopped | How to fix it |
+When you resume a paused task that is going on with neither a test command nor the judgment of no tests (in the cases above, or when the Orchestrator decided neither), you can choose one of the following in "Tests" of the resume section of the task details (whatever the reason it stopped).
+A task that an earlier version stopped right after choosing the steps, because the test command could not be determined or it could not proceed without tests, can be resumed the same way (you do not need to create the task again).
+
+- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`).
+  It is passed to the agent of the implementation step as the test command a person decided (sacty does not run it).
+- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents.
+  The reason remains in the Activity, the task details, and the PR body as a reason decided by a person.
+  It cannot be chosen for a bug fix.
+- **Resume without deciding**: the task continues from where it stopped with the chosen steps (the steps are not chosen again).
+  It does not stop because the test command cannot be determined.
+
+For a task that an earlier version stopped right after choosing the steps, choose according to why it stopped.
+
+| Why it stopped | How to choose |
 | --- | --- |
-| The Orchestrator could not determine the test command ("could not determine the test command") | If there are tests, specify the test command and resume. If the repository does not have tests, proceed without tests. |
-| The Orchestrator judged that there are no tests, but some files look like tests ("some files look like tests (…)"; the files found are shown) | If the files found **really are tests**, specify the test command and resume. If a file that is **not a test** (such as a script that is not for testing) was matched by mistake, proceed without tests (resuming without deciding no longer stops, but the implementation goes ahead without the handling of tests decided). |
-| There were too many files to confirm that there are no test files ("too many files to confirm …") | If there are tests, specify the test command and resume. If there really are no tests, proceed without tests. |
-| A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), and fix it. Then resume, either specifying the test command or choosing to proceed without tests. |
-| A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Specify the test command and resume (a bug fix cannot proceed without tests). To fix it without tests, cancel the task and use rerun to redo it as an ordinary task that describes what to fix. |
-
-The following files count as files that look like tests.
-
-- Files inside `test`, `tests`, and `__tests__` directories
-- Files with names like `*.test.*`, `*.spec.*`, `*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`
-
-Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/README.md` does not match).
+| The Orchestrator could not determine the test command ("could not determine the test command") | If there are tests, specify the test command. If the repository does not have tests, proceed without tests. |
+| The Orchestrator judged that there are no tests, but some files look like tests ("some files look like tests (…)"; the files found are shown) | If the files found **really are tests**, specify the test command. If a file that is **not a test** (such as a script that is not for testing) was matched by mistake, proceed without tests. |
+| There were too many files to confirm that there are no test files ("too many files to confirm …") | If there are tests, specify the test command. If there really are no tests, proceed without tests. |
+| A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), and fix it. Then specify the test command or choose to proceed without tests. |
+| A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Specify the test command (a bug fix cannot proceed without tests). To fix it without tests, cancel the task and use rerun to redo it as an ordinary task that describes what to fix. |
 
 ## When the implementation has no changes
 
@@ -606,8 +478,8 @@ Once you merge the PR, the task moves on at the next check without returning to 
 - When the task is escalated, such as when a person chooses the step to redo for PR comments.
 - When the PR was closed without merging, or does not exist yet.
 
-If a person merges the implementation PR while the implementation is being reworked (after a rejection, imported PR comments, or a failed final review), the merge is taken as the approval.
-sacty stops the running implementation, final review, and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
+If a person merges the implementation PR while the implementation is being reworked (after a rejection or imported PR comments), the merge is taken as the approval.
+sacty stops the running implementation and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
 The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
 To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task.
 While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
@@ -651,10 +523,10 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 - Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
 - The form of the PR body
   - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
-  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, sacty's review (the PR review child task reviews and posts), and what you should confirm in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint) (with the final review's findings for a task that had the final review in an earlier version). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a send-back or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
+  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, sacty's review (the PR review child task reviews and posts), and what you should confirm (when there is a record of an earlier version's final review) in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint) (with the final review's findings for a task that had the final review in an earlier version). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a send-back or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
   - Which one was used appears in "Body" in the PR section of the task page.
   - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated). When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
-  - The "最後の直し" section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows; when it fits in the conclusion, the section is not shown. The final review's summary also appears only as its head in the conclusion, with only the rest in the collapsed "続き" or "再発の確認". The findings of each viewpoint do not repeat sentences of the summary, and say "総評と同じです" (the same as the summary) when all of it is the same.
+  - The "最後の直し" section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows; when it fits in the conclusion, the section is not shown. For a task that had a final review in an earlier version, the summary of that review is usually not shown in the description either (only for a task that a person moved on to review despite a failed final review in an earlier version, the summary is shown in one line as "最終レビューの所見" (final review findings), together with that record). The findings of each viewpoint appear in the collapsed "観点ごとの詳細" (details by viewpoint).
   - In the viewpoint-test mapping, the same test is shown once (a name with the describe prefix and one without are merged into the one with it). Format characters such as `%j` and `%s` in the name of a parameterized test are replaced with `‹…›`, because the values cannot be known from the name alone.
   - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments (the investigation result, the comments a step requests, and the comment that tells you what to check). They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
   - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
@@ -769,7 +641,7 @@ The first round reviews with every viewpoint. A re-review after fixing (the seco
 The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
 When the target repository has review skills that apply to this change, one reviewer is added per skill and also reviews with the items of that skill. When it has development skills or instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING`, and so on) that apply to this change, a viewpoint (X-3) that checks whether this change follows those rules is added too. Nothing is added for ones that do not apply to this change, such as a skill for an area the change does not touch. Neither reduces the default viewpoints. Fixes, posting, and starting subagents written in the skills or instruction files are not done.
 When the deliverable of a request is judged to be document files only, the self-review of the implementation also uses the document viewpoints (sync with the code, whether the steps work, fit to the reader, static quality) instead of the code viewpoints. A request that also changes code is reviewed with the code viewpoints as before.
-When the agent redoes the work after requested changes from a person, a finding from the AI review, or a failed final review, the first review of that run is also treated as a re-review. It uses only the viewpoints related to the findings of this run, plus X-1 (the first run of a task still uses every viewpoint, as before). The viewpoints it did not use are recorded as "not started (fix run: not related to this run's findings)". If the previous submission's self-review did not pass, every viewpoint is used.
+When the agent redoes the work after requested changes from a person or a finding from the AI review, the first review of that run is also treated as a re-review. It uses only the viewpoints related to the findings of this run, plus X-1 (the first run of a task still uses every viewpoint, as before). The viewpoints it did not use are recorded as "not started (fix run: not related to this run's findings)". If the previous submission's self-review did not pass, every viewpoint is used.
 The Requirements and Design deliverables are put into the PR by sacty as repository files (by default under `docs/sacty/<short task ID>/`).
 Before submitting, the agent runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) on that file and makes it pass.
 It does not run verification of code, such as tests, builds, and type checks.
@@ -862,7 +734,7 @@ The details of a task stopped by the budget limit show a field for the new cumul
   - A Requirements or Design PR is not watched while paused. If it is merged or comments arrive, the check after the resume (every minute) takes them in as an approval or a send-back.
   - A person paused it, so nothing is sent to Slack. When it is resumed and returns to the same wait for approval, the approval notice is not sent again.
 - If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task's details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
-  When you resume, before redoing the step that stopped (the final review, for example), sacty reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
+  When you resume, before redoing the step that stopped (the implementation or the PR update, for example), sacty reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
   If no comments have arrived, the step that stopped is redone as before.
   - Comments you wrote just before resuming are read again after the resume and applied.
   - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.
@@ -882,7 +754,7 @@ The details of a task stopped by the budget limit show a field for the new cumul
 You can carry on with follow-up work (handling issues it found, further improvements, and so on) as a separate task based on a completed task's results. In the "Follow-up tasks" section of a completed task's details, press "Create a follow-up task".
 
 - In the dialog, write the repository to work in (empty means no repository), the plan, the title, and the description (what to do next). The description is required.
-- sacty creates a new task that points to the original one. It adds the original task's record (step outputs, PRs, final review, questions and answers) after the description.
+- sacty creates a new task that points to the original one. It adds the original task's record (step outputs, PRs, an earlier version's final review, questions and answers) after the description.
 - The original task doesn't change. You can create as many follow-up tasks from one task as you need. They are listed in the "Follow-up tasks" section, and "Follow-up of" in the properties of a follow-up task's details shows a link to the original task.
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose). This keeps the report's contents out of public places.
@@ -956,6 +828,20 @@ Earlier versions had an "Open PR" step (`pr`; "PR作成" on the Japanese screen)
 - The number and IDs of the deleted tasks are written to the daemon log.
 - GitHub branches and PRs are left as they are. If you won't use an open PR, close it on GitHub. Create the work you want to continue as a new task.
 - If you wrote `pr` in `step_agents` in `config.yaml`, delete it. Leaving it is a settings error. While there are old tasks, the daemon does not start and does not delete them (the log shows the settings error and asks you to delete it). Delete it and start again.
+
+## Tasks from earlier versions (with the final review)
+
+Older versions had, after the Implementation step, the final review (the final review agent runs the tests and judges pass or fail), the wait for and rerun of the implementation PR's CI, and the flaky test ledger.
+The current version removed them, and the child task that reviews the PR reviews it instead ([Review of the implementation PR](#review-of-the-implementation-pr)).
+Tasks from older versions are not deleted; they move on to the current flow the next time they run.
+
+- A task that was in the middle of the final review or the wait for the PR's CI moves on to the flow of the child task that reviews the PR, without the final review, the next time it runs (a stopped task, when you resume it).
+  A draft PR opened before the final review is updated and reused.
+- A task that stopped in the final review (verification kept failing, the verdict could not be read, the verification tool was not in the image, the request was judged documents only but the diff disagreed, and so on) moves on to the flow of the child task that reviews the PR, without the final review, when you press "Resume".
+  For a task that stopped because the verification tool was missing, or because the request was judged documents only but the diff disagreed, you can also specify the test command again or choose to proceed without tests in "Tests" of the resume section before resuming ([Deciding the tests on resume](#deciding-the-tests-on-resume)).
+- The final review results ("Tests run in the final review", the items for a person to check, and so on) are shown on the task details and the Implement approval screen as records from the older version.
+  For a task that was redoing the implementation after failing the final review, the previous implementation's test results and final review are shown under headings such as "… for the previous submission" (they are not results for the current implementation).
+- The "Move to review" operation and the flaky test ledger are not shown on the screen ([The flaky test ledger](audit.en.md#the-flaky-test-ledger)).
 
 ## Related pages
 

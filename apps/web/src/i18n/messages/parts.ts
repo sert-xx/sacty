@@ -21,13 +21,14 @@ const ja = {
   },
   implementation: {
     title: "実装",
-    passed: "最終レビューに合格",
+    passed: "完了",
     working: "作業中",
     repository: (url: string, branch: string) => `対象リポジトリ：${url} ・ ${branch} @ `,
     running: "実装中…",
     notYet: "まだ実装されていません。",
     mapTitle: "観点 → テスト → 実行結果",
-    mapHint: "テストの対応は工程エージェントの申告、検証は最終レビューの判定です。",
+    mapHint:
+      "テストの対応は工程エージェントの申告です。検証の判定は、以前の版の最終レビューの記録があるときだけ出ます。",
     tests: "テスト",
     noTests: "対応するテストがありません",
     result: "実行結果",
@@ -105,7 +106,7 @@ const ja = {
     noTestsAddedFailed: (command: string, exitCode: number | undefined) =>
       `実装で用意したテスト（${command}）が通りませんでした。終了コード ${exitCode ?? "申告なし"}。通るまで実装をやり直します。`,
     noTestsSkipped:
-      "テストのコマンドが無いため、テストでは検証していません。観点は、目的・要求要件とコードから判定します。",
+      "テストの仕組みが無いリポジトリとして進めています。観点は、目的・要求要件とコードから確かめます。",
     noTestsAdded: (command: string) =>
       `リポジトリにテストの仕組みが無いため、実装で用意したテスト（${command}）で検証しました。`,
     noTestsReason: (reason: string) => `根拠：${reason}`,
@@ -205,10 +206,10 @@ const ja = {
       keepRechooseHint: "オーケストレーターが、工程の選択からやり直します。",
       command: "テストのコマンドを指定する",
       commandLabel: "テストのコマンド",
-      commandHint: "sh -c で実行し、終了コード 0 で合格とみなします。",
+      commandHint: "実装の工程のエージェントへの指示に渡します（sacty は実行しません）。",
       none: "テストなしで進める",
       noneHint:
-        "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを実行せずに進めます。",
+        "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを書かずに進めます。",
       noneBugfix: "不具合の修正は、テストなしでは進められません。",
       reasonLabel: "テストなしで進める理由",
       reasonHint: "工程のエージェントへの指示と、PR の本文に渡します。",
@@ -313,14 +314,14 @@ const en: PartsMessages = {
   },
   implementation: {
     title: "Implement",
-    passed: "Passed the final review",
+    passed: "Done",
     working: "In progress",
     repository: (url, branch) => `Target repository: ${url} · ${branch} @ `,
     running: "Implementing…",
     notYet: "Not implemented yet.",
     mapTitle: "Viewpoint → test → result",
     mapHint:
-      "Test mapping is reported by the step agent; verification is judged by the final review.",
+      "Test mapping is reported by the step agent. The verification verdict appears only when there is a record of an earlier version's final review.",
     tests: "Tests",
     noTests: "No matching tests",
     result: "Result",
@@ -395,7 +396,7 @@ const en: PartsMessages = {
     noTestsAddedFailed: (command, exitCode) =>
       `The tests added in the implementation (${command}) failed. Exit code ${exitCode ?? "not reported"}. The implementation is redone until they pass.`,
     noTestsSkipped:
-      "There is no test command, so the implementation is not verified by tests. The viewpoints are judged from the goal, the requirements, and the code.",
+      "The task proceeds as a repository without tests. The viewpoints are checked from the goal, the requirements, and the code.",
     noTestsAdded: (command) =>
       `The repository had no tests, so the tests added by the implementation (${command}) were run.`,
     noTestsReason: (reason) => `Why: ${reason}`,
@@ -492,10 +493,11 @@ const en: PartsMessages = {
       keepRechooseHint: "The Orchestrator chooses the steps again.",
       command: "Specify the test command",
       commandLabel: "Test command",
-      commandHint: "Run with sh -c. Exit code 0 passes.",
+      commandHint:
+        "Passed to the Implementation step agent's instructions (sacty does not run it).",
       none: "Proceed without tests",
       noneHint:
-        "For repositories without tests (only skills or documents, for example). The task proceeds without running tests.",
+        "For repositories without tests (only skills or documents, for example). The task proceeds without writing tests.",
       noneBugfix: "A bug fix cannot proceed without tests.",
       reasonLabel: "Why to proceed without tests",
       reasonHint: "Passed to the step agents' instructions and the PR description.",

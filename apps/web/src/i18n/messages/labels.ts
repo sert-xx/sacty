@@ -510,7 +510,7 @@ const ja = {
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}${repos.length > 0 ? `・リポジトリ：${repos.join("・")}` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
     TaskUnblockedStacked: (branch: string, commit: string) =>
-      `依存先の子タスクの PR が最終レビューに合格したため、そのブランチ（${branch}・${commit}）に重ねて実行待ちにした`,
+      `依存先の子タスクの PR のレビューが済んだため（指摘なし。以前の版では最終レビューに合格）、そのブランチ（${branch}・${commit}）に重ねて実行待ちにした`,
     StackedDependencyMerged: (branch: string) =>
       `重ねていた依存先の PR がマージされたため、起点のブランチを ${branch} に付け替えた`,
     PullRequestRetargeted: (number: number, branch: string, ready: boolean) =>
@@ -1094,7 +1094,7 @@ const en: LabelMessages = {
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}${repos.length > 0 ? `; repositories: ${repos.join(", ")}` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
     TaskUnblockedStacked: (branch, commit) =>
-      `Queued on top of the branch (${branch}, ${commit}) of a subtask it depends on, because that subtask's PR passed the final review`,
+      `Queued on top of the branch (${branch}, ${commit}) of a subtask it depends on, because that subtask's PR has been reviewed (no findings; in earlier versions, it passed the final review)`,
     StackedDependencyMerged: (branch) =>
       `The PR it was stacked on was merged, so the starting branch was changed to ${branch}`,
     PullRequestRetargeted: (number, branch, ready) =>

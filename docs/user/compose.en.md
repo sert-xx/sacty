@@ -4,7 +4,7 @@
 
 # docker compose services (databases, mock APIs, and so on)
 
-For repositories that need a database or mock API started with docker compose for tests or manual checks, sacty starts the services on the host. The agent containers (including the final review that runs the tests) are connected to their network. Agents are not given Docker privileges.
+For repositories that need a database or mock API started with docker compose for tests or manual checks, sacty starts the services on the host. The step agent containers are connected to their network. Agents are not given Docker privileges.
 
 When you use the target repository's own compose file, no configuration is needed.
 
@@ -12,10 +12,7 @@ When you use the target repository's own compose file, no configuration is neede
 
 - When the Orchestrator chooses the steps, it reads the repository (compose files, README, AGENTS.md, and test configuration). It then decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation). If the information gathering at the start of the task has sorted the services needed for tests and manual checks, the Orchestrator bases its choice on that. Services are not started for an Investigation of content (as opposed to a bug Investigation).
 - sacty starts dependency apps managed elsewhere (ones that do not run this repository's code) and databases, caches, mocks, and so on. Apps that run this repository's code are started by the step agent inside the agent's container and connected to the services. The grouping depends on what each service runs, not on whether it has `build` in compose (a database built from the repository's Dockerfile is also a dependency).
-- sacty starts the services under a separate project name (`docker compose up --wait`) for each of the following runs.
-  - Each agent run of a step
-  - Each final review that runs the tests (it uses the Implementation step's services)
-
+- sacty starts the services under a separate project name (`docker compose up --wait`) for each agent run of a step.
   When a run finishes, sacty removes the containers, networks, and volumes. Tasks in the same repository can run in parallel without colliding. Data is discarded after each run.
 - Agents (and the tests they run) connect by service name and container port (for example `db:5432`). sacty starts the services with `ports` (host ports) and `container_name` removed.
 - Images of services that do not build (only `image`) are pulled by the host's Docker, using the names written in the compose file. For images in your organization's registry, run `docker login` on the host beforehand.
@@ -76,7 +73,7 @@ The reason for using or not using it, and which shared compose (repository, ref,
 
 ### Fetching and starting
 
-- Before a step or final review run, sacty fetches the repository.
+- Before a step run, sacty fetches the repository.
   - It updates the per-repository cache (`$SACTY_HOME/cache/shared-compose`) to the latest commit of the ref on every run.
   - It writes that commit's contents to a per-run directory, starts the services from there, and removes the directory when finished. This keeps parallel tasks from overwriting each other's initialization scripts.
 - Startup and safety checks are the same as for the target repository's compose (a per-run project name, `up --wait` to wait for healthchecks, and no host ports published).

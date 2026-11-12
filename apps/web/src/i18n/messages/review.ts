@@ -22,7 +22,7 @@ const ja = {
   noOutput: "（出力がありません）",
   viewpoints: "テスト観点",
   viewpointsNote: (n: number) => `${n}件`,
-  viewpointsHint: "承認すると凍結し、最終レビューの基準になります。",
+  viewpointsHint: "承認すると凍結し、実装の工程が観点ごとにテストを対応させる基準になります。",
   frozenRequirements: "承認済みの要求要件",
   frozenNote: (n: number) => `${n}回目の提出・凍結`,
   frozenHint: "変えるには、要求要件へ差し戻して、もう一度承認します。",
@@ -78,7 +78,7 @@ const ja = {
     noChangesTitle: "変更なし・PR 無し",
     noChangesHelp:
       "実装は起点から何も変えていません。承認すると変更なしで完了し、差し戻すと実装をやり直します。",
-    noChangesHint: "変更が要らない理由は、実装の説明・テストの結果・最終レビューで確かめられます。",
+    noChangesHint: "変更が要らない理由は、実装の説明で確かめられます。",
     prTitle: "GitHub の PR で判断します",
     prHelp: "マージで承認、コメントで差し戻しです。",
     prHint:
@@ -129,7 +129,8 @@ const en: ReviewMessages = {
   noOutput: "(No output)",
   viewpoints: "Test viewpoints",
   viewpointsNote: (n) => `${n} viewpoint${n === 1 ? "" : "s"}`,
-  viewpointsHint: "Frozen on approval and used as the basis for the final review.",
+  viewpointsHint:
+    "Frozen on approval and used as the basis the Implementation step maps its tests to.",
   frozenRequirements: "Approved requirements",
   frozenNote: (n) => `Submission ${n} · frozen`,
   frozenHint: "To change it, request changes on Requirements and approve again.",
@@ -184,8 +185,7 @@ const en: ReviewMessages = {
     noChangesTitle: "No changes, no PR",
     noChangesHelp:
       "The implementation changed nothing from the base. Approving finishes the task without changes; requesting changes redoes the implementation.",
-    noChangesHint:
-      "Check why no change is needed in the implementation notes, test results, and final review.",
+    noChangesHint: "Check why no change is needed in the implementation notes.",
     prTitle: "Decide on the GitHub PR",
     prHelp: "Merging approves; comments request changes.",
     prHint:

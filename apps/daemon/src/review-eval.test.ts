@@ -2,9 +2,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildFinalReviewPrompt, buildPrompt, extractFinalReview } from "./prompts.js";
+import { buildPrompt } from "./prompts.js";
 import {
-  assertFinalReviewVerdict,
   assertReviewerVerdict,
   evalEnabled,
   evalRuns,
@@ -14,134 +13,16 @@ import {
   readFixture,
   removesRepositoryRuleCondition,
   runAgent,
-  s12FinalReviewPrompt,
-  s12Input,
   s12Task,
-  s12Workspace,
   s18Workspace,
   viewpointRow,
 } from "./testing/review-eval/index.js";
 
-// レビューの観点の指示を、実験 S18・S12 に近い実在の例に当てて確かめる（PBI-282）。
+// レビューの観点の指示を、実験 S18 に近い実在の例に当てて確かめる（PBI-282）。
 // 常に走るのは、例が本当に問題の形になっていること（固定の確認）。実際の AI に渡す確認は、SACTY_REVIEW_EVAL=1 のときだけ走る
 // （AI を呼ぶので時間と費用がかかる。指示を変えたときに、変更の前後で流して比べる）。
 //   SACTY_REVIEW_EVAL=1 SACTY_REVIEW_EVAL_RUNS=3 npx vitest run apps/daemon/src/review-eval.test.ts
 // 担当の AI を差し替えるときは SACTY_REVIEW_EVAL_AGENT（プロンプトを標準入力から読み、答えを標準出力に出すコマンド）。
-
-describe("例 s12：共通化で、複数の異常が重なる入力の 422 のメッセージが変わる", () => {
-  it("変更前後で、異常が 1 つだけの入力は同じ結果になり、既存のテストでは気づけない", async () => {
-    const before = await import("./testing/review-eval/fixtures/s12/before.mjs");
-    const after = await import("./testing/review-eval/fixtures/s12/after.mjs");
-    const result = (mod: typeof before | typeof after, input: ReturnType<typeof s12Input>) => {
-      try {
-        mod.newReservation(input);
-        return "ok";
-      } catch (e) {
-        return `${(e as Error).constructor.name}: ${(e as Error).message}`;
-      }
-    };
-    const past = {
-      startsAt: new Date("2099-01-02T08:00:00Z"),
-      endsAt: new Date("2099-01-02T08:30:00Z"),
-    };
-    const future = {
-      startsAt: new Date("2099-01-02T10:00:00Z"),
-      endsAt: new Date("2099-01-02T10:30:00Z"),
-    };
-    const inactive = { room: { id: "room1", name: "R", isActive: false, capacity: 6 } };
-    const single = [
-      s12Input({ ...future }),
-      s12Input({ ...past }),
-      s12Input({ ...future, ...inactive }),
-      s12Input({ ...future, attendees: 7 }),
-    ];
-    for (const input of single) expect(result(after, input)).toBe(result(before, input));
-    // 異常が 1 つだけの入力の結果（既存のテストが確かめる範囲）
-    expect(result(before, s12Input({ ...past }))).toBe(
-      "BusinessRuleError: Reservations must start in the future",
-    );
-    expect(result(before, s12Input({ ...future, ...inactive }))).toBe(
-      'BusinessRuleError: Room "R" is not available for booking',
-    );
-  });
-
-  it("開始が過去かつ会議室が利用停止の入力では、状態コード（422）は同じで、メッセージが変わる", async () => {
-    const before = await import("./testing/review-eval/fixtures/s12/before.mjs");
-    const after = await import("./testing/review-eval/fixtures/s12/after.mjs");
-    const input = s12Input({ room: { id: "room1", name: "R", isActive: false, capacity: 6 } });
-    const message = (fn: (i: typeof input) => unknown) => {
-      try {
-        fn(input);
-        return undefined;
-      } catch (e) {
-        return e as Error;
-      }
-    };
-    const was = message(before.newReservation);
-    const now = message(after.newReservation);
-    expect(was).toBeInstanceOf(before.BusinessRuleError);
-    expect(now).toBeInstanceOf(after.BusinessRuleError);
-    expect(was?.message).toBe("Reservations must start in the future");
-    expect(now?.message).toBe('Room "R" is not available for booking');
-  });
-
-  it("対照（after-same-order）は、同じ共通化で検査の順番を保ち、どの入力の組み合わせでも変更前と同じ結果になる", async () => {
-    const before = await import("./testing/review-eval/fixtures/s12/before.mjs");
-    const same = await import("./testing/review-eval/fixtures/s12/after-same-order.mjs");
-    const after = await import("./testing/review-eval/fixtures/s12/after.mjs");
-    const run = (mod: { newReservation: (i: never) => unknown }, input: unknown) => {
-      try {
-        mod.newReservation(input as never);
-        return "ok";
-      } catch (e) {
-        return (e as Error).message;
-      }
-    };
-    const now = new Date("2099-01-02T09:00:00Z");
-    const at = (h: number, m = 0) => new Date(Date.UTC(2099, 0, 2, h, m));
-    let differs = 0;
-    let total = 0;
-    for (const [startsAt, endsAt] of [
-      [at(8), at(8, 30)], // 開始が過去
-      [at(10), at(10, 30)], // 開始が未来
-      [at(10), at(15)], // 開始が未来で、240 分を超える
-      [at(8), at(13)], // 開始が過去で、240 分を超える
-    ] as const) {
-      for (const isActive of [true, false]) {
-        for (const attendees of [2, 9]) {
-          const input = s12Input({
-            startsAt,
-            endsAt,
-            attendees,
-            now,
-            room: { id: "room1", name: "R", isActive, capacity: 6 },
-          });
-          total++;
-          expect(run(same, input)).toBe(run(before, input));
-          if (run(after, input) !== run(before, input)) differs++;
-        }
-      }
-    }
-    // 順番を入れ替えた版（after）は、異常が重なる入力のうち一部（全部ではない）で結果が変わる
-    expect(differs).toBeGreaterThan(0);
-    expect(differs).toBeLessThan(total);
-  });
-
-  it("例の差分は、作成の検査を共通の関数に分けた変更と、変更（changeReservation）の追加で、承認済みの設計に順番の変更は書かれていない", () => {
-    const { diff } = s12Workspace();
-    expect(diff).toContain("+function validateFormat(");
-    expect(diff).toContain("+function validateRules(");
-    expect(diff).toContain("+export function changeReservation(");
-    // 開始が未来の検査が、会議室の検査より後ろに動いている
-    expect(diff).toMatch(
-      /-\s+if \(input\.startsAt\.getTime\(\) <= input\.now\.getTime\(\)\) \{\n-\s+throw new BusinessRuleError\("Reservations must start in the future"\)/,
-    );
-    const design = readFixture("s12/design.md");
-    expect(design).toContain("開始が未来の検査を除いて共通の関数に分け");
-    expect(design).not.toMatch(/検査の順|順番を変え|メッセージが変わ/);
-    expect(readFixture("s12/requirements.md")).not.toMatch(/メッセージ/);
-  });
-});
 
 describe("例 s18：リポジトリの決まりから導いた条件が、要求要件に入っている", () => {
   it("下書きの R-2（定義・生成物・版）は、リポジトリの README の決まりから導かれ、確かめ方も決まりのコマンドである", () => {
@@ -381,59 +262,6 @@ describe("実際の AI に当てる確認の入口（固定の確認）", () => 
     ).not.toThrow();
   });
 
-  it("最終レビューの判定は、期待する観点がすべて揃い、各観点の verified と summary まで確かめる（空の viewpoints では成功しない）", () => {
-    const block = (v: Record<string, unknown>) =>
-      `説明\n\`\`\`json\n${JSON.stringify({ "sacty-final-review": v })}\n\`\`\``;
-    const good = {
-      viewpoints: [
-        { id: "TV-1", verified: true },
-        { id: "TV-2", verified: false },
-      ],
-      summary: "ok",
-    };
-    for (const bad of [
-      "",
-      "判定なし",
-      '```json\n{"x": 1}\n```',
-      block({}),
-      block({ viewpoints: [], summary: "ok" }), // 空の配列
-      block({ ...good, viewpoints: [{ id: "TV-1", verified: true }] }), // 観点が足りない
-      block({
-        ...good,
-        viewpoints: [
-          { id: "TV-1", verified: "yes" },
-          { id: "TV-2", verified: true },
-        ],
-      }),
-      block({ ...good, viewpoints: [{ verified: true }, { id: "TV-2", verified: true }] }),
-      block({ viewpoints: good.viewpoints }), // summary が無い
-    ]) {
-      expect(() => assertFinalReviewVerdict(bad, ["TV-1", "TV-2"]), bad).toThrow(
-        "判定の JSON として読めません",
-      );
-    }
-    expect(() => assertFinalReviewVerdict(block(good), ["TV-1", "TV-2"])).not.toThrow();
-    // sacty 本体が採るのは、見出しのオブジェクトを持つ最後のブロック。前に正しいブロックがあっても、最後が不正なら失敗する
-    const lastBad = [block(good), block({ viewpoints: [], summary: "訂正" })].join("\n");
-    expect(() => assertFinalReviewVerdict(lastBad, ["TV-1", "TV-2"])).toThrow(
-      "判定の JSON として読めません",
-    );
-    // 囲みが無い JSON も、本体は読む。囲みなしの最後が不正なら、前の囲み付きが正しくても失敗する
-    const unfencedBad = `${block(good)}\n{"sacty-final-review": {"viewpoints": [{"id": "TV-1", "verified": true}], "summary": "x"}}`;
-    expect(() => assertFinalReviewVerdict(unfencedBad, ["TV-1", "TV-2"])).toThrow();
-    // 最後が正しければ、前の不正なブロックがあっても成功する（本体と同じく最後を採る）
-    const lastGood = [block({ viewpoints: [], summary: "途中" }), block(good)].join("\n");
-    expect(() => assertFinalReviewVerdict(lastGood, ["TV-1", "TV-2"])).not.toThrow();
-    // 本体が採るブロックと同じものを検証している（同じ出力を extractFinalReview に渡して一致する）
-    expect(
-      extractFinalReview(lastBad, ["TV-1", "TV-2"], [], {}).viewpoints.every((v) => !v.verified),
-    ).toBe(true);
-    expect(
-      extractFinalReview(lastGood, ["TV-1", "TV-2"], [], {}).viewpoints.map((v) => v.verified),
-    ).toEqual([true, false]);
-    expect(() => assertFinalReviewVerdict(block(good), [])).toThrow(); // 期待する観点が無いときも成功させない
-  });
-
   it("skillsDir を指定すると、依頼文の観点の「見るもの」「見ないもの」は、その版のカタログから取る（変更前の版の評価に新しい文言が混ざらない）", () => {
     const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-skills-"));
     mkdirSync(join(dir, "review-dispatch/references"), { recursive: true });
@@ -502,39 +330,6 @@ describe("観点の指示の文言（PBI-282）", () => {
     }
     expect(buildPrompt(task, "implement")).not.toContain("「決まりの書き直し」として消さない");
   });
-
-  it("最終レビューの指示に、既存の振る舞いの変化（エラーの種類・メッセージ・検査の順番・応答の形）を、リファクタリングを含めて確かめ、範囲外として申告させることがある", () => {
-    for (const prompt of [
-      s12FinalReviewPrompt("diff"),
-      buildFinalReviewPrompt(s12Task(), "diff", { testCommand: "npm test" }),
-    ]) {
-      expect(prompt).toContain(
-        "既存の振る舞い（エラーの種類・状態コード・メッセージ、検査の順番、応答の形・項目、既定値）",
-      );
-      expect(prompt).toContain("承認済みの要求要件・設計");
-      expect(prompt).toContain(
-        "共通化・分割・移動・名前の付け替えのリファクタリングも例外にしない",
-      );
-      expect(prompt).toContain("複数の異常が同時に当たる入力");
-      expect(prompt).toContain("どちらの検査が先に働き、どのエラーを返すかを追う");
-      expect(prompt).toContain("既存のテストが通っていても同じ");
-      expect(prompt).toContain(
-        "outOfScope に「どの入力で、変更前は何を返し、変更後は何を返すか」を書き、不合格にする",
-      );
-      // 振る舞いを変えない変更は範囲外にしない（比較で確かめる）、リポジトリの決まりが求める変更は範囲内、は変えない
-      expect(prompt).toContain(
-        "リファクタリング・整形などの振る舞いを変えない変更は、ここでは範囲外としない（変えていないことは、次の項目で確かめる）",
-      );
-      expect(prompt).toContain("要求要件・設計に書かれていなくても範囲内とする");
-    }
-  });
-
-  it("セキュリティ対応の最終レビューには入れない（観点 SEC-MIN が見る）", () => {
-    const task = { ...s12Task(), requestedPlan: "security-fix" } as unknown as ReturnType<
-      typeof s12Task
-    >;
-    expect(buildFinalReviewPrompt(task, "diff")).not.toContain("既存の振る舞い（エラーの種類");
-  });
 });
 
 // ここから先は、実際の AI を呼ぶ確認。SACTY_REVIEW_EVAL=1 のときだけ走る。
@@ -569,51 +364,6 @@ live(`実際の AI に当てる（${RUNS} 回ずつ）`, () => {
           );
         if (!flagsOtherOverwriting(findings))
           failures.push(`run ${run}: ほかの書きすぎを指摘していない（D-10 が黙った）`);
-      }
-      expect(failures).toEqual([]);
-    },
-    MINUTES * RUNS,
-  );
-
-  /** s12 の最終レビューを流し、範囲外の変更（観点 SCOPE）として申告された内容を返す。 */
-  const s12Reported = (variant: "after" | "after-same-order", run: number) => {
-    const ws = s12Workspace(variant);
-    const task = s12Task();
-    const ids = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
-    const { output } = runAgent(s12FinalReviewPrompt(ws.diff), { cwd: ws.dir, addDirs: [] });
-    assertFinalReviewVerdict(output, ids);
-    const review = extractFinalReview(output, ids, [], {});
-    const scope = review.viewpoints.find((v) => v.viewpointId === "SCOPE");
-    const reported = scope && !scope.verified ? JSON.stringify(scope.reason) : "";
-    record(
-      `[s12 ${variant} run ${run}] SCOPE: ${reported || "（申告なし）"}\n${output.slice(-800)}`,
-    );
-    return reported;
-  };
-  // 検査の順番（開始が過去と会議室の利用停止のどちらが先か）に触れた申告
-  const ORDER = /Reservations must start in the future|is not available for booking|検査の順|順番/;
-
-  it(
-    "s12：最終レビューが、共通化で変わった検査の順番（422 のメッセージ）を範囲外の変更として申告する",
-    () => {
-      const failures: string[] = [];
-      for (let run = 1; run <= RUNS; run++) {
-        if (!ORDER.test(s12Reported("after", run))) {
-          failures.push(`run ${run}: 検査の順番の変化を申告していない`);
-        }
-      }
-      expect(failures).toEqual([]);
-    },
-    MINUTES * RUNS,
-  );
-
-  it(
-    "s12（対照）：検査の順番を保った共通化は、範囲外として申告しない（指示が過剰に働かない）",
-    () => {
-      const failures: string[] = [];
-      for (let run = 1; run <= RUNS; run++) {
-        const reported = s12Reported("after-same-order", run);
-        if (ORDER.test(reported)) failures.push(`run ${run}: 順番を保っているのに申告した`);
       }
       expect(failures).toEqual([]);
     },

@@ -97,8 +97,8 @@ X-2 も同じ扱いだが、修正後に実行し直した検証が失敗・警�
 再レビューでも検証の範囲（`scope`）は決め直す。`scope` が `docs` のときは、実行し直した文書に効く検証が失敗・警告を出したときに X-2 を起動し、実行した検証が 1 つも無ければ、前回の回で `must` を出していても起動しない（分析するものが無い）。修正で差分にコードの変更が入れば `scope` は `all` になり、検証は全部実行する。
 初回のレビューと、PR のレビュー（`pr-review`）の再レビューの起動の規則は変えない。
 
-自己レビューでも、作業の指示が「この実行は、人の差し戻し・AI のレビューの指摘・最終レビューの不合格を受けた直しである」と示したうえで、「この実行の最初のセルフレビューを、直しの実行の最初のレビューの規則で行う」と明示しているときに限り、その実行の最初のレビューを再レビューとして扱う（PBI-296。実験 F39）。明示が無いとき（タスクの最初の実行、または「差し戻しの直し」「レビューの範囲を絞る」としか書かれていない実行、前回のセルフレビューが合格していない実行）は、観点を絞らず、初回の規則で全部の観点で見る。
-起動するのは、今回の指摘に関わる観点と X-1 だけ。関わる観点は、指摘が観点の ID を示していればその観点、示していなければ指摘が述べる問題を観点カタログの「見るもの」に当てはめて選ぶ。最終レビューの不合格は、不合格の理由（満たしていない要件・失敗したテスト・再発した指摘）ごとに同じ方法で選ぶ。決められない、または境界にまたがるときは、当てはまりうる観点をすべて起動する。
+自己レビューでも、作業の指示が「この実行は、人の差し戻し・AI のレビューの指摘・検証の不合格を受けた直しである」と示したうえで、「この実行の最初のセルフレビューを、直しの実行の最初のレビューの規則で行う」と明示しているときに限り、その実行の最初のレビューを再レビューとして扱う（PBI-296。実験 F39）。明示が無いとき（タスクの最初の実行、または「差し戻しの直し」「レビューの範囲を絞る」としか書かれていない実行、前回のセルフレビューが合格していない実行）は、観点を絞らず、初回の規則で全部の観点で見る。
+起動するのは、今回の指摘に関わる観点と X-1 だけ。関わる観点は、指摘が観点の ID を示していればその観点、示していなければ指摘が述べる問題を観点カタログの「見るもの」に当てはめて選ぶ。検証の不合格は、不合格の理由（満たしていない要件・失敗したテスト・再発した指摘）ごとに同じ方法で選ぶ。決められない、または境界にまたがるときは、当てはまりうる観点をすべて起動する。
 X-2 は、指摘が検証の失敗に関わるとき、または実行し直した検証が失敗・警告を出したときだけ起動する。対象は、この実行で直した箇所とその直しが直接必要にした既存の箇所。
 起動した担当には、今回の指摘と直しの内容を渡し、直ったかと、直しが新しい問題を持ち込んでいないかを見させる。起動しなかった観点は、起動表に「起動しない」と理由（直しの実行：今回の指摘に関わらない）を残し、成果の説明の「起動した観点」でも分かるようにする。この実行の中の次の回からは、上の再レビューの規則どおり。
 
@@ -153,10 +153,10 @@ Playwright やブラウザを新たに入れない。
 定義が無い段階は親と同じモデルで起動し、起動表の「段階」に「親と同じ」と書く。
 
 観点の指示を人が手で変えるときは、実験で見つかった取りこぼしに近い固定の例に実際の AI を当てて、効き目を測れる（任意の手動の測定手順。`review-eval.test.ts`。工程のエージェントに求めるものではない）。
-例は、リポジトリの決まりから導いた条件を D-10 が消す（S18）、共通化のリファクタリングで 422 のメッセージが変わるのを最終レビューが見逃す（S12）の 2 つで、実験の入力を縮めて `testing/review-eval/fixtures/` に置く。
+例は、リポジトリの決まりから導いた条件を D-10 が消す（S18）で、実験の入力を縮めて `testing/review-eval/fixtures/` に置く（S12 の例は、最終レビューの仕組みとともにやめた。S12 の承認済みの要求要件・設計は、指示の文言の固定の確認に使う）。
 固定の確認（例が問題の形になっていること・指示の文言・判定の読み取り）は、テストの実行で常に走る。
 AI を呼ぶ確認は `SACTY_REVIEW_EVAL=1` のときだけ走り、指示の変更の前後で同じ例を複数回（`SACTY_REVIEW_EVAL_RUNS`）流して比べる。
-D-10 は決まりから導いた条件を消す・縮める指摘を出さず、ほかの書きすぎは指摘すること、最終レビューは検査の順番が変わった例を範囲外として申告し、順番を保った対照は申告しないことを確かめる。
+D-10 は決まりから導いた条件を消す・縮める指摘を出さず、ほかの書きすぎは指摘することを確かめる。
 
 ### PR のレビューと投稿
 
@@ -184,7 +184,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
     主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`s12Workspace`・`runAgent`）
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`runAgent`）
 
 ## 既定の文章用スキル
 
