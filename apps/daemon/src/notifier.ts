@@ -5,6 +5,7 @@ import {
   isCompleted,
   message,
   type NotificationKind,
+  openProposal,
   type PauseReason,
   type Project,
   renderMessage,
@@ -149,6 +150,8 @@ export function notificationText(
   }
   if (kind === "escalation") {
     const reason = task.escalation?.reason;
+    // 変更の申し出の判断待ち（PBI-333。escalation は付かない。以前の版の、判定できなかった申し出も）
+    const proposal = task.status === "escalated" ? openProposal(task) : undefined;
     const stepName = nameOf(task.escalation?.step ?? task.gate?.step);
     const where = stepName ? (ja ? `${stepName}で` : ` in ${stepName}`) : "";
     const what =
@@ -156,9 +159,24 @@ export function notificationText(
         ? ja
           ? `${where}エスカレーションしました。PR の指摘の戻し先を確かめてください`
           : `Escalated${where}: confirm the step to redo for the PR comments`
-        : ja
-          ? `${where}エスカレーションしました。判断してください`
-          : `Escalated${where}; your decision is needed`;
+        : proposal
+          ? ja
+            ? `${where}承認済みの成果物の変更の申し出がありました。認めるか判断してください`
+            : `A change to an approved deliverable was proposed${where}; decide whether to accept it`
+          : ja
+            ? `${where}エスカレーションしました。判断してください`
+            : `Escalated${where}; your decision is needed`;
+    // 変更の申し出は、タスクの詳細の申し出の欄で判断する（承認の画面は承認待ちのときだけ使える。PBI-333）
+    if (proposal) {
+      const proposals = `${base}/tasks/${task.id}#proposals`;
+      return [
+        `:warning: ${title}`,
+        what,
+        ja
+          ? `窓口：${link(proposals, "タスクの詳細の変更の申し出")}`
+          : `Decide here: ${link(proposals, "change request in the task details")}`,
+      ].join("\n");
+    }
     return [
       `:warning: ${title}`,
       what,

@@ -15,7 +15,7 @@ const ja = {
   escalated: "エスカレーション",
   fromProposalTitle: (id: string) => `${id}による変更案`,
   fromProposalBody: (from: string, byPerson: boolean, step: string) =>
-    `${from}の工程の申し出を${byPerson ? "人" : "ゴールガーディアン"}が認めました。承認済みの${step}が変わるので、もう一度承認してください。`,
+    `${from}の工程の申し出を${byPerson ? "人" : "以前の版の AI"}が認めました。承認済みの${step}が変わるので、もう一度承認してください。`,
   reason: (reason: string) => `理由：${reason}`,
   history: "これまでの指摘への対応",
   deliverable: "成果物",
@@ -51,9 +51,9 @@ const ja = {
     revokeNote: (step: string) => `${step}の承認を取り消し、もう一度承認します。`,
     causeLegend: "差し戻しの原因",
     causeHint:
-      "ゴールガーディアンの見逃しとして数えるのは、見逃したと選んだ差し戻しだけです。選ばなければ、原因が分からない差し戻しとして数えます。",
+      "見逃しとして数えるのは、見逃したと選んだ差し戻しだけです。選ばなければ、原因が分からない差し戻しとして数えます。",
     causeNone: "選ばない（分からない）",
-    causeGuardianMissed: "ゴールガーディアンが見逃した（確かめられたはずの不備）",
+    causeGuardianMissed: "見逃し（確かめられたはずの不備）",
     causeNewRequest: "新しい要望・方針の変更（承認した内容に無かったこと）",
     causeBaseChanged: "ベースブランチの変化による競合（先の PR のマージなど）",
     commentsLabel: "指摘（差し戻すときは必須）",
@@ -82,11 +82,11 @@ const ja = {
     prTitle: "GitHub の PR で判断します",
     prHelp: "マージで承認、コメントで差し戻しです。",
     prHint:
-      "レビュー・行へのコメント・コメントを差し戻しとして取り込み、ゴールガーディアンが決めた工程（実装・設計・要求要件）からやり直します。取り込みは、最後のコメントから 2 分後です。設計・要求要件からやり直したら、もう一度承認します。",
+      "レビュー・行へのコメント・コメントを差し戻しとして取り込み、戻し先の判断で決めた工程（実装・設計・要求要件）からやり直します。取り込みは、最後のコメントから 2 分後です。設計・要求要件からやり直したら、もう一度承認します。",
     stepPrHelp: (step: string) =>
       `マージで${step}を承認し、次の工程に進みます。コメントは差し戻しです。`,
     stepPrHint: (step: string) =>
-      `${step}は、タスクブランチへの PR です。コメントを差し戻しとして取り込み、ゴールガーディアンが${step}のやり直し（同じ PR を更新）か、前の工程への差し戻しかを決めます。Sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。`,
+      `${step}は、タスクブランチへの PR です。コメントを差し戻しとして取り込み、レビューの子タスクか工程のエージェントが${step}のやり直し（同じ PR を更新）か、前の工程への差し戻しかを決めます。Sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。`,
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed: "PR はマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prConflict:
@@ -99,8 +99,7 @@ const ja = {
       "差し戻しても、引き継いだ PR にはベースブランチを取り込みません。競合は GitHub で解消してください。",
     prRequestNote: "差し戻すときは、ここに指摘を入力してください。",
     reworkTitle: "PR の指摘の戻し先を確かめてください",
-    reworkSuggestion: (step: string, note: string) =>
-      `ゴールガーディアンの提案：${step}からやり直す（${note}）`,
+    reworkSuggestion: (step: string, note: string) => `提案：${step}からやり直す（${note}）`,
     reworkHelp: "戻し先を選んで差し戻してください。PR の指摘は取り込み済みです。",
     reworkHint: "指摘を空にすると、取り込んだ指摘をそのまま使います。",
     prMergedOutdated:
@@ -123,7 +122,7 @@ const en: ReviewMessages = {
   escalated: "Escalated",
   fromProposalTitle: (id) => `Revised by ${id}`,
   fromProposalBody: (from, byPerson, step) =>
-    `${byPerson ? "A person" : "The Goal Guardian"} accepted a change request from the ${from} step. It changes the approved ${step}, so approve it again.`,
+    `${byPerson ? "A person" : "The AI in an earlier version"} accepted a change request from the ${from} step. It changes the approved ${step}, so approve it again.`,
   reason: (reason) => `Reason: ${reason}`,
   history: "Responses to earlier comments",
   deliverable: "Deliverable",
@@ -158,9 +157,9 @@ const en: ReviewMessages = {
     revokeNote: (step) => `Revokes the ${step} approval; approve it again afterwards.`,
     causeLegend: "Cause of the rework",
     causeHint:
-      "Only a rework marked as missed counts as a Goal Guardian miss. If you choose nothing, it is counted as rework with an unknown cause.",
+      "Only a rework marked as missed counts as a miss. If you choose nothing, it is counted as rework with an unknown cause.",
     causeNone: "Don't choose (unknown)",
-    causeGuardianMissed: "The Goal Guardian missed it (a flaw it could have caught)",
+    causeGuardianMissed: "Miss (a flaw that could be caught)",
     causeNewRequest: "A new request or change of direction (not in what was approved)",
     causeBaseChanged: "A conflict from changes to the base branch (e.g. an earlier PR merged)",
     commentsLabel: "Comments (required to request changes)",
@@ -190,11 +189,11 @@ const en: ReviewMessages = {
     prTitle: "Decide on the GitHub PR",
     prHelp: "Merging approves; comments request changes.",
     prHint:
-      "Comments in reviews, on lines, or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements). Comments are imported two minutes after the last one. When design or requirements are redone, approve the reworked deliverable again.",
+      "Comments in reviews, on lines, or on the PR are imported as change requests, and the work is redone from the step decided for them (implementation, design, or requirements). Comments are imported two minutes after the last one. When design or requirements are redone, approve the reworked deliverable again.",
     stepPrHelp: (step) =>
       `Merging approves the ${step} and moves on to the next step; comments request changes.`,
     stepPrHint: (step) =>
-      `The ${step} is a PR to the task branch. Comments are imported as change requests, and the Goal Guardian decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. Sacty checks every minute and imports two minutes after the last comment.`,
+      `The ${step} is a PR to the task branch. Comments are imported as change requests, and the review subtask or the step agent decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. Sacty checks every minute and imports two minutes after the last comment.`,
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prConflict:
@@ -207,7 +206,7 @@ const en: ReviewMessages = {
       "Even if you send it back, the base branch is not merged into a continued PR. Resolve the conflict on GitHub.",
     prRequestNote: "To request changes, enter your comments here.",
     reworkTitle: "Confirm the step to redo for the PR comments",
-    reworkSuggestion: (step, note) => `Goal Guardian's suggestion: redo from ${step} (${note})`,
+    reworkSuggestion: (step, note) => `Suggestion: redo from ${step} (${note})`,
     reworkHelp: "Choose the step to redo, then request changes. The PR comments are imported.",
     reworkHint: "Leave the comments empty to use the imported comments as they are.",
     prMergedOutdated:

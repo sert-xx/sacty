@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 
 /*
- * PR の欄：PR の指摘で差し戻したときの戻し先に、ゴールガーディアンが判断した原因を添える。見逃しの記録は、見逃しのときだけ出る（PBI-268）。
+ * PR の欄：PR の指摘で差し戻したときの戻し先に、戻し先の判断で決まった原因を添える。見逃しの記録は、見逃しのときだけ出る（PBI-268）。
  */
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor("ja") }));
 
@@ -40,14 +40,14 @@ describe("PR の欄の差し戻しの原因（PBI-268）", () => {
     ["base_changed", "原因：ベースの変化による競合"],
     ["new_request", "原因：新しい要望・方針の変更"],
     ["question_answer", "原因：質問への答え"],
-    ["guardian_missed", "原因：ゴールガーディアンの見逃し"],
+    ["guardian_missed", "原因：見逃し"],
   ])("原因が %s なら、戻し先の下に出す。見逃しの記録は、記録が無ければ出ない", (cause, text) => {
     const html = renderToStaticMarkup(
       h(PullRequestCard, { task: task({ prRework: rework(cause) }) }),
     );
     expect(html).toContain(text);
     expect(html).toContain("実装からやり直し");
-    expect(html).not.toContain("ゴールガーディアンの見逃し 1件");
+    expect(html).not.toContain("最終レビューの見逃し 1件");
   });
 
   it("原因を決めていない差し戻しには、原因を出さない", () => {
@@ -62,7 +62,7 @@ describe("PR の欄の差し戻しの原因（PBI-268）", () => {
         task: task({ misses: [{ reviewAt: "r", remarkIds: ["implement-1-1"], at: "t" }] }),
       }),
     );
-    expect(html).toContain("ゴールガーディアンの見逃し 1件");
+    expect(html).toContain("最終レビューの見逃し 1件");
   });
 });
 

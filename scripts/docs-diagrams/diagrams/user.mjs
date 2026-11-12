@@ -73,8 +73,8 @@ export const overview = {
       title: t("エージェント", "Agents"),
       lines: [
         t("オーケストレーター・情報収集・", "Orchestrator, information"),
-        t("工程・ゴールガーディアン", "gatherer, steps, goal"),
-        t("（コンテナ）", "guardian (containers)"),
+        t("工程のエージェント", "gatherer, step agents"),
+        t("（コンテナ）", "(containers)"),
       ],
     },
     {

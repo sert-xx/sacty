@@ -11,7 +11,6 @@ const config = (patch: Partial<SactyConfig> = {}): SactyConfig =>
   ({
     image: "x",
     defaultAgent: agent("main", { mode: "subscription", secret: "claude-token" }),
-    guardianAgent: agent("main", { mode: "subscription", secret: "claude-token" }),
     budgetPerTaskUsd: 1,
     gatewayRetry: { maxAttempts: 1, maxWaitMs: 0 },
     hostAddress: "host-gateway",
@@ -25,7 +24,7 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
   it("使うエージェント・接続先・PF・ホストの MCP・Sacty の設定の通知先の参照を、重ねずに集める（PBI-115）", () => {
     const uses = secretUses(
       config({
-        guardianAgent: {
+        auditAgent: {
           ...agent("guard", { mode: "api-key", secret: "op://Work/Anthropic/key" }),
           runtime: "claude-code",
         },

@@ -103,7 +103,7 @@ import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
 import { NotificationFeed } from "./notification-feed.js";
-import { SlackNotifier } from "./notifier.js";
+import { notificationText, SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
@@ -1132,7 +1132,7 @@ class FakeExecutor implements AgentExecutor {
     this.forwards.push(forwards);
     this.images.push({ image, ...(imageEnv ? { env: imageEnv } : {}) });
     this.dirs.push(workspaceDir);
-    this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
+    this.scratch.push(/[\\/]_(?:snapshots|guardian|code-copy)[\\/]/.test(workspaceDir));
     this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
     // レビューの工程で別にマウントされる、PR の差分の全体のファイル（PBI-65。実行の後に消される）
     const reviewMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-review");
@@ -3757,7 +3757,7 @@ describe("作業領域の写し・削除の間も、デーモンのイベント�
   class ManyFilesRepos extends FakeRepos {
     override async snapshot(gitDir: string, baseCommit: string, outDir: string) {
       await super.snapshot(gitDir, baseCommit, outDir);
-      if (!outDir.includes("_guardian")) return;
+      if (!outDir.includes("_code-copy")) return;
       for (let d = 0; d < 20; d++) {
         mkdirSync(join(outDir, "node_modules", `pkg${d}`), { recursive: true });
         for (let f = 0; f < 100; f++) {
@@ -3767,44 +3767,26 @@ describe("作業領域の写し・削除の間も、デーモンのイベント�
     }
   }
 
-  it("ゴールガーディアンの作業領域を消す間も、ほかのタイマーが進み、消し終わってから工程を終える", async () => {
+  it("コードの写しを消す間も、ほかのタイマーが進み、消し終わってから分析を終える（PBI-333 から、写しは _code-copy）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
-    const out = (text: string): AgentOutcome => ({
-      kind: "completed",
-      output: text,
-      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
-    });
     const { service, executor } = makeService(
       activity,
       [
-        out("# 要求要件 v1"),
-        out(
-          [
-            "# 設計 v1",
-            block({
-              "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
-            }),
-            block({
-              "sacty-change-proposal": {
-                target: "requirements",
-                reason: "外部APIが冪等性キーに対応していない",
-                facts: ["決済代行のAPI仕様書 v3 に Idempotency-Key が無い"],
-                proposed: "# 要求要件 v2",
-              },
-            }),
-          ].join("\n\n"),
-        ),
-        out(block({ "sacty-verdict": { verdict: "rejected", reason: "代替手段がある" } })),
+        { kind: "failed", reason: "error", message: "exit code 1" },
+        {
+          kind: "completed",
+          output: "### 何が起きたか\n分析",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+        },
       ],
-      { repos: new ManyFilesRepos() },
+      { repos: new ManyFilesRepos(), sessionLogs: new SessionLogStore(join(dir, "runs")) },
     );
-    // ゴールガーディアンの実行が終わってから、作業領域が消えるまでに進んだタイマーの数
+    // 分析の実行が終わってから、写しが消えるまでに進んだタイマーの数
     let ticks = 0;
     const run = executor.run.bind(executor);
     executor.run = async (input) => {
       const outcome = await run(input);
-      if (input.workspaceDir.includes("_guardian")) {
+      if (input.workspaceDir.includes("_code-copy")) {
         expect(existsSync(join(input.workspaceDir, "node_modules", "pkg19", "f99.js"))).toBe(true);
         const tick = () => {
           if (!existsSync(input.workspaceDir)) return;
@@ -3815,19 +3797,20 @@ describe("作業領域の写し・削除の間も、デーモンのイベント�
       }
       return outcome;
     };
-    const task = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
-    await service.runNext(task.id);
-    service.approve(task.id, { step: "requirements", submission: 1 });
-    await service.runNext(task.id);
-    expect(executor.dirs[2]).toContain("_guardian");
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    await service.analyzeErrors(id).analyzed;
+    const copy = executor.dirs.at(-1) ?? "";
+    expect(copy).toContain("_code-copy");
+    expect(copy).not.toContain("_guardian");
     // 同期で消すと、消し終わるまでタイマーが1つも進まない
     expect(ticks).toBeGreaterThan(0);
-    expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
+    expect(existsSync(copy)).toBe(false);
     activity.close();
   });
 });
 
-describe("ゴールガーディアン：変更の申し出の判定（PBI-9）", () => {
+describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () => {
   const out = (text: string, usageOutput = 100): AgentOutcome => ({
     kind: "completed",
     output: text,
@@ -3851,13 +3834,11 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
         }),
       ].join("\n\n"),
     );
-  const verdict = (v: string, reason = "事実で裏付けられている") =>
-    out(block({ "sacty-verdict": { verdict: v, reason } }), 1000);
   const promptOf = (executor: FakeExecutor, i: number) =>
     executor.calls[i]?.command.join(" ") ?? "";
 
-  /** 要求要件を承認し、設計の実行（申し出つき）とゴールガーディアンの判定まで進める。 */
-  async function proposeAndJudge(outcomes: AgentOutcome[]) {
+  /** 要求要件を承認し、設計の実行（申し出つき）まで進める。 */
+  async function propose(outcomes: AgentOutcome[]) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [out("# 要求要件 v1"), ...outcomes]);
     const task = made.service.createTask({
@@ -3871,266 +3852,63 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     return { activity, ...made, id: task.id };
   }
 
-  it("設計の工程は要求要件の変更を申し出られ、ゴールガーディアンは新しいセッションで必要な情報だけを受け取る", async () => {
-    const { activity, service, executor, id } = await proposeAndJudge([
-      designWithProposal(),
-      verdict("rejected", "代替手段がある"),
-    ]);
+  it("設計の工程は要求要件の変更を申し出られ、AI の判定を挟まずに人の判断待ちになる（PBI-333）", async () => {
+    const { activity, service, executor, id } = await propose([designWithProposal()]);
     expect(promptOf(executor, 1)).toContain("sacty-change-proposal");
-
-    const guardian = promptOf(executor, 2);
-    expect(guardian).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v1");
-    expect(guardian).toContain("理由：外部APIが冪等性キーに対応していない");
-    expect(guardian).toContain("- 決済代行のAPI仕様書 v3 に Idempotency-Key が無い");
-    expect(guardian).toContain("# 要求要件 v2（sacty側で重複を防ぐ）");
-    // タスクの内容や工程の下書き、過去の経緯は渡さない
-    expect(guardian).not.toContain("タスクの本文");
-    expect(guardian).not.toContain("# 設計 v1");
-    // 工程の作業領域とは別の作業領域に、起点のコミットのコードを読み取り専用で渡す（PBI-16）
-    expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
-    expect(executor.dirs[2]).toContain("_guardian");
-    expect(executor.scratch[2]).toBe(true);
-    expect(executor.workspaceFiles[2]).toEqual(["README.md"]);
-    expect(guardian).toContain("起点のコミット（base123）のコードがあります");
-    // コンテキスト（規約・スキル）は渡さない
-    expect(executor.contexts[2]).toBeUndefined();
-    expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
-
+    // 判定の実行はしない
+    expect(executor.calls).toHaveLength(2);
     const task = service.get(id)?.task;
+    expect(task?.status).toBe("escalated");
     expect(task?.proposals).toMatchObject([
-      {
-        id: "CP-1",
-        fromStep: "design",
-        target: "requirements",
-        judgement: { verdict: "rejected", reason: "代替手段がある" },
-        applied: false,
-      },
+      { id: "CP-1", fromStep: "design", target: "requirements", applied: false },
     ]);
-    // 却下されたら、設計をそのまま提出する。要求要件は承認済みのまま
-    expect(task?.gate).toEqual({ step: "design", submission: 1 });
+    expect(task?.proposals[0]?.judgement).toBeUndefined();
+    // 通知は、判断の欄のあるタスクの詳細の申し出の欄へリンクする（PR #351 レビュー指摘）
+    expect(task && notificationText(task, "escalation", "ja", "http://x")).toContain(
+      `http://x/tasks/${id}#proposals`,
+    );
     expect(task?.outputs.design).toBe("# 設計 v1"); // 申し出のJSONは本文から除く
     expect(task?.approved.requirements?.output).toBe("# 要求要件 v1");
-    // ゴールガーディアンの費用も予算に入る（100 + 100 + 1000 出力トークン × $15/M）
-    expect(task?.budget.usedUsd).toBeCloseTo(0.018, 6);
-    const types = service.get(id)?.activity.map((e) => e.type) ?? [];
-    expect(types.slice(-4)).toEqual([
-      "ChangeProposed",
-      "RunCostRecorded",
-      "ChangeJudged",
-      "StepSubmitted",
-    ]);
-    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.actor).toBe(
-      "guardian",
-    );
-    activity.close();
-  });
-
-  it("要求要件の変更が承認されても、人間の再承認が必要になる", async () => {
-    const { activity, service, executor, id } = await proposeAndJudge([
-      designWithProposal(),
-      verdict("approved"),
-      out("# 設計 v2"),
-    ]);
-    const task = service.get(id)?.task;
-    expect(task?.status).toBe("awaiting_approval");
-    expect(task?.gate).toEqual({ step: "requirements", submission: 2 });
-    expect(task?.outputs.requirements).toBe("# 要求要件 v2（sacty側で重複を防ぐ）");
-    expect(task?.approved).toEqual({});
-    expect(task?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo"]);
-    expect(task?.proposals[0]?.applied).toBe(true);
-
-    service.approve(id, { step: "requirements", submission: 2 });
-    await service.runNext(id);
-    expect(promptOf(executor, 3)).toContain(
-      "--- 承認済みの要求要件 ---\n# 要求要件 v2（sacty側で重複を防ぐ）",
-    );
-    expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
-    activity.close();
-  });
-
-  it("ゴールガーディアンが利用制限なら、代わりのエージェント（agents の fallback）で判定し直す", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const main = agent({ fallback: ["claude-api"] });
-    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
-    const config = (): ConfigResult => {
-      const base = configOf(main)();
-      return base.ok
-        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
-        : base;
-    };
-    const { service, executor } = makeService(
-      activity,
-      [
-        out("# 要求要件 v1"),
-        designWithProposal(),
-        { kind: "failed", reason: "usage_limit", message: "429 Too Many Requests" },
-        verdict("rejected", "代替手段がある"),
-      ],
-      {
-        config,
-        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+    const events = service.get(id)?.activity ?? [];
+    expect(events.map((e) => e.type)).not.toContain("ChangeJudged");
+    expect(events.at(-1)).toMatchObject({
+      actor: "sacty",
+      type: "TaskEscalated",
+      payload: {
+        step: "design",
+        target: "requirements",
+        reason: "change_proposed",
+        proposalId: "CP-1",
       },
-    );
-    const task = service.createTask({ projectId: "default", title: "決済API" });
-    await service.runNext(task.id);
-    service.approve(task.id, { step: "requirements", submission: 1 });
-    await service.runNext(task.id);
-    expect(executor.calls[3]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
-    const events = service.get(task.id)?.activity ?? [];
-    expect(events.find((e) => e.type === "AgentFellBack")?.payload).toMatchObject({
-      role: "guardian",
-      agentId: "claude-subscription",
-      fallbackAgentId: "claude-api",
     });
-    expect(events.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject({
-      verdict: "rejected",
-      runResult: "completed",
-      agentId: "claude-api",
-      authMode: "api-key",
-    });
-    expect(service.get(task.id)?.task.gate).toEqual({ step: "design", submission: 1 });
     activity.close();
   });
 
-  it("代わりのエージェントで判定し直したとき、先の実行の使用量が不明なら、判定の費用も不明にして読めた分を足す（PBI-281）", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const main = agent({ fallback: ["claude-api"] });
-    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
-    const config = (): ConfigResult => {
-      const base = configOf(main)();
-      return base.ok
-        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
-        : base;
-    };
-    const { service } = makeService(
-      activity,
-      [
-        out("# 要求要件 v1"),
-        designWithProposal(),
-        {
-          kind: "failed",
-          reason: "usage_limit",
-          message: "429 Too Many Requests",
-          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 }, // $0.30
-          costUnknown: true,
-        },
-        verdict("rejected", "代替手段がある"),
-      ],
-      {
-        config,
-        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
-      },
-    );
-    const task = service.createTask({ projectId: "default", title: "決済API" });
-    await service.runNext(task.id);
-    service.approve(task.id, { step: "requirements", submission: 1 });
-    await service.runNext(task.id);
-    const judged = service.get(task.id)?.activity.find((e) => e.type === "ChangeJudged");
-    expect(judged?.payload).toMatchObject({ runResult: "completed", costUnknown: true });
-    // 先の実行の読めた分（$0.30）に、判定し直した実行の分が加わる
-    expect(judged?.type === "ChangeJudged" && judged.payload.costUsd).toBeGreaterThanOrEqual(0.3);
-    activity.close();
-  });
-
-  it("1回の判定の中では、制限の期限が過ぎても試したエージェントに戻らない（PR #172 レビュー指摘）", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const main = agent({ fallback: ["claude-api"] });
-    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
-    const config = (): ConfigResult => {
-      const base = configOf(main)();
-      return base.ok
-        ? {
-            ok: true,
-            config: {
-              ...base.config,
-              agents: { [main.id]: main, [backup.id]: backup },
-              fallbackCooldownMs: 60_000,
-            },
-          }
-        : base;
-    };
-    const limited: AgentOutcome = {
-      kind: "failed",
-      reason: "usage_limit",
-      message: "429 Too Many Requests",
-    };
-    let now = Date.parse("2026-10-20T00:00:00Z");
-    const { service, executor } = makeService(
-      activity,
-      [out("# 要求要件 v1"), designWithProposal(), limited, limited, limited, limited],
-      {
-        config,
-        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
-        now: () => now,
-      },
-    );
-    // 実行のたびに 61 秒進める（制限の期限 1 分が、次の実行の終わりには過ぎている）
-    executor.respond = () => {
-      now += 61_000;
-      return undefined;
-    };
-    const task = service.createTask({ projectId: "default", title: "決済API" });
-    await service.runNext(task.id);
-    service.approve(task.id, { step: "requirements", submission: 1 });
-    await service.runNext(task.id);
-    // 元（claude-subscription）と代わり（claude-api）を1回ずつ試したら、判定できなかったことにする
-    expect(executor.calls).toHaveLength(4);
-    const events = service.get(task.id)?.activity ?? [];
-    expect(events.filter((e) => e.type === "AgentFellBack")).toHaveLength(1);
-    expect(events.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject({
-      verdict: "undecidable",
-      runResult: "failed",
-      agentId: "claude-api",
-    });
-    expect(service.get(task.id)?.task.status).toBe("escalated");
-    activity.close();
-  });
-
-  it("ゴールガーディアンの実行に失敗したら、判定の記録に実行の失敗を残す（PBI-46 レビュー指摘）", async () => {
-    const { activity, service, id } = await proposeAndJudge([
-      designWithProposal(),
-      { kind: "failed", reason: "auth", message: "401 Unauthorized" },
-    ]);
-    expect(service.get(id)?.task.status).toBe("escalated");
-    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
-      { verdict: "undecidable", runResult: "failed" },
-    );
-    activity.close();
-  });
-
-  it("判定できなければエスカレーションになり、人間が認めるか認めないかを決める", async () => {
-    const { activity, service, id } = await proposeAndJudge([
-      designWithProposal(),
-      out("判定の形式が無い出力"),
-    ]);
-    const escalated = service.get(id)?.task;
-    expect(escalated?.status).toBe("escalated");
-    expect(escalated?.proposals[0]?.judgement).toMatchObject({ verdict: "undecidable" });
-    // 実行はできた（判断できなかっただけ）ことを記録する（PBI-46 レビュー指摘）
-    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
-      { runResult: "completed" },
-    );
+  it("人が認めなければ、設計をそのまま提出する。要求要件は承認済みのまま", async () => {
+    const { activity, service, id } = await propose([designWithProposal()]);
     expect(() => service.approve(id, { step: "design", submission: 1 })).toThrow();
     expect(() => service.decideChange(id, "CP-9", { accept: true })).toThrow(
       /判断待ちではありません/,
     );
-
     const rejected = service.decideChange(id, "CP-1", { accept: false });
     expect(rejected.gate).toEqual({ step: "design", submission: 1 });
     expect(rejected.approved.requirements?.output).toBe("# 要求要件 v1");
+    expect(rejected.proposals[0]).toMatchObject({ decision: { accept: false }, applied: false });
     expect(() => service.decideChange(id, "CP-1", { accept: true })).toThrow(
       /判断待ちではありません/,
     );
     activity.close();
   });
 
-  it("人間が認めた要求要件の変更も、再承認に回す", async () => {
-    const { activity, service, id } = await proposeAndJudge([
+  it("人が認めた要求要件の変更は反映し、人の再承認に回す", async () => {
+    const { activity, service, executor, id } = await propose([
       designWithProposal(),
-      verdict("undecidable", "価値判断を含む"),
+      out("# 設計 v2"),
     ]);
     const accepted = service.decideChange(id, "CP-1", { accept: true });
+    expect(accepted.status).toBe("awaiting_approval");
     expect(accepted.gate).toEqual({ step: "requirements", submission: 2 });
+    expect(accepted.outputs.requirements).toBe("# 要求要件 v2（sacty側で重複を防ぐ）");
     expect(accepted.proposals[0]).toMatchObject({ decision: { accept: true }, applied: true });
     expect(accepted.approved).toEqual({}); // 承認を取り消している
     expect(accepted.steps.map((st) => st.state)).toEqual(["active", "todo", "todo"]);
@@ -4141,32 +3919,42 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       "ChangeApplied",
       "StepSubmitted",
     ]);
+    service.approve(id, { step: "requirements", submission: 2 });
+    await service.runNext(id);
+    expect(promptOf(executor, 2)).toContain(
+      "--- 承認済みの要求要件 ---\n# 要求要件 v2（sacty側で重複を防ぐ）",
+    );
+    expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
     activity.close();
   });
 
-  it("ゴールガーディアンの実行に失敗したら、判定できなかったものとしてエスカレーションにする", async () => {
-    const { activity, service, id } = await proposeAndJudge([
-      designWithProposal(),
-      { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
-    ]);
-    const task = service.get(id)?.task;
-    expect(task?.status).toBe("escalated");
-    expect(ja(task?.proposals[0]?.judgement?.reason)).toContain("session limit");
+  it("申し出と人の判断待ちは、同じトランザクションで作業履歴に記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const appended: string[][] = [];
+    const original = activity.append.bind(activity);
+    activity.append = (entry) => {
+      appended.push(entry.events.map((e) => e.event.type));
+      return original(entry);
+    };
+    const { service } = makeService(activity, [out("# 要求要件 v1"), designWithProposal()]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(appended).toContainEqual(["AgentRunCompleted", "ChangeProposed", "TaskEscalated"]);
     activity.close();
   });
 
   it("承認されていない工程への申し出は無視し、そのまま提出する", async () => {
-    const { activity, service, executor, id } = await proposeAndJudge([
-      designWithProposal("design"),
-    ]);
-    expect(executor.calls).toHaveLength(2); // ゴールガーディアンは呼ばない
+    const { activity, service, executor, id } = await propose([designWithProposal("design")]);
+    expect(executor.calls).toHaveLength(2);
     const task = service.get(id)?.task;
     expect(task?.proposals).toEqual([]);
     expect(task?.gate).toEqual({ step: "design", submission: 1 });
     activity.close();
   });
 
-  it("デーモンの停止で中断された判定は、再起動時にエスカレーションにする", async () => {
+  it("以前の版で判定の途中に止まった申し出は、再起動時に人の判断待ちにする（PBI-333）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求要件 v1")]);
     const { id } = service.createTask({ projectId: "default", title: "A" });
@@ -4221,33 +4009,16 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     restarted.recoverInterrupted();
     const task = restarted.get(id)?.task;
     expect(task?.status).toBe("escalated");
-    expect(ja(task?.proposals[0]?.judgement?.reason)).toMatch(/中断/);
-    expect(
-      restarted.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload,
-    ).toMatchObject({ runResult: "interrupted" });
-    activity.close();
-  });
-
-  it("判定と後始末は、同じトランザクションで作業履歴に記録する（レビュー指摘）", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const appended: string[][] = [];
-    const original = activity.append.bind(activity);
-    activity.append = (entry) => {
-      appended.push(entry.events.map((e) => e.event.type));
-      return original(entry);
-    };
-    const { service } = makeService(activity, [
-      out("# 要求要件 v1"),
-      designWithProposal(),
-      verdict("approved"),
-    ]);
-    const { id } = service.createTask({ projectId: "default", title: "A" });
-    await service.runNext(id);
-    service.approve(id, { step: "requirements", submission: 1 });
-    await service.runNext(id);
-    expect(appended).toContainEqual(["ChangeJudged", "ChangeApplied", "StepSubmitted"]);
-    // 申し出のない実行も、完了と提出を一緒に記録する
-    expect(appended).toContainEqual(["AgentRunCompleted", "StepSubmitted"]);
+    expect(task?.proposals[0]?.judgement).toBeUndefined();
+    expect(restarted.get(id)?.activity.at(-1)).toMatchObject({
+      type: "TaskEscalated",
+      payload: { reason: "change_proposed", proposalId: "CP-1" },
+    });
+    // 人の判断を受け付ける
+    expect(restarted.decideChange(id, "CP-1", { accept: false }).gate).toEqual({
+      step: "design",
+      submission: 1,
+    });
     activity.close();
   });
 
@@ -9935,7 +9706,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const running = drain(service);
       await repos.copyStarted.promise;
       const calls = executor.calls.length;
-      const guardianDirs = () => readdirSync(join(dir, "workspaces", "_guardian"));
+      const guardianDirs = () => readdirSync(join(dir, "workspaces", "_code-copy"));
       expect(guardianDirs()).toHaveLength(1);
       const stopping = stop === "pause" ? service.pause(id) : service.cancel(id);
       gate.resolve();
@@ -9971,7 +9742,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(guardian).toContain("+export const pay = () => 1;");
     expect(guardian).not.toContain("ガーディアンには渡さない");
     expect(guardian).not.toContain("タスクの本文");
-    expect(executor.dirs[4]).toContain("_guardian");
+    expect(executor.dirs[4]).toContain("_code-copy");
     expect(existsSync(executor.dirs[4] ?? "")).toBe(false);
     // テストが git を参照できるように、写しの .git は退避したメタデータから作る（PR #188 レビュー指摘）
     expect(repos.workingCopies.at(-1)).toMatchObject({
@@ -11878,18 +11649,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         }),
       ].join("\n\n"),
     );
-    const verdict = out(block({ "sacty-verdict": { verdict: "approved", reason: "ok" } }));
     const { activity, service, id } = await toImplement([
       implement("# v1"),
       review(undefined, undefined, undefined, 1),
       proposal,
-      verdict,
     ]);
     await service.runNext(id); // 実装
     await service.runNext(id); // 最終レビューで、テストが通らない
     expect(service.get(id)?.task.verifyFailures).toBe(1);
-    await service.runNext(id); // 実装のやり直しで、要求要件の変更を申し出て認められる
-    const task = service.get(id)?.task;
+    await service.runNext(id); // 実装のやり直しで、要求要件の変更を申し出る
+    const task = service.decideChange(id, "CP-1", { accept: true }); // 人が認める
     expect(task?.gate).toEqual({ step: "requirements", submission: 3 });
     expect(task?.verifyFailures).toBe(0);
     expect(task?.verifyFeedback).toBeUndefined();
@@ -23937,7 +23706,7 @@ describe("統合レビュー（PBI-31）", () => {
     expect(executor.workspaceFiles[last]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe(repos.branchHead);
     const prompt = promptOf(executor, last);
-    expect(prompt).toContain("統合の観点で最終レビュー");
+    expect(prompt).toContain("統合の観点でレビューしてください");
     expect(prompt).toMatch(/決済の API：完了[\s\S]*決済の画面：完了/);
     expect(prompt).toContain("# 要求要件");
     expect(prompt).toContain("[TV-1]");
@@ -23957,7 +23726,7 @@ describe("統合レビュー（PBI-31）", () => {
         .get(id)
         ?.activity.find((e) => e.type === "AgentRunCompleted" && e.payload.step === "integrate")
         ?.actor,
-    ).toBe("guardian");
+    ).toBe("agent");
     expect(parent?.budget.usedUsd).toBeGreaterThan(0);
 
     service.approve(id, { step: "integrate", submission: 1 });
@@ -24103,7 +23872,8 @@ describe("統合レビュー（PBI-31）", () => {
         { secretStore: secrets },
       );
       executor.respond = (invocation) => {
-        if (invocation.command.join(" ").includes("統合の観点で最終レビュー")) secrets.arm();
+        if (invocation.command.join(" ").includes("統合の観点でレビューしてください"))
+          secrets.arm();
         return undefined;
       };
       const running = drain(service, id);
@@ -25679,7 +25449,7 @@ describe("エラーレポートと、オーケストレーターのエラーの�
 
   for (const [where, pattern] of [
     ["並べたセッションログ", /_question-logs/],
-    ["分析のためのコードの写し", /_guardian/],
+    ["分析のためのコードの写し", /_code-copy/],
   ] as const) {
     it(`${where}を消せなくても、分析の結果と費用を記録し、警告を出す`, async () => {
       const { activity, service, id } = await failedTask([out("### 何が起きたか\n分析", 1000)]);
@@ -43146,9 +42916,15 @@ describe("終わったタスクと、中断された実行の作業領域の片�
   it("起動時に、残った実行ごとの一時領域と、もう使わない・どのタスクのものでもない作業領域を消す", async () => {
     const { service, id: open } = await submittedTask();
     const runIds = Object.fromEntries(
-      ["_guardian", "_snapshots", "_review", "_input", "_audit-logs", "_audit-ledger"].map(
-        (name) => [name, randomUUID()],
-      ),
+      [
+        "_code-copy",
+        "_guardian",
+        "_snapshots",
+        "_review",
+        "_input",
+        "_audit-logs",
+        "_audit-ledger",
+      ].map((name) => [name, randomUUID()]),
     );
     for (const [name, runId] of Object.entries(runIds)) {
       mkdirSync(join(root(), name, runId, "src"), { recursive: true });
@@ -43177,7 +42953,7 @@ describe("終わったタスクと、中断された実行の作業領域の片�
     expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
     expect(existsSync(join(root(), orphan))).toBe(false);
     expect(existsSync(join(root(), "_git", `${orphan}.git`))).toBe(false);
-    expect(removed).toBe(6 + 1 + 2);
+    expect(removed).toBe(7 + 1 + 2);
     expect(existsSync(join(root(), "_guardian", "not-a-run"))).toBe(true);
     expect(existsSync(join(root(), "_cache", "shared-compose"))).toBe(true);
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);

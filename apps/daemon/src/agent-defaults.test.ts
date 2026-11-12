@@ -147,7 +147,6 @@ describe("接続先と単価だけの config.yaml", () => {
       auth: { mode: "api-key", secret: "openai-api-key" },
       price: { input: 1, cachedInput: 0.05, cacheWrite: 0, output: 5 },
     });
-    expect(config.guardianAgent.id).toBe("codex_standard");
     expect(config.auditAgent.id).toBe("codex_standard");
     expect(Object.keys(config.tierAgents?.codex ?? {})).toEqual(ALL_TIERS);
     // 接続先の無い claude の既定は、使えないだけ（誤りにも警告にもしない）
@@ -249,7 +248,6 @@ describe("単価（available_models）が無いモデル", () => {
     const base = `providers:\n${codex(LUNA)}`;
     for (const [extra, path] of [
       ["", "default_agent"],
-      ["default_agent: codex_lite\nguardian_agent: codex_ultimate\n", "guardian_agent"],
       ["default_agent: codex_lite\naudit_agent: codex_advanced\n", "audit_agent"],
       ["default_agent: codex_lite\nstep_agents:\n  design: codex_standard\n", "step_agents.design"],
     ] as const) {

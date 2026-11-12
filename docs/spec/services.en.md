@@ -12,10 +12,10 @@ Related ADRs: [Service builds cannot tag shared images, and the agent image is p
 - The instructions for a step (and the final review that runs the tests) add, along with the service connection details, that this repository's apps are started inside the container without docker and connected to the services (`servicePromptLines`).
 - Services start for each step agent run, and are removed afterward.
 - In verifying the implementation, a final review with a test (verification) command works as follows.
-  - The Implementation step's services start before the Goal Guardian runs. The workspace is the implementation's workspace. `forTests` of `ServicesStarted` is `true`, meaning a start for the verification (the tests in the final review).
-  - The Goal Guardian's container is connected, and the connection details are added to the prompt.
+  - The Implementation step's services start before the final review agent runs. The workspace is the implementation's workspace. `forTests` of `ServicesStarted` is `true`, meaning a start for the verification (the tests in the final review).
+  - The final review agent's container is connected, and the connection details are added to the prompt.
   - When the run ends, the services are removed.
-  - If they cannot start, the task is paused without running the Goal Guardian (`verify.testsUnavailable`). Resuming redoes the final review.
+  - If they cannot start, the task is paused without running the final review agent (`verify.testsUnavailable`). Resuming redoes the final review.
   - If a person stops the task while it waits for them to start, nothing is recorded.
 - A shared compose does not start just by being written in the project. It is fetched and started only when the Orchestrator chooses it by name (only for tasks that have a target repository). If a name not in the settings is chosen, the step stops (`services.sharedUnknown`).
 

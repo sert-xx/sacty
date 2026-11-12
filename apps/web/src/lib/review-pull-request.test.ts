@@ -255,7 +255,7 @@ describe("実装の PR がベースブランチと競合しているとき（画
     );
   });
 
-  it("競合の記録が古い（別の提出・別の PR・閉じた・ゴールガーディアンが判断中）ときは出さない", () => {
+  it("競合の記録が古い（別の提出・別の PR・閉じた・戻し先を判断中）ときは出さない", () => {
     const text = (t: Task) => attentionRows(projects, [t], {}, ja)[0]?.status.text;
     const normal = "実装の PR のマージ待ち";
     expect(text(conflicting({ pullRequestConflict: { number: 12, commit: "old", at: "" } }))).toBe(

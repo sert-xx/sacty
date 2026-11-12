@@ -52,7 +52,7 @@ Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.send`, `SLACK_USERNAME`, `SL
   | `paused` | The step when it stopped (the `active` step) | `Paused in Implement (budget cap)`. Before the steps are decided (no steps), `Paused before the steps were decided (…)`; if the step is unknown, `Paused (…)` |
   | `completed` | None | `Done` |
 
-- It includes the place to approve or decide (`/tasks/<ID>/review`). When awaiting approval with a PR, it adds a link to the PR and "merge to approve". For Pause, it includes the detailed message (up to 300 characters).
+- It includes the place to approve or decide (`/tasks/<ID>/review`). While a change request waits for a decision (an escalation with a change request that has no verdict, including one an older version could not judge), the place is the change request section of the task details, where the decision form is (`/tasks/<ID>#proposals`). When awaiting approval with a PR, it adds a link to the PR and "merge to approve". For Pause, it includes the detailed message (up to 300 characters).
 - Mention targets (`targets`, 1 to 20) and the form added at the start of the body are as follows.
   - `U…` and `W…` (users): `<@U…>`
   - `S…` (user groups): `<!subteam^S…>`

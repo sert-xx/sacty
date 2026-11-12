@@ -2915,14 +2915,21 @@ const TaskEscalated = z.object({
     target: StepKey.optional(),
     /**
      * too_many_changes：差し戻しが上限を超えた
-     * change_undecidable：ゴールガーディアンが変更の申し出を判定できなかった
+     * change_proposed：工程のエージェントが変更の申し出をしたので、人が判断する（PBI-333。AI の判定を挟まない）
+     * change_undecidable：以前の版で、AI（ゴールガーディアン）が変更の申し出を判定できなかった。PBI-333 から記録しない
+     *   （過去の作業履歴を読むために残す）
      * rework_confirmation：PR の指摘で、設計・要求要件まで戻す（または戻し先を判断できなかった）ので、
      *   人間が戻し先を確かめる（PBI-14b）。PBI-58 から記録しない（過去の作業履歴を読むために残す）
      */
-    reason: z.enum(["too_many_changes", "change_undecidable", "rework_confirmation"]),
+    reason: z.enum([
+      "too_many_changes",
+      "change_proposed",
+      "change_undecidable",
+      "rework_confirmation",
+    ]),
     /** ゴールガーディアンの判断の理由（rework_confirmation のとき）。 */
     note: DaemonText.optional(),
-    /** 判定できなかった申し出（change_undecidable のとき）。 */
+    /** 人が判断する申し出（change_proposed・change_undecidable のとき）。 */
     proposalId: z.string().optional(),
     /** 上限に達したときに人間が書いていた指摘。差し戻しを続ける場合に使う。 */
     pendingRemarks: z.array(Remark).default([]),

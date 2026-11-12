@@ -937,11 +937,11 @@ step_agents:
       via_gateway: false,
       price: { input: 2, cachedInput: 0.2, output: 12 },
     });
-    // 工程ごとに書いたものはそれ、書いていなければ default_agent（統合レビューは guardian_agent）
+    // 工程ごとに書いたものはそれ、書いていなければ default_agent（統合レビューも。PBI-333）
     expect(agentFor(result.config, "design").id).toBe("codex_advanced");
     expect(agentFor(result.config, "orchestrator").id).toBe("codex_lite");
     expect(agentFor(result.config, "implement").id).toBe("codex_lite");
-    expect(agentFor(result.config, "integrate").id).toBe("codex_advanced");
+    expect(agentFor(result.config, "integrate").id).toBe("codex_lite");
 
     const problem = (yaml: string) => {
       write(yaml);
@@ -1985,20 +1985,8 @@ echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,
 });
 
 describe("判定を読み取れなかったときの文言（PBI-11b レビュー指摘）", () => {
-  it("sacty が補う説明はコードで返し、ゴールガーディアンが書いた理由はそのまま返す", async () => {
-    const { extractVerdict, extractFinalReview } = await import("../prompts.js");
-    const unreadable = extractVerdict("判定はありません");
-    expect(unreadable).toEqual({
-      verdict: "undecidable",
-      reason: { code: "guardian.verdictUnreadable" },
-    });
-    expect(renderMessage(unreadable.reason, "en")).toBe(
-      "Could not read a verdict from the Goal Guardian's output.",
-    );
-    expect(
-      extractVerdict('```json\n{"sacty-verdict": {"verdict": "approved", "reason": "妥当"}}\n```'),
-    ).toEqual({ verdict: "approved", reason: "妥当" });
-
+  it("sacty が補う説明はコードで返し、AI が書いた理由はそのまま返す", async () => {
+    const { extractFinalReview } = await import("../prompts.js");
     const none = extractFinalReview("出力なし", ["TV-1"], ["r-1"]);
     expect(none.viewpoints[0]?.reason).toEqual({ code: "review.unreadable" });
     expect(none.remarks[0]?.reason).toEqual({ code: "review.unreadable" });

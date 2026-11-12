@@ -71,7 +71,7 @@
     - 状態が `awaiting_approval`
     - 今の提出の PR（`gatePullRequest`）が `open`
     - PR の URL が `https://` で始まる
-  - エスカレーションで、ゴールガーディアンが判定できなかった変更の申し出（`change_undecidable`。人がまだ決めていないもの。`openProposal`）があるときは、タスクの詳細の「変更の申し出と判定」（`/tasks/<ID>#proposals`）へ案内する。
+  - エスカレーションで、人の判断待ちの変更の申し出（`change_proposed`。以前の版の `change_undecidable` も。人がまだ決めていないもの。`openProposal`）があるときは、タスクの詳細の「変更の申し出」（`/tasks/<ID>#proposals`）へ案内する。
   - 次のときは、sacty の承認の画面（`/tasks/<ID>/review`）へ案内する。
     - それ以外のエスカレーション（PR の指摘の戻し先の確認など）
     - 状態が `awaiting_approval` で、今の提出の PR が開いていない（閉じられた、またはマージの後で次の確認がまだ承認を記録していない）・無い
@@ -231,7 +231,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   4. 予算の上限に達していれば、判断を実行せず、予算による一時停止にする（工程の実行の前の確認と同じ。判断は費用がかかる）。そうでなければ、戻し先と原因を判断する（`ReworkJudged`。[PR の指摘の取り込み](#pr-の指摘の取り込み)と同じ判断と指示。実装後のコードを読む）。判断を採用できないとき（一時停止・作り直しの停止（PR のマージ）・デーモンの停止のために実行を止めた・中止された・指摘や状態が変わった）は、判断を残さず、使った実行の費用・使用量だけを `runResult: interrupted` の `ReworkJudged` に記録する（指摘は未判断のまま。再開したら判断し直す）。判断できなければ実装をやり直す。判断を記録した後、差し戻す直前に PR の状態を読み直し、マージ済みなら差し戻さず、その場でマージを承認として進める（戻し先が設計・要求要件だと、作り直しの停止の対象外になり、マージ済みなのに前の工程を実行してしまうため）。読み直せなければ、そのまま差し戻す。差し戻す直前には（判断を保存して再開した場合も）、中止・作り直しの停止（PR のマージ）の進行・一時停止の求めを確かめ、あれば古い応答（開いたまま）で差し戻さず、反映を見送る（停止が、残した指摘を捨てて承認として進める）。
   5. 判断した工程に差し戻す（`ChangesRequested`。`settleHeldReview`）。actor は、すべて AI のレビューの指摘なら `sacty`、そうでなければ `person`。回の番号と指摘の ID は、承認待ちの差し戻しと同じ規則で続ける。止まった工程の途中経過（検証・PR の更新の待ち・工程の見直しの待ち）は持ち越さない。以降の実行は、通常の差し戻しの後と同じ（指摘を渡して実装をやり直す、または前の工程からやり直す）。
 - 人の差し戻しの上限：承認ゲートが無く、エスカレーションを置く場所が無いので、上限（`MAX_CHANGE_REQUESTS`）に達していても止めない。人の再開を、続ける判断として扱い、`overLimit: true` で記録する。AI のレビューの指摘だけの回は、これまでどおり人の回数に数えない。
-- ゴールガーディアンの見逃し（`GuardianMissed`）は記録しない。止まった工程の実装は、最終レビューに合格していないため。差し戻しの原因（`cause`）は、判断のとおり記録する。
+- 見逃し（`GuardianMissed`）は記録しない。止まった工程の実装は、最終レビューに合格していないため。差し戻しの原因（`cause`）は、判断のとおり記録する。
 - 一時停止の間に PR がマージされたら、[作り直しの停止](#実装の作り直しの間のマージ)が、残した指摘（`pendingReview`）を捨て、`ReworkStoppedByMerge` の `discardedReview` に件数を残す。
 
 コード: `apps/daemon/src/service.ts`（`checkHeldFeedback`・`holdFeedback`・`reworkHeldReview`・`settleHeldReview`・`withoutStaleReviews`・`resume`・`heldRecheck`）、`packages/core/src/projection.ts`（`heldReview`・`PullRequestReviewImported`・`ChangesRequested`）、`apps/web/src/components/task-detail.tsx`（`HeldReviewNotice`）、`apps/web/src/lib/labels.ts`（`statusText`）
@@ -243,9 +243,8 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 承認待ち（`awaiting_approval`）のタスクも、人が一時停止できる。マージを待っている間に、PR の取り込みを止めたいときに使う。エスカレーション（`escalated`）は止められない。
 
 - 一時停止：エージェントの実行が無いので、その場で `TaskPaused`（actor `person`、理由 `manual`）を記録する。承認ゲート（`gate`）と PR の記録はそのまま残し、再開の先として `resumeTo: awaiting_approval` を持つ。
-  ゴールガーディアンが変更の申し出を判定している間は、これまでどおり止められない。
 - 止めている間は、承認も差し戻しもできない（状態が `paused`）。PR の取り込みと見守りは、PR の種類で次のとおり。
-  - 実装の PR：実装を作り直している間の PR と同じ扱い（`reworkingPullRequest`）。マージされたら、`ReworkStoppedByMerge`（`was: paused`）に続けて `PullRequestMerged`・`StepApproved` を記録して承認として進める（[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。再開は要らない。届いた指摘は未反映として残す（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。ゴールガーディアンは動かさない。
+  - 実装の PR：実装を作り直している間の PR と同じ扱い（`reworkingPullRequest`）。マージされたら、`ReworkStoppedByMerge`（`was: paused`）に続けて `PullRequestMerged`・`StepApproved` を記録して承認として進める（[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。再開は要らない。届いた指摘は未反映として残す（[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。戻し先の判断はしない。
   - 要求要件・設計の PR：止めている間は見守らない。マージも指摘も、再開したあとの確認で扱う。
 - 再開：`TaskResumed` が承認待ちに戻す（承認ゲートは残っているので、承認の画面がそのまま使える）。エージェントは動かさない。
   止めていた間に起きたことは、再開のあとの PR の確認（60秒ごと）が取り込む。
@@ -384,7 +383,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - 変更：実装の工程の出力（作業の経過の報告を除く。作り直した後は、PR 全体の説明に続けて、太字の「最後の直し」と最後の直しの説明）
   - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果とゴールガーディアンの最終レビューの続き・再発の確認は「sacty の記録」にする。
+  - 書き出した成果と最終レビューの続き・再発の確認は「sacty の記録」にする。
   - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程。リンクの形は下の「前の工程の成果物へのリンク」のとおり）
@@ -525,7 +524,7 @@ sacty のレビューのタスクが PR に投稿したレビュー・行への�
   - AI のレビューの指摘だけの差し戻しは、上限に達していてもエスカレーションにしない。
   - 費用の上限は、今までどおり効く。
 - 古い head へのレビュー：レビューが対象にした PR の head（レビューのコミット。行へのコメントは、後の push で今の head に付け替わる `commit_id` ではなく、親レビューの `commit_id`（無ければ `original_commit_id`）。`PullRequestFeedback.commit`）が、取り込むときの PR の今の head（`status` の `headSha`）と違えば、取り込まずに捨てる。
-  - 捨てたものは `PullRequestReviewDiscarded`（actor `sacty`。`reason: stale_head`・今の head・捨てた指摘と対象のコミット）に残し、取り込み済み（`importedFeedback`）にする。差し戻さず、ゴールガーディアンも動かさない。以降も取り込み直さない。
+  - 捨てたものは `PullRequestReviewDiscarded`（actor `sacty`。`reason: stale_head`・今の head・捨てた指摘と対象のコミット）に残し、取り込み済み（`importedFeedback`）にする。差し戻さず、戻し先も判断しない。以降も取り込み直さない。
   - 対象のコミットが分からない投稿は、古いかどうか分からないので取り込む。短いコミットの表記は先頭の一致で比べる。
   - PR の head を読めないときは、AI のレビューだけ今回は取り込まず、次の確認で確かめ直す（人の指摘は取り込む）。
   - 人の指摘は、head によらず取り込む。
@@ -627,7 +626,8 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 | 理由 | いつ |
 | --- | --- |
 | `too_many_changes` | 同じ工程への人の差し戻しが `MAX_CHANGE_REQUESTS`（3）回に達した後の差し戻し（AI のレビューの指摘だけの回は数えない）。書きかけの指摘は残す。上限を超えて続けるには、明示して差し戻す（`overLimit`） |
-| `change_undecidable` | ゴールガーディアンが変更の申し出を判定できなかった。人が判断する（`ChangeDecided`） |
+| `change_proposed` | 工程のエージェントが変更の申し出をした。AI の判定を挟まずに人が判断する（`ChangeDecided`。[変更の申し出](tasks-and-steps.md#変更の申し出)） |
+| `change_undecidable` | 以前の版の記録（AI が変更の申し出を判定できなかった。いまは記録しない）。人が判断する（`ChangeDecided`） |
 | `rework_confirmation` | 以前の版の記録（いまは記録しない） |
 
 コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`MAX_CHANGE_REQUESTS`）、`packages/core/src/projection.ts`（`changeRounds`）

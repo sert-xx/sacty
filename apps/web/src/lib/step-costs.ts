@@ -15,7 +15,7 @@ import {
 /**
  * 費用の表の行。工程と、工程の外の費用：チケットの読み取り（オーケストレーター。PBI-52）・作業するリポジトリの選択
  * （オーケストレーター。PBI-73）・オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・エラーの分析（オーケストレーター）・
- * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。マージの後のデプロイの確認は、マージの後の
+ * 承認した成果の書き出し（PBI-56）・以前の版のゴールガーディアン（判定・最終レビュー）。マージの後のデプロイの確認は、マージの後の
  * 監視の工程（deployment）の行（PBI-116）。
  */
 export type CostRole =
@@ -124,7 +124,7 @@ function notRun(payload: { agentId?: string; costUsd: number; usage?: TokenUsage
 /**
  * 工程ごとの、エージェント・設定・使用量・費用（PBI-46）。作業履歴から、タスクの予算に入れる費用を持つイベント
  * （@sacty/core の CHARGED_EVENT_TYPES）をすべて行に振り分ける。工程に属さない費用（チケットの読み取り・
- * リポジトリの選択・工程の選択・質問への答え・書き出し・ゴールガーディアン）は、それぞれの行に出す。
+ * リポジトリの選択・工程の選択・質問への答え・書き出し・以前の版のゴールガーディアン）は、それぞれの行に出す。
  * 合計の費用は、projection と同じ規則（chargeBudget）で作業履歴の順に足すので、タスクの費用（task.budget）と一致する（PBI-86）。
  * 工程の行はタスクの工程の順にすべて出し（まだ動かしていない工程は実行0回）、工程の外の行は記録があるときだけ出す。
  */
@@ -205,7 +205,7 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "ReworkJudged":
         // PR のレビューの子タスクの答えから決めた判断は、実行していない（子タスクの費用は子タスクに数える。PBI-332）
         if (event.payload.reviewTaskId) return;
-        // PR の工程のエージェントの判断（PBI-332）。それより前の記録は、ゴールガーディアンの行
+        // PR の工程のエージェントの判断（PBI-332）。それより前の記録は、以前の版のゴールガーディアンの行
         push(
           event.actor === "guardian" ? "guardian" : "rework",
           runOf(event, event.payload, guardianRunResult(event.payload)),
@@ -311,8 +311,8 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
 }
 
 /**
- * ゴールガーディアンの判定の記録から、実行の結果を出す（PBI-46）。以前の作業履歴（runResult が無い）は、
- * sacty が書いた失敗・中断の理由の文言で判別する（それ以外は、ゴールガーディアンが実行して書いた理由）。
+ * 判定の記録（以前の版のゴールガーディアン・PR の工程のエージェント）から、実行の結果を出す（PBI-46）。以前の作業履歴（runResult が無い）は、
+ * sacty が書いた失敗・中断の理由の文言で判別する（それ以外は、エージェントが実行して書いた理由）。
  */
 function guardianRunResult(payload: {
   runResult?: GuardianRunResult;

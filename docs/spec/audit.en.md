@@ -33,7 +33,7 @@ The audit flows as follows.
    - The agent registers knowledge that will help later tasks as memories ([Memory](memory.en.md)).
    - After every step is deep-dived, `AuditCompleted`.
 
-- Both stages run in a new session every time. The AI is `audit_agent` in config.yaml (or `guardian_agent`, or `default_agent`).
+- Both stages run in a new session every time. The AI is `audit_agent` in config.yaml (or `default_agent`).
 - What the agent sees
   - Session logs are mounted read-only at `/sacty-logs`, as for answers to questions.
   - The full ledger (one JSON event per line) is mounted read-only at `/sacty-ledger/ledger.jsonl`, because the instructions hold only the start of each row and omit the middle when long.

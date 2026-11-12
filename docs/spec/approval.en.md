@@ -64,7 +64,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
     - The task is `awaiting_approval`
     - The PR of the current submission (`gatePullRequest`) is `open`
     - The PR's URL starts with `https://`
-  - In an escalation with a change proposal the Goal Guardian could not judge (`change_undecidable`; one a person has not decided yet; `openProposal`), the link goes to "Change requests and verdicts" in the task details (`/tasks/<ID>#proposals`).
+  - In an escalation with a change request waiting for a person's decision (`change_proposed`, and also `change_undecidable` from earlier versions; one a person has not decided yet; `openProposal`), the link goes to "Change requests" in the task details (`/tasks/<ID>#proposals`).
   - In the following cases, the link goes to the sacty approval screen (`/tasks/<ID>/review`).
     - Any other escalation (such as confirming the step to redo for PR comments)
     - The task is `awaiting_approval` and the PR for the current submission is not open (it was closed, or it was merged and the next check has not recorded the approval yet) or does not exist
@@ -212,7 +212,7 @@ The task is not waiting for approval, so "Importing PR comments" above does not 
   4. If the budget cap has been reached, the judgment is not run and the task is paused for the budget (the same check as before running a step; judging costs money). Otherwise, sacty decides where to send the task back and the cause (`ReworkJudged`; the same judgment and instructions as [Importing PR comments](#importing-pr-comments), reading the implemented code). If the judgment cannot be adopted (the run was stopped by a pause, a rework stop (a PR merge), or the daemon stopping, the task was cancelled, or the comments or state changed), the judgment is not kept; only the cost and usage of the run are recorded in a `ReworkJudged` with `runResult: interrupted` (the comments stay unjudged and are judged again on resume). If it cannot judge, the implementation is redone. After the judgment is recorded, the PR status is read again just before sending back; if it is merged, the task is not sent back and the merge is taken as the approval on the spot (if the judged step were Design or Requirements, it would fall outside the rework stop, and the earlier step would run on a merged PR). If it cannot be read again, the task is sent back as it is. Just before sending back (also when a saved judgment is applied after a resume), a cancel, a rework stop in progress (a PR merge), or a pause request is checked; if there is one, the task is not sent back on the stale (still open) response and applying is skipped (the stop discards the kept comments and moves on as an approval).
   5. The task is sent back to the judged step (`ChangesRequested`; `settleHeldReview`). The actor is `sacty` if all the comments are AI review comments and `person` otherwise. The round number and comment IDs continue by the same rule as a send-back while waiting for approval. The progress of the step that stopped (the verification, the wait for the PR update, the wait for a step review) is not carried over. The runs after that are the same as after an ordinary send-back (the implementation is redone with the comments, or the task restarts from an earlier step).
 - Limit on people's send-backs: there is no approval gate and no place for an escalation, so the limit (`MAX_CHANGE_REQUESTS`) does not stop the task even if it is reached. A person's resume is treated as the decision to continue, and it is recorded with `overLimit: true`. A batch of only AI review comments is still not counted as a person's send-back.
-- A Goal Guardian miss (`GuardianMissed`) is not recorded, because the implementation of the step that stopped has not passed the final review. The send-back cause (`cause`) is recorded as judged.
+- A miss (`GuardianMissed`) is not recorded, because the implementation of the step that stopped has not passed the final review. The send-back cause (`cause`) is recorded as judged.
 - If the PR is merged while paused, the [rework stop](#merging-during-a-rework-of-the-implementation) discards the kept comments (`pendingReview`) and records their number in `discardedReview` of `ReworkStoppedByMerge`.
 
 Code: `apps/daemon/src/service.ts` (`checkHeldFeedback`, `holdFeedback`, `reworkHeldReview`, `settleHeldReview`, `withoutStaleReviews`, `resume`, `heldRecheck`), `packages/core/src/projection.ts` (`heldReview`, `PullRequestReviewImported`, `ChangesRequested`), `apps/web/src/components/task-detail.tsx` (`HeldReviewNotice`), `apps/web/src/lib/labels.ts` (`statusText`)
@@ -224,9 +224,8 @@ Related ADR: [承認待ち（PR のマージ待ち）でも一時停止できる
 A person can also pause a task that is waiting for approval (`awaiting_approval`). Use it when you want to stop PR imports while you wait for the merge. A task in escalation (`escalated`) cannot be paused.
 
 - Pausing: there is no agent run, so `TaskPaused` (actor `person`, reason `manual`) is recorded on the spot. The approval gate (`gate`) and the PR records stay as they are, and `resumeTo: awaiting_approval` is kept as where to resume to.
-  As before, the task cannot be paused while the Goal Guardian is judging a change proposal.
 - While paused, the task cannot be approved or sent back (its state is `paused`). What happens to the PR depends on the kind of PR.
-  - The implementation PR: it is treated like the PR while the implementation is being reworked (`reworkingPullRequest`). If it is merged, `ReworkStoppedByMerge` (`was: paused`) is recorded, followed by `PullRequestMerged` and `StepApproved`, and the merge is taken as the approval ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)). No resume is needed. Comments that arrive are kept as not yet applied ([Comments that arrive while paused](#comments-that-arrive-while-paused)). The Goal Guardian does not run.
+  - The implementation PR: it is treated like the PR while the implementation is being reworked (`reworkingPullRequest`). If it is merged, `ReworkStoppedByMerge` (`was: paused`) is recorded, followed by `PullRequestMerged` and `StepApproved`, and the merge is taken as the approval ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)). No resume is needed. Comments that arrive are kept as not yet applied ([Comments that arrive while paused](#comments-that-arrive-while-paused)). The step to redo is not decided.
   - A Requirements or Design PR: it is not watched while paused. Both merges and comments are handled by the check after the resume.
 - Resuming: `TaskResumed` returns the task to waiting for approval (the approval gate is still there, so the approval screen can be used as it is). No agent runs.
   What happened while it was paused is picked up by the PR check after the resume (every 60 seconds).
@@ -346,7 +345,7 @@ A template is judged absent or unusable as follows.
   - Changes: the Implementation step's output (without progress reports; after a redo, the description of the whole PR followed by a bold "最後の直し" and the description of the last fix)
   - Tests: the viewpoint → test → result table and the test results (6 in [Assembling the implementation PR body](#assembling-the-implementation-pr-body))
   - Related Issue: `Closes #<number>` (for a task taken in from an Issue)
-  - The exported results and the rest of the Goal Guardian's final review (the continuation and the recurrence check) go into "the sacty record".
+  - The exported results and the rest of the final review (the continuation and the recurrence check) go into "the sacty record".
   - What a person should confirm and the record that a person moved on despite the failure go into the last part (footer).
 - Content of the requirements and design PRs (`buildStepPullRequestBodyParts`)
   - Purpose: which step's result it is (and the approved earlier steps; the form of the links is as in "Links to earlier steps' outputs" below)
@@ -402,7 +401,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - That task's rounds with findings are imported as comments. The kind of review task (a review child task (`source.review: sacty` with `reviewOf`), a task an older version took in from the review label for a sacty PR (`source.review: sacty` without `reviewOf`), a review request (`requested`), the review label (`label`), a task created manually (no `source`), and so on) does not matter. A review child task is created automatically when sacty opens the PR (not through a label); the others are reviews that a person asked for. Each is a review the task that opened the PR should address. Rounds with findings are those where `verdict` in `reviewVerdicts` is `changes_required` or `suggestions`; rounds whose verdict could not be read are also included so as not to drop comments.
 
     This delivers a review by a task separate from the one that opened the PR to the original task so that it addresses them. Rounds with suggestions only are imported too, and the budget stops the cost of repetition. How the verdict is decided is in [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks).
-  - Other rounds (rounds with no findings, and rounds with no recorded verdict: rounds not yet run, or rounds of a task that only refers to the PR and has no review step) are not imported, even if the account differs from the original task's. There is no Request changes, and the Goal Guardian does not run either.
+  - Other rounds (rounds with no findings, and rounds with no recorded verdict: rounds not yet run, or rounds of a task that only refers to the PR and has no review step) are not imported, even if the account differs from the original task's. There is no Request changes, and the step to redo is not decided either.
   - Re-reviews are judged per round. A marker copied by someone other than that task's account is treated as a person's comment.
   - The imported comments are told apart from a person's comments as AI review comments ("AI review comments" below).
 - Otherwise, the following posts are not imported.
@@ -555,7 +554,8 @@ Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voi
 | Reason | When |
 | --- | --- |
 | `too_many_changes` | A Request changes after requests for changes by a person to the same step reached `MAX_CHANGE_REQUESTS` (3) (rounds of AI review comments only are not counted). Comments in progress are kept. To continue beyond the limit, request changes explicitly (`overLimit`) |
-| `change_undecidable` | The Goal Guardian could not judge a change request. A person decides (`ChangeDecided`) |
+| `change_proposed` | A step agent made a change request. A person decides without an AI judging it (`ChangeDecided`; [Change requests](tasks-and-steps.en.md#change-requests)) |
+| `change_undecidable` | A record from earlier versions (the AI could not judge a change request; no longer recorded). A person decides (`ChangeDecided`) |
 | `rework_confirmation` | A record from an earlier version (no longer recorded) |
 
 Code: `apps/daemon/src/service.ts` (`requestChanges`, `decideChange`), `packages/core/src/events.ts` (`TaskEscalated`, `MAX_CHANGE_REQUESTS`), `packages/core/src/projection.ts` (`changeRounds`)

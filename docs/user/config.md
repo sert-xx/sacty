@@ -15,10 +15,10 @@
 | --- | --- | --- |
 | `providers` | runtime ごとの接続先（認証）と、使えるモデルの単価（[接続先と単価](#接続先と単価providers)）。`codex` と `claude` だけ | なし |
 | `default_agent` | 工程を実行する AI（エージェントの名前） | `codex_standard`（使えなければ `claude_standard`） |
-| `guardian_agent` | ゴールガーディアンに使う AI | `default_agent` |
-| `audit_agent` | 完了したタスクの監査に使う AI（[監査](audit.md)） | `guardian_agent`（無ければ `default_agent`） |
+| `guardian_agent` | 以前の版の設定で、今は使いません。書いてあっても起動は失敗せず、読み捨てて画面に警告を出します | なし |
+| `audit_agent` | 完了したタスクの監査に使う AI（[監査](audit.md)） | `default_agent` |
 | `agent_fallback.cooldown_minutes` | 失敗したエージェントを使わず、代わりのエージェントを使う時間（分。1〜1440 の整数。[失敗したときの切り替え](#失敗したときの切り替え)） | `60` |
-| `step_agents` | 工程（マージの後の監視を含む）・オーケストレーター・情報収集ごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`、情報収集はオーケストレーターの AI） |
+| `step_agents` | 工程（マージの後の監視を含む）・オーケストレーター・情報収集ごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューも。情報収集はオーケストレーターの AI） |
 | `agents` | sacty の既定のエージェントの上書き・追加（[エージェントの上書き](#エージェントの上書き)）。任意 | なし（sacty の既定を使う） |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
 | `budget.per_plan_usd` | 工程の組み合わせごとの予算（米ドル。0 より大きい数。[予算](#予算)） | なし（`budget.default_per_task_usd`） |
@@ -29,7 +29,7 @@
 | `onepassword.account` | 使う 1Password のアカウント（[秘密情報](secrets.md#1password)） | なし |
 | `gateway` | ホストのゲートウェイ（[ゲートウェイ](gateway.md)） | なし |
 | `web.auth` | 画面の認証。`false` にすると、入り口の URL を開かなくても画面を使える（危険と切り替え方は [CLI](cli.md#sacty-up)）。`sacty up` の起動のときだけ読む | `true` |
-| `run_timeout` | エージェントの1回の実行の上限（分。1〜720）。`agent_minutes`（エージェント）・`test_minutes`（テストを実行する最終レビュー `final-review`・再現 `reproduce`・PR のレビュー `review` で、`agent_minutes` に足す分）と、役割ごとの上書きの `roles`（例：`implement: 90`・`guardian: 45`。上書きがあれば、その分だけになります）。過ぎるとコンテナを止め、タスクを一時停止します。再開すると、止めた実行のセッションの続きから進みます（[困ったとき](troubleshooting.md)）。次の実行から効きます | `agent_minutes: 30`・`test_minutes: 20` |
+| `run_timeout` | エージェントの1回の実行の上限（分。1〜720）。`agent_minutes`（エージェント）・`test_minutes`（テストを実行する最終レビュー `final-review`・再現 `reproduce`・PR のレビュー `review` で、`agent_minutes` に足す分）と、役割ごとの上書きの `roles`（例：`implement: 90`・`rework: 45`。上書きがあれば、その分だけになります）。過ぎるとコンテナを止め、タスクを一時停止します。再開すると、止めた実行のセッションの続きから進みます（[困ったとき](troubleshooting.md)）。次の実行から効きます | `agent_minutes: 30`・`test_minutes: 20` |
 | `update_check` | sacty の新しいリリースを1日ごとに確かめ、あれば画面に出す（[sacty を更新する](getting-started.md#sacty-を更新する)）。インターネットに出られない環境では `false` にする（GitHub に問い合わせない） | `true` |
 
 次の2つは、config.yaml には書かず、画面の「Sacty の設定」で決めます。
@@ -83,7 +83,8 @@ providers:
   - Claude Code の実行は、CLI が報告した額を使うので、契約の単価がその額と違っても、報告された額が費用になります。ここに書いた単価は、報告が無い実行と、実行の中の別のモデルの換算に効きます。
   - サブスクリプションでは実際の請求は発生しません。
     sacty は報告された額（無ければ同じ単価で換算した値）を費用として扱い、予算の判定に使います。
-- `default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、使えないエージェントを書くと誤りになります。
+- `default_agent`・`audit_agent`・`step_agents` に、使えないエージェントを書くと誤りになります。
+- 以前の版の `guardian_agent` は使いません。書いてあっても誤りにはならず、読み捨てて画面に警告を出します。統合レビューのエージェントは `step_agents.integrate`、監査のエージェントは `audit_agent` に書き、`guardian_agent` は消してください（書かなければ、どちらも `default_agent` です）。
 - `default_agent` を書かず、`codex_standard`・`claude_standard` のどちらも使えないときも、誤りになります（`providers` を書いていないときなど）。
 
 ## 認証方式
@@ -183,8 +184,8 @@ agents:
 
 ```yaml
 default_agent: codex_standard
-guardian_agent: codex_advanced
-step_agents:          # 書かなければ default_agent（統合レビューは guardian_agent）
+audit_agent: codex_advanced
+step_agents:          # 書かなければ default_agent（統合レビューも）
   orchestrator: codex_lite
   requirements: codex_advanced
   design: codex_advanced
@@ -208,7 +209,8 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 | `operation` | 作業 |
 | `deployment` | マージの後の監視の工程の確認（[マージの後の監視](deployment-watch.md)） |
 
-- `default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、無い名前や使えないエージェントを書くと誤りになります。
+- `default_agent`・`audit_agent`・`step_agents` に、無い名前や使えないエージェントを書くと誤りになります。
+- 統合レビュー（`integrate`）のエージェントは、ここで決まります。タスクごとには変えられません。
 - 人がタスクの作成時（[タスクのイメージと工程ごとのエージェントを指定する](tasks.md#タスクのイメージと工程ごとのエージェントを指定する)）や、タスクの詳細・一時停止したタスクの再開・差し戻し（[工程のエージェントを変える](tasks.md#工程のエージェントを変える)）で工程のエージェントを指定したときは、そのタスクではそちらを `step_agents` より優先します。
 - 以前の版の `pr`（PR作成）は、工程を無くしたので書けません。
   書くと誤りになるので、消してください。
@@ -278,7 +280,7 @@ agent_fallback:
 
 | 実行 | 失敗したとき |
 | --- | --- |
-| 工程・統合レビュー・情報収集・オーケストレーターの工程の選択・チケットの読み取り・最終レビュー・ゴールガーディアンの判定（変更の申し出・差し戻しの指摘） | 理由を問わず（利用制限・認証エラー・そのほかのエラー）、タスクを止めずに、代わりのエージェントで同じ工程をやり直す |
+| 工程・統合レビュー・情報収集・オーケストレーターの工程の選択・チケットの読み取り・最終レビュー・PR の指摘の戻し先の判断 | 理由を問わず（利用制限・認証エラー・そのほかのエラー）、タスクを止めずに、代わりのエージェントで同じ工程をやり直す |
 | 書き出し・マージの後の監視・監査・質問への答え | その回の失敗はこれまでどおり扱う（止まる・確かめられなかったことにするなど）。利用制限のときは、次の実行から代わりのエージェントを使う |
 
 - 失敗かどうかは、エージェントの終了コードと出力で判断し、標準エラー出力に出たログでは判断しません。
@@ -302,7 +304,7 @@ agent_fallback:
   元のコンテナが動いたままかもしれないためです。
 - `fallback` に無い名前や、そのエージェント自身を書くと誤りになります。
 - 代わりのエージェントが使えない（そのツールの `providers` が無いなど）ときは、画面に警告を出し、そのエージェントには切り替えません。
-- 代わりのエージェントは、`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` やタスクの詳細で選んだエージェントの、どれにも効きます。
+- 代わりのエージェントは、`default_agent`・`audit_agent`・`step_agents` やタスクの詳細で選んだエージェントの、どれにも効きます。
 
 ## 予算
 

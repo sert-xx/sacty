@@ -25,10 +25,10 @@
 | `image` | `sacty-agent:1.23.1`（`DEFAULT_IMAGE`） | 既定のイメージ。エージェントの実行に使う |
 | `providers` | `{}` | runtime ごとの接続先（下の「接続先」）。名前は `codex`・`claude` だけ |
 | `default_agent` | `config/agents.yaml` の `default_agent` のうち、使える最初のもの | 既定の AI。エージェントの名前 |
-| `guardian_agent` | `default_agent` | ゴールガーディアンの AI |
-| `audit_agent` | `guardian_agent`（無ければ `default_agent`） | 完了したタスクの監査の AI（[監査](audit.md)） |
+| `guardian_agent` | なし | 使わない。書いてあっても誤りにせず、読み捨てて警告する（`config.guardianAgentIgnored`。画面の警告に出る） |
+| `audit_agent` | `default_agent` | 完了したタスクの監査の AI（[監査](audit.md)） |
 | `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 失敗したエージェントを使わない時間（分。1〜1440 の整数）。利用制限（`usage_limit`）ならすべてのタスクで、ほかの失敗ならそのタスクで、その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#失敗したときの代わりのエージェント)） |
-| `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator`・`gather`（タスクの開始時の情報収集）ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent`、情報収集（`gather`）は `orchestrator` の AI |
+| `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator`・`gather`（タスクの開始時の情報収集）ごとの AI。書かなければ `default_agent`（統合レビュー（`integrate`）も）、情報収集（`gather`）は `orchestrator` の AI |
 | `agents` | `{}` | エージェントの既定の上書きと追加（下の「エージェントの既定と上書き」） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |
 | `budget.per_plan_usd` | `{}` | 工程の組み合わせ（`StepPlan`）ごとの予算（米ドル。正の数）。オーケストレーターがその組み合わせを選んだら、タスクの予算の上限にする（[タスクと工程](tasks-and-steps.md#予算一時停止再開中止)）。書いていない組み合わせは `budget.default_per_task_usd` |
@@ -49,7 +49,7 @@
 
 ほかに、次のときも誤りにする。
 
-- `default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無い（`config.agentMissing`）。
+- `default_agent`・`audit_agent`・`step_agents` の値が、エージェントに無い（`config.agentMissing`）。
 - 同じ値が、使えないエージェント（下の「使えるエージェント」）である（`config.agentUnavailable`）。
   使えない理由の文言を `reason` に載せる。
   設定が誤りのときは画面の警告を出さないためである。
@@ -128,7 +128,7 @@
 | `reasoning_effort` | リーズニングエフォート（任意。`^[a-z][a-z0-9_-]{0,30}$`）。Codex は `model_reasoning_effort`、Claude Code は `--effort` で渡す |
 | `fallback` | 実行が失敗したとき（理由は問わない）に代わりに使うエージェントの名前（任意。1つか並びで、上から順に試す）。`agents` に無い名前は誤り（`config.agentMissing`）、自分自身も誤り（`config.agentFallbackSelf`）。使えないエージェントは警告して外す（`config.agentFallbackUnavailable`） |
 | `price_per_mtok_usd` | `runtime: stub` だけ。単価（書き方は `available_models` と同じ。書かなければ 0） |
-| `stub` | `runtime: stub` の出力（工程・オーケストレーター・ゴールガーディアンなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
+| `stub` | `runtime: stub` の出力（工程・オーケストレーター・最終レビューなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
 
 - 既定と同じ名前は、書いた項目だけを既定に重ねる（書いていない項目は既定のまま）。
   既定に無い名前は、そのエージェントを足す。
@@ -158,7 +158,7 @@ sacty の更新で既定のモデルが変わっても、設定が読めなく�
 `runtime: stub` のエージェントは、接続先・単価を見ずに使える（単価は `price_per_mtok_usd`、無ければ 0）。
 
 使う AI と役割の対応は `agentFor` が決める。
-`step_agents` にあればそれを使い、無ければ `default_agent`（`integrate` は `guardian_agent`、`gather` は `orchestrator` の AI）を使う。
+`step_agents` にあればそれを使い、無ければ `default_agent`（`gather` は `orchestrator` の AI）を使う。統合レビュー（`integrate`）も同じで、タスクごとには変えられない（`agent.stepNotChangeable`）。
 工程（マージの後の監視・外部作業・書き出しを含む）は、人が指定したエージェント（タスクの `agents`）があれば、`step_agents` より優先する（`stepAgentFor`）。
 人が指定するのは、タスクの作成時（`TaskCreated` の `agents`。[作成時に指定したタスクのイメージ・工程のエージェント](tasks-and-steps.md#作成時に指定したタスクのイメージ工程のエージェント)）と、タスクの詳細・一時停止したタスクの再開・差し戻し（`StepAgentChanged`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
 作業履歴には、使った AI の `authMode`・`model`・`reasoningEffort` だけを残す（秘密の値・接続先の URL は残さない。`agentSetting`）。

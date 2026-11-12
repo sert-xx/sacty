@@ -94,7 +94,7 @@ const ja = {
     contextOwn: "プロジェクトの層",
     contextUpper: (n: number) => `上位 ${n} 層`,
     sacty: "Sacty の既定のコンテキスト",
-    sactyHint: "ゴールガーディアンのプロンプトと、既定のスキル。",
+    sactyHint: "sacty のプロンプトと、既定のスキル。",
   },
   proposal: {
     pending: "判断待ち",
@@ -167,7 +167,7 @@ const ja = {
       pullRequest: "PR",
       known: "既知",
       knownHint: (n: number) =>
-        `${n} タスク以上で見たテストです。差分に含まれなければ、ゴールガーディアンは実行し直しを省いて申告できます。`,
+        `${n} タスク以上で見たテストです。差分に含まれなければ、最終レビューは実行し直しを省いて申告できます。`,
       proposal: "提案：このテストを直すタスクを作りましょう。隔離・無効化は自動で行いません。",
       createFix: "直すタスクを作る",
       fixTask: "直しているタスク",
@@ -314,7 +314,7 @@ const en: AuditMessages = {
     contextOwn: "project layer",
     contextUpper: (n) => `${n} layer${n === 1 ? "" : "s"} up`,
     sacty: "Sacty default context",
-    sactyHint: "The goal guardian's prompts and the default skills.",
+    sactyHint: "Sacty's prompts and the default skills.",
   },
   proposal: {
     pending: "Needs decision",
@@ -388,7 +388,7 @@ const en: AuditMessages = {
       pullRequest: "PR",
       known: "Known",
       knownHint: (n) =>
-        `Seen in ${n} or more tasks. Unless the diff includes it, the Goal Guardian may report it without rerunning it.`,
+        `Seen in ${n} or more tasks. Unless the diff includes it, the final review may report it without rerunning it.`,
       proposal:
         "Proposal: create a task to fix this test. Nothing is quarantined or disabled automatically.",
       createFix: "Create a task to fix it",

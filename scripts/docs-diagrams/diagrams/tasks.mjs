@@ -227,8 +227,8 @@ export const verify = {
   height: 1100,
   title: t("実装の検証から承認待ちまで", "From implementation to awaiting approval"),
   desc: t(
-    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作り（変更が無ければ PR を作らずに進み）、PR の CI を待たずに、ゴールガーディアンが手元のテストで最終レビューする（CI の結果が出ていれば合わせて判定する）。合格したら CI の結果を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行する）、初回で通った・CI が無ければ sacty がドラフトを外してラベルを付け、承認待ちにする。CI が落ちた・時間切れ・再実行で通ったなら、CI の結果を渡して最終レビューをし直し、合格すればレビューへ進める。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
-    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the goal guardian runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed on the first try or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, timed out, or passed on a rerun, the final review runs again with the CI result, and on a pass the PR moves to review. Three failures in a row pause the task, and a person can also move it to review.",
+    "実装の工程の後、sacty がベースブランチの最新を取り込み（競合の目印が残っていれば実装をやり直し）、実装の PR をドラフトで作り（変更が無ければ PR を作らずに進み）、PR の CI を待たずに、最終レビューのエージェント（default_agent）が手元のテストで最終レビューする（CI の結果が出ていれば合わせて判定する）。合格したら CI の結果を待ち（失敗なら失敗したジョブをできるときに1回だけ再実行する）、初回で通った・CI が無ければ sacty がドラフトを外してラベルを付け、承認待ちにする。CI が落ちた・時間切れ・再実行で通ったなら、CI の結果を渡して最終レビューをし直し、合格すればレビューへ進める。不合格が続けて3回になると一時停止し、人がレビューへ進めることもできる。",
+    "After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the final review agent (default_agent) runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed on the first try or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, timed out, or passed on a rerun, the final review runs again with the CI result, and on a pass the PR moves to review. Three failures in a row pause the task, and a person can also move it to review.",
   ),
   items: [
     {
@@ -309,7 +309,7 @@ export const verify = {
       strong: true,
       title: t("最終レビュー", "Final review"),
       lines: [
-        t("ゴールガーディアンが手元で", "The goal guardian runs the tests"),
+        t("エージェントが手元で", "The agent runs the tests"),
         t("テストを実行し、観点ごとに判定", "here and judges each viewpoint"),
         t("（CI の結果が出ていれば合わせる）", "(with the CI result, if in)"),
       ],

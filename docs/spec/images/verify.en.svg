@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1100" width="1040" height="1100" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/verify.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">From implementation to awaiting approval</title>
-  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the goal guardian runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed on the first try or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, timed out, or passed on a rerun, the final review runs again with the CI result, and on a pass the PR moves to review. Three failures in a row pause the task, and a person can also move it to review.</desc>
+  <desc id="desc">After the implementation step, sacty merges in the latest base branch (redoing the implementation if conflict markers remain) and opens the implementation PR as a draft (with no changes it goes on without a PR); without waiting for the PR's CI, the final review agent (default_agent) runs the final review with the tests it runs here (taking the CI result into account if it is already in). After a pass sacty waits for the CI result (on failure it reruns the failed jobs once when it can); if CI passed on the first try or there is no CI, sacty marks the PR ready, adds the label, and waits for approval. If CI failed, timed out, or passed on a rerun, the final review runs again with the CI result, and on a pass the PR moves to review. Three failures in a row pause the task, and a person can also move it to review.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -86,7 +86,7 @@
   <rect x="260" y="505" width="300" height="116" rx="10" class="card" style="stroke:var(--green);stroke-width:1.5"/>
   <svg x="276" y="519" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
   <text x="312" y="537" class="title">Final review</text>
-  <text x="276" y="565" class="sub">The goal guardian runs the tests</text>
+  <text x="276" y="565" class="sub">The agent runs the tests</text>
   <text x="276" y="585" class="sub">here and judges each viewpoint</text>
   <text x="276" y="605" class="sub">(with the CI result, if in)</text>
   <rect x="640" y="505" width="300" height="108" rx="10" class="card" style=""/>

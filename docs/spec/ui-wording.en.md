@@ -15,7 +15,7 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
 - One message is one sentence. Headings, labels and statuses are nouns, and buttons are verbs. The length guide is 40 characters in Japanese and 80 in English.
 - No parenthesized notes in the body. Parentheses only attach a number or an ID (for example "PR #12", "3rd").
 - Explanatory sentences become a status noun or a short imperative.
-- Internal roles (Orchestrator, Goal Guardian, step agent) appear only when a person's decision needs them.
+- Internal roles (Orchestrator, step agent) appear only when a person's decision needs them.
 - Never say the same thing twice (heading and note, body and hint).
 - The body keeps the following. Errors and decision guidance may be up to two sentences.
   - Warnings about irreversible, paid or publicly visible actions

@@ -49,7 +49,7 @@ Code: `<path>` (`<function name>`)
 - [Overall structure](architecture.en.md): packages (core, daemon, web, cli), processes and communication, where data is stored
 - [Daemon startup and shutdown](daemon-lifecycle.en.md): `sacty up`, startup order, double starts, shutdown
 - [Configuration (config.yaml)](configuration.en.md): settings and defaults, agents and auth modes, validation rules
-- [Tasks and steps](tasks-and-steps.en.md): steps and how they are combined, the orchestrator, verification, the goal guardian, budget, pause, and cancel, questions, review-only tasks
+- [Tasks and steps](tasks-and-steps.en.md): steps and how they are combined, the orchestrator, verification, change requests, budget, pause, and cancel, questions, review-only tasks
 - [Approval and request changes](approval.en.md): approving in the web UI, approving in PRs, taking in PR comments, request changes, escalation
 - [Task split and integration review](split-and-integrate.en.md)
 - [Audit of completed tasks](audit.en.md): audit states, causes and proposals, audit budget, mock, API, screens

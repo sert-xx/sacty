@@ -27,7 +27,7 @@ const ja = {
     running: "実装中…",
     notYet: "まだ実装されていません。",
     mapTitle: "観点 → テスト → 実行結果",
-    mapHint: "テストの対応は工程エージェントの申告、検証はゴールガーディアンの判定です。",
+    mapHint: "テストの対応は工程エージェントの申告、検証は最終レビューの判定です。",
     tests: "テスト",
     noTests: "対応するテストがありません",
     result: "実行結果",
@@ -35,19 +35,19 @@ const ja = {
     testsPassed: "テスト合格",
     testsPassedEnvironment: "テスト合格（環境による失敗のみ）",
     environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean, flaky = false) =>
-      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものとゴールガーディアンが判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
+      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
     testsFailed: "テスト不合格",
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
     testRun: "テストの実行",
     previousTestRun: "前の提出のテストの実行",
-    guardianTestRun: "ゴールガーディアンが実行したテスト",
-    previousGuardianTestRun: "前の提出で、ゴールガーディアンが実行したテスト",
-    /** ゴールガーディアンが実行せず、前の段の結果を判定に使った（PBI-305）。 */
+    guardianTestRun: "最終レビューで実行したテスト",
+    previousGuardianTestRun: "前の提出で、最終レビューで実行したテスト",
+    /** 最終レビューで実行せず、前の段の結果を判定に使った（PBI-305）。 */
     reusedTestRun: "最終レビューが判定に使ったテスト",
     previousReusedTestRun: "前の提出で、最終レビューが判定に使ったテスト",
     guardianTestRunHint:
-      "ゴールガーディアンが最終レビューの中で実行し、終了コードと結果の抜粋を申告したものです。",
+      "以前の版の最終レビューの中で実行し、終了コードと結果の抜粋を申告したものです。",
     previousHint: "今の提出では、まだ実行・判定していません。",
     previousFinalReview: "前の提出の最終レビュー",
     pass: "合格",
@@ -56,7 +56,7 @@ const ja = {
       `終了コード ${exitCode ?? "申告なし"}${seconds === undefined ? "" : `・${seconds}秒`}・`,
     noOutput: "（出力なし）",
     finalReview: "最終レビュー",
-    reviewer: "ゴールガーディアン・",
+    reviewer: "以前の版の AI の判定・",
     recurrence: "過去の指摘の再発",
     notRecurred: "再発なし",
     recurred: "再発している",
@@ -66,7 +66,7 @@ const ja = {
     /** 人が最終承認で確かめること（PBI-155）。 */
     humanChecks: "人が確かめること",
     humanChecksHint:
-      "ゴールガーディアンが作業領域では確かめられなかったことです。実装の PR をマージする前に確かめてください。",
+      "最終レビューで、作業領域では確かめられなかったことです。実装の PR をマージする前に確かめてください。",
     environmentFailure: (detail: string) => `環境によると判断したテストの失敗：${detail}`,
     flakyFailure: (f: FlakyFailure) =>
       `不安定と判断したテストの失敗：${f.name}（${f.file}。${
@@ -81,16 +81,16 @@ const ja = {
     rejectedFlakyFailures: "不安定な失敗として認めなかった申告：",
     environmentMixed: "環境による失敗あり",
     environmentMixedHint:
-      "終了コードは 0 ではありませんが、ゴールガーディアンが失敗を環境によるものか不安定なものと判断したため、テストは通ったものとしました。",
+      "終了コードは 0 ではありませんが、最終レビューで失敗を環境によるものか不安定なものと判断したため、テストは通ったものとしました。",
     environmentOnly: "環境による失敗だけ",
     environmentOnlyHint:
-      "終了コードは 0 ではありませんが、ゴールガーディアンが失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
+      "終了コードは 0 ではありませんが、最終レビューで失敗をすべて環境によるものと判断したため、テストは通ったものとしました。",
     toolsMissing: (tools: string) => `${tools} が無く実行できず`,
-    /** ゴールガーディアンが実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。 */
+    /** 最終レビューで実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。 */
     reusedTests: (from: "self-review" | "ci"): string =>
       from === "ci" ? "PR の CI の結果を使い回し" : "実装の工程の結果を使い回し",
     reusedTestsHint:
-      "同じ内容で前の段が全体を実行した結果なので、ゴールガーディアンは実行し直さず、その結果で判定しました。",
+      "同じ内容で前の段が全体を実行した結果なので、最終レビューは実行し直さず、その結果で判定しました。",
     toolsMissingHint:
       "テストのコマンドのツールがイメージに無く、変更が文書のファイルだけなので、止めずに進めました。実行できなかった検証は「人が確かめること」にあります。",
     /** テストの仕組みが無いタスク（PBI-94）。 */
@@ -105,7 +105,7 @@ const ja = {
     noTestsAddedFailed: (command: string, exitCode: number | undefined) =>
       `実装で用意したテスト（${command}）が通りませんでした。終了コード ${exitCode ?? "申告なし"}。通るまで実装をやり直します。`,
     noTestsSkipped:
-      "テストのコマンドが無いため、テストでは検証していません。ゴールガーディアンが、目的・要求要件とコードから判定します。",
+      "テストのコマンドが無いため、テストでは検証していません。観点は、目的・要求要件とコードから判定します。",
     noTestsAdded: (command: string) =>
       `リポジトリにテストの仕組みが無いため、実装で用意したテスト（${command}）で検証しました。`,
     noTestsReason: (reason: string) => `根拠：${reason}`,
@@ -116,10 +116,9 @@ const ja = {
     requirementsViewpoint: "受け入れ条件・タスクの目的",
   },
   proposals: {
-    title: "変更の申し出と判定",
-    hint: "承認済みの成果物を変えるには、ゴールガーディアンの判定が要ります。判定できなければ、人が決めます。",
+    title: "変更の申し出",
+    hint: "工程のエージェントが承認済みの成果物を変えたいときに出す申し出です。理由と根拠を見て、人が認めるかを決めます。",
     empty: "変更の申し出はありません。",
-    judging: "ゴールガーディアンが判定中",
     awaitingPerson: "人の判断待ち",
     notApplied: "反映しない",
     awaitingApply: "反映待ち",
@@ -130,8 +129,7 @@ const ja = {
     facts: "根拠の事実",
     none: "（なし）",
     judgement: "判定",
-    byGuardian: "ゴールガーディアン",
-    judgingShort: "判定中…",
+    byEarlierAi: "以前の版の AI の判定",
     decision: "人の判断",
     accepted: "変更を認めた",
     rejected: "認めなかった",
@@ -143,7 +141,7 @@ const ja = {
     notCreatedHint: "設定で PR の作成先が指定されていません。",
     branch: "ブランチ",
     commit: "コミット",
-    misses: (n: number) => `ゴールガーディアンの見逃し ${n}件`,
+    misses: (n: number) => `最終レビューの見逃し ${n}件`,
     missesHelp: "最終レビューで合格にした成果物を、見逃しが原因として、人が差し戻しました。",
     remarks: (ids: string) => `指摘：${ids}`,
     none: "（なし）",
@@ -210,10 +208,10 @@ const ja = {
       commandHint: "sh -c で実行し、終了コード 0 で合格とみなします。",
       none: "テストなしで進める",
       noneHint:
-        "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを実行せず、ゴールガーディアンがタスクの目的から判定します。",
+        "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを実行せずに進めます。",
       noneBugfix: "不具合の修正は、テストなしでは進められません。",
       reasonLabel: "テストなしで進める理由",
-      reasonHint: "ゴールガーディアンへの指示と、PR の本文に渡します。",
+      reasonHint: "工程のエージェントへの指示と、PR の本文に渡します。",
       reasonDefault: "テストを書く種類のリポジトリではありません。",
     },
   },
@@ -322,7 +320,7 @@ const en: PartsMessages = {
     notYet: "Not implemented yet.",
     mapTitle: "Viewpoint → test → result",
     mapHint:
-      "Test mapping is reported by the step agent; verification is judged by the Goal Guardian.",
+      "Test mapping is reported by the step agent; verification is judged by the final review.",
     tests: "Tests",
     noTests: "No matching tests",
     result: "Result",
@@ -330,18 +328,18 @@ const en: PartsMessages = {
     testsPassed: "Tests passed",
     testsPassedEnvironment: "Tests passed (environment failures only)",
     environmentPassNote: (exitCode, workspaceOnly, flaky = false) =>
-      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : flaky ? 'the Goal Guardian judged every failure to be environmental, or unrelated to the diff with a result that changes when rerun (for a known flaky test, the reruns were skipped) (the failures are listed under "For a person to check")' : 'the Goal Guardian judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
+      `The exit code is ${exitCode ?? "not reported"}, but the run counts as passed because ${workspaceOnly ? "the only failures came from Sacty's own working files, which are not part of the repository's checks" : flaky ? 'the final review judged every failure to be environmental, or unrelated to the diff with a result that changes when rerun (for a known flaky test, the reruns were skipped) (the failures are listed under "For a person to check")' : 'the final review judged every failure to be environmental (the failures are listed under "For a person to check")'}.`,
     testsFailed: "Tests failed",
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",
     testRun: "Test run",
     previousTestRun: "Test run for the previous submission",
-    guardianTestRun: "Tests run by the Goal Guardian",
-    previousGuardianTestRun: "Tests run by the Goal Guardian for the previous submission",
+    guardianTestRun: "Tests run in the final review",
+    previousGuardianTestRun: "Tests run in the final review for the previous submission",
     reusedTestRun: "Tests the final review judged with",
     previousReusedTestRun: "Tests the final review judged with for the previous submission",
     guardianTestRunHint:
-      "The Goal Guardian ran them in the final review and reported the exit code and an excerpt of the result.",
+      "Run in the final review of an earlier version, which reported the exit code and an excerpt of the result.",
     previousHint: "Not yet run or judged for the current submission.",
     previousFinalReview: "Final review of the previous submission",
     pass: "Passed",
@@ -350,7 +348,7 @@ const en: PartsMessages = {
       `Exit code ${exitCode ?? "not reported"}${seconds === undefined ? "" : ` · ${seconds}s`} · `,
     noOutput: "(no output)",
     finalReview: "Final review",
-    reviewer: "Goal Guardian · ",
+    reviewer: "AI verdict in an earlier version · ",
     recurrence: "Recurrence of past comments",
     notRecurred: "Not recurring",
     recurred: "Recurring",
@@ -359,7 +357,7 @@ const en: PartsMessages = {
       "Changes that neither the request nor the approved requirements and design call for. The implementation is redone to remove them.",
     humanChecks: "For a person to check",
     humanChecksHint:
-      "The Goal Guardian could not check these in the workspace. Check them before merging the implementation PR.",
+      "The final review could not check these in the workspace. Check them before merging the implementation PR.",
     flakyFailure: (f) =>
       `Test failure judged flaky: ${f.name} (${f.file}; ${
         f.runs === 0
@@ -373,17 +371,17 @@ const en: PartsMessages = {
     rejectedFlakyFailures: "Reports not accepted as flaky failures:",
     environmentMixed: "Environment failures",
     environmentMixedHint:
-      "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment or flaky, so the tests count as passed.",
+      "The exit code is not 0, but the final review judged every failure to be caused by the environment or flaky, so the tests count as passed.",
     environmentFailure: (detail) =>
       `Test failure judged to be caused by the environment: ${detail}`,
     environmentOnly: "Environment failures only",
     environmentOnlyHint:
-      "The exit code is not 0, but the Goal Guardian judged every failure to be caused by the environment, so the tests count as passed.",
+      "The exit code is not 0, but the final review judged every failure to be caused by the environment, so the tests count as passed.",
     toolsMissing: (tools) => `Could not run: ${tools} missing`,
     reusedTests: (from) =>
       from === "ci" ? "Reused the PR's CI result" : "Reused the implementation step's result",
     reusedTestsHint:
-      "An earlier stage ran the whole command on the same content, so the Goal Guardian judged with that result instead of running it again.",
+      "An earlier stage ran the whole command on the same content, so the final review judged with that result instead of running it again.",
     toolsMissingHint:
       'A tool of the test command is not in the image, and the change touches only document files, so the task went on instead of stopping. The verification that could not run is listed under "For a person to check".',
     noTestsTitle: "Not verified by tests",
@@ -397,7 +395,7 @@ const en: PartsMessages = {
     noTestsAddedFailed: (command, exitCode) =>
       `The tests added in the implementation (${command}) failed. Exit code ${exitCode ?? "not reported"}. The implementation is redone until they pass.`,
     noTestsSkipped:
-      "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges from the goal, the requirements, and the code.",
+      "There is no test command, so the implementation is not verified by tests. The viewpoints are judged from the goal, the requirements, and the code.",
     noTestsAdded: (command) =>
       `The repository had no tests, so the tests added by the implementation (${command}) were run.`,
     noTestsReason: (reason) => `Why: ${reason}`,
@@ -407,10 +405,9 @@ const en: PartsMessages = {
     requirementsViewpoint: "Acceptance criteria or the task's purpose",
   },
   proposals: {
-    title: "Change requests and verdicts",
-    hint: "Changing an approved deliverable needs a Goal Guardian verdict. If it cannot decide, a person decides.",
+    title: "Change requests",
+    hint: "A step agent makes a change request when it wants to change an approved deliverable. Read the reason and facts, then decide whether to accept it.",
     empty: "No change requests.",
-    judging: "Goal Guardian is judging",
     awaitingPerson: "Needs you",
     notApplied: "Not applied",
     awaitingApply: "Waiting to apply",
@@ -421,8 +418,7 @@ const en: PartsMessages = {
     facts: "Supporting facts",
     none: "(none)",
     judgement: "Verdict",
-    byGuardian: "Goal Guardian",
-    judgingShort: "Judging…",
+    byEarlierAi: "AI verdict in an earlier version",
     decision: "Your decision",
     accepted: "Change accepted",
     rejected: "Not accepted",
@@ -434,7 +430,7 @@ const en: PartsMessages = {
     notCreatedHint: "No PR destination is configured.",
     branch: "Branch",
     commit: "Commit",
-    misses: (n) => `${n} Goal Guardian miss${n === 1 ? "" : "es"}`,
+    misses: (n) => `${n} final review miss${n === 1 ? "" : "es"}`,
     missesHelp: "A person sent back a deliverable that passed the final review, citing a miss.",
     remarks: (ids) => `Comments: ${ids}`,
     none: "(none)",
@@ -499,10 +495,10 @@ const en: PartsMessages = {
       commandHint: "Run with sh -c. Exit code 0 passes.",
       none: "Proceed without tests",
       noneHint:
-        "For repositories without tests (only skills or documents, for example). Tests are not run; the Goal Guardian judges by the purpose of the task.",
+        "For repositories without tests (only skills or documents, for example). The task proceeds without running tests.",
       noneBugfix: "A bug fix cannot proceed without tests.",
       reasonLabel: "Why to proceed without tests",
-      reasonHint: "Passed to the Goal Guardian and the PR description.",
+      reasonHint: "Passed to the step agents' instructions and the PR description.",
       reasonDefault: "This repository is not the kind that has tests.",
     },
   },

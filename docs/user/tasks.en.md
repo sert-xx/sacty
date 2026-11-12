@@ -4,7 +4,7 @@
 
 # Working with tasks
 
-When you create a task, the Orchestrator and the Goal Guardian move it through the steps. You make decisions only at approval gates.
+When you create a task, the Orchestrator and the step agents move it through the steps. You make decisions only at approval gates.
 
 A task proceeds as follows.
 
@@ -77,7 +77,7 @@ When you pick a plan, "Set per step" appears below the sequence of steps. Press 
 ![The "Step settings" view](images/new-task-steps.en.png)
 
 - For the image, choose a name in `images` or `default` (the default image) (see [Images](images.en.md)). Every step, the tests, and the final review of the task run in this image. If you leave it as "Automatic", the project target or the Orchestrator chooses as usual.
-- For the agent, choose the name of an available agent (see [Settings](config.en.md)). If you leave it as "Default", the agent decided by `step_agents` (or `default_agent`) is used. Integration review can't be chosen, because the Goal Guardian runs it.
+- For the agent, choose the name of an available agent (see [Settings](config.en.md)). If you leave it as "Default", the agent decided by `step_agents` (or `default_agent`) is used. The integration review agent can't be chosen, because it is decided by `step_agents.integrate` in `config.yaml` (or `default_agent` if absent).
 - A step whose agent you set is marked, and "Reset to default" undoes it. "Done" or the back button at the top left returns to the main form. The sequence of steps in the main form also marks the steps whose agent you set, and the summary shows the image you set.
 - Switching views keeps the title and description you are typing and your choices. Choosing another plan keeps the choices for the same steps (only those for the steps of the current plan are used).
 - The image and agents you set take precedence over the Orchestrator's choice and `step_agents`. After creating the task, you can still change them in "Task image" and "Step agents" on the task page (they show "set by a person at creation").
@@ -169,7 +169,8 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
   Even a document that is not referenced, if it sets behavior or premises related to the request (data freshness, operational rules, and so on), is written in the gathered information.
 - Information gathered from outside the target repository (the code or documents of another repository such as the one the target was imported from, or external URLs) is written with its origin (repository name or URL) and an explicit "対象のリポジトリの外" (outside the target repository), in an item separate from the target repository's documents. A lack of documents in the target repository is not written as if outside documents made up for it. The later steps are also told not to treat outside information as the target repository's conventions or decisions.
 - The gathered information is summarized down to what is relevant and shown under "Gathered information" in the task details (collapsed once a step has started). Sources that could not be read and conflicts between sources are written too.
-- The summary is given to the Orchestrator, every step, and the Goal Guardian. The Goal Guardian uses it only to understand the background; the basis of its verdicts stays the approved deliverables.
+- The summary is given to the Orchestrator and every step. It is also given to the final review, Integration review, and deciding where to send PR comments back to.
+  These judgments use it only to understand the background; the basis of the verdicts stays the approved deliverables.
 - You can choose the AI with `step_agents.gather` in `config.yaml` (the Orchestrator's AI if omitted; [config.yaml settings](config.en.md#models-per-step)). The cost is counted toward the task budget and shown in the "Information gathering" row of the per-step cost table.
 - If it cannot summarize, the task is paused. Resuming gathers again.
 - Split child tasks do not gather again; they carry over the information their parent gathered in their content.
@@ -298,7 +299,7 @@ The exception is a step that is approved by merging its PR (implementation, requ
 
 ## Review of the implementation PR
 
-After the Implementation step, sacty runs neither the final review (the Goal Guardian running the tests) nor the wait for or rerun of the PR's CI.
+After the Implementation step, sacty runs neither the final review (running the tests and judging pass or fail) nor the wait for or rerun of the PR's CI.
 Instead, the child task that reviews the PR reviews it, and only after there are no findings is it passed to you for approval (merge).
 The Implementation step's agent still runs tests while it works.
 
@@ -321,7 +322,7 @@ The Implementation step's agent still runs tests while it works.
 
 This section and "The implementation PR and CI" below it describe the final review of older versions ([Review of the implementation PR](#review-of-the-implementation-pr)). So do the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image".
 
-To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
+To verify the implementation, the final review agent runs the test (verification) command that the orchestrator chose by reading the repository. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The final review agent uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
 
 sacty does not run the tests separately.
 
@@ -332,32 +333,32 @@ Even a repository without test code uses a check that mechanically validates its
   - For Terraform, `terraform validate`
   - For YAML, `yamllint`, and so on
 - The chosen command appears as "Test command" on the "Step settings" tab of the task details, and as "Tests" in the properties in the right column.
-- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）". When an earlier stage's result was reused, the heading becomes "Tests the final review judged with", and the test line of the PR body reads like "（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード N）".
-- In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
-  - The Goal Guardian reports neither exit code 0 nor that every failure is caused by the environment
+- The command, exit code, and an excerpt of the result of the tests the final review agent ran appear under "Tests run in the final review" in the implementation deliverable. The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）". When an earlier stage's result was reused, the heading becomes "Tests the final review judged with", and the test line of the PR body reads like "（ゴールガーディアンは実行せず、同じ内容の PR の CI の結果を使い回した。終了コード N）".
+- In the following cases, the final review fails and the implementation is redone (the redo receives the results of the tests the final review agent ran).
+  - The final review agent reports neither exit code 0 nor that every failure is caused by the environment
   - There is a viewpoint the implementation did not map to a test
   - There is a change that neither the request nor the approved requirements and design call for ([Out-of-scope changes](#out-of-scope-changes))
-- For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the Goal Guardian's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
-- The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the Goal Guardian reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
-- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The Goal Guardian checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
-- Separately from the test command, the Goal Guardian runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration) (results an earlier stage got by running the whole on the same content are reused).
+- For a task whose Requirements and Design are approved through PRs, the Requirements and Design files that go into the implementation PR (by default `docs/sacty/<short task ID>/`) are also put into the final review's copy with the same contents as the PR. A check that covers the whole repository (such as `prettier --check .`) runs on the same contents as the PR, so if it fails on these files the final review fails and the implementation is redone. sacty places these files and the implementation cannot rewrite them, so the check's settings (such as `.prettierignore`) are fixed to match the repository's policy (for example, when the location is the default `docs/sacty/`, the whole location is excluded at once. When the location has been changed from the default and is shared with other files, such as `docs`, the whole of it is not excluded, only the range that matches the task ID directories; a line is not added per task).
+- The final review does not fail only because the test command could not run for a tool missing from the image. Other failures (test failures or lint errors that the final review agent reported, and so on) and the viewpoints are judged as usual. If every changed file is a document, the task goes on without stopping and keeps the verification that could not run in "For a person to check" ([For a person to check](#for-a-person-to-check)). If a file that is not a document changed, the task pauses ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
+- A viewpoint without behavior that runs, such as a change only to documents, comments or wording, can be reported as "checked in the diff" without a test. The final review agent checks in the diff that the change for that viewpoint does not change behavior, and judges it (if it changes behavior but has no test, it fails). The implementation deliverable shows "No test; checked in the diff (reason)". Documents of instructions for agents, such as a skill (SKILL.md) or AGENTS.md, are also checked in the diff without tests that start an agent (code that runs, such as a script in a skill, gets tests).
+- Separately from the test command, the final review agent runs the verification the repository defines, such as formatters, linters, and type checks, on everything that goes into the PR (code, tests, documents, configuration) (results an earlier stage got by running the whole on the same content are reused).
   A failure caused by the change fails the final review. Verification that could not run, for example because a tool is missing from the image, remains in "人が確かめること" with the reason.
   The implementation agent also makes the same verification pass before submitting, and writes the reason in the implementation's description for any verification it did not run.
 - The check of acceptance cannot shrink to confirming that a name, item, file, or link exists.
-  When a document describes a responsibility or behavior of the code ("A does B"), the Goal Guardian reads the relevant code and checks that it does so.
-- When the diff newly adds or changes a mechanism shared by several processes (a queue, a lock, a cache, a flag, and so on), the Goal Guardian checks that later processing still continues after an anomaly or failure in that mechanism.
+  When a document describes a responsibility or behavior of the code ("A does B"), the final review agent reads the relevant code and checks that it does so.
+- When the diff newly adds or changes a mechanism shared by several processes (a queue, a lock, a cache, a flag, and so on), the final review agent checks that later processing still continues after an anomaly or failure in that mechanism.
   What could not be checked remains in "人が確かめること" (in the integration review, it is written in the explanation of the verdict).
-- The Goal Guardian's findings and "人が確かめること" are written in the language the task's title and content are written in. They do not switch to English because the command output or the diff is in English.
+- The final review's findings and "人が確かめること" are written in the language the task's title and content are written in. They do not switch to English because the command output or the diff is in English.
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug. If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### The implementation PR and CI
 
 When the Implementation step finishes, sacty opens the implementation PR as a draft before the final review.
-Behavior that only CI can check (fixing a workflow, for example) is part of the Goal Guardian's judgment too.
+Behavior that only CI can check (fixing a workflow, for example) is part of the final review's judgment too.
 
 1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The child task that reviews the PR is not created yet. While it is a draft, please wait before reviewing or merging.
-2. sacty waits for the PR's CI. Without waiting for the CI to finish, the Goal Guardian starts the final review in the workspace (the CI time and the final review time overlap). If the review fails, the implementation is redone without waiting for the CI. If it passes, only the CI result is awaited, and the task's status is "Waiting for the PR's CI". In a repository confirmed to have no CI it moves on after 1 minute, if no CI appears, after 5 minutes, and if CI does not finish, after up to 60 minutes. If a GitHub Actions run fails, sacty reruns the failed jobs once per commit and waits for them to finish (the waiting time is counted again from the rerun). If it cannot rerun them (a lack of permission, for example), it goes on without rerunning. The task does not stop.
-3. If the CI passed on the first try, or there is no CI, the task moves on without another final review. If the CI failed, did not finish in time, or passed after a rerun, the Goal Guardian does the final review again from the tests it ran in the workspace together with the PR's CI result (verification of the same content is reused).
+2. sacty waits for the PR's CI. Without waiting for the CI to finish, the final review agent starts the final review in the workspace (the CI time and the final review time overlap). If the review fails, the implementation is redone without waiting for the CI. If it passes, only the CI result is awaited, and the task's status is "Waiting for the PR's CI". In a repository confirmed to have no CI it moves on after 1 minute, if no CI appears, after 5 minutes, and if CI does not finish, after up to 60 minutes. If a GitHub Actions run fails, sacty reruns the failed jobs once per commit and waits for them to finish (the waiting time is counted again from the rerun). If it cannot rerun them (a lack of permission, for example), it goes on without rerunning. The task does not stop.
+3. If the CI passed on the first try, or there is no CI, the task moves on without another final review. If the CI failed, did not finish in time, or passed after a rerun, the final review agent does the final review again from the tests it ran in the workspace together with the PR's CI result (verification of the same content is reused).
    - If a CI failure is caused by the change, the review fails and the implementation is redone.
    - If a failure is unrelated to the change (the CI environment, an external service, a missing secret, and so on), the review does not fail for it, and it goes into "For a person to check".
    - If the rerun passes, the CI result counts as passed. The original failures also reach the final review, which checks them as candidates for flaky failures. Those confirmed to be unrelated to the diff go into "For a person to check", and a failure involving tests or code the diff changed fails the review.
@@ -366,7 +367,7 @@ Behavior that only CI can check (fixing a workflow, for example) is part of the 
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
 - A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
-- So that the same verification is not run again on the same content, the Goal Guardian reuses the results of the verification the Implementation step ran last and the PR's CI results.
+- So that the same verification is not run again on the same content, the final review agent reuses the results of the verification the Implementation step ran last and the PR's CI results.
   Only results of running the whole are reused. What ran only in part, or what CI cannot be confirmed to cover, is run again. In a repository without CI, CI results are not relied on.
   The child task that reviews the PR also reuses the results the final review handled on the same commit and the CI results.
   When the test command was reused, "Tests the final review judged with" in the implementation deliverable shows "Reused the implementation step's result" or "Reused the PR's CI result".
@@ -448,19 +449,19 @@ In the task details, you can choose one of the following.
 
 ### Out-of-scope changes
 
-For each change in the diff, the Goal Guardian checks whether the request, the approved requirements and design, or a person's earlier comment calls for it, or whether it is needed to make a requested change.
+For each change in the diff, the final review agent checks whether the request, the approved requirements and design, or a person's earlier comment calls for it, or whether it is needed to make a requested change.
 If either of the following exists, the final review fails (viewpoint `SCOPE`) and the implementation is redone to remove the out-of-scope changes.
 A security fix is not judged this way, because the viewpoint `SEC-MIN` ([Security checks and fixes](#security-checks-and-fixes)) looks at the same thing.
 
 - A change of behavior that none of them call for (a change to a screen, an API, a setting, a default value, or wording, or an added feature or operation). Even a change that looks good is out of scope if nobody asked for it.
 - A change that weakens or reverses what an existing test expects (changing an expected value, removing an assertion, skipping or deleting a test). It is in scope only when the requirements or design (for a task that skips them, the request or the reproduction test) ask for a change to the behavior that the test checks. The same applies to a test merged earlier.
-- A change to existing behavior (the kind of error, the status code, the message, the order of checks, the shape and fields of a response, a default value) that the requirements and design do not call for. This includes one caused by refactoring that merges, splits, or moves code. The Goal Guardian reads the code before and after the change, and for a function with several checks it traces which check fires first for an input that breaks several rules at once. It is out of scope even if the existing tests pass.
+- A change to existing behavior (the kind of error, the status code, the message, the order of checks, the shape and fields of a response, a default value) that the requirements and design do not call for. This includes one caused by refactoring that merges, splits, or moves code. The final review agent reads the code before and after the change, and for a function with several checks it traces which check fires first for an input that breaks several rules at once. It is out of scope even if the existing tests pass.
 
 Treated as in scope:
 
 - Changes needed to make a requested change (updating callers, type changes, adding or updating tests for the requested behavior, resolving conflicts)
 - Formatting or refactoring that does not change behavior (that it does not is checked by the comparison above)
-- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The Goal Guardian reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
+- Changes that the repository's rules (AGENTS.md, CONTRIBUTING, the PR template, and so on) call for along with this kind of change (updating the README, the CHANGELOG, a version, documentation, or generated files). They are in scope even if the requirements and design do not mention them. The final review agent reads these rules in the workspace, and what it cannot confirm is not treated as out of scope; it stays in "For a person to check"
 - Changes on the base branch side, and the Requirements and Design files that sacty adds to the PR
 
 What cannot be judged as in scope or not, because the request or requirements can be read in more than one way, does not fail the review; it stays in "For a person to check".
@@ -477,9 +478,9 @@ For a task that takes over an existing PR, however, "Move to review" is not avai
 
 What cannot be checked in the workspace (container) does not fail the final review; it is left as items a person checks before merging.
 
-- Test failures caused by the environment: when the Goal Guardian judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
+- Test failures caused by the environment: when the final review agent judges that every failure is caused by the environment (for example, it fails the same way without the change), it writes the evidence, and the tests count as passed.
   If even one failure can be explained neither as caused by the environment nor as flaky, the review fails as before.
-- Flaky test failures: when a rerun of the failed tests changes the result and the Goal Guardian judges the failure unrelated to the diff, the tests also count as passed.
+- Flaky test failures: when a rerun of the failed tests changes the result and the final review agent judges the failure unrelated to the diff, the tests also count as passed.
   The failures appear under "For a person to check". A failure of a test changed in the diff is not treated as flaky.
   A known flaky test seen in 3 or more tasks may skip the rerun ([The flaky test ledger](audit.en.md#the-flaky-test-ledger)).
 - Acceptance checks that cannot be done in the workspace: checks on real devices, a specific OS, input methods, and so on are judged on what the tests can check (with synthetic input, for example), and the rest becomes items for a person to check.
@@ -487,11 +488,11 @@ What cannot be checked in the workspace (container) does not fail the final revi
 
 - Items carried over from the previous round: when the final review is redone, the items the previous round listed under "For a person to check" (including changes it called "cannot be judged as in scope") stay in the next round.
   The exceptions are test failures judged to be caused by the environment or judged flaky, which are not carried over and are judged again from that round's test results, and the item for verification that could not run because a tool is missing, which is not carried over and is created again only when the same condition applies in that round.
-  The Goal Guardian can drop one only after confirming that its concern is resolved in the current code, or that the previous judgment was wrong, and writing the reason.
+  The final review agent can drop one only after confirming that its concern is resolved in the current code, or that the previous judgment was wrong, and writing the reason.
   The dropped item and its reason are kept in the final review record. An item whose code has not changed is not dropped.
-  Items with the same purpose across rounds are merged into one. When the Goal Guardian rewrites an item of the previous round for the current state, or when items with the same heading overlap, such as 「この環境だけの結果」, only the newest wording stays. The wording before merging is kept in the final review record.
+  Items with the same purpose across rounds are merged into one. When the final review agent rewrites an item of the previous round for the current state, or when items with the same heading overlap, such as 「この環境だけの結果」, only the newest wording stays. The wording before merging is kept in the final review record.
 - Verification passed with tools the agent installed itself: when something the tests need, such as a browser, is not in the run environment (image), the implementing agent may install it under `.sacty-tools/` in the workspace and verify with it. When it does, it writes what it installed, the verification it passed, and what it did not check in an environment without it, in the 「この環境だけの結果」 ("results only in this environment") section of the implementation description (which goes into the PR body).
-  The Goal Guardian leaves this as an item for a person, "この環境だけの結果: …", and also writes it in the final review summary. Installing alone is not a reason to fail.
+  The final review agent leaves this as an item for a person, "この環境だけの結果: …", and also writes it in the final review summary. Installing alone is not a reason to fail.
   Tools installed under `.sacty-tools/` do not go into the PR or the commit (anything installed elsewhere goes into the PR unless the repository's `.gitignore` ignores it). Check with an image that has the tools, or, if needed, change to an image that includes them ([Container images](images.en.md)).
   `.sacty-tools/` is only for installed tools. Working files of sacty and the agent, such as verification records, copies of the base, and drafts, are put outside the workspace (`/tmp/agent-scratch/`), because inside the workspace a formatter or linter would check them and fail. When a repository file (a script, test, or setting) contains a name from inside the workspace (such as `.sacty-tools`), sacty finds it in the diff, and unless the request or the approved requirements or design mention it, the final review fails it as an out-of-scope change.
 - Checks of things inside sacty's workspace (tools under `.sacty-tools/`, temporary files, paths inside the container, and so on) for whether they exist or work are not in this list, because a person has no way to check them. A check failure caused by such a file does not appear in this list or in the PR body either (the final review reruns the check without that file and judges by that).
@@ -499,13 +500,13 @@ What cannot be checked in the workspace (container) does not fail the final revi
 - Verification that could not run because a tool is missing: when every changed file is a document (such as `.md` or `.rst`; `.txt` is not counted as a document because it is also used for dependency and build definitions) and a tool of the test command is not in the image, the task goes on instead of stopping. The verification that could not run stays as an item to check by running it in an environment that has the tool. If even one changed file is not a document, such as code, the task stops as before ([When the verification tool is not in the image](#when-the-verification-tool-is-not-in-the-image)).
 
 These items appear in the 「人が確かめること」 checklist in the body of the implementation PR (in the "結論" (conclusion) section at the top of a body without a template, and at the end of a body that follows one), and as "For a person to check" in the final review on the task details. A task that took over an existing PR does not change the PR body, so check them in the final review on the task details.
-The tests run by the Goal Guardian show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
+The tests run in the final review show "Environment failures only" (or "Could not run: <tool> missing" when a tool was missing).
 When the exit code is not 0 but the tests passed with environment failures only, the result of each viewpoint reads "Tests passed (environment failures only)" with the exit code and the reason it passed. The test line of the PR body gives the same reason, so it never says just "passed".
 Check them before merging the PR.
 
 ### When the verification tool is not in the image
 
-If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the task image), the Goal Guardian reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
+If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the task image), the final review agent reports it. The task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
 
 Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the implementation.
 
@@ -526,11 +527,11 @@ However, when every changed file is a document (such as `.md` or `.rst`), the ta
 2. Rebuild the image with `npx sacty image build <name>`.
 3. If you added a new image, change the task image under "Task image" in the task details ([Changing the task image](images.en.md#changing-the-task-image)).
 
-In a task whose test command is decided, if you want to go on without fixing the image (for example, when the verification need not run in that image), you can instead resume with "Tests" in the resume section: specify the test command again, or proceed without tests (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding redoes the final review from where it stopped). When you proceed without tests, tests are not run and the Goal Guardian judges by the task's goal. A bug fix cannot proceed without tests.
+In a task whose test command is decided, if you want to go on without fixing the image (for example, when the verification need not run in that image), you can instead resume with "Tests" in the resume section: specify the test command again, or proceed without tests (the choices are the same as in [When the task stopped instead of proceeding without tests](#when-the-task-stopped-instead-of-proceeding-without-tests); resuming without deciding redoes the final review from where it stopped). When you proceed without tests, tests are not run and the final review agent judges by the task's goal. A bug fix cannot proceed without tests.
 
 A task in a repository without tests that verifies with the test command the implementation prepared ([Repositories without tests](#repositories-without-tests)) does not have this field. The message when it stops does not mention it either, so fix the image and resume.
 
-If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
+If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, sacty treats it as a problem with the repository's dependencies. The implementation is redone like any other test failure (here too, the final review agent runs the tests).
 
 ### Documents-only requests
 
@@ -631,7 +632,7 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
   - It checks every minute and takes them in 2 minutes after the last comment.
   - sacty decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between.
     When the comments are only from sacty's review child task, sacty follows the step the child task gave for each finding (no run is made for the decision, and it costs nothing).
-    When your comments are included, the agent of that PR's step decides (in older versions, the Goal Guardian decided). The decision and its reasons are kept in the Activity and the PR section.
+    When your comments are included, the agent of that PR's step decides (in older versions, a different AI decided). The decision and its reasons are kept in the Activity and the PR section.
   - The target depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on). A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR). Only a comment that changes the decision itself goes back to the step that holds it. The reason says which decision is changed or not changed.
   - The judgment of the step to redo (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
     The judgment is an interpretation of the comments, so when it disagrees with the original text of your comment, the original text wins.
@@ -680,14 +681,29 @@ So that the people looking at the PR notice it, the same content is commented on
 - If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
 - Secret values are hidden and long text is cut. Paths inside sacty's workspace are replaced with names a person can follow.
 
+## Change requests
+
+When a step's agent cannot proceed without changing the approved requirements or design, it makes a change request (numbered like `CP-1`).
+sacty does not have an AI judge the request; it asks you to decide.
+
+1. When there is a request, the task is escalated ("Change request needs you") and appears in "Needs you".
+2. Press "Decide" to go to the "Change requests" section in the task details. Read the reason, the supporting facts, and the full proposed text.
+3. Press "Accept change" or "Don't accept".
+   - If you accept a change to the requirements, their approval is revoked, so approve them again.
+   - If you accept a change to the design, it replaces the approved design.
+   - If you don't accept it, the requesting step's deliverable is submitted as is (the approved requirements and design do not change).
+
+- While the task waits for your decision, it cannot be paused.
+- A request that an earlier version's AI was in the middle of judging waits for your decision when the updated version starts.
+
 ## Cause of a request for changes
 
-When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted as Goal Guardian misses.
+When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted as final review misses.
 
 | Choice | When to use it |
 | --- | --- |
 | Don't choose (initial choice) | Request changes without deciding the cause. It is not counted as a miss, and is counted under "Rework with unknown cause" on the dashboard |
-| The Goal Guardian missed it | A flaw the final review (Integration review) could have caught. When you send back a deliverable it had passed, a miss is recorded |
+| Miss (a flaw that could be caught) | A flaw the final review (Integration review) could have caught. When you send back a deliverable it had passed, a miss is recorded |
 | A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
 | A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
 
@@ -696,7 +712,7 @@ When you request changes on the approval screen, you can choose a "Cause of the 
   - When every answer is as recommended (for example "as recommended") and nothing you approved changes, the deliverable is not redone and not self-reviewed. The answered items are removed from "Open questions", and only the places that reflect the answers are changed.
   - When an answer differs from the recommendation, when an answer changes what you approved, or when a request other than an answer is mixed in, the work is redone as before.
 - When you request changes on the approval screen, you choose where to send it back, so sacty does not judge the cause. To count misses correctly, choose the cause when you know it.
-- The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Goal Guardian miss" lists only what was recorded as a miss.
+- The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Final review miss" lists only what was recorded as a miss.
 - The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
 - Requests for changes from before the cause could be chosen have no cause. On the dashboard, a request for changes with a miss record is counted as a miss, and the others as "Rework with unknown cause".
 
@@ -828,7 +844,7 @@ For example, you can rerun only a step that stopped on an error or was sent back
 - When requesting changes on the approval screen, you can also choose again the task image and the agents of the step to redo and the steps after it, under "Change the task image and step agents" (open it to use it). The current settings are selected at first, and only what you changed is recorded, only when you request changes (not when you approve).
 - When resuming a paused task, you can also choose again the task image and the agents of the steps not yet finished in the resume form ([Pause, resume, and cancel](#pause-resume-and-cancel)).
 - If the chosen agent can no longer be used (you deleted it from config.yaml, removed its price, and so on), the task pauses when the step runs. Choose again, then resume.
-- Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
+- Integration review (`step_agents.integrate` in `config.yaml`) and the Orchestrator cannot be changed here.
 
 ## Pause, resume, and cancel
 

@@ -59,7 +59,7 @@ Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib
 7. It recovers interrupted runs (`recoverInterrupted`).
    - An "Ask the Orchestrator" that was in the middle of answering is recorded as interrupted.
    - A deployment check that was in the middle of running is recorded as interrupted. For the after-merge watch step, the task is paused (`TaskPaused`, reason `error`) and checked again on resume. For tasks from before the step, it ends as not determined ([After-merge watch](deployment-watch.en.md)).
-   - A Goal Guardian judgment that was in the middle of judging is recorded as not judged (`undecidable`).
+   - A change request that was in the middle of the AI's judgment in an earlier version is put into waiting for a person's decision (`TaskEscalated`, reason `change_proposed`; [Change requests](tasks-and-steps.en.md#change-requests)).
    - Tasks that were running (`running`) are recorded as a run failure (`AgentRunFailed`) and paused (`TaskPaused`, reason `error`).
 8. It starts removing workspaces left by the previous daemon (`cleanupWorkspacesAtStartup`; [Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)).
    - Per-run scratch directories that do not belong to a running run.

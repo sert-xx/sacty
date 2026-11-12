@@ -20,7 +20,7 @@ const PAREN_MAX = { ja: 14, en: 30 } as const;
  * 規則の例外（キーのパス）。理由を添える。足すときは、本文に残す理由が「判断に要る」「エラー」のどちらかであること。
  */
 const EXCEPTIONS: Record<string, string> = {
-  // 役割の見出し：ゴールガーディアンの何の判断かを括弧で添える（見出しなので括弧の例外）
+  // 役割の見出し：何の判断かを括弧で添える（見出しなので括弧の例外）
   "runLog.roles.guardian": "見出し。括弧で判断の種類を添える",
   "runLog.roles.final-review": "見出し。括弧で判断の種類を添える",
   "runLog.roles.rework": "見出し。括弧で判断の種類を添える",
@@ -34,7 +34,7 @@ const EXCEPTIONS: Record<string, string> = {
   "review.gate.prMergedOutdated": "判断の案内。何が起きた・次に何が起きるの2文",
   "parts.changeDecision.requirementsHelp": "判断の案内。認める・認めないの結果の2文",
   "parts.changeDecision.designHelp": "判断の案内。認める・認めないの結果の2文",
-  "parts.implementation.noTestsSkipped": "検証の状態。何をしていない・誰が判定するの2文",
+  "parts.implementation.noTestsSkipped": "検証の状態。何をしていない・何から判定するの2文",
   "parts.resume.ticketNoRepo": "エラー。何が無い・何をするの2文",
   "forms.task.templateSetupNote": "テンプレートを選んだときの説明。何をする・何を決めるの2文",
   "forms.task.templateDocsSetupNote": "テンプレートを選んだときの説明。何をする・何を決めるの2文",

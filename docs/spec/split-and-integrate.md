@@ -81,7 +81,7 @@
 
 ## 統合レビュー
 
-- AI は `step_agents.integrate`、無ければ `guardian_agent`（それも無ければ `default_agent`）。
+- AI は、統合レビューの工程のエージェント（`step_agents.integrate`、無ければ `default_agent`）。タスクごとには変えられない（`agent.stepNotChangeable`）。作業履歴の actor は `agent`。
 - ベースブランチの最新を取得して使い捨ての写しで渡す。
   リポジトリの無い親では、子タスクのリポジトリとベースブランチごとに写しを並べる。
   指示には、承認済みの要求要件・設計、テスト観点（無ければ `REQ`）、子タスクの要約（題・状態・PR の URL・回・リポジトリ）、人の過去の指摘と AI のレビューの過去の指摘（節を分けて）を入れる。

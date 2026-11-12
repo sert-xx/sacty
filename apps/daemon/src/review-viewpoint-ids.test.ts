@@ -108,7 +108,7 @@ describe("判定する観点に無い ID で答えたとき", () => {
     );
     expect(review.passed).toBe(false);
     expect(renderMessage(review.viewpoints[0]?.reason ?? "", "ja")).toBe(
-      "観点 REQ の判定がありません（ゴールガーディアンは、判定する観点に無い ID TV-1 で答えました）。",
+      "観点 REQ の判定がありません（最終レビューは、判定する観点に無い ID TV-1 で答えました）。",
     );
     expect(renderMessage(review.viewpoints[0]?.reason ?? "", "en")).toContain("answered with TV-1");
   });

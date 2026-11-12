@@ -1727,7 +1727,11 @@ export function applyEvent(
 
     case "ChangeDecided": {
       const proposal = findProposal(task, event, event.payload.proposalId);
-      if (task.status !== "escalated" || proposal.judgement?.verdict !== "undecidable") {
+      // 人の判断待ちの申し出：判定の無いもの（PBI-333）か、以前の版で AI が判定できなかったもの
+      if (
+        task.status !== "escalated" ||
+        (proposal.judgement !== undefined && proposal.judgement.verdict !== "undecidable")
+      ) {
         throw new ActivityIntegrityError(event, "the proposal is not waiting for a person");
       }
       if (proposal.decision) throw new ActivityIntegrityError(event, "already decided");
@@ -2739,6 +2743,17 @@ export function applyEvent(
       break;
 
     case "TaskEscalated":
+      // 変更の申し出を、AI の判定を挟まずに人の判断待ちにする（PBI-333）
+      if (event.payload.reason === "change_proposed") {
+        if (task.status !== "idle")
+          throw new ActivityIntegrityError(event, `status ${task.status}`);
+        const proposal = findProposal(task, event, event.payload.proposalId ?? "");
+        if (proposal.judgement || proposal.decision) {
+          throw new ActivityIntegrityError(event, "the proposal is already judged");
+        }
+        task.status = "escalated";
+        break;
+      }
       if (event.payload.reason === "change_undecidable") {
         if (task.status !== "idle")
           throw new ActivityIntegrityError(event, `status ${task.status}`);
@@ -3666,10 +3681,13 @@ export function lastChangeRound(task: Task, step: StepKey): number {
   return task.remarks.filter((r) => r.step === step).reduce((max, r) => Math.max(max, r.round), 0);
 }
 
-/** 判定中、または人間の判断待ちの変更の申し出。 */
+/**
+ * 人間の判断待ちの変更の申し出（PBI-333 から、申し出はすべて人が判断する）。以前の版の作業履歴では、AI（ゴールガーディアン）が
+ * 判定中のもの・判定できなかったもの。
+ */
 export function openProposal(task: Task): TaskProposal | undefined {
   return task.proposals.find(
-    (p) => !p.judgement || (p.judgement.verdict === "undecidable" && !p.decision),
+    (p) => !p.decision && (!p.judgement || p.judgement.verdict === "undecidable"),
   );
 }
 

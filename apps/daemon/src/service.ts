@@ -341,7 +341,6 @@ import {
   buildExportPrompt,
   buildFinalReviewPrompt,
   buildGatherPrompt,
-  buildGuardianPrompt,
   buildIntegrationReviewPrompt,
   buildInvestigationComment,
   buildOrchestratorPrompt,
@@ -387,7 +386,6 @@ import {
   extractStepPlan,
   extractStepReview,
   extractTicketTriage,
-  extractVerdict,
   finalReviewUnreadableDetail,
   finalReviewVerdictIds,
   finalReviewViewpointIds,
@@ -491,6 +489,7 @@ import {
   withoutStepDocuments,
 } from "./verification-reuse.js";
 import {
+  CODE_COPY_DIR,
   idEntries,
   overlapsMounts,
   RUN_SCRATCH_DIRS,
@@ -3247,7 +3246,7 @@ export class TaskService {
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
     const runId = run.runId ?? randomUUID();
-    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    const workspaceDir = join(this.deps.workspaceRoot, CODE_COPY_DIR, runId);
     // 作業領域の写しに入れなかったファイル（読めないもの）を知らせる文を足した、実行の指示
     let prompt = run.prompt;
     try {
@@ -4473,15 +4472,13 @@ export class TaskService {
   }
 
   /**
-   * プレビューで段階の親にするエージェント（PBI-119）。その runtime の既定のエージェント、無ければ工程・ゴールガーディアンの
+   * プレビューで段階の親にするエージェント（PBI-119）。その runtime の既定のエージェント、無ければ工程・監査の
    * エージェントのうち最初のもの。その runtime のエージェントが無ければ undefined。
    */
   private previewParent(config: SactyConfig, runtime: TierRuntime): AgentConfig | undefined {
-    return [
-      config.defaultAgent,
-      ...Object.values(config.stepAgents ?? {}),
-      config.guardianAgent,
-    ].find((a) => a?.runtime === runtime);
+    return [config.defaultAgent, ...Object.values(config.stepAgents ?? {}), config.auditAgent].find(
+      (a) => a?.runtime === runtime,
+    );
   }
 
   /**
@@ -7112,7 +7109,7 @@ export class TaskService {
     if (agentSteps.some((step) => !steps.includes(step))) {
       throw new InvalidOperationError(message("task.stepSettingOutsidePlan"));
     }
-    // 統合レビューは、ゴールガーディアンが実行する（タスクの詳細で変えるときと同じく断る）
+    // 統合レビューのエージェントは、config.yaml の step_agents.integrate で決める（タスクの詳細で変えるときと同じく断る）
     if (!agentSteps.every(stepAgentChangeable)) {
       throw new InvalidOperationError(message("agent.stepNotChangeable"));
     }
@@ -7638,23 +7635,22 @@ export class TaskService {
       ]);
     }
     for (const task of this.tasks.values()) {
-      const judging = task.proposals.find((p) => !p.judgement);
+      // 以前の版で、AI（ゴールガーディアン）が判定している間に止まった申し出は、人の判断待ちにする（PBI-333）
+      const judging = task.proposals.find((p) => !p.judgement && !p.decision);
       if (task.status === "idle" && judging) {
         this.append(task, [
           {
             actor: "sacty",
             event: {
-              type: "ChangeJudged",
+              type: "TaskEscalated",
               payload: {
+                step: judging.fromStep,
+                target: judging.target,
+                reason: "change_proposed",
                 proposalId: judging.id,
-                verdict: "undecidable",
-                reason: message("run.guardianInterrupted"),
-                agentId: "unknown",
-                runResult: "interrupted",
               },
             },
           },
-          ...this.settleEvents(task, judging, undefined),
         ]);
         continue;
       }
@@ -9467,31 +9463,26 @@ export class TaskService {
       return;
     }
 
-    // 承認済みの成果物への変更の申し出は、提出の前にゴールガーディアンが判定する
+    // 承認済みの成果物への変更の申し出は、AI の判定を挟まずに人が判断する（PBI-333）。申し出と人の判断待ちは同じ
+    // トランザクションで記録する（間でデーモンが止まっても、判断待ちにならない申し出を残さないため）
     const proposalId = `CP-${latest.proposals.length + 1}`;
     events.push({
       actor: "agent",
       event: { type: "ChangeProposed", payload: { proposalId, fromStep: step, ...proposal } },
     });
-    const proposed = this.append(task, events);
-    const judged = proposed.proposals.find((p) => p.id === proposalId);
-    if (!judged) throw new Error(`proposal ${proposalId} is missing`);
-    const judgement = await this.judge(proposed, judged, config.config);
-    // 判定と、その後始末（エスカレーション・反映・提出）は同じトランザクションで記録する。
-    // 間でデーモンが止まると、判定済みなのにどの状態にも進まないタスクが残るため。
-    const accepted =
-      judgement.verdict === "approved"
-        ? true
-        : judgement.verdict === "rejected"
-          ? false
-          : undefined;
-    const settled = this.append(proposed, [
-      { actor: "guardian", event: { type: "ChangeJudged", payload: judgement } },
-      ...this.settleEvents(proposed, judged, accepted),
-    ]);
-    // PR で承認する工程（PBI-57）の提出は、成果を PR にしてから承認待ちにする
-    const stepPr = this.awaitingStepPullRequest(settled);
-    if (stepPr) await this.publishStepPullRequest(settled, stepPr);
+    events.push({
+      actor: "sacty",
+      event: {
+        type: "TaskEscalated",
+        payload: {
+          step,
+          target: proposal.target,
+          reason: "change_proposed",
+          proposalId,
+        },
+      },
+    });
+    this.append(task, events);
     this.checkBudget(this.mustGet(task.id));
   }
 
@@ -10385,7 +10376,7 @@ export class TaskService {
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする
     const agent = this.usableAgent(
       config.config,
-      config.config.guardianAgent,
+      config.config.defaultAgent,
       task.id,
       "final-review",
     );
@@ -10512,7 +10503,7 @@ export class TaskService {
             runId,
             role: "final-review",
             agent,
-            selected: config.config.guardianAgent,
+            selected: config.config.defaultAgent,
           },
           outcome.reason,
           {
@@ -12343,10 +12334,6 @@ export class TaskService {
     if (task.status === "blocked" || task.status === "waiting_children") {
       throw new InvalidOperationError(message("pause.waitingTasks"));
     }
-    const judging = openProposal(task);
-    if (judging && !judging.judgement) {
-      throw new InvalidOperationError(message("pause.guardianJudging"));
-    }
     if (task.status === "awaiting_approval") {
       // 実行中の処理は無いので、その場で一時停止を記録する。承認ゲートと PR の見守りは、再開するまで止まる。実装の PR は
       // 作り直しの間と同じ扱いで、一時停止の間のマージは承認として進め、届いた指摘は残して再開のあとに反映する
@@ -12466,10 +12453,6 @@ export class TaskService {
     if (task.status === "cancelled")
       throw new InvalidOperationError(message("cancel.alreadyCancelled"));
     if (this.cancelling.has(id)) throw new InvalidOperationError(message("cancel.cleaningUp"));
-    const judging = openProposal(task);
-    if (judging && !judging.judgement) {
-      throw new InvalidOperationError(message("cancel.guardianJudging"));
-    }
     this.cancelling.add(id);
     try {
       // 質問に答えている実行は止めて、答えの記録（中断・費用）を待つ（PBI-54）
@@ -12710,7 +12693,7 @@ export class TaskService {
         },
       },
     ]);
-    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    const workspaceDir = join(this.deps.workspaceRoot, CODE_COPY_DIR, runId);
     const subtasks = this.subtaskSummaries(task);
     let baseBranch = task.repository?.baseBranch ?? "";
     let commit = "";
@@ -12855,7 +12838,7 @@ export class TaskService {
     );
     const events: ActivityItem[] = [
       {
-        actor: "guardian",
+        actor: "agent",
         event: {
           type: "AgentRunCompleted",
           payload: {
@@ -12871,7 +12854,7 @@ export class TaskService {
         },
       },
       {
-        actor: "guardian",
+        actor: "agent",
         event: {
           type: "IntegrationReviewed",
           payload: {
@@ -13919,51 +13902,6 @@ export class TaskService {
   }
 
   /**
-   * ゴールガーディアンが、変更の申し出を判定する。判定ごとに新しいセッション（空の作業領域・
-   * 空の設定）で実行し、承認済みの成果物と申し出の内容だけを渡す。実行に失敗した場合は、
-   * 判定できなかったものとして人間に判断してもらう。
-   */
-  private async judge(
-    task: Task,
-    proposal: TaskProposal,
-    config: SactyConfig,
-  ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
-    // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる。失敗したら、代わりのエージェントで
-    // 判定し直す
-    const { outcome, costUsd, estimated, costUnknown, runId, agent } =
-      await this.runGuardianWithFallback(
-        task,
-        {
-          agent: config.guardianAgent,
-          image: config.image,
-          prompt: buildGuardianPrompt(task, proposal),
-          role: "guardian",
-        },
-        "base",
-        config,
-      );
-    const judgement =
-      outcome.kind === "completed"
-        ? extractVerdict(outcome.output)
-        : {
-            verdict: "undecidable" as const,
-            reason: message("run.guardianFailed", { detail: outcome.message }),
-          };
-    return {
-      proposalId: proposal.id,
-      ...judgement,
-      runResult: outcome.kind === "completed" ? "completed" : "failed",
-      agentId: agent.id,
-      ...agentSetting(agent),
-      runId,
-      usage: outcome.usage,
-      costUsd,
-      estimated,
-      ...unknownCost({ costUnknown }),
-    };
-  }
-
-  /**
    * 判定（または人間の判断）に従った、申し出の後始末のイベント。判定や判断と同じ
    * トランザクションで記録する（間で止まっても、どの状態にも進まないタスクを残さないため）。
    * - 判定できなければエスカレーションにする
@@ -14148,7 +14086,8 @@ export class TaskService {
     if (!task.steps.some((s) => s.key === step)) {
       throw new InvalidOperationError(message("agent.stepMissing"));
     }
-    // 統合レビューは、ゴールガーディアンが実行する。画面で出さないだけでなく、API でも断る（PR #131 レビュー指摘）
+    // 統合レビューのエージェントは、config.yaml の step_agents.integrate で決める。画面で出さないだけでなく、API でも断る
+    // （PR #131 レビュー指摘）
     if (!stepAgentChangeable(step)) {
       throw new InvalidOperationError(message("agent.stepNotChangeable"));
     }
@@ -14219,7 +14158,7 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     const open = openProposal(task);
-    if (task.status !== "escalated" || open?.id !== proposalId || !open.judgement) {
+    if (task.status !== "escalated" || open?.id !== proposalId) {
       throw new InvalidOperationError(message("change.notAwaiting"));
     }
     return this.append(task, [

@@ -72,8 +72,8 @@
   <svg x="516" y="240" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
   <text x="552" y="258" class="title">Agents</text>
   <text x="516" y="286" class="sub">Orchestrator, information</text>
-  <text x="516" y="306" class="sub">gatherer, steps, goal</text>
-  <text x="516" y="326" class="sub">guardian (containers)</text>
+  <text x="516" y="306" class="sub">gatherer, step agents</text>
+  <text x="516" y="326" class="sub">(containers)</text>
   <rect x="230" y="356" width="220" height="76" rx="10" class="card" style=""/>
   <svg x="246" y="370" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="M12 2.5 4.5 5.5v5.8c0 4.7 3.2 8.6 7.5 10.2 4.3-1.6 7.5-5.5 7.5-10.2V5.5z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></svg>
   <text x="282" y="388" class="title">Gateway</text>

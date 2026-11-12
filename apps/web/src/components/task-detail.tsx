@@ -175,7 +175,6 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   const { task, activity } = data;
   const messages = useMessages();
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
-  const proposal = openProposal(task);
   const { task: m, parts } = messages;
   const l = m.layout;
   // チケットのタスクで、チケットを読む段階で止まったら、人がリポジトリを選ぶ（選び直せる。PBI-52）
@@ -184,13 +183,12 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
     ? (data.ticketRepositories ?? [])
     : undefined;
   // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間と、承認待ち（PR のマージ待ち。
-  // 止めている間の PR の扱いは仕様書の「承認待ちでの一時停止」）。ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
+  // 止めている間の PR の扱いは仕様書の「承認待ちでの一時停止」）
   const canPause =
-    (task.status === "queued" ||
-      task.status === "running" ||
-      task.status === "awaiting_approval" ||
-      (task.status === "idle" && task.verification !== undefined)) &&
-    !(proposal && !proposal.judgement);
+    task.status === "queued" ||
+    task.status === "running" ||
+    task.status === "awaiting_approval" ||
+    (task.status === "idle" && task.verification !== undefined);
 
   const [tab, setTab] = useState<TabKey>("overview");
   const tabs: { key: TabKey; label: string; count?: number }[] = [

@@ -86,7 +86,7 @@ function RejectedFlakyFailures({ items }: { items: readonly DaemonText[] }) {
 
 /**
  * 実装の成果物。実装の説明と、「観点 → テスト → 実行結果」の対応、
- * ゴールガーディアンが最終レビューの中で実行したテストの結果（それより前の版では sacty が実行したもの）、最終レビューを出す。
+ * 最終レビューの中で実行したテストの結果（以前の版のゴールガーディアンが実行したもの。それより前の版では sacty が実行したもの）、最終レビューを出す。
  */
 export function Implementation({ task }: { task: Task }) {
   const messages = useMessages();

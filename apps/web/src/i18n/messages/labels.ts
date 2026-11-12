@@ -18,7 +18,7 @@ import {
  * 工程・状態・作業履歴などの用語。英語は構想ドキュメントの用語集に従う
  * （要求要件 Requirements、設計 Design、テスト観点 Test viewpoints、承認 Approval、
  * 差し戻し Request changes、一時停止 Pause、中止 Cancel、エスカレーション Escalation、
- * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、作業履歴 Activity、人間の対応待ち Needs you）。
+ * オーケストレーター Orchestrator、作業履歴 Activity、人間の対応待ち Needs you）。
  * 作業履歴の1行は「何をした・何が起きた」だけにし、結果の矢印や言い訳の括弧を付けない（PBI-117）。
  */
 const ja = {
@@ -135,13 +135,13 @@ const ja = {
     sacty: "Sacty",
     orchestrator: "オーケストレーター",
     gatherer: "情報収集",
-    guardian: "ゴールガーディアン",
+    guardian: "以前の版の AI の判定",
     agent: "工程エージェント",
     auditor: "監査",
   } satisfies Record<Actor, string>,
   /** 工程以外の実行の役割の表示名（PBI-280）。 */
   runRole: {
-    guardian: "ゴールガーディアン",
+    guardian: "以前の版の AI の判定",
     "final-review": "最終レビュー",
     rework: "差し戻しの判断",
     orchestrator: "オーケストレーター",
@@ -157,17 +157,16 @@ const ja = {
     undecidable: "判定できない",
   } satisfies Record<Verdict, string>,
   state: {
-    guardianJudging: "ゴールガーディアンが判定中",
     completed: "完了",
     completedNoChanges: "完了（変更なし）",
     testsRunning: "テストを実行中",
     waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
     watchingCheck: "マージの後の監視・確認中",
-    finalReviewing: "ゴールガーディアンが最終レビュー中",
+    finalReviewing: "最終レビュー中",
     changeUndecided: "変更の申し出の判断待ち",
     reworkConfirmation: "PR の指摘の戻し先の確認待ち",
-    reworkJudging: "ゴールガーディアンが PR の指摘を判断中",
+    reworkJudging: "PR の指摘の戻し先を判断中",
     noChangesReview: (n: number) => `変更なしの実装の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
@@ -192,7 +191,7 @@ const ja = {
   },
   /** 差し戻しの原因（PBI-268）。 */
   reworkCause: {
-    guardian_missed: "ゴールガーディアンの見逃し",
+    guardian_missed: "見逃し",
     base_changed: "ベースの変化による競合",
     new_request: "新しい要望・方針の変更",
     question_answer: "質問への答え",
@@ -465,7 +464,7 @@ const ja = {
       reason: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
     ) =>
       `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : "レビューする PR の元のタスクが中止されたため"}）`,
-    GuardianMissed: "ゴールガーディアンの見逃し：合格にした成果物が差し戻された",
+    GuardianMissed: "最終レビューの見逃し：合格にした成果物が差し戻された",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
     AgentSessionArchived: (files: number, truncated: number) =>
@@ -566,8 +565,11 @@ const ja = {
         : "",
     TaskCancelled: (done: string[], failed: string[], actor: string) =>
       `中止（${actor}）：${done.length > 0 ? `${done.join("・")}を片付けた` : "片付ける対象なし"}${failed.length > 0 ? `／失敗：${failed.join("・")}` : ""}`,
+    escalatedProposed: (id: string | undefined) =>
+      `エスカレーション：${id ?? "変更の申し出"}を人が判断する`,
+    /** 以前の版で、AI が変更の申し出を判定できなかった（PBI-333 より前の作業履歴）。 */
     escalatedUndecidable: (id: string | undefined) =>
-      `エスカレーション：${id ?? "変更の申し出"}を判定できなかった`,
+      `エスカレーション：${id ?? "変更の申し出"}を判定できなかった（以前の版の AI の判定）`,
     escalatedTooMany: (step: string) => `エスカレーション：${step}への差し戻しが上限`,
     escalatedRework: (step: string) => `エスカレーション：PR の指摘で${step}まで戻すかの確認`,
     PullRequestReviewImported: (
@@ -807,12 +809,12 @@ const en: LabelMessages = {
     sacty: "Sacty",
     orchestrator: "Orchestrator",
     gatherer: "Information gatherer",
-    guardian: "Goal Guardian",
+    guardian: "AI verdict in an earlier version",
     agent: "step agent",
     auditor: "audit",
   },
   runRole: {
-    guardian: "Goal Guardian",
+    guardian: "AI verdict in an earlier version",
     "final-review": "final review",
     rework: "rework judgment",
     orchestrator: "Orchestrator",
@@ -828,17 +830,16 @@ const en: LabelMessages = {
     undecidable: "Undecidable",
   },
   state: {
-    guardianJudging: "Goal Guardian is judging",
     completed: "Done",
     completedNoChanges: "Done (no changes)",
     testsRunning: "Running tests",
     waitingPullRequestCi: "Waiting for the PR's CI",
     watchingCi: "After-merge watch · waiting for CI/CD",
     watchingCheck: "After-merge watch · checking",
-    finalReviewing: "Goal Guardian is doing the final review",
+    finalReviewing: "Doing the final review",
     changeUndecided: "Change request needs you",
     reworkConfirmation: "Step to redo for PR comments needs you",
-    reworkJudging: "Goal Guardian is judging PR comments",
+    reworkJudging: "Deciding the step to redo for PR comments",
     noChangesReview: (n) =>
       `Implement awaiting approval with no changes${n > 1 ? ` (submission ${n})` : ""}`,
     stepPrAwaitingMerge: (step, n) =>
@@ -861,7 +862,7 @@ const en: LabelMessages = {
     newTab: "(opens in a new tab)",
   },
   reworkCause: {
-    guardian_missed: "Goal Guardian miss",
+    guardian_missed: "Miss",
     base_changed: "Conflict from base changes",
     new_request: "New request or change of direction",
     question_answer: "Answer to a question",
@@ -1058,7 +1059,7 @@ const en: LabelMessages = {
       `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
     GitHubCommentPosted: (url) => `posted (${url})`,
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
-    GuardianMissed: "Goal Guardian miss: a deliverable that passed the final review was sent back",
+    GuardianMissed: "Final review miss: a deliverable that passed the final review was sent back",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
     AgentSessionArchived: (files, truncated) =>
@@ -1129,8 +1130,9 @@ const en: LabelMessages = {
         : "",
     TaskCancelled: (done, failed, actor) =>
       `Cancelled (${actor}): ${done.length > 0 ? `cleaned up ${done.join(", ")}` : "nothing to clean up"}${failed.length > 0 ? `; failed: ${failed.join(", ")}` : ""}`,
+    escalatedProposed: (id) => `Escalated: ${id ?? "the change request"} needs your decision`,
     escalatedUndecidable: (id) =>
-      `Escalated: the Goal Guardian could not decide ${id ?? "the change request"}`,
+      `Escalated: the AI in an earlier version could not decide ${id ?? "the change request"}`,
     escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
     escalatedRework: (step) =>
       `Escalated: confirm whether to redo from ${step} for the PR comments`,

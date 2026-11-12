@@ -284,7 +284,7 @@ Ones that differ are not placed, and `agents.tierConnectionDiffers` is left as a
 - Nothing is placed for a stub step.
 - A tier without `reasoning_effort` (such as the default `claude_lite`) becomes a definition without it (the tool's default).
 - The placed tiers (tier, agent name, model, reasoning effort) are recorded in `tiers` of `ContextResolved`.
-- The preview shows the same files. The parent for the preview is the `default_agent` of that runtime, otherwise the first of `step_agents` and `guardian_agent` with that runtime.
+- The preview shows the same files. The parent for the preview is the `default_agent` of that runtime, otherwise the first of `step_agents` and `audit_agent` with that runtime.
 - `ContextResolved` is recorded with the `runId` of every run that receives a context (`contextResolved`). This covers not only step runs but also information gathering, the Orchestrator (PBI-146), the after-merge watch, operations, and exports.
 - The cost of a run that placed tiers is recorded as estimated (`estimated`). This is because a reviewer may run with a model other than the parent's. The cost is the amount the CLI reported, or each model's usage converted with that model's price ([Agent execution](agent-execution.en.md#output-handling)).
 
