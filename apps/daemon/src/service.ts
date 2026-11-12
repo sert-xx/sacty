@@ -11286,9 +11286,21 @@ export class TaskService {
     try {
       merged = await mergePullRequestBody({ base, human, generated });
     } catch (error) {
-      console.warn(
-        `[daemon] PR #${input.number}（${input.repo}）の本文をマージできないため、本文を変えません：${renderMessage(errorText(error), "ja")}`,
-      );
+      // 本文に触れず、理由を作業履歴に残す（画面で、本文に今回の内容が入らなかったことが分かるように）
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestBodyResolved",
+            payload: {
+              repo: input.repo,
+              number: input.number,
+              outcome: "kept",
+              reason: message("pr.bodyMergeError", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
       return { record: false };
     }
     if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {

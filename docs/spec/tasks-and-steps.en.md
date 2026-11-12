@@ -876,7 +876,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
      If it cannot fetch (for example the PR was merged and the branch deleted), continue without merging and write the reason to the daemon log.
   2. If markers remain in the files that conflicted in a merge not yet submitted (`pendingHeadMerge`), do not merge further and return those files (so that a new merge record does not erase the record of the remaining markers).
   3. If the tip equals the commit sacty last pushed (or the tip of a merge not yet submitted, if any), do nothing.
-  4. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
+  4. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed (or the tip of a merge not yet submitted, if any) as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
      The requirements and design files carried over from the task branch (`path` of `stepPullRequests`) are removed from the trees on both sides before merging (`exclude` of `mergeBase`).
      Those paths in the workspace are not changed (the task branch's version is carried over when submitting).
   5. Record `PullRequestHeadMerged` (the branch, sacty's commit before the merge, the merged tip, and every conflicted file).
@@ -899,7 +899,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   - For a task that stacks on a task branch, the check for changes sacty did not push (`pr.taskBranchChanged`) starts from the merged tip.
     The person's changes that were merged are not checked again.
     When sacty has not stacked the implementation yet (the first submission), it checks from the starting point and stops, as before.
-- Implementation instructions (`mergeConflictLines`, `headMergeLines`): if there is a merge not yet submitted, they say that a person added commits to the PR branch, the merged tip, not to remove, revert, or rewrite the person's changes (change them only when this round's comments ask to), and not to merge, rebase, fetch, commit, or push with git.
+- Implementation instructions (`mergeConflictLines`, `headMergeLines`; the bug-fix flow too): if there is a merge not yet submitted, they say that a person added commits to the PR branch, the merged tip, not to remove, revert, or rewrite the person's changes (change them only when this round's comments ask to), and not to merge, rebase, fetch, commit, or push with git.
   If files conflicted, they give the list, that the part above the marker is the implementation side and the part below is the person's side, and to keep the person's changes while removing every marker line.
   Conflicts with the base branch are passed in a separate section as before (`baseConflictLines`).
   When the previous verification found markers only in files that conflicted in the person's merge, the heading is "前回の検証：人が PR に足したコミットとの競合の目印が残っていました" (`feedbackLines`).

@@ -3217,7 +3217,12 @@ export function buildPrompt(
         const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
         lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
-        lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
+        lines.push(
+          ...feedbackLines(task),
+          ...remarkLines(task, step, "観点ごとのテストの対応"),
+          // 取り込みで競合したファイルと、人が PR に足したコミットのこと（ほかの実装の指示と同じ。PBI-334）
+          ...mergeConflictLines(task, extra.mergeConflicts ?? []),
+        );
         lines.push(...implementSelfReviewLines(task, "修正"));
         return lines.join("\n");
       }

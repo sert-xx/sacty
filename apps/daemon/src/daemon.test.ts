@@ -24703,6 +24703,35 @@ describe("再現の工程（PBI-29）", () => {
     activity.close();
   });
 
+  it("不具合の修正のやり直しでも、人が PR に足したコミットを取り込んだことと、競合したファイルを実装に渡す（PBI-334）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(
+      activity,
+      [
+        reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]),
+        implement(),
+        review(),
+        implement("# 直した修正"),
+        review(),
+      ],
+      { planner },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await drain(service);
+    const pushed = service.get(id)?.task.pushedBranch;
+    if (!pushed) throw new Error("no pushed branch");
+    repos.remote[pushed.branch] = "d".repeat(40);
+    repos.mergeResult = { status: "conflicted", conflicts: ["src/pay.ts"] };
+    repos.markers = ["src/pay.ts"];
+    service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+    await service.runNext(id);
+    const fix = promptOf(executor, executor.calls.length - 1);
+    expect(fix).toContain("そのテストが通るように不具合を直してください");
+    expect(fix).toContain("--- 人が PR に足したコミット ---");
+    expect(fix).toContain("- src/pay.ts");
+    activity.close();
+  });
+
   it("再現のテストが失敗したら、人間の承認なしに実装へ進み、再現のテストを観点にして検証する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();

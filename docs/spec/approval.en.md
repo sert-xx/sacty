@@ -421,7 +421,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
      - the answer cannot be read (`orchestrator.unreadable`; no marker lines, empty, merge markers left, or too long)
      - the person edited the body again while it was being reconciled, or it cannot be read again (`pr.bodyEditedDuringMerge`)
      - when retargeting a stacked PR (`retargetPullRequest`); retargeting runs outside the task's run, so no agent is run (`pr.bodyMergeDeferred`)
-     - the merge itself failed (not recorded; written to the daemon log)
+     - the merge itself failed (`pr.bodyMergeError`)
 - Cost: the cost of `PullRequestBodyResolved` is charged to the task budget (`CHARGED_EVENT_TYPES`). In the per-step cost table, it appears in the orchestrator row.
 - In the activity log: "Wrote the body of PR #…", and whether an agent reconciled it or could not (with the reason).
 

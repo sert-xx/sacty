@@ -468,7 +468,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - 答えを読めない（`orchestrator.unreadable`。目印の行が無い・空・マージの目印が残っている・長すぎる）
      - まとめる間に人が本文をまた直した・読み直せない（`pr.bodyEditedDuringMerge`）
      - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
-     - マージに失敗した（記録せず、デーモンのログに出す）
+     - マージに失敗した（`pr.bodyMergeError`）
 - 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
 - 作業履歴の表示：「PR #… の本文を書いた」、エージェントがまとめた・まとめられなかった（理由）を出す。
 

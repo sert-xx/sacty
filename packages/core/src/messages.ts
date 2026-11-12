@@ -479,6 +479,7 @@ const PARAMS = {
   "pr.bodyMergeBudget": null,
   "pr.bodyMergeFailed": z.object({ detail: TextParam }),
   "pr.bodyMergeDeferred": null,
+  "pr.bodyMergeError": z.object({ detail: TextParam }),
   "pr.bodyEditedDuringMerge": null,
   "pr.readyFailed": z.object({ detail: TextParam }),
   "pr.stackDraftFailed": z.object({ detail: TextParam }),
@@ -1392,6 +1393,8 @@ const ja: MessageDictionary = {
   "pr.bodyMergeBudget": "予算の上限に達しているため、エージェントに本文をまとめさせませんでした。",
   "pr.bodyMergeFailed": ({ detail }, text) =>
     `エージェントが本文をまとめられませんでした：${text(detail)}`,
+  "pr.bodyMergeError": ({ detail }, text) =>
+    `人が直した PR の本文と、Sacty の新しい本文をマージできませんでした：${text(detail)}`,
   "pr.bodyMergeDeferred":
     "PR の向き先の付け替えでは、エージェントに本文をまとめさせません（次に実装を直して PR を更新するときにまとめます）。",
   "pr.bodyEditedDuringMerge":
@@ -2171,6 +2174,8 @@ const en: MessageDictionary = {
   "pr.bodyMergeBudget": "The budget cap has been reached, so an agent did not reconcile the body.",
   "pr.bodyMergeFailed": ({ detail }, text) =>
     `An agent could not reconcile the body: ${text(detail)}`,
+  "pr.bodyMergeError": ({ detail }, text) =>
+    `Could not merge the person's edits to the PR body with Sacty's new body: ${text(detail)}`,
   "pr.bodyMergeDeferred":
     "When retargeting a PR, an agent does not reconcile the body (it is reconciled the next time the implementation is fixed and the PR is updated).",
   "pr.bodyEditedDuringMerge":
