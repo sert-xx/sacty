@@ -2261,7 +2261,23 @@ const VerificationOverridden = z.object({
  */
 const FinalReviewSkipped = z.object({
   type: z.literal("FinalReviewSkipped"),
-  payload: z.object({}),
+  payload: z.object({
+    /**
+     * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らした結果（PBI-331）。violation が無ければ守っている。
+     * セキュリティ対応でないタスク・以前の版の記録には無い。
+     */
+    securityScope: z
+      .object({
+        violation: z
+          .object({
+            outside: z.array(z.string()),
+            lines: z.number().int().nonnegative().optional(),
+            max: z.number().int().positive(),
+          })
+          .optional(),
+      })
+      .optional(),
+  }),
 });
 
 /**

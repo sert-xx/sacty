@@ -408,6 +408,7 @@ import {
   type RawExportPlan,
   type RawServices,
   type ReviewCi,
+  type ReviewSecurity,
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
@@ -8353,8 +8354,16 @@ export class TaskService {
     if (initial && awaitingVerification(initial, this.finalReview)) {
       // 最終レビューをしない（PBI-331）：テストも CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする）
       if (!this.finalReview) {
+        const securityScope = await this.checkSecurityScope(initial);
+        if (securityScope === "stopped") return;
         this.append(initial, [
-          { actor: "sacty", event: { type: "FinalReviewSkipped", payload: {} } },
+          {
+            actor: "sacty",
+            event: {
+              type: "FinalReviewSkipped",
+              payload: securityScope ? { securityScope } : {},
+            },
+          },
         ]);
         return;
       }
@@ -8827,6 +8836,8 @@ export class TaskService {
     let reviewExisting: PullRequestFeedback[] | "unreadable" | undefined;
     // PR のレビューの子タスクに渡す、レビューする先頭のコミットの CI（PBI-331）
     let reviewCi: ReviewCi | undefined;
+    // PR のレビューの子タスクに渡す、セキュリティ対応の修正の範囲と照合の結果（PBI-331）
+    let reviewSecurity: ReviewSecurity | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -8889,6 +8900,14 @@ export class TaskService {
             reviewExisting = feedback === "unreadable" ? "unreadable" : feedback.existing;
             if (latest.reviewOf && this.deps.ci) {
               reviewCi = await this.reviewCiOf(latest, reviewTarget);
+            }
+            // セキュリティ対応の実装の PR なら、修正の範囲と照合の結果を渡す（PBI-331）
+            const parent = latest.reviewOf && this.tasks.get(latest.reviewOf.taskId);
+            if (parent && latest.reviewOf?.step === "implement" && isSecurityFix(parent)) {
+              reviewSecurity = {
+                scope: securityScope(parent),
+                ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
+              };
             }
             if (latest.previousReview) {
               reviewReplies = feedback === "unreadable" ? "unreadable" : feedback.replies;
@@ -8986,6 +9005,7 @@ export class TaskService {
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
             ...(reviewCi ? { reviewCi } : {}),
+            ...(reviewSecurity ? { reviewSecurity } : {}),
             // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
@@ -11606,6 +11626,42 @@ export class TaskService {
     }
   }
 
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、セキュリティ対応の差分を前段の調査が宣言した修正の範囲と照らす（最終レビューの
+   * 照合と同じ。PR の本文と PR のレビューの子タスクに渡す）。セキュリティ対応でなければ undefined。差分を取れなければ、
+   * 最終レビューと同じく止める（"stopped"）。
+   */
+  private async checkSecurityScope(
+    task: Task,
+  ): Promise<
+    { violation?: NonNullable<ReturnType<typeof scopeViolation>> } | undefined | "stopped"
+  > {
+    if (!isSecurityFix(task) || !task.repository) return undefined;
+    try {
+      const changes = await this.deps.repos.diffStats(
+        this.repoDir(task),
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+      const violation = scopeViolation(securityScope(task), changes);
+      return violation ? { violation } : {};
+    } catch (error) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("verify.diffUnavailable", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
+      return "stopped";
+    }
+  }
+
   private draftTimeoutMs(): number {
     return this.deps.draftTimeoutMs ?? DRAFT_TIMEOUT_MS;
   }
@@ -11624,8 +11680,12 @@ export class TaskService {
     const abort = new AbortController();
     const request = this.deps.pulls.setDraft({ ...input, signal: abort.signal });
     let counted = true;
+    let expired = false;
     const ms = this.draftTimeoutMs();
-    const settle = setTimeout(() => done(), ms * DRAFT_SETTLE_FACTOR);
+    const settle = setTimeout(() => {
+      expired = true;
+      done();
+    }, ms * DRAFT_SETTLE_FACTOR);
     settle.unref?.();
     const done = () => {
       if (!counted) return;
@@ -11635,10 +11695,33 @@ export class TaskService {
       if (left > 0) this.draftRequests.set(key, left);
       else this.draftRequests.delete(key);
     };
-    request.then(done, done);
+    request.then((result) => {
+      done();
+      // 数えるのをやめた後に、ドラフトに戻す要求が届いた。その間に指摘なしでドラフトを外していたら、外し直す
+      if (expired && input.draft && result.draft) this.undraftAfterLateRedraft(taskId, input);
+    }, done);
     return withDeadline(request, ms).catch((error: unknown) => {
       abort.abort();
       throw error;
+    });
+  }
+
+  /**
+   * 数えるのをやめた後に届いた、ドラフトに戻す要求（PBI-331）。その PR を指摘なしでドラフトを外して記録していれば（人の承認
+   * 待ち）、記録と合うようにドラフトを外し直す。外せなければ、デーモンのログに残す。
+   */
+  private undraftAfterLateRedraft(
+    taskId: string,
+    input: Omit<Parameters<PullRequests["setDraft"]>[0], "signal">,
+  ): void {
+    const task = this.tasks.get(taskId);
+    const pr = task?.pullRequest;
+    if (task?.status !== "awaiting_approval" || this.cancelling.has(taskId)) return;
+    if (pr?.number !== input.number || pr.awaitingReview || pr.reviewedCommit === undefined) return;
+    this.setDraftWithin(taskId, { ...input, draft: false }).catch((error: unknown) => {
+      console.warn(
+        `[daemon] 後から届いたドラフトに戻す要求の後に、PR #${input.number}（${input.repo}）のドラフトを外し直せませんでした：${renderMessage(errorText(error), "ja")}`,
+      );
     });
   }
 
@@ -11743,6 +11826,18 @@ export class TaskService {
       }
       const current = await unchanged();
       if (!current) return;
+      // 外す間に子タスクの再レビューが始まった・判定が変わったら、古い指摘なしで記録せず、ドラフトに戻す（次の確認でやり直す）
+      const reviewer = this.tasks.get(child.id);
+      if (
+        !reviewer ||
+        reviewer.reviewTarget?.headCommit !== commit ||
+        reviewer.reviewRound !== child.reviewRound ||
+        reviewer.reviewVerdicts?.length !== child.reviewVerdicts?.length ||
+        !reviewCleared(reviewer)
+      ) {
+        await redraft();
+        return;
+      }
       this.append(current, [
         {
           actor: "sacty",

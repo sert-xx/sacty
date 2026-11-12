@@ -538,8 +538,10 @@ export class GitHubCiStatus implements CiStatusReader {
       const res = await this.fetchImpl(url, { headers: this.headers(token) });
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) throw apiError("readChecks", res.status, json);
+      // key の配列を読めなければ（中継の応答など）、欠けた項目を空として扱わずに失敗にする（CI がまだ無いと誤って伝えない。PBI-331）
       const items = json[key];
-      if (Array.isArray(items)) all.push(...(items as Record<string, unknown>[]));
+      if (!Array.isArray(items)) throw apiError("readChecks", res.status, json);
+      all.push(...(items as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
       url = next?.startsWith(`${api}/`) ? next : undefined;
     }

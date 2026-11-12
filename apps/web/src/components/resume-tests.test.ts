@@ -75,8 +75,8 @@ describe("テストが決まらずに止まったタスクの再開", () => {
       expect(html).toContain('name="tests" value="command"');
       expect(html).toContain('name="tests" value="none"');
       expect(html).toContain(t.none);
-      // まだ工程を始めていないので、決めずに再開すると工程の選択からやり直すことを案内する
-      expect(html).toContain(t.keepRechooseHint);
+      // 今の流れでは、まだ工程を始めていなくても、決めずに再開して工程の選択からやり直さない（PBI-331）
+      expect(html).not.toContain(t.keepRechooseHint);
       expect(html).not.toContain(t.noneBugfix);
     }
   });

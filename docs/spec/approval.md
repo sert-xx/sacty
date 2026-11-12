@@ -141,13 +141,16 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 子タスクには、レビューする先頭のコミットの CI の状態（ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ（GitHub Actions のチェック。ワークフローが成功でも、実行されなかったジョブを伝えるため）。チェックの名前・状態・結論・URL。失敗・実行中のものはすべて、成功したもの（`success`・`neutral`。実行されなかった `skipped` は省かない）は合わせて `REVIEW_CI_MAX` 件まで並べ、残りは件数だけ）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
   CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
   読めなければ、読めなかったことを渡す（レビューは止めない）。
+  GitHub の答えに一覧の配列が無ければ（中継の応答など）、CI がまだ無いとは扱わず、読めなかったものとする。
+- セキュリティ対応の実装の PR なら、子タスクに、前段の調査が宣言した修正の範囲（変えてよいファイル・上げる依存）・変えた行の数の上限と、sacty が差分を範囲と照らした結果（`FinalReviewSkipped` の `securityScope`）を渡す（`reviewSecurityLines`）。
+  差分が範囲の中の最小限の変更か（観点 `SEC-MIN`）を子タスクに確かめさせ、範囲の外の変更・要らない変更を要修正の指摘にさせる。sacty が違反を見つけていれば、それも要修正の指摘にさせる。
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクが終わる前に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。
 - 親が中止されたら、PR の確認で、終わっていない子タスクも中止する（`TaskCancelled` の `reason: parent_cancelled`。中止の片付けで PR を閉じなかったときも、レビューを続けない）。
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 

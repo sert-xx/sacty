@@ -753,6 +753,11 @@ export type Task = {
   aiReview?: AiReviewOfHead;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、セキュリティ対応の差分を修正の範囲と照らした結果（最後の FinalReviewSkipped）。
+   * PR の本文と、PR のレビューの子タスクの指示に渡す。
+   */
+  securityScopeCheck?: PayloadOf<"FinalReviewSkipped">["securityScope"];
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
@@ -1987,6 +1992,7 @@ export function applyEvent(
       }
       passVerification(task);
       task.pullRequestCi = undefined;
+      task.securityScopeCheck = event.payload.securityScope;
       break;
 
     case "PullRequestMarkedReady": {

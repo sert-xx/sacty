@@ -29289,6 +29289,60 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
       });
 
+      it("ドラフトを外す間に子タスクの再レビューが始まったら、古い指摘なしで記録せず、ドラフトに戻す（PR #348 7回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        // 外す要求の答えを待つ間に、人が子タスクの再レビューを始めた
+        service.rereview(childId);
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        await checking;
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(true);
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        activity.close();
+      });
+
+      it("数えるのをやめた後にドラフトに戻す要求が届いたら、指摘なしで外した PR のドラフトを外し直す（PR #348 7回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        // ドラフトに戻す要求が、中断に応じず、上限を過ぎてから GitHub に届く
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        const late = Promise.withResolvers<void>();
+        setDraft.mockImplementationOnce(async (input) => {
+          await late.promise;
+          pulls.drafts[input.number] = input.draft;
+          return { draft: input.draft };
+        });
+        setDraft.mockImplementation(original);
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(false);
+        // 遅れて届いた戻す要求で、GitHub ではドラフトに戻った
+        const before = setDraft.mock.calls.length;
+        late.resolve();
+        await vi.waitFor(() => expect(setDraft.mock.calls.length).toBeGreaterThan(before));
+        expect(setDraft.mock.calls.at(-1)?.[0]).toMatchObject({ number: 7, draft: false });
+        await vi.waitFor(() => expect(pulls.drafts[7]).toBe(false));
+        setDraft.mockRestore();
+        activity.close();
+      });
+
       it("テストのコマンドが決まらないまま最初の工程の前に止まっても、再開で工程を選び直さず、イメージを変えて再開できる（PR #348 6回目のレビュー指摘）", async () => {
         const pulls = new FakePulls();
         const made = await start([implement()], {
@@ -42952,6 +43006,98 @@ describe("セキュリティチェックとセキュリティ対応", () => {
       expect(ja(min?.reason)).toContain("src/util.ts");
       expect(executor.calls[2]?.command.join(" ")).toContain("違反を見つけました");
       activity.close();
+    });
+
+    describe("最終レビューをしない流れ（PBI-331。PR #348 7回目のレビュー指摘）", () => {
+      const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
+      const verdict = out(
+        `# 評価\n\n問題なし\n\n${block({ "sacty-review-verdict": { verdict: "no_findings" } })}`,
+      );
+      const runNew = async (changes: FileChange[], diffFail?: string) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const repos = new FakeRepos();
+        repos.changes = changes;
+        if (diffFail) repos.diffFail = diffFail;
+        const pulls = new FakePulls();
+        const made = makeService(activity, [scoped, implemented, verdict], {
+          planner: fixPlanner,
+          repos,
+          pulls,
+          stepPullRequests: true,
+          reviewTasks: true,
+          finalReview: false,
+        });
+        const { id } = made.service.createTask({
+          projectId: "default",
+          title: "GHSA-0000-0000-0000 を直す",
+          plan: "security-fix",
+        });
+        for (let i = 0; i < 5 && taskOf(made.service, id).status !== "awaiting_approval"; i++) {
+          if (taskOf(made.service, id).status === "paused") break;
+          await made.service.runNext(id);
+        }
+        const skipped = made.service.get(id)?.activity.find((e) => e.type === "FinalReviewSkipped");
+        const childId = taskOf(made.service, id).reviewTasks?.[0]?.taskId;
+        if (childId) {
+          for (let i = 0; i < 4 && !isCompleted(taskOf(made.service, childId)); i++) {
+            await made.service.runNext(childId);
+          }
+        }
+        return { ...made, activity, pulls, id, skipped, childId };
+      };
+
+      it("範囲の外のファイルを変えたら、照合の結果を記録し、PR の本文とレビューの子タスクに違反を要修正として渡す", async () => {
+        const { activity, service, executor, pulls, id, skipped, childId } = await runNew([
+          { path: "package.json", added: 1, removed: 0 },
+          { path: "src/util.ts", added: 1, removed: 0 },
+        ]);
+        expect(skipped?.type === "FinalReviewSkipped" && skipped.payload).toEqual({
+          securityScope: {
+            violation: expect.objectContaining({ outside: ["src/util.ts"] }),
+          },
+        });
+        expect(taskOf(service, id).securityScopeCheck?.violation?.outside).toEqual(["src/util.ts"]);
+        const body = pulls.calls.at(-1)?.body ?? "";
+        expect(body).toContain("違反を見つけました");
+        expect(body).toContain("src/util.ts");
+        expect(body).not.toContain("ゴールガーディアンが最小限か");
+        expect(childId).toBeTruthy();
+        const reviewPrompt = executor.calls.at(-1)?.command.join(" ") ?? "";
+        expect(reviewPrompt).toContain("この PR はセキュリティ対応です");
+        expect(reviewPrompt).toContain("`package.json`・`package-lock.json`");
+        expect(reviewPrompt).toContain("example-lib 1.2.3 → 1.2.4");
+        expect(reviewPrompt).toContain("違反を見つけました。直すべき指摘（要修正）にする");
+        expect(reviewPrompt).toContain("src/util.ts");
+        activity.close();
+      });
+
+      it("範囲の中の差分なら、違反なしを記録し、PR の本文とレビューの子タスクに最小限かの確認を任せる", async () => {
+        const { activity, executor, pulls, skipped } = await runNew([
+          { path: "package.json", added: 1, removed: 1 },
+          { path: "package-lock.json", added: 40, removed: 40 },
+        ]);
+        expect(skipped?.type === "FinalReviewSkipped" && skipped.payload).toEqual({
+          securityScope: {},
+        });
+        const body = pulls.calls.at(-1)?.body ?? "";
+        expect(body).toContain("範囲の外の変更・行の数の超過は見つかりませんでした");
+        expect(body).toContain("PR のレビューの子タスクが確かめます");
+        expect(body).not.toContain("ゴールガーディアンが最小限か");
+        const reviewPrompt = executor.calls.at(-1)?.command.join(" ") ?? "";
+        expect(reviewPrompt).toContain("この PR はセキュリティ対応です");
+        expect(reviewPrompt).toContain("範囲の外の変更・行の数の超過は見つかりませんでした");
+        expect(reviewPrompt).not.toContain("違反を見つけました");
+        activity.close();
+      });
+
+      it("差分を取れなければ、照合せずに PR を作らず一時停止する", async () => {
+        const { activity, service, pulls, id, skipped } = await runNew([], "git が壊れている");
+        expect(skipped).toBeUndefined();
+        expect(taskOf(service, id)).toMatchObject({ status: "paused", pausedReason: "error" });
+        expect(ja(taskOf(service, id).pausedMessage)).toContain("git が壊れている");
+        expect(pulls.calls).toHaveLength(0);
+        activity.close();
+      });
     });
   });
 });

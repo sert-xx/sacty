@@ -5,7 +5,6 @@ import {
   appliedProposalFor,
   canDecideTests,
   canDerive,
-  canRechooseSteps,
   canRereview,
   canRerun,
   canRetryExport,
@@ -306,7 +305,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             ? {
                 tests: {
                   bugfix: task.steps.some((s) => s.key === "reproduce"),
-                  rechoose: canRechooseSteps(task),
+                  // 今の流れでは、テストを決めずに再開しても工程の選択からやり直さない（PBI-331）。工程のイメージ・AI は選べる
+                  rechoose: false,
                   // ツールがイメージに無くて止まったタスク・文書だけの依頼と差分が食い違って止まったタスクは、いまのテストの
                   // コマンドを直せるよう、入力欄に初期値として出す
                   ...((testToolsMissing(task) || documentsOnlyContradicted(task)) &&

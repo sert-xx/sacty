@@ -199,3 +199,23 @@ describe("実装の PR の承認待ちの案内（PBI-331・PR #348 レビュー
     locale = "ja";
   });
 });
+
+describe("テストが決まらずに止まったタスクの再開（PBI-331）", () => {
+  it("工程を選んだ直後に止まっても、工程の選び直しの案内を出さず、工程のイメージ・AI を選べる（PR #348 7回目のレビュー指摘）", () => {
+    locale = "ja";
+    const task = newTask();
+    task.status = "paused";
+    task.pausedReason = "verification";
+    task.resumeTo = "queued";
+    task.steps = [
+      { key: "implement", state: "todo" },
+      { key: "integrate", state: "todo" },
+    ];
+    const html = render(task);
+    const r = messagesFor("ja").parts.resume;
+    expect(html).toContain('data-testid="resume-steps"');
+    expect(html).not.toContain('data-testid="resume-steps-rechoose"');
+    expect(html).not.toContain(r.stepsRechoose);
+    expect(html).not.toContain(r.tests.keepRechooseHint);
+  });
+});

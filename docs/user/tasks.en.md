@@ -30,7 +30,7 @@ Press "Create task" in the task list to open this dialog.
   - A small change whose request is clear and that uses existing mechanisms may start from implementation, without requirements or design.
   - Each time a step finishes (after the requirements are approved, and so on), it reviews whether the remaining design and reproduction steps are needed and skips the ones that are not.
   - Skipped steps are shown struck through in the list of steps. The reason appears in the activity log.
-  - For what was skipped, the Goal Guardian reviews the implementation against the task's purpose (the request), and you approve it by merging the PR.
+  - For what was skipped, the review child task reviews the implementation PR against the task's purpose (the request), and you approve it by merging the PR.
 - Whether the development setup (installing dependencies, building, and so on) runs depends on the step.
   - Choosing the steps, and investigations that read and explain code or how things work, do not run it. This takes precedence even if the repository's AGENTS.md or similar has setup instructions.
   - Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
@@ -554,11 +554,11 @@ Even in a repository that has no tests at all, such as one with only a README, t
 
 ### When the task stopped instead of proceeding without tests
 
-In the following cases, the task does not proceed without tests and is paused (the reason appears in the task details). You do not need to create the task again. In "Tests" of the resume section of the task details, choose one of the following and resume.
+The current sacty does not run tests (the agent of the implementation step decides them from the repository and runs them, and the review child task reviews the PR), so the task does not stop when the test command cannot be determined. A task that an earlier version paused in the following cases, instead of proceeding without tests, stays paused (the reason appears in the task details). You do not need to create the task again. In "Tests" of the resume section of the task details, choose one of the following and resume.
 
-- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`). The Goal Guardian runs it in the final review.
-- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents. When you write a reason, tests are not run and the Goal Guardian judges by the task's goal. The reason remains in the Activity, the task details, and the PR body as a reason decided by a person. It cannot be chosen for a bug fix.
-- **Resume without deciding**: if no step has started yet, the Orchestrator chooses the steps again. The task does not continue with the same steps and stop for the same reason after spending on them. If the Orchestrator makes the same judgment again, the task stops again.
+- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`). It is passed to the agent of the implementation step as the test command a person decided.
+- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents. The reason remains in the Activity, the task details, and the PR body as a reason decided by a person. It cannot be chosen for a bug fix.
+- **Resume without deciding**: the task continues from where it stopped (the steps are not chosen again). It no longer stops because the test command cannot be determined.
 
 | Why it stopped | How to fix it |
 | --- | --- |
@@ -835,7 +835,7 @@ The details of a task stopped by the budget limit show a field for the new cumul
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see [config.yaml settings](config.en.md#budget)).
 - In the resume section, you can change the following along with the resume.
   - **Additional notes (optional)**: write what you want the agents to know (the credentials to use, approaches to avoid, and so on). They are added after the task description under the heading "補足（再開で人が足したもの）", and the Orchestrator and the steps still to run read them. When the task description is long and only a little can be added, the length of notes you can add is shown below the field (to stay within what can be edited when rerunning). If no notes can be added, the field is disabled; resume without notes, or cancel and fix the description in a rerun.
-  - **Change the task image and step agents** (open it to use): you can choose again the task image and the agent for each step not finished yet. The current settings are selected first, only what you changed is recorded, and it is used from the next run. When you resume without deciding the tests and the steps are chosen again, they can't be changed here (change them in the task details after the steps are chosen again).
+  - **Change the task image and step agents** (open it to use): you can choose again the task image and the agent for each step not finished yet. The current settings are selected first, only what you changed is recorded, and it is used from the next run. Resuming without deciding the tests does not choose the steps again, so you can change them here.
 - A task waiting for approval (waiting for a PR merge) can also be paused with "Pause". The approval screen and the task details stay as they are. A task in escalation cannot be paused.
   - While paused, you cannot approve or send it back. When you resume, it returns to waiting for approval and you can use the approval screen again.
   - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume has the Goal Guardian decide where to send the task back.

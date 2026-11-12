@@ -654,6 +654,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   実装の指示では、範囲の外を変えないと直せないときは、理由と広げるべき範囲を説明に書かせる。
   再実行のタスクは、セキュリティの組み合わせを引き継ぐ（下の「中止したタスクの再実行」）。
 - 実装の PR の本文の目的の節は、要求要件の代わりに「修正の範囲（セキュリティ対応）」（変えてよいファイル・上げる依存・解消の確かめ方・範囲の理由）にする（`securityScopeBodyLines`）。
+  最終レビューをしない流れ（今の振る舞い）では、節の初めに sacty が照らした結果（違反があればその中身）と、最小限かを PR のレビューの子タスクが確かめることを書く（`Task.securityScopeCheck`）。照らした結果が無い以前の版の提出では、ゴールガーディアンが判定したと書く。
   既存の PR を引き継いだときは、PR の題・本文を変えない（上の「既存の PR の引き継ぎ」）ので、範囲はタスクの詳細の前段の調査の結果で確かめる。
 - 公開リポジトリへの PR も、ほかの実装と同じく作る。
 
@@ -1008,6 +1009,10 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、次の実行で `FinalReviewSkipped`（actor `sacty`）を記録して、PR の作成の待ち（`publishPending`）にする。
   ベースブランチの取り込み・差分の取得・テストのコンテナ・ゴールガーディアンは動かさない。実装の工程のエージェントが作業中にテストを実行することは変わらない。
   最終レビュー・CI の待ちの途中だったタスク（古い版の作業履歴）も、次の実行（止まっていたタスクは再開の後）で同じく `FinalReviewSkipped` を記録して進む（`pullRequestCi` を捨てる）。
+  - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
+    結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
+    差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
+    違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
 - 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
   既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
   PR の本文の結論には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを書く（`reviewBodyLine`）。
@@ -1017,11 +1022,13 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 台帳の `draft` にかかわらず、GitHub の状態を読んで外す（すでに外れていれば何もしない）。外せたときだけ記録する。
   - 外す間に差し戻された・PR を更新したら、記録せず、まだレビューを待つ PR ならドラフトに戻す（外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）。
   - 外した後に GitHub の先頭を読み直し、指摘なしにした先頭と違う・読めなければ、記録せずにドラフトに戻す（外す間に人がコミットを足した。次の確認で再レビューする）。
+  - 記録の前に子タスクの今の状態を読み直し、レビューする先頭・レビューの回・判定の数が外す前と違う、または指摘なしでなくなっていれば、記録せずにドラフトに戻す（外す間に再レビューが始まった。次の確認でやり直す）。
   - 外す要求の答えを受け取れなければ（GitHub では外れているかもしれない）、ドラフトに戻し、記録せずに次の確認でやり直す。
   - これらでドラフトに戻せなかったら（台帳には `draft` が残る）、戻せたと確かめられるまで、確認のたびに戻す（`redraftAwaiting`）。
   - 外す要求の答えを受け取れなかったら、外す要求が後から届くかもしれないので、指摘なしで外して記録するまで、確認のたびにドラフトに戻す（PR ごとに覚え、PR を更新した次の提出にも引き継ぐ）。
   - 答えを待つのをやめた後も終わっていないドラフトの切り替えの要求があれば（`draftRequests`）、終わるまでドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻らないように）。
     答えを待つのをやめたら、その通信を中断する。中断しても終わらない要求も、`DRAFT_TIMEOUT_MS` の `DRAFT_SETTLE_FACTOR`（10）倍を過ぎたら数えない（GitHub が復旧した後に、外せないままにしない）。
+    数えるのをやめた後にドラフトに戻す要求が届き、その間にその PR を指摘なしで外して記録していれば（人の承認待ちで、レビューを待つ PR でない）、記録と合うようにドラフトを外し直す（`undraftAfterLateRedraft`。外せなければデーモンのログに残す）。
   - 外した後の確認では、指摘なしにした先頭（`reviewedCommit`）とレビューした先頭を比べ、同じ先頭を再レビューしない。
   - 外す・戻す・先頭を読む GitHub の答えは、PR の更新でドラフトに戻すときも含めて `DRAFT_TIMEOUT_MS`（30秒）まで待ち、返らなければ答えを受け取れなかったものとして扱う。
   - 記録した先頭は、指摘なしにした先頭（人が足したコミットを含む）として持ち、依存のある子タスクはそこから重ねる（`reviewedPullRequest`）。
@@ -1030,7 +1037,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - sacty は PR の CI を待たない・再実行しない（PR の確認で `checkVerificationCi` を動かさない）。不安定なテストの台帳に新しい記録はできない。
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`undraftAfterLateRedraft`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 最終レビューをする流れ
 
@@ -1524,10 +1531,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   テストが決まらずに止まったのでも、ツールが無くて止まったのでも、文書だけの依頼と差分が食い違って止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
   画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
+  最終レビューをしない流れ（今の振る舞い）では、テストのコマンドは実装の工程の指示に人が決めたものとして渡す（sacty は実行しない）。テストのコマンドが決まらないことでは止めないので、この止まり方は以前の版で止まったタスクだけに残る。
 - 決めずに再開したとき、以前の版の最終レビューをする流れ（依存 `finalReview` を有効にしたとき）で、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
   同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないようにするため。
   工程を始めた後なら、今までどおり止まった所から再開する（検証でまた止まる）。
 - 画面の再開の欄では、テストの扱い（決めずに再開する・テストのコマンドを指定する・テストなしで進める）を選べる。
+  画面は依存 `finalReview` を知らないので、決めずに再開しても工程の選択からやり直すとは扱わず、工程のイメージ・エージェントの欄を出す（今の振る舞い）。
   不具合の修正では、テストなしを選べない。
   ツールが無くて止まったタスクでは、テストのコマンドの入力欄の初期値にいまのコマンドを出す。
 
