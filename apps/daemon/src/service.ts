@@ -1407,6 +1407,8 @@ export class TaskService {
     await this.checkReviewPullRequests();
     // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
     await this.reconcileReviewTasks();
+    // 一時停止したタスクの実装の PR のドラフト（PBI-331）
+    if (this.deps.reviewTasks === true && !this.finalReview) await this.settlePausedDrafts();
     // 最終レビューの前に作った実装の PR の CI（最終レビューをしないなら、CI を待たない。PBI-331）
     if (this.finalReview) await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
@@ -8369,6 +8371,8 @@ export class TaskService {
     if (initial && awaitingVerification(initial, this.finalReview)) {
       // 最終レビューをしない（PBI-331）：テストも CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする）
       if (!this.finalReview) {
+        // ベースブランチは取り込み直さないが、実装の前の取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+        if (!(await this.conflictsResolved(initial))) return;
         const securityScope = await this.checkSecurityScope(initial);
         if (securityScope === "stopped") return;
         this.append(initial, [
@@ -11583,15 +11587,14 @@ export class TaskService {
         gate.step === "implement" && parent.pullRequest?.number === gate.number
           ? parent.pullRequest.reviewedCommit
           : undefined;
-      // 指摘なしで外した後に、人がコミットを足してドラフトにした（PR の確認で読んだ GitHub の先頭とドラフト）なら、その先頭を
-      // 再レビューさせる（ドラフトは、指摘なしになるまで外し直さない。settleDraft）
+      // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
+      // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
       const seen = this.latestHeads.get(parent.id);
       const draftedAhead =
         !awaiting &&
         reviewed !== undefined &&
         seen?.number === gate.number &&
         seen.commit === gate.commit &&
-        seen.draft === true &&
         seen.head !== reviewed
           ? seen.head
           : undefined;
@@ -11658,6 +11661,40 @@ export class TaskService {
         `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
     }
+  }
+
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、実装の前のベースブランチの取り込みで競合した目印が、実装の後に残っていないか
+   * 確かめる（最終レビューの前の syncBeforeVerify と同じ扱い。取り込み直しはしない）。残っていれば BaseConflictsRemained を
+   * 記録して実装をやり直させ（続けて解消できなければ一時停止する）、false。確かめられなければ一時停止して false。
+   */
+  private async conflictsResolved(task: Task): Promise<boolean> {
+    const pending = task.baseMerge?.conflicts ?? [];
+    if (pending.length === 0 || !existsSync(this.repoDir(task))) return true;
+    let remaining: string[];
+    try {
+      remaining = await this.deps.repos.conflictMarkers(this.repoDir(task), pending);
+    } catch (error) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("merge.failed", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
+      return false;
+    }
+    if (remaining.length === 0) return true;
+    const failed = this.append(this.mustGet(task.id), [
+      { actor: "sacty", event: { type: "BaseConflictsRemained", payload: { files: remaining } } },
+    ]);
+    this.pauseIfVerificationKeepsFailing(failed);
+    return false;
   }
 
   /**
@@ -11751,19 +11788,88 @@ export class TaskService {
     if (task?.status !== "awaiting_approval" || this.cancelling.has(taskId)) return;
     if (pr?.number !== number || pr.commit !== commit || this.readying.has(taskId)) return;
     if (this.draftRequests.has(`${taskId}:${number}`)) return;
-    if (pr.awaitingReview) {
-      if (github.draft || task.stack) return;
-      await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
-        (error: unknown) => {
-          console.warn(
-            `[daemon] 指摘なしを待つ PR #${number}（${repo}）のドラフトが外れていたので戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
-          );
-        },
-      );
-      return;
-    }
-    if (github.draft && pr.reviewedCommit !== undefined) {
+    const wants = this.wantsDraft(task, repo, github.head);
+    if (wants === true && !github.draft) {
+      await this.redraftFor(taskId, repo, number, token, "指摘なしになっていない");
+    } else if (wants === false && github.draft && github.head) {
       await this.undraftMarkedReady(taskId, repo, number, commit, token, github.head);
+    }
+  }
+
+  /**
+   * 実装の PR が、今ドラフトであるべきか（PBI-331）。指摘なしを待つ PR（重ねた PR を除く）はドラフト。指摘なしで外して記録
+   * した PR は、GitHub の先頭（head）をレビューの子タスクが指摘なしにしていればドラフトでなく、そうでなければ（外した後に人が
+   * コミットを足した・再レビューの途中）ドラフト。先頭が分からない・どちらでもない PR は undefined（何もしない）。
+   */
+  private wantsDraft(task: Task, repo: string, head: string | undefined): boolean | undefined {
+    const pr = task.pullRequest;
+    if (!pr?.number) return undefined;
+    if (pr.awaitingReview) return task.stack ? undefined : true;
+    if (pr.reviewedCommit === undefined || !head) return undefined;
+    const child = this.reviewerOf(task, repo, pr.number);
+    return !(child && child.reviewTarget?.headCommit === head && reviewCleared(child));
+  }
+
+  /** 実装の PR のレビューの子タスク（PBI-331）。 */
+  private reviewerOf(task: Task, repo: string, number: number): Task | undefined {
+    const record = (task.reviewTasks ?? []).findLast(
+      (r) => r.number === number && sameRepo(r.repo, repo),
+    );
+    return record && this.tasks.get(record.taskId);
+  }
+
+  /** 実装の PR をドラフトに戻す（PBI-331）。戻せなければ、デーモンのログに残す（次の確認でやり直す）。 */
+  private async redraftFor(
+    taskId: string,
+    repo: string,
+    number: number,
+    token: string,
+    why: string,
+  ): Promise<void> {
+    await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
+      (error: unknown) => {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）は${why}ので、ドラフトに戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+        );
+      },
+    );
+  }
+
+  /**
+   * 一時停止したタスクの実装の PR が、ドラフトであるべきなのにドラフトでなければ、ドラフトに戻す（PBI-331。外し直す間・外す
+   * 間に一時停止した、などのため。一時停止の間は外さない）。GitHub の状態で決めるので、再起動の後も、戻せなかったときも次の
+   * 確認でやり直す。
+   */
+  private async settlePausedDrafts(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      const pr = task.pullRequest;
+      if (task.status !== "paused" || this.cancelling.has(task.id)) continue;
+      if (!pr?.number || !pr.repo || (!pr.awaitingReview && pr.reviewedCommit === undefined)) {
+        continue;
+      }
+      if (this.readying.has(task.id) || this.draftRequests.has(`${task.id}:${pr.number}`)) continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, pr.repo, usedSecrets);
+        const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+        if (status.state !== "open" || status.draft !== false) continue;
+        const latest = this.tasks.get(task.id);
+        if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) continue;
+        if (this.wantsDraft(latest, pr.repo, status.headSha?.trim() || undefined) === false) {
+          continue;
+        }
+        await this.redraftFor(
+          task.id,
+          pr.repo,
+          pr.number,
+          token,
+          "一時停止の間も指摘なしになっていない",
+        );
+      } catch (error) {
+        console.warn(
+          `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
     }
   }
 
@@ -11781,7 +11887,7 @@ export class TaskService {
     number: number,
     commit: string,
     token: string,
-    head: string | undefined,
+    head: string,
   ): Promise<void> {
     const marked = (): Task | undefined => {
       const latest = this.tasks.get(taskId);
@@ -11795,15 +11901,11 @@ export class TaskService {
         ? latest
         : undefined;
     };
-    const reviewerOf = (task: Task): Task | undefined => {
-      const record = (task.reviewTasks ?? []).findLast(
-        (r) => r.number === number && sameRepo(r.repo, repo),
-      );
-      return record && this.tasks.get(record.taskId);
-    };
+    const reviewerOf = (task: Task): Task | undefined => this.reviewerOf(task, repo, number);
     const task = marked();
     if (!task) return;
-    const target = head ?? task.pullRequest?.reviewedCommit ?? commit;
+    // 先頭は PR の確認で読んだ GitHub の先頭（読めなければ外さない。記録したコミットで代えると、足されたコミットを外しうる）
+    const target = head;
     const child = reviewerOf(task);
     // 子タスクがその先頭を指摘なしにしていなければ、ドラフトのまま再レビューを待つ
     if (!child || child.reviewTarget?.headCommit !== target || !reviewCleared(child)) return;
@@ -11853,21 +11955,12 @@ export class TaskService {
           return;
         }
       }
-      if (!result) return;
-      // 外す間に変わった：作り直す・レビューを待つ・まだ指摘なしで外した PR なら、ドラフトに戻す（次の確認でやり直す）
+      // 外せなかった（答えを受け取れなかったときも）・外す間に変わった：外れているかもしれないので、終わっていないタスクの同じ PR
+      // ならドラフトに戻す（指摘なしで外したままでよいときは、次の確認で GitHub の状態を読んで外し直す。一時停止の間も、
+      // 確認のたびに戻す。settlePausedDrafts）
       const latest = this.tasks.get(taskId);
-      const now = latest?.pullRequest;
-      const reworking = latest?.status === "queued" || latest?.status === "running";
-      if (latest && now?.number === number) {
-        if (reworking || now.awaitingReview || latest.status === "awaiting_approval") {
-          await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
-            (error: unknown) => {
-              console.warn(
-                `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
-              );
-            },
-          );
-        }
+      if (latest && !isFinished(latest) && latest.pullRequest?.number === number) {
+        await this.redraftFor(taskId, repo, number, token, "外す間に変わった");
       }
     } finally {
       this.readying.delete(taskId);

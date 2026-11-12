@@ -1009,6 +1009,9 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、次の実行で `FinalReviewSkipped`（actor `sacty`）を記録して、PR の作成の待ち（`publishPending`）にする。
   ベースブランチの取り込み・差分の取得・テストのコンテナ・ゴールガーディアンは動かさない。実装の工程のエージェントが作業中にテストを実行することは変わらない。
   最終レビュー・CI の待ちの途中だったタスク（古い版の作業履歴）も、次の実行（止まっていたタスクは再開の後）で同じく `FinalReviewSkipped` を記録して進む（`pullRequestCi` を捨てる）。
+  - `FinalReviewSkipped` の前に、ベースブランチとの競合の目印が作業領域に残っていないかを確かめる（`conflictsResolved`）。
+    残っていれば記録せず、`BaseConflictsRemained` を記録して実装をやり直す（数え方・止め方は[ベースブランチの取り込み](#ベースブランチの取り込み)と同じ）。
+    確かめられなければ一時停止する（`merge.failed`）。
   - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
     結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
     差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
@@ -1029,9 +1032,17 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 答えを待つのをやめた後も終わっていないドラフトの切り替えの要求があれば（`draftRequests`）、終わるまでドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻らないように）。
     答えを待つのをやめたら、その通信を中断する。中断しても終わらない要求も、`DRAFT_TIMEOUT_MS` の `DRAFT_SETTLE_FACTOR`（10）倍を過ぎたら数えない（GitHub が復旧した後に、外せないままにしない）。
     PR の確認のたびに GitHub の状態（`draft`）を読み、台帳に合わせる（`settleDraft`。答えを待つのをやめた・中断した・数えるのをやめた要求が後から GitHub に届いたときのため。デーモンが覚えていなくても、再起動の後も、直せなかったときも次の確認でやり直す）。
-    - 指摘なしを待つ PR がドラフトでなければ、ドラフトに戻す（依存先の PR に重ねた PR は除く。人がドラフトを外してマージしてよいため）。
-    - 指摘なしで外して記録した PR（人の承認待ち）がドラフトなら、外し直す（`undraftMarkedReady`）。GitHub の先頭が指摘なしにした先頭と違えば（外した後に人がコミットを足した）、ドラフトのままにして子タスクにその先頭を再レビューさせ、指摘なしになったら外して、その先頭で `PullRequestMarkedReady` を記録し直す。
-    - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わったら、ドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
+    あるべき状態は、台帳と子タスクの今の状態から決める（`wantsDraft`）。GitHub の先頭を読めなければ、ドラフトを外さない（変えない）。
+    - 指摘なしを待つ PR は、ドラフトにする（依存先の PR に重ねた PR は除く。人がドラフトを外してマージしてよいため）。
+    - 指摘なしで外して記録した PR（人の承認待ち）は、子タスクが GitHub の今の先頭で指摘なしにしているときだけ、ドラフトでなくする。
+      ドラフトなら外し直す（`undraftMarkedReady`。GitHub の先頭を読めたときだけ）。
+      GitHub の先頭が指摘なしにした先頭と違えば（外した後に人がコミットを足した。人が PR をドラフトにしたかにかかわらず）、子タスクにその先頭を再レビューさせ、
+      それまではドラフトに戻す。指摘なしになったら外して、その先頭で `PullRequestMarkedReady` を記録し直す。
+    - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わった、または外した答えを受け取れなかったら、
+      タスクが終わっておらず PR の番号が同じならドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、
+      次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
+    - 一時停止したタスクの PR も、GitHub でドラフトでなく、あるべき状態がドラフトでないと決まっていなければ、ドラフトに戻す（`settlePausedDrafts`。
+      外し直す間に止めた・止めている間に人がコミットを足したときのため。止めている間も確認のたびにやり直す）。
   - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
   - 外した後の確認では、指摘なしにした先頭（`reviewedCommit`）とレビューした先頭を比べ、同じ先頭を再レビューしない。
@@ -1043,7 +1054,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`buildPrompt` の `finalReview`・`addedTestCommandLine`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`settleDraft`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 最終レビューをする流れ
 

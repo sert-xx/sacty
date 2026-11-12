@@ -4449,6 +4449,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       secretStore?: ServiceDeps["secrets"];
       /** PR テンプレートを探す（PBI-87）。 */
       templates?: ServiceDeps["templates"];
+      /** 最終レビューをしない（PBI-331）。 */
+      finalReview?: boolean;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -4576,6 +4578,47 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const done = service.get(id)?.task as Task;
       expect(done.gate).toEqual({ step: "implement", submission: 1 });
       expect(done.verifyFeedback).toBeUndefined();
+      activity.close();
+    });
+
+    it("最終レビューをしない流れでも、目印が残ったまま提出されたら、PR を作らずに競合したファイルを渡して実装をやり直す（PR #348 11回目のレビュー指摘）", async () => {
+      const repos = conflicted();
+      const { activity, service, id } = await toImplement(
+        [implement("# 実装 v1"), implement("# 実装 v2")],
+        { repos, mergeBase: true, finalReview: false },
+      );
+      await service.runNext(id); // 実装（競合の目印が入った作業領域）
+      await service.runNext(id);
+      const failed = service.get(id)?.task as Task;
+      expect(failed.status).toBe("queued");
+      expect(failed.verifyFeedback).toEqual({ kind: "merge", files: conflictedFiles });
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(types(service, id)).not.toContain("FinalReviewSkipped");
+      expect(repos.published).toEqual([]);
+      // 解消すれば、取り込み直さずに PR の作成へ進む
+      repos.markers = [];
+      await drain(service);
+      expect(types(service, id)).toContain("FinalReviewSkipped");
+      expect(repos.merges).toHaveLength(1);
+      expect(repos.published).toHaveLength(1);
+      activity.close();
+    });
+
+    it("最終レビューをしない流れでは、実装の前に変えた題を、実装の PR のコミットに使う（PR #348 11回目のレビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        repos,
+        finalReview: false,
+      });
+      service.renameTask(id, { title: "設計の承認の後に変えた題" });
+      await drain(service);
+      const done = service
+        .get(id)
+        ?.activity.findLast(
+          (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
+        );
+      expect(repos.published.at(-1)?.date).toBe(done?.at);
+      expect(repos.published.at(-1)?.message).toContain("設計の承認の後に変えた題");
       activity.close();
     });
 
@@ -29588,6 +29631,98 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         // 実装の工程が終わった後に変えた題は、このコミットには使わない（題は、コミットの日時のときの題。PBI-323）
         expect(repos.published.at(-1)?.message).not.toContain("作成の後に変えた題");
         expect(repos.published.at(-1)?.date).not.toBe(taskOf(service, id).createdAt);
+        activity.close();
+      });
+
+      it("指摘なしで外した後に人がドラフトにせずにコミットを足しても、その先頭を再レビューし、指摘なしになるまでドラフトにする（PR #348 11回目のレビュー指摘）", async () => {
+        const made = await implemented([
+          verdictOut("no_findings", "# 評価\n\n問題なし"),
+          verdictOut("no_findings", "# 評価\n\n足したコミットも問題なし"),
+        ]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        const human = "h".repeat(40);
+        pulls.prInfo = { ...pulls.prInfo, headSha: human };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
+        expect(restarts?.map((e) => e.payload)).toEqual([{ reason: "updated", commit: human }]);
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(taskOf(service, id).pullRequest?.reviewedCommit).toBe(human);
+        activity.close();
+      });
+
+      it("GitHub の先頭を読めなければ、指摘なしで外した PR のドラフトを外し直さない（PR #348 11回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        pulls.drafts[7] = true;
+        pulls.prInfo = { ...pulls.prInfo, headSha: "" };
+        const changes = pulls.draftChanges.length;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        // 一瞬でも外さない（外している間に、レビューしていないコミットをマージできてしまう）
+        expect(pulls.draftChanges.slice(changes)).toEqual([]);
+        activity.close();
+      });
+
+      it("外し直す間に再レビューが始まって一時停止したら、ドラフトに戻す。戻せなければ、一時停止の間も確認のたびに戻す（PR #348 11回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        pulls.drafts[7] = true;
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        pulls.setDraftStarted = Promise.withResolvers<void>();
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        // 外し直す間に、子タスクの再レビューが始まり、親を一時停止した
+        service.rereview(childId);
+        service.pause(id);
+        // 戻す要求は失敗する
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        pulls.setDraftFail = "GitHub が落ちている";
+        await checking;
+        expect(taskOf(service, id).status).toBe("paused");
+        expect(pulls.drafts[7]).toBe(false);
+        pulls.setDraftFail = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        activity.close();
+      });
+
+      it("外し直す答えを受け取れなければ、ドラフトに戻し、次の確認で外し直す（PR #348 11回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        pulls.drafts[7] = true;
+        // 外す要求は GitHub で済むが、答えを受け取れない（戻す要求も同じ）
+        pulls.setDraftAnswerLost = "接続が切れた";
+        const changes = pulls.draftChanges.length;
+        await service.checkPullRequests();
+        expect(pulls.draftChanges.slice(changes)).toEqual([
+          { number: 7, draft: false },
+          { number: 7, draft: true },
+        ]);
+        pulls.setDraftAnswerLost = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
         activity.close();
       });
 

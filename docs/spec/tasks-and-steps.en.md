@@ -642,6 +642,9 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`); the next run records `FinalReviewSkipped` (actor `sacty`) and makes it wait to open the PR (`publishPending`).
   Merging the base branch, getting the diff, test containers, and the Goal Guardian are not run. The Implementation step's agent still runs tests while it works.
   A task that was in the middle of the final review or the CI wait (activity from an older version) also records `FinalReviewSkipped` at its next run (for a stopped task, after resuming) and moves on (`pullRequestCi` is dropped).
+  - Before `FinalReviewSkipped`, sacty checks that no conflict markers with the base branch remain in the workspace (`conflictsResolved`).
+    If any remain, it does not record it, records `BaseConflictsRemained`, and redoes the implementation (counted and stopped the same way as in [Merging the base branch](#merging-the-base-branch)).
+    If it cannot check, the task is paused (`merge.failed`).
   - For a security fix task, before `FinalReviewSkipped`, sacty checks the diff against the fix scope declared by the preceding investigation (`checkSecurityScope`; the check is the same as in "Security fix" below).
     The result is recorded in `securityScope` of `FinalReviewSkipped` (if there is a violation, `violation` holds the files outside the scope, the changed line count, and the cap; `Task.securityScopeCheck`).
     If the diff cannot be obtained, sacty pauses without recording it (`verify.diffUnavailable`).
@@ -662,9 +665,17 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
   - If a draft change request is still unfinished after sacty stopped waiting for its answer (`draftRequests`), sacty does not remove the draft until it finishes (so that a late request to turn it back into a draft does not turn a PR whose draft was removed back into a draft).
     When sacty stops waiting for the answer, it aborts the request. A request that does not finish even after being aborted is no longer counted after `DRAFT_SETTLE_FACTOR` (10) times `DRAFT_TIMEOUT_MS` (so that the draft can be removed after GitHub recovers).
     At every PR check, sacty reads the state on GitHub (`draft`) and matches it to the ledger (`settleDraft`; for requests that sacty stopped waiting for, aborted, or stopped counting and that reached GitHub later. Even if the daemon does not remember them, after a restart, or after a failure, it tries again at the next check).
-    - If a PR waiting for no findings is not a draft, sacty turns it back into a draft (except a PR stacked on a dependency's PR, because a person may remove its draft and merge it).
-    - If a PR whose draft was removed after no findings and recorded (waiting for a person's approval) is a draft, sacty removes the draft again (`undraftMarkedReady`). If the head on GitHub differs from the head that got no findings (a person added a commit after the draft was removed), sacty keeps the draft, has the child task review that head again, and once it gets no findings removes the draft and records `PullRequestMarkedReady` again with that head.
-    - If the task is sent back, the PR is updated, a re-review of the child task starts, or the head changes while the draft is being removed again, sacty turns the PR back into a draft. If the answer to removing the draft is not received while the record is unchanged, the request might still arrive later, so sacty turns the PR back into a draft at every check, also for the next submission, until it removes the draft after no findings (`undraftUnsettled`).
+    The state it should have is decided from the ledger and the child task's current state (`wantsDraft`). If the head on GitHub cannot be read, sacty does not remove the draft (it changes nothing).
+    - A PR waiting for no findings should be a draft (except a PR stacked on a dependency's PR, because a person may remove its draft and merge it).
+    - A PR whose draft was removed after no findings and recorded (waiting for a person's approval) should not be a draft only while the child task has no findings at the current head on GitHub.
+      If it is a draft, sacty removes the draft again (`undraftMarkedReady`; only when the head on GitHub can be read).
+      If the head on GitHub differs from the head that got no findings (a person added a commit after the draft was removed, whether or not the person turned the PR into a draft), sacty has the child task review that head again,
+      and until then turns the PR back into a draft. Once it gets no findings, sacty removes the draft and records `PullRequestMarkedReady` again with that head.
+    - If the task is sent back, the PR is updated, a re-review of the child task starts, or the head changes while the draft is being removed again, or the answer to removing the draft is not received,
+      sacty turns the PR back into a draft when the task is not finished and the PR number is the same. If the answer to removing the draft is not received while the record is unchanged, the request might still arrive later,
+      so sacty turns the PR back into a draft at every check, also for the next submission, until it removes the draft after no findings (`undraftUnsettled`).
+    - For a paused task, too, if its PR is not a draft on GitHub and it is not decided that the PR should not be a draft, sacty turns it back into a draft (`settlePausedDrafts`;
+      for when the task was paused while the draft was being removed again, or a person added a commit while it was paused. sacty tries again at every check while it is paused).
   - The date and subject of the implementation PR's commit are those of when the Implementation step finished (`outputAt`), because there is no final review date.
   - If the answer to removing the draft says the PR is still a draft, sacty does not record it and tries again at the next check.
   - After the draft is removed, checks compare the reviewed head with the head that got no findings (`reviewedCommit`), so the same head is not reviewed again.
@@ -676,7 +687,7 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
 - Even when the orchestrator cannot decide the test command for a task that includes implementation, the task does not stop (it does not stop with `orchestrator.testCommandUnknown`, because sacty does not run the tests).
 - In the implementation instructions of a task without tests (`noTestsReason`), the agent is told to run the tests it prepared itself before submitting and to write the command it ran and the result in the implementation's description (sacty does not run the declared test command). It is told that the review child task of the PR checks the acceptance (`finalReview` of `buildPrompt`, `addedTestCommandLine`).
 
-Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`, `checkSecurityScope`, `settleDraft`, `undraftMarkedReady`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
+Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`, `checkSecurityScope`, `conflictsResolved`, `settleDraft`, `wantsDraft`, `settlePausedDrafts`, `undraftMarkedReady`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
 
 ### The flow with the final review
 
