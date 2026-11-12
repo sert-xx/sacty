@@ -984,6 +984,27 @@ function Properties({ data }: { data: TaskDetailData }) {
           ],
         ]
       : []),
+    ...(task.reviewOf
+      ? [
+          [
+            l.reviewOf,
+            <span key="ro">
+              <TaskLink id={task.reviewOf.taskId} title={data.reviewOf?.title} testId="review-of" />
+              {m.reviewOfStep(labels.step[task.reviewOf.step])}
+            </span>,
+          ] as [string, ReactNode],
+        ]
+      : []),
+    ...(data.reviewTasks ?? []).map(
+      (r) =>
+        [
+          l.reviewTask,
+          <span key={`rt-${r.id}`}>
+            <TaskLink id={r.id} title={r.title} testId="review-task" />
+            {m.reviewTaskOf(labels.step[r.step], r.number)}
+          </span>,
+        ] as [string, ReactNode],
+    ),
     ...(task.rerun
       ? [
           [

@@ -648,6 +648,11 @@ export type ServiceDeps = {
    * モックでないときに有効にする。
    */
   audit?: boolean;
+  /**
+   * sacty が作った PR をレビューする子タスクを作る（PBI-330）。既定は作らない（工程の流れだけを確かめるテストで、子タスクが
+   * エージェントの実行を使わないように）。main.ts が有効にする。
+   */
+  reviewTasks?: boolean;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -1030,7 +1035,6 @@ export class TaskService {
    */
   private readonly feedbackSeenAt = new Map<string, Map<string, number>>();
   /** レビュー用のラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
-  private readonly labeling = new Set<string>();
   /**
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
@@ -1307,8 +1311,8 @@ export class TaskService {
     // コンテキストにする改修の PR がマージされたメモリーを消す（PBI-128）
     this.cleanupPromotedMemories();
     await this.checkReviewPullRequests();
-    // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
-    await this.resumePullRequestLabels();
+    // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
+    this.reconcileReviewTasks();
     // 最終レビューの前に作った実装の PR の CI
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
@@ -5621,11 +5625,9 @@ export class TaskService {
     );
     const reviewOf = (issue: FoundIssue): "requested" | "label" | "sacty" | undefined => {
       if (!issue.pullRequest) return undefined;
-      // sacty が作り、レビュー用のラベルを付けた PR は、元のタスクとは別の、レビューだけのタスク（sacty）にする（そのレビューを、
-      // 元のタスクに PR の指摘として届けるため）。レビューの依頼にも当たっても、こちらにする（PBI-88・PBI-99）
-      if (has(issue, reviewLabel) && sactyMade.has(key(issue.repo, issue.number))) {
-        return "sacty";
-      }
+      // sacty が作った PR は取り込まない。PR を作ったタスクが、レビューの子タスクを作ってレビューさせる（PBI-330）。以前の版で
+      // ラベルを付けた PR・レビューの依頼に当たった PR も同じ（二重にレビューしない）
+      if (sactyMade.has(key(issue.repo, issue.number))) return undefined;
       // 依頼は、担当のプロジェクトでそのホストに選んだ本人への依頼だけ（ほかのプロジェクトのアカウントへの依頼を、
       // 担当のプロジェクトのアカウントで取り込んで投稿しない。PBI-44 レビュー指摘）
       if (issue.review === "requested" && settings.reviewRequested && issue.requestedFor) {
@@ -10701,8 +10703,6 @@ export class TaskService {
               number: pr.number,
               repo,
               ...(superseded !== undefined ? { supersedes: superseded } : {}),
-              // レビュー用のラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88・PBI-99）
-              ...this.labelDue(latest, repo, pr.number),
             },
           },
         },
@@ -10715,8 +10715,8 @@ export class TaskService {
         },
       ]);
       this.warnIfNeeded(submitted);
-      // レビュー用のラベルを付ける（同じ PR を更新したときは、もう付けない。PBI-88・PBI-99）
-      await this.labelPullRequest(task.id, repo, pr.number, token, usedSecrets);
+      // PR をレビューする子タスクを作る（同じ PR を更新したときは、もう作らない。PBI-330）
+      this.ensureReviewTask(submitted, step, repo, pr.number, pr.url);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
@@ -11064,16 +11064,14 @@ export class TaskService {
               repo: prRepo,
               ...(task.stack && draft ? { draft: true as const } : {}),
               ...baseRecord,
-              // レビュー用のラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88・PBI-99）
-              ...this.labelDue(task, prRepo, pr.number),
             },
           },
         },
         this.implementSubmitted(task),
       ]);
       this.checkBudget(submitted);
-      // レビュー用のラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88・PBI-99）
-      await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
+      // PR をレビューする子タスクを作る（作れなくても PR の作成は失敗にしない。PBI-330）
+      this.ensureReviewTask(submitted, "implement", prRepo, pr.number, pr.url);
       return "published";
     } catch (error) {
       // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
@@ -11223,123 +11221,127 @@ export class TaskService {
   }
 
   /**
-   * いま sacty の PR に付けるラベル（PBI-88）。レビュー用のラベル（sacty の設定 reviewLabel。PBI-99）。設定していなければ無い。
-   * そのトリアージを Off にしていても付ける（一時的に Off にした間の PR も、On に戻したら取り込まれるように。PBI-139）。
+   * sacty が作った PR（要求要件・設計・実装の PR）をレビューする子タスクを作る（PBI-330）。PR を作った工程とは別の
+   * コンテキストで、PR のレビューだけのタスク（source.review: sacty）としてレビューさせ、指摘は PR の指摘の取り込みで親に
+   * 届ける。1つの PR につき1つ（作った記録のある PR には、更新しても作らない）。
+   * - 子タスクを作った後、親に記録する前に止まった（停止・クラッシュ）ときは、作った子タスクを見つけて記録だけ足す
+   * - ほかのレビューのタスク（以前の版でラベルから取り込んだものなど）が終わらずにあれば、二重に作らない
+   * - 作れなくても、PR の作成・承認待ちは失敗にしない（次の PR の確認で作り直す）
    */
-  private labelForPullRequests(): string | undefined {
-    return this.deps.settings.get().reviewLabel || undefined;
-  }
-
-  /**
-   * PR の公開の記録に入れる、レビュー用のラベルを付ける予定（PBI-88・PBI-99）。付けた・付けられなかった記録のある PR には付けない
-   * （1つの PR に1回。人が外したラベルを付け直さないため）。
-   */
-  private labelDue(task: Task, repo: string, number: number): { label?: string } {
-    const label = this.labelForPullRequests();
-    if (!label) return {};
-    const done = (task.pullRequestLabels ?? []).some(
-      (x) => x.number === number && sameRepo(x.repo, repo),
-    );
-    return done ? {} : { label };
-  }
-
-  /**
-   * 公開の記録に付ける予定があり、付けた・付けられなかった記録の無い、開いている sacty の PR（PBI-88）。公開を記録した後、
-   * ラベルを付ける前に止まった（停止・クラッシュ）ものを、再開で付けるため。
-   */
-  private pendingPullRequestLabels(task: Task): { repo: string; number: number }[] {
-    const prs = [
-      ...(task.pullRequest?.label &&
-      task.pullRequest.repo &&
-      task.pullRequest.number &&
-      task.pullRequestState === "open"
-        ? [{ repo: task.pullRequest.repo, number: task.pullRequest.number }]
-        : []),
-      ...task.stepPullRequests
-        .filter((p) => p.label && p.state === "open" && !p.superseded)
-        .map((p) => ({ repo: p.repo, number: p.number })),
-    ];
-    return prs.filter(
-      (p) =>
-        !(task.pullRequestLabels ?? []).some(
-          (x) => x.number === p.number && sameRepo(x.repo, p.repo),
-        ),
-    );
-  }
-
-  /**
-   * 付ける予定のまま記録の無い PR に、レビュー用のラベルを付ける（PBI-88・PBI-99）。PR の確認（60秒ごと）のたびに行う。中止した
-   * タスク・いまは付けない設定（レビュー用のラベルが無い）なら付けない（記録もしない）。
-   */
-  private async resumePullRequestLabels(): Promise<void> {
-    if (!this.labelForPullRequests()) return;
-    for (const task of [...this.tasks.values()]) {
-      if (task.status === "cancelled" || this.cancelling.has(task.id)) continue;
-      for (const pr of this.pendingPullRequestLabels(task)) {
-        const usedSecrets: string[] = [];
-        let token: string;
-        try {
-          token = await this.githubToken(task, pr.repo, usedSecrets);
-        } catch (error) {
-          console.warn(
-            `[daemon] PR #${pr.number}（${pr.repo}）にラベルを付けるためのトークンを取り出せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-          );
-          continue;
-        }
-        await this.labelPullRequest(task.id, pr.repo, pr.number, token, usedSecrets);
+  private ensureReviewTask(
+    parent: Task,
+    step: "requirements" | "design" | "implement",
+    repo: string,
+    number: number,
+    url: string | undefined,
+  ): void {
+    const same = (r: string | undefined, n: number | undefined) =>
+      n === number && r !== undefined && sameRepo(r, repo);
+    if (this.deps.reviewTasks !== true) return;
+    try {
+      if (parent.status === "cancelled" || this.cancelling.has(parent.id)) return;
+      if ((parent.reviewTasks ?? []).some((x) => same(x.repo, x.number))) return;
+      const reviews = [...this.tasks.values()].filter(
+        (t) =>
+          t.source?.kind === "github_pull_request" &&
+          t.source.review !== undefined &&
+          same(t.source.repo, t.source.number),
+      );
+      const mine = reviews.find((t) => t.reviewOf?.taskId === parent.id);
+      let childId = mine?.id;
+      if (!childId) {
+        // 以前の版でラベルから取り込んだレビューのタスクが、まだ終わっていなければ任せる
+        if (reviews.some((t) => t.status !== "cancelled" && !isCompleted(t))) return;
+        const config = this.deps.config();
+        const child = this.append({ id: randomUUID(), projectId: parent.projectId }, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: reviewTaskTitle(parent.title, number),
+                body: "",
+                start: "github_pull_request",
+                budgetCapUsd: config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD,
+                source: {
+                  kind: "github_pull_request",
+                  repo,
+                  number,
+                  url: url ?? `${repo.replace(/\.git$|\/$/g, "")}/pull/${number}`,
+                  review: "sacty",
+                },
+                reviewOf: { taskId: parent.id, step },
+              },
+            },
+          },
+        ]);
+        childId = child.id;
       }
+      const latest = this.tasks.get(parent.id);
+      if (!latest || (latest.reviewTasks ?? []).some((x) => same(x.repo, x.number))) return;
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: { type: "ReviewTaskCreated", payload: { taskId: childId, step, repo, number } },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）のレビューの子タスクを作れませんでした：${renderMessage(errorText(error), "ja")}`,
+      );
     }
   }
 
   /**
-   * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、レビュー用のラベル（sacty の設定 reviewLabel）を付ける
-   * （PBI-88・PBI-99）。別のタスクとして取り込ませ、レビューだけを行わせるため。
-   * - レビュー用のラベルを設定していなければ、付けない（そのトリアージが Off でも付ける。PBI-139）
-   * - 1つの PR につき1回だけ付ける（付けた・付けられなかった記録があれば、PR を更新しても付けない。人が外したラベルを
-   *   付け直さないため）。同じ PR を付けている途中なら、重ねて付けない
-   * - 付けられなければ、理由を台帳に残す（秘密の値は伏せる）。PR の作成は失敗にしない
+   * PR の確認（60秒ごと）で、承認待ちの PR のレビューの子タスクを整える（PBI-330）。
+   * - 子タスクの無い承認待ちの PR（作る前に止まったもの）には作る
+   * - 親が PR を更新して承認待ちに戻った（指摘を直した）のに、子タスクが前の先頭をレビューして終わっていれば、最新の
+   *   コミットを再レビューさせる。同じ先頭では1回だけ（先頭を読み違えても、繰り返さない）
+   * 一時停止・中止を求められた親と子、一時停止した子は動かさない。
    */
-  private async labelPullRequest(
-    taskId: string,
-    repo: string,
-    number: number,
-    token: string,
-    usedSecrets: readonly string[],
-  ): Promise<void> {
-    const label = this.labelForPullRequests();
-    if (!label) return;
-    const same = (x: { repo: string; number: number }) =>
-      x.number === number && sameRepo(x.repo, repo);
-    if ((this.tasks.get(taskId)?.pullRequestLabels ?? []).some(same)) return;
-    const key = `${taskId} ${repoKey(repo)}#${number}`;
-    if (this.labeling.has(key)) return;
-    this.labeling.add(key);
-    try {
-      let event: EventInput;
-      try {
-        const { created } = await this.deps.pulls.addLabel({ repo, token, number, label });
-        event = {
-          type: "PullRequestLabeled",
-          payload: { repo, number, label, ...(created ? { created } : {}) },
-        };
-      } catch (error) {
-        event = {
-          type: "PullRequestLabelFailed",
-          payload: { repo, number, label, message: redactText(errorText(error), usedSecrets) },
-        };
+  private reconcileReviewTasks(): void {
+    if (this.deps.reviewTasks !== true) return;
+    // 親が中止されたら、終わっていないレビューの子タスクも中止する（中止の片付けで PR を閉じなかったときも、レビューを続けない）
+    for (const child of [...this.tasks.values()]) {
+      if (!child.reviewOf || child.status === "cancelled" || isCompleted(child)) continue;
+      if (this.cancelling.has(child.id)) continue;
+      if (this.tasks.get(child.reviewOf.taskId)?.status !== "cancelled") continue;
+      void this.cancel(child.id, "parent_cancelled").catch((error: unknown) => {
+        console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
+      });
+    }
+    for (const parent of [...this.tasks.values()]) {
+      if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) continue;
+      if (this.pauseRequested.has(parent.id)) continue;
+      const gate = gatePullRequest(parent);
+      if (gate?.state !== "open" || !gate.repo) continue;
+      if (gate.step !== "requirements" && gate.step !== "design" && gate.step !== "implement") {
+        continue;
       }
-      // 付けている間に、ほかで記録された（同じ PR）なら、記録しない
-      const latest = this.tasks.get(taskId);
-      if (!latest || (latest.pullRequestLabels ?? []).some(same)) return;
+      this.ensureReviewTask(parent, gate.step, gate.repo, gate.number, gate.url);
+      const record = (this.tasks.get(parent.id)?.reviewTasks ?? []).findLast(
+        (x) => x.number === gate.number && gate.repo !== undefined && sameRepo(x.repo, gate.repo),
+      );
+      const child = record && this.tasks.get(record.taskId);
+      if (!child || !canRereview(child) || child.status === "paused") continue;
+      if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) continue;
+      if (child.reviewTarget?.headCommit === gate.commit) continue;
+      if (child.reviewRestartCommit === gate.commit) continue;
       try {
-        this.append(latest, [{ actor: "sacty", event }]);
+        this.append(child, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ReviewRestarted",
+              payload: { reason: "updated", commit: gate.commit },
+            },
+          },
+        ]);
       } catch (error) {
         console.warn(
-          `[daemon] PR #${number}（${repo}）のラベルの記録に失敗しました：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          `[daemon] レビューの子タスク ${child.id} を再レビューにできませんでした：${renderMessage(errorText(error), "ja")}`,
         );
       }
-    } finally {
-      this.labeling.delete(key);
     }
   }
 
@@ -11512,8 +11514,11 @@ export class TaskService {
    */
   async cancel(
     id: string,
-    /** sacty が中止する理由（レビューの PR がマージされた・閉じられた。PBI-44）。人間の中止では無い。 */
-    reason?: "pull_request_merged" | "pull_request_closed",
+    /**
+     * sacty が中止する理由（レビューの PR がマージされた・閉じられた。PBI-44。PR のレビューの子タスクの親が中止された。
+     * PBI-330）。人間の中止では無い。
+     */
+    reason?: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
   ): Promise<Task> {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
@@ -15936,4 +15941,15 @@ function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
     signal.addEventListener("abort", onAbort, { once: true });
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+/**
+ * レビューの子タスクの題（PBI-330）。親の題と PR の番号から作る（題は 200 文字までに切る）。
+ */
+export function reviewTaskTitle(parentTitle: string, number: number): string {
+  const suffix = `（PR #${number}）`;
+  const head = "レビュー：";
+  const room = 200 - head.length - suffix.length;
+  const title = parentTitle.length > room ? `${parentTitle.slice(0, room - 1)}…` : parentTitle;
+  return `${head}${title}${suffix}`;
 }

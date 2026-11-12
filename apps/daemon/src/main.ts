@@ -238,6 +238,7 @@ const service = new TaskService({
   activity,
   // 完了したタスクを監査する（PBI-125）
   audit: !auditMock,
+  reviewTasks: true,
   config,
   secrets,
   projects,

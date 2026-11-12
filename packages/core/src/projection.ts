@@ -605,6 +605,15 @@ export type Task = {
   status: TaskStatus;
   /** 分割で作った子タスクの親と、依存先の子タスク（PBI-27）。 */
   parent?: { taskId: string; dependsOn: string[] };
+  /** sacty が作った PR をレビューする子タスクの、親と、その PR を作った工程（PBI-330）。 */
+  reviewOf?: { taskId: string; step: "requirements" | "design" | "implement" };
+  /**
+   * このタスクが作った PR をレビューする子タスク（作った順。PBI-330）。1つの PR につき1つ。PR を作り直したら、新しい PR に
+   * もう1つ。
+   */
+  reviewTasks?: PayloadOf<"ReviewTaskCreated">[];
+  /** 親の PR の更新で再レビューを始めたときの、親の PR の先頭（同じ更新で繰り返さない。PBI-330）。 */
+  reviewRestartCommit?: string;
   /**
    * 依存先の子タスク（taskId）の実装の PR に重ねて始めた子タスクの、重ねている先（PBI-317）。branch はその PR のブランチ
    * （子タスクの起点のブランチ・PR の向き先・取り込む元）、commit は始めたときの依存先の合格したコミット（作業領域の起点）。
@@ -1200,6 +1209,7 @@ export function applyEvent(
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      ...(event.payload.reviewOf ? { reviewOf: event.payload.reviewOf } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.plan ? { requestedPlan: event.payload.plan } : {}),
       ...(event.payload.image ? { requestedImage: event.payload.image } : {}),
@@ -2004,6 +2014,26 @@ export function applyEvent(
       task.status = "idle";
       break;
 
+    case "ReviewTaskCreated": {
+      // sacty がこのタスクのために作った PR だけ。1つの PR に1つ（PBI-330）
+      const p = event.payload;
+      const same = (repo: string | undefined, number: number | undefined) =>
+        number === p.number && (repo ?? "").toLowerCase() === p.repo.toLowerCase();
+      const made =
+        p.step === "implement"
+          ? same(task.pullRequest?.repo, task.pullRequest?.number) ||
+            same(task.continuedPullRequest?.repo, task.continuedPullRequest?.number)
+          : task.stepPullRequests.some((x) => x.step === p.step && same(x.repo, x.number));
+      if (!made) {
+        throw new ActivityIntegrityError(event, "not a pull request sacty created for the task");
+      }
+      if ((task.reviewTasks ?? []).some((x) => same(x.repo, x.number))) {
+        throw new ActivityIntegrityError(event, "the pull request already has a review task");
+      }
+      task.reviewTasks = [...(task.reviewTasks ?? []), p];
+      break;
+    }
+
     case "PullRequestLabeled":
     case "PullRequestLabelFailed": {
       // sacty が作った PR（実装の PR と、要求要件・設計の PR）だけ（PBI-88）
@@ -2196,6 +2226,7 @@ export function applyEvent(
         Object.entries(task.outputs).filter(([key]) => key !== "review"),
       );
       task.reviewRound = (task.reviewRound ?? 1) + 1;
+      if (event.payload.commit) task.reviewRestartCommit = event.payload.commit;
       break;
 
     case "IssueCommented":

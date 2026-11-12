@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #108、PBI-99
 - 置き換え元: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
-- 置き換え先: [取り込むラベルとレビュー用のラベルに同じ名前を許す](20261015-0850-allow-same-intake-and-review-label.md)（2つのラベルに同じ名前を拒否する部分）
+- 置き換え先: [取り込むラベルとレビュー用のラベルに同じ名前を許す](20261015-0850-allow-same-intake-and-review-label.md)（2つのラベルに同じ名前を拒否する部分）、[sacty が作る PR のレビューを、ラベルで取り込む別のタスクではなく、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](20261112-0609-review-sacty-pull-requests-in-child-tasks.md)（sacty の PR にレビュー用のラベルを付け、取り込みでレビューのタスクにする部分）
 
 ## 背景
 

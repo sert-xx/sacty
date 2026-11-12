@@ -400,6 +400,8 @@ const ja = {
       `タスクブランチを作成（${branch}・${commit}）`,
     StepBranchPushed: (step: string, branch: string, commit: string) =>
       `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
+    ReviewTaskCreated: (step: string, number: number) =>
+      `${step}の PR #${number} をレビューする子タスクを作成`,
     PullRequestLabeled: (number: number, label: string, created: boolean) =>
       `PR #${number} にレビュー用のラベル「${label}」を付けた${created ? "（ラベルを作った）" : ""}`,
     PullRequestLabelFailed: (number: number, label: string, message: string) =>
@@ -451,10 +453,15 @@ const ja = {
       `GitHub の一時的な失敗のため、${seconds}秒後に${where === "reviewTarget" ? "レビューの対象の PR の確認" : "レビューの投稿"}を自動でやり直す（${attempt}/${maxAttempts}回目。${message}）`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
+    ReviewRestartedByUpdate: (commit: string) =>
+      `PR が更新されたので、最新のコミットの再レビューを始めた（${commit}）`,
     ReviewRestartedByRequest: (actor: string) =>
       `PR でレビューが再依頼されたので、再レビューを始めた（${actor}）`,
-    cancelledBecause: (text: string, reason: "pull_request_merged" | "pull_request_closed") =>
-      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : "PR が閉じられたため"}）`,
+    cancelledBecause: (
+      text: string,
+      reason: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
+    ) =>
+      `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : "レビューする PR の元のタスクが中止されたため"}）`,
     GuardianMissed: "ゴールガーディアンの見逃し：合格にした成果物が差し戻された",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -1005,6 +1012,7 @@ const en: LabelMessages = {
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
+    ReviewTaskCreated: (step, number) => `Created a child task to review the ${step} PR #${number}`,
     PullRequestLabeled: (number, label, created) =>
       `Added the review label "${label}" to PR #${number}${created ? " (created the label)" : ""}`,
     PullRequestLabelFailed: (number, label, message) =>
@@ -1029,10 +1037,12 @@ const en: LabelMessages = {
       `Because of a temporary GitHub failure, retrying ${where === "reviewTarget" ? "the check of the PR to review" : "posting the review"} automatically in ${seconds}s (retry ${attempt} of ${maxAttempts}; ${message})`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
+    ReviewRestartedByUpdate: (commit) =>
+      `The PR was updated, so started a re-review of the latest commit (${commit})`,
     ReviewRestartedByRequest: (actor) =>
       `Started a re-review because a review was re-requested on the PR (${actor})`,
     cancelledBecause: (text, reason) =>
-      `${text} (${reason === "pull_request_merged" ? "the PR was merged" : "the PR was closed"})`,
+      `${text} (${reason === "pull_request_merged" ? "the PR was merged" : reason === "pull_request_closed" ? "the PR was closed" : "the task whose PR it reviews was cancelled"})`,
     IssueCommentFailed: (message) =>
       `Could not post the investigation result to the issue: ${message}`,
     GitHubCommentsPosted: (step, results) =>

@@ -26,7 +26,7 @@ const ja = {
   reviewHint:
     "取り込んだ PR はレビューだけを行い、結果を PR に投稿します。実装や PR の作成はしません。レビューの依頼は、プロジェクトで選んだ GitHub アカウントへの個人の依頼だけです。",
   reviewLabelHint:
-    "レビュー用のラベルを設定していると、Sacty が作る PR にもこのラベルを付け、別のタスクでレビューします（取り込みが Off の間も付けます）。直す点があれば、PR を作ったタスクが直します。取り込むラベルと同じ名前にもできます。",
+    "このラベルの付いた PR を、レビューだけのタスクとして取り込みます。Sacty が作る PR にはラベルを付けず、PR を作ったタスクの子タスクがレビューします（直す点があれば、PR を作ったタスクが直します）。取り込むラベルと同じ名前にもできます。",
   reviewRequested: "自分にレビューが依頼された PR を取り込む",
   reviewMentionSelf: "レビューの投稿で、PR の作者ではなく自分にメンションする",
   reviewMentionSelfHint:
@@ -148,7 +148,7 @@ const en: SettingsMessages = {
   reviewHint:
     "Imported PRs are only reviewed, and the review is posted to the PR. No implementation and no PR. Only reviews requested from you personally (the GitHub account chosen in the project) count.",
   reviewLabelHint:
-    "When the review label is set, Sacty also adds this label to the PRs it creates (even while importing them is off), so another task reviews them. If changes are needed, the task that created the PR makes them. The review label can be the same as the label to import.",
+    "PRs with this label are imported as review-only tasks. Sacty does not add this label to the PRs it creates; a child task of the task that created the PR reviews them (if changes are needed, the task that created the PR makes them). The review label can be the same as the label to import.",
   reviewRequested: "Import PRs that request my review",
   reviewMentionSelf: "Mention me instead of the PR author in posted reviews",
   reviewMentionSelfHint:
