@@ -2677,6 +2677,15 @@ describe("non-code workflow boundaries", () => {
       );
     }
   });
+  it("作業の指示は依頼に要る複数の書き込みを許し、失敗・結果不明の後の同じ書き込みの再送だけを禁じる", () => {
+    const prompt = buildPrompt({ ...task, operation }, "operation");
+    expect(prompt).not.toContain("書込要求は1回だけ");
+    expect(prompt).toContain("書き込みの回数に上限はありません");
+    expect(prompt).toContain("親の投稿とそのスレッドへの返信");
+    expect(prompt).toContain(
+      "エラー・タイムアウト・結果不明の後に同じ書き込みを再送しないでください",
+    );
+  });
   it("不足/不正な具体案と根拠なしの成功は受け入れない", () => {
     const read = (value: unknown) =>
       extractStepPlan(
