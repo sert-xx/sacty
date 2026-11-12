@@ -21,8 +21,8 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 if (process.platform !== "darwin")
   throw new Error("現在は macOS の同一アーキテクチャのビルドだけに対応しています。");
 const [major, minor, patch] = process.versions.node.split(".").map(Number);
-if (major < 26 || (major === 26 && (minor < 12 || (minor === 12 && patch < 1))))
-  throw new Error("Node.js 26.12.1 以上で実行してください。");
+if (major < 26 || (major === 26 && (minor < 13 || (minor === 13 && patch < 1))))
+  throw new Error("Node.js 26.13.1 以上で実行してください。");
 const require = createRequire(import.meta.url);
 const { finalizeRuntime } = require("../packaging.cjs");
 const { DEFAULT_IMAGE } = require(join(root, "apps/daemon/dist/config.js"));
