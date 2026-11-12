@@ -33,7 +33,16 @@ export interface PullRequests {
      * 向き先を変えない。
      */
     retarget?: boolean;
-  }): Promise<{ url: string; number: number; draft: boolean }>;
+  }): Promise<{
+    url: string;
+    number: number;
+    draft: boolean;
+    /**
+     * 作ろうとしたら、同じブランチの PR がすでにあったので、それを返した（前回、作成の後の記録の前に止まったなど）。本文は
+     * 書いていない（PBI-334。前回の版として記録しない）。
+     */
+    existing?: true;
+  }>;
   /**
    * PR をドラフトにする・ドラフトを外す（レビューへ進める）。すでにその状態なら何もしない。GitHub の REST API では
    * 変えられないので、GraphQL の convertPullRequestToDraft・markPullRequestReadyForReview を使う。答えは変えた後の状態
@@ -957,7 +966,7 @@ export class GitHubPullRequests implements PullRequests {
       );
       const list = found.json as unknown;
       if (found.res.ok && Array.isArray(list) && list[0]) {
-        return result(list[0] as Record<string, unknown>);
+        return { ...result(list[0] as Record<string, unknown>), existing: true as const };
       }
     }
     throw apiError("createPr", res.status, json);

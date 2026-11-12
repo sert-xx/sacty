@@ -888,11 +888,11 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   - Before the implementation run, the conflicted files are passed to the implementation instructions (see "Implementation instructions" below).
   - Before the final review or before opening the PR, record `BaseConflictsRemained` and redo the implementation. A new conflict is not counted (`fresh`); remaining markers from the previous merge are counted.
   - Right before publishing (waiting to open the PR; `publishPending`), the PR is not opened; the conflicted files become `verifyFeedback` (`merge`) and the implementation is redone (the projection of `PullRequestHeadMerged`; not counted).
-    For the draft PR before the final review (`verifying`), the task pauses (`pr.headConflicted`).
+    For the draft PR before the final review (`verifying`), record `BaseConflictsRemained` (`fresh`; not counted) and redo the implementation without going on to the final review.
   - Whether markers remain is checked the same way as for the base branch merge (`pendingConflicts` is the conflicted files of the base branch merge and of the merge not yet submitted, together).
     If markers from the merge not yet submitted remain right before publishing, sacty does not push and pauses (`pr.headConflicted`).
   - If it cannot merge, it pauses with the reason (`pr.headMergeFailed`).
-- In the flow with the final review, when the merge right before publishing (after passing the final review, while waiting to open the PR) merges without conflicts, the merged contents have not been verified, so the PR is not opened; the task goes back to waiting for verification and the final review is redone (`reverify` of `PullRequestHeadMerged`).
+- In the flow with the final review, when the merge right before publishing (after passing the final review, while waiting to open the PR), or the merge after the body is prepared (commits added while an agent reconciled the body), merges without conflicts, the merged contents have not been verified, so the PR is not opened; the task goes back to waiting for verification and the final review is redone (`reverify` of `PullRequestHeadMerged`).
 - Submitting (`publish`):
   - If there is a merge not yet submitted, stack with the merged tip as the parent (otherwise, as before, the previously pushed commit).
     Because it stacks on the person's tip, the push is a fast-forward.

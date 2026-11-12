@@ -13417,6 +13417,64 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("本文をまとめたコンテナが止まったことを確かめられなければ、PR を更新せずに一時停止する", async () => {
+      const { activity, service, executor, pulls, id } = await toImplementGate(rework());
+      pulls.bodies[7] = "人が全部書き直した本文";
+      const run = executor.run.bind(executor);
+      executor.run = async (input) => {
+        const prompt = input.invocation.stdin ?? input.invocation.command.join(" ");
+        if (!prompt.includes("githubNow")) return run(input);
+        const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+        error.unconfirmedContainer = "sacty-run-body";
+        throw error;
+      };
+      sendBack(service, id);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({
+        code: "orchestrator.failed",
+        params: { detail: { code: "run.containerNotConfirmed" } },
+      });
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("最終レビューをする流れで、本文をまとめる間に人がコミットを足したら、PR を出さずに取り込んで最終レビューからやり直す", async () => {
+      const [fixed, reviewed] = rework();
+      if (!fixed || !reviewed) throw new Error("no outcomes");
+      const answer = out(`${BODY_BEGIN}\n## まとめた本文\n${BODY_END}`);
+      const { activity, service, executor, repos, pulls, id } = await toImplementGate([
+        fixed,
+        reviewed,
+        HOLD,
+        reviewed,
+        answer,
+      ]);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      pulls.bodies[7] = "人が全部書き直した本文";
+      sendBack(service, id);
+      const running = drain(service);
+      const runId = await executor.started.promise;
+      // 本文をまとめる間に、人がコミットを足した
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      executor.finishHeld(runId, answer);
+      await running;
+      await drain(service);
+      expect(
+        eventsOf(service, id, "PullRequestHeadMerged").map(
+          (e) => (e.payload as { commit: string; reverify?: true }).reverify,
+        ),
+      ).toEqual([true]);
+      // 検証していない内容の PR は出さず、最終レビューをやり直してから、人の先頭に積んで出す
+      expect(pulls.calls).toHaveLength(2);
+      expect(repos.published.at(-1)).toMatchObject({ parent: human });
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
     it("今の本文を読めなければ、これまでどおり sacty の本文で更新する", async () => {
       const { activity, service, pulls, id } = await toImplementGate(rework());
       pulls.bodies[7] = "人が全部書き直した本文";
@@ -13985,6 +14043,53 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.pullRequest).toMatchObject({ number: 7, verifying: true, draft: true });
       expect(task?.status).toBe("idle");
       expect(task?.pullRequestCi?.result).toBeUndefined();
+      activity.close();
+    });
+
+    it("ドラフトの PR を更新する直前に、人の新しいコミットと競合したら、一時停止せずに、競合したファイルを渡して実装をやり直す（PBI-334）", async () => {
+      // 最終レビューの前の取り込み（1回目の読み取り）の後、ドラフトの PR を更新する前（2回目）に、人がコミットを足した
+      class MovingRepos extends FakeRepos {
+        branchReads = 0;
+        moveAt?: { branch: string; read: number; commit: string };
+        override async fetchBranch(
+          gitDir: string,
+          branch: string,
+          authEnv?: Record<string, string>,
+        ) {
+          if (this.moveAt?.branch === branch) {
+            this.branchReads += 1;
+            if (this.branchReads === this.moveAt.read) {
+              this.remote[branch] = this.moveAt.commit;
+              this.mergeResult = { status: "conflicted", conflicts: ["src/retry.ts"] };
+            }
+          }
+          return super.fetchBranch(gitDir, branch, authEnv);
+        }
+      }
+      const repos = new MovingRepos();
+      const { activity, service, pulls, id } = await drafted(
+        [implement("# 実装の説明"), review(), implement("# 実装の説明 v2"), implement("# v3")],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      await settleCi(service);
+      await service.runNext(id);
+      await service.runNext(id);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+      await service.runNext(id); // 実装のやり直し（取り込むものは無い）
+      repos.branchReads = 0;
+      repos.moveAt = { branch: pushed.branch, read: 2, commit: "d".repeat(40) };
+      repos.markers = ["src/retry.ts"];
+      await service.runNext(id); // 最終レビューの前：取り込み（1回目）→ ドラフトの PR の更新（2回目で競合）
+      const task = service.get(id)?.task;
+      expect(task?.status).not.toBe("paused");
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(task?.verifyFeedback).toEqual({ kind: "merge", files: ["src/retry.ts"] });
+      // ドラフトの PR は、競合の目印のある内容で更新しない
+      expect(pulls.calls).toHaveLength(2);
       activity.close();
     });
 

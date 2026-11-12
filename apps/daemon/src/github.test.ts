@@ -237,6 +237,8 @@ describe("GitHub の PR（PBI-10b）", () => {
     ]);
     const pr = await new GitHubPullRequests(impl).upsert(input);
     expect(pr.number).toBe(8);
+    // 本文は書いていないので、そう示す（PBI-334。前回の版として記録しない）
+    expect(pr.existing).toBe(true);
     expect(calls[1]?.url).toBe(
       "https://api.github.com/repos/acme/app/pulls?state=open&head=acme%3Asacty%2Ftask-1234abcd",
     );
@@ -252,6 +254,33 @@ describe("GitHub の PR（PBI-10b）", () => {
     await client.upsert({ ...input, number: 7, baseBranch: "main" });
     expect(calls[0]).toMatchObject({ method: "PATCH", body: { body: "本文", base: "main" } });
     expect(calls[1]?.body).toEqual({ body: "本文" });
+  });
+
+  it("更新で本文が無ければ、本文を送らない（人が直した本文に触れない。PBI-334）。作った PR は existing にしない", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { html_url: "https://github.com/acme/app/pull/7", number: 7 } },
+      { status: 201, json: { html_url: "https://github.com/acme/app/pull/9", number: 9 } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    await client.upsert({ ...input, number: 7, body: undefined });
+    expect(calls[0]).toMatchObject({ method: "PATCH" });
+    expect(calls[0]?.body).toEqual({});
+    expect((await client.upsert(input)).existing).toBeUndefined();
+  });
+
+  it("PR の今の本文を読む。本文が無ければ空、読めない・答えが JSON でなければ失敗にする（PBI-334）", async () => {
+    const ok = fakeFetch([{ status: 200, json: { body: "人の本文" } }]);
+    expect(await new GitHubPullRequests(ok.impl).pullRequestBody({ ...input, number: 7 })).toBe(
+      "人の本文",
+    );
+    const empty = fakeFetch([{ status: 200, json: { body: null } }]);
+    expect(await new GitHubPullRequests(empty.impl).pullRequestBody({ ...input, number: 7 })).toBe(
+      "",
+    );
+    const denied = fakeFetch([{ status: 404, json: { message: "Not Found" } }]);
+    await expect(
+      new GitHubPullRequests(denied.impl).pullRequestBody({ ...input, number: 7 }),
+    ).rejects.toThrow();
   });
 
   it("番号があれば本文を更新し、失敗は理由つきのエラーにする（トークンは含めない）", async () => {

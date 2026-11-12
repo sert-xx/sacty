@@ -11136,6 +11136,9 @@ export class TaskService {
             generated: body,
           })
         : { body, record: true };
+      // 本文をまとめる間に一時停止・中止を求められた・まとめたコンテナが止まったか確かめられなかったら、PR を更新しない
+      // （同じ PR がすでにあるので、作った PR を記録し損ねることはない。再開すると、ここからやり直す）
+      if (reuse && ("stop" in sent || this.stopRequested(task.id))) return;
       const pr = await this.deps.pulls.upsert({
         repo,
         token,
@@ -11146,7 +11149,7 @@ export class TaskService {
         body: sent.body,
         ...(reuse ? { number: reuse.number } : {}),
       });
-      if (sent.record) this.recordPullRequestBody(task.id, repo, pr.number, body);
+      if (sent.record && !pr.existing) this.recordPullRequestBody(task.id, repo, pr.number, body);
       // 作った PR は、中止・一時停止を求められていても記録する（中止の後片付けで閉じるため）
       const latest = this.mustGet(task.id);
       if (this.awaitingStepPullRequest(latest) !== step) return;
@@ -11260,7 +11263,7 @@ export class TaskService {
   private async reconcilePullRequestBody(
     task: Task,
     input: { repo: string; token: string; number: number; generated: string; agent?: boolean },
-  ): Promise<{ body?: string; record: boolean }> {
+  ): Promise<{ body?: string; record: boolean; stop?: true }> {
     const generated = input.generated;
     const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
     if (base === undefined) return { body: generated, record: true };
@@ -11323,9 +11326,22 @@ export class TaskService {
     );
     if ("failure" in ran) {
       const { reason: _reason, message: detail, ...cost } = ran.failure;
-      // コンテナが止まったことを確かめられなかった実行は、ここでは使わない（本文は変えないので、タスクは止めない）
-      this.unconfirmedRuns.delete(ran.failure.runId ?? "");
-      return kept(message("pr.bodyMergeFailed", { detail }), cost);
+      const result = kept(message("pr.bodyMergeFailed", { detail }), cost);
+      // コンテナが止まったことを確かめられなかった実行（元のコンテナが動いたままかもしれない）なら、ほかの実行と重ならないように
+      // PR を更新せずに一時停止する（再開・中止のときに、止まったことを確かめる。工程の見直しと同じ）
+      if (this.unconfirmedRuns.delete(ran.failure.runId ?? "")) {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: ran.failure.reason, message: ran.failure.message },
+            },
+          },
+        ]);
+        return { ...result, stop: true };
+      }
+      return result;
     }
     const body = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
     if (!body) return kept(message("orchestrator.unreadable"), ran.cost);
@@ -11464,6 +11480,17 @@ export class TaskService {
     if (head.kind === "conflicts") {
       // 新しく競合したなら、PullRequestHeadMerged の投影が実装のやり直しに戻した
       if (waitingPublish && head.fresh) return "stopped";
+      // 最終レビューの前のドラフトの PR（verifying）で新しく競合したら、検証に進まず、競合したファイルを渡して実装をやり直す
+      // （数えない。エージェントの誤りではない）
+      if (verifying && head.fresh) {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: { type: "BaseConflictsRemained", payload: { files: head.files, fresh: true } },
+          },
+        ]);
+        return "stopped";
+      }
       // 前の取り込みの目印が残っている・最終レビューの前のドラフトの PR（verifying）は、目印のある内容をプッシュせずに止める
       return fail(message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }));
     }
@@ -11612,7 +11639,14 @@ export class TaskService {
             generated: body,
           })
         : { body, record: true };
-      if (this.stopRequested(task.id)) return "stopped";
+      if ("stop" in sent || this.stopRequested(task.id)) return "stopped";
+      // 最終レビューをする流れで、本文を用意する間（エージェントがまとめる間など）に人がコミットを足していたら、検証していない
+      // 内容の PR を出さない（取り込んで、検証からやり直す）
+      if (reverify) {
+        const moved = await this.syncPullRequestHead(this.mustGet(task.id), { reverify: true });
+        if (moved.kind === "failed") return fail(moved.message);
+        if (moved.kind === "conflicts" || moved.merged) return "stopped";
+      }
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
@@ -11627,7 +11661,9 @@ export class TaskService {
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
       });
-      if (sent.record) this.recordPullRequestBody(task.id, prRepo, pr.number, body);
+      if (sent.record && !pr.existing) {
+        this.recordPullRequestBody(task.id, prRepo, pr.number, body);
+      }
       let draft = pr.draft;
       let draftError: unknown;
       const baseRecord = stacked ? { baseBranch: repositoryNow.baseBranch } : {};

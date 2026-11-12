@@ -390,7 +390,7 @@ A task that takes over an existing PR never changes the PR body in the first pla
 
 Related ADR: [Merge commits a person added to a sacty PR into the workspace, and keep a person's edits to the PR body with a three-way merge](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
 
-- Record of the previous version: after opening or updating a PR, sacty records the body it assembled that time (after filling the template, truncating to the length limit, and masking secrets; it does not include the person's edits) as `PullRequestBodyWritten` (the PR's repository, number, and body) (`recordPullRequestBody`).
+- Record of the previous version: after opening or updating a PR (not when sacty tried to open one, found an existing PR for the same branch, and did not write its body; `existing` in the answer of `upsert`), sacty records the body it assembled that time (after filling the template, truncating to the length limit, and masking secrets; it does not include the person's edits) as `PullRequestBodyWritten` (the PR's repository, number, and body) (`recordPullRequestBody`).
   It is not recorded when it equals the previous one.
   `Task.pullRequestBodies` (keyed by `<repository URL>#<number>`; `pullRequestBodyKey`) holds the last one per PR.
   The task list API (`/api/tasks`) does not send it (the screen does not use it, and it holds a full body per PR).
@@ -411,12 +411,13 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
      - The text between the last `<<<SACTY_PR_BODY_BEGIN>>>` and `<<<SACTY_PR_BODY_END>>>` in the answer is the body (`extractMergedPullRequestBody`).
      - After reconciling, sacty reads the current body again; if the person edited it again in the meantime, it does not overwrite with a body that lacks those edits (see 6.; `pr.bodyEditedDuringMerge`).
      - If reconciled, sacty updates with that body, records `PullRequestBodyResolved` (`resolved`; with the run's cost), and records the newly assembled body as the previous version.
+  If a pause or cancel is requested while an agent reconciles the body, the PR is not updated (the same applies to the requirements and design PRs).
   6. If it cannot be reconciled, the PR is updated without touching the body (no body is passed to `upsert`; the body read earlier is not written back), and the previous version is not recorded again (the next update merges sacty's updates again).
      `PullRequestBodyResolved` (`kept`) keeps the reason. The PR update does not stop.
      It cannot be reconciled when:
      - the settings cannot be read (`pr.bodyMergeUnavailable`)
      - the budget cap has been reached (`pr.bodyMergeBudget`)
-     - the agent run failed (`pr.bodyMergeFailed`)
+     - the agent run failed (`pr.bodyMergeFailed`). If it could not be confirmed that the container stopped, the PR is not updated and the task pauses (with the run failure's reason; stopping is confirmed on resume or cancel)
      - the answer cannot be read (`orchestrator.unreadable`; no marker lines, empty, merge markers left, or too long)
      - the person edited the body again while it was being reconciled, or it cannot be read again (`pr.bodyEditedDuringMerge`)
      - when retargeting a stacked PR (`retargetPullRequest`); retargeting runs outside the task's run, so no agent is run (`pr.bodyMergeDeferred`)

@@ -437,7 +437,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 
 関係する ADR: [人が sacty の PR に足したコミットを作業領域に取り込み、人が直した PR の本文を3方向でマージして残す](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
 
-- 前回の版の記録：PR を作った・更新した後に、sacty がその回に組み立てた本文（テンプレートで埋め、長さの上限で省き、秘密の値を伏せた後のもの。人の直しは含まない）を `PullRequestBodyWritten`（PR のリポジトリ・番号・本文）に記録する（`recordPullRequestBody`）。
+- 前回の版の記録：PR を作った・更新した後に（作ろうとしたら同じブランチの PR がすでにあり、本文を書かなかったとき（`upsert` の答えの `existing`）は記録しない）、sacty がその回に組み立てた本文（テンプレートで埋め、長さの上限で省き、秘密の値を伏せた後のもの。人の直しは含まない）を `PullRequestBodyWritten`（PR のリポジトリ・番号・本文）に記録する（`recordPullRequestBody`）。
   前回と同じ本文なら記録しない。
   `Task.pullRequestBodies`（キーは `<リポジトリの URL>#<番号>`。`pullRequestBodyKey`）に、PR ごとに最後のものを持つ。
   タスクの一覧の API（`/api/tasks`）では送らない（画面では使わず、PR ごとに本文の全文があるため）。
@@ -458,12 +458,13 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - 答えの `<<<SACTY_PR_BODY_BEGIN>>>` と `<<<SACTY_PR_BODY_END>>>` の間（最後のもの）を本文にする（`extractMergedPullRequestBody`）。
      - まとめた後に今の本文を読み直し、まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（下の 6.。`pr.bodyEditedDuringMerge`）。
      - まとめられたら、その本文で更新する。`PullRequestBodyResolved`（`resolved`。実行の費用）を記録し、新しく組み立てた本文を前回の版として記録する。
+  エージェントがまとめる間に一時停止・中止を求められたら、PR を更新しない（要求要件・設計の PR も同じ）。
   6. まとめられなければ、本文に触れずに PR を更新し（`upsert` に本文を渡さない。読んだ時点の古い本文を書き戻さない）、前回の版も記録し直さない（次の更新で、もう一度 sacty の更新を取り込む）。
      `PullRequestBodyResolved`（`kept`）に理由を残す。PR の更新は止めない。
      まとめられないのは、次のとき。
      - 設定を読めない（`pr.bodyMergeUnavailable`）
      - 予算の上限に達している（`pr.bodyMergeBudget`）
-     - エージェントの実行に失敗した（`pr.bodyMergeFailed`）
+     - エージェントの実行に失敗した（`pr.bodyMergeFailed`）。コンテナが止まったことを確かめられなかったときは、PR を更新せずに一時停止する（実行の失敗の理由。再開・中止のときに、止まったことを確かめる）
      - 答えを読めない（`orchestrator.unreadable`。目印の行が無い・空・マージの目印が残っている・長すぎる）
      - まとめる間に人が本文をまた直した・読み直せない（`pr.bodyEditedDuringMerge`）
      - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
