@@ -28678,6 +28678,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           },
         }) as unknown as ServiceDeps["ci"];
       /** 実装だけのタスクを、実装の PR を作って承認待ちになるまで進める。 */
+      /**
+       * 呼び出し元（スタックの名前 caller）からの PR の状態を読む答えを返さないようにする（PR #348 15回目のレビュー指摘）。
+       * 読み始めたときに、待つのをやめていない（中断されていない）先の通信が何本あったかの最大を返す。
+       */
+      function hangStatus(pulls: FakePulls, caller: string) {
+        const original = pulls.status.bind(pulls);
+        const spy = vi.spyOn(pulls, "status");
+        const signals: (AbortSignal | undefined)[] = [];
+        let max = 0;
+        spy.mockImplementation(
+          (input: Parameters<FakePulls["status"]>[0] & { signal?: AbortSignal }) => {
+            if (!new Error().stack?.includes(caller)) return original(input);
+            signals.push(input.signal);
+            max = Math.max(max, signals.filter((signal) => !signal?.aborted).length);
+            return new Promise(() => {});
+          },
+        );
+        return { signals, maxActive: () => max, restore: () => spy.mockRestore() };
+      }
+
       async function implemented(
         outcomes: AgentOutcome[],
         ciCalls: string[] = [],
@@ -29781,20 +29801,35 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(taskOf(service, second).pullRequest?.number).toBeDefined();
         service.pause(id);
         service.pause(second);
-        const original = pulls.status.bind(pulls);
-        const status = vi.spyOn(pulls, "status");
-        let hanging = 0;
-        status.mockImplementation((input) => {
-          if (!new Error().stack?.includes("settlePausedDraft")) return original(input);
-          hanging++;
-          return new Promise(() => {});
-        });
-        const started = Date.now();
+        const hung = hangStatus(pulls, "settlePausedDraft");
         await service.checkPullRequests();
-        status.mockRestore();
-        expect(hanging).toBe(2);
-        // 1つずつ待つと 600 ミリ秒以上かかる
-        expect(Date.now() - started).toBeLessThan(550);
+        hung.restore();
+        // 2つとも、先の答えを待つのをやめる前に読み始めた（並べて読んだ）。待つのをやめた通信は中断した
+        expect(hung.signals).toHaveLength(2);
+        expect(hung.maxActive()).toBe(2);
+        expect(hung.signals.every((signal) => signal?.aborted)).toBe(true);
+        activity.close();
+      });
+
+      it("指摘なしを待つ実装の PR の先頭は並べて読み、答えが返らなければ中断する（PR #348 15回目のレビュー指摘）", async () => {
+        const made = await implemented([implement()], [], { draftTimeoutMs: 100 });
+        const { activity, service, pulls, id } = made;
+        const second = service.createTask({
+          projectId: "default",
+          title: "2つめ",
+          body: "本文",
+        }).id;
+        for (let i = 0; i < 5 && taskOf(service, second).status !== "awaiting_approval"; i++) {
+          await service.runNext(second);
+        }
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        expect(taskOf(service, second).pullRequest?.awaitingReview).toBe(true);
+        const hung = hangStatus(pulls, "pullRequestHead");
+        await service.checkPullRequests();
+        hung.restore();
+        expect(hung.signals.length).toBeGreaterThanOrEqual(2);
+        expect(hung.maxActive()).toBeGreaterThanOrEqual(2);
+        expect(hung.signals.every((signal) => signal?.aborted)).toBe(true);
         activity.close();
       });
 

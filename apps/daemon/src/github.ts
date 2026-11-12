@@ -46,7 +46,13 @@ export interface PullRequests {
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（承認待ちの間に見守る。PBI-14a）。 */
-  status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
+  /** signal で中断できる（答えを待つのをやめた通信を残さない。PBI-331）。 */
+  status(input: {
+    repo: string;
+    token: string;
+    number: number;
+    signal?: AbortSignal;
+  }): Promise<PullRequestStatus>;
   /**
    * PR へのフィードバック（PBI-14b）。レビュー（Request changes・コメント）の本文、行ごとのコメント、
    * PR への通常のコメント。bot のものは含めない。
@@ -787,6 +793,7 @@ export class GitHubPullRequests implements PullRequests {
         authorization: `Bearer ${input.token}`,
         "x-github-api-version": "2022-11-28",
       },
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);

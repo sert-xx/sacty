@@ -1028,8 +1028,27 @@ function warnDraftUnknown(number: number, repo: string): void {
   );
 }
 
-/** 一時停止したタスクの実装の PR のドラフトを、同時に確かめる数（PBI-331。settlePausedDrafts）。 */
-export const PAUSED_DRAFTS_CONCURRENCY = 4;
+/**
+ * PR の確認で、実装の PR の先頭・ドラフトを同時に読む数（PBI-331。reconcileReviewTasks・settlePausedDrafts。答えが返らない
+ * PR が続いても、1つずつ待たない）。
+ */
+export const DRAFT_CHECK_CONCURRENCY = 4;
+
+/** items を、同時に limit 件ずつ fn で処理する（PBI-331）。 */
+async function inParallel<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const work = async () => {
+    while (next < items.length) {
+      const item = items[next++] as T;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, work));
+}
 
 /**
  * 答えを待つのをやめたドラフトの切り替えの要求を、終わっていない要求として数える上限（DRAFT_TIMEOUT_MS の倍数。PBI-331）。
@@ -11585,6 +11604,26 @@ export class TaskService {
         console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
       });
     }
+    // 指摘なしを待つ実装の PR の GitHub の先頭は、先に並べて読む（答えが返らない PR が続いても、1つずつ待たない）
+    const heads = new Map<string, string | undefined>();
+    const awaitingParents = [...this.tasks.values()].filter((parent) => {
+      const gate = gatePullRequest(parent);
+      return (
+        parent.status === "awaiting_approval" &&
+        gate?.state === "open" &&
+        gate.repo !== undefined &&
+        gate.step === "implement" &&
+        parent.pullRequest?.awaitingReview === true
+      );
+    });
+    await inParallel(awaitingParents, DRAFT_CHECK_CONCURRENCY, async (parent) => {
+      const gate = gatePullRequest(parent);
+      if (!gate?.repo) return;
+      heads.set(
+        `${parent.id}:${gate.number}`,
+        await this.pullRequestHead(parent, gate.repo, gate.number),
+      );
+    });
     for (const parent of [...this.tasks.values()]) {
       if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) continue;
       if (this.pauseRequested.has(parent.id)) continue;
@@ -11618,8 +11657,11 @@ export class TaskService {
         seen.head !== reviewed
           ? seen.head
           : undefined;
+      const key = `${parent.id}:${gate.number}`;
       const target = awaiting
-        ? await this.pullRequestHead(parent, gate.repo, gate.number)
+        ? heads.has(key)
+          ? heads.get(key)
+          : await this.pullRequestHead(parent, gate.repo, gate.number)
         : (draftedAhead ?? reviewed ?? gate.commit);
       if (!target) continue;
       const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
@@ -11758,6 +11800,21 @@ export class TaskService {
   }
 
   /**
+   * PR の状態を読む（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら通信を中断して失敗にする（待つのをやめた通信を
+   * 残さない）。
+   */
+  private statusWithin(input: { repo: string; token: string; number: number }) {
+    const abort = new AbortController();
+    return withDeadline(
+      this.deps.pulls.status({ ...input, signal: abort.signal }),
+      this.draftTimeoutMs(),
+    ).catch((error: unknown) => {
+      abort.abort();
+      throw error;
+    });
+  }
+
+  /**
    * PR のドラフトを切り替える（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら通信を中断して失敗にする。要求が終わるまでは、
    * 終わっていない要求として数える（draftRequests）。中断しても終わらない要求も、DRAFT_SETTLE_MS を過ぎたら数えない（GitHub が
    * 復旧した後に、ドラフトを外せないままにしない）。
@@ -11869,17 +11926,8 @@ export class TaskService {
       }
       return !this.readying.has(task.id) && !this.draftRequests.has(`${task.id}:${pr.number}`);
     });
-    // 答えが返らない PR があっても全体が長く待たないよう、PAUSED_DRAFTS_CONCURRENCY 件ずつ並べて確かめる
-    let next = 0;
-    const work = async () => {
-      while (next < paused.length) {
-        const task = paused[next++];
-        if (task) await this.settlePausedDraft(task);
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(PAUSED_DRAFTS_CONCURRENCY, paused.length) }, work),
-    );
+    // 答えが返らない PR があっても全体が長く待たないよう、DRAFT_CHECK_CONCURRENCY 件ずつ並べて確かめる
+    await inParallel(paused, DRAFT_CHECK_CONCURRENCY, (task) => this.settlePausedDraft(task));
   }
 
   /** 一時停止したタスクの実装の PR を1つ確かめ、ドラフトでなければ戻す（PBI-331。settlePausedDrafts）。 */
@@ -11890,10 +11938,7 @@ export class TaskService {
     try {
       const token = await this.githubToken(task, pr.repo, usedSecrets);
       // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
-      const status = await withDeadline(
-        this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
-        this.draftTimeoutMs(),
-      );
+      const status = await this.statusWithin({ repo: pr.repo, token, number: pr.number });
       if (status.state !== "open") return;
       if (status.draft === undefined) {
         warnDraftUnknown(pr.number, pr.repo);
@@ -12015,10 +12060,7 @@ export class TaskService {
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
-      const status = await withDeadline(
-        this.deps.pulls.status({ repo, token, number }),
-        this.draftTimeoutMs(),
-      );
+      const status = await this.statusWithin({ repo, token, number });
       return status.state === "open" ? status.headSha : undefined;
     } catch (error) {
       console.warn(
