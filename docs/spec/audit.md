@@ -9,7 +9,7 @@
 採用のときは、改善案に補足する・人の案に差し替えることもできる。
 監査は、監査したタスクの作業履歴に記録する。
 
-関係する ADR: [監査の画面を、裏側のモックで先に作る](../adr/20261017-1145-audit-ui-with-mock.md)、[完了したタスクを、作業履歴に記録しながら2段で監査する](../adr/20261017-1310-audit-engine.md)、[不安定なテストの台帳を作業履歴から導き、提案は人が作るタスクにする](../adr/20261106-1105-derive-flaky-test-ledger-from-activity.md)
+関係する ADR: [監査の画面を、裏側のモックで先に作る](../adr/20261017-1145-audit-ui-with-mock.md)、[完了したタスクを、作業履歴に記録しながら2段で監査する](../adr/20261017-1310-audit-engine.md)、[不安定なテストの台帳を作業履歴から導き、提案は人が作るタスクにする](../adr/20261106-1105-superseded-derive-flaky-test-ledger-from-activity.md)
 
 ## 監査の始まりと対象
 
@@ -147,6 +147,7 @@
 
 最終レビューが認めた不安定な失敗（`FinalReviewed` の `tests.flakyFailures` と、テストのコマンドが無いタスクで CI の結果から認めた `ciFlakyFailures`。[工程の仕様](tasks-and-steps.md)）を、プロジェクトごとに集計する。
 監査の実行とは別のもので、監査の予算を使わない。
+最終レビューをしない流れ（デーモンの起動の既定。[実装の検証](tasks-and-steps.md#実装の検証)）では、新しい記録はできない。画面にも出さない（台帳を読む API `/api/projects/:id/flaky-tests` と、台帳からタスクを作る口は、古い記録のために残る）。
 
 - 新しい保存先は持たず、作業履歴から導く。
   `lastReview` は回ごとに置き換わるので、タスクの状態の `flakySightings` に、すべての回の認めた失敗を畳み込む。
@@ -172,7 +173,7 @@
   - PR をマージしたら、マージより前の記録は数えない。後の記録があれば、数え直す。タスクを分割したときは、子孫のタスクの PR のマージも数える。
 
 コード: `packages/core/src/flaky-tests.ts`（`flakyTests`・`knownFlakyTests`・`findFlakyTest`・`repoPath`）、`packages/core/src/projection.ts`（`flakySightings`）、`apps/daemon/src/service.ts`（`projectFlakyTests`・`createTask`・`rerunTask`）、
-`apps/web/src/components/flaky-tests.tsx`（`FlakyTestsCard`・`flakyFixDraft`）、`apps/web/src/components/new-task-dialog.tsx`（`NewTaskDialog`）
+`apps/web/src/components/new-task-dialog.tsx`（`NewTaskDialog`）
 
 ## 監査の予算
 

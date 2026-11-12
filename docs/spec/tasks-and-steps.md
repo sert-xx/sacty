@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -1000,7 +1000,28 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 ## 実装の検証
 
-実装の工程が終わってから承認待ちになるまでの流れは次のとおり。
+デーモンの起動では、実装の工程の後に最終レビュー（ゴールガーディアンによるテストの実行）も PR の CI の待ちもしない（デーモンの依存 `finalReview: false`。[最終レビューをしない流れ](#最終レビューをしない流れ)。[ADR](../adr/20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)）。
+この節のそれ以外の項（最終レビュー・CI の待ち・不安定なテスト・人がレビューへ進める）は、`finalReview` を有効にしたときの流れで、工程の流れを確かめるテストのために残している。
+
+### 最終レビューをしない流れ
+
+- 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、次の実行で `FinalReviewSkipped`（actor `sacty`）を記録して、PR の作成の待ち（`publishPending`）にする。
+  ベースブランチの取り込み・差分の取得・テストのコンテナ・ゴールガーディアンは動かさない。実装の工程のエージェントが作業中にテストを実行することは変わらない。
+  最終レビュー・CI の待ちの途中だったタスク（古い版の作業履歴）も、次の実行（止まっていたタスクは再開の後）で同じく `FinalReviewSkipped` を記録して進む（`pullRequestCi` を捨てる）。
+- 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
+  既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
+  PR の本文の結論には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを書く（`reviewBodyLine`）。
+- PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+  子タスクの判定が今のコミットで指摘なしになったら、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
+  外せなければ記録せず、次の PR の確認でやり直す。外す間に親が変わったら（差し戻し・PR の更新）記録しない。
+- sacty は PR の CI を待たない・再実行しない（PR の確認で `checkVerificationCi` を動かさない）。不安定なテストの台帳に新しい記録はできない。
+- 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
+
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+
+### 最終レビューをする流れ
+
+実装の工程が終わってから承認待ちになるまでの流れは次のとおり（`finalReview` を有効にしたとき）。
 
 ![実装の検証から承認待ちまで](images/verify.svg)
 
@@ -1405,6 +1426,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 ### 人がレビューへ進める
 
 実装の検証が続けて通らずに止まった（`verification`）タスクは、人の判断で、ゴールガーディアンの不合格のままレビューへ進められる（`submitForReview`）。
+画面にはこの操作を出さない（最終レビューをしない流れでは、止まったタスクは再開すると PR のレビューへ進むため）。デーモンの API だけが残る。
 
 - 進められるのは、実装の工程で `verification` の一時停止をしていて、PR の作成の待ちでないとき（`canOverrideVerification`）。
   既存の PR を引き継ぐタスクは進められない（不合格の実装を人の PR に積むことになり、PR の本文も変えないので覆した記録も残らないため）。
@@ -1417,7 +1439,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   本文の長さの上限で省かれないよう、テンプレートを使う本文は footer に、使わない本文は冒頭の「結論」に置いて省いても残す（`keep`）。
 - 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。
 
-コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）
+コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）
 
 ### テストの仕組みが無いタスク
 

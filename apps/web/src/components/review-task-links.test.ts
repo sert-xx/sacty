@@ -77,6 +77,23 @@ describe("PR のレビューの子タスクへのリンク（PBI-330）", () => 
       expect(html).toContain(m.task.reviewTaskOf(step, 7, m.labels.status.cancelled));
       expect(html).toContain(m.task.reviewTaskOf(step, 7, m.labels.status.queued));
       expect(html.match(/data-testid="review-task"/g)).toHaveLength(2);
+      // 投稿した回があれば、何回目と判定を添える（PBI-331）
+      const posted = {
+        ...(second as Task),
+        reviewVerdicts: [{ round: 2, verdict: "no_findings" as const }],
+      };
+      const withRound = renderToStaticMarkup(
+        createElement(TaskDetailView, {
+          data: {
+            task: parent as Task,
+            activity: [],
+            projectName: "Project",
+            children: [],
+            reviewTasks: [{ id: "c2", step: "requirements" as const, number: 7, task: posted }],
+          },
+        }),
+      );
+      expect(withRound).toContain(m.task.reviewTaskRound(2, m.task.reviewVerdict.no_findings));
     }
   });
 });

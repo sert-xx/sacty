@@ -4,7 +4,7 @@
 - タスク: PBI-310
 - PR: #316
 - ブランチ: feat/issue-310-flaky-classification
-- 関係する ADR: [差分と無関係で実行し直すと結果が変わる失敗を、実装に戻さない](../adr/20261106-1130-accept-flaky-failures-unrelated-to-diff.md)
+- 関係する ADR: [差分と無関係で実行し直すと結果が変わる失敗を、実装に戻さない](../adr/20261106-1130-superseded-accept-flaky-failures-unrelated-to-diff.md)
 
 ## 目的
 

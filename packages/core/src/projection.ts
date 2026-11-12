@@ -139,6 +139,8 @@ export function reviewedPullRequest(
 ): { branch: string; commit: string; number: number; url?: string } | undefined {
   const pr = task.pullRequest;
   if (!pr?.number || pr.verifying || task.pullRequestState !== "open") return undefined;
+  // PR のレビューの子タスクが、まだ指摘なしにしていない（PBI-331）
+  if (pr.awaitingReview) return undefined;
   if (task.status === "cancelled" || task.continuedPullRequest) return undefined;
   if (task.verificationOverride?.submission === task.submissions.implement) return undefined;
   return {
@@ -1966,6 +1968,29 @@ export function applyEvent(
         ...(task.pullRequestCiReruns ?? []),
         { commit, ...rerun, at: event.at },
       ];
+      break;
+    }
+
+    case "FinalReviewSkipped":
+      // 最終レビューと CI の待ちをせずに、PR の作成へ進める（PBI-331）
+      if (
+        task.status !== "idle" ||
+        activeStep(task) !== "implement" ||
+        task.verification === undefined
+      ) {
+        throw new ActivityIntegrityError(event, "final review is not pending");
+      }
+      passVerification(task);
+      task.pullRequestCi = undefined;
+      break;
+
+    case "PullRequestMarkedReady": {
+      const pr = task.pullRequest;
+      if (!pr || pr.number !== event.payload.number || !pr.awaitingReview) {
+        throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
+      }
+      const { draft: _draft, awaitingReview: _awaiting, ...rest } = pr;
+      task.pullRequest = rest;
       break;
     }
 

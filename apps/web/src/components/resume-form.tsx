@@ -2,7 +2,7 @@
 
 import { type PauseReason, RESUME_NOTE_MAX } from "@sacty/core";
 import { useActionState, useState } from "react";
-import { type ResumeState, resumeTaskAction, submitForReviewAction } from "@/app/actions";
+import { type ResumeState, resumeTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,6 @@ export function ResumeForm({
   repoOptional = false,
   chosenRepo,
   tests,
-  toReview = false,
   steps = [],
   image,
   noteRoom = RESUME_NOTE_MAX,
@@ -60,8 +59,6 @@ export function ResumeForm({
    * current：いまのテストのコマンド（ツールがイメージに無くて止まったタスク。指定し直すときの初期値）。
    */
   tests?: { bugfix: boolean; rechoose: boolean; current?: string };
-  /** 実装の検証が続けて通らずに止まったタスク。人の判断で、レビュー（実装の承認）へ進められる。 */
-  toReview?: boolean;
   /** 再開と一緒にエージェントを変えられる工程（まだ終わっていない工程）。 */
   steps?: ResumeStepSetting[];
   /** 再開と一緒に変えられるタスクのイメージ（PBI-318。まだ終わっていない工程があるときだけ）。 */
@@ -268,7 +265,6 @@ export function ResumeForm({
         </p>
       )}
       {needsCap && <p className="text-xs text-muted-foreground">{m.parts.resume.capNote}</p>}
-      {toReview && <ToReviewForm taskId={taskId} />}
     </section>
   );
 }
@@ -318,30 +314,5 @@ function ResumeStepSettings({
         )}
       </div>
     </details>
-  );
-}
-
-/** 実装の検証が続けて通らずに止まったタスクを、人の判断でレビューへ進める。 */
-function ToReviewForm({ taskId }: { taskId: string }) {
-  const m = useMessages();
-  const [state, formAction, pending] = useActionState(submitForReviewAction, {});
-  const r = m.parts.resume;
-  return (
-    <form action={formAction} className="flex flex-col gap-2 border-t border-warn-line pt-3">
-      <input type="hidden" name="taskId" value={taskId} />
-      <p className="flex items-center gap-1 text-sm leading-6">
-        {r.toReviewHelp} <Hint text={r.toReviewHint} />
-      </p>
-      <div>
-        <Button type="submit" variant="outline" disabled={pending}>
-          {pending ? r.toReviewing : r.toReview}
-        </Button>
-      </div>
-      {state.message && (
-        <p role="alert" className="text-sm text-warn">
-          {state.message}
-        </p>
-      )}
-    </form>
   );
 }

@@ -4,7 +4,7 @@
 - タスク: PBI-309
 - PR: #315
 - ブランチ: feat/issue-309-short-ci-grace
-- 関係する ADR: [実装の PR の CI の待ちは、リポジトリに CI が無いと確かめられたら短い猶予で終える](../adr/20261106-1041-short-grace-when-repository-has-no-ci.md)
+- 関係する ADR: [実装の PR の CI の待ちは、リポジトリに CI が無いと確かめられたら短い猶予で終える](../adr/20261106-1041-superseded-short-grace-when-repository-has-no-ci.md)
 
 ## 目的
 

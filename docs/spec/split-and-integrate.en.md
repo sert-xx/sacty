@@ -22,6 +22,8 @@ Code: `apps/daemon/src/service.ts` (`settleSplit`, `childSettled`, `splitWithRep
 ## Child tasks stacked on a dependency's PR
 
 A child task with dependencies starts, without waiting for the merge, from the branch of a dependency's implementation PR once that PR passes the final review (stacked PRs; PBI-317).
+In the flow without the final review (the default when the daemon starts; [Verifying the implementation](tasks-and-steps.en.md#the-flow-without-the-final-review)), "passes" is replaced by "the PR's review child task gave the current commit no findings and the draft was removed" (a PR waiting for no findings (`awaitingReview`) cannot be stacked on; PBI-331).
+A stacked PR gets its review child task after the dependency is merged and the PR is retargeted, and its draft is removed when there are no findings (retargeting does not remove the draft).
 
 - Deciding whether to start (`blockedStart`; in the parent's `settleSplit`, for each `blocked` child task): dependencies are sorted into the following. When it cannot be decided, the child task waits.
   - In the base branch (`landed`): canceled with a person's acknowledgment, or completed or with its implementation PR merged (`implementationMerged`; the after-merge watch is under way), and not stacked on another PR.

@@ -19,6 +19,14 @@ const ja = {
   reviewOfStep: (step: string) => `（${step}の PR）`,
   reviewTaskOf: (step: string, number: number, status?: string) =>
     `（${step}の PR #${number}${status ? `・${status}` : ""}）`,
+  /** PR のレビューの子タスクの、最後に投稿した回と判定（PBI-331）。 */
+  reviewTaskRound: (round: number, verdict: string) => `${round}回目：${verdict}`,
+  reviewVerdict: {
+    changes_required: "修正が必要",
+    suggestions: "提案あり",
+    no_findings: "指摘なし",
+    unreadable: "判定を読めない",
+  } as Record<"changes_required" | "suggestions" | "no_findings" | "unreadable", string>,
   parent: " ・ 親タスク：",
   rerunOf: " ・ 再実行の元：",
   derivedFrom: " ・ 続きの元：",
@@ -530,6 +538,13 @@ const en: TaskMessages = {
   repoChoiceHint: (reason) => `Why: ${reason}`,
   reviewOfStep: (step) => ` (${step} PR)`,
   reviewTaskOf: (step, number, status) => ` (${step} PR #${number}${status ? `, ${status}` : ""})`,
+  reviewTaskRound: (round, verdict) => `round ${round}: ${verdict}`,
+  reviewVerdict: {
+    changes_required: "changes required",
+    suggestions: "suggestions",
+    no_findings: "no findings",
+    unreadable: "verdict unreadable",
+  },
   parent: " · Parent task: ",
   rerunOf: " · Rerun of: ",
   derivedFrom: " · Follow-up of: ",

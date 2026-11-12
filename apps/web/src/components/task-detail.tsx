@@ -5,7 +5,6 @@ import {
   appliedProposalFor,
   canDecideTests,
   canDerive,
-  canOverrideVerification,
   canRechooseSteps,
   canRereview,
   canRerun,
@@ -318,7 +317,6 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               }
             : {})}
           reason={task.pausedReason}
-          toReview={canOverrideVerification(task)}
           steps={resumeStepSettings(task, data)}
           {...(task.steps.some((s) => s.state !== "done" && s.state !== "skip")
             ? { image: resumeTaskImage(task, data, m.images.defaultDescription) }
@@ -975,6 +973,14 @@ function Properties({ data }: { data: TaskDetailData }) {
   const step = task.steps.find((s) => s.state === "active")?.key ?? task.gate?.step;
   const created = activity[0]?.at;
   const updated = activity.at(-1)?.at;
+  // PR のレビューの子タスクの状態と、最後に投稿した回の判定（PBI-331。何回目で、指摘が残っているか）
+  const reviewTaskState = (child: Task) => {
+    const last = child.reviewVerdicts?.at(-1);
+    const round = last
+      ? m.reviewTaskRound(last.round, m.reviewVerdict[last.verdict ?? "unreadable"])
+      : undefined;
+    return [statusText(child, labels), round].filter(Boolean).join("・");
+  };
   const related: [string, ReactNode][] = [
     ...(task.parent
       ? [
@@ -1001,11 +1007,7 @@ function Properties({ data }: { data: TaskDetailData }) {
           l.reviewTask,
           <span key={`rt-${r.id}`}>
             <TaskLink id={r.id} title={r.title} testId="review-task" />
-            {m.reviewTaskOf(
-              labels.step[r.step],
-              r.number,
-              r.task ? statusText(r.task, labels) : undefined,
-            )}
+            {m.reviewTaskOf(labels.step[r.step], r.number, r.task && reviewTaskState(r.task))}
           </span>,
         ] as [string, ReactNode],
     ),

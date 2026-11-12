@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #239
 - 置き換え元: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](20261015-1430-superseded-implement-step-opens-pull-request.md)（最終レビューに合格した後に実装の PR を作る部分）
-- 置き換え先: [最終レビューを、実装の PR の CI と並べて進める](20261108-0232-final-review-alongside-pull-request-ci.md)（CI を待ってから最終レビューに進む部分）
+- 置き換え先: [最終レビューを、実装の PR の CI と並べて進める](20261108-0232-superseded-final-review-alongside-pull-request-ci.md)（CI を待ってから最終レビューに進む部分）
 
 ## 背景
 

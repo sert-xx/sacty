@@ -200,11 +200,6 @@ const ja = {
     taskImage: "タスクのイメージ",
     taskImageNote: "すべての工程の次の実行から使います。",
     stepAgent: "エージェント",
-    toReview: "レビューへ進める",
-    toReviewing: "進めています…",
-    toReviewHelp: "PR を確かめて問題が無ければ、人の判断でレビューへ進められます。",
-    toReviewHint:
-      "最終レビューの不合格のまま、PR のドラフトを外してレビュー用のラベルを付け、実装の承認待ちにします。最終レビューはやり直しません。",
     /** テストのコマンドが決まらずに止まったタスクの、再開のときのテストの扱い。 */
     tests: {
       legend: "テストの扱い",
@@ -495,11 +490,6 @@ const en: PartsMessages = {
     taskImage: "Task image",
     taskImageNote: "Used from the next run of every step.",
     stepAgent: "Agent",
-    toReview: "Move to review",
-    toReviewing: "Moving…",
-    toReviewHelp: "If the PR looks right, a person can move it to review.",
-    toReviewHint:
-      "Keeps the failed final review, marks the PR ready for review, adds the review label, and waits for implementation approval. The final review is not run again.",
     tests: {
       legend: "Tests",
       keep: "Resume without deciding",

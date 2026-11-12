@@ -91,11 +91,13 @@ Audit results are not combined across projects.
 
 ## The flaky test ledger
 
+The current version does not run the final review, so no new entries are added to the ledger, and it is not shown on the audit page ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
+The rest of this section describes older versions.
+
 Tests the final review accepted as flaky and unrelated to the diff are counted per project and shown on the audit page.
 This does not use the audit budget.
 It needs no setup.
 
-![Flaky tests on the audit page (a known test and a proposal for a task to fix it)](images/audit-flaky-tests.en.png)
 
 - It shows the test's name and file, the number of tasks that saw it, when it was last seen, and links to those tasks and PRs.
 - Several times in the same task count as one task.

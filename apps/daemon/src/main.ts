@@ -239,6 +239,8 @@ const service = new TaskService({
   // 完了したタスクを監査する（PBI-125）
   audit: !auditMock,
   reviewTasks: true,
+  // 最終レビュー（テストの実行）と CI の待ちをせず、PR のレビューの子タスクに任せる（PBI-331）
+  finalReview: false,
   config,
   secrets,
   projects,

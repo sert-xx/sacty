@@ -41,7 +41,6 @@ const ja = {
       "タスクのイメージか、工程ごとのエージェントの指定が正しくありません。選び直してください。",
     capPositive: "新しい上限は、0 より大きい金額にしてください。",
     resumeFailed: "再開できませんでした。デーモンが動いているか確認してください。",
-    toReviewFailed: "レビューへ進められませんでした。デーモンが動いているか確認してください。",
     testCommandInvalid: "テストのコマンドを 1000 文字以内で入力してください。",
     noTestsReasonInvalid: "テストなしで進める理由を 2000 文字以内で入力してください。",
     resumeNoteTooLong: (max: number) =>
@@ -95,7 +94,6 @@ const en: CommonMessages = {
     stepSettingsInvalid: "The task image or an agent set for a step is not valid. Choose it again.",
     capPositive: "Enter a new cap greater than 0.",
     resumeFailed: "Could not resume. Check that the daemon is running.",
-    toReviewFailed: "Could not move to review. Check that the daemon is running.",
     testCommandInvalid: "Enter a test command of up to 1000 characters.",
     noTestsReasonInvalid: "Enter why to proceed without tests in up to 2000 characters.",
     resumeNoteTooLong: (max) =>

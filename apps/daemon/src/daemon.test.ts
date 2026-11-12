@@ -1314,6 +1314,8 @@ function makeService(
     audit?: boolean;
     /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。既定は作らない。 */
     reviewTasks?: boolean;
+    /** 最終レビューと CI の待ちをする（PBI-331）。false なら、PR のレビューの子タスクに任せる。既定はする。 */
+    finalReview?: boolean;
     /** メモリーを書き出す（PBI-126）。既定は書き出さない。 */
     memory?: boolean;
     /** 階層ごとのメモリーの件数の上限（PBI-126）。 */
@@ -1389,6 +1391,7 @@ function makeService(
     ...(options.ci ? { ci: options.ci } : {}),
     ...(options.audit ? { audit: true } : {}),
     ...(options.reviewTasks ? { reviewTasks: true } : {}),
+    ...(options.finalReview === false ? { finalReview: false } : {}),
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
     ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
@@ -22756,6 +22759,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       draftPullRequests?: boolean;
       templates?: ServiceDeps["templates"];
       reviewTasks?: boolean;
+      finalReview?: boolean;
     } = {},
   ) {
     // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
@@ -22772,6 +22776,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
         ...(options.draftPullRequests ? { draftPullRequests: true } : {}),
         ...(options.templates ? { templates: options.templates } : {}),
         ...(options.reviewTasks ? { reviewTasks: true } : {}),
+        ...(options.finalReview === false ? { finalReview: false } : {}),
       },
     );
     const { service } = made;
@@ -22887,6 +22892,66 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
     expect(taskOf(service, b).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
       [8, "implement"],
+    ]);
+    activity.close();
+  });
+
+  it("最終レビューをしない流れでは、依存先の PR のレビューが指摘なしになってから重ねて始め、重ねた PR は付け替えの後にレビューして指摘なしでドラフトを外す（PBI-331 受け入れ条件 7）", async () => {
+    const noFindings = out(
+      `# 評価\n\n問題なし\n\n${block({ "sacty-review-verdict": { verdict: "no_findings" } })}`,
+    );
+    const pulls = new FakePulls();
+    const { activity, service, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), noFindings, implement("# B の実装"), noFindings],
+      new FakeRepos(),
+      pulls,
+      { reviewTasks: true, finalReview: false, draftPullRequests: true },
+    );
+    const [a, b] = ids as [string, string];
+    const drainSteps = async () => {
+      for (let i = 0; i < 12; i++) {
+        const queued = service.queuedTaskIds().filter((q) => !taskOf(service, q).reviewOf);
+        if (queued.length === 0) return;
+        for (const q of queued) await service.runNext(q);
+      }
+    };
+    const reviewOf = async (id: string, number: number) => {
+      const child = taskOf(service, id).reviewTasks?.findLast((r) => r.number === number)?.taskId;
+      expect(child, `${id} #${number}`).toBeDefined();
+      pulls.prInfo = { ...pulls.prInfo, number, headSha: taskOf(service, id).pullRequest?.commit };
+      for (let i = 0; i < 4 && !isCompleted(taskOf(service, child ?? "")); i++) {
+        await service.runNext(child ?? "");
+      }
+    };
+    await drainSteps();
+    // 依存先の PR は、ドラフトのままレビューを待つ。指摘なしになるまで、子は始めない
+    expect(taskOf(service, a).pullRequest).toMatchObject({ number: 7, awaitingReview: true });
+    expect(taskOf(service, b).status).toBe("blocked");
+    await reviewOf(a, 7);
+    await service.checkPullRequests();
+    expect(taskOf(service, a).pullRequest?.awaitingReview).toBeUndefined();
+    await drainSteps();
+    // 指摘なしの依存先の PR に重ねて始め、重ねた PR はドラフトのまま。重ねている間はレビューしない
+    const child = taskOf(service, b);
+    expect(child.stack?.taskId).toBe(a);
+    expect(child.pullRequest).toMatchObject({ number: 8, draft: true, awaitingReview: true });
+    await service.checkPullRequests();
+    expect(taskOf(service, b).reviewTasks).toBeUndefined();
+    // 依存先のマージの後、向き先を付け替えてもドラフトは外さず、レビューの子タスクを作る
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drainSteps();
+    await service.checkPullRequests();
+    expect(taskOf(service, b).pullRequest).toMatchObject({ baseBranch: "main", draft: true });
+    expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+    expect(taskOf(service, b).reviewTasks?.map((r) => r.number)).toEqual([8]);
+    await reviewOf(b, 8);
+    await service.checkPullRequests();
+    expect(taskOf(service, b).pullRequest?.awaitingReview).toBeUndefined();
+    expect(pulls.draftChanges).toEqual([
+      { number: 7, draft: false },
+      { number: 8, draft: false },
     ]);
     activity.close();
   });
@@ -26938,6 +27003,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ci?: ServiceDeps["ci"];
       /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。 */
       reviewTasks?: boolean;
+      /** 最終レビューと CI の待ちをしない（PBI-331）。 */
+      finalReview?: boolean;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -26949,6 +27016,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
+      ...(options.finalReview === false ? { finalReview: false } : {}),
       now: later,
       pulls,
       repos,
@@ -28507,6 +28575,234 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     };
     const posted = (pulls: FakePulls, n: number, author = "me") =>
       item(`review:${50 + n}`, { kind: "review", author, body: pulls.reviews[n]?.body ?? "" });
+
+    describe("最終レビューと CI の待ちをせず、レビューの子タスクの指摘なしで承認待ちにする（PBI-331）", () => {
+      const failingCi = (calls: string[] = []) =>
+        ({
+          snapshot: async (input: { commit: string }) => {
+            calls.push(input.commit);
+            return {
+              checks: [
+                {
+                  kind: "workflow" as const,
+                  name: "CI",
+                  status: "completed" as const,
+                  conclusion: "failure",
+                  url: "https://example.com/runs/1",
+                },
+                { kind: "check" as const, name: "lint", status: "pending" as const },
+              ],
+              failedRuns: [],
+            };
+          },
+          failures: async () => [],
+          rerunFailedJobs: async () => {
+            throw new Error("再実行しない");
+          },
+        }) as unknown as ServiceDeps["ci"];
+      /** 実装だけのタスクを、実装の PR を作って承認待ちになるまで進める。 */
+      async function implemented(outcomes: AgentOutcome[], ciCalls: string[] = []) {
+        const pulls = new FakePulls();
+        const made = await start([implement(), ...outcomes], {
+          pulls,
+          steps: ["implement"],
+          reviewTasks: true,
+          finalReview: false,
+          ci: failingCi(ciCalls),
+        });
+        const { service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        return { ...made, pulls };
+      }
+
+      it("実装の工程の後、最終レビューもテストもせずに実装の PR をドラフトで作り、レビューの子タスクを作る。CI は待たない（受け入れ条件 1・3）", async () => {
+        const ciCalls: string[] = [];
+        const { activity, service, pulls, executor, id } = await implemented([], ciCalls);
+        const task = taskOf(service, id);
+        expect(task.status).toBe("awaiting_approval");
+        expect(task.gate).toEqual({ step: "implement", submission: 1 });
+        expect(types(service, id)).toContain("FinalReviewSkipped");
+        for (const t of ["FinalReviewed", "TestsRun", "PullRequestCiFinished"]) {
+          expect(types(service, id)).not.toContain(t);
+        }
+        // エージェントの実行は実装の工程だけ（ゴールガーディアンを動かさない）
+        expect(executor.calls).toHaveLength(1);
+        expect(task.pullRequest).toMatchObject({ number: 7, draft: true, awaitingReview: true });
+        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.draftChanges).toEqual([]);
+        expect(task.pullRequestCi).toBeUndefined();
+        expect(pulls.calls[0]?.body).toContain("sacty のレビュー：（sacty のレビューの子タスクが");
+        expect(pulls.calls[0]?.body).not.toContain("最終レビュー：");
+        // ドラフトのまま、レビューの子タスクを作る
+        expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
+          [7, "implement"],
+        ]);
+        // PR の確認でも、CI を読まない・再実行しない（子タスクのレビューの準備でだけ読む）
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        expect(ciCalls).toEqual([]);
+        expect(types(service, id)).not.toContain("PullRequestCiRerunRequested");
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        activity.close();
+      });
+
+      it("子タスクが CI の結果を読んでレビューし、指摘を親が直したら再レビューし、指摘なしでドラフトを外して人の承認を待つ（受け入れ条件 2・3）", async () => {
+        const ciCalls: string[] = [];
+        const made = await implemented(
+          [
+            verdictOut("changes_required"),
+            rework("implement", "実装で直せる"),
+            implement("# 実装の説明 v2"),
+            verdictOut("no_findings", "# 評価\n\nマージしてよい"),
+          ],
+          ciCalls,
+        );
+        const { activity, service, pulls, executor, id } = made;
+        const childId = childOf(service, id);
+        const first = commitOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: first };
+        const before = executor.calls.length;
+        await runReview(service, childId);
+        // 子タスクに、レビューする先頭のコミットの CI の結果を渡し、失敗を指摘にさせる
+        expect(ciCalls).toEqual([first]);
+        const prompt = executor.calls[before]?.command.join(" ") ?? "";
+        expect(prompt).toContain(`先頭のコミット（${first.slice(0, 7)}）の CI`);
+        expect(prompt).toContain("CI：failure（https://example.com/runs/1）");
+        expect(prompt).toContain("lint：実行中");
+        expect(prompt).toContain("変更による失敗なら、直すべき指摘（要修正）にする");
+        // 指摘ありの回では、ドラフトを外さない
+        await service.checkPullRequests();
+        expect(taskOf(service, id).pullRequest?.draft).toBe(true);
+        // 指摘を取り込んで直し、PR を更新する（ドラフトのまま、最終レビューもしない）
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        expect(taskOf(service, id).status).toBe("queued");
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        const second = commitOf(service, id);
+        expect(second).not.toBe(first);
+        expect(taskOf(service, id).pullRequest).toMatchObject({
+          draft: true,
+          awaitingReview: true,
+        });
+        expect(types(service, id).filter((t) => t === "FinalReviewSkipped")).toHaveLength(2);
+        expect(types(service, id)).not.toContain("FinalReviewed");
+        // 最新のコミットを再レビューし、指摘なしになったらドラフトを外す
+        await service.checkPullRequests();
+        pulls.prInfo = { ...pulls.prInfo, headSha: second };
+        await runReview(service, childId);
+        expect(taskOf(service, childId).reviewVerdicts?.at(-1)).toEqual({
+          round: 2,
+          verdict: "no_findings",
+        });
+        await service.checkPullRequests();
+        const parent = taskOf(service, id);
+        expect(parent.status).toBe("awaiting_approval");
+        expect(parent.pullRequest?.draft).toBeUndefined();
+        expect(parent.pullRequest?.awaitingReview).toBeUndefined();
+        expect(pulls.draftChanges).toEqual([{ number: 7, draft: false }]);
+        const ready = service.get(id)?.activity.find((e) => e.type === "PullRequestMarkedReady");
+        expect(ready).toMatchObject({
+          actor: "sacty",
+          payload: { number: 7, commit: second, reviewTaskId: childId },
+        });
+        // もう一度確かめても、繰り返さない
+        await service.checkPullRequests();
+        expect(pulls.draftChanges).toHaveLength(1);
+        expect(types(service, id).filter((t) => t === "PullRequestMarkedReady")).toHaveLength(1);
+        // 再起動しても同じ状態を復元する
+        const done = taskOf(service, id);
+        activity.close();
+        const again = new SqliteActivityStore(dbPath);
+        expect(makeService(again, [], { stepPullRequests: true }).service.get(id)?.task).toEqual(
+          done,
+        );
+        again.close();
+      });
+
+      it("ドラフトを外せなければ記録せず、次の確認でやり直す。外す間に親が変わったら記録しない（受け入れ条件 2）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const setDraft = vi.spyOn(pulls, "setDraft").mockRejectedValueOnce(new Error("502"));
+        await service.checkPullRequests();
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        setDraft.mockRestore();
+        await service.checkPullRequests();
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBeUndefined();
+        activity.close();
+      });
+
+      it("テストのコマンドが決まらなくても止めずに、実装して PR のレビューに進む（受け入れ条件 4）", async () => {
+        const pulls = new FakePulls();
+        const made = await start([implement()], {
+          pulls,
+          steps: ["implement"],
+          reviewTasks: true,
+          finalReview: false,
+          ci: failingCi(),
+          planner: async () => ({
+            steps: ["implement"],
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }),
+        });
+        const { activity, service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        const task = taskOf(service, id);
+        expect(task.testCommand).toBeUndefined();
+        expect(task.status).toBe("awaiting_approval");
+        expect(task.pullRequest).toMatchObject({ number: 7, awaitingReview: true });
+        expect(types(service, id)).not.toContain("TaskPaused");
+        activity.close();
+      });
+
+      it("最終レビュー・CI の待ちの途中だった古いタスクは、新しい流れで PR のレビューに進む（受け入れ条件 4）", async () => {
+        // 以前の版：最終レビューの前のドラフトの PR を作り、CI を待っていた
+        const pulls = new FakePulls();
+        const made = await start([implement()], {
+          pulls,
+          steps: ["implement"],
+          ci: failingCi(),
+        });
+        const { id } = made;
+        await made.service.runNext(id);
+        expect(taskOf(made.service, id).pullRequestCi).toBeDefined();
+        expect(taskOf(made.service, id).verification).toBeDefined();
+        made.activity.close();
+        const activity = new SqliteActivityStore(dbPath);
+        const { service, executor } = makeService(activity, [], {
+          stepPullRequests: true,
+          pulls,
+          reviewTasks: true,
+          finalReview: false,
+          now: later,
+          ci: failingCi(),
+          draftPullRequests: true,
+        });
+        expect(service.queuedTaskIds()).toContain(id);
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        const task = taskOf(service, id);
+        expect(task.status).toBe("awaiting_approval");
+        expect(task.pullRequestCi).toBeUndefined();
+        expect(task.pullRequest).toMatchObject({ number: 7, draft: true, awaitingReview: true });
+        expect(types(service, id)).toContain("FinalReviewSkipped");
+        expect(executor.calls).toHaveLength(0);
+        expect(task.reviewTasks?.map((r) => r.number)).toEqual([7]);
+        activity.close();
+      });
+    });
 
     it("要求要件の PR を作ったら、その PR をレビューする子タスクを作って親に記録する。ラベルは付けず、PR を更新しても作り直さない（受け入れ条件 1・5）", async () => {
       // レビュー用のラベルの設定・そのトリアージに関わらず作る

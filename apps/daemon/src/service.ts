@@ -407,6 +407,7 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
+  type ReviewCi,
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
@@ -603,15 +604,21 @@ function serviceConnection(started: StartedServices): {
   return { network: started.network, ...(forwards.length > 0 ? { forwards } : {}) };
 }
 
-function awaitingVerification(task: Task): boolean {
+function awaitingVerification(task: Task, finalReview = true): boolean {
   return (
     task.status === "idle" &&
     task.verification !== undefined &&
     !openProposal(task) &&
     // 最終レビューの前に作った実装の PR の CI を待つ間も、最終レビューは並べて進める（PBI-314）。合格した後は、CI の結果だけを
-    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）
-    !awaitingCiAfterReview(task)
+    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）。最終レビューをしないなら、CI を待っていた古いタスクも進める（PBI-331）
+    (!finalReview || !awaitingCiAfterReview(task))
   );
+}
+
+/** PR のレビューの子タスクの、最後に投稿した回の判定が指摘なしか（PBI-331）。 */
+function reviewCleared(child: Task): boolean {
+  const last = child.reviewVerdicts?.at(-1);
+  return last?.verdict === "no_findings" && last.round === (child.reviewRound ?? 1);
 }
 
 /** 一時的な失敗のやり直しの途中で、やり直しをやめた（止める・中止・デーモンの停止）。何も記録せずに処理を終える。 */
@@ -653,6 +660,12 @@ export type ServiceDeps = {
    * エージェントの実行を使わないように）。main.ts が有効にする。
    */
   reviewTasks?: boolean;
+  /**
+   * 実装の工程の後に、最終レビュー（ゴールガーディアンが作業領域でテストを実行して判定する）と、実装の PR の CI の待ち・
+   * 失敗した CI の再実行を行うか。false なら行わず、実装の PR をドラフトで作って PR のレビューの子タスクに渡し、指摘なしに
+   * なったらドラフトを外す（PBI-331）。既定は行う（工程の流れを確かめる既存のテストのため）。main.ts が false にする。
+   */
+  finalReview?: boolean;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -1022,6 +1035,8 @@ export class TaskService {
    * 切り替えが混ざらないように。付け替えは、実行中のタスクでは始めない）。
    */
   private readonly retargeting = new Set<string>();
+  /** PR のレビューの子タスクの指摘なしで、ドラフトを外している最中のタスク（PBI-331）。 */
+  private readonly readying = new Set<string>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -1313,8 +1328,8 @@ export class TaskService {
     await this.checkReviewPullRequests();
     // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
     await this.reconcileReviewTasks();
-    // 最終レビューの前に作った実装の PR の CI
-    await this.checkVerificationCi();
+    // 最終レビューの前に作った実装の PR の CI（最終レビューをしないなら、CI を待たない。PBI-331）
+    if (this.finalReview) await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
   }
@@ -3454,6 +3469,29 @@ export class TaskService {
         t.status !== "cancelled" &&
         (same(t.pullRequest) || same(t.continuedPullRequest) || t.stepPullRequests.some(same)),
     );
+  }
+
+  /**
+   * PR のレビューの子タスクがレビューする先頭のコミットの CI の状態（PBI-331。sacty は CI を待たないので、子タスクが読んで
+   * 指摘にする）。読めなければ、読めなかったことを渡す（レビューは止めない）。
+   */
+  private async reviewCiOf(
+    task: Task,
+    target: NonNullable<Task["reviewTarget"]>,
+  ): Promise<ReviewCi> {
+    const ci = this.deps.ci;
+    const usedSecrets: string[] = [];
+    if (!ci) return { commit: target.headCommit, checks: "unreadable" };
+    try {
+      const token = await this.githubToken(task, target.repo, usedSecrets);
+      const snapshot = await ci.snapshot({ repo: target.repo, token, commit: target.headCommit });
+      return { commit: target.headCommit, checks: snapshot.checks };
+    } catch (error) {
+      console.warn(
+        `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return { commit: target.headCommit, checks: "unreadable" };
+    }
   }
 
   /**
@@ -7244,7 +7282,7 @@ export class TaskService {
               // 再開した後に、一時停止の間に届いた PR の指摘を反映する。最終レビューの前の PR の CI を待つタスクのように、
               // 検証の待ちから外れていても、先に反映する（PBI-279）
               this.heldReviewDue(t) ||
-              awaitingVerification(t) ||
+              awaitingVerification(t, this.finalReview) ||
               // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
               awaitingIssueComment(t) ||
               // 書いたレビューを、対象の PR に投稿する（PBI-19）
@@ -7755,7 +7793,12 @@ export class TaskService {
         this.tasks.values(),
         sameRepo,
       );
-      const stage = { secrets: usedSecrets, aiReview, ...(stackedOn ? { stackedOn } : {}) };
+      const stage = {
+        secrets: usedSecrets,
+        aiReview,
+        ...(stackedOn ? { stackedOn } : {}),
+        ...(!this.finalReview ? { reviewing: true } : {}),
+      };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
         pr.repo,
@@ -7776,7 +7819,8 @@ export class TaskService {
         number: pr.number,
         retarget: true,
       });
-      const ready = !task.stack;
+      // PR のレビューの子タスクの指摘なしを待つ PR は、ドラフトのままにする（指摘なしで外す。PBI-331）
+      const ready = !task.stack && !pr.awaitingReview;
       if (!unchanged()) return;
       if (ready) {
         try {
@@ -7815,7 +7859,7 @@ export class TaskService {
         },
       ]);
       // ドラフトを外したら、PR をレビューする子タスクを作る（PBI-330）
-      if (ready) this.ensureReviewTask(retargeted, "implement", pr.repo, pr.number, pr.url);
+      this.ensureReviewTask(retargeted, "implement", pr.repo, pr.number, pr.url);
     } catch (error) {
       console.warn(
         `[daemon] PR #${pr.number}（${pr.repo}）の向き先を ${repository.baseBranch} に付け替えられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -8224,7 +8268,14 @@ export class TaskService {
     if (initial && submittedComments) {
       return this.postGitHubComments(initial, submittedComments, "submitted");
     }
-    if (initial && awaitingVerification(initial)) {
+    if (initial && awaitingVerification(initial, this.finalReview)) {
+      // 最終レビューをしない（PBI-331）：テストも CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする）
+      if (!this.finalReview) {
+        this.append(initial, [
+          { actor: "sacty", event: { type: "FinalReviewSkipped", payload: {} } },
+        ]);
+        return;
+      }
       // CI を待つ間の最終レビュー（PBI-314）は、CI を待っている PR のコミットを見るので、ベースブランチを取り込まない
       if (!awaitingPullRequestCi(initial) && !(await this.syncBeforeVerify(initial))) return;
       return this.verify(this.mustGet(taskId));
@@ -8490,8 +8541,14 @@ export class TaskService {
         event: { type: "StepsChosen", payload: chosen },
       });
       // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）。
-      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）
-      if (chosen.steps.includes("implement") && !chosen.testCommand && !chosen.noTestsReason) {
+      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）。最終レビューをしない（PBI-331）なら、sacty は
+      // テストを実行しないので止めない（実装の工程のエージェントが、リポジトリから決めて実行する）
+      if (
+        this.finalReview &&
+        chosen.steps.includes("implement") &&
+        !chosen.testCommand &&
+        !chosen.noTestsReason
+      ) {
         events.push({
           actor: "sacty",
           event: {
@@ -8686,6 +8743,8 @@ export class TaskService {
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
     // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
     let reviewExisting: PullRequestFeedback[] | "unreadable" | undefined;
+    // PR のレビューの子タスクに渡す、レビューする先頭のコミットの CI（PBI-331）
+    let reviewCi: ReviewCi | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -8746,6 +8805,9 @@ export class TaskService {
               },
             );
             reviewExisting = feedback === "unreadable" ? "unreadable" : feedback.existing;
+            if (latest.reviewOf && this.deps.ci) {
+              reviewCi = await this.reviewCiOf(latest, reviewTarget);
+            }
             if (latest.previousReview) {
               reviewReplies = feedback === "unreadable" ? "unreadable" : feedback.replies;
             }
@@ -8841,6 +8903,7 @@ export class TaskService {
             ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
+            ...(reviewCi ? { reviewCi } : {}),
             // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
@@ -10804,6 +10867,19 @@ export class TaskService {
     return this.deps.draftPullRequests !== false && !task.continuedPullRequest && !!task.repository;
   }
 
+  /** 実装の工程の後に、最終レビューと CI の待ちを行うか（PBI-331。ServiceDeps の finalReview）。 */
+  private get finalReview(): boolean {
+    return this.deps.finalReview !== false;
+  }
+
+  /**
+   * 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにして待つか（PBI-331）。最終レビューをしないタスクで、
+   * sacty が作る PR だけ（引き継いだ人の PR は、人の PR なのでドラフトにしない）。
+   */
+  private awaitsReview(task: Task): boolean {
+    return !this.finalReview && this.draftsPullRequest(task);
+  }
+
   /**
    * 実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作る（PBI-110）。コミットは、エージェントが
    * 触れない退避した git のメタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
@@ -10960,6 +11036,8 @@ export class TaskService {
       // 重ねている間は、検証に通った後もドラフトのままにする（依存先より先にマージさせない）
       const stackedOn = this.stackedPullRequest(task);
       const stacked = this.recordsPullRequestBase(task);
+      // 最終レビューをしないなら、PR のレビューの子タスクが指摘なしにするまでドラフトにする（PBI-331）
+      const awaitsReview = !verifying && this.awaitsReview(task);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -10968,6 +11046,7 @@ export class TaskService {
         () =>
           buildPullRequestBodyText(this.latestTitled(task), {
             verifying,
+            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
@@ -10975,6 +11054,7 @@ export class TaskService {
         () =>
           buildPullRequestBodyParts(this.latestTitled(task), {
             verifying,
+            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
@@ -10993,7 +11073,7 @@ export class TaskService {
         title: this.latestTitled(task).title,
         body,
         number,
-        ...(verifying || task.stack ? { draft: true } : {}),
+        ...(verifying || awaitsReview || task.stack ? { draft: true } : {}),
         // 重ねている間は、ドラフトを使えないリポジトリでも、ドラフトでない PR にしない（PBI-317）
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
@@ -11001,7 +11081,7 @@ export class TaskService {
       let draft = pr.draft;
       let draftError: unknown;
       const baseRecord = stacked ? { baseBranch: task.repository.baseBranch } : {};
-      if (verifying || task.stack) {
+      if (verifying || awaitsReview || task.stack) {
         // 前の提出でレビューへ進めた PR を更新した（PR の指摘で実装をやり直した）なら、検証の間はドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
         // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
@@ -11057,7 +11137,8 @@ export class TaskService {
       // GitHub の今の PR を読んで決める（ドラフトに戻した答え・更新の答えを受け取れなかったときも外すため）。すでに
       // 外れていれば（人が外した・ドラフトを使えないリポジトリ）何もしない
       // 依存先の PR に重ねている間は、ドラフトのまま承認待ちにする（依存先がマージされたら、向き先を付け替えて外す。PBI-317）
-      if (!task.stack) {
+      // 最終レビューをしないなら、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
+      if (!task.stack && !awaitsReview) {
         try {
           await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
         } catch (error) {
@@ -11076,7 +11157,8 @@ export class TaskService {
               url: pr.url,
               number: pr.number,
               repo: prRepo,
-              ...(task.stack && draft ? { draft: true as const } : {}),
+              ...((task.stack || awaitsReview) && draft ? { draft: true as const } : {}),
+              ...(awaitsReview ? { awaitingReview: true as const } : {}),
               ...baseRecord,
             },
           },
@@ -11254,13 +11336,15 @@ export class TaskService {
     if (this.deps.reviewTasks !== true) return;
     try {
       if (parent.status === "cancelled" || this.cancelling.has(parent.id)) return;
-      // 依存先に重ねた実装の PR は、ドラフトを外すまでレビューしない（向き先の付け替えの後に作る）
-      if (
-        step === "implement" &&
-        parent.pullRequest?.number === number &&
-        parent.pullRequest.draft
-      ) {
-        return;
+      // 依存先に重ねた実装の PR は、依存先がマージされて向き先を付け替えるまでレビューしない。最終レビューをする流れでは、
+      // ドラフトを外したとき（付け替えの後）に作る。しない流れ（PBI-331）では、ドラフトのままレビューし、指摘なしで外す
+      const pr = parent.pullRequest;
+      if (step === "implement" && pr?.number === number) {
+        const retargeted =
+          !pr.baseBranch ||
+          !parent.repository?.baseBranch ||
+          pr.baseBranch === parent.repository.baseBranch;
+        if (pr.awaitingReview ? parent.stack || !retargeted : pr.draft) return;
       }
       if (!this.needsReviewTask(parent, repo, number)) return;
       const recorded = new Set((parent.reviewTasks ?? []).map((x) => x.taskId));
@@ -11364,7 +11448,13 @@ export class TaskService {
       const child = record && this.tasks.get(record.taskId);
       if (!child || !canRereview(child) || child.status === "paused") continue;
       if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) continue;
-      if (child.reviewTarget?.headCommit === gate.commit) continue;
+      if (child.reviewTarget?.headCommit === gate.commit) {
+        // 今のコミットを指摘なしにしたら、レビューを待つ実装の PR のドラフトを外す（PBI-331）
+        if (gate.step === "implement" && reviewCleared(child)) {
+          await this.markReady(parent, child, gate.commit);
+        }
+        continue;
+      }
       if (child.reviewRestartCommit === gate.commit) continue;
       try {
         this.append(child, [
@@ -11381,6 +11471,60 @@ export class TaskService {
           `[daemon] レビューの子タスク ${child.id} を再レビューにできませんでした：${renderMessage(errorText(error), "ja")}`,
         );
       }
+    }
+  }
+
+  /**
+   * PR のレビューの子タスクが今のコミットを指摘なしにした、レビューを待つ実装の PR のドラフトを外し、人の承認（マージ）待ちに
+   * する（PBI-331）。ドラフトでなければ（ドラフトを使えないリポジトリ・人が外した）記録だけする。外せなければ、記録せずに次の
+   * 確認でやり直す。外す間にタスクが変わったら（差し戻し・PR の更新）、記録しない（次の提出がドラフトに戻す）。
+   */
+  private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
+    const pr = parent.pullRequest;
+    if (
+      parent.status !== "awaiting_approval" ||
+      !pr?.awaitingReview ||
+      !pr.number ||
+      !pr.repo ||
+      pr.commit !== commit ||
+      parent.stack
+    ) {
+      return;
+    }
+    if (this.readying.has(parent.id)) return;
+    this.readying.add(parent.id);
+    const usedSecrets: string[] = [];
+    try {
+      if (pr.draft) {
+        const token = await this.githubToken(parent, pr.repo, usedSecrets);
+        await this.deps.pulls.setDraft({ repo: pr.repo, token, number: pr.number, draft: false });
+      }
+      const latest = this.tasks.get(parent.id);
+      const now = latest?.pullRequest;
+      if (
+        latest?.status !== "awaiting_approval" ||
+        this.cancelling.has(latest.id) ||
+        !now?.awaitingReview ||
+        now.number !== pr.number ||
+        now.commit !== commit
+      ) {
+        return;
+      }
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestMarkedReady",
+            payload: { number: pr.number, commit, reviewTaskId: child.id },
+          },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${pr.number}（${pr.repo}）のドラフトを外せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    } finally {
+      this.readying.delete(parent.id);
     }
   }
 

@@ -2218,6 +2218,11 @@ const PullRequestPublished = z.object({
      */
     verifying: z.literal(true).optional(),
     /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
+    /**
+     * PR のレビューの子タスクの指摘なし（PBI-331）を待つ PR。最終レビューの代わりに、指摘なしになったら sacty がドラフトを外す
+     * （`PullRequestMarkedReady`）。それより前の記録には無い。
+     */
+    awaitingReview: z.literal(true).optional(),
     draft: z.literal(true).optional(),
     /**
      * PR の向き先のブランチ（PBI-317）。依存先の PR に重ねた子タスクの PR だけ記録する（重ねている間は依存先の PR の
@@ -2247,6 +2252,30 @@ const PullRequestRetargeted = z.object({
 const VerificationOverridden = z.object({
   type: z.literal("VerificationOverridden"),
   payload: z.object({}),
+});
+
+/**
+ * 実装の工程が終わった実装を、最終レビュー（ゴールガーディアンのテストの実行）も CI の待ちもせずに、PR の作成へ進めた（PBI-331）。
+ * PR はドラフトで作り、PR のレビューの子タスクが指摘なしにしたらドラフトを外す。最終レビュー・CI の待ちの途中で止まっていた
+ * 古いタスクも、再開するとこれで新しい流れに乗る。
+ */
+const FinalReviewSkipped = z.object({
+  type: z.literal("FinalReviewSkipped"),
+  payload: z.object({}),
+});
+
+/**
+ * PR のレビューの子タスクが、実装の PR の今のコミットを指摘なし（no_findings）にしたので、sacty がドラフトを外した（PBI-331）。
+ * これで PR は人の承認（マージ）を待つ。
+ */
+const PullRequestMarkedReady = z.object({
+  type: z.literal("PullRequestMarkedReady"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    /** 指摘なしにしたレビューの子タスク。 */
+    reviewTaskId: z.string().min(1),
+  }),
 });
 
 /**
@@ -3380,6 +3409,8 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestCiFinished,
   PullRequestCiRerunRequested,
   VerificationOverridden,
+  FinalReviewSkipped,
+  PullRequestMarkedReady,
   NoChangesFound,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,

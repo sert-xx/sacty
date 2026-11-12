@@ -8,7 +8,7 @@
 同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 上限に数えるのは人が差し戻した回数で、sacty 自身の AI のレビューの指摘だけの差し戻しは数えない（[AI のレビューの指摘](#ai-のレビューの指摘)）。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)、[sacty が作る PR のレビューを、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)、[sacty が作る PR のレビューを、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)
 
 ## 画面での承認
 
@@ -110,9 +110,10 @@ sacty は、作る PR（要求要件・設計の PR と実装の PR）ごとに�
 PR を作った工程とは別のコンテキスト（別のタスク・別の実行）でレビューさせ、その指摘を [PR の指摘の取り込み](#pr-の指摘の取り込み) で親（PR を作ったタスク）に届けて直させ、指摘なしになるまで繰り返すためである。
 PR にラベルは付けない（レビュー用のラベル `reviewLabel` は、sacty が作っていない PR の取り込みだけに使う。[チケットの取り込みと GitHub](intake.md)）。
 
-- 作る時点：要求要件・設計の PR は作った直後、実装の PR はレビューへ進めるとき（ドラフトを外したとき）。
-  最終レビューの前のドラフトの間は作らない。
-  依存先の PR に重ねた実装の PR（ドラフトのまま承認待ちにする。[タスクと工程](tasks-and-steps.md)）も、ドラフトの間は作らず、依存先のマージの後に向き先を付け替えてドラフトを外したときに作る。
+- 作る時点：要求要件・設計の PR は作った直後。
+  実装の PR は、最終レビューをしない流れ（デーモンの起動の既定。[実装の検証](tasks-and-steps.md#最終レビューをしない流れ)）では、ドラフトで作った直後（指摘なしでドラフトを外す）。
+  依存先の PR に重ねた実装の PR は、依存先がマージされて向き先を付け替えた後に作る（重ねている間は作らない）。
+  最終レビューをする流れでは、レビューへ進めるとき（ドラフトを外したとき）に作り、最終レビューの前のドラフトの間と、重ねた PR のドラフトの間は作らない。
   既存の PR を引き継ぐタスクでは、引き継いだ PR に作る。
 - 子タスクは、PR のレビューだけのタスク（`source.review: sacty`。[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）で、`TaskCreated` の `reviewOf` に親の ID と PR を作った工程を持つ。
   題は `[PR #<番号>] <親の題>`（言語に依存しない形。200 文字まで。長い親の題は、文字の途中で切らずに `…` で切り詰める）、プロジェクトは親と同じ、予算の上限は `budget.default_per_task_usd`（子タスクの費用は子タスクの予算に数える）。
@@ -136,13 +137,16 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
     同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
     一時停止した・一時停止や中止を求められた子タスクは動かさない。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず再レビューも起きないので、PR は人の承認（マージ）を待つ。
+  最終レビューをしない流れの実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+- 子タスクには、レビューする先頭のコミットの CI の状態（チェックの名前・状態・結論・URL。`REVIEW_CI_MAX` 件まで）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
+  読めなければ、読めなかったことを渡す（レビューは止めない）。
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクが終わる前に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。
 - 親が中止されたら、PR の確認で、終わっていない子タスクも中止する（`TaskCancelled` の `reason: parent_cancelled`。中止の片付けで PR を閉じなかったときも、レビューを続けない）。
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 

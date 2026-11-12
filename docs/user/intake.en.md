@@ -84,8 +84,8 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 
 For each PR sacty creates (Requirements and Design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
 No label setting is needed, and sacty does not add a label to the PR.
-The implementation PR is opened as a draft before the final review, and the child task is created when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
-An implementation PR stacked on a dependency's PR waits for approval as a draft, so its child task is created when the dependency is merged and the draft is removed.
+The implementation PR is opened as a draft, and the child task is created right after it is opened. When the child task gives "no findings", sacty removes the draft ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
+An implementation PR stacked on a dependency's PR gets its child task when the dependency is merged and the PR is retargeted.
 
 - The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).
   In "Related tasks" of the task detail, links to each other appear as "PR review" on the original task and "Reviews the PR of" on the child task.

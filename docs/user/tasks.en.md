@@ -296,7 +296,28 @@ The exception is a step that is approved by merging its PR (implementation, requ
 - The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop. If it could not be posted, read the record in the activity history and, if needed, write to the PR yourself.
 - The review step, as before, has sacty post the written review to the PR.
 
+## Review of the implementation PR
+
+After the Implementation step, sacty runs neither the final review (the Goal Guardian running the tests) nor the wait for or rerun of the PR's CI.
+Instead, the child task that reviews the PR reviews it, and only after there are no findings is it passed to you for approval (merge).
+The Implementation step's agent still runs tests while it works.
+
+1. When the Implementation step finishes, sacty pushes the implementation, opens the implementation PR as a draft, and creates the child task that reviews the PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+   The conclusion of the PR body gets a "sacty review" line.
+2. The child task reviews the PR and posts the review. It also reads the CI result at that point.
+   A CI failure caused by the change becomes a "changes required" finding, and a failure unrelated to the change is written in the body as something a person should check. If the CI has not finished, it reviews without waiting and writes that the CI is running.
+3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft), and the child task reviews it again.
+4. When the child task gives "no findings", sacty removes the draft. Merging this PR approves the implementation.
+   Check the PR's CI result before merging (sacty does not wait for the CI).
+
+- In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
+- A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it).
+- From "Test (verification) commands" after this section to "When the verification tool is not in the image", the sections describe the final review of older versions. The current version does not do them.
+  The "Move to review" operation and the flaky test ledger are not shown on the screen either.
+
 ## Test (verification) commands
+
+This section and the sections below it (The implementation PR and CI, When verification keeps failing, and so on) describe the final review of older versions ([Review of the implementation PR](#review-of-the-implementation-pr)).
 
 To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
 
@@ -381,7 +402,8 @@ Even if another task or a person's PR is merged into the base branch (main and t
 
 In a task split, a child task that depends on other child tasks can start without waiting for the dependency's PR to be merged. This keeps later child tasks moving while the dependency's PR is reviewed and merged.
 
-- When the dependency's implementation PR passes the final review and waits for approval, the dependent child task starts from that PR's branch.
+- When the PR's review child task gives the dependency's implementation PR "no findings" and sacty removes the draft, the dependent child task starts from that PR's branch (in older versions, when the PR passed the final review).
+  The dependent child task's PR is reviewed by its review child task after the dependency is merged and the PR is retargeted, and the draft is removed at "no findings".
   When the dependency is completed or its cancellation is acknowledged, it starts from the base branch as before.
 - The dependent child task's PR targets the dependency PR's branch (its base is the dependency's branch). The diff on GitHub shows only that child task's changes.
   - The top of the PR body says which PR it is stacked on and that it must not be merged before that PR.
