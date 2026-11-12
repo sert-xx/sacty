@@ -1007,7 +1007,10 @@ class FakePulls implements PullRequests {
     return (this.feedbackBy[input.number] ?? this.feedbackList).flatMap((item) => {
       const key = sactyReviewTask(item.body);
       const round = input.sactyReviews?.find((r) => r.key === key && r.account === item.author);
-      if (round) return round.allowed ? [{ ...item, source: "sacty_review" as const }] : [];
+      // 投稿したレビューのタスクと回（目印の中身）も、本物と同じく添える（PBI-332）
+      if (round) {
+        return round.allowed ? [{ ...item, source: "sacty_review" as const, review: key }] : [];
+      }
       return key !== undefined && item.author === input.account ? [] : [item];
     });
   }
@@ -28792,6 +28795,74 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           payload: { target: "design", agentId: "claude-subscription", runResult: "completed" },
         });
         expect(judged(service, id)[0]?.payload).not.toHaveProperty("reviewTaskId");
+        activity.close();
+      });
+      it("AI のレビューの指摘が子タスクの最後の回の投稿でなければ、その回の戻し先を当てずに、工程のエージェントが判断する（PR #350 レビュー指摘）", async () => {
+        const made = await designed([
+          reworkOut("changes_required", {
+            findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
+          }),
+          reworkOut("changes_required", {
+            findings: [{ finding: "上限を変える", target: "requirements", reason: "決定を変える" }],
+          }),
+          rework("design", "決定を変えない：前の回の指摘は表記だけ"),
+        ]);
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        // 前の回の投稿を取り込む前に、子タスクが同じ先頭を再レビューした（2回目は別の戻し先を示した）
+        service.rereview(childId);
+        await runReview(service, childId);
+        expect(taskOf(service, childId).reviewRound).toBe(2);
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        expect(executor.calls[calls]?.command.join(" ") ?? "").toContain(
+          "どの工程からやり直せば解消できるかを判断してください",
+        );
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "agent",
+          payload: { target: "design" },
+        });
+        expect(judged(service, id)[0]?.payload).not.toHaveProperty("reviewTaskId");
+        activity.close();
+      });
+
+      it("人が選んだ工程のエージェントが設定から消えていたら、既定のエージェントで判断せずに、理由を示して止める（PR #350 レビュー指摘）", async () => {
+        const base = configOf(agent())();
+        let agents: Record<string, ReturnType<typeof agent>> = { strong: agent({ id: "strong" }) };
+        const config = (): ConfigResult =>
+          base.ok
+            ? { ok: true, config: { ...base.config, agents: { ...base.config.agents, ...agents } } }
+            : base;
+        const made = await designed(
+          [
+            reworkOut("changes_required", {
+              findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
+            }),
+          ],
+          config,
+        );
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        service.changeStepAgent(id, { step: "design", agent: "strong" });
+        agents = {};
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [
+          posted(pulls, 0),
+          item("comment:901", { kind: "comment", author: "reviewer", body: "ここも直して" }),
+        ];
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        expect(task.status).toBe("paused");
+        expect(task.pausedMessage).toEqual(
+          message("agent.chosenMissing", { step: "design", name: "strong" }),
+        );
+        // 判断を実行せず、指摘は未判断のまま残す
+        expect(executor.calls.length).toBe(calls);
+        expect(judged(service, id)).toHaveLength(0);
+        expect(task.pendingReview?.judgement).toBeUndefined();
+        expect(task.pendingReview?.remarks).toHaveLength(2);
         activity.close();
       });
     });

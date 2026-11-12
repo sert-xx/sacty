@@ -2580,6 +2580,11 @@ const PullRequestReviewImported = z.object({
           url: z.string().optional(),
           /** AI のレビュー（sacty のレビューのタスクの投稿）なら sacty_review。無ければ人の指摘（PBI-275）。 */
           source: RemarkSource.optional(),
+          /**
+           * AI のレビューの、投稿したレビューのタスクと回（投稿の目印の中身。`<タスク ID>` か `<タスク ID>:<回>`。PBI-332）。
+           * 戻し先を、その回の判定から決めるため。無ければ（以前の版の記録も）、工程のエージェントが判断する。
+           */
+          review: z.string().min(1).optional(),
         }),
       )
       .min(1),

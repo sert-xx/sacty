@@ -1552,6 +1552,7 @@ export class TaskService {
               at: item.at,
               ...(item.url ? { url: item.url } : {}),
               ...(item.source ? { source: item.source } : {}),
+              ...(item.source && item.review ? { review: item.review } : {}),
             })),
             remarks: feedbackRemarks(batch),
             held: true,
@@ -1639,8 +1640,14 @@ export class TaskService {
         "implement",
         pending.remarks,
         pending.aiReview ?? [],
+        pending.aiReviewFrom ?? {},
         config.config,
       );
+      // 選んだエージェントが無ければ、判断せずに止める（指摘は未判断のまま残す。再開したら判断し直す）
+      if ("missingAgent" in judged) {
+        this.pauseForMissingAgent(held, "implement", judged.missingAgent);
+        return true;
+      }
       // 判断を採用できないとき（一時停止・作り直しの停止（PR のマージ）・デーモンの停止のために実行を止めた・中止された・
       // 指摘や状態が変わった）は、判断は残さず、
       // 使った費用だけを記録する（runResult が interrupted の ReworkJudged は、指摘を未判断のまま保つ）。再開したら判断し直す
@@ -2922,6 +2929,7 @@ export class TaskService {
                 at: item.at,
                 ...(item.url ? { url: item.url } : {}),
                 ...(item.source ? { source: item.source } : {}),
+                ...(item.source && item.review ? { review: item.review } : {}),
               })),
               remarks: feedbackRemarks(batch),
             },
@@ -2939,8 +2947,14 @@ export class TaskService {
         pr.step,
         pending.remarks,
         pending.aiReview ?? [],
+        pending.aiReviewFrom ?? {},
         config.config,
       );
+      // 選んだエージェントが無ければ、判断せずに止める（指摘は未判断のまま残す。再開したら判断し直す）
+      if ("missingAgent" in judged) {
+        this.pauseForMissingAgent(current, pr.step, judged.missingAgent, { awaiting: true });
+        return;
+      }
       // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
       const latest = this.tasks.get(task.id);
       // デーモンを止める・中止するために止めた実行は、判断の失敗として採用しない（採用すると、実装をやり直すことになる）。
@@ -5206,6 +5220,7 @@ export class TaskService {
     gateStep: StepKey,
     remarks: readonly string[],
     aiReview: readonly number[],
+    aiReviewFrom: Readonly<Record<string, string>>,
   ): Extract<EventInput, { type: "ReworkJudged" }>["payload"] | undefined {
     const ai = new Set(aiReview);
     if (remarks.length === 0 || remarks.some((_, i) => !ai.has(i))) return undefined;
@@ -5216,6 +5231,10 @@ export class TaskService {
     const child = record && this.tasks.get(record.taskId);
     if (!child) return undefined;
     const round = child.reviewRound ?? 1;
+    // 指摘がすべて、その子タスクの最後の回の投稿のときだけ、その回の判定から決める（ほかのレビューのタスク・前の回の指摘に
+    // 別の回の戻し先を当てない。出どころの回が分からない指摘も、工程のエージェントが判断する）
+    const from = sactyReviewKey(child.id, round);
+    if (remarks.some((_, i) => aiReviewFrom[String(i)] !== from)) return undefined;
     const last = child.reviewVerdicts?.find((v) => v.round === round);
     if (!last || last.verdict === "no_findings") return undefined;
     const targets = reworkTargets(task, gateStep);
@@ -5253,19 +5272,22 @@ export class TaskService {
     gateStep: StepKey,
     remarks: string[],
     aiReview: readonly number[],
+    aiReviewFrom: Readonly<Record<string, string>>,
     config: SactyConfig,
-  ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
-    const fromReview = this.reviewTaskRework(task, gateStep, remarks, aiReview);
+  ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"] | { missingAgent: string }> {
+    const fromReview = this.reviewTaskRework(task, gateStep, remarks, aiReview, aiReviewFrom);
     if (fromReview) return fromReview;
     const targets = reworkTargets(task, gateStep);
+    // 人が選んだエージェントが設定から消えていれば、判断せずに知らせて止める（選ばれていないエージェントで費用を使わない）
     const chosen = stepAgentFor(config, gateStep, task.agents?.[gateStep]);
+    if (!chosen.ok) return { missingAgent: chosen.missing };
     // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる。失敗したら、代わりのエージェントで判定し直す
     const { outcome, costUsd, estimated, costUnknown, runId, agent } =
       await this.runGuardianWithFallback(
         task,
         {
-          agent: chosen.ok ? chosen.agent : agentFor(config, gateStep),
+          agent: chosen.agent,
           image: config.image,
           prompt: buildReworkPrompt(task, remarks, targets, gateStep, aiReview),
           role: "rework",
@@ -14165,9 +14187,22 @@ export class TaskService {
   }
 
   /** 人が選んだ工程のエージェントが config.yaml から消えていたら、理由を示して一時停止する（PBI-121）。 */
-  private pauseForMissingAgent(task: Task, step: StepKey, name: string): void {
+  /**
+   * 人が選んだエージェントが設定から消えていたので、理由を示して一時停止する。awaiting なら、承認待ち（PR の指摘の戻し先の判断。
+   * PBI-332）からも止める。
+   */
+  private pauseForMissingAgent(
+    task: Task,
+    step: StepKey,
+    name: string,
+    options: { awaiting?: boolean } = {},
+  ): void {
     const latest = this.mustGet(task.id);
-    if (latest.status !== "queued" && latest.status !== "idle") return;
+    const pausable =
+      latest.status === "queued" ||
+      latest.status === "idle" ||
+      (options.awaiting === true && latest.status === "awaiting_approval");
+    if (!pausable || this.cancelling.has(task.id)) return;
     this.append(latest, [
       {
         actor: "sacty",

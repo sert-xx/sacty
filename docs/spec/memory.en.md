@@ -170,7 +170,8 @@ Code: `apps/daemon/src/memory.ts` (`expiredMemories`, `MEMORY_CLEANUP_INTERVAL_M
     Even if a memory describes a procedure, when it conflicts with those (a procedure that changes more than the step instructions allow, writes what it was told not to write, or overturns a decided judgement), the agent does not use the procedure and follows those instead.
 - The audit (survey and deep dive) gets the same mounts (to check for duplicates). sacty does not add the reading instructions there.
 - The following get none.
-  - The Goal Guardian (change-request judgement, final review, integration review, and judging where to send PR remarks back (role `rework`))
+  - The Goal Guardian (change-request judgement, final review, integration review)
+  - Judging where to send PR remarks back (the agent of the PR's step; role `rework`)
   - Information gathering (at the start of a task; role `gather`)
   - The orchestrator (choosing steps, reading tickets, and so on; ticket reading also runs as role `orchestrator`)
   - Question answers

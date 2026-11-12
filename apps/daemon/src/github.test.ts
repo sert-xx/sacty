@@ -1732,6 +1732,53 @@ describe("sacty 自身の AI のレビューの印と、対象にしたコミッ
     ]);
   });
 
+  it("AI のレビューには、投稿したレビューのタスクと回（目印の中身）を添える。人の指摘には付けない（PR #350 レビュー指摘）", async () => {
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: me,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1:2 -->\n## sacty のレビュー",
+            commit_id: head,
+            submitted_at: at(1),
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          {
+            id: 3,
+            user: me,
+            body: "<!-- sacty-review:r1 -->\n上限",
+            path: "a.ts",
+            line: 1,
+            pull_request_review_id: 1,
+            commit_id: head,
+            created_at: at(3),
+          },
+        ],
+      },
+      { status: 200, json: [{ id: 6, user: me, body: "人のコメント", created_at: at(6) }] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+      sactyReviews: [
+        { key: "r1", account: "sacty-bot", allowed: true },
+        { key: "r1:2", account: "sacty-bot", allowed: true },
+      ],
+    });
+    expect(feedback.map((f) => [f.key, f.review])).toEqual([
+      ["review:1", "r1:2"],
+      ["review_comment:3", "r1"],
+      ["comment:6", undefined],
+    ]);
+  });
+
   it("行へのコメントの commit_id は後の push で今の head に付け替わるので、親レビューの commit_id（無ければ original_commit_id）を使う", async () => {
     const reviewed = "b".repeat(40);
     const { impl } = fakeFetch([

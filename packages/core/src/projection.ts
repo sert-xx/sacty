@@ -1001,6 +1001,11 @@ export type Task = {
     };
     /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
     aiReview?: number[];
+    /**
+     * AI のレビューの指摘の位置（文字列）ごとの、投稿したレビューのタスクと回（PBI-332。`PullRequestReviewImported` の items の
+     * review）。無い位置の指摘は、出どころの回が分からない。
+     */
+    aiReviewFrom?: Record<string, string>;
   };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
@@ -2145,10 +2150,15 @@ export function applyEvent(
             item.source === "sacty_review" ? [before + i] : [],
           ),
         ];
+        const heldFrom = {
+          ...(task.pendingReview?.aiReviewFrom ?? {}),
+          ...reviewFromOf(event.payload.items, before),
+        };
         task.pendingReview = {
           keys: [...(task.pendingReview?.keys ?? []), ...heldKeys],
           remarks: [...(task.pendingReview?.remarks ?? []), ...event.payload.remarks],
           ...(heldAi.length > 0 ? { aiReview: heldAi } : {}),
+          ...(Object.keys(heldFrom).length > 0 ? { aiReviewFrom: heldFrom } : {}),
         };
         break;
       }
@@ -2169,10 +2179,12 @@ export function applyEvent(
       const aiReview = event.payload.items.flatMap((item, i) =>
         item.source === "sacty_review" ? [i] : [],
       );
+      const aiReviewFrom = reviewFromOf(event.payload.items, 0);
       task.pendingReview = {
         keys,
         remarks: event.payload.remarks,
         ...(aiReview.length > 0 ? { aiReview } : {}),
+        ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
       };
       break;
     }
@@ -4055,4 +4067,18 @@ export function deliveredWithoutChanges(task: Task): boolean {
   const submission = task.noChanges?.submission;
   if (submission === undefined || task.pullRequest) return false;
   return task.submissions.implement === submission;
+}
+
+/**
+ * 取り込んだ指摘の項目のうち、AI のレビューの指摘の位置（offset から数える）ごとの、投稿したレビューのタスクと回（PBI-332）。
+ */
+function reviewFromOf(
+  items: readonly { source?: "sacty_review"; review?: string }[],
+  offset: number,
+): Record<string, string> {
+  return Object.fromEntries(
+    items.flatMap((item, i) =>
+      item.source === "sacty_review" && item.review ? [[String(offset + i), item.review]] : [],
+    ),
+  );
 }

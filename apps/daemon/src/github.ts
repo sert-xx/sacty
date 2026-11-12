@@ -272,6 +272,11 @@ export type PullRequestFeedback = {
    * アカウントでは見分けない。PBI-275）。無ければ人の指摘。
    */
   source?: "sacty_review";
+  /**
+   * source が sacty_review のとき、投稿したレビューのタスクと回（目印の中身。`sactyReviewKey` の形。PBI-332。戻し先を、その回
+   * の判定から決めるため）。
+   */
+  review?: string;
   /** source が sacty_review のとき、そのレビュー・行へのコメントが対象にしたコミット（PR の head。読めなければ無い）。 */
   commit?: string;
   /**
@@ -445,11 +450,16 @@ export class GitHubPullRequests implements PullRequests {
     const aiReview = (
       item: Record<string, unknown>,
       reviewCommit?: (item: Record<string, unknown>) => unknown,
-    ): Pick<PullRequestFeedback, "source" | "commit"> => {
+    ): Pick<PullRequestFeedback, "source" | "commit" | "review"> => {
       if (!sactyRound(item)?.allowed) return {};
       const raw = reviewCommit ? reviewCommit(item) : item.commit_id;
       const commit = typeof raw === "string" ? raw.trim() : "";
-      return { source: "sacty_review", ...(commit ? { commit } : {}) };
+      const review = sactyReviewTask(item.body);
+      return {
+        source: "sacty_review",
+        ...(commit ? { commit } : {}),
+        ...(review ? { review } : {}),
+      };
     };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
