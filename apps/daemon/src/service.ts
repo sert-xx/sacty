@@ -5613,16 +5613,7 @@ export class TaskService {
     const projects = this.deps.projects.all();
     // リポジトリの URL は、書き方の揺れ（.git・末尾の / など）をそろえて比べる（PBI-88）
     const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
-    // sacty がタスクのために作った PR（実装の PR と、要求要件・設計の PR。ラベルを付けた記録も。PBI-88）
-    const sactyMade = new Set(
-      [...this.tasks.values()].flatMap((t) => [
-        ...(t.pullRequest?.repo && t.pullRequest.number
-          ? [key(t.pullRequest.repo, t.pullRequest.number)]
-          : []),
-        ...t.stepPullRequests.map((p) => key(p.repo, p.number)),
-        ...(t.pullRequestLabels ?? []).map((p) => key(p.repo, p.number)),
-      ]),
-    );
+    const sactyMade = this.sactyMadePullRequests();
     const reviewOf = (issue: FoundIssue): "requested" | "label" | "sacty" | undefined => {
       if (!issue.pullRequest) return undefined;
       // sacty が作った PR は取り込まない。PR を作ったタスクが、レビューの子タスクを作ってレビューさせる（PBI-330）。以前の版で
@@ -5686,6 +5677,24 @@ export class TaskService {
   }
 
   /**
+   * sacty がタスクのために作った PR（実装の PR と、要求要件・設計の PR。ラベルを付けた記録と、レビューの子タスクの記録も。
+   * PBI-88・PBI-330）。値は `repoKey(repo)#番号`。取り込みと再依頼の両方で、これらの PR を別のレビューのタスクにしない。
+   */
+  private sactyMadePullRequests(): Set<string> {
+    const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
+    return new Set(
+      [...this.tasks.values()].flatMap((t) => [
+        ...(t.pullRequest?.repo && t.pullRequest.number
+          ? [key(t.pullRequest.repo, t.pullRequest.number)]
+          : []),
+        ...t.stepPullRequests.map((p) => key(p.repo, p.number)),
+        ...(t.pullRequestLabels ?? []).map((p) => key(p.repo, p.number)),
+        ...(t.reviewTasks ?? []).map((p) => key(p.repo, p.number)),
+      ]),
+    );
+  }
+
+  /**
    * レビューの再依頼（PBI-143）。依頼の検索で見つかった PR のうち、依頼で取り込んでレビューを投稿して完了したタスク
    * （「再レビュー」できるもの）がある PR を、PR の今の依頼先で確かめ、そのタスクのアカウントに依頼されていれば別タスクで再レビューする。
    * 依頼された人がレビューを投稿すると GitHub が依頼を外すので、投稿の後に依頼があれば、作者が再依頼したもの。
@@ -5706,6 +5715,9 @@ export class TaskService {
       if (!issue.pullRequest || issue.review !== "requested" || !issue.requestedFor) continue;
       const id = key(issue.repo, issue.number);
       if (seen.has(id)) continue;
+      // sacty が作った PR は、以前の版で依頼から取り込んだタスクがあっても再レビューしない。PR を作ったタスクの
+      // レビューの子タスクがレビューする（PBI-330 レビュー指摘）
+      if (this.sactyMadePullRequests().has(id)) continue;
       // 依頼で取り込んだタスクだけ（ラベルで取り込んだもの・sacty が作った PR のものは、元の動きのまま）
       const related = () =>
         [...this.tasks.values()].filter(

@@ -87,12 +87,13 @@ For each item in the sacty settings, sacty searches the project's targets (an or
     - `reviewRound` adds 1 to the previous round and continues the review count.
   - GitHub removes a request when the requested person posts a review, so a post normally clears it. Search results lag (a removed request can remain right after the post), so they alone never start a re-review. If a post did not clear the request (for example, the account changed after intake), the last request is older than the post, so it does not repeat after every post.
   - The most recently created task for the same PR is the predecessor only if it has posted and completed; an older completed task is never used as a fallback. sacty saves the request time, account, and predecessor task in the event, so repeated polling of the same request, concurrent processing, and daemon restarts create no duplicates. A later request after the new task has posted and completed creates another separate task.
-  - Tasks that are running, not yet posted, or cancelled, tasks taken in by the label, and tasks for PRs sacty created are excluded. Nothing is checked while `reviewRequested` is Off.
+  - Tasks that are running, not yet posted, or cancelled, and tasks taken in by the label are excluded. Nothing is checked while `reviewRequested` is Off.
+    PRs sacty created (the item below) are excluded even if an older version took them in by a request (the review child task of the task that created the PR reviews them).
   - If the current requested reviewers or the request time cannot be read, sacty starts no re-review, records `intake.rerequestUnchecked`, and does not advance that search's read position. The same PR is found again at the next intake. Each PR is checked once per intake.
   - If the same PR appears in searches for multiple accounts, sacty removes duplicates only after matching the task's account.
   - sacty reads PR events up to 50 pages. If another page remains, it records the read as failed and does not use partial results to decide whether a review was re-requested.
   - After the API reads, sacty confirms that intake is still On and that the selected account, review round, and posting time are unchanged before it creates a new task.
-- PRs created by sacty (ones in the ledger: the implementation PR of a task, a Requirements or Design PR, or a PR given the label by an older version)
+- PRs created by sacty (ones in the ledger: the implementation PR of a task, a Requirements or Design PR, a PR a review child task was created for, or a PR given the label by an older version; `sactyMadePullRequests`)
   - They are not taken in (whichever of the review label, the intake label, or a review request they match).
     The task that created the PR creates a child task that reviews it ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)).
   - The same applies to PRs given the label by an older version and PRs that already have a review task taken in (no double review).
@@ -103,7 +104,7 @@ For each item in the sacty settings, sacty searches the project's targets (an or
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), sacty skips the other searches for that account.
 - sacty does not search intake sources with no account chosen, and records `github.accountRequired`.
 
-Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`), `packages/core/src/events.ts` (`TaskCreated`), `packages/core/src/projection.ts` (`applyEvent`)
+Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyMadePullRequests`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`), `packages/core/src/events.ts` (`TaskCreated`), `packages/core/src/projection.ts` (`applyEvent`)
 
 ## JIRA tickets
 

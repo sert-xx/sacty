@@ -1266,7 +1266,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - コミットの1行目（`commitSubject`・`detectCommitConvention`。PBI-301 A8。実験 S5 r2）：リポジトリが Conventional Commits の形を定めているときだけ、題に種類を付ける（`feat: <題>`）。定めているのは、次のどれか。Commitizen・commitlint の設定のファイル（`.czrc`・`.cz.json`・`commitlint.config.*`・`.commitlintrc*` など）がある。`package.json` に commitlint・commitizen の設定か依存がある。AGENTS.md・CLAUDE.md・CONTRIBUTING・README が Conventional Commits・Commitizen・commitlint に触れるか、`feat:` と `fix:` の両方を例に挙げている。commitlint が1行目の形を独自に決めている設定（`headerPattern`・`parserPreset`）は読み解けないので、定めていないものとして扱う（`package.json` の依存や別のファイルの設定があっても、独自の形があれば優先し、種類を付けない）。定めは、エージェントが書き換えた作業領域ではなく、起点のコミットから読む（`COMMIT_CONVENTION_FILES`。再開しても同じコミットになる。読めなかったときは定めが無いものとして題のまま）。種類は、文書だけの依頼の実装は `docs`、不具合の修正は `fix`、それ以外は `feat`。要求要件・設計の PR のコミットは `docs`。題がすでに種類の付いた形（`feat: …`・`fix(api): …`）なら重ねて付けない。定めが無いリポジトリでは、今までどおり題のまま。2行目以降の `sacty task <ID>` は変えない。既存の PR を引き継ぐタスクが積むコミットも同じ。1行目の長さは変えない（長さの上限を定めるリポジトリでは、長い題が収まらないことがある）。
 - 作ったら `PullRequestPublished`（`verifying`。ドラフトにしたら `draft`）を記録する。
   承認待ちにはしない。
-  レビュー用のラベルは付けない（付けるのは、レビューへ進めるとき）。
+  PR のレビューの子タスクは、まだ作らない（作るのは、レビューへ進めるとき。PR にレビュー用のラベルは付けない。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   - リポジトリがドラフトの PR を使えない（GitHub の 422）なら、ドラフトでない PR にする。
   - 最終レビューに通らずにやり直した実装は、同じ PR を更新する。
     承認待ちの後に差し戻してやり直した実装は、PR をドラフトに戻す（GraphQL の `convertPullRequestToDraft`）。
@@ -1412,7 +1412,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   停止を確かめられなかったコンテナが残っていれば、再開と同じく確かめ直してから進める。
 - 進めると `VerificationOverridden`（actor `person`）を記録し、最終レビューに通ったときと同じく PR の作成の待ち（`publishPending`）にする。
   最終レビューはやり直さない。
-- 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、レビュー用のラベルを付けて、実装の承認待ちにする。
+- 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、その PR をレビューする子タスクを作って、実装の承認待ちにする（ラベルは付けない）。
 - PR の本文には、人が最終レビューの不合格のままレビューへ進めたことと、不合格の観点・最終レビューの所見（1行にし、`HUMAN_CHECK_ITEM_MAX` 文字まで）を書く（`overrideBodyLines`）。
   本文の長さの上限で省かれないよう、テンプレートを使う本文は footer に、使わない本文は冒頭の「結論」に置いて省いても残す（`keep`）。
 - 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。

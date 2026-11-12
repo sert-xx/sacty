@@ -39798,6 +39798,46 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     activity.close();
   });
 
+  it("sacty が作った PR は、以前の版で依頼から取り込んだタスクがあっても、再依頼で別のタスクを作らない（PBI-330 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    pulls.nextNumber = 9;
+    const settings = new MemorySettingsStore({ reviewRequested: true });
+    const { service } = makeService(activity, [out("# 1回目"), out("# 要求要件")], {
+      pulls,
+      settings,
+      projects: projectsWithAccount(),
+      stepPullRequests: true,
+      planner: async () => ({
+        steps: ["requirements"],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    // 以前の版：PR 9 を依頼から取り込んでレビューを投稿した
+    const [review] = service.importIssues([pr(9)]);
+    const reviewId = review?.id ?? "";
+    await service.runNext(reviewId);
+    await service.runNext(reviewId);
+    expect(service.get(reviewId)?.task.reviewPost).toBeDefined();
+    // その PR 9 は、sacty のタスクが作った要求要件の PR
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.stepPullRequests.map((p) => p.number)).toEqual([9]);
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, reviewId);
+    expect(await service.restartRerequestedReviews([pr(9)])).toEqual({
+      restarted: [],
+      failed: [],
+    });
+    expect(pulls.lastRequestQueries).toEqual([]);
+    expect(service.list()).toHaveLength(2);
+    activity.close();
+  });
+
   it.each(["Off", "account"])("API待機中に%sへ変更したら、再レビューしない", async (change) => {
     const { activity, pulls, settings, projects, service, id } = await posted();
     pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };

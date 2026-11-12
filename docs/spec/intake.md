@@ -129,7 +129,8 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
     古い完了タスクには戻らない。
     依頼の日時・アカウントと元タスクをイベントに保存し、同じ依頼の連続ポーリング・並行処理・デーモン再起動でも重複を作らない。
     新タスクの投稿完了後に届いた次の依頼は、さらに別のタスクにする。
-  - 作業中・投稿の前・中止したタスク、ラベルで取り込んだタスク、sacty が作った PR のタスクは対象外。
+  - 作業中・投稿の前・中止したタスク、ラベルで取り込んだタスクは対象外。
+    sacty が作った PR（下の項目）は、以前の版で依頼から取り込んだタスクがあっても対象外（PR を作ったタスクのレビューの子タスクがレビューする）。
     `reviewRequested` が Off なら確かめない。
   - 今の依頼先か依頼の日時を読めなければ、再レビューせずに `intake.rerequestUnchecked` を記録し、その検索の読んだ位置を進めない。
     次の取り込みで、同じ PR がまた見つかる。
@@ -138,7 +139,7 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
   - PR のできごとは50ページまで読む。
     次のページが残っていれば取得不能として記録し、部分結果で再依頼を判定しない。
   - API を読んだ後に、取り込みが On で、担当アカウント・レビューの回・投稿の時刻が読む前と変わっていないことを確かめてから、新タスクを作る。
-- sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・以前の版でラベルを付けた PR）
+- sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・レビューの子タスクを作った PR・以前の版でラベルを付けた PR。`sactyMadePullRequests`）
   - 取り込まない（レビュー用のラベル・取り込むラベル・レビューの依頼のどれに当たっても）。
     PR を作ったタスクが、その PR をレビューする子タスクを作ってレビューさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   - 以前の版でラベルを付けた PR・取り込んだレビューのタスクのある PR も同じ（二重にレビューしない）。
@@ -150,7 +151,7 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`restartRerequestedReviews`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）、`packages/core/src/events.ts`（`TaskCreated`）、`packages/core/src/projection.ts`（`applyEvent`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`restartRerequestedReviews`・`sactyMadePullRequests`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）、`packages/core/src/events.ts`（`TaskCreated`）、`packages/core/src/projection.ts`（`applyEvent`）
 
 ## JIRA のチケット
 
