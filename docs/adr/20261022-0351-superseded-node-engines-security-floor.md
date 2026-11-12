@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #193
 - 置き換え元: なし
-- 置き換え先: [Node.js を 26.x の LTS に上げる](20261028-1158-node-26-lts.md)
+- 置き換え先: [Node.js を 26.x の LTS に上げる](20261028-1158-superseded-node-26-lts.md)
 
 ## 背景
 
