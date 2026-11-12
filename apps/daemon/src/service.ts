@@ -1097,6 +1097,11 @@ export class TaskService {
    */
   private readonly undraftUnsettled = new Set<string>();
   /**
+   * 数えるのをやめた後に届いた、ドラフトに戻す要求があった実装の PR（PBI-331。タスク ID と PR の番号から、リポジトリと番号）。
+   * 指摘なしで外して記録した（する）PR がドラフトに戻っているかもしれないので、記録の後に外し直せるまで、確認のたびに外す。
+   */
+  private readonly lateRedrafted = new Map<string, { repo: string; number: number }>();
+  /**
    * 答えを待つのをやめた後も、まだ終わっていないドラフトの切り替えの要求の数（PBI-331。タスク ID と PR の番号）。終わるまで
    * ドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻り、記録と食い違うのを防ぐ）。
    */
@@ -9010,6 +9015,8 @@ export class TaskService {
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
+            // 最終レビューをしない流れ（PBI-331）では、実装が用意したテストを自分で実行させる
+            ...(this.finalReview ? {} : { finalReview: false }),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
@@ -9607,7 +9614,7 @@ export class TaskService {
         imageEnv: image.env,
         workspaceDir,
         prompt: [
-          buildPrompt(latest, step),
+          buildPrompt(latest, step, { finalReview: this.finalReview }),
           ...platformPromptLines(platform ? [platform] : []),
         ].join("\n"),
         ...(platform ? { platforms: [platform] } : {}),
@@ -11539,6 +11546,12 @@ export class TaskService {
         console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
       });
     }
+    // 数えるのをやめた後に届いた戻す要求で、指摘なしで外した PR がドラフトに戻っていたら、外し直す（PBI-331）
+    for (const taskId of new Set(
+      [...this.lateRedrafted.keys()].map((k) => k.split(":")[0] ?? ""),
+    )) {
+      await this.undraftLateRedrafted(taskId);
+    }
     for (const parent of [...this.tasks.values()]) {
       if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) continue;
       if (this.pauseRequested.has(parent.id)) continue;
@@ -11698,7 +11711,13 @@ export class TaskService {
     request.then((result) => {
       done();
       // 数えるのをやめた後に、ドラフトに戻す要求が届いた。その間に指摘なしでドラフトを外していたら、外し直す
-      if (expired && input.draft && result.draft) this.undraftAfterLateRedraft(taskId, input);
+      if (expired && input.draft && result.draft) {
+        this.lateRedrafted.set(`${taskId}:${input.number}`, {
+          repo: input.repo,
+          number: input.number,
+        });
+        void this.undraftLateRedrafted(taskId);
+      }
     }, done);
     return withDeadline(request, ms).catch((error: unknown) => {
       abort.abort();
@@ -11707,22 +11726,38 @@ export class TaskService {
   }
 
   /**
-   * 数えるのをやめた後に届いた、ドラフトに戻す要求（PBI-331）。その PR を指摘なしでドラフトを外して記録していれば（人の承認
-   * 待ち）、記録と合うようにドラフトを外し直す。外せなければ、デーモンのログに残す。
+   * 数えるのをやめた後に届いた、ドラフトに戻す要求の後始末（PBI-331）。その PR を指摘なしで外して記録していれば（人の承認
+   * 待ち）、記録と合うようにドラフトを外し直す。まだ記録していなければ（外す途中・レビュー待ち）、記録の後に外し直す。外せ
+   * なければ、次の確認でやり直す。タスクが終わった・PR が変わったら忘れる。
    */
-  private undraftAfterLateRedraft(
-    taskId: string,
-    input: Omit<Parameters<PullRequests["setDraft"]>[0], "signal">,
-  ): void {
+  private async undraftLateRedrafted(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
     const pr = task?.pullRequest;
-    if (task?.status !== "awaiting_approval" || this.cancelling.has(taskId)) return;
-    if (pr?.number !== input.number || pr.awaitingReview || pr.reviewedCommit === undefined) return;
-    this.setDraftWithin(taskId, { ...input, draft: false }).catch((error: unknown) => {
-      console.warn(
-        `[daemon] 後から届いたドラフトに戻す要求の後に、PR #${input.number}（${input.repo}）のドラフトを外し直せませんでした：${renderMessage(errorText(error), "ja")}`,
-      );
-    });
+    for (const [key, late] of this.lateRedrafted) {
+      if (!key.startsWith(`${taskId}:`)) continue;
+      if (!task || isFinished(task) || pr?.number !== late.number) {
+        this.lateRedrafted.delete(key);
+        continue;
+      }
+      if (task.status !== "awaiting_approval" || this.cancelling.has(taskId)) continue;
+      if (pr.awaitingReview || pr.reviewedCommit === undefined || this.readying.has(taskId))
+        continue;
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken(task, late.repo, usedSecrets);
+        const result = await this.setDraftWithin(taskId, {
+          repo: late.repo,
+          token,
+          number: late.number,
+          draft: false,
+        });
+        if (!result.draft) this.lateRedrafted.delete(key);
+      } catch (error) {
+        console.warn(
+          `[daemon] 後から届いたドラフトに戻す要求の後に、PR #${late.number}（${late.repo}）のドラフトを外し直せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    }
   }
 
   /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
@@ -11793,7 +11828,17 @@ export class TaskService {
     try {
       token = await this.githubToken(parent, repo, usedSecrets);
       try {
-        await this.setDraftWithin(parent.id, { repo, token, number, draft: false });
+        const undrafted = await this.setDraftWithin(parent.id, {
+          repo,
+          token,
+          number,
+          draft: false,
+        });
+        // GitHub の答えがまだドラフトなら、記録せずに次の確認でやり直す
+        if (undrafted.draft) {
+          warn("のドラフトが外れていません", "GitHub の答えがドラフトのまま");
+          return;
+        }
       } catch (error) {
         warn("のドラフトを外せませんでした", error);
         // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す
@@ -11848,6 +11893,11 @@ export class TaskService {
         },
       ]);
       this.undraftUnsettled.delete(`${parent.id}:${number}`);
+      // 外す間に、数えるのをやめた戻す要求が届いていたら、記録の後に外し直す
+      if (this.lateRedrafted.has(`${parent.id}:${number}`)) {
+        this.readying.delete(parent.id);
+        await this.undraftLateRedrafted(parent.id);
+      }
     } catch (error) {
       warn("のドラフトを外せませんでした", error);
     } finally {

@@ -29343,6 +29343,100 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      /** 起動の後に最初にドラフトに戻す要求を、中断に応じず、late が解決してから GitHub に届くようにする。 */
+      const lateFirstRedraft = (pulls: FakePulls) => {
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        const late = Promise.withResolvers<void>();
+        const landed = Promise.withResolvers<void>();
+        setDraft.mockImplementationOnce(async (input) => {
+          await late.promise;
+          pulls.drafts[input.number] = input.draft;
+          landed.resolve();
+          return { draft: input.draft };
+        });
+        setDraft.mockImplementation(original);
+        return { setDraft, late, landed };
+      };
+
+      it("数えるのをやめた戻す要求が、ドラフトを外して記録する前に届いても、記録の後に外し直す（PR #348 8回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        const { setDraft, late, landed } = lateFirstRedraft(pulls);
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        // 外す要求の答えを待つ間に、遅れた戻す要求が GitHub に届く
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        late.resolve();
+        await landed.promise;
+        expect(pulls.drafts[7]).toBe(true);
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        await checking;
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(false);
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("遅れた戻す要求の後に外し直せなければ、次の確認でやり直す（PR #348 8回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        const { setDraft, late, landed } = lateFirstRedraft(pulls);
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        // 外し直しが失敗する
+        pulls.setDraftFail = "GitHub が落ちている";
+        late.resolve();
+        await landed.promise;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(pulls.drafts[7]).toBe(true);
+        pulls.setDraftFail = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        // 外し直せたら、繰り返さない
+        const calls = setDraft.mock.calls.length;
+        await service.checkPullRequests();
+        expect(setDraft.mock.calls.slice(calls).filter(([input]) => !input.draft)).toEqual([]);
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("ドラフトを外す答えがドラフトのままなら、記録せずに次の確認でやり直す（PR #348 8回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) =>
+          input.draft ? original(input) : { draft: true },
+        );
+        await service.checkPullRequests();
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        setDraft.mockRestore();
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(false);
+        activity.close();
+      });
+
       it("テストのコマンドが決まらないまま最初の工程の前に止まっても、再開で工程を選び直さず、イメージを変えて再開できる（PR #348 6回目のレビュー指摘）", async () => {
         const pulls = new FakePulls();
         const made = await start([implement()], {
@@ -29396,6 +29490,29 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(task.status).toBe("awaiting_approval");
         expect(task.pullRequest).toMatchObject({ number: 7, awaitingReview: true });
         expect(types(service, id)).not.toContain("TaskPaused");
+        activity.close();
+      });
+
+      it("テストの仕組みが無いタスクの実装には、用意したテストを自分で実行させる（PR #348 8回目のレビュー指摘）", async () => {
+        const made = await start([implement()], {
+          steps: ["implement"],
+          reviewTasks: true,
+          finalReview: false,
+          planner: async () => ({
+            steps: ["implement"],
+            fallback: false,
+            noTestsReason: "テストの仕組みが無い",
+            costUsd: 0,
+            estimated: false,
+          }),
+        });
+        const { activity, service, executor, id } = made;
+        await service.runNext(id);
+        await service.runNext(id);
+        expect(taskOf(service, id).noTestsReason).toBe("テストの仕組みが無い");
+        const prompt = executor.calls[0]?.command.join(" ") ?? "";
+        expect(prompt).toContain("提出の前にそのテストを自分で実行し");
+        expect(prompt).not.toContain("ゴールガーディアンが最終レビューの中で");
         activity.close();
       });
 

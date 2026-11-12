@@ -2527,11 +2527,27 @@ export function provenanceGuideLines(provenance: Provenance | null | undefined):
  * タスクの内容（依頼）と、前段の調査の結果か集めた情報（basisWithoutRequirements）に従わせ、タスクの目的を観点 REQ として確かめる。テストの仕組みが無いタスク
  * （PBI-94）は、テストを書かせず、どう満たしたかを説明に書かせる。
  */
+/** テストの仕組みが無いタスクの受け入れを見る役（PBI-331。最終レビューをしなければ、PR のレビューの子タスク）。 */
+function noTestsJudgeBy(finalReview: boolean): string {
+  return finalReview ? "ゴールガーディアン" : "PR のレビューの子タスク";
+}
+
+/**
+ * テストの仕組みが無いタスクで、実装が用意したテストのコマンドの申告の行（PBI-331）。最終レビューをしなければ sacty は
+ * 実行しないので、提出の前に自分で実行させる。
+ */
+function addedTestCommandLine(finalReview: boolean): string {
+  return finalReview
+    ? "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。ゴールガーディアンが最終レビューの中でそのコマンドを実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない"
+    : "- タスクがテストの仕組みを用意することを求めていて、用意したなら、提出の前にそのテストを自分で実行し（依存関係の取得も含める）、通ることを確かめて、実行したコマンドと結果を実装の説明に書く。sacty はこのテストを実行しないので、後の工程に実行を任せない。あわせて、そのテストを実行するコマンドを下の形式で付ける。用意していなければ付けない";
+}
+
 function directImplementLines(
   task: Task,
   content: string,
   previous: string | undefined,
   remarks: ReturnType<typeof humanRemarks>,
+  finalReview: boolean,
 ): string[] {
   const step: StepKey = "implement";
   const noTests = task.noTestsReason;
@@ -2545,12 +2561,12 @@ function directImplementLines(
     ...(noTests
       ? [
           `このリポジトリには、テストの仕組みがありません（${noTestsJudge(task)}）。sacty はテストを実行せず、`,
-          `ゴールガーディアンが、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、観点 ${REQUIREMENTS_VIEWPOINT}（タスクの目的）の受け入れを判定します。`,
+          `${noTestsJudgeBy(finalReview)}が、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、観点 ${REQUIREMENTS_VIEWPOINT}（タスクの目的）の受け入れを${finalReview ? "判定" : "レビュー"}します。`,
           "",
-          "- 依頼が求めることを、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
+          `- 依頼が求めることを、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。${noTestsJudgeBy(finalReview)}は、コードと差分で裏付けられることだけを根拠にする`,
           "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
           NO_TESTS_AGENT_INSTRUCTIONS_IMPLEMENT_LINE,
-          "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。ゴールガーディアンが最終レビューの中でそのコマンドを実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
+          addedTestCommandLine(finalReview),
           `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
           "- コミットやプッシュはしない（sacty が行います）",
           NO_CHANGE_LINE,
@@ -2691,6 +2707,11 @@ export function buildPrompt(
     reviewCi?: ReviewCi;
     /** PR のレビューの子タスクが読む、セキュリティ対応の修正の範囲と、sacty の照合の結果（PBI-331）。 */
     reviewSecurity?: ReviewSecurity;
+    /**
+     * 実装の後に最終レビューをするか（PBI-331）。false なら、テストの仕組みが無いタスクの実装の指示で、用意したテストを
+     * 自分で実行させ、受け入れは PR のレビューの子タスクが見ると伝える。無ければ最終レビューをする（以前の版の流れ）。
+     */
+    finalReview?: boolean;
   } = {},
 ): string {
   // 引き継いで直す既存の PR のことと、その PR の指摘
@@ -3156,7 +3177,7 @@ export function buildPrompt(
       // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と集めた情報（前段の調査があればその結果）から実装する
       if (!designed && withoutRequirements(task)) {
         return [
-          ...directImplementLines(task, content, previous, remarks),
+          ...directImplementLines(task, content, previous, remarks, extra.finalReview !== false),
           ...mergeConflictLines(task, extra.mergeConflicts ?? []),
         ].join("\n");
       }
@@ -3166,7 +3187,7 @@ export function buildPrompt(
           ? [
               `作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件${designed ? "と設計" : ""}に従って実装してください。`,
               `このリポジトリには、テストの仕組みがありません（${noTestsJudge(task)}）。sacty はテストを実行せず、`,
-              `ゴールガーディアンが、タスクの目的・要求要件${designed ? "・設計" : ""}と、実装後のコード・差分・あなたの実装の説明から、観点ごとに受け入れを判定します。`,
+              `${noTestsJudgeBy(extra.finalReview !== false)}が、タスクの目的・要求要件${designed ? "・設計" : ""}と、実装後のコード・差分・あなたの実装の説明から、観点ごとに受け入れを${extra.finalReview !== false ? "判定" : "レビュー"}します。`,
               ...(designed
                 ? []
                 : [
@@ -3186,10 +3207,10 @@ export function buildPrompt(
         "",
         ...(noTests
           ? [
-              "- 観点ごとに、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
+              `- 観点ごとに、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。${noTestsJudgeBy(extra.finalReview !== false)}は、コードと差分で裏付けられることだけを根拠にする`,
               "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
               NO_TESTS_AGENT_INSTRUCTIONS_IMPLEMENT_LINE,
-              "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。ゴールガーディアンが最終レビューの中でそのコマンドを実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
+              addedTestCommandLine(extra.finalReview !== false),
               `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,

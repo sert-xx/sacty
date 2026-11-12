@@ -2256,6 +2256,34 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(review).not.toContain("判断の根拠は、下の差分とテストの結果だけにする");
   });
 
+  it("最終レビューをしない流れでは、テストの仕組みが無いタスクの実装に、用意したテストを自分で実行させる（PR #348 8回目のレビュー指摘）", () => {
+    for (const steps of [
+      ["investigate", "implement"],
+      ["requirements", "implement"],
+      ["requirements", "design", "implement"],
+    ] as const) {
+      const t = task({ noTestsReason: NO_TESTS }, [...steps]);
+      const current = buildPrompt(t, "implement", { finalReview: false });
+      expect(current, steps.join()).toContain("提出の前にそのテストを自分で実行し");
+      expect(current, steps.join()).toContain(
+        "sacty はこのテストを実行しないので、後の工程に実行を任せない",
+      );
+      expect(current, steps.join()).toContain("PR のレビューの子タスクが、タスクの目的");
+      expect(current, steps.join()).not.toContain("ゴールガーディアンが最終レビューの中で");
+      expect(current, steps.join()).not.toContain("ゴールガーディアンが、タスクの目的");
+      // 申告の形は変えない
+      expect(current, steps.join()).toContain(
+        '```sacty-test-command\n{"command": "テストのコマンド"}\n```',
+      );
+      // 以前の版の流れ（最終レビューをする）は今までどおり
+      const legacy = buildPrompt(t, "implement");
+      expect(legacy, steps.join()).toContain(
+        "ゴールガーディアンが最終レビューの中でそのコマンドを実行し",
+      );
+      expect(legacy, steps.join()).not.toContain("提出の前にそのテストを自分で実行し");
+    }
+  });
+
   it("要求要件・設計を経ないタスクでも、エージェント向けの指示の文書を差分で判定させ、エージェントの起動を求めさせない（PR #234 レビュー指摘）", () => {
     const IMPLEMENT_LINE =
       "エージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など）は、文書に何が書かれているかを差分で確かめられるよう、依頼を満たす記述の箇所を実装の説明に書く。エージェントを起動して確かめるテストの仕組みを足さない";
