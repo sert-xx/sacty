@@ -4593,11 +4593,20 @@ export class TaskService {
    * プロジェクトの対象も指定していない）か、決めた名前が既定のイメージでも config.yaml の images でもない。
    */
   private mayUseContextImage(task: Task, config: SactyConfig): boolean {
-    const names = [
-      task.image,
-      this.pinnedImage(task)?.name,
-      ...Object.values(task.images ?? {}),
-    ].filter((n): n is string => typeof n === "string");
+    // 実行のときと同じ順で決める（stepImageOf）。タスクのイメージ（人が変えたものを含む）があれば、それだけを見る。
+    // 古い版の作業履歴の工程ごとのイメージ、工程を選ぶ前なら決まっているイメージ（作成時・プロジェクトの対象）の順
+    const legacy = Object.values(task.images ?? {}).filter(
+      (n): n is string => typeof n === "string",
+    );
+    const pinned = task.steps.length === 0 ? this.pinnedImage(task)?.name : undefined;
+    const names =
+      task.image !== undefined
+        ? [task.image]
+        : legacy.length > 0
+          ? legacy
+          : pinned !== undefined
+            ? [pinned]
+            : [];
     if (names.length === 0) return task.steps.length === 0;
     return names.some((n) => n !== DEFAULT_IMAGE_NAME && !hasImage(config, n));
   }

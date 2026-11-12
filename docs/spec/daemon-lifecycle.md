@@ -229,12 +229,13 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
   - `buildImage`（`sacty image build` と同じ Dockerfile。言語ごとのイメージとして作る）を使い、docker の出力の末尾（16 KiB。`CONTEXT_IMAGE_LOG_MAX`）を持つ。
   - `image_build` は、名前を決めたとき（読んだとき）のものを使う（名前のハッシュと中身を一致させる）。
   - 60分（`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`）で終わらなければ、docker を止めて `failed`（`contextImage.buildTimedOut`）にし、次のものを作る。
+    止めてから 15 秒（`CONTEXT_IMAGE_ABANDON_MS`）で終わらない処理（npm のトークンの取り出しが応答しないなど）は見切る（見切った処理は、止めた signal を見て docker を動かさない）。
   - Dockerfile の場所は、`sacty up` が渡す `SACTY_DOCKER_DIR`（無ければリポジトリの `packages/cli/docker`）。
   - 失敗したら `failed`（`contextImage.buildFailed`）にする。
     自動では作り直さない。
     `POST /api/projects/:id/context-images/:name/rebuild`（画面の「作り直す」）で `queued` に戻す（失敗していないものは `contextImage.notFailed`、無いものは `contextImage.notFound` で断る）。
   - すべて作り終え、設定を読めて、どのプロジェクトも今の定義を読めていれば、今の定義の名前以外の、自分の印の `sacty-ctx-<印>-` のイメージを `docker image rm` で消す（強制では消さない）。
-    2分（`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`）で終わらなければ、止めて先に進む。
+    2分（`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`）で終わらなければ止め、止めた docker が終わる（`CONTEXT_IMAGE_ABANDON_MS` まで）のを待ってから先に進む。
     消している間は、読み直しが手元にあるかを確かめず、消し終えてから確かめる。
     消している間に順番待ちが増えたら、消し終えてから作る。
   - デーモンを止めるとき・作成の時間切れのときは、docker に `SIGTERM` を送り、10 秒（`DOCKER_KILL_GRACE_MS`）で終わらなければ `SIGKILL` を送る（`runDockerStreaming`）。
@@ -250,11 +251,12 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
   - 画面の選択肢（タスクの作成・差し戻し・タスクの詳細・プロジェクトの対象）にも、そのプロジェクトのものを足す（`projectImages`）。
 - 待ち：プロジェクトのコンテキストを読む前・読んでいる間・作る順番待ち・作成中は、そのイメージを使うかもしれないタスクの実行を始めない（`awaitingContextImages`。実行の印も付けず、ワーカーが2秒ごとに確かめ直す）。
   - 使うかもしれないのは、イメージが決まっていない（工程が無く、人もプロジェクトの対象も指定していない）タスクと、決まった名前が `default` でも `config.yaml` の `images` でもないタスク。
+    名前は実行のときと同じ順で決める（タスクのイメージ（人が変えたものを含む）、古い版の工程ごとのイメージ、工程を選ぶ前なら作成時・プロジェクトの対象の指定）。
   - 60分（`CONTEXT_IMAGES_WAIT_MS`）待っても終わらなければ、`TaskPaused`（理由 `error`、`contextImage.waitTimedOut`）にする。
   - 待っている間の一時停止・中止は、実行していないタスクと同じにすぐ効く。
   - ワーカーは、待っているタスクを実行の対象から除いてから、同時に実行する数を数える（`runnableTaskIds`。後の実行できるタスクの枠を塞がない）。
 
-コード: `apps/daemon/src/context-images.ts`（`ContextImageBuilder`・`contextImageTag`・`contextImagePrefix`・`contextLanguageImage`・`runDockerStreaming`・`removeStaleContextImages`・`CONTEXT_IMAGES_REFRESH_MS`・`CONTEXT_IMAGE_LOG_MAX`・`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`・`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`・`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`・`DOCKER_KILL_GRACE_MS`）、
+コード: `apps/daemon/src/context-images.ts`（`ContextImageBuilder`・`contextImageTag`・`contextImagePrefix`・`contextLanguageImage`・`runDockerStreaming`・`removeStaleContextImages`・`CONTEXT_IMAGES_REFRESH_MS`・`CONTEXT_IMAGE_LOG_MAX`・`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`・`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`・`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`・`DOCKER_KILL_GRACE_MS`・`CONTEXT_IMAGE_ABANDON_MS`）、
 `apps/daemon/src/context.ts`（`contextImages`）、`apps/daemon/src/config.ts`（`resolveImage`・`imageDefined`・`hasImage`）、
 `apps/daemon/src/service.ts`（`projectImagesConfig`・`awaitingContextImages`・`runnableTaskIds`・`mayUseContextImage`・`loadContextImages`・`rebuildContextImage`・`refreshContextImages`・`CONTEXT_IMAGES_WAIT_MS`）、
 `apps/daemon/src/server.ts`、`apps/daemon/src/main.ts`、`apps/daemon/src/worker.ts`（`Worker`）、`packages/cli/src/up-env.ts`（`daemonEnv`）、

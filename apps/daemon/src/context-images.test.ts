@@ -523,9 +523,10 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
       inspect: async () => "present",
       build: async () => undefined,
       removeStale: (_keep, _prefix, signal) =>
-        new Promise(() => {
+        new Promise((r) => {
           signal.addEventListener("abort", () => {
             aborted = true;
+            r();
           });
         }),
       pruneTimeoutMs: 20,
@@ -583,6 +584,97 @@ describe("コンテキストのイメージ（PBI-325 レビュー指摘）", ()
     await Promise.all([first, second]);
     expect(loads).toBe(2);
     expect(builder.images("p1").map((e) => e.name)).toEqual(["other"]);
+  });
+
+  it("片付けの時間切れの後も、止めた片付けが終わるまでは、読み直しが手元にあるかを確かめない", async () => {
+    const order: string[] = [];
+    let images = one;
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({ images, warnings: [] }),
+      config: () => baseConfig(),
+      inspect: async (image) => {
+        order.push(`inspect ${image.split(":")[0]}`);
+        return "present";
+      },
+      build: async () => undefined,
+      removeStale: (_keep, _prefix, signal) =>
+        new Promise((r) => {
+          // 止められても、すぐには終わらない（止めた docker の終わりを待つ）
+          signal.addEventListener("abort", () =>
+            setTimeout(() => {
+              order.push("prune end");
+              r();
+            }, 30),
+          );
+        }),
+      pruneTimeoutMs: 10,
+    });
+    await builder.refresh();
+    await new Promise((r) => setTimeout(r, 15));
+    images = [{ name: "other", image: def("y"), from: "acme" }];
+    await builder.refresh();
+    expect(order.slice(1, 3)).toEqual(["prune end", "inspect sacty-ctx-p1-other"]);
+  });
+
+  it("止めても終わらない作成（秘密情報の取り出しが応答しないなど）は、見切って失敗にし、次を作る", async () => {
+    const started: string[] = [];
+    const builder = new ContextImageBuilder({
+      projects: () => [{ id: "p1", name: "p" }],
+      load: async () => ({
+        images: [
+          { name: "a", image: def("A"), from: "acme" },
+          { name: "b", image: def("B"), from: "acme" },
+        ],
+        warnings: [],
+      }),
+      config: () => baseConfig(),
+      inspect: async () => "missing",
+      build: (language) => {
+        started.push(language.name);
+        // a は止めても終わらない
+        return language.name === "a" ? new Promise(() => {}) : Promise.resolve(undefined);
+      },
+      buildTimeoutMs: 10,
+      abandonMs: 10,
+    });
+    await builder.refresh();
+    await builder.idle();
+    expect(started).toEqual(["a", "b"]);
+    expect(builder.images("p1").map((e) => e.state)).toEqual(["failed", "ready"]);
+    expect(builder.images("p1")[0]?.error).toEqual({
+      code: "contextImage.buildTimedOut",
+      params: { minutes: 1 },
+    });
+  });
+
+  it("設定を読めないときに読んだプロジェクトは、設定が戻っても、読み直すまで片付けの対象にしない", async () => {
+    let config: SactyConfig | undefined;
+    let removed = 0;
+    const builder = new ContextImageBuilder({
+      projects: () => [
+        { id: "p1", name: "p1" },
+        { id: "p2", name: "p2" },
+      ],
+      load: async () => ({ images: one, warnings: [] }),
+      config: () => config,
+      inspect: async () => "present",
+      build: async () => undefined,
+      removeStale: async () => {
+        removed++;
+      },
+    });
+    await builder.refresh();
+    await builder.idle();
+    // 設定が戻ってから、p2 だけを読み直す（p1 は、設定を読めないときに読んだまま）
+    config = baseConfig();
+    await builder.refresh("p2");
+    await builder.idle();
+    expect(removed).toBe(0);
+    // p1 も読み直せば、片付ける
+    await builder.refresh("p1");
+    await builder.idle();
+    expect(removed).toBe(1);
   });
 
   it("デーモンの印を名前に入れ、片付けはその印のものだけを消す", async () => {

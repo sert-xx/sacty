@@ -38,6 +38,23 @@ export const CONTEXT_IMAGES_LOAD_TIMEOUT_MS = 5 * 60_000;
 export const CONTEXT_IMAGES_PRUNE_TIMEOUT_MS = 2 * 60_000;
 /** 止めるときに SIGTERM を送ってから、終わらなければ SIGKILL を送るまでの時間（10秒）。 */
 export const DOCKER_KILL_GRACE_MS = 10_000;
+/**
+ * 止めてから、終わるのを待つ上限（15秒。SIGKILL まで待ってから少し）。秘密情報の取り出し（キーチェーン・1Password）のように
+ * 止められない処理が応答しなくても、見切って先に進む（見切った処理は、止めた signal を見て docker を動かさない）。
+ */
+export const CONTEXT_IMAGE_ABANDON_MS = DOCKER_KILL_GRACE_MS + 5_000;
+
+/** signal が止められてから ms 後に解ける（止められなければ、解けない）。 */
+function afterAbort(signal: AbortSignal, ms: number): Promise<"abandoned"> {
+  return new Promise((resolve) => {
+    const start = () => {
+      const timer = setTimeout(() => resolve("abandoned"), ms);
+      timer.unref?.();
+    };
+    if (signal.aborted) start();
+    else signal.addEventListener("abort", start, { once: true });
+  });
+}
 
 /** 作る順番待ち・作成中・作成済み・失敗。 */
 export type ContextImageState = "queued" | "building" | "ready" | "failed";
@@ -128,6 +145,8 @@ export type ContextImagesDeps = {
   removeStale?: (keep: readonly string[], prefix: string, signal: AbortSignal) => Promise<void>;
   /** 片付けを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGES_PRUNE_TIMEOUT_MS。 */
   pruneTimeoutMs?: number;
+  /** 止めてから、終わるのを待つ上限（ミリ秒）。無ければ CONTEXT_IMAGE_ABANDON_MS。 */
+  abandonMs?: number;
   /**
    * イメージの名前に入れる、このデーモンの印（SACTY_HOME から作る）。同じ Docker を使う別の SACTY_HOME のデーモンのイメージを、
    * 片付けで消さないように、名前で見分ける。
@@ -566,7 +585,7 @@ export class ContextImageBuilder {
       }, limit);
       timer.unref?.();
       try {
-        const detail = await this.deps.build(
+        const building = this.deps.build(
           entry.language,
           entry.build,
           (chunk) => {
@@ -574,7 +593,16 @@ export class ContextImageBuilder {
           },
           local.signal,
         );
-        if (detail) failure = message("contextImage.buildFailed", { detail });
+        building.catch(() => {});
+        // 止めても終わらなければ（npm のトークンの取り出しが応答しないなど）、見切って次へ進む
+        const detail = await Promise.race([
+          building,
+          afterAbort(local.signal, this.deps.abandonMs ?? CONTEXT_IMAGE_ABANDON_MS),
+        ]);
+        // 見切ったのは止めたとき（時間切れ・デーモンの停止）だけなので、理由は下で決める
+        if (detail && detail !== "abandoned") {
+          failure = message("contextImage.buildFailed", { detail });
+        }
       } catch (error) {
         failure = errorText(error);
       } finally {
@@ -624,16 +652,27 @@ export class ContextImageBuilder {
       }, this.deps.pruneTimeoutMs ?? CONTEXT_IMAGES_PRUNE_TIMEOUT_MS);
       timer.unref?.();
     });
-    this.pruning = Promise.race([
-      removeStale(keep, contextImagePrefix(this.deps.owner), local.signal).catch(() => {
+    const removal = removeStale(keep, contextImagePrefix(this.deps.owner), local.signal).catch(
+      () => {
         // 片付けられなくても、作成には関わらない
-      }),
-      timeout,
-    ]).finally(() => {
-      clearTimeout(timer);
-      this.controller.signal.removeEventListener("abort", onStop);
-      this.pruning = undefined;
-    });
+      },
+    );
+    // 時間切れなら止め、止めた docker が終わる（SIGKILL まで）のを待ってから、待ちを解く（消している途中のまま、読み直しが
+    // 手元にあるかを確かめないように）
+    this.pruning = Promise.race([removal, timeout])
+      .then(() =>
+        Promise.race([
+          removal,
+          // 止めても終わらなければ、見切る（止めた signal で、残りの docker は動かさない）
+          afterAbort(local.signal, this.deps.abandonMs ?? CONTEXT_IMAGE_ABANDON_MS),
+        ]),
+      )
+      .then(() => {})
+      .finally(() => {
+        clearTimeout(timer);
+        this.controller.signal.removeEventListener("abort", onStop);
+        this.pruning = undefined;
+      });
     await this.pruning;
   }
 }

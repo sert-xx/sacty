@@ -42662,6 +42662,27 @@ describe("コンテキストのイメージ（PBI-325）", () => {
     activity.close();
   });
 
+  it("人がタスクのイメージを default に変えたら、作成時に指定したコンテキストのイメージの作成を待たない（PBI-325 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: false, entries: [entry("ready")] });
+    const { service } = makeService(activity, [completed(10)], { contextImages: fake.images });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "画面のテスト",
+      plan: "standard",
+      image: "node-pw",
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("awaiting_approval");
+    service.changeTaskImage(id, { image: "default" });
+    service.approve(id, { step: "requirements", submission: 1 });
+    expect(service.get(id)?.task.status).toBe("queued");
+    // 作成時の指定（node-pw）が残っていても、今のタスクのイメージ（default）で判定する
+    fake.state.pending = true;
+    expect(service.runnableTaskIds()).toContain(id);
+    activity.close();
+  });
+
   it("作成時に、コンテキストのイメージの名前を指定できる。無い名前は断る", () => {
     const activity = new SqliteActivityStore(dbPath);
     const fake = fakeImages({ pending: false, entries: [entry("ready")] });
