@@ -72,14 +72,14 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `split` | Task split | Creates child tasks and waits for them to finish |
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
-| `implement` | Implementation | Implements. Before the final review sacty opens the implementation PR as a draft; after it passes verification, sacty marks it ready and waits for a person's approval (merging the PR) |
+| `implement` | Implementation | Implements. When the Implementation step finishes, sacty opens the implementation PR as a draft and waits for approval; once the PR review child task reports no findings, sacty removes the draft and waits for a person's approval (merging the PR) |
 | `deployment` | After-merge watch | After the implementation PR is merged, waits for CI/CD, checks as the skill says, and registers a fix task on failure (no human approval. [After-merge watch](deployment-watch.en.md)) |
 | `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
 | `operation` | Operation | Performs the requested external change once and submits evidence for result approval |
 
 The steps fall into the following categories.
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a security fix (`security-fix`) (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is marked ready for review.
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a security fix (`security-fix`) (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved. When the agent's run ends, Implementation waits for approval after sacty opens the implementation PR as a draft ("The flow without the final review" below). Once the PR review child task reports no findings, sacty removes the draft, and a person approves by merging the PR. In the older flow with the final review (when the `finalReview` dependency is enabled), it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is marked ready for review.
 - Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`, `document`.
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
@@ -674,7 +674,7 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
     - If the task is sent back, the PR is updated, a re-review of the child task starts, or the head changes while the draft is being removed again, or the answer to removing the draft is not received,
       sacty turns the PR back into a draft when the task is not finished and the PR number is the same. If the answer to removing the draft is not received while the record is unchanged, the request might still arrive later,
       so sacty turns the PR back into a draft at every check, also for the next submission, until it removes the draft after no findings (`undraftUnsettled`).
-    - For a paused task, if its PR is not a draft on GitHub, sacty turns it back into a draft (`settlePausedDrafts`; the PR is not to be merged while the task is paused. A PR waiting for no findings that is stacked on a dependency's PR is excluded).
+    - For a paused task, if its PR is not a draft on GitHub, sacty turns it back into a draft (`settlePausedDrafts`; the PR is not to be merged while the task is paused. A PR waiting for no findings that is stacked on a dependency's PR is excluded. sacty checks `PAUSED_DRAFTS_CONCURRENCY` (4) PRs at a time in parallel).
       Even when the task was paused while the draft was being removed again, the redraft failed, or no answer came back (`DRAFT_TIMEOUT_MS`), sacty tries again at every check while it is paused.
       After the task is resumed, sacty removes the draft of a PR recorded after no findings again, as above.
   - The date and subject of the implementation PR's commit are those of when the Implementation step finished (`outputAt`), because there is no final review date.

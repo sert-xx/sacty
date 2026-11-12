@@ -29740,6 +29740,41 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("一時停止したタスクの PR は並べて確かめ、答えが返らない PR が続いても、1つずつ待たない（PR #348 13回目のレビュー指摘）", async () => {
+        const ok = verdictOut("no_findings", "# 評価\n\n問題なし");
+        const made = await implemented([ok, implement(), ok], [], { draftTimeoutMs: 300 });
+        const { activity, service, pulls, id } = made;
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childOf(service, id));
+        await service.checkPullRequests();
+        const second = service.createTask({
+          projectId: "default",
+          title: "2つめ",
+          body: "本文",
+        }).id;
+        for (let i = 0; i < 5 && taskOf(service, second).status !== "awaiting_approval"; i++) {
+          await service.runNext(second);
+        }
+        expect(taskOf(service, second).pullRequest?.number).toBeDefined();
+        service.pause(id);
+        service.pause(second);
+        const original = pulls.status.bind(pulls);
+        const status = vi.spyOn(pulls, "status");
+        let hanging = 0;
+        status.mockImplementation((input) => {
+          if (!new Error().stack?.includes("settlePausedDraft")) return original(input);
+          hanging++;
+          return new Promise(() => {});
+        });
+        const started = Date.now();
+        await service.checkPullRequests();
+        status.mockRestore();
+        expect(hanging).toBe(2);
+        // 1つずつ待つと 600 ミリ秒以上かかる
+        expect(Date.now() - started).toBeLessThan(550);
+        activity.close();
+      });
+
       it("一時停止したタスクの PR の状態の答えが返らなくても、PR の確認を止めない（PR #348 12回目のレビュー指摘）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
           draftTimeoutMs: 50,

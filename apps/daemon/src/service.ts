@@ -1013,6 +1013,9 @@ export const REVIEW_CI_TIMEOUT_MS = 30_000;
  */
 export const DRAFT_TIMEOUT_MS = 30_000;
 
+/** 一時停止したタスクの実装の PR のドラフトを、同時に確かめる数（PBI-331。settlePausedDrafts）。 */
+export const PAUSED_DRAFTS_CONCURRENCY = 4;
+
 /**
  * 答えを待つのをやめたドラフトの切り替えの要求を、終わっていない要求として数える上限（DRAFT_TIMEOUT_MS の倍数。PBI-331）。
  * 通信を中断しても終わらない要求で、ずっとドラフトを外せなくならないようにする。
@@ -11841,32 +11844,49 @@ export class TaskService {
    * 再起動の後も、戻せなかった・答えが返らなかったときも次の確認でやり直す。依存先の PR に重ねた、指摘なしを待つ PR は除く。
    */
   private async settlePausedDrafts(): Promise<void> {
-    for (const task of [...this.tasks.values()]) {
+    const paused = [...this.tasks.values()].filter((task) => {
       const pr = task.pullRequest;
-      if (task.status !== "paused" || this.cancelling.has(task.id)) continue;
+      if (task.status !== "paused" || this.cancelling.has(task.id)) return false;
       if (!pr?.number || !pr.repo || (!pr.awaitingReview && pr.reviewedCommit === undefined)) {
-        continue;
+        return false;
       }
-      if (this.readying.has(task.id) || this.draftRequests.has(`${task.id}:${pr.number}`)) continue;
-      const usedSecrets: string[] = [];
-      try {
-        const token = await this.githubToken(task, pr.repo, usedSecrets);
-        // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
-        const status = await withDeadline(
-          this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
-          this.draftTimeoutMs(),
-        );
-        if (status.state !== "open" || status.draft !== false) continue;
-        const latest = this.tasks.get(task.id);
-        if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) continue;
-        // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
-        if (latest.pullRequest.awaitingReview && latest.stack) continue;
-        await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
-      } catch (error) {
-        console.warn(
-          `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-        );
+      return !this.readying.has(task.id) && !this.draftRequests.has(`${task.id}:${pr.number}`);
+    });
+    // 答えが返らない PR があっても全体が長く待たないよう、PAUSED_DRAFTS_CONCURRENCY 件ずつ並べて確かめる
+    let next = 0;
+    const work = async () => {
+      while (next < paused.length) {
+        const task = paused[next++];
+        if (task) await this.settlePausedDraft(task);
       }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(PAUSED_DRAFTS_CONCURRENCY, paused.length) }, work),
+    );
+  }
+
+  /** 一時停止したタスクの実装の PR を1つ確かめ、ドラフトでなければ戻す（PBI-331。settlePausedDrafts）。 */
+  private async settlePausedDraft(task: Task): Promise<void> {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo) return;
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, pr.repo, usedSecrets);
+      // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
+      const status = await withDeadline(
+        this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+        this.draftTimeoutMs(),
+      );
+      if (status.state !== "open" || status.draft !== false) return;
+      const latest = this.tasks.get(task.id);
+      if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
+      // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
+      if (latest.pullRequest.awaitingReview && latest.stack) return;
+      await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
+    } catch (error) {
+      console.warn(
+        `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
     }
   }
 
