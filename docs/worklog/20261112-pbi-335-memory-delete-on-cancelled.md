@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-12（UTC）
 - タスク: PBI-335
-- PR: なし
+- PR: #356
 - ブランチ: feat/issue-335-memory-delete-on-cancelled
 - 関係する ADR: [監査の後に中止したタスクにも、メモリーの削除の記録だけは追記できるようにする](../adr/20261112-2210-delete-memory-of-cancelled-task.md)
 
