@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-12（UTC）
 - タスク: PBI-332
-- PR: （作成後に記入）
+- PR: [#350](https://github.com/sert-xx/sacty/pull/350)
 - ブランチ: feat/issue-332-review-decides-rework-target
 - 関係する ADR: [PR の指摘の戻し先を、ゴールガーディアンではなく、AI のレビューの指摘はレビューの子タスクが、人の指摘は PR の工程のエージェントが決める](../adr/20261112-0748-review-child-task-decides-rework-target.md)
 
