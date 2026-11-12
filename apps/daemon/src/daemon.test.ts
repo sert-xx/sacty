@@ -29754,7 +29754,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const status = vi.spyOn(pulls, "status");
         // 一時停止したタスクの PR を確かめる答えだけが返らない
         status.mockImplementation((input) =>
-          new Error().stack?.includes("settlePausedDrafts") ? new Promise(() => {}) : original(input),
+          new Error().stack?.includes("settlePausedDrafts")
+            ? new Promise(() => {})
+            : original(input),
         );
         await service.checkPullRequests();
         status.mockRestore();
