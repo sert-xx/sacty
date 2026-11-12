@@ -20,6 +20,7 @@ CI が無いので、PR の lint・型検査・テストは、作った人と sa
 - 外部の Action（`actions/checkout`・`actions/setup-node`）はコミットの SHA で固定し、タグをコメントに書く。
 - Node.js の版は `.node-version` から読む（`engines` の下限と同じ版。下限を上げると CI の版も変わる）。
 - main のルールセットの承認数は 0 のままにする（個人で保守していて、承認する人がほかにいないため）。
+- Dependabot は今は足さない。
 
 ## 理由
 
