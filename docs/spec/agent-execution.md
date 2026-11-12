@@ -299,6 +299,23 @@
     イメージに残す npm の設定（`registry` と `npm_config`）は別の secret で渡す。
   - secret の中身は BuildKit のキャッシュの判定に入らない。
     そのため、中身のハッシュ（`NPM_CONFIG_HASH`・`SACTY_SETUP_HASH`）を build-arg で渡し、変えたときに作り直されるようにする。
+  - ビルドのキャッシュ
+    - 手順は、変わりにくく重いものから並べる（git → 作業用の CLI → セキュリティの検査の道具 → draw.io → エージェントの CLI → npm の設定 → `packages`・`run` → `gh` の代わり・`drawio` の包むスクリプト → `maven_mirror`）。
+    - build-arg（`NPM_VERSION`・`SACTY_DRAWIO`・`MAVEN_MIRROR`）は、使う手順の直前で宣言する。
+      宣言より後の手順は、使わなくても値が変わると作り直されるため（`npm_version` を変えても、作業用の CLI・draw.io・セキュリティの道具は作り直さない）。
+    - `drawio-shim.cjs` は draw.io の本体を入れる手順とは別に、`gh` の代わりの後で写す（直しても draw.io を入れ直さない）。
+    - 作業用の CLI・セキュリティの検査の道具・draw.io・git の手順は、BuildKit の cache マウント（`id=sacty-build-cache`、`/var/cache/sacty-build`、`sharing=locked`）を `packages/cli/docker/with-build-cache.sh` を通して使う。
+      中身はイメージの層に残らず、元のイメージが違うイメージ（言語ごとのイメージ）の間でも共有する。
+      - apt-get が取得した `.deb` を `/var/cache/sacty-build/apt` に置く（`APT_CONFIG` の `Dir::Cache::Archives`）。
+        パッケージの一覧は置かず、毎回 `apt-get update` で取る。
+        置いてから 30 日を過ぎた `.deb` は、手順の始めに消す。
+      - draw.io・`osv-scanner`・`gitleaks` の取得物を `/var/cache/sacty-build/downloads/<道具>/<版>/` に置く（`SACTY_DOWNLOAD_CACHE`）。
+        置いたものは、スクリプトに固定した SHA-256 と合うときだけ使い（取得しない）、合わなければ取得し直して置き換える。
+        取得したものは確かめてから置き、置いたら同じ道具のほかの版を消す。
+        置けなくても続ける。
+      - dnf・microdnf・yum の取得物は置かない（これまでどおり `clean all` で消す）。
+    - エージェントの CLI の `npm ci` と `npm install -g npm@<版>` は、npm のキャッシュを cache マウント（`id=sacty-npm-cache`、`/var/cache/sacty-npm`）に置く（イメージには残さない）。
+    - `packages`・`run` の手順は cache マウントを使わない。
   - `gh` の代わりに `packages/cli/docker/gh-shim.cjs` を、`run` の後に `/opt/sacty/bin/gh` に置く（`PATH` の先頭なので、元のイメージの `gh` より先に使われる。`run` の中の `gh` は元のイメージのもの）。
     - `gh api` だけを受け、REST の `GET`・`HEAD` と GraphQL を `$SACTY_GITHUB_URL/<ホスト>/…` に送る（ホストは `--hostname`、無ければ `GH_HOST`）。
     - フィールド（`-f`・`-F`）は、REST ではクエリ、GraphQL では `query` と変数にする。
@@ -332,7 +349,7 @@
       その後、128 にシグナルの番号を足した終了コードで終わる。
 - イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
-コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/agent-cli/package.json`、`packages/cli/docker/agent-cli/package-lock.json`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/install-security-tools.sh`、`packages/cli/docker/drawio-shim.cjs`
+コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`、`packages/cli/docker/agent-cli/package.json`、`packages/cli/docker/agent-cli/package-lock.json`、`packages/cli/docker/install-tools.sh`、`packages/cli/docker/install-drawio.sh`、`packages/cli/docker/install-security-tools.sh`、`packages/cli/docker/drawio-shim.cjs`、`packages/cli/docker/with-build-cache.sh`
 
 ## テストの実行
 

@@ -58,12 +58,36 @@ verify() {
   }
 }
 
+# 取得物を置いておく場所（Dockerfile が BuildKit の cache マウントで渡す。with-build-cache.sh）。無ければ使わない
+cache="${SACTY_DOWNLOAD_CACHE:-}"
+
+# 添付物を $dir に用意する（引数：取得元 名前 ハッシュ 道具の名前 版）。キャッシュに、固定したハッシュと合うものが
+# あればそれを写す（取得しない）。無ければ取得して確かめ（合わなければ止める）、キャッシュに置く。置いたら、
+# 同じ道具のほかの版を消す。キャッシュに置けなくても続ける。取得できなければ 1 を返す
+obtain() {
+  slot="$cache/$4/$5"
+  if [ -n "$cache" ] && [ -f "$slot/$2" ] \
+    && echo "$3  $slot/$2" | sha256sum -c - >/dev/null 2>&1 \
+    && cp "$slot/$2" "$dir/$2"; then
+    echo "sacty: ビルドのキャッシュにある $2 を使います。"
+    return 0
+  fi
+  fetch "$1/$2" "$dir/$2" || return 1
+  verify "$2" "$3"
+  if [ -n "$cache" ]; then
+    { mkdir -p "$slot" && cp "$dir/$2" "$slot/$2.tmp" && mv -f "$slot/$2.tmp" "$slot/$2"; } 2>/dev/null || true
+    for old in "$cache/$4"/*; do
+      [ "$old" = "$slot" ] || rm -rf "$old"
+    done
+  fi
+  return 0
+}
+
 if command -v osv-scanner >/dev/null 2>&1; then
   echo "sacty: osv-scanner は元のイメージにあるので、入れません。"
 else
   file="osv-scanner_linux_$osv_arch"
-  if fetch "$OSV_SCANNER_URL/$file" "$dir/$file"; then
-    verify "$file" "$osv_sha"
+  if obtain "$OSV_SCANNER_URL" "$file" "$osv_sha" osv-scanner "$OSV_SCANNER_VERSION"; then
     if install -m 0755 "$dir/$file" /usr/local/bin/osv-scanner; then
       echo "sacty: osv-scanner $OSV_SCANNER_VERSION を入れました。"
     else
@@ -78,8 +102,7 @@ if command -v gitleaks >/dev/null 2>&1; then
   echo "sacty: gitleaks は元のイメージにあるので、入れません。"
 else
   file="gitleaks_${GITLEAKS_VERSION}_linux_$gitleaks_arch.tar.gz"
-  if fetch "$GITLEAKS_URL/$file" "$dir/$file"; then
-    verify "$file" "$gitleaks_sha"
+  if obtain "$GITLEAKS_URL" "$file" "$gitleaks_sha" gitleaks "$GITLEAKS_VERSION"; then
     if tar -xzf "$dir/$file" -C "$dir" gitleaks; then
       if install -m 0755 "$dir/gitleaks" /usr/local/bin/gitleaks; then
         echo "sacty: gitleaks $GITLEAKS_VERSION を入れました。"

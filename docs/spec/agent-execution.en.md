@@ -228,6 +228,16 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
   - The build installs `packages` as root with whichever of dnf, microdnf, yum, or apt-get the base image has, and `enable_repos` becomes its `--enablerepo` (fails with apt-get). It executes `run` as root from top to bottom (with `-o pipefail` if bash is available).
   - The build reads the npm token (`image_build.npm_token`) only during the build through a BuildKit secret (`npmrc`), and the token does not remain in the image. The npm settings that remain in the image (`registry` and `npm_config`) are passed through a separate secret.
   - Secret contents are not part of BuildKit's cache key. So sacty passes hashes of the contents (`NPM_CONFIG_HASH`, `SACTY_SETUP_HASH`) as build-args, and the image is rebuilt when they change.
+  - Build cache
+    - The steps are ordered from the heavy ones that rarely change (git → work CLIs → security check tools → draw.io → agent CLIs → npm settings → `packages` and `run` → the `gh` replacement and the `drawio` wrapper → `maven_mirror`).
+    - Build-args (`NPM_VERSION`, `SACTY_DRAWIO`, `MAVEN_MIRROR`) are declared right before the step that uses them. Steps after a declaration are rebuilt when its value changes even if they do not use it (changing `npm_version` does not rebuild the work CLIs, draw.io, or the security tools).
+    - `drawio-shim.cjs` is copied separately from the step that installs draw.io, after the `gh` replacement (editing it does not reinstall draw.io).
+    - The git, work CLI, security tool, and draw.io steps use a BuildKit cache mount (`id=sacty-build-cache`, `/var/cache/sacty-build`, `sharing=locked`) through `packages/cli/docker/with-build-cache.sh`. Its contents do not remain in the image layers and are shared between images with different base images (per-language images).
+      - The `.deb` files apt-get fetches are kept in `/var/cache/sacty-build/apt` (`Dir::Cache::Archives` through `APT_CONFIG`). Package lists are not kept; `apt-get update` fetches them every time. `.deb` files older than 30 days are removed at the start of the step.
+      - The draw.io, `osv-scanner`, and `gitleaks` downloads are kept in `/var/cache/sacty-build/downloads/<tool>/<version>/` (`SACTY_DOWNLOAD_CACHE`). A kept file is used (without fetching) only when it matches the SHA-256 pinned in the script; otherwise it is fetched again and replaced. A fetched file is kept only after it is checked, and keeping it removes the other versions of the same tool. Failing to keep it does not stop the build.
+      - Downloads of dnf, microdnf, and yum are not kept (they are removed with `clean all` as before).
+    - `npm ci` for the agent CLIs and `npm install -g npm@<version>` keep the npm cache in a cache mount (`id=sacty-npm-cache`, `/var/cache/sacty-npm`), not in the image.
+    - The `packages` and `run` step does not use cache mounts.
   - In place of `gh`, the build places `packages/cli/docker/gh-shim.cjs` at `/opt/sacty/bin/gh` after `run`, at the front of `PATH` (it is used before a `gh` in the base image; `gh` inside `run` is the base image's).
     - It accepts only `gh api` and sends REST `GET` and `HEAD` and GraphQL to `$SACTY_GITHUB_URL/<host>/…` (the host is `--hostname`, else `GH_HOST`).
     - Fields (`-f`, `-F`) become the query for REST, and `query` and variables for GraphQL.
@@ -251,7 +261,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     - On SIGINT or SIGTERM, it sends the same signal to draw.io while draw.io is running. If draw.io has not started yet (such as while waiting for Xvfb to start), it stops Xvfb and waits for it to end. It then exits with 128 plus the signal number.
 - The image's `env` is passed to the agent containers that run on that image (including the final review that runs the tests).
 
-Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`, `packages/cli/docker/agent-cli/package.json`, `packages/cli/docker/agent-cli/package-lock.json`, `packages/cli/docker/install-tools.sh`, `packages/cli/docker/install-drawio.sh`, `packages/cli/docker/install-security-tools.sh`, `packages/cli/docker/drawio-shim.cjs`
+Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`, `packages/cli/docker/agent-cli/package.json`, `packages/cli/docker/agent-cli/package-lock.json`, `packages/cli/docker/install-tools.sh`, `packages/cli/docker/install-drawio.sh`, `packages/cli/docker/install-security-tools.sh`, `packages/cli/docker/drawio-shim.cjs`, `packages/cli/docker/with-build-cache.sh`
 
 ## Running tests
 

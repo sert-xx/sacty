@@ -26,13 +26,15 @@ const sha256 = (path: string) => createHash("sha256").update(readFileSync(path))
  */
 function run(
   installExit: number,
-  options: { tamper?: ("osv" | "gitleaks")[]; missing?: string[] } = {},
+  options: { tamper?: ("osv" | "gitleaks")[]; missing?: string[]; cache?: string } = {},
 ) {
-  dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+  dir ??= mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+  rmSync(join(dir, "fetched"), { force: true });
+  rmSync(join(dir, "installed"), { force: true });
   const bin = join(dir, "bin");
   const assets = join(dir, "assets");
-  mkdirSync(bin);
-  mkdirSync(assets);
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(assets, { recursive: true });
   const script = (name: string, lines: string[]) => {
     writeFileSync(join(bin, name), ["#!/bin/sh", ...lines, ""].join("\n"));
     chmodSync(join(bin, name), 0o755);
@@ -72,7 +74,10 @@ function run(
   return spawnSync("sh", [copy], {
     encoding: "utf8",
     // macOS の sha256sum は /sbin にある
-    env: { PATH: `${bin}:/usr/bin:/bin:/sbin` },
+    env: {
+      PATH: `${bin}:/usr/bin:/bin:/sbin`,
+      ...(options.cache ? { SACTY_DOWNLOAD_CACHE: options.cache } : {}),
+    },
   });
 }
 
@@ -139,5 +144,67 @@ describe("セキュリティの検査の道具を入れる", () => {
     expect(result.stdout).not.toContain("を入れました");
     expect(result.stderr).toContain("osv-scanner を入れません（/usr/local/bin に置けない）");
     expect(result.stderr).toContain("gitleaks を入れません（/usr/local/bin に置けない）");
+  });
+
+  describe("ビルドのキャッシュ（SACTY_DOWNLOAD_CACHE）", () => {
+    const fetched = () => {
+      try {
+        return readFileSync(join(dir ?? "", "fetched"), "utf8");
+      } catch {
+        return "";
+      }
+    };
+
+    it("取得して確かめたものをキャッシュに置き、次からは取得せずに使う", () => {
+      dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+      const cache = join(dir, "cache");
+      expect(run(0, { cache }).status).toBe(0);
+      expect(fetched()).toContain("osv-scanner_linux_amd64");
+      expect(readFileSync(join(cache, "osv-scanner/2.7.0/osv-scanner_linux_amd64"), "utf8")).toBe(
+        "osv",
+      );
+      const second = run(0, { cache });
+      expect(second.status).toBe(0);
+      expect(fetched()).toBe("");
+      expect(second.stdout).toContain(
+        "ビルドのキャッシュにある osv-scanner_linux_amd64 を使います",
+      );
+      expect(second.stdout).toContain("osv-scanner 2.7.0 を入れました");
+      expect(second.stdout).toContain("gitleaks 8.30.1 を入れました");
+    });
+
+    it("キャッシュの中身が固定したハッシュと合わなければ使わず、取得し直して置き換える", () => {
+      dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+      const cache = join(dir, "cache");
+      mkdirSync(join(cache, "osv-scanner/2.7.0"), { recursive: true });
+      writeFileSync(join(cache, "osv-scanner/2.7.0/osv-scanner_linux_amd64"), "broken");
+      const result = run(0, { cache });
+      expect(result.status).toBe(0);
+      expect(fetched()).toContain("osv-scanner_linux_amd64");
+      expect(readFileSync(join(cache, "osv-scanner/2.7.0/osv-scanner_linux_amd64"), "utf8")).toBe(
+        "osv",
+      );
+    });
+
+    it("取得したものがハッシュと合わなければ、キャッシュに置かずに止める", () => {
+      dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+      const cache = join(dir, "cache");
+      const result = run(0, { cache, tamper: ["osv"] });
+      expect(result.status).toBe(1);
+      expect(() =>
+        readFileSync(join(cache, "osv-scanner/2.7.0/osv-scanner_linux_amd64")),
+      ).toThrow();
+    });
+
+    it("置いたら、同じ道具のほかの版を消す", () => {
+      dir = mkdtempSync(join(tmpdir(), "sacty-security-tools-"));
+      const cache = join(dir, "cache");
+      mkdirSync(join(cache, "osv-scanner/2.6.0"), { recursive: true });
+      writeFileSync(join(cache, "osv-scanner/2.6.0/osv-scanner_linux_amd64"), "old");
+      expect(run(0, { cache }).status).toBe(0);
+      expect(() =>
+        readFileSync(join(cache, "osv-scanner/2.6.0/osv-scanner_linux_amd64")),
+      ).toThrow();
+    });
   });
 });
