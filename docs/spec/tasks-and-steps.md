@@ -1028,7 +1028,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 外す要求の答えを受け取れなかったら、外す要求が後から届くかもしれないので、指摘なしで外して記録するまで、確認のたびにドラフトに戻す（PR ごとに覚え、PR を更新した次の提出にも引き継ぐ）。
   - 答えを待つのをやめた後も終わっていないドラフトの切り替えの要求があれば（`draftRequests`）、終わるまでドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻らないように）。
     答えを待つのをやめたら、その通信を中断する。中断しても終わらない要求も、`DRAFT_TIMEOUT_MS` の `DRAFT_SETTLE_FACTOR`（10）倍を過ぎたら数えない（GitHub が復旧した後に、外せないままにしない）。
-    数えるのをやめた後にドラフトに戻す要求が届いたら、その PR を覚え（`lateRedrafted`）、指摘なしで外して記録した後（人の承認待ちで、レビューを待つ PR でない）に、記録と合うようにドラフトを外し直す（`undraftLateRedrafted`）。外す途中に届いたら、記録の後に外し直す。外せなければ、外せるまで PR の確認のたびにやり直す。タスクが終わった・PR が変わったら忘れる。
+    指摘なしで外して記録した PR（人の承認待ち）は、PR の確認のたびに GitHub の状態（`draft`）を読み、ドラフトになっていたら外し直す（`undraftMarkedReady`。答えを待つのをやめた・中断した・数えるのをやめた戻す要求が後から GitHub に届いたときのため。デーモンが覚えていなくても、再起動の後も、外せなかったときも次の確認でやり直す）。
+    外し直す間に差し戻された・PR を更新したら、ドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
   - 外した後の確認では、指摘なしにした先頭（`reviewedCommit`）とレビューした先頭を比べ、同じ先頭を再レビューしない。
   - 外す・戻す・先頭を読む GitHub の答えは、PR の更新でドラフトに戻すときも含めて `DRAFT_TIMEOUT_MS`（30秒）まで待ち、返らなければ答えを受け取れなかったものとして扱う。
@@ -1039,7 +1040,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
 - テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`buildPrompt` の `finalReview`・`addedTestCommandLine`）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`undraftLateRedrafted`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 最終レビューをする流れ
 

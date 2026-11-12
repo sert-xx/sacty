@@ -797,7 +797,13 @@ class FakePulls implements PullRequests {
     this.checked.push(input);
     if (this.statusFail) throw new Error(this.statusFail);
     // 先頭のコミットを指定していなければ、レビューの対象の PR の先頭とする（投稿の直前の確認。PBI-111）
-    return { headSha: this.prInfo.headSha, ...(this.states[input.number] ?? this.state) };
+    const state = this.states[input.number] ?? this.state;
+    const draft = this.drafts[input.number];
+    return {
+      headSha: this.prInfo.headSha,
+      ...state,
+      ...(state.state === "open" && draft !== undefined ? { draft } : {}),
+    };
   }
   /** Issue へのコメント（調査の結果。PBI-18）。 */
   issueComments: { repo: string; token: string; number: number; body: string }[] = [];
@@ -29334,11 +29340,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(types(service, id)).toContain("PullRequestMarkedReady");
         expect(pulls.drafts[7]).toBe(false);
         // 遅れて届いた戻す要求で、GitHub ではドラフトに戻った
-        const before = setDraft.mock.calls.length;
         late.resolve();
-        await vi.waitFor(() => expect(setDraft.mock.calls.length).toBeGreaterThan(before));
+        await vi.waitFor(() => expect(pulls.drafts[7]).toBe(true));
+        // 次の PR の確認で、GitHub の状態を読んで外し直す
+        await service.checkPullRequests();
         expect(setDraft.mock.calls.at(-1)?.[0]).toMatchObject({ number: 7, draft: false });
-        await vi.waitFor(() => expect(pulls.drafts[7]).toBe(false));
+        expect(pulls.drafts[7]).toBe(false);
         setDraft.mockRestore();
         activity.close();
       });
@@ -29382,6 +29389,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         gate.resolve();
         await checking;
         expect(types(service, id)).toContain("PullRequestMarkedReady");
+        await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(false);
         setDraft.mockRestore();
         activity.close();
@@ -29404,7 +29412,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         pulls.setDraftFail = "GitHub が落ちている";
         late.resolve();
         await landed.promise;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
         pulls.setDraftFail = undefined;
         await service.checkPullRequests();
@@ -29414,6 +29422,78 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await service.checkPullRequests();
         expect(setDraft.mock.calls.slice(calls).filter(([input]) => !input.draft)).toEqual([]);
         setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("中断した戻す要求が GitHub にだけ届いても、再起動などで覚えていなくても、指摘なしで外した PR のドラフトを外し直す（PR #348 9回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        // 起動の後のドラフトに戻す要求は、中断で失敗するが、GitHub には後から届く
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        const late = Promise.withResolvers<void>();
+        const landed = Promise.withResolvers<void>();
+        setDraft.mockImplementationOnce(
+          (input) =>
+            new Promise((_, reject) => {
+              input.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+              void late.promise.then(() => {
+                pulls.drafts[input.number] = true;
+                landed.resolve();
+              });
+            }),
+        );
+        setDraft.mockImplementation(original);
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(false);
+        late.resolve();
+        await landed.promise;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        // 何も覚えていない（再起動の後と同じ）ときも、GitHub でドラフトなら外し直す
+        pulls.drafts[7] = true;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        // ドラフトでなければ、何もしない
+        const calls = setDraft.mock.calls.length;
+        await service.checkPullRequests();
+        expect(setDraft.mock.calls.length).toBe(calls);
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("ドラフトを外し直す間に差し戻されたら、ドラフトに戻す（PR #348 9回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        // 遅れた戻す要求で、GitHub ではドラフトに戻った
+        pulls.drafts[7] = true;
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        pulls.setDraftStarted = Promise.withResolvers<void>();
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        // 外し直す要求の答えを待つ間に、人が差し戻した
+        service.requestChanges(id, {
+          step: "implement",
+          submission: 1,
+          comments: ["ここを直して"],
+        });
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        await checking;
+        expect(pulls.drafts[7]).toBe(true);
         activity.close();
       });
 

@@ -596,6 +596,23 @@ describe("承認待ちの PR のベースブランチとの競合（mergeable）
   });
 });
 
+describe("承認待ちの PR のドラフト（PBI-331）", () => {
+  it("開いている PR の draft を、真偽値のときだけ答えに含める（閉じた PR には含めない。PR #348 9回目のレビュー指摘）", async () => {
+    const { impl } = fakeFetch([
+      { status: 200, json: { state: "open", merged: false, draft: true } },
+      { status: 200, json: { state: "open", merged: false, draft: false } },
+      { status: 200, json: { state: "open", merged: false, draft: "yes" } },
+      { status: 200, json: { state: "closed", merged: false, draft: true } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "open", draft: true });
+    expect(await client.status(pr)).toEqual({ state: "open", draft: false });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await client.status(pr)).toEqual({ state: "closed" });
+  });
+});
+
 describe("PR へのフィードバック（PBI-14b）", () => {
   it("レビュー（Request changes・本文のあるコメント）、行ごとのコメント、通常のコメントを、時刻の順に読む", async () => {
     const human = { login: "reviewer", type: "User" };

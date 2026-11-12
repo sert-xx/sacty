@@ -335,6 +335,8 @@ export type PullRequestStatus = { headSha?: string } & (
        * （null）・読めないときは無い。
        */
       mergeable?: boolean;
+      /** ドラフトか（GitHub の draft。読めないときは無い。PBI-331）。 */
+      draft?: boolean;
     }
   | { state: "closed" }
   | { state: "merged"; mergedBy?: string; mergeCommit?: string }
@@ -806,6 +808,7 @@ export class GitHubPullRequests implements PullRequests {
       state: "open",
       ...head,
       ...(typeof json.mergeable === "boolean" ? { mergeable: json.mergeable } : {}),
+      ...(typeof json.draft === "boolean" ? { draft: json.draft } : {}),
     };
   }
 
