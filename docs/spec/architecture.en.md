@@ -127,7 +127,7 @@ Each dashboard section contains the following.
   - Tasks near their budget are the open tasks whose used amount is 80% (`BUDGET_WARN_RATIO`) or more of the cap (including those that reached it). They are shown largest ratio first, with used / cap and the cap-reached mark (`nearBudgetRows`).
 - Step queue
   - The number of running tasks / the parallel limit, and the number of waiting tasks. The limit is the sacty setting `maxParallelTasks` (the default when it is not set or cannot be read).
-  - Running means the tasks the worker is processing (`inflight`). This includes work while the status is `idle` (the final review after implementation (including running the tests), exports, and so on).
+  - Running means the tasks the worker is processing (`inflight`). This includes work while the status is `idle` (opening the implementation PR, exports, and so on).
   - Waiting means the tasks the worker will process next (`queuedTaskIds`, the same decision as the worker) that it is not processing yet.
   - When more tasks than the limit have been waiting for 10 minutes (`QUEUE_OVER_MS`), the section is highlighted with a link to the sacty settings.
   - The daemon updates the start of "has persisted" (`overSince`) (`trackQueue`, `queueOverSince`; independent of the UI fetching). It updates it whenever it writes to the activity log, starts or finishes a run, or saves the sacty settings or a project. It keeps the value in memory only and counts again after a restart.

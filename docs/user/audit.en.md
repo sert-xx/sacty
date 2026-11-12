@@ -90,30 +90,9 @@ Audit results are not combined across projects.
 
 ## The flaky test ledger
 
-The current version does not run the final review, so no new entries are added to the ledger, and it is not shown on the audit page ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
-The rest of this section describes older versions.
-
-Tests the final review accepted as flaky and unrelated to the diff are counted per project and shown on the audit page.
-This does not use the audit budget.
-It needs no setup.
-
-
-- It shows the test's name and file, the number of tasks that saw it, when it was last seen, and links to those tasks and PRs.
-- Several times in the same task count as one task.
-  The same name in another repository or file counts as another test.
-  Records from other projects are not mixed in.
-- A test seen in 3 or more tasks is marked Known.
-  Unless the diff includes it, the final review may report it without rerunning it.
-  sacty checks this against the ledger and the diff, and does not accept a test in the diff even if it is known.
-  Accepted failures still appear under "For a person to check".
-- A known test gets a proposal for a task to fix it.
-  Pressing "Create a task to fix it" opens the task creation dialog with the title and description filled in.
-  When you check them and press create, it runs as a normal task.
-  - Proposals are never run automatically.
-  - sacty does not quarantine or disable tests automatically.
-- While the fix task is unfinished, a link to it replaces the proposal.
-  If you cancel the task, the test is proposed again.
-  Once its PR is merged, records from before the merge are no longer counted.
+In earlier versions, tests the final review accepted as flaky and unrelated to the diff were counted in a per-project ledger and shown on the audit page.
+The current version does not run the final review ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)), so no new entries are added to the ledger, and it is not shown on the audit page.
+Records from earlier versions are kept.
 
 ## Dashboard
 
@@ -129,7 +108,7 @@ When a deep dive finds knowledge that will help later tasks (how to run the test
 - Memories have two layers, project and repository.
   - They live in the data directory (default `~/.sacty`) under `memory/projects/<project ID>/` and `memory/repos/<host>/<owner>/<name>/`.
   - Repository memories stay in use for tasks on the same repository even after you change project settings.
-- In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository, and open only the relevant ones. They never read other projects' memories. The final review, Integration review, and deciding where to send PR comments back to get none.
+- In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository, and open only the relevant ones. They never read other projects' memories. Integration review and deciding where to send PR comments back to get none.
 - A memory is a reference. It ranks below the step instructions (the scope of the rework, what to write and not to write, how decided judgements are handled, and so on), your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when a procedure written in a memory conflicts with those, the procedure is not used and those win.
   The audit also avoids registering procedures that change the step instructions.
 - The last useful date is the last day the memory helped.

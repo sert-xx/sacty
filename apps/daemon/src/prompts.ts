@@ -456,7 +456,7 @@ function reviewVerificationLines(task: Task, previous?: VerificationRecord): str
     // 同じコミットの検証の結果の使い回し（PBI-305）。CI はエージェントが自分で読む（スキルの手順の 3）
     ...reuseVerificationLines({
       records: previous
-        ? [{ label: "sacty の最終レビュー（ゴールガーディアン）", record: previous }]
+        ? [{ label: "以前の版の sacty の最終レビュー（ゴールガーディアン）", record: previous }]
         : [],
     }),
   ];
@@ -745,7 +745,7 @@ function mergeConflictLines(task: Task, files: readonly string[]): string[] {
       : []),
     "- どちらかを捨てずに、両方の意図が生きる内容にして、目印の行をすべて消す（<<<<<<< と >>>>>>> の行には長い ID が付いている。=======の行も消す。1行でも残ると解消したことになりません）。ベースブランチ側の変更を、自分の変更として書き直したり、消したりしない",
     "- 解消したら、そのファイルに関わるテストも、ベースブランチ側の変更を含めて通るようにする",
-    "- git でのマージ・リベース・フェッチ・コミット・プッシュはしない（sacty が、解消した内容をマージコミットとして PR に積みます）。目印が残ったまま提出すると、最終レビューに進めず、実装をやり直すことになります",
+    "- git でのマージ・リベース・フェッチ・コミット・プッシュはしない（sacty が、解消した内容をマージコミットとして PR に積みます）。目印が残ったまま提出すると、sacty は PR を作らず、実装をやり直すことになります",
   ];
 }
 
@@ -777,7 +777,7 @@ function feedbackLines(task: Task): string[] {
     return [
       "",
       "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
-      "最終レビューに進む前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。最終レビューはまだ行っていません。",
+      "実装の PR を作る前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。PR は、まだ作っていません（更新もしていません）。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
     ];
   }
@@ -1922,7 +1922,7 @@ function implementSelfReviewLines(task: Task, verb: "実装" | "修正"): string
   // 指摘を受けた直しの実行（PBI-296）の指示は、主対象の種類にかかわらず渡す
   const fixCauses = fixRunCauses(task, "implement");
   return [
-    // 最終レビューの基準を、提出の前に自分で確かめさせる（PBI-315。不合格になると実装と検証をまるごとやり直すため）
+    // レビューの基準を、提出の前に自分で確かめさせる（PBI-315）
     ...implementReviewCriteriaLines({
       sources: task.approved.design
         ? "承認済みの要求要件・設計"
@@ -3396,7 +3396,7 @@ function implementVerificationLines(task: Task): string[] {
       : "- リポジトリが定めるフォーマッター・リンター・型チェックなどの検証（AGENTS.md・CONTRIBUTING・README の開発手順、CI の設定、パッケージの設定やタスクランナーの定義で探す）を、PR に入る変更すべて（コード・テスト・文書・設定。あなたが足したファイルを含む）に対して実行し、通してから提出する。変更したファイルだけに絞れるツールは絞ってよいが、変更したファイルの種類（文書でも）を、対象から外さない",
     ...(places
       ? [
-          `- 実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）のファイルも入る。リポジトリ全体を対象にする検証は、そのファイルも検査する。作業領域では実行できないので、検査の対象に入るかを設定（除外の定義など）で確かめ、落ちたときの直し方は、最終レビューの指摘に従う`,
+          `- 実装の PR には、作業領域に無い、sacty が足す成果物（${places.dirs.map((d) => `${d}/`).join("・")}）のファイルも入る。リポジトリ全体を対象にする検証は、そのファイルも検査する。作業領域では実行できないので、検査の対象に入るかを設定（除外の定義など）で確かめ、落ちたときの直し方は、PR のレビューの指摘に従う`,
         ]
       : []),
     // テストは、途中は関係するものだけ、全件は最後の変更の後に1回（PBI-316）。文書だけの依頼はテストを実行せず、テストの仕組みが
@@ -3885,8 +3885,11 @@ function resultTableLines(task: Task): string[] {
             ];
   const review = task.lastReview;
   const tests = task.lastTests;
-  // ゴールガーディアンが最終レビューの中で実行したテスト（今の版）
+  // ゴールガーディアンが最終レビューの中で実行したテスト（以前の版）
   const guardianTests = review?.tests;
+  // 最終レビューの列と所見、テストの実行の行は、以前の版の記録（lastReview・lastTests）があるときだけ出す。今の流れでは、
+  // sacty はテストを実行せず、最終レビューもしない（PBI-331）ので、常に「（なし）」「（未実行）」になるため
+  const legacy = review !== undefined;
   const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m]));
   // 同じテストを1回にし、パラメータ化したテストの名前の書式の文字（%j など）を印にする（PBI-302 C3）
   const testNames = (id: string): string[] => displayTestNames(mapped.get(id)?.tests ?? []);
@@ -3903,7 +3906,7 @@ function resultTableLines(task: Task): string[] {
         ? `（テストなし。差分で確認：${flat(entry.untested)}）`
         : "（テストなし。差分で確認）";
     }
-    return task.noTestsReason ? "（テストなし。目的から判定）" : "（なし）";
+    return task.noTestsReason ? "（テストなし。目的から確認）" : "（なし）";
   };
   // 表のセルには、テスト名を1件目と残りの件数だけ入れる。全件は折りたたみに出す
   const testCell = (id: string) => {
@@ -3917,7 +3920,7 @@ function resultTableLines(task: Task): string[] {
     const judged = judgedOf(v.id);
     const names = testNames(v.id);
     return [
-      `- **${v.id} ${flat(v.title)}**：${mark(v.id)}`,
+      `- **${v.id} ${flat(v.title)}**${legacy ? `：${mark(v.id)}` : ""}`,
       `  - 入力：${flat(v.input)}`,
       `  - 期待結果：${flat(v.expected)}`,
       `  - テスト：${names.length > 0 ? names.map(flat).join(" / ") : noTestText(v.id, true)}`,
@@ -3928,21 +3931,21 @@ function resultTableLines(task: Task): string[] {
         : []),
     ];
   });
+  const testRunLine = guardianTests
+    ? `テスト：\`${codeLine(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（${guardianTests.reusedFrom ? `ゴールガーディアンは実行せず、同じ内容の${guardianTests.reusedFrom === "ci" ? " PR の CI " : "実装の工程"}の結果を使い回した` : "ゴールガーディアンが実行"}。終了コード ${guardianTests.exitCode ?? "申告なし"}${environmentPassNote(guardianTests)}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
+    : tests
+      ? `テスト：\`${codeLine(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
+      : task.noTestsReason
+        ? "テスト：テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。"
+        : undefined;
   return [
-    "| 観点 | テスト | 最終レビュー |",
-    "| --- | --- | --- |",
+    legacy ? "| 観点 | テスト | 最終レビュー |" : "| 観点 | テスト |",
+    legacy ? "| --- | --- | --- |" : "| --- | --- |",
     ...viewpoints.map(
       (v) =>
-        `| ${v.id} ${cell(shortText(v.title, BODY_VIEWPOINT_TITLE_MAX))} | ${cell(testCell(v.id))} | ${mark(v.id)} |`,
+        `| ${v.id} ${cell(shortText(v.title, BODY_VIEWPOINT_TITLE_MAX))} | ${cell(testCell(v.id))} |${legacy ? ` ${mark(v.id)} |` : ""}`,
     ),
-    "",
-    guardianTests
-      ? `テスト：\`${codeLine(guardianTests.command)}\` → ${guardianTests.missingCommands?.length ? "一部を実行できず" : guardianTestsPassed(guardianTests) ? "合格" : "不合格"}（${guardianTests.reusedFrom ? `ゴールガーディアンは実行せず、同じ内容の${guardianTests.reusedFrom === "ci" ? " PR の CI " : "実装の工程"}の結果を使い回した` : "ゴールガーディアンが実行"}。終了コード ${guardianTests.exitCode ?? "申告なし"}${environmentPassNote(guardianTests)}${guardianTests.missingCommands?.length ? `。${guardianTests.missingCommands.join("・")} がイメージに無く、差分が文書だけなので止めずに進めた。下の「人が確かめること」` : ""}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === guardianTests.command ? "（人が指定したテストのコマンド）" : ""}`
-      : tests
-        ? `テスト：\`${codeLine(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）${task.noTestsReason ? "（実装で用意したテスト）" : personTestCommand(task) === tests.command ? "（人が指定したテストのコマンド）" : ""}`
-        : task.noTestsReason
-          ? "テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。"
-          : "テスト：（未実行）",
+    ...(testRunLine ? ["", testRunLine] : []),
     // テストの仕組みが無いと判断した根拠（PBI-94）
     ...(task.noTestsReason
       ? [
@@ -3956,7 +3959,9 @@ function resultTableLines(task: Task): string[] {
       ? [
           "",
           detailsBlock(
-            "観点ごとの詳細（入力・期待結果・テスト・最終レビューの所見）",
+            legacy
+              ? "観点ごとの詳細（入力・期待結果・テスト・最終レビューの所見）"
+              : "観点ごとの詳細（入力・期待結果・テスト）",
             detailLines.join("\n"),
           ),
         ]
@@ -5965,20 +5970,20 @@ export function buildOrchestratorPrompt(
     "",
     "あわせて、コードを読んで次のことを決めてください（PBI-25・PBI-43）。",
     `- baseBranch：変更の起点にするブランチ。ふつうは既定のブランチ（${task.repository?.baseBranch ?? "既定のブランチ"}）。CONTRIBUTING などで別のブランチ（例：develop）に向けると決まっているときだけ、そのブランチ名を書く`,
-    "- testCommand：このリポジトリのテスト（検証）を実行するコマンド（例：npm ci && npm test）。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める（ここでは実行しない）。パッケージの設定（package.json の scripts など）・Makefile・justfile・Taskfile・CI の設定（.github/workflows・.gitlab-ci.yml など）・pre-commit の設定・README・CONTRIBUTING・AGENTS.md・CLAUDE.md の開発の手順・テストのディレクトリやファイルを調べて、リポジトリが実際に使っているコマンドを書く。リポジトリに根拠の無いコマンドを推測で作らない",
+    "- testCommand：このリポジトリのテスト（検証）を実行するコマンド（例：npm ci && npm test）。sh -c で実行でき、終了コード0で合格を表すもの。依存関係の取得も含める（ここでは実行しない。sacty は実行せず、工程のエージェントが検証のコマンドとして使う）。パッケージの設定（package.json の scripts など）・Makefile・justfile・Taskfile・CI の設定（.github/workflows・.gitlab-ci.yml など）・pre-commit の設定・README・CONTRIBUTING・AGENTS.md・CLAUDE.md の開発の手順・テストのディレクトリやファイルを調べて、リポジトリが実際に使っているコマンドを書く。リポジトリに根拠の無いコマンドを推測で作らない",
     "  - テストのコードが無くても、リポジトリの成果物を機械的に確かめる検証（Kubernetes のマニフェストの kustomize build・helm lint・kubeconform、Terraform の terraform validate、YAML の yamllint など）を CI・Makefile・pre-commit の設定が実行しているなら、それを testCommand にする。そうした設定が無くても、リポジトリの形からその検証のツールが決まる（kustomization.yaml があれば kustomize build、Chart.yaml があれば helm lint など）なら、それを testCommand にしてよい",
     "  - 実行する検証が複数ある（テストの種類が複数・テストのほかに lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて && でつないで1つの testCommand にする（例：npm ci && npm run lint && npm test）。; ではつながない（前の検証の失敗が終了コードに残らないため）。代表の1つだけを選ばない",
     "  - コードも変える依頼では、変更が及ぶ範囲の検証のすべてを testCommand に入れる（上のとおり。代表の1つだけを選ばない）",
     `  - 成果物が文書のファイルだけの依頼（documentsOnly）では、文書の変更が及ばないコードの検証（テスト・lint・型の検査・ビルド）を testCommand に入れない。文書のファイルは、${DOCUMENT_FILES_LABEL}。依頼が文書を書く・直すことだけで、変更するファイルがすべてこの文書のファイルのときが、文書だけの依頼（コード・コード中のコメント・設定・テキストファイル（.txt）・画像の変更を含むなら、文書だけの依頼ではない。迷うときも、文書だけの依頼にしない）`,
     "    - リポジトリが文書向けの検証（リンクの検査・markdown の lint・文書のフォーマットなど。CI・Makefile・pre-commit が実行しているもの）を持っていれば、その検証だけを testCommand に書く。無ければ testCommand を書かず、noTests に「文書だけの依頼で、文書向けの検証が無い」ことと根拠を書く（起点のコードにテストのファイルがあっても、文書だけの依頼なら noTests にしてよい）。どちらの場合も、答えに documentsOnly: true を書く",
-    "    - sacty は、実装の差分に文書のファイル以外が1つでもあると、コードの変更が検証されないので、最終レビューをせずに止める。コードも変える依頼には、documentsOnly を書かない",
+    "    - 文書だけの依頼では、実装の工程はコードの検証（テスト・ビルド・型の検査・コードの lint）を実行しない。コードも変える依頼には、documentsOnly を書かない",
     "  - testCommand に使うツールは、選べるイメージ（下の images）のうち、そのツールを持つものを優先して選ぶ。どのイメージにも入っていないときだけ、それでも testCommand は書き（空にしない）、imageReason に、そのツールを持つイメージが無いことを書く",
     "- noTests：実装する組み合わせを選ぶときは、testCommand か noTests のどちらかを必ず書く（両方を空にしない。PBI-94）。上の場所を調べても、テストの仕組み（テストのコード・テストを実行する設定やスクリプト・CI のテストの工程など）も上の検証のコマンドも見つからなければ、testCommand を書かずに、noTests にその根拠（どこを見て、何が無かったか）を書く。エージェントのスキル（SKILL.md など）を集めたリポジトリ・ドキュメントを置くだけのリポジトリのように、テストを書く種類でないリポジトリもこれに当たる。noTests のタスクは、sacty がテストを実行せず、PR のレビューの子タスクがタスクの目的から受け入れを確かめる。noTests には、テストの仕組みが無いことの根拠だけを書き、受け入れの確かめ方（「名前の存在を grep で確かめる」など）は書かない（確かめ方は、後の工程が依頼の受け入れ条件から決める。受け入れ条件より弱い手段に縮めない）。テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない（再現をテストで確かめられないため）。sacty は、noTests と答えたリポジトリにテストのファイルらしいもの（tests のディレクトリの中・*.test.*・*_test.* など）があれば止めるので、見つけたテストは testCommand にする（文書だけの依頼（documentsOnly）は除く）",
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
     ...(continuable ? continuePullRequestLines(task, continuable) : []),
     ...(images.length > 0
       ? [
-          "- image：このタスクで使う実行のイメージ（PBI-318）。タスクのすべての工程の作業・テスト・最終レビューを、この1つのイメージのコンテナで行う（工程ごとには選ばない）。タスクで扱うコード（モノレポなら、タスクで触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、次のイメージから合うものの名前を1つ書く。複数の言語が要るときは、すべてを含むイメージを選ぶ",
+          "- image：このタスクで使う実行のイメージ（PBI-318）。タスクのすべての工程の作業・テストを、この1つのイメージのコンテナで行う（工程ごとには選ばない）。タスクで扱うコード（モノレポなら、タスクで触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、次のイメージから合うものの名前を1つ書く。複数の言語が要るときは、すべてを含むイメージを選ぶ",
           ...images.map((image) => `  - ${image.name}：${image.description}`),
           "- テストもこのイメージで実行するので、testCommand と、リポジトリの依存（package.json・requirements.txt・Gemfile などの開発用の依存も）から選ぶ。テストに要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール、kustomize・helm・kubeconform などの検証のツール）が入っているイメージにする。testCommand のツールを持つイメージがあれば、それを優先して選ぶ。どのイメージにも無いときだけ、testCommand は書いたうえで（上のとおり）、imageReason にその理由を書く",
           `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。汎用の最低限のもの（${DEFAULT_IMAGE_CONTENTS}）で、${DEFAULT_IMAGE_MISSING}。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使うときは image に ${DEFAULT_IMAGE_NAME} と書き、defaultReason に、このタスクで images のどれも合わない理由を書く`,
@@ -6287,10 +6292,10 @@ export function buildChildBody(
     parent.split
       ? `このタスクは、親タスク「${parent.title}」の統合レビューの指摘を直す、修正の子タスクです。親の要求要件と設計のうち、このタスクの範囲だけを直してください。`
       : `このタスクは、親タスク「${parent.title}」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
-    // 依存先の PR は、まだマージされていないことがある（最終レビューに合格した依存先の PR に重ねて始める。PBI-317）
+    // 依存先の PR は、まだマージされていないことがある（指摘なしになった依存先の PR に重ねて始める。PBI-317）
     ...(deps.length > 0
       ? [
-          `このタスクは、子タスク ${deps.join("・")} に依存します。作業領域には、依存先の変更が入っています（依存先の PR がマージされたベースブランチか、最終レビューに合格した依存先の PR のブランチから始めます。中止された依存先を除く）。`,
+          `このタスクは、子タスク ${deps.join("・")} に依存します。作業領域には、依存先の変更が入っています（依存先の PR がマージされたベースブランチか、PR のレビューで指摘なしになった依存先の PR のブランチから始めます。中止された依存先を除く）。`,
         ]
       : []),
     "",

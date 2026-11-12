@@ -325,7 +325,9 @@ describe("実装の PR の本文：表のセルを短くする（PBI-264）", ()
         lastReview: undefined,
       }),
     );
-    expect(none).toContain("| REQ 要求要件の受け入れ条件 | （なし） | （なし） |");
+    // 以前の版の最終レビューの記録が無ければ、最終レビューの列を出さない
+    expect(none).toContain("| REQ 要求要件の受け入れ条件 | （なし） |\n");
+    expect(none).not.toContain("最終レビュー |");
   });
 });
 

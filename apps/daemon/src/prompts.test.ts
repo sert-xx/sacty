@@ -4466,7 +4466,7 @@ describe("タスクの開始時に集めた情報", () => {
       new Map([["a", "API"]]),
     );
     expect(body).toContain("子タスク 「API」 に依存します");
-    expect(body).toContain("最終レビューに合格した依存先の PR のブランチ");
+    expect(body).toContain("PR のレビューで指摘なしになった依存先の PR のブランチ");
     expect(body).not.toContain("マージされています");
   });
 });

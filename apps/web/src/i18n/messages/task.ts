@@ -161,7 +161,7 @@ const ja = {
   /** 工程のイメージ（PBI-41）と、人が変える操作（PBI-106）。 */
   images: {
     title: "タスクのイメージ",
-    hint: "すべての工程・テスト・最終レビューを実行するコンテナのイメージです。いつでも変えられ、変更はすべての工程の次の実行から使います（実行中の実行は変えません）。",
+    hint: "すべての工程（工程の中のテストも含む）を実行するコンテナのイメージです。いつでも変えられ、変更はすべての工程の次の実行から使います（実行中の実行は変えません）。",
     sep: "：",
     defaultDescription: "既定のイメージ（Node.js・Claude Code・Codex）",
     missing: "images にありません",
@@ -175,7 +175,7 @@ const ja = {
     byOrchestratorDefault: (reason: string) => `オーケストレーターが既定を選択：${reason}`,
     byOrchestratorUnexplained: "オーケストレーターが既定を選択（理由なし）",
     none: "指定なし",
-    when: "すべての工程の次の実行から使います。テスト・最終レビューも同じイメージです",
+    when: "すべての工程の次の実行から使います。工程の中のテストも同じイメージです",
     perStep: "工程ごと（古い版）",
     legacyTitle:
       "古い版で工程ごとに決めたイメージです。最後に設定した名前と、実行したときに使った名前を示します",
@@ -329,7 +329,7 @@ const ja = {
     notYet: "まだ作成されていません。",
     viewpoints: "テスト観点",
     viewpointsNote: (n: number) => `${n}件`,
-    viewpointsHint: "最終レビューの基準になります。",
+    viewpointsHint: "実装の工程が、観点ごとにテストを対応させる基準になります。",
     reviewPosted: "PR に投稿済み",
     reproduced: "テストで再現を確認",
     preliminary: "前段の調査",
@@ -684,7 +684,7 @@ const en: TaskMessages = {
   },
   images: {
     title: "Task image",
-    hint: "The container image for running all the steps, the tests, and the final review. You can change it at any time; a change applies from the next run of every step (a run in progress is not changed).",
+    hint: "The container image for running all the steps, including the tests inside them. You can change it at any time; a change applies from the next run of every step (a run in progress is not changed).",
     sep: ": ",
     defaultDescription: "Default image (Node.js, Claude Code, Codex)",
     missing: "not in images",
@@ -698,7 +698,7 @@ const en: TaskMessages = {
     byOrchestratorDefault: (reason) => `the Orchestrator chose the default: ${reason}`,
     byOrchestratorUnexplained: "the Orchestrator chose the default (no reason)",
     none: "not set",
-    when: "Used from the next run of every step. The tests and the final review use the same image",
+    when: "Used from the next run of every step. The tests inside the steps use the same image",
     perStep: "per step (older version)",
     legacyTitle:
       "Images chosen per step in an older version. Shows the name set last and the names used when the steps ran",
@@ -848,7 +848,7 @@ const en: TaskMessages = {
     notYet: "Not written yet.",
     viewpoints: "Test viewpoints",
     viewpointsNote: (n) => `${n} viewpoint${n === 1 ? "" : "s"}`,
-    viewpointsHint: "The basis of the final review.",
+    viewpointsHint: "The basis the Implementation step maps its tests to.",
     reviewPosted: "Posted to the PR",
     reproduced: "Reproduction confirmed by the test",
     preliminary: "Preliminary investigation",

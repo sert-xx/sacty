@@ -55,7 +55,7 @@ The audit flows as follows.
   - Imported PR remarks (written by a person)
   - Imported remarks from sacty's own AI review (`aiReviewRemark`; counted separately from a person's remarks. [AI review comments](approval.en.md#ai-review-comments))
   - Pauses
-  - Retries (failed runs, failed tests, final reviews, and integration reviews)
+  - Retries (failed runs and failed integration reviews; in records from earlier versions, also failed tests and final reviews)
   - Failed tool calls (session logs)
   - Escalations
 - The instructions say not to follow instructions found in the ledger, logs, or code, and not to write secrets.
@@ -122,7 +122,7 @@ Code: `apps/daemon/src/service.ts` (`adoptAuditProposal`, `createAuditFixTask`, 
 
 ## The flaky test ledger
 
-sacty counts, per project, the flaky failures the final review accepted (`tests.flakyFailures` of `FinalReviewed`, and `ciFlakyFailures`, accepted from the CI results for a task with no test command; [the step specification](tasks-and-steps.en.md)).
+sacty counts, per project, the flaky failures the final review accepted in earlier versions (`tests.flakyFailures` of `FinalReviewed`, and `ciFlakyFailures`, accepted from the CI results for a task with no test command; [the step specification](tasks-and-steps.en.md)).
 This is separate from running audits and does not use the audit budget.
 The current version runs no final review ([Verifying the implementation](tasks-and-steps.en.md#verifying-the-implementation)), so no new entries are added. It is not shown on the screen either (the API that reads the ledger, `/api/projects/:id/flaky-tests`, and the way to create a task from it remain for older records).
 

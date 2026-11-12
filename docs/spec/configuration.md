@@ -43,8 +43,8 @@
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
 | `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
 | `run_timeout.agent_minutes` | `30` | エージェントの1回の実行の上限（分。1〜720 の整数。PBI-150）。過ぎたらコンテナを止め、時間切れ（`run.timeout`）にする（[エージェントの実行](agent-execution.md#コンテナ)） |
-| `run_timeout.test_minutes` | `20` | テストを実行する役割（`final-review`・`reproduce`・`review`）の上限に足す分（分。1〜720 の整数）。その役割の `roles` の上書きが無ければ、上限は `agent_minutes` + `test_minutes`（[エージェントの実行](agent-execution.md#コンテナ)） |
-| `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`gather`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り |
+| `run_timeout.test_minutes` | `20` | テストを実行する役割（`reproduce`・`review`。以前の版の最終レビューの役割 `final-review` も含むが、今は実行しない）の上限に足す分（分。1〜720 の整数）。その役割の `roles` の上書きが無ければ、上限は `agent_minutes` + `test_minutes`（[エージェントの実行](agent-execution.md#コンテナ)） |
+| `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`gather`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り。`guardian`・`final-review` は以前の版の役割で、書いても誤りにはならないが、今は使われない |
 | `update_check` | `true` | sacty の最新版（GitHub Releases の最新のリリース）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
 
 ほかに、次のときも誤りにする。
@@ -128,7 +128,7 @@
 | `reasoning_effort` | リーズニングエフォート（任意。`^[a-z][a-z0-9_-]{0,30}$`）。Codex は `model_reasoning_effort`、Claude Code は `--effort` で渡す |
 | `fallback` | 実行が失敗したとき（理由は問わない）に代わりに使うエージェントの名前（任意。1つか並びで、上から順に試す）。`agents` に無い名前は誤り（`config.agentMissing`）、自分自身も誤り（`config.agentFallbackSelf`）。使えないエージェントは警告して外す（`config.agentFallbackUnavailable`） |
 | `price_per_mtok_usd` | `runtime: stub` だけ。単価（書き方は `available_models` と同じ。書かなければ 0） |
-| `stub` | `runtime: stub` の出力（工程・オーケストレーター・最終レビューなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
+| `stub` | `runtime: stub` の出力（工程・オーケストレーターなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
 
 - 既定と同じ名前は、書いた項目だけを既定に重ねる（書いていない項目は既定のまま）。
   既定に無い名前は、そのエージェントを足す。

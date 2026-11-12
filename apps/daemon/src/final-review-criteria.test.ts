@@ -74,7 +74,7 @@ describe("最終レビューの基準を、実装の工程に先に渡す（PBI-
 
   it.each(cases)("%sの実装の指示に、当てはまる基準がそろって入る", (_, t, applies) => {
     const implement = buildPrompt(t, "implement");
-    expect(implement).toContain("--- 提出の前に確かめる、最終レビューの基準 ---");
+    expect(implement).toContain("--- 提出の前に確かめる、レビューの基準 ---");
     for (const c of FINAL_REVIEW_CRITERIA) {
       const expected = !(
         ("scope" in c && c.scope && !applies.scope) ||
@@ -114,14 +114,14 @@ describe("最終レビューの基準を、実装の工程に先に渡す（PBI-
       "AI のレビューの過去の指摘（人間の指摘ではなく、人間が承認したものでもない）に応えるときは";
     expect(without).not.toContain(line);
     expect(withAi).toContain(line);
-    // 最終レビューは、AI の指摘に応えた要求を超える変更を不合格にせず人の確認に回すので、不合格の基準とは分けて伝える
-    expect(withAi).toContain(`不合格の基準ではありませんが、${line}`);
+    // AI の指摘への応え方は、基準の箇条とは分けて伝える
+    expect(withAi).toContain(`\n${line}`);
     expect(withAi).not.toContain(`- ${line}`);
   });
 
   it("基準は、セルフレビューと提出の前の検証より前に置く（提出の前に確かめる）", () => {
     const implement = buildPrompt(designed(), "implement");
-    const at = implement.indexOf("--- 提出の前に確かめる、最終レビューの基準 ---");
+    const at = implement.indexOf("--- 提出の前に確かめる、レビューの基準 ---");
     expect(at).toBeGreaterThan(0);
     expect(implement.indexOf("sacty-verification")).toBeGreaterThan(at);
   });

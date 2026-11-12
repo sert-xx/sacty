@@ -478,25 +478,15 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.changes;
   }
-  /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
-  workingCopies: {
-    dir: string;
-    outDir: string;
-    gitDir?: string;
-    include?: { commit: string; paths: string[] };
-  }[] = [];
+  /** 実装後のコードの写し（PBI-16）。 */
+  workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
   copyFail?: string;
   /** 読めないために写さなかったファイル（権限 0000 のツールのファイルなど。PBI-278）。 */
   copySkipped: { count: number; paths: string[] } = { count: 0, paths: [] };
   /** 写しを始めたら解決する。copyGate があれば、それが解決するまで写し終えない（写しの途中で止めるテスト。PBI-156）。 */
   copyStarted = Promise.withResolvers<void>();
   copyGate?: Promise<void>;
-  async copyWorkingTree(
-    dir: string,
-    outDir: string,
-    gitDir?: string,
-    include?: { commit: string; paths: string[] },
-  ) {
+  async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (this.copyFail) throw new Error(this.copyFail);
     this.copyStarted.resolve();
     if (this.copyGate) {
@@ -505,17 +495,7 @@ class FakeRepos implements RepositoryWorkspace {
     }
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
-    // PR に足す成果物のファイルを、PR のコミットの内容で入れる（偽物は、パスを本文にして書く）
-    for (const path of include?.paths ?? []) {
-      mkdirSync(dirname(join(outDir, path)), { recursive: true });
-      writeFileSync(join(outDir, path), `included from ${include?.commit}`);
-    }
-    this.workingCopies.push({
-      dir,
-      outDir,
-      ...(gitDir ? { gitDir } : {}),
-      ...(include ? { include } : {}),
-    });
+    this.workingCopies.push({ dir, outDir, ...(gitDir ? { gitDir } : {}) });
     return { skipped: this.copySkipped };
   }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
@@ -9342,10 +9322,8 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       title: "決済API",
       number: undefined,
     });
-    // 最終レビューをしないので、判定は空のまま
-    expect(call?.body).toContain(
-      "| TV-1 同じキーの再送 | pay.test.ts › 同じキーの再送 | （なし） |",
-    );
+    // 最終レビューをしないので、最終レビューの列は出さない
+    expect(call?.body).toContain("| TV-1 同じキーの再送 | pay.test.ts › 同じキーの再送 |\n");
     // 入力・期待結果の全文は、表の外の折りたたみに出す
     expect(call?.body).toContain("  - 入力：同じキーで2回送る");
     expect(call?.body).not.toContain("最終レビューの所見：");
@@ -20140,7 +20118,7 @@ describe("再現の工程（PBI-29）", () => {
     expect(body).toContain("## 不具合の再現");
     // 全文は載せない（再現の説明は見出しだけなので、要点は無く、全文のある場所だけを書く）
     expect(body).toContain("全文は sacty のタスクの画面で確かめてください。");
-    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \| （なし） \|/);
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|\n/);
     expect(body).not.toContain("## 要求要件");
     // 実装の承認待ちから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
     expect(reworkTargets(done as Task, "implement")).toEqual(["implement"]);
@@ -29746,8 +29724,10 @@ describe("PR テンプレート（PBI-87）", () => {
     );
     expect(impl).toContain("（PR：[#7](https://github.com/acme/app/pull/7)）");
     expect(impl).toContain("## 変更内容\n\n# 実装の説明");
-    expect(impl).toContain("## テスト\n\n| 観点 | テスト | 最終レビュー |");
-    expect(impl).toContain("テスト：（未実行）");
+    // 最終レビューをしない流れでは、最終レビューの列と、テストの実行の行を出さない
+    expect(impl).toContain("## テスト\n\n| 観点 | テスト |\n| --- | --- |");
+    expect(impl).not.toContain("最終レビュー |");
+    expect(impl).not.toContain("テスト：（未実行）");
     expect(impl).toContain("<summary>観点ごとの詳細");
     expect(impl).toContain("- [ ] 単体テストを足した");
     // チェックボックスには、sacty が印を付けない
@@ -31276,10 +31256,10 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(pulls.calls).toHaveLength(1);
     const body = pulls.calls[0]?.body ?? "";
     expect(body).toContain(
-      "テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。",
+      "テスト：テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。",
     );
     expect(body).toContain(`テストの仕組みが無いと判断した根拠（オーケストレーター）：${NO_TESTS}`);
-    expect(body).toContain("（テストなし。目的から判定）");
+    expect(body).toContain("（テストなし。目的から確認）");
     // 人の承認は今どおり要る
     expect(isCompleted(task)).toBe(false);
     activity.close();

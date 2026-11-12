@@ -3007,7 +3007,7 @@ export class TaskService {
               workspaceDir,
             );
           } else {
-            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
+            // エージェントが git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
             // 応答し続けるよう、非同期で写す（写しの途中で止められたら、execute が起動の前に止める。PBI-156）
             const copied = await this.deps.repos.copyWorkingTree(
               this.repoDir(task),

@@ -179,11 +179,11 @@ describe("PR のレビュー", () => {
       diff: "diff",
       reviewVerification: { commit: "h".repeat(40), commands: record.commands },
     });
-    expect(withRecord).toContain("sacty の最終レビュー（ゴールガーディアン）");
+    expect(withRecord).toContain("以前の版の sacty の最終レビュー（ゴールガーディアン）");
     expect(withRecord).toContain('"command": "npm test"');
     const without = buildPrompt(reviewTask, "review", { diff: "diff" });
     expect(without).toContain("--- 前の段で実行した検証の使い回し ---");
-    expect(without).not.toContain("sacty の最終レビュー（ゴールガーディアン）");
+    expect(without).not.toContain("以前の版の sacty の最終レビュー（ゴールガーディアン）");
   });
 });
 
