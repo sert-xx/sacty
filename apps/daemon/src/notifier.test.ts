@@ -189,6 +189,26 @@ describe("Slack の通知（PBI-38）", () => {
     ).toContain("PR の指摘の戻し先を確かめてください");
   });
 
+  it("変更の申し出のエスカレーションは、承認の画面ではなく、タスクの詳細の申し出の欄へリンクする（PR #351 レビュー指摘）", () => {
+    const proposed = task({
+      status: "escalated",
+      escalation: {
+        step: "implement",
+        target: "design",
+        pendingRemarks: [],
+        reason: "change_proposed",
+      },
+    });
+    for (const language of ["ja", "en"] as const) {
+      const text = notificationText(proposed, "escalation", language, "http://x/");
+      expect(text).toContain(`http://x/tasks/${proposed.id}#proposals`);
+      expect(text).not.toContain(`/tasks/${proposed.id}/review`);
+    }
+    expect(notificationText(proposed, "escalation", "ja", "http://x")).toContain(
+      "変更の申し出がありました",
+    );
+  });
+
   it("Slack API の形（Proxy を含む）は、チャンネルと本文を送り、トークンがあれば付ける", async () => {
     const api = slack();
     const notifier = new SlackNotifier({

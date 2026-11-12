@@ -7160,7 +7160,7 @@ export type ChatLogs = { runs: readonly QuestionLogRun[] } | { unavailable: stri
 /** 工程以外の実行の名前（PBI-91）。 */
 const RUN_ROLE_NAME: Record<string, string> = {
   orchestrator: "オーケストレーター",
-  guardian: "統合レビュー（以前の版ではゴールガーディアン）",
+  guardian: "以前の版の AI の判定（ゴールガーディアン）",
   "final-review": "最終レビュー",
   rework: "差し戻し先の判断",
   chat: "質問への答え（オーケストレーター）",
