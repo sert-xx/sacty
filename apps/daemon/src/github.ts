@@ -40,6 +40,8 @@ export interface PullRequests {
     token: string;
     number: number;
     draft: boolean;
+    /** 中断すると、通信をやめて失敗にする（答えを待つ上限。PBI-331）。 */
+    signal?: AbortSignal;
   }): Promise<{ draft: boolean }>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
@@ -933,15 +935,19 @@ function draftUnsupported(json: Record<string, unknown>): boolean {
 /** PR のドラフトを切り替える。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
 async function setPullRequestDraft(
   fetchImpl: Fetch,
-  input: { repo: string; token: string; number: number; draft: boolean },
+  input: { repo: string; token: string; number: number; draft: boolean; signal?: AbortSignal },
 ): Promise<{ draft: boolean }> {
+  const signal = input.signal ? { signal: input.signal } : {};
   const headers = {
     accept: "application/vnd.github+json",
     authorization: `Bearer ${input.token}`,
     "x-github-api-version": "2022-11-28",
     "content-type": "application/json",
   };
-  const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, { headers });
+  const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
+    headers,
+    ...signal,
+  });
   // 答えを読めない・ドラフトかが書かれていないときは、今の状態を決められないので失敗にする（ドラフトのまま承認待ちにしない）
   const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
   if (!res.ok) throw apiError("getPr", res.status, json ?? {});
@@ -954,6 +960,7 @@ async function setPullRequestDraft(
   const done = await fetchImpl(githubGraphqlUrl(host), {
     method: "POST",
     headers,
+    ...signal,
     body: JSON.stringify({
       query: `mutation($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
       variables: { id },

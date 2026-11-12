@@ -8,6 +8,11 @@ import { apiError, nextPage, repoApi } from "./github.js";
  */
 export type CiSnapshot = {
   checks: CiCheck[];
+  /**
+   * GitHub Actions のジョブ（チェック。checks には入れない。PBI-331）。ワークフローが成功でも、実行されなかった（skipped）
+   * ジョブを PR のレビューの子タスクに伝えるため。
+   */
+  jobs?: CiCheck[];
   /** 失敗したワークフローの実行（ID と名前・URL・試行の回数）。 */
   failedRuns: { id: number; name: string; url?: string; conclusion: string; attempt?: number }[];
 };
@@ -607,6 +612,7 @@ export class GitHubCiStatus implements CiStatusReader {
     );
     const str = (v: unknown) => (typeof v === "string" ? v : undefined);
     const checks: CiCheck[] = [];
+    const jobs: CiCheck[] = [];
     const failedRuns: CiSnapshot["failedRuns"] = [];
     // 同じワークフローを再実行したら、最新の試行（run_attempt の大きいもの）だけを見る
     const latest = new Map<string, Record<string, unknown>>();
@@ -639,12 +645,11 @@ export class GitHubCiStatus implements CiStatusReader {
       }
     }
     for (const c of checkRuns) {
-      // GitHub Actions のジョブは、ワークフローの実行で見る（二重に数えない）
+      // GitHub Actions のジョブは、ワークフローの実行で見る（checks に二重に数えない。jobs に分けて持つ）
       const app = (c.app as { slug?: unknown } | null)?.slug;
-      if (app === "github-actions") continue;
       const completed = c.status === "completed";
       const url = str(c.html_url) ?? str(c.details_url);
-      checks.push({
+      (app === "github-actions" ? jobs : checks).push({
         kind: "check",
         name: str(c.name) ?? String(c.id),
         status: completed ? "completed" : "pending",
@@ -663,7 +668,7 @@ export class GitHubCiStatus implements CiStatusReader {
         ...(url ? { url } : {}),
       });
     }
-    return { checks, failedRuns };
+    return { checks, jobs, failedRuns };
   }
 
   async failures(input: Parameters<CiStatusReader["failures"]>[0]): Promise<CiFailure[]> {

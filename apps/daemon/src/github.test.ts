@@ -126,6 +126,27 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(calls[1]?.auth).toBe("Bearer ghp_secret");
   });
 
+  it("ドラフトの切り替えの通信には、渡した中断の合図を付ける（PBI-331）", async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    const answers = [
+      { number: 7, draft: true, node_id: "PR_node" },
+      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
+    ];
+    const impl = (async (_url: string, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return new Response(JSON.stringify(answers[seen.length - 1]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const abort = new AbortController();
+    await new GitHubPullRequests(impl).setDraft({
+      repo: input.repo,
+      token: input.token,
+      number: 7,
+      draft: false,
+      signal: abort.signal,
+    });
+    expect(seen).toEqual([abort.signal, abort.signal]);
+  });
+
   it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: false, node_id: "PR_node" } },

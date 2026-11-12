@@ -1012,6 +1012,12 @@ export const REVIEW_CI_TIMEOUT_MS = 30_000;
  */
 export const DRAFT_TIMEOUT_MS = 30_000;
 
+/**
+ * 答えを待つのをやめたドラフトの切り替えの要求を、終わっていない要求として数える上限（DRAFT_TIMEOUT_MS の倍数。PBI-331）。
+ * 通信を中断しても終わらない要求で、ずっとドラフトを外せなくならないようにする。
+ */
+export const DRAFT_SETTLE_FACTOR = 10;
+
 /** 答えが ms のうちに返らなければ、時間切れの失敗にする（PBI-331）。時間切れの後に届いた失敗は知らせない。 */
 async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   promise.catch(() => {});
@@ -3558,7 +3564,8 @@ export class TaskService {
         );
         return { commit: target.headCommit, checks: "unreadable" };
       }
-      return { commit: target.headCommit, checks: snapshot.checks };
+      // ワークフローのほかに、その中のジョブも渡す（ワークフローが成功でも、実行されなかったジョブを見落とさない）
+      return { commit: target.headCommit, checks: [...snapshot.checks, ...(snapshot.jobs ?? [])] };
     } catch (error) {
       console.warn(
         `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -11604,23 +11611,35 @@ export class TaskService {
   }
 
   /**
-   * PR のドラフトを切り替える（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら失敗にする。要求が終わるまでは、終わって
-   * いない要求として数える（draftRequests）。
+   * PR のドラフトを切り替える（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら通信を中断して失敗にする。要求が終わるまでは、
+   * 終わっていない要求として数える（draftRequests）。中断しても終わらない要求も、DRAFT_SETTLE_MS を過ぎたら数えない（GitHub が
+   * 復旧した後に、ドラフトを外せないままにしない）。
    */
   private setDraftWithin(
     taskId: string,
-    input: Parameters<PullRequests["setDraft"]>[0],
+    input: Omit<Parameters<PullRequests["setDraft"]>[0], "signal">,
   ): Promise<{ draft: boolean }> {
     const key = `${taskId}:${input.number}`;
     this.draftRequests.set(key, (this.draftRequests.get(key) ?? 0) + 1);
-    const request = this.deps.pulls.setDraft(input);
+    const abort = new AbortController();
+    const request = this.deps.pulls.setDraft({ ...input, signal: abort.signal });
+    let counted = true;
+    const ms = this.draftTimeoutMs();
+    const settle = setTimeout(() => done(), ms * DRAFT_SETTLE_FACTOR);
+    settle.unref?.();
     const done = () => {
+      if (!counted) return;
+      counted = false;
+      clearTimeout(settle);
       const left = (this.draftRequests.get(key) ?? 1) - 1;
       if (left > 0) this.draftRequests.set(key, left);
       else this.draftRequests.delete(key);
     };
     request.then(done, done);
-    return withDeadline(request, this.draftTimeoutMs());
+    return withDeadline(request, ms).catch((error: unknown) => {
+      abort.abort();
+      throw error;
+    });
   }
 
   /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
@@ -15669,7 +15688,8 @@ export class TaskService {
       }
       events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
     }
-    const rechooseSteps = !input.tests && canRechooseSteps(task);
+    // 最終レビューをしない流れ（PBI-331）では、テストが決まらないことで止めないので、それを理由に工程を選び直さない
+    const rechooseSteps = !input.tests && this.finalReview && canRechooseSteps(task);
     // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
     // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
     const settingCount =

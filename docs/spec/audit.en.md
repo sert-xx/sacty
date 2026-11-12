@@ -196,7 +196,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
   - Evidence links to the activity row (`#event-<ID>`) and the run log.
   - Activity rows of audit runs also open their logs.
 - Audit page (`/projects/<ID>/audit`; "Audit" in the side menu)
-  - It shows causes (recurred first), proposals (those needing a decision first), flaky tests (known first, then newest), audited tasks, and report export.
+  - It shows causes (recurred first), proposals (those needing a decision first), audited tasks, and report export (it does not show the flaky test ledger; [Flaky test ledger](#the-flaky-test-ledger)).
   - An adoption for sacty shows that no task was created in the project.
   - For a proposal that needs a decision, the adopt form can open an edit to the proposed fix (supplement or replacement).
   - A note attached to an adoption is shown under the proposal with its kind (and in reports).

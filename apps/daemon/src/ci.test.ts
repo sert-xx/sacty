@@ -465,6 +465,10 @@ describe("GitHub の CI/CD の状態（PBI-89）", () => {
         url: "https://ci.example.com/1",
       },
     ]);
+    // GitHub Actions のジョブは checks に入れず、jobs に分けて持つ（PR のレビューの子タスクに渡すため。PBI-331）
+    expect(snap.jobs).toEqual([
+      { kind: "check", name: "build", status: "completed", conclusion: "failure" },
+    ]);
     expect(snap.failedRuns).toEqual([]);
   });
 

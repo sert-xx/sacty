@@ -131,6 +131,7 @@ import {
 import { createApp } from "./server.js";
 import {
   awaitingIssueComment,
+  DRAFT_SETTLE_FACTOR,
   InvalidOperationError,
   type LocalSessionView,
   MEMORY_STEP_ROLES,
@@ -28610,6 +28611,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
                 },
                 { kind: "check" as const, name: "lint", status: "pending" as const },
               ],
+              // ワークフローの中のジョブ（実行されなかったもの）
+              jobs: [
+                {
+                  kind: "check" as const,
+                  name: "e2e",
+                  status: "completed" as const,
+                  conclusion: "skipped",
+                },
+              ],
               failedRuns: [],
             };
           },
@@ -28694,6 +28704,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(prompt).toContain(`先頭のコミット（${first.slice(0, 7)}）の CI`);
         expect(prompt).toContain("CI：failure（https://example.com/runs/1）");
         expect(prompt).toContain("lint：実行中");
+        // ワークフローの中のジョブも渡す（実行されなかった skipped を見落とさない。PR #348 6回目のレビュー指摘）
+        expect(prompt).toContain("e2e：skipped");
         expect(prompt).toContain("変更による失敗なら、直すべき指摘（要修正）にする");
         // 指摘ありの回では、ドラフトを外さない
         await service.checkPullRequests();
@@ -29231,6 +29243,78 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
         setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("答えの返らないドラフトの切り替えは通信を中断し、中断しても終わらなくても上限を過ぎたら、ドラフトを外せる（PR #348 6回目のレビュー指摘）", async () => {
+        for (const ignoresAbort of [false, true]) {
+          rmSync(dbPath, { force: true });
+          const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+            draftTimeoutMs: 20,
+          });
+          const { activity, service, pulls, id } = made;
+          const childId = childOf(service, id);
+          pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+          // ドラフトに戻す要求が答えを返さない（中断に応じる・応じない）
+          const original = pulls.setDraft.bind(pulls);
+          const setDraft = vi.spyOn(pulls, "setDraft");
+          const signals: (AbortSignal | undefined)[] = [];
+          setDraft.mockImplementationOnce(
+            (input) =>
+              new Promise((_, reject) => {
+                signals.push(input.signal);
+                if (!ignoresAbort) {
+                  input.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+                }
+              }),
+          );
+          setDraft.mockImplementation(original);
+          await service.checkPullRequests();
+          expect(signals[0]?.aborted).toBe(true);
+          await runReview(service, childId);
+          if (ignoresAbort) {
+            // 中断に応じない要求は、上限（DRAFT_TIMEOUT_MS の DRAFT_SETTLE_FACTOR 倍）までは終わっていないものとして外さない
+            await service.checkPullRequests();
+            expect(types(service, id), String(ignoresAbort)).not.toContain(
+              "PullRequestMarkedReady",
+            );
+            await new Promise((resolve) => setTimeout(resolve, 20 * DRAFT_SETTLE_FACTOR + 50));
+          }
+          // 中断で終わった・上限を過ぎた要求は数えず、指摘なしでドラフトを外す
+          await service.checkPullRequests();
+          expect(pulls.drafts[7], String(ignoresAbort)).toBe(false);
+          expect(types(service, id), String(ignoresAbort)).toContain("PullRequestMarkedReady");
+          setDraft.mockRestore();
+          activity.close();
+        }
+      });
+
+      it("テストのコマンドが決まらないまま最初の工程の前に止まっても、再開で工程を選び直さず、イメージを変えて再開できる（PR #348 6回目のレビュー指摘）", async () => {
+        const pulls = new FakePulls();
+        const made = await start([implement()], {
+          pulls,
+          steps: ["implement"],
+          reviewTasks: true,
+          finalReview: false,
+          ci: failingCi(),
+          // 工程を選ぶ費用で予算を超え、最初の工程の前に止まる
+          planner: async () => ({
+            steps: ["implement"],
+            fallback: false,
+            costUsd: 1000,
+            estimated: false,
+          }),
+        });
+        const { activity, service, id } = made;
+        await service.runNext(id);
+        const paused = taskOf(service, id);
+        expect(paused).toMatchObject({ status: "paused", pausedReason: "budget" });
+        expect(paused.testCommand).toBeUndefined();
+        expect(paused.steps.map((s) => s.key)).toEqual(["implement"]);
+        service.resume(id, { capUsd: 2000, image: "default" });
+        const resumed = service.get(id)?.activity.findLast((e) => e.type === "TaskResumed");
+        expect(resumed?.type === "TaskResumed" && resumed.payload.rechooseSteps).toBeUndefined();
+        expect(taskOf(service, id).steps.map((s) => s.key)).toEqual(["implement"]);
         activity.close();
       });
 
