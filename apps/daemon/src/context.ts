@@ -277,6 +277,11 @@ export function localContextDir(repo: string): string | undefined {
  * `file://`・相対パス（デーモンのカレントディレクトリから読める）・`ext::` などの取得方法は、ホストに届くので含めない。
  */
 const REMOTE_REPO = /^(?:(?:https?|ssh|git):\/\/|[\w.-]+@[\w.-]+:(?!:))/i;
+/**
+ * git が scp の形（`[user@]host:path`）として読みうる指定。最初の `:` より前に `/` が無いもの（git の判定と同じ）。
+ * URL（`https://…` など）も当たるが、空のディレクトリで clone しても変わらない。
+ */
+const SCP_REPO = /^[^/]+:/;
 
 type ManifestExtends = NonNullable<z.output<typeof ContextManifest>["extends"]>;
 
@@ -1594,12 +1599,21 @@ export class GitContextFetcher implements ContextFetcher {
   ) {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
     const branch = ref.ref ? ["--branch", ref.ref] : [];
-    await run(
-      ["clone", "--depth", "1", ...branch, "--", ref.repo, dir],
-      undefined,
-      authEnv,
-      signal,
-    );
+    // git clone は、`user@host:path` と同じ名前のエントリがカレントディレクトリ（デーモンのもの）にあると、ローカルから
+    // 読む。その形は、空のディレクトリで clone してネットワークの先から取得させる（PBI-327）
+    const isolated = SCP_REPO.test(ref.repo)
+      ? mkdtempSync(join(tmpdir(), "sacty-clone-"))
+      : undefined;
+    try {
+      await run(
+        ["clone", "--depth", "1", ...branch, "--", ref.repo, resolve(dir)],
+        isolated,
+        authEnv,
+        signal,
+      );
+    } finally {
+      if (isolated) rmSync(isolated, { recursive: true, force: true });
+    }
     const commit = (await run(["rev-parse", "HEAD"], dir, {}, signal)).trim();
     return { commit };
   }

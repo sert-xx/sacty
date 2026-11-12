@@ -1837,6 +1837,23 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     prepared.dispose();
   });
 
+  it("user@host:path の形は、カレントディレクトリに同じ名前のリポジトリがあっても、ローカルから取得しない（PBI-327）", async () => {
+    const cwd = join(dir, "cwd");
+    mkdirSync(join(cwd, "git@sacty.invalid:owner"), { recursive: true });
+    const source = makeRepo("source", { "rules.md": "ローカルの規約" });
+    git(dir, "clone", "--quiet", source, join(cwd, "git@sacty.invalid:owner", "repo"));
+    const before = process.cwd();
+    process.chdir(cwd);
+    try {
+      await expect(
+        new GitContextFetcher().fetch({ repo: "git@sacty.invalid:owner/repo" }, join(dir, "got")),
+      ).rejects.toThrow();
+    } finally {
+      process.chdir(before);
+    }
+    expect(existsSync(join(dir, "got", "rules.md"))).toBe(false);
+  });
+
   it("ref の無いローカルのパスは、コミットしていない変更も git で管理していないディレクトリも、今の中身を使う（.git は写さない）", async () => {
     const repo = makeRepo("local", { "rules.md": "コミットした規約" });
     writeFileSync(join(repo, "rules.md"), "まだコミットしていない規約");

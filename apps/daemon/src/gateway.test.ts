@@ -386,6 +386,40 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls[0]?.headers.get("accept")).toBe("application/json");
   });
 
+  it("メソッドを上書きするクエリ（_method など）は、上流に送らずに拒否する", async () => {
+    const g = await startPf([json(200, { id: 42 })]);
+    const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {
+      readOnly: true,
+    });
+    const base = `http://127.0.0.1:${g.port}/r/${run?.token}/pf`;
+    for (const query of [
+      "?_method=DELETE",
+      "?expand=1&_METHOD=DELETE",
+      "?%5Fmethod=DELETE",
+      "?.method=DELETE",
+      "?_method[]=DELETE",
+      "?x-http-method-override=DELETE",
+      "?X_HTTP_Method=DELETE",
+      "?x.method.override=DELETE",
+      "?expand=1;_method=DELETE",
+      "?%20_method=DELETE",
+      "?+_method=DELETE",
+      "?%09_method%20=DELETE",
+      "?_method%00ignored=DELETE",
+    ]) {
+      const res = await fetch(`${base}/ticket/api/v1/tickets/42${query}`);
+      expect(res.status, query).toBe(400);
+      expect(await res.text()).toContain("override the HTTP method");
+    }
+    expect(g.calls).toHaveLength(0);
+    // 名前の一部に含むだけのクエリは送る
+    const ok = await fetch(`${base}/ticket/api/v1/tickets/42?http_method_name=x&methods=1`);
+    expect(ok.status).toBe(200);
+    expect(g.calls[0]?.url).toBe(
+      "https://ticket.internal.example.com/api/v1/tickets/42?http_method_name=x&methods=1",
+    );
+  });
+
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {
     const g = await startPf([json(200, { id: 42 })]);
     const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {

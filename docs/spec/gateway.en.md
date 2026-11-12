@@ -117,6 +117,8 @@ The relay flows as follows.
 ![Relaying an internal PF request](images/gateway-pf.en.svg)
 
 - Lookup order is the host's PFs, then, if not found, the PFs of the project context bound to the run's token. Tokens of tasks in other projects do not find them (404).
+- The checks run in this order: a path that changes when made into a URL (400), a query that overrides the method (400), anything other than GET and HEAD for a read-only run (403), and matching `allow` (403). The first one that applies refuses the request.
+- If the query has a name that overrides the method (`_method`, `x-http-method-override`, `x-http-method`, `x-method-override`; case, `-`, `_`, `.`, spaces, `%` encoding, and a trailing `[]` are treated alike, `;` is also read as a separator, and the name is compared after dropping everything from a NUL and trimming surrounding whitespace), 400 (it is not sent upstream; `overridesMethodInQuery`).
 - Matching `allow`
   - `*` matches one segment and `**` matches everything below (a trailing `/**` also matches that segment itself).
   - The query is ignored.
