@@ -313,6 +313,8 @@ The Implementation step's agent still runs tests while it works.
    If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again at every PR check. To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub. When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it.
 
 - In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
+- You may add commits to the PR branch directly (for example, applying a review suggestion). The next time sacty makes changes, it merges those commits first and then stacks on them (it does not force-push). If they conflict with sacty's changes in the same place, sacty redoes the implementation to resolve them.
+- You may add notes to or reformat the PR body. When sacty updates the PR, it keeps your edits and adds the new content (test results, review status, and so on). When sacty also rewrites the same place, an agent reconciles both. If it cannot, your body is left unchanged (this appears in the activity log of the task detail).
 - A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it).
 - "Test (verification) commands" and "The implementation PR and CI" after this section, and the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image", describe the final review of older versions. The current version does not do them.
   "When the base branch moves ahead" and "PRs of dependent child tasks (stacked PRs)" describe the current version.

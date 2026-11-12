@@ -1615,6 +1615,82 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
         ).rejects.toThrow();
       },
     );
+
+    itMerge(
+      "人が PR のブランチに足したコミットを、sacty が最後にプッシュしたコミットを共通の祖先にして取り込み、その先頭に積める（外すパスは取り込まない。PBI-334）",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const pushed = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit,
+          parent: baseCommit,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        // 人が、PR のブランチに、README の直しと新しいファイルと、外すパス（タスクブランチの要求要件）の変更を積んだ
+        const human = join(dir, "human");
+        git(origin, "worktree", "add", human, branch);
+        writeFileSync(
+          join(human, "README.md"),
+          "# app\n\n1. one\n2. two\n3. three（人が直した）\n",
+        );
+        writeFileSync(join(human, "human.ts"), "export const human = 1;\n");
+        mkdirSync(join(human, "docs"), { recursive: true });
+        writeFileSync(join(human, "docs", "req.md"), "# 要求要件\n");
+        git(human, "add", "--all");
+        git(human, "commit", "-m", "human");
+        const head = git(human, "rev-parse", "HEAD");
+        expect(await workspace.fetchBranch(gitDir, branch)).toBe(head);
+        // sacty はその間に、作業領域で実装を直していた
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 2;\n");
+
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: pushed.commit,
+          target: head,
+          exclude: ["docs/req.md"],
+        });
+        expect(merged).toEqual({ status: "merged", conflicts: [] });
+        expect(readFileSync(join(clone, "README.md"), "utf8")).toContain("3. three（人が直した）");
+        expect(readFileSync(join(clone, "human.ts"), "utf8")).toBe("export const human = 1;\n");
+        expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 2;\n");
+        // 外したパスは、作業領域に入れない（提出のときに keep で引き継ぐ）
+        expect(existsSync(join(clone, "docs", "req.md"))).toBe(false);
+
+        // 人の先頭を親にして積めば、強制プッシュせずに更新できる
+        const next = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit,
+          parent: head,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T02:00:00.000Z",
+        });
+        expect(parents(origin, next.commit)).toEqual([head]);
+        expect(git(origin, "show", `${branch}:pay.ts`)).toBe("export const pay = () => 2;");
+        expect(git(origin, "show", `${branch}:human.ts`)).toBe("export const human = 1;");
+      },
+    );
+
+    it("外すパスに、作業領域の外を指すものや .git は受け付けない（PBI-334）", async () => {
+      const { workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      for (const exclude of [["../x"], [".git/config"], ["/etc/passwd"], ["a//b"]]) {
+        await expect(
+          workspace.mergeBase({
+            dir: clone,
+            gitDir,
+            base: baseCommit,
+            target: baseCommit,
+            exclude,
+          }),
+        ).rejects.toThrow();
+      }
+    });
   });
 
   /**

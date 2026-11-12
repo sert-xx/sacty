@@ -363,6 +363,15 @@ const ja = {
         : `ベースブランチの最新（${commit}）を作業領域に取り込み（競合なし）`,
     BaseConflictsRemained: (files: string) =>
       `競合の目印が作業領域に残っているため、最終レビューの前に実装をやり直す（${files}）`,
+    PullRequestHeadMerged: (branch: string, commit: string, conflicts: number, files: string) =>
+      conflicts > 0
+        ? `人が PR のブランチ ${branch} に足したコミット（${commit}）を作業領域に取り込み：${conflicts}件のファイルが競合（${files}）`
+        : `人が PR のブランチ ${branch} に足したコミット（${commit}）を作業領域に取り込み（競合なし）`,
+    PullRequestBodyWritten: (number: number) => `PR #${number} の本文を書いた`,
+    PullRequestBodyResolved: (number: number, outcome: "resolved" | "kept", reason: string) =>
+      outcome === "resolved"
+        ? `人が直した PR #${number} の本文と、Sacty の新しい本文の競合を、エージェントがまとめた`
+        : `人が直した PR #${number} の本文と競合をまとめられなかったため、人の本文のまま変えない${reason ? `（${reason}）` : ""}`,
     TestsRun: (passed: boolean, exitCode: number, unmapped: string[]) =>
       `テストを実行：${passed ? "合格" : "不合格"}（終了コード ${exitCode}${unmapped.length > 0 ? `・テストの無い観点 ${unmapped.join(", ")}` : ""}）`,
     TestsSkipped: "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
@@ -988,6 +997,15 @@ const en: LabelMessages = {
         : `Merged the latest base branch (${commit}) into the workspace (no conflicts)`,
     BaseConflictsRemained: (files) =>
       `Conflict markers remain in the workspace, so the implementation is redone before the final review (${files})`,
+    PullRequestHeadMerged: (branch, commit, conflicts, files) =>
+      conflicts > 0
+        ? `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace: ${conflicts} file(s) conflict (${files})`
+        : `Merged the commits a person added to the PR branch ${branch} (${commit}) into the workspace (no conflicts)`,
+    PullRequestBodyWritten: (number) => `Wrote the body of PR #${number}`,
+    PullRequestBodyResolved: (number, outcome, reason) =>
+      outcome === "resolved"
+        ? `An agent reconciled the person's edits to the body of PR #${number} with Sacty's new body`
+        : `Could not reconcile the person's edits to the body of PR #${number}, so the body was left as the person wrote it${reason ? ` (${reason})` : ""}`,
     TestsRun: (passed, exitCode, unmapped) =>
       `Tests run: ${passed ? "passed" : "failed"} (exit code ${exitCode}${unmapped.length > 0 ? ` · viewpoints without tests: ${unmapped.join(", ")}` : ""})`,
     TestsSkipped: "No test command, so the tests were skipped; on to the final review",

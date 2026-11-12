@@ -1454,6 +1454,56 @@ const BaseConflictsRemained = z.object({
 });
 
 /**
+ * 人が sacty の PR のブランチに足したコミット（レビューの提案の適用・ベースブランチの取り込みなど）を、実装の作業領域に
+ * 取り込んだ（PBI-334）。from は sacty が最後にプッシュしたコミット（取り込みの共通の祖先）、commit は取り込んだブランチの
+ * 先頭。conflicts は、競合して目印を残したファイル（無ければ空）。次の提出は commit を親にして積む（強制プッシュしない）。
+ */
+const PullRequestHeadMerged = z.object({
+  type: z.literal("PullRequestHeadMerged"),
+  payload: z.object({
+    branch: z.string().min(1),
+    from: z.string().min(1),
+    commit: z.string().min(1),
+    conflicts: z.array(z.string().min(1)).max(MAX_BASE_CONFLICTS),
+  }),
+});
+
+/**
+ * sacty が PR の本文を書いた（作った・更新した。PBI-334）。次の更新で、人が本文を直したかを見分け、3方向でマージする
+ * ときの共通の祖先にする。repo は PR のリポジトリの URL。
+ */
+const PullRequestBodyWritten = z.object({
+  type: z.literal("PullRequestBodyWritten"),
+  payload: z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    body: z.string(),
+  }),
+});
+
+/**
+ * 人が直した PR の本文と、sacty が新しく組み立てた本文が同じ箇所で競合したので、エージェントにまとめさせた（PBI-334）。
+ * resolved：まとめた本文で更新する。kept：まとめられなかった（実行の失敗・答えを読めない）ので、人の本文のまま変えない
+ * （reason に理由）。
+ */
+const PullRequestBodyResolved = z.object({
+  type: z.literal("PullRequestBodyResolved"),
+  payload: z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    outcome: z.enum(["resolved", "kept"]),
+    reason: DaemonText.optional(),
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+    costUnknown: z.boolean().optional(),
+  }),
+});
+
+/**
  * sacty がテストのコンテナでテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
  * 不合格なら実装をやり直す（続けて通らなければ一時停止）。
  * 今の版は記録しない（テストはゴールガーディアンが最終レビューの中で実行する）。それより前の作業履歴を読むために残す。
@@ -3440,6 +3490,9 @@ export const EventInput = z.discriminatedUnion("type", [
   RepositoryPrepared,
   BaseBranchMerged,
   BaseConflictsRemained,
+  PullRequestHeadMerged,
+  PullRequestBodyWritten,
+  PullRequestBodyResolved,
   TestsRun,
   TestsSkipped,
   FinalReviewed,

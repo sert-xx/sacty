@@ -59,6 +59,7 @@ export const CHARGED_EVENT_TYPES = [
   "ErrorAnalyzed",
   "OutputExported",
   "DeploymentChecked",
+  "PullRequestBodyResolved",
 ] as const satisfies readonly ActivityEvent["type"][];
 
 export type ChargedEventType = (typeof CHARGED_EVENT_TYPES)[number];

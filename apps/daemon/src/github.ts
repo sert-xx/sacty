@@ -139,6 +139,10 @@ export interface PullRequests {
   /** レビューの対象の PR（PBI-19）。 */
   pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
   /**
+   * PR の今の本文（PBI-334。人が GitHub で直したかを見分ける）。本文が無ければ空。読めなければ失敗する（空とは扱わない）。
+   */
+  pullRequestBody(input: { repo: string; token: string; number: number }): Promise<string>;
+  /**
    * PR で reviewer に最後にレビューを依頼した日時（ISO。PBI-143）。依頼が無ければ undefined。個人への依頼だけ
    * （チームへの依頼は含めない）。再依頼が、前回のレビューの投稿より後かを確かめるため。
    */
@@ -678,6 +682,21 @@ export class GitHubPullRequests implements PullRequests {
       names.set(r.full_name.toLowerCase(), `https://${org.host}/${r.full_name}`);
     }
     return [...names.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  async pullRequestBody(input: Parameters<PullRequests["pullRequestBody"]>[0]): Promise<string> {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!res.ok) throw apiError("getPr", res.status, json ?? {});
+    // 答えを読めない（JSON でない）ときは、空の本文と取り違えない
+    if (!json || typeof json !== "object") throw apiError("getPr", res.status, {});
+    return typeof json.body === "string" ? json.body : "";
   }
 
   async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {

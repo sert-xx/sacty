@@ -42,6 +42,7 @@ import {
   type Provenance,
   type ProvenanceItem,
   type PullRequestCi,
+  pendingHeadMerge,
   RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
@@ -791,6 +792,47 @@ function promptPath(path: string): string {
  * PR に積む。
  */
 function mergeConflictLines(task: Task, files: readonly string[]): string[] {
+  const head = pendingHeadMerge(task);
+  const headFiles = new Set(head?.conflicts ?? []);
+  return [
+    ...headMergeLines(
+      task,
+      files.filter((f) => headFiles.has(f)),
+    ),
+    ...baseConflictLines(
+      task,
+      files.filter((f) => !headFiles.has(f)),
+    ),
+  ];
+}
+
+/**
+ * 人が PR のブランチに足したコミットを、sacty が作業領域に取り込んだこと（PBI-334）。人の変更を消さない・書き直さないことと、
+ * 競合したファイルの解消の仕方を伝える。まだ提出していない取り込みが無ければ、何も出さない。
+ */
+function headMergeLines(task: Task, files: readonly string[]): string[] {
+  const head = pendingHeadMerge(task);
+  if (!head) return [];
+  return [
+    "",
+    "--- 人が PR に足したコミット ---",
+    `人が PR のブランチ（${head.branch}）にコミットを足していた（レビューの提案の適用など）ので、sacty が先頭（${head.commit.slice(0, 7)}）を作業領域の内容にマージしました。作業領域には、その変更が入っています。`,
+    "- 人が足した変更は、人の判断で入れたものです。消したり、元に戻したり、別の形に書き直したりしないでください（今回の指摘がその変更を直すよう求めているときだけ直す）",
+    ...(files.length > 0
+      ? [
+          "- 次のファイルは、あなたの実装の変更と競合したため、目印（<<<<<<<・=======・>>>>>>>）が入っています。上側（<<<<<<< と ======= の間）があなたの実装の側、下側（======= と >>>>>>> の間）が人の足した側です",
+          ...files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+          ...(files.length > MERGE_FILES_IN_PROMPT
+            ? [`- ほか ${files.length - MERGE_FILES_IN_PROMPT} 件`]
+            : []),
+          "- 人の変更を生かしたうえで、実装の意図も生きる内容にして、目印の行をすべて消す（<<<<<<< と >>>>>>> の行には長い ID が付いている。=======の行も消す。1行でも残ると解消したことになりません）",
+        ]
+      : []),
+    "- git でのマージ・リベース・フェッチ・コミット・プッシュはしない（sacty が、人のコミットの上に積んで PR を更新します）",
+  ];
+}
+
+function baseConflictLines(task: Task, files: readonly string[]): string[] {
   if (files.length === 0) return [];
   const merged = task.baseMerge ? task.baseMerge.commit.slice(0, 7) : undefined;
   return [
@@ -838,9 +880,14 @@ function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
   if (!feedback) return [];
   if (feedback.kind === "merge") {
+    // 人が PR に足したコミットを取り込んで競合したファイルだけなら、そう伝える（PBI-334）
+    const head = new Set(pendingHeadMerge(task)?.conflicts ?? []);
+    const fromHead = feedback.files.length > 0 && feedback.files.every((f) => head.has(f));
     return [
       "",
-      "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
+      fromHead
+        ? "--- 前回の検証：人が PR に足したコミットとの競合の目印が残っていました ---"
+        : "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
       "最終レビューに進む前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。最終レビューはまだ行っていません。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
     ];
@@ -4153,6 +4200,7 @@ export function buildFinalReviewPrompt(
     ),
     ...pullRequestContentLines(task, options.stepDocumentsIncluded === true),
     ...baseMergeLines(task),
+    ...headMergeReviewLines(task),
     ...outOfScopeLines(task),
     ...(options.pullRequest ? pullRequestCiLines(options.pullRequest, Boolean(testCommand)) : []),
     ...(options.pullRequestCiPending ? PENDING_CI_LINES : []),
@@ -4700,6 +4748,26 @@ function baseMergeLines(task: Task): string[] {
     ...(conflicted
       ? [
           `- 取り込みでは ${merge.conflicts.slice(0, 10).map(promptPath).join("・")}${merge.conflicts.length > 10 ? " ほか" : ""} が競合し、実装のエージェントが解消した。解消した内容が、ベースブランチ側の変更を壊していない・実装の変更を消していないかを、差分とコードで確かめる`,
+        ]
+      : []),
+    "",
+  ];
+}
+
+/**
+ * 人が PR のブランチに足したコミットを作業領域に取り込んだタスクで、最終レビューに、差分の中の人の変更の扱いを伝える
+ * （PBI-334）。人の変更は範囲外の変更として不合格にしない。
+ */
+function headMergeReviewLines(task: Task): string[] {
+  const head = pendingHeadMerge(task);
+  if (!head) return [];
+  return [
+    "--- 人が PR に足したコミットの取り込み ---",
+    `- 人が PR のブランチ（${head.branch}）にコミットを足していたため、sacty が先頭（${head.commit.slice(0, 7)}）を作業領域に取り込んでいる。下の差分には、その人の変更も含まれる`,
+    "- 人が足した変更は、人の判断で入れたものなので、範囲外の変更・過剰な変更として不合格にしない。ただし、実装後のコードとテストが、その変更を含めて通るかは確かめる",
+    ...(head.conflicts.length > 0
+      ? [
+          `- 取り込みでは ${head.conflicts.slice(0, 10).map(promptPath).join("・")}${head.conflicts.length > 10 ? " ほか" : ""} が競合し、実装のエージェントが解消した。解消した内容が、人の変更を消していないかを、差分とコードで確かめる`,
         ]
       : []),
     "",

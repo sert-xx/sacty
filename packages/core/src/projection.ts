@@ -118,6 +118,24 @@ export function canOverrideVerification(task: Task): boolean {
   );
 }
 
+/** sacty が PR に書いた本文の記録（Task.pullRequestBodies）のキー（PBI-334）。 */
+export function pullRequestBodyKey(repo: string, number: number): string {
+  return `${repo}#${number}`;
+}
+
+/**
+ * まだ提出していない、人が PR のブランチに足したコミットの取り込み（PBI-334）。取り込んだ後に sacty がまだプッシュして
+ * いなければ（from が今プッシュしてあるコミットで、同じブランチ）、その記録。次の提出は、その commit を親にして積む。
+ */
+export function pendingHeadMerge(
+  task: Pick<Task, "headMerge" | "pushedBranch">,
+): Task["headMerge"] | undefined {
+  const merge = task.headMerge;
+  const pushed = task.pushedBranch;
+  if (!merge || !pushed) return undefined;
+  return merge.from === pushed.commit && merge.branch === pushed.branch ? merge : undefined;
+}
+
 /**
  * 実装の作業領域が、いまベースにしているコミット。ベースブランチの最新を取り込んでいれば（baseMerge）その先頭、なければ
  * 起点のコミット。実装の差分（ここからの変更）と、変更が無いかの判定に使う。
@@ -706,6 +724,17 @@ export type Task = {
    */
   baseMerge?: PayloadOf<"BaseBranchMerged"> & { at: string };
   /**
+   * 人が sacty の PR のブランチに足したコミットを、作業領域に取り込んだ記録（PullRequestHeadMerged の最後のもの。PBI-334）。
+   * from が今の pushedBranch のコミットなら、まだ提出していない取り込みで、次の提出は commit を親にして積む
+   * （`pendingHeadMerge`）。
+   */
+  headMerge?: PayloadOf<"PullRequestHeadMerged"> & { at: string };
+  /**
+   * sacty が PR に最後に書いた本文（PullRequestBodyWritten。キーは `<リポジトリの URL>#<番号>`。PBI-334）。次の更新で、人が
+   * 本文を直したかを見分け、3方向でマージするときの共通の祖先にする。
+   */
+  pullRequestBodies?: Record<string, string>;
+  /**
    * 実装の観点とテストの対応。最新の提出が申告したもの。直しの提出（前に実装の提出がある）は、PR 全体の対応にするため、
    * 前の提出までに対応させたテストも、今回の申告に出てくる観点に残す（PBI-299）。
    */
@@ -1268,6 +1297,7 @@ export function applyEvent(
       exports: {},
       stepPullRequests: [],
       stepBranches: [],
+      pullRequestBodies: {},
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -1779,6 +1809,7 @@ export function applyEvent(
       task.repository = event.payload;
       // ベースブランチを選び直して用意し直した作業領域は、新しい起点のコードのまま（取り込みは無い）
       task.baseMerge = undefined;
+      task.headMerge = undefined;
       break;
 
     case "BaseBranchMerged":
@@ -1790,6 +1821,33 @@ export function applyEvent(
       task.implementVerification = undefined;
       // 検証の待ちで取り込んだなら、前の CI の結果は取り込む前のコードのものなので、PR を作り直して CI を待ち直す
       if (task.verification !== undefined) task.pullRequestCi = undefined;
+      break;
+
+    case "PullRequestHeadMerged":
+      if (!task.repository) {
+        throw new ActivityIntegrityError(event, "the repository is not prepared");
+      }
+      task.headMerge = { ...event.payload, at: event.at };
+      // 取り込みで作業領域の内容が変わったので、実装の工程が実行した検証の結果・前の CI の結果は、今の内容のものではない
+      task.implementVerification = undefined;
+      if (task.verification !== undefined) task.pullRequestCi = undefined;
+      // PR を出す直前に取り込んで競合したら、PR を出さずに、競合したファイルを渡して実装をやり直す（エージェントの誤りでは
+      // ないので、検証に通らなかった回数には数えない）
+      if (task.publishPending && event.payload.conflicts.length > 0) {
+        task.publishPending = undefined;
+        task.verifyFeedback = { kind: "merge", files: event.payload.conflicts };
+      }
+      break;
+
+    case "PullRequestBodyWritten":
+      task.pullRequestBodies = {
+        ...task.pullRequestBodies,
+        [pullRequestBodyKey(event.payload.repo, event.payload.number)]: event.payload.body,
+      };
+      break;
+
+    case "PullRequestBodyResolved":
+      // 費用は chargeBudget が足す。本文は、更新した後の PullRequestBodyWritten で記録する
       break;
 
     case "BaseConflictsRemained":

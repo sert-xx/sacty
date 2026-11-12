@@ -1319,6 +1319,57 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `apps/daemon/src/service.ts`（`mergesBase`・`syncBase`・`syncBeforeVerify`・`runNextInner`・`publish`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/repository.ts`（`mergeBase`・`conflictMarkers`・`publish`）、`apps/daemon/src/prompts.ts`（`mergeConflictLines`・`baseMergeLines`・`guardianCodeLines`）、`packages/core/src/events.ts`（`BaseBranchMerged`・`BaseConflictsRemained`）、`packages/core/src/projection.ts`（`baseMerge`・`workBaseCommit`・`canOverrideVerification`）
 
+### 人が PR に足したコミットの取り込み
+
+sacty が作った PR のブランチに、人がコミットを足していること（レビューの提案の適用・GitHub の画面でのベースブランチの取り込みなど）がある。
+sacty は、そのコミットを実装の作業領域に取り込んでから、その先頭に積む。
+人の変更を消さず、強制プッシュもしない。
+既存の PR を引き継ぐタスク（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）は、人の PR のブランチに積むので、取り込まない（`publishContinued` が、前にプッシュしたコミットか先頭に積む）。
+
+関係する ADR: [人が sacty の PR に足したコミットを作業領域に取り込み、人が直した PR の本文を3方向でマージして残す](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
+
+- 取り込む時点（`syncPullRequestHead`）：
+  - 実装の実行を始める前（`syncBase` の中で、ベースブランチの取り込みより先に）。差し戻し・PR の指摘の取り込み・再レビューで実装をやり直すときも同じ。
+  - 最終レビューの前（`syncBeforeVerify`）。
+  - 最終レビューをしない流れでは、PR を出す前（`headSyncedBeforePublish`。実装の実行の間に足されたもの）。
+  - PR を出す直前（`publish`）。
+  - 設定 `ServiceDeps.mergeBase`（テスト用）が `false` でも取り込む（`false` で止まるのは、ベースブランチの取り込みだけ）。
+- 取り込み方：
+  1. sacty が最後にプッシュしたブランチ（`Task.pushedBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
+     まだプッシュしていなければ、何もしない。
+     取得できない（PR がマージされてブランチが消えたなど）ときは、取り込まずに進め、理由をデーモンのログに出す。
+  2. sacty が最後にプッシュしたコミット（まだ提出していない取り込みがあれば、その先頭。`pendingHeadMerge`）と同じなら、何もしない。
+  3. 違えば、sacty が最後にプッシュしたコミットを共通の祖先にして、作業領域の内容と先頭を3方向でマージする（`mergeBase`。ベースブランチの取り込みと同じ仕組み・同じ上限）。
+     タスクブランチから引き継ぐ要求要件・設計のファイル（`stepPullRequests` の `path`）は、両側のツリーから外してマージする（`mergeBase` の `exclude`）。
+     作業領域のそのパスは変えない（提出のときに、タスクブランチのものを引き継ぐ）。
+  4. `PullRequestHeadMerged`（ブランチ・取り込む前の sacty のコミット・取り込んだ先頭・競合したファイルの全件）を記録する。
+     `Task.headMerge` に最後の取り込みを持つ。
+     sacty がまだその先頭に積んでいない間（`from` が今プッシュしてあるコミットで、同じブランチ）を、まだ提出していない取り込み（`pendingHeadMerge`）とする。
+     取り込みで作業領域の内容が変わるので、実装の工程の検証の結果（`implementVerification`）を捨て、検証の待ちなら前の CI の結果も捨てる。
+     ベースブランチを選び直して作業領域を用意し直したとき（`RepositoryPrepared`）は消す。
+- 競合したとき：
+  - 実装の実行の前なら、競合したファイルを実装の指示に渡す（下の「実装の指示」）。
+  - 最終レビューの前・PR を出す前なら、`BaseConflictsRemained`（`fresh`。数えない）を記録して実装をやり直す。
+  - PR を出す直前（PR の作成の待ち。`publishPending`）なら、PR を出さずに、競合したファイルを `verifyFeedback`（`merge`）にして実装をやり直す（`PullRequestHeadMerged` の投影。数えない）。
+    最終レビューの前のドラフトの PR（`verifying`）のときは、一時停止する（`pr.headConflicted`）。
+  - 目印が残っているかは、ベースブランチの取り込みと同じく確かめる（`pendingConflicts` は、ベースブランチの取り込みと、まだ提出していない取り込みの、競合したファイルを合わせたもの）。
+    PR を出す直前に、まだ提出していない取り込みの目印が残っていれば、プッシュしないで一時停止する（`pr.headConflicted`）。
+  - マージできなければ、理由を示して一時停止する（`pr.headMergeFailed`）。
+- 提出（`publish`）：
+  - まだ提出していない取り込みがあれば、取り込んだ先頭を親にして積む（無ければ、これまでどおり前にプッシュしたコミット）。
+    人の先頭の上に積むので、早送りでプッシュできる。
+  - タスクブランチに積むタスクは、sacty が積んでいない変更があるかの確認（`pr.taskBranchChanged`）の起点を、取り込んだ先頭にする。
+    取り込んだ人の変更は、確かめ直さない。
+    sacty がまだ実装を積んでいない（初めての提出の）ときは、これまでどおり起点から確かめて止める。
+- 実装の指示（`mergeConflictLines`・`headMergeLines`）：まだ提出していない取り込みがあれば、人が PR のブランチにコミットを足したこと、取り込んだ先頭、人の変更を消したり戻したり書き直したりしないこと（今回の指摘が直すよう求めているときだけ直す）、git でのマージ・リベース・フェッチ・コミット・プッシュをしないことを書く。
+  競合したファイルがあれば、一覧と、目印の上側が実装の側・下側が人の足した側であること、人の変更を生かして目印の行をすべて消すことを書く。
+  ベースブランチとの競合は、これまでどおり別の節（`baseConflictLines`）で渡す。
+  前回の検証で、人の取り込みで競合したファイルだけの目印が残っていたときは、見出しを「前回の検証：人が PR に足したコミットとの競合の目印が残っていました」にする（`feedbackLines`）。
+- 最終レビューの指示（`headMergeReviewLines`）：取り込んだこと、差分に人の変更も含まれること、人の変更を範囲外・過剰な変更として不合格にしないこと、その変更を含めてコードとテストが通るかは確かめること、競合を解消した内容が人の変更を消していないかを確かめることを伝える。
+- 作業履歴の表示：「人が PR のブランチ … に足したコミット（…）を作業領域に取り込み」と、競合したファイルの数と先頭の5件を出す。
+
+コード: `apps/daemon/src/service.ts`（`syncPullRequestHead`・`syncBase`・`headSyncedBeforePublish`・`conflictsResolved`・`publish`・`pendingConflicts`）、`apps/daemon/src/repository.ts`（`mergeBase`）、`apps/daemon/src/prompts.ts`（`mergeConflictLines`・`headMergeLines`・`baseConflictLines`・`headMergeReviewLines`・`feedbackLines`）、`packages/core/src/events.ts`（`PullRequestHeadMerged`）、`packages/core/src/projection.ts`（`headMerge`・`pendingHeadMerge`）、`apps/web/src/lib/labels.ts`
+
 ### 最終レビューの前の実装の PR と CI
 
 - 実装の工程が終わって検証の待ちになったら、最終レビューの前に、sacty が実装の作業領域をコミットしてプッシュし、実装の PR をドラフトで作る（`draft`）。

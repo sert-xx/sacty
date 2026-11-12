@@ -855,6 +855,57 @@ A child task stacked on a dependency's PR, while stacked, merges in the dependen
 
 Code: `apps/daemon/src/service.ts` (`mergesBase`, `syncBase`, `syncBeforeVerify`, `runNextInner`, `publish`, `pauseIfVerificationKeepsFailing`), `apps/daemon/src/repository.ts` (`mergeBase`, `conflictMarkers`, `publish`), `apps/daemon/src/prompts.ts` (`mergeConflictLines`, `baseMergeLines`, `guardianCodeLines`), `packages/core/src/events.ts` (`BaseBranchMerged`, `BaseConflictsRemained`), `packages/core/src/projection.ts` (`baseMerge`, `workBaseCommit`, `canOverrideVerification`)
 
+### Merging commits a person added to the PR
+
+A person may add commits to the branch of a PR that sacty opened (applying a review suggestion, merging the base branch from the GitHub screen, and so on).
+sacty merges those commits into the implementation workspace and then stacks on their tip.
+It does not remove the person's changes and does not force-push.
+A task that takes over an existing PR ([Taking over an existing PR](#taking-over-an-existing-pr)) stacks on the person's PR branch, so it does not merge (`publishContinued` stacks on the previously pushed commit or the tip).
+
+Related ADR: [Merge commits a person added to a sacty PR into the workspace, and keep a person's edits to the PR body with a three-way merge](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
+
+- When to merge (`syncPullRequestHead`):
+  - Before starting the implementation run (inside `syncBase`, before merging the base branch). The same applies when the implementation is redone after a send-back, imported PR comments, or a re-review.
+  - Before the final review (`syncBeforeVerify`).
+  - In the flow without the final review, before opening the PR (`headSyncedBeforePublish`; commits added while the implementation ran).
+  - Right before publishing the PR (`publish`).
+  - It merges even when the setting `ServiceDeps.mergeBase` (for tests) is `false` (`false` only stops merging the base branch).
+- How it merges:
+  1. Fetch the tip of the branch sacty last pushed (`Task.pushedBranch`) into the moved-aside metadata (`fetchBranch`).
+     If sacty has not pushed yet, do nothing.
+     If it cannot fetch (for example the PR was merged and the branch deleted), continue without merging and write the reason to the daemon log.
+  2. If the tip equals the commit sacty last pushed (or the tip of a merge not yet submitted, if any; `pendingHeadMerge`), do nothing.
+  3. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
+     The requirements and design files carried over from the task branch (`path` of `stepPullRequests`) are removed from the trees on both sides before merging (`exclude` of `mergeBase`).
+     Those paths in the workspace are not changed (the task branch's version is carried over when submitting).
+  4. Record `PullRequestHeadMerged` (the branch, sacty's commit before the merge, the merged tip, and every conflicted file).
+     `Task.headMerge` holds the last merge.
+     While sacty has not yet stacked on that tip (`from` is the currently pushed commit, on the same branch), it is a merge not yet submitted (`pendingHeadMerge`).
+     Because the merge changes the workspace contents, the implementation step's verification result (`implementVerification`) is discarded, and while waiting for verification, the previous CI result is discarded too.
+     It is cleared when the workspace is prepared again for a newly chosen base branch (`RepositoryPrepared`).
+- On conflicts:
+  - Before the implementation run, the conflicted files are passed to the implementation instructions (see "Implementation instructions" below).
+  - Before the final review or before opening the PR, record `BaseConflictsRemained` (`fresh`; not counted) and redo the implementation.
+  - Right before publishing (waiting to open the PR; `publishPending`), the PR is not opened; the conflicted files become `verifyFeedback` (`merge`) and the implementation is redone (the projection of `PullRequestHeadMerged`; not counted).
+    For the draft PR before the final review (`verifying`), the task pauses (`pr.headConflicted`).
+  - Whether markers remain is checked the same way as for the base branch merge (`pendingConflicts` is the conflicted files of the base branch merge and of the merge not yet submitted, together).
+    If markers from the merge not yet submitted remain right before publishing, sacty does not push and pauses (`pr.headConflicted`).
+  - If it cannot merge, it pauses with the reason (`pr.headMergeFailed`).
+- Submitting (`publish`):
+  - If there is a merge not yet submitted, stack with the merged tip as the parent (otherwise, as before, the previously pushed commit).
+    Because it stacks on the person's tip, the push is a fast-forward.
+  - For a task that stacks on a task branch, the check for changes sacty did not push (`pr.taskBranchChanged`) starts from the merged tip.
+    The person's changes that were merged are not checked again.
+    When sacty has not stacked the implementation yet (the first submission), it checks from the starting point and stops, as before.
+- Implementation instructions (`mergeConflictLines`, `headMergeLines`): if there is a merge not yet submitted, they say that a person added commits to the PR branch, the merged tip, not to remove, revert, or rewrite the person's changes (change them only when this round's comments ask to), and not to merge, rebase, fetch, commit, or push with git.
+  If files conflicted, they give the list, that the part above the marker is the implementation side and the part below is the person's side, and to keep the person's changes while removing every marker line.
+  Conflicts with the base branch are passed in a separate section as before (`baseConflictLines`).
+  When the previous verification found markers only in files that conflicted in the person's merge, the heading is "前回の検証：人が PR に足したコミットとの競合の目印が残っていました" (`feedbackLines`).
+- Final review instructions (`headMergeReviewLines`): they say that sacty merged the commits, that the diff includes the person's changes, not to fail them as out-of-scope or excessive, to check that the code and tests pass including those changes, and to check that the conflict resolution did not remove the person's changes.
+- In the activity log: "Merged the commits a person added to the PR branch … (…) into the workspace", with the number of conflicted files and the first five.
+
+Code: `apps/daemon/src/service.ts` (`syncPullRequestHead`, `syncBase`, `headSyncedBeforePublish`, `conflictsResolved`, `publish`, `pendingConflicts`), `apps/daemon/src/repository.ts` (`mergeBase`), `apps/daemon/src/prompts.ts` (`mergeConflictLines`, `headMergeLines`, `baseConflictLines`, `headMergeReviewLines`, `feedbackLines`), `packages/core/src/events.ts` (`PullRequestHeadMerged`), `packages/core/src/projection.ts` (`headMerge`, `pendingHeadMerge`), `apps/web/src/lib/labels.ts`
+
 ### The implementation PR and CI before the final review
 
 - When the Implementation step finishes and the task waits for verification, before the final review sacty commits and pushes the implementation workspace and opens the implementation PR as a draft (`draft`). No agent is used. The commit date is the time the Implementation step finished (resuming makes the same commit; after the implementation is verified the content is the same, so the same commit is marked ready).

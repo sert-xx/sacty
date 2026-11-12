@@ -210,6 +210,12 @@ export interface RepositoryWorkspace {
      * まま、解消したことにしない）。
      */
     maxConflicts?: number;
+    /**
+     * マージから外すパス（リポジトリの根からの相対パス）。base と target のツリーから除いてマージするので、作業領域の
+     * そのパスは変わらない（人が PR に足したコミットを取り込むとき、タスクブランチから引き継ぐ要求要件・設計のファイルを
+     * 外す。PBI-334）。
+     */
+    exclude?: string[];
   }): Promise<{ status: "unchanged" | "merged" | "conflicted"; conflicts: string[] }>;
   /**
    * paths（リポジトリの根からの相対パス）のうち、競合の目印（mergeBase が書く、ID のラベルの付いた <<<<<<< の行か
@@ -932,6 +938,9 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     if (!COMMIT_RE.test(input.base) || !COMMIT_RE.test(input.target)) {
       throw new MessageError(message("git.invalidBaseCommit"));
     }
+    if (input.exclude && !input.exclude.every(validPath)) {
+      throw new MessageError(message("git.invalidPath"));
+    }
     // 取り込むものが無い（ベースブランチの先頭が、今の起点の履歴に含まれている）
     if (
       input.base === input.target ||
@@ -947,6 +956,26 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           message("git.failed", { command: "write-tree", detail: "unexpected output" }),
         );
       }
+      // 外すパスがあれば、共通の祖先と target を、そのパスを除いたツリーにしてマージする（作業領域の側からも除く）
+      const exclude = input.exclude ?? [];
+      const without = async (treeish: string) => {
+        await run("read-tree", ["read-tree", treeish]);
+        await run("rm", [
+          "rm",
+          "--cached",
+          "-r",
+          "-q",
+          "--ignore-unmatch",
+          "--",
+          ...exclude.map((p) => `:(literal)${p}`),
+        ]);
+        return (await run("write-tree", ["write-tree"])).trim();
+      };
+      const mergeBaseTree = exclude.length > 0 ? await without(input.base) : input.base;
+      const targetTree = exclude.length > 0 ? await without(input.target) : input.target;
+      const mineTree = exclude.length > 0 ? await without(mine) : mine;
+      // 最後の read-tree -m -u は、インデックスが作業領域の内容（mine）であることを前提にする
+      if (exclude.length > 0) await run("read-tree", ["read-tree", mine]);
       // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
       // 目印を入れたファイルを含む結果のツリーができる
       const merged = await gitResult(
@@ -959,9 +988,9 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           "--no-messages",
           "--name-only",
           "-z",
-          `--merge-base=${input.base}`,
-          mine,
-          input.target,
+          `--merge-base=${mergeBaseTree}`,
+          mineTree,
+          targetTree,
         ],
         isolatedEnv("/dev/null"),
       );
@@ -988,8 +1017,26 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
         );
       }
+      // 外したパスは、作業領域の内容（mine）のものを戻す（マージの結果のツリーには無い）
+      let result = tree;
+      if (exclude.length > 0) {
+        await run("read-tree", ["read-tree", tree]);
+        const listed = await run("ls-tree", ["ls-tree", "-r", "-z", mine, "--", ...exclude]);
+        for (const entry of listed.split("\0").filter(Boolean)) {
+          const match = entry.match(/^(\d+) (?:blob|commit) ([0-9a-f]+)\t(.+)$/s);
+          if (!match) continue;
+          await run("update-index", [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            `${match[1]},${match[2]},${match[3]}`,
+          ]);
+        }
+        result = (await run("write-tree", ["write-tree"])).trim();
+        await run("read-tree", ["read-tree", mine]);
+      }
       // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
-      if (tree !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, tree]);
+      if (result !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, result]);
       return {
         status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
         conflicts,

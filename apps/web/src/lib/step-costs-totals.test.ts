@@ -342,6 +342,17 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     },
   });
   add({ type: "StepSubmitted", payload: { step: "implement", submission: 1 } });
+  // 人が直した PR の本文との競合を、エージェントにまとめさせた（PBI-334）
+  if (rand() < 0.5) {
+    const outcome = pick(["resolved", "kept"] as const);
+    add(
+      {
+        type: "PullRequestBodyResolved",
+        payload: { repo: "https://github.com/acme/app", number: 7, outcome, ...charged() },
+      },
+      outcome === "resolved" ? "orchestrator" : "sacty",
+    );
+  }
   // PR がマージされ、マージの後のデプロイの確認を実行した（PBI-89）
   if (rand() < 0.5) {
     add({ type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person");
