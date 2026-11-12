@@ -139,11 +139,14 @@ export function reviewedPullRequest(
 ): { branch: string; commit: string; number: number; url?: string } | undefined {
   const pr = task.pullRequest;
   if (!pr?.number || pr.verifying || task.pullRequestState !== "open") return undefined;
+  // PR のレビューの子タスクが、まだ指摘なしにしていない（PBI-331）
+  if (pr.awaitingReview) return undefined;
   if (task.status === "cancelled" || task.continuedPullRequest) return undefined;
   if (task.verificationOverride?.submission === task.submissions.implement) return undefined;
   return {
     branch: pr.branch,
-    commit: pr.commit,
+    // 指摘なしにした先頭（人が足したコミットを含む）から重ねる（PBI-331）
+    commit: pr.reviewedCommit ?? pr.commit,
     number: pr.number,
     ...(pr.url ? { url: pr.url } : {}),
   };
@@ -750,6 +753,11 @@ export type Task = {
   aiReview?: AiReviewOfHead;
   /** 人が、ゴールガーディアンの不合格のまま実装の承認へ進めた（VerificationOverridden）。submission はその提出回。 */
   verificationOverride?: { at: string; submission: number };
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、セキュリティ対応の差分を修正の範囲と照らした結果（最後の FinalReviewSkipped）。
+   * PR の本文と、PR のレビューの子タスクの指示に渡す。
+   */
+  securityScopeCheck?: PayloadOf<"FinalReviewSkipped">["securityScope"];
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /**
@@ -783,7 +791,11 @@ export type Task = {
   /** sacty がプッシュしたブランチ（PRの作成の前に記録する）。 */
   pushedBranch?: PayloadOf<"BranchPushed">;
   /** sacty が作ったPR（またはブランチ）。 */
-  pullRequest?: PayloadOf<"PullRequestPublished">;
+  /**
+   * reviewedCommit は、PR のレビューの子タスクが指摘なしにして、sacty がドラフトを外した PR の先頭（PBI-331）。人がレビューの間に
+   * コミットを足したときは、sacty が提出したコミット（commit）と違う。依存のある子タスクは、これを起点に重ねる。
+   */
+  pullRequest?: PayloadOf<"PullRequestPublished"> & { reviewedCommit?: string };
   /** 実装の承認待ちの間に見守っている、実装の PR の状態（PBI-14a・PBI-110）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** 実装の PR のマージの記録（PBI-63）。 */
@@ -1966,6 +1978,35 @@ export function applyEvent(
         ...(task.pullRequestCiReruns ?? []),
         { commit, ...rerun, at: event.at },
       ];
+      break;
+    }
+
+    case "FinalReviewSkipped":
+      // 最終レビューと CI の待ちをせずに、PR の作成へ進める（PBI-331）
+      if (
+        task.status !== "idle" ||
+        activeStep(task) !== "implement" ||
+        task.verification === undefined
+      ) {
+        throw new ActivityIntegrityError(event, "final review is not pending");
+      }
+      passVerification(task);
+      task.pullRequestCi = undefined;
+      task.securityScopeCheck = event.payload.securityScope;
+      break;
+
+    case "PullRequestMarkedReady": {
+      const pr = task.pullRequest;
+      // 指摘なしで外した後に人がコミットを足してドラフトにし、その先頭を指摘なしにして外したときは、記録し直す（PBI-331）
+      if (
+        !pr ||
+        pr.number !== event.payload.number ||
+        (!pr.awaitingReview && pr.reviewedCommit === undefined)
+      ) {
+        throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
+      }
+      const { draft: _draft, awaitingReview: _awaiting, ...rest } = pr;
+      task.pullRequest = { ...rest, reviewedCommit: event.payload.commit };
       break;
     }
 

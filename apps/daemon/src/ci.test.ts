@@ -465,7 +465,40 @@ describe("GitHub の CI/CD の状態（PBI-89）", () => {
         url: "https://ci.example.com/1",
       },
     ]);
+    // GitHub Actions のジョブは checks に入れず、jobs に分けて持つ（PR のレビューの子タスクに渡すため。PBI-331）
+    expect(snap.jobs).toEqual([
+      { kind: "check", name: "build", status: "completed", conclusion: "failure" },
+    ]);
     expect(snap.failedRuns).toEqual([]);
+  });
+
+  it("成功の応答でも一覧の配列を読めなければ、CI がまだ無いとせず例外を投げる（PR #348 7回目のレビュー指摘）", async () => {
+    const lists = {
+      [`${api}/actions/runs?head_sha=${sha}`]: { workflow_runs: [] },
+      [`${api}/commits/${sha}/check-runs`]: { check_runs: [] },
+      [`${api}/commits/${sha}/status`]: { statuses: [] },
+    };
+    const token = "t";
+    await expect(
+      new GitHubCiStatus(fakeFetch(lists)).snapshot({
+        repo: "https://github.com/acme/app",
+        token,
+        commit: sha,
+      }),
+    ).resolves.toMatchObject({ checks: [] });
+    for (const path of Object.keys(lists)) {
+      for (const body of [{}, { total_count: 0 }, "<html>proxy</html>"]) {
+        const routes = { ...lists, [path]: body };
+        await expect(
+          new GitHubCiStatus(fakeFetch(routes)).snapshot({
+            repo: "https://github.com/acme/app",
+            token,
+            commit: sha,
+          }),
+          `${path} ${JSON.stringify(body)}`,
+        ).rejects.toThrow();
+      }
+    }
   });
 
   it("失敗したワークフローの、失敗したジョブとログの末尾（伏せた後）を読む", async () => {

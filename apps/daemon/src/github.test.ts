@@ -126,6 +126,27 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(calls[1]?.auth).toBe("Bearer ghp_secret");
   });
 
+  it("ドラフトの切り替えの通信には、渡した中断の合図を付ける（PBI-331）", async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    const answers = [
+      { number: 7, draft: true, node_id: "PR_node" },
+      { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } },
+    ];
+    const impl = (async (_url: string, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return new Response(JSON.stringify(answers[seen.length - 1]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const abort = new AbortController();
+    await new GitHubPullRequests(impl).setDraft({
+      repo: input.repo,
+      token: input.token,
+      number: 7,
+      draft: false,
+      signal: abort.signal,
+    });
+    expect(seen).toEqual([abort.signal, abort.signal]);
+  });
+
   it("ドラフトに戻すときは convertPullRequestToDraft を呼び、すでにその状態なら何もしない", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { number: 7, draft: false, node_id: "PR_node" } },
@@ -572,6 +593,23 @@ describe("承認待ちの PR のベースブランチとの競合（mergeable）
     expect(await client.status(pr)).toEqual({ state: "closed" });
     // PR の状態を読む 1 回の問い合わせだけ
     expect(calls).toHaveLength(5);
+  });
+});
+
+describe("承認待ちの PR のドラフト（PBI-331）", () => {
+  it("開いている PR の draft を、真偽値のときだけ答えに含める（閉じた PR には含めない。PR #348 9回目のレビュー指摘）", async () => {
+    const { impl } = fakeFetch([
+      { status: 200, json: { state: "open", merged: false, draft: true } },
+      { status: 200, json: { state: "open", merged: false, draft: false } },
+      { status: 200, json: { state: "open", merged: false, draft: "yes" } },
+      { status: 200, json: { state: "closed", merged: false, draft: true } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "https://github.com/acme/app", token: "t", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "open", draft: true });
+    expect(await client.status(pr)).toEqual({ state: "open", draft: false });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(await client.status(pr)).toEqual({ state: "closed" });
   });
 });
 

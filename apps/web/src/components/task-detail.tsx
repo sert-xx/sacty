@@ -5,8 +5,6 @@ import {
   appliedProposalFor,
   canDecideTests,
   canDerive,
-  canOverrideVerification,
-  canRechooseSteps,
   canRereview,
   canRerun,
   canRetryExport,
@@ -307,7 +305,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             ? {
                 tests: {
                   bugfix: task.steps.some((s) => s.key === "reproduce"),
-                  rechoose: canRechooseSteps(task),
+                  // 今の流れでは、テストを決めずに再開しても工程の選択からやり直さない（PBI-331）。工程のイメージ・AI は選べる
+                  rechoose: false,
                   // ツールがイメージに無くて止まったタスク・文書だけの依頼と差分が食い違って止まったタスクは、いまのテストの
                   // コマンドを直せるよう、入力欄に初期値として出す
                   ...((testToolsMissing(task) || documentsOnlyContradicted(task)) &&
@@ -318,7 +317,6 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               }
             : {})}
           reason={task.pausedReason}
-          toReview={canOverrideVerification(task)}
           steps={resumeStepSettings(task, data)}
           {...(task.steps.some((s) => s.state !== "done" && s.state !== "skip")
             ? { image: resumeTaskImage(task, data, m.images.defaultDescription) }
@@ -585,7 +583,13 @@ function GateNotice({ task }: { task: Task }) {
                       : watched?.state === "merged_outdated"
                         ? m.gate.prMergedOutdatedHelp
                         : watched?.step === "implement"
-                          ? m.gate.prHelp
+                          ? // 子タスクの指摘なしを待つ間は、マージの前にレビューの完了を待つ（PBI-331）
+                            task.pullRequest?.awaitingReview
+                            ? // 依存先の PR に重ねている間は、子タスクを作らずに依存先のマージを待つ
+                              task.stack
+                              ? m.gate.prStackedHelp
+                              : m.gate.prReviewingHelp
+                            : m.gate.prHelp
                           : task.gate?.step === "implement" && deliveredWithoutChanges(task)
                             ? m.gate.noChangesHelp
                             : watched
@@ -975,6 +979,14 @@ function Properties({ data }: { data: TaskDetailData }) {
   const step = task.steps.find((s) => s.state === "active")?.key ?? task.gate?.step;
   const created = activity[0]?.at;
   const updated = activity.at(-1)?.at;
+  // PR のレビューの子タスクの状態と、最後に投稿した回の判定（PBI-331。何回目で、指摘が残っているか）
+  const reviewTaskState = (child: Task) => {
+    const last = child.reviewVerdicts?.at(-1);
+    const round = last
+      ? m.reviewTaskRound(last.round, m.reviewVerdict[last.verdict ?? "unreadable"])
+      : undefined;
+    return [statusText(child, labels), round].filter(Boolean).join("・");
+  };
   const related: [string, ReactNode][] = [
     ...(task.parent
       ? [
@@ -1001,11 +1013,7 @@ function Properties({ data }: { data: TaskDetailData }) {
           l.reviewTask,
           <span key={`rt-${r.id}`}>
             <TaskLink id={r.id} title={r.title} testId="review-task" />
-            {m.reviewTaskOf(
-              labels.step[r.step],
-              r.number,
-              r.task ? statusText(r.task, labels) : undefined,
-            )}
+            {m.reviewTaskOf(labels.step[r.step], r.number, r.task && reviewTaskState(r.task))}
           </span>,
         ] as [string, ReactNode],
     ),

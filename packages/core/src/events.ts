@@ -2217,6 +2217,11 @@ const PullRequestPublished = z.object({
      * （CI と並べる。PBI-314。実装の承認待ちにはしない）。それより前の記録には無い（検証に通った後に作った PR）。
      */
     verifying: z.literal(true).optional(),
+    /**
+     * PR のレビューの子タスクの指摘なし（PBI-331）を待つ PR。最終レビューの代わりに、指摘なしになったら sacty がドラフトを外す
+     * （`PullRequestMarkedReady`）。それより前の記録には無い。
+     */
+    awaitingReview: z.literal(true).optional(),
     /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
     draft: z.literal(true).optional(),
     /**
@@ -2247,6 +2252,46 @@ const PullRequestRetargeted = z.object({
 const VerificationOverridden = z.object({
   type: z.literal("VerificationOverridden"),
   payload: z.object({}),
+});
+
+/**
+ * 実装の工程が終わった実装を、最終レビュー（ゴールガーディアンのテストの実行）も CI の待ちもせずに、PR の作成へ進めた（PBI-331）。
+ * PR はドラフトで作り、PR のレビューの子タスクが指摘なしにしたらドラフトを外す。最終レビュー・CI の待ちの途中で止まっていた
+ * 古いタスクも、再開するとこれで新しい流れに乗る。
+ */
+const FinalReviewSkipped = z.object({
+  type: z.literal("FinalReviewSkipped"),
+  payload: z.object({
+    /**
+     * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らした結果（PBI-331）。violation が無ければ守っている。
+     * セキュリティ対応でないタスク・以前の版の記録には無い。
+     */
+    securityScope: z
+      .object({
+        violation: z
+          .object({
+            outside: z.array(z.string()),
+            lines: z.number().int().nonnegative().optional(),
+            max: z.number().int().positive(),
+          })
+          .optional(),
+      })
+      .optional(),
+  }),
+});
+
+/**
+ * PR のレビューの子タスクが、実装の PR の今のコミットを指摘なし（no_findings）にしたので、sacty がドラフトを外した（PBI-331）。
+ * これで PR は人の承認（マージ）を待つ。
+ */
+const PullRequestMarkedReady = z.object({
+  type: z.literal("PullRequestMarkedReady"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    commit: z.string().min(1),
+    /** 指摘なしにしたレビューの子タスク。 */
+    reviewTaskId: z.string().min(1),
+  }),
 });
 
 /**
@@ -3380,6 +3425,8 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestCiFinished,
   PullRequestCiRerunRequested,
   VerificationOverridden,
+  FinalReviewSkipped,
+  PullRequestMarkedReady,
   NoChangesFound,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,

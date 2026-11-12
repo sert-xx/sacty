@@ -407,6 +407,8 @@ import {
   pullRequestInText,
   type RawExportPlan,
   type RawServices,
+  type ReviewCi,
+  type ReviewSecurity,
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
@@ -603,15 +605,21 @@ function serviceConnection(started: StartedServices): {
   return { network: started.network, ...(forwards.length > 0 ? { forwards } : {}) };
 }
 
-function awaitingVerification(task: Task): boolean {
+function awaitingVerification(task: Task, finalReview = true): boolean {
   return (
     task.status === "idle" &&
     task.verification !== undefined &&
     !openProposal(task) &&
     // 最終レビューの前に作った実装の PR の CI を待つ間も、最終レビューは並べて進める（PBI-314）。合格した後は、CI の結果だけを
-    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）
-    !awaitingCiAfterReview(task)
+    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）。最終レビューをしないなら、CI を待っていた古いタスクも進める（PBI-331）
+    (!finalReview || !awaitingCiAfterReview(task))
   );
+}
+
+/** PR のレビューの子タスクの、最後に投稿した回の判定が指摘なしか（PBI-331）。 */
+function reviewCleared(child: Task): boolean {
+  const last = child.reviewVerdicts?.at(-1);
+  return last?.verdict === "no_findings" && last.round === (child.reviewRound ?? 1);
 }
 
 /** 一時的な失敗のやり直しの途中で、やり直しをやめた（止める・中止・デーモンの停止）。何も記録せずに処理を終える。 */
@@ -653,6 +661,12 @@ export type ServiceDeps = {
    * エージェントの実行を使わないように）。main.ts が有効にする。
    */
   reviewTasks?: boolean;
+  /**
+   * 実装の工程の後に、最終レビュー（ゴールガーディアンが作業領域でテストを実行して判定する）と、実装の PR の CI の待ち・
+   * 失敗した CI の再実行を行うか。false なら行わず、実装の PR をドラフトで作って PR のレビューの子タスクに渡し、指摘なしに
+   * なったらドラフトを外す（PBI-331）。既定は行う（工程の流れを確かめる既存のテストのため）。main.ts が false にする。
+   */
+  finalReview?: boolean;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -706,6 +720,16 @@ export type ServiceDeps = {
    * CONTEXT_SECRETS_TIMEOUT_MS。超えたプロジェクトのコンテキストの秘密情報は、使うときに取り出す。
    */
   contextSecretsTimeoutMs?: number;
+  /**
+   * PR のレビューの子タスクが、レビューの準備で先頭のコミットの CI を読むのを待つ上限（ミリ秒。PBI-331）。既定は
+   * REVIEW_CI_TIMEOUT_MS。超えたら、読めなかったものとしてレビューを続ける。
+   */
+  reviewCiTimeoutMs?: number;
+  /**
+   * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（ミリ秒。PBI-331）。既定は
+   * DRAFT_TIMEOUT_MS。超えたら、答えを受け取れなかったものとして扱う。
+   */
+  draftTimeoutMs?: number;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /**
@@ -978,6 +1002,75 @@ export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentO
 export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
 
 /**
+ * PR のレビューの子タスクが、レビューの準備で先頭のコミットの CI を読むのを待つ上限（PBI-331）。GitHub が答えなくても、
+ * レビューを始められないままにしない（過ぎたら、読めなかったものとしてレビューを続ける）。
+ */
+export const REVIEW_CI_TIMEOUT_MS = 30_000;
+
+/**
+ * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（PBI-331）。GitHub が答えないまま
+ * 待ち続けて、ドラフトに戻すことも次の確認もできなくなるのを防ぐ（過ぎたら、答えを受け取れなかったものとして扱う）。
+ */
+export const DRAFT_TIMEOUT_MS = 30_000;
+
+/** PR のレビューの子タスクの流れ（PBI-331）の実装の PR か（指摘なしを待つ・指摘なしで外して記録した）。 */
+function reviewFlowPullRequest(pr: { awaitingReview?: boolean; reviewedCommit?: string }): boolean {
+  return pr.awaitingReview === true || pr.reviewedCommit !== undefined;
+}
+
+/**
+ * 開いている PR の答えにドラフトか（draft）が無ければ、デーモンのログに残す（PBI-331。ドラフトを合わせられないので、
+ * 次の確認でやり直す）。
+ */
+function warnDraftUnknown(number: number, repo: string): void {
+  console.warn(
+    `[daemon] PR #${number}（${repo}）がドラフトかを GitHub の答えから読めなかったので、ドラフトを合わせませんでした（次の確認でやり直します）`,
+  );
+}
+
+/**
+ * PR の確認で、実装の PR の先頭・ドラフトを同時に読む数（PBI-331。reconcileReviewTasks・settlePausedDrafts。答えが返らない
+ * PR が続いても、1つずつ待たない）。
+ */
+export const DRAFT_CHECK_CONCURRENCY = 4;
+
+/** items を、同時に limit 件ずつ fn で処理する（PBI-331）。 */
+async function inParallel<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const work = async () => {
+    while (next < items.length) {
+      const item = items[next++] as T;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, work));
+}
+
+/**
+ * 答えを待つのをやめたドラフトの切り替えの要求を、終わっていない要求として数える上限（DRAFT_TIMEOUT_MS の倍数。PBI-331）。
+ * 通信を中断しても終わらない要求で、ずっとドラフトを外せなくならないようにする。
+ */
+export const DRAFT_SETTLE_FACTOR = 10;
+
+/** 答えが ms のうちに返らなければ、時間切れの失敗にする（PBI-331）。時間切れの後に届いた失敗は知らせない。 */
+async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  promise.catch(() => {});
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${ms} ミリ秒のうちに答えが返りませんでした`)), ms);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * コンテキストのイメージ（PBI-325）を作り終えるのを、タスクが待つ上限（60分）。イメージの作成（OS のパッケージやブラウザの
  * 導入など）には時間がかかるので長めにする。過ぎたら、理由を示して止める。
  */
@@ -1011,7 +1104,7 @@ export class TaskService {
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
-    { number: number; commit: string; head: string }
+    { number: number; commit: string; head: string; draft?: boolean }
   >();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
@@ -1022,6 +1115,29 @@ export class TaskService {
    * 切り替えが混ざらないように。付け替えは、実行中のタスクでは始めない）。
    */
   private readonly retargeting = new Set<string>();
+  /** PR のレビューの子タスクの指摘なしで、ドラフトを外している最中のタスク（PBI-331）。 */
+  private readonly readying = new Set<string>();
+  /**
+   * このデーモンの起動の後に、レビューの確認でドラフトに戻せた、レビューを待つ実装の PR（PBI-331。タスク ID と提出した
+   * コミット）。同じ提出では、もう戻さない（再起動の後は、台帳の draft にかかわらず1回戻す）。
+   */
+  private readonly redrafted = new Set<string>();
+  /**
+   * ドラフトを外した後に戻そうとして戻せなかった、レビューを待つ実装の PR（PBI-331。タスク ID と提出したコミット）。台帳には
+   * draft が残るので、GitHub でドラフトに戻せたと確かめられるまで、確認のたびに戻す。
+   */
+  private readonly redraftPending = new Set<string>();
+  /**
+   * ドラフトを外す要求の答えを受け取れなかった（時間切れ・失敗）、レビューを待つ実装の PR（PBI-331。タスク ID と PR の番号。
+   * 提出をまたいで引き継ぐ）。外す要求が後から届いてドラフトが外れるかもしれないので、指摘なしで外して記録するまで、確認の
+   * たびにドラフトに戻す。
+   */
+  private readonly undraftUnsettled = new Set<string>();
+  /**
+   * 答えを待つのをやめた後も、まだ終わっていないドラフトの切り替えの要求の数（PBI-331。タスク ID と PR の番号）。終わるまで
+   * ドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻り、記録と食い違うのを防ぐ）。
+   */
+  private readonly draftRequests = new Map<string, number>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -1249,9 +1365,26 @@ export class TaskService {
         if (status.state === "open" && latest.status === "awaiting_approval") {
           // PR が開いている間の最新の head（提出したコミットとは別。人が足したコミットで変わる。PR #304 のレビュー）
           const head = status.headSha?.trim();
-          if (head) this.latestHeads.set(task.id, { number: pr.number, commit: pr.commit, head });
-          else this.latestHeads.delete(task.id);
+          if (head) {
+            this.latestHeads.set(task.id, {
+              number: pr.number,
+              commit: pr.commit,
+              head,
+              ...(status.draft !== undefined ? { draft: status.draft } : {}),
+            });
+          } else this.latestHeads.delete(task.id);
           latest = this.recordPullRequestConflict(latest, pr, status.mergeable) ?? latest;
+          // 指摘なしでドラフトを外した実装の PR が、GitHub でドラフトに戻っていたら外し直す。指摘なしを待つ実装の PR の
+          // ドラフトが外れていたら、ドラフトに戻す（PBI-331。GitHub の状態で決めるので、再起動の後も、後から届いた要求も直す）
+          if (status.draft !== undefined && pr.step === "implement") {
+            await this.settleDraft(task.id, pr.repo, pr.number, pr.commit, token, {
+              draft: status.draft,
+              ...(head ? { head } : {}),
+            });
+            latest = this.tasks.get(task.id) ?? latest;
+          } else if (pr.step === "implement" && reviewFlowPullRequest(latest.pullRequest ?? {})) {
+            warnDraftUnknown(pr.number, pr.repo);
+          }
           try {
             const settled = await this.importFeedback(latest, token);
             if (settled === "pull_request_changed" && !rechecked.has(task.id)) {
@@ -1313,8 +1446,10 @@ export class TaskService {
     await this.checkReviewPullRequests();
     // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
     await this.reconcileReviewTasks();
-    // 最終レビューの前に作った実装の PR の CI
-    await this.checkVerificationCi();
+    // 一時停止したタスクの実装の PR のドラフト（PBI-331）
+    if (this.deps.reviewTasks === true && !this.finalReview) await this.settlePausedDrafts();
+    // 最終レビューの前に作った実装の PR の CI（最終レビューをしないなら、CI を待たない。PBI-331）
+    if (this.finalReview) await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
   }
@@ -3454,6 +3589,48 @@ export class TaskService {
         t.status !== "cancelled" &&
         (same(t.pullRequest) || same(t.continuedPullRequest) || t.stepPullRequests.some(same)),
     );
+  }
+
+  /**
+   * PR のレビューの子タスクがレビューする先頭のコミットの CI の状態（PBI-331。sacty は CI を待たないので、子タスクが読んで
+   * 指摘にする）。読めなければ、読めなかったことを渡す（レビューは止めない）。
+   */
+  private async reviewCiOf(
+    task: Task,
+    target: NonNullable<Task["reviewTarget"]>,
+  ): Promise<ReviewCi> {
+    const ci = this.deps.ci;
+    const usedSecrets: string[] = [];
+    if (!ci) return { commit: target.headCommit, checks: "unreadable" };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const token = await this.githubToken(task, target.repo, usedSecrets);
+      const reading = ci.snapshot({ repo: target.repo, token, commit: target.headCommit });
+      // 時間切れの後に届いた失敗は、知らせない（時間切れとして知らせる）
+      reading.catch(() => {});
+      const expired = new Promise<"expired">((resolve) => {
+        timer = setTimeout(
+          () => resolve("expired"),
+          this.deps.reviewCiTimeoutMs ?? REVIEW_CI_TIMEOUT_MS,
+        );
+      });
+      const snapshot = await Promise.race([reading, expired]);
+      if (snapshot === "expired") {
+        console.warn(
+          `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI が時間内に読めませんでした`,
+        );
+        return { commit: target.headCommit, checks: "unreadable" };
+      }
+      // ワークフローのほかに、その中のジョブも渡す（ワークフローが成功でも、実行されなかったジョブを見落とさない）
+      return { commit: target.headCommit, checks: [...snapshot.checks, ...(snapshot.jobs ?? [])] };
+    } catch (error) {
+      console.warn(
+        `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return { commit: target.headCommit, checks: "unreadable" };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -7244,7 +7421,7 @@ export class TaskService {
               // 再開した後に、一時停止の間に届いた PR の指摘を反映する。最終レビューの前の PR の CI を待つタスクのように、
               // 検証の待ちから外れていても、先に反映する（PBI-279）
               this.heldReviewDue(t) ||
-              awaitingVerification(t) ||
+              awaitingVerification(t, this.finalReview) ||
               // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
               awaitingIssueComment(t) ||
               // 書いたレビューを、対象の PR に投稿する（PBI-19）
@@ -7755,7 +7932,12 @@ export class TaskService {
         this.tasks.values(),
         sameRepo,
       );
-      const stage = { secrets: usedSecrets, aiReview, ...(stackedOn ? { stackedOn } : {}) };
+      const stage = {
+        secrets: usedSecrets,
+        aiReview,
+        ...(stackedOn ? { stackedOn } : {}),
+        ...(!this.finalReview ? { reviewing: true } : {}),
+      };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
         pr.repo,
@@ -7776,7 +7958,8 @@ export class TaskService {
         number: pr.number,
         retarget: true,
       });
-      const ready = !task.stack;
+      // PR のレビューの子タスクの指摘なしを待つ PR は、ドラフトのままにする（指摘なしで外す。PBI-331）
+      const ready = !task.stack && !pr.awaitingReview;
       if (!unchanged()) return;
       if (ready) {
         try {
@@ -7815,7 +7998,7 @@ export class TaskService {
         },
       ]);
       // ドラフトを外したら、PR をレビューする子タスクを作る（PBI-330）
-      if (ready) this.ensureReviewTask(retargeted, "implement", pr.repo, pr.number, pr.url);
+      this.ensureReviewTask(retargeted, "implement", pr.repo, pr.number, pr.url);
     } catch (error) {
       console.warn(
         `[daemon] PR #${pr.number}（${pr.repo}）の向き先を ${repository.baseBranch} に付け替えられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -8224,7 +8407,24 @@ export class TaskService {
     if (initial && submittedComments) {
       return this.postGitHubComments(initial, submittedComments, "submitted");
     }
-    if (initial && awaitingVerification(initial)) {
+    if (initial && awaitingVerification(initial, this.finalReview)) {
+      // 最終レビューをしない（PBI-331）：テストも CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする）
+      if (!this.finalReview) {
+        // ベースブランチは取り込み直さないが、実装の前の取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+        if (!(await this.conflictsResolved(initial))) return;
+        const securityScope = await this.checkSecurityScope(initial);
+        if (securityScope === "stopped") return;
+        this.append(initial, [
+          {
+            actor: "sacty",
+            event: {
+              type: "FinalReviewSkipped",
+              payload: securityScope ? { securityScope } : {},
+            },
+          },
+        ]);
+        return;
+      }
       // CI を待つ間の最終レビュー（PBI-314）は、CI を待っている PR のコミットを見るので、ベースブランチを取り込まない
       if (!awaitingPullRequestCi(initial) && !(await this.syncBeforeVerify(initial))) return;
       return this.verify(this.mustGet(taskId));
@@ -8490,8 +8690,14 @@ export class TaskService {
         event: { type: "StepsChosen", payload: chosen },
       });
       // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）。
-      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）
-      if (chosen.steps.includes("implement") && !chosen.testCommand && !chosen.noTestsReason) {
+      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）。最終レビューをしない（PBI-331）なら、sacty は
+      // テストを実行しないので止めない（実装の工程のエージェントが、リポジトリから決めて実行する）
+      if (
+        this.finalReview &&
+        chosen.steps.includes("implement") &&
+        !chosen.testCommand &&
+        !chosen.noTestsReason
+      ) {
         events.push({
           actor: "sacty",
           event: {
@@ -8686,6 +8892,10 @@ export class TaskService {
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
     // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
     let reviewExisting: PullRequestFeedback[] | "unreadable" | undefined;
+    // PR のレビューの子タスクに渡す、レビューする先頭のコミットの CI（PBI-331）
+    let reviewCi: ReviewCi | undefined;
+    // PR のレビューの子タスクに渡す、セキュリティ対応の修正の範囲と照合の結果（PBI-331）
+    let reviewSecurity: ReviewSecurity | undefined;
     // 引き継いで直す既存の PR の指摘（レビュー・行へのコメント・通常のコメント）。実装と、その前の工程に渡す
     const continued = this.mustGet(task.id).continuedPullRequest;
     const continuedFeedback =
@@ -8746,6 +8956,17 @@ export class TaskService {
               },
             );
             reviewExisting = feedback === "unreadable" ? "unreadable" : feedback.existing;
+            if (latest.reviewOf && this.deps.ci) {
+              reviewCi = await this.reviewCiOf(latest, reviewTarget);
+            }
+            // セキュリティ対応の実装の PR なら、修正の範囲と照合の結果を渡す（PBI-331）
+            const parent = latest.reviewOf && this.tasks.get(latest.reviewOf.taskId);
+            if (parent && latest.reviewOf?.step === "implement" && isSecurityFix(parent)) {
+              reviewSecurity = {
+                scope: securityScope(parent),
+                ...(parent.securityScopeCheck ? { check: parent.securityScopeCheck } : {}),
+              };
+            }
             if (latest.previousReview) {
               reviewReplies = feedback === "unreadable" ? "unreadable" : feedback.replies;
             }
@@ -8841,10 +9062,14 @@ export class TaskService {
             ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
             // PR にすでにあるレビュー・コメント（PBI-144）
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
+            ...(reviewCi ? { reviewCi } : {}),
+            ...(reviewSecurity ? { reviewSecurity } : {}),
             // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
+            // 最終レビューをしない流れ（PBI-331）では、実装が用意したテストを自分で実行させる
+            ...(this.finalReview ? {} : { finalReview: false }),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
@@ -9442,7 +9667,7 @@ export class TaskService {
         imageEnv: image.env,
         workspaceDir,
         prompt: [
-          buildPrompt(latest, step),
+          buildPrompt(latest, step, { finalReview: this.finalReview }),
           ...platformPromptLines(platform ? [platform] : []),
         ].join("\n"),
         ...(platform ? { platforms: [platform] } : {}),
@@ -10804,6 +11029,19 @@ export class TaskService {
     return this.deps.draftPullRequests !== false && !task.continuedPullRequest && !!task.repository;
   }
 
+  /** 実装の工程の後に、最終レビューと CI の待ちを行うか（PBI-331。ServiceDeps の finalReview）。 */
+  private get finalReview(): boolean {
+    return this.deps.finalReview !== false;
+  }
+
+  /**
+   * 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにして待つか（PBI-331）。最終レビューをしないタスクで、
+   * sacty が作る PR だけ（引き継いだ人の PR は、人の PR なのでドラフトにしない）。
+   */
+  private awaitsReview(task: Task): boolean {
+    return !this.finalReview && this.draftsPullRequest(task);
+  }
+
   /**
    * 実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作る（PBI-110）。コミットは、エージェントが
    * 触れない退避した git のメタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
@@ -10906,9 +11144,11 @@ export class TaskService {
           }
         }
       }
-      const date = verifying
-        ? this.outputAt(task, "implement")
-        : (task.lastReview?.at ?? task.createdAt);
+      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする（最終レビューの日時が無い・前の提出のもののため）
+      const date =
+        verifying || !this.finalReview
+          ? this.outputAt(task, "implement")
+          : (task.lastReview?.at ?? task.createdAt);
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
@@ -10960,6 +11200,8 @@ export class TaskService {
       // 重ねている間は、検証に通った後もドラフトのままにする（依存先より先にマージさせない）
       const stackedOn = this.stackedPullRequest(task);
       const stacked = this.recordsPullRequestBase(task);
+      // 最終レビューをしないなら、PR のレビューの子タスクが指摘なしにするまでドラフトにする（PBI-331）
+      const awaitsReview = !verifying && this.awaitsReview(task);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -10968,6 +11210,7 @@ export class TaskService {
         () =>
           buildPullRequestBodyText(this.latestTitled(task), {
             verifying,
+            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
@@ -10975,6 +11218,7 @@ export class TaskService {
         () =>
           buildPullRequestBodyParts(this.latestTitled(task), {
             verifying,
+            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
@@ -10993,7 +11237,7 @@ export class TaskService {
         title: this.latestTitled(task).title,
         body,
         number,
-        ...(verifying || task.stack ? { draft: true } : {}),
+        ...(verifying || awaitsReview || task.stack ? { draft: true } : {}),
         // 重ねている間は、ドラフトを使えないリポジトリでも、ドラフトでない PR にしない（PBI-317）
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
@@ -11001,13 +11245,17 @@ export class TaskService {
       let draft = pr.draft;
       let draftError: unknown;
       const baseRecord = stacked ? { baseBranch: task.repository.baseBranch } : {};
-      if (verifying || task.stack) {
+      if (verifying || awaitsReview || task.stack) {
         // 前の提出でレビューへ進めた PR を更新した（PR の指摘で実装をやり直した）なら、検証の間はドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
         // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
         if ((number || task.stack) && !draft) {
-          draft = await this.deps.pulls
-            .setDraft({ repo: prRepo, token, number: pr.number, draft: true })
+          draft = await this.setDraftWithin(task.id, {
+            repo: prRepo,
+            token,
+            number: pr.number,
+            draft: true,
+          })
             .then((r) => r.draft)
             .catch((error: unknown) => {
               draftError = error;
@@ -11057,7 +11305,8 @@ export class TaskService {
       // GitHub の今の PR を読んで決める（ドラフトに戻した答え・更新の答えを受け取れなかったときも外すため）。すでに
       // 外れていれば（人が外した・ドラフトを使えないリポジトリ）何もしない
       // 依存先の PR に重ねている間は、ドラフトのまま承認待ちにする（依存先がマージされたら、向き先を付け替えて外す。PBI-317）
-      if (!task.stack) {
+      // 最終レビューをしないなら、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
+      if (!task.stack && !awaitsReview) {
         try {
           await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
         } catch (error) {
@@ -11076,7 +11325,8 @@ export class TaskService {
               url: pr.url,
               number: pr.number,
               repo: prRepo,
-              ...(task.stack && draft ? { draft: true as const } : {}),
+              ...((task.stack || awaitsReview) && draft ? { draft: true as const } : {}),
+              ...(awaitsReview ? { awaitingReview: true as const } : {}),
               ...baseRecord,
             },
           },
@@ -11134,7 +11384,10 @@ export class TaskService {
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-      const date = task.lastReview?.at ?? task.createdAt;
+      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする
+      const date = this.finalReview
+        ? (task.lastReview?.at ?? task.createdAt)
+        : this.outputAt(task, "implement");
       // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
       const subject = await this.commitSubjectFor(
         task,
@@ -11254,13 +11507,15 @@ export class TaskService {
     if (this.deps.reviewTasks !== true) return;
     try {
       if (parent.status === "cancelled" || this.cancelling.has(parent.id)) return;
-      // 依存先に重ねた実装の PR は、ドラフトを外すまでレビューしない（向き先の付け替えの後に作る）
-      if (
-        step === "implement" &&
-        parent.pullRequest?.number === number &&
-        parent.pullRequest.draft
-      ) {
-        return;
+      // 依存先に重ねた実装の PR は、依存先がマージされて向き先を付け替えるまでレビューしない。最終レビューをする流れでは、
+      // ドラフトを外したとき（付け替えの後）に作る。しない流れ（PBI-331）では、ドラフトのままレビューし、指摘なしで外す
+      const pr = parent.pullRequest;
+      if (step === "implement" && pr?.number === number) {
+        const retargeted =
+          !pr.baseBranch ||
+          !parent.repository?.baseBranch ||
+          pr.baseBranch === parent.repository.baseBranch;
+        if (pr.awaitingReview ? parent.stack || !retargeted : pr.draft) return;
       }
       if (!this.needsReviewTask(parent, repo, number)) return;
       const recorded = new Set((parent.reviewTasks ?? []).map((x) => x.taskId));
@@ -11349,6 +11604,26 @@ export class TaskService {
         console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
       });
     }
+    // 指摘なしを待つ実装の PR の GitHub の先頭は、先に並べて読む（答えが返らない PR が続いても、1つずつ待たない）
+    const heads = new Map<string, string | undefined>();
+    const awaitingParents = [...this.tasks.values()].filter((parent) => {
+      const gate = gatePullRequest(parent);
+      return (
+        parent.status === "awaiting_approval" &&
+        gate?.state === "open" &&
+        gate.repo !== undefined &&
+        gate.step === "implement" &&
+        parent.pullRequest?.awaitingReview === true
+      );
+    });
+    await inParallel(awaitingParents, DRAFT_CHECK_CONCURRENCY, async (parent) => {
+      const gate = gatePullRequest(parent);
+      if (!gate?.repo) return;
+      heads.set(
+        `${parent.id}:${gate.number}`,
+        await this.pullRequestHead(parent, gate.repo, gate.number),
+      );
+    });
     for (const parent of [...this.tasks.values()]) {
       if (parent.status !== "awaiting_approval" || this.cancelling.has(parent.id)) continue;
       if (this.pauseRequested.has(parent.id)) continue;
@@ -11362,17 +11637,52 @@ export class TaskService {
         (x) => x.number === gate.number && gate.repo !== undefined && sameRepo(x.repo, gate.repo),
       );
       const child = record && this.tasks.get(record.taskId);
-      if (!child || !canRereview(child) || child.status === "paused") continue;
+      if (!child) continue;
+      // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
+      // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
+      const awaiting = gate.step === "implement" && parent.pullRequest?.awaitingReview === true;
+      // 指摘なしでドラフトを外した後は、指摘なしにした先頭（人が足したコミットを含む）と比べる（同じ先頭を再レビューしない）
+      const reviewed =
+        gate.step === "implement" && parent.pullRequest?.number === gate.number
+          ? parent.pullRequest.reviewedCommit
+          : undefined;
+      // 指摘なしで外した後に、人がコミットを足した（PR の確認で読んだ GitHub の先頭）なら、ドラフトかにかかわらず、その先頭を
+      // 再レビューさせる（指摘なしになるまで、ドラフトにする。settleDraft）
+      const seen = this.latestHeads.get(parent.id);
+      const draftedAhead =
+        !awaiting &&
+        reviewed !== undefined &&
+        seen?.number === gate.number &&
+        seen.commit === gate.commit &&
+        seen.head !== reviewed
+          ? seen.head
+          : undefined;
+      const key = `${parent.id}:${gate.number}`;
+      const target = awaiting
+        ? heads.has(key)
+          ? heads.get(key)
+          : await this.pullRequestHead(parent, gate.repo, gate.number)
+        : (draftedAhead ?? reviewed ?? gate.commit);
+      if (!target) continue;
+      const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
+      // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
+      // していないコミットをマージできるままにしない。PBI-331）
+      if (awaiting && !cleared) await this.redraftAwaiting(parent, gate.repo, gate.number);
+      if (!canRereview(child) || child.status === "paused") continue;
       if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) continue;
-      if (child.reviewTarget?.headCommit === gate.commit) continue;
-      if (child.reviewRestartCommit === gate.commit) continue;
+      if (child.reviewTarget?.headCommit === target) {
+        // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
+        if (awaiting && cleared) await this.markReady(parent, child, target);
+        continue;
+      }
+      if (child.reviewRestartCommit === target) continue;
       try {
         this.append(child, [
           {
             actor: "sacty",
             event: {
               type: "ReviewRestarted",
-              payload: { reason: "updated", commit: gate.commit },
+              payload: { reason: "updated", commit: target },
             },
           },
         ]);
@@ -11381,6 +11691,500 @@ export class TaskService {
           `[daemon] レビューの子タスク ${child.id} を再レビューにできませんでした：${renderMessage(errorText(error), "ja")}`,
         );
       }
+    }
+  }
+
+  /**
+   * 指摘なしを待つ実装の PR を、ドラフトに戻す（PBI-331）。台帳の draft は、戻せなかった・外す要求が後から届いたなどで GitHub と
+   * 違うことがあり、戻せなかったことの記憶（redraftPending）は再起動で消えるので、起動の後に1回は GitHub で戻す。戻せたら、同じ
+   * 提出では繰り返さない（redrafted）。ただし、ドラフトを外した後に戻せなかった（redraftPending）・外す要求の答えを受け取れな
+   * かった（undraftUnsettled）ときは、確認のたびに戻す。戻せなければ、次の確認でやり直す。
+   */
+  private async redraftAwaiting(parent: Task, repo: string, number: number): Promise<void> {
+    // 先頭を読む間に変わっていれば、今の記録で判断する
+    const task = this.tasks.get(parent.id);
+    const pr = task?.pullRequest;
+    if (task?.status !== "awaiting_approval" || this.cancelling.has(task.id)) return;
+    if (!pr?.awaitingReview || pr.number !== number) return;
+    const key = `${task.id}:${pr.commit}`;
+    const again = this.redraftPending.has(key) || this.undraftUnsettled.has(`${task.id}:${number}`);
+    if (!again && this.redrafted.has(key)) return;
+    if (this.readying.has(task.id)) return;
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, repo, usedSecrets);
+      const result = await this.setDraftWithin(task.id, { repo, token, number, draft: true });
+      if (result.draft) {
+        this.redrafted.add(key);
+        this.redraftPending.delete(key);
+      }
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+  }
+
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、実装の前のベースブランチの取り込みで競合した目印が、実装の後に残っていないか
+   * 確かめる（最終レビューの前の syncBeforeVerify と同じ扱い。取り込み直しはしない）。残っていれば BaseConflictsRemained を
+   * 記録して実装をやり直させ（続けて解消できなければ一時停止する）、false。確かめられなければ一時停止して false。
+   */
+  private async conflictsResolved(task: Task): Promise<boolean> {
+    const pending = task.baseMerge?.conflicts ?? [];
+    if (pending.length === 0 || !existsSync(this.repoDir(task))) return true;
+    let remaining: string[];
+    try {
+      remaining = await this.deps.repos.conflictMarkers(this.repoDir(task), pending);
+    } catch (error) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("merge.failed", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
+      return false;
+    }
+    if (remaining.length === 0) return true;
+    const failed = this.append(this.mustGet(task.id), [
+      { actor: "sacty", event: { type: "BaseConflictsRemained", payload: { files: remaining } } },
+    ]);
+    this.pauseIfVerificationKeepsFailing(failed);
+    return false;
+  }
+
+  /**
+   * 最終レビューをしない流れ（PBI-331）で、セキュリティ対応の差分を前段の調査が宣言した修正の範囲と照らす（最終レビューの
+   * 照合と同じ。PR の本文と PR のレビューの子タスクに渡す）。セキュリティ対応でなければ undefined。差分を取れなければ、
+   * 最終レビューと同じく止める（"stopped"）。
+   */
+  private async checkSecurityScope(
+    task: Task,
+  ): Promise<
+    { violation?: NonNullable<ReturnType<typeof scopeViolation>> } | undefined | "stopped"
+  > {
+    if (!isSecurityFix(task) || !task.repository) return undefined;
+    try {
+      const changes = await this.deps.repos.diffStats(
+        this.repoDir(task),
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+      const violation = scopeViolation(securityScope(task), changes);
+      return violation ? { violation } : {};
+    } catch (error) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("verify.diffUnavailable", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
+      return "stopped";
+    }
+  }
+
+  private draftTimeoutMs(): number {
+    return this.deps.draftTimeoutMs ?? DRAFT_TIMEOUT_MS;
+  }
+
+  /**
+   * PR の状態を読む（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら通信を中断して失敗にする（待つのをやめた通信を
+   * 残さない）。
+   */
+  private statusWithin(input: { repo: string; token: string; number: number }) {
+    const abort = new AbortController();
+    return withDeadline(
+      this.deps.pulls.status({ ...input, signal: abort.signal }),
+      this.draftTimeoutMs(),
+    ).catch((error: unknown) => {
+      abort.abort();
+      throw error;
+    });
+  }
+
+  /**
+   * PR のドラフトを切り替える（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら通信を中断して失敗にする。要求が終わるまでは、
+   * 終わっていない要求として数える（draftRequests）。中断しても終わらない要求も、DRAFT_SETTLE_MS を過ぎたら数えない（GitHub が
+   * 復旧した後に、ドラフトを外せないままにしない）。
+   */
+  private setDraftWithin(
+    taskId: string,
+    input: Omit<Parameters<PullRequests["setDraft"]>[0], "signal">,
+  ): Promise<{ draft: boolean }> {
+    const key = `${taskId}:${input.number}`;
+    this.draftRequests.set(key, (this.draftRequests.get(key) ?? 0) + 1);
+    const abort = new AbortController();
+    const request = this.deps.pulls.setDraft({ ...input, signal: abort.signal });
+    let counted = true;
+    const ms = this.draftTimeoutMs();
+    const settle = setTimeout(() => done(), ms * DRAFT_SETTLE_FACTOR);
+    settle.unref?.();
+    const done = () => {
+      if (!counted) return;
+      counted = false;
+      clearTimeout(settle);
+      const left = (this.draftRequests.get(key) ?? 1) - 1;
+      if (left > 0) this.draftRequests.set(key, left);
+      else this.draftRequests.delete(key);
+    };
+    request.then(done, done);
+    return withDeadline(request, ms).catch((error: unknown) => {
+      abort.abort();
+      throw error;
+    });
+  }
+
+  /**
+   * PR の確認で読んだ GitHub のドラフトの状態を、台帳に合わせる（PBI-331）。答えを待つのをやめた・中断した・数えるのをやめた
+   * 切り替えの要求が後から GitHub に届いても、デーモンが覚えていなくても（再起動の後も）、次の確認で直す。
+   * - 指摘なしを待つ PR（重ねた PR を除く。人がドラフトを外してマージしてよいため）がドラフトでなければ、ドラフトに戻す。
+   * - 指摘なしで外して記録した PR（人の承認待ち）がドラフトなら、外し直す（undraftMarkedReady）。
+   */
+  private async settleDraft(
+    taskId: string,
+    repo: string,
+    number: number,
+    commit: string,
+    token: string,
+    github: { draft: boolean; head?: string },
+  ): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const pr = task?.pullRequest;
+    if (task?.status !== "awaiting_approval" || this.cancelling.has(taskId)) return;
+    if (pr?.number !== number || pr.commit !== commit || this.readying.has(taskId)) return;
+    if (this.draftRequests.has(`${taskId}:${number}`)) return;
+    const wants = this.wantsDraft(task, repo, github.head);
+    if (wants === true && !github.draft) {
+      await this.redraftFor(taskId, repo, number, token, "指摘なしになっていない");
+    } else if (wants === false && github.draft && github.head) {
+      await this.undraftMarkedReady(taskId, repo, number, commit, token, github.head);
+    }
+  }
+
+  /**
+   * 実装の PR が、今ドラフトであるべきか（PBI-331）。指摘なしを待つ PR（重ねた PR を除く）はドラフト。指摘なしで外して記録
+   * した PR は、GitHub の先頭（head）をレビューの子タスクが指摘なしにしていればドラフトでなく、そうでなければ（外した後に人が
+   * コミットを足した・再レビューの途中）ドラフト。先頭が分からない・どちらでもない PR は undefined（何もしない）。
+   */
+  private wantsDraft(task: Task, repo: string, head: string | undefined): boolean | undefined {
+    const pr = task.pullRequest;
+    if (!pr?.number) return undefined;
+    if (pr.awaitingReview) return task.stack ? undefined : true;
+    if (pr.reviewedCommit === undefined || !head) return undefined;
+    const child = this.reviewerOf(task, repo, pr.number);
+    return !(child && child.reviewTarget?.headCommit === head && reviewCleared(child));
+  }
+
+  /** 実装の PR のレビューの子タスク（PBI-331）。 */
+  private reviewerOf(task: Task, repo: string, number: number): Task | undefined {
+    const record = (task.reviewTasks ?? []).findLast(
+      (r) => r.number === number && sameRepo(r.repo, repo),
+    );
+    return record && this.tasks.get(record.taskId);
+  }
+
+  /** 実装の PR をドラフトに戻す（PBI-331）。戻せなければ、デーモンのログに残す（次の確認でやり直す）。 */
+  private async redraftFor(
+    taskId: string,
+    repo: string,
+    number: number,
+    token: string,
+    why: string,
+  ): Promise<void> {
+    await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
+      (error: unknown) => {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）は${why}ので、ドラフトに戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+        );
+      },
+    );
+  }
+
+  /**
+   * 一時停止したタスクの実装の PR がドラフトでなければ、ドラフトに戻す（PBI-331。一時停止の間はマージさせない。外し直す間・
+   * 外す間に一時停止した、などのときも。再開したら、指摘なしで記録した PR は PR の確認で外し直す）。GitHub の状態で決めるので、
+   * 再起動の後も、戻せなかった・答えが返らなかったときも次の確認でやり直す。依存先の PR に重ねた、指摘なしを待つ PR は除く。
+   */
+  private async settlePausedDrafts(): Promise<void> {
+    const paused = [...this.tasks.values()].filter((task) => {
+      const pr = task.pullRequest;
+      if (task.status !== "paused" || this.cancelling.has(task.id)) return false;
+      if (!pr?.number || !pr.repo || (!pr.awaitingReview && pr.reviewedCommit === undefined)) {
+        return false;
+      }
+      return !this.readying.has(task.id) && !this.draftRequests.has(`${task.id}:${pr.number}`);
+    });
+    // 答えが返らない PR があっても全体が長く待たないよう、DRAFT_CHECK_CONCURRENCY 件ずつ並べて確かめる
+    await inParallel(paused, DRAFT_CHECK_CONCURRENCY, (task) => this.settlePausedDraft(task));
+  }
+
+  /** 一時停止したタスクの実装の PR を1つ確かめ、ドラフトでなければ戻す（PBI-331。settlePausedDrafts）。 */
+  private async settlePausedDraft(task: Task): Promise<void> {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo) return;
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, pr.repo, usedSecrets);
+      // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
+      const status = await this.statusWithin({ repo: pr.repo, token, number: pr.number });
+      if (status.state !== "open") return;
+      if (status.draft === undefined) {
+        warnDraftUnknown(pr.number, pr.repo);
+        return;
+      }
+      if (status.draft) return;
+      const latest = this.tasks.get(task.id);
+      if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
+      // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
+      if (latest.pullRequest.awaitingReview && latest.stack) return;
+      await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
+    } catch (error) {
+      console.warn(
+        `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    }
+  }
+
+  /**
+   * 指摘なしでドラフトを外して記録した実装の PR（人の承認待ち）が、GitHub でドラフトになっていたら外し直す（PBI-331）。
+   * GitHub の先頭（head）が指摘なしにした先頭と違えば（外した後に人がコミットを足してドラフトにした）、ドラフトのままにし、
+   * レビューの子タスクにその先頭を再レビューさせる（reconcileReviewTasks）。子タスクがその先頭を指摘なしにしたら、外して
+   * その先頭で記録し直す。外す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わったら、ドラフトに
+   * 戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、次の提出でも指摘なしで外すまで
+   * 確認のたびにドラフトに戻す（undraftUnsettled）。
+   */
+  private async undraftMarkedReady(
+    taskId: string,
+    repo: string,
+    number: number,
+    commit: string,
+    token: string,
+    head: string,
+  ): Promise<void> {
+    const marked = (): Task | undefined => {
+      const latest = this.tasks.get(taskId);
+      const pr = latest?.pullRequest;
+      return latest?.status === "awaiting_approval" &&
+        !this.cancelling.has(taskId) &&
+        pr?.number === number &&
+        pr.commit === commit &&
+        !pr.awaitingReview &&
+        pr.reviewedCommit !== undefined
+        ? latest
+        : undefined;
+    };
+    const reviewerOf = (task: Task): Task | undefined => this.reviewerOf(task, repo, number);
+    const task = marked();
+    if (!task) return;
+    // 先頭は PR の確認で読んだ GitHub の先頭（読めなければ外さない。記録したコミットで代えると、足されたコミットを外しうる）
+    const target = head;
+    const child = reviewerOf(task);
+    // 子タスクがその先頭を指摘なしにしていなければ、ドラフトのまま再レビューを待つ
+    if (!child || child.reviewTarget?.headCommit !== target || !reviewCleared(child)) return;
+    const round = child.reviewRound;
+    const verdicts = child.reviewVerdicts?.length;
+    const unchanged = (): Task | undefined => {
+      const latest = marked();
+      const reviewer = latest && reviewerOf(latest);
+      return latest &&
+        reviewer?.id === child.id &&
+        reviewer.reviewTarget?.headCommit === target &&
+        reviewer.reviewRound === round &&
+        reviewer.reviewVerdicts?.length === verdicts &&
+        reviewCleared(reviewer)
+        ? latest
+        : undefined;
+    };
+    const key = `${taskId}:${number}`;
+    this.undraftUnsettled.add(key);
+    this.readying.add(taskId);
+    try {
+      let result: { draft: boolean } | undefined;
+      try {
+        result = await this.setDraftWithin(taskId, { repo, token, number, draft: false });
+      } catch (error) {
+        console.warn(
+          `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+        );
+      }
+      const current = result && unchanged();
+      if (current && (await this.pullRequestHead(current, repo, number)) === target) {
+        const latest = unchanged();
+        if (latest) {
+          // 外した後に足された先頭を指摘なしにして外したなら、その先頭で記録し直す
+          if (latest.pullRequest?.reviewedCommit !== target) {
+            this.append(latest, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "PullRequestMarkedReady",
+                  payload: { number, commit: target, reviewTaskId: child.id },
+                },
+              },
+            ]);
+          }
+          if (result && !result.draft) this.undraftUnsettled.delete(key);
+          return;
+        }
+      }
+      // 外せなかった（答えを受け取れなかったときも）・外す間に変わった：外れているかもしれないので、終わっていないタスクの同じ PR
+      // ならドラフトに戻す（指摘なしで外したままでよいときは、次の確認で GitHub の状態を読んで外し直す。一時停止の間も、
+      // 確認のたびに戻す。settlePausedDrafts）
+      const latest = this.tasks.get(taskId);
+      if (latest && !isFinished(latest) && latest.pullRequest?.number === number) {
+        await this.redraftFor(taskId, repo, number, token, "外す間に変わった");
+      }
+    } finally {
+      this.readying.delete(taskId);
+    }
+  }
+
+  /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
+  private async pullRequestHead(
+    task: Task,
+    repo: string,
+    number: number,
+  ): Promise<string | undefined> {
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, repo, usedSecrets);
+      const status = await this.statusWithin({ repo, token, number });
+      return status.state === "open" ? status.headSha : undefined;
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）の先頭を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * PR のレビューの子タスクが GitHub の今の先頭（commit）を指摘なしにした、レビューを待つ実装の PR のドラフトを外し、人の承認
+   * （マージ）待ちにする（PBI-331）。台帳の draft にかかわらず GitHub の状態を読んで外し（すでに外れていれば何もしない）、外せた
+   * ときだけ記録する。外せなければ、記録せずに次の確認でやり直す。次のときは記録せず、まだレビューを待つ PR ならドラフトに戻す。
+   * - 外す間にタスクが変わった（差し戻し・PR の更新。外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）
+   * - 外した後の GitHub の先頭が、指摘なしにした先頭と違う・読めない（外す間に人がコミットを足した。次の確認で再レビューする）
+   * - 外す要求の答えを受け取れなかった（GitHub では外れているかもしれない。時間切れも。外す要求が後から届くかもしれないので、
+   *   指摘なしで外すまで確認のたびに戻す）
+   */
+  private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
+    const pr = parent.pullRequest;
+    if (
+      parent.status !== "awaiting_approval" ||
+      !pr?.awaitingReview ||
+      !pr.number ||
+      !pr.repo ||
+      parent.stack
+    ) {
+      return;
+    }
+    if (this.readying.has(parent.id)) return;
+    // 前の切り替えの要求が終わっていなければ、終わってから外す（次の確認でやり直す）
+    if (this.draftRequests.has(`${parent.id}:${pr.number}`)) return;
+    this.readying.add(parent.id);
+    const { number, repo } = pr;
+    const usedSecrets: string[] = [];
+    const warn = (what: string, error: unknown) =>
+      console.warn(
+        `[daemon] PR #${number}（${repo}）${what}：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+    let token: string | undefined;
+    // ドラフトに戻す（戻せなくても、次の提出・次の確認が戻す）
+    const key = `${parent.id}:${pr.commit}`;
+    const redraft = async () => {
+      if (token === undefined) return;
+      // 戻せたと確かめられるまで、次の確認でも戻す（台帳には draft が残るため）
+      this.redraftPending.add(key);
+      await this.setDraftWithin(parent.id, { repo, token, number, draft: true })
+        .then((r) => {
+          if (r.draft) this.redraftPending.delete(key);
+        })
+        .catch((error: unknown) => warn("をドラフトに戻せませんでした", error));
+    };
+    try {
+      token = await this.githubToken(parent, repo, usedSecrets);
+      try {
+        const undrafted = await this.setDraftWithin(parent.id, {
+          repo,
+          token,
+          number,
+          draft: false,
+        });
+        // GitHub の答えがまだドラフトなら、記録せずに次の確認でやり直す
+        if (undrafted.draft) {
+          warn("のドラフトが外れていません", "GitHub の答えがドラフトのまま");
+          return;
+        }
+      } catch (error) {
+        warn("のドラフトを外せませんでした", error);
+        // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す
+        this.undraftUnsettled.add(`${parent.id}:${number}`);
+        await redraft();
+        return;
+      }
+      // 外す間にタスクが変わっていないか。変わっていたら、まだレビューを待つ PR ならドラフトに戻す
+      const unchanged = async (): Promise<Task | undefined> => {
+        const latest = this.tasks.get(parent.id);
+        const now = latest?.pullRequest;
+        if (
+          latest?.status === "awaiting_approval" &&
+          !this.cancelling.has(latest.id) &&
+          now?.awaitingReview &&
+          now.number === number &&
+          now.commit === pr.commit
+        ) {
+          return latest;
+        }
+        const reworking = latest?.status === "queued" || latest?.status === "running";
+        if (latest && (reworking || now?.awaitingReview) && now?.number === number) await redraft();
+        return undefined;
+      };
+      const latest = await unchanged();
+      if (!latest) return;
+      if ((await this.pullRequestHead(latest, repo, number)) !== commit) {
+        await redraft();
+        return;
+      }
+      const current = await unchanged();
+      if (!current) return;
+      // 外す間に子タスクの再レビューが始まった・判定が変わったら、古い指摘なしで記録せず、ドラフトに戻す（次の確認でやり直す）
+      const reviewer = this.tasks.get(child.id);
+      if (
+        !reviewer ||
+        reviewer.reviewTarget?.headCommit !== commit ||
+        reviewer.reviewRound !== child.reviewRound ||
+        reviewer.reviewVerdicts?.length !== child.reviewVerdicts?.length ||
+        !reviewCleared(reviewer)
+      ) {
+        await redraft();
+        return;
+      }
+      this.append(current, [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestMarkedReady",
+            payload: { number, commit, reviewTaskId: child.id },
+          },
+        },
+      ]);
+      this.undraftUnsettled.delete(`${parent.id}:${number}`);
+    } catch (error) {
+      warn("のドラフトを外せませんでした", error);
+    } finally {
+      this.readying.delete(parent.id);
     }
   }
 
@@ -15312,7 +16116,8 @@ export class TaskService {
       }
       events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
     }
-    const rechooseSteps = !input.tests && canRechooseSteps(task);
+    // 最終レビューをしない流れ（PBI-331）では、テストが決まらないことで止めないので、それを理由に工程を選び直さない
+    const rechooseSteps = !input.tests && this.finalReview && canRechooseSteps(task);
     // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
     // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
     const settingCount =

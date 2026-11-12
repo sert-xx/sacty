@@ -3,15 +3,9 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AuditScreen } from "@/components/audit-screen";
 import { DaemonError } from "@/components/daemon-error";
-import { FlakyTestsCard } from "@/components/flaky-tests";
 import { FollowProject } from "@/components/shell/follow-project";
 import { getMessages } from "@/i18n/server";
-import {
-  DaemonUnavailableError,
-  getProjectAudits,
-  getProjectFlakyTests,
-  listProjects,
-} from "@/lib/daemon";
+import { DaemonUnavailableError, getProjectAudits, listProjects } from "@/lib/daemon";
 
 /**
  * プロジェクトの監査の画面（PBI-124）。表示するプロジェクトは URL の ID で決め、表示しているプロジェクト（cookie）を
@@ -31,16 +25,10 @@ async function Audit({ params }: { params: Promise<{ id: string }> }) {
   const m = (await getMessages()).audit;
   let project: Project | undefined;
   let data: Awaited<ReturnType<typeof getProjectAudits>>;
-  let flaky: Awaited<ReturnType<typeof getProjectFlakyTests>>;
   try {
-    const [projects, audits, ledger] = await Promise.all([
-      listProjects(),
-      getProjectAudits(id),
-      getProjectFlakyTests(id),
-    ]);
+    const [projects, audits] = await Promise.all([listProjects(), getProjectAudits(id)]);
     project = projects.find((p) => p.id === id);
     data = audits;
-    flaky = ledger;
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (
@@ -52,7 +40,7 @@ async function Audit({ params }: { params: Promise<{ id: string }> }) {
     }
     throw error;
   }
-  if (!data || !flaky || project === undefined) notFound();
+  if (!data || project === undefined) notFound();
   return (
     <>
       <FollowProject projectId={id} />
@@ -60,20 +48,7 @@ async function Audit({ params }: { params: Promise<{ id: string }> }) {
         <p className="text-sm text-muted-foreground">{m.screen.project(project.name)}</p>
         <h1 className="text-2xl font-bold">{m.title}</h1>
       </div>
-      <AuditScreen
-        data={data}
-        today={new Date().toISOString().slice(0, 10)}
-        flaky={
-          <FlakyTestsCard
-            tests={flaky.tests}
-            project={{
-              id: project.id,
-              name: project.name,
-              hasTargets: project.targets.length > 0,
-            }}
-          />
-        }
-      />
+      <AuditScreen data={data} today={new Date().toISOString().slice(0, 10)} />
     </>
   );
 }

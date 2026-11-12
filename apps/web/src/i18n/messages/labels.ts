@@ -104,7 +104,7 @@ const ja = {
     auth: "認証に失敗しました。トークンや API キーを確かめてから再開してください。",
     error: "エラーで止まりました。原因を確かめてから再開すると、止まった工程を実行し直します。",
     verification:
-      "実装がテストか最終レビューに続けて通りません。再開すると実装をやり直し、PR を確かめて人が判断するならレビューへ進められます。",
+      "実装がテストか最終レビューに続けて通らず止まりました（以前の版の一時停止）。再開すると実装をやり直し、PR のレビューに進みます。",
     manual: "人が一時停止しました。再開すると、止めたところから続けます。",
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
@@ -391,6 +391,9 @@ const ja = {
     PullRequestCiRerunRequested: (failed: string[]) =>
       `PR の CI が失敗した：${failed.join("、")}。失敗したジョブを1回再実行する`,
     VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
+    FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
+    PullRequestMarkedReady: (number: number) =>
+      `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
     WorkspaceFilesSkipped: (count: number) =>
       `読めないファイルが${count}件あり、作業領域の写しには入れなかった（権限など。エージェントが入れたツールの可能性）`,
@@ -773,7 +776,7 @@ const en: LabelMessages = {
     auth: "Authentication failed. Check the token or API key, then resume.",
     error: "Stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
-      "The implementation keeps failing the tests or the final review. Resume to implement again, or check the PR and move it to review yourself.",
+      "Stopped because the implementation kept failing the tests or the final review (a pause from older versions). Resume to implement again and go on to the PR review.",
     manual: "A person paused this task. Resume to continue from where it stopped.",
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",
@@ -1004,6 +1007,10 @@ const en: LabelMessages = {
     PullRequestCiRerunRequested: (failed) =>
       `The PR's CI failed: ${failed.join(", ")}; rerunning the failed jobs once`,
     VerificationOverridden: "A person moved the task to review despite the failed final review",
+    FinalReviewSkipped:
+      "Got ready to open the implementation PR without the final review or CI wait",
+    PullRequestMarkedReady: (number) =>
+      `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
     ContinuedFeedbackPassed: (count) =>
       `Passed the feedback on the taken-over PR to the implementation (${count})`,
     WorkspaceFilesSkipped: (count) =>

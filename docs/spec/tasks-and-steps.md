@@ -10,7 +10,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-superseded-guardian-runs-tests.md)、[オーケストレーターに成果物から進め方を選ばせ、文書作成・作業のみ・設計だけをリポジトリのあるタスクでも選べるようにし、人がタスクの作成時に進め方を指定できるようにする](../adr/20261022-0955-plan-by-deliverable-and-requested-plan.md)、[オーケストレーターの前に情報収集のエージェントを置き、集めた情報をすべての工程とゴールガーディアンに引き継ぐ](../adr/20261022-2350-superseded-gather-information-before-orchestrator.md)、[情報収集が、対象リポジトリのコードも読む（決まっていなければ候補を洗い出して読む）](../adr/20261023-0219-gather-reads-repository-code.md)、[情報収集がテストと動作確認に要るサービスを分け、オーケストレーターはそれをもとに依存だけを起動させ、対象のアプリは工程がコンテナの中で起動する](../adr/20261023-1410-gather-sorts-services-for-orchestrator.md)、[PR のレビューの工程が、作業領域で依存関係を取得して検証を実行する](../adr/20261024-0310-superseded-review-runs-verification-in-workspace.md)、[環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人の確認として最終承認へ回す](../adr/20261024-1124-human-checks-at-final-approval.md)、[スキルなどエージェント向けの指示の文書は、テストを書かずに差分で確かめ、ふつうは direct か skip-design で進める](../adr/20261027-0020-agent-instructions-checked-in-diff.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)、[タスクのテンプレート「ドキュメント構築」で、実装からドキュメントと、それを参照・直すスキルを作る](../adr/20261030-0934-task-template-docs-setup.md)、[実装の PR がベースブランチと競合しないよう、Sacty がホストでベースブランチの最新を作業領域にマージし、親が 2 つのマージコミットで出す](../adr/20261101-0340-merge-base-branch-into-workspace.md)
 
 タスクの進み方の全体は次のとおり。
 
@@ -115,7 +115,7 @@
 | `split` | タスク分割 | 子タスクを作り、終わるのを待つ |
 | `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
 | `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
-| `implement` | 実装 | 実装する。最終レビューの前に sacty が実装の PR をドラフトで作り、検証に通ったらドラフトを外して、人の承認（PR のマージ）を待つ |
+| `implement` | 実装 | 実装する。実装の工程が終わったら sacty が実装の PR をドラフトで作って承認待ちにし、PR のレビューの子タスクが指摘なしにしたらドラフトを外して、人の承認（PR のマージ）を待つ |
 | `deployment` | マージの後の監視 | 実装の PR のマージの後に、CI/CD を待ち、スキルに従って確かめ、失敗したら修正のタスクを登録する（人の承認は無い。[マージの後の監視](deployment-watch.md)） |
 | `document` | 文書作成 | Markdown の原稿を作成・編集し、画面で承認を待つ |
 | `operation` | 作業 | 依頼された外部変更を1回実行し、根拠を提出して結果の承認を待つ |
@@ -125,7 +125,8 @@
 - 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`・`document`・`operation`。
   ただし、セキュリティ対応（`security-fix`）の先頭の調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。
   調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
-  実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR のドラフトを外してから承認待ちにする。
+  実装は、エージェントの実行が終わったら、実装の PR をドラフトで作ってから承認待ちにする（下の「最終レビューをしない流れ」）。PR のレビューの子タスクが指摘なしにしたらドラフトを外し、人が PR をマージして承認する。
+  以前の版の最終レビューをする流れ（依存 `finalReview` を有効にしたとき）では、検証（下の「実装の検証」）に通り、実装の PR のドラフトを外してから承認待ちにする。
 - 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`・`document`。
 - リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
 - docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
@@ -654,6 +655,7 @@ PR・Issue にコメントするときは、出力に次の JSON を1つだけ�
   実装の指示では、範囲の外を変えないと直せないときは、理由と広げるべき範囲を説明に書かせる。
   再実行のタスクは、セキュリティの組み合わせを引き継ぐ（下の「中止したタスクの再実行」）。
 - 実装の PR の本文の目的の節は、要求要件の代わりに「修正の範囲（セキュリティ対応）」（変えてよいファイル・上げる依存・解消の確かめ方・範囲の理由）にする（`securityScopeBodyLines`）。
+  最終レビューをしない流れ（今の振る舞い）では、節の初めに sacty が照らした結果（違反があればその中身）と、最小限かを PR のレビューの子タスクが確かめることを書く（`Task.securityScopeCheck`）。照らした結果が無い以前の版の提出では、ゴールガーディアンが判定したと書く。
   既存の PR を引き継いだときは、PR の題・本文を変えない（上の「既存の PR の引き継ぎ」）ので、範囲はタスクの詳細の前段の調査の結果で確かめる。
 - 公開リポジトリへの PR も、ほかの実装と同じく作る。
 
@@ -1000,7 +1002,65 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 ## 実装の検証
 
-実装の工程が終わってから承認待ちになるまでの流れは次のとおり。
+デーモンの起動では、実装の工程の後に最終レビュー（ゴールガーディアンによるテストの実行）も PR の CI の待ちもしない（デーモンの依存 `finalReview: false`。[最終レビューをしない流れ](#最終レビューをしない流れ)。[ADR](../adr/20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)）。
+この節のそれ以外の項（最終レビュー・CI の待ち・不安定なテスト・人がレビューへ進める）は、`finalReview` を有効にしたときの流れで、工程の流れを確かめるテストのために残している。
+
+### 最終レビューをしない流れ
+
+- 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、次の実行で `FinalReviewSkipped`（actor `sacty`）を記録して、PR の作成の待ち（`publishPending`）にする。
+  ベースブランチの取り込み・差分の取得・テストのコンテナ・ゴールガーディアンは動かさない。実装の工程のエージェントが作業中にテストを実行することは変わらない。
+  最終レビュー・CI の待ちの途中だったタスク（古い版の作業履歴）も、次の実行（止まっていたタスクは再開の後）で同じく `FinalReviewSkipped` を記録して進む（`pullRequestCi` を捨てる）。
+  - `FinalReviewSkipped` の前に、ベースブランチとの競合の目印が作業領域に残っていないかを確かめる（`conflictsResolved`）。
+    残っていれば記録せず、`BaseConflictsRemained` を記録して実装をやり直す（数え方・止め方は[ベースブランチの取り込み](#ベースブランチの取り込み)と同じ）。
+    確かめられなければ一時停止する（`merge.failed`）。
+  - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
+    結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
+    差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
+    違反があっても止めず、PR の本文の範囲の節に書き、PR のレビューの子タスクに要修正の指摘にさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+- 実装の PR はドラフトで作り（更新したときも、ドラフトに戻す。戻せなくても PR の作成は失敗にしない）、`PullRequestPublished` に `awaitingReview` を付けて、実装の承認待ちにする（`awaitsReview`）。
+  既存の PR を引き継ぐタスクは、人の PR なのでドラフトにせず、`awaitingReview` も付けない。
+  PR の本文の結論には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを書く（`reviewBodyLine`）。
+- PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+  子タスクの判定が今のコミットで指摘なしになったら、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
+  - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`。指摘なしを待つ PR の先頭は、PR の確認で `DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて先に読む。答えは `DRAFT_TIMEOUT_MS` まで待ち、過ぎたら通信を中断する）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
+  - 台帳の `draft` にかかわらず、GitHub の状態を読んで外す（すでに外れていれば何もしない）。外せたときだけ記録する。
+  - 外す間に差し戻された・PR を更新したら、記録せず、まだレビューを待つ PR ならドラフトに戻す（外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）。
+  - 外した後に GitHub の先頭を読み直し、指摘なしにした先頭と違う・読めなければ、記録せずにドラフトに戻す（外す間に人がコミットを足した。次の確認で再レビューする）。
+  - 記録の前に子タスクの今の状態を読み直し、レビューする先頭・レビューの回・判定の数が外す前と違う、または指摘なしでなくなっていれば、記録せずにドラフトに戻す（外す間に再レビューが始まった。次の確認でやり直す）。
+  - 外す要求の答えを受け取れなければ（GitHub では外れているかもしれない）、ドラフトに戻し、記録せずに次の確認でやり直す。
+  - これらでドラフトに戻せなかったら（台帳には `draft` が残る）、戻せたと確かめられるまで、確認のたびに戻す（`redraftAwaiting`）。
+  - 外す要求の答えを受け取れなかったら、外す要求が後から届くかもしれないので、指摘なしで外して記録するまで、確認のたびにドラフトに戻す（PR ごとに覚え、PR を更新した次の提出にも引き継ぐ）。
+  - 答えを待つのをやめた後も終わっていないドラフトの切り替えの要求があれば（`draftRequests`）、終わるまでドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻らないように）。
+    答えを待つのをやめたら、その通信を中断する。中断しても終わらない要求も、`DRAFT_TIMEOUT_MS` の `DRAFT_SETTLE_FACTOR`（10）倍を過ぎたら数えない（GitHub が復旧した後に、外せないままにしない）。
+    PR の確認のたびに GitHub の状態（`draft`）を読み、台帳に合わせる（`settleDraft`。答えを待つのをやめた・中断した・数えるのをやめた要求が後から GitHub に届いたときのため。デーモンが覚えていなくても、再起動の後も、直せなかったときも次の確認でやり直す）。
+    あるべき状態は、台帳と子タスクの今の状態から決める（`wantsDraft`）。GitHub の先頭を読めなければ、ドラフトを外さない（変えない）。
+    - 指摘なしを待つ PR は、ドラフトにする（依存先の PR に重ねた PR は除く。人がドラフトを外してマージしてよいため）。
+    - 指摘なしで外して記録した PR（人の承認待ち）は、子タスクが GitHub の今の先頭で指摘なしにしているときだけ、ドラフトでなくする。
+      ドラフトなら外し直す（`undraftMarkedReady`。GitHub の先頭を読めたときだけ）。
+      GitHub の先頭が指摘なしにした先頭と違えば（外した後に人がコミットを足した。人が PR をドラフトにしたかにかかわらず）、子タスクにその先頭を再レビューさせ、
+      それまではドラフトに戻す。指摘なしになったら外して、その先頭で `PullRequestMarkedReady` を記録し直す。
+    - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わった、または外した答えを受け取れなかったら、
+      タスクが終わっておらず PR の番号が同じならドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、
+      次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
+    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、
+      指摘なしを待つ PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
+      再開したら、指摘なしで記録した PR は、上と同じく外し直す。
+  - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
+  - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
+  - 外した後の確認では、指摘なしにした先頭（`reviewedCommit`）とレビューした先頭を比べ、同じ先頭を再レビューしない。
+  - 外す・戻す・先頭を読む GitHub の答えは、PR の更新でドラフトに戻すときも含めて `DRAFT_TIMEOUT_MS`（30秒）まで待ち、返らなければ答えを受け取れなかったものとして扱う。
+  - 記録した先頭は、指摘なしにした先頭（人が足したコミットを含む）として持ち、依存のある子タスクはそこから重ねる（`reviewedPullRequest`）。
+  - 指摘なしを待つ PR は、台帳の `draft` にかかわらず、デーモンの起動の後に一度 GitHub でドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった・戻せなかったことの記憶が再起動で消えたときのため）。戻せなければ、指摘なしになるまで確認のたびに戻す。戻せたら、同じ提出では繰り返さない。
+  外せなければ記録せず、次の PR の確認でやり直す。外す間に親が変わったら（差し戻し・PR の更新）記録しない。
+- sacty は PR の CI を待たない・再実行しない（PR の確認で `checkVerificationCi` を動かさない）。不安定なテストの台帳に新しい記録はできない。
+- 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
+- テストの仕組みが無いタスク（`noTestsReason`）の実装の指示では、用意したテストを提出の前に自分で実行させ、実行したコマンドと結果を実装の説明に書かせる（sacty は申告したテストのコマンドを実行しない）。受け入れは PR のレビューの子タスクが見ると伝える（`buildPrompt` の `finalReview`・`addedTestCommandLine`）。
+
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`・`checkSecurityScope`・`conflictsResolved`・`settleDraft`・`wantsDraft`・`settlePausedDrafts`・`undraftMarkedReady`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+
+### 最終レビューをする流れ
+
+実装の工程が終わってから承認待ちになるまでの流れは次のとおり（`finalReview` を有効にしたとき）。
 
 ![実装の検証から承認待ちまで](images/verify.svg)
 
@@ -1404,7 +1464,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 ### 人がレビューへ進める
 
-実装の検証が続けて通らずに止まった（`verification`）タスクは、人の判断で、ゴールガーディアンの不合格のままレビューへ進められる（`submitForReview`）。
+以前の版の最終レビューをする流れ（依存 `finalReview` を有効にしたとき）で、実装の検証が続けて通らずに止まった（`verification`）タスクは、人の判断で、不合格のままレビューへ進められる（`submitForReview`）。
+デーモンの起動の既定の最終レビューをしない流れでは使わない。画面にはこの操作を出さない（止まったタスクは再開すると PR のレビューへ進むため）。デーモンの API だけが残る。
 
 - 進められるのは、実装の工程で `verification` の一時停止をしていて、PR の作成の待ちでないとき（`canOverrideVerification`）。
   既存の PR を引き継ぐタスクは進められない（不合格の実装を人の PR に積むことになり、PR の本文も変えないので覆した記録も残らないため）。
@@ -1415,9 +1476,9 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 続けて、検証に通った実装と同じく、sacty が PR のドラフトを外し、その PR をレビューする子タスクを作って、実装の承認待ちにする（ラベルは付けない）。
 - PR の本文には、人が最終レビューの不合格のままレビューへ進めたことと、不合格の観点・最終レビューの所見（1行にし、`HUMAN_CHECK_ITEM_MAX` 文字まで）を書く（`overrideBodyLines`）。
   本文の長さの上限で省かれないよう、テンプレートを使う本文は footer に、使わない本文は冒頭の「結論」に置いて省いても残す（`keep`）。
-- 画面では、タスクの詳細の一時停止の欄に「レビューへ進める」を出す（何が起きるかは補足に出す）。
+- 画面には出さない（以前の版では、タスクの詳細の一時停止の欄に「レビューへ進める」を出していた）。
 
-コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/web/src/components/resume-form.tsx`（`ToReviewForm`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）
+コード: `apps/daemon/src/service.ts`（`submitForReview`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/submit-for-review`）、`packages/core/src/projection.ts`（`canOverrideVerification`・`verificationOverride`）、`packages/core/src/events.ts`（`VerificationOverridden`）、`apps/daemon/src/prompts.ts`（`overrideBodyLines`）
 
 ### テストの仕組みが無いタスク
 
@@ -1489,10 +1550,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   テストが決まらずに止まったのでも、ツールが無くて止まったのでも、文書だけの依頼と差分が食い違って止まったのでもないタスクに渡すと、受け付けない（`resume.testsNotUndecided`）。
 - 人が決めたら `Task.testsDecidedBy` を `person` にし、工程は選び直さない。
   画面の「工程の設定」タブ・実装と最終レビューの指示・PR の本文で、人が決めたテストのコマンドか理由であることを示す。
-- 決めずに再開したとき、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
+  最終レビューをしない流れ（今の振る舞い）では、テストのコマンドは実装の工程の指示に人が決めたものとして渡す（sacty は実行しない）。テストのコマンドが決まらないことでは止めないので、この止まり方は以前の版で止まったタスクだけに残る。
+- 決めずに再開したとき、以前の版の最終レビューをする流れ（依存 `finalReview` を有効にしたとき）で、工程を選んだ直後に止まり、まだどの工程の成果も無ければ（`canRechooseSteps`）、`TaskResumed` の `rechooseSteps` を記録し、選んだ工程と、工程の選択で決めたもの（イメージ・サービス・書き出し先など。人が工程ごとに変えたイメージ・エージェントも消す。予算の上限は残す）を消して、工程の選択からやり直す。
   同じ工程のまま進めて、費用をかけた後の検証で同じ理由で止まらないようにするため。
   工程を始めた後なら、今までどおり止まった所から再開する（検証でまた止まる）。
 - 画面の再開の欄では、テストの扱い（決めずに再開する・テストのコマンドを指定する・テストなしで進める）を選べる。
+  画面は依存 `finalReview` を知らないので、決めずに再開しても工程の選択からやり直すとは扱わず、工程のイメージ・エージェントの欄を出す（今の振る舞い）。
   不具合の修正では、テストなしを選べない。
   ツールが無くて止まったタスクでは、テストのコマンドの入力欄の初期値にいまのコマンドを出す。
 

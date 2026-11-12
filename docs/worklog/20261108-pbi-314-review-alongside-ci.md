@@ -4,7 +4,7 @@
 - タスク: PBI-314
 - PR: #320
 - ブランチ: feat/issue-314-review-alongside-ci
-- 関係する ADR: [最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)
+- 関係する ADR: [最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-superseded-final-review-alongside-pull-request-ci.md)
 
 ## 目的
 

@@ -155,3 +155,67 @@ describe("タスクの詳細の並び", () => {
     expect(render(task)).not.toContain('id="proposals"');
   });
 });
+
+describe("実装の PR の承認待ちの案内（PBI-331・PR #348 レビュー指摘）", () => {
+  const awaiting = (awaitingReview: boolean): Task => ({
+    ...newTask(),
+    status: "awaiting_approval",
+    gate: { step: "implement", submission: 1 },
+    pullRequest: {
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      repo: "https://github.com/acme/app",
+      branch: "sacty/task-1",
+      commit: "c1",
+      ...(awaitingReview ? { draft: true as const, awaitingReview: true as const } : {}),
+    },
+  });
+
+  it("レビューの子タスクの指摘なしを待つ間は、マージではなくレビューの完了を待つ案内を出す（日英）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const gate = messagesFor(lang).task.gate;
+      const html = render(awaiting(true));
+      expect(html).toContain(gate.prReviewingHelp);
+      expect(html).not.toContain(gate.prHelp);
+      const ready = render(awaiting(false));
+      expect(ready).toContain(gate.prHelp);
+      expect(ready).not.toContain(gate.prReviewingHelp);
+    }
+    locale = "ja";
+  });
+
+  it("依存先の PR に重ねている間は、レビュー中ではなく依存先のマージを待つ案内を出す（日英。PR #348 レビュー指摘）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const gate = messagesFor(lang).task.gate;
+      const html = render({
+        ...awaiting(true),
+        stack: { taskId: "dep", branch: "sacty/dep", commit: "d1" },
+      });
+      expect(html).toContain(gate.prStackedHelp);
+      expect(html).not.toContain(gate.prReviewingHelp);
+    }
+    locale = "ja";
+  });
+});
+
+describe("テストが決まらずに止まったタスクの再開（PBI-331）", () => {
+  it("工程を選んだ直後に止まっても、工程の選び直しの案内を出さず、工程のイメージ・AI を選べる（PR #348 7回目のレビュー指摘）", () => {
+    locale = "ja";
+    const task = newTask();
+    task.status = "paused";
+    task.pausedReason = "verification";
+    task.resumeTo = "queued";
+    task.steps = [
+      { key: "implement", state: "todo" },
+      { key: "integrate", state: "todo" },
+    ];
+    const html = render(task);
+    const r = messagesFor("ja").parts.resume;
+    expect(html).toContain('data-testid="resume-steps"');
+    expect(html).not.toContain('data-testid="resume-steps-rechoose"');
+    expect(html).not.toContain(r.stepsRechoose);
+    expect(html).not.toContain(r.tests.keepRechooseHint);
+  });
+});

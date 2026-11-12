@@ -1,4 +1,4 @@
-<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/components/flaky-tests.tsx, packages/core/src/flaky-tests.ts, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, apps/daemon/src/memory.ts, apps/daemon/default-context/skills/memory/SKILL.md, packages/core/src/audit.ts -->
+<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, packages/core/src/flaky-tests.ts, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, apps/daemon/src/memory.ts, apps/daemon/default-context/skills/memory/SKILL.md, packages/core/src/audit.ts -->
 
 [日本語](audit.md) | **English**
 
@@ -83,7 +83,6 @@ The audit page looks like this (the image uses the audit mock data).
   - Each shows its state (Recurred, Proposed, Adopted, Fixed, Rejected), how many times it was found, and the tasks.
   - Recurred causes come first and stand out.
 - **Proposals**: those needing a decision come first. Each shows which task's audit it came from, and you can adopt or reject it here too.
-- **Flaky tests**: the ledger of tests the final review accepted as flaky ([The flaky test ledger](#the-flaky-test-ledger)).
 - **Audited tasks**: state, remarks, cost, and when the audit finished.
 - **Report**: choose a start and end date and press "Export report" to download a Markdown file with the causes, proposals, and decisions of audits finished in the period. Headings follow the UI language; audit text is not translated. Times are UTC.
 
@@ -91,11 +90,13 @@ Audit results are not combined across projects.
 
 ## The flaky test ledger
 
+The current version does not run the final review, so no new entries are added to the ledger, and it is not shown on the audit page ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
+The rest of this section describes older versions.
+
 Tests the final review accepted as flaky and unrelated to the diff are counted per project and shown on the audit page.
 This does not use the audit budget.
 It needs no setup.
 
-![Flaky tests on the audit page (a known test and a proposal for a task to fix it)](images/audit-flaky-tests.en.png)
 
 - It shows the test's name and file, the number of tasks that saw it, when it was last seen, and links to those tasks and PRs.
 - Several times in the same task count as one task.
