@@ -209,7 +209,7 @@ If target details are missing, add the missing information to the request and cr
 
 You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone.
 
-sacty instructs the agent to write once and check the result after the change. However, this does not guarantee that the external service prevents duplicates.
+sacty instructs the agent to make every write the request needs (there may be several, such as a parent post and a reply in its thread) and check the result after the change. The agent does not resend the same write; after a failure or an unknown result, it stops the remaining writes and reports, separately, the writes confirmed as successful, those not made, and those whose result is unknown. A write with an unknown result may have succeeded in the external service, so check it there before requesting it in a new task. However, this does not guarantee that the external service prevents duplicates.
 
 You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12"). The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its output.
 

@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: [#123](https://github.com/sert-xx/sacty/pull/123)、PBI-112、PBI-113
 - 置き換え元: なし
-- 置き換え先: [工程のエージェントに GitHub の読み取りの中継をいつも渡し、PR・Issue へのコメントはエージェントが出力で頼んで承認の後に sacty が投稿する](20261021-1130-superseded-github-read-relay-and-comment-requests.md)（単発作業が、選定した接続先1つだけを使う部分）、[文書作成の工程にも、ほかの工程と同じくプロジェクトのコンテキスト・外部 PF・MCP・GitHub の読み取りを渡す](20261022-1505-superseded-document-step-gets-context.md)（承認前の原稿作成に外部接続とプロジェクトコンテキストを渡さず、外部原稿を読まない部分）
+- 置き換え先: [工程のエージェントに GitHub の読み取りの中継をいつも渡し、PR・Issue へのコメントはエージェントが出力で頼んで承認の後に sacty が投稿する](20261021-1130-superseded-github-read-relay-and-comment-requests.md)（単発作業が、選定した接続先1つだけを使う部分）、[文書作成の工程にも、ほかの工程と同じくプロジェクトのコンテキスト・外部 PF・MCP・GitHub の読み取りを渡す](20261022-1505-superseded-document-step-gets-context.md)（承認前の原稿作成に外部接続とプロジェクトコンテキストを渡さず、外部原稿を読まない部分）、[単発作業（operation）の書き込みに回数の上限を設けず、同じ書き込みの再送だけを禁じる](20261112-1524-operation-allows-multiple-writes.md)（外部操作の書き込みを1回にする部分）
 
 ## 背景
 
