@@ -45,11 +45,12 @@ export function UpdateNoticeView({
         )}
       </p>
       <p>{t.steps}</p>
+      {/* cli:install で入れた入口は、入れたときの Node.js を書いているので、Node.js の版が変わったら入れ直す。コマンドを
+          上から順に実行する前に読めるよう、コマンドの前に置く（PR #338 のレビュー） */}
+      <p>{t.cliInstall}</p>
       <pre className="overflow-x-auto rounded-md bg-background/60 p-2 font-mono text-xs text-foreground">
         {UPDATE_COMMANDS}
       </pre>
-      {/* cli:install で入れた入口は、入れたときの Node.js を書いているので、Node.js の版が変わったら入れ直す */}
-      <p>{t.cliInstall}</p>
     </section>
   );
 }

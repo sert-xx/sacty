@@ -194,11 +194,17 @@ export function installWithMise({ version, dir, run, resolveReal = real }) {
   return { ok: true };
 }
 
-/** 入口を書く。置き場所に、sacty の入口でないファイル・リンクがあれば上書きしない（false）。 */
-function writeLauncher(launcher, content) {
+/**
+ * 入口を書く。置き場所に、sacty の入口でないファイル・リンクがあれば上書きしない（false）。ただし、このリポジトリの
+ * entry を指すリンク（前のやり方の npm link で入れたもの。npm のグローバルの場所が ~/.local だと重なる）は置き換える。
+ */
+export function writeLauncher(launcher, content, entry) {
   if (existsSync(launcher) || isSymlink(launcher)) {
-    const current = isSymlink(launcher) ? "" : safeRead(launcher);
-    if (!current.includes(LAUNCHER_MARK)) return false;
+    const ours = isSymlink(launcher)
+      ? real(launcher) === real(entry)
+      : safeRead(launcher).includes(LAUNCHER_MARK);
+    if (!ours) return false;
+    if (isSymlink(launcher)) rmSync(launcher, { force: true });
   }
   mkdirSync(dirname(launcher), { recursive: true });
   // 書きかけの入口を使わせないよう、隣に書いてから置き換える
@@ -221,13 +227,34 @@ function main() {
   const content = launcherScript({ node, entry, repo });
   const binLauncher = join(launcherDir(), "sacty");
 
+  // 前のやり方（npm link）で、いまの Node.js のグローバルに入れたこのリポジトリの sacty があれば外す（PATH で先に
+  // 見つかって、別の Node.js の版で動くのを防ぐ）。ほかのリポジトリ・ほかのパッケージのものは触らない。
+  // 入口を書く前に外す（npm のグローバルの場所が ~/.local だと、前のリンクが入口の置き場所と重なるため）
+  const npm = "npm";
+  const prefix = globalPrefix({ npmPrefix: () => run(npm, ["prefix", "-g"]).stdout.trim() });
+  const linkedCli = join(prefix, "lib", "node_modules", "@sacty", "cli");
+  if (isSymlink(linkedCli) && real(linkedCli) === real(cliDir)) {
+    // 確かめた場所（prefix）に対して外す（npm が自分で決める場所と違うことがあっても、確かめた場所のリンクを外す）
+    const removed = run(npm, ["rm", "-g", "@sacty/cli"], {
+      stdio: "inherit",
+      env: { ...process.env, npm_config_prefix: prefix },
+    });
+    if (removed.status === 0 && !isSymlink(linkedCli)) {
+      console.log(`[sacty] 前のやり方（npm link）で入れた sacty を外しました（${linkedCli}）。`);
+    } else {
+      console.warn(
+        `[sacty] 注意：前のやり方（npm link）で入れた sacty（${linkedCli}）を外せませんでした。`,
+      );
+    }
+  }
+
   // mise があれば、版ごとのディレクトリに入口を置いて mise に登録する。登録できなければ、置き場所（~/.local/bin など）に置く
   let launcher;
   let via = "bin";
   if (useMise({ hasMise: Boolean(findOnPath("mise")) })) {
     const toolDir = miseToolDir({ version });
     const miseLauncher = join(toolDir, "bin", "sacty");
-    if (!writeLauncher(miseLauncher, content)) {
+    if (!writeLauncher(miseLauncher, content, entry)) {
       fail(
         `${miseLauncher} に、sacty の入口でないファイル（またはリンク）があります。消してから、もう一度実行してください。`,
       );
@@ -241,7 +268,7 @@ function main() {
     }
   }
   if (!launcher) {
-    if (!writeLauncher(binLauncher, content)) {
+    if (!writeLauncher(binLauncher, content, entry)) {
       fail(
         `${binLauncher} に、sacty の入口でないファイル（またはリンク）があります。消すか、SACTY_BIN_DIR で別の置き場所を指定してから、もう一度実行してください。`,
       );
@@ -251,22 +278,6 @@ function main() {
     // mise で入れたら、前に置き場所に置いた入口は消す（PATH で mise のものより先に見つかるのを防ぐ）
     rmSync(binLauncher, { force: true });
     console.log(`[sacty] 前に置いた入口（${binLauncher}）を消しました（mise で入れたため）。`);
-  }
-
-  // 前のやり方（npm link）で、いまの Node.js のグローバルに入れたこのリポジトリの sacty があれば外す（PATH で先に
-  // 見つかって、別の Node.js の版で動くのを防ぐ）。ほかのリポジトリ・ほかのパッケージのものは触らない
-  const npm = "npm";
-  const prefix = globalPrefix({ npmPrefix: () => run(npm, ["prefix", "-g"]).stdout.trim() });
-  const linkedCli = join(prefix, "lib", "node_modules", "@sacty", "cli");
-  if (isSymlink(linkedCli) && real(linkedCli) === real(cliDir)) {
-    const removed = run(npm, ["rm", "-g", "@sacty/cli"], { stdio: "inherit" });
-    if (removed.status === 0) {
-      console.log(`[sacty] 前のやり方（npm link）で入れた sacty を外しました（${linkedCli}）。`);
-    } else {
-      console.warn(
-        `[sacty] 注意：前のやり方（npm link）で入れた sacty（${linkedCli}）を外せませんでした。`,
-      );
-    }
   }
 
   // 入口が、このリポジトリの版で動くか（ビルドの結果を読めるか）

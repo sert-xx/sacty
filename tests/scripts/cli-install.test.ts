@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +23,7 @@ import {
   launcherScript,
   miseToolDir,
   useMise,
+  writeLauncher,
 } from "../../scripts/cli-install.mjs";
 
 describe("launcherScript", () => {
@@ -243,5 +253,44 @@ describe("mise で入れる", () => {
     expect(
       checkMise({ launcher, found, onPath: "/opt/old/sacty", miseBin, resolveReal }).warnings[0],
     ).toContain("/opt/old/sacty");
+  });
+});
+
+describe("writeLauncher", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("前のやり方（npm link）でこのリポジトリを指すリンクは置き換え、ほかのリンク・ファイルは上書きしない", () => {
+    const root = mkdtempSync(join(tmpdir(), "sacty-write-launcher-"));
+    dirs.push(root);
+    const entry = join(root, "repo", "sacty.js");
+    mkdirSync(join(root, "repo"));
+    writeFileSync(entry, "");
+    const content = `#!/bin/sh\n${LAUNCHER_MARK}\n`;
+    // npm のグローバルの場所が ~/.local だと、前の npm link のリンクが入口の置き場所と重なる
+    const overlap = join(root, "a", "sacty");
+    mkdirSync(join(root, "a"));
+    symlinkSync(entry, overlap);
+    expect(writeLauncher(overlap, content, entry)).toBe(true);
+    expect(lstatSync(overlap).isSymbolicLink()).toBe(false);
+    expect(readFileSync(overlap, "utf8")).toBe(content);
+    // ほかのリポジトリを指すリンク・sacty のものでないファイルは守る
+    const other = join(root, "other.js");
+    writeFileSync(other, "");
+    const linked = join(root, "b", "sacty");
+    mkdirSync(join(root, "b"));
+    symlinkSync(other, linked);
+    expect(writeLauncher(linked, content, entry)).toBe(false);
+    expect(lstatSync(linked).isSymbolicLink()).toBe(true);
+    const foreign = join(root, "c", "sacty");
+    mkdirSync(join(root, "c"));
+    writeFileSync(foreign, "#!/bin/sh\necho other\n");
+    expect(writeLauncher(foreign, content, entry)).toBe(false);
+    expect(readFileSync(foreign, "utf8")).toContain("echo other");
+    // 前に置いた入口（目印のあるもの）は書き直す
+    expect(writeLauncher(overlap, `${content}# v2\n`, entry)).toBe(true);
+    expect(readFileSync(overlap, "utf8")).toContain("# v2");
   });
 });
