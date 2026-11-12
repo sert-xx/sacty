@@ -1790,6 +1790,52 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
       "person",
     );
 
+  it("テストが決まっていなくても、予算・ほかのエラー・人の一時停止で止まったタスクでは決められない。以前の版にその記録があっても読み込める（PBI-337）", () => {
+    seq = 0;
+    const stops = [
+      { reason: "budget" },
+      { reason: "error", message: { code: "pr.failed", params: { detail: "boom" } } },
+      { reason: "manual" },
+    ];
+    stops.forEach((payload, i) => {
+      const id = `s${i}`;
+      const events = [
+        created(id),
+        ev(id, chosen(STEP_PLANS.direct)),
+        ev(id, { type: "TaskPaused", payload } as EventInput),
+      ];
+      const paused = project(events).get(id) as Task;
+      expect(paused.status).toBe("paused");
+      expect(canDecideTests(paused)).toBe(false);
+      // 以前の版は、止まった理由を見ずに決められたので、その記録は読み込める
+      const decidedTask = project([...events, decided(id, { testCommand: "make check" })]).get(
+        id,
+      ) as Task;
+      expect(decidedTask.testCommand).toBe("make check");
+    });
+    // テストが決まらないことを理由に止まったタスク（以前の版）は、決められる
+    for (const code of [
+      "orchestrator.noTestsUncertain",
+      "orchestrator.noTestsContradicted",
+      "orchestrator.bugfixNeedsTests",
+    ]) {
+      const id = code;
+      const params =
+        code === "orchestrator.noTestsContradicted"
+          ? { reason: "r", files: "a.test.ts" }
+          : { reason: "r" };
+      const paused = project([
+        created(id),
+        ev(id, chosen(STEP_PLANS.direct)),
+        ev(id, {
+          type: "TaskPaused",
+          payload: { reason: "error", message: { code, params } },
+        } as EventInput),
+      ]).get(id) as Task;
+      expect(canDecideTests(paused)).toBe(true);
+    }
+  });
+
   it("人がテストのコマンドかテストなしの理由を決めると、タスクに持ち、人が決めたことがわかる", () => {
     seq = 0;
     const events = undecided("t1", chosen(STEP_PLANS.direct));

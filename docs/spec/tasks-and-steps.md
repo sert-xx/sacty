@@ -1257,10 +1257,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 一時停止したタスクを再開するとき、次のどれかに当たれば、人がテストの扱いを決められる（`ResumeTaskInput` の `tests`。`canDecideTests`）。
 
-- 実装（不具合の修正では再現も）を含む工程を選んだのに、テストのコマンドもテストの仕組みが無いという判断（`noTestsReason`）も無いタスク（`testsUndecided`）。
-  一時停止の理由は問わない（予算・エラー・人の一時停止なども当たる）。
-  今の版では、オーケストレーターがどちらも決めなかったとき・テストの仕組みが無いという判断を使えなかったとき（上の「テストの仕組みが無いタスク」）に、このタスクになる（止まりはしない）。
-  以前の版で、工程を選んだ直後にこの理由で止まったタスク（`orchestrator.noTests*`・`orchestrator.bugfixNeedsTests`・`orchestrator.testCommandUnknown`）も当たる。
+- 以前の版で、テストが決まらないことを理由に、工程を選んだ直後に止まったタスク。実装（不具合の修正では再現も）を含む工程を選んだのに、
+  テストのコマンドもテストの仕組みが無いという判断（`noTestsReason`）も無く（`testsUndecided`）、一時停止の理由が `error` で、
+  止まった理由のコードが `orchestrator.noTests*`・`orchestrator.bugfixNeedsTests`・`orchestrator.testCommandUnknown` のどれか
+  （`TESTS_UNDECIDED_STOP_CODES`）。
+  今の版では、オーケストレーターがどちらも決めなかったとき・テストの仕組みが無いという判断を使えなかったとき（上の「テストの仕組みが無いタスク」）も、
+  止まらずに進むので、このタスクにはならない。テストが決まっていなくても、予算・ほかのエラー・人の一時停止で止まったタスクは当たらない。
 - 以前の版の最終レビューで、ツールが無くて止まったタスク・文書だけの依頼と差分が食い違って止まったタスク（下の2つ）。
 
 決め方は次のとおり。

@@ -31361,7 +31361,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     });
   });
 
-  it("テストの決まっていないタスクを人が止めたら、テストなしで進めると決めて再開でき、実装の指示と PR の本文で人が決めた理由だとわかる", async () => {
+  it("テストが決まらずに止まったタスク（以前の版）は、テストなしで進めると決めて再開でき、実装の指示と PR の本文で人が決めた理由だとわかる。人が止めただけなら決められない（PBI-337）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const REASON =
       "スキルを集めたリポジトリで、テストは書かない（scripts/test_helper.sh はテストではない）";
@@ -31379,8 +31379,27 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(taskOf(service, id).noTestsReason).toBeUndefined();
     expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
     service.approve(id, { step: "requirements", submission: 1 });
-    // 実装の前に人が止め、テストの扱いを決めて再開する
+    // 人が止めただけなら、テストが決まっていなくても、テストの扱いは決められない（PBI-337）
     await service.pause(id);
+    expect(canDecideTests(taskOf(service, id))).toBe(false);
+    expect(() => service.resume(id, { tests: { noTestsReason: REASON } })).toThrow(
+      InvalidOperationError,
+    );
+    expect(typesOf(service, id)).not.toContain("TestsDecided");
+    service.resume(id, {});
+    // 以前の版で、テストが決まらないことを理由に止めた記録
+    appendLegacy(service, id, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "error",
+            message: message("orchestrator.noTestsUncertain", { reason: "テストが無い" }),
+          },
+        },
+      },
+    ]);
     expect(canDecideTests(taskOf(service, id))).toBe(true);
     service.resume(id, { tests: { noTestsReason: REASON } });
     // 人の判断を記録し、工程は選び直さない（オーケストレーターをもう一度実行しない）
@@ -31400,7 +31419,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
-  it("テストの決まっていないタスクを人が止めたら、テストのコマンドを指定して再開でき、実装の指示で人が指定したコマンドだとわかる", async () => {
+  it("テストが決まらずに止まったタスク（以前の版）は、テストのコマンドを指定して再開でき、実装の指示で人が指定したコマンドだとわかる（PBI-337）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(
       activity,
@@ -31418,7 +31437,16 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     // テストのコマンドが分からなくても止めない（sacty はテストを実行しない）
     expect(taskOf(service, id).pausedMessage).toBeUndefined();
     service.approve(id, { step: "requirements", submission: 1 });
-    await service.pause(id);
+    // 以前の版で、テストのコマンドが決まらないことを理由に止めた記録
+    appendLegacy(service, id, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: { reason: "error", message: message("orchestrator.testCommandUnknown") },
+        },
+      },
+    ]);
     service.resume(id, { tests: { testCommand: "make test" } });
     expect(taskOf(service, id).testCommand).toBe("make test");
     await drain(service);
@@ -31439,6 +31467,25 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     });
     const bug = service.createTask({ projectId: "default", title: "不具合" });
     await service.runNext(bug.id);
+    // テストが決まらないこと以外で止まったタスクは、テストの扱いを決められない（PBI-337）
+    expect(taskOf(service, bug.id).status).toBe("paused");
+    expect(() => service.resume(bug.id, { tests: { testCommand: "make test" } })).toThrow(
+      expect.objectContaining({ messages: [{ code: "resume.testsNotUndecided" }] }),
+    );
+    service.resume(bug.id, {});
+    // 以前の版で、不具合の修正にテストが要るとして止めた記録
+    appendLegacy(service, bug.id, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "error",
+            message: message("orchestrator.bugfixNeedsTests", { reason: "テストは無い" }),
+          },
+        },
+      },
+    ]);
     expect(() => service.resume(bug.id, { tests: { noTestsReason: "テストは無い" } })).toThrow(
       expect.objectContaining({ messages: [{ code: "resume.bugfixNeedsTestCommand" }] }),
     );
