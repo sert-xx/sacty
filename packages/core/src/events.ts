@@ -2217,12 +2217,12 @@ const PullRequestPublished = z.object({
      * （CI と並べる。PBI-314。実装の承認待ちにはしない）。それより前の記録には無い（検証に通った後に作った PR）。
      */
     verifying: z.literal(true).optional(),
-    /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
     /**
      * PR のレビューの子タスクの指摘なし（PBI-331）を待つ PR。最終レビューの代わりに、指摘なしになったら sacty がドラフトを外す
      * （`PullRequestMarkedReady`）。それより前の記録には無い。
      */
     awaitingReview: z.literal(true).optional(),
+    /** PR をドラフトにした（ドラフトに戻した）。リポジトリがドラフトを使えなければ、ドラフトでない PR のまま無い。 */
     draft: z.literal(true).optional(),
     /**
      * PR の向き先のブランチ（PBI-317）。依存先の PR に重ねた子タスクの PR だけ記録する（重ねている間は依存先の PR の

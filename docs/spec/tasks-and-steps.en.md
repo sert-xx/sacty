@@ -650,11 +650,15 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
   - The current commit is the current head of the PR on GitHub (`pullRequestHead`). If a person adds a commit during the review, sacty has the child task review that head again and does not remove the draft from a head that was not reviewed. If the head cannot be read, sacty tries again at the next check.
   - sacty reads the state on GitHub and removes the draft whatever `draft` in the ledger says (nothing happens if it is already removed). It records only when the draft was removed.
   - If the task is sent back or the PR is updated while the draft is being removed, sacty does not record it and turns the PR back into a draft if it still waits for the review (in case the request to remove the draft arrives after the next submission's request to make it a draft).
+  - After removing the draft, sacty reads the head on GitHub again. If it differs from the head with no findings or cannot be read, sacty does not record it and turns the PR back into a draft (a person added a commit while the draft was being removed; the next check has it reviewed again).
+  - If the answer to the request to remove the draft is lost (the draft may have been removed on GitHub), sacty turns the PR back into a draft, does not record it, and tries again at the next check.
+  - The recorded head is kept as the head with no findings (including commits a person added), and dependent child tasks stack on it (`reviewedPullRequest`).
+  - A PR that could not be turned back into a draft at submission (no `draft` in the ledger) is turned back into a draft at every check until it has no findings (`redraftAwaiting`; once it succeeds, sacty does not repeat it for the same submission).
   If the draft cannot be removed, nothing is recorded and the next PR check tries again. If the parent changes while removing it (request changes, a PR update), nothing is recorded.
 - sacty neither waits for nor reruns the PR's CI (the PR check does not run `checkVerificationCi`). No new entries are added to the flaky test ledger.
 - Even when the orchestrator cannot decide the test command for a task that includes implementation, the task does not stop (it does not stop with `orchestrator.testCommandUnknown`, because sacty does not run the tests).
 
-Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
+Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
 
 ### The flow with the final review
 

@@ -95,6 +95,9 @@ const ja = {
     /** 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにしている間（PBI-331）。 */
     prReviewingHelp:
       "レビューの子タスクが PR を確かめています。指摘なしでドラフトが外れたら、マージで承認します。",
+    /** 依存先の PR に重ねた実装の PR が、依存先のマージを待つ間（PBI-331。付け替えの後にレビューの子タスクを作る）。 */
+    prStackedHelp:
+      "依存先の PR のマージを待っています。マージされたら向き先を付け替え、レビューの子タスクが PR を確かめます。",
     stepPrHelp: (step: string) =>
       `GitHub の PR で判断します。マージで${step}を承認し、次の工程に進みます。`,
     rework: "PR の指摘の戻し先の確認待ち",
@@ -616,6 +619,8 @@ const en: TaskMessages = {
     prHelp: "Decide on the GitHub PR. Merging approves; comments request changes.",
     prReviewingHelp:
       "The review child task is checking the PR. When it has no findings, the draft is removed; then approve by merging.",
+    prStackedHelp:
+      "Waiting for the PR this one depends on to be merged. Then the base is changed and the review child task checks the PR.",
     stepPrHelp: (step) =>
       `Decide on the GitHub PR. Merging approves the ${step} and moves on to the next step.`,
     rework: "Step to redo for PR comments needs your decision",

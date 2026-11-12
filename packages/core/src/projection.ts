@@ -145,7 +145,8 @@ export function reviewedPullRequest(
   if (task.verificationOverride?.submission === task.submissions.implement) return undefined;
   return {
     branch: pr.branch,
-    commit: pr.commit,
+    // 指摘なしにした先頭（人が足したコミットを含む）から重ねる（PBI-331）
+    commit: pr.reviewedCommit ?? pr.commit,
     number: pr.number,
     ...(pr.url ? { url: pr.url } : {}),
   };
@@ -785,7 +786,11 @@ export type Task = {
   /** sacty がプッシュしたブランチ（PRの作成の前に記録する）。 */
   pushedBranch?: PayloadOf<"BranchPushed">;
   /** sacty が作ったPR（またはブランチ）。 */
-  pullRequest?: PayloadOf<"PullRequestPublished">;
+  /**
+   * reviewedCommit は、PR のレビューの子タスクが指摘なしにして、sacty がドラフトを外した PR の先頭（PBI-331）。人がレビューの間に
+   * コミットを足したときは、sacty が提出したコミット（commit）と違う。依存のある子タスクは、これを起点に重ねる。
+   */
+  pullRequest?: PayloadOf<"PullRequestPublished"> & { reviewedCommit?: string };
   /** 実装の承認待ちの間に見守っている、実装の PR の状態（PBI-14a・PBI-110）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** 実装の PR のマージの記録（PBI-63）。 */
@@ -1990,7 +1995,7 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
       }
       const { draft: _draft, awaitingReview: _awaiting, ...rest } = pr;
-      task.pullRequest = rest;
+      task.pullRequest = { ...rest, reviewedCommit: event.payload.commit };
       break;
     }
 

@@ -585,7 +585,10 @@ function GateNotice({ task }: { task: Task }) {
                         : watched?.step === "implement"
                           ? // 子タスクの指摘なしを待つ間は、マージの前にレビューの完了を待つ（PBI-331）
                             task.pullRequest?.awaitingReview
-                            ? m.gate.prReviewingHelp
+                            ? // 依存先の PR に重ねている間は、子タスクを作らずに依存先のマージを待つ
+                              task.stack
+                              ? m.gate.prStackedHelp
+                              : m.gate.prReviewingHelp
                             : m.gate.prHelp
                           : task.gate?.step === "implement" && deliveredWithoutChanges(task)
                             ? m.gate.noChangesHelp

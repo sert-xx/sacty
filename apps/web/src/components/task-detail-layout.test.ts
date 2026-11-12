@@ -184,4 +184,18 @@ describe("実装の PR の承認待ちの案内（PBI-331・PR #348 レビュー
     }
     locale = "ja";
   });
+
+  it("依存先の PR に重ねている間は、レビュー中ではなく依存先のマージを待つ案内を出す（日英。PR #348 レビュー指摘）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const gate = messagesFor(lang).task.gate;
+      const html = render({
+        ...awaiting(true),
+        stack: { taskId: "dep", branch: "sacty/dep", commit: "d1" },
+      });
+      expect(html).toContain(gate.prStackedHelp);
+      expect(html).not.toContain(gate.prReviewingHelp);
+    }
+    locale = "ja";
+  });
 });

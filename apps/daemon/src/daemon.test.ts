@@ -59,6 +59,7 @@ import {
   renderMessage,
   rerunEditableBody,
   resumeNoteRoom,
+  reviewedPullRequest,
   reworkTargets,
   STEP_PLANS,
   stepRunning,
@@ -28763,6 +28764,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(pulls.drafts[7]).toBe(false);
         const ready = service.get(id)?.activity.find((e) => e.type === "PullRequestMarkedReady");
         expect(ready?.payload).toMatchObject({ number: 7, commit: human });
+        // 依存のある子タスクは、指摘なしにした先頭（人が足したコミット）から重ねる（PR #348 2回目のレビュー指摘）
+        expect(reviewedPullRequest(taskOf(service, id))?.commit).toBe(human);
         activity.close();
       });
 
@@ -28840,6 +28843,93 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           { number: 7, draft: false },
           { number: 7, draft: true },
         ]);
+        activity.close();
+      });
+
+      it("ドラフトを外す間に人が先頭にコミットを足したら、記録せずにドラフトに戻し、その先頭を再レビューする（PR #348 2回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        // 外す要求の答えを待つ間に、人がコミットを足した
+        const human = "h".repeat(40);
+        pulls.prInfo = { ...pulls.prInfo, headSha: human };
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        await checking;
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        expect(pulls.drafts[7]).toBe(true);
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        await service.checkPullRequests();
+        const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
+        expect(restarts?.map((e) => e.payload)).toEqual([{ reason: "updated", commit: human }]);
+        activity.close();
+      });
+
+      it("ドラフトを外す要求の答えを受け取れなければ、ドラフトに戻して記録せず、次の確認でやり直す（PR #348 2回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        // GitHub では外れたが、答えを受け取れない
+        pulls.setDraftAnswerLost = "socket hang up";
+        await service.checkPullRequests();
+        expect(pulls.draftChanges).toEqual([
+          { number: 7, draft: false },
+          { number: 7, draft: true },
+        ]);
+        expect(pulls.drafts[7]).toBe(true);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        pulls.setDraftAnswerLost = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        activity.close();
+      });
+
+      it("PR の更新でドラフトに戻せなかったら、指摘なしになるまで確認のたびにドラフトに戻す。戻せたら繰り返さない（PR #348 2回目のレビュー指摘）", async () => {
+        const made = await implemented([
+          verdictOut("changes_required"),
+          rework("implement", "実装で直せる"),
+          implement("# 実装の説明 v2"),
+          verdictOut("no_findings", "# 評価\n\nマージしてよい"),
+        ]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        // 人がドラフトを外していた PR を、直した PR の更新でドラフトに戻せない
+        pulls.drafts[7] = false;
+        pulls.setDraftFail = "502";
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
+        // 確認でも戻せなければ、次の確認でやり直す
+        pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        pulls.setDraftFail = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        await service.checkPullRequests();
+        expect(setDraft).not.toHaveBeenCalled();
+        setDraft.mockRestore();
+        // 指摘なしになったら外す
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
         activity.close();
       });
 

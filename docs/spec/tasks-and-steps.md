@@ -1016,11 +1016,15 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
   - 台帳の `draft` にかかわらず、GitHub の状態を読んで外す（すでに外れていれば何もしない）。外せたときだけ記録する。
   - 外す間に差し戻された・PR を更新したら、記録せず、まだレビューを待つ PR ならドラフトに戻す（外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）。
+  - 外した後に GitHub の先頭を読み直し、指摘なしにした先頭と違う・読めなければ、記録せずにドラフトに戻す（外す間に人がコミットを足した。次の確認で再レビューする）。
+  - 外す要求の答えを受け取れなければ（GitHub では外れているかもしれない）、ドラフトに戻し、記録せずに次の確認でやり直す。
+  - 記録した先頭は、指摘なしにした先頭（人が足したコミットを含む）として持ち、依存のある子タスクはそこから重ねる（`reviewedPullRequest`）。
+  - 提出のときにドラフトに戻せなかった PR（台帳に `draft` が無い）は、指摘なしになるまで、確認のたびにドラフトに戻す（`redraftAwaiting`。戻せたら、同じ提出では繰り返さない）。
   外せなければ記録せず、次の PR の確認でやり直す。外す間に親が変わったら（差し戻し・PR の更新）記録しない。
 - sacty は PR の CI を待たない・再実行しない（PR の確認で `checkVerificationCi` を動かさない）。不安定なテストの台帳に新しい記録はできない。
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 最終レビューをする流れ
 
