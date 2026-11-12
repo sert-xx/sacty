@@ -125,7 +125,7 @@ describe("Implementation のテストを書かずに差分で確かめる観点"
       testMap: [{ viewpointId: "TV-1", tests: [], untested: "README の文言だけを直したため" }],
     }) as unknown as Task;
 
-  it("テストが無いことを警告にせず、申告の理由と、ゴールガーディアンが差分で判定したことを出す", () => {
+  it("テストが無いことを警告にせず、申告の理由と、最終レビューが差分で判定したことを出す", () => {
     const html = render(
       designed(
         review({
@@ -279,7 +279,7 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
     expect(html).toContain("テスト合格（環境による失敗のみ）");
     expect(html).toContain('data-testid="environment-pass-note"');
     expect(html).toContain(
-      "終了コードは 1 ですが、失敗がすべて環境によるものとゴールガーディアンが判断したため",
+      "終了コードは 1 ですが、失敗がすべて環境によるものと最終レビューで判断したため",
     );
     const en = render(
       designed(
@@ -323,20 +323,20 @@ describe("Implementation の、前の段の結果を使い回したテスト（P
     humanChecks: undefined,
   });
 
-  it("見出しと補足を、ゴールガーディアンが実行したものではなく、判定に使った結果の表現にする", () => {
+  it("見出しと補足を、最終レビューで実行したものではなく、判定に使った結果の表現にする", () => {
     const html = render(task(reused));
     expect(html).toContain("最終レビューが判定に使ったテスト");
     expect(html).toContain("PR の CI の結果を使い回し");
-    expect(html).not.toContain("ゴールガーディアンが実行したテスト");
-    expect(html).not.toContain("ゴールガーディアンが最終レビューの中で実行し");
+    expect(html).not.toContain("最終レビューで実行したテスト");
+    expect(html).not.toContain("以前の版の最終レビューの中で実行し");
     const en = render(task(reused), "en");
     expect(en).toContain("Tests the final review judged with");
-    expect(en).not.toContain("Tests run by the Goal Guardian");
+    expect(en).not.toContain("Tests run in the final review");
   });
 
-  it("使い回していなければ、これまでどおりゴールガーディアンが実行したテストとして出す", () => {
+  it("使い回していなければ、これまでどおり最終レビューで実行したテストとして出す", () => {
     const html = render(task(review({ tests: { command: "npm test", exitCode: 0, output: "" } })));
-    expect(html).toContain("ゴールガーディアンが実行したテスト");
+    expect(html).toContain("最終レビューで実行したテスト");
     expect(html).not.toContain("最終レビューが判定に使ったテスト");
   });
 });

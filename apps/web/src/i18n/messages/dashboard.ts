@@ -103,7 +103,7 @@ const ja = {
     aiReviewRework: "AI のレビューの差し戻し",
     aiReviewReworkHint:
       "sacty 自身のレビューのタスクが PR に投稿した指摘だけで、工程をやり直した回数です。人の差し戻しには数えません。",
-    guardianMissed: "ゴールガーディアンの見逃し",
+    guardianMissed: "最終レビューの見逃し",
     guardianMissedHint:
       "最終レビューで合格にした成果物を、見逃しが原因として人が実装の承認で差し戻した回数です。競合や新しい要望による差し戻しは数えません。",
     integrationFailed: "統合レビューの不合格",
@@ -115,10 +115,10 @@ const ja = {
     byStepsHint: "人の差し戻しと PR の指摘の差し戻しを、差し戻された成果物の工程ごとに数えます。",
     reworkUnspecified: "原因が分からない差し戻し",
     reworkUnspecifiedHint:
-      "人が原因を選ばず、ゴールガーディアンも判断していない差し戻しの回数です。見逃しだったかどうかは分かりません。原因を記録する前の差し戻しも含みます。",
+      "人が原因を選ばず、戻し先の判断でも原因が決まっていない差し戻しの回数です。見逃しだったかどうかは分かりません。原因を記録する前の差し戻しも含みます。",
     byCause: "見逃しではない差し戻しの原因",
     byCauseHint:
-      "原因が見逃しではないと分かっている差し戻しを、原因ごとに数えます。原因は差し戻すときに選ぶか、PR の指摘ならゴールガーディアンが判断します。",
+      "原因が見逃しではないと分かっている差し戻しを、原因ごとに数えます。原因は差し戻すときに選ぶか、PR の指摘なら戻し先の判断で決まります。",
     causes: {
       new_request: "新しい要望・方針の変更",
       question_answer: "質問への答え",
@@ -232,7 +232,7 @@ const en: DashboardMessages = {
     aiReviewRework: "Rework from AI review",
     aiReviewReworkHint:
       "How many times only remarks that sacty's own review task posted on a PR sent a step back for rework. Not counted as a person's changes.",
-    guardianMissed: "Goal guardian misses",
+    guardianMissed: "Final review misses",
     guardianMissedHint:
       "How many times a person sent back, at implementation approval, a deliverable the final review had passed, with a miss as the cause. Rework caused by conflicts or new requests is not counted.",
     integrationFailed: "Integration review failures",
@@ -246,10 +246,10 @@ const en: DashboardMessages = {
       "Changes requested by a person and rework from PR feedback, counted by the step whose deliverable was sent back.",
     reworkUnspecified: "Rework with unknown cause",
     reworkUnspecifiedHint:
-      "How many times changes were requested without a person choosing a cause and without the Goal Guardian judging one. It is not known whether they were misses. Includes rework from before causes were recorded.",
+      "How many times changes were requested without a person choosing a cause and without one being judged when deciding the step to redo. It is not known whether they were misses. Includes rework from before causes were recorded.",
     byCause: "Rework that is not a miss, by cause",
     byCauseHint:
-      "Rework known not to be a miss, counted by cause. The cause is chosen when requesting changes, or judged by the Goal Guardian for PR feedback.",
+      "Rework known not to be a miss, counted by cause. The cause is chosen when requesting changes, or, for PR feedback, judged when deciding the step to redo.",
     causes: {
       new_request: "New request or change of direction",
       question_answer: "Answer to a question",

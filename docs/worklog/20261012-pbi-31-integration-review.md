@@ -4,7 +4,7 @@
 - タスク: PBI-31
 - PR: #37
 - ブランチ: feat/issue-31-integration-review
-- 関係する ADR: [子タスクがすべて片付いた親は、ゴールガーディアンの統合レビューを通り、人間が承認してから完了にする](../adr/20261012-0718-parent-integration-review.md)
+- 関係する ADR: [子タスクがすべて片付いた親は、ゴールガーディアンの統合レビューを通り、人間が承認してから完了にする](../adr/20261012-0718-superseded-parent-integration-review.md)
 
 ## 目的
 

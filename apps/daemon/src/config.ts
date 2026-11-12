@@ -281,15 +281,17 @@ const ConfigFile = z.object({
   /** 書かなければ、config/agents.yaml の default_agent（上から順に、使えるもの）。 */
   default_agent: z.string().optional(),
   /**
-   * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent、
-   * 情報収集は orchestrator の AI）。
+   * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（情報収集は orchestrator の AI）。
    */
   step_agents: z
     .partialRecord(z.enum([...StepKey.options, "orchestrator", "gather"]), z.string())
     .default({}),
-  /** ゴールガーディアンに使うAI。省略すると default_agent。 */
-  guardian_agent: z.string().optional(),
-  /** 完了したタスクの監査に使うAI（PBI-125）。省略すると guardian_agent（それも無ければ default_agent）。 */
+  /**
+   * 以前の版のゴールガーディアンに使う AI。PBI-333 から使わない。書いてあっても起動に失敗させず、読み捨てて警告を出す
+   * （config.guardianAgentIgnored）。
+   */
+  guardian_agent: z.unknown().optional(),
+  /** 完了したタスクの監査に使うAI（PBI-125）。省略すると default_agent（PBI-333 より前は guardian_agent）。 */
   audit_agent: z.string().optional(),
   /**
    * 失敗して代わりのエージェント（agents の fallback）に切り替えたときの扱い。cooldown_minutes の間は、失敗した
@@ -574,14 +576,12 @@ export type AgentConfig = {
 export type AgentRoleKey = StepKey | "orchestrator" | "gather";
 
 /**
- * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent。統合レビューはゴールガーディアンが
- * 行うので、書いてなければ guardian_agent。情報収集はオーケストレーターの前段なので、書いてなければオーケストレーターの AI。
+ * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent（統合レビューも。PBI-333 より前は
+ * guardian_agent）。情報収集はオーケストレーターの前段なので、書いてなければオーケストレーターの AI。
  */
 export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
   if (role === "gather") return config.stepAgents?.gather ?? agentFor(config, "orchestrator");
-  return (
-    config.stepAgents?.[role] ?? (role === "integrate" ? config.guardianAgent : config.defaultAgent)
-  );
+  return config.stepAgents?.[role] ?? config.defaultAgent;
 }
 /**
  * 工程に使う AI（PBI-121）。人がタスクの詳細で選んだエージェントがあればそれ（config.yaml の step_agents より優先）、無ければ
@@ -646,9 +646,7 @@ export function agentSetting(agent: AgentConfig) {
 export type SactyConfig = {
   image: string;
   defaultAgent: AgentConfig;
-  /** ゴールガーディアンに使うAI。 */
-  guardianAgent: AgentConfig;
-  /** 完了したタスクの監査に使うAI（PBI-125。audit_agent・guardian_agent・default_agent の順）。 */
+  /** 完了したタスクの監査に使うAI（PBI-125。audit_agent・default_agent の順）。 */
   auditAgent: AgentConfig;
   /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
@@ -1034,11 +1032,8 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
       : { ok: false, problem: message("config.noDefaultAgent") };
   }
   if (isProblem(defaultAgent)) return defaultAgent;
-  const guardianAgent =
-    file.guardian_agent !== undefined ? pick("guardian_agent", file.guardian_agent) : defaultAgent;
-  if (isProblem(guardianAgent)) return guardianAgent;
   const auditAgent =
-    file.audit_agent !== undefined ? pick("audit_agent", file.audit_agent) : guardianAgent;
+    file.audit_agent !== undefined ? pick("audit_agent", file.audit_agent) : defaultAgent;
   if (isProblem(auditAgent)) return auditAgent;
   const roleAgents: Partial<Record<AgentRoleKey, AgentConfig>> = {};
   for (const [role, id] of Object.entries(file.step_agents)) {
@@ -1096,11 +1091,14 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
       },
       defaultAgent,
-      guardianAgent,
       auditAgent,
       stepAgents: roleAgents,
       agents,
-      agentWarnings: built.warnings,
+      agentWarnings: [
+        ...built.warnings,
+        // 使わなくなった guardian_agent（PBI-333）
+        ...(file.guardian_agent !== undefined ? [message("config.guardianAgentIgnored")] : []),
+      ],
       tierAgents: tierAgentsOf(agents),
     },
   };
@@ -1217,12 +1215,9 @@ providers:
 
 # 工程を動かす AI（書かなければ codex_standard。providers.codex が無ければ claude_standard）
 # default_agent: codex_standard
-# ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
-# guardian_agent: codex_advanced
-# 完了したタスクの監査に使う AI（書かなければ guardian_agent。無ければ default_agent）
+# 完了したタスクの監査に使う AI（書かなければ default_agent）
 # audit_agent: codex_advanced
-# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent、
-# 情報収集は orchestrator の AI）
+# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。情報収集は orchestrator の AI）
 # step_agents:
 #   orchestrator: codex_lite
 #   gather: codex_lite        # タスクの開始時の情報収集

@@ -1,6 +1,6 @@
 "use client";
 
-import { proposalAccepted, type Task, type TaskProposal } from "@sacty/core";
+import { openProposal, proposalAccepted, type Task, type TaskProposal } from "@sacty/core";
 import { cn } from "cn";
 import { ChangeDecisionForm } from "@/components/change-decision-form";
 import { Markdown } from "@/components/markdown";
@@ -14,7 +14,6 @@ function outcome(
   p: TaskProposal,
   m: Messages["parts"]["proposals"],
 ): { text: string; tone: "ok" | "no" | "wait" } {
-  if (!p.judgement) return { text: m.judging, tone: "wait" };
   const accepted = proposalAccepted(p);
   if (accepted === undefined) return { text: m.awaitingPerson, tone: "wait" };
   if (!accepted) return { text: m.notApplied, tone: "no" };
@@ -30,7 +29,7 @@ const TONE = {
   wait: "border-warn-line bg-warn-soft text-warn",
 } as const;
 
-/** タスク詳細の「変更の申し出と判定」。 */
+/** タスク詳細の「変更の申し出」（人が判断する。PBI-333）。 */
 export function Proposals({ task }: { task: Task }) {
   const messages = useMessages();
   const m = messages.parts.proposals;
@@ -67,8 +66,8 @@ function ProposalItem({
   const m = messages.parts.proposals;
   const step = messages.labels.step;
   const result = outcome(p, m);
-  const waiting =
-    task.status === "escalated" && p.judgement?.verdict === "undecidable" && !p.decision;
+  // 人の判断待ち（PBI-333 から、申し出はすべて人が判断する。以前の版では AI が判定できなかったもの）
+  const waiting = task.status === "escalated" && openProposal(task)?.id === p.id;
   return (
     <li
       className={cn(
@@ -103,18 +102,17 @@ function ProposalItem({
             <span className="text-muted-foreground">{m.none}</span>
           )}
         </dd>
-        <dt className="pt-0.5 text-xs text-muted-foreground">{m.judgement}</dt>
-        <dd className="break-words">
-          {p.judgement ? (
-            <>
+        {/* 以前の版の作業履歴の、AI による判定（PBI-333 から判定しない） */}
+        {p.judgement && (
+          <>
+            <dt className="pt-0.5 text-xs text-muted-foreground">{m.judgement}</dt>
+            <dd className="break-words">
               <span className="font-medium">{messages.labels.verdict[p.judgement.verdict]}</span>：
               {messages.labels.text(p.judgement.reason)}
-              <span className="ml-1 text-xs text-muted-foreground">{m.byGuardian}</span>
-            </>
-          ) : (
-            <span className="text-muted-foreground">{m.judgingShort}</span>
-          )}
-        </dd>
+              <span className="ml-1 text-xs text-muted-foreground">{m.byEarlierAi}</span>
+            </dd>
+          </>
+        )}
         {p.decision && (
           <>
             <dt className="pt-0.5 text-xs text-muted-foreground">{m.decision}</dt>

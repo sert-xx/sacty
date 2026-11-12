@@ -383,7 +383,7 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 - `reasoning_effort` の無い段階（既定の `claude_lite` など）は、それを書かない定義（ツールの既定）になる。
 - 置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に記録する。
 - プレビューにも同じファイルを出す。
-  プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`guardian_agent` のうち最初のもの。
+  プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`audit_agent` のうち最初のもの。
 - `ContextResolved` は、コンテキストを渡すたびに、その実行の `runId` で記録する（`contextResolved`）。
   工程の実行だけでなく、情報収集・オーケストレーター（PBI-146）・マージの後の監視・外部作業・書き出しの実行でも記録する。
 - 段階を置いた実行の費用は推定（`estimated`）として記録する。

@@ -7,7 +7,7 @@ import { useMessages } from "@/i18n/client";
 
 const initial: DecideChangeState = {};
 
-/** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断するフォーム。 */
+/** 変更の申し出を、人間が判断するフォーム（PBI-333 より前は、以前の版のゴールガーディアンが判定できなかったものだけ）。 */
 export function ChangeDecisionForm({
   taskId,
   proposalId,

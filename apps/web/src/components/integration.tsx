@@ -20,7 +20,7 @@ function Pill({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 
 /**
  * 最新の統合レビュー（PBI-31）。合否と読んだコード、足りないこと、観点ごとの判定、過去の指摘の再発、
- * ゴールガーディアンの説明を出す。
+ * 統合レビューのエージェントの説明を出す。
  */
 export function IntegrationResult({ task }: { task: Task }) {
   const { task: messages, labels, locale } = useMessages();

@@ -40,7 +40,7 @@
    - すべての工程を深掘りしたら `AuditCompleted`。
 
 - どちらも毎回新しいセッションで実行する。
-  使う AI は config.yaml の `audit_agent`（無ければ `guardian_agent`、それも無ければ `default_agent`）。
+  使う AI は config.yaml の `audit_agent`（無ければ `default_agent`）。
 - エージェントに見せるもの
   - セッションログは、質問への答えと同じく `/sacty-logs` に読み取り専用でマウントする。
   - 台帳の全文（1行に1件の JSON）は、`/sacty-ledger/ledger.jsonl` に読み取り専用でマウントする。

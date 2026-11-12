@@ -935,7 +935,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
     expect(notice()?.textContent).toContain("一時停止の間に、PR の指摘が2件届いています");
     expect(notice()?.textContent).toContain("PR #7");
     expect(notice()?.textContent).toContain("うち AI のレビューの指摘 1件");
-    expect(notice()?.textContent).toContain("ゴールガーディアンが読み、戻し先を判断");
+    expect(notice()?.textContent).toContain("走り直す前に、戻し先を判断して差し戻します");
     // 再開したら（実行待ち）、お知らせは消える
     server = detail(
       task({
@@ -1033,7 +1033,7 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
       }),
     );
     expect(ask()?.textContent).toContain("人に確かめてほしいことが2件あります");
-    expect(ask()?.textContent).toContain("ゴールガーディアンが判断できませんでした");
+    expect(ask()?.textContent).toContain("の意図を読み取れませんでした");
     expect(ask()?.textContent).toContain("上限の値は 31 日と推測しました");
     // 目立つ所：承認の案内（#gate）のすぐ後ろ、タブの中身の前に出る（どのタブを開いていても見える）
     const gate = container.querySelector("#gate");

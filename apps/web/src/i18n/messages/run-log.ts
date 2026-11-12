@@ -44,12 +44,12 @@ const ja = {
     raw: "生の行",
     truncated: "ここで間を省きました",
   },
-  /** 役割の見出し。ゴールガーディアンは何の判断かを括弧で添える（見出しなので、文言の規則の括弧の例外）。 */
+  /** 役割の見出し。判断の役割は何の判断かを括弧で添える（見出しなので、文言の規則の括弧の例外）。 */
   roles: {
     orchestrator: "オーケストレーター",
-    guardian: "ゴールガーディアン（変更の申し出の判定）",
-    "final-review": "ゴールガーディアン（最終レビュー）",
-    rework: "ゴールガーディアン（PR の指摘の戻し先）",
+    guardian: "以前の版の AI の判定（変更の申し出）",
+    "final-review": "最終レビュー（以前の版）",
+    rework: "戻し先の判断（PR の指摘）",
     chat: "質問への答え",
     "error-analysis": "エラーの分析",
     export: "書き出し",
@@ -141,9 +141,9 @@ const en: RunLogMessages = {
   },
   roles: {
     orchestrator: "Orchestrator",
-    guardian: "Goal Guardian (change proposal)",
-    "final-review": "Goal Guardian (final review)",
-    rework: "Goal Guardian (where to rework PR feedback)",
+    guardian: "AI verdict in an earlier version (change proposal)",
+    "final-review": "Final review (earlier version)",
+    rework: "Step to redo (PR feedback)",
     chat: "Answer to a question",
     "error-analysis": "Error analysis",
     export: "Export",

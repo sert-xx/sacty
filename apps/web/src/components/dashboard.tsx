@@ -653,7 +653,7 @@ export function FlowCard({ data }: { data: DashboardData }) {
 }
 
 /**
- * 品質の信号（PBI-118）：直近30日の、人の差し戻し・PR の指摘の差し戻し・ゴールガーディアンの見逃し・統合レビューの不合格・
+ * 品質の信号（PBI-118）：直近30日の、人の差し戻し・PR の指摘の差し戻し・最終レビューの見逃し・統合レビューの不合格・
  * 監視で作った修正のタスクの回数と、工程ごとの差し戻しの回数（要求要件・設計・実装は常に出し、ほかの工程は回数があるときだけ）。
  */
 export function QualityCard({ data }: { data: DashboardData }) {

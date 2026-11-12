@@ -76,11 +76,9 @@ const PARAMS = {
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
-  "pause.guardianJudging": null,
   "pause.reachedApproval": null,
   "cancel.alreadyCancelled": null,
   "cancel.cleaningUp": null,
-  "cancel.guardianJudging": null,
   "rerun.notCancelled": null,
   "rerun.notRerunnable": null,
   "rerun.alreadyRerun": null,
@@ -619,6 +617,7 @@ const PARAMS = {
   "config.noDefaultAgent": null,
   "config.agentRuntimeRequired": null,
   "config.agentModelRequired": null,
+  "config.guardianAgentIgnored": null,
   "config.agentProviderMissing": z.object({ id: z.string(), provider: z.string() }),
   "config.modelPriceMissing": z.object({
     provider: z.string(),
@@ -849,12 +848,8 @@ const ja: MessageDictionary = {
   "pause.reachedApproval":
     "止める前に作業が終わり、承認待ちになったため、一時停止しませんでした（PR を作った工程は、PR で判断してください。止めるなら中止してください）。",
   "pause.waitingTasks": "ほかのタスクの完了を待っているため、一時停止する必要はありません。",
-  "pause.guardianJudging":
-    "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
   "cancel.alreadyCancelled": "すでに中止しています。",
   "cancel.cleaningUp": "中止の後片付けをしています。",
-  "cancel.guardianJudging":
-    "ゴールガーディアンが変更の申し出を判定しているため、終わるまで中止できません。",
   "rerun.notCancelled": "中止したタスクだけを再実行できます。",
   "rerun.notRerunnable":
     "このタスクは再実行できません（分割で作った子タスクは親から、PR のレビューは PR から依頼し直してください）。",
@@ -1141,7 +1136,7 @@ const ja: MessageDictionary = {
   "input.dollarBrace":
     "「$\u007b」は使えません（秘密情報は { secret: 名前 } で参照してください）。",
   "run.daemonStopped": "デーモンが停止したため、実行が中断されました。",
-  "run.guardianInterrupted": "デーモンが停止したため、ゴールガーディアンの判定が中断されました。",
+  "run.guardianInterrupted": "デーモンが停止したため、以前の版の AI の判定が中断されました。",
   "run.stoppedByPerson": "人間が止めたため、実行しませんでした。",
   "run.emptyResult":
     "エージェントの最後の結果が空で、その前にも中身のある結果がありませんでした。成果物がないため、失敗として扱います。再開すると、同じ工程をやり直します。",
@@ -1206,8 +1201,8 @@ const ja: MessageDictionary = {
     `1Password から「${ref}」を取り出せませんでした（${detail}）。参照（保管庫・アイテム・フィールド）を確かめてから再開してください。`,
   "run.repositoryNotConfigured":
     "このタスクには対象リポジトリがありません（対象リポジトリを選ぶ前の版で作ったタスクです）。中止して、タスクを作り直してください。",
-  "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
-  "guardian.reworkUnreadable": "ゴールガーディアンの出力から、戻し先の判断を読み取れませんでした。",
+  "guardian.verdictUnreadable": "以前の版の AI の出力から、判定を読み取れませんでした。",
+  "guardian.reworkUnreadable": "以前の版の AI の出力から、戻し先の判断を読み取れませんでした。",
   "rework.unreadable": "出力から、戻し先の判断を読み取れませんでした。",
   "rework.runFailed": ({ detail }, text) => `戻し先の判断の実行に失敗しました：${text(detail)}`,
   "rework.reviewTaskUnreadable":
@@ -1245,13 +1240,13 @@ const ja: MessageDictionary = {
   "orchestrator.failed": ({ detail }, text) =>
     `オーケストレーターを実行できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
-    "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので、費用をかける前に止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。",
+    "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので、費用をかける前に止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（テストを実行せずに進めます）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。",
   "orchestrator.noTestsContradicted": ({ reason, files }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、テストのように見えるファイルがあります（${files}）。テストなしでは進めずに止めます。ファイルが本当にテストなら、再開するときにそのテストのコマンドを指定してください。テストではないなら、「テストなしで進める」を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（テストを実行せずに進めます）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。Sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてください。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（ゴールガーディアンがタスクの目的から判定します）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストなしでは進めずに止めます。Sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてください。再開するときに、テストのコマンドを指定するか、テストを書かないリポジトリなら「テストなしで進める」（テストを実行せずに進めます）を選んでください。どちらも選ばずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。再開するときに、テストのコマンドを指定してください（不具合の修正は、テストなしでは進められません）。指定せずに再開すると、まだ工程を始めていなければ、工程の選択からやり直します。`,
   "implement.testCommandInvalid":
@@ -1297,7 +1292,7 @@ const ja: MessageDictionary = {
     "投稿先が、プロジェクトの対象のリポジトリではありません（対象の外には投稿しません）。",
   "review.verdictMissing": "判定がありません。",
   "review.verdictIdMismatch": ({ expected, answered }) =>
-    `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
+    `観点 ${expected} の判定がありません（最終レビューは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "review.unreadableAt": ({ line, column, near }, text) =>
     `最終レビューの出力の JSON を読み取れませんでした（JSON の ${line} 行目の ${column} 文字目の付近で壊れています${text(near) ? `：${text(near)}` : ""}）。`,
@@ -1338,7 +1333,7 @@ const ja: MessageDictionary = {
   "security.alreadyRequested": "この区分の対応のタスクは、すでに作っています。",
   "security.noFindings": "レポートに、この区分の指摘がありません。",
   "run.guardianFailed": ({ detail }, text) =>
-    `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
+    `以前の版の AI の判定の実行に失敗しました：${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
   "verify.workspaceMissing": "実装の作業領域が見つからないため、検証できません。",
   "verify.commandMissing": ({ commands: names, image, step, testsDecidable }) => {
@@ -1363,7 +1358,7 @@ const ja: MessageDictionary = {
   "verify.diffUnavailable": ({ detail }, text) =>
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
-    `ゴールガーディアンの最終レビューを実行できませんでした：${text(detail)}`,
+    `最終レビューを実行できませんでした：${text(detail)}`,
   "verify.finalReviewUnreadable": ({ count, max, path, detail }, text) =>
     `最終レビューの出力から、判定を読み取れませんでした（${count}/${max}回目）。${detail === undefined ? "" : text(detail)}不合格にはせず、過去の指摘も再発と数えずに、最終レビューをやり直します。出力：${path}`,
   "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
@@ -1523,6 +1518,8 @@ const ja: MessageDictionary = {
     `エージェント「${id}」は、providers.${provider} が無いので使えません。`,
   "config.modelPriceMissing": ({ provider, model, agents }) =>
     `providers.${provider}.available_models に ${model} の単価が無いので、${agents} を使えません。単価を足してください。`,
+  "config.guardianAgentIgnored":
+    "guardian_agent は使わなくなりました（読み捨てます）。統合レビューは step_agents.integrate、監査は audit_agent に書いてください。書かなければ default_agent です。",
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。Sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
@@ -1532,7 +1529,7 @@ const ja: MessageDictionary = {
     `エージェント「${id}」の代わり（fallback）の「${fallback}」は使えないので、利用制限のときに切り替えません：${text(reason)}`,
   "agent.stepMissing": "その工程は、このタスクの工程にありません。",
   "agent.stepNotChangeable":
-    "統合レビューは、ゴールガーディアン（config.yaml の guardian_agent）が実行するため、工程のエージェントを変えられません。",
+    "統合レビューのエージェントは config.yaml の step_agents.integrate（書かなければ default_agent）で決まるため、タスクごとには変えられません。",
   "agent.notInAgents": ({ name }) =>
     `エージェント「${name}」は使えるエージェントにありません。画面に出ているエージェントから選んでください。`,
   "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
@@ -1608,12 +1605,8 @@ const en: MessageDictionary = {
     "The work finished before it could stop and the task is now waiting for approval, so it was not paused (decide on the PR for a step that opened one, or cancel the task to stop it).",
   "pause.waitingTasks":
     "The task is waiting for other tasks to finish, so there is no need to pause it.",
-  "pause.guardianJudging":
-    "The Goal Guardian is judging a change request. You can pause once it finishes.",
   "cancel.alreadyCancelled": "The task is already cancelled.",
   "cancel.cleaningUp": "Cleaning up after cancellation.",
-  "cancel.guardianJudging":
-    "The Goal Guardian is judging a change request. You can cancel once it finishes.",
   "rerun.notCancelled": "Only a cancelled task can be rerun.",
   "rerun.notRerunnable":
     "This task can't be rerun (rerun a subtask from its parent, and request a PR review again on the PR).",
@@ -1900,7 +1893,7 @@ const en: MessageDictionary = {
   "input.dollarBrace": "“$\u007b” is not allowed (refer to secrets with { secret: name }).",
   "run.daemonStopped": "The daemon stopped, so the run was interrupted.",
   "run.guardianInterrupted":
-    "The daemon stopped, so the Goal Guardian's judgement was interrupted.",
+    "The daemon stopped, so the AI verdict in an earlier version was interrupted.",
   "run.stoppedByPerson": "Not run because it was stopped by a person.",
   "run.emptyResult":
     "The agent's final result was empty, and no earlier result had any content. There is no deliverable, so the run is treated as failed. Resuming runs the same step again.",
@@ -1967,8 +1960,10 @@ const en: MessageDictionary = {
     `Could not read "${ref}" from 1Password (${detail}). Check the reference (vault, item, and field) and resume.`,
   "run.repositoryNotConfigured":
     "This task has no target repository (it was created before tasks chose one). Cancel it and create the task again.",
-  "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
-  "guardian.reworkUnreadable": "Could not read the step to redo from the Goal Guardian's output.",
+  "guardian.verdictUnreadable":
+    "Could not read a verdict from the output of the AI in an earlier version.",
+  "guardian.reworkUnreadable":
+    "Could not read the step to redo from the output of the AI in an earlier version.",
   "rework.unreadable": "Could not read the step to redo from the output.",
   "rework.runFailed": ({ detail }, text) =>
     `The run to decide the step to redo failed: ${text(detail)}`,
@@ -2007,13 +2002,13 @@ const en: MessageDictionary = {
   "orchestrator.failed": ({ detail }, text) =>
     `Could not run the Orchestrator: ${text(detail).replace(/[。.]\s*$/, "")}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
-    'The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Stopping before spending on the steps. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.',
+    'The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Stopping before spending on the steps. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (tests are not run). Resuming without either chooses the steps again if no step has started yet.',
   "orchestrator.noTestsContradicted": ({ reason, files }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but some files look like tests (${files}). Stopping instead of proceeding without tests. If the files really are tests, specify their test command when resuming. If they are not, choose "Proceed without tests". Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. Stopping instead of proceeding without tests. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. Stopping instead of proceeding without tests. When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (tests are not run). Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. Stopping instead of proceeding without tests. Check that the user running Sacty can read that directory (permissions, disk state). When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (the Goal Guardian judges by the purpose of the task). Resuming without either chooses the steps again if no step has started yet.`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. Stopping instead of proceeding without tests. Check that the user running Sacty can read that directory (permissions, disk state). When resuming, specify the test command, or choose "Proceed without tests" if the repository does not have tests (tests are not run). Resuming without either chooses the steps again if no step has started yet.`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. Specify the test command when resuming (a bug fix cannot proceed without tests). Resuming without it chooses the steps again if no step has started yet.`,
   "implement.testCommandInvalid":
@@ -2058,7 +2053,7 @@ const en: MessageDictionary = {
     "The target is not a repository of the project's targets (sacty does not post outside them).",
   "review.verdictMissing": "No verdict was given.",
   "review.verdictIdMismatch": ({ expected, answered }) =>
-    `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
+    `No verdict for the viewpoint ${expected} (the final review answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "review.unreadableAt": ({ line, column, near }, text) =>
     `The JSON in the final review output could not be read (it is broken near line ${line}, column ${column} of the JSON${text(near) ? `: ${text(near)}` : ""}).`,
@@ -2102,7 +2097,8 @@ const en: MessageDictionary = {
     "This is not a security check task whose report was approved and completed, so no fix task can be created.",
   "security.alreadyRequested": "A fix task for this category has already been created.",
   "security.noFindings": "The report has no findings in this category.",
-  "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,
+  "run.guardianFailed": ({ detail }, text) =>
+    `The AI verdict in an earlier version failed to run: ${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
   "verify.workspaceMissing":
     "The implementation workspace was not found, so it cannot be verified.",
@@ -2128,7 +2124,7 @@ const en: MessageDictionary = {
   "verify.diffUnavailable": ({ detail }, text) =>
     `Could not get the diff, so the final review was not done: ${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
-    `Could not run the Goal Guardian's final review: ${text(detail)}`,
+    `Could not run the final review: ${text(detail)}`,
   "verify.finalReviewUnreadable": ({ count, max, path, detail }, text) =>
     `Could not read the verdicts from the final review output (attempt ${count} of ${max}). ${detail === undefined ? "" : `${text(detail)} `}It is not counted as a failure, and no past remark is counted as recurring; the final review is run again. Output: ${path}`,
   "verify.finalReviewUnreadableStopped": ({ max, path, detail }, text) =>
@@ -2287,6 +2283,8 @@ const en: MessageDictionary = {
     `The agent "${id}" cannot be used because providers.${provider} is not written.`,
   "config.modelPriceMissing": ({ provider, model, agents }) =>
     `${agents} cannot be used because providers.${provider}.available_models has no price for ${model}. Add its price.`,
+  "config.guardianAgentIgnored":
+    "guardian_agent is no longer used (it is ignored). Write step_agents.integrate for the integration review and audit_agent for audits. Without them, default_agent is used.",
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart Sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
@@ -2296,7 +2294,7 @@ const en: MessageDictionary = {
     `The fallback "${fallback}" of the agent "${id}" cannot be used, so Sacty does not switch to it at a usage limit: ${text(reason)}`,
   "agent.stepMissing": "That step is not one of this task's steps.",
   "agent.stepNotChangeable":
-    "The integration review is run by the goal guardian (guardian_agent in config.yaml), so its step agent cannot be changed.",
+    "The integration review agent is set by step_agents.integrate in config.yaml (default_agent if not written), so it cannot be changed per task.",
   "agent.notInAgents": ({ name }) =>
     `The agent "${name}" is not one of the usable agents. Choose one of the agents shown.`,
   "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,

@@ -17,7 +17,15 @@ import { dockerClientEnv } from "./agents/docker.js";
  * shared-compose.ts で消す。キャッシュ（`_cache`）と、退避した git のメタデータ（`_git`）と、タスクごとの依存のキャッシュ
  * （`_task-cache`。タスクの作業領域と一緒に消す）は含めない。
  */
+/**
+ * 判断・分析・統合レビューなどを、作業領域とは別のコードの写しで実行する一時領域（`<名前>/<runId>`。PBI-333 より前は
+ * `_guardian`）。
+ */
+export const CODE_COPY_DIR = "_code-copy";
+
 export const RUN_SCRATCH_DIRS = [
+  CODE_COPY_DIR,
+  // PBI-333 より前の版が残した写し（ゴールガーディアンの作業領域）も片付ける
   "_guardian",
   "_snapshots",
   "_review",

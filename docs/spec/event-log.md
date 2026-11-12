@@ -12,14 +12,14 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は106（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は106（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判断、検証、git・PR、最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
   - `taskId`・`projectId`
   - `at`（同じ追記の中のイベントは同じ時刻）
   - `actor`
-- `actor` は `person`・`sacty`・`orchestrator`・`gatherer`（タスクの開始時の情報収集。[タスクと工程](tasks-and-steps.md#情報収集)）・`guardian`・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
+- `actor` は `person`・`sacty`・`orchestrator`・`gatherer`（タスクの開始時の情報収集。[タスクと工程](tasks-and-steps.md#情報収集)）・`guardian`（最終レビューと、以前の版の AI の判定）・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
 - AI を使ったイベントの多くは、次を持つ。
   - トークン数（`usage`：`input`・`cacheRead`・`cacheWrite`・`output`）
   - 費用（`costUsd`）と、推定かどうか（`estimated`）、使った分の全体を読めなかったか（`costUnknown`。失敗しうるイベントだけ）
@@ -111,7 +111,7 @@
   | `ErrorAnalyzed` | エラーの分析（`errorAnalysis`。[エラーレポート](error-report.md)） |
   | `DeploymentChecked` | マージの後の監視の工程（`deployment`。[マージの後の監視](deployment-watch.md)） |
   | `ReworkJudged`（actor が `agent`。PBI-332） | 戻し先の判断（`rework`）。actor が `sacty`（`reviewTaskId` があり、PR のレビューの子タスクの答えから決めた）のものは実行していないので、行にしない |
-  | `ChangeJudged`・`ReworkJudged`（actor が `guardian`。以前の版）・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
+  | `ChangeJudged`・`ReworkJudged`（actor が `guardian`。以前の版）・`FinalReviewed`・`FinalReviewFailed` | 以前の版の AI の判定（`guardian`。最終レビューもこの行） |
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。
   一覧に無い種類が `costUsd` を持つと、型の検査で typecheck が通らない。
@@ -175,7 +175,7 @@
      - 工程の一覧に無い工程の記録も出す。
      - デプロイの確認は、マージの後の監視の工程の行に入れる。
        実行中も出す。
-  3. 書き出し・質問への答え・エラーの分析・戻し先の判断・ゴールガーディアン（記録があるときだけ）
+  3. 書き出し・質問への答え・エラーの分析・戻し先の判断・以前の版の AI の判定（記録があるときだけ）
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足す。
   そのため、タスクの費用（`budget.usedUsd`・`budget.estimated`）と一致する。

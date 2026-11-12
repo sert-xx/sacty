@@ -40,8 +40,6 @@ export function prConflictNote(task: Task, l: LabelMessages): string | undefined
 
 export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
-  const proposal = openProposal(task);
-  if (proposal && !proposal.judgement) return l.state.guardianJudging;
   if (task.status === "idle" && isCompleted(task)) {
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）
     return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
@@ -60,7 +58,7 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "idle" && task.verification === "tests_passed") {
     return l.state.finalReviewing;
   }
-  if (task.status === "escalated" && proposal) return l.state.changeUndecided;
+  if (task.status === "escalated" && openProposal(task)) return l.state.changeUndecided;
   if (task.status === "escalated" && task.escalation?.reason === "rework_confirmation") {
     return l.state.reworkConfirmation;
   }
@@ -117,7 +115,7 @@ export type StatusTone = "working" | "waiting" | "person" | "completed" | "cance
 export function statusTone(task: Task): StatusTone {
   if (task.status === "cancelled") return "cancelled";
   if (task.status === "idle" && isCompleted(task)) return "completed";
-  // ゴールガーディアンが PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
+  // PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
   if (task.status === "awaiting_approval" && task.pendingReview) return "working";
   if ((task.status === "queued" || task.status === "idle") && heldReview(task)) return "working";
   if (needsPerson(task)) return "person";
@@ -135,12 +133,12 @@ export function usesTestCommand(task: Task): boolean {
 }
 
 /**
- * 画面に出すテストの実行。ゴールガーディアンが最終レビューの中で実行したもの（byGuardian。今の版）か、それより前の版で sacty が
+ * 画面に出すテストの実行。最終レビューの中で実行したもの（byGuardian。以前の版のゴールガーディアン）か、それより前の版で sacty が
  * テストのコンテナで実行したもの。
  */
 export type TestRunView = {
   command: string;
-  /** 終了コード（ゴールガーディアンが申告しなかったときは無い）。 */
+  /** 終了コード（最終レビューで申告しなかったときは無い）。 */
   exitCode?: number;
   passed: boolean;
   output: string;
@@ -148,7 +146,7 @@ export type TestRunView = {
   durationMs?: number;
   note?: NonNullable<Task["lastTests"]>["note"];
   byGuardian?: true;
-  /** 環境によるとゴールガーディアンが判断したテストの失敗（PBI-155）。 */
+  /** 環境によると最終レビューで判断したテストの失敗（PBI-155）。 */
   environmentFailures?: string[];
   /** 差分と無関係で、実行し直すと結果が変わった失敗（PBI-310）。 */
   flakyFailures?: FlakyFailure[];
@@ -156,14 +154,14 @@ export type TestRunView = {
   rejectedFlakyFailures?: DaemonText[];
   /** イメージにツールが無くて実行できなかった検証（差分が文書だけで、止めずに進めたとき。PBI-158）。 */
   missingCommands?: string[];
-  /** ゴールガーディアンが実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。元の段。 */
+  /** 最終レビューで実行せず、同じ内容で前の段が実行した結果を使い回した（PBI-305）。元の段。 */
   reusedFrom?: "self-review" | "ci";
 };
 
 /**
  * 実装の成果物に出す、テストの結果と最終レビュー。それぞれ、今の提出の検証のものか（current）を返す（PR #105 再レビュー指摘）。
  * - 今の提出の検証が始まった（verification が pending）なら、どちらも前の提出のもの
- * - テストの結果は、最終レビューの中でゴールガーディアンが実行したものがあればそれ、無ければそれより前の版で sacty が実行したもの
+ * - テストの結果は、最終レビューの中で実行したもの（以前の版のゴールガーディアン）があればそれ、無ければそれより前の版で sacty が実行したもの
  * - それより前の版の記録では、最終レビューは、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より後のものだけが今の検証のもの
  * 前の提出のものは、隠さずに「前の提出の」と区別して出す。
  */
@@ -247,7 +245,7 @@ export function personAction(
   task: Task,
   l: LabelMessages,
 ): { href: string; label: string; external?: true } {
-  // ゴールガーディアンが判定できなかった申し出は、タスク詳細の「変更の申し出と判定」で判断する
+  // 変更の申し出は、タスク詳細の「変更の申し出」で人が判断する（PBI-333）
   if (task.status === "escalated" && openProposal(task)) {
     return { href: `/tasks/${task.id}#proposals`, label: l.action.decide };
   }
@@ -969,11 +967,13 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);
     case "TaskEscalated":
-      return event.payload.reason === "change_undecidable"
-        ? e.escalatedUndecidable(event.payload.proposalId)
-        : event.payload.reason === "rework_confirmation"
-          ? e.escalatedRework(l.step[event.payload.target ?? event.payload.step])
-          : e.escalatedTooMany(l.step[event.payload.target ?? event.payload.step]);
+      return event.payload.reason === "change_proposed"
+        ? e.escalatedProposed(event.payload.proposalId)
+        : event.payload.reason === "change_undecidable"
+          ? e.escalatedUndecidable(event.payload.proposalId)
+          : event.payload.reason === "rework_confirmation"
+            ? e.escalatedRework(l.step[event.payload.target ?? event.payload.step])
+            : e.escalatedTooMany(l.step[event.payload.target ?? event.payload.step]);
     case "PullRequestReviewImported":
       return e.PullRequestReviewImported(
         event.payload.number,
@@ -1361,7 +1361,7 @@ export type StepAgentRow = {
 };
 
 /**
- * 工程ごとのエージェントと、決めた元（PBI-121）。ゴールガーディアンが行う統合レビューは、工程のエージェントで動かないので出さない。
+ * 工程ごとのエージェントと、決めた元（PBI-121）。統合レビューは、config.yaml の step_agents.integrate で決まり、タスクごとに変えられないので出さない。
  * stepAgents は config.yaml で決まる名前（デーモンの状態。取れなければ undefined）。
  */
 export function stepAgentRows(

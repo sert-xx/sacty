@@ -195,7 +195,7 @@ export function ReviewView({ task }: { task: Task }) {
               <Implementation task={task} />
             </>
           ) : step === "integrate" ? (
-            // 統合レビュー（PBI-31）は、ゴールガーディアンの判定と説明を成果物として出す
+            // 統合レビュー（PBI-31）は、統合レビューのエージェントの判定と説明を成果物として出す
             <IntegrationResult task={task} />
           ) : (
             <section

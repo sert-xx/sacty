@@ -32,7 +32,7 @@ function taskOf(events: ActivityEvent[]): Task {
 
 /**
  * オーケストレーターの失敗と選択、要求要件の3回の実行（完了・失敗・古い形の完了）、設計、
- * ゴールガーディアンの判定を含む作業履歴。
+ * 以前の版のゴールガーディアンの判定を含む作業履歴。
  */
 function history(): ActivityEvent[] {
   seq = 0;
@@ -191,7 +191,7 @@ function history(): ActivityEvent[] {
 }
 
 describe("工程ごとの費用（PBI-46）", () => {
-  it("オーケストレーター・工程（タスクの工程の順）・ゴールガーディアンの順に行を出す。実行していない工程も0回で出す", () => {
+  it("オーケストレーター・工程（タスクの工程の順）・以前の版の AI の判定の順に行を出す。実行していない工程も0回で出す", () => {
     const events = history();
     const { rows } = stepCosts(taskOf(events), events);
     expect(rows.map((r) => [r.role, r.runs.length])).toEqual([
@@ -243,7 +243,7 @@ describe("工程ごとの費用（PBI-46）", () => {
     ]);
   });
 
-  it("オーケストレーターの失敗と選択の費用を1行にまとめ、ゴールガーディアンの判定も1行で出す", () => {
+  it("オーケストレーターの失敗と選択の費用を1行にまとめ、以前の版の AI の判定も1行で出す", () => {
     const events = history();
     const { rows } = stepCosts(taskOf(events), events);
     const orchestrator = rows.find((r) => r.role === "orchestrator");
@@ -333,7 +333,7 @@ describe("工程ごとの費用（PBI-46）", () => {
     expect(total.costUsd).toBe(0.2);
   });
 
-  it("費用・接続先の項目が無い古いゴールガーディアンの判定も1回として数え、記録の無い項目は持たない", () => {
+  it("費用・接続先の項目が無い古い AI の判定（以前の版）も1回として数え、記録の無い項目は持たない", () => {
     seq = 0;
     const judged = ev(
       {
@@ -356,7 +356,7 @@ describe("工程ごとの費用（PBI-46）", () => {
     expect(total).toEqual({ usage: undefined, costUsd: 0, estimated: false, unknownRuns: 0 });
   });
 
-  it("ゴールガーディアンの実行の失敗・中断は、判定の記録でも「完了」にしない（以前の記録は理由の文言で判別する）", () => {
+  it("以前の版の AI の判定の実行の失敗・中断は、判定の記録でも「完了」にしない（以前の記録は理由の文言で判別する）", () => {
     seq = 0;
     const failed = { code: "run.guardianFailed", params: { detail: "401 Unauthorized" } } as const;
     const interrupted = { code: "run.guardianInterrupted" } as const;
@@ -508,7 +508,7 @@ describe("質問への答えの費用（PBI-54）", () => {
     ];
     const task = taskOf(events);
     const { rows, total } = stepCosts(task, events);
-    // 工程の行の後、ゴールガーディアンの前
+    // 工程の行の後、以前の版の AI の判定の前
     expect(rows.map((r) => r.role)).toEqual([
       "orchestrator",
       "requirements",

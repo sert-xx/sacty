@@ -73,12 +73,21 @@ const task = (patch: Partial<Task> = {}): Task => ({
 });
 
 describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
-  it("ゴールガーディアンの判定中・最終レビュー中は、待機（idle）でもそれと分かるように出す", () => {
-    expect(statusText(task({ proposals: [proposal()] }))).toBe("ゴールガーディアンが判定中");
+  it("最終レビュー中は、待機（idle）でもそれと分かるように出す", () => {
     // 実装の検証中（テスト・最終レビュー）は、待機（idle）のまま（PBI-10a）
-    expect(statusText(task({ verification: "tests_passed" }))).toBe(
-      "ゴールガーディアンが最終レビュー中",
-    );
+    expect(statusText(task({ verification: "tests_passed" }))).toBe("最終レビュー中");
+  });
+
+  it("人の判断を待つ申し出（判定の無いもの）も、判断フォームのある「変更の申し出」へ誘導する（PBI-333）", () => {
+    const waiting = task({ status: "escalated", proposals: [proposal()] });
+    expect(personAction(waiting)).toEqual({ href: "/tasks/t1#proposals", label: "判断する" });
+    expect(statusText(waiting)).toBe("変更の申し出の判断待ち");
+    // 人が判断したら、もう待たない
+    const decided = task({
+      status: "idle",
+      proposals: [{ ...proposal(), decision: { accept: true, at: "2026-11-12T00:00:00.000Z" } }],
+    });
+    expect(statusText(decided)).not.toBe("変更の申し出の判断待ち");
   });
 
   it("判定できなかった申し出は、判断フォームのある「変更の申し出と判定」へ誘導する", () => {
@@ -144,9 +153,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
         }),
         ja,
       ).text;
-    expect(because("guardian_missed")).toBe(
-      "実装を差し戻し：指摘1件（人間）（原因：ゴールガーディアンの見逃し）",
-    );
+    expect(because("guardian_missed")).toBe("実装を差し戻し：指摘1件（人間）（原因：見逃し）");
     expect(because("base_changed")).toBe(
       "実装を差し戻し：指摘1件（人間）（原因：ベースの変化による競合）",
     );
@@ -425,7 +432,22 @@ describe("英語の表示（PBI-4b）", () => {
         }),
         en,
       ),
-    ).toBe("Escalated: the Goal Guardian could not decide CP-1");
+    ).toBe("Escalated: the AI in an earlier version could not decide CP-1");
+    // 変更の申し出を人が判断する（PBI-333）
+    expect(
+      describeIn(
+        event({
+          type: "TaskEscalated",
+          payload: {
+            step: "design",
+            reason: "change_proposed",
+            proposalId: "CP-1",
+            pendingRemarks: [],
+          },
+        }),
+        en,
+      ),
+    ).toBe("Escalated: CP-1 needs your decision");
   });
 });
 
@@ -788,7 +810,7 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
           pendingReview: { keys: ["comment:1"], remarks: ["x"] },
         }),
       ),
-    ).toBe("ゴールガーディアンが PR の指摘を判断中");
+    ).toBe("PR の指摘の戻し先を判断中");
     expect(
       statusText(
         task({
@@ -1202,13 +1224,13 @@ describe("最終レビューの表示：出力の JSON を直して読んだと�
     }) as unknown as ActivityEvent;
 
   it("直して読んだ箇所を、合格の表示に添える。直さずに読めたときは、これまでどおり", () => {
-    expect(describeEvent(reviewed())).toBe("最終レビュー：合格（ゴールガーディアン・$0.5000）");
+    expect(describeEvent(reviewed())).toBe("最終レビュー：合格（以前の版の AI の判定・$0.5000）");
     const repaired = {
       code: "review.outputRepaired",
       params: { repairs: [{ kind: "brace", count: 1, line: 1, column: 2556, key: "humanChecks" }] },
     };
     expect(describeEvent(reviewed(repaired))).toBe(
-      "最終レビュー：合格（ゴールガーディアン・$0.5000）。最終レビューの出力の JSON が崩れていたので、直して読みました（入れ子のオブジェクトの閉じ括弧 } の欠け（humanChecks の前に補った）：JSON の 1 行目の 2556 文字目）。",
+      "最終レビュー：合格（以前の版の AI の判定・$0.5000）。最終レビューの出力の JSON が崩れていたので、直して読みました（入れ子のオブジェクトの閉じ括弧 } の欠け（humanChecks の前に補った）：JSON の 1 行目の 2556 文字目）。",
     );
     expect(describeIn(reviewed(repaired), labels.en)).toContain(
       "a missing closing } of a nested object (added before humanChecks): line 1, column 2556 of the JSON",
@@ -1445,7 +1467,7 @@ describe("時間切れで止めた実行の記録の表示（PBI-280）", () => 
       "The final review run",
     );
     expect(describeEvent(event("AgentRunTimedOut", { role: "guardian", minutes: 3 }))).toContain(
-      "ゴールガーディアンの実行",
+      "以前の版の AI の判定の実行",
     );
     expect(
       describeEvent(event("AgentRunTimedOut", { role: "unknown-role", minutes: 3 })),
@@ -1559,26 +1581,26 @@ describe("状態の表示の種類（PBI-42）", () => {
     };
     for (const status of ["queued", "idle"] as const) {
       const judging = task({ ...held, status });
-      expect(statusText(judging)).toBe("ゴールガーディアンが PR の指摘を判断中");
+      expect(statusText(judging)).toBe("PR の指摘の戻し先を判断中");
       expect(statusTone(judging)).toBe("working");
     }
     // 一時停止中は、一時停止の理由のまま（人の出番）
     const paused = task({ ...held, status: "paused", pausedReason: "error" });
-    expect(statusText(paused)).not.toBe("ゴールガーディアンが PR の指摘を判断中");
+    expect(statusText(paused)).not.toBe("PR の指摘の戻し先を判断中");
     expect(statusTone(paused)).toBe("person");
     // 指摘が無ければ、これまでどおり
     expect(statusText(task({ ...held, status: "queued", pendingReview: undefined }))).not.toBe(
-      "ゴールガーディアンが PR の指摘を判断中",
+      "PR の指摘の戻し先を判断中",
     );
   });
 
-  it("ゴールガーディアンが PR の指摘を判断している間は、承認待ちでも working", () => {
+  it("PR の指摘の戻し先を判断している間は、承認待ちでも working", () => {
     const judging = task({
       status: "awaiting_approval",
       gate: { step: "implement", submission: 1 },
       pendingReview: { keys: ["comment:1"], remarks: ["x"] },
     });
-    expect(statusText(judging)).toBe("ゴールガーディアンが PR の指摘を判断中");
+    expect(statusText(judging)).toBe("PR の指摘の戻し先を判断中");
     expect(statusTone(judging)).toBe("working");
   });
 });
@@ -1963,7 +1985,7 @@ describe("今の提出の検証の結果か（PR #105 再レビュー指摘）",
   });
 });
 
-describe("ゴールガーディアンが最終レビューの中で実行したテスト", () => {
+describe("最終レビューの中で実行したテスト（以前の版のゴールガーディアン）", () => {
   const review = (exitCode: number | undefined) => ({
     passed: exitCode === 0,
     viewpoints: [],
@@ -1980,7 +2002,7 @@ describe("ゴールガーディアンが最終レビューの中で実行した�
       output: "2 passed",
     },
   });
-  it("ゴールガーディアンが前の段の結果を使い回したら、元の段を出す（PBI-305）", () => {
+  it("最終レビューで前の段の結果を使い回したら、元の段を出す（PBI-305）", () => {
     const reused = review(0);
     expect(
       verificationResults(
@@ -2029,7 +2051,7 @@ describe("ゴールガーディアンが最終レビューの中で実行した�
     expect(verificationResults(task({ lastReview: review(127) })).tests).not.toHaveProperty(
       "missingCommands",
     );
-    // 実装で用意したテスト（PBI-94）の結果も、ゴールガーディアンが実行したものから決める
+    // 実装で用意したテスト（PBI-94）の結果も、最終レビューで実行したものから決める
     const m = taskMessages.ja;
     const noTests = { noTestsReason: "無い", addedTestCommand: "make test" };
     expect(addedTestsResult(task({ ...noTests, lastReview: review(1) }))).toBe("failed");

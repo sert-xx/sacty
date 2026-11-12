@@ -7,7 +7,6 @@ import {
   renderMessage,
   STEP_PLANS,
   type Task,
-  type TaskProposal,
   type TaskQuestion,
 } from "@sacty/core";
 import { describe, expect, it } from "vitest";
@@ -21,7 +20,6 @@ import {
   buildExportPrompt,
   buildFinalReviewPrompt,
   buildGatherPrompt,
-  buildGuardianPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
@@ -1551,7 +1549,10 @@ describe("成果の書き出し（PBI-56）", () => {
       expect(footer).toContain(
         "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
       );
-      expect(footer).toContain("ゴールガーディアンが、実装のやり直し（この PR を更新します）か");
+      expect(footer).toContain(
+        "人の指摘はこの工程のエージェントが、実装のやり直し（この PR を更新します）か",
+      );
+      expect(footer).not.toContain("ゴールガーディアン");
       expect(footer).not.toContain("成果物チェック");
     }
     expect(parts.footer).toContain(`sacty task ${task.id}`);
@@ -2330,7 +2331,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     }
   });
 
-  it("承認済みの文書と食い違う補足は、実装に優先して従わせ、変更の申し出・差し戻しの判定にも人の新しい意図として渡す", () => {
+  it("承認済みの文書と食い違う補足は、実装に優先して従わせ、差し戻しの判断にも人の新しい意図として渡す", () => {
     // 承認済みの要求要件は「再送は3回まで」、人が再開のときに「5回まで」に変えた
     const NOTE = "再送の上限は5回にする";
     const t = task(
@@ -2355,14 +2356,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(implement).toContain(
       "人が再開のときに足した補足と食い違う箇所は、補足に従って作ってください",
     );
-    const proposal = {
-      target: "requirements",
-      reason: "人が上限を5回にした",
-      facts: ["補足"],
-      proposed: "# 要求要件\n\n再送は5回まで",
-    } as unknown as TaskProposal;
     const judges = [
-      buildGuardianPrompt(t, proposal),
       buildReworkPrompt(t, ["上限が違う"], ["implement", "design", "requirements"]),
       buildReworkPrompt(t, ["上限が違う"], ["design", "requirements"], "design"),
     ];
@@ -2373,7 +2367,6 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     // 補足が無ければ、判定にも申し出の指示にも足さない
     const none = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
     expect(buildPrompt(none, "implement")).not.toContain("補足に従って作ってください");
-    expect(buildGuardianPrompt(none, proposal)).not.toContain("人が再開のときに足した補足");
     expect(buildReworkPrompt(none, ["x"], ["implement", "requirements"])).not.toContain(
       "人が再開のときに足した補足",
     );

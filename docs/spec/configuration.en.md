@@ -21,10 +21,10 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `image` | `sacty-agent:1.23.1` (`DEFAULT_IMAGE`) | The default image. Used to run agents |
 | `providers` | `{}` | The endpoint per runtime ("Providers" below). Only the names `codex` and `claude` |
 | `default_agent` | The first usable one in `default_agent` of `config/agents.yaml` | The default AI. An agent name |
-| `guardian_agent` | `default_agent` | The Goal Guardian's AI |
-| `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
+| `guardian_agent` | None | Not used. Even if written, it is not an error; it is ignored with a warning (`config.guardianAgentIgnored`; shown in the web UI's warnings) |
+| `audit_agent` | `default_agent` | The AI for audits of completed tasks ([Audit](audit.en.md)) |
 | `agent_fallback.cooldown_minutes` | `60` (`DEFAULT_FALLBACK_COOLDOWN_MINUTES`) | How long an agent that failed is not used (minutes; an integer from 1 to 1440). During that time, the `fallback` in `agents` is used, for all tasks at a usage limit (`usage_limit`) and for that task on other failures ([Agent execution](agent-execution.en.md#fallback-agents-on-failure)) |
-| `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator` and `gather` (information gathering at the start of a task). If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent`; for information gathering (`gather`), the AI of `orchestrator` |
+| `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator` and `gather` (information gathering at the start of a task). If not written, `default_agent` (also for Integration review (`integrate`)); for information gathering (`gather`), the AI of `orchestrator` |
 | `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
 | `budget.per_plan_usd` | `{}` | The budget per step plan (`StepPlan`; US dollars; a positive number). When the orchestrator chooses that plan, it becomes the task's budget cap ([Tasks and steps](tasks-and-steps.en.md#budget-pause-resume-and-cancel)). Plans not listed use `budget.default_per_task_usd` |
@@ -45,7 +45,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 
 The following are also errors.
 
-- A value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`).
+- A value of `default_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`).
 - The same value is an agent that cannot be used ("Usable agents" below; `config.agentUnavailable`). The error carries the reason in `reason`, because the web UI shows no warnings while the config has an error.
 - An `agents` name is a tier (`claude_<tier>`, `codex_<tier>`), but its `runtime` does not match the prefix (`config.tierRuntime`). The tiers are `lite`, `entry`, `standard`, `advanced`, `expert`, and `ultimate` in `AGENT_TIERS`.
 
@@ -110,7 +110,7 @@ The items of `agents` in `config.yaml` (`AgentFile`) are as follows.
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
 | `fallback` | The names of the agents used instead when a run fails (for any reason) (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
 | `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
-| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the Goal Guardian, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
+| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the final review, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
 
 - For a name that is in the defaults, only the items written are laid over the default (items not written keep the default). A name not in the defaults adds that agent.
 - Writing `auth`, `provider`, or `via_gateway` on an agent is an error. Writing `price_per_mtok_usd` on an agent other than `stub` is also an error (`config.agentLegacyKey`). That error says to write them in `auth`, `via_gateway`, and `available_models` of `providers`. The former format is not converted automatically.
@@ -130,7 +130,7 @@ Of the agents merged from the defaults and the overrides, the following cannot b
 
 The warnings are kept in `agentWarnings` and shown as warnings in the web UI (`warnings` of `GET /api/status`). Agents with `runtime: stub` are usable without looking at endpoints or prices (the price is `price_per_mtok_usd`, or 0).
 
-`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`, the AI of `orchestrator` for `gather`). For steps (including the after-merge watch, operations, and exports), an agent a person specified (the task's `agents`) takes precedence over `step_agents` (`stepAgentFor`). A person specifies it at task creation (`agents` of `TaskCreated`; [Task image and step agents specified at creation](tasks-and-steps.en.md#task-image-and-step-agents-specified-at-creation)) and in the task details, when resuming a paused task, and when requesting changes (`StepAgentChanged`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
+`agentFor` chooses the AI used for each role. It uses the one in `step_agents` if present, otherwise `default_agent` (the AI of `orchestrator` for `gather`). The same goes for Integration review (`integrate`), which cannot be changed per task (`agent.stepNotChangeable`). For steps (including the after-merge watch, operations, and exports), an agent a person specified (the task's `agents`) takes precedence over `step_agents` (`stepAgentFor`). A person specifies it at task creation (`agents` of `TaskCreated`; [Task image and step agents specified at creation](tasks-and-steps.en.md#task-image-and-step-agents-specified-at-creation)) and in the task details, when resuming a paused task, and when requesting changes (`StepAgentChanged`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
 The Activity keeps only the `authMode`, `model`, and `reasoningEffort` of the AI used (it does not keep secret values or endpoint URLs; `agentSetting`).
 
 Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `stepAgentFor`, `agentSetting`), `apps/daemon/src/service.ts` (`TaskService.status`), `packages/core/src/projection.ts` (`applyEvent`)

@@ -2,7 +2,7 @@
 
 # Agent execution
 
-sacty carries out steps, information gathering, the Orchestrator, the Goal Guardian, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The agents of the Goal Guardian (the final review), the Reproduce step, and the PR review step run them inside their own containers.
+sacty carries out steps, information gathering, the Orchestrator, the final review, Integration review, deciding where to send PR comments back to, answers to questions, and export by running an AI agent (Claude Code or Codex) once inside a docker container. sacty does not run tests in a separate container. The agents of the final review, the Reproduce step, and the PR review step run them inside their own containers.
 
 Related ADRs: [Claude Code runs get a mode that asks for no permission confirmations, passed explicitly](../adr/20261108-1137-claude-permission-mode.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-superseded-guardian-runs-tests.md)
 
@@ -37,7 +37,7 @@ Within one task, the results of preparing dependencies (package downloads, build
 
 - Location: `_task-cache/<task-id>` under the workspace root (`0700`). It is separate per task and never mounted into another task's container.
 - Runs that get it: only runs that work on the target repository with the task's image (steps, the final review, the integration review).
-  The Goal Guardian's judgments, the Orchestrator, information gathering, answers to questions, export, external work, and the after-merge watch do not get it.
+  Deciding where to send PR comments back to, the Orchestrator, information gathering, answers to questions, export, external work, and the after-merge watch do not get it.
 - How it is passed:
   - It is mounted with `-v <location>:/sacty-cache`, and the location is passed to the check below in `SACTY_TASK_CACHE=/sacty-cache`.
     `XDG_CACHE_HOME` is not overridden with `-e`. Only when the location is writable does the check script point it to `/sacty-cache` (taking precedence over the image's `ENV` and `env`).
@@ -73,7 +73,7 @@ Code: `apps/daemon/src/task-cache.ts` (`prepareTaskCache`, `taskCachePromptLines
 | `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. Last come `--` and `-` (the instructions go to stdin)) | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'` (returns the output of the `stub` setting; no AI is called) | None |
 
-- sacty does not put the instructions (prompt) for the agent in the command arguments. It writes them to the container's stdin with `docker run -i` and then closes it (PBI-149). In an argument, a large prompt (such as the Goal Guardian's, which includes a diff) exceeds Linux's per-argument limit (128 KiB) and fails with `argument list too long`. The prompt itself is unchanged.
+- sacty does not put the instructions (prompt) for the agent in the command arguments. It writes them to the container's stdin with `docker run -i` and then closes it (PBI-149). In an argument, a large prompt (such as the final review's, which includes a diff) exceeds Linux's per-argument limit (128 KiB) and fails with `argument list too long`. The prompt itself is unchanged.
   - The output relay and localhost forwarding pass stdin through to the command.
   - Runs without instructions (`stub`) get no `-i`, and stdin is closed at once.
 - sacty mounts a temporary directory per run read-write at the config location. Before the run starts, it copies the composed context ([Context composition](context.en.md)), the saved session, and the auth files into it. It is removed after the run; if it cannot be removed, only a warning is shown and the run's result (output and usage) is kept.
@@ -138,7 +138,7 @@ Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`, `CLAUDE_DISALLO
   | `error` | Anything else |
 
   When a task stopped on `usage_limit` or `auth` is resumed, the step it stopped at runs again. If there is a fallback agent, the task does not stop whatever the reason (see "Fallback agents on failure" below).
-- Structured answers from an agent are JSON with a heading (`sacty-steps`, `sacty-verdict`, `sacty-final-review`, `sacty-split`, `sacty-export`, and so on). sacty tries the JSON objects in the output from the end and uses the first one that parses.
+- Structured answers from an agent are JSON with a heading (`sacty-steps`, `sacty-final-review`, `sacty-split`, `sacty-export`, and so on). sacty tries the JSON objects in the output from the end and uses the first one that parses.
 - Before recording the run's result text and output, sacty replaces the secrets used in the run (retrieved values, gateway tokens, values in auth files, and so on) with `[REDACTED]`.
 
 Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeReader`, `classifyFailure`, `MAX_LINE`), `apps/daemon/src/agents/cost.ts` (`runCost`, `priceOfModel`), `apps/daemon/src/agent-json.ts` (`jsonCandidates`, `lastJsonAnswer`), `apps/daemon/src/prompts.ts` (`answerMarker`), `apps/daemon/src/agents/redact.ts` (`redact`, `redactText`)
@@ -149,18 +149,18 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - When a run fails for another reason (`auth`, `error`) and reaches `fallBack`, sacty remembers the agent as not to be used for the same time, for that task only. Other tasks run with the original agent.
 - sacty keeps both only in the daemon's memory. After a restart, it tries the original agent first.
 - sacty decides whether a run failed from the exit code and the agent's output (`is_error` of Claude Code's `result`; Codex's `turn.failed` and `error`). It does not decide from the text on standard error, which it uses only for the failure text and for classifying the reason. So a misclassified reason does not change whether the fallback is used. It changes only whether the agent is avoided for all tasks or for that task.
-- When sacty chooses an agent and the chosen agent is limited or not to be used for that task, sacty looks at its `fallback` from the top (following each `fallback`'s own fallbacks too) and uses the first usable one (`fallbackAgentFor`). If none is usable, the chosen agent is kept. This applies to steps, the integration review, information gathering, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review, judging rework, exports, the post-merge watch, and audits.
+- When sacty chooses an agent and the chosen agent is limited or not to be used for that task, sacty looks at its `fallback` from the top (following each `fallback`'s own fallbacks too) and uses the first usable one (`fallbackAgentFor`). If none is usable, the chosen agent is kept. This applies to steps, the integration review, information gathering, the Orchestrator, reading tickets, answering questions, the final review, judging rework, exports, the post-merge watch, and audits.
 - When the run of a step, the integration review, information gathering, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback exists, sacty records `AgentFellBack` instead of a pause (`TaskPaused`).
   - The record holds the failed run, the role, the original and fallback agents, the failure reason, and the time limit.
   - The failure record has put the task back to queued, so the fallback agent runs it again in the next pass.
-  - sacty switches when the run ended normally but its answer could not be read only for information gathering, the choice of steps, and reading a ticket. An unreadable answer from the final review or the Goal Guardian's judgements is handled as before.
+  - sacty switches when the run ended normally but its answer could not be read only for information gathering, the choice of steps, and reading a ticket. An unreadable answer from the final review or from deciding where to send PR comments back to is handled as before.
 - sacty remembers the agents tried while switching per task and per role of the process being retried, separately from the time limit (`fallbackTried`). The role is the step name, `gather`, `orchestrator`, `final-review`, and so on: the role passed to `fallBack`.
   - sacty does not go back to an agent already tried, even after its time limit expires. When all have been tried, the task stops.
   - When the run after a switch ends without coming back to `fallBack` (the run succeeded and its answer could be read), sacty forgets them when it chooses the next run for that role (`usableAgent`).
   - sacty also forgets them when a person resumes the task. Success in another role (such as answering a question) does not forget them.
-  - For the Goal Guardian's judgements, sacty forgets them when one judgement ends.
+  - For deciding where to send PR comments back to, sacty forgets them when one decision ends.
 - A run whose container could not be confirmed as stopped (`run.containerNotConfirmed`) stops without switching. The original container may still be running, and a fallback starting in the same workspace could duplicate changes or outside operations.
-- sacty redoes judging change proposals and rework remarks on the spot with the fallback agent (`runGuardianWithFallback`). It records `AgentFellBack` and adds the cost of the failed run to the judgement's cost. Within one judgement, it does not try an agent already tried even after its time limit expires, and when all have been tried it returns the last failure (retries are at most the number of fallbacks).
+- sacty redoes deciding where to send PR comments back to on the spot with the fallback agent (`runGuardianWithFallback`). It records `AgentFellBack` and adds the cost of the failed run to the decision's cost. Within one decision, it does not try an agent already tried even after its time limit expires, and when all have been tried it returns the last failure (retries are at most the number of fallbacks).
 - In the following cases, the task stops as before.
   - A person paused or cancelled the task.
   - There is no fallback, or none is usable (including those already tried).
@@ -202,7 +202,7 @@ Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited
       sacty puts the copied files (`runs/<task ID>/<stopped run ID>/agent/`) back in the config location and resumes with `--resume <ID>` for Claude Code or `resume <ID>` for Codex. The run ID is new (the step records use that run ID).
       It adds to the start of the instructions that the run was stopped by the timeout and resumed, and how files are treated: those in the workspace (kept only for implementation and reproduction) and those inside the container (not kept) (`timeoutResumeLines`).
     - Do not continue (run again from the start): the reason is `no_session` (no session record, or the original files could not be copied), `agent_changed`, `truncated`, or `files_broken` (files missing or hashes differ).
-  - sacty records whether it continued or ran again from the start in `AgentRunContinued` (run ID, stopped run ID, `resumed` or `restarted`, the session ID or the reason; it does not change state) **before the run**. If the daemon stops during the run, this record remains, so even for roles that leave no start record (the final review, the Goal Guardian, and so on) the next run does not continue the same old session again.
+  - sacty records whether it continued or ran again from the start in `AgentRunContinued` (run ID, stopped run ID, `resumed` or `restarted`, the session ID or the reason; it does not change state) **before the run**. If the daemon stops during the run, this record remains, so even for roles that leave no start record (the final review, deciding the step to redo, and so on) the next run does not continue the same old session again.
     If the run was meant to resume but started another session, or the AI refused the resume, sacty records `restarted` (`resume_failed`) again after the run (the newer record takes precedence). In that case sacty does not retry with a new run ID and returns the failure as it is (the next resume runs from the start).
   - The workspace for implementation and reproduction (the task's clone) is not deleted by the stop (only completed tasks are cleaned up). The resumed run works in the same workspace, with the changes made before the stop.
     Requirements, design, and the like use a copy prepared for each run, so files written before the stop are not kept.
@@ -256,9 +256,9 @@ Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_
 ## Running tests
 
 - sacty does not run the test command in a container of its own.
-  - The Goal Guardian runs the tests for verifying the implementation inside the final review.
+  - The final review agent (`default_agent`) runs the tests for verifying the implementation inside the final review (only when the final review is enabled).
   - The Reproduce step's agent runs the reproduction test.
-  - The Goal Guardian and the Reproduce step's agent report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
+  - The final review agent and the Reproduce step's agent report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
   - The PR review step's agent fetches dependencies in the copy of the PR's code and runs verification such as formatters, linters, type checks, tests, and builds. For verification that could not run, it writes the command and why it stopped in the review body ([Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)).
 - The final review runs on the task image (for per-step images in activity from an older version, the Implementation step's image, or the Reproduce step's if absent), with that image's `env`. It runs on a disposable copy of the implemented working tree (the copy's .git is a copy of the saved metadata). If the implementation uses services, it is connected to them ([Services](services.en.md)).
 - The test code (in a PR review, including the PR's dependency install scripts and tests) runs inside the container of the agent that runs the tests. So, as in any other agent run, it can reach the agent's authentication values in the container. In runs that use the gateway, it can also reach the per-run gateway token.

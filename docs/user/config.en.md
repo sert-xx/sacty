@@ -14,10 +14,10 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | --- | --- | --- |
 | `providers` | The connection (authentication) per runtime and the prices of the models you can use ([Connections and prices](#connections-and-prices-providers)). Only `codex` and `claude` | None |
 | `default_agent` | The AI that runs the steps (an agent name) | `codex_standard` (`claude_standard` if it cannot be used) |
-| `guardian_agent` | The AI used for the Goal Guardian | `default_agent` |
-| `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `guardian_agent` (or `default_agent`) |
+| `guardian_agent` | A setting from earlier versions that is no longer used. Even if written, Sacty starts; it ignores the setting and shows a warning on the screen | None |
+| `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `default_agent` |
 | `agent_fallback.cooldown_minutes` | How long an agent that failed is not used and the fallback agent is used instead (minutes; an integer from 1 to 1440; [Switching agents on failure](#switching-agents-on-failure)) | `60` |
-| `step_agents` | The AI to use for each step (including the after-merge watch), the Orchestrator and information gathering ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review, the Orchestrator's AI for information gathering) |
+| `step_agents` | The AI to use for each step (including the after-merge watch), the Orchestrator and information gathering ([Models per step](#models-per-step)) | `default_agent` if omitted (also for Integration review; the Orchestrator's AI for information gathering) |
 | `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.per_plan_usd` | Budget per step plan (US dollars. A number greater than 0. [Budget](#budget)) | None (`budget.default_per_task_usd`) |
@@ -28,7 +28,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
 | `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
-| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review`, the reproduction `reproduce`, and the PR review `review`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `guardian: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. When you resume, the run continues the session of the stopped run ([Troubleshooting](troubleshooting.en.md)). Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
+| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review`, the reproduction `reproduce`, and the PR review `review`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `rework: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. When you resume, the run continues the session of the stopped run ([Troubleshooting](troubleshooting.en.md)). Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
 | `update_check` | Checks daily for a newer sacty release and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
 You set the following two in "Sacty settings" in the web UI, not in config.yaml.
@@ -77,7 +77,8 @@ Only two names can be written in `providers`: `codex` for Codex and `claude` for
   - Write example prices close to what you are actually charged. A price higher than the real one makes the cost of runs without a report look large, so the budget cap is reached early and the task pauses.
   - A Claude Code run uses the amount the CLI reports, so even if your contract prices differ from that amount, the reported amount is the cost. The prices you write here apply to runs without a report and to other models used inside a run.
   - With a subscription you are not actually billed. sacty treats the reported amount (or, if there is none, the value converted at the same unit prices) as the cost and uses it to check the budget.
-- Writing an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+- Writing an agent that cannot be used in `default_agent`, `audit_agent`, or `step_agents` is an error.
+- `guardian_agent` from earlier versions is no longer used. Writing it is not an error; Sacty ignores it and shows a warning on the screen. Write the integration review agent in `step_agents.integrate` and the audit agent in `audit_agent`, and delete `guardian_agent` (without them, both use `default_agent`).
 - It is also an error when `default_agent` is not written and neither `codex_standard` nor `claude_standard` can be used (for example, when `providers` is not written).
 
 ## Authentication
@@ -168,8 +169,8 @@ In `step_agents`, choose an agent for each step and the Orchestrator.
 
 ```yaml
 default_agent: codex_standard
-guardian_agent: codex_advanced
-step_agents:          # default_agent if omitted (guardian_agent for Integration review)
+audit_agent: codex_advanced
+step_agents:          # default_agent if omitted (also for Integration review)
   orchestrator: codex_lite
   requirements: codex_advanced
   design: codex_advanced
@@ -193,7 +194,8 @@ You can write the following keys in `step_agents`.
 | `operation` | Operation |
 | `deployment` | The check in the after-merge watch step ([After-merge watch](deployment-watch.en.md)) |
 
-- Writing a name that does not exist or an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+- Writing a name that does not exist or an agent that cannot be used in `default_agent`, `audit_agent`, or `step_agents` is an error.
+- The agent for Integration review (`integrate`) is decided here. It cannot be changed per task.
 - When a person specifies a step's agent at task creation ([Set the task image and the agent for each step](tasks.en.md#set-the-task-image-and-the-agent-for-each-step)), or in the task details, when resuming a paused task, or when requesting changes ([Changing a step's agent](tasks.en.md#changing-a-steps-agent)), that agent takes precedence over `step_agents` for that task.
 - The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed. Writing it is an error, so delete it.
 
@@ -254,7 +256,7 @@ What happens when an agent's run fails depends on the kind of run.
 
 | Run | On failure |
 | --- | --- |
-| Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks) | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
+| Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, the final review, and deciding where to send PR comments back to | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
 | Exports, the post-merge watch, audits, and answers to questions | The failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on). At a usage limit, the fallback agent is used from the next run |
 
 - If the agent's final result is empty but an earlier result has content, that result is used as the answer. If no result has any content, sacty treats the run as failed instead of producing an empty deliverable (a switch to a fallback agent or a pause, as in the table above).
@@ -273,7 +275,7 @@ What happens when an agent's run fails depends on the kind of run.
 - When the agent's container could not be confirmed as stopped, the task is paused without switching. This is because the original container may still be running.
 - Writing a name that does not exist, or the agent itself, in `fallback` is an error.
 - When a fallback agent cannot be used (for example, there is no `providers` for its tool), the web UI shows a warning and sacty does not switch to that agent.
-- Fallback agents apply to every agent in `default_agent`, `guardian_agent`, `audit_agent`, `step_agents`, and the agents chosen in task details.
+- Fallback agents apply to every agent in `default_agent`, `audit_agent`, `step_agents`, and the agents chosen in task details.
 
 ## Budget
 

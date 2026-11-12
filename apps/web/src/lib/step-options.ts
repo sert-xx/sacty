@@ -106,7 +106,7 @@ export function stepOptionsLoader(
   return start;
 }
 
-/** 工程ごとに、どれを指定できるか（エージェントは、ゴールガーディアンが行う統合レビューを除く）。 */
+/** 工程ごとに、どれを指定できるか（エージェントは、config.yaml の step_agents.integrate で決まる統合レビューを除く）。 */
 export function planStepSettings(plan: StepPlan): { step: StepKey; agent: boolean }[] {
   return STEP_PLANS[plan].map((step) => ({ step, agent: stepAgentChangeable(step) }));
 }

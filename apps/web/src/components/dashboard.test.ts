@@ -530,7 +530,7 @@ describe("ダッシュボードの流量と品質の信号（PBI-118）", () => 
     expect(byId("rework-implement")?.textContent).toBe("0回");
     expect(byId("rework-document")?.textContent).toBe("1回");
     expect(byId("rework-investigate")).toBeNull();
-    // 見逃しではない差し戻しは、原因ごとに分けて出す（見逃しは「ゴールガーディアンの見逃し」の欄）
+    // 見逃しではない差し戻しは、原因ごとに分けて出す（見逃しは「最終レビューの見逃し」の欄）
     expect(byId("rework-cause-new_request")?.textContent).toBe("1回");
     expect(byId("rework-cause-question_answer")?.textContent).toBe("3回");
     expect(byId("rework-cause-base_changed")?.textContent).toBe("1回");

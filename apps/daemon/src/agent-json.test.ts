@@ -1,4 +1,4 @@
-import { renderMessage } from "@sacty/core";
+import { type DaemonText, message, renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
   explainUnreadableAnswer,
@@ -21,8 +21,21 @@ import {
   extractSplitPlan,
   extractStepPlan,
   extractTicketTriage,
-  extractVerdict,
 } from "./prompts.js";
+
+/**
+ * JSON の読み取りを確かめるための、判定の形の答えの読み取り（以前の版の変更の申し出の判定と同じ形。PBI-333 で、本体からは
+ * 消した）。読めなければ判定できなかったものとする。
+ */
+function extractVerdict(output: string): { verdict: string; reason: DaemonText } {
+  const found = lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, "sacty-verdict") ?? {};
+    const verdict = ["approved", "rejected", "undecidable"].find((x) => x === v.verdict);
+    const reason = typeof v.reason === "string" ? v.reason.trim() : "";
+    return verdict && reason ? { verdict, reason } : undefined;
+  });
+  return found?.value ?? { verdict: "undecidable", reason: message("guardian.verdictUnreadable") };
+}
 
 /** AI の答えの囲み方の揺らぎ（PBI-72）。 */
 const shapes: [string, (json: string) => string][] = [
@@ -76,7 +89,7 @@ const calls: {
       }),
   },
   {
-    name: "ゴールガーディアンの判定",
+    name: "判定の形の答え",
     json: { "sacty-verdict": { verdict: "rejected", reason: "裏付けが無い" } },
     check: (o) =>
       expect(extractVerdict(o)).toEqual({ verdict: "rejected", reason: "裏付けが無い" }),

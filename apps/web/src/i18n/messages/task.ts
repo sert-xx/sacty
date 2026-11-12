@@ -34,7 +34,7 @@ const ja = {
   sourceClose: "）",
   gathered: {
     title: "集めた情報",
-    hint: "タスクの開始時に、情報収集のエージェントがチケットの親・リンク先・URL・MCP・外部 PF などから集め、関係するものだけにまとめた情報です。オーケストレーター・すべての工程・ゴールガーディアンに渡します。",
+    hint: "タスクの開始時に、情報収集のエージェントがチケットの親・リンク先・URL・MCP・外部 PF などから集め、関係するものだけにまとめた情報です。オーケストレーター・すべての工程に渡します。",
     sources: (n: number) => `情報源 ${n} 件`,
   },
   operationSettings: {
@@ -54,13 +54,13 @@ const ja = {
   heldReview: {
     title: (count: number) => `一時停止の間に、PR の指摘が${count}件届いています`,
     help: (number: number, ai: number) =>
-      `PR #${number} に届いた指摘${ai > 0 ? `（うち AI のレビューの指摘 ${ai}件）` : ""}は、再開すると、止まった工程を走り直す前にゴールガーディアンが読み、戻し先を判断して差し戻します。`,
+      `PR #${number} に届いた指摘${ai > 0 ? `（うち AI のレビューの指摘 ${ai}件）` : ""}は、再開すると、止まった工程を走り直す前に、戻し先を判断して差し戻します。`,
   },
   /** 人に確かめてほしいこと（PBI-301）。指摘の意図を判断できなかった理由と、実行が挙げた聞き返し・推測で決めたこと。 */
   humanAsk: {
     title: (count: number) => `人に確かめてほしいことが${count}件あります`,
     help: "承認・マージの前に、次を確かめてください。",
-    undecided: (ids: string) => `指摘（${ids}）の意図を、ゴールガーディアンが判断できませんでした`,
+    undecided: (ids: string) => `戻し先の判断で、指摘（${ids}）の意図を読み取れませんでした`,
     undecidedHelp:
       "読み取れた範囲の最小限で直しています。意図と合うか、指摘した方が確かめてください。",
     confirm: (id: string) => `実行が確かめたいこと（指摘 ${id}）`,
@@ -102,7 +102,7 @@ const ja = {
       `GitHub の PR で判断します。マージで${step}を承認し、次の工程に進みます。`,
     rework: "PR の指摘の戻し先の確認待ち",
     reworkHelp: (step: string, note: string) =>
-      `ゴールガーディアンは${step}からのやり直しを提案しています：${note}。戻し先を確かめて差し戻してください。`,
+      `${step}からのやり直しが提案されています：${note}。戻し先を確かめて差し戻してください。`,
     prClosedHelp: "PR がマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prConflictHelp: "競合は自動では取り込みません。差し戻すか PR に指摘を書くと取り込みます。",
     prConflictContinuedHelp:
@@ -264,7 +264,7 @@ const ja = {
   },
   integration: {
     title: "統合レビュー",
-    hint: "ゴールガーディアンが、子タスクの PR をマージした後のコードで、親の要求要件を満たすかを確かめます。",
+    hint: "統合レビューのエージェントが、子タスクの PR をマージした後のコードで、親の要求要件を満たすかを確かめます。",
     passed: "合格",
     failed: "不合格",
     failures: (count: number, max: number) => `続けて${count}回不合格・${max}回で判断待ち`,
@@ -277,7 +277,7 @@ const ja = {
     notVerified: "満たさない",
     notRecurred: "再発なし",
     recurred: "再発",
-    explanation: "ゴールガーディアンの説明",
+    explanation: "統合レビューのエージェントの説明",
   },
   chat: {
     title: "オーケストレーターに質問",
@@ -559,7 +559,7 @@ const en: TaskMessages = {
   sourceClose: ")",
   gathered: {
     title: "Gathered information",
-    hint: "At the start of the task, the information gatherer collected this from the ticket's parents, links, URLs, MCP servers and external platforms, and kept only what is relevant. It is given to the Orchestrator, every step and the Goal Guardian.",
+    hint: "At the start of the task, the information gatherer collected this from the ticket's parents, links, URLs, MCP servers and external platforms, and kept only what is relevant. It is given to the Orchestrator and every step.",
     sources: (n: number) => `${n} sources`,
   },
   operationSettings: {
@@ -579,12 +579,13 @@ const en: TaskMessages = {
     title: (count: number) =>
       `${count} PR comment${count === 1 ? "" : "s"} arrived while the task was paused`,
     help: (number: number, ai: number) =>
-      `When you resume, the Goal Guardian reads the comments on PR #${number}${ai > 0 ? ` (${ai} of them from the AI review)` : ""} and sends the task back to the step it decides, before the step that stopped runs again.`,
+      `When you resume, the comments on PR #${number}${ai > 0 ? ` (${ai} of them from the AI review)` : ""} are read and the task is sent back to the step decided for them, before the step that stopped runs again.`,
   },
   humanAsk: {
     title: (count: number) => `${count} thing${count === 1 ? "" : "s"} for you to check`,
     help: "Check these before you approve or merge.",
-    undecided: (ids: string) => `The Goal Guardian could not tell what comment ${ids} meant`,
+    undecided: (ids: string) =>
+      `The meaning of comment ${ids} was unclear when deciding the step to redo`,
     undecidedHelp:
       "It made the smallest change it could read. Whoever commented should check it matches what they meant.",
     confirm: (id: string) => `What the run wants you to check (comment ${id})`,
@@ -626,7 +627,7 @@ const en: TaskMessages = {
       `Decide on the GitHub PR. Merging approves the ${step} and moves on to the next step.`,
     rework: "Step to redo for PR comments needs your decision",
     reworkHelp: (step, note) =>
-      `The Goal Guardian suggests redoing from ${step}: ${note}. Confirm the step to redo and request changes.`,
+      `Redoing from ${step} is suggested: ${note}. Confirm the step to redo and request changes.`,
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prConflictHelp:
       "The conflict is not merged in automatically. Send the task back or comment on the PR to merge the base branch in.",
@@ -781,7 +782,7 @@ const en: TaskMessages = {
   },
   integration: {
     title: "Integration review",
-    hint: "The Goal Guardian checks whether the code after the subtask PRs were merged meets the parent's requirements.",
+    hint: "The integration review agent checks whether the code after the subtask PRs were merged meets the parent's requirements.",
     passed: "Passed",
     failed: "Failed",
     failures: (count, max) =>
@@ -795,7 +796,7 @@ const en: TaskMessages = {
     notVerified: "Not met",
     notRecurred: "Not recurred",
     recurred: "Recurred",
-    explanation: "Goal Guardian's explanation",
+    explanation: "Integration review agent's explanation",
   },
   chat: {
     title: "Ask the Orchestrator",

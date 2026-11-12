@@ -257,7 +257,7 @@ describe("ダッシュボードのあなたの出番（PBI-118）", () => {
       // 人の出番ではない
       task({ id: "d", status: "running" }),
       task({ id: "e", status: "queued" }),
-      // 承認待ちでも、ゴールガーディアンが PR の指摘を判断している間は出さない
+      // 承認待ちでも、PR の指摘の戻し先を判断している間は出さない
       task({
         id: "f",
         status: "awaiting_approval",

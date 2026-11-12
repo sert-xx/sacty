@@ -19,7 +19,7 @@ An audit proceeds as follows.
 3. After the deep dives, the audit is done. A task where nothing went wrong finishes without a deep dive.
 
 - Audits run one by one in the same queue as other runs (they count toward the limit on parallel runs).
-- Choose the AI for audits with `audit_agent` in config.yaml. If omitted, the Goal Guardian's AI is used ([config.yaml settings](config.en.md)).
+- Choose the AI for audits with `audit_agent` in config.yaml. If omitted, `default_agent` is used ([config.yaml settings](config.en.md)).
 - Tasks that completed before audits were added are not audited.
 - If an audit cannot run, it becomes "Audit failed" with the reason. If the AI's JSON output is broken and cannot be read, the reason says at which line and column of the JSON it breaks. Common breakage such as double quotes inside strings is repaired when reading, so it alone does not fail the audit. Even when an audit fails, the survey and finished deep dives so far and the cost used are kept.
 - An audit in progress when sacty stops continues at the next start.
@@ -51,7 +51,7 @@ A proposal that needs a decision shows a target choice and "Adopt", "Reject", an
 - Choose the target from the following three. The target the audit chose is selected first.
   - The target repository
   - A context (the project layer or an upper layer)
-  - The sacty default context (the goal guardian's prompts and the default skills)
+  - The sacty default context (Sacty's prompts and the default skills)
 - When you press "Adopt", sacty creates a fix task for the chosen target's repository. The task goes through the usual flow (requirements, design, implementation, PR).
 - If the target is the sacty default context, no task is created in your project; only the adoption is recorded. Use the proposal text as a fix for sacty itself.
 - "Reject" opens a reason field. The reason is required. sacty passes it to later audits so they do not repeat the same proposal.
@@ -103,7 +103,7 @@ It needs no setup.
   The same name in another repository or file counts as another test.
   Records from other projects are not mixed in.
 - A test seen in 3 or more tasks is marked Known.
-  Unless the diff includes it, the Goal Guardian may report it without rerunning it.
+  Unless the diff includes it, the final review may report it without rerunning it.
   sacty checks this against the ledger and the diff, and does not accept a test in the diff even if it is known.
   Accepted failures still appear under "For a person to check".
 - A known test gets a proposal for a task to fix it.
@@ -129,7 +129,7 @@ When a deep dive finds knowledge that will help later tasks (how to run the test
 - Memories have two layers, project and repository.
   - They live in the data directory (default `~/.sacty`) under `memory/projects/<project ID>/` and `memory/repos/<host>/<owner>/<name>/`.
   - Repository memories stay in use for tasks on the same repository even after you change project settings.
-- In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository, and open only the relevant ones. They never read other projects' memories. The Goal Guardian gets none.
+- In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository, and open only the relevant ones. They never read other projects' memories. The final review, Integration review, and deciding where to send PR comments back to get none.
 - A memory is a reference. It ranks below the step instructions (the scope of the rework, what to write and not to write, how decided judgements are handled, and so on), your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when a procedure written in a memory conflicts with those, the procedure is not used and those win.
   The audit also avoids registering procedures that change the step instructions.
 - The last useful date is the last day the memory helped.

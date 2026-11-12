@@ -88,7 +88,7 @@
    - 実行の途中だったデプロイの確認を、中断として記録する。
      マージの後の監視の工程なら一時停止（`TaskPaused`、理由 `error`）にし、再開で確かめ直す。
      工程の無い以前のタスクなら、確かめられなかったとして終える（[マージの後の監視](deployment-watch.md)）。
-   - 判定の途中だったゴールガーディアンの判定を、判定できなかった（`undecidable`）として記録する。
+   - 以前の版で AI の判定の途中だった変更の申し出を、人の判断待ち（`TaskEscalated`、理由 `change_proposed`）にする（[変更の申し出](tasks-and-steps.md#変更の申し出)）。
    - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
 8. 前回のデーモンが残した作業領域を消し始める（`cleanupWorkspacesAtStartup`。[タスクと工程](tasks-and-steps.md#終わったタスクの作業領域の片付け)）。
    - 実行ごとの一時領域のうち、動いている実行のものでないもの。

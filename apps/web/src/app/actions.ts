@@ -457,7 +457,7 @@ export async function changeStepAgentAction(
 
 export type DecideChangeState = { message?: string };
 
-/** ゴールガーディアンが判定できなかった変更の申し出を、認めるか認めないかを決める。 */
+/** 変更の申し出を、人が認めるか認めないかを決める。 */
 export async function decideChangeAction(
   _prev: DecideChangeState,
   formData: FormData,

@@ -34,11 +34,11 @@ function load(extra: string) {
 }
 
 describe("audit_agent（PBI-125）", () => {
-  it("書けば監査の AI、書かなければ guardian_agent、それも無ければ default_agent", () => {
+  it("書けば監査の AI、書かなければ default_agent。使わなくなった guardian_agent は監査にも使わない（PBI-333）", () => {
     const own = load("guardian_agent: a\naudit_agent: b\n");
     expect(own.ok && own.config.auditAgent.id).toBe("b");
     const guardian = load("guardian_agent: b\n");
-    expect(guardian.ok && guardian.config.auditAgent.id).toBe("b");
+    expect(guardian.ok && guardian.config.auditAgent.id).toBe("a");
     const fallback = load("");
     expect(fallback.ok && fallback.config.auditAgent.id).toBe("a");
   });

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 
 /*
- * 人に確かめてほしいこと（PBI-301）：ゴールガーディアンが指摘の意図を判断できなかった理由と、実行が挙げた聞き返し・推測で
+ * 人に確かめてほしいこと（PBI-301）：戻し先の判断で指摘の意図を読み取れなかった理由と、実行が挙げた聞き返し・推測で
  * 決めたことを、承認の画面とタスクの詳細の目立つ所に出す。
  */
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor("ja") }));
@@ -49,9 +49,7 @@ describe("人に確かめてほしいことの欄（PBI-301）", () => {
     const html = render(task({ prRework: undecided() }));
     expect(html).toContain('data-testid="human-ask"');
     expect(html).toContain("人に確かめてほしいことが1件あります");
-    expect(html).toContain(
-      "指摘（implement-1-1）の意図を、ゴールガーディアンが判断できませんでした",
-    );
+    expect(html).toContain("戻し先の判断で、指摘（implement-1-1）の意図を読み取れませんでした");
     expect(html).toContain("「前と言ってること」が何を指すか読み取れない。");
     expect(html).toContain("意図と合うか、指摘した方が確かめてください");
   });
@@ -100,7 +98,7 @@ describe("人に確かめてほしいことの欄（PBI-301）", () => {
     const en = messagesFor("en").task.humanAsk;
     expect(en.title(1)).toBe("1 thing for you to check");
     expect(en.undecided("implement-1-1")).toContain(
-      "could not tell what comment implement-1-1 meant",
+      "The meaning of comment implement-1-1 was unclear",
     );
   });
 });
