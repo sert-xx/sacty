@@ -982,10 +982,30 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         return (await sideRun("write-tree", ["write-tree"])).trim();
       };
       try {
-        const mergeBaseTree = exclude.length > 0 ? await without(input.base) : input.base;
-        const targetTree = exclude.length > 0 ? await without(input.target) : input.target;
-        const mineTree = exclude.length > 0 ? await without(mine) : mine;
-        // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
+        // git 2.40〜2.44 の merge-tree は、マージする側と共通の祖先にコミットしか受け付けないので、ツリーは一時的なコミット
+        // （どのブランチにも付けない。日時と作者は固定）にして渡す（PBI-334。作業履歴の環境の git 2.43 で、ツリーを渡すと失敗した）
+        const asCommit = async (tree: string) =>
+          (
+            await git(
+              "commit-tree",
+              ["--git-dir", input.gitDir, ...SAFE_CONFIG, "commit-tree", tree, "-m", "sacty merge"],
+              {
+                ...isolatedEnv("/dev/null"),
+                GIT_AUTHOR_NAME: "sacty",
+                GIT_AUTHOR_EMAIL: "sacty@localhost",
+                GIT_COMMITTER_NAME: "sacty",
+                GIT_COMMITTER_EMAIL: "sacty@localhost",
+                GIT_AUTHOR_DATE: "1970-01-01T00:00:00Z",
+                GIT_COMMITTER_DATE: "1970-01-01T00:00:00Z",
+              },
+            )
+          ).trim();
+        const mergeBaseTree =
+          exclude.length > 0 ? await asCommit(await without(input.base)) : input.base;
+        const targetTree =
+          exclude.length > 0 ? await asCommit(await without(input.target)) : input.target;
+        const mineTree = await asCommit(exclude.length > 0 ? await without(mine) : mine);
+        // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（ブランチのコミットは作らない）。競合は終了コード 1 で、
         // 目印を入れたファイルを含む結果のツリーができる
         const merged = await gitResult(
           [

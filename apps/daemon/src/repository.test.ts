@@ -1093,7 +1093,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     /** ブランチをベースブランチにマージするとき、競合するか（GitHub の「マージできる」の判定と同じ3方向のマージ）。 */
     const conflictsWith = (origin: string, main: string, branch: string) => {
       try {
-        git(origin, "merge-tree", "--write-tree", "--quiet", main, branch);
+        git(origin, "merge-tree", "--write-tree", "--name-only", main, branch);
         return false;
       } catch {
         return true;

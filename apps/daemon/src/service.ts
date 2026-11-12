@@ -11341,13 +11341,19 @@ export class TaskService {
       const result = kept(message("pr.bodyMergeFailed", { detail }), cost);
       // コンテナが止まったことを確かめられなかった実行（元のコンテナが動いたままかもしれない）なら、ほかの実行と重ならないように
       // PR を更新せずに一時停止する（再開・中止のときに、止まったことを確かめる。工程の見直しと同じ）
-      if (this.unconfirmedRuns.delete(ran.failure.runId ?? "")) {
+      const runId = ran.failure.runId;
+      if (runId && this.unconfirmedRuns.delete(runId)) {
         this.append(this.mustGet(task.id), [
           {
             actor: "sacty",
             event: {
               type: "TaskPaused",
-              payload: { reason: ran.failure.reason, message: ran.failure.message },
+              // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、残ったコンテナを確かめ直す）
+              payload: {
+                reason: ran.failure.reason,
+                message: ran.failure.message,
+                unstoppedRuns: [runId],
+              },
             },
           },
         ]);
@@ -11659,6 +11665,8 @@ export class TaskService {
         if (moved.kind === "failed") return fail(moved.message);
         if (moved.kind === "conflicts" || moved.merged) return "stopped";
       }
+      // 先頭を読む間に一時停止・中止を求められたら、PR を更新しない
+      if (this.stopRequested(task.id)) return "stopped";
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,

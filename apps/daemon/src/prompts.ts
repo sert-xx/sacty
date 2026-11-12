@@ -811,7 +811,9 @@ function mergeConflictLines(task: Task, files: readonly string[]): string[] {
  * 競合したファイルの解消の仕方を伝える。まだ提出していない取り込みが無ければ、何も出さない。
  */
 function headMergeLines(task: Task, files: readonly string[]): string[] {
-  const head = pendingHeadMerge(task);
+  // 取り込んだ先頭に積んでプッシュした後（最終レビューで不合格になってやり直すときなど）も、作業領域には人の変更が入っているので、
+  // 守る指示は出し続ける（競合したファイルは、まだ提出していない取り込みのものだけ）
+  const head = pendingHeadMerge(task) ?? task.headMerge;
   if (!head) return [];
   return [
     "",

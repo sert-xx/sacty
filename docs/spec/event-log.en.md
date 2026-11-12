@@ -48,7 +48,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   3. The event is applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw. Even for a cancelled task, however, the session-saving records `AgentSessionArchived` and `OrchestratorSessionUsed` are accepted.
 - Some events are records only and do not change state (`AiRequestsRetried`, `RunCostRecorded`, `ReviewGitHubRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`, `AgentRunTimedOut`, `AgentRunContinued`, `WorkspaceFilesSkipped`).
-- When an event that carries cost (the 16 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
+- When an event that carries cost (the 17 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
 - Main fields of `Task`
   - `status`
   - `steps` (`todo`, `active`, `done`, or `skip` per step)

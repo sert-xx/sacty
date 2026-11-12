@@ -13294,6 +13294,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("取り込んだ先頭に積んで出した後のやり直しでも、人の変更を消さない指示を実装に渡す", async () => {
+      const { activity, service, executor, repos, id } = await toImplementGate([
+        ...rework(),
+        ...rework(),
+      ]);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      repos.remote[pushed.branch] = "d".repeat(40);
+      sendBack(service, id);
+      await drain(service);
+      // 人の先頭に積んで出したので、まだ提出していない取り込みは無い
+      const task = service.get(id)?.task;
+      expect(task && pendingHeadMerge(task)).toBeUndefined();
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 2,
+        comments: ["もう一度直して"],
+      });
+      await drain(service);
+      const prompt = promptOf(executor, 7);
+      expect(prompt).toContain("あなたはソフトウェア開発の工程エージェントです。");
+      expect(prompt).toContain("--- 人が PR に足したコミット ---");
+      expect(prompt).toContain("人が足した変更は、人の判断で入れたものです");
+      activity.close();
+    });
+
     it("人のコミットと競合したら、競合したファイルを、人の側を残して解消するよう実装に渡す", async () => {
       const { activity, service, executor, repos, id } = await toImplementGate(rework());
       const pushed = service.get(id)?.task.pushedBranch;
@@ -13436,6 +13462,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         code: "orchestrator.failed",
         params: { detail: { code: "run.containerNotConfirmed" } },
       });
+      // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、確かめ直す）
+      expect(task?.unstoppedRuns).toHaveLength(1);
       expect(pulls.calls).toHaveLength(1);
       activity.close();
     });
