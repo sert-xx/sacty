@@ -583,7 +583,7 @@ const ja = {
           : ai === count
             ? `PR #${number} の AI のレビューの指摘（${authors}）を${count}件取り込んだ`
             : `PR #${number} の指摘（${authors}）を${count}件取り込んだ（うち AI のレビューの指摘 ${ai}件）`
-      }${held ? "。一時停止の間に届いたので、未反映として残し、再開のときにゴールガーディアンが戻し先を判断する" : ""}`,
+      }${held ? "。一時停止の間に届いたので、未反映として残し、再開のときに戻し先を判断する" : ""}`,
     PullRequestReviewDiscarded: (number: number, count: number, reviewed: string, head: string) =>
       `PR #${number} への AI のレビューの指摘${count}件を取り込まずに捨てた：レビューの対象は古い head（${reviewed}）で、PR の今の head は ${head}`,
     QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
@@ -663,6 +663,8 @@ const ja = {
       discarded
         ? `戻し先の判断を採用しなかった（一時停止・中止などで。指摘は未判断のまま残し、再開したら判断し直す・${tail}）`
         : `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
+    /** PR のレビューの子タスクが示した指摘ごとの戻し先から決めた（PBI-332。実行はしない）。 */
+    reworkFromReviewTask: "PR のレビューの子タスクの答えから",
     // 完了したタスクの監査（PBI-125）
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
@@ -1139,7 +1141,7 @@ const en: LabelMessages = {
           : ai === count
             ? `Imported ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} (${authors})`
             : `Imported ${count} comment${count === 1 ? "" : "s"} on PR #${number} (${authors}); ${ai} of them from AI review`
-      }${held ? ". They arrived while the task was paused, so they are kept unapplied; the Goal Guardian decides where to send the task back when it resumes" : ""}`,
+      }${held ? ". They arrived while the task was paused, so they are kept unapplied; the step to redo is decided when it resumes" : ""}`,
     PullRequestReviewDiscarded: (number, count, reviewed, head) =>
       `Discarded ${count} AI review comment${count === 1 ? "" : "s"} on PR #${number} without importing: the review was for an old head (${reviewed}); the PR's head is now ${head}`,
     QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
@@ -1204,6 +1206,7 @@ const en: LabelMessages = {
       discarded
         ? `The judgment of the step to redo was not adopted (a pause, a cancel, or a change; the comments stay unjudged and are judged again on resume · ${tail})`
         : `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
+    reworkFromReviewTask: "from the answer of the PR review child task",
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,

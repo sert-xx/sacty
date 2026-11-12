@@ -1027,7 +1027,10 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         event.payload.target ? l.step[event.payload.target] : undefined,
         // 判断の文は長いので、行には要点（先頭の 1〜2 文）を出し、全文は詳細に出す（describeEventParts。PBI-301）
         summarizeDecision(l.text(event.payload.reason)).summary,
-        withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
+        // PR のレビューの子タスクの答えから決めたものは、実行していないので費用を出さない（PBI-332）
+        event.payload.reviewTaskId
+          ? e.reworkFromReviewTask
+          : withCost(event.payload.costUsd, event.payload.estimated, event.payload.costUnknown),
         event.payload.runResult === "interrupted",
       );
     // マージの後の監視（PBI-89）

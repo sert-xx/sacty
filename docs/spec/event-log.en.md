@@ -96,7 +96,8 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `QuestionAnswered` | Answers to questions (`chat`) |
   | `ErrorAnalyzed` | Error analysis (`errorAnalysis`; [Error report](error-report.en.md)) |
   | `DeploymentChecked` | The after-merge watch step (`deployment`; [After-merge watch](deployment-watch.en.md)) |
-  | `ChangeJudged`, `ReworkJudged`, `FinalReviewed`, `FinalReviewFailed` | Goal Guardian (`guardian`) |
+  | `ReworkJudged` (actor `agent`; PBI-332) | Deciding the step to redo (`rework`). One with actor `sacty` (it has `reviewTaskId` and was decided from the answer of the PR review child task) is not a run and gets no row |
+  | `ChangeJudged`, `ReworkJudged` (actor `guardian`; older versions), `FinalReviewed`, `FinalReviewFailed` | Goal Guardian (`guardian`) |
 
 - For a run stopped (for example by a timeout) before the usage of the whole run could be read, sacty adds the part it could read (a lower bound) to `costUsd` and marks the event with `costUnknown` (PBI-281).
   - The mark goes on the events that can record a failed run: `AgentRunFailed`, `OrchestratorFailed`, `StepsSkipped`, `ChangeJudged`, `ReworkJudged`, `FinalReviewFailed`, `QuestionAnswered`, `ErrorAnalyzed`, `OutputExported`, and `DeploymentChecked`.
@@ -150,7 +151,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot
      - Steps that have not run are shown with 0 runs.
      - Records for steps not in the step list are also shown.
      - The deployment check goes in the row of the after-merge watch step. It is shown while running too.
-  3. Export, answers to questions, error analysis, and the Goal Guardian (only when recorded)
+  3. Export, answers to questions, error analysis, deciding the step to redo, and the Goal Guardian (only when recorded)
 - Ticket reading and repository selection decided by a person, and `StepsChosen` from the era of fixed steps (no agent, cost, or usage), are not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order. So they match the task's cost (`budget.usedUsd`, `budget.estimated`).
 - A run with `costUnknown` shows "or more" when some part could be read and "unknown" when none could, in the per-run breakdown, the step rows, and the total. Below the table, a note gives the number of unknown runs (`unknownRuns`; the total is the same as `budget.unknownRuns`). The "Cost" in the right column of the task detail shows the number too.

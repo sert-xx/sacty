@@ -292,7 +292,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       },
     });
     expect(describeEvent(heldImport)).toBe(
-      "PR #7 の指摘（sert-xx）を1件取り込んだ。一時停止の間に届いたので、未反映として残し、再開のときにゴールガーディアンが戻し先を判断する",
+      "PR #7 の指摘（sert-xx）を1件取り込んだ。一時停止の間に届いたので、未反映として残し、再開のときに戻し先を判断する",
     );
     expect(describeIn(heldImport, labels.en)).toContain("kept unapplied");
     const discarded = event({
@@ -1324,6 +1324,20 @@ describe("使った分の全体を読めなかった実行の費用の表示（P
     expect(
       describeEvent(event("ReworkJudged", { reason: "x", costUsd: 0, estimated: true })),
     ).not.toContain("費用不明");
+  });
+
+  it("レビューの子タスクの答えから決めた戻し先は、費用ではなく答えから決めたことを出す（PBI-332）", () => {
+    const text = describeEvent(
+      event("ReworkJudged", {
+        target: "design",
+        reason: "決定を変える：設計の画面を変える",
+        reviewTaskId: "child-1",
+        costUsd: 0,
+        estimated: false,
+      }),
+    );
+    expect(text).toContain("PR のレビューの子タスクの答えから");
+    expect(text).not.toContain("$0");
   });
 });
 

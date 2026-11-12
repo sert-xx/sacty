@@ -1669,10 +1669,10 @@ describe("要求要件・設計の PR（PBI-57）", () => {
       testViewpoints: [],
     } as unknown as Task;
     const pr = buildReworkPrompt(task, ["x"], ["implement", "requirements"]);
-    expect(pr).toContain("成果物（PR）に人間が付けた指摘");
+    expect(pr).toContain("成果物（PR）に付いた指摘");
     expect(pr).toContain("- implement（実装）：");
     const step = buildReworkPrompt(task, ["x"], ["design", "requirements"], "design");
-    expect(step).toContain("設計の PR に人間が付けた指摘");
+    expect(step).toContain("設計の PR に付いた指摘");
     expect(step).not.toContain("implement");
     expect(step).toContain("（設計をやり直します）");
   });
@@ -5327,7 +5327,7 @@ describe("指摘を受けた直しの実行では、セルフレビューを再�
   });
 });
 
-describe("ゴールガーディアンの判断文を、その判断で始まった作り直しの実行に渡す（PBI-300）", () => {
+describe("戻し先の判断文を、その判断で始まった作り直しの実行に渡す（PBI-300・PBI-332）", () => {
   const task = (extra: Partial<Task> = {}): Task =>
     ({
       id: "t-1",
@@ -5383,7 +5383,7 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
     round,
     remarkIds,
   });
-  const HEADING = "--- ゴールガーディアンの判断";
+  const HEADING = "--- 戻し先の判断（今回の指摘";
   const withJudgment = (step: Step, prRework: unknown, remarks = [remark(step, 1)]) =>
     task({
       outputs: { [step]: "# 前回" },
@@ -5406,11 +5406,9 @@ describe("ゴールガーディアンの判断文を、その判断で始まっ�
         reason:
           "決定を変えない：前の指摘で簡単にするため削った R-2・R-3 を元に戻せという意味に読める",
       });
-      // ゴールガーディアンの解釈であって、人の指摘そのものではない
+      // 判断した側の解釈であって、人の指摘そのものではない
       expect(prompt, step).toContain("人間の指摘そのものではありません");
-      expect(prompt, step).toContain(
-        "これはゴールガーディアンの解釈で、人間が書いたものではありません",
-      );
+      expect(prompt, step).toContain("これは判断した側の解釈で、人間が書いたものではありません");
       // 食い違うときは指摘の原文（人間の指摘）を優先する。原文は今までどおり渡す
       expect(prompt, step).toContain(
         "判断文と指摘の原文が食い違うときは、指摘の原文（人間の指摘を最優先）に従う",

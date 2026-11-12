@@ -93,7 +93,7 @@ An implementation PR stacked on a dependency's PR gets its child task when the d
   Its cost counts toward the child task's budget.
 - The child task's review is posted to the PR.
   - If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.
-    The Goal Guardian decides where to go back to and fixes them.
+    They are fixed in the step the child task gave for each finding ([Approval in PRs](tasks.en.md#approval-in-prs-requirements-design-implement)).
   - When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again.
     This repeats until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
   - A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).

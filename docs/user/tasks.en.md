@@ -629,10 +629,12 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 - sacty takes in PR reviews, line comments, and regular comments as findings.
   - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
   - It checks every minute and takes them in 2 minutes after the last comment.
-  - The Goal Guardian decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between. The decision and its reasons are kept in the Activity and the PR section.
+  - sacty decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between.
+    When the comments are only from sacty's review child task, sacty follows the step the child task gave for each finding (no run is made for the decision, and it costs nothing).
+    When your comments are included, the agent of that PR's step decides (in older versions, the Goal Guardian decided). The decision and its reasons are kept in the Activity and the PR section.
   - The target depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on). A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR). Only a comment that changes the decision itself goes back to the step that holds it. The reason says which decision is changed or not changed.
-  - The Goal Guardian's judgment (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
-    The judgment is the Goal Guardian's interpretation, so when it disagrees with the original text of your comment, the original text wins.
+  - The judgment of the step to redo (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
+    The judgment is an interpretation of the comments, so when it disagrees with the original text of your comment, the original text wins.
     When the target could not be decided, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
   - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text. The record in the Activity and the judgment passed to the redo stay in full.
   - When there is something for a person to check, the approval screen and the task details show it in a prominent place as "N things for you to check", and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
@@ -666,7 +668,7 @@ When Requirements, Design, and Implementation are all approved in PRs, the branc
 In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
 In the cases below, the approval screen and the task details show "N things for you to check" under the approval notice.
 
-- The Goal Guardian could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
+- sacty could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
 - The redo run listed something it wants you to check along with its response to the comment: it guessed because it could not read what the comment meant, it recreated a value or wording it no longer had, it changed something the comment did not ask for, or it left a comment unaddressed. The comment it concerns is also shown.
 
 So that the people looking at the PR notice it, the same content is commented on the PR of the redone deliverable (implementation, requirements, or design) when it is back to waiting for approval. One comment per submission.
@@ -689,11 +691,11 @@ When you request changes on the approval screen, you can choose a "Cause of the 
 | A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
 | A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
 
-- When changes are requested from PR feedback, the Goal Guardian also judges the cause together with where to send it back. If it cannot decide, no cause is set (it is not counted as a miss, and is counted under "Rework with unknown cause").
+- When changes are requested from PR feedback, the cause is judged together with where to send it back. If it cannot decide, no cause is set (it is not counted as a miss, and is counted under "Rework with unknown cause").
 - When a comment on a Requirements or Design PR only answers the deliverable's "Open questions" (questions from sacty), the cause is judged to be "An answer to a question". It is not a new request, so it is not counted as a miss.
   - When every answer is as recommended (for example "as recommended") and nothing you approved changes, the deliverable is not redone and not self-reviewed. The answered items are removed from "Open questions", and only the places that reflect the answers are changed.
   - When an answer differs from the recommendation, when an answer changes what you approved, or when a request other than an answer is mixed in, the work is redone as before.
-- When you request changes on the approval screen, you choose where to send it back, so the Goal Guardian does not judge the cause. To count misses correctly, choose the cause when you know it.
+- When you request changes on the approval screen, you choose where to send it back, so sacty does not judge the cause. To count misses correctly, choose the cause when you know it.
 - The cause is shown on the request-for-changes line of the Activity ("Cause: ...") and in the "Redo from" row of the PR section. The PR section's "Goal Guardian miss" lists only what was recorded as a miss.
 - The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
 - Requests for changes from before the cause could be chosen have no cause. On the dashboard, a request for changes with a miss record is counted as a miss, and the others as "Rework with unknown cause".
@@ -840,11 +842,11 @@ The details of a task stopped by the budget limit show a field for the new cumul
   - **Change the task image and step agents** (open it to use): you can choose again the task image and the agent for each step not finished yet. The current settings are selected first, only what you changed is recorded, and it is used from the next run. Resuming without deciding the tests does not choose the steps again, so you can change them here.
 - A task waiting for approval (waiting for a PR merge) can also be paused with "Pause". The approval screen and the task details stay as they are. A task in escalation cannot be paused.
   - While paused, you cannot approve or send it back. When you resume, it returns to waiting for approval and you can use the approval screen again.
-  - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume has the Goal Guardian decide where to send the task back.
+  - The implementation PR is watched the same way as while the implementation is being reworked. If it is merged while paused, the merge is taken as the approval without a resume. Comments that arrive are kept, and the check after the resume decides where to send the task back.
   - A Requirements or Design PR is not watched while paused. If it is merged or comments arrive, the check after the resume (every minute) takes them in as an approval or a send-back.
   - A person paused it, so nothing is sent to Slack. When it is resumed and returns to the same wait for approval, the approval notice is not sent again.
 - If comments (reviews, line comments, or ordinary comments) arrive on the implementation PR while an implementation rework is paused, sacty keeps them and shows the number in the task's details (whatever the reason for the pause: the budget, an error, a person's pause, and so on).
-  When you resume, before redoing the step that stopped (the final review, for example), the Goal Guardian reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
+  When you resume, before redoing the step that stopped (the final review, for example), sacty reads the comments, judges where to send the task back, and sends it back to that step (the judgment is the same as for [PR comments while waiting for approval](#approval-in-prs-requirements-design-implement)).
   If no comments have arrived, the step that stopped is redone as before.
   - Comments you wrote just before resuming are read again after the resume and applied.
   - sacty's own AI review comments are kept in the same way. They are handled separately from people's comments, and if they are the only ones, they do not count toward the number of send-backs.

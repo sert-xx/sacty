@@ -15,6 +15,7 @@ import type {
   Remark,
   RemarkSource,
   ReviewComment,
+  ReviewRework,
   ReviewVerdict,
   ReworkAnswer,
   ReworkCause,
@@ -878,7 +879,14 @@ export type Task = {
   /**
    * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定を読めなかった。
    */
-  reviewVerdicts?: { round: number; verdict?: ReviewVerdict }[];
+  reviewVerdicts?: {
+    round: number;
+    verdict?: ReviewVerdict;
+    /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。 */
+    rework?: ReviewRework;
+    /** 戻し先を示した回の、実行のエージェント（PBI-332。戻し先の判断の記録に使う）。 */
+    agentId?: string;
+  }[];
   /**
    * 前回投稿したレビュー（再レビューのとき。PBI-111）。前回の指摘（本文と行へのコメント）と、投稿の後の作者の返答を
    * 再レビューのプロンプトに渡すため。
@@ -1388,6 +1396,10 @@ export function applyEvent(
             {
               round,
               ...(event.payload.reviewVerdict ? { verdict: event.payload.reviewVerdict } : {}),
+              // 戻し先を示した回は、その実行のエージェントも残す（戻し先の判断の記録に使う。PBI-332）
+              ...(event.payload.reviewRework
+                ? { rework: event.payload.reviewRework, agentId: event.payload.agentId }
+                : {}),
             },
           ];
         }
@@ -3675,6 +3687,25 @@ export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
       .map((s) => s.key)
       .reverse()
   );
+}
+
+/**
+ * PR のレビューの子タスクが指摘ごとに示した戻し先から、差し戻す工程を決める（PBI-332）。承認済みの前の工程の決定を変える指摘が
+ * 1つでもあればその工程、複数の工程にまたがれば前の工程。戻し先の候補（targets。ゲートに近い順）に無い・読めない値の指摘は、
+ * その PR の工程（gateStep）で直す。候補が無ければ（工程を戻せないタスク）undefined。
+ */
+export function reviewReworkTarget(
+  rework: ReviewRework | undefined,
+  targets: readonly StepKey[],
+  gateStep: StepKey,
+): StepKey | undefined {
+  if (!targets.includes(gateStep)) return targets[0];
+  let index = targets.indexOf(gateStep);
+  for (const finding of rework?.findings ?? []) {
+    const i = finding.target ? targets.indexOf(finding.target) : -1;
+    if (i > index) index = i;
+  }
+  return targets[index];
 }
 
 /**

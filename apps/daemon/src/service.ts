@@ -130,6 +130,7 @@ import {
   responsibleTicketProject,
   resumeNoteRoom,
   reviewedPullRequest,
+  reviewReworkTarget,
   reworkingPullRequest,
   reworkTargets,
   SactySettings,
@@ -408,6 +409,7 @@ import {
   type RawExportPlan,
   type RawServices,
   type ReviewCi,
+  type ReviewReworkContext,
   type ReviewSecurity,
   referencedPullRequest,
   reviewMarker,
@@ -614,6 +616,11 @@ function awaitingVerification(task: Task, finalReview = true): boolean {
     // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）。最終レビューをしないなら、CI を待っていた古いタスクも進める（PBI-331）
     (!finalReview || !awaitingCiAfterReview(task))
   );
+}
+
+/** 戻し先の判断の記録の担い手（PBI-332）。レビューの子タスクの答えから決めたなら sacty、工程のエージェントが判断したなら agent。 */
+function reworkActor(judged: { reviewTaskId?: string }): "sacty" | "agent" {
+  return judged.reviewTaskId ? "sacty" : "agent";
 }
 
 /** PR のレビューの子タスクの、最後に投稿した回の判定が指摘なしか（PBI-331）。 */
@@ -1650,7 +1657,7 @@ export class TaskService {
         if (latest) {
           this.append(latest, [
             {
-              actor: "guardian",
+              actor: reworkActor(judged),
               event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
             },
           ]);
@@ -1660,7 +1667,7 @@ export class TaskService {
       }
       this.warnIfNeeded(
         this.append(latest, [
-          { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
+          { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
         ]),
       );
       // 判断の間（実行は長い）に、PR がマージされたかもしれない。差し戻す前に読み直し、マージ済みなら反映しない
@@ -2942,7 +2949,7 @@ export class TaskService {
         if (latest) {
           this.append(latest, [
             {
-              actor: "guardian",
+              actor: reworkActor(judged),
               event: { type: "ReworkJudged", payload: { ...judged, runResult: "interrupted" } },
             },
           ]);
@@ -2957,7 +2964,7 @@ export class TaskService {
         return;
       }
       current = this.append(latest, [
-        { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
+        { actor: reworkActor(judged), event: { type: "ReworkJudged", payload: judged } },
       ]);
     }
     // 判断の間（エージェントの実行は長い）に、人が PR をマージした・閉じたかもしれない。差し戻す前に PR の状態を読み直し、
@@ -5177,7 +5184,70 @@ export class TaskService {
     };
   }
 
-  /** ゴールガーディアンに、PR の指摘の戻し先を判断させる（新しいセッション。PBI-14b）。 */
+  /**
+   * PR のレビューの子タスクの指示に渡す、親の PR の工程・戻し先の候補・承認済みの成果物（PBI-332）。子タスクでなければ・親が
+   * 無ければ渡さない（ラベルや依頼で取り込んだレビューだけのタスクは、戻し先を示さない）。
+   */
+  private reviewReworkContext(task: Task): { reviewRework?: ReviewReworkContext } {
+    const of = this.tasks.get(task.id)?.reviewOf;
+    const parent = of && this.tasks.get(of.taskId);
+    if (!of || !parent) return {};
+    return { reviewRework: { gateStep: of.step, targets: reworkTargets(parent, of.step), parent } };
+  }
+
+  /**
+   * AI のレビューの指摘だけのとき、その PR のレビューの子タスク（PBI-330）が最後の回に示した指摘ごとの戻し先と原因から、戻し先の
+   * 判断を作る（PBI-332）。承認済みの前の工程の決定を変える指摘があればその工程、複数なら前の工程。子タスクの答えを読めない
+   * （rework が無い）なら、その PR の工程で直す。人の指摘を含む・子タスクが無い・その回の判定が無いなら undefined（工程の
+   * エージェントが判断する）。
+   */
+  private reviewTaskRework(
+    task: Task,
+    gateStep: StepKey,
+    remarks: readonly string[],
+    aiReview: readonly number[],
+  ): Extract<EventInput, { type: "ReworkJudged" }>["payload"] | undefined {
+    const ai = new Set(aiReview);
+    if (remarks.length === 0 || remarks.some((_, i) => !ai.has(i))) return undefined;
+    const pr = gateStep === "implement" ? task.pullRequest : gatePullRequest(task);
+    const record = (task.reviewTasks ?? []).findLast(
+      (r) => r.step === gateStep && pr !== undefined && r.number === pr.number,
+    );
+    const child = record && this.tasks.get(record.taskId);
+    if (!child) return undefined;
+    const round = child.reviewRound ?? 1;
+    const last = child.reviewVerdicts?.find((v) => v.round === round);
+    if (!last || last.verdict === "no_findings") return undefined;
+    const targets = reworkTargets(task, gateStep);
+    const target = reviewReworkTarget(last.rework, targets, gateStep);
+    const rework = last.rework;
+    const decisive = rework?.findings.find((f) => f.target === target && target !== gateStep);
+    const reason: DaemonText = rework
+      ? [
+          ...(decisive ? [decisive.reason] : []),
+          ...rework.findings.map(
+            (f) =>
+              `- [${f.target && targets.includes(f.target) ? f.target : gateStep}] ${f.finding}：${f.reason}`,
+          ),
+        ].join("\n") || message("rework.reviewTaskUnreadable")
+      : message("rework.reviewTaskUnreadable");
+    return {
+      ...(target ? { target } : {}),
+      ...(rework?.cause ? { cause: rework.cause } : {}),
+      reason,
+      agentId: last.agentId ?? "",
+      reviewTaskId: child.id,
+      runResult: "completed",
+      costUsd: 0,
+      estimated: false,
+    };
+  }
+
+  /**
+   * PR の指摘の戻し先を判断する（PBI-14b）。AI のレビューの指摘だけなら、PR のレビューの子タスクが示した指摘ごとの戻し先から
+   * 決める（実行しない。PBI-332）。人の指摘を含めば、PR の工程のエージェント（人が選んだもの。無ければ step_agents か
+   * default_agent）に新しいセッションで判断させる（PBI-332 より前はゴールガーディアン）。
+   */
   private async judgeRework(
     task: Task,
     gateStep: StepKey,
@@ -5185,14 +5255,17 @@ export class TaskService {
     aiReview: readonly number[],
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
+    const fromReview = this.reviewTaskRework(task, gateStep, remarks, aiReview);
+    if (fromReview) return fromReview;
     const targets = reworkTargets(task, gateStep);
+    const chosen = stepAgentFor(config, gateStep, task.agents?.[gateStep]);
     // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる。失敗したら、代わりのエージェントで判定し直す
     const { outcome, costUsd, estimated, costUnknown, runId, agent } =
       await this.runGuardianWithFallback(
         task,
         {
-          agent: config.guardianAgent,
+          agent: chosen.ok ? chosen.agent : agentFor(config, gateStep),
           image: config.image,
           prompt: buildReworkPrompt(task, remarks, targets, gateStep, aiReview),
           role: "rework",
@@ -5203,7 +5276,7 @@ export class TaskService {
     const judgement =
       outcome.kind === "completed"
         ? extractRework(outcome.output, targets)
-        : { reason: message("run.guardianFailed", { detail: outcome.message }) };
+        : { reason: message("rework.runFailed", { detail: outcome.message }) };
     return {
       ...judgement,
       runResult: outcome.kind === "completed" ? "completed" : "failed",
@@ -9064,6 +9137,8 @@ export class TaskService {
             ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
             ...(reviewCi ? { reviewCi } : {}),
             ...(reviewSecurity ? { reviewSecurity } : {}),
+            // PR のレビューの子タスクに、指摘ごとの戻し先を示させる（PBI-332）
+            ...this.reviewReworkContext(task),
             // 同じコミットで、sacty の最終レビューが実行済みの検証（PBI-305）
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
@@ -9333,6 +9408,7 @@ export class TaskService {
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.verdict ? { reviewVerdict: review.verdict } : {}),
+            ...(review?.rework ? { reviewRework: review.rework } : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
             ...(documentPages && documentPages.pages.length > 0
               ? { documentPages: documentPages.pages }

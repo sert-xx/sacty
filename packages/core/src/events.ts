@@ -449,6 +449,42 @@ export type ReviewComment = z.infer<typeof ReviewComment>;
 export const ReviewVerdict = z.enum(["changes_required", "suggestions", "no_findings"]);
 export type ReviewVerdict = z.infer<typeof ReviewVerdict>;
 
+/**
+ * 差し戻しの原因（PBI-268）。
+ * guardian_missed：確かめられたはずの不備の見逃し（PBI-332 より前は、ゴールガーディアンの見逃し。今は、その工程の見逃し）。
+ * base_changed：ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物の不備ではない。
+ * new_request：承認済みの要求要件・設計に無い、人が新しく足した要望・方針の変更。
+ * question_answer：sacty の質問（成果物の「確認したいこと」）への答えだけのコメント。新しい要望ではない（PBI-302 B1）。
+ */
+export const ReworkCause = z.enum([
+  "guardian_missed",
+  "base_changed",
+  "new_request",
+  "question_answer",
+]);
+export type ReworkCause = z.infer<typeof ReworkCause>;
+
+/**
+ * 原因が question_answer の差し戻しの、答えと推奨の関係（PBI-302 B1）。
+ * as_recommended：すべての答えが推奨の答えどおりで、承認済みの決定を変えない（答えの反映だけの軽い直しにする）。
+ * changes_decision：推奨と違う答えがあり、決定を変える（今までどおりの直しの実行にする）。
+ */
+export const ReworkAnswer = z.enum(["as_recommended", "changes_decision"]);
+export type ReworkAnswer = z.infer<typeof ReworkAnswer>;
+
+/**
+ * PR のレビューの子タスク（PBI-330）が、指摘ごとに示した戻し先と、差し戻しの原因・答えの扱い（PBI-332）。target は、その指摘を
+ * 直す工程（その PR の工程か、変える決定を持つ前の工程）。読めない・知らない値なら無い（その PR の工程で直す）。
+ */
+export const ReviewRework = z.object({
+  findings: z
+    .array(z.object({ finding: z.string(), target: StepKey.optional(), reason: z.string() }))
+    .default([]),
+  cause: ReworkCause.optional(),
+  answer: ReworkAnswer.optional(),
+});
+export type ReviewRework = z.infer<typeof ReviewRework>;
+
 /** 変更の申し出に対する、ゴールガーディアンの判定。 */
 export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
 export type Verdict = z.infer<typeof Verdict>;
@@ -1149,6 +1185,8 @@ const AgentRunCompleted = z.object({
      * 決める。判定を読めず、`[要修正]` の指摘も無ければ無い。
      */
     reviewVerdict: ReviewVerdict.optional(),
+    /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。読めなければ無い。 */
+    reviewRework: ReviewRework.optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
     reproductionTests: z.array(z.string()).default([]),
     /**
@@ -2584,31 +2622,9 @@ const PullRequestReviewDiscarded = z.object({
 });
 
 /**
- * 差し戻しの原因（PBI-268）。
- * guardian_missed：ゴールガーディアンが確かめられたはずの不備を見逃した。
- * base_changed：ベースブランチが進んだこと（先の PR のマージなど）による競合・衝突で、成果物の不備ではない。
- * new_request：承認済みの要求要件・設計に無い、人が新しく足した要望・方針の変更。
- * question_answer：sacty の質問（成果物の「確認したいこと」）への答えだけのコメント。新しい要望ではない（PBI-302 B1）。
- */
-export const ReworkCause = z.enum([
-  "guardian_missed",
-  "base_changed",
-  "new_request",
-  "question_answer",
-]);
-export type ReworkCause = z.infer<typeof ReworkCause>;
-
-/**
- * 原因が question_answer の差し戻しの、答えと推奨の関係（PBI-302 B1）。
- * as_recommended：すべての答えが推奨の答えどおりで、承認済みの決定を変えない（答えの反映だけの軽い直しにする）。
- * changes_decision：推奨と違う答えがあり、決定を変える（今までどおりの直しの実行にする）。
- */
-export const ReworkAnswer = z.enum(["as_recommended", "changes_decision"]);
-export type ReworkAnswer = z.infer<typeof ReworkAnswer>;
-
-/**
- * 取り込んだ PR の指摘で、どの工程まで戻すかのゴールガーディアンの判断（PBI-14b）。target が無ければ
- * 判断できなかった。判断した工程に、人間の確認を待たずに差し戻す。判断できなければ実装をやり直す（PBI-58）。
+ * 取り込んだ PR の指摘で、どの工程まで戻すかの判断（PBI-14b）。PBI-332 からは、AI のレビューの指摘だけなら PR のレビューの
+ * 子タスクが示した戻し先から決め（reviewTaskId）、人の指摘を含めば PR の工程のエージェントが判断する（それより前はゴール
+ * ガーディアン）。target が無ければ判断できなかった。判断した工程に、人間の確認を待たずに差し戻す。判断できなければ実装をやり直す（PBI-58）。
  * PBI-58 より前の作業履歴では、設計・要求要件まで戻す・判断できないときは人間が確かめた（rework_confirmation）。
  */
 const ReworkJudged = z.object({
@@ -2619,9 +2635,14 @@ const ReworkJudged = z.object({
     cause: ReworkCause.optional(),
     /** 原因が question_answer のとき、答えが推奨どおりか（PBI-302 B1）。判断できなければ無い。 */
     answer: ReworkAnswer.optional(),
-    /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
+    /** 判断した担い手が書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
     agentId: z.string(),
+    /**
+     * PR のレビューの子タスクが示した戻し先から決めたときの、その子タスク（PBI-332。実行はしないので費用は 0）。無ければ、
+     * 判断の実行の記録（PBI-332 より前はゴールガーディアン、今は PR の工程のエージェント）。
+     */
+    reviewTaskId: z.string().optional(),
     runResult: GuardianRunResult.optional(),
     ...AgentSetting,
     ...RunRef,

@@ -1860,6 +1860,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。
   判定が無い・決めた値でなく、`[要修正]` の指摘も無ければ残さない（読めない）。
   レビューを完了できなかったときは、判定を付けさせない。
   判定のブロックは投稿する本文から取り除き、`AgentRunCompleted` の `reviewVerdict` に残す（回ごとに `reviewVerdicts`）。
+  PR のレビューの子タスク（`reviewOf`）には、判定のブロックに指摘ごとの戻し先と原因（`rework`）も付けさせる（PBI-332。[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。読めたものは `AgentRunCompleted` の `reviewRework` に残す（回ごとの `reviewVerdicts` の `rework`）。
   PR のレビューを、その PR を作った元のタスクに届けるのは、`changes_required`・`suggestions` と読めない回（`no_findings` の回は届けない。取り込みの経路（ラベル・依頼・手動）は問わない。[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
 - 投稿する本文：目印、見出し「sacty のレビュー」、作者への @ メンションと判定の1行（作者が login の形でなければ @ を付けない。判定を読めなければそう書く）、エージェントの本文、AI がレビューした旨の固定の文の順。
   エージェントの本文は、Claude Code では判定の塊を含む最後の `result` から読む（最終の答えの後の通知への返答を投稿しない。[エージェントの実行](agent-execution.md#出力の扱い)）。
