@@ -60,3 +60,7 @@
   - 対応：同じ場所で続けて実行するときは、前に作った tar を使い回すようにした。
 - 実際の `docker build`（`ubuntu:24.04`、`run` に `drawio --version`）：`run` の中で `drawio` が `32.4.1` を返した。apt・draw.io・セキュリティの道具は、キャッシュのものを使った。
 - 確かめたこと：`npm run lint`・`npm run typecheck` が通過。`npx vitest run apps/daemon/src/with-build-cache.test.ts apps/daemon/src/image.test.ts apps/daemon/src/install-security-tools.test.ts tests/docs` がすべて通過。
+
+2回目（sacty の再レビュー、判定：指摘なし）
+
+- 前回の4件の指摘すべてについて、対応を確かめたとのこと。新しい指摘は無い。
