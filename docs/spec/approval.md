@@ -8,7 +8,7 @@
 同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 上限に数えるのは人が差し戻した回数で、sacty 自身の AI のレビューの指摘だけの差し戻しは数えない（[AI のレビューの指摘](#ai-のレビューの指摘)）。
 
-関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-superseded-complete-without-changes.md)、[PR を参照する sacty のタスクの投稿は、取り込みの経路に関わらず、指摘のある回を元のタスクの PR の指摘として取り込む](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md)、[実装の PR を最終レビューの前にドラフトで作り、CI を待ってからゴールガーディアンが判定し、合格したらドラフトを外してレビューへ進める](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md)、[最終レビューを、実装の PR の CI と並べて進める](../adr/20261108-0232-final-review-alongside-pull-request-ci.md)、[sacty 自身の AI のレビューの指摘を、人の指摘と区別して扱う](../adr/20261102-0843-distinguish-ai-review-remarks.md)、[sacty が作る PR のレビューを、PR を作ったタスクの子タスクにし、指摘なしになるまで繰り返す](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)
 
 ## 画面での承認
 
@@ -104,43 +104,45 @@
 
 コード: `apps/daemon/src/service.ts`（`publish`）、`packages/core/src/events.ts`（`NoChangesFound`）、`packages/core/src/projection.ts`（`noChanges`・`deliveredWithoutChanges`）、`apps/daemon/src/prompts.ts`（`NO_CHANGE_LINE`）、`apps/web/src/lib/labels.ts`（`statusText`）
 
-## PR のレビュー用のラベル
+## PR のレビューの子タスク
 
-sacty は、作る PR すべて（実装の PR と、要求要件・設計の PR）に、レビュー用のラベル（sacty の設定 `reviewLabel`）を付ける。
-要求要件・設計の PR は作った直後に、実装の PR はレビューへ進めるとき（ドラフトを外したとき）に付ける。
-最終レビューの前のドラフトの間は付けない（記録の `label` も持たない）。
-PR を別のタスク（PR のレビューだけのタスク）として取り込ませ、作ったタスクとは別のコンテキストでレビューさせるためである（[チケットの取り込みと GitHub](intake.md)）。
-取り込むラベル（`intakeLabel`）は付けない。
+sacty は、作る PR（要求要件・設計の PR と実装の PR）ごとに、その PR をレビューする子タスクを作る。
+PR を作った工程とは別のコンテキスト（別のタスク・別の実行）でレビューさせ、その指摘を [PR の指摘の取り込み](#pr-の指摘の取り込み) で親（PR を作ったタスク）に届けて直させ、指摘なしになるまで繰り返すためである。
+PR にラベルは付けない（レビュー用のラベル `reviewLabel` は、sacty が作っていない PR の取り込みだけに使う。[チケットの取り込みと GitHub](intake.md)）。
 
-- レビュー用のラベルを設定していなければ、付けない。
-  何も記録しない。
-- そのトリアージを Off にしていても（`triageOff` に `reviewLabel`）付ける。
-  一時的に Off にした間に作った PR も、On に戻した時点で開いていれば取り込まれるようにするためである。
-  Off の間は取り込まない。
-  取り込みは `is:open is:pr` で探すので、Off の間にマージ・クローズした PR は取り込まれない。
-- リポジトリにラベルが無ければ（`GET /repos/<owner>/<name>/labels/<ラベル>` が 404）、作ってから（`POST .../labels`、色 `0e8a16`）PR に付ける（`POST .../issues/<番号>/labels`）。
-  作っている間にほかで作られた（422 の `already_exists`）ときは、そのまま付ける。
-- 結果は次のとおり記録し、タスクの作業履歴の画面に出す。
-  - 付けたら `PullRequestLabeled`（`created`：ラベルを作った）
-  - 付けられなければ `PullRequestLabelFailed`。
-    どの操作が失敗したか（`github.failed` の `getLabel`・`createLabel`・`addLabel`）と、GitHub の答えを持つ。
-    使った秘密の値は伏せる。
-  - 付けられなくても、PR の作成は失敗にしない（タスクはそのまま承認待ちに進む）。
-- 付けるのは、1つの PR（リポジトリと番号）につき1回だけ。
-  - 記録のある PR には、同じ PR を更新しても付けない。
-    重ねて付けない・人が外したラベルを付け直さない・失敗しても付け直さない。
-  - 記録の無い PR（設定する前に作った PR など）は、次に更新したときに付ける。
-  - PR を作り直した（前の PR が閉じられて、新しい番号の PR を作った）ときは、新しい PR に付ける。
-- 中止・一時停止を求められて、要求要件・設計の PR を記録しなかったときは付けない。
-- 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `label`）に残してから付ける。
-  - 公開を記録した後、付ける前に止まった（停止・クラッシュ）PR には、PR の確認（60秒ごと。再起動の後も）で付ける。
-    付けるのは、予定があり、付けた・付けられなかった記録が無く、開いている PR。
-  - 付けるのは、そのときの設定のレビュー用のラベル。
-  - 中止したタスクと、いまは付けない設定（レビュー用のラベルが無い）なら付けない。
-  - 同じ PR を付けている途中なら、重ねて付けない。
-- それより前の記録の `intakeLabel`（取り込むラベルを付ける予定）は、読み込めるが、付ける予定としては扱わない（台帳は書き換えない）。
+- 作る時点：要求要件・設計の PR は作った直後、実装の PR はレビューへ進めるとき（ドラフトを外したとき）。
+  最終レビューの前のドラフトの間は作らない。
+  依存先の PR に重ねた実装の PR（ドラフトのまま承認待ちにする。[タスクと工程](tasks-and-steps.md)）も、ドラフトの間は作らず、依存先のマージの後に向き先を付け替えてドラフトを外したときに作る。
+  既存の PR を引き継ぐタスクでは、引き継いだ PR に作る。
+- 子タスクは、PR のレビューだけのタスク（`source.review: sacty`。[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）で、`TaskCreated` の `reviewOf` に親の ID と PR を作った工程を持つ。
+  題は `[PR #<番号>] <親の題>`（言語に依存しない形。200 文字まで。長い親の題は、文字の途中で切らずに `…` で切り詰める）、プロジェクトは親と同じ、予算の上限は `budget.default_per_task_usd`（子タスクの費用は子タスクの予算に数える）。
+  分割の子タスク（`parent`）とは別で、分割の待ち・統合レビューの対象にしない。
+- 親には `ReviewTaskCreated`（子タスクの ID・工程・PR）を記録する（`Task.reviewTasks`）。
+  1つの PR（リポジトリと番号）につき1つ。記録のある PR は、更新しても作らない。PR を作り直した（新しい番号）ときは、新しい PR に作る。
+  ただし、最後の子タスクが PR のクローズで中止されていれば（`reason: pull_request_closed`）、PR を開き直したときの PR の確認で、新しい子タスクを作って記録を足す（中止したタスクは再レビューできないため。`needsReviewTask`）。
+  人が中止した子タスクは作り直さない。
+- タスクの詳細の「関連するタスク」に、親から子タスク（工程・PR の番号・子タスクの状態）と、子タスクから親へのリンクを出す（同じ PR に子タスクが複数あっても、状態で区別できる）。
+- 作らないとき
+  - 親が中止された・中止を求められている。
+  - その PR のレビューのタスク（以前の版でレビュー用のラベルから取り込んだものなど）が、終わらずにある（二重にレビューしない）。
+  - デーモンの依存で無効にしている（`reviewTasks`。テストで工程の流れだけを確かめるため。デーモンの起動では有効）。
+- 作れなくても、PR の作成・承認待ちは失敗にしない（デーモンのログに残し、次の PR の確認で作り直す）。
+- PR の確認（60秒ごと）で、承認待ち（`awaiting_approval`）の今の提出の PR（`gatePullRequest`）が開いていれば、次を行う（`reconcileReviewTasks`）。
+  一時停止・中止を求められた親は除く。
+  - 子タスクの記録が無ければ作る（公開を記録した後、作る前に止まった（停止・クラッシュ）とき）。
+    子タスクだけ作って親に記録する前に止まっていたら、作り直さずに記録だけ足す。
+  - 子タスクがレビューを投稿して終わっていて（「再レビュー」できる状態）、レビューした先頭のコミット（`reviewTarget.headCommit`）が、親が PR に積んだ今のコミットと違えば、再レビューを始める（`ReviewRestarted`、`reason: updated`、`commit` に親のコミット。actor `sacty`）。
+    親が指摘を直して PR を更新し、承認待ちに戻ったときにあたる。直している間（承認待ちでない）は始めない。
+    同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
+    一時停止した・一時停止や中止を求められた子タスクは動かさない。
+- 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず再レビューも起きないので、PR は人の承認（マージ）を待つ。
+  繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
+- 子タスクが終わる前に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。
+- 親が中止されたら、PR の確認で、終わっていない子タスクも中止する（`TaskCancelled` の `reason: parent_cancelled`。中止の片付けで PR を閉じなかったときも、レビューを続けない）。
+  PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
+- 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`labelDue`・`resumePullRequestLabels`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 
@@ -164,7 +166,7 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 - 確認の終わりに、次を順に行う。
   1. コンテキストにする改修の PR がマージされたメモリーを消す（`cleanupPromotedMemories`。[メモリー](memory.md#コンテキストへの昇格)）。
   2. PR のレビューの取り込みのタスクのうち終わっていないものの PR を確かめ、マージされた・マージせずに閉じられたら中止する（`checkReviewPullRequests`）。
-  3. 公開の後、ラベルを付ける前に止まった PR にラベルを付ける（`resumePullRequestLabels`。[PR のレビュー用のラベル](#pr-のレビュー用のラベル)）。
+  3. 承認待ちの PR のレビューの子タスクを整える（作る前に止まったものを作り、親が PR を更新していたら再レビューを始める。`reconcileReviewTasks`。[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
   4. 最終レビューの前に作った実装の PR の CI を待っているタスクの CI を確かめる（`checkVerificationCi`。[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）。
   5. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
 
@@ -270,7 +272,7 @@ PR を別のタスク（PR のレビューだけのタスク）として取り�
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`・`prConflictNote`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`resumePullRequestLabels`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
 ## PR の本文と PR テンプレート
 
@@ -436,8 +438,9 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   そのタスクのプロジェクトのアカウント（元のタスクのアカウントと違うことがある）と、目印（`<!-- sacty-review:<タスク ID>[:<回>] -->`）の回である。
   bot の判定より先に見るので、そのアカウントが bot（GitHub App など）でも同じ。
   - そのタスクの、指摘のある回は、指摘として取り込む。
-    取り込みの経路（レビュー用のラベル（`source.review: sacty`）・レビューの依頼（`requested`）・手動で作ったタスク（`source` 無し）など）は問わない。
-    どれも、人が求めたレビューにあたるためである。
+    レビューのタスクの種類（レビューの子タスク（`source.review: sacty`、`reviewOf` あり）・以前の版でレビュー用のラベルから取り込んだ sacty の PR のタスク（`source.review: sacty`、`reviewOf` なし）・レビューの依頼（`requested`）・レビュー用のラベル（`label`）・手動で作ったタスク（`source` 無し）など）は問わない。
+    レビューの子タスクは、sacty が PR を作ったときに自動で作る（ラベルを経由しない）。それ以外は、人が求めたレビューにあたる。
+    どれも、PR を作ったタスクに直させるべきレビューである。
     指摘のある回は、`reviewVerdicts` の `verdict` が `changes_required` か `suggestions` の回。
     判定を読めなかった回も、指摘を落とさないように含める。
     作ったタスクとは別のタスクのレビューを、元のタスクに届けて対応させるためである。

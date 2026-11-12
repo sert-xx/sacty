@@ -82,11 +82,20 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 
 ## Reviewing PRs that sacty created
 
-If the "Label for PR reviews" is set, sacty adds that label to every PR it creates (implementation PRs, and Requirements and Design PRs). It does not add the label to import. The implementation PR is opened as a draft before the final review and gets the label when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
+For each PR sacty creates (Requirements and Design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
+No label setting is needed, and sacty does not add a label to the PR.
+The implementation PR is opened as a draft before the final review, and the child task is created when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
+An implementation PR stacked on a dependency's PR waits for approval as a draft, so its child task is created when the dependency is merged and the draft is removed.
 
-- If the repository does not have the label, sacty creates it first. If sacty cannot add the label (permissions and so on), the PR is left as it is, and the reason appears in the task's Activity.
-- A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR.
-  - If its verdict is changes required or suggestions only (OK to merge), the review reaches the creating task as PR findings. The Goal Guardian decides where to go back to and fixes them (the task's budget stops the cost of repetition).
+- The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).
+  In "Related tasks" of the task detail, links to each other appear as "PR review" on the original task and "Reviews the PR of" on the child task.
+  The links on the original task also show the child task's status (queued, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
+  Its cost counts toward the child task's budget.
+- The child task's review is posted to the PR.
+  - If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.
+    The Goal Guardian decides where to go back to and fixes them.
+  - When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again.
+    This repeats until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
   - A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
   - The findings of this review are told apart as "AI review comments" from the comments you wrote.
     The review is posted with the same GitHub account as yours, but it is recognized by the marker (`sacty-review:`) put in the post.
@@ -96,11 +105,13 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
   - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), that review is discarded instead of delivered.
     That it was discarded, and why, remain in the Activity.
     The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub). They stay until the PR is merged, so check them before you approve or merge.
+    When the original task goes back to waiting for approval, the child task reviews the current PR again.
   - The approval screen and the task detail also show whether a Sacty AI review is attached to the current commit of the PR awaiting approval (not attached, reviewing, or attached). A review takes a while to reach a commit created by a rework, so approving or merging before it arrives means going ahead without seeing its comments. Approving and merging are not blocked. The "Conclusion" of the PR body also gets one line with the state when the body was written (a review that arrives later is not reflected, so check the approval screen for the latest state).
-    sacty does not import them into the rework automatically, and does not run the review again on the new commit (it would add cost). If a comment still applies to the current PR, convey it by requesting changes; it is treated as your comment.
-- Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an implementation task. Its findings reach the creating task in the same way.
-- sacty adds the label once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again, use "Review again" on the review task). sacty does not add back a label that someone removed either.
-- Even if "Import PRs with the review label" is Off, sacty still adds the label. While it is Off, the PRs are not imported; once you turn it back On, the PRs still open at that time are imported. Intake only searches open PRs, so PRs merged or closed while it was Off are not imported.
+- There is one child task per PR. Updating the PR does not create a new child task. When the PR is recreated (it becomes a PR with a new number), one is created for the new PR.
+- If you merge or close the PR before the child task finishes, the child task is cancelled. It is also cancelled when you cancel the original task.
+  If you reopen a closed PR, a new child task is created and reviews it again (a child task you cancelled is not recreated).
+- PRs sacty created are not taken in even if you add the review label or request a review (the child task reviews them).
+  The same applies to PRs to which an older version of sacty added the label.
 
 ## JIRA tickets
 

@@ -7,7 +7,7 @@ At a step with an approval gate, the task moves to the next step when a person a
 Requesting changes redoes the work from the chosen step. When requests for changes to the same step exceed the limit, the task goes to Escalation (waiting for a person's decision).
 What counts toward the limit is the requests for changes by a person; a request for changes made only of comments from sacty's own AI review is not counted ([AI review comments](#ai-review-comments)).
 
-Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md), [Open the implementation PR as a draft before the final review, let the Goal Guardian judge after waiting for CI, and on a pass mark it ready for review](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md), [Run the final review alongside the implementation PR's CI](../adr/20261108-0232-final-review-alongside-pull-request-ci.md), [Treat comments from sacty's own AI review separately from a person's comments](../adr/20261102-0843-distinguish-ai-review-remarks.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-superseded-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md), [Import rounds with findings posted by a sacty task that refers to the PR as comments on the original task's PR, however that task was taken in](../adr/20261025-2245-import-sacty-reviews-from-any-intake.md), [Open the implementation PR as a draft before the final review, let the Goal Guardian judge after waiting for CI, and on a pass mark it ready for review](../adr/20261027-2330-superseded-draft-pull-request-before-final-review.md), [Run the final review alongside the implementation PR's CI](../adr/20261108-0232-final-review-alongside-pull-request-ci.md), [Treat comments from sacty's own AI review separately from a person's comments](../adr/20261102-0843-distinguish-ai-review-remarks.md), [Review the PRs sacty creates in a child task of the task that created the PR, and repeat until there are no findings](../adr/20261112-0609-review-sacty-pull-requests-in-child-tasks.md)
 
 ## Approval in the web UI
 
@@ -88,32 +88,45 @@ When opening the PR for a verified implementation, if the implementation workspa
 
 Code: `apps/daemon/src/service.ts` (`publish`), `packages/core/src/events.ts` (`NoChangesFound`), `packages/core/src/projection.ts` (`noChanges`, `deliveredWithoutChanges`), `apps/daemon/src/prompts.ts` (`NO_CHANGE_LINE`), `apps/web/src/lib/labels.ts` (`statusText`)
 
-## The review label on PRs
+## The review child task of a PR
 
-sacty adds the review label (sacty's setting `reviewLabel`) to every PR it opens (the implementation PR and the requirements and design PRs).
-Requirements and design PRs get it right after being opened, and the implementation PR when it moves to review (when it is marked ready).
-While it is a draft before the final review, the label is not added (the record has no `label` either). This is so that the PR is taken in as a separate task (a PR-review-only task) and reviewed in a context separate from the task that opened it ([Ticket intake and GitHub](intake.en.md)). The intake label (`intakeLabel`) is not attached.
+For each PR sacty opens (requirements and design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
+This is so that the PR is reviewed in a context separate from the step that opened it (a separate task and run), its findings are delivered to the parent (the task that opened the PR) through [Importing PR comments](#importing-pr-comments) to be fixed, and this repeats until there are no findings.
+No label is attached to the PR (the review label `reviewLabel` is used only for taking in PRs sacty did not open; [Ticket intake and GitHub](intake.en.md)).
 
-- If no review label is configured, the label is not attached. Nothing is recorded.
-- It is attached even if its triage is Off (`reviewLabel` in `triageOff`). This is so that PRs opened while it was temporarily Off are taken in once it is back On, if they are still open then. Nothing is taken in while it is Off. Intake searches with `is:open is:pr`, so PRs merged or closed while it was Off are not taken in.
-- If the repository does not have the label (`GET /repos/<owner>/<name>/labels/<label>` returns 404), it is created (`POST .../labels`, color `0e8a16`) and then attached to the PR (`POST .../issues/<number>/labels`). If it was created elsewhere in the meantime (422 `already_exists`), it is attached as is.
-- The result is recorded as follows and appears on the task's Activity screen.
-  - Once attached, `PullRequestLabeled` (`created`: the label was created)
-  - If it could not be attached, `PullRequestLabelFailed`. It holds which operation failed (`getLabel`, `createLabel`, or `addLabel` of `github.failed`) and GitHub's response. The secret values used are redacted.
-  - Failing to attach the label does not make opening the PR fail (the task proceeds to waiting for approval).
-- The label is attached only once per PR (repository and number).
-  - A PR with a record does not get the label again when the same PR is updated. There are no duplicate labels, no re-adding a label a person removed, and no retry after failure.
-  - A PR without a record (for example, one opened before the setting was configured) gets the label the next time it is updated.
-  - When the PR is recreated (the earlier PR was closed and a PR with a new number was opened), the new PR gets the label.
-- If cancel or pause was requested and the requirements or design PR was not recorded, the label is not attached.
-- The plan to attach is kept in the PR's publish record (`label` in `PullRequestPublished` and `StepPullRequestPublished`) before attaching.
-  - A PR that stopped (shutdown or crash) after the publish was recorded but before the label was attached gets the label from the PR check (every 60 seconds, also after restart). The check attaches it when there is a plan, there is no record of attaching or failing, and the PR is open.
-  - The label attached is the review label in the settings at that time.
-  - It is not attached for canceled tasks or if the current setting does not attach (no review label).
-  - If the same PR is in the middle of being labeled, it is not labeled again.
-- `intakeLabel` in older records (a plan to attach the intake label) can still be read but is not treated as a plan to attach (the ledger is not rewritten).
+- When it is created: right after the requirements or design PR is opened, and for the implementation PR when it moves to review (when the draft is removed).
+  It is not created while it is a draft before the final review.
+  An implementation PR stacked on a dependency's PR (it waits for approval as a draft; [Tasks and steps](tasks-and-steps.en.md)) also does not get one while it is a draft; it is created when, after the dependency is merged, the PR is retargeted and the draft is removed.
+  In a task that continues an existing PR, it is created for the continued PR.
+- The child task is a PR-review-only task (`source.review: sacty`; [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)), and holds the parent's ID and the step that opened the PR in `reviewOf` of `TaskCreated`.
+  Its title is `[PR #<number>] <parent title>` (a form that does not depend on the language; up to 200 characters; a long parent title is cut with `…` without splitting a character), its project is the parent's, and its budget cap is `budget.default_per_task_usd` (the child task's cost counts toward the child task's budget).
+  It is separate from split subtasks (`parent`), and is not waited for by a split or included in an integration review.
+- `ReviewTaskCreated` (the child task's ID, step, and PR) is recorded on the parent (`Task.reviewTasks`).
+  One per PR (repository and number). A PR with a record does not get another when updated. When the PR is recreated (new number), one is created for the new PR.
+  However, if the last child task was cancelled because the PR was closed (`reason: pull_request_closed`), the PR check after the PR is reopened creates a new child task and adds a record (a cancelled task cannot be re-reviewed; `needsReviewTask`).
+  A child task a person cancelled is not recreated.
+- "Related tasks" in the task detail shows links from the parent to its child tasks (the step, the PR number, and the child task's status) and from a child task to its parent (several child tasks for the same PR can be told apart by their status).
+- When it is not created
+  - The parent is canceled or a cancel was requested.
+  - A review task for that PR (such as one taken in from the review label by an older version) exists and has not finished (no double review).
+  - It is disabled in the daemon's dependencies (`reviewTasks`; for tests that check only the step flow. Enabled when the daemon starts).
+- Failing to create it does not make opening the PR or waiting for approval fail (it is logged by the daemon and retried at the next PR check).
+- In the PR check (every 60 seconds), if the PR of the current submission (`gatePullRequest`) of a task waiting for approval (`awaiting_approval`) is open, the following is done (`reconcileReviewTasks`).
+  Parents for which pause or cancel was requested are excluded.
+  - If there is no record of a child task, one is created (when it stopped (shutdown or crash) after the publish was recorded but before creating it).
+    If only the child task was created and it stopped before recording it on the parent, only the record is added without creating it again.
+  - If the child task has posted its review and finished (it can be re-reviewed), and the head commit it reviewed (`reviewTarget.headCommit`) differs from the commit the parent currently has on the PR, a re-review starts (`ReviewRestarted`, `reason: updated`, the parent's commit in `commit`; actor `sacty`).
+    This is when the parent fixed the findings, updated the PR, and went back to waiting for approval. It does not start while fixing (not waiting for approval).
+    It starts only once for the same commit (`Task.reviewRestartCommit`; even if a push elsewhere makes the reviewed head differ from the parent's commit, it does not repeat).
+    Child tasks that are paused, or for which pause or cancel was requested, are left alone.
+- If the child task's verdict is no findings (`no_findings`), nothing is delivered to the parent and no re-review happens, so the PR waits for a person's approval (merge).
+  There is no limit on the number of rounds; they stop at the budget cap of the parent and of the child task.
+- If the PR is merged or closed before the child task finishes, the child task is cancelled (the same as PR-review-only tasks; `checkReviewPullRequests`).
+- If the parent is cancelled, the PR check also cancels the child tasks that have not finished (`reason: parent_cancelled` of `TaskCancelled`; even if the PR was not closed in the cancel's cleanup, the review does not continue).
+  The PR check finishes only after the child tasks' cancellation (cleanup and records) finishes.
+- Records from older versions (`label` and `intakeLabel` in the PR publish records, `PullRequestLabeled` and `PullRequestLabelFailed`) can still be read but are not treated as a plan to attach a label (the ledger is not rewritten).
 
-Code: `apps/daemon/src/service.ts` (`labelPullRequest`, `labelDue`, `resumePullRequestLabels`, `publishStepPullRequest`, `publish`), `apps/daemon/src/github.ts` (`GitHubPullRequests.addLabel`), `packages/core/src/projection.ts` (`pullRequestLabels`)
+Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
 
 ## The PR check
 
@@ -134,7 +147,7 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - At the end of the check, the following are done in order.
   1. Memories whose PR promoting them to context was merged are deleted (`cleanupPromotedMemories`; [Memory](memory.en.md#promotion-to-context)).
   2. For PR review intake tasks that have not finished, the PR is checked, and the task is cancelled if the PR was merged or closed without merging (`checkReviewPullRequests`).
-  3. PRs that stopped after the publish but before the label was attached get the label (`resumePullRequestLabels`; [The review label on PRs](#the-review-label-on-prs)).
+  3. The review child tasks of PRs waiting for approval are put in order (one that stopped before being created is created, and if the parent updated the PR, a re-review starts; `reconcileReviewTasks`; [The review child task of a PR](#the-review-child-task-of-a-pr)).
   4. The CI of tasks waiting for the CI of the implementation PR opened before the final review is checked (`checkVerificationCi`; [Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)).
   5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
 
@@ -240,7 +253,7 @@ It only shows it; the base branch is not merged in (it is merged in, before the 
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `recordPullRequestConflict`), `apps/daemon/src/github.ts` (`GitHubPullRequests.status`), `packages/core/src/projection.ts` (`pullRequestConflict`, `Task.pullRequestConflict`), `apps/web/src/lib/labels.ts` (`statusText`, `prConflictNote`), `apps/web/src/lib/dashboard-data.ts` (`attentionRows`), `apps/web/src/lib/task-list-data.ts`, `apps/web/src/components/task-detail.tsx` (`GateNotice`), `apps/web/src/components/gate-form.tsx`
 
-Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`, `cleanupPromotedMemories`, `checkReviewPullRequests`, `resumePullRequestLabels`, `checkVerificationCi`, `checkDeployments`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
+Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`, `cleanupPromotedMemories`, `checkReviewPullRequests`, `reconcileReviewTasks`, `checkVerificationCi`, `checkDeployments`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)
 
 ## PR body and PR template
 
@@ -375,7 +388,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
   - While the implementation rework is paused, the task is not waiting for approval, so comments are not imported; they are kept as not yet applied and applied on resume ([Comments that arrive while paused](#comments-that-arrive-while-paused)).
   - For a taken-over existing PR, comments passed to the prompt of the Implement step are not imported (the implementation addressed them; [Taking over an existing PR](tasks-and-steps.en.md#taking-over-an-existing-pr)).
 - Posts by a sacty task that reviewed this PR (a task pointing to the PR: the PR it took in, or the PR URL in its body) are identified by two things. They are that task's project account (which may differ from the original task's account) and the round in the marker (`<!-- sacty-review:<task ID>[:<round>] -->`). This is checked before the bot check, so the same applies even if that account is a bot (such as a GitHub App).
-  - That task's rounds with findings are imported as comments. How the task was taken in (the review label (`source.review: sacty`), a review request (`requested`), a task created manually (no `source`), and so on) does not matter, because each is a review that a person asked for. Rounds with findings are those where `verdict` in `reviewVerdicts` is `changes_required` or `suggestions`; rounds whose verdict could not be read are also included so as not to drop comments.
+  - That task's rounds with findings are imported as comments. The kind of review task (a review child task (`source.review: sacty` with `reviewOf`), a task an older version took in from the review label for a sacty PR (`source.review: sacty` without `reviewOf`), a review request (`requested`), the review label (`label`), a task created manually (no `source`), and so on) does not matter. A review child task is created automatically when sacty opens the PR (not through a label); the others are reviews that a person asked for. Each is a review the task that opened the PR should address. Rounds with findings are those where `verdict` in `reviewVerdicts` is `changes_required` or `suggestions`; rounds whose verdict could not be read are also included so as not to drop comments.
 
     This delivers a review by a task separate from the one that opened the PR to the original task so that it addresses them. Rounds with suggestions only are imported too, and the budget stops the cost of repetition. How the verdict is decided is in [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks).
   - Other rounds (rounds with no findings, and rounds with no recorded verdict: rounds not yet run, or rounds of a task that only refers to the PR and has no review step) are not imported, even if the account differs from the original task's. There is no Request changes, and the Goal Guardian does not run either.

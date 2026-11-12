@@ -133,6 +133,7 @@ import {
   InvalidOperationError,
   type LocalSessionView,
   MEMORY_STEP_ROLES,
+  reviewTaskTitle,
   type ServiceDeps,
   TaskService,
 } from "./service.js";
@@ -1311,6 +1312,8 @@ function makeService(
     ci?: ServiceDeps["ci"];
     /** 完了したタスクを監査する（PBI-125）。既定は監査しない。 */
     audit?: boolean;
+    /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。既定は作らない。 */
+    reviewTasks?: boolean;
     /** メモリーを書き出す（PBI-126）。既定は書き出さない。 */
     memory?: boolean;
     /** 階層ごとのメモリーの件数の上限（PBI-126）。 */
@@ -1385,6 +1388,7 @@ function makeService(
     ...(options.templates ? { templates: options.templates } : {}),
     ...(options.ci ? { ci: options.ci } : {}),
     ...(options.audit ? { audit: true } : {}),
+    ...(options.reviewTasks ? { reviewTasks: true } : {}),
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
     ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
@@ -9923,14 +9927,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       tests: { command: "npm test", exitCode: 0, output: "2 passed" },
     });
     expect(task?.lastTests).toBeUndefined();
-    expect(types(service, id).slice(-6)).toEqual([
+    // sacty の PR にラベルは付けない（レビューは子タスク。PBI-330）
+    expect(types(service, id).slice(-5)).toEqual([
       "RunCostRecorded",
       "FinalReviewed",
       "BranchPushed",
       "PullRequestPublished",
       "StepSubmitted",
-      // 取り込むラベル（PBI-88）
-      "PullRequestLabeled",
     ]);
     expect(types(service, id)).not.toContain("TestsRun");
     expect(service.get(id)?.activity.find((e) => e.type === "FinalReviewed")?.actor).toBe(
@@ -11908,21 +11911,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       url: "https://github.com/acme/app/pull/7",
       number: 7,
     });
-    expect(types(service, id).slice(-4)).toEqual([
+    expect(types(service, id).slice(-3)).toEqual([
       "BranchPushed",
       "PullRequestPublished",
       "StepSubmitted",
-      "PullRequestLabeled",
     ]);
-    // 実装の PR に、レビュー用のラベルを付ける（PBI-88・PBI-99）
-    expect(pulls.labels).toEqual([
-      {
-        repo: "https://github.com/acme/app",
-        token: "ghp_secret",
-        number: 7,
-        label: "sacty-review",
-      },
-    ]);
+    // 実装の PR に、レビュー用のラベルは付けない（レビューは子タスク。PBI-330）
+    expect(pulls.labels).toEqual([]);
     // トークンは作業履歴に残さない
     expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
 
@@ -12793,12 +12788,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const gated = service.get(id)?.task;
       expect(gated?.gate).toEqual({ step: "implement", submission: 1 });
       expect(gated?.steps.at(-1)).toEqual({ key: "implement", state: "active" });
-      expect(types(service, id).slice(-5)).toEqual([
+      expect(types(service, id).slice(-4)).toEqual([
         "FinalReviewed",
         "BranchPushed",
         "PullRequestPublished",
         "StepSubmitted",
-        "PullRequestLabeled",
       ]);
       const submitted = service.get(id)?.activity.findLast((e) => e.type === "StepSubmitted");
       expect(submitted?.payload).toEqual({ step: "implement", submission: 1 });
@@ -12997,12 +12991,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(pulls.checked).toEqual([
       { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 },
     ]);
-    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
+    expect(types(service, id).at(-1)).toBe("StepSubmitted");
 
     // 確かめられなければ（ネットワークなど）、何も記録せずに次の確認でやり直す
     pulls.statusFail = "network";
     await service.checkPullRequests();
-    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
+    expect(types(service, id).at(-1)).toBe("StepSubmitted");
     pulls.statusFail = undefined;
 
     // マージせずに閉じられたら、記録して人間の判断を待つ
@@ -13434,12 +13428,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.calls).toHaveLength(2);
       expect(pulls.calls[1]).toMatchObject({ number: 7 });
       expect(pulls.calls[1]?.draft).toBeUndefined();
-      expect(types(service, id).slice(-5)).toEqual([
+      expect(types(service, id).slice(-4)).toEqual([
         "FinalReviewed",
         "PullRequestCiFinished",
         "PullRequestPublished",
         "StepSubmitted",
-        "PullRequestLabeled",
       ]);
       expect(gated?.pullRequest?.verifying).toBeUndefined();
       // CI を確かめたコミットのまま、レビューへ進める（新しいコミットを作らず、CI を二重に動かさない）
@@ -14581,11 +14574,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       );
       const log = service.get(id)?.activity ?? [];
       expect(log.find((e) => e.type === "VerificationOverridden")?.actor).toBe("person");
-      expect(types(service, id).slice(-4)).toEqual([
+      expect(types(service, id).slice(-3)).toEqual([
         "BranchPushed",
         "PullRequestPublished",
         "StepSubmitted",
-        "PullRequestLabeled",
       ]);
       activity.close();
     });
@@ -22763,6 +22755,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       planner?: ServiceDeps["planner"];
       draftPullRequests?: boolean;
       templates?: ServiceDeps["templates"];
+      reviewTasks?: boolean;
     } = {},
   ) {
     // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
@@ -22778,6 +22771,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
         mergeBase: true,
         ...(options.draftPullRequests ? { draftPullRequests: true } : {}),
         ...(options.templates ? { templates: options.templates } : {}),
+        ...(options.reviewTasks ? { reviewTasks: true } : {}),
       },
     );
     const { service } = made;
@@ -22857,6 +22851,43 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     // 依存先の合格したコミットと同じなので、取り込まない
     expect(repos.merges).toEqual([]);
     expect(taskOf(service, id).status).toBe("waiting_children");
+    activity.close();
+  });
+
+  it("重ねた PR はドラフトの間レビューの子タスクを作らず、依存先のマージの後に向き先を付け替えてドラフトを外したときに作る（PBI-330 レビュー指摘）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), review(), implement("# B の実装"), review()],
+      new FakeRepos(),
+      new FakePulls(),
+      { reviewTasks: true },
+    );
+    const [a, b] = ids as [string, string];
+    // レビューの子タスクは動かさない（工程の流れだけを見る）
+    const drainSteps = async () => {
+      for (let i = 0; i < 12; i++) {
+        const queued = service.queuedTaskIds().filter((q) => !taskOf(service, q).reviewOf);
+        if (queued.length === 0) return;
+        for (const q of queued) await service.runNext(q);
+      }
+    };
+    await drainSteps();
+    expect(taskOf(service, a).reviewTasks?.map((r) => r.number)).toEqual([7]);
+    expect(taskOf(service, b).pullRequest).toMatchObject({ number: 8, draft: true });
+    expect(taskOf(service, b).reviewTasks).toBeUndefined();
+    // PR の確認でも、ドラフトの間は作らない
+    await service.checkPullRequests();
+    expect(taskOf(service, b).reviewTasks).toBeUndefined();
+    expect(service.list().filter((t) => t.reviewOf?.taskId === b)).toEqual([]);
+    // 依存先のマージの後、向き先を付け替えてドラフトを外したら作る
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drainSteps();
+    await service.checkPullRequests();
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    expect(taskOf(service, b).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
+      [8, "implement"],
+    ]);
     activity.close();
   });
 
@@ -26905,6 +26936,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       planner?: ServiceDeps["planner"];
       /** 最終レビューの前に実装の PR をドラフトで作り、CI を待つ（既定は、待たずに最終レビューへ進む）。 */
       ci?: ServiceDeps["ci"];
+      /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。 */
+      reviewTasks?: boolean;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -26915,6 +26948,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
       ...(options.ci ? { ci: options.ci, draftPullRequests: true } : {}),
+      ...(options.reviewTasks ? { reviewTasks: true } : {}),
       now: later,
       pulls,
       repos,
@@ -27043,14 +27077,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const taskBranch = taskBranchOf(id);
     // 1. タスクブランチ（起点のコミットから）と、要求要件のブランチ・PR
     expect(repos.pushedCommits).toEqual([{ commit: "base123", branch: taskBranch }]);
-    expect(types(service, id).slice(-6)).toEqual([
+    expect(types(service, id).slice(-5)).toEqual([
       "AgentRunCompleted",
       "TaskBranchCreated",
       "StepBranchPushed",
       "StepPullRequestPublished",
       "StepSubmitted",
-      // 取り込むラベル（PBI-88）
-      "PullRequestLabeled",
     ]);
     const completedAt = service
       .get(id)
@@ -27086,7 +27118,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(() => service.approve(id, { step: "requirements", submission: 1 })).toThrow(/pull\/7/);
     // 開いたままなら何も記録しない
     await service.checkPullRequests();
-    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
+    expect(types(service, id).at(-1)).toBe("StepSubmitted");
 
     // マージで承認として記録し、次の工程（設計）に進む
     await merge(made, "requirements");
@@ -27154,12 +27186,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     expect(task.pullRequest).toMatchObject({ number: 9, branch: taskBranch });
-    // 要求要件・設計・実装の PR のすべてに、レビュー用のラベルを付ける（PBI-88・PBI-99）
-    expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty-review"],
-      [8, "sacty-review"],
-      [9, "sacty-review"],
-    ]);
+    // sacty の PR にラベルは付けない（レビューは子タスク。PBI-330）
+    expect(pulls.labels).toEqual([]);
     await merge(made, "implement");
     const done = taskOf(service, id);
     expect(isCompleted(done)).toBe(true);
@@ -27604,8 +27632,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(
       service.get(id)?.activity.findLast((e) => e.type === "StepPullRequestPublished")?.payload,
     ).toMatchObject({ number: 10, supersedes: 8 });
-    // 作り直した PR（新しい番号）には、取り込むラベルを付ける（1つの PR に1回。PBI-88）
-    expect(pulls.labels.map((l) => l.number)).toEqual([7, 8, 9, 10]);
+    // sacty の PR にラベルは付けない（PBI-330）
+    expect(pulls.labels).toEqual([]);
     activity.close();
   });
 
@@ -28449,7 +28477,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
   });
 
-  describe("sacty が作る PR にレビュー用のラベルを付け、別のタスクでレビューさせる（PBI-88・PBI-99）", () => {
+  describe("sacty が作る PR を、その工程の子タスクでレビューする（PBI-330）", () => {
     const labeledPr = (number: number, labels = ["sacty-review"]) => ({
       repo: "https://github.com/acme/app",
       number,
@@ -28459,212 +28487,184 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       labels,
       pullRequest: true,
     });
-
-    it("要求要件の PR にレビュー用のラベルを付け（無ければ作り）、台帳に残す。PR を更新しても付け直さない（受け入れ条件 1・3・7）", async () => {
-      const pulls = new FakePulls();
-      pulls.labelCreated = true;
-      const made = await start(
-        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
-        { pulls },
+    const verdictOut = (verdict: string, text = "# 評価\n\n受け入れ条件が足りない") =>
+      out(`${text}\n\n${block({ "sacty-review-verdict": { verdict } })}`);
+    /** 親のタスクの、その番号の PR のレビューの子タスクの ID。 */
+    const childOf = (svc: TaskService, id: string, number = 7) =>
+      taskOf(svc, id).reviewTasks?.find((r) => r.number === number)?.taskId ?? "";
+    /** 親のタスクが、その番号の PR に最後に積んだコミット。 */
+    const commitOf = (svc: TaskService, id: string, number = 7) => {
+      const t = taskOf(svc, id);
+      return (
+        t.stepPullRequests.findLast((p) => p.number === number)?.commit ??
+        (t.pullRequest?.number === number ? t.pullRequest.commit : undefined) ??
+        ""
       );
-      const { activity, service, id } = made;
-      expect(pulls.labels).toEqual([
-        {
-          repo: "https://github.com/acme/app",
-          token: "ghp_secret",
-          number: 7,
-          label: "sacty-review",
-        },
-      ]);
-      const labeled = service.get(id)?.activity.at(-1);
-      expect(labeled).toMatchObject({
-        type: "PullRequestLabeled",
-        actor: "sacty",
-        payload: {
-          repo: "https://github.com/acme/app",
-          number: 7,
-          label: "sacty-review",
-          created: true,
-        },
-      });
-      expect(taskOf(service, id).pullRequestLabels).toEqual([
-        { repo: "https://github.com/acme/app", number: 7, label: "sacty-review", created: true },
-      ]);
-      // 指摘で同じ PR を更新しても、ラベルは付け直さない（人が外していても）
-      pulls.feedbackBy[7] = [item("comment:1")];
-      await service.checkPullRequests();
-      await service.runNext(id);
-      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
-      expect(pulls.labels).toHaveLength(1);
-      expect(types(service, id).filter((t) => t === "PullRequestLabeled")).toHaveLength(1);
-      // 再起動しても、付けた記録を復元する
-      const done = taskOf(service, id);
-      activity.close();
-      const again = new SqliteActivityStore(dbPath);
-      expect(
-        makeService(again, [], { stepPullRequests: true }).service.get(id)?.task.pullRequestLabels,
-      ).toEqual(done.pullRequestLabels);
-      again.close();
-    });
+    };
+    /** レビューの子タスクを、レビューを投稿して終わるまで進める。 */
+    const runReview = async (svc: TaskService, childId: string) => {
+      for (let i = 0; i < 4 && !isCompleted(taskOf(svc, childId)); i++) await svc.runNext(childId);
+    };
+    const posted = (pulls: FakePulls, n: number, author = "me") =>
+      item(`review:${50 + n}`, { kind: "review", author, body: pulls.reviews[n]?.body ?? "" });
 
-    it("レビュー用のラベルのトリアージを Off にしていても、要求要件・設計の PR と実装の PR に付ける（On に戻したら取り込まれる。PBI-139）", async () => {
-      const settings = new MemorySettingsStore({
-        intakeLabel: "sacty",
-        reviewLabel: "sacty-review",
-        triageOff: ["reviewLabel", "issues"],
-      });
-      const pulls = new FakePulls();
-      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
-        pulls,
-        settings,
-      });
-      await merge(made, "requirements");
-      await made.service.runNext(made.id);
-      await merge(made, "design");
-      await drain(made.service);
-      expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
-        [7, "sacty-review"],
-        [8, "sacty-review"],
-        [9, "sacty-review"],
-      ]);
-      expect(taskOf(made.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
-        7, 8, 9,
-      ]);
-      // Off の間は、ラベルを付けた sacty の PR も取り込まない。On に戻したら、レビューだけのタスクとして取り込む
-      const labeled = { ...labeledPr(7), review: "label" as const };
-      expect(made.service.importIssues([labeled])).toEqual([]);
-      made.service.saveSettings({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
-      expect(made.service.importIssues([labeled]).map((t) => t.source?.review)).toEqual(["sacty"]);
-      made.activity.close();
-    });
-
-    it("レビュー用のラベルを設定していないなら、付けずに PR を作る（取り込むラベルは付けない。PBI-99）", async () => {
+    it("要求要件の PR を作ったら、その PR をレビューする子タスクを作って親に記録する。ラベルは付けず、PR を更新しても作り直さない（受け入れ条件 1・5）", async () => {
+      // レビュー用のラベルの設定・そのトリアージに関わらず作る
       for (const settings of [
+        undefined,
         new MemorySettingsStore({}),
-        new MemorySettingsStore({ intakeLabel: "sacty" }),
+        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] }),
       ]) {
-        const pulls = new FakePulls();
-        const { activity, service, id } = await start([out("# 要求要件 v1")], { pulls, settings });
-        expect(pulls.labels).toEqual([]);
-        expect(types(service, id).at(-1)).toBe("StepSubmitted");
-        expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
-        activity.close();
         rmSync(dbPath, { force: true });
+        const pulls = new FakePulls();
+        const made = await start(
+          [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+          { pulls, reviewTasks: true, ...(settings ? { settings } : {}) },
+        );
+        const { activity, service, id } = made;
+        expect(pulls.labels).toEqual([]);
+        const childId = childOf(service, id);
+        expect(taskOf(service, id).reviewTasks).toEqual([
+          { taskId: childId, step: "requirements", repo: "https://github.com/acme/app", number: 7 },
+        ]);
+        expect(service.get(id)?.activity.at(-1)).toMatchObject({
+          type: "ReviewTaskCreated",
+          actor: "sacty",
+        });
+        const child = taskOf(service, childId);
+        expect(child.reviewOf).toEqual({ taskId: id, step: "requirements" });
+        expect(child.source).toEqual({
+          kind: "github_pull_request",
+          repo: "https://github.com/acme/app",
+          number: 7,
+          url: "https://github.com/acme/app/pull/7",
+          review: "sacty",
+        });
+        expect(child.title).toBe("[PR #7] 決済API");
+        expect(child.projectId).toBe("default");
+        // 分割の子タスクではない（分割の待ち・統合レビューに混ざらない）
+        expect(child.parent).toBeUndefined();
+        expect(service.queuedTaskIds()).toContain(childId);
+        // 人の指摘で同じ PR を更新しても、もう作らない
+        pulls.feedbackBy[7] = [item("comment:1")];
+        await service.checkPullRequests();
+        await service.runNext(id);
+        expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
+        expect(taskOf(service, id).reviewTasks).toHaveLength(1);
+        expect(service.list().filter((t) => t.reviewOf)).toHaveLength(1);
+        // 再起動しても、作った記録を復元する
+        const done = taskOf(service, id);
+        activity.close();
+        const again = new SqliteActivityStore(dbPath);
+        const restarted = makeService(again, [], { stepPullRequests: true }).service;
+        expect(restarted.get(id)?.task.reviewTasks).toEqual(done.reviewTasks);
+        expect(restarted.get(childId)?.task.reviewOf).toEqual({ taskId: id, step: "requirements" });
+        again.close();
       }
     });
 
-    it("ラベルを付けられなくても PR の作成は失敗にせず、理由を秘密の値を伏せて台帳に残し、付け直さない（受け入れ条件 4・7）", async () => {
+    it("子タスクの指摘を親が直して PR を更新したら、子タスクが最新のコミットを再レビューし、指摘なしになったら繰り返さずに人の承認を待つ（受け入れ条件 2・3）", async () => {
       const pulls = new FakePulls();
-      pulls.labelFail = "403 Resource not accessible (token ghp_secret)";
-      const made = await start(
-        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
-        { pulls },
-      );
-      const { activity, service, id } = made;
-      const task = taskOf(service, id);
-      expect(task.status).toBe("awaiting_approval");
-      expect(task.gate).toEqual({ step: "requirements", submission: 1 });
-      const failed = service.get(id)?.activity.at(-1);
-      expect(failed?.type).toBe("PullRequestLabelFailed");
-      expect(failed?.payload).toMatchObject({ number: 7, label: "sacty-review" });
-      const text = ja(failed?.type === "PullRequestLabelFailed" ? failed.payload.message : "");
-      expect(text).toContain("403 Resource not accessible");
-      expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
-      expect(task.pullRequestLabels?.[0]?.failed).toBeDefined();
-      // PR を更新しても、もう一度は付けない（失敗も1回だけ記録する）
-      pulls.labelFail = undefined;
-      pulls.feedbackBy[7] = [item("comment:1")];
-      await service.checkPullRequests();
-      await service.runNext(id);
-      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
-      expect(pulls.labels).toEqual([]);
-      expect(types(service, id).filter((t) => t.startsWith("PullRequestLabel"))).toEqual([
-        "PullRequestLabelFailed",
-      ]);
-      activity.close();
-    });
-
-    it("ラベルを付けた PR は、別のレビューだけのタスクとして1度だけ取り込まれ、その指摘が元のタスクの PR の指摘として届く（受け入れ条件 5・6）", async () => {
-      const pulls = new FakePulls();
-      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
       const made = await start(
         [
           out("# 要求要件 v1"),
-          out(
-            [
-              "# 評価\n\n受け入れ条件が足りない",
-              block({ "sacty-review-verdict": { verdict: "changes_required" } }),
-            ].join("\n\n"),
-          ),
+          verdictOut("changes_required"),
           rework("requirements", "要求要件で直せる"),
           out("# 要求要件 v2"),
+          verdictOut("no_findings", "# 評価\n\nマージしてよい"),
         ],
-        { pulls },
+        { pulls, reviewTasks: true },
       );
       const { activity, service, executor, id } = made;
-      // 取り込み：元のタスク（要求要件の PR の作り手）とは別の、レビューだけのタスクになる
-      const [review, ...rest] = service.importIssues([labeledPr(7)]);
-      expect(rest).toEqual([]);
-      expect(review?.id).not.toBe(id);
-      expect(review?.source).toMatchObject({
-        kind: "github_pull_request",
+      const childId = childOf(service, id);
+      const first = commitOf(service, id);
+      pulls.prInfo = {
+        ...pulls.prInfo,
         number: 7,
-        review: "sacty",
-      });
-      const reviewId = review?.id ?? "";
+        url: "https://github.com/acme/app/pull/7",
+        headSha: first,
+      };
       const before = executor.calls.length;
-      await service.runNext(reviewId);
-      const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
-      expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toContain(
-        "Sacty がほかのタスクで作った PR",
-      );
+      await runReview(service, childId);
       expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
-      await service.runNext(reviewId);
       expect(pulls.reviews.map((r) => r.number)).toEqual([7]);
-      expect(pulls.reviews[0]?.body).toContain(`<!-- sacty-review:${reviewId} -->`);
-      // 評価のブロックは、投稿する本文に入れない
-      expect(pulls.reviews[0]?.body).not.toContain("sacty-review-verdict");
-      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
+      expect(pulls.reviews[0]?.body).toContain(`<!-- sacty-review:${childId} -->`);
+      expect(taskOf(service, childId).reviewVerdicts).toEqual([
         { round: 1, verdict: "changes_required" },
       ]);
-
-      // 元のタスクの PR の指摘の取り込みに、このレビューのタスクの投稿を含めるよう渡す
-      pulls.feedbackBy[7] = [
-        item("review:50", {
-          kind: "review",
-          author: "me",
-          body: pulls.reviews[0]?.body ?? "",
-        }),
-      ];
+      // 親が PR を更新するまでは、再レビューしない
       await service.checkPullRequests();
-      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([reviewId]);
+      expect(types(service, childId)).not.toContain("ReviewRestarted");
+      // 子タスクの指摘が、親の PR の指摘（AI のレビューの指摘）として届き、親が直す
+      pulls.feedbackBy[7] = [posted(pulls, 0)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([childId]);
       const imported = service
         .get(id)
         ?.activity.find((e) => e.type === "PullRequestReviewImported");
-      expect(imported?.payload).toMatchObject({ number: 7, items: [{ key: "review:50" }] });
-      expect(taskOf(service, id).remarks.at(-1)?.text).toContain("受け入れ条件が足りない");
-      // sacty 自身の AI のレビューとして届く：人の操作・人の差し戻しにしない（PBI-275）
       expect(imported?.actor).toBe("sacty");
-      expect(
-        imported?.type === "PullRequestReviewImported" && imported.payload.items[0]?.source,
-      ).toBe("sacty_review");
       expect(taskOf(service, id).remarks.at(-1)?.source).toBe("sacty_review");
-      expect(service.get(id)?.activity.findLast((e) => e.type === "ChangesRequested")?.actor).toBe(
-        "sacty",
-      );
-      expect(changeRounds(taskOf(service, id), "requirements")).toBe(0);
-      // 直して同じ PR を更新しても、ラベルは付け直さず、同じ PR はもうレビューのタスクにしない（繰り返さない）
+      expect(taskOf(service, id).status).toBe("queued");
+      // 直している間（承認待ちでない）は、再レビューしない
+      expect(types(service, childId)).not.toContain("ReviewRestarted");
       await service.runNext(id);
-      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
-      expect(pulls.labels).toHaveLength(1);
-      expect(service.importIssues([labeledPr(7)])).toEqual([]);
-      // レビューのタスクは、PR の指摘を取り込まない（自分の PR を持たない）
-      expect(taskOf(service, reviewId).pullRequest).toBeUndefined();
+      const second = commitOf(service, id);
+      expect(second).not.toBe(first);
+      expect(taskOf(service, id).status).toBe("awaiting_approval");
+      // PR を更新して承認待ちに戻ったので、最新のコミットを再レビューする（1回だけ）
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
+      expect(restarts).toHaveLength(1);
+      expect(restarts?.[0]).toMatchObject({
+        actor: "sacty",
+        payload: { reason: "updated", commit: second },
+      });
+      pulls.prInfo = { ...pulls.prInfo, headSha: second };
+      await runReview(service, childId);
+      expect(pulls.reviews).toHaveLength(2);
+      expect(taskOf(service, childId).reviewVerdicts).toEqual([
+        { round: 1, verdict: "changes_required" },
+        { round: 2, verdict: "no_findings" },
+      ]);
+      // 前回の指摘を渡して再レビューする
+      expect(taskOf(service, childId).previousReview?.headCommit).toBe(first);
+      // 指摘なしの回は親に届けず、再レビューも繰り返さず、人の承認（マージ）を待つ
+      pulls.feedbackBy[7] = [posted(pulls, 0), posted(pulls, 1)];
+      const after = executor.calls.length;
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(taskOf(service, id).status).toBe("awaiting_approval");
+      expect(types(service, id).filter((t) => t === "PullRequestReviewImported")).toHaveLength(1);
+      expect(
+        service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted"),
+      ).toHaveLength(1);
+      expect(executor.calls.length).toBe(after);
       activity.close();
     });
 
-    it("指摘の無いレビューは、元のタスクに取り込まず差し戻さない。提案だけの回と、評価を読めない回は取り込む（PO の指摘・PBI-145）", async () => {
+    it("レビューした先頭が親の積んだコミットと違っても（ほかで push された）、同じ更新で再レビューを繰り返さない", async () => {
+      const pulls = new FakePulls();
+      const made = await start(
+        [out("# 要求要件 v1"), verdictOut("no_findings"), verdictOut("no_findings")],
+        { pulls, reviewTasks: true },
+      );
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: "e".repeat(40) };
+      await runReview(service, childId);
+      await service.checkPullRequests();
+      await runReview(service, childId);
+      for (let i = 0; i < 3; i++) await service.checkPullRequests();
+      const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
+      expect(restarts?.map((e) => e.payload)).toEqual([
+        { reason: "updated", commit: commitOf(service, id) },
+      ]);
+      expect(taskOf(service, childId).reviewRound).toBe(2);
+      activity.close();
+    });
+
+    it("指摘の無いレビューは、親に取り込まず差し戻さない。提案だけの回と、評価を読めない回は取り込む（PO の指摘・PBI-145）", async () => {
       const cases: { name: string; review: string; imported: boolean; verdict?: string }[] = [
         {
           name: "指摘なし",
@@ -28676,7 +28676,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           verdict: "no_findings",
         },
         {
-          // 提案だけの回も、元のタスクに対応させるために取り込む（PBI-145。繰り返しの費用は予算で止める）
+          // 提案だけの回も、親に対応させるために取り込む（PBI-145。繰り返しの費用は予算で止める）
           name: "提案あり",
           review: [
             "# 評価\n\nマージしてよい",
@@ -28710,7 +28710,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       for (const c of cases) {
         rmSync(dbPath, { force: true });
         const pulls = new FakePulls();
-        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
         const made = await start(
           [
             out("# 要求要件 v1"),
@@ -28718,20 +28717,17 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             rework("requirements", "要求要件で直せる"),
             out("# 要求要件 v2"),
           ],
-          { pulls },
+          { pulls, reviewTasks: true },
         );
         const { activity, service, executor, id } = made;
-        const [review] = service.importIssues([labeledPr(7)]);
-        const reviewId = review?.id ?? "";
-        await service.runNext(reviewId);
-        await service.runNext(reviewId);
+        const reviewId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, reviewId);
         expect(
           pulls.reviews.map((r) => r.number),
           c.name,
         ).toEqual([7]);
-        pulls.feedbackBy[7] = [
-          item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
-        ];
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
         const before = executor.calls.length;
         await service.checkPullRequests();
         const task = taskOf(service, id);
@@ -28759,6 +28755,243 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         }
         activity.close();
       }
+    });
+
+    it("要求要件・設計・実装の PR それぞれに子タスクを作る。実装の PR は、最終レビューに通ってドラフトを外したときに作る。マージされたら、終わっていない子タスクを終える", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+        pulls,
+        reviewTasks: true,
+      });
+      const { activity, service, id } = made;
+      await merge(made, "requirements");
+      // 要求要件の PR のマージで、終わっていない子タスクは中止する（もうレビューしない）
+      expect(taskOf(service, childOf(service, id, 7)).status).toBe("cancelled");
+      await service.runNext(id);
+      await merge(made, "design");
+      for (let i = 0; i < 4 && taskOf(service, id).gate?.step !== "implement"; i++) {
+        await service.runNext(id);
+      }
+      expect(taskOf(service, id).gate?.step).toBe("implement");
+      expect(taskOf(service, id).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
+        [7, "requirements"],
+        [8, "design"],
+        [9, "implement"],
+      ]);
+      expect(taskOf(service, childOf(service, id, 9)).reviewOf).toEqual({
+        taskId: id,
+        step: "implement",
+      });
+      expect(pulls.labels).toEqual([]);
+      activity.close();
+    });
+
+    it("親を中止したら、PR が開いたままでも、終わっていない子タスクを中止する（受け入れ条件 6）", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls, reviewTasks: true });
+      const { activity, service, id } = made;
+      const childId = childOf(service, id);
+      // 中止の片付けで PR を閉じられなかった（PR は開いたまま）
+      pulls.closeFail = "403";
+      await service.cancel(id);
+      expect(taskOf(service, id).status).toBe("cancelled");
+      // PR の確認は、子タスクの中止を待ってから終わる（デーモンの終了で、中止の記録が途中で切れない）
+      await service.checkPullRequests();
+      expect(taskOf(service, childId).status).toBe("cancelled");
+      const cancelled = service.get(childId)?.activity.findLast((e) => e.type === "TaskCancelled");
+      expect(cancelled?.actor).toBe("sacty");
+      expect(cancelled?.payload).toMatchObject({ reason: "parent_cancelled" });
+      activity.close();
+    });
+
+    it("PR のクローズで中止した子タスクは、PR を開き直したら新しい子タスクで作り直す。人が中止した子タスクは作り直さない（受け入れ条件 6）", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls, reviewTasks: true });
+      const { activity, service, id } = made;
+      const first = childOf(service, id);
+      pulls.states[7] = { state: "closed" };
+      await service.checkPullRequests();
+      expect(taskOf(service, first).cancelled?.reason).toBe("pull_request_closed");
+      // 閉じている間は作り直さない
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks).toHaveLength(1);
+      // 開き直したら、新しい子タスクを作って親に記録する（中止した子タスクは再レビューできないため）
+      pulls.states[7] = { state: "open" };
+      await service.checkPullRequests();
+      const records = taskOf(service, id).reviewTasks ?? [];
+      expect(records.map((r) => r.number)).toEqual([7, 7]);
+      const second = records[1]?.taskId ?? "";
+      expect(second).not.toBe(first);
+      expect(taskOf(service, second).reviewOf).toEqual({ taskId: id, step: "requirements" });
+      expect(service.queuedTaskIds()).toContain(second);
+      // もう一度確かめても、増やさない。人が中止した子タスクも作り直さない
+      await service.checkPullRequests();
+      await service.cancel(second);
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks).toHaveLength(2);
+      expect(service.list().filter((t) => t.reviewOf)).toHaveLength(2);
+      // 記録は再起動しても読める
+      activity.close();
+      const again = new SqliteActivityStore(dbPath);
+      const restarted = makeService(again, [], { stepPullRequests: true }).service;
+      expect(restarted.get(id)?.task.reviewTasks).toHaveLength(2);
+      again.close();
+    });
+
+    it("子タスクの題は、長い親の題を文字の途中で切らずに 200 文字に収める（受け入れ条件 1）", () => {
+      const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+      for (const pad of [189, 190, 191, 192]) {
+        const title = reviewTaskTitle(`${"a".repeat(pad)}😀${"b".repeat(20)}`, 7);
+        expect(title.length, String(pad)).toBeLessThanOrEqual(200);
+        expect(lone.test(title), String(pad)).toBe(false);
+        expect(title.startsWith("[PR #7] a"), String(pad)).toBe(true);
+        expect(title.endsWith("…"), String(pad)).toBe(true);
+      }
+      expect(reviewTaskTitle("決済API", 7)).toBe("[PR #7] 決済API");
+    });
+
+    it("PR を公開した後、子タスクを作る前に止まっても、再起動後の PR の確認で作る（受け入れ条件 1）", async () => {
+      // 子タスクを作らない版で、要求要件の PR を承認待ちまで進める（作る前に止まった代わり）
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls });
+      const { id } = made;
+      expect(taskOf(made.service, id).reviewTasks).toBeUndefined();
+      made.activity.close();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [], {
+        stepPullRequests: true,
+        pulls: new FakePulls(),
+        now: later,
+        reviewTasks: true,
+      });
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks?.map((r) => r.number)).toEqual([7]);
+      expect(service.list().filter((t) => t.reviewOf?.taskId === id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("子タスクを作った後、親に記録する前に止まっていたら、作り直さずに記録だけ足す", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls });
+      const { id } = made;
+      // 子タスクの作成だけが台帳にある（親の ReviewTaskCreated は無い）
+      const childId = randomUUID();
+      made.activity.append({
+        taskId: childId,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "[PR #7] 決済API",
+                body: "",
+                start: "github_pull_request",
+                budgetCapUsd: 1,
+                source: {
+                  kind: "github_pull_request",
+                  repo: "https://github.com/acme/app",
+                  number: 7,
+                  url: "https://github.com/acme/app/pull/7",
+                  review: "sacty",
+                },
+                reviewOf: { taskId: id, step: "requirements" },
+              },
+            },
+          },
+        ],
+      });
+      made.activity.close();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [], {
+        stepPullRequests: true,
+        now: later,
+        reviewTasks: true,
+      });
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks?.map((r) => r.taskId)).toEqual([childId]);
+      expect(service.list().filter((t) => t.reviewOf)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("以前の版の記録（ラベルの予定・付けた記録・ラベルから取り込んだレビューのタスク）は読め、終わっていないレビューのタスクがあれば二重に作らない（受け入れ条件 5）", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls });
+      const { id } = made;
+      // 以前の版が書いた、ラベルを付けた記録と、ラベルから取り込んだレビューのタスク
+      made.activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestLabeled",
+              payload: { repo: "https://github.com/acme/app", number: 7, label: "sacty-review" },
+            },
+          },
+        ],
+      });
+      const oldId = randomUUID();
+      made.activity.append({
+        taskId: oldId,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: "PR 7",
+                body: "本文",
+                start: "github_pull_request",
+                budgetCapUsd: 1,
+                source: {
+                  kind: "github_pull_request",
+                  repo: "https://github.com/acme/app",
+                  number: 7,
+                  url: "https://github.com/acme/app/pull/7",
+                  review: "sacty",
+                },
+              },
+            },
+          },
+        ],
+      });
+      made.activity.close();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [], {
+        stepPullRequests: true,
+        pulls: new FakePulls(),
+        now: later,
+        reviewTasks: true,
+      });
+      expect(taskOf(service, id).pullRequestLabels?.map((l) => l.number)).toEqual([7]);
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks).toBeUndefined();
+      expect(service.list().filter((t) => t.reviewOf)).toEqual([]);
+      // ラベルが付いたままの sacty の PR も、取り込まない
+      expect(service.importIssues([labeledPr(7)])).toEqual([]);
+      activity.close();
+    });
+
+    it("sacty が作った PR は、レビュー用のラベル・取り込むラベル・レビューの依頼のどれでも取り込まない。sacty が作っていない PR のレビュー用のラベルは、今までどおりレビューのタスク（受け入れ条件 5）", async () => {
+      const { activity, service } = await start([out("# 要求要件 v1")], {
+        settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty" }),
+      });
+      expect(
+        service.importIssues([
+          labeledPr(7),
+          labeledPr(7, ["sacty"]),
+          { ...labeledPr(7, []), review: "requested" as const, requestedFor: "me" },
+        ]),
+      ).toEqual([]);
+      const [other] = service.importIssues([labeledPr(41, ["sacty"])]);
+      expect(other?.source).toMatchObject({ number: 41, review: "label" });
+      expect(other?.reviewOf).toBeUndefined();
+      activity.close();
     });
 
     describe("手動で作ったレビューのタスク（本文に PR の URL。source 無し）", () => {
@@ -28978,373 +29211,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
         activity.close();
       });
-    });
-
-    it("再レビューは回ごとに判定し、直すべき指摘のある回のレビューだけを取り込む（PO の指摘）", async () => {
-      const pulls = new FakePulls();
-      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
-      const verdict = (changesRequested: boolean) =>
-        block({
-          "sacty-review-verdict": {
-            verdict: changesRequested ? "changes_required" : "no_findings",
-          },
-        });
-      const made = await start(
-        [
-          out("# 要求要件 v1"),
-          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
-          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
-          rework("requirements", "要求要件で直せる"),
-          out("# 要求要件 v2"),
-        ],
-        { pulls },
-      );
-      const { activity, service, id } = made;
-      const [review] = service.importIssues([labeledPr(7)]);
-      const reviewId = review?.id ?? "";
-      await service.runNext(reviewId);
-      await service.runNext(reviewId);
-      const first = (n: number) =>
-        item(`review:${50 + n}`, {
-          kind: "review",
-          author: "me",
-          body: pulls.reviews[n]?.body ?? "",
-        });
-      pulls.feedbackBy[7] = [first(0)];
-      await service.checkPullRequests();
-      expect(taskOf(service, id).importedFeedback).toEqual([]);
-      // 再レビュー（2回目）は直すべき指摘あり。1回目（指摘なし）のレビューは取り込まない
-      service.rereview(reviewId);
-      await service.runNext(reviewId);
-      await service.runNext(reviewId);
-      expect(pulls.reviews).toHaveLength(2);
-      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
-        { round: 1, verdict: "no_findings" },
-        { round: 2, verdict: "changes_required" },
-      ]);
-      pulls.feedbackBy[7] = [first(0), first(1)];
-      await service.checkPullRequests();
-      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([`${reviewId}:2`]);
-      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
-      expect(taskOf(service, id).status).toBe("queued");
-      activity.close();
-    });
-
-    it("レビューのタスクが元のタスクと違うアカウントで投稿しても、そのアカウントと回で判定する（レビュー指摘）", async () => {
-      // 元のタスクのプロジェクト（parent）。PR を作った後に Org の担当に変え、リポジトリを担当するプロジェクト（reviewer）を足す
-      const projects = new MemoryProjectStore();
-      projects.put("default", {
-        name: "元",
-        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
-        githubAccounts: { "github.com": "parent" },
-      });
-      const pulls = new FakePulls();
-      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
-      const verdict = (changesRequested: boolean) =>
-        block({
-          "sacty-review-verdict": {
-            verdict: changesRequested ? "changes_required" : "no_findings",
-          },
-        });
-      const made = await start(
-        [
-          out("# 要求要件 v1"),
-          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
-          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
-          rework("requirements", "要求要件で直せる"),
-        ],
-        {
-          pulls,
-          projects,
-          github: new FakeGitHub({ parent: "ghp_parent", reviewer: "ghp_reviewer" }),
-        },
-      );
-      const { activity, service, id } = made;
-      expect(taskOf(service, id).stepPullRequests.map((p) => p.number)).toEqual([7]);
-      projects.put("default", {
-        name: "元",
-        targets: [{ scope: "org", target: "https://github.com/acme" }],
-        githubAccounts: { "github.com": "parent" },
-      });
-      projects.put("app", {
-        name: "リポジトリ",
-        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
-        githubAccounts: { "github.com": "reviewer" },
-      });
-      const [review] = service.importIssues([labeledPr(7)]);
-      expect(review?.projectId).toBe("app");
-      const reviewId = review?.id ?? "";
-      await service.runNext(reviewId);
-      await service.runNext(reviewId);
-      expect(pulls.reviews[0]?.token).toBe("ghp_reviewer");
-      const posted = (n: number) =>
-        item(`review:${50 + n}`, {
-          kind: "review",
-          author: "reviewer",
-          body: pulls.reviews[n]?.body ?? "",
-        });
-      // 1回目（指摘なし）は、元のタスクと違うアカウントでも、人の指摘として取り込まない
-      pulls.feedbackBy[7] = [posted(0)];
-      await service.checkPullRequests();
-      expect(pulls.feedbackAccounts.at(-1)).toBe("parent");
-      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
-        { key: reviewId, account: "reviewer", allowed: false },
-      ]);
-      expect(taskOf(service, id).importedFeedback).toEqual([]);
-      // 2回目（指摘あり）は取り込む
-      service.rereview(reviewId);
-      await service.runNext(reviewId);
-      await service.runNext(reviewId);
-      pulls.feedbackBy[7] = [posted(0), posted(1)];
-      await service.checkPullRequests();
-      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
-        { key: reviewId, account: "reviewer", allowed: false },
-        { key: `${reviewId}:2`, account: "reviewer", allowed: true },
-      ]);
-      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
-      activity.close();
-    });
-
-    it("公開を記録した後、ラベルを付ける前に止まっても、再起動後の PR の確認で付ける（要求要件・設計の PR と実装の PR。レビュー指摘）", async () => {
-      /** 指定した番号の PR では、ラベルを付ける途中で止まる（止まったことを知らせる）。 */
-      const stopAt = (pulls: FakePulls, number: number) => {
-        const reached = Promise.withResolvers<void>();
-        const original = pulls.addLabel.bind(pulls);
-        const stop = { reached: reached.promise, calls: 0 };
-        pulls.addLabel = (input) => {
-          if (input.number !== number) return original(input);
-          stop.calls += 1;
-          reached.resolve();
-          return new Promise(() => {});
-        };
-        return stop;
-      };
-      /** 同じ台帳でデーモンを起動し直し、PR の確認を行う。 */
-      const restart = async (settings?: MemorySettingsStore) => {
-        const activity = new SqliteActivityStore(dbPath);
-        const pulls = new FakePulls();
-        const { service } = makeService(activity, [], {
-          stepPullRequests: true,
-          pulls,
-          now: later,
-          ...(settings ? { settings } : {}),
-        });
-        await service.checkPullRequests();
-        return { activity, service, pulls };
-      };
-
-      // 要求要件の PR（7）：公開と承認待ちを記録した後、ラベルを付ける途中で止まる
-      const pulls = new FakePulls();
-      const stopped = stopAt(pulls, 7);
-      const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(activity, [out("# 要求要件 v1")], {
-        stepPullRequests: true,
-        pulls,
-        now: later,
-      });
-      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
-      void service.runNext(id);
-      await stopped.reached;
-      // 付けている途中に PR の確認が来ても、重ねて付けない
-      await service.checkPullRequests();
-      expect(stopped.calls).toBe(1);
-      expect(types(service, id).slice(-2)).toEqual(["StepPullRequestPublished", "StepSubmitted"]);
-      expect(taskOf(service, id).stepPullRequests[0]?.label).toBe("sacty-review");
-      // 起動し直しても、いまはラベルを付けない設定（レビュー用のラベルが無い）なら付けない（記録もしない）
-      const off = await restart(new MemorySettingsStore({ intakeLabel: "sacty" }));
-      expect(off.pulls.labels).toEqual([]);
-      expect(types(off.service, id).at(-1)).toBe("StepSubmitted");
-      off.activity.close();
-      // 起動し直した後の PR の確認で付けて記録する（レビュー用のラベルのトリアージが Off でも。PBI-139）。次の確認では重ねて付けない
-      const offTriage = () =>
-        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] });
-      const again = await restart(offTriage());
-      expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty-review"]]);
-      expect(types(again.service, id).at(-1)).toBe("PullRequestLabeled");
-      await again.service.checkPullRequests();
-      expect(again.pulls.labels).toHaveLength(1);
-      again.activity.close();
-      activity.close();
-
-      // 実装の PR（9）も同じ
-      rmSync(dbPath, { force: true });
-      const implPulls = new FakePulls();
-      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
-        pulls: implPulls,
-      });
-      await merge(made, "requirements");
-      await made.service.runNext(made.id);
-      await merge(made, "design");
-      const implStopped = stopAt(implPulls, 9);
-      void drain(made.service);
-      await implStopped.reached;
-      expect(taskOf(made.service, made.id).pullRequest).toMatchObject({
-        number: 9,
-        label: "sacty-review",
-      });
-      expect(types(made.service, made.id).at(-1)).toBe("StepSubmitted");
-      const resumed = await restart(offTriage());
-      expect(resumed.pulls.labels.map((l) => l.number)).toEqual([9]);
-      expect(taskOf(resumed.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
-        7, 8, 9,
-      ]);
-      resumed.activity.close();
-      made.activity.close();
-    });
-
-    it("以前の版の記録（StepPullRequestPublished の intakeLabel）は読めるが、再開でラベルを付ける予定として扱わない（PBI-99 レビュー指摘）", async () => {
-      // 要求要件の PR（7）：公開を記録した後、ラベルを付ける途中で止まる
-      const pulls = new FakePulls();
-      const reached = Promise.withResolvers<void>();
-      pulls.addLabel = () => {
-        reached.resolve();
-        return new Promise(() => {});
-      };
-      const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(activity, [out("# 要求要件 v1")], {
-        stepPullRequests: true,
-        pulls,
-        now: later,
-      });
-      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
-      void service.runNext(id);
-      await reached.promise;
-      expect(taskOf(service, id).stepPullRequests[0]?.label).toBe("sacty-review");
-      // 同じ出来事を、以前の版の項目の名前（intakeLabel）で別の台帳に書き写す（以前の版が書いた台帳の代わり）
-      const oldPath = join(dir, "old.db");
-      new SqliteActivityStore(oldPath).close();
-      const old = new DatabaseSync(oldPath);
-      const insert = old.prepare(
-        "INSERT INTO activity (id, task_id, project_id, at, actor, type, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      );
-      for (const e of activity.all()) {
-        const { label, ...rest } = e.payload as Record<string, unknown>;
-        const payload =
-          e.type === "StepPullRequestPublished" && label !== undefined
-            ? { ...rest, intakeLabel: "sacty" }
-            : e.payload;
-        insert.run(e.id, e.taskId, e.projectId, e.at, e.actor, e.type, JSON.stringify(payload));
-      }
-      old.close();
-      activity.close();
-      const written = new DatabaseSync(oldPath);
-      expect(
-        (
-          written
-            .prepare("SELECT payload FROM activity WHERE type = 'StepPullRequestPublished'")
-            .get() as { payload: string }
-        ).payload,
-      ).toContain('"intakeLabel":"sacty"');
-      written.close();
-      // 以前の記録で起動し直す：読めて、PR の確認でもラベルを付けない（記録もしない）
-      const again = new SqliteActivityStore(oldPath);
-      const restartedPulls = new FakePulls();
-      const restarted = makeService(again, [], {
-        stepPullRequests: true,
-        pulls: restartedPulls,
-        now: later,
-      }).service;
-      const task = taskOf(restarted, id);
-      expect(task.stepPullRequests.map((p) => p.number)).toEqual([7]);
-      expect(task.stepPullRequests[0]?.label).toBeUndefined();
-      expect(JSON.stringify(task.stepPullRequests[0])).not.toContain("intakeLabel");
-      await restarted.checkPullRequests();
-      expect(restartedPulls.labels).toEqual([]);
-      expect(types(restarted, id).at(-1)).toBe("StepSubmitted");
-      again.close();
-    });
-
-    it("取り込むラベルだけの PR は、sacty の PR でも取り込まない。sacty が作っていない PR のレビュー用のラベルは、ふつうのレビューのタスク（PBI-99）", async () => {
-      const { activity, service } = await start([out("# 要求要件 v1")]);
-      // 取り込むラベル（Issue の取り込み）の付いた PR は、sacty が作った PR（7）でも、ほかの PR でも取り込まない
-      expect(service.importIssues([labeledPr(7, ["sacty"]), labeledPr(40, ["sacty"])])).toEqual([]);
-      // レビュー用のラベルの付いた、sacty が作っていない PR は、ふつうのレビューのタスク（元のタスクには届かない）
-      const [other] = service.importIssues([labeledPr(41)]);
-      expect(other?.source).toMatchObject({ number: 41, review: "label" });
-      // 2つのラベルが両方付いていても、sacty の PR は sacty のレビュー
-      expect(
-        service
-          .importIssues([labeledPr(7, ["sacty", "sacty-review"])])
-          .map((t) => t.source?.review),
-      ).toEqual(["sacty"]);
-      activity.close();
-      rmSync(dbPath, { force: true });
-      // レビュー用のラベルのトリアージを Off にしていれば、sacty の PR も取り込まない
-      const settings = new MemorySettingsStore({
-        intakeLabel: "sacty",
-        reviewLabel: "sacty-review",
-        triageOff: ["reviewLabel"],
-      });
-      const off = await start([out("# 要求要件 v1")], { settings });
-      expect(off.service.importIssues([labeledPr(7)])).toEqual([]);
-      off.activity.close();
-    });
-
-    it("取り込むラベルとレビュー用のラベルが同じでも、sacty の PR はレビューだけのタスクとして1回だけ取り込まれ、実装のタスクにならず、指摘は元のタスクに届く（PBI-104）", async () => {
-      const pulls = new FakePulls();
-      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
-      const { activity, service, executor, id } = await start(
-        [
-          out("# 要求要件 v1"),
-          out(
-            [
-              "# 評価\n\n受け入れ条件が足りない",
-              block({ "sacty-review-verdict": { verdict: "changes_required" } }),
-            ].join("\n\n"),
-          ),
-          rework("requirements", "要求要件で直せる"),
-          out("# 要求要件 v2"),
-        ],
-        {
-          pulls,
-          settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty" }),
-        },
-      );
-      // sacty の PR には、レビュー用のラベル（取り込むラベルと同じ名前）を1回だけ付ける
-      expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty"]]);
-      // 大文字・小文字だけが違う名前でも保存でき、比べるときは同じとみなす
-      expect(service.saveSettings({ intakeLabel: "sacty", reviewLabel: "SACTY" })).toEqual({
-        intakeLabel: "sacty",
-        reviewLabel: "SACTY",
-      });
-      // Issue の取り込みの検索（review なし）と PR のレビューの取り込みの検索の両方で見つかっても、レビューだけのタスク1つ
-      const created = service.importIssues([
-        labeledPr(7, ["sacty"]),
-        {
-          ...labeledPr(7, ["sacty"]),
-          review: "label" as const,
-        },
-      ]);
-      expect(created.map((t) => [t.source?.number, t.source?.review])).toEqual([[7, "sacty"]]);
-      const reviewId = created[0]?.id ?? "";
-      expect(reviewId).not.toBe(id);
-      // 実装のタスク（source.review の無い、PR のタスク）にはならない
-      expect(
-        service.list().filter((t) => t.source?.kind === "github_pull_request" && !t.source.review),
-      ).toEqual([]);
-      const before = executor.calls.length;
-      await service.runNext(reviewId);
-      const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
-      expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
-      expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
-      await service.runNext(reviewId);
-      expect(pulls.reviews.map((r) => r.number)).toEqual([7]);
-      // そのレビューは、元のタスクに PR の指摘として届く
-      pulls.feedbackBy[7] = [
-        item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
-      ];
-      await service.checkPullRequests();
-      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([reviewId]);
-      expect(
-        service.get(id)?.activity.find((e) => e.type === "PullRequestReviewImported")?.payload,
-      ).toMatchObject({ number: 7, items: [{ key: "review:50" }] });
-      expect(taskOf(service, id).remarks.at(-1)?.text).toContain("受け入れ条件が足りない");
-      // 直して PR を更新しても、ラベルは付け直さず、同じ PR はもう取り込まない
-      await service.runNext(id);
-      expect(pulls.labels).toHaveLength(1);
-      expect(service.importIssues([labeledPr(7, ["sacty"])])).toEqual([]);
-      expect(service.list().filter((t) => t.source?.number === 7)).toHaveLength(1);
-      activity.close();
     });
   });
 });
@@ -32663,13 +32529,9 @@ describe("PR テンプレート（PBI-87）", () => {
     const task = taskOf(service, id);
     expect(task.stepPullRequests.map((p) => p.template)).toEqual([used, used]);
     expect(task.pullRequest?.template).toEqual(used);
-    // レビュー用のラベル（PBI-88・PBI-99）も、テンプレートの本文と一緒に3つの PR に付く
-    expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty-review"],
-      [8, "sacty-review"],
-      [9, "sacty-review"],
-    ]);
-    expect(task.pullRequest?.label).toBe("sacty-review");
+    // sacty の PR にラベルは付けない（PBI-330）
+    expect(pulls.labels).toEqual([]);
+    expect(task.pullRequest?.label).toBeUndefined();
     activity.close();
   });
 
@@ -32897,6 +32759,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       steps?: StepKey[];
       /** コンテキストのイメージ（PBI-325）。 */
       contextImages?: ServiceDeps["contextImages"];
+      /** sacty が作った PR をレビューする子タスクを作る（PBI-330）。 */
+      reviewTasks?: boolean;
     } = {},
   ) {
     const activity = options.activity ?? new SqliteActivityStore(dbPath);
@@ -32915,6 +32779,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       ...(options.pulls ? { pulls: options.pulls } : {}),
       ...(options.templates ? { templates: options.templates } : {}),
       ...(options.contextImages ? { contextImages: options.contextImages } : {}),
+      ...(options.reviewTasks ? { reviewTasks: true } : {}),
       planner: async () => ({
         steps: options.steps ?? ["implement", "deployment"],
         fallback: false,
@@ -33623,43 +33488,34 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     }
   });
 
-  it("修正のタスクの PR にもレビュー用のラベルを付け、レビューだけのタスクとして取り込める。そのマージでも監視する（PBI-88 と両立）", async () => {
+  it("修正のタスクの PR にも、レビューの子タスクを作る。そのマージでも監視する（PBI-330 と両立）", async () => {
     const ci = new FakeCi();
     ci.snap = failing();
     ci.failuresList = [testFailure];
-    const t = setup({ ci });
+    const t = setup({ ci, reviewTasks: true });
     const id = t.create();
     await t.merge(id);
-    // 元のタスクの実装の PR にもラベルを付けている
-    expect(t.pulls.labels.map((l) => l.number)).toEqual([7]);
+    // 元のタスクの実装の PR にも、レビューの子タスクがある（ラベルは付けない）
+    expect(t.service.get(id)?.task.reviewTasks?.map((r) => r.number)).toEqual([7]);
     const fixId = t.service.get(id)?.task.deployment?.fix?.taskId ?? "";
     for (let i = 0; i < 5 && t.service.get(fixId)?.task.gate?.step !== "implement"; i++) {
       await t.service.runNext(fixId);
     }
-    const pr = t.service.get(fixId)?.task.pullRequest;
-    expect(pr).toMatchObject({ number: 8, label: "sacty-review" });
-    expect(t.pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty-review"],
-      [8, "sacty-review"],
-    ]);
-    // ラベルの付いた修正のタスクの PR は、レビューだけのタスクとして取り込む
-    const [review] = t.service.importIssues([
-      {
-        repo: "https://github.com/acme/app",
-        number: 8,
-        title: "CI/CD の失敗を直す",
-        body: "",
-        url: "https://github.com/acme/app/pull/8",
-        labels: ["sacty-review"],
-        pullRequest: true,
-      },
-    ]);
-    expect(review?.source).toMatchObject({ kind: "github_pull_request", number: 8 });
-    expect(review?.source?.review).toBe("sacty");
+    expect(t.service.get(fixId)?.task.pullRequest).toMatchObject({ number: 8 });
+    expect(t.pulls.labels).toEqual([]);
+    const [record] = t.service.get(fixId)?.task.reviewTasks ?? [];
+    expect(record).toMatchObject({ step: "implement", number: 8 });
+    const review = t.service.get(record?.taskId ?? "")?.task;
+    expect(review?.source).toMatchObject({
+      kind: "github_pull_request",
+      number: 8,
+      review: "sacty",
+    });
+    expect(review?.reviewOf).toEqual({ taskId: fixId, step: "implement" });
     // 修正のタスクの PR のマージでも監視を始める（レビューのタスクは監視しない）
     await t.merge(fixId);
     expect(t.service.get(fixId)?.task.deployment?.state).toBe("failed");
-    expect(t.service.get(review?.id ?? "")?.task.deployment).toBeUndefined();
+    expect(review?.deployment).toBeUndefined();
     t.activity.close();
   });
 
@@ -33693,7 +33549,6 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     const fix = t.service.get(fixId)?.task;
     expect(fix?.pullRequest).toMatchObject({
       number: 8,
-      label: "sacty-review",
       template: { repo: "https://github.com/acme/app", path: ".github/pull_request_template.md" },
     });
     const body = t.pulls.calls.find((c) => c.title === fix?.title)?.body ?? "";
@@ -40027,6 +39882,46 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     expect(restarted[0]?.previousReview?.body).toBe("# 1回目");
     expect(pulls.lastRequestQueries).toHaveLength(1);
     expect(pulls.lastRequestQueries[0]?.reviewer).toBe("me");
+    activity.close();
+  });
+
+  it("sacty が作った PR は、以前の版で依頼から取り込んだタスクがあっても、再依頼で別のタスクを作らない（PBI-330 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    pulls.nextNumber = 9;
+    const settings = new MemorySettingsStore({ reviewRequested: true });
+    const { service } = makeService(activity, [out("# 1回目"), out("# 要求要件")], {
+      pulls,
+      settings,
+      projects: projectsWithAccount(),
+      stepPullRequests: true,
+      planner: async () => ({
+        steps: ["requirements"],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    // 以前の版：PR 9 を依頼から取り込んでレビューを投稿した
+    const [review] = service.importIssues([pr(9)]);
+    const reviewId = review?.id ?? "";
+    await service.runNext(reviewId);
+    await service.runNext(reviewId);
+    expect(service.get(reviewId)?.task.reviewPost).toBeDefined();
+    // その PR 9 は、sacty のタスクが作った要求要件の PR
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.stepPullRequests.map((p) => p.number)).toEqual([9]);
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, reviewId);
+    expect(await service.restartRerequestedReviews([pr(9)])).toEqual({
+      restarted: [],
+      failed: [],
+    });
+    expect(pulls.lastRequestQueries).toEqual([]);
+    expect(service.list()).toHaveLength(2);
     activity.close();
   });
 

@@ -703,6 +703,16 @@ const TaskCreated = z.object({
      * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
+    /**
+     * sacty が作った PR をレビューする子タスクの、親（PR を作ったタスク）と、その PR を作った工程（PBI-330）。source は、その PR
+     * （review: sacty）。分割の子タスク（parent）とは別で、分割の待ち・統合レビューの対象にしない。
+     */
+    reviewOf: z
+      .object({
+        taskId: z.string().min(1),
+        step: z.enum(["requirements", "design", "implement"]),
+      })
+      .optional(),
     /** テンプレートで作った（PBI-90）。題と説明は、テンプレートから sacty が決めたもの。 */
     template: TaskTemplate.optional(),
     /**
@@ -2289,6 +2299,20 @@ const PullRequestLabeled = z.object({
 });
 
 /**
+ * sacty が作った PR（要求要件・設計・実装の PR）をレビューする子タスクを作った（PBI-330）。親（PR を作ったタスク）の作業履歴に
+ * 残し、親から子へたどれるようにする。1つの PR につき1つ（PR を作り直したら、新しい PR に作る）。
+ */
+const ReviewTaskCreated = z.object({
+  type: z.literal("ReviewTaskCreated"),
+  payload: z.object({
+    taskId: z.string().min(1),
+    step: z.enum(["requirements", "design", "implement"]),
+    repo: z.string(),
+    number: z.number().int().positive(),
+  }),
+});
+
+/**
  * 取り込むラベルを、sacty が作った PR に付けられなかった（権限など。PBI-88）。PR の作成は失敗にしない。
  * 付け直しはしない（1つの PR につき1回）。
  */
@@ -2622,7 +2646,14 @@ const PullRequestReviewPosted = z.object({
  */
 const ReviewRestarted = z.object({
   type: z.literal("ReviewRestarted"),
-  payload: z.object({ reason: z.literal("rerequested").optional() }),
+  /**
+   * reason：rerequested は GitHub のレビューの再依頼、updated は親のタスクが PR を更新した（レビューの子タスク。PBI-330）。
+   * commit は、updated のときの親の PR の先頭（同じ更新で再レビューを繰り返さないため）。
+   */
+  payload: z.object({
+    reason: z.enum(["rerequested", "updated"]).optional(),
+    commit: z.string().min(1).optional(),
+  }),
 });
 
 /**
@@ -2710,9 +2741,10 @@ const TaskCancelled = z.object({
   payload: z.object({
     /**
      * sacty が中止した理由（PBI-44）。レビューの PR がマージされた・マージされずに閉じられたので、終わっていない
-     * レビューのタスクを中止した。人間が中止したときは無い。
+     * レビューのタスクを中止した。parent_cancelled は、PR のレビューの子タスクの親が中止された（PBI-330）。人間が中止したときは
+     * 無い。
      */
-    reason: z.enum(["pull_request_merged", "pull_request_closed"]).optional(),
+    reason: z.enum(["pull_request_merged", "pull_request_closed", "parent_cancelled"]).optional(),
     cleanup: z.array(
       z.object({
         target: CleanupTarget,
@@ -3353,6 +3385,7 @@ export const EventInput = z.discriminatedUnion("type", [
   WorkspaceFilesSkipped,
   PullRequestLabeled,
   PullRequestLabelFailed,
+  ReviewTaskCreated,
   TaskBranchCreated,
   StepBranchPushed,
   StepPullRequestPublished,

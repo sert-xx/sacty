@@ -94,7 +94,7 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
 | 設定 | 検索の条件 | タスク |
 | --- | --- | --- |
 | `intakeLabel` | `is:open is:issue label:"<ラベル>"` | 通常のタスク（Issue だけ） |
-| `reviewLabel` | `is:open is:pr label:"<ラベル>"` | PR のレビューだけ（`source.review: label`。sacty が作った PR は `sacty`） |
+| `reviewLabel` | `is:open is:pr label:"<ラベル>"` | PR のレビューだけ（`source.review: label`。sacty が作った PR は取り込まない） |
 | `reviewRequested` | `is:open is:pr user-review-requested:<アカウント>` | PR のレビューだけ（`source.review: requested`） |
 
 - ラベル
@@ -104,7 +104,7 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
   - 取り込むラベルとレビュー用のラベルは、同じ名前（大文字・小文字だけが違う名前も）にできる。
     同じ名前でも、Issue は取り込むラベルで通常のタスクに、PR はレビュー用のラベルでレビューだけのタスクにする。
     検索の条件が `is:issue`・`is:pr` で分かれ、取り込みの判定でも Issue をレビューのタスクに、PR を通常のタスクにしない。
-    sacty が作った PR も、`sacty` のレビューのタスクとして1回だけ取り込む。
+    sacty が作った PR は、どちらのラベルでも取り込まない。
   - 取り込むラベルの付いた PR は取り込まない（検索の後に見つかっても、通常のタスクにしない）。
     それより前に取り込んだ PR のタスク（`start: github_pull_request` で `source.review` の無いもの）は、そのまま進む（工程はオーケストレーターが選ぶ）。
   - `triageOff`（Off にした種類。`issues`・`reviewLabel`・`tickets`）に書いた種類は、ラベルを残したまま、検索も取り込みもしない。
@@ -129,7 +129,8 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
     古い完了タスクには戻らない。
     依頼の日時・アカウントと元タスクをイベントに保存し、同じ依頼の連続ポーリング・並行処理・デーモン再起動でも重複を作らない。
     新タスクの投稿完了後に届いた次の依頼は、さらに別のタスクにする。
-  - 作業中・投稿の前・中止したタスク、ラベルで取り込んだタスク、sacty が作った PR のタスクは対象外。
+  - 作業中・投稿の前・中止したタスク、ラベルで取り込んだタスクは対象外。
+    sacty が作った PR（下の項目）は、以前の版で依頼から取り込んだタスクがあっても対象外（PR を作ったタスクのレビューの子タスクがレビューする）。
     `reviewRequested` が Off なら確かめない。
   - 今の依頼先か依頼の日時を読めなければ、再レビューせずに `intake.rerequestUnchecked` を記録し、その検索の読んだ位置を進めない。
     次の取り込みで、同じ PR がまた見つかる。
@@ -138,25 +139,19 @@ PR を取り込むのは、PR のレビューの取り込みだけ。
   - PR のできごとは50ページまで読む。
     次のページが残っていれば取得不能として記録し、部分結果で再依頼を判定しない。
   - API を読んだ後に、取り込みが On で、担当アカウント・レビューの回・投稿の時刻が読む前と変わっていないことを確かめてから、新タスクを作る。
-- sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・ラベルを付けた PR。[PR のレビュー用のラベル](approval.md#pr-のレビュー用のラベル)）
-  - レビュー用のラベルが付いていれば、作ったタスクとは別の、PR のレビューだけのタスクにする（`source.review: sacty`。オーケストレーターに工程を選ばせない）。
-  - レビューの依頼にも当たっても `sacty` にする（そのレビューを作ったタスクに届けるため）。
-  - レビュー用のラベルのトリアージを Off にしていれば、ラベルでは取り込まない（`sacty` にもしない）。
-  - レビューの依頼からの取り込みは、別に動く。
-    `reviewRequested` が On で、担当のプロジェクトで選んだアカウント本人への依頼があれば、sacty の PR でも `requested` として取り込む（その指摘のある回も、元のタスクに届く）。
-  - 作ったタスクの取り込み元（Issue など）とは番号が違うので、作ったタスクがあることで取り込まれずに終わることはない。
-    同じ PR は二度取り込まないので、1つの PR のレビューのタスクは1つ（PR を更新しても、新しいレビューのタスクは作らない）。
-  - レビューのタスクが PR に投稿したレビューのうち、指摘のある回（修正が必要・提案あり。判定を読めなかった回も）のものは、作ったタスクの PR の指摘として取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
-    依頼で取り込んだタスクや、本文に PR の URL を書いて手動で作ったレビューのタスクの投稿も同じ。
-    指摘の無い回は取り込まない。
-    届いた指摘は、投稿の目印で見分けて、AI のレビューの指摘として人の指摘と区別する。人の差し戻しの回数・上限に数えず、レビューが対象にした head が PR の今の head と違えば捨てる（[AI のレビューの指摘](approval.md#ai-のレビューの指摘)）。
-    レビューのタスクは PR を作らないので、それ自体はラベルの付く PR を増やさない。
+- sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・レビューの子タスクを作った PR・以前の版でラベルを付けた PR。`sactyMadePullRequests`）
+  - 取り込まない（レビュー用のラベル・取り込むラベル・レビューの依頼のどれに当たっても）。
+    PR を作ったタスクが、その PR をレビューする子タスクを作ってレビューさせる（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
+  - 以前の版でラベルを付けた PR・取り込んだレビューのタスクのある PR も同じ（二重にレビューしない）。
+- レビューのタスク（レビューの子タスク・依頼で取り込んだタスク・ラベルで取り込んだタスク・本文に PR の URL を書いて手動で作ったタスク）が PR に投稿したレビューのうち、指摘のある回（修正が必要・提案あり。判定を読めなかった回も）のものは、その PR を作ったタスクの PR の指摘として取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+  指摘の無い回は取り込まない。
+  届いた指摘は、投稿の目印で見分けて、AI のレビューの指摘として人の指摘と区別する。人の差し戻しの回数・上限に数えず、レビューが対象にした head が PR の今の head と違えば捨てる（[AI のレビューの指摘](approval.md#ai-のレビューの指摘)）。
 - 担当のプロジェクトは、リポジトリの指定が Org の指定より優先（`responsibleProject`）。
   同じ Issue・PR（`<リポジトリ>#<番号>`）は二度取り込まない（上記のレビュー再依頼による新タスクを除く）。
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`restartRerequestedReviews`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）、`packages/core/src/events.ts`（`TaskCreated`）、`packages/core/src/projection.ts`（`applyEvent`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`restartRerequestedReviews`・`sactyMadePullRequests`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）、`packages/core/src/events.ts`（`TaskCreated`）、`packages/core/src/projection.ts`（`applyEvent`）
 
 ## JIRA のチケット
 

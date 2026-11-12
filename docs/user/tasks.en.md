@@ -332,20 +332,20 @@ Even a repository without test code uses a check that mechanically validates its
 When the Implementation step finishes, sacty opens the implementation PR as a draft before the final review.
 Behavior that only CI can check (fixing a workflow, for example) is part of the Goal Guardian's judgment too.
 
-1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The review label is not added yet. While it is a draft, please wait before reviewing or merging.
+1. sacty pushes the implementation and opens the implementation PR as a draft (a redone implementation updates the same PR). The child task that reviews the PR is not created yet. While it is a draft, please wait before reviewing or merging.
 2. sacty waits for the PR's CI. Without waiting for the CI to finish, the Goal Guardian starts the final review in the workspace (the CI time and the final review time overlap). If the review fails, the implementation is redone without waiting for the CI. If it passes, only the CI result is awaited, and the task's status is "Waiting for the PR's CI". In a repository confirmed to have no CI it moves on after 1 minute, if no CI appears, after 5 minutes, and if CI does not finish, after up to 60 minutes. If a GitHub Actions run fails, sacty reruns the failed jobs once per commit and waits for them to finish (the waiting time is counted again from the rerun). If it cannot rerun them (a lack of permission, for example), it goes on without rerunning. The task does not stop.
 3. If the CI passed on the first try, or there is no CI, the task moves on without another final review. If the CI failed, did not finish in time, or passed after a rerun, the Goal Guardian does the final review again from the tests it ran in the workspace together with the PR's CI result (verification of the same content is reused).
    - If a CI failure is caused by the change, the review fails and the implementation is redone.
    - If a failure is unrelated to the change (the CI environment, an external service, a missing secret, and so on), the review does not fail for it, and it goes into "For a person to check".
    - If the rerun passes, the CI result counts as passed. The original failures also reach the final review, which checks them as candidates for flaky failures. Those confirmed to be unrelated to the diff go into "For a person to check", and a failure involving tests or code the diff changed fails the review.
-4. On a pass, sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval.
+4. On a pass, sacty marks the PR ready for review, creates a child task that reviews the PR, and the task waits for implementation approval ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
 
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
 - A task that takes over an existing PR pushes to that PR only after the final review passes (not before the final review).
 - So that the same verification is not run again on the same content, the Goal Guardian reuses the results of the verification the Implementation step ran last and the PR's CI results.
   Only results of running the whole are reused. What ran only in part, or what CI cannot be confirmed to cover, is run again. In a repository without CI, CI results are not relied on.
-  The PR review started by the review label also reuses the results the final review handled on the same commit and the CI results.
+  The child task that reviews the PR also reuses the results the final review handled on the same commit and the CI results.
   When the test command was reused, "Tests the final review judged with" in the implementation deliverable shows "Reused the implementation step's result" or "Reused the PR's CI result".
 - Converting a PR to a draft and marking it ready need the same permission for the project's GitHub account as opening a PR. If marking it ready fails, the task stops with the reason. Fix the cause and press "Resume" to start again from marking it ready.
 - Rerunning CI needs write access to the repository's Actions for the project's GitHub account (the `repo` scope of a token, or Actions: Read and write for a fine-grained token). Without it, sacty just does not rerun: the activity shows "it could not be rerun", and the reason goes to the daemon log. Failures of only checks other than GitHub Actions or commit statuses are not rerun.
@@ -419,7 +419,7 @@ Conflict markers with the base branch left in the workspace count the same three
 In the task details, you can choose one of the following.
 
 - "Resume": redoes the implementation.
-- "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, adds the review label, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
+- "Move to review": if you check the PR and judge it fine, moves it to review despite the failed final review. sacty marks the PR ready for review, creates a child task that reviews the PR, and the task waits for implementation approval. The final review is not run again. The PR body shows that a person moved it on despite the failure, and the reasons for the failure.
 
 ### Out-of-scope changes
 

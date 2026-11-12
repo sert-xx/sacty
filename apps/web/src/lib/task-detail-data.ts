@@ -29,6 +29,11 @@ export type TaskDetailData = {
   projectName: string;
   /** 分割で作った子タスクの親（PBI-27）。 */
   parent?: Task;
+  /** PR のレビューの子タスクの親（その PR を作ったタスク。PBI-330）。 */
+  reviewOf?: Task;
+  /** このタスクが作った PR のレビューの子タスク（作った順。読めなかったものは題が無い。PBI-330）。 */
+  /** PR のレビューの子タスク（PBI-330）。task は読めたときだけ（状態を添えて、同じ PR の中止した子と区別する）。 */
+  reviewTasks?: { id: string; title?: string; step: StepKey; number: number; task?: Task }[];
   /** マージの後の監視で作った修正のタスクの、元のタスク（PBI-89）。 */
   origin?: Task;
   /** マージの後の監視で作った修正のタスク（PBI-89）。 */
@@ -102,6 +107,8 @@ export async function loadTaskDetail(
     securityFindings,
     securityReport,
     derivedFrom,
+    reviewOf,
+    reviewTasks,
   ] = await Promise.all([
     getProject(task.projectId),
     task.parent ? getTask(task.parent.taskId) : undefined,
@@ -127,6 +134,18 @@ export async function loadTaskDetail(
     canRequestSecurityFix(task) ? getSecurityFindings(task.id).catch(() => null) : undefined,
     task.securityFix ? getTask(task.securityFix.taskId).catch(() => undefined) : undefined,
     task.derivedFrom ? getTask(task.derivedFrom.taskId).catch(() => undefined) : undefined,
+    task.reviewOf ? getTask(task.reviewOf.taskId).catch(() => undefined) : undefined,
+    Promise.all(
+      (task.reviewTasks ?? []).map(async (r) => {
+        const found = await getTask(r.taskId).catch(() => undefined);
+        return {
+          id: r.taskId,
+          step: r.step,
+          number: r.number,
+          ...(found ? { title: found.task.title, task: found.task } : {}),
+        };
+      }),
+    ),
   ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -140,6 +159,8 @@ export async function loadTaskDetail(
     ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
     ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
     ...(derivedFrom ? { derivedFrom: derivedFrom.task } : {}),
+    ...(reviewOf ? { reviewOf: reviewOf.task } : {}),
+    ...(reviewTasks.length > 0 ? { reviewTasks } : {}),
     derivedTasks: derivedIds.map((id) => {
       const found = all?.find((t) => t.id === id);
       return { id, ...(found ? { title: found.title } : {}) };

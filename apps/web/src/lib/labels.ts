@@ -711,6 +711,8 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       return e.ContinuedFeedbackPassed(event.payload.keys.length);
     case "WorkspaceFilesSkipped":
       return e.WorkspaceFilesSkipped(event.payload.count);
+    case "ReviewTaskCreated":
+      return e.ReviewTaskCreated(l.step[event.payload.step], event.payload.number);
     case "PullRequestLabeled":
       return e.PullRequestLabeled(event.payload.number, event.payload.label, event.payload.created);
     case "PullRequestLabelFailed":
@@ -954,7 +956,9 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "ReviewRestarted":
       return event.payload.reason === "rerequested"
         ? e.ReviewRestartedByRequest(actor)
-        : e.ReviewRestarted(actor);
+        : event.payload.reason === "updated"
+          ? e.ReviewRestartedByUpdate((event.payload.commit ?? "").slice(0, 7))
+          : e.ReviewRestarted(actor);
     case "ContextResolved":
       // describeEventParts で分けて出す（ここには来ない）
       return describeEventParts(event, l).text;

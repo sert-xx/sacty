@@ -16,6 +16,9 @@ const ja = {
   repoChoiceBy: (byPerson: boolean): string =>
     byPerson ? "（人が選択）" : "（オーケストレーターが選択）",
   repoChoiceHint: (reason: string) => `選んだ理由：${reason}`,
+  reviewOfStep: (step: string) => `（${step}の PR）`,
+  reviewTaskOf: (step: string, number: number, status?: string) =>
+    `（${step}の PR #${number}${status ? `・${status}` : ""}）`,
   parent: " ・ 親タスク：",
   rerunOf: " ・ 再実行の元：",
   derivedFrom: " ・ 続きの元：",
@@ -486,6 +489,8 @@ const ja = {
     pullRequest: "PR",
     related: "関連するタスク",
     parent: "親タスク",
+    reviewOf: "レビューする PR の元",
+    reviewTask: "PR のレビュー",
     rerunOf: "再実行の元",
     rerunBy: "再実行したタスク",
     derivedFrom: "続きの元",
@@ -523,6 +528,8 @@ const en: TaskMessages = {
   repoChoiceBy: (byPerson) =>
     byPerson ? " (chosen by a person)" : " (chosen by the Orchestrator)",
   repoChoiceHint: (reason) => `Why: ${reason}`,
+  reviewOfStep: (step) => ` (${step} PR)`,
+  reviewTaskOf: (step, number, status) => ` (${step} PR #${number}${status ? `, ${status}` : ""})`,
   parent: " · Parent task: ",
   rerunOf: " · Rerun of: ",
   derivedFrom: " · Follow-up of: ",
@@ -982,6 +989,8 @@ const en: TaskMessages = {
     pullRequest: "PR",
     related: "Related tasks",
     parent: "Parent",
+    reviewOf: "Reviews the PR of",
+    reviewTask: "PR review",
     rerunOf: "Rerun of",
     rerunBy: "Rerun as",
     derivedFrom: "Follow-up of",

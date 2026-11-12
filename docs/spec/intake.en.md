@@ -66,12 +66,12 @@ For each item in the sacty settings, sacty searches the project's targets (an or
 | Setting | Search condition | Task |
 | --- | --- | --- |
 | `intakeLabel` | `is:open is:issue label:"<label>"` | An ordinary task (issues only) |
-| `reviewLabel` | `is:open is:pr label:"<label>"` | A PR review only (`source.review: label`; `sacty` for PRs created by sacty) |
+| `reviewLabel` | `is:open is:pr label:"<label>"` | A PR review only (`source.review: label`; PRs created by sacty are not taken in) |
 | `reviewRequested` | `is:open is:pr user-review-requested:<account>` | A PR review only (`source.review: requested`) |
 
 - Labels
   - Labels are up to 50 characters (`"` and `\` cannot be used). Comparison is case-insensitive. If not set, nothing is taken in.
-  - The intake label and the review label can have the same name (including names that differ only in upper and lower case). Even then, issues become ordinary tasks by the intake label, and PRs become review-only tasks by the review label. The searches are split by `is:issue` and `is:pr`, and the intake decision also never makes an issue a review task or a PR an ordinary task. PRs created by sacty are also taken in once, as `sacty` review tasks.
+  - The intake label and the review label can have the same name (including names that differ only in upper and lower case). Even then, issues become ordinary tasks by the intake label, and PRs become review-only tasks by the review label. The searches are split by `is:issue` and `is:pr`, and the intake decision also never makes an issue a review task or a PR an ordinary task. PRs created by sacty are not taken in by either label.
   - PRs with the intake label are not taken in (even if found by the search, they are not made ordinary tasks). Tasks of PRs taken in before that (`start: github_pull_request` without `source.review`) continue as they are (the Orchestrator chooses the steps).
   - The kinds written in `triageOff` (the kinds turned Off: `issues`, `reviewLabel`, `tickets`) are neither searched nor taken in, while the label is kept. Saving rejects unknown kinds.
 - Review requests
@@ -87,23 +87,24 @@ For each item in the sacty settings, sacty searches the project's targets (an or
     - `reviewRound` adds 1 to the previous round and continues the review count.
   - GitHub removes a request when the requested person posts a review, so a post normally clears it. Search results lag (a removed request can remain right after the post), so they alone never start a re-review. If a post did not clear the request (for example, the account changed after intake), the last request is older than the post, so it does not repeat after every post.
   - The most recently created task for the same PR is the predecessor only if it has posted and completed; an older completed task is never used as a fallback. sacty saves the request time, account, and predecessor task in the event, so repeated polling of the same request, concurrent processing, and daemon restarts create no duplicates. A later request after the new task has posted and completed creates another separate task.
-  - Tasks that are running, not yet posted, or cancelled, tasks taken in by the label, and tasks for PRs sacty created are excluded. Nothing is checked while `reviewRequested` is Off.
+  - Tasks that are running, not yet posted, or cancelled, and tasks taken in by the label are excluded. Nothing is checked while `reviewRequested` is Off.
+    PRs sacty created (the item below) are excluded even if an older version took them in by a request (the review child task of the task that created the PR reviews them).
   - If the current requested reviewers or the request time cannot be read, sacty starts no re-review, records `intake.rerequestUnchecked`, and does not advance that search's read position. The same PR is found again at the next intake. Each PR is checked once per intake.
   - If the same PR appears in searches for multiple accounts, sacty removes duplicates only after matching the task's account.
   - sacty reads PR events up to 50 pages. If another page remains, it records the read as failed and does not use partial results to decide whether a review was re-requested.
   - After the API reads, sacty confirms that intake is still On and that the selected account, review round, and posting time are unchanged before it creates a new task.
-- PRs created by sacty (ones in the ledger: the implementation PR of a task, a Requirements or Design PR, or a PR given the label; see [The review label on PRs](approval.en.md#the-review-label-on-prs))
-  - If such a PR has the review label, it becomes a separate review-only task, not the task that created it (`source.review: sacty`; the Orchestrator does not choose steps).
-  - Even if it also matches a review request, it is `sacty` (so that the review reaches the task that created the PR).
-  - If the review label's triage is Off, it is not taken in by the label (and is not made `sacty`).
-  - Intake from review requests works separately. If `reviewRequested` is On and there is a request to the account chosen in the responsible project itself, even a sacty PR is taken in as `requested` (its rounds with findings also reach the original task).
-  - The number differs from the intake source (an Issue and so on) of the task that created the PR, so the PR is never skipped just because that task exists. The same PR is never taken in twice, so there is one review task per PR (updating the PR does not create a new review task).
-  - Reviews that the review task posts on the PR, in rounds with findings (changes required or suggestions; and rounds whose verdict could not be read), are taken in as comments on the PR of the task that created it ([Importing PR comments](approval.en.md#importing-pr-comments)). The same applies to posts by a task taken in by a request, and by a review task created manually with the PR URL in its description. Rounds with no findings are not taken in. The comments that arrive are told apart by the post's marker as AI review comments, distinct from a person's comments: they are not counted in a person's requests for changes or in the limit, and are discarded when the head the review targeted differs from the PR's current head ([AI review comments](approval.en.md#ai-review-comments)). The review task does not create PRs, so it does not itself add PRs that get the label.
+- PRs created by sacty (ones in the ledger: the implementation PR of a task, a Requirements or Design PR, a PR a review child task was created for, or a PR given the label by an older version; `sactyMadePullRequests`)
+  - They are not taken in (whichever of the review label, the intake label, or a review request they match).
+    The task that created the PR creates a child task that reviews it ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)).
+  - The same applies to PRs given the label by an older version and PRs that already have a review task taken in (no double review).
+- Reviews that a review task (a review child task, a task taken in by a request, a task taken in by the label, or a review task created manually with the PR URL in its description) posts on the PR, in rounds with findings (changes required or suggestions; and rounds whose verdict could not be read), are taken in as comments on the PR of the task that created it ([Importing PR comments](approval.en.md#importing-pr-comments)).
+  Rounds with no findings are not taken in.
+  The comments that arrive are told apart by the post's marker as AI review comments, distinct from a person's comments: they are not counted in a person's requests for changes or in the limit, and are discarded when the head the review targeted differs from the PR's current head ([AI review comments](approval.en.md#ai-review-comments)).
 - For the responsible project, a repository target takes precedence over an org target (`responsibleProject`). The same Issue or PR (`<repository>#<number>`) is never taken in twice (except for new tasks created by review re-requests as described above).
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), sacty skips the other searches for that account.
 - sacty does not search intake sources with no account chosen, and records `github.accountRequired`.
 
-Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`), `packages/core/src/events.ts` (`TaskCreated`), `packages/core/src/projection.ts` (`applyEvent`)
+Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyMadePullRequests`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`), `packages/core/src/events.ts` (`TaskCreated`), `packages/core/src/projection.ts` (`applyEvent`)
 
 ## JIRA tickets
 

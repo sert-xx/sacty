@@ -31,16 +31,15 @@ describe("取り込みの文言（PBI-99）", () => {
     }
   });
 
-  it("sacty の PR にラベルを付けるのは、レビュー用のラベルを設定したとき（取り込みが Off の間も付ける。PBI-139）と書く", () => {
+  it("sacty の PR にはラベルを付けず、子タスクがレビューすると書く（PBI-330）", () => {
     expect(messagesFor("ja").settings.reviewLabelHint).toContain(
-      "レビュー用のラベルを設定していると、Sacty が作る PR にもこのラベルを付け",
+      "Sacty が作る PR にはラベルを付けず、PR を作ったタスクの子タスクがレビューします",
     );
-    expect(messagesFor("ja").settings.reviewLabelHint).toContain("取り込みが Off の間も付けます");
-    expect(messagesFor("en").settings.reviewLabelHint).toContain(
-      "When the review label is set, Sacty also adds this label",
+    expect(messagesFor("ja").settings.reviewLabelHint).not.toContain(
+      "取り込みが Off の間も付けます",
     );
     expect(messagesFor("en").settings.reviewLabelHint).toContain(
-      "even while importing them is off",
+      "Sacty does not add this label to the PRs it creates",
     );
   });
 });
