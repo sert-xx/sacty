@@ -29154,7 +29154,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       it("PR の更新でドラフトに戻せなかったら、指摘なしになるまで確認のたびにドラフトに戻す。戻せたら繰り返さない（PR #348 2回目のレビュー指摘）", async () => {
         const made = await implemented([
           verdictOut("changes_required"),
-          rework("implement", "実装で直せる"),
           implement("# 実装の説明 v2"),
           verdictOut("no_findings", "# 評価\n\nマージしてよい"),
         ]);
@@ -29433,11 +29432,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("PR の更新でドラフトに戻す答えが返らなくても待ち続けず、承認待ちにして、次の確認で戻す（PR #348 5回目のレビュー指摘）", async () => {
         const made = await implemented(
-          [
-            verdictOut("changes_required"),
-            rework("implement", "実装で直せる"),
-            implement("# 実装の説明 v2"),
-          ],
+          [verdictOut("changes_required"), implement("# 実装の説明 v2")],
           [],
           { draftTimeoutMs: 20 },
         );
