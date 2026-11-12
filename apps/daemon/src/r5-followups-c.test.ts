@@ -219,7 +219,7 @@ const taskOf = (extra: Record<string, unknown> = {}) =>
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 describe("C2：PR の本文で、同じ文を複数の節に繰り返さない・空の見出しを出さない", () => {
-  it("観点ごとの所見は、総評にある文を繰り返さない", () => {
+  it("総評は本文に出さないので、観点ごとの所見は、総評にある文も含めてそのまま出す（PBI-336）", () => {
     const summary =
       "受け入れ条件はすべて、コードとテストで満たしていることを確かめた。範囲外の変更や、既存の振る舞いの変化は無い。";
     const own = "R-1 は src/a.ts の create で確かめた。";
@@ -231,8 +231,8 @@ describe("C2：PR の本文で、同じ文を複数の節に繰り返さない�
         }),
       }),
     );
-    // 総評は本文に出さない（最終レビューは PBI-331 でやめた）。観点ごとの所見の、総評に無い文は残す
-    expect(mixed).toContain(`最終レビューの所見：${own}`);
+    // 総評は本文に出さない（最終レビューは PBI-331 でやめた）ので、所見から総評の文を除かない
+    expect(mixed).toContain(`最終レビューの所見：${summary}${own}`);
   });
 
   it("短い所見（偶然の一致がありうる短い文）は除かない", () => {

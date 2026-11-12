@@ -787,3 +787,22 @@ describe("前の工程の成果物へのリンク（PBI-322）", () => {
     expect(none).toContain("- 要求要件：`docs/sacty/t-1/requirements.md`\n");
   });
 });
+
+describe("以前の版の最終レビューの観点ごとの所見（PBI-336）", () => {
+  it("総評は本文に出さないので、総評と同じ文の所見も、そのまま観点ごとの詳細に出す", () => {
+    const same = "境界のテストも通っていて、変更は最小限である。";
+    const body = buildPullRequestBody(
+      task({
+        lastReview: review({
+          summary: same,
+          viewpoints: [
+            { viewpointId: "TV-1", verified: true, reason: same },
+            { viewpointId: "TV-2", verified: true, reason: same },
+          ],
+        }),
+      }),
+    );
+    expect(body).toContain(`最終レビューの所見：${same}`);
+    expect(body).not.toContain("総評と同じです");
+  });
+});

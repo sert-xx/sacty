@@ -3841,15 +3841,6 @@ export type BodyParts = {
   footer: string;
 };
 
-/**
- * 観点ごとの最終レビューの所見。総評にある文は繰り返さない。すべてが総評にある文なら、総評と同じと書く（PBI-302 C2）。
- */
-function findingText(reason: string, summary: string | undefined): string {
-  if (summary === undefined) return reason;
-  const own = withoutSentencesIn(reason, summary);
-  return own === "" && reason !== "" ? "総評と同じです（上の「最終レビュー」）" : own;
-}
-
 /** PR の本文の、観点 → テスト → 実行結果の表とテストの結果（PBI-10b）。 */
 function resultTableLines(task: Task): string[] {
   const basis = verificationBasis(task);
@@ -3924,11 +3915,7 @@ function resultTableLines(task: Task): string[] {
       `  - 入力：${flat(v.input)}`,
       `  - 期待結果：${flat(v.expected)}`,
       `  - テスト：${names.length > 0 ? names.map(flat).join(" / ") : noTestText(v.id, true)}`,
-      ...(judged
-        ? [
-            `  - 最終レビューの所見：${findingText(flat(ja(judged.reason)), review ? ja(review.summary) : undefined)}`,
-          ]
-        : []),
+      ...(judged ? [`  - 最終レビューの所見：${flat(ja(judged.reason))}`] : []),
     ];
   });
   const testRunLine = guardianTests
@@ -4145,18 +4132,6 @@ function leadSplit(text: string, max: number): { lead: string; rest: string } {
 /** 長い文を、文の切れ目（。）か max 文字で切る（超えたら、切れ目が無ければ末尾に「…」）。 */
 function leadOf(text: string, max: number): string {
   return leadSplit(text, max).lead;
-}
-
-/**
- * 文（。で区切る）のうち、別の文章にすでにある文を除く（同じ文を複数の節に繰り返さない。PBI-302 C2）。短い文（挨拶・
- * 「問題なし。」など）は、偶然の一致があるので除かない。
- */
-function withoutSentencesIn(text: string, shown: string): string {
-  const seen = new Set((flat(shown).match(/[^。]+。?/g) ?? []).map((s) => s.trim()));
-  return (flat(text).match(/[^。]+。?/g) ?? [])
-    .filter((sentence) => sentence.trim().length < 12 || !seen.has(sentence.trim()))
-    .join("")
-    .trim();
 }
 
 /**
