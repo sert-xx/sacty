@@ -4,6 +4,7 @@
 - タスク: PBI-337
 - PR: #357
 - ブランチ: feat/issue-337-tests-decision-only-when-stopped-for-tests
+- 関係する ADR: なし（既存の方針どおりの不具合の修正）
 
 ## 目的
 
