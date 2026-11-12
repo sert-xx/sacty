@@ -8231,8 +8231,11 @@ export class TaskService {
    */
   private async syncPullRequestHead(
     task: Task,
-    /** 検証に通った後、PR を出す直前の取り込み（最終レビューをする流れ）。取り込んだら検証からやり直す（reverify）。 */
-    options: { reverify?: boolean } = {},
+    /**
+     * reverify：検証に通った後、PR を出す直前の取り込み（最終レビューをする流れ）。取り込んだら検証からやり直す。
+     * strict：ブランチを読めなければ failed にする（検証していない人の変更を含む PR を出さないための、PR を更新する直前の確認）。
+     */
+    options: { reverify?: boolean; strict?: boolean } = {},
   ): Promise<
     | { kind: "clean"; merged?: true }
     | { kind: "conflicts"; files: string[]; fresh: boolean }
@@ -8271,8 +8274,15 @@ export class TaskService {
       const authEnv = await this.gitAuth(task, repository.url, usedSecrets);
       head = await this.deps.repos.fetchBranch(gitDir, pushed.branch, authEnv);
     } catch (error) {
+      const detail = redactText(errorText(error), usedSecrets);
+      if (options.strict) {
+        return {
+          kind: "failed",
+          message: message("pr.headMergeFailed", { branch: pushed.branch, detail }),
+        };
+      }
       console.warn(
-        `[daemon] PR のブランチ ${pushed.branch} を読めないため、人が足したコミットを確かめませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        `[daemon] PR のブランチ ${pushed.branch} を読めないため、人が足したコミットを確かめませんでした：${renderMessage(detail, "ja")}`,
       );
       return { kind: "clean" };
     }
@@ -11514,6 +11524,8 @@ export class TaskService {
     }
     // 検証からやり直す（PullRequestHeadMerged の投影が、PR の作成の待ちを検証の待ちに戻した）
     if (head.kind === "clean" && head.merged && reverify) return "stopped";
+    // 先頭を読む間に一時停止・中止を求められたら、プッシュしない
+    if (this.stopRequested(task.id)) return "stopped";
     task = this.mustGet(task.id);
     // 取り込みで競合した目印が残っていれば、目印のある内容をプッシュしない
     const unresolved = pendingHeadMerge(task)?.conflicts ?? [];
@@ -11661,7 +11673,10 @@ export class TaskService {
       // 最終レビューをする流れで、本文を用意する間（エージェントがまとめる間など）に人がコミットを足していたら、検証していない
       // 内容の PR を出さない（取り込んで、検証からやり直す）
       if (reverify) {
-        const moved = await this.syncPullRequestHead(this.mustGet(task.id), { reverify: true });
+        const moved = await this.syncPullRequestHead(this.mustGet(task.id), {
+          reverify: true,
+          strict: true,
+        });
         if (moved.kind === "failed") return fail(moved.message);
         if (moved.kind === "conflicts" || moved.merged) return "stopped";
       }

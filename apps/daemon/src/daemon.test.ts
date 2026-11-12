@@ -13320,6 +13320,59 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    /** やり直した実装をプッシュした後（PR を更新する前の確認）に PR のブランチを読むと、before を呼ぶ偽物。 */
+    const afterRepush = (before: (repos: FakeRepos) => void) => {
+      const repos = new FakeRepos();
+      const fetch = repos.fetchBranch.bind(repos);
+      repos.fetchBranch = async (gitDir, branch, authEnv) => {
+        if (repos.published.length === 2 && branch !== "main") before(repos);
+        return fetch(gitDir, branch, authEnv);
+      };
+      return repos;
+    };
+
+    it("最終レビューをする流れで、PR を更新する直前に PR のブランチを読めなければ、検証していない変更を出さないよう、PR を更新せずに止める", async () => {
+      let failing = true;
+      const repos = afterRepush(() => {
+        if (failing) throw new Error("network");
+      });
+      const { activity, service, pulls, id } = await toImplementGate(rework(), { repos });
+      sendBack(service, id);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({ code: "pr.headMergeFailed" });
+      expect(pulls.calls).toHaveLength(1);
+      // 読めるようになって再開すると、PR を更新する
+      failing = false;
+      service.resume(id, {});
+      await drain(service);
+      expect(pulls.calls).toHaveLength(2);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
+    it("PR を更新する直前に PR のブランチを読む間に一時停止を求められたら、PR を更新しない", async () => {
+      let service: TaskService | undefined;
+      let taskId = "";
+      let paused = false;
+      const repos = afterRepush(() => {
+        if (paused || !service) return;
+        paused = true;
+        void service.pause(taskId);
+      });
+      const made = await toImplementGate(rework(), { repos });
+      service = made.service;
+      taskId = made.id;
+      sendBack(made.service, made.id);
+      await drain(made.service);
+      expect(paused).toBe(true);
+      expect(made.pulls.calls).toHaveLength(1);
+      expect(made.pulls.draftChanges).toEqual([]);
+      expect(made.service.get(made.id)?.task.status).toBe("paused");
+      made.activity.close();
+    });
+
     it("人のコミットと競合したら、競合したファイルを、人の側を残して解消するよう実装に渡す", async () => {
       const { activity, service, executor, repos, id } = await toImplementGate(rework());
       const pushed = service.get(id)?.task.pushedBranch;
