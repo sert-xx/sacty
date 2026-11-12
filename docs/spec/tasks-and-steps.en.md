@@ -4,7 +4,7 @@
 
 A task proceeds as a sequence of steps (Investigation, Requirements, Design, Implementation, and so on). The Orchestrator chooses which combination of steps (plan) to use when the task starts (if a person specified a plan when creating the task, that plan is used). Before that, the information gatherer collects and narrows down the information related to the task and gives its summary to the Orchestrator, every step, and the Goal Guardian ("Information gathering" below). Agents run the steps, and people decide only at approval steps (approval gates).
 
-The Goal Guardian judges change requests, the final review, and Integration review. Where PR comments are sent back to is decided by the review child task for AI review comments, and by the agent of the PR's step when person comments are included ([Importing PR comments](approval.en.md#importing-pr-comments)).
+The Goal Guardian judges change requests, the final review, and Integration review. Where PR comments are sent back to is decided from the review child task's answer when all the comments were posted in the last round of the PR's review child task (AI review comments), and otherwise (when a person's comment, a comment from another review task or an earlier round, or a comment of an unknown round is included) by the agent of the PR's step ([Importing PR comments](approval.en.md#importing-pr-comments)).
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
