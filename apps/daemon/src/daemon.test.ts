@@ -39899,7 +39899,7 @@ describe("Docker とエージェントのイメージの注意（PBI-148）", ()
   it("確かめた注意を、画面の状態の docker に載せる（ほかの注意とは分ける。無ければ空）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.22.1",
+      image: "sacty-agent:1.23.0",
       command: "npx sacty image build",
     });
     let current = [missing];
@@ -39914,7 +39914,7 @@ describe("Docker とエージェントのイメージの注意（PBI-148）", ()
   it("設定ファイルが無いとき（既定のイメージだけ確かめる）も、注意を載せる（PR #166 レビュー指摘）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.22.1",
+      image: "sacty-agent:1.23.0",
       command: "npx sacty image build",
     });
     const unreachable = message("image.dockerUnreachable");
