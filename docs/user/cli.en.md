@@ -58,6 +58,7 @@ This command builds the container images for running agents ([Container images](
 - If you omit the names, it builds the default image and every per-language image listed under `images` in `config.yaml` (`default` is the default image).
 - If you specify a name that is not in `images`, it stops and shows the names it can build.
 - If `config.yaml` has an error, it stops without building.
+- It does not build the images in `images.yaml` of context repositories (Sacty builds them in the background after `sacty up`. [Context images](images.en.md#context-images)).
 - Once everything is built, it removes old image versions (`sacty-agent` and `sacty-agent-<name>` images with `X.Y.Z` tags), keeping the two newest versions of each name. It also removes build cache unused for more than 7 days. It does not remove images listed in `image` or `images`, images with other tags or names, or images that containers use.
 
 ## sacty context init

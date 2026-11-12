@@ -40,7 +40,8 @@ export class Worker {
       let queued: string[];
       try {
         limit = this.service.maxParallelTasks();
-        queued = this.service.queuedTaskIds();
+        // コンテキストのイメージを待っているタスクは除く（実行の枠を塞がないように。PBI-325）
+        queued = this.service.runnableTaskIds();
       } catch (error) {
         console.error("[daemon] worker error:", error);
         queued = [];

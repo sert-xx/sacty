@@ -183,4 +183,6 @@ sacty の更新で既定のモデルが変わっても、設定が読めなく�
   - `enable_repos` は `packages` と一緒に書く。
 - `images.<名前>.maven_mirror`：http・https の URL で、ユーザー名・パスワードや引用符などの記号を含まない。
 
-コード: `apps/daemon/src/config.ts`（`NPM_SECRET_KEY`・`IMAGE_ENV_SECRET_NAME`・`IMAGE_ENV_RESERVED`・`hasUserInfo`）
+この検査は、コンテキストリポジトリの `images.yaml` にも同じく効く（[コンテキストの合成](context.md#コンテキストリポジトリのファイル)）。
+
+コード: `apps/daemon/src/config.ts`（`NPM_SECRET_KEY`）、`apps/daemon/src/image-schema.ts`（`LanguageImageFile`・`languageImagesFile`・`IMAGE_ENV_SECRET_NAME`・`IMAGE_ENV_RESERVED`・`hasUserInfo`）

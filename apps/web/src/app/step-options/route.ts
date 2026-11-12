@@ -1,17 +1,26 @@
 import { getMessages } from "@/i18n/server";
+import { currentProjectId } from "@/lib/current-project";
 import { DaemonUnavailableError, getStatus } from "@/lib/daemon";
-import { stepAgentOptions, stepImageOptions } from "@/lib/labels";
+import { projectImages, stepAgentOptions, stepImageOptions } from "@/lib/labels";
 
 /**
  * タスクの作成のダイアログ・差し戻しのフォームで、工程ごとに選べるイメージ・エージェント。ダイアログの「工程ごとに設定」・
  * 差し戻しのフォームの工程の設定の折りたたみを開いたときにだけ読む。選択肢はタスクの詳細で変えるときと同じ（設定を読めないときは、選べない理由を返す。消えた名前と取り違えないため）。
  */
-export async function GET() {
+export async function GET(request?: Request) {
   const m = await getMessages();
   const t = m.forms.task;
   try {
     const status = await getStatus();
-    const images = stepImageOptions(status, m.task.images.defaultDescription);
+    // タスクを作る・差し戻すタスクのプロジェクトのコンテキストのイメージも選べる（PBI-325）。指定が無ければ、選んでいる
+    // プロジェクト
+    const project =
+      (request ? new URL(request.url).searchParams.get("project") : null) ??
+      (await currentProjectId().catch(() => undefined));
+    const images = stepImageOptions(
+      { problems: status.problems, images: projectImages(status, project) },
+      m.task.images.defaultDescription,
+    );
     // stub は、既定のエージェントが stub のとき（動作確認用の設定）だけ出す
     const agents = stepAgentOptions(status, status.agent?.id);
     if (!images || !agents) {

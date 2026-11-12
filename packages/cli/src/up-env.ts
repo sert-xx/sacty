@@ -28,10 +28,12 @@ export function webAuthEnabled(config: ConfigResult): boolean {
 
 export function daemonEnv(
   base: Env,
-  input: { daemonPort: number; daemonToken: string; webPort: number },
+  input: { daemonPort: number; daemonToken: string; webPort: number; dockerDir?: string },
 ): Env {
   return {
     ...withoutWebToken(base),
+    // コンテキストのイメージ（PBI-325）を、sacty image build と同じ Dockerfile で作るための場所
+    ...(input.dockerDir ? { SACTY_DOCKER_DIR: input.dockerDir } : {}),
     SACTY_DAEMON_PORT: String(input.daemonPort),
     SACTY_DAEMON_TOKEN: input.daemonToken,
     // 通知のリンクに使う、画面の URL（PBI-38）

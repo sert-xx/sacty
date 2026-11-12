@@ -1296,6 +1296,32 @@ function legacyStepImageRows(task: Task, activity: readonly ActivityEvent[]): Le
  * タスクのイメージの選択肢（PBI-106・PBI-318）。既定のイメージと images の名前（説明つき）。デーモンの状態を取得できない・設定を
  * 読めないときは undefined（候補を確かめられない。images から消した名前と取り違えないため。PR #116 レビュー指摘）。
  */
+/**
+ * プロジェクトで選べるイメージ（PBI-325）。config.yaml の images に、そのプロジェクトのコンテキストの images.yaml の
+ * イメージを足す（同じ名前は config.yaml のもの）。作成中・作成に失敗したものも選べる（実行のときに待つか、止まる）。
+ */
+export function projectImages(
+  status:
+    | {
+        images?: { name: string; description: string }[];
+        contextImages?: { projectId: string; images: { name: string; description: string }[] }[];
+      }
+    | undefined,
+  projectId: string | undefined,
+): { name: string; description: string }[] | undefined {
+  if (!status?.images) return undefined;
+  const own = projectId
+    ? (status.contextImages?.find((p) => p.projectId === projectId)?.images ?? [])
+    : [];
+  const names = new Set(status.images.map((i) => i.name));
+  return [
+    ...status.images,
+    ...own
+      .filter((i) => !names.has(i.name))
+      .map(({ name, description }) => ({ name, description })),
+  ];
+}
+
 export function stepImageOptions(
   status: { problems: unknown[]; images?: { name: string; description: string }[] } | undefined,
   defaultDescription: string,

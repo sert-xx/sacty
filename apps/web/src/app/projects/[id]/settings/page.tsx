@@ -16,6 +16,7 @@ import {
   getProjectPlatforms,
   getStatus,
 } from "@/lib/daemon";
+import { projectImages } from "@/lib/labels";
 
 /** プロジェクトの設定（PBI-114 で `/projects/<ID>` から移した）。プロジェクトが無ければ 404。 */
 export default async function ProjectSettingsPage({
@@ -91,7 +92,8 @@ async function ProjectSettings({
         exclusions={view.exclusions}
         github={await getGitHubAccounts()}
         // 選べるイメージ（PBI-41）。状態を取れなければ、選ぶ欄を出さない（指定済みのイメージは出す）
-        images={(await getStatus().catch(() => undefined))?.images ?? []}
+        // コンテキストの images.yaml のイメージも（PBI-325）
+        images={projectImages(await getStatus().catch(() => undefined), view.project.id) ?? []}
         platforms={(await getStatus().catch(() => undefined))?.platforms ?? []}
         // プロジェクトで使える外部 PF（コンテキストの platforms.yaml も。PBI-74）。取れなければ一覧を出さない
         projectPlatforms={await getProjectPlatforms(view.project.id).catch(() => undefined)}

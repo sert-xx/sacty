@@ -50,6 +50,7 @@ import {
   pauseTask,
   prefetchSecrets,
   previewProjectContext,
+  rebuildContextImage,
   rejectAuditProposal,
   renameTask,
   requestChanges,
@@ -889,6 +890,26 @@ export async function analyzeErrorsAction(
   let result: Awaited<ReturnType<typeof analyzeErrors>>;
   try {
     result = await analyzeErrors(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 作成に失敗したコンテキストのイメージを作り直す（PBI-325）。 */
+export async function rebuildContextImageAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof rebuildContextImage>>;
+  try {
+    result = await rebuildContextImage(
+      String(formData.get("projectId") ?? ""),
+      String(formData.get("name") ?? ""),
+    );
   } catch {
     return { message: a.daemonDown };
   }

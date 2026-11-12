@@ -4,7 +4,7 @@
 
 `sacty up` starts the daemon (`apps/daemon`) and the web UI (Next.js in `apps/web`) as child processes, and stops both when either one ends. Only one daemon runs per `SACTY_HOME` (an OS file lock decides this).
 
-Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md), [Compare the running version with the latest GitHub release to report a newer sacty](../adr/20261020-0008-update-check-against-releases.md)
+Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md), [Compare the running version with the latest GitHub release to report a newer sacty](../adr/20261020-0008-update-check-against-releases.md), [Let context repositories define images, and have the daemon build them in the background after it starts](../adr/20261111-0038-context-images-built-by-daemon.md)
 
 ## sacty up
 
@@ -73,6 +73,7 @@ Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib
     - Starting the host MCP servers
     - Preparing the context's command MCP servers (removing the previous layer copies in `SACTY_HOME/context-mcp/layers` and starting the check that stops ones no longer used)
     - Preparing authentication for organization platforms (PF)
+    - Building context images ("Building context images" below)
     - The worker, intake, PR watching, and scheduled tasks
 
 Every 2 seconds, the worker runs queued tasks in order of creation, oldest first. The limit of concurrent runs is `maxParallelTasks` in sacty settings (default `DEFAULT_MAX_PARALLEL_TASKS` = 3). It never runs the same task twice at the same time.
@@ -144,6 +145,65 @@ Code: `apps/daemon/src/image-presence.ts` (`ImagePresenceChecker`, `pingDocker`,
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/daemon/src/main.ts`, `apps/web/src/components/shell/docker-notice.tsx` (`DockerNotice`),
 `apps/web/src/components/shell/docker-notice-live.tsx` (`DockerNoticeLive`, `DOCKER_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/docker-notice-view.tsx` (`DockerNoticeView`),
 `apps/web/src/app/live/docker/route.ts`
+
+## Building context images
+
+Images in `images.yaml` of context repositories ([Context composition](context.en.md#context-repository-files)) are not built by `sacty image build`; the daemon builds them per project after it starts (PBI-325).
+
+- When it reads them: when it starts in step 11 of the startup, when a project is saved (created, changed, or imported) or deleted, and every 5 minutes (`CONTEXT_IMAGES_REFRESH_MS`).
+  - It reads only projects with a context, one at a time (`contextImages`; it composes the inheritance chain and applies `locked` and `remove`).
+    If fetching one project does not finish within 5 minutes (`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`), it stops the fetch and treats the project as unreadable (`contextImage.loadTimedOut`).
+  - If the configuration (`config.yaml`) cannot be read, it builds nothing (and does not clean up).
+  - If a reread is requested while a project is being read (saving the project, for example), it reads again after the current read finishes.
+  - Images with the same name as one in `images` of `config.yaml` are not built; that becomes the `contextImage.configOverride` warning (only own properties are compared; `hasImage`).
+  - If the context cannot be read, it keeps using what it read before (if anything), with the `contextImage.loadFailed` warning.
+- Name: `sacty-ctx-<mark>-<project ID>-<name>:<hash>` (`contextImageTag`).
+  The mark is the first 8 characters of the SHA-256 of `SACTY_HOME` (to tell these apart from images of a daemon for another `SACTY_HOME` on the same Docker).
+  The hash is made from the definition, `image_build` (only the secret's name for authentication), the default image name (the sacty version), the project ID, and the name.
+  The name is turned into a form Docker accepts (lowercase letters, digits, `-`).
+- States: `queued`, `building`, `ready`, and `failed`.
+  - Each read checks with `docker image inspect`: `ready` if present, `queued` if not.
+    An image with the same name keeps its earlier state (still building or failed).
+    `ready` images are checked again too and become `queued` if missing (they stay `ready` if the check fails).
+  - States are kept only in memory (restarting the daemon builds failed images again).
+  - If it cannot check (Docker is unreachable), the image becomes `failed` (`image.dockerUnreachable`) and is checked again on the next read.
+- Building: `queued` images are built one at a time across all projects (images of a project being reread wait until the read finishes).
+  - It uses `buildImage` (the same Dockerfile as `sacty image build`, built as a per-language image) and keeps the tail of the docker output (16 KiB; `CONTEXT_IMAGE_LOG_MAX`).
+  - It uses the `image_build` from when the name was decided (when the context was read), so the hash in the name matches the content.
+  - If a build does not finish within 60 minutes (`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`), it stops docker, marks it `failed` (`contextImage.buildTimedOut`), and builds the next one.
+    Work that does not finish within 15 seconds of being stopped (`CONTEXT_IMAGE_ABANDON_MS`; for example, fetching the npm token does not respond) is abandoned (the abandoned work sees the stopped signal and does not run docker).
+  - The Dockerfile location is `SACTY_DOCKER_DIR` passed by `sacty up` (otherwise `packages/cli/docker` in the repository).
+  - On failure it becomes `failed` (`contextImage.buildFailed`).
+    It is not rebuilt automatically.
+    `POST /api/projects/:id/context-images/:name/rebuild` ("Rebuild" on the screen) puts it back to `queued` (an image that has not failed is refused with `contextImage.notFailed`, and a missing one with `contextImage.notFound`).
+  - After everything is built, and if the configuration could be read and every project's current definitions were read, it removes images with its own mark, `sacty-ctx-<mark>-`, other than the names of the current definitions with `docker image rm` (not forced).
+    If that does not finish within 2 minutes (`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`), it stops it and waits for the stopped docker to finish (up to `CONTEXT_IMAGE_ABANDON_MS`) before moving on.
+    While removing, a reread does not check which images are present; it checks after the removal finishes.
+    If images get queued during the removal, it builds them after the removal finishes.
+  - When the daemon stops, or a build times out, it sends `SIGTERM` to docker and, if it has not finished within 10 seconds (`DOCKER_KILL_GRACE_MS`), `SIGKILL` (`runDockerStreaming`).
+  - When the daemon stops, it stops the interval and the docker build in progress.
+    It waits for the stopped build's cleanup (removing the temporary file with npm authentication) together with the other cleanup (up to the same 20 seconds).
+- Status: listed in `contextImages` of `GET /api/status` (only projects with images); read failures and same-name images go into `warnings`.
+  - On every screen, images being built, queued, or failed appear above the content as "Image builds" (`ContextImagesNotice`).
+    The log of a build in progress is shown open; failed images show the reason, the log, and "Rebuild".
+  - The screen refetches from `/live/context-images` every 5 seconds (`CONTEXT_IMAGES_LIVE_INTERVAL_MS`).
+- Use: tasks of a project choose from `images` of `config.yaml` plus that project's context images (`projectImagesConfig`; for the same name, the one in `config.yaml`).
+  - Images being built or failed can still be chosen (`imageDefined`).
+    At run time they are not used; the run stops with the reason (`contextImage.building`, `contextImage.failed`) (`resolveImage`).
+    The deployment check after a merge also does not fall back to the default image; it records the reason as a check that could not be made (`deploy.checkFailed`).
+  - The choices on the screen (creating a task, requesting changes, task details, project targets) include that project's images too (`projectImages`).
+- Waiting: before the project's context is read, while it is read, and while images are queued or being built, tasks that may use those images do not start (`awaitingContextImages`; no in-flight mark is set, and the worker checks again every 2 seconds).
+  - Tasks that may use them are tasks whose image is not decided (no steps, and neither a person nor the project targets chose one) and tasks whose decided name is neither `default` nor in `images` of `config.yaml`.
+    The name is decided in the same order as at run time (the task image, including a person's change; the per-step images of old activity logs; before the steps are chosen, the image chosen at creation or in the project targets).
+  - If it has not finished after 60 minutes (`CONTEXT_IMAGES_WAIT_MS`), the task gets `TaskPaused` (reason `error`, `contextImage.waitTimedOut`).
+  - Pausing or cancelling while waiting takes effect immediately, as for a task that is not running.
+  - The worker drops waiting tasks from the run targets before counting concurrent runs (`runnableTaskIds`), so they do not take the slots of later tasks that can run.
+
+Code: `apps/daemon/src/context-images.ts` (`ContextImageBuilder`, `contextImageTag`, `contextImagePrefix`, `contextLanguageImage`, `runDockerStreaming`, `removeStaleContextImages`, `CONTEXT_IMAGES_REFRESH_MS`, `CONTEXT_IMAGE_LOG_MAX`, `CONTEXT_IMAGE_BUILD_TIMEOUT_MS`, `CONTEXT_IMAGES_LOAD_TIMEOUT_MS`, `CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`, `DOCKER_KILL_GRACE_MS`, `CONTEXT_IMAGE_ABANDON_MS`),
+`apps/daemon/src/context.ts` (`contextImages`), `apps/daemon/src/config.ts` (`resolveImage`, `imageDefined`, `hasImage`),
+`apps/daemon/src/service.ts` (`projectImagesConfig`, `awaitingContextImages`, `runnableTaskIds`, `mayUseContextImage`, `loadContextImages`, `rebuildContextImage`, `refreshContextImages`, `CONTEXT_IMAGES_WAIT_MS`),
+`apps/daemon/src/server.ts`, `apps/daemon/src/main.ts`, `apps/daemon/src/worker.ts` (`Worker`), `packages/cli/src/up-env.ts` (`daemonEnv`),
+`apps/web/src/components/shell/context-images-notice-view.tsx` (`ContextImagesNoticeView`), `apps/web/src/components/shell/context-images-notice-live.tsx` (`CONTEXT_IMAGES_LIVE_INTERVAL_MS`), `apps/web/src/lib/labels.ts` (`projectImages`)
 
 ## Duplicate start
 

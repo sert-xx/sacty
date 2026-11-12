@@ -38,7 +38,10 @@ export function GateForm({
   noChanges = false,
   steps = [],
   image,
+  projectId,
 }: {
+  /** タスクのプロジェクト（イメージの候補に、そのプロジェクトのコンテキストのイメージを足す。PBI-325）。 */
+  projectId?: string;
   taskId: string;
   step: StepKey;
   /** 画面が表示している提出回。最新でなければデーモンが拒否する。 */
@@ -225,6 +228,7 @@ export function GateForm({
           {steps.length > 0 && (
             <GateStepSettings
               image={image}
+              {...(projectId ? { projectId } : {})}
               steps={steps.slice(
                 Math.max(
                   steps.findIndex((s) => s.step === target),
@@ -281,7 +285,9 @@ function GateStepSettings({
   image,
   steps,
   chosen,
+  projectId,
 }: {
+  projectId?: string;
   image: string | undefined;
   steps: GateStepSetting[];
   chosen: GateState;
@@ -307,7 +313,7 @@ function GateStepSettings({
       className="rounded-md border border-border bg-muted/40"
       data-testid="gate-steps"
       onToggle={(e) => {
-        if (e.currentTarget.open) load(m.forms.task.repositoriesNoAnswer, setOptions);
+        if (e.currentTarget.open) load(m.forms.task.repositoriesNoAnswer, setOptions, projectId);
       }}
     >
       <summary className="min-h-9 cursor-pointer px-3 py-2 text-sm font-medium marker:text-muted-foreground">

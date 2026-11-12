@@ -221,6 +221,9 @@ import {
   definedAgent,
   fallbackAgentFor,
   githubRepoOf,
+  hasImage,
+  imageDefined,
+  type LanguageImage,
   resolveImage,
   type SactyConfig,
   stepAgentFor,
@@ -231,6 +234,7 @@ import {
   type ContextFetcher,
   type ContextPreview,
   contextExportInfo,
+  contextImages,
   contextPlatforms,
   contextSecretSources,
   GATEWAY_TOKEN_SECRET,
@@ -240,6 +244,7 @@ import {
   prepareContext,
   previewContext,
 } from "./context.js";
+import type { ContextImageBuilder, ContextImagesView } from "./context-images.js";
 import type { ContextMcpServers } from "./context-mcp.js";
 import {
   buildCiFixTask,
@@ -715,6 +720,13 @@ export type ServiceDeps = {
   /** Docker が動いていない・手元に無い・版の違うエージェントのイメージ（起動のときと1分ごとに確かめる。PBI-148）。 */
   imageProblems?: () => DaemonText[];
   /**
+   * コンテキストリポジトリの images.yaml のイメージ（PBI-325）。デーモンが裏で作る。無ければ、コンテキストのイメージは
+   * 使わない（config.yaml の images だけ）。
+   */
+  contextImages?: Pick<ContextImageBuilder, "images" | "pending" | "view" | "rebuild" | "refresh">;
+  /** コンテキストのイメージを作り終えるのを待つ上限（ミリ秒。PBI-325）。無ければ CONTEXT_IMAGES_WAIT_MS。 */
+  contextImagesWaitMs?: number;
+  /**
    * 実行の前に、その実行が使うホストの MCP サーバーの準備を待つ（PBI-77。設定に足した直後でも使えるよう、設定と突き合わせて
    * 起動を待つ。上限あり）。準備ができないものの理由を返す。無ければ待たない。
    */
@@ -800,6 +812,11 @@ export type DaemonStatus = {
   stepAgents: Partial<Record<StepKey, string>>;
   /** sacty の新しい版（PBI-135）。最新・確かめられない・OFF なら無い。 */
   update?: UpdateStatus;
+  /**
+   * コンテキストのイメージの作成の状況（PBI-325）。コンテキストのイメージがあるプロジェクトだけ。画面はどの画面でも、
+   * 作成中・失敗したものを出す。
+   */
+  contextImages?: ContextImagesView[];
 };
 
 export type IntakeStatus = {
@@ -955,6 +972,12 @@ export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentO
  */
 export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
 
+/**
+ * コンテキストのイメージ（PBI-325）を作り終えるのを、タスクが待つ上限（60分）。イメージの作成（OS のパッケージやブラウザの
+ * 導入など）には時間がかかるので長めにする。過ぎたら、理由を示して止める。
+ */
+export const CONTEXT_IMAGES_WAIT_MS = 60 * 60_000;
+
 /** 秘密情報をまとめて取り出すときに、同時に読むプロジェクトのコンテキストの数（PBI-107）。 */
 export const CONTEXT_SECRETS_CONCURRENCY = 4;
 
@@ -965,6 +988,8 @@ export class TaskService {
   private settingsSaves = 0;
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
   private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
+  /** コンテキストのイメージを作り終えるのを待っているタスクと、待ち始めた時刻（PBI-325）。 */
+  private readonly contextImageWaits = new Map<string, number>();
   /**
    * いま runNext が処理しているタスク。ワーカーは複数のタスクを同時に処理するので（PBI-30）、
    * 処理の流れごとに持つ（コンテナを、どのタスクの実行として覚えるかに使う）。
@@ -2543,8 +2568,16 @@ export class TaskService {
     const watchStepped = atStart.steps.some((s) => s.key === "deployment");
     const imageName =
       atStart.image ?? (watchStepped ? atStart.images?.deployment : atStart.images?.implement);
-    const image = resolveImage(config, imageName);
-    const usedImage = image.ok ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
+    const images = this.projectImagesConfig(config, task.projectId);
+    const image = resolveImage(images, imageName);
+    // 作成中・作成に失敗したコンテキストのイメージ（PBI-325）は、既定のイメージに倒さず、理由を示して確認を止める（要る
+    // ツールの無いイメージで確かめないため）。images から消した名前は、これまでどおり既定のイメージで確かめる
+    const unavailable =
+      !image.ok && imageName !== undefined && imageDefined(images, imageName)
+        ? image.message
+        : undefined;
+    const usedImage =
+      image.ok || unavailable ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
     this.append(task, [
       {
         actor: "sacty",
@@ -2590,6 +2623,7 @@ export class TaskService {
         ...cost,
         ...(stepped ? { retry: true as const } : {}),
       });
+    if (unavailable) return fail(unavailable);
     const workspaceDir = join(this.deps.workspaceRoot, "_deployment", runId);
     let context: RunContext | undefined;
     let executed: Executed;
@@ -4489,6 +4523,104 @@ export class TaskService {
   }
 
   /**
+   * プロジェクトで使えるイメージを足した設定（PBI-325）。config.yaml の images に、プロジェクトのコンテキストの images.yaml の
+   * イメージを足す（同じ名前は config.yaml のものを使う）。作成中・作成に失敗したものは、使えない理由を付けて足す（選べるが、
+   * 実行のときは理由を示して止める）。
+   */
+  private projectImagesConfig(config: SactyConfig, projectId: string): SactyConfig {
+    const entries = this.deps.contextImages?.images(projectId) ?? [];
+    if (entries.length === 0) return config;
+    const project = this.deps.projects.get(projectId)?.name ?? projectId;
+    const added: Record<string, LanguageImage> = {};
+    for (const entry of entries) {
+      if (hasImage(config, entry.name)) continue;
+      added[entry.name] = {
+        ...entry.language,
+        ...(entry.state === "ready"
+          ? {}
+          : {
+              unavailable:
+                entry.state === "failed"
+                  ? message("contextImage.failed", {
+                      project,
+                      name: entry.name,
+                      detail: entry.error ?? "",
+                    })
+                  : message("contextImage.building", { project, name: entry.name }),
+            }),
+      };
+    }
+    return { ...config, images: { ...added, ...config.images } };
+  }
+
+  /**
+   * コンテキストのイメージを作り終えるのを待つタスクか（PBI-325）。プロジェクトのコンテキストのイメージを読んでいる・作って
+   * いる間、そのイメージを使うかもしれないタスク（イメージをまだ選んでいない・コンテキストのイメージを使う）は、実行を始めずに
+   * 待たせる（オーケストレーターが合わないイメージを選ばないように。作り終えたものから選ばせる）。上限を過ぎたら、理由を
+   * 示して止める。待っている間も、一時停止・中止はできる（実行を始めていないので）。
+   */
+  private awaitingContextImages(task: Task): boolean {
+    const builder = this.deps.contextImages;
+    const config = this.deps.config();
+    if (
+      !builder ||
+      !config.ok ||
+      task.status !== "queued" ||
+      !builder.pending(task.projectId) ||
+      !this.mayUseContextImage(task, config.config)
+    ) {
+      this.contextImageWaits.delete(task.id);
+      return false;
+    }
+    const now = this.now();
+    const since = this.contextImageWaits.get(task.id) ?? now;
+    this.contextImageWaits.set(task.id, since);
+    const limit = this.deps.contextImagesWaitMs ?? CONTEXT_IMAGES_WAIT_MS;
+    if (now - since < limit) return true;
+    this.contextImageWaits.delete(task.id);
+    const project = this.deps.projects.get(task.projectId)?.name ?? task.projectId;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "error",
+            message: message("contextImage.waitTimedOut", {
+              project,
+              minutes: Math.round(limit / 60_000),
+            }),
+          },
+        },
+      },
+    ]);
+    return true;
+  }
+
+  /**
+   * タスクがコンテキストのイメージを使うかもしれないか（PBI-325）。イメージをまだ決めていない（工程を選ぶ前で、人も
+   * プロジェクトの対象も指定していない）か、決めた名前が既定のイメージでも config.yaml の images でもない。
+   */
+  private mayUseContextImage(task: Task, config: SactyConfig): boolean {
+    // 実行のときと同じ順で決める（stepImageOf）。タスクのイメージ（人が変えたものを含む）があれば、それだけを見る。
+    // 古い版の作業履歴の工程ごとのイメージ、工程を選ぶ前なら決まっているイメージ（作成時・プロジェクトの対象）の順
+    const legacy = Object.values(task.images ?? {}).filter(
+      (n): n is string => typeof n === "string",
+    );
+    const pinned = task.steps.length === 0 ? this.pinnedImage(task)?.name : undefined;
+    const names =
+      task.image !== undefined
+        ? [task.image]
+        : legacy.length > 0
+          ? legacy
+          : pinned !== undefined
+            ? [pinned]
+            : [];
+    if (names.length === 0) return task.steps.length === 0;
+    return names.some((n) => n !== DEFAULT_IMAGE_NAME && !hasImage(config, n));
+  }
+
+  /**
    * タスクのイメージを決める（PBI-41・PBI-318）。決まっているイメージ（pinned）があれば、それを使う。無ければ
    * オーケストレーターの選択。images に無い名前なら、理由を示して止める（再開すると選び直す）。
    * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かすときに、images のどれも合わない理由を
@@ -4513,7 +4645,8 @@ export class TaskService {
       ...rest
     } = choice;
     const image = pinned ? pinned.name : picked;
-    if (image && !resolveImage(config, image).ok) {
+    // コンテキストのイメージ（PBI-325）は、作成中・作成に失敗したものも選べる（実行のときに待つか、理由を示して止める）
+    if (image && !imageDefined(config, image)) {
       return {
         failure: {
           reason: "error",
@@ -4903,6 +5036,64 @@ export class TaskService {
     };
   }
 
+  /** コンテキストのイメージの作成の状況（PBI-325）。無ければ載せない。 */
+  private contextImagesStatus(): { contextImages?: ContextImagesView[] } {
+    const view = this.deps.contextImages?.view() ?? [];
+    return view.length > 0 ? { contextImages: view } : {};
+  }
+
+  /**
+   * プロジェクトのコンテキストの images.yaml のイメージ（PBI-325）。デーモンがイメージを作るために読む。取得のエラー文は、
+   * 認証のトークンを伏せる。
+   */
+  async loadContextImages(
+    projectId: string,
+    signal?: AbortSignal,
+  ): Promise<Awaited<ReturnType<typeof contextImages>>> {
+    const project = this.deps.projects.get(projectId);
+    if (!project?.context) return { images: [], warnings: [], layers: [] };
+    const usedSecrets: string[] = [];
+    try {
+      return await contextImages(
+        this.deps.contexts,
+        project.context,
+        (repo) => this.gitAuth({ projectId }, repo, usedSecrets),
+        this.deps.defaultContext,
+        signal,
+      );
+    } catch (error) {
+      // 文言のコードのまま返す（画面の言語で出す）。取得のエラー文の認証のトークンは伏せる
+      const text = redactText(errorText(error), usedSecrets);
+      throw typeof text === "string" ? new Error(text) : new MessageError(text as DaemonMessage);
+    }
+  }
+
+  /** コンテキストのあるプロジェクト（PBI-325。イメージを作るデーモンが読む）。 */
+  contextImageProjects(): { id: string; name: string }[] {
+    return this.deps.projects
+      .all()
+      .filter((p) => p.context)
+      .map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  /** 作成に失敗したコンテキストのイメージを作り直す（画面の「作り直す」。PBI-325）。 */
+  rebuildContextImage(projectId: string, name: string): void {
+    const builder = this.deps.contextImages;
+    if (!builder) throw new InvalidOperationError(message("contextImage.notFound", { name }));
+    if (!this.deps.projects.get(projectId)) {
+      throw new InvalidOperationError(message("project.notFound"));
+    }
+    const result = builder.rebuild(projectId, name);
+    if (!result.ok) throw new InvalidOperationError(result.message);
+  }
+
+  /** プロジェクトの設定を保存したときに、コンテキストのイメージを読み直す（PBI-325。作り終えるのは待たない）。 */
+  refreshContextImages(projectId?: string): void {
+    void this.deps.contextImages?.refresh(projectId).catch((error: unknown) => {
+      console.warn("[daemon] context images: could not refresh:", error);
+    });
+  }
+
   /** gh にログイン済みの GitHub のアカウント。gh が無いなどで分からなければ、その理由。 */
   async githubAccounts(): Promise<{ accounts: GitHubAccount[] } | { error: DaemonText }> {
     try {
@@ -4921,6 +5112,7 @@ export class TaskService {
         warnings: [],
         // 設定ファイルが無くても Docker と既定のイメージは確かめるので、その注意は載せる（PR #166 レビュー指摘。PBI-148）
         docker: this.deps.imageProblems?.() ?? [],
+        ...this.contextImagesStatus(),
         intake: null,
         images: [],
         platforms: [],
@@ -4942,9 +5134,15 @@ export class TaskService {
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
+        // コンテキストのイメージ（PBI-325）を読めなかった・config.yaml と同じ名前だった
+        ...(this.deps.contextImages?.view() ?? []).flatMap((p) => [
+          ...(p.loadError ? [p.loadError] : []),
+          ...p.warnings,
+        ]),
       ],
       // Docker が動いていない・手元に無い・版の違うエージェントのイメージ（PBI-148）。画面はどの画面でも出す
       docker: this.deps.imageProblems?.() ?? [],
+      ...this.contextImagesStatus(),
       // 取り込みは、設定ファイルを読めれば動く（PBI-100。以前は github: が要った）
       intake: this.intakeStatusOf(),
       images: Object.values(config.config.images ?? {}).map(({ name, description }) => ({
@@ -6583,7 +6781,7 @@ export class TaskService {
     ) {
       throw new InvalidOperationError(message("task.reviewPlanNeedsPullRequest"));
     }
-    const stepSettings = this.requestedStepSettings(plan, input.image, input.agents);
+    const stepSettings = this.requestedStepSettings(projectId, plan, input.image, input.agents);
     // 直す不安定なテスト（PBI-312）。画面の名前は伏せた値なので、識別子で台帳から元のテストを探す
     const flakyFix = input.flakyFixTest
       ? findFlakyTest([...this.tasks.values()], projectId, input.flakyFixTest)
@@ -6616,6 +6814,7 @@ export class TaskService {
    * 何も指定していなければ、何も返さない。
    */
   private requestedStepSettings(
+    projectId: string,
     plan: StepPlan | undefined,
     image: string | undefined,
     agents: StepSettingMap | undefined,
@@ -6640,7 +6839,10 @@ export class TaskService {
           : message("agent.configUnavailable", { detail: config.problem }),
       );
     }
-    if (image !== undefined && !resolveImage(config.config, image).ok) {
+    if (
+      image !== undefined &&
+      !imageDefined(this.projectImagesConfig(config.config, projectId), image)
+    ) {
       throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
     for (const name of Object.values(agents ?? {})) {
@@ -6732,7 +6934,7 @@ export class TaskService {
           message("image.configUnavailable", { detail: config.problem }),
         );
       }
-      if (!resolveImage(config.config, input.image).ok) {
+      if (!imageDefined(this.projectImagesConfig(config.config, previous.projectId), input.image)) {
         throw new InvalidOperationError(message("image.notInImages", { name: input.image }));
       }
     }
@@ -7002,6 +7204,17 @@ export class TaskService {
     config?: SactyConfig,
   ): ActivityItem {
     return this.fallBack(taskId, failed, reason, config) ?? pause;
+  }
+
+  /**
+   * ワーカーが、いま実行を始めてよいタスク（PBI-325）。実行待ちのうち、コンテキストのイメージを作り終えるのを待っている
+   * ものを除く（実行の枠を数える前に除き、待っているタスクが、後の実行できるタスクの枠を塞がないように）。
+   */
+  runnableTaskIds(): string[] {
+    return this.queuedTaskIds().filter((id) => {
+      const task = this.tasks.get(id);
+      return !(task && !this.inflight.has(id) && this.awaitingContextImages(task));
+    });
   }
 
   queuedTaskIds(): string[] {
@@ -7462,7 +7675,7 @@ export class TaskService {
         ...(task.testCommand ? { testCommand: task.testCommand } : {}),
         // テストは、タスクのイメージで実行する（PBI-318。古い版の作業履歴なら、確かめる工程のイメージ）。
         // images から消した名前なら既定のイメージにしておき、テストを実行するところで理由を示して止める
-        ...testImageOf(config, verificationImageOf(task)),
+        ...testImageOf(this.projectImagesConfig(config, task.projectId), verificationImageOf(task)),
         pullRequest: { provider: "github" as const, repo },
       },
     };
@@ -7894,6 +8107,8 @@ export class TaskService {
       });
       return;
     }
+    // コンテキストのイメージを作っている間は、実行を始めない（実行の印も付けない。次の見回りで確かめ直す。PBI-325）
+    if (task && this.awaitingContextImages(task)) return;
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
     this.trackQueue();
@@ -8063,8 +8278,15 @@ export class TaskService {
       // プロジェクトの対象で指定したイメージ（PBI-41）は、レビューだけの工程にも同じく使い、名前も確かめる（PBI-44 レビュー指摘）
       // images があれば、レビューの工程のイメージだけをオーケストレーターに選ばせる（検証コマンドを実行するため）
       const choice = review
-        ? await this.chooseReviewSteps(this.mustGet(taskId), config.config, review)
-        : await this.chooseSteps(this.mustGet(taskId), config.config);
+        ? await this.chooseReviewSteps(
+            this.mustGet(taskId),
+            this.projectImagesConfig(config.config, initial.projectId),
+            review,
+          )
+        : await this.chooseSteps(
+            this.mustGet(taskId),
+            this.projectImagesConfig(config.config, initial.projectId),
+          );
       // 対象リポジトリの無いタスクで、コードの変更が要り、分けないなら、選んだリポジトリを記録する（PBI-73）。
       // 次の実行でそのリポジトリを用意して、いつもどおり工程を選ぶ
       if ("repository" in choice) {
@@ -8548,7 +8770,10 @@ export class TaskService {
         }
       }
       // 工程のイメージ（タスクのイメージ。PBI-41・PBI-318）。images から消した名前なら、実行せずに理由を示して止める
-      const stepImage = resolveImage(config.config, runImageName);
+      const stepImage = resolveImage(
+        this.projectImagesConfig(config.config, task.projectId),
+        runImageName,
+      );
       if (!stepImage.ok) {
         executed ??= {
           outcome: { kind: "failed", reason: "error", message: stepImage.message },
@@ -9126,7 +9351,10 @@ export class TaskService {
     }
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）で実行する
     const agent = this.usableAgent(config, chosen.agent, task.id, step);
-    const image = resolveImage(config, stepImageOf(task, step));
+    const image = resolveImage(
+      this.projectImagesConfig(config, task.projectId),
+      stepImageOf(task, step),
+    );
     if (!image.ok) {
       pause(image.message);
       return;
@@ -9662,7 +9890,10 @@ export class TaskService {
     // 最終レビューは、タスクのイメージで実行する（テストを実行するため。PBI-318。古い版の作業履歴なら、実装（不具合の修正
     // では再現）の工程のイメージ）。images から消えていれば、実行せずに理由を示して止める
     const imageName = verificationImageOf(task);
-    const testImage = resolveImage(config.config, imageName);
+    const testImage = resolveImage(
+      this.projectImagesConfig(config.config, task.projectId),
+      imageName,
+    );
     if (!testImage.ok) {
       this.append(task, [
         {
@@ -11583,7 +11814,10 @@ export class TaskService {
         }
       }
       // 統合レビューのイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
-      const stepImage = resolveImage(config, runImageName);
+      const stepImage = resolveImage(
+        this.projectImagesConfig(config, task.projectId),
+        runImageName,
+      );
       if (!stepImage.ok) executed ??= failed(stepImage.message);
       executed ??= await this.execute({
         agent,
@@ -12937,7 +13171,7 @@ export class TaskService {
         message("image.configUnavailable", { detail: config.problem }),
       );
     }
-    if (!resolveImage(config.config, image).ok) {
+    if (!imageDefined(this.projectImagesConfig(config.config, task.projectId), image)) {
       throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
     const legacy = task.image === undefined && Object.keys(task.images ?? {}).length > 0;

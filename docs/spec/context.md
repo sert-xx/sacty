@@ -296,7 +296,7 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 
 ## コンテキストリポジトリのファイル
 
-読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。
+読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`images.yaml`・`rules.md・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。
 
 - これらの中に通常のファイル・ディレクトリでないもの（シンボリックリンクなど）があれば止める（`context.notPlainFile`）。
 - YAML が無ければ既定値を使う。
@@ -308,10 +308,11 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 | `skills/` | `SKILL.md` のあるディレクトリが1つのスキル（名前はディレクトリ名）。無いディレクトリはグループとして中を探す。同じ層で名前が重なれば先のものを使い警告する |
 | `mcp.yaml` | `servers.<名前>`（`^[A-Za-z0-9_-]+$`）。コマンド型（`command`・`args`・`env`・`via_gateway`（既定 `true`））か URL 型（`url`・`headers`・`via_gateway`（既定 `true`））。共通で `startup_timeout_sec`（1〜3600）・`tool_timeout_sec`（1〜86400）。値は文字列か `{ secret, prefix }`。文字列に `${` は書けない |
 | `platforms.yaml` | `platforms.<名前>`。項目は `gateway.platforms` と同じ（[ゲートウェイ](gateway.md)） |
-| `sacty-context.yaml` | `extends`、`locked`・`remove`（それぞれ `skills`・`mcp`・`platforms` の名前の一覧） |
+| `images.yaml` | `images.<名前>`。項目と検査は `config.yaml` の `images` と同じ（[設定](configuration.md#イメージの設定の検査)）。ただし `image` と、知らない項目は書けない。デーモンが作る（[デーモンの起動と終了](daemon-lifecycle.md#コンテキストのイメージの作成)） |
+| `sacty-context.yaml` | `extends`、`locked`・`remove`（それぞれ `skills`・`mcp`・`platforms`・`images` の名前の一覧） |
 | `agents/codex/config.toml`・`agents/claude/settings.json` | エージェントの設定。`agents/codex/`・`agents/claude/` の下のほかのファイルはパスごとに写す |
 
-コード: `apps/daemon/src/context.ts`（`CONTEXT_ENTRIES`・`assertPlainEntries`・`readYaml`・`layerRules`・`layerSkills`・`McpFile`・`McpServer`・`McpValue`・`PlatformsFile`・`ContextManifest`・`AGENT_SETTINGS_FILES`）
+コード: `apps/daemon/src/context.ts`（`CONTEXT_ENTRIES`・`assertPlainEntries`・`readYaml`・`layerRules`・`layerSkills`・`McpFile`・`McpServer`・`McpValue`・`PlatformsFile`・`ImagesFile`・`ContextManifest`・`AGENT_SETTINGS_FILES`・`contextImages`）
 
 ## 合成の規則
 

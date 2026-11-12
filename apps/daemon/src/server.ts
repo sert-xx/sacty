@@ -86,6 +86,8 @@ export function createApp(
    * （1Password の承認を待つことがある）。取り出せなかったものは、画面の警告に出る。
    */
   const prefetchProjectSecrets = (id: string) => {
+    // コンテキストの images.yaml のイメージも読み直し、無いものを作り始める（PBI-325。作り終えるのは待たない）
+    service.refreshContextImages(id);
     service.prefetchProjectSecrets(id).catch((error: unknown) => {
       console.warn(
         "[daemon] プロジェクトの秘密情報を取り出せませんでした：",
@@ -357,6 +359,16 @@ export function createApp(
     }
   });
 
+  // 作成に失敗したコンテキストのイメージを作り直す（画面の「作り直す」。PBI-325）。作り終えるのは待たない
+  app.post("/api/projects/:id/context-images/:name/rebuild", (c) => {
+    try {
+      service.rebuildContextImage(c.req.param("id"), c.req.param("name"));
+      return c.json({ ok: true }, 202);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // プロジェクトの削除（プロジェクトの設定の「危険な操作」）。終わっていないタスクがあれば 409 で理由を返す
   app.delete("/api/projects/:id", (c) => {
     const id = c.req.param("id");
@@ -365,6 +377,8 @@ export function createApp(
       service.deleteProject(id);
       // プロジェクトのスケジュールタスクも消す（作ったタスクは、ほかのタスクと同じく残す）
       schedules.deleteForProject(id);
+      // 消したプロジェクトのコンテキストのイメージを忘れる（作ったイメージは、次の片付けで消える。PBI-325）
+      service.refreshContextImages(id);
       return c.json({ ok: true });
     } catch (error) {
       return handleError(c, error);

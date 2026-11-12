@@ -1317,6 +1317,9 @@ function makeService(
     memoryLimit?: number;
     /** 動いているコンテナがマウントしている場所（PBI-157）。既定は、動いているコンテナが無い。 */
     containerMounts?: ServiceDeps["containerMounts"];
+    /** コンテキストのイメージ（PBI-325）。 */
+    contextImages?: ServiceDeps["contextImages"];
+    contextImagesWaitMs?: number;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -1385,6 +1388,10 @@ function makeService(
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
     ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
+    ...(options.contextImages ? { contextImages: options.contextImages } : {}),
+    ...(options.contextImagesWaitMs !== undefined
+      ? { contextImagesWaitMs: options.contextImagesWaitMs }
+      : {}),
   });
   return { service, executor, repos, pulls };
 }
@@ -32888,6 +32895,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       skill?: boolean;
       /** オーケストレーターが選ぶ工程（既定は実装とマージの後の監視）。 */
       steps?: StepKey[];
+      /** コンテキストのイメージ（PBI-325）。 */
+      contextImages?: ServiceDeps["contextImages"];
     } = {},
   ) {
     const activity = options.activity ?? new SqliteActivityStore(dbPath);
@@ -32905,6 +32914,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       ...(options.config ? { config: options.config } : {}),
       ...(options.pulls ? { pulls: options.pulls } : {}),
       ...(options.templates ? { templates: options.templates } : {}),
+      ...(options.contextImages ? { contextImages: options.contextImages } : {}),
       planner: async () => ({
         steps: options.steps ?? ["implement", "deployment"],
         fallback: false,
@@ -34032,6 +34042,54 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     expect(checks?.map((e) => e.type === "DeploymentCheckStarted" && e.payload.image)).toEqual([
       "web",
     ]);
+    t.activity.close();
+  });
+
+  it("作成に失敗したコンテキストのイメージなら、既定のイメージに倒さず、理由を示して確認を止める（PBI-325 レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    let failed = false;
+    const entry = () => ({
+      name: "web",
+      description: "ブラウザ",
+      from: "acme",
+      image: "sacty-ctx-x-default-web:0123456789abcdef",
+      language: {
+        name: "web",
+        image: "sacty-ctx-x-default-web:0123456789abcdef",
+        description: "ブラウザ",
+        baseImage: "node:26",
+        env: {},
+      },
+      state: failed ? ("failed" as const) : ("ready" as const),
+      ...(failed ? { error: "イメージを作成できませんでした。" } : {}),
+      log: "",
+    });
+    const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+      images: () => [entry()],
+      pending: () => false,
+      view: () => [],
+      rebuild: () => ({ ok: true }),
+      refresh: async () => {},
+    };
+    const t = setup({ ci, repos, contextImages, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.service.runNext(id);
+    t.service.changeTaskImage(id, { image: "web" });
+    await t.merge(id);
+    failed = true;
+    const runs = t.executor.images.length;
+    await t.service.runNext(id);
+    // 確認のエージェントは動かさない（既定のイメージでも動かさない）
+    expect(t.executor.images.length).toBe(runs);
+    const started = t.service.get(id)?.activity.filter((e) => e.type === "DeploymentCheckStarted");
+    expect(started?.map((e) => e.type === "DeploymentCheckStarted" && e.payload.image)).toEqual([
+      "web",
+    ]);
+    const checked = t.service.get(id)?.activity.findLast((e) => e.type === "DeploymentChecked");
+    expect(JSON.stringify(checked)).toContain("contextImage.failed");
     t.activity.close();
   });
 
@@ -42477,6 +42535,219 @@ describe("タスクの作成時に、タスクのイメージ・工程ごとの�
     expect(task.requestedImage).toBeUndefined();
     expect(activity.forTask(task.id)[0]?.payload).not.toHaveProperty("image");
     expect(service.list().filter((t) => t.title === "A")).toHaveLength(1);
+    activity.close();
+  });
+});
+
+describe("コンテキストのイメージ（PBI-325）", () => {
+  type Entry = ReturnType<NonNullable<ServiceDeps["contextImages"]>["images"]>[number];
+  const entry = (state: Entry["state"], extra: Partial<Entry> = {}): Entry => ({
+    name: "node-pw",
+    description: "Node.js・Playwright",
+    from: "acme@abc1234",
+    image: "sacty-ctx-default-node-pw:0123456789abcdef",
+    language: {
+      name: "node-pw",
+      image: "sacty-ctx-default-node-pw:0123456789abcdef",
+      description: "Node.js・Playwright",
+      baseImage: "registry.example.com/ci/node:26",
+      env: { PLAYWRIGHT_BROWSERS_PATH: "/opt/pw" },
+    },
+    state,
+    log: "",
+    ...extra,
+  });
+  /** 状態を差し替えられる、コンテキストのイメージの偽物。 */
+  const fakeImages = (initial: { pending: boolean; entries: Entry[] }) => {
+    const state = { ...initial, rebuilt: [] as string[] };
+    const images: NonNullable<ServiceDeps["contextImages"]> = {
+      images: (projectId) => (projectId === "default" ? state.entries : []),
+      pending: (projectId) => projectId === "default" && state.pending,
+      view: () => [],
+      rebuild: (_projectId, name) => {
+        state.rebuilt.push(name);
+        return { ok: true };
+      },
+      refresh: async () => {},
+    };
+    return { images, state };
+  };
+  const planOutput = (image: string) => ({
+    kind: "completed" as const,
+    output: `\`\`\`json\n{"sacty-steps": {"plan": "standard", "reason": "r", "testCommand": "npx playwright test", "image": "${image}", "imageReason": "Playwright のテストがある"}}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+  });
+
+  it("作っている間は工程を選ばずに待ち、作り終えたら候補に見せて、そのイメージと環境変数で実行する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: true, entries: [entry("building")] });
+    const { service, executor } = makeService(activity, [planOutput("node-pw"), completed(10)], {
+      realPlanner: true,
+      contextImages: fake.images,
+    });
+    const task = service.createTask({ projectId: "default", title: "画面のテスト" });
+    await service.runNext(task.id);
+    // 作っている間は、オーケストレーターも動かさない
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    fake.state.pending = false;
+    fake.state.entries = [entry("ready")];
+    await service.runNext(task.id);
+    const prompt = executor.calls[0]?.command.join(" ") ?? "";
+    expect(prompt).toContain("- node-pw：Node.js・Playwright");
+    expect(service.get(task.id)?.task.image).toBe("node-pw");
+    expect(executor.images[1]).toEqual({
+      image: "sacty-ctx-default-node-pw:0123456789abcdef",
+      env: { PLAYWRIGHT_BROWSERS_PATH: "/opt/pw" },
+    });
+    activity.close();
+  });
+
+  it("待つ上限を過ぎたら、理由を示して一時停止する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: true, entries: [entry("building")] });
+    let now = Date.parse("2026-11-11T00:00:00Z");
+    const { service, executor } = makeService(activity, [], {
+      realPlanner: true,
+      contextImages: fake.images,
+      contextImagesWaitMs: 60_000,
+      now: () => now,
+    });
+    const task = service.createTask({ projectId: "default", title: "画面のテスト" });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    now += 61_000;
+    await service.runNext(task.id);
+    const latest = service.get(task.id);
+    expect(latest?.task.status).toBe("paused");
+    const paused = latest?.activity.findLast((e) => e.type === "TaskPaused");
+    expect(paused?.type === "TaskPaused" && paused.payload.message).toEqual({
+      code: "contextImage.waitTimedOut",
+      params: { project: expect.any(String), minutes: 1 },
+    });
+    expect(executor.calls).toHaveLength(0);
+    activity.close();
+  });
+
+  it("config.yaml のイメージを使うと決まったタスクは、コンテキストのイメージを作っていても待たない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: true, entries: [entry("building")] });
+    const { service, executor } = makeService(activity, [completed(10)], {
+      contextImages: fake.images,
+    });
+    const task = service.createTask({
+      projectId: "default",
+      title: "文書",
+      plan: "standard",
+      image: "default",
+    });
+    await service.runNext(task.id);
+    expect(executor.calls.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("作成に失敗したイメージを使う工程は、実行せずに理由を示して止まる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({
+      pending: false,
+      entries: [entry("failed", { error: "イメージを作成できませんでした。" })],
+    });
+    const { service, executor } = makeService(activity, [planOutput("node-pw")], {
+      realPlanner: true,
+      contextImages: fake.images,
+    });
+    const task = service.createTask({ projectId: "default", title: "画面のテスト" });
+    await service.runNext(task.id);
+    // 作成に失敗したものも選べる（工程は決まる）
+    expect(service.get(task.id)?.task.image).toBe("node-pw");
+    await service.runNext(task.id);
+    const latest = service.get(task.id);
+    expect(latest?.task.status).toBe("paused");
+    expect(JSON.stringify(latest?.activity)).toContain("contextImage.failed");
+    // オーケストレーターだけが動き、工程のエージェントは動かない
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("設定を読めるときの状態に、作成の状況を載せる（PBI-325 レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: false, entries: [entry("building")] });
+    const view = [
+      {
+        projectId: "default",
+        projectName: "既定",
+        loading: false,
+        warnings: [],
+        images: [
+          {
+            name: "node-pw",
+            description: "Node.js・Playwright",
+            from: "acme",
+            image: "sacty-ctx-default-node-pw:0123456789abcdef",
+            state: "building" as const,
+          },
+        ],
+      },
+    ];
+    fake.images.view = () => view;
+    const { service } = makeService(activity, [], { contextImages: fake.images });
+    expect(service.status().contextImages).toEqual(view);
+    activity.close();
+  });
+
+  it("イメージを待っているタスクは、ワーカーの実行の対象から除き、後の実行できるタスクの枠を塞がない（PBI-325 レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: true, entries: [entry("building")] });
+    const { service } = makeService(activity, [], { contextImages: fake.images });
+    const waiting = service.createTask({ projectId: "default", title: "画面のテスト" });
+    const runnable = service.createTask({
+      projectId: "default",
+      title: "文書",
+      plan: "standard",
+      image: "default",
+    });
+    expect(service.queuedTaskIds()).toEqual([waiting.id, runnable.id]);
+    expect(service.runnableTaskIds()).toEqual([runnable.id]);
+    fake.state.pending = false;
+    expect(service.runnableTaskIds()).toEqual([waiting.id, runnable.id]);
+    activity.close();
+  });
+
+  it("人がタスクのイメージを default に変えたら、作成時に指定したコンテキストのイメージの作成を待たない（PBI-325 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: false, entries: [entry("ready")] });
+    const { service } = makeService(activity, [completed(10)], { contextImages: fake.images });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "画面のテスト",
+      plan: "standard",
+      image: "node-pw",
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("awaiting_approval");
+    service.changeTaskImage(id, { image: "default" });
+    service.approve(id, { step: "requirements", submission: 1 });
+    expect(service.get(id)?.task.status).toBe("queued");
+    // 作成時の指定（node-pw）が残っていても、今のタスクのイメージ（default）で判定する
+    fake.state.pending = true;
+    expect(service.runnableTaskIds()).toContain(id);
+    activity.close();
+  });
+
+  it("作成時に、コンテキストのイメージの名前を指定できる。無い名前は断る", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const fake = fakeImages({ pending: false, entries: [entry("ready")] });
+    const { service } = makeService(activity, [], { contextImages: fake.images });
+    const task = service.createTask({
+      projectId: "default",
+      title: "画面のテスト",
+      plan: "standard",
+      image: "node-pw",
+    });
+    expect(service.get(task.id)?.task.requestedImage).toBe("node-pw");
+    expect(() =>
+      service.createTask({ projectId: "default", title: "x", plan: "standard", image: "nothing" }),
+    ).toThrow();
     activity.close();
   });
 });

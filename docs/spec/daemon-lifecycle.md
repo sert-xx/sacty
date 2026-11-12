@@ -5,7 +5,7 @@
 `sacty up` が、デーモン（`apps/daemon`）と画面（`apps/web` の Next.js）を子プロセスとして起動し、どちらかが終われば両方を止める。
 デーモンは、同じ `SACTY_HOME` で1つしか動かない（OS のファイルロックで判定する）。
 
-関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)、[sacty の最新版を、動いている版と GitHub Releases の最新のリリースで比べて知らせる](../adr/20261020-0008-update-check-against-releases.md)
+関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)、[sacty の最新版を、動いている版と GitHub Releases の最新のリリースで比べて知らせる](../adr/20261020-0008-update-check-against-releases.md)、[コンテキストリポジトリにイメージを定義できるようにし、デーモンが起動の後に裏で作る](../adr/20261111-0038-context-images-built-by-daemon.md)
 
 ## sacty up
 
@@ -104,6 +104,7 @@
     - ホストの MCP サーバーの起動
     - コンテキストのコマンド型の MCP サーバーの準備（前回の層の写し `SACTY_HOME/context-mcp/layers` を消し、使われなくなったものを止める確かめを始める）
     - 組織内 PF の認証の用意
+    - コンテキストのイメージの作成（下の「コンテキストのイメージの作成」）
     - ワーカー・取り込み・PR の監視・スケジュールタスク
 
 ワーカーは2秒ごとに、実行待ちのタスクを作成の古い順に実行する。
@@ -203,6 +204,65 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
 `apps/daemon/src/service.ts`（`TaskService.status`）、`apps/daemon/src/main.ts`、`apps/web/src/components/shell/docker-notice.tsx`（`DockerNotice`）、
 `apps/web/src/components/shell/docker-notice-live.tsx`（`DockerNoticeLive`・`DOCKER_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/docker-notice-view.tsx`（`DockerNoticeView`）、
 `apps/web/src/app/live/docker/route.ts`
+
+## コンテキストのイメージの作成
+
+コンテキストリポジトリの `images.yaml` のイメージ（[コンテキストの合成](context.md#コンテキストリポジトリのファイル)）は、`sacty image build` では作らず、デーモンが起動の後にプロジェクトごとに作る（PBI-325）。
+
+- 読むとき：起動の 11 で始めるとき・プロジェクトを保存（作成・変更・取り込み）・削除したとき・5分ごと（`CONTEXT_IMAGES_REFRESH_MS`）。
+  - コンテキストのあるプロジェクトだけを、1つずつ順に読む（`contextImages`。継承の鎖を合成し、`locked`・`remove` も効かせる）。
+    1つのプロジェクトの取得を5分（`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`）待っても終わらなければ、取得を止めて読めなかったことにする（`contextImage.loadTimedOut`）。
+  - 設定（`config.yaml`）を読めなければ、作らない（片付けもしない）。
+  - 読んでいる途中に読み直しを求められたら（プロジェクトの保存など）、読み終えてから、もう一度読む。
+  - `config.yaml` の `images` と同じ名前のものは作らず、`contextImage.configOverride` の警告にする（自身のプロパティだけを比べる。`hasImage`）。
+  - 読めなければ、前に読んだもの（あれば）を使い続け、`contextImage.loadFailed` の警告にする。
+- 名前：`sacty-ctx-<印>-<プロジェクトの ID>-<名前>:<ハッシュ>`（`contextImageTag`）。
+  印は `SACTY_HOME` の SHA-256 の先頭8文字（同じ Docker を使う別の `SACTY_HOME` のデーモンのイメージと見分ける）。
+  ハッシュは、定義・`image_build`（認証は秘密情報の名前だけ）・既定のイメージの名前（sacty の版）・プロジェクトの ID・名前から作る。
+  名前は Docker に使える形にする（英小文字・数字・`-`）。
+- 状態：`queued`（順番待ち）・`building`（作成中）・`ready`（作成済み）・`failed`（失敗）。
+  - 読むたびに `docker image inspect` で確かめ、あれば `ready`、無ければ `queued`。
+    同じ名前のものは、前の状態を引き継ぐ（作成中・失敗のまま）。
+    `ready` のものも確かめ直し、無ければ `queued` にする（確かめられないときは `ready` のまま）。
+  - 状態はメモリーにだけ持つ（デーモンを起動し直すと、失敗したものも作り直す）。
+  - 確かめられない（Docker に接続できない）ときは `failed`（`image.dockerUnreachable`）にし、次に読むときに確かめ直す。
+- 作成：`queued` のものを、すべてのプロジェクトで1つずつ順に作る（読み直している途中のプロジェクトのものは、読み終えてから）。
+  - `buildImage`（`sacty image build` と同じ Dockerfile。言語ごとのイメージとして作る）を使い、docker の出力の末尾（16 KiB。`CONTEXT_IMAGE_LOG_MAX`）を持つ。
+  - `image_build` は、名前を決めたとき（読んだとき）のものを使う（名前のハッシュと中身を一致させる）。
+  - 60分（`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`）で終わらなければ、docker を止めて `failed`（`contextImage.buildTimedOut`）にし、次のものを作る。
+    止めてから 15 秒（`CONTEXT_IMAGE_ABANDON_MS`）で終わらない処理（npm のトークンの取り出しが応答しないなど）は見切る（見切った処理は、止めた signal を見て docker を動かさない）。
+  - Dockerfile の場所は、`sacty up` が渡す `SACTY_DOCKER_DIR`（無ければリポジトリの `packages/cli/docker`）。
+  - 失敗したら `failed`（`contextImage.buildFailed`）にする。
+    自動では作り直さない。
+    `POST /api/projects/:id/context-images/:name/rebuild`（画面の「作り直す」）で `queued` に戻す（失敗していないものは `contextImage.notFailed`、無いものは `contextImage.notFound` で断る）。
+  - すべて作り終え、設定を読めて、どのプロジェクトも今の定義を読めていれば、今の定義の名前以外の、自分の印の `sacty-ctx-<印>-` のイメージを `docker image rm` で消す（強制では消さない）。
+    2分（`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`）で終わらなければ止め、止めた docker が終わる（`CONTEXT_IMAGE_ABANDON_MS` まで）のを待ってから先に進む。
+    消している間は、読み直しが手元にあるかを確かめず、消し終えてから確かめる。
+    消している間に順番待ちが増えたら、消し終えてから作る。
+  - デーモンを止めるとき・作成の時間切れのときは、docker に `SIGTERM` を送り、10 秒（`DOCKER_KILL_GRACE_MS`）で終わらなければ `SIGKILL` を送る（`runDockerStreaming`）。
+  - デーモンを止めるときは、間隔を止め、作成中の docker を止める。
+    止めた作成の後片付け（npm の認証を書いた一時ファイルを消す）が終わるのを、ほかの後処理と一緒に待つ（上限は後処理と同じ 20 秒）。
+- 状況：`GET /api/status` の `contextImages`（イメージのあるプロジェクトだけ）に載せ、読めなかった・同じ名前だったことは `warnings` に載せる。
+  - 画面は、どの画面でも中身の上に、作成中・順番待ち・失敗したものを「イメージの作成」として出す（`ContextImagesNotice`）。
+    作成中のログを開いて出し、失敗したものには理由・ログ・「作り直す」を出す。
+  - 画面は 5 秒ごと（`CONTEXT_IMAGES_LIVE_INTERVAL_MS`）に `/live/context-images` から取り直す。
+- 使い方：プロジェクトのタスクでは、`config.yaml` の `images` に、そのプロジェクトのコンテキストのイメージを足したものから選ぶ（`projectImagesConfig`。同じ名前は `config.yaml` のもの）。
+  - 作成中・失敗のものも選べる（`imageDefined`）。
+    実行のときは使わず、理由（`contextImage.building`・`contextImage.failed`）で止める（`resolveImage`）。
+    マージの後のデプロイの確認も、既定のイメージに倒さず、確かめられなかったこと（`deploy.checkFailed`）として理由を記録する。
+  - 画面の選択肢（タスクの作成・差し戻し・タスクの詳細・プロジェクトの対象）にも、そのプロジェクトのものを足す（`projectImages`）。
+- 待ち：プロジェクトのコンテキストを読む前・読んでいる間・作る順番待ち・作成中は、そのイメージを使うかもしれないタスクの実行を始めない（`awaitingContextImages`。実行の印も付けず、ワーカーが2秒ごとに確かめ直す）。
+  - 使うかもしれないのは、イメージが決まっていない（工程が無く、人もプロジェクトの対象も指定していない）タスクと、決まった名前が `default` でも `config.yaml` の `images` でもないタスク。
+    名前は実行のときと同じ順で決める（タスクのイメージ（人が変えたものを含む）、古い版の工程ごとのイメージ、工程を選ぶ前なら作成時・プロジェクトの対象の指定）。
+  - 60分（`CONTEXT_IMAGES_WAIT_MS`）待っても終わらなければ、`TaskPaused`（理由 `error`、`contextImage.waitTimedOut`）にする。
+  - 待っている間の一時停止・中止は、実行していないタスクと同じにすぐ効く。
+  - ワーカーは、待っているタスクを実行の対象から除いてから、同時に実行する数を数える（`runnableTaskIds`。後の実行できるタスクの枠を塞がない）。
+
+コード: `apps/daemon/src/context-images.ts`（`ContextImageBuilder`・`contextImageTag`・`contextImagePrefix`・`contextLanguageImage`・`runDockerStreaming`・`removeStaleContextImages`・`CONTEXT_IMAGES_REFRESH_MS`・`CONTEXT_IMAGE_LOG_MAX`・`CONTEXT_IMAGE_BUILD_TIMEOUT_MS`・`CONTEXT_IMAGES_LOAD_TIMEOUT_MS`・`CONTEXT_IMAGES_PRUNE_TIMEOUT_MS`・`DOCKER_KILL_GRACE_MS`・`CONTEXT_IMAGE_ABANDON_MS`）、
+`apps/daemon/src/context.ts`（`contextImages`）、`apps/daemon/src/config.ts`（`resolveImage`・`imageDefined`・`hasImage`）、
+`apps/daemon/src/service.ts`（`projectImagesConfig`・`awaitingContextImages`・`runnableTaskIds`・`mayUseContextImage`・`loadContextImages`・`rebuildContextImage`・`refreshContextImages`・`CONTEXT_IMAGES_WAIT_MS`）、
+`apps/daemon/src/server.ts`、`apps/daemon/src/main.ts`、`apps/daemon/src/worker.ts`（`Worker`）、`packages/cli/src/up-env.ts`（`daemonEnv`）、
+`apps/web/src/components/shell/context-images-notice-view.tsx`（`ContextImagesNoticeView`）、`apps/web/src/components/shell/context-images-notice-live.tsx`（`CONTEXT_IMAGES_LIVE_INTERVAL_MS`）、`apps/web/src/lib/labels.ts`（`projectImages`）
 
 ## 二重の起動
 

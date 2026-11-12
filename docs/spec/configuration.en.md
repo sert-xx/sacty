@@ -152,4 +152,6 @@ Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `ste
   - `enable_repos` is written together with `packages`.
 - `images.<name>.maven_mirror`: an http or https URL without a user name, password, or symbols such as quotes.
 
-Code: `apps/daemon/src/config.ts` (`NPM_SECRET_KEY`, `IMAGE_ENV_SECRET_NAME`, `IMAGE_ENV_RESERVED`, `hasUserInfo`)
+The same checks apply to `images.yaml` in context repositories ([Context composition](context.en.md#context-repository-files)).
+
+Code: `apps/daemon/src/config.ts` (`NPM_SECRET_KEY`), `apps/daemon/src/image-schema.ts` (`LanguageImageFile`, `languageImagesFile`, `IMAGE_ENV_SECRET_NAME`, `IMAGE_ENV_RESERVED`, `hasUserInfo`)

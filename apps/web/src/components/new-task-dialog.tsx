@@ -120,7 +120,7 @@ export function NewTaskDialog({
   const show = (next: "main" | "steps") => {
     switched.current = true;
     setView(next);
-    if (next === "steps") loadStepOptions(t.repositoriesNoAnswer, setStepOptions);
+    if (next === "steps") loadStepOptions(t.repositoriesNoAnswer, setStepOptions, target.id);
   };
   const choose =
     (set: (update: (prev: StepChoices) => StepChoices) => void) => (step: StepKey, name: string) =>

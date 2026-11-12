@@ -308,7 +308,12 @@ async function up(webPort: number, daemonPort: number) {
     "daemon",
     spawn(process.execPath, ["--disable-warning=ExperimentalWarning", daemonMain], {
       stdio: "inherit",
-      env: daemonEnv(process.env, { daemonPort, daemonToken: token, webPort }),
+      env: daemonEnv(process.env, {
+        daemonPort,
+        daemonToken: token,
+        webPort,
+        dockerDir: fileURLToPath(new URL("../docker", import.meta.url)),
+      }),
     }),
   );
 
