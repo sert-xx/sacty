@@ -29740,6 +29740,29 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("開いている PR の答えにドラフトかが無ければ、確認中も一時停止中もデーモンのログに残す（PR #348 14回目のレビュー指摘）", async () => {
+        const made = await implemented([]);
+        const { activity, service, pulls, id } = made;
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        delete pulls.drafts[7];
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await service.checkPullRequests();
+          const unknown = () =>
+            warn.mock.calls.filter((c) =>
+              String(c[0]).includes("ドラフトかを GitHub の答えから読めなかった"),
+            );
+          expect(unknown()).toHaveLength(1);
+          service.pause(id);
+          delete pulls.drafts[7];
+          await service.checkPullRequests();
+          expect(unknown()).toHaveLength(2);
+        } finally {
+          warn.mockRestore();
+        }
+        activity.close();
+      });
+
       it("一時停止したタスクの PR は並べて確かめ、答えが返らない PR が続いても、1つずつ待たない（PR #348 13回目のレビュー指摘）", async () => {
         const ok = verdictOut("no_findings", "# 評価\n\n問題なし");
         const made = await implemented([ok, implement(), ok], [], { draftTimeoutMs: 300 });

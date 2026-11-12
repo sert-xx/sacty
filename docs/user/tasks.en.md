@@ -313,12 +313,13 @@ The Implementation step's agent still runs tests while it works.
 
 - In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
 - A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it).
-- From "Test (verification) commands" after this section to "When the verification tool is not in the image", the sections describe the final review of older versions. The current version does not do them.
+- "Test (verification) commands" and "The implementation PR and CI" after this section, and the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image", describe the final review of older versions. The current version does not do them.
+  "When the base branch moves ahead" and "PRs of dependent child tasks (stacked PRs)" describe the current version.
   The "Move to review" operation and the flaky test ledger are not shown on the screen either.
 
 ## Test (verification) commands
 
-This section and the sections below it (The implementation PR and CI, When verification keeps failing, and so on) describe the final review of older versions ([Review of the implementation PR](#review-of-the-implementation-pr)).
+This section and "The implementation PR and CI" below it describe the final review of older versions ([Review of the implementation PR](#review-of-the-implementation-pr)). So do the sections from "When the final review verdict cannot be read" to "When the verification tool is not in the image".
 
 To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review. However, if an earlier stage (the Implementation step or the PR's CI) already ran the whole command on the same content with a result, it judges with that result instead of running it again ([The implementation PR and CI](#the-implementation-pr-and-ci)). The Goal Guardian uses the task image and a copy of the implemented code. It checks the whole output of the command (every kind of test the command runs, such as unit and integration tests), and judges from that result, the diff, and the code.
 
@@ -376,7 +377,7 @@ Behavior that only CI can check (fixing a workflow, for example) is part of the 
 
 Even if another task or a person's PR is merged into the base branch (main and the like) first, sacty handles it automatically so that the implementation PR does not stay in conflict with the base branch.
 
-- sacty merges the latest base branch into the implementation workspace before the implementation starts and before the final review.
+- sacty merges the latest base branch into the implementation workspace before the implementation starts (older versions also merged it before the final review).
   When the implementation is redone after a rejection or after PR comments, it merges before redoing it.
   It does not merge on its own while the task waits for approval. To fix a PR after the base branch moved, reject it or write a comment on the PR.
 - If another PR is merged while the task waits for approval and the implementation PR conflicts with the base branch, sacty notices and shows it (when GitHub says it conflicts; the PR check that runs every minute finds out).
@@ -391,9 +392,9 @@ Even if another task or a person's PR is merged into the base branch (main and t
 - If there is a conflict, the conflicting files keep markers (`<<<<<<<`, `=======`, `>>>>>>>`).
   sacty gives the list of conflicting files to the implementation agent and has it resolve them so that both changes survive.
   The resolved content is added to the PR as the merge commit.
-- If the implementation ends with markers still left, the final review does not start. The implementation is redone with the conflicting files.
+- If the implementation ends with markers still left, no PR is opened (in older versions, the final review does not start). The implementation is redone with the conflicting files.
   If it cannot be resolved three times in a row, the task pauses and the conflicting files appear as the reason.
-  An implementation with markers left cannot be moved to review with "Move to review". "Resume" redoes the implementation with the files that have markers.
+  "Resume" redoes the implementation with the files that have markers (in older versions too, an implementation with markers left cannot be moved to review with "Move to review").
 - If the latest base branch cannot be fetched or merged (a network failure, for example), the task pauses with the reason.
   Fix the cause and press "Resume" to start again from the merge.
 - Merging the base branch needs git 2.40 or later on the host. If it is older, the task stops with a message about it.

@@ -1013,6 +1013,21 @@ export const REVIEW_CI_TIMEOUT_MS = 30_000;
  */
 export const DRAFT_TIMEOUT_MS = 30_000;
 
+/** PR のレビューの子タスクの流れ（PBI-331）の実装の PR か（指摘なしを待つ・指摘なしで外して記録した）。 */
+function reviewFlowPullRequest(pr: { awaitingReview?: boolean; reviewedCommit?: string }): boolean {
+  return pr.awaitingReview === true || pr.reviewedCommit !== undefined;
+}
+
+/**
+ * 開いている PR の答えにドラフトか（draft）が無ければ、デーモンのログに残す（PBI-331。ドラフトを合わせられないので、
+ * 次の確認でやり直す）。
+ */
+function warnDraftUnknown(number: number, repo: string): void {
+  console.warn(
+    `[daemon] PR #${number}（${repo}）がドラフトかを GitHub の答えから読めなかったので、ドラフトを合わせませんでした（次の確認でやり直します）`,
+  );
+}
+
 /** 一時停止したタスクの実装の PR のドラフトを、同時に確かめる数（PBI-331。settlePausedDrafts）。 */
 export const PAUSED_DRAFTS_CONCURRENCY = 4;
 
@@ -1348,6 +1363,8 @@ export class TaskService {
               ...(head ? { head } : {}),
             });
             latest = this.tasks.get(task.id) ?? latest;
+          } else if (pr.step === "implement" && reviewFlowPullRequest(latest.pullRequest ?? {})) {
+            warnDraftUnknown(pr.number, pr.repo);
           }
           try {
             const settled = await this.importFeedback(latest, token);
@@ -11877,7 +11894,12 @@ export class TaskService {
         this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
         this.draftTimeoutMs(),
       );
-      if (status.state !== "open" || status.draft !== false) return;
+      if (status.state !== "open") return;
+      if (status.draft === undefined) {
+        warnDraftUnknown(pr.number, pr.repo);
+        return;
+      }
+      if (status.draft) return;
       const latest = this.tasks.get(task.id);
       if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
       // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい

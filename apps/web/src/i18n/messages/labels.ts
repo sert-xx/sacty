@@ -391,8 +391,7 @@ const ja = {
     PullRequestCiRerunRequested: (failed: string[]) =>
       `PR の CI が失敗した：${failed.join("、")}。失敗したジョブを1回再実行する`,
     VerificationOverridden: "人が、最終レビューの不合格のままレビューへ進めた",
-    FinalReviewSkipped:
-      "最終レビューと CI の待ちをせずに、実装の PR を作って PR のレビューの子タスクに渡した",
+    FinalReviewSkipped: "最終レビューと CI の待ちをせず、実装の PR を作る準備をした",
     PullRequestMarkedReady: (number: number) =>
       `PR のレビューの子タスクが指摘なしにしたので、PR #${number} のドラフトを外して人の承認待ちにした`,
     ContinuedFeedbackPassed: (count: number) => `引き継いだ PR の指摘を実装に渡した（${count}件）`,
@@ -1009,7 +1008,7 @@ const en: LabelMessages = {
       `The PR's CI failed: ${failed.join(", ")}; rerunning the failed jobs once`,
     VerificationOverridden: "A person moved the task to review despite the failed final review",
     FinalReviewSkipped:
-      "Opened the implementation PR and handed it to the PR's review child task (no final review or CI wait)",
+      "Got ready to open the implementation PR without the final review or CI wait",
     PullRequestMarkedReady: (number) =>
       `The PR's review child task found nothing, so PR #${number} was marked ready (waiting for a person's approval)`,
     ContinuedFeedbackPassed: (count) =>
