@@ -28540,7 +28540,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           url: "https://github.com/acme/app/pull/7",
           review: "sacty",
         });
-        expect(child.title).toBe("レビュー：決済API（PR #7）");
+        expect(child.title).toBe("[PR #7] 決済API");
         expect(child.projectId).toBe("default");
         // 分割の子タスクではない（分割の待ち・統合レビューに混ざらない）
         expect(child.parent).toBeUndefined();
@@ -28840,13 +28840,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
     it("子タスクの題は、長い親の題を文字の途中で切らずに 200 文字に収める（受け入れ条件 1）", () => {
       const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-      for (const pad of [185, 186, 187, 188]) {
+      for (const pad of [189, 190, 191, 192]) {
         const title = reviewTaskTitle(`${"a".repeat(pad)}😀${"b".repeat(20)}`, 7);
         expect(title.length, String(pad)).toBeLessThanOrEqual(200);
         expect(lone.test(title), String(pad)).toBe(false);
-        expect(title.endsWith("…（PR #7）"), String(pad)).toBe(true);
+        expect(title.startsWith("[PR #7] a"), String(pad)).toBe(true);
+        expect(title.endsWith("…"), String(pad)).toBe(true);
       }
-      expect(reviewTaskTitle("決済API", 7)).toBe("レビュー：決済API（PR #7）");
+      expect(reviewTaskTitle("決済API", 7)).toBe("[PR #7] 決済API");
     });
 
     it("PR を公開した後、子タスクを作る前に止まっても、再起動後の PR の確認で作る（受け入れ条件 1）", async () => {
@@ -28885,7 +28886,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             event: {
               type: "TaskCreated",
               payload: {
-                title: "レビュー：決済API（PR #7）",
+                title: "[PR #7] 決済API",
                 body: "",
                 start: "github_pull_request",
                 budgetCapUsd: 1,

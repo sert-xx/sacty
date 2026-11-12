@@ -17,7 +17,8 @@ const ja = {
     byPerson ? "（人が選択）" : "（オーケストレーターが選択）",
   repoChoiceHint: (reason: string) => `選んだ理由：${reason}`,
   reviewOfStep: (step: string) => `（${step}の PR）`,
-  reviewTaskOf: (step: string, number: number) => `（${step}の PR #${number}）`,
+  reviewTaskOf: (step: string, number: number, status?: string) =>
+    `（${step}の PR #${number}${status ? `・${status}` : ""}）`,
   parent: " ・ 親タスク：",
   rerunOf: " ・ 再実行の元：",
   derivedFrom: " ・ 続きの元：",
@@ -528,7 +529,7 @@ const en: TaskMessages = {
     byPerson ? " (chosen by a person)" : " (chosen by the Orchestrator)",
   repoChoiceHint: (reason) => `Why: ${reason}`,
   reviewOfStep: (step) => ` (${step} PR)`,
-  reviewTaskOf: (step, number) => ` (${step} PR #${number})`,
+  reviewTaskOf: (step, number, status) => ` (${step} PR #${number}${status ? `, ${status}` : ""})`,
   parent: " · Parent task: ",
   rerunOf: " · Rerun of: ",
   derivedFrom: " · Follow-up of: ",

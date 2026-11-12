@@ -32,7 +32,8 @@ export type TaskDetailData = {
   /** PR のレビューの子タスクの親（その PR を作ったタスク。PBI-330）。 */
   reviewOf?: Task;
   /** このタスクが作った PR のレビューの子タスク（作った順。読めなかったものは題が無い。PBI-330）。 */
-  reviewTasks?: { id: string; title?: string; step: StepKey; number: number }[];
+  /** PR のレビューの子タスク（PBI-330）。task は読めたときだけ（状態を添えて、同じ PR の中止した子と区別する）。 */
+  reviewTasks?: { id: string; title?: string; step: StepKey; number: number; task?: Task }[];
   /** マージの後の監視で作った修正のタスクの、元のタスク（PBI-89）。 */
   origin?: Task;
   /** マージの後の監視で作った修正のタスク（PBI-89）。 */
@@ -141,7 +142,7 @@ export async function loadTaskDetail(
           id: r.taskId,
           step: r.step,
           number: r.number,
-          ...(found ? { title: found.task.title } : {}),
+          ...(found ? { title: found.task.title, task: found.task } : {}),
         };
       }),
     ),

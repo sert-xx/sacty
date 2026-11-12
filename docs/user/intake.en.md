@@ -87,8 +87,9 @@ No label setting is needed, and sacty does not add a label to the PR.
 The implementation PR is opened as a draft before the final review, and the child task is created when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
 An implementation PR stacked on a dependency's PR waits for approval as a draft, so its child task is created when the dependency is merged and the draft is removed.
 
-- The child task is a "PR review only" task titled "レビュー：(title of the original task)（PR #number）".
+- The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).
   In "Related tasks" of the task detail, links to each other appear as "PR review" on the original task and "Reviews the PR of" on the child task.
+  The links on the original task also show the child task's status (queued, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
   Its cost counts toward the child task's budget.
 - The child task's review is posted to the PR.
   - If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.

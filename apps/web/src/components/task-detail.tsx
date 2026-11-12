@@ -1001,7 +1001,11 @@ function Properties({ data }: { data: TaskDetailData }) {
           l.reviewTask,
           <span key={`rt-${r.id}`}>
             <TaskLink id={r.id} title={r.title} testId="review-task" />
-            {m.reviewTaskOf(labels.step[r.step], r.number)}
+            {m.reviewTaskOf(
+              labels.step[r.step],
+              r.number,
+              r.task ? statusText(r.task, labels) : undefined,
+            )}
           </span>,
         ] as [string, ReactNode],
     ),

@@ -15986,12 +15986,12 @@ function untilAborted<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
  * レビューの子タスクの題（PBI-330）。親の題と PR の番号から作る（題は 200 文字までに切る）。
  */
 export function reviewTaskTitle(parentTitle: string, number: number): string {
-  const suffix = `（PR #${number}）`;
-  const head = "レビュー：";
-  const room = 200 - head.length - suffix.length;
+  // 言語に依存しない形にする（画面の言語を変えても、英語の画面に日本語の語が出ない。PBI-330 レビュー指摘）
+  const head = `[PR #${number}] `;
+  const room = 200 - head.length;
   // 文字の途中（サロゲートペアの間）で切らない
   let cut = room - 1;
   if (parentTitle.length > room && /[\uDC00-\uDFFF]/.test(parentTitle[cut] ?? "")) cut--;
   const title = parentTitle.length > room ? `${parentTitle.slice(0, cut)}…` : parentTitle;
-  return `${head}${title}${suffix}`;
+  return `${head}${title}`;
 }
