@@ -16,6 +16,17 @@
 - `out_of_scope_notes`（観点外の気づき）は、他の観点の指摘と照らす。どの観点にも拾われていない気づきで、根拠が示せるものは、親が根拠を確かめた上で採用してよい（採用した指摘には「横断で拾った」と記す）。確かめられないものは不採用にする
 - 相反する指摘（ある観点は「分けろ」、別の観点は「まとめろ」）は、根拠と影響を比べて1つに決め、決めた理由を記録する
 
+## リポジトリの指示との重なりと相反
+
+R（リポジトリのレビュー用のスキル）と X-3（リポジトリの指示への準拠）を起動したときは、次のように扱う（[repo-guidance.md](repo-guidance.md)）。
+
+- R・X-3 の指摘が、他の観点の指摘と同じ箇所・同じ問題なら、1つにまとめて観点を併記する（R はスキルの名前も添える）。重要度は高い方にする
+- R・X-3 の指摘も、他の観点と同じ基準で検証する（形式、`checked`、根拠）。担当がスキルの独自の形式・採点・総合の判定を返してきたら、出力形式だけを直させる
+- 担当の `limitations` に、スキルが求めていて行わなかったこと（投稿・修正・分担など）があれば、記録に残す。親も、それを代わりに行わない
+- 他の観点の `should`・`nit` が、基準にしたリポジトリの指示の明文の決まりと相反するとき（決まりのとおりに書かれたものを、直すよう求めている）は、リポジトリの決まりを優先して不採用にする。理由は「リポジトリの決まりに従っている」とし、決まりの出典（ファイルと節）を添える
+- `must`（不具合・セキュリティ・データ破損・要件の不適合・互換性の破壊）は、リポジトリの決まりと相反していても不採用にしない。採用し、決まりと相反することを指摘に添える（決まりの側を見直す材料になる）
+- 基準にしなかった指示（`pr-review` で PR が変えた・足した指示）は、指摘を不採用にする根拠にしない
+
 ## 不採用
 
 次は不採用にし、理由を `dismissed` に残す（PR には投稿しない。自己レビューでは記録だけ）。
@@ -25,6 +36,7 @@
 - 根拠が無い・`confidence: low` で親が確かめられない
 - 好みだけ、意図された振る舞いの変更、同じ問題の言い換え
 - 作者が対象外・後続対応を明示した論点（流れの資料の規則）
+- 基準にしたリポジトリの指示の明文の決まりと相反する `should`・`nit`（理由は「リポジトリの決まりに従っている」。`must` は不採用にしない。上の「リポジトリの指示との重なりと相反」）
 - PR にすでにある他のレビュアーの指摘と同じ箇所・同じ問題（`pr-review`。言い換えを含む。理由は「既存のレビューで指摘済み」。`must` でも繰り返さない。規則は流れの資料の「既存の指摘との重なり」）
 
 `must` は、過去の指摘の履歴や「前回は出なかった」という理由だけで抑えない（他のレビュアーがすでに同じ指摘をしているときは除く。作者にはすでに届いている）。
@@ -52,16 +64,18 @@
   "workflow": "self-review | pr-review",
   "round": 1,
   "target_kind": "code | design-doc | user-doc",
-  "launched": [{ "viewpoint": "C-1", "tier": "advanced | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
+  "launched": [{ "viewpoint": "C-1", "skill": "<R のときだけ、スキルの名前>", "tier": "advanced | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
   "linked_docs": [{ "source": "<URL かリポジトリ内のパス>", "role": "target | evidence", "reason": "本文が成果物の設計書として示している", "fetched": true, "copy": "/tmp/agent-scratch/review-linked/design.md", "version": "<版や更新日時。分からなければ空>", "not_fetched_reason": "" }],
   "verification": { "summary": "/tmp/agent-scratch/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
   "screens": { "path": "/tmp/agent-scratch/review-verify/round-1/screens/screens.json", "status": "captured | partial | skipped | error | 対象外", "reason": "撮らなかった・失敗した理由" },
   "existing_reviews": { "count": 3, "readable": true, "overlapping": 1 },
+  "repo_guidance": { "searched": true, "not_searched_reason": "", "items": [{ "source": "<リポジトリのルートからのパス>", "name": "<スキルの名前。指示書なら空>", "kind": "review | dev | both | unused", "used_as": ["R-1", "X-3"], "version": "作業領域の版 | 変更前の版 | 基準にしない | PR が消した", "copy": "/tmp/agent-scratch/review-guidance/round-1/<パス>（変更前の版を写したとき）", "reason": "使わない・基準にしない理由。行わなかった指示（投稿・修正・分担など）" }] },
   "adopted": [],
   "dismissed": [{ "viewpoint": "C-5", "title": "…", "reason": "範囲の外（既存の問題）" }],
   "verdict": "passed | changes_required | incomplete"
 }
 ```
 
-`adopted` は、担当の指摘の形式のまま（併合した観点を `viewpoints` に列挙）。人が読む本文は、この記録から流れの資料の形式に書き起こす。
+`adopted` は、担当の指摘の形式のまま（併合した観点を `viewpoints` に列挙）。
+`repo_guidance` の `items` は、見つけたリポジトリの指示を1件ずつ残す（使わなかったものは `used_as` を空の配列にする）。探して無ければ `items` を空の配列にし、作業領域を読めなかったときは `searched` を `false` にして理由を残す。`launched` の R の行には、`skill`（スキルの名前）を残す。人が読む本文は、この記録から流れの資料の形式に書き起こす。
