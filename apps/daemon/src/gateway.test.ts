@@ -402,6 +402,10 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
       "?X_HTTP_Method=DELETE",
       "?x.method.override=DELETE",
       "?expand=1;_method=DELETE",
+      "?%20_method=DELETE",
+      "?+_method=DELETE",
+      "?%09_method%20=DELETE",
+      "?_method%00ignored=DELETE",
     ]) {
       const res = await fetch(`${base}/ticket/api/v1/tickets/42${query}`);
       expect(res.status, query).toBe(400);

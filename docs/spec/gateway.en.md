@@ -117,13 +117,14 @@ The relay flows as follows.
 ![Relaying an internal PF request](images/gateway-pf.en.svg)
 
 - Lookup order is the host's PFs, then, if not found, the PFs of the project context bound to the run's token. Tokens of tasks in other projects do not find them (404).
+- The checks run in this order: a path that changes when made into a URL (400), a query that overrides the method (400), anything other than GET and HEAD for a read-only run (403), and matching `allow` (403). The first one that applies refuses the request.
+- If the query has a name that overrides the method (`_method`, `x-http-method-override`, `x-http-method`, `x-method-override`; case, `-`, `_`, `.`, spaces, `%` encoding, and a trailing `[]` are treated alike, `;` is also read as a separator, and the name is compared after dropping everything from a NUL and trimming surrounding whitespace), 400 (it is not sent upstream; `overridesMethodInQuery`).
 - Matching `allow`
   - `*` matches one segment and `**` matches everything below (a trailing `/**` also matches that segment itself).
   - The query is ignored.
   - Paths containing `.` or `..` segments, `%2e`, `%2f`, or `\` do not match.
   - A path that changes when made into a URL (containing `#` or spaces, for example) is 400.
   - If nothing matches, 403 (the list of usable APIs is returned).
-- If the query has a name that overrides the method (`_method`, `x-http-method-override`, `x-http-method`, `x-method-override`; case, `-`, `_`, `.`, spaces, `%` encoding, and a trailing `[]` are treated alike, and `;` is also read as a separator), 400 (it is not sent upstream; `overridesMethodInQuery`).
 - For a read-only run (information gathering at the start of a task; `readOnly` of `register`), anything other than GET and HEAD is 403 even if it matches `allow` (it is not sent upstream).
 - The gateway removes the agent's authentication, `cookie`, the PF's authentication header, and the headers that override the method (`x-http-method-override`, `x-http-method`, `x-method-override`) from the headers sent, and attaches the authentication value. It does not follow redirects.
 - The gateway refetches the token from 30 seconds before its expiry (`expires_in_path`, or `ttl_sec` if absent). If a 401 or 403 is returned for an `auth.token` PF, it refetches the token and sends the request again once.

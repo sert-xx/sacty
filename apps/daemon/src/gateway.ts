@@ -78,11 +78,17 @@ const METHOD_OVERRIDE_QUERY = new Set([
 /**
  * クエリにメソッドを上書きする名前があるか。名前はデコードしてから比べ、`_method[]` のような配列の形も見る。
  * `.`・空白も比べる前にそろえる（PHP は名前の `.`・空白を `_` に変える）。`;` も区切りとして読む（区切りに使う上流がある）。
+ * NUL より後ろは捨て、前後の空白は除いてから比べる（PHP は名前を NUL で切り、先頭の空白を除く。PR #342 のレビュー）。
  */
 export function overridesMethodInQuery(query: string): boolean {
   if (!query) return false;
   for (const key of new URLSearchParams(query.slice(1).replaceAll(";", "&")).keys()) {
-    const name = key.replace(/\[.*$/, "").toLowerCase().replace(/[_. ]/g, "-");
+    const name = key
+      .replace(/\0.*$/s, "")
+      .trim()
+      .replace(/\[.*$/s, "")
+      .toLowerCase()
+      .replace(/[_. ]/g, "-");
     if (METHOD_OVERRIDE_QUERY.has(name)) return true;
   }
   return false;
