@@ -148,6 +148,7 @@ PR の監視は60秒ごとに、前の確認が終わってから確かめる。
   - 共通の外枠は画面の移動で描き直されない。
     そのため画面は `/live/update` から 30 秒ごと（`UPDATE_LIVE_INTERVAL_MS`）に取り直し、知らせが現れる・消えるのをリロードせずに反映する。
 - 更新のコマンドは、動いている `sacty up` を止めてから実行する順に示す（`npm run build` が画面の `.next` を消して作り直すため）。
+  コマンドの前に、`npm run cli:install` で入れた人は `npm run build` の代わりに `npm run cli:install` を実行するよう添える（入口に入れたときの Node.js を書いているので、Node.js の版が変わったら入れ直す。[アーキテクチャ](architecture.md#パッケージ)）。
   既定のイメージの名前は版に連れて変わるので、`npx sacty image build` を含める。
   依存は `npm ci` で入れ直す（`package-lock.json` を書き換えないので、レジストリを設定で変えていても作業ツリーに差分が残らず、次の `git pull` がぶつからない）。
 

@@ -4,7 +4,7 @@
 
 # CLI (the sacty command)
 
-Run it as `npx sacty <command>` (inside the sacty repository). If you install it with `npm run cli:install`, you can use it as `sacty <command>` in any directory ([Getting started](getting-started.en.md#using-sacty-in-any-directory)). `npx sacty --help` (`-h`) shows the usage, and `npx sacty --version` shows the version. If you specify an unknown command, it shows the usage and exits with a failure.
+Run it as `npx sacty <command>` (inside the sacty repository). If you install it with `npm run cli:install`, you can use it as `sacty <command>` in any directory ([Getting started](getting-started.en.md#using-sacty-in-any-directory)). `npx sacty --help` (`-h`) shows the usage, and `npx sacty --version` shows the version. `--help` and `--version` show the usage or the version without running the command, whichever command they follow (those written after `--` of `sacty launch` are passed to the AI CLI). If you specify an unknown command, it shows the usage and exits with a failure.
 
 ## sacty up
 
@@ -97,6 +97,7 @@ This command starts your local Claude Code or Codex interactively with the conte
 - The AI uses the account you are logged in with locally (for both Claude Code and Codex, whether the login is stored in the keychain or in a file) and your local settings as they are. It does not use the `agents` settings of sacty or the API keys saved in sacty.
 - The working directory is `--cwd` (the current directory by default). Clone the target repository locally beforehand.
 - Only the MCP servers in the project's context are used. The MCP servers written in your local settings files (Claude Code's settings and `.mcp.json`, and Codex's `config.toml` and the target repository's `.codex/config.toml`) are not used. MCP servers added in other ways, such as plugins, may not be stopped.
+  With Codex, if your local settings have an MCP server with the same name, the one from the context is passed under the name `<name>-sacty`, and it tells you with `[sacty] 注意：` before starting (because Codex would mix settings with the same name).
 - sacty does not pass settings that skip permission checks. Claude Code starts in the mode that asks for permission (`--permission-mode default`), and Codex starts with the sandbox that can write only to the workspace and the policy that asks for approval when needed (`--sandbox workspace-write --ask-for-approval on-request`).
 - Arguments after `--` are passed to the AI CLI as they are (for example `-- --model claude-opus-5-5`). If you pass the same argument as one sacty passes, the one after `--` takes effect (Claude Code uses the one given later, and Codex's `-c` uses the one given later. For Codex's `--sandbox` and `--ask-for-approval`, sacty does not pass its own when you pass them).
 - Nothing is recorded in the activity log. sacty does not count costs or budgets for it either.

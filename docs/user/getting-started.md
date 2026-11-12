@@ -42,13 +42,21 @@ npx sacty config init   # ~/.sacty/config.yaml を作る
 npm run cli:install
 ```
 
-ビルド（`npm run build`）の後に `npm link` で `sacty` コマンドを入れ、`sacty --version` がこのリポジトリの版を出すことを確かめます。
+ビルド（`npm run build`）の後に、`sacty` の起動の入口を置き、`sacty --version` がこのリポジトリの版を出すことを確かめます。
 
-- 入れた `sacty` は、このリポジトリを指します。sacty を更新してビルドし直せば、新しい版で動きます。
+- mise を使っていれば、入口を mise に登録します（`mise use --global sacty@<版>`。`mise ls sacty` で確かめられます）。同じ版がほかの方法で登録されているときは上書きしません。登録できなければ、理由を知らせて `~/.local/bin/sacty` に置きます。
+- mise で入れた後、いまのシェルで `sacty` が見つからないときは知らせます。`mise activate` を使っていれば新しいシェルから使えます。シムを使うなら、mise のシムのディレクトリを `PATH` に入れてください。
+- mise を使っていなければ、`~/.local/bin/sacty` に置きます。
+
+
+- 入口は、実行したときの Node.js（sacty のリポジトリで mise などが選んだ版）で sacty を動かします。mise などでディレクトリごとに Node.js の版が違っても、どのディレクトリでも同じように動きます。
+- 入口は、このリポジトリを指します。sacty を更新してビルドし直せば、新しい版で動きます。
+- sacty の更新で Node.js の版が変わったら（`mise.toml`）、もう一度実行してください。入口の Node.js が新しい版に切り替わります。古い版の Node.js を消した後に実行し忘れると、`sacty` がやり直しを知らせます。
 - 何度実行してもかまいません。別の場所に clone した sacty で実行すると、`sacty` はその clone を指すように切り替わります。
-- npm のグローバルの bin が `PATH` に無いとき、または `PATH` で先に別の `sacty` が見つかるときは、`[sacty] 注意：` で知らせます。
+- 環境変数 `SACTY_BIN_DIR` を指定すると、mise を使わずに、その中に置きます。置き場所が `PATH` に無いとき、または `PATH` で先に別の `sacty` が見つかるときは、`[sacty] 注意：` で知らせます。
+- 前に `npm link` で入れた `sacty`（いまの Node.js の版のもの）は、外します。ほかの Node.js の版で入れたものが残っていると、その版が有効なディレクトリで先に見つかることがあります。その版で `npm rm -g @sacty/cli` を実行して消してください。
 - シェルの `alias` で `sacty` を定義していると、そちらが先に使われます。
-- 消すときは `npm uninstall -g @sacty/cli` を実行します。
+- 消すときは、mise で入れたなら、mise の利用者全体の設定（`~/.config/mise/config.toml`）の `[tools]` から `sacty` の行を消し、`~/.local/share/sacty/mise`（`XDG_DATA_HOME` を指定しているなら `$XDG_DATA_HOME/sacty/mise`）を消します。mise を使っていなければ `~/.local/bin/sacty`（`SACTY_BIN_DIR` を指定したなら、その中の `sacty`）を消します。
 
 ## 起動する
 
@@ -108,7 +116,7 @@ npx sacty image build
 npx sacty up
 ```
 
-`npm run cli:install` で `sacty` を入れた場合も、同じ手順で新しい版になります（`npm run build` の代わりに `npm run cli:install` を実行してもかまいません）。
+`npm run cli:install` で `sacty` を入れた場合は、`npm run build` の代わりに `npm run cli:install` を実行してください（Node.js の版が変わったときも、入口が切り替わります）。
 
 `npm ci` は、`package-lock.json` のとおりに依存を入れ直します。`package-lock.json` を書き換えないので、
 npm のレジストリを設定で変えていても作業ツリーに差分が残らず、次の `git pull` がぶつかりません。

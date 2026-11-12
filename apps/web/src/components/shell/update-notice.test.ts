@@ -36,6 +36,15 @@ describe("sacty の新しい版の知らせ（PBI-135・PBI-147）", () => {
     expect(text).toContain("リリースの内容を見る");
     // 動いている sacty up を止めてから、更新・ビルド・イメージの作り直しをして起動する（PR #147 レビュー提案・PBI-147）
     expect(text).toContain("Ctrl+C で止めてから");
+    // cli:install で入れた人は、build の代わりに cli:install で入れ直す（入口の Node.js が切り替わるように）
+    expect(text).toContain("build の代わりに cli:install を実行してください");
+    // コマンドを上から順に実行する前に読めるよう、コマンドより前に出す
+    expect(text.indexOf("cli:install を実行してください")).toBeLessThan(
+      text.indexOf("git pull origin main"),
+    );
+    expect(view(newer(), shell.en.update)).toContain(
+      "run npm run cli:install instead of npm run build",
+    );
     expect(UPDATE_COMMANDS.split("\n")).toEqual([
       "git pull origin main",
       "npm ci",

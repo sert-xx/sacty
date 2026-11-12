@@ -19,12 +19,20 @@ sacty は、5つのパッケージでできている。
 | `packages/cli` | `sacty` コマンド | `sacty up` などのコマンドと、エージェント実行用のイメージの Dockerfile（`packages/cli/docker/Dockerfile`） | `@sacty/core`・`@sacty/daemon`・`@sacty/web` |
 | `apps/desktop` | `@sacty/desktop` | macOS 向けのデスクトップ版（Electron）。`sacty` コマンドを別のプロセスで動かし、画面を表示する（[デスクトップ版](desktop.md)） | なし（作るときに cli・daemon・web の成果物を同梱する） |
 
-`npm run cli:install`（ルートの `package.json`。確かめるのは `scripts/cli-install.mjs` の `checkLink`・`findOnPath`・`globalPrefix`）は、ビルドの後に `packages/cli` を `npm link` して、`sacty` コマンドを npm のグローバルの bin に入れる（リンクは `packages/cli` を指す）。
-npm のグローバルの場所は、`npm run` が渡す環境変数 `npm_config_global_prefix` から求める（npm は自分の出力の中の UUID の形の文字列を `***` に伏せるので、`npm prefix -g` の出力はパスに UUID があると使えない）。環境変数が無い（スクリプトを直接実行した）ときだけ `npm prefix -g` を使う。
-入れた後に、次を確かめる。
-- npm のグローバルの bin の `sacty` が、このリポジトリの `packages/cli/bin/sacty.js` を指すこと。違えば終了コード 1。
-- その `sacty --version`（`packages/cli/package.json` の版を出す）が、このリポジトリの版と同じこと。違えば終了コード 1。
-- `PATH` で最初に見つかる `sacty` が、このリポジトリを指すこと。npm のグローバルの bin が `PATH` に無い・先に別の `sacty` があるときは注意を出す（終了コードは 0）。
+`npm run cli:install`（ルートの `package.json`。処理は `scripts/cli-install.mjs` の `launcherScript`・`launcherDir`・`useMise`・`miseToolDir`・`installWithMise`・`checkMise`・`checkPath`・`findOnPath`・`globalPrefix`）は、ビルドの後に、`sacty` の起動の入口（シェルのスクリプト）を置く。
+- `PATH` に `mise` があり、`SACTY_BIN_DIR` を指定していなければ、mise で入れる。
+  入口を版ごとのディレクトリ（`XDG_DATA_HOME`、無ければ `~/.local/share` の下の `sacty/mise/<版>/bin/sacty`）に置き、`mise link sacty@<版> <そのディレクトリ>` と `mise use --global sacty@<版>` で登録する。
+  同じ版が既に登録されていれば（`mise where sacty@<版>`）、登録先がそのディレクトリのときだけ `--force` で置き換える。ほかの場所の登録は上書きしない（`mise link --force` は元の登録先を消すため）。
+  登録できない・どちらかが失敗したら、理由を注意に出して、下の置き場所に置く。
+  mise で入れたら、置き場所に前に置いた入口（目印のあるもの）を消す。
+- mise を使わないときの置き場所は `SACTY_BIN_DIR`、無ければ `~/.local/bin`（Node.js の版に関係しない場所。mise などで版ごとに分かれる npm のグローバルの bin には置かない）。
+- 入口は、スクリプトを動かした Node.js（`process.execPath`。sacty のリポジトリで mise などが選んだ版）の絶対パスで、このリポジトリの `packages/cli/bin/sacty.js` を動かす。`PATH` の `node` は使わないので、ディレクトリごとに Node.js の版が違っても、sacty はこの Node.js で動く。
+- 入口の Node.js か `sacty.js` が無くなったら、入口は `npm run cli:install` のやり直しを知らせて終了コード 1 で終わる。
+- 置き場所に、入口の目印（`LAUNCHER_MARK`）の無いファイルかリンクがあれば、上書きせずに終了コード 1。ただし、このリポジトリの `packages/cli/bin/sacty.js` を指すリンク（前のやり方の `npm link` のもの。npm のグローバルの場所が `~/.local` だと置き場所と重なる）は置き換える。入口は隣に書いてから置き換える（`writeLauncher`）。
+- 入口を置く前に、前のやり方（`npm link`）で、いまの Node.js の npm のグローバルに入れた `@sacty/cli` がこのリポジトリを指していれば、`npm rm -g @sacty/cli` で外す（ほかのリポジトリのものは触らない。外すのは、下で求めた npm のグローバルの場所に対して）。npm のグローバルの場所は、`npm run` が渡す環境変数 `npm_config_global_prefix` から求める（npm は自分の出力の中の UUID の形の文字列を `***` に伏せるので、`npm prefix -g` の出力はパスに UUID があると使えない）。環境変数が無い（スクリプトを直接実行した）ときだけ `npm prefix -g` を使う。
+- 置いた後に、入口の `sacty --version`（`packages/cli/package.json` の版を出す）がこのリポジトリの版と同じことを確かめる（違えば終了コード 1）。`PATH` で最初に見つかる `sacty` が置いた入口でない・見つからないときは、注意を出す（終了コードは 0）。
+  mise で入れたときは、`mise which sacty` が入口であることと、`PATH` で最初に見つかる `sacty` が入口か mise のシム（`mise` へのリンク）であることを確かめる（mise が選べても、シェルに `mise activate` やシムの `PATH` の設定が無ければ実行できないため）。
+- Windows では使えない（終了コード 1）。
 
 コード: `packages/core/package.json`、`apps/daemon/package.json`、`apps/web/package.json`、`packages/cli/package.json`、`apps/desktop/package.json`、`packages/cli/src/index.ts`（`main`）
 

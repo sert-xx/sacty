@@ -35,13 +35,21 @@ npx sacty config init   # creates ~/.sacty/config.yaml
 npm run cli:install
 ```
 
-After building (`npm run build`), it installs the `sacty` command with `npm link` and checks that `sacty --version` shows this repository's version.
+After building (`npm run build`), it places a launcher for `sacty` and checks that `sacty --version` shows this repository's version.
 
-- The installed `sacty` points to this repository. After you update sacty and build again, it runs the new version.
+- If you use mise, it registers the launcher with mise (`mise use --global sacty@<version>`; you can check it with `mise ls sacty`). If the same version is registered another way, it does not overwrite it. If it cannot register it, it tells you why and places it in `~/.local/bin/sacty`.
+- After installing with mise, it tells you if `sacty` is not found in your current shell. With `mise activate`, you can use it from a new shell. If you use shims, add mise's shims directory to your `PATH`.
+- If you do not use mise, it places it in `~/.local/bin/sacty`.
+
+
+- The launcher runs sacty with the Node.js used when you ran it (the version that mise or a similar tool chose in the sacty repository). Even if the Node.js version differs per directory with mise or a similar tool, it works the same in every directory.
+- The launcher points to this repository. After you update sacty and build again, it runs the new version.
+- If an update of sacty changes the Node.js version (`mise.toml`), run it again. The launcher's Node.js switches to the new version. If you forget to run it after removing the old Node.js version, `sacty` tells you to run it again.
 - You can run it any number of times. If you run it in a sacty clone in another location, `sacty` switches to point to that clone.
-- If npm's global bin is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- If you specify the environment variable `SACTY_BIN_DIR`, it places it there without using mise. If the location is not in your `PATH`, or another `sacty` is found earlier in your `PATH`, it tells you with `[sacty] 注意：`.
+- It removes a `sacty` you installed earlier with `npm link` (the one for the current Node.js version). If one installed with another Node.js version remains, it may be found first in directories where that version is active. Run `npm rm -g @sacty/cli` with that version to remove it.
 - If you define `sacty` with a shell `alias`, that one is used first.
-- To remove it, run `npm uninstall -g @sacty/cli`.
+- To remove it, if you installed it with mise, remove the `sacty` line from `[tools]` in mise's user-wide settings (`~/.config/mise/config.toml`) and delete `~/.local/share/sacty/mise` (or `$XDG_DATA_HOME/sacty/mise` if you set `XDG_DATA_HOME`). If you do not use mise, delete `~/.local/bin/sacty` (or `sacty` in `SACTY_BIN_DIR` if you specified it).
 
 ## Start
 
@@ -90,7 +98,7 @@ npx sacty image build
 npx sacty up
 ```
 
-If you installed `sacty` with `npm run cli:install`, the same steps bring you to the new version (you may run `npm run cli:install` instead of `npm run build`).
+If you installed `sacty` with `npm run cli:install`, run `npm run cli:install` instead of `npm run build` (the launcher also switches when the Node.js version changes).
 
 `npm ci` reinstalls the dependencies exactly as written in `package-lock.json`. It does not rewrite `package-lock.json`, so even if you changed the npm registry in your settings, no changes are left in the working tree and the next `git pull` does not conflict.
 

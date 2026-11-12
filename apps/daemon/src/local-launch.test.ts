@@ -106,7 +106,7 @@ describe("codexLaunch", () => {
         file("agents/standard.toml", 'name = "standard"\ndescription = "段階"\n'),
         file("skills/review/SKILL.md", "# review"),
       ],
-      ["wiki", "mine"],
+      ["mine"],
       ["--model", "gpt-6-sol"],
     );
     expect(plan.command).toBe("codex");
@@ -133,6 +133,26 @@ describe("codexLaunch", () => {
       "agents/standard.toml",
       "skills/review/SKILL.md",
     ]);
+  });
+
+  it("利用者の設定と同じ名前のコンテキストの MCP サーバーは、混ざらないよう別の名前で渡し、利用者のものは止める", () => {
+    const plan = codexLaunch(
+      "/tmp/l",
+      [
+        file(
+          "config.toml",
+          '[mcp_servers.xxx]\nurl = "http://127.0.0.1:5001/ctx-mcp/xxx"\n[mcp_servers.wiki]\nurl = "http://w"\n',
+        ),
+      ],
+      ["xxx", "xxx-sacty"],
+    );
+    expect(overrides(plan.args)).toEqual([
+      'mcp_servers.xxx-sacty-2={ url = "http://127.0.0.1:5001/ctx-mcp/xxx" }',
+      'mcp_servers.wiki={ url = "http://w" }',
+      "mcp_servers.xxx.enabled=false",
+      "mcp_servers.xxx-sacty.enabled=false",
+    ]);
+    expect(plan.renamed).toEqual([{ from: "xxx", to: "xxx-sacty-2" }]);
   });
 
   it("利用者が `--` の後でサンドボックス・承認の方針を渡したら、sacty の同じ引数は渡さない（2 回渡すと Codex が起動しない）", () => {
