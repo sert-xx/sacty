@@ -2685,6 +2685,10 @@ describe("non-code workflow boundaries", () => {
     expect(prompt).toContain(
       "エラー・タイムアウト・結果不明の後に同じ書き込みを再送しないでください",
     );
+    expect(prompt).toContain("その時点で残りの書き込みも行わず、失敗として報告してください");
+    expect(prompt).toContain(
+      "成功を読み戻しで確かめた書き込み・行っていない書き込み・結果が不明な書き込み（外部では成功しているかもしれないもの）を分けて書いてください",
+    );
   });
   it("不足/不正な具体案と根拠なしの成功は受け入れない", () => {
     const read = (value: unknown) =>
