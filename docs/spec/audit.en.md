@@ -135,8 +135,8 @@ In the flow without the final review (the default when the daemon starts; [Verif
   Several times in the same task count as one.
 - A test seen in `FLAKY_KNOWN_MIN_TASKS` (3) or more tasks is known.
   - Known tests are passed to the final review prompt (only those of the task's repository).
-  - For a known test, the screen proposes a task to fix it. The screen shows the repository along with the name and file.
-- A proposal only opens the task creation dialog with the title, description, and target repository filled in.
+  - For a known test, a task to fix it is proposed (on the screen of the earlier version; the current screen does not show the ledger, so it shows no proposal either). It showed the repository along with the name and file.
+- A proposal only opened the task creation dialog with the title, description, and target repository filled in.
   No task is created until a person presses create, and the created task runs as a normal task.
   - Reading the ledger records nothing.
   - sacty does not quarantine or disable tests automatically.

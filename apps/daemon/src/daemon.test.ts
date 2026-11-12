@@ -22943,6 +22943,11 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     const child = taskOf(service, b);
     expect(child.stack?.taskId).toBe(a);
     expect(child.pullRequest).toMatchObject({ number: 8, draft: true, awaitingReview: true });
+    // 本文は、付け替えの後にレビューの子タスクが指摘なしにしてから外すと案内する（PR #348 5回目のレビュー提案）
+    const stackedBody = pulls.calls.findLast((c) => c.body.includes("に重ねています"))?.body ?? "";
+    expect(stackedBody).toContain(
+      "sacty のレビューの子タスクがこの PR をレビューします。指摘なしになると、ドラフトを外します。",
+    );
     await service.checkPullRequests();
     expect(taskOf(service, b).reviewTasks).toBeUndefined();
     // 依存先のマージの後、向き先を付け替えてもドラフトは外さず、レビューの子タスクを作る
@@ -28783,6 +28788,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         expect(ready?.payload).toMatchObject({ number: 7, commit: human });
         // 依存のある子タスクは、指摘なしにした先頭（人が足したコミット）から重ねる（PR #348 2回目のレビュー指摘）
         expect(reviewedPullRequest(taskOf(service, id))?.commit).toBe(human);
+        // 外した後の確認では、指摘なしにした先頭を再レビューしない（PR #348 5回目のレビュー提案）
+        await service.checkPullRequests();
+        expect(
+          service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted"),
+        ).toHaveLength(1);
         activity.close();
       });
 
@@ -29104,6 +29114,123 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         setDraft.mockRestore();
         await service.checkPullRequests();
         expect(pulls.drafts[7]).toBe(true);
+        activity.close();
+      });
+
+      it("ドラフトに戻す要求が終わっていなければ、指摘なしでも外さず、終わってから外す（PR #348 5回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        // ドラフトに戻す要求が、答えを待つのをやめた後も終わらない（後から GitHub に届く）
+        const late = Promise.withResolvers<void>();
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) => {
+          if (!input.draft) return original(input);
+          await late.promise;
+          return original(input);
+        });
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        // 指摘なしでも、戻す要求が終わるまでは外さない
+        await service.checkPullRequests();
+        expect(setDraft.mock.calls.some(([input]) => !input.draft)).toBe(false);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        // 戻す要求が届いて終わったら、外して記録する（外した後に戻らない）
+        late.resolve();
+        await late.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(pulls.drafts[7]).toBe(true);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("外す要求の答えを受け取れなかったことは、PR を更新した次の提出にも引き継ぎ、後から外れても戻す（PR #348 5回目のレビュー指摘）", async () => {
+        const made = await implemented(
+          [
+            verdictOut("no_findings", "# 評価\n\n問題なし"),
+            rework("implement", "実装で直せる"),
+            implement("# 実装の説明 v2"),
+          ],
+          [],
+          { draftTimeoutMs: 20 },
+        );
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        // 外す要求は答えを返さず、GitHub にも届いていない（後から届く）
+        const late = Promise.withResolvers<void>();
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) => {
+          if (input.draft) return original(input);
+          await late.promise;
+          return original(input);
+        });
+        await service.checkPullRequests();
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        // 人の指摘で直して、PR を更新する
+        pulls.feedbackBy[7] = [
+          item("comment:1", { kind: "comment", author: "alice", body: "直して" }),
+        ];
+        await service.checkPullRequests();
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        // 前の提出の外す要求が後から届いて外れても、次の確認で戻す
+        late.resolve();
+        await late.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(pulls.drafts[7]).toBe(false);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        expect(types(service, id).filter((t) => t === "PullRequestMarkedReady")).toHaveLength(0);
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("PR の更新でドラフトに戻す答えが返らなくても待ち続けず、承認待ちにして、次の確認で戻す（PR #348 5回目のレビュー指摘）", async () => {
+        const made = await implemented(
+          [
+            verdictOut("changes_required"),
+            rework("implement", "実装で直せる"),
+            implement("# 実装の説明 v2"),
+          ],
+          [],
+          { draftTimeoutMs: 20 },
+        );
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        pulls.feedbackBy[7] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        // 人がドラフトを外していた PR を、直した PR の更新でドラフトに戻す答えが返らない（GitHub でも戻っていない）
+        pulls.drafts[7] = false;
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementationOnce(() => new Promise(() => {}));
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        expect(taskOf(service, id).pullRequest?.awaitingReview).toBe(true);
+        expect(pulls.drafts[7]).toBe(false);
+        setDraft.mockImplementation(original);
+        pulls.prInfo = { ...pulls.prInfo, headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        setDraft.mockRestore();
         activity.close();
       });
 

@@ -1084,10 +1084,16 @@ export class TaskService {
    */
   private readonly redraftPending = new Set<string>();
   /**
-   * ドラフトを外す要求の答えを受け取れなかった（時間切れ・失敗）、レビューを待つ実装の PR（PBI-331。タスク ID と提出した
-   * コミット）。外す要求が後から届いてドラフトが外れるかもしれないので、指摘なしで外すまで、確認のたびにドラフトに戻す。
+   * ドラフトを外す要求の答えを受け取れなかった（時間切れ・失敗）、レビューを待つ実装の PR（PBI-331。タスク ID と PR の番号。
+   * 提出をまたいで引き継ぐ）。外す要求が後から届いてドラフトが外れるかもしれないので、指摘なしで外して記録するまで、確認の
+   * たびにドラフトに戻す。
    */
   private readonly undraftUnsettled = new Set<string>();
+  /**
+   * 答えを待つのをやめた後も、まだ終わっていないドラフトの切り替えの要求の数（PBI-331。タスク ID と PR の番号）。終わるまで
+   * ドラフトを外さない（後から届いた戻す要求で、外した PR がドラフトに戻り、記録と食い違うのを防ぐ）。
+   */
+  private readonly draftRequests = new Map<string, number>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -11155,8 +11161,12 @@ export class TaskService {
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
         // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
         if ((number || task.stack) && !draft) {
-          draft = await this.deps.pulls
-            .setDraft({ repo: prRepo, token, number: pr.number, draft: true })
+          draft = await this.setDraftWithin(task.id, {
+            repo: prRepo,
+            token,
+            number: pr.number,
+            draft: true,
+          })
             .then((r) => r.draft)
             .catch((error: unknown) => {
               draftError = error;
@@ -11519,9 +11529,14 @@ export class TaskService {
       // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
       // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
       const awaiting = gate.step === "implement" && parent.pullRequest?.awaitingReview === true;
+      // 指摘なしでドラフトを外した後は、指摘なしにした先頭（人が足したコミットを含む）と比べる（同じ先頭を再レビューしない）
+      const reviewed =
+        gate.step === "implement" && parent.pullRequest?.number === gate.number
+          ? parent.pullRequest.reviewedCommit
+          : undefined;
       const target = awaiting
         ? await this.pullRequestHead(parent, gate.repo, gate.number)
-        : gate.commit;
+        : (reviewed ?? gate.commit);
       if (!target) continue;
       const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
       // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
@@ -11566,16 +11581,13 @@ export class TaskService {
     if (task?.status !== "awaiting_approval" || this.cancelling.has(task.id)) return;
     if (!pr?.awaitingReview || pr.number !== number) return;
     const key = `${task.id}:${pr.commit}`;
-    const again = this.redraftPending.has(key) || this.undraftUnsettled.has(key);
+    const again = this.redraftPending.has(key) || this.undraftUnsettled.has(`${task.id}:${number}`);
     if (!again && this.redrafted.has(key)) return;
     if (this.readying.has(task.id)) return;
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
-      const result = await withDeadline(
-        this.deps.pulls.setDraft({ repo, token, number, draft: true }),
-        this.draftTimeoutMs(),
-      );
+      const result = await this.setDraftWithin(task.id, { repo, token, number, draft: true });
       if (result.draft) {
         this.redrafted.add(key);
         this.redraftPending.delete(key);
@@ -11589,6 +11601,26 @@ export class TaskService {
 
   private draftTimeoutMs(): number {
     return this.deps.draftTimeoutMs ?? DRAFT_TIMEOUT_MS;
+  }
+
+  /**
+   * PR のドラフトを切り替える（PBI-331）。答えは DRAFT_TIMEOUT_MS まで待ち、過ぎたら失敗にする。要求が終わるまでは、終わって
+   * いない要求として数える（draftRequests）。
+   */
+  private setDraftWithin(
+    taskId: string,
+    input: Parameters<PullRequests["setDraft"]>[0],
+  ): Promise<{ draft: boolean }> {
+    const key = `${taskId}:${input.number}`;
+    this.draftRequests.set(key, (this.draftRequests.get(key) ?? 0) + 1);
+    const request = this.deps.pulls.setDraft(input);
+    const done = () => {
+      const left = (this.draftRequests.get(key) ?? 1) - 1;
+      if (left > 0) this.draftRequests.set(key, left);
+      else this.draftRequests.delete(key);
+    };
+    request.then(done, done);
+    return withDeadline(request, this.draftTimeoutMs());
   }
 
   /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
@@ -11634,6 +11666,8 @@ export class TaskService {
       return;
     }
     if (this.readying.has(parent.id)) return;
+    // 前の切り替えの要求が終わっていなければ、終わってから外す（次の確認でやり直す）
+    if (this.draftRequests.has(`${parent.id}:${pr.number}`)) return;
     this.readying.add(parent.id);
     const { number, repo } = pr;
     const usedSecrets: string[] = [];
@@ -11648,10 +11682,7 @@ export class TaskService {
       if (token === undefined) return;
       // 戻せたと確かめられるまで、次の確認でも戻す（台帳には draft が残るため）
       this.redraftPending.add(key);
-      await withDeadline(
-        this.deps.pulls.setDraft({ repo, token, number, draft: true }),
-        this.draftTimeoutMs(),
-      )
+      await this.setDraftWithin(parent.id, { repo, token, number, draft: true })
         .then((r) => {
           if (r.draft) this.redraftPending.delete(key);
         })
@@ -11660,14 +11691,11 @@ export class TaskService {
     try {
       token = await this.githubToken(parent, repo, usedSecrets);
       try {
-        await withDeadline(
-          this.deps.pulls.setDraft({ repo, token, number, draft: false }),
-          this.draftTimeoutMs(),
-        );
+        await this.setDraftWithin(parent.id, { repo, token, number, draft: false });
       } catch (error) {
         warn("のドラフトを外せませんでした", error);
         // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す
-        this.undraftUnsettled.add(key);
+        this.undraftUnsettled.add(`${parent.id}:${number}`);
         await redraft();
         return;
       }
@@ -11705,6 +11733,7 @@ export class TaskService {
           },
         },
       ]);
+      this.undraftUnsettled.delete(`${parent.id}:${number}`);
     } catch (error) {
       warn("のドラフトを外せませんでした", error);
     } finally {

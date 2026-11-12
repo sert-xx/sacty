@@ -653,8 +653,10 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
   - After removing the draft, sacty reads the head on GitHub again. If it differs from the head with no findings or cannot be read, sacty does not record it and turns the PR back into a draft (a person added a commit while the draft was being removed; the next check has it reviewed again).
   - If the answer to the request to remove the draft is lost (the draft may have been removed on GitHub), sacty turns the PR back into a draft, does not record it, and tries again at the next check.
   - If sacty cannot turn the PR back into a draft in these cases (`draft` stays in the ledger), it tries again at every check until it confirms the PR is a draft (`redraftAwaiting`).
-  - If the answer to removing the draft is lost, the request might still arrive later, so sacty turns the PR back into a draft at every check until it removes the draft and records it after no findings.
-  - sacty waits up to `DRAFT_TIMEOUT_MS` (30 seconds) for GitHub's answers to removing or restoring the draft and to reading the head. If no answer comes, it treats the answer as lost.
+  - If the answer to removing the draft is lost, the request might still arrive later, so sacty turns the PR back into a draft at every check until it removes the draft and records it after no findings (remembered per PR and carried over to the next submission after the PR is updated).
+  - If a draft change request is still unfinished after sacty stopped waiting for its answer (`draftRequests`), sacty does not remove the draft until it finishes (so that a late request to turn it back into a draft does not turn a PR whose draft was removed back into a draft).
+  - After the draft is removed, checks compare the reviewed head with the head that got no findings (`reviewedCommit`), so the same head is not reviewed again.
+  - sacty waits up to `DRAFT_TIMEOUT_MS` (30 seconds) for GitHub's answers to removing or restoring the draft (including when updating the PR) and to reading the head. If no answer comes, it treats the answer as lost.
   - The recorded head is kept as the head with no findings (including commits a person added), and dependent child tasks stack on it (`reviewedPullRequest`).
   - A PR waiting for no findings is turned back into a draft on GitHub once after the daemon starts, whatever `draft` the ledger has (`redraftAwaiting`; for when it could not be turned back at submission, or the memory that it could not be turned back was lost on restart). If that fails, it is turned back at every check until it has no findings. Once it succeeds, sacty does not repeat it for the same submission.
   If the draft cannot be removed, nothing is recorded and the next PR check tries again. If the parent changes while removing it (request changes, a PR update), nothing is recorded.
@@ -935,8 +937,8 @@ Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerif
 
 ### A person moves it to review
 
-A task paused because verification keeps failing (`verification`) can be moved to review by a person's decision, despite the Goal Guardian's failed verdict (`submitForReview`).
-This operation is not shown on the screen (in the flow without the final review, a stopped task moves on to the PR review when resumed). Only the daemon's API remains.
+In the earlier version's flow with the final review (when the dependency `finalReview` is enabled), a task paused because verification keeps failing (`verification`) can be moved to review by a person's decision, despite the failed verdict (`submitForReview`).
+It is not used in the flow without the final review, which is the default when the daemon starts. This operation is not shown on the screen (a stopped task moves on to the PR review when resumed). Only the daemon's API remains.
 
 - It can be moved only when the task is paused for `verification` in the Implementation step and is not waiting to open the PR (`canOverrideVerification`). A task that takes over an existing PR cannot be moved (it would push the failed implementation to a person's PR, and since the PR body is not changed, the override would leave no record there). Otherwise it is refused (`override.notAllowed`; 409). If containers whose stop could not be confirmed remain, they are confirmed again first, the same as resuming.
 - Moving records `VerificationOverridden` (actor `person`) and makes the task wait to open the PR (`publishPending`), the same as passing the final review. The final review is not run again.
