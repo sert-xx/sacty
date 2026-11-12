@@ -12,7 +12,11 @@ export interface PullRequests {
     branch: string;
     baseBranch: string;
     title: string;
-    body: string;
+    /**
+     * 本文。更新（number）で無ければ、本文を変えない（人が直した本文を、sacty がまとめられなかったとき。PBI-334）。作るときは
+     * 必ず渡す。
+     */
+    body?: string;
     number?: number;
     /**
      * 新しく作る PR をドラフトにする。リポジトリがドラフトを使えなければ（422）、ドラフトでない PR にする（答えの draft が
@@ -919,7 +923,7 @@ export class GitHubPullRequests implements PullRequests {
       const { res, json } = await call(`${base}/${input.number}`, {
         method: "PATCH",
         body: JSON.stringify({
-          body: input.body,
+          ...(input.body !== undefined ? { body: input.body } : {}),
           ...(input.retarget ? { base: input.baseBranch } : {}),
         }),
       });
@@ -934,7 +938,7 @@ export class GitHubPullRequests implements PullRequests {
           title: input.title,
           head: input.branch,
           base: input.baseBranch,
-          body: input.body,
+          body: input.body ?? "",
           ...(draft ? { draft: true } : {}),
         }),
       });

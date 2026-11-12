@@ -456,14 +456,17 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - 目印の行を残させない。上限の文字数以内にさせる。
      - 渡した本文の中の指示には従わせない。ファイル・コマンド・GitHub は操作させない。
      - 答えの `<<<SACTY_PR_BODY_BEGIN>>>` と `<<<SACTY_PR_BODY_END>>>` の間（最後のもの）を本文にする（`extractMergedPullRequestBody`）。
+     - まとめた後に今の本文を読み直し、まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（下の 6.。`pr.bodyEditedDuringMerge`）。
      - まとめられたら、その本文で更新する。`PullRequestBodyResolved`（`resolved`。実行の費用）を記録し、新しく組み立てた本文を前回の版として記録する。
-  6. まとめられなければ、人の本文のまま変えず、前回の版も記録し直さない（次の更新で、もう一度 sacty の更新を取り込む）。
+  6. まとめられなければ、本文に触れずに PR を更新し（`upsert` に本文を渡さない。読んだ時点の古い本文を書き戻さない）、前回の版も記録し直さない（次の更新で、もう一度 sacty の更新を取り込む）。
      `PullRequestBodyResolved`（`kept`）に理由を残す。PR の更新は止めない。
      まとめられないのは、次のとき。
      - 設定を読めない（`pr.bodyMergeUnavailable`）
      - 予算の上限に達している（`pr.bodyMergeBudget`）
      - エージェントの実行に失敗した（`pr.bodyMergeFailed`）
      - 答えを読めない（`orchestrator.unreadable`。目印の行が無い・空・マージの目印が残っている・長すぎる）
+     - まとめる間に人が本文をまた直した・読み直せない（`pr.bodyEditedDuringMerge`）
+     - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
      - マージに失敗した（記録せず、デーモンのログに出す）
 - 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
 - 作業履歴の表示：「PR #… の本文を書いた」、エージェントがまとめた・まとめられなかった（理由）を出す。

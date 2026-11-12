@@ -327,6 +327,7 @@ import {
   buildPullRequestBodyMergePrompt,
   extractMergedPullRequestBody,
   mergePullRequestBody,
+  normalizeNewlines,
 } from "./pr-body-merge.js";
 import {
   fillTemplate,
@@ -8045,11 +8046,13 @@ export class TaskService {
         () => buildPullRequestBodyParts(this.latestTitled(task), stage),
       );
       // 人が直した本文は、3方向でマージして残す（PBI-334）
+      // 付け替えはタスクの実行の外なので、重なってもエージェントは実行しない（次のやり直しの提出でまとめる）
       const sent = await this.reconcilePullRequestBody(task, {
         repo: pr.repo,
         token,
         number: pr.number,
         generated: body,
+        agent: false,
       });
       // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
       if (!unchanged()) return;
@@ -8228,8 +8231,10 @@ export class TaskService {
    */
   private async syncPullRequestHead(
     task: Task,
+    /** 検証に通った後、PR を出す直前の取り込み（最終レビューをする流れ）。取り込んだら検証からやり直す（reverify）。 */
+    options: { reverify?: boolean } = {},
   ): Promise<
-    | { kind: "clean" }
+    | { kind: "clean"; merged?: true }
     | { kind: "conflicts"; files: string[]; fresh: boolean }
     | { kind: "failed"; message: DaemonText }
   > {
@@ -8238,7 +8243,27 @@ export class TaskService {
     // ベースブランチの取り込みの設定（テスト用の mergeBase）とは関係なく取り込む。引き継いだ人の PR は、人のブランチなので
     // 取り込まない（publishContinued が、前にプッシュしたコミットか先頭に積む）
     if (!repository || !pushed || task.continuedPullRequest) return { kind: "clean" };
-    const known = pendingHeadMerge(task)?.commit ?? pushed.commit;
+    const pending = pendingHeadMerge(task);
+    // 前の取り込みで競合した目印が残っていれば、さらに取り込まず、先に解消させる（新しい取り込みの記録で、残った目印の記録を
+    // 消さない）
+    if (pending && pending.conflicts.length > 0) {
+      try {
+        const remaining = await this.deps.repos.conflictMarkers(
+          this.repoDir(task),
+          pending.conflicts,
+        );
+        if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
+      } catch (error) {
+        return {
+          kind: "failed",
+          message: message("pr.headMergeFailed", {
+            branch: pushed.branch,
+            detail: errorText(error),
+          }),
+        };
+      }
+    }
+    const known = pending?.commit ?? pushed.commit;
     const gitDir = this.trustedGitDir(task);
     const usedSecrets: string[] = [];
     let head: string;
@@ -8269,13 +8294,19 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestHeadMerged",
-            payload: { branch: pushed.branch, from: pushed.commit, commit: head, conflicts },
+            payload: {
+              branch: pushed.branch,
+              from: pushed.commit,
+              commit: head,
+              conflicts,
+              ...(options.reverify ? { reverify: true as const } : {}),
+            },
           },
         },
       ]);
       return conflicts.length > 0
         ? { kind: "conflicts", files: conflicts, fresh: true }
-        : { kind: "clean" };
+        : { kind: "clean", merged: true };
     } catch (error) {
       return {
         kind: "failed",
@@ -11220,24 +11251,28 @@ export class TaskService {
    * - 前回の記録が無い（PBI-334 より前に書いた本文）・今の本文を読めないときは、これまでどおり generated にする
    * - 人が直していない・重ならずにマージできたら、その結果にする
    * - 同じ箇所で重なった（長さの上限を超えた）ら、オーケストレーターのエージェントにまとめさせ、PullRequestBodyResolved を記録する。
-   *   まとめられなければ（予算の上限・実行の失敗・答えを読めない）、人の本文のまま変えない
-   * record は、更新した後に generated を前回の版として記録するか（人の本文のまま変えなかったときは記録しない。次の更新で、
-   * もう一度今回の sacty の更新を取り込むため）。
+   *   まとめられなければ（予算の上限・実行の失敗・答えを読めない・まとめる間に人が本文をまた直した）、本文に触れない
+   *   （body が undefined。読んだ時点の古い本文を書き戻さない）。agent が false なら（タスクの実行の外の、向き先の付け替え）、
+   *   エージェントを実行せずに本文に触れない（次のやり直しの提出で、もう一度まとめる）
+   * record は、更新した後に generated を前回の版として記録するか（本文に触れなかったときは記録しない。次の更新で、もう一度
+   * 今回の sacty の更新を取り込むため）。
    */
   private async reconcilePullRequestBody(
     task: Task,
-    input: { repo: string; token: string; number: number; generated: string },
-  ): Promise<{ body: string; record: boolean }> {
+    input: { repo: string; token: string; number: number; generated: string; agent?: boolean },
+  ): Promise<{ body?: string; record: boolean }> {
     const generated = input.generated;
     const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
     if (base === undefined) return { body: generated, record: true };
-    let human: string;
-    try {
-      human = await this.deps.pulls.pullRequestBody({
+    const read = () =>
+      this.deps.pulls.pullRequestBody({
         repo: input.repo,
         token: input.token,
         number: input.number,
       });
+    let human: string;
+    try {
+      human = await read();
     } catch (error) {
       console.warn(
         `[daemon] PR #${input.number}（${input.repo}）の今の本文を読めないため、sacty の本文で更新します：${renderMessage(errorText(error), "ja")}`,
@@ -11249,9 +11284,9 @@ export class TaskService {
       merged = await mergePullRequestBody({ base, human, generated });
     } catch (error) {
       console.warn(
-        `[daemon] PR #${input.number}（${input.repo}）の本文をマージできないため、人の本文のまま変えません：${renderMessage(errorText(error), "ja")}`,
+        `[daemon] PR #${input.number}（${input.repo}）の本文をマージできないため、本文を変えません：${renderMessage(errorText(error), "ja")}`,
       );
-      return { body: human, record: false };
+      return { record: false };
     }
     if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {
       return { body: merged.text, record: true };
@@ -11267,8 +11302,9 @@ export class TaskService {
           },
         },
       ]);
-      return { body: human, record: false };
+      return { record: false };
     };
+    if (input.agent === false) return kept(message("pr.bodyMergeDeferred"));
     const config = this.deps.config();
     if (!config.ok) return kept(message("pr.bodyMergeUnavailable", { detail: config.problem }));
     if (budgetState(this.mustGet(task.id).budget) === "exceeded") {
@@ -11293,6 +11329,16 @@ export class TaskService {
     }
     const body = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
     if (!body) return kept(message("orchestrator.unreadable"), ran.cost);
+    // まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（次の更新で、もう一度まとめる）
+    let now: string | undefined;
+    try {
+      now = await read();
+    } catch {
+      now = undefined;
+    }
+    if (now === undefined || normalizeNewlines(now) !== normalizeNewlines(human)) {
+      return kept(message("pr.bodyEditedDuringMerge"), ran.cost);
+    }
     this.append(this.mustGet(task.id), [
       {
         actor: "orchestrator",
@@ -11411,13 +11457,18 @@ export class TaskService {
     // PR を出す直前にも、人が PR のブランチに足したコミットを取り込む（PBI-334。最終レビューの間などに足されたもの）。
     // 競合したら、PR を出さずに実装をやり直す（PR の作成の待ちなら、PullRequestHeadMerged の投影がやり直しに戻す）
     const waitingPublish = task.publishPending === true;
-    const head = await this.syncPullRequestHead(task);
+    // 最終レビューをする流れで、検証に通った後に取り込んだら、取り込んだ内容は検証していないので、検証からやり直す
+    const reverify = waitingPublish && this.finalReview;
+    const head = await this.syncPullRequestHead(task, reverify ? { reverify: true } : {});
     if (head.kind === "failed") return fail(head.message);
     if (head.kind === "conflicts") {
-      if (waitingPublish) return "stopped";
-      // 最終レビューの前のドラフトの PR（verifying）は、やり直しに戻せないので止める（再開すると、取り込んだ内容で検証する）
+      // 新しく競合したなら、PullRequestHeadMerged の投影が実装のやり直しに戻した
+      if (waitingPublish && head.fresh) return "stopped";
+      // 前の取り込みの目印が残っている・最終レビューの前のドラフトの PR（verifying）は、目印のある内容をプッシュせずに止める
       return fail(message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }));
     }
+    // 検証からやり直す（PullRequestHeadMerged の投影が、PR の作成の待ちを検証の待ちに戻した）
+    if (head.kind === "clean" && head.merged && reverify) return "stopped";
     task = this.mustGet(task.id);
     // 取り込みで競合した目印が残っていれば、目印のある内容をプッシュしない
     const unresolved = pendingHeadMerge(task)?.conflicts ?? [];
@@ -12078,12 +12129,17 @@ export class TaskService {
       ]);
       return false;
     }
-    this.append(this.mustGet(task.id), [
+    const failed = this.append(this.mustGet(task.id), [
       {
         actor: "sacty",
-        event: { type: "BaseConflictsRemained", payload: { files: synced.files, fresh: true } },
+        event: {
+          type: "BaseConflictsRemained",
+          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
+        },
       },
     ]);
+    // 前の取り込みの目印が残っているときは、検証に通らなかったものとして数える
+    if (!synced.fresh) this.pauseIfVerificationKeepsFailing(failed);
     return false;
   }
 

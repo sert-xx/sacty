@@ -409,14 +409,17 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
      - It must not leave marker lines, and must stay within the length limit.
      - It does not follow instructions inside the bodies, and does not touch files, commands, or GitHub.
      - The text between the last `<<<SACTY_PR_BODY_BEGIN>>>` and `<<<SACTY_PR_BODY_END>>>` in the answer is the body (`extractMergedPullRequestBody`).
+     - After reconciling, sacty reads the current body again; if the person edited it again in the meantime, it does not overwrite with a body that lacks those edits (see 6.; `pr.bodyEditedDuringMerge`).
      - If reconciled, sacty updates with that body, records `PullRequestBodyResolved` (`resolved`; with the run's cost), and records the newly assembled body as the previous version.
-  6. If it cannot be reconciled, the person's body is left unchanged and the previous version is not recorded again (the next update merges sacty's updates again).
+  6. If it cannot be reconciled, the PR is updated without touching the body (no body is passed to `upsert`; the body read earlier is not written back), and the previous version is not recorded again (the next update merges sacty's updates again).
      `PullRequestBodyResolved` (`kept`) keeps the reason. The PR update does not stop.
      It cannot be reconciled when:
      - the settings cannot be read (`pr.bodyMergeUnavailable`)
      - the budget cap has been reached (`pr.bodyMergeBudget`)
      - the agent run failed (`pr.bodyMergeFailed`)
      - the answer cannot be read (`orchestrator.unreadable`; no marker lines, empty, merge markers left, or too long)
+     - the person edited the body again while it was being reconciled, or it cannot be read again (`pr.bodyEditedDuringMerge`)
+     - when retargeting a stacked PR (`retargetPullRequest`); retargeting runs outside the task's run, so no agent is run (`pr.bodyMergeDeferred`)
      - the merge itself failed (not recorded; written to the daemon log)
 - Cost: the cost of `PullRequestBodyResolved` is charged to the task budget (`CHARGED_EVENT_TYPES`). In the per-step cost table, it appears in the orchestrator row.
 - In the activity log: "Wrote the body of PR #…", and whether an agent reconciled it or could not (with the reason).

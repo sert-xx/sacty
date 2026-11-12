@@ -874,23 +874,25 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   1. Fetch the tip of the branch sacty last pushed (`Task.pushedBranch`) into the moved-aside metadata (`fetchBranch`).
      If sacty has not pushed yet, do nothing.
      If it cannot fetch (for example the PR was merged and the branch deleted), continue without merging and write the reason to the daemon log.
-  2. If the tip equals the commit sacty last pushed (or the tip of a merge not yet submitted, if any; `pendingHeadMerge`), do nothing.
-  3. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
+  2. If markers remain in the files that conflicted in a merge not yet submitted (`pendingHeadMerge`), do not merge further and return those files (so that a new merge record does not erase the record of the remaining markers).
+  3. If the tip equals the commit sacty last pushed (or the tip of a merge not yet submitted, if any), do nothing.
+  4. Otherwise, three-way merge the workspace contents and the tip, with the commit sacty last pushed as the common ancestor (`mergeBase`; the same mechanism and limit as merging the base branch).
      The requirements and design files carried over from the task branch (`path` of `stepPullRequests`) are removed from the trees on both sides before merging (`exclude` of `mergeBase`).
      Those paths in the workspace are not changed (the task branch's version is carried over when submitting).
-  4. Record `PullRequestHeadMerged` (the branch, sacty's commit before the merge, the merged tip, and every conflicted file).
+  5. Record `PullRequestHeadMerged` (the branch, sacty's commit before the merge, the merged tip, and every conflicted file).
      `Task.headMerge` holds the last merge.
      While sacty has not yet stacked on that tip (`from` is the currently pushed commit, on the same branch), it is a merge not yet submitted (`pendingHeadMerge`).
      Because the merge changes the workspace contents, the implementation step's verification result (`implementVerification`) is discarded, and while waiting for verification, the previous CI result is discarded too.
      It is cleared when the workspace is prepared again for a newly chosen base branch (`RepositoryPrepared`).
 - On conflicts:
   - Before the implementation run, the conflicted files are passed to the implementation instructions (see "Implementation instructions" below).
-  - Before the final review or before opening the PR, record `BaseConflictsRemained` (`fresh`; not counted) and redo the implementation.
+  - Before the final review or before opening the PR, record `BaseConflictsRemained` and redo the implementation. A new conflict is not counted (`fresh`); remaining markers from the previous merge are counted.
   - Right before publishing (waiting to open the PR; `publishPending`), the PR is not opened; the conflicted files become `verifyFeedback` (`merge`) and the implementation is redone (the projection of `PullRequestHeadMerged`; not counted).
     For the draft PR before the final review (`verifying`), the task pauses (`pr.headConflicted`).
   - Whether markers remain is checked the same way as for the base branch merge (`pendingConflicts` is the conflicted files of the base branch merge and of the merge not yet submitted, together).
     If markers from the merge not yet submitted remain right before publishing, sacty does not push and pauses (`pr.headConflicted`).
   - If it cannot merge, it pauses with the reason (`pr.headMergeFailed`).
+- In the flow with the final review, when the merge right before publishing (after passing the final review, while waiting to open the PR) merges without conflicts, the merged contents have not been verified, so the PR is not opened; the task goes back to waiting for verification and the final review is redone (`reverify` of `PullRequestHeadMerged`).
 - Submitting (`publish`):
   - If there is a merge not yet submitted, stack with the merged tip as the parent (otherwise, as before, the previously pushed commit).
     Because it stacks on the person's tip, the push is a fast-forward.
@@ -901,7 +903,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   If files conflicted, they give the list, that the part above the marker is the implementation side and the part below is the person's side, and to keep the person's changes while removing every marker line.
   Conflicts with the base branch are passed in a separate section as before (`baseConflictLines`).
   When the previous verification found markers only in files that conflicted in the person's merge, the heading is "前回の検証：人が PR に足したコミットとの競合の目印が残っていました" (`feedbackLines`).
-- Final review instructions (`headMergeReviewLines`): they say that sacty merged the commits, that the diff includes the person's changes, not to fail them as out-of-scope or excessive, to check that the code and tests pass including those changes, and to check that the conflict resolution did not remove the person's changes.
+- Final review instructions (`headMergeReviewLines`): if sacty has merged such commits (`Task.headMerge`; the final review's diff starts from the workspace's starting point, so it includes the person's changes even after sacty stacked on the merged tip and pushed), they say that sacty merged the commits, that the diff includes the person's changes, not to fail them as out-of-scope or excessive, to check that the code and tests pass including those changes, and to check that the conflict resolution did not remove the person's changes.
 - In the activity log: "Merged the commits a person added to the PR branch … (…) into the workspace", with the number of conflicted files and the first five.
 
 Code: `apps/daemon/src/service.ts` (`syncPullRequestHead`, `syncBase`, `headSyncedBeforePublish`, `conflictsResolved`, `publish`, `pendingConflicts`), `apps/daemon/src/repository.ts` (`mergeBase`), `apps/daemon/src/prompts.ts` (`mergeConflictLines`, `headMergeLines`, `baseConflictLines`, `headMergeReviewLines`, `feedbackLines`), `packages/core/src/events.ts` (`PullRequestHeadMerged`), `packages/core/src/projection.ts` (`headMerge`, `pendingHeadMerge`), `apps/web/src/lib/labels.ts`

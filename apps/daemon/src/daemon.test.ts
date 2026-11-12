@@ -753,8 +753,9 @@ class FakePulls implements PullRequests {
     }
     this.calls.push(input);
     const number = input.number ?? this.nextNumber++;
-    // GitHub と同じく、書いた本文を今の本文にする（PBI-334）
-    this.bodies[number] = input.body;
+    // GitHub と同じく、書いた本文を今の本文にする（本文を渡さない更新では変えない。PBI-334）
+    if (input.body !== undefined) this.bodies[number] = input.body;
+    this.bodyWrites += 1;
     // ドラフトを使えないリポジトリ（draftUnsupported）なら、ドラフトでない PR にする
     const draft = input.number
       ? (this.drafts[number] ?? false)
@@ -765,9 +766,16 @@ class FakePulls implements PullRequests {
   /** PR ごとの、GitHub の今の本文（upsert で書いたもの。人が直したことは、テストで書き換えて表す。PBI-334）。 */
   bodies: Record<number, string> = {};
   bodyFail?: string;
+  bodyWrites = 0;
+  /** あれば、本文を読むたびに呼ぶ（読んだ回数を渡す。本文の読み取りの後に人がまた直したことを表す。PBI-334）。 */
+  onBodyRead?: (reads: number) => void;
+  bodyReads = 0;
   async pullRequestBody(input: { repo: string; token: string; number: number }) {
     if (this.bodyFail) throw new Error(this.bodyFail);
-    return this.bodies[input.number] ?? "";
+    this.bodyReads += 1;
+    const body = this.bodies[input.number] ?? "";
+    this.onBodyRead?.(this.bodyReads);
+    return body;
   }
   /** PR ごとの、ドラフトか。 */
   drafts: Record<number, boolean> = {};
@@ -4413,6 +4421,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ]);
       expect(repos.published.at(-1)).toMatchObject({ parent: human, branch: pushed.branch });
       expect(types(service, id)).toContain("FinalReviewSkipped");
+      activity.close();
+    });
+
+    it("最終レビューをしない流れで、前の人のコミットとの競合の目印が残っていれば、実装の間に新しく足されたコミットを取り込まず、目印の解消を先にさせる（PBI-334）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), HOLD, implement("# 実装 v3")],
+        { repos, finalReview: false },
+      );
+      await drain(service);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      // 人がコミットを足し、実装のやり直しの前の取り込みで競合した
+      repos.remote[pushed.branch] = "d".repeat(40);
+      repos.mergeResult = { status: "conflicted", conflicts: ["src/retry.ts"] };
+      repos.markers = ["src/retry.ts"];
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      // 実装の間に、人がさらにコミットを足した（今度は競合しない）。エージェントは目印を消さずに提出する
+      repos.remote[pushed.branch] = "e".repeat(40);
+      repos.mergeResult = { status: "merged", conflicts: [] };
+      executor.finishHeld(runId, implement("# 実装 v2"));
+      await running;
+      await service.runNext(id);
+      // 新しい先頭は取り込まない（取り込むと、残った目印の記録が消えて、目印のまま PR を出してしまう）
+      expect(
+        service
+          .get(id)
+          ?.activity.filter((e) => e.type === "PullRequestHeadMerged")
+          .map((e) => (e.payload as { commit: string }).commit),
+      ).toEqual(["d".repeat(40)]);
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(repos.published).toHaveLength(1);
       activity.close();
     });
 
@@ -13211,6 +13253,47 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("最終レビューの間に人がコミットを足したら、PR を出す直前に取り込み、PR を出さずに取り込んだ内容で最終レビューをやり直す", async () => {
+      const [fixed, reviewed] = rework();
+      if (!fixed || !reviewed) throw new Error("no outcomes");
+      const { activity, service, executor, repos, pulls, id } = await toImplementGate([
+        fixed,
+        HOLD,
+        reviewed,
+      ]);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      sendBack(service, id);
+      const running = drain(service);
+      const runId = await executor.started.promise;
+      // 最終レビューの間に、人がコミットを足した
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      executor.finishHeld(runId, reviewed);
+      await running;
+      await drain(service);
+      const merged = eventsOf(service, id, "PullRequestHeadMerged");
+      expect(merged.map((e) => e.payload)).toEqual([
+        {
+          branch: pushed.branch,
+          from: pushed.commit,
+          commit: human,
+          conflicts: [],
+          reverify: true,
+        },
+      ]);
+      // 最終レビューを、取り込んだ内容でもう一度行ってから、人の先頭に積んで PR を更新する
+      const names = types(service, id);
+      expect(names.slice(names.indexOf("PullRequestHeadMerged"))).toContain("FinalReviewed");
+      expect(promptOf(executor, executor.calls.length - 1)).toContain(
+        "--- 人が PR に足したコミットの取り込み ---",
+      );
+      expect(repos.published.at(-1)).toMatchObject({ parent: human });
+      expect(pulls.calls).toHaveLength(2);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
     it("人のコミットと競合したら、競合したファイルを、人の側を残して解消するよう実装に渡す", async () => {
       const { activity, service, executor, repos, id } = await toImplementGate(rework());
       const pushed = service.get(id)?.task.pushedBranch;
@@ -13243,9 +13326,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const first = pulls.calls[0]?.body ?? "";
       // 人が、GitHub の画面で本文の先頭に補足を足した（画面で直した本文は CRLF になる）
       pulls.bodies[7] = `> 人のメモ：リリースノートに載せる\r\n\r\n${first.replace(/\n/g, "\r\n")}`;
+      const before = executor.calls.length;
       sendBack(service, id);
       await drain(service);
-      const runs = executor.calls.length;
+      // 実行は、実装のやり直しと最終レビューの2回だけ（本文をまとめるエージェントは実行しない）
+      expect(executor.calls.length).toBe(before + 2);
+      expect(executor.calls.some((_, i) => promptOf(executor, i).includes("githubNow"))).toBe(
+        false,
+      );
       const updated = pulls.calls[1]?.body ?? "";
       expect(updated.startsWith("> 人のメモ：リリースノートに載せる\n\n")).toBe(true);
       // sacty の更新（新しい head・直しの再発の確認）も入る
@@ -13253,7 +13341,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(updated).toContain("implement-1-1：再発なし");
       expect(updated).not.toContain("\r");
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
-      expect(executor.calls.length).toBe(runs);
       // 前回の版としては、sacty が組み立てた本文（人の補足を含まない）を記録する
       const recorded = service.get(id)?.task.pullRequestBodies?.["https://github.com/acme/app#7"];
       expect(recorded).toBeDefined();
@@ -13290,7 +13377,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       pulls.bodies[7] = "人が全部書き直した本文";
       sendBack(service, id);
       await drain(service);
-      expect(pulls.calls[1]?.body).toBe("人が全部書き直した本文");
+      // 本文は渡さずに更新する（読んだ時点の本文を書き戻さない）
+      expect(pulls.calls[1]).toBeDefined();
+      expect(pulls.calls[1]?.body).toBeUndefined();
+      expect(pulls.bodies[7]).toBe("人が全部書き直した本文");
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
         { payload: { number: 7, outcome: "kept" } },
       ]);
@@ -13299,6 +13389,33 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       );
       // PR の更新は止めない（承認待ちに進む）
       expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
+    it("エージェントがまとめる間に人が本文をまた直したら、まとめた本文で上書きせず、本文に触れない", async () => {
+      const merged = "## まとめた本文";
+      const { activity, service, pulls, id } = await toImplementGate([
+        ...rework(),
+        out(`${BODY_BEGIN}\n${merged}\n${BODY_END}`),
+      ]);
+      pulls.bodies[7] = "人が全部書き直した本文";
+      // 1回目の読み取り（マージの前）の後に、人がもう一度直した
+      pulls.onBodyRead = (reads) => {
+        if (reads === 1) pulls.bodies[7] = "人がもう一度直した本文";
+      };
+      sendBack(service, id);
+      await drain(service);
+      expect(pulls.calls[1]?.body).toBeUndefined();
+      expect(pulls.bodies[7]).toBe("人がもう一度直した本文");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        { payload: { number: 7, outcome: "kept" } },
+      ]);
+      expect(
+        ja(
+          (eventsOf(service, id, "PullRequestBodyResolved")[0]?.payload as { reason?: unknown })
+            .reason,
+        ),
+      ).toContain("人が PR の本文をまた直した");
       activity.close();
     });
 

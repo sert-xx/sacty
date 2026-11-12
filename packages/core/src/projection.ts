@@ -1836,6 +1836,12 @@ export function applyEvent(
       if (task.publishPending && event.payload.conflicts.length > 0) {
         task.publishPending = undefined;
         task.verifyFeedback = { kind: "merge", files: event.payload.conflicts };
+      } else if (task.publishPending && event.payload.reverify) {
+        // 検証に通った後に取り込んだ内容は検証していないので、PR を出さずに検証（最終レビュー）からやり直す
+        task.publishPending = undefined;
+        task.verification = "pending";
+        task.status = "idle";
+        task.pullRequestCi = undefined;
       }
       break;
 

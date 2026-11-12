@@ -3895,6 +3895,22 @@ describe("人が PR のブランチに足したコミットの取り込みと、
     expect(clean?.verifyFeedback).toBeUndefined();
   });
 
+  it("最終レビューをする流れで、検証に通った後に取り込んだら（reverify）、PR を出さずに検証の待ちに戻す", () => {
+    seq = 0;
+    const events = [...prepared("t1"), ...verifiedImplementation("t1"), pushed("t1", "p1")];
+    const task = project([
+      ...events,
+      ev("t1", {
+        type: "PullRequestHeadMerged",
+        payload: { branch: "sacty/t", from: "p1", commit: "h1", conflicts: [], reverify: true },
+      }),
+    ]).get("t1");
+    expect(task?.publishPending).toBeUndefined();
+    expect(task?.verification).toBe("pending");
+    expect(task?.status).toBe("idle");
+    expect(task && pendingHeadMerge(task)?.commit).toBe("h1");
+  });
+
   it("sacty が組み立てた PR の本文を、PR ごとに最後のものだけ記録する", () => {
     seq = 0;
     const written = (number: number, body: string) =>

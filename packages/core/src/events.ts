@@ -1465,6 +1465,11 @@ const PullRequestHeadMerged = z.object({
     from: z.string().min(1),
     commit: z.string().min(1),
     conflicts: z.array(z.string().min(1)).max(MAX_BASE_CONFLICTS),
+    /**
+     * 検証（最終レビュー）に通った後、PR を出す直前に取り込んだ（最終レビューをする流れ）。取り込んだ内容は検証していないので、
+     * PR を出さずに検証からやり直す。
+     */
+    reverify: z.literal(true).optional(),
   }),
 });
 

@@ -4756,10 +4756,11 @@ function baseMergeLines(task: Task): string[] {
 
 /**
  * 人が PR のブランチに足したコミットを作業領域に取り込んだタスクで、最終レビューに、差分の中の人の変更の扱いを伝える
- * （PBI-334）。人の変更は範囲外の変更として不合格にしない。
+ * （PBI-334）。人の変更は範囲外の変更として不合格にしない。最終レビューの差分は作業領域の起点からなので、取り込んだ後は
+ * （ドラフトの PR をプッシュして、まだ提出していない取り込みでなくなっても）ずっと人の変更を含む。最後の取り込みで伝える。
  */
 function headMergeReviewLines(task: Task): string[] {
-  const head = pendingHeadMerge(task);
+  const head = task.headMerge;
   if (!head) return [];
   return [
     "--- 人が PR に足したコミットの取り込み ---",
