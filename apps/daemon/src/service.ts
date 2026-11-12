@@ -724,6 +724,11 @@ export type ServiceDeps = {
    * REVIEW_CI_TIMEOUT_MS。超えたら、読めなかったものとしてレビューを続ける。
    */
   reviewCiTimeoutMs?: number;
+  /**
+   * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（ミリ秒。PBI-331）。既定は
+   * DRAFT_TIMEOUT_MS。超えたら、答えを受け取れなかったものとして扱う。
+   */
+  draftTimeoutMs?: number;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /**
@@ -1002,6 +1007,26 @@ export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
 export const REVIEW_CI_TIMEOUT_MS = 30_000;
 
 /**
+ * レビューを待つ実装の PR のドラフトを外す・戻す・先頭を読むときに、GitHub の答えを待つ上限（PBI-331）。GitHub が答えないまま
+ * 待ち続けて、ドラフトに戻すことも次の確認もできなくなるのを防ぐ（過ぎたら、答えを受け取れなかったものとして扱う）。
+ */
+export const DRAFT_TIMEOUT_MS = 30_000;
+
+/** 答えが ms のうちに返らなければ、時間切れの失敗にする（PBI-331）。時間切れの後に届いた失敗は知らせない。 */
+async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  promise.catch(() => {});
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${ms} ミリ秒のうちに答えが返りませんでした`)), ms);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * コンテキストのイメージ（PBI-325）を作り終えるのを、タスクが待つ上限（60分）。イメージの作成（OS のパッケージやブラウザの
  * 導入など）には時間がかかるので長めにする。過ぎたら、理由を示して止める。
  */
@@ -1049,8 +1074,8 @@ export class TaskService {
   /** PR のレビューの子タスクの指摘なしで、ドラフトを外している最中のタスク（PBI-331）。 */
   private readonly readying = new Set<string>();
   /**
-   * 提出のときにドラフトに戻せず、レビューの確認でドラフトに戻せた、レビューを待つ実装の PR（PBI-331。タスク ID と提出した
-   * コミット）。同じ提出では、もう戻さない。
+   * このデーモンの起動の後に、レビューの確認でドラフトに戻せた、レビューを待つ実装の PR（PBI-331。タスク ID と提出した
+   * コミット）。同じ提出では、もう戻さない（再起動の後は、台帳の draft にかかわらず1回戻す）。
    */
   private readonly redrafted = new Set<string>();
   /**
@@ -1058,6 +1083,11 @@ export class TaskService {
    * draft が残るので、GitHub でドラフトに戻せたと確かめられるまで、確認のたびに戻す。
    */
   private readonly redraftPending = new Set<string>();
+  /**
+   * ドラフトを外す要求の答えを受け取れなかった（時間切れ・失敗）、レビューを待つ実装の PR（PBI-331。タスク ID と提出した
+   * コミット）。外す要求が後から届いてドラフトが外れるかもしれないので、指摘なしで外すまで、確認のたびにドラフトに戻す。
+   */
+  private readonly undraftUnsettled = new Set<string>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -11524,9 +11554,10 @@ export class TaskService {
   }
 
   /**
-   * 指摘なしを待つ実装の PR を、台帳にドラフトの記録が無い（提出のときに戻せなかった）か、ドラフトを外した後に戻せなかった
-   * （redraftPending。台帳には draft が残る）なら、ドラフトに戻す（PBI-331）。戻せたら、同じ提出では繰り返さない。戻せなければ、
-   * 次の確認でやり直す。
+   * 指摘なしを待つ実装の PR を、ドラフトに戻す（PBI-331）。台帳の draft は、戻せなかった・外す要求が後から届いたなどで GitHub と
+   * 違うことがあり、戻せなかったことの記憶（redraftPending）は再起動で消えるので、起動の後に1回は GitHub で戻す。戻せたら、同じ
+   * 提出では繰り返さない（redrafted）。ただし、ドラフトを外した後に戻せなかった（redraftPending）・外す要求の答えを受け取れな
+   * かった（undraftUnsettled）ときは、確認のたびに戻す。戻せなければ、次の確認でやり直す。
    */
   private async redraftAwaiting(parent: Task, repo: string, number: number): Promise<void> {
     // 先頭を読む間に変わっていれば、今の記録で判断する
@@ -11535,13 +11566,16 @@ export class TaskService {
     if (task?.status !== "awaiting_approval" || this.cancelling.has(task.id)) return;
     if (!pr?.awaitingReview || pr.number !== number) return;
     const key = `${task.id}:${pr.commit}`;
-    const pending = this.redraftPending.has(key);
-    if (!pending && (pr.draft || this.redrafted.has(key))) return;
+    const again = this.redraftPending.has(key) || this.undraftUnsettled.has(key);
+    if (!again && this.redrafted.has(key)) return;
     if (this.readying.has(task.id)) return;
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
-      const result = await this.deps.pulls.setDraft({ repo, token, number, draft: true });
+      const result = await withDeadline(
+        this.deps.pulls.setDraft({ repo, token, number, draft: true }),
+        this.draftTimeoutMs(),
+      );
       if (result.draft) {
         this.redrafted.add(key);
         this.redraftPending.delete(key);
@@ -11553,6 +11587,10 @@ export class TaskService {
     }
   }
 
+  private draftTimeoutMs(): number {
+    return this.deps.draftTimeoutMs ?? DRAFT_TIMEOUT_MS;
+  }
+
   /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
   private async pullRequestHead(
     task: Task,
@@ -11562,7 +11600,10 @@ export class TaskService {
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
-      const status = await this.deps.pulls.status({ repo, token, number });
+      const status = await withDeadline(
+        this.deps.pulls.status({ repo, token, number }),
+        this.draftTimeoutMs(),
+      );
       return status.state === "open" ? status.headSha : undefined;
     } catch (error) {
       console.warn(
@@ -11578,7 +11619,8 @@ export class TaskService {
    * ときだけ記録する。外せなければ、記録せずに次の確認でやり直す。次のときは記録せず、まだレビューを待つ PR ならドラフトに戻す。
    * - 外す間にタスクが変わった（差し戻し・PR の更新。外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）
    * - 外した後の GitHub の先頭が、指摘なしにした先頭と違う・読めない（外す間に人がコミットを足した。次の確認で再レビューする）
-   * - 外す要求の答えを受け取れなかった（GitHub では外れているかもしれない）
+   * - 外す要求の答えを受け取れなかった（GitHub では外れているかもしれない。時間切れも。外す要求が後から届くかもしれないので、
+   *   指摘なしで外すまで確認のたびに戻す）
    */
   private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
     const pr = parent.pullRequest;
@@ -11606,8 +11648,10 @@ export class TaskService {
       if (token === undefined) return;
       // 戻せたと確かめられるまで、次の確認でも戻す（台帳には draft が残るため）
       this.redraftPending.add(key);
-      await this.deps.pulls
-        .setDraft({ repo, token, number, draft: true })
+      await withDeadline(
+        this.deps.pulls.setDraft({ repo, token, number, draft: true }),
+        this.draftTimeoutMs(),
+      )
         .then((r) => {
           if (r.draft) this.redraftPending.delete(key);
         })
@@ -11616,9 +11660,14 @@ export class TaskService {
     try {
       token = await this.githubToken(parent, repo, usedSecrets);
       try {
-        await this.deps.pulls.setDraft({ repo, token, number, draft: false });
+        await withDeadline(
+          this.deps.pulls.setDraft({ repo, token, number, draft: false }),
+          this.draftTimeoutMs(),
+        );
       } catch (error) {
         warn("のドラフトを外せませんでした", error);
+        // 外す要求が後から届くかもしれないので、指摘なしで外すまで確認のたびに戻す
+        this.undraftUnsettled.add(key);
         await redraft();
         return;
       }

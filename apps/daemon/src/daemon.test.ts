@@ -1319,6 +1319,8 @@ function makeService(
     finalReview?: boolean;
     /** レビューの子タスクが CI を読むのを待つ上限（ミリ秒。PBI-331）。 */
     reviewCiTimeoutMs?: number;
+    /** ドラフトを外す・戻す・先頭を読む答えを待つ上限（ミリ秒。PBI-331）。 */
+    draftTimeoutMs?: number;
     /** メモリーを書き出す（PBI-126）。既定は書き出さない。 */
     memory?: boolean;
     /** 階層ごとのメモリーの件数の上限（PBI-126）。 */
@@ -1396,6 +1398,7 @@ function makeService(
     ...(options.reviewTasks ? { reviewTasks: true } : {}),
     ...(options.finalReview === false ? { finalReview: false } : {}),
     ...(options.reviewCiTimeoutMs ? { reviewCiTimeoutMs: options.reviewCiTimeoutMs } : {}),
+    ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
     ...(options.containerMounts ? { containerMounts: options.containerMounts } : {}),
@@ -27011,6 +27014,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       finalReview?: boolean;
       /** レビューの子タスクが CI を読むのを待つ上限（ミリ秒。PBI-331）。 */
       reviewCiTimeoutMs?: number;
+      /** ドラフトを外す・戻す・先頭を読む答えを待つ上限（ミリ秒。PBI-331）。 */
+      draftTimeoutMs?: number;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -27024,6 +27029,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ...(options.reviewTasks ? { reviewTasks: true } : {}),
       ...(options.finalReview === false ? { finalReview: false } : {}),
       ...(options.reviewCiTimeoutMs ? { reviewCiTimeoutMs: options.reviewCiTimeoutMs } : {}),
+      ...(options.draftTimeoutMs ? { draftTimeoutMs: options.draftTimeoutMs } : {}),
       now: later,
       pulls,
       repos,
@@ -28608,7 +28614,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           },
         }) as unknown as ServiceDeps["ci"];
       /** 実装だけのタスクを、実装の PR を作って承認待ちになるまで進める。 */
-      async function implemented(outcomes: AgentOutcome[], ciCalls: string[] = []) {
+      async function implemented(
+        outcomes: AgentOutcome[],
+        ciCalls: string[] = [],
+        extra: { draftTimeoutMs?: number } = {},
+      ) {
         const pulls = new FakePulls();
         const made = await start([implement(), ...outcomes], {
           pulls,
@@ -28616,6 +28626,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           reviewTasks: true,
           finalReview: false,
           ci: failingCi(ciCalls),
+          ...extra,
         });
         const { service, id } = made;
         for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
@@ -29000,6 +29011,99 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         await service.checkPullRequests();
         expect(again).not.toHaveBeenCalled();
         again.mockRestore();
+        activity.close();
+      });
+
+      it("外した後に戻せなかったドラフトは、再起動して戻せなかったことを忘れても、台帳の draft にかかわらず戻す（PR #348 4回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        // 外す間に人がコミットを足し、ドラフトに戻す要求も失敗した
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) => {
+          if (input.draft) throw new Error("502");
+          pulls.drafts[input.number] = false;
+          pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
+          return { draft: false };
+        });
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(taskOf(service, id).pullRequest?.draft).toBe(true);
+        setDraft.mockRestore();
+        made.activity.close();
+        // 再起動すると、戻せなかったことの記憶は消えるが、台帳の draft にかかわらず戻す
+        const activity = new SqliteActivityStore(dbPath);
+        const restarted = makeService(activity, [], {
+          stepPullRequests: true,
+          pulls,
+          reviewTasks: true,
+          finalReview: false,
+          now: later,
+          ci: failingCi(),
+          draftPullRequests: true,
+        }).service;
+        expect(taskOf(restarted, id).pullRequest?.draft).toBe(true);
+        await restarted.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        expect(types(restarted, id)).not.toContain("PullRequestMarkedReady");
+        activity.close();
+      });
+
+      it("ドラフトを外す答えが返らなくても待ち続けず、ドラフトに戻す。外す要求が後から届いても、指摘なしで外すまで確認のたびに戻す（PR #348 4回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        // レビューの前の確認で、一度ドラフトに戻してある（同じ提出では、もう戻さない状態）
+        await service.checkPullRequests();
+        await runReview(service, childId);
+        // GitHub は外したが、答えを返さない
+        const original = pulls.setDraft.bind(pulls);
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) => {
+          if (input.draft) return original(input);
+          pulls.drafts[input.number] = false;
+          return new Promise(() => {});
+        });
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        // 外す要求が後から届いて外れた後に、人がコミットを足しても（指摘なしでない先頭）、次の確認で戻す
+        pulls.drafts[7] = false;
+        pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        setDraft.mockRestore();
+        activity.close();
+      });
+
+      it("外した後にドラフトに戻す答えが返らなくても待ち続けず、次の確認で戻す（PR #348 4回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 20,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        // 外す間に人がコミットを足し、ドラフトに戻す要求は答えを返さない（GitHub でも戻っていない）
+        const setDraft = vi.spyOn(pulls, "setDraft");
+        setDraft.mockImplementation(async (input) => {
+          if (input.draft) return new Promise(() => {});
+          pulls.drafts[input.number] = false;
+          pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
+          return { draft: false };
+        });
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        setDraft.mockRestore();
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
         activity.close();
       });
 
