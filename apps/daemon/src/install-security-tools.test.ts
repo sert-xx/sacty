@@ -1,6 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,9 +48,12 @@ function run(
     chmodSync(join(bin, name), 0o755);
   };
   writeFileSync(join(assets, "osv-scanner_linux_amd64"), "osv");
-  writeFileSync(join(dir, "gitleaks"), "gitleaks");
   const tarball = "gitleaks_8.30.1_linux_x64.tar.gz";
-  execFileSync("tar", ["-czf", join(assets, tarball), "-C", dir, "gitleaks"]);
+  // 同じ場所で続けて実行するときは、前に作った tar を使い回す（作り直すと、tar に入る更新日時でハッシュが変わるため）
+  if (!existsSync(join(assets, tarball))) {
+    writeFileSync(join(dir, "gitleaks"), "gitleaks");
+    execFileSync("tar", ["-czf", join(assets, tarball), "-C", dir, "gitleaks"]);
+  }
   // 取得元のリリースにハッシュのファイルを置いても、それでは確かめない（スクリプトに固定したハッシュで確かめる）
   writeFileSync(join(assets, "osv-scanner_SHA256SUMS"), "0  osv-scanner_linux_amd64\n");
   const osvSha = sha256(join(assets, "osv-scanner_linux_amd64"));

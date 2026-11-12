@@ -22,10 +22,10 @@
 
 - build-arg は、使う手順の直前で宣言する。セキュリティの検査の道具を draw.io より前に動かし、`SACTY_DRAWIO` の後ろに重い手順を置かない
   （エージェントの CLI は版をよく上げるので、draw.io より後のまま）。
-- `drawio-shim.cjs` は、draw.io を入れる手順と別に、`gh` の代わりの後で写す。
+- `drawio-shim.cjs` は、draw.io を入れる手順と別に、エージェントの CLI の後・`packages`・`run` の前で写す（`run` から `drawio` を使えるように）。
 - git・作業用の CLI・セキュリティの検査の道具・draw.io の手順は、BuildKit の cache マウント（`id=sacty-build-cache`、`sharing=locked`）を
   `with-build-cache.sh` を通して使う。
-  - apt-get の `.deb` は `APT_CONFIG` の `Dir::Cache::Archives` でマウントの中に置く。Debian・Ubuntu の公式のイメージの `docker-clean` は
+  - apt-get の `.deb` は `APT_CONFIG` の `Dir::Cache::Archives` でマウントの中に置く。元のイメージの `APT_CONFIG` は `#include` で引き継ぐ。Debian・Ubuntu の公式のイメージの `docker-clean` は
     `/var/cache/apt/archives` の `.deb` を消すので、場所を変える。パッケージの一覧は置かない（毎回 `apt-get update` で取る）。30 日を過ぎた `.deb` は消す。
   - draw.io・セキュリティの道具の取得物は、道具と版ごとの場所に置き、スクリプトに固定した SHA-256 と合うときだけ使う。
 - エージェントの CLI の npm のキャッシュを、消す一時の場所から cache マウント（`id=sacty-npm-cache`）に移す。

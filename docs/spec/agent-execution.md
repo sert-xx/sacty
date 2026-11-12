@@ -301,13 +301,14 @@
   - secret の中身は BuildKit のキャッシュの判定に入らない。
     そのため、中身のハッシュ（`NPM_CONFIG_HASH`・`SACTY_SETUP_HASH`）を build-arg で渡し、変えたときに作り直されるようにする。
   - ビルドのキャッシュ
-    - 手順は、変わりにくく重いものから並べる（git → 作業用の CLI → セキュリティの検査の道具 → draw.io → エージェントの CLI → npm の設定 → `packages`・`run` → `gh` の代わり・`drawio` の包むスクリプト → `maven_mirror`）。
+    - 手順は、変わりにくく重いものから並べる（git → 作業用の CLI → セキュリティの検査の道具 → draw.io → エージェントの CLI → npm の設定 → `drawio` の包むスクリプト → `packages`・`run` → `gh` の代わり → `maven_mirror`）。
     - build-arg（`NPM_VERSION`・`SACTY_DRAWIO`・`MAVEN_MIRROR`）は、使う手順の直前で宣言する。
       宣言より後の手順は、使わなくても値が変わると作り直されるため（`npm_version` を変えても、作業用の CLI・draw.io・セキュリティの道具は作り直さない）。
-    - `drawio-shim.cjs` は draw.io の本体を入れる手順とは別に、`gh` の代わりの後で写す（直しても draw.io を入れ直さない）。
+    - `drawio-shim.cjs` は、draw.io の本体を入れる手順と別に、エージェントの CLI の後・`packages`・`run` の前で写す（直しても draw.io とエージェントの CLI を入れ直さず、`run` から `drawio` を使える）。
     - 作業用の CLI・セキュリティの検査の道具・draw.io・git の手順は、BuildKit の cache マウント（`id=sacty-build-cache`、`/var/cache/sacty-build`、`sharing=locked`）を `packages/cli/docker/with-build-cache.sh` を通して使う。
       中身はイメージの層に残らず、元のイメージが違うイメージ（言語ごとのイメージ）の間でも共有する。
       - apt-get が取得した `.deb` を `/var/cache/sacty-build/apt` に置く（`APT_CONFIG` の `Dir::Cache::Archives`）。
+        元のイメージが `APT_CONFIG` を設定していれば、そのファイルを `#include` で読み込んでから足す（プロキシなどの設定を引き継ぐ）。
         パッケージの一覧は置かず、毎回 `apt-get update` で取る。
         置いてから 30 日を過ぎた `.deb` は、手順の始めに消す。
       - draw.io・`osv-scanner`・`gitleaks` の取得物を `/var/cache/sacty-build/downloads/<道具>/<版>/` に置く（`SACTY_DOWNLOAD_CACHE`）。

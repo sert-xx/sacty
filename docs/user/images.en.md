@@ -138,6 +138,7 @@ npx sacty image build java17     # build by name (default is the default image)
 
 - sacty adds git, Claude Code, and Codex to the base image and runs as the `node` user.
   - If the base image has Node.js 18 or later and npm, sacty uses them; otherwise it copies them from `node_image`. It looks for npm in `npm root -g`, `/usr/local/lib/node_modules`, and `/usr/lib/node_modules`.
+  - If the copied Node.js does not run (for example, a plain image such as `ubuntu:24.04` lacks shared libraries), sacty installs `libatomic` and `libstdc++` with whichever of apt-get, dnf, microdnf, or yum the base image has. If it still does not run, the build stops with the reason ("写した Node.js … が、元のイメージで動きません"). In that case, set `node_image` to a Node.js image that runs on the base image (one with the same C library), or use a base image that has Node.js 18 or later and npm. Node.js from the default `node_image` (glibc) cannot be copied into musl images such as Alpine. This check runs before `packages` and `run`, so installing the missing libraries with `packages` or `run` is too late.
   - sacty uses the npm settings from `image_build`.
   - Because agents run as the `node` user, sacty sets `HOME` to `/home/node` and `GOPATH` to `/home/node/go`, and adds `/home/node/go/bin` to PATH. This lets agents write even if the CI image points these to root's locations. You can override `GOPATH` with `env`.
 - In `env`, write things such as your organization's registries (`PIP_INDEX_URL`, `UV_DEFAULT_INDEX`, `GOPROXY`, `GONOSUMDB`, and so on).

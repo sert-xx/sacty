@@ -157,6 +157,10 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
+# draw.io の CLI の包むスクリプト（/opt/sacty/bin/drawio は、install-drawio.sh がここへのリンクにしてある）。
+# draw.io の本体・エージェントの CLI の後に写し（直しても入れ直さない）、images の run より前に置く（run から drawio を使える）
+COPY --chmod=755 drawio-shim.cjs /opt/sacty/lib/drawio-shim.cjs
+
 # イメージを作るときに入れる OS のパッケージと、実行するコマンド（言語ごとのイメージの packages・run。PBI-50）。
 # パッケージは、元のイメージにあるパッケージの管理のコマンド（dnf・microdnf・yum・apt-get）で入れる。コマンドは
 # 上から順に root で実行し、失敗したら止める（bash があれば pipefail で、パイプの途中の失敗でも止める）。
@@ -190,8 +194,6 @@ RUN --mount=type=secret,id=setup,target=/run/secrets/setup \
 # トークンはコンテナに入れない（ゲートウェイが、プロジェクトの gh のアカウントで認証する）。元のイメージに本物の gh が
 # あっても、認証が無く使えないので、PATH の先頭（/opt/sacty/bin。CLI の後で PATH に足してある）に置いてこちらを使わせる
 COPY --chmod=755 gh-shim.cjs /opt/sacty/bin/gh
-# draw.io の CLI の包むスクリプト（/opt/sacty/bin/drawio は、install-drawio.sh がここへのリンクにしてある）
-COPY --chmod=755 drawio-shim.cjs /opt/sacty/lib/drawio-shim.cjs
 
 # root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
 RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi

@@ -165,6 +165,11 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - sacty は、元のイメージに git・Claude Code・Codex を足し、`node` ユーザーで動かします。
   - 元のイメージに Node.js 18 以上と npm があればそれを使い、無ければ `node_image` から写します。
     npm は `npm root -g`・`/usr/local/lib/node_modules`・`/usr/lib/node_modules` から探します。
+  - 写した Node.js が動かないとき（`ubuntu:24.04` のような素のイメージで、共有ライブラリが足りないなど）は、元のイメージにある apt-get・dnf・microdnf・yum で `libatomic`・`libstdc++` を入れます。
+    それでも動かなければ、「写した Node.js … が、元のイメージで動きません」と理由を示して止まります。
+    そのときは、元のイメージで動く Node.js のイメージ（同じ C ライブラリのもの）を `node_image` に書くか、Node.js 18 以上と npm の入った元のイメージを使ってください。
+    Alpine など musl のイメージには、既定の `node_image`（glibc）の Node.js は写せません。
+    この確かめは `packages`・`run` より前に行うので、足りないものを `packages`・`run` で入れても間に合いません。
   - npm の設定は `image_build` のものを使います。
   - エージェントは `node` ユーザーで動くので、`HOME` を `/home/node`、`GOPATH` を `/home/node/go` にし、`/home/node/go/bin` を PATH に足します。
     CI のイメージが root 向けの場所にしていても書けるようにするためです。

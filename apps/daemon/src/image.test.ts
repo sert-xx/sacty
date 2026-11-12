@@ -493,7 +493,10 @@ describe("既定のイメージの固定（セキュリティチェックの指�
     );
     // 包むスクリプトは draw.io の本体と別に写す（直しても draw.io を入れ直さない）
     expect(dockerfile).not.toMatch(/^COPY .*install-drawio\.sh.*drawio-shim\.cjs/m);
-    expect(at("COPY --chmod=755 drawio-shim.cjs")).toBeGreaterThan(lastHeavy);
+    // エージェントの CLI の後、images の run より前（run から drawio を使える。レビュー指摘）
+    const shim = at("COPY --chmod=755 drawio-shim.cjs");
+    expect(shim).toBeGreaterThan(at("npm ci --omit=dev"));
+    expect(shim).toBeLessThan(at("/run/secrets/setup;"));
   });
 
   it("写した Node.js が動かなければ、要る共有ライブラリを入れ、それでも動かなければ理由を示して止める（素のイメージ）", () => {

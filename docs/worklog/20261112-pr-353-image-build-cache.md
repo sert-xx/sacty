@@ -47,4 +47,16 @@
 
 ## レビューの指摘と対応
 
-- なし（レビューを待っている）。
+1回目（sacty のレビュー、判定：修正が必要）
+
+- [要修正] `drawio-shim.cjs` の `COPY` が利用者の `images.run` より後なので、`run` の中の `drawio` が無いファイルを指し、`run` で drawio を使う設定のビルドが失敗する。
+  - 対応：エージェントの CLI の後、`packages`・`run` の前に移した。直しても draw.io とエージェントの CLI は入れ直さない。`image.test.ts` で、`npm ci` より後・`/run/secrets/setup` より前にあることを確かめる。
+- [要修正] `with-build-cache.sh` が元のイメージの `APT_CONFIG` を上書きするので、そこに書いたプロキシなどの設定が apt の実行のときに失われる。
+  - 対応：元の `APT_CONFIG` のファイルがあれば、`#include` で読み込んでから `Dir::Cache::Archives` を足すようにした。テストのためだけに、キャッシュの場所を `SACTY_BUILD_CACHE_DIR` で変えられるようにした。`with-build-cache.test.ts` を足した（場所を渡す・引き継ぐ・ファイルが無ければ読み込まない・マウントが無ければ何もしない）。
+  - `ubuntu:24.04` のコンテナで `apt-config dump` を実行し、`#include` した `Acquire::http::Proxy` と `Dir::Cache::archives` の両方が効くことを確かめた。
+- [要修正] 写した Node.js が動かないときの説明が、`docs/user/images.md`・`images.en.md` に無い。
+  - 対応：両方の言語に、共有ライブラリを入れること、それでも動かないときのメッセージ、`node_image` と元のイメージの選び方、`packages`・`run` では間に合わないことを書いた。
+- [提案] 2回の `run` の間に秒が変わると、作り直した gitleaks の tar に入る更新日時でハッシュが変わり、キャッシュのテストが不安定になる。
+  - 対応：同じ場所で続けて実行するときは、前に作った tar を使い回すようにした。
+- 実際の `docker build`（`ubuntu:24.04`、`run` に `drawio --version`）：`run` の中で `drawio` が `32.4.1` を返した。apt・draw.io・セキュリティの道具は、キャッシュのものを使った。
+- 確かめたこと：`npm run lint`・`npm run typecheck` が通過。`npx vitest run apps/daemon/src/with-build-cache.test.ts apps/daemon/src/image.test.ts apps/daemon/src/install-security-tools.test.ts tests/docs` がすべて通過。
