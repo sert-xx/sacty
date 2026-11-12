@@ -13410,12 +13410,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
         { payload: { number: 7, outcome: "kept" } },
       ]);
-      expect(
-        ja(
-          (eventsOf(service, id, "PullRequestBodyResolved")[0]?.payload as { reason?: unknown })
-            .reason,
-        ),
-      ).toContain("人が PR の本文をまた直した");
+      const resolved = eventsOf(service, id, "PullRequestBodyResolved")[0];
+      expect(ja((resolved?.payload as { reason?: unknown } | undefined)?.reason)).toContain(
+        "人が PR の本文をまた直した",
+      );
       activity.close();
     });
 
