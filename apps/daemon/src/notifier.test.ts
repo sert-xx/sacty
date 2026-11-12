@@ -22,6 +22,7 @@ const task = (patch: Partial<Task> = {}): Task =>
     title: "決済の <API> & 画面",
     status: "idle",
     steps: [{ key: "requirements", state: "active" }],
+    proposals: [],
     ...patch,
   }) as Task;
 
@@ -190,15 +191,23 @@ describe("Slack の通知（PBI-38）", () => {
   });
 
   it("変更の申し出のエスカレーションは、承認の画面ではなく、タスクの詳細の申し出の欄へリンクする（PR #351 レビュー指摘）", () => {
+    // 変更の申し出の判断待ちは、escalation を付けずに、判定の無い申し出を持つ（投影と同じ形）
     const proposed = task({
       status: "escalated",
-      escalation: {
-        step: "implement",
-        target: "design",
-        pendingRemarks: [],
-        reason: "change_proposed",
-      },
+      proposals: [
+        {
+          id: "CP-1",
+          fromStep: "implement",
+          target: "design",
+          reason: "設計を変える",
+          facts: [],
+          proposed: "# 設計 v2",
+          proposedAt: "2026-11-12T00:00:00.000Z",
+          applied: false,
+        },
+      ],
     });
+    expect(proposed.escalation).toBeUndefined();
     for (const language of ["ja", "en"] as const) {
       const text = notificationText(proposed, "escalation", language, "http://x/");
       expect(text).toContain(`http://x/tasks/${proposed.id}#proposals`);

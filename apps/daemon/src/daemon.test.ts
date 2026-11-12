@@ -103,7 +103,7 @@ import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
 import { NotificationFeed } from "./notification-feed.js";
-import { SlackNotifier } from "./notifier.js";
+import { notificationText, SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
@@ -3863,6 +3863,10 @@ describe("変更の申し出（PBI-9。PBI-333 から人が判断する）", () 
       { id: "CP-1", fromStep: "design", target: "requirements", applied: false },
     ]);
     expect(task?.proposals[0]?.judgement).toBeUndefined();
+    // 通知は、判断の欄のあるタスクの詳細の申し出の欄へリンクする（PR #351 レビュー指摘）
+    expect(task && notificationText(task, "escalation", "ja", "http://x")).toContain(
+      `http://x/tasks/${id}#proposals`,
+    );
     expect(task?.outputs.design).toBe("# 設計 v1"); // 申し出のJSONは本文から除く
     expect(task?.approved.requirements?.output).toBe("# 要求要件 v1");
     const events = service.get(id)?.activity ?? [];
