@@ -271,7 +271,7 @@ Besides creating it from a report, you can create one in "Create task" by choosi
 
 1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope is not approved.
 2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
-3. sacty checks the diff against the scope, and the Goal Guardian checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, it fails and the implementation is redone. Regression test files may be added outside the scope (their lines are counted).
+3. sacty checks the diff against the scope and then opens the PR. The review child task of the PR checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, the violation appears in the PR body, the child task makes it a "changes required" finding, and the implementation is fixed. Regression test files may be added outside the scope (their lines are counted). In an earlier version, the Goal Guardian checked this in the final review and, on a violation, failed it and redid the implementation.
 4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
 
 - When it cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation's description. You cannot request changes on the preliminary Investigate, so cancel the task and rerun it, writing the scope to widen in the rerun's note. The rerun task also proceeds as "Security fix".
@@ -580,7 +580,7 @@ Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/
 
 When the Implementation step changes nothing (it decided the requirements are already met and no change is needed), no PR is created. This is the same for every task.
 
-- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence), the test results, and the final review.
+- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence) and the verification results the Implementation step reported (the current version does not run the final review; for a task that had a final review in an earlier version, its result is also shown).
 - If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
 - If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
 - In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).

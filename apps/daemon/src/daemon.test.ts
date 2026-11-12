@@ -29497,6 +29497,100 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("指摘なしで外した後に人がコミットを足してドラフトにしたら、外し直さずにその先頭を再レビューし、指摘なしで外して記録し直す（PR #348 10回目のレビュー指摘）", async () => {
+        const made = await implemented([
+          verdictOut("no_findings", "# 評価\n\n問題なし"),
+          verdictOut("no_findings", "# 評価\n\n足したコミットも問題なし"),
+        ]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(types(service, id)).toContain("PullRequestMarkedReady");
+        // 人がコミットを足して、ドラフトにした
+        const human = "h".repeat(40);
+        pulls.prInfo = { ...pulls.prInfo, headSha: human };
+        pulls.drafts[7] = true;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        const restarts = service.get(childId)?.activity.filter((e) => e.type === "ReviewRestarted");
+        expect(restarts?.map((e) => e.payload)).toEqual([{ reason: "updated", commit: human }]);
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        const marks = service.get(id)?.activity.filter((e) => e.type === "PullRequestMarkedReady");
+        expect(marks?.map((e) => e.type === "PullRequestMarkedReady" && e.payload.commit)).toEqual([
+          commitOf(service, id),
+          human,
+        ]);
+        expect(taskOf(service, id).pullRequest?.reviewedCommit).toBe(human);
+        activity.close();
+      });
+
+      it("ドラフトを外し直す間に子タスクの再レビューが始まったら、ドラフトに戻す（PR #348 10回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        pulls.drafts[7] = true;
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        pulls.setDraftStarted = Promise.withResolvers<void>();
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        service.rereview(childId);
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        await checking;
+        expect(pulls.drafts[7]).toBe(true);
+        activity.close();
+      });
+
+      it("指摘なしを待つ PR のドラフトが GitHub で外れていたら、覚えていなくても確認のたびにドラフトに戻す（PR #348 10回目のレビュー指摘）", async () => {
+        const made = await implemented([]);
+        const { activity, service, pulls, id } = made;
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        // 再起動の後に一度戻した後で、古い外す要求が GitHub に届いた
+        for (let i = 0; i < 2; i++) {
+          pulls.drafts[7] = false;
+          await service.checkPullRequests();
+          expect(pulls.drafts[7], String(i)).toBe(true);
+        }
+        expect(types(service, id)).not.toContain("PullRequestMarkedReady");
+        activity.close();
+      });
+
+      it("実装の PR のコミットの日時と題は、実装の工程が終わったときにする（PR #348 10回目のレビュー指摘）", async () => {
+        const repos = new FakeRepos();
+        const made = await start([implement()], {
+          repos,
+          steps: ["implement"],
+          reviewTasks: true,
+          finalReview: false,
+        });
+        const { activity, service, id } = made;
+        // 実装の工程は start の中で終わっている
+        service.renameTask(id, { title: "作成の後に変えた題" });
+        for (let i = 0; i < 4 && taskOf(service, id).status !== "awaiting_approval"; i++) {
+          await service.runNext(id);
+        }
+        const done = service
+          .get(id)
+          ?.activity.findLast(
+            (e) => e.type === "AgentRunCompleted" && e.payload.step === "implement",
+          );
+        expect(repos.published.at(-1)?.date).toBe(done?.at);
+        // 実装の工程が終わった後に変えた題は、このコミットには使わない（題は、コミットの日時のときの題。PBI-323）
+        expect(repos.published.at(-1)?.message).not.toContain("作成の後に変えた題");
+        expect(repos.published.at(-1)?.date).not.toBe(taskOf(service, id).createdAt);
+        activity.close();
+      });
+
       it("ドラフトを外す答えがドラフトのままなら、記録せずに次の確認でやり直す（PR #348 8回目のレビュー指摘）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;

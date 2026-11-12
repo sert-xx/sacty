@@ -1067,7 +1067,7 @@ export class TaskService {
   /** 承認待ちの PR の、PR の確認で最後に読んだ head（タスク → PR の番号・提出したコミット・読んだ head。PR #304 のレビュー）。 */
   private readonly latestHeads = new Map<
     string,
-    { number: number; commit: string; head: string }
+    { number: number; commit: string; head: string; draft?: boolean }
   >();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
@@ -1328,12 +1328,22 @@ export class TaskService {
         if (status.state === "open" && latest.status === "awaiting_approval") {
           // PR が開いている間の最新の head（提出したコミットとは別。人が足したコミットで変わる。PR #304 のレビュー）
           const head = status.headSha?.trim();
-          if (head) this.latestHeads.set(task.id, { number: pr.number, commit: pr.commit, head });
-          else this.latestHeads.delete(task.id);
+          if (head) {
+            this.latestHeads.set(task.id, {
+              number: pr.number,
+              commit: pr.commit,
+              head,
+              ...(status.draft !== undefined ? { draft: status.draft } : {}),
+            });
+          } else this.latestHeads.delete(task.id);
           latest = this.recordPullRequestConflict(latest, pr, status.mergeable) ?? latest;
-          // 指摘なしでドラフトを外した実装の PR が、GitHub でドラフトに戻っていたら外し直す（PBI-331）
-          if (status.draft === true && pr.step === "implement") {
-            await this.undraftMarkedReady(task.id, pr.repo, pr.number, pr.commit, token);
+          // 指摘なしでドラフトを外した実装の PR が、GitHub でドラフトに戻っていたら外し直す。指摘なしを待つ実装の PR の
+          // ドラフトが外れていたら、ドラフトに戻す（PBI-331。GitHub の状態で決めるので、再起動の後も、後から届いた要求も直す）
+          if (status.draft !== undefined && pr.step === "implement") {
+            await this.settleDraft(task.id, pr.repo, pr.number, pr.commit, token, {
+              draft: status.draft,
+              ...(head ? { head } : {}),
+            });
             latest = this.tasks.get(task.id) ?? latest;
           }
           try {
@@ -11091,9 +11101,11 @@ export class TaskService {
           }
         }
       }
-      const date = verifying
-        ? this.outputAt(task, "implement")
-        : (task.lastReview?.at ?? task.createdAt);
+      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする（最終レビューの日時が無い・前の提出のもののため）
+      const date =
+        verifying || !this.finalReview
+          ? this.outputAt(task, "implement")
+          : (task.lastReview?.at ?? task.createdAt);
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
@@ -11329,7 +11341,10 @@ export class TaskService {
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-      const date = task.lastReview?.at ?? task.createdAt;
+      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする
+      const date = this.finalReview
+        ? (task.lastReview?.at ?? task.createdAt)
+        : this.outputAt(task, "implement");
       // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
       const subject = await this.commitSubjectFor(
         task,
@@ -11568,9 +11583,21 @@ export class TaskService {
         gate.step === "implement" && parent.pullRequest?.number === gate.number
           ? parent.pullRequest.reviewedCommit
           : undefined;
+      // 指摘なしで外した後に、人がコミットを足してドラフトにした（PR の確認で読んだ GitHub の先頭とドラフト）なら、その先頭を
+      // 再レビューさせる（ドラフトは、指摘なしになるまで外し直さない。settleDraft）
+      const seen = this.latestHeads.get(parent.id);
+      const draftedAhead =
+        !awaiting &&
+        reviewed !== undefined &&
+        seen?.number === gate.number &&
+        seen.commit === gate.commit &&
+        seen.draft === true &&
+        seen.head !== reviewed
+          ? seen.head
+          : undefined;
       const target = awaiting
         ? await this.pullRequestHead(parent, gate.repo, gate.number)
-        : (reviewed ?? gate.commit);
+        : (draftedAhead ?? reviewed ?? gate.commit);
       if (!target) continue;
       const cleared = child.reviewTarget?.headCommit === target && reviewCleared(child);
       // 提出のときにドラフトに戻せなかった PR は、指摘なしになるまで、確認のたびにドラフトに戻す（レビューの途中も。レビュー
@@ -11706,11 +11733,47 @@ export class TaskService {
   }
 
   /**
-   * 指摘なしでドラフトを外して記録した実装の PR（人の承認待ち）が、GitHub でドラフトになっていたら外し直す（PBI-331）。答えを
-   * 待つのをやめた・中断した・数えるのをやめたドラフトに戻す要求が、後から GitHub に届いたときのため。PR の確認のたびに GitHub
-   * の状態を読んで決めるので、再起動の後も、外せなかったときも、次の確認でやり直す。外す間に差し戻された・PR を更新したら、
-   * ドラフトに戻す。外す要求が後から届くかもしれないので、外した答えを今の記録のまま受け取れるまで、次の提出でも確認のたびに
-   * ドラフトに戻す（undraftUnsettled）。
+   * PR の確認で読んだ GitHub のドラフトの状態を、台帳に合わせる（PBI-331）。答えを待つのをやめた・中断した・数えるのをやめた
+   * 切り替えの要求が後から GitHub に届いても、デーモンが覚えていなくても（再起動の後も）、次の確認で直す。
+   * - 指摘なしを待つ PR（重ねた PR を除く。人がドラフトを外してマージしてよいため）がドラフトでなければ、ドラフトに戻す。
+   * - 指摘なしで外して記録した PR（人の承認待ち）がドラフトなら、外し直す（undraftMarkedReady）。
+   */
+  private async settleDraft(
+    taskId: string,
+    repo: string,
+    number: number,
+    commit: string,
+    token: string,
+    github: { draft: boolean; head?: string },
+  ): Promise<void> {
+    const task = this.tasks.get(taskId);
+    const pr = task?.pullRequest;
+    if (task?.status !== "awaiting_approval" || this.cancelling.has(taskId)) return;
+    if (pr?.number !== number || pr.commit !== commit || this.readying.has(taskId)) return;
+    if (this.draftRequests.has(`${taskId}:${number}`)) return;
+    if (pr.awaitingReview) {
+      if (github.draft || task.stack) return;
+      await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
+        (error: unknown) => {
+          console.warn(
+            `[daemon] 指摘なしを待つ PR #${number}（${repo}）のドラフトが外れていたので戻そうとしましたが、戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+          );
+        },
+      );
+      return;
+    }
+    if (github.draft && pr.reviewedCommit !== undefined) {
+      await this.undraftMarkedReady(taskId, repo, number, commit, token, github.head);
+    }
+  }
+
+  /**
+   * 指摘なしでドラフトを外して記録した実装の PR（人の承認待ち）が、GitHub でドラフトになっていたら外し直す（PBI-331）。
+   * GitHub の先頭（head）が指摘なしにした先頭と違えば（外した後に人がコミットを足してドラフトにした）、ドラフトのままにし、
+   * レビューの子タスクにその先頭を再レビューさせる（reconcileReviewTasks）。子タスクがその先頭を指摘なしにしたら、外して
+   * その先頭で記録し直す。外す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わったら、ドラフトに
+   * 戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、次の提出でも指摘なしで外すまで
+   * 確認のたびにドラフトに戻す（undraftUnsettled）。
    */
   private async undraftMarkedReady(
     taskId: string,
@@ -11718,6 +11781,7 @@ export class TaskService {
     number: number,
     commit: string,
     token: string,
+    head: string | undefined,
   ): Promise<void> {
     const marked = (): Task | undefined => {
       const latest = this.tasks.get(taskId);
@@ -11731,35 +11795,82 @@ export class TaskService {
         ? latest
         : undefined;
     };
-    if (!marked() || this.readying.has(taskId)) return;
+    const reviewerOf = (task: Task): Task | undefined => {
+      const record = (task.reviewTasks ?? []).findLast(
+        (r) => r.number === number && sameRepo(r.repo, repo),
+      );
+      return record && this.tasks.get(record.taskId);
+    };
+    const task = marked();
+    if (!task) return;
+    const target = head ?? task.pullRequest?.reviewedCommit ?? commit;
+    const child = reviewerOf(task);
+    // 子タスクがその先頭を指摘なしにしていなければ、ドラフトのまま再レビューを待つ
+    if (!child || child.reviewTarget?.headCommit !== target || !reviewCleared(child)) return;
+    const round = child.reviewRound;
+    const verdicts = child.reviewVerdicts?.length;
+    const unchanged = (): Task | undefined => {
+      const latest = marked();
+      const reviewer = latest && reviewerOf(latest);
+      return latest &&
+        reviewer?.id === child.id &&
+        reviewer.reviewTarget?.headCommit === target &&
+        reviewer.reviewRound === round &&
+        reviewer.reviewVerdicts?.length === verdicts &&
+        reviewCleared(reviewer)
+        ? latest
+        : undefined;
+    };
     const key = `${taskId}:${number}`;
-    // 前の切り替えの要求が終わっていなければ、終わってから外す（次の確認でやり直す）
-    if (this.draftRequests.has(key)) return;
     this.undraftUnsettled.add(key);
+    this.readying.add(taskId);
     try {
-      const result = await this.setDraftWithin(taskId, { repo, token, number, draft: false });
-      if (marked()) {
-        if (!result.draft) this.undraftUnsettled.delete(key);
-        return;
+      let result: { draft: boolean } | undefined;
+      try {
+        result = await this.setDraftWithin(taskId, { repo, token, number, draft: false });
+      } catch (error) {
+        console.warn(
+          `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+        );
       }
-    } catch (error) {
-      console.warn(
-        `[daemon] 指摘なしで外した PR #${number}（${repo}）がドラフトに戻っていたので外し直そうとしましたが、外せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
-      );
-      if (marked()) return;
-    }
-    // 外す間に差し戻された・PR を更新した：まだレビューを待つ・作り直す PR なら、ドラフトに戻す
-    const latest = this.tasks.get(taskId);
-    const now = latest?.pullRequest;
-    const reworking = latest?.status === "queued" || latest?.status === "running";
-    if (latest && (reworking || now?.awaitingReview) && now?.number === number) {
-      await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
-        (error: unknown) => {
-          console.warn(
-            `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+      const current = result && unchanged();
+      if (current && (await this.pullRequestHead(current, repo, number)) === target) {
+        const latest = unchanged();
+        if (latest) {
+          // 外した後に足された先頭を指摘なしにして外したなら、その先頭で記録し直す
+          if (latest.pullRequest?.reviewedCommit !== target) {
+            this.append(latest, [
+              {
+                actor: "sacty",
+                event: {
+                  type: "PullRequestMarkedReady",
+                  payload: { number, commit: target, reviewTaskId: child.id },
+                },
+              },
+            ]);
+          }
+          if (result && !result.draft) this.undraftUnsettled.delete(key);
+          return;
+        }
+      }
+      if (!result) return;
+      // 外す間に変わった：作り直す・レビューを待つ・まだ指摘なしで外した PR なら、ドラフトに戻す（次の確認でやり直す）
+      const latest = this.tasks.get(taskId);
+      const now = latest?.pullRequest;
+      const reworking = latest?.status === "queued" || latest?.status === "running";
+      if (latest && now?.number === number) {
+        if (reworking || now.awaitingReview || latest.status === "awaiting_approval") {
+          await this.setDraftWithin(taskId, { repo, token, number, draft: true }).catch(
+            (error: unknown) => {
+              console.warn(
+                `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした（次の確認でやり直します）：${renderMessage(redactText(errorText(error), [token]), "ja")}`,
+              );
+            },
           );
-        },
-      );
+        }
+      }
+    } finally {
+      this.readying.delete(taskId);
     }
   }
 

@@ -1997,7 +1997,12 @@ export function applyEvent(
 
     case "PullRequestMarkedReady": {
       const pr = task.pullRequest;
-      if (!pr || pr.number !== event.payload.number || !pr.awaitingReview) {
+      // 指摘なしで外した後に人がコミットを足してドラフトにし、その先頭を指摘なしにして外したときは、記録し直す（PBI-331）
+      if (
+        !pr ||
+        pr.number !== event.payload.number ||
+        (!pr.awaitingReview && pr.reviewedCommit === undefined)
+      ) {
         throw new ActivityIntegrityError(event, "the pull request is not waiting for the review");
       }
       const { draft: _draft, awaitingReview: _awaiting, ...rest } = pr;
