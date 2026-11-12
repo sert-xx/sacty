@@ -139,6 +139,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず再レビューも起きないので、PR は人の承認（マージ）を待つ。
   最終レビューをしない流れの実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
 - 子タスクには、レビューする先頭のコミットの CI の状態（チェックの名前・状態・結論・URL。`REVIEW_CI_MAX` 件まで）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
+  CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
   読めなければ、読めなかったことを渡す（レビューは止めない）。
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクが終わる前に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。
@@ -146,7 +147,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 

@@ -719,6 +719,11 @@ export type ServiceDeps = {
    * CONTEXT_SECRETS_TIMEOUT_MS。超えたプロジェクトのコンテキストの秘密情報は、使うときに取り出す。
    */
   contextSecretsTimeoutMs?: number;
+  /**
+   * PR のレビューの子タスクが、レビューの準備で先頭のコミットの CI を読むのを待つ上限（ミリ秒。PBI-331）。既定は
+   * REVIEW_CI_TIMEOUT_MS。超えたら、読めなかったものとしてレビューを続ける。
+   */
+  reviewCiTimeoutMs?: number;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /**
@@ -991,6 +996,12 @@ export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentO
 export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
 
 /**
+ * PR のレビューの子タスクが、レビューの準備で先頭のコミットの CI を読むのを待つ上限（PBI-331）。GitHub が答えなくても、
+ * レビューを始められないままにしない（過ぎたら、読めなかったものとしてレビューを続ける）。
+ */
+export const REVIEW_CI_TIMEOUT_MS = 30_000;
+
+/**
  * コンテキストのイメージ（PBI-325）を作り終えるのを、タスクが待つ上限（60分）。イメージの作成（OS のパッケージやブラウザの
  * 導入など）には時間がかかるので長めにする。過ぎたら、理由を示して止める。
  */
@@ -1042,6 +1053,11 @@ export class TaskService {
    * コミット）。同じ提出では、もう戻さない。
    */
   private readonly redrafted = new Set<string>();
+  /**
+   * ドラフトを外した後に戻そうとして戻せなかった、レビューを待つ実装の PR（PBI-331。タスク ID と提出したコミット）。台帳には
+   * draft が残るので、GitHub でドラフトに戻せたと確かめられるまで、確認のたびに戻す。
+   */
+  private readonly redraftPending = new Set<string>();
   /** 実装の PR がマージされたので、作り直しの実行を止めているタスク（PBI-276）。止めた実行は、一時停止にしない。 */
   private readonly mergeStopping = new Set<string>();
   /**
@@ -3487,15 +3503,33 @@ export class TaskService {
     const ci = this.deps.ci;
     const usedSecrets: string[] = [];
     if (!ci) return { commit: target.headCommit, checks: "unreadable" };
+    let timer: NodeJS.Timeout | undefined;
     try {
       const token = await this.githubToken(task, target.repo, usedSecrets);
-      const snapshot = await ci.snapshot({ repo: target.repo, token, commit: target.headCommit });
+      const reading = ci.snapshot({ repo: target.repo, token, commit: target.headCommit });
+      // 時間切れの後に届いた失敗は、知らせない（時間切れとして知らせる）
+      reading.catch(() => {});
+      const expired = new Promise<"expired">((resolve) => {
+        timer = setTimeout(
+          () => resolve("expired"),
+          this.deps.reviewCiTimeoutMs ?? REVIEW_CI_TIMEOUT_MS,
+        );
+      });
+      const snapshot = await Promise.race([reading, expired]);
+      if (snapshot === "expired") {
+        console.warn(
+          `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI が時間内に読めませんでした`,
+        );
+        return { commit: target.headCommit, checks: "unreadable" };
+      }
       return { commit: target.headCommit, checks: snapshot.checks };
     } catch (error) {
       console.warn(
         `[daemon] レビューのタスク ${task.id} で、PR #${target.number}（${target.repo}）の CI を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
       );
       return { commit: target.headCommit, checks: "unreadable" };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -11490,22 +11524,28 @@ export class TaskService {
   }
 
   /**
-   * 指摘なしを待つ実装の PR を、台帳にドラフトの記録が無ければ（提出のときに戻せなかった）ドラフトに戻す（PBI-331）。戻せたら、
-   * 同じ提出では繰り返さない。戻せなければ、次の確認でやり直す。
+   * 指摘なしを待つ実装の PR を、台帳にドラフトの記録が無い（提出のときに戻せなかった）か、ドラフトを外した後に戻せなかった
+   * （redraftPending。台帳には draft が残る）なら、ドラフトに戻す（PBI-331）。戻せたら、同じ提出では繰り返さない。戻せなければ、
+   * 次の確認でやり直す。
    */
   private async redraftAwaiting(parent: Task, repo: string, number: number): Promise<void> {
     // 先頭を読む間に変わっていれば、今の記録で判断する
     const task = this.tasks.get(parent.id);
     const pr = task?.pullRequest;
     if (task?.status !== "awaiting_approval" || this.cancelling.has(task.id)) return;
-    if (!pr?.awaitingReview || pr.draft || pr.number !== number) return;
+    if (!pr?.awaitingReview || pr.number !== number) return;
     const key = `${task.id}:${pr.commit}`;
-    if (this.redrafted.has(key) || this.readying.has(task.id)) return;
+    const pending = this.redraftPending.has(key);
+    if (!pending && (pr.draft || this.redrafted.has(key))) return;
+    if (this.readying.has(task.id)) return;
     const usedSecrets: string[] = [];
     try {
       const token = await this.githubToken(task, repo, usedSecrets);
       const result = await this.deps.pulls.setDraft({ repo, token, number, draft: true });
-      if (result.draft) this.redrafted.add(key);
+      if (result.draft) {
+        this.redrafted.add(key);
+        this.redraftPending.delete(key);
+      }
     } catch (error) {
       console.warn(
         `[daemon] PR #${number}（${repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -11561,10 +11601,16 @@ export class TaskService {
       );
     let token: string | undefined;
     // ドラフトに戻す（戻せなくても、次の提出・次の確認が戻す）
+    const key = `${parent.id}:${pr.commit}`;
     const redraft = async () => {
       if (token === undefined) return;
+      // 戻せたと確かめられるまで、次の確認でも戻す（台帳には draft が残るため）
+      this.redraftPending.add(key);
       await this.deps.pulls
         .setDraft({ repo, token, number, draft: true })
+        .then((r) => {
+          if (r.draft) this.redraftPending.delete(key);
+        })
         .catch((error: unknown) => warn("をドラフトに戻せませんでした", error));
     };
     try {

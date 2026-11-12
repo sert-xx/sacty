@@ -123,6 +123,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
 - If the child task's verdict is no findings (`no_findings`), nothing is delivered to the parent and no re-review happens, so the PR waits for a person's approval (merge).
   For an implementation PR in the flow without the final review (`awaitingReview`), when the current commit of the PR gets no findings, the PR check has sacty remove the draft (`PullRequestMarkedReady`; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
 - sacty reads the CI state of the head commit being reviewed (check names, status, conclusion, and URL, up to `REVIEW_CI_MAX`) and passes it to the child task (`reviewCiOf`, `reviewCiLines`). Because sacty does not wait for the CI, the child task is told to make failures caused by the change required fixes, to write failures confirmed to be unrelated to the change as things a person should check in the body, and to review without waiting for unfinished checks, writing that they are running.
+  sacty waits up to `REVIEW_CI_TIMEOUT_MS` (30 seconds) to read the CI. If there is no answer, it continues the review as if the CI could not be read.
   If it cannot be read, that is passed instead (the review does not stop).
   There is no limit on the number of rounds; they stop at the budget cap of the parent and of the child task.
 - If the PR is merged or closed before the child task finishes, the child task is cancelled (the same as PR-review-only tasks; `checkReviewPullRequests`).
@@ -130,7 +131,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   The PR check finishes only after the child tasks' cancellation (cleanup and records) finishes.
 - Records from older versions (`label` and `intakeLabel` in the PR publish records, `PullRequestLabeled` and `PullRequestLabelFailed`) can still be read but are not treated as a plan to attach a label (the ledger is not rewritten).
 
-Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `markReady`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
+Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `markReady`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`), `apps/daemon/src/service.ts` (`REVIEW_CI_TIMEOUT_MS`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
 
 ## The PR check
 
