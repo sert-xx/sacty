@@ -85,6 +85,7 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 For each PR sacty creates (Requirements and Design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
 No label setting is needed, and sacty does not add a label to the PR.
 The implementation PR is opened as a draft before the final review, and the child task is created when it moves to review (when it is marked ready; [The implementation PR and CI](tasks.en.md#the-implementation-pr-and-ci)).
+An implementation PR stacked on a dependency's PR waits for approval as a draft, so its child task is created when the dependency is merged and the draft is removed.
 
 - The child task is a "PR review only" task titled "レビュー：(title of the original task)（PR #number）".
   In "Related tasks" of the task detail, links to each other appear as "PR review" on the original task and "Reviews the PR of" on the child task.
@@ -107,6 +108,7 @@ The implementation PR is opened as a draft before the final review, and the chil
   - The approval screen and the task detail also show whether a Sacty AI review is attached to the current commit of the PR awaiting approval (not attached, reviewing, or attached). A review takes a while to reach a commit created by a rework, so approving or merging before it arrives means going ahead without seeing its comments. Approving and merging are not blocked. The "Conclusion" of the PR body also gets one line with the state when the body was written (a review that arrives later is not reflected, so check the approval screen for the latest state).
 - There is one child task per PR. Updating the PR does not create a new child task. When the PR is recreated (it becomes a PR with a new number), one is created for the new PR.
 - If you merge or close the PR before the child task finishes, the child task is cancelled. It is also cancelled when you cancel the original task.
+  If you reopen a closed PR, a new child task is created and reviews it again (a child task you cancelled is not recreated).
 - PRs sacty created are not taken in even if you add the review label or request a review (the child task reviews them).
   The same applies to PRs to which an older version of sacty added the label.
 

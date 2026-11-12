@@ -112,12 +112,15 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 - 作る時点：要求要件・設計の PR は作った直後、実装の PR はレビューへ進めるとき（ドラフトを外したとき）。
   最終レビューの前のドラフトの間は作らない。
+  依存先の PR に重ねた実装の PR（ドラフトのまま承認待ちにする。[タスクと工程](tasks-and-steps.md)）も、ドラフトの間は作らず、依存先のマージの後に向き先を付け替えてドラフトを外したときに作る。
   既存の PR を引き継ぐタスクでは、引き継いだ PR に作る。
 - 子タスクは、PR のレビューだけのタスク（`source.review: sacty`。[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）で、`TaskCreated` の `reviewOf` に親の ID と PR を作った工程を持つ。
-  題は `レビュー：<親の題>（PR #<番号>）`、プロジェクトは親と同じ、予算の上限は `budget.default_per_task_usd`（子タスクの費用は子タスクの予算に数える）。
+  題は `レビュー：<親の題>（PR #<番号>）`（200 文字まで。長い親の題は、文字の途中で切らずに `…` で切り詰める）、プロジェクトは親と同じ、予算の上限は `budget.default_per_task_usd`（子タスクの費用は子タスクの予算に数える）。
   分割の子タスク（`parent`）とは別で、分割の待ち・統合レビューの対象にしない。
 - 親には `ReviewTaskCreated`（子タスクの ID・工程・PR）を記録する（`Task.reviewTasks`）。
   1つの PR（リポジトリと番号）につき1つ。記録のある PR は、更新しても作らない。PR を作り直した（新しい番号）ときは、新しい PR に作る。
+  ただし、最後の子タスクが PR のクローズで中止されていれば（`reason: pull_request_closed`）、PR を開き直したときの PR の確認で、新しい子タスクを作って記録を足す（中止したタスクは再レビューできないため。`needsReviewTask`）。
+  人が中止した子タスクは作り直さない。
 - 作らないとき
   - 親が中止された・中止を求められている。
   - その PR のレビューのタスク（以前の版でレビュー用のラベルから取り込んだものなど）が、終わらずにある（二重にレビューしない）。
@@ -135,9 +138,10 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   繰り返しの回数に上限は無く、親と子タスクそれぞれの予算の上限で止まる。
 - 子タスクが終わる前に PR がマージ・クローズされたら、子タスクを中止する（PR のレビューだけのタスクと同じ。`checkReviewPullRequests`）。
 - 親が中止されたら、PR の確認で、終わっていない子タスクも中止する（`TaskCancelled` の `reason: parent_cancelled`。中止の片付けで PR を閉じなかったときも、レビューを続けない）。
+  PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 

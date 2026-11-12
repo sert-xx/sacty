@@ -2015,7 +2015,7 @@ export function applyEvent(
       break;
 
     case "ReviewTaskCreated": {
-      // sacty がこのタスクのために作った PR だけ。1つの PR に1つ（PBI-330）
+      // sacty がこのタスクのために作った PR だけ。同じ子タスクは1回（PR を開き直したときは、新しい子タスクを足す。PBI-330）
       const p = event.payload;
       const same = (repo: string | undefined, number: number | undefined) =>
         number === p.number && (repo ?? "").toLowerCase() === p.repo.toLowerCase();
@@ -2027,8 +2027,8 @@ export function applyEvent(
       if (!made) {
         throw new ActivityIntegrityError(event, "not a pull request sacty created for the task");
       }
-      if ((task.reviewTasks ?? []).some((x) => same(x.repo, x.number))) {
-        throw new ActivityIntegrityError(event, "the pull request already has a review task");
+      if ((task.reviewTasks ?? []).some((x) => x.taskId === p.taskId)) {
+        throw new ActivityIntegrityError(event, "the review task is already recorded");
       }
       task.reviewTasks = [...(task.reviewTasks ?? []), p];
       break;

@@ -133,6 +133,7 @@ import {
   InvalidOperationError,
   type LocalSessionView,
   MEMORY_STEP_ROLES,
+  reviewTaskTitle,
   type ServiceDeps,
   TaskService,
 } from "./service.js";
@@ -22754,6 +22755,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
       planner?: ServiceDeps["planner"];
       draftPullRequests?: boolean;
       templates?: ServiceDeps["templates"];
+      reviewTasks?: boolean;
     } = {},
   ) {
     // ベースブランチ（main）は、子タスクの間は進まない（重ねた子タスクの取り込みだけを見る）
@@ -22769,6 +22771,7 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
         mergeBase: true,
         ...(options.draftPullRequests ? { draftPullRequests: true } : {}),
         ...(options.templates ? { templates: options.templates } : {}),
+        ...(options.reviewTasks ? { reviewTasks: true } : {}),
       },
     );
     const { service } = made;
@@ -22848,6 +22851,43 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     // 依存先の合格したコミットと同じなので、取り込まない
     expect(repos.merges).toEqual([]);
     expect(taskOf(service, id).status).toBe("waiting_children");
+    activity.close();
+  });
+
+  it("重ねた PR はドラフトの間レビューの子タスクを作らず、依存先のマージの後に向き先を付け替えてドラフトを外したときに作る（PBI-330 レビュー指摘）", async () => {
+    const { activity, service, pulls, ids } = await splitParent(
+      chain,
+      [implement("# A の実装"), review(), implement("# B の実装"), review()],
+      new FakeRepos(),
+      new FakePulls(),
+      { reviewTasks: true },
+    );
+    const [a, b] = ids as [string, string];
+    // レビューの子タスクは動かさない（工程の流れだけを見る）
+    const drainSteps = async () => {
+      for (let i = 0; i < 12; i++) {
+        const queued = service.queuedTaskIds().filter((q) => !taskOf(service, q).reviewOf);
+        if (queued.length === 0) return;
+        for (const q of queued) await service.runNext(q);
+      }
+    };
+    await drainSteps();
+    expect(taskOf(service, a).reviewTasks?.map((r) => r.number)).toEqual([7]);
+    expect(taskOf(service, b).pullRequest).toMatchObject({ number: 8, draft: true });
+    expect(taskOf(service, b).reviewTasks).toBeUndefined();
+    // PR の確認でも、ドラフトの間は作らない
+    await service.checkPullRequests();
+    expect(taskOf(service, b).reviewTasks).toBeUndefined();
+    expect(service.list().filter((t) => t.reviewOf?.taskId === b)).toEqual([]);
+    // 依存先のマージの後、向き先を付け替えてドラフトを外したら作る
+    merge(pulls, service, a);
+    await service.checkPullRequests();
+    await drainSteps();
+    await service.checkPullRequests();
+    expect(pulls.draftChanges).toEqual([{ number: 8, draft: false }]);
+    expect(taskOf(service, b).reviewTasks?.map((r) => [r.number, r.step])).toEqual([
+      [8, "implement"],
+    ]);
     activity.close();
   });
 
@@ -28755,12 +28795,58 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       pulls.closeFail = "403";
       await service.cancel(id);
       expect(taskOf(service, id).status).toBe("cancelled");
+      // PR の確認は、子タスクの中止を待ってから終わる（デーモンの終了で、中止の記録が途中で切れない）
       await service.checkPullRequests();
-      await vi.waitFor(() => expect(taskOf(service, childId).status).toBe("cancelled"));
+      expect(taskOf(service, childId).status).toBe("cancelled");
       const cancelled = service.get(childId)?.activity.findLast((e) => e.type === "TaskCancelled");
       expect(cancelled?.actor).toBe("sacty");
       expect(cancelled?.payload).toMatchObject({ reason: "parent_cancelled" });
       activity.close();
+    });
+
+    it("PR のクローズで中止した子タスクは、PR を開き直したら新しい子タスクで作り直す。人が中止した子タスクは作り直さない（受け入れ条件 6）", async () => {
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1")], { pulls, reviewTasks: true });
+      const { activity, service, id } = made;
+      const first = childOf(service, id);
+      pulls.states[7] = { state: "closed" };
+      await service.checkPullRequests();
+      expect(taskOf(service, first).cancelled?.reason).toBe("pull_request_closed");
+      // 閉じている間は作り直さない
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks).toHaveLength(1);
+      // 開き直したら、新しい子タスクを作って親に記録する（中止した子タスクは再レビューできないため）
+      pulls.states[7] = { state: "open" };
+      await service.checkPullRequests();
+      const records = taskOf(service, id).reviewTasks ?? [];
+      expect(records.map((r) => r.number)).toEqual([7, 7]);
+      const second = records[1]?.taskId ?? "";
+      expect(second).not.toBe(first);
+      expect(taskOf(service, second).reviewOf).toEqual({ taskId: id, step: "requirements" });
+      expect(service.queuedTaskIds()).toContain(second);
+      // もう一度確かめても、増やさない。人が中止した子タスクも作り直さない
+      await service.checkPullRequests();
+      await service.cancel(second);
+      await service.checkPullRequests();
+      expect(taskOf(service, id).reviewTasks).toHaveLength(2);
+      expect(service.list().filter((t) => t.reviewOf)).toHaveLength(2);
+      // 記録は再起動しても読める
+      activity.close();
+      const again = new SqliteActivityStore(dbPath);
+      const restarted = makeService(again, [], { stepPullRequests: true }).service;
+      expect(restarted.get(id)?.task.reviewTasks).toHaveLength(2);
+      again.close();
+    });
+
+    it("子タスクの題は、長い親の題を文字の途中で切らずに 200 文字に収める（受け入れ条件 1）", () => {
+      const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+      for (const pad of [185, 186, 187, 188]) {
+        const title = reviewTaskTitle(`${"a".repeat(pad)}😀${"b".repeat(20)}`, 7);
+        expect(title.length, String(pad)).toBeLessThanOrEqual(200);
+        expect(lone.test(title), String(pad)).toBe(false);
+        expect(title.endsWith("…（PR #7）"), String(pad)).toBe(true);
+      }
+      expect(reviewTaskTitle("決済API", 7)).toBe("レビュー：決済API（PR #7）");
     });
 
     it("PR を公開した後、子タスクを作る前に止まっても、再起動後の PR の確認で作る（受け入れ条件 1）", async () => {

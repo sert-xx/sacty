@@ -1312,7 +1312,7 @@ export class TaskService {
     this.cleanupPromotedMemories();
     await this.checkReviewPullRequests();
     // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
-    this.reconcileReviewTasks();
+    await this.reconcileReviewTasks();
     // 最終レビューの前に作った実装の PR の CI
     await this.checkVerificationCi();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
@@ -7801,7 +7801,7 @@ export class TaskService {
         if (ready) await this.redraftAfterRetarget(task.id, pr.repo, token, pr.number, usedSecrets);
         return;
       }
-      this.append(latest, [
+      const retargeted = this.append(latest, [
         {
           actor: "sacty",
           event: {
@@ -7814,6 +7814,8 @@ export class TaskService {
           },
         },
       ]);
+      // ドラフトを外したら、PR をレビューする子タスクを作る（PBI-330）
+      if (ready) this.ensureReviewTask(retargeted, "implement", pr.repo, pr.number, pr.url);
     } catch (error) {
       console.warn(
         `[daemon] PR #${pr.number}（${pr.repo}）の向き先を ${repository.baseBranch} に付け替えられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -11252,14 +11254,26 @@ export class TaskService {
     if (this.deps.reviewTasks !== true) return;
     try {
       if (parent.status === "cancelled" || this.cancelling.has(parent.id)) return;
-      if ((parent.reviewTasks ?? []).some((x) => same(x.repo, x.number))) return;
+      // 依存先に重ねた実装の PR は、ドラフトを外すまでレビューしない（向き先の付け替えの後に作る）
+      if (
+        step === "implement" &&
+        parent.pullRequest?.number === number &&
+        parent.pullRequest.draft
+      ) {
+        return;
+      }
+      if (!this.needsReviewTask(parent, repo, number)) return;
+      const recorded = new Set((parent.reviewTasks ?? []).map((x) => x.taskId));
       const reviews = [...this.tasks.values()].filter(
         (t) =>
           t.source?.kind === "github_pull_request" &&
           t.source.review !== undefined &&
           same(t.source.repo, t.source.number),
       );
-      const mine = reviews.find((t) => t.reviewOf?.taskId === parent.id);
+      // 作ったが親に記録する前に止まった子タスク
+      const mine = reviews.findLast(
+        (t) => t.reviewOf?.taskId === parent.id && !recorded.has(t.id) && t.status !== "cancelled",
+      );
       let childId = mine?.id;
       if (!childId) {
         // 以前の版でラベルから取り込んだレビューのタスクが、まだ終わっていなければ任せる
@@ -11290,7 +11304,7 @@ export class TaskService {
         childId = child.id;
       }
       const latest = this.tasks.get(parent.id);
-      if (!latest || (latest.reviewTasks ?? []).some((x) => same(x.repo, x.number))) return;
+      if (!latest || !this.needsReviewTask(latest, repo, number)) return;
       this.append(latest, [
         {
           actor: "sacty",
@@ -11305,20 +11319,33 @@ export class TaskService {
   }
 
   /**
+   * その PR に、レビューの子タスクを（また）作るか。まだ無いか、最後の子タスクが PR のクローズで中止された（PR を開き直した。
+   * 中止したタスクは再レビューできないので、新しい子タスクにする）とき（PBI-330）。
+   */
+  private needsReviewTask(parent: Task, repo: string, number: number): boolean {
+    const last = (parent.reviewTasks ?? []).findLast(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    if (!last) return true;
+    const child = this.tasks.get(last.taskId);
+    return child?.status === "cancelled" && child.cancelled?.reason === "pull_request_closed";
+  }
+
+  /**
    * PR の確認（60秒ごと）で、承認待ちの PR のレビューの子タスクを整える（PBI-330）。
    * - 子タスクの無い承認待ちの PR（作る前に止まったもの）には作る
    * - 親が PR を更新して承認待ちに戻った（指摘を直した）のに、子タスクが前の先頭をレビューして終わっていれば、最新の
    *   コミットを再レビューさせる。同じ先頭では1回だけ（先頭を読み違えても、繰り返さない）
    * 一時停止・中止を求められた親と子、一時停止した子は動かさない。
    */
-  private reconcileReviewTasks(): void {
+  private async reconcileReviewTasks(): Promise<void> {
     if (this.deps.reviewTasks !== true) return;
     // 親が中止されたら、終わっていないレビューの子タスクも中止する（中止の片付けで PR を閉じなかったときも、レビューを続けない）
     for (const child of [...this.tasks.values()]) {
       if (!child.reviewOf || child.status === "cancelled" || isCompleted(child)) continue;
       if (this.cancelling.has(child.id)) continue;
       if (this.tasks.get(child.reviewOf.taskId)?.status !== "cancelled") continue;
-      void this.cancel(child.id, "parent_cancelled").catch((error: unknown) => {
+      await this.cancel(child.id, "parent_cancelled").catch((error: unknown) => {
         console.warn(`[daemon] レビューの子タスク ${child.id} を中止できませんでした：`, error);
       });
     }
@@ -15962,6 +15989,9 @@ export function reviewTaskTitle(parentTitle: string, number: number): string {
   const suffix = `（PR #${number}）`;
   const head = "レビュー：";
   const room = 200 - head.length - suffix.length;
-  const title = parentTitle.length > room ? `${parentTitle.slice(0, room - 1)}…` : parentTitle;
+  // 文字の途中（サロゲートペアの間）で切らない
+  let cut = room - 1;
+  if (parentTitle.length > room && /[\uDC00-\uDFFF]/.test(parentTitle[cut] ?? "")) cut--;
+  const title = parentTitle.length > room ? `${parentTitle.slice(0, cut)}…` : parentTitle;
   return `${head}${title}${suffix}`;
 }

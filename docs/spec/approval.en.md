@@ -96,12 +96,15 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
 
 - When it is created: right after the requirements or design PR is opened, and for the implementation PR when it moves to review (when the draft is removed).
   It is not created while it is a draft before the final review.
+  An implementation PR stacked on a dependency's PR (it waits for approval as a draft; [Tasks and steps](tasks-and-steps.en.md)) also does not get one while it is a draft; it is created when, after the dependency is merged, the PR is retargeted and the draft is removed.
   In a task that continues an existing PR, it is created for the continued PR.
 - The child task is a PR-review-only task (`source.review: sacty`; [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)), and holds the parent's ID and the step that opened the PR in `reviewOf` of `TaskCreated`.
-  Its title is `レビュー：<parent title>（PR #<number>）`, its project is the parent's, and its budget cap is `budget.default_per_task_usd` (the child task's cost counts toward the child task's budget).
+  Its title is `レビュー：<parent title>（PR #<number>）` (up to 200 characters; a long parent title is cut with `…` without splitting a character), its project is the parent's, and its budget cap is `budget.default_per_task_usd` (the child task's cost counts toward the child task's budget).
   It is separate from split subtasks (`parent`), and is not waited for by a split or included in an integration review.
 - `ReviewTaskCreated` (the child task's ID, step, and PR) is recorded on the parent (`Task.reviewTasks`).
   One per PR (repository and number). A PR with a record does not get another when updated. When the PR is recreated (new number), one is created for the new PR.
+  However, if the last child task was cancelled because the PR was closed (`reason: pull_request_closed`), the PR check after the PR is reopened creates a new child task and adds a record (a cancelled task cannot be re-reviewed; `needsReviewTask`).
+  A child task a person cancelled is not recreated.
 - When it is not created
   - The parent is canceled or a cancel was requested.
   - A review task for that PR (such as one taken in from the review label by an older version) exists and has not finished (no double review).
@@ -119,9 +122,10 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   There is no limit on the number of rounds; they stop at the budget cap of the parent and of the child task.
 - If the PR is merged or closed before the child task finishes, the child task is cancelled (the same as PR-review-only tasks; `checkReviewPullRequests`).
 - If the parent is cancelled, the PR check also cancels the child tasks that have not finished (`reason: parent_cancelled` of `TaskCancelled`; even if the PR was not closed in the cancel's cleanup, the review does not continue).
+  The PR check finishes only after the child tasks' cancellation (cleanup and records) finishes.
 - Records from older versions (`label` and `intakeLabel` in the PR publish records, `PullRequestLabeled` and `PullRequestLabelFailed`) can still be read but are not treated as a plan to attach a label (the ledger is not rewritten).
 
-Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
+Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
 
 ## The PR check
 
