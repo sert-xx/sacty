@@ -2942,12 +2942,6 @@ export const MAX_FIX_CHAIN = 3;
 export const DEPLOYMENT_CI_GRACE_MS = 5 * 60_000;
 /** CI/CD が終わるのを待つ上限（監視を始めた時刻から。PBI-89）。 */
 export const DEPLOYMENT_CI_TIMEOUT_MS = 60 * 60_000;
-/** 最終レビューの前に作った実装の PR で、CI が1つも現れないまま、これだけたったら CI が無いとみなす。 */
-export const PULL_REQUEST_CI_GRACE_MS = 5 * 60_000;
-/** 上の待ち時間のうち、リポジトリに CI が無いと確かめられたときの短い猶予（PBI-309）。 */
-export const PULL_REQUEST_NO_CI_GRACE_MS = 60_000;
-/** 最終レビューの前に作った実装の PR の CI が終わるのを待つ上限（PR を作った・更新した時刻から）。 */
-export const PULL_REQUEST_CI_TIMEOUT_MS = 60 * 60_000;
 
 /** CI/CD の実行・チェック・コミットの状態の1件（PBI-89）。conclusion は終わったものだけ。 */
 export const CiCheck = z.object({

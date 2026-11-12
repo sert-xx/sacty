@@ -16,7 +16,6 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { findDeploymentSkill } from "./deployment.js";
-import { diffMatchesFiles, internalNamesInDiff } from "./prompts.js";
 import {
   DIFF_LIMIT,
   GitRepositoryWorkspace,
@@ -1878,7 +1877,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     }
   });
 
-  it("差分の節を、git が出したファイルの一覧で結び付ける。BMP の外の文字・引用符・タブの名前と、名前の変更の前のパスを取り違えない（PR #304 のレビュー）", async () => {
+  it("差分のファイルの一覧は、BMP の外の文字・引用符・タブの名前と、名前の変更の前のパス・種類の変更を取り違えない（PR #304 のレビュー）", async () => {
     const origin = makeOrigin();
     mkdirSync(join(origin, "docs"));
     const body = Array.from({ length: 12 }, (_, i) => `${i + 1}. 説明の行`);
@@ -1914,7 +1913,6 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     rmSync(join(clone, "docs/link"));
     symlinkSync("../pay.ts", join(clone, "docs/link"));
 
-    const diff = await workspace.diff(clone, gitDir, baseCommit);
     const files = await workspace.diffFiles(clone, gitDir, baseCommit);
     expect(files).toContainEqual({
       status: expect.stringMatching(/^R/),
@@ -1922,31 +1920,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       path: 'docs/new "名".md',
     });
     expect(files.find((f) => f.path === "docs/link")?.status).toBe("T");
-    expect(diffMatchesFiles(diff, files)).toBe(true);
-    const hits = internalNamesInDiff(diff, "", files);
-    expect(hits).toEqual(
-      expect.arrayContaining([
-        { path: emoji, line: 1, name: "/tmp/agent-scratch" },
-        { path: tab, line: 1, name: "/sacty-input" },
-        {
-          path: 'docs/new "名".md',
-          line: 14,
-          name: ".sacty-tools",
-          basePath: "docs/old name.md",
-        },
-      ]),
-    );
-    expect(hits).toHaveLength(3);
-    // 起点の側は、変える前のパスで読める（もともとある名前を除ける）
-    const renamed = hits.find((h) => h.basePath);
-    const base = await workspace.readFile(gitDir, baseCommit, renamed?.basePath ?? "", {
-      anyName: true,
-    });
-    expect(base).toContain(renamed?.name);
-    // 変えた後のパスは起点に無い
-    expect(
-      await workspace.readFile(gitDir, baseCommit, renamed?.path ?? "", { anyName: true }),
-    ).toBeUndefined();
+    expect(files.map((f) => f.path)).toEqual(expect.arrayContaining([emoji, tab]));
   });
 
   it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {

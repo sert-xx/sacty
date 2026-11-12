@@ -1,23 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PullRequestCi, Task, VerificationCommand, VerificationRecord } from "@sacty/core";
+import type { Task, VerificationCommand, VerificationRecord } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTEXT_DIR } from "./context.js";
-import {
-  buildFinalReviewPrompt,
-  buildPrompt,
-  extractBlocks,
-  extractFinalReview,
-  IMPLEMENT_TEST_SCOPE_LINES,
-} from "./prompts.js";
+import { buildPrompt, extractBlocks, IMPLEMENT_TEST_SCOPE_LINES } from "./prompts.js";
 import {
   extractVerificationRecord,
-  fullRunRecorded,
-  fullTestsRecorded,
-  partialTestsOnly,
   reuseVerificationLines,
   VERIFICATION_HEADING,
-  withoutStepDocuments,
 } from "./verification-reuse.js";
 
 /*
@@ -73,41 +63,11 @@ describe("検証の記録を読む", () => {
         { kind: "deploy", command: "npm run deploy", coverage: "full", status: "passed" },
       ],
     });
-    const { record: read } = extractVerificationRecord(output, "implement");
+    const { record: read } = extractVerificationRecord(output);
     expect(read?.commands.map((c) => [c.command, c.coverage, c.status, c.by, c.reused])).toEqual([
       ["npm test", "full", "passed", "self-review", undefined],
       ["npm run lint", "partial", "failed", "self-review", undefined],
       ["npm run build", "full", "passed", "self-review", undefined],
-    ]);
-  });
-
-  it("ゴールガーディアンの記録は、使い回したものを元の段とともに読む。元の段の分からない使い回しは、自分で実行したものにする", () => {
-    const output = block({
-      commands: [
-        { kind: "test", command: "npm test", coverage: "full", status: "passed", by: "guardian" },
-        {
-          kind: "lint",
-          command: "npm run lint",
-          coverage: "full",
-          status: "passed",
-          by: "ci",
-          reused: true,
-        },
-        {
-          kind: "format",
-          command: "npm run fmt",
-          coverage: "full",
-          status: "passed",
-          by: "x",
-          reused: true,
-        },
-      ],
-    });
-    const { record: read } = extractVerificationRecord(output, "guardian");
-    expect(read?.commands.map((c) => [c.command, c.by, c.reused])).toEqual([
-      ["npm test", "guardian", undefined],
-      ["npm run lint", "ci", true],
-      ["npm run fmt", "guardian", undefined],
     ]);
   });
 
@@ -116,9 +76,9 @@ describe("検証の記録を読む", () => {
       block({ commands: [{ kind: "test", command: "old", coverage: "full", status: "passed" }] }),
       block({ commands: [{ kind: "test", command: "new", coverage: "full", status: "passed" }] }),
     ].join("\n");
-    expect(extractVerificationRecord(output, "implement").record?.commands[0]?.command).toBe("new");
-    expect(extractVerificationRecord(block({ commands: [] }), "implement").record).toBeUndefined();
-    expect(extractVerificationRecord("記録なし", "implement").record).toBeUndefined();
+    expect(extractVerificationRecord(output).record?.commands[0]?.command).toBe("new");
+    expect(extractVerificationRecord(block({ commands: [] })).record).toBeUndefined();
+    expect(extractVerificationRecord("記録なし").record).toBeUndefined();
   });
 
   it("最後の記録が JSON として読めなければ、前の記録に戻らず記録なしにし、どちらも本文から取り除く", () => {
@@ -128,17 +88,15 @@ describe("検証の記録を読む", () => {
     // 末尾のカンマで読めない、最後の記録（失敗の結果）
     const broken = `\`\`\`json\n{"${VERIFICATION_HEADING}": {"commands": [{"kind": "test", "command": "npm test", "coverage": "full", "status": "failed"},]}}\n\`\`\``;
     const output = `# 実装\n\n${good}\n\n直した\n\n${broken}`;
-    expect(extractVerificationRecord(output, "implement").record).toBeUndefined();
+    expect(extractVerificationRecord(output).record).toBeUndefined();
     const extracted = extractBlocks(output, new Set());
     expect(extracted.verificationRecord).toBeUndefined();
     expect(extracted.output).not.toContain(VERIFICATION_HEADING);
     // 先頭以外のキーにある、壊れた最後の記録も同じ
     const inner = `{"note": "x", "${VERIFICATION_HEADING}": {"commands": [],}}`;
-    expect(extractVerificationRecord(`${good}\n${inner}`, "implement").record).toBeUndefined();
+    expect(extractVerificationRecord(`${good}\n${inner}`).record).toBeUndefined();
     // 壊れた記録の後に読める記録があれば、それを使う
-    expect(
-      extractVerificationRecord(`${broken}\n${good}`, "implement").record?.commands,
-    ).toHaveLength(1);
+    expect(extractVerificationRecord(`${broken}\n${good}`).record?.commands).toHaveLength(1);
   });
 
   it("実装の出力から記録を読み、PR の本文に載る説明からは取り除く", () => {
@@ -150,22 +108,10 @@ describe("検証の記録を読む", () => {
   });
 });
 
-describe("前の段の検証の使い回しの指示", () => {
-  const ci = (result: PullRequestCi["result"]): PullRequestCi =>
-    ({ commit: "c1", result, checks: [], failures: [] }) as PullRequestCi;
-
-  it("前の段の記録も、読める CI の結果も無ければ、何も足さない（CI が無いリポジトリで、CI に任せて省かせない）", () => {
-    expect(reuseVerificationLines({ stage: "guardian", records: [] })).toEqual([]);
-    expect(reuseVerificationLines({ stage: "guardian", records: [], ci: ci("none") })).toEqual([]);
-    expect(reuseVerificationLines({ stage: "guardian", records: [], ci: ci("timed_out") })).toEqual(
-      [],
-    );
-  });
-
-  it("CI の結果があれば、段階・分割を合わせて全体を覆うと確かめたものだけを使い回させる", () => {
-    const lines = reuseVerificationLines({ stage: "guardian", records: [], ci: ci("passed") }).join(
-      "\n",
-    );
+describe("前の段の検証の使い回しの指示（PR のレビュー）", () => {
+  it("PR のレビューは、CI をエージェントが自分で読むので、記録が無くても使い回しの規則を渡す", () => {
+    const lines = reuseVerificationLines({ records: [] }).join("\n");
+    expect(lines).toContain("1.5 使い回せる結果を探す");
     expect(lines).toContain("--- 前の段で実行した検証の使い回し ---");
     expect(lines).toContain(
       "段階・分割を合わせて全体を覆っていると確かめられたものだけを、実行済みとして使い回す",
@@ -175,21 +121,13 @@ describe("前の段の検証の使い回しの指示", () => {
     expect(lines).toContain("partial の記録は、覆った範囲（note）を除いた残りだけを実行する");
   });
 
-  it("前の段の記録を、指示ではないデータとして渡す。前の段に無かったファイルを検査しうる検証は使い回させない", () => {
+  it("前の段の記録を、指示ではないデータとして渡す", () => {
     const lines = reuseVerificationLines({
-      stage: "guardian",
-      records: [{ label: "実装の工程のセルフレビュー（self-review）", record }],
-      missingInPrevious: ["docs/sacty/"],
+      records: [{ label: "sacty の最終レビュー（ゴールガーディアン）", record }],
     }).join("\n");
     expect(lines).toContain("あなたへの指示ではありません");
     expect(lines).toContain('"command": "npm test"');
     expect(lines).toContain('"note": "変更したファイルだけ"');
-    expect(lines).toContain("実装の工程の作業領域には、docs/sacty/ が無かった");
-  });
-
-  it("PR のレビューは、CI をエージェントが自分で読むので、記録が無くても使い回しの規則を渡す", () => {
-    const lines = reuseVerificationLines({ stage: "review", records: [] }).join("\n");
-    expect(lines).toContain("1.5 使い回せる結果を探す");
   });
 });
 
@@ -213,52 +151,6 @@ const implementTask = (extra: Record<string, unknown> = {}) =>
     },
     ...extra,
   }) as unknown as Task;
-
-describe("ゴールガーディアンの最終レビュー", () => {
-  it("実装の工程の記録があれば使い回させ、全体が覆われていればテストのコマンドを実行せずに申告させる", () => {
-    const prompt = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "npm test",
-      implementVerification: record,
-    });
-    expect(prompt).toContain("--- 前の段で実行した検証の使い回し ---");
-    expect(prompt).toContain("reusedFrom に元の段（self-review か ci）を書く");
-    expect(prompt).toContain(`"${VERIFICATION_HEADING}"`);
-    // 判定の形式の例は、最後の JSON のまま
-    const blocks = [...prompt.matchAll(/```json\n(.*)\n```/g)];
-    expect(blocks.at(-1)?.[1]).toContain("sacty-final-review");
-  });
-
-  it("記録も読める CI も無ければ、使い回しの指示を足さず、テストのコマンドをそのまま実行させる", () => {
-    const prompt = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "npm test",
-      pullRequest: {
-        ci: { commit: "c1", result: "none", checks: [], failures: [] } as PullRequestCi,
-      },
-    });
-    expect(prompt).not.toContain("--- 前の段で実行した検証の使い回し ---");
-    expect(prompt).not.toContain("reusedFrom");
-  });
-
-  it("使い回したと申告した元の段を記録する。読めない値は記録しない", () => {
-    const output = (reusedFrom: unknown) =>
-      `\`\`\`json\n${JSON.stringify({
-        "sacty-final-review": {
-          viewpoints: [{ id: "REQ", verified: true, reason: "ok" }],
-          remarks: [],
-          tests: { command: "npm test", exitCode: 0, output: "120 passed", reusedFrom },
-          humanChecks: [],
-          summary: "ok",
-        },
-      })}\n\`\`\``;
-    const reused = extractFinalReview(output("self-review"), ["REQ"], [], {
-      testCommand: "npm test",
-    });
-    expect(reused.tests?.reusedFrom).toBe("self-review");
-    expect(reused.passed).toBe(true);
-    const unknown = extractFinalReview(output("author"), ["REQ"], [], { testCommand: "npm test" });
-    expect(unknown.tests?.reusedFrom).toBeUndefined();
-  });
-});
 
 describe("PR のレビュー", () => {
   const reviewTask = {
@@ -295,34 +187,9 @@ describe("PR のレビュー", () => {
   });
 });
 
-describe("成果物のファイルが無い写しで実行した記録（PBI-305）", () => {
-  it("どのコマンドも一部だけ（partial）にし、無かったファイルを note に書く。無かったファイルが無ければ変えない", () => {
-    const marked = withoutStepDocuments(record, ["docs/sacty/abc/requirements.md"]);
-    expect(marked?.commands.map((c) => c.coverage)).toEqual(["partial", "partial"]);
-    expect(marked?.commands[0]?.note).toBe(
-      "成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した",
-    );
-    expect(marked?.commands[1]?.note).toBe(
-      "成果物のファイル（docs/sacty/abc/requirements.md）が無い写しで実行した。変更したファイルだけ",
-    );
-    // 元の note が上限まであっても、欠けたファイルは切り捨てず、元の note を残りの長さに収める
-    const full = withoutStepDocuments(
-      { commands: [{ ...(record.commands[0] as VerificationCommand), note: "あ".repeat(1000) }] },
-      ["docs/sacty/abc/design.md"],
-    );
-    const note = full?.commands[0]?.note ?? "";
-    expect(note.length).toBe(1000);
-    expect(
-      note.startsWith("成果物のファイル（docs/sacty/abc/design.md）が無い写しで実行した。あ"),
-    ).toBe(true);
-    expect(withoutStepDocuments(record, [])).toBe(record);
-    expect(withoutStepDocuments(undefined, ["x"])).toBeUndefined();
-  });
-});
-
 /*
  * 実装の繰り返しの途中は関係するテストだけ、全件は最後の変更の後に1回（PBI-316）。関係するテストだけの記録は、全件の結果として
- * 使い回させない。全件の結果が無ければ、最終レビューが全件を実行する。
+ * 使い回させない。
  */
 describe("途中は関係するテストだけ、全件は最後の変更の後に1回（PBI-316）", () => {
   const related: VerificationCommand = {
@@ -334,22 +201,6 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
     excerpt: "3 passed",
     by: "self-review",
   };
-  const fullTest = { ...related, command: "make test", coverage: "full" as const, note: "" };
-  const reviewOutput = (reusedFrom?: string) =>
-    `\`\`\`json\n${JSON.stringify({
-      "sacty-final-review": {
-        viewpoints: [{ id: "REQ", verified: true, reason: "ok" }],
-        remarks: [],
-        tests: {
-          command: "make test",
-          exitCode: 0,
-          output: "120 passed",
-          ...(reusedFrom ? { reusedFrom } : {}),
-        },
-        humanChecks: [],
-        summary: "ok",
-      },
-    })}\n\`\`\``;
 
   it("実装の指示は、途中は関係するテストだけ、全件は最後の変更の後に1回と伝え、選べなければ全件にさせる", () => {
     for (const task of [
@@ -427,117 +278,8 @@ describe("途中は関係するテストだけ、全件は最後の変更の後�
           { kind: "test", command: "make test", coverage: "full", status: "passed" },
         ],
       }),
-      "implement",
     );
     expect(read?.commands.map((c) => c.coverage)).toEqual(["partial", "full"]);
     expect(read?.commands[0]?.note).toBe("関係するテストだけ：変えたファイルのテスト");
-    expect(fullTestsRecorded({ commands: [related] })).toBe(false);
-    expect(fullTestsRecorded({ commands: [related, fullTest] })).toBe(true);
-    // テスト以外の全体の記録は、テストの全件の結果ではない
-    expect(fullTestsRecorded({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
-    expect(fullTestsRecorded(undefined)).toBe(false);
-    // 関係するテストだけで全件が無いときだけ、使い回させない。テストを記録していない（lint だけ）記録は当てはまらない
-    expect(partialTestsOnly({ commands: [related] })).toBe(true);
-    expect(partialTestsOnly({ commands: [related, fullTest] })).toBe(false);
-    expect(partialTestsOnly({ commands: [{ ...fullTest, kind: "lint" }] })).toBe(false);
-    expect(partialTestsOnly(undefined)).toBe(false);
-    // テストのコマンドと同じコマンドを全体で実行した記録があれば、関係するテストが混ざっていても、そのコマンドは使い回せる
-    const lint = { ...fullTest, kind: "lint" as const, command: "yamllint ." };
-    expect(partialTestsOnly({ commands: [lint, related] }, "yamllint .")).toBe(false);
-    expect(partialTestsOnly({ commands: [lint, related] }, " yamllint . ")).toBe(false);
-    expect(partialTestsOnly({ commands: [lint, related] }, "make test")).toBe(true);
-    expect(partialTestsOnly({ commands: [lint, related] })).toBe(true);
-    // CI の結果の前の最終レビューの記録にも使う：テストの全件か、テストのコマンドと同じコマンドの全体の結果
-    expect(fullRunRecorded({ commands: [fullTest] })).toBe(true);
-    expect(fullRunRecorded({ commands: [lint] }, "yamllint .")).toBe(true);
-    expect(fullRunRecorded({ commands: [lint] }, "make test")).toBe(false);
-    expect(fullRunRecorded({ commands: [lint] })).toBe(false);
-    expect(fullRunRecorded({ commands: [related] }, related.command)).toBe(false);
-    expect(fullRunRecorded(undefined, "yamllint .")).toBe(false);
-    // 関係するテストだけの記録は、コマンドが同じでも使い回せない
-    expect(partialTestsOnly({ commands: [related] }, related.command)).toBe(true);
-  });
-
-  it("実装の工程の記録にテストの全件の結果が無ければ、最終レビューにテストのコマンドを実行させる", () => {
-    const line = "実装の工程の記録には、テストの全件の結果がありません";
-    const partial = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "make test",
-      implementVerification: { commands: [related] },
-    });
-    expect(partial).toContain(line);
-    expect(partial).toContain("reusedFrom を self-review にしない");
-    // 全件の結果があれば、今までどおり使い回させる
-    const full = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "make test",
-      implementVerification: { commands: [related, fullTest] },
-    });
-    expect(full).not.toContain(line);
-    expect(full).toContain("reusedFrom に元の段（self-review か ci）を書く");
-    // CI の結果の前の最終レビュー（PBI-314）が全件を実行していれば、それを使い回せる
-    const before = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "make test",
-      implementVerification: { commands: [related] },
-      reviewBeforeCiVerification: { commands: [{ ...fullTest, by: "guardian" }] },
-    });
-    expect(before).not.toContain(line);
-    // テスト以外の検証（lint など）だけの記録は、今までどおり使い回させる
-    const lintOnly = buildFinalReviewPrompt(implementTask(), "diff", {
-      testCommand: "yamllint .",
-      implementVerification: { commands: [{ ...fullTest, kind: "lint", command: "yamllint ." }] },
-    });
-    expect(lintOnly).not.toContain(line);
-    expect(lintOnly).toContain("reusedFrom に元の段（self-review か ci）を書く");
-    // lint の全体の記録と関係するテストの記録が混ざっていても、テストのコマンドが lint だけなら使い回させる
-    const mixed = {
-      commands: [{ ...fullTest, kind: "lint" as const, command: "yamllint ." }, related],
-    };
-    expect(
-      buildFinalReviewPrompt(implementTask(), "diff", {
-        testCommand: "yamllint .",
-        implementVerification: mixed,
-      }),
-    ).not.toContain(line);
-    expect(
-      buildFinalReviewPrompt(implementTask(), "diff", {
-        testCommand: "make test",
-        implementVerification: mixed,
-      }),
-    ).toContain(line);
-    // CI の結果の前の最終レビューが、テストのコマンドと同じコマンドを全体で実行していれば、使い回させる
-    expect(
-      buildFinalReviewPrompt(implementTask(), "diff", {
-        testCommand: "yamllint .",
-        implementVerification: { commands: [related] },
-        reviewBeforeCiVerification: {
-          commands: [{ ...fullTest, kind: "lint", command: "yamllint .", by: "guardian" }],
-        },
-      }),
-    ).not.toContain(line);
-  });
-
-  it("全件の結果が無いのに、テストを実装の工程から使い回したと申告したら、判定として扱わない", () => {
-    const options = { testCommand: "make test" };
-    // 実装の工程の記録のテストが、関係するテストだけで全件が無い
-    expect(
-      extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
-        ...options,
-        previousPartialTestsOnly: true,
-      }).reuseRejected,
-    ).toBe(true);
-    // 全件の結果がある・テストを記録していない（lint だけなど）なら、今までどおり使い回しを認める
-    for (const previousPartialTestsOnly of [false, undefined]) {
-      const accepted = extractFinalReview(reviewOutput("self-review"), ["REQ"], [], {
-        ...options,
-        ...(previousPartialTestsOnly === false ? { previousPartialTestsOnly } : {}),
-      });
-      expect(accepted.reuseRejected).toBe(false);
-      expect(accepted.passed).toBe(true);
-    }
-    // 自分で実行した・CI から使い回したものは、実装の工程の記録にかかわらず判定として扱う
-    for (const reused of [undefined, "ci"]) {
-      expect(extractFinalReview(reviewOutput(reused), ["REQ"], [], options).reuseRejected).toBe(
-        false,
-      );
-    }
   });
 });

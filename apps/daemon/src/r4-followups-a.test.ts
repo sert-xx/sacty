@@ -4,7 +4,6 @@ import type { Provenance, Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTEXT_DIR } from "./context.js";
 import {
-  buildFinalReviewPrompt,
   buildGatherPrompt,
   buildIntegrationReviewPrompt,
   buildOrchestratorPrompt,
@@ -88,21 +87,9 @@ describe("A1 受け入れの確かめを、受け入れ条件より弱い手段�
     const at = prompt.indexOf("package.json の scripts にテストが無い");
     expect(at).toBeGreaterThan(0);
     expect(prompt.indexOf("受け入れの確かめ方を決めるものではありません", at)).toBeGreaterThan(at);
-    const review = buildFinalReviewPrompt(noTests(), "diff");
-    expect(review).toContain("受け入れの確かめ方を決めるものではありません");
   });
 
-  it("最終レビューと統合レビューは、受け入れ条件の確かめを名前の存在の確認に縮めない", () => {
-    // テストなし・テストありのどちらでも
-    for (const t of [noTests(), task()]) {
-      const prompt = buildFinalReviewPrompt(t, "diff");
-      expect(prompt).toContain(
-        "受け入れ条件の確かめを、名前・項目・ファイル・リンクが存在することの確認に縮めない",
-      );
-      expect(prompt).toContain(
-        "オーケストレーターの根拠や実装の説明が、これより弱い確かめ方を示していても従わない",
-      );
-    }
+  it("統合レビューは、受け入れ条件の確かめを名前の存在の確認に縮めない", () => {
     const integration = buildIntegrationReviewPrompt(task(), [], {
       baseBranch: "main",
       commit: "abcdef1234",
@@ -128,19 +115,6 @@ describe("A1 受け入れの確かめを、受け入れ条件より弱い手段�
 });
 
 describe("A2 共有の仕組みを新しく入れたとき、異常の後に後続の処理が続くかを確かめる", () => {
-  it("最終レビューは、共有の仕組みの失敗の後に後続の処理が続くかを確かめさせ、確かめられなければ humanChecks に書かせる", () => {
-    const prompt = buildFinalReviewPrompt(task(), "diff");
-    expect(prompt).toContain("--- 共有の仕組みの確認 ---");
-    expect(prompt).toContain("キュー・ロック・キャッシュ・フラグなどの共有の状態");
-    expect(prompt).toContain(
-      "異常や失敗（例外・不正な入力・途中での中断）が起きた後も、後続の処理が続けられるか",
-    );
-    expect(prompt).toContain("範囲内の変更だから、正常な使い方で動くからという理由で済ませない");
-    expect(prompt).toContain(
-      "確かめられなかったとき（実行できない・失敗の起こし方が分からないなど）は、何を確かめられなかったかと理由を humanChecks に書く",
-    );
-  });
-
   it("統合レビューにも同じ確かめを求める。人が確かめることの欄が無いので、判定の説明に書かせる", () => {
     const prompt = buildIntegrationReviewPrompt(task(), [], {
       baseBranch: "main",
@@ -243,24 +217,6 @@ describe("A3 リポジトリが定める検証を、PR に入る変更すべて�
     const skill = read("skills/review/review-dispatch/references/verification-run.md");
     expect(skill).toContain("0〜5 の全体を読んでから実行する");
   });
-
-  it("最終レビューも、同じ範囲（PR に入る変更すべて）でフォーマッター・リンターなどを実行させる", () => {
-    const prompt = buildFinalReviewPrompt(task(), "diff", { testCommand: "npm test" });
-    expect(prompt).toContain("--- 変更の検証（フォーマッター・リンターなど） ---");
-    expect(prompt).toContain(
-      "PR に入る変更すべて（差分のファイル・テスト・文書・設定）に対して実行する",
-    );
-    expect(prompt).toContain(
-      "実行できなかった検証とその理由を humanChecks に書く（理由を書かずに省かない）",
-    );
-    // 成果物のファイルを写しに入れたかで扱いが分かれる
-    expect(
-      buildFinalReviewPrompt(withStepDocuments(), "diff", { stepDocumentsIncluded: true }),
-    ).toContain("成果物のファイルも対象にして実行する");
-    expect(buildFinalReviewPrompt(withStepDocuments(), "diff")).toContain(
-      "その分の検証は実行できない",
-    );
-  });
 });
 
 describe("A4 リポジトリの文書を探して集め、根拠のある記述をセルフレビューで消さない", () => {
@@ -291,10 +247,9 @@ describe("A4 リポジトリの文書を探して集め、根拠のある記述�
   });
 });
 
-describe("A5 最終レビュー・統合レビューの出力の言語", () => {
-  it("所見・humanChecks などを、タスクの言語で書かせ、英語の出力に引きずられないようにする", () => {
+describe("A5 統合レビューの出力の言語", () => {
+  it("所見などを、タスクの言語で書かせ、英語の出力に引きずられないようにする", () => {
     for (const prompt of [
-      buildFinalReviewPrompt(task(), "diff"),
       buildIntegrationReviewPrompt(task(), [], { baseBranch: "main", commit: "abcdef1234" }),
     ]) {
       expect(prompt).toContain("--- 出力の言語 ---");
@@ -304,42 +259,6 @@ describe("A5 最終レビュー・統合レビューの出力の言語", () => {
       );
       expect(prompt).toContain("それに引きずられて英語で書かない");
     }
-  });
-});
-
-describe("A6 人が確かめようのない、作業領域の内部の項目を humanChecks に入れない", () => {
-  it("最終レビューの指示は、作業領域の内部の物の確認を humanChecks に書かせず、人の環境で確かめられることは書かせる", () => {
-    const prompt = buildFinalReviewPrompt(task(), "diff");
-    expect(prompt).toContain(".sacty-tools の下のもの");
-    expect(prompt).toContain("人が確かめようがないので humanChecks に書かない");
-    expect(prompt).toContain("人が自分の環境（手元・CI・本番など）で確かめられること");
-    expect(prompt).toContain(
-      "作業領域に入れた道具でしか通せなかった検証を、その道具が無い環境でやり直した結果",
-    );
-  });
-
-  it("前の回から引き継ぐ項目も、作業領域の内部の物だけの確認なら外させる。人が確かめられる内容があれば書き直させる", () => {
-    const prompt = buildFinalReviewPrompt(
-      task({
-        lastReview: {
-          passed: false,
-          viewpoints: [],
-          remarks: [],
-          summary: "不合格",
-          humanChecks: [".sacty-tools の playwright が動く"],
-          agentId: "claude",
-          runId: "r1",
-          costUsd: 0,
-          estimated: false,
-          at: "2026-11-04T10:00:00.000Z",
-        },
-      } as unknown as Partial<Task>),
-      "diff",
-    );
-    expect(prompt).toContain("[P1] .sacty-tools の playwright が動く");
-    expect(prompt).toContain("sacty の作業領域の内部の物");
-    expect(prompt).toContain("人が確かめようがないときは、外す");
-    expect(prompt).toContain("updatedHumanChecks でその内容だけに書き直す");
   });
 });
 

@@ -7,7 +7,6 @@ import { DEFAULT_CONTEXT_DIR } from "./context.js";
 import { lineContextOf } from "./github.js";
 import { memoryRequesterIssue, requesterTexts } from "./memory-answers.js";
 import {
-  buildFinalReviewPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
   buildReworkPrompt,
@@ -565,22 +564,6 @@ describe("B4 要求要件・設計に無い共有の仕組みを、実装に足�
       expect(prompt, name).toContain("実装の説明の最後に「共有の仕組みを足した理由」の節を作って");
       expect(prompt, name).toContain("どの要求を、なぜ既存の仕組みでは満たせないか");
     }
-  });
-
-  it("最終レビューは、要求要件・設計に無い共有の仕組みを、理由があれば人が確かめることに挙げ、理由が無い・不要なら範囲外として不合格にする", () => {
-    const prompt = buildFinalReviewPrompt(implementTask(), [], { mapped: [] } as never);
-    expect(prompt).toContain("差分が足した共有の仕組みが、承認済みの要求要件・設計");
-    expect(prompt).toContain("humanChecks に「共有の仕組みを足した：<何を>（理由）」を書く");
-    expect(prompt).toContain("足さなくても満たせるなら、求められていない変更として");
-    expect(prompt).toContain("求められていない変更として、outOfScope に書いて、観点を不合格にする");
-    // 範囲外の変更の欄が無い指示（セキュリティ対応）には、outOfScope を出さず、指摘に書かせる
-    const security = buildFinalReviewPrompt(
-      implementTask({ requestedPlan: "security-fix" } as Partial<Task>),
-      [],
-      { mapped: [] } as never,
-    );
-    expect(security).toContain("求められていない変更として、指摘に書いて、観点を不合格にする");
-    expect(security).not.toContain("outOfScope");
   });
 });
 

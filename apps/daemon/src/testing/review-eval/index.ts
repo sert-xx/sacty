@@ -3,7 +3,7 @@
  *
  * 実験で見つかった「観点の取りこぼし」を、実験の入力に近い固定の例（fixtures）にして残す。
  * - s18：要求要件のセルフレビュー（観点 D-10）が、リポジトリの決まりから導いた条件を「決まりの書き直し」として消した
- * - s12：最終レビューが、共通化のリファクタリングで 422 のメッセージが変わったことを指摘しなかった
+ * - s12：承認済みの要求要件・設計を持つタスク（要求要件・設計の指示の確かめに使う。最終レビューの例は PBI-331 でやめた）
  *
  * 指示を変えたら、実際の AI に例を渡して、指摘が出るか・出ないかを確かめる（`review-eval.test.ts` の SACTY_REVIEW_EVAL）。
  * AI の判定は揺れるので、同じ例を複数回（SACTY_REVIEW_EVAL_RUNS）流し、指示の変更の前後で比べる。
@@ -15,9 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Task, TestViewpoint } from "@sacty/core";
-import { headedObject, lastJsonAnswer } from "../../agent-json.js";
 import { DEFAULT_CONTEXT_DIR } from "../../context.js";
-import { buildFinalReviewPrompt } from "../../prompts.js";
 
 export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -26,21 +24,6 @@ export const readFixture = (...path: string[]): string => readFileSync(fixture(.
 
 /** 既定のレビュー用スキル（review-dispatch・review-execution の親のディレクトリ）。 */
 export const REVIEW_SKILLS_DIR = join(DEFAULT_CONTEXT_DIR, "skills", "review");
-
-function run(cwd: string, args: string[]): string {
-  const result = spawnSync(
-    "git",
-    ["-c", "user.name=eval", "-c", "user.email=eval@example.com", ...args],
-    {
-      cwd,
-      encoding: "utf8",
-    },
-  );
-  if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
-  }
-  return result.stdout;
-}
 
 /** 観点カタログ（viewpoints.md）の、観点 ID の行（親が担当への依頼文に写す「見るもの」「見ないもの」を含む）。 */
 export function viewpointRow(
@@ -165,43 +148,6 @@ export function flagsOtherOverwriting(findings: readonly Finding[]): boolean {
   );
 }
 
-const MINUTE = 60_000;
-
-/** s12 の例の入力：開始が過去で、会議室が利用停止。 */
-export function s12Input(overrides: Record<string, unknown> = {}) {
-  const now = new Date("2099-01-02T09:00:00Z");
-  return {
-    id: "r1",
-    memberId: "m1",
-    title: "定例",
-    startsAt: new Date(now.getTime() - 60 * MINUTE),
-    endsAt: new Date(now.getTime() - 30 * MINUTE),
-    attendees: 2,
-    now,
-    room: { id: "room1", name: "R", isActive: true, capacity: 6 },
-    ...overrides,
-  };
-}
-
-/**
- * s12 の例：変更前のコードを 1 コミットにし、変更後のコードを作業ツリーに置いたリポジトリと、その差分。
- * after-same-order は対照（同じ共通化で、検査の順番を保ったもの。範囲外と申告されてはいけない）。
- */
-export function s12Workspace(after: "after" | "after-same-order" = "after"): {
-  dir: string;
-  diff: string;
-} {
-  const dir = mkdtempSync(join(tmpdir(), "sacty-review-eval-s12-"));
-  run(dir, ["init", "-q", "-b", "main"]);
-  mkdirSync(join(dir, "src"), { recursive: true });
-  cpSync(fixture("s12/before.mjs"), join(dir, "src/reservation.mjs"));
-  run(dir, ["add", "."]);
-  run(dir, ["commit", "-q", "-m", "base"]);
-  cpSync(fixture(`s12/${after}.mjs`), join(dir, "src/reservation.mjs"));
-  const diff = run(dir, ["diff", "HEAD"]);
-  return { dir, diff };
-}
-
 /** s12 のタスク：承認済みの要求要件・設計（実験の成果物を縮めたもの）と、テスト観点。 */
 export function s12Task(): Task {
   const design = readFixture("s12/design.md");
@@ -244,11 +190,6 @@ export function s12Task(): Task {
       baseCommit: "abcdef1234",
     },
   } as unknown as Task;
-}
-
-/** s12 の最終レビューの指示（実際の buildFinalReviewPrompt）。 */
-export function s12FinalReviewPrompt(diff: string): string {
-  return buildFinalReviewPrompt(s12Task(), diff);
 }
 
 export type AgentRun = { output: string; status: number | null };
@@ -353,30 +294,4 @@ export function assertReviewerVerdict(output: string, viewpoint: string): void {
   if (!ok) {
     throw new Error(`観点 ${viewpoint} の判定の JSON として読めません：\n${output.slice(-500)}`);
   }
-}
-
-/**
- * 最終レビューの出力が、見出し sacty-final-review の判定の JSON か。sacty 本体が判定として採る最後の見出しのブロック
- * （`extractFinalReview` の `findBlock`。囲み方は問わない。sacty 本体は崩れを直して読むが、評価では出力が正しい JSON であることを
- * 求めるので、直さずに読む）を、期待する観点（expectedIds）がすべて揃い、それぞれ verified が
- * 真偽値、summary が文字列であることまで確かめる。採られるブロックが読めなければ（前に正しいブロックがあっても）、
- * 評価せず失敗させる。
- */
-export function assertFinalReviewVerdict(output: string, expectedIds: readonly string[]): void {
-  const adopted = lastJsonAnswer(output, (value) =>
-    headedObject(value, "sacty-final-review"),
-  )?.value;
-  const viewpoints = adopted?.viewpoints;
-  let ok = Array.isArray(viewpoints) && typeof adopted?.summary === "string";
-  const ids = new Set<string>();
-  if (ok) {
-    for (const vp of viewpoints as unknown[]) {
-      const r = vp as Record<string, unknown> | null;
-      if (typeof r?.id !== "string" || typeof r.verified !== "boolean") ok = false;
-      else ids.add(r.id);
-    }
-  }
-  ok = ok && expectedIds.length > 0 && expectedIds.every((id) => ids.has(id));
-  if (!ok)
-    throw new Error(`最終レビューの出力が判定の JSON として読めません：\n${output.slice(-500)}`);
 }

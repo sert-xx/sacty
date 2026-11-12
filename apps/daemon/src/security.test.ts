@@ -1,6 +1,6 @@
-import { renderMessage, type Task } from "@sacty/core";
+import type { Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { buildPullRequestBody, extractFinalReview, extractStepPlan } from "./prompts.js";
+import { buildPullRequestBody, extractStepPlan } from "./prompts.js";
 import { parseNumstat } from "./repository.js";
 import {
   extractSecurityFindings,
@@ -147,32 +147,6 @@ describe("差分と範囲の照合", () => {
     });
     expect(scopeViolation(undefined, diff({ "src/anything.ts": max }))).toBeUndefined();
     expect(scopeViolation(undefined, diff({ "src/anything.ts": max + 1 }))?.lines).toBe(max + 1);
-  });
-});
-
-describe("最終レビューの SEC-MIN", () => {
-  const output = json({
-    "sacty-final-review": {
-      viewpoints: [
-        { id: "REQ", verified: true, reason: "ok" },
-        { id: "SEC-MIN", verified: true, reason: "最小限" },
-      ],
-      remarks: [],
-      summary: "",
-    },
-  });
-
-  it("範囲の違反があれば、ゴールガーディアンが合格にしても SEC-MIN を不合格にする", () => {
-    const violation = { outside: ["src/util.ts"], max: SECURITY_FIX_MAX_CHANGED_LINES };
-    const review = extractFinalReview(output, ["REQ", "SEC-MIN"], [], {
-      scopeViolation: violation,
-    });
-    expect(review.passed).toBe(false);
-    const min = review.viewpoints.find((v) => v.viewpointId === "SEC-MIN");
-    expect(min?.verified).toBe(false);
-    expect(renderMessage(min?.reason ?? "", "ja")).toContain("src/util.ts");
-    expect(renderMessage(min?.reason ?? "", "en")).toContain("outside the scope");
-    expect(extractFinalReview(output, ["REQ", "SEC-MIN"], []).passed).toBe(true);
   });
 });
 

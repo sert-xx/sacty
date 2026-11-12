@@ -153,10 +153,10 @@ Playwright やブラウザを新たに入れない。
 定義が無い段階は親と同じモデルで起動し、起動表の「段階」に「親と同じ」と書く。
 
 観点の指示を人が手で変えるときは、実験で見つかった取りこぼしに近い固定の例に実際の AI を当てて、効き目を測れる（任意の手動の測定手順。`review-eval.test.ts`。工程のエージェントに求めるものではない）。
-例は、リポジトリの決まりから導いた条件を D-10 が消す（S18）、共通化のリファクタリングで 422 のメッセージが変わるのを最終レビューが見逃す（S12）の 2 つで、実験の入力を縮めて `testing/review-eval/fixtures/` に置く。
+例は、リポジトリの決まりから導いた条件を D-10 が消す（S18）で、実験の入力を縮めて `testing/review-eval/fixtures/` に置く（S12 の例は、最終レビューの仕組みとともにやめた。S12 の承認済みの要求要件・設計は、指示の文言の固定の確認に使う）。
 固定の確認（例が問題の形になっていること・指示の文言・判定の読み取り）は、テストの実行で常に走る。
 AI を呼ぶ確認は `SACTY_REVIEW_EVAL=1` のときだけ走り、指示の変更の前後で同じ例を複数回（`SACTY_REVIEW_EVAL_RUNS`）流して比べる。
-D-10 は決まりから導いた条件を消す・縮める指摘を出さず、ほかの書きすぎは指摘すること、最終レビューは検査の順番が変わった例を範囲外として申告し、順番を保った対照は申告しないことを確かめる。
+D-10 は決まりから導いた条件を消す・縮める指摘を出さず、ほかの書きすぎは指摘することを確かめる。
 
 ### PR のレビューと投稿
 
@@ -184,7 +184,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
     主対象にした文書が読めなければ、レビューを完了できなかったものとして扱う。
   - 分けた結果は集約の記録の `linked_docs` に残す。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`s12Workspace`・`runAgent`）
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/linked-docs.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`、`apps/daemon/default-context/skills/review/review-dispatch/references/screen-capture.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-15.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-16.md`、`apps/daemon/default-context/skills/review/review-execution/references/D-10.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/self-review.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/viewpoints.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/repo-guidance.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/aggregation.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-3.md`、`apps/daemon/default-context/skills/review/review-execution/references/R.md`、`apps/daemon/default-context/skills/review/review-execution/references/C-5.md`、`apps/daemon/src/default-skills.test.ts`、`apps/daemon/src/review-eval.test.ts`、`apps/daemon/src/testing/review-eval/index.ts`（`s18Workspace`・`runAgent`）
 
 ## 既定の文章用スキル
 

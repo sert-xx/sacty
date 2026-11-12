@@ -32,7 +32,7 @@
 
 要求要件・設計（`StepPullRequestKey`）と実装は、PR で承認する。
 実装の PR は、実装の工程が終わったらドラフトで作り、PR のレビューの子タスクが指摘なしにしたらドラフトを外す（[タスクと工程](tasks-and-steps.md#最終レビューをしない流れ)）。
-以前の版の最終レビューをする流れ（依存 `finalReview` を有効にしたとき）では、最終レビューの前にドラフトで作り（[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）、検証に通ったらドラフトを外す（[タスクと工程](tasks-and-steps.md#検証に通った実装の-pr)）。
+PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成)、以前の版の最終レビューの記録を持つタスクの扱いは[タスクと工程](tasks-and-steps.md#最終レビューがあった版のタスク)にある。
 承認・差し戻し・PR のマージでの承認・PR の指摘の取り込みの扱いは、3つの工程で同じ。
 
 要求要件・設計・実装をすべて PR で承認するときのブランチは、次のようになる（タスク ID が 1a2b3c4d で始まる例）。
@@ -86,13 +86,12 @@
 
 ## 実装に変更が無いとき
 
-検証に通った実装の PR を作るとき、実装の作業領域が起点のコミットから何も変わっていなければ（`NothingToCommitError`）、PR を作らない。
+実装の PR を作るとき、実装の作業領域が起点のコミットから何も変わっていなければ（`NothingToCommitError`）、PR を作らない。
 
 - まだ実装の PR を作っていなければ、`NoChangesFound`（この後に提出する実装の回）を記録し、実装を提出する（`StepSubmitted`）。
   PR が無いので、画面で承認できる。
   すべてのタスクで同じ（テンプレートのタスクに限らない）。
 - 提出の前に、テストの実行と最終レビューはしない（sacty はテストを実行しない。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。PR が無いので、PR のレビューの子タスクも作らない。
-  以前の版の最終レビューをする流れでは、ふつうと同じくテストと最終レビュー（観点ごとの検証）を通っている。
   画面は、承認待ちを「変更なしの実装の承認待ち」とする。
   承認の画面には、実装は何も変えていないことと、実装の説明で変更が要らない理由を確かめることを出す。
 - 承認すると、PR を作らずに完了する（「完了（変更なし）」）。
@@ -113,9 +112,8 @@ PR を作った工程とは別のコンテキスト（別のタスク・別の�
 PR にラベルは付けない（レビュー用のラベル `reviewLabel` は、sacty が作っていない PR の取り込みだけに使う。[チケットの取り込みと GitHub](intake.md)）。
 
 - 作る時点：要求要件・設計の PR は作った直後。
-  実装の PR は、最終レビューをしない流れ（デーモンの起動の既定。[実装の検証](tasks-and-steps.md#最終レビューをしない流れ)）では、ドラフトで作った直後（指摘なしでドラフトを外す）。
+  実装の PR は、ドラフトで作った直後（指摘なしでドラフトを外す。[実装の検証](tasks-and-steps.md#最終レビューをしない流れ)）。
   依存先の PR に重ねた実装の PR は、依存先がマージされて向き先を付け替えた後に作る（重ねている間は作らない）。
-  最終レビューをする流れでは、レビューへ進めるとき（ドラフトを外したとき）に作り、最終レビューの前のドラフトの間と、重ねた PR のドラフトの間は作らない。
   既存の PR を引き継ぐタスクでは、引き継いだ PR に作る。
 - 子タスクは、PR のレビューだけのタスク（`source.review: sacty`。[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）で、`TaskCreated` の `reviewOf` に親の ID と PR を作った工程を持つ。
   題は `[PR #<番号>] <親の題>`（言語に依存しない形。200 文字まで。長い親の題は、文字の途中で切らずに `…` で切り詰める）、プロジェクトは親と同じ、予算の上限は `budget.default_per_task_usd`（子タスクの費用は子タスクの予算に数える）。
@@ -139,7 +137,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
     同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
     一時停止した・一時停止や中止を求められた子タスクは動かさない。
 - 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず再レビューも起きないので、PR は人の承認（マージ）を待つ。
-  最終レビューをしない流れの実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+  実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
 - 子タスクには、レビューする先頭のコミットの CI の状態（ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ（GitHub Actions のチェック。ワークフローが成功でも、実行されなかったジョブを伝えるため）。チェックの名前・状態・結論・URL。失敗・実行中のものはすべて、成功したもの（`success`・`neutral`。実行されなかった `skipped` は省かない）は合わせて `REVIEW_CI_MAX` 件まで並べ、残りは件数だけ）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
   CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
   読めなければ、読めなかったことを渡す（レビューは止めない）。
@@ -177,16 +175,14 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   1. コンテキストにする改修の PR がマージされたメモリーを消す（`cleanupPromotedMemories`。[メモリー](memory.md#コンテキストへの昇格)）。
   2. PR のレビューの取り込みのタスクのうち終わっていないものの PR を確かめ、マージされた・マージせずに閉じられたら中止する（`checkReviewPullRequests`）。
   3. 承認待ちの PR のレビューの子タスクを整える（作る前に止まったものを作り、親が PR を更新していたら再レビューを始める。`reconcileReviewTasks`。[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
-  4. 最終レビューの前に作った実装の PR の CI を待っているタスクの CI を確かめる（`checkVerificationCi`。[タスクと工程](tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)）。
-  5. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
+  4. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
 
 ### 実装の作り直しの間のマージ
 
-差し戻し・PR の指摘の取り込み・最終レビューの不合格で実装を作り直している間（承認待ちではない）に、人が実装の PR をマージしたら、マージを承認として扱い、作り直しを止める。新しい PR は作らない。
+差し戻し・PR の指摘の取り込みで実装を作り直している間（承認待ちではない）に、人が実装の PR をマージしたら、マージを承認として扱い、作り直しを止める。新しい PR は作らない。
 
-- 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。最終レビューなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）か、承認待ちで閉じられたまま差し戻したもの（`closed`。GitHub で開き直してマージされることがある。マージかどうかは GitHub の状態で決める）。
-  - 最終レビューの前のドラフトの PR を、人がドラフトを外してマージしたときも同じ。
-  - 引き継いだ既存の PR（`Task.continuedPullRequest`）は、初めて提出するまで `Task.pullRequest` が無い。その間（最初の最終レビューに通らず作り直している間など）も、引き継いだ PR を見守る。投影は、このとき引き継いだ PR を実装の PR として記録してから、マージを記録する（コミットは、引き継いだ時点の PR の先頭）。
+- 対象（`reworkingPullRequest`）：実行対象の工程が実装で、状態が実行待ち（`queued`）・実行中（`running`）・待機（`idle`。PR の作成の待ちなど）・一時停止（`paused`）のタスクのうち、`Task.pullRequest` の PR が開いている（`pullRequestState` が `open`）か、承認待ちで閉じられたまま差し戻したもの（`closed`。GitHub で開き直してマージされることがある。マージかどうかは GitHub の状態で決める）。
+  - 引き継いだ既存の PR（`Task.continuedPullRequest`）は、初めて提出するまで `Task.pullRequest` が無い。その間も、引き継いだ PR を見守る。投影は、このとき引き継いだ PR を実装の PR として記録してから、マージを記録する（コミットは、引き継いだ時点の PR の先頭）。
   - 要求要件・設計をやり直している間（実行対象の工程が実装でない）は見守らない。実装に進んだ時点で、PR がマージ済みなら同じく止める。
   - 承認待ち・エスカレーション中のタスクは、上の確認が見守る。
 - 確認：PR の状態を読み（プロジェクトの gh のアカウント。読めなければ次の確認でやり直す）、マージされていたら次を行う。開いたまま・閉じられたときは何もしない。
@@ -224,7 +220,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   - 戻し先の判断が済んだ指摘がある間は、足さない。再開した後（実行待ち・待機）は、一時停止中の確認は足さない（読んでいる間に再開されたときも足さない。再開した後の判断と食い違わないよう、足すのは反映の側だけ）。
   - 同時に走った別の確認（一時停止中の確認と再開の後の確認）が、同じ古い head への AI のレビューを捨てようとしたときは、取り込み済みになったものを除いて記録する（重ねて記録しない）。
 - 画面：一時停止中のタスクの詳細に、届いた指摘の件数（AI のレビューの内訳つき）と、再開したときの扱いを出す（`HeldReviewNotice`。`heldReview`）。作業履歴の取り込みの行には、一時停止の間に届いて未反映として残した旨を添える。
-- 反映（`reworkHeldReview`）：再開したタスクが次に実行されるとき（`runNextInner` の先頭）、止まった工程（最終レビュー・PR の更新・実装など）より前に行う。最終レビューの前の PR の CI を待つ状態で止めたタスクのように、検証の待ちから外れているタスクも、反映の対象として実行待ちに数える（`heldReviewDue`。`queuedTaskIds`）。
+- 反映（`reworkHeldReview`）：再開したタスクが次に実行されるとき（`runNextInner` の先頭）、止まった工程（PR の更新・実装など）より前に行う。以前の版で最終レビューの前の PR の CI を待つ状態で止めたタスクのように、検証の待ちから外れているタスクも、反映の対象として実行待ちに数える（`heldReviewDue`。`queuedTaskIds`）。
   1. 再開の直後に、PR のフィードバックをもう一度読んで残す（再開の直前に書かれた指摘を拾う。`heldRecheck`。メモリーだけで、再起動で消えても、それまでに残した指摘は作業履歴にある）。読めなければ、また AI のレビューの対象の head を確かめられなければ（原因はタスクと PR を添えて警告に残す。トークンは伏せる）、確かめられるまで止まった工程を走り直さずに待ち（印を残して、次の周期で読み直す）、直前の指摘を落としたまま走り直さない。
   2. 未反映の指摘が無ければ、何もせず、止まった工程を今までどおり走り直す。
   3. PR がマージ済みなら、反映しない（判断も差し戻しもしない）。止まった工程も走らせず、その場で[作り直しの停止](#実装の作り直しの間のマージ)と同じ記録（`ReworkStoppedByMerge`・`PullRequestMerged`・`StepApproved`。残した指摘は捨てる）で、マージを承認として進める（`endHeldByMerge`）。別の作り直しの停止が進行中（`mergeStopping`）なら、そちらに任せる。
@@ -281,7 +277,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`recordPullRequestConflict`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.status`）、`packages/core/src/projection.ts`（`pullRequestConflict`・`Task.pullRequestConflict`）、`apps/web/src/lib/labels.ts`（`statusText`・`prConflictNote`）、`apps/web/src/lib/dashboard-data.ts`（`attentionRows`）、`apps/web/src/lib/task-list-data.ts`、`apps/web/src/components/task-detail.tsx`（`GateNotice`）、`apps/web/src/components/gate-form.tsx`
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkVerificationCi`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`・`cleanupPromotedMemories`・`checkReviewPullRequests`・`reconcileReviewTasks`・`checkDeployments`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
 ## PR の本文と PR テンプレート
 
@@ -302,8 +298,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
 2. 「結論」
    - 変更の要約：実装の工程の出力の最初の段落（字下げのない行だけ。見出し・表・コードブロック・字下げした行を除く）の頭。出力が無ければ行ごと出さない。作り直した後は、PR 全体の説明（下の「作り直しの後の本文」）の頭。
    - 最後の直し：作り直した後だけ、最後の直しの説明の頭。
-   - レビューの行（`reviewBodyLine`）。最終レビューをしない流れ（今の振る舞い）では、PR のレビューの子タスクがレビューして投稿し、指摘があれば sacty が直し、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることの案内（`REVIEWING_LEAD`）。
-     以前の版の最終レビューをする流れでは、最終レビューの判定と所見の頭（`BODY_LEAD_MAX` 以内の文の切れ目まで）。まだ最終レビューが無ければ「（なし）」、検証中ならその旨。
+   - レビューの行（`REVIEW_BODY_LINE`）。PR のレビューの子タスクがレビューして投稿し、指摘があれば sacty が直し、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることの案内。以前の版の最終レビューの判定と所見は、結論に出さない。
    - AI のレビューの状況：今の head に sacty の AI のレビューが付いているか（[AI のレビューの指摘](#ai-のレビューの指摘)の「今の head に AI のレビューが付いているか」。`aiReviewBodyLine`）。
    - 人が最終レビューの不合格のまま進めた記録と不合格の要点（あれば。`overrideBodyLines`）
    - 人が確かめること（あれば。`humanCheckBodyLines`）
@@ -320,7 +315,6 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
    - 表の下に、テストの行（上の「テスト：」）を置く。
    - 観点ごとの入力・期待結果・テスト全件・最終レビューの所見は、表の外の折りたたみ「観点ごとの詳細」に出す。所見のうち、最終レビューの総評にある文（12 文字以上で、句点で区切って一致するもの）は繰り返さない。所見のすべてが総評の文なら「総評と同じです」と書く（`findingText`。PBI-302 C2）。
    - テスト名は、同じテストを1回にして、書式の文字を印にしてから出す（`displayTestNames`。PBI-302 C3。実験 S18 の r5：同じテストが describe の接頭辞あり・なしで2回出て、10 行のうち5行が重複し、`%j` が書式のまま出た）。同じファイル・同じテスト名で、describe の並びが他方の末尾にあたる名前（接頭辞を省いた名前）は、長いほうに統合し、そのテストが最初に出てきた位置（短い名前と長い名前の早いほう）に置く（describe が別の同名のテスト・ファイルが別の同名のテストは別のまま）。区切りは `›` と ` > ` で、区切りの書き方や空白だけが違う名前は同じテストとし、最初の表記を残す。パラメータ化したテストの名前の書式の文字（`%s`・`%d`・`%i`・`%f`・`%j`・`%o`・`%O`・`%p`・`%#`・`%$`）は、名前だけからは値が分からないので展開せず、`‹…›` に置き換える（`%%` は `%`）。画面の観点とテストの対応も同じ。ゴールガーディアンへ渡す対応は、申告のまま。
-8. 最終レビューの続き（折りたたみ。以前の版の最終レビューをする流れだけ。最終レビューをしない流れ・検証中には出さない）。総評が結論に載せた頭に収まらないときはその続き（頭の続きだけ。結論の文を重ねない）、前の指摘の再発の確認があるときはその確認を出す。どちらも無ければ出さない。見出しは「続き」「再発の確認」「続きと再発の確認」のどれか（`finalReviewMore`。PBI-302 C2）。頭が文の切れ目の無いまま途中で切れたときは、続きは「…」で始める。テンプレートに沿わせる本文では「sacty の記録」に太字の見出しで出す。
 
 共通の規則は次のとおり。
 
@@ -379,11 +373,11 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   チェックボックスのある見出しには書かない（外したチェックボックスだけを残す）。
   最初の見出しより前は、コメントとチェックボックスだけを残す。
 - 実装の PR の内容（`buildPullRequestBodyParts`）
-  - 目的：レビューの行（上の結論と同じ。最終レビューをしない流れでは PR のレビューの子タスクの案内、以前の版では最終レビューの判定と所見の頭）、人が確かめることの件数（あれば「この PR の末尾にあります」）、承認済みの要求要件（再現のタスクは不具合の再現）の要点と全文のある場所
+  - 目的：レビューの行（上の結論と同じ。PR のレビューの子タスクの案内）、人が確かめることの件数（あれば「この PR の末尾にあります」）、承認済みの要求要件（再現のタスクは不具合の再現）の要点と全文のある場所
   - 変更：実装の工程の出力（作業の経過の報告を除く。作り直した後は、PR 全体の説明に続けて、太字の「最後の直し」と最後の直しの説明）
   - テスト：観点 → テスト → 実行結果の表とテストの結果（[実装の PR の本文の組み立て](#実装の-pr-の本文の組み立て)の 6）
   - 関係する Issue：`Closes #<番号>`（Issue から取り込んだタスク）
-  - 書き出した成果と最終レビューの続き・再発の確認は「sacty の記録」にする。
+  - 書き出した成果は「sacty の記録」にする。
   - 人が確かめること・人が不合格のまま進めた記録は、最後の部分（footer）に置く。
 - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）
   - 目的：何の工程の成果か（と承認済みの前の工程。リンクの形は下の「前の工程の成果物へのリンク」のとおり）
@@ -425,7 +419,7 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - パスは区切りごとに符号にし（括弧も符号にして、リンク先が途中で閉じないようにする）、リンクの文字はパスのインラインのコード（中にバッククォートがあれば、より長いバッククォートで囲む）。
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`・`finalReviewMore`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 

@@ -9,7 +9,6 @@ import {
   buildGatherPrompt,
   buildPrompt,
   buildPullRequestBody,
-  buildPullRequestBodyParts,
   gatheredLines,
   provenanceGuideLines,
   provenanceIds,
@@ -220,41 +219,7 @@ const taskOf = (extra: Record<string, unknown> = {}) =>
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 describe("C2：PR の本文で、同じ文を複数の節に繰り返さない・空の見出しを出さない", () => {
-  const SUMMARY = Array.from(
-    { length: 40 },
-    (_, i) => `${i + 1}件目の受け入れ条件を、テストで確かめている。`,
-  ).join("");
-
-  it("S2・S18：最終レビューの総評は、結論に頭、折りたたみに続きだけを出す。再発の確認があっても重ならない", () => {
-    const remarks = [{ remarkId: "implement-1-1", notRecurred: true, reason: "直した" }];
-    const body = buildPullRequestBody(
-      taskOf({ lastReview: review({ summary: SUMMARY, remarks }) }),
-    );
-    // どの文も1回しか出ない
-    for (let i = 1; i <= 40; i++) {
-      expect(
-        body.match(new RegExp(`(?<!\\d)${i}件目の受け入れ条件を`, "g")),
-        String(i),
-      ).toHaveLength(1);
-    }
-    expect(body).toContain(
-      "<summary>ゴールガーディアンの最終レビュー（続きと再発の確認）</summary>",
-    );
-    expect(body).toContain("- implement-1-1：再発なし（直した）");
-  });
-
-  it("テンプレートに沿わせる本文の「sacty の記録」も、続きだけを出す", () => {
-    const parts = buildPullRequestBodyParts(taskOf({ lastReview: review({ summary: SUMMARY }) }));
-    const summary = parts.summary ?? "";
-    const record = parts.record ?? "";
-    expect(record).toContain("**ゴールガーディアンの最終レビュー（続き）**");
-    const lead = /最終レビュー：合格。(.*)/.exec(summary)?.[1] ?? "";
-    expect(lead.length).toBeGreaterThan(0);
-    expect(record).not.toContain(lead);
-    expect(`${lead}${record.split("\n\n").at(-1)}`).toBe(SUMMARY);
-  });
-
-  it("観点ごとの所見は、総評にある文を繰り返さない。全部が総評の文なら、総評と同じと書く", () => {
+  it("観点ごとの所見は、総評にある文を繰り返さない", () => {
     const summary =
       "受け入れ条件はすべて、コードとテストで満たしていることを確かめた。範囲外の変更や、既存の振る舞いの変化は無い。";
     const own = "R-1 は src/a.ts の create で確かめた。";
@@ -266,22 +231,8 @@ describe("C2：PR の本文で、同じ文を複数の節に繰り返さない�
         }),
       }),
     );
-    expect(count(mixed, "受け入れ条件はすべて、コードとテストで満たしていることを確かめた。")).toBe(
-      1,
-    );
+    // 総評は本文に出さない（最終レビューは PBI-331 でやめた）。観点ごとの所見の、総評に無い文は残す
     expect(mixed).toContain(`最終レビューの所見：${own}`);
-    const same = buildPullRequestBody(
-      taskOf({
-        lastReview: review({
-          summary,
-          viewpoints: [{ viewpointId: "REQ", verified: true, reason: summary }],
-        }),
-      }),
-    );
-    expect(count(same, "受け入れ条件はすべて、コードとテストで満たしていることを確かめた。")).toBe(
-      1,
-    );
-    expect(same).toContain("最終レビューの所見：総評と同じです");
   });
 
   it("短い所見（偶然の一致がありうる短い文）は除かない", () => {
