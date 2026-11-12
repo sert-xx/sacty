@@ -16,6 +16,7 @@ CI が無いので、PR の lint・型検査・テストは、作った人と sa
 利用者が 2026-11-12 に決めた。
 
 - `.github/workflows/ci.yml` を足し、PR と main への push で `npm ci`・`npm run lint`・`npm run typecheck`・`npx vitest run` を実行する。画面のテストのために Chromium を入れ、時間を測るテストが CPU の取り合いで落ちないよう、テストのファイルを1つずつ動かす（`--no-file-parallelism`。2つずつでも上限を超えた）。
+- PR の実行は、同じ PR の後の push で取り消す。main への push の実行は、コミットごとに別のグループにして取り消さない（どのコミットで落ちたか分かるように）。
 - 権限は `contents: read` だけにし、checkout の認証情報を作業ツリーに残さない（`persist-credentials: false`）。
 - 外部の Action（`actions/checkout`・`actions/setup-node`）はコミットの SHA で固定し、タグをコメントに書く。
 - Node.js の版は `.node-version` から読む（`engines` の下限と同じ版。下限を上げると CI の版も変わる）。

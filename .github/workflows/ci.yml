@@ -11,8 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # main への push は、後の push で取り消さない（どのコミットで落ちたか分かるように）
+  # PR は同じ PR の後の push で取り消す。main への push はコミットごとに別のグループにし、待機中のものも取り消さない
+  # （どのコミットで落ちたか分かるように。同じグループでは、待機中の実行が後の実行に置き換えられる）
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
