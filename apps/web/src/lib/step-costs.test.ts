@@ -399,6 +399,33 @@ describe("工程ごとの費用（PBI-46）", () => {
     ]);
   });
 
+  it("戻し先の判断は、工程のエージェントの判断を「戻し先の判断」の行に、レビューの子タスクの答えから決めたものは行に出さない（PBI-332）", () => {
+    seq = 0;
+    const base = {
+      reason: "決定を変えない",
+      runResult: "completed",
+      costUsd: 0.2,
+      estimated: false,
+    };
+    const events = [
+      ev({ type: "ReworkJudged", payload: { ...base, agentId: "old" } } as EventInput, "guardian"),
+      ev({ type: "ReworkJudged", payload: { ...base, agentId: "step" } } as EventInput, "agent"),
+      ev(
+        {
+          type: "ReworkJudged",
+          payload: { ...base, costUsd: 0, agentId: "child", reviewTaskId: "child-1" },
+        } as EventInput,
+        "sacty",
+      ),
+    ];
+    const task = { id: "t1", steps: [] as Task["steps"] } as Task;
+    const { rows } = stepCosts(task, events);
+    expect(rows.map((r) => [r.role, r.runs.map((x) => x.agentId)])).toEqual([
+      ["rework", ["step"]],
+      ["guardian", ["old"]],
+    ]);
+  });
+
   it("開始の記録が無い実行も、費用を落とさない", () => {
     seq = 0;
     const done = ev({

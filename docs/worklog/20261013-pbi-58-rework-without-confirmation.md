@@ -4,7 +4,7 @@
 - タスク: PBI-58
 - PR: #64
 - ブランチ: feat/issue-58-rework-without-confirmation
-- 関係する ADR: [PR の指摘による差し戻しは、人の確認を挟まず、ゴールガーディアンが判断した工程にそのまま行う](../adr/20261013-1000-rework-without-human-confirmation.md)
+- 関係する ADR: [PR の指摘による差し戻しは、人の確認を挟まず、ゴールガーディアンが判断した工程にそのまま行う](../adr/20261013-1000-superseded-rework-without-human-confirmation.md)
 
 ## 目的
 

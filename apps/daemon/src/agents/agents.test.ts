@@ -2070,10 +2070,10 @@ describe("PR の指摘の戻し先の判断（PBI-14b）", () => {
     });
     // 選べない工程や、理由の無い判断は読まない
     expect(extractRework(block({ target: "pr", reason: "x" }), targets)).toEqual({
-      reason: { code: "guardian.reworkUnreadable" },
+      reason: { code: "rework.unreadable" },
     });
     expect(extractRework("出力なし", targets)).toEqual({
-      reason: { code: "guardian.reworkUnreadable" },
+      reason: { code: "rework.unreadable" },
     });
   });
 });

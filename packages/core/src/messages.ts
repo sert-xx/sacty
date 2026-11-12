@@ -342,6 +342,10 @@ const PARAMS = {
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "guardian.reworkUnreadable": null,
+  // 戻し先の判断（PBI-332。ゴールガーディアンではなく、PR の工程のエージェント・PR のレビューの子タスク）
+  "rework.unreadable": null,
+  "rework.runFailed": z.object({ detail: TextParam }),
+  "rework.reviewTaskUnreadable": null,
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
@@ -1204,6 +1208,10 @@ const ja: MessageDictionary = {
     "このタスクには対象リポジトリがありません（対象リポジトリを選ぶ前の版で作ったタスクです）。中止して、タスクを作り直してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
   "guardian.reworkUnreadable": "ゴールガーディアンの出力から、戻し先の判断を読み取れませんでした。",
+  "rework.unreadable": "出力から、戻し先の判断を読み取れませんでした。",
+  "rework.runFailed": ({ detail }, text) => `戻し先の判断の実行に失敗しました：${text(detail)}`,
+  "rework.reviewTaskUnreadable":
+    "PR のレビューの子タスクの答えから、指摘の戻し先を読み取れませんでした。この PR の工程で直します。",
   "orchestrator.fallback": ({ detail }, text) =>
     `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
   "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
@@ -1961,6 +1969,11 @@ const en: MessageDictionary = {
     "This task has no target repository (it was created before tasks chose one). Cancel it and create the task again.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
   "guardian.reworkUnreadable": "Could not read the step to redo from the Goal Guardian's output.",
+  "rework.unreadable": "Could not read the step to redo from the output.",
+  "rework.runFailed": ({ detail }, text) =>
+    `The run to decide the step to redo failed: ${text(detail)}`,
+  "rework.reviewTaskUnreadable":
+    "Could not read the step to redo for each finding from the answer of the PR review child task. The step of this PR redoes the work.",
   "orchestrator.fallback": ({ detail }, text) =>
     `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
   "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",

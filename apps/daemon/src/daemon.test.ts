@@ -1007,7 +1007,10 @@ class FakePulls implements PullRequests {
     return (this.feedbackBy[input.number] ?? this.feedbackList).flatMap((item) => {
       const key = sactyReviewTask(item.body);
       const round = input.sactyReviews?.find((r) => r.key === key && r.account === item.author);
-      if (round) return round.allowed ? [{ ...item, source: "sacty_review" as const }] : [];
+      // 投稿したレビューのタスクと回（目印の中身）も、本物と同じく添える（PBI-332）
+      if (round) {
+        return round.allowed ? [{ ...item, source: "sacty_review" as const, review: key }] : [];
+      }
       return key !== undefined && item.author === input.account ? [] : [item];
     });
   }
@@ -14739,7 +14742,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ],
       });
       expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
-        ["ReworkJudged", "guardian"],
+        ["ReworkJudged", "agent"],
         ["GuardianMissed", "sacty"],
         ["ChangesRequested", "person"],
       ]);
@@ -14783,7 +14786,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         const events = service.get(id)?.activity ?? [];
         expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
           ["PullRequestReviewImported", "person"],
-          ["ReworkJudged", "guardian"],
+          ["ReworkJudged", "agent"],
           ["ChangesRequested", "person"],
         ]);
         expect(events.at(-2)?.payload).toMatchObject({ target: "implement", cause });
@@ -15001,7 +15004,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const events = service.get(id)?.activity ?? [];
       expect(events.some((e) => e.type === "TaskEscalated")).toBe(false);
       expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
-        ["ReworkJudged", "guardian"],
+        ["ReworkJudged", "agent"],
         ["GuardianMissed", "sacty"],
         ["ChangesRequested", "person"],
       ]);
@@ -15457,7 +15460,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
     });
 
-    it("ゴールガーディアンの判断文（戻し先と指摘の読み方）を、その判断で始まった作り直しの実行の指示に渡す。人の指摘の原文も渡す（PBI-300。S14）", async () => {
+    it("戻し先の判断文（戻し先と指摘の読み方）を、その判断で始まった作り直しの実行の指示に渡す。人の指摘の原文も渡す（PBI-300。S14）", async () => {
       const pulls = new FakePulls();
       const reason =
         "決定を変える：前の指摘で簡単にするため削った R-2・R-3 を元に戻せという意味に読める";
@@ -15471,13 +15474,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       const prompt = promptOf(executor, before);
       expect(prompt).toContain("[requirements-2-1] さっきの指摘は無しにしてください");
-      expect(prompt).toContain(
-        "--- ゴールガーディアンの判断（今回の指摘 requirements-2-1 の読み方",
-      );
+      expect(prompt).toContain("--- 戻し先の判断（今回の指摘 requirements-2-1 の読み方");
       expect(prompt).toContain(
         `{"guardianJudgment":{"target":"requirements","decided":true,"reason":"${reason}"}}`,
       );
-      expect(prompt).toContain("ゴールガーディアンの解釈で、人間が書いたものではありません");
+      expect(prompt).toContain("判断した側の解釈で、人間が書いたものではありません");
       expect(prompt).toContain("指摘の原文（人間の指摘を最優先）に従う");
       // 判断を渡した実行が提出されたあとの再実行（最終レビューの不合格など）には、判断を渡さない
       expect(service.get(id)?.task.remarks.at(-1)?.submittedIn).toBeDefined();
@@ -15542,7 +15543,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const prompt = promptOf(executor, before);
       expect(prompt).toContain("[implement-1-1] 全体として、失敗時のログが足りない");
       expect(prompt).not.toContain("guardianJudgment");
-      expect(prompt).not.toContain("--- ゴールガーディアンの判断");
+      expect(prompt).not.toContain("--- 戻し先の判断（今回の指摘");
       activity.close();
     });
 
@@ -16156,7 +16157,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 取り込んだ指摘と判断は残し、差し戻し（と見逃し）は記録しない。同じ確認の中で、マージを承認として記録する
       expect(events.slice(-4).map((e) => [e.type, e.actor])).toEqual([
         ["PullRequestReviewImported", "person"],
-        ["ReworkJudged", "guardian"],
+        ["ReworkJudged", "agent"],
         ["PullRequestMerged", "person"],
         ["StepApproved", "person"],
       ]);
@@ -16215,7 +16216,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const events = service.get(id)?.activity ?? [];
       expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
         ["PullRequestReviewImported", "person"],
-        ["ReworkJudged", "guardian"],
+        ["ReworkJudged", "agent"],
         ["PullRequestClosed", "sacty"],
       ]);
       expect(changeCount(service, id)).toBe(changes);
@@ -16636,7 +16637,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         expect(promptOf(executor, calls)).toContain("sacty-rework");
         const events = service.get(id)?.activity ?? [];
         expect(events.slice(-2).map((e) => [e.type, e.actor])).toEqual([
-          ["ReworkJudged", "guardian"],
+          ["ReworkJudged", "agent"],
           ["ChangesRequested", "person"],
         ]);
         expect(events.at(-1)?.payload).toMatchObject({
@@ -27458,7 +27459,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       items: [{ key: "review:1" }, { key: "review_comment:2" }, { key: "comment:3" }],
     });
     expect(events.slice(-2).map((e) => [e.type, e.actor])).toEqual([
-      ["ReworkJudged", "guardian"],
+      ["ReworkJudged", "agent"],
       ["ChangesRequested", "person"],
     ]);
     expect(events.at(-2)?.payload).toMatchObject({
@@ -27467,7 +27468,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
     // ゴールガーディアンには、PR の要求要件と指摘を、起点のコードの写しとあわせて渡す
     const prompt = promptOf(executor, before);
-    expect(prompt).toContain("要求要件の PR に人間が付けた指摘");
+    expect(prompt).toContain("要求要件の PR に付いた指摘");
     expect(prompt).toContain("# 要求要件 v1");
     expect(prompt).toContain(`${docOf(id, "requirements")}:3：ここが曖昧`);
     expect(prompt).toContain("requirements（要求要件）：この PR の要求要件を直せば解消できる");
@@ -28644,6 +28645,228 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const posted = (pulls: FakePulls, n: number, author = "me") =>
       item(`review:${50 + n}`, { kind: "review", author, body: pulls.reviews[n]?.body ?? "" });
 
+    describe("PR の指摘の戻し先を、ゴールガーディアンではなくレビューの子タスクが示す（PBI-332）", () => {
+      const reworkOut = (verdict: string, rework?: unknown) =>
+        out(
+          `# 評価\n\n指摘あり\n\n${block({ "sacty-review-verdict": { verdict, ...(rework ? { rework } : {}) } })}`,
+        );
+      /** 要求要件の PR をマージして、設計の PR を作って承認待ちにする。 */
+      async function designed(outcomes: AgentOutcome[], config?: () => ConfigResult) {
+        const pulls = new FakePulls();
+        const made = await start([out("# 要求要件 v1"), out("# 設計 v1"), ...outcomes], {
+          pulls,
+          steps: ["requirements", "design"],
+          reviewTasks: true,
+          ...(config ? { config } : {}),
+        });
+        await merge({ ...made, pulls }, "requirements");
+        const { service, id } = made;
+        for (let i = 0; i < 4 && taskOf(service, id).gate?.step !== "design"; i++) {
+          await service.runNext(id);
+        }
+        const pr = taskOf(service, id).stepPullRequests.findLast((x) => x.step === "design");
+        const number = pr?.number ?? 0;
+        pulls.prInfo = { ...pulls.prInfo, number, headSha: pr?.commit ?? "" };
+        return { ...made, pulls, number, childId: childOf(service, id, number) };
+      }
+      const judged = (svc: TaskService, id: string) =>
+        svc.get(id)?.activity.filter((e) => e.type === "ReworkJudged") ?? [];
+
+      it("子タスクが指摘ごとに戻し先を示し、前の工程の決定を変える指摘があれば、判断の実行をせずにその工程へ戻す（受け入れ条件 1・4）", async () => {
+        const made = await designed([
+          reworkOut("changes_required", {
+            findings: [
+              { finding: "見出しの誤字", target: "design", reason: "決定を変えない：表記だけ" },
+              {
+                finding: "受け入れ条件 2 の上限を変える",
+                target: "requirements",
+                reason: "決定を変える：承認済みの要求要件の上限を変える",
+              },
+            ],
+            cause: "guardian_missed",
+          }),
+        ]);
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        expect(childId).not.toBe("");
+        const before = executor.calls.length;
+        await runReview(service, childId);
+        // 子タスクに、戻し先の候補と承認済みの前の工程の成果物を渡す
+        const prompt = executor.calls[before]?.command.join(" ") ?? "";
+        expect(prompt).toContain("--- 指摘の戻し先 ---");
+        expect(prompt).toContain("- design（設計）：この PR の設計を直せば解消できる");
+        expect(prompt).toContain(
+          "- requirements（要求要件）：解消するには、承認済みの要求要件の決定を変える",
+        );
+        expect(prompt).toContain("# 要求要件 v1");
+        expect(taskOf(service, childId).reviewVerdicts?.at(-1)?.rework?.findings).toHaveLength(2);
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        // 判断の実行（ゴールガーディアン・工程のエージェント）をしない
+        expect(executor.calls.slice(calls).map((c) => c.command.join(" "))).not.toContainEqual(
+          expect.stringContaining("どの工程からやり直せば解消できるか"),
+        );
+        const [event] = judged(service, id);
+        expect(event).toMatchObject({
+          actor: "sacty",
+          payload: {
+            target: "requirements",
+            cause: "guardian_missed",
+            reviewTaskId: childId,
+            runResult: "completed",
+            costUsd: 0,
+          },
+        });
+        expect(String(event?.type === "ReworkJudged" && event.payload.reason)).toContain(
+          "決定を変える：承認済みの要求要件の上限を変える",
+        );
+        expect(types(service, id)).not.toContain("ChangeJudged");
+        activity.close();
+      });
+
+      it("戻し先が読めない・知らない値・無いなら、その PR の工程で直す（受け入れ条件 1）", async () => {
+        const made = await designed([
+          reworkOut("changes_required", {
+            findings: [{ finding: "誤字", target: "deploy-later", reason: "不明" }],
+            cause: "base_changed",
+          }),
+        ]);
+        const { activity, service, pulls, id, number, childId } = made;
+        await runReview(service, childId);
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "sacty",
+          payload: { target: "design", cause: "base_changed", reviewTaskId: childId },
+        });
+        activity.close();
+      });
+
+      it("子タスクの答えに戻し先が無ければ、その PR の工程で直し、読めなかったことを理由に残す（受け入れ条件 1）", async () => {
+        const made = await designed([reworkOut("changes_required")]);
+        const { activity, service, pulls, id, number, childId } = made;
+        await runReview(service, childId);
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "sacty",
+          payload: {
+            target: "design",
+            reason: { code: "rework.reviewTaskUnreadable" },
+            reviewTaskId: childId,
+          },
+        });
+        activity.close();
+      });
+
+      it("人の指摘を含むときは、ゴールガーディアンではなく PR の工程のエージェントが戻し先を判断する（受け入れ条件 2・3）", async () => {
+        // ゴールガーディアンの設定を、工程のエージェントと別にする（どちらが判断したかを見分ける）
+        const base = configOf(agent())();
+        const config = (): ConfigResult =>
+          base.ok
+            ? { ok: true, config: { ...base.config, guardianAgent: agent({ id: "guardian" }) } }
+            : base;
+        const made = await designed(
+          [
+            reworkOut("changes_required", {
+              findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
+            }),
+            rework("design", "決定を変えない：人の指摘は表記だけ"),
+          ],
+          config,
+        );
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [
+          posted(pulls, 0),
+          item("comment:900", { kind: "comment", author: "reviewer", body: "ここも直して" }),
+        ];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        const prompt = executor.calls[calls]?.command.join(" ") ?? "";
+        expect(prompt).toContain("どの工程からやり直せば解消できるかを判断してください");
+        expect(prompt).not.toContain("ゴールガーディアン");
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "agent",
+          payload: { target: "design", agentId: "claude-subscription", runResult: "completed" },
+        });
+        expect(judged(service, id)[0]?.payload).not.toHaveProperty("reviewTaskId");
+        activity.close();
+      });
+      it("AI のレビューの指摘が子タスクの最後の回の投稿でなければ、その回の戻し先を当てずに、工程のエージェントが判断する（PR #350 レビュー指摘）", async () => {
+        const made = await designed([
+          reworkOut("changes_required", {
+            findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
+          }),
+          reworkOut("changes_required", {
+            findings: [{ finding: "上限を変える", target: "requirements", reason: "決定を変える" }],
+          }),
+          rework("design", "決定を変えない：前の回の指摘は表記だけ"),
+        ]);
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        // 前の回の投稿を取り込む前に、子タスクが同じ先頭を再レビューした（2回目は別の戻し先を示した）
+        service.rereview(childId);
+        await runReview(service, childId);
+        expect(taskOf(service, childId).reviewRound).toBe(2);
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [posted(pulls, 0)];
+        await service.checkPullRequests();
+        for (let i = 0; i < 2 && judged(service, id).length === 0; i++) await service.runNext(id);
+        expect(executor.calls[calls]?.command.join(" ") ?? "").toContain(
+          "どの工程からやり直せば解消できるかを判断してください",
+        );
+        expect(judged(service, id)[0]).toMatchObject({
+          actor: "agent",
+          payload: { target: "design" },
+        });
+        expect(judged(service, id)[0]?.payload).not.toHaveProperty("reviewTaskId");
+        activity.close();
+      });
+
+      it("人が選んだ工程のエージェントが設定から消えていたら、既定のエージェントで判断せずに、理由を示して止める（PR #350 レビュー指摘）", async () => {
+        const base = configOf(agent())();
+        let agents: Record<string, ReturnType<typeof agent>> = { strong: agent({ id: "strong" }) };
+        const config = (): ConfigResult =>
+          base.ok
+            ? { ok: true, config: { ...base.config, agents: { ...base.config.agents, ...agents } } }
+            : base;
+        const made = await designed(
+          [
+            reworkOut("changes_required", {
+              findings: [{ finding: "誤字", target: "design", reason: "決定を変えない" }],
+            }),
+          ],
+          config,
+        );
+        const { activity, service, pulls, executor, id, number, childId } = made;
+        await runReview(service, childId);
+        service.changeStepAgent(id, { step: "design", agent: "strong" });
+        agents = {};
+        const calls = executor.calls.length;
+        pulls.feedbackBy[number] = [
+          posted(pulls, 0),
+          item("comment:901", { kind: "comment", author: "reviewer", body: "ここも直して" }),
+        ];
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        expect(task.status).toBe("paused");
+        expect(task.pausedMessage).toEqual(
+          message("agent.chosenMissing", { step: "design", name: "strong" }),
+        );
+        // 判断を実行せず、指摘は未判断のまま残す
+        expect(executor.calls.length).toBe(calls);
+        expect(judged(service, id)).toHaveLength(0);
+        expect(task.pendingReview?.judgement).toBeUndefined();
+        expect(task.pendingReview?.remarks).toHaveLength(2);
+        activity.close();
+      });
+    });
+
     describe("最終レビューと CI の待ちをせず、レビューの子タスクの指摘なしで承認待ちにする（PBI-331）", () => {
       const failingCi = (calls: string[] = []) =>
         ({
@@ -28755,7 +28978,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         const made = await implemented(
           [
             verdictOut("changes_required"),
-            rework("implement", "実装で直せる"),
             implement("# 実装の説明 v2"),
             verdictOut("no_findings", "# 評価\n\nマージしてよい"),
           ],
@@ -28897,7 +29119,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       it("PR の更新でドラフトに戻した答えを受け取れず台帳に残らなくても、指摘なしで GitHub のドラフトを外す（PR #348 レビュー指摘）", async () => {
         const made = await implemented([
           verdictOut("changes_required"),
-          rework("implement", "実装で直せる"),
           implement("# 実装の説明 v2"),
           verdictOut("no_findings", "# 評価\n\nマージしてよい"),
         ]);
@@ -29004,7 +29225,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       it("PR の更新でドラフトに戻せなかったら、指摘なしになるまで確認のたびにドラフトに戻す。戻せたら繰り返さない（PR #348 2回目のレビュー指摘）", async () => {
         const made = await implemented([
           verdictOut("changes_required"),
-          rework("implement", "実装で直せる"),
           implement("# 実装の説明 v2"),
           verdictOut("no_findings", "# 評価\n\nマージしてよい"),
         ]);
@@ -29283,11 +29503,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
 
       it("PR の更新でドラフトに戻す答えが返らなくても待ち続けず、承認待ちにして、次の確認で戻す（PR #348 5回目のレビュー指摘）", async () => {
         const made = await implemented(
-          [
-            verdictOut("changes_required"),
-            rework("implement", "実装で直せる"),
-            implement("# 実装の説明 v2"),
-          ],
+          [verdictOut("changes_required"), implement("# 実装の説明 v2")],
           [],
           { draftTimeoutMs: 20 },
         );
@@ -30079,7 +30295,6 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         [
           out("# 要求要件 v1"),
           verdictOut("changes_required"),
-          rework("requirements", "要求要件で直せる"),
           out("# 要求要件 v2"),
           verdictOut("no_findings", "# 評価\n\nマージしてよい"),
         ],

@@ -15,6 +15,7 @@ import type {
   Remark,
   RemarkSource,
   ReviewComment,
+  ReviewRework,
   ReviewVerdict,
   ReworkAnswer,
   ReworkCause,
@@ -878,7 +879,14 @@ export type Task = {
   /**
    * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定を読めなかった。
    */
-  reviewVerdicts?: { round: number; verdict?: ReviewVerdict }[];
+  reviewVerdicts?: {
+    round: number;
+    verdict?: ReviewVerdict;
+    /** PR のレビューの子タスクが示した、指摘の戻し先と原因（PBI-332）。 */
+    rework?: ReviewRework;
+    /** 戻し先を示した回の、実行のエージェント（PBI-332。戻し先の判断の記録に使う）。 */
+    agentId?: string;
+  }[];
   /**
    * 前回投稿したレビュー（再レビューのとき。PBI-111）。前回の指摘（本文と行へのコメント）と、投稿の後の作者の返答を
    * 再レビューのプロンプトに渡すため。
@@ -993,6 +1001,11 @@ export type Task = {
     };
     /** remarks のうち、AI のレビュー（sacty のレビューのタスクの投稿）の指摘の位置（PBI-275）。無ければすべて人の指摘。 */
     aiReview?: number[];
+    /**
+     * AI のレビューの指摘の位置（文字列）ごとの、投稿したレビューのタスクと回（PBI-332。`PullRequestReviewImported` の items の
+     * review）。無い位置の指摘は、出どころの回が分からない。
+     */
+    aiReviewFrom?: Record<string, string>;
   };
   /**
    * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
@@ -1388,6 +1401,10 @@ export function applyEvent(
             {
               round,
               ...(event.payload.reviewVerdict ? { verdict: event.payload.reviewVerdict } : {}),
+              // 戻し先を示した回は、その実行のエージェントも残す（戻し先の判断の記録に使う。PBI-332）
+              ...(event.payload.reviewRework
+                ? { rework: event.payload.reviewRework, agentId: event.payload.agentId }
+                : {}),
             },
           ];
         }
@@ -2133,10 +2150,15 @@ export function applyEvent(
             item.source === "sacty_review" ? [before + i] : [],
           ),
         ];
+        const heldFrom = {
+          ...(task.pendingReview?.aiReviewFrom ?? {}),
+          ...reviewFromOf(event.payload.items, before),
+        };
         task.pendingReview = {
           keys: [...(task.pendingReview?.keys ?? []), ...heldKeys],
           remarks: [...(task.pendingReview?.remarks ?? []), ...event.payload.remarks],
           ...(heldAi.length > 0 ? { aiReview: heldAi } : {}),
+          ...(Object.keys(heldFrom).length > 0 ? { aiReviewFrom: heldFrom } : {}),
         };
         break;
       }
@@ -2157,10 +2179,12 @@ export function applyEvent(
       const aiReview = event.payload.items.flatMap((item, i) =>
         item.source === "sacty_review" ? [i] : [],
       );
+      const aiReviewFrom = reviewFromOf(event.payload.items, 0);
       task.pendingReview = {
         keys,
         remarks: event.payload.remarks,
         ...(aiReview.length > 0 ? { aiReview } : {}),
+        ...(Object.keys(aiReviewFrom).length > 0 ? { aiReviewFrom } : {}),
       };
       break;
     }
@@ -3678,6 +3702,25 @@ export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
 }
 
 /**
+ * PR のレビューの子タスクが指摘ごとに示した戻し先から、差し戻す工程を決める（PBI-332）。承認済みの前の工程の決定を変える指摘が
+ * 1つでもあればその工程、複数の工程にまたがれば前の工程。戻し先の候補（targets。ゲートに近い順）に無い・読めない値の指摘は、
+ * その PR の工程（gateStep）で直す。候補が無ければ（工程を戻せないタスク）undefined。
+ */
+export function reviewReworkTarget(
+  rework: ReviewRework | undefined,
+  targets: readonly StepKey[],
+  gateStep: StepKey,
+): StepKey | undefined {
+  if (!targets.includes(gateStep)) return targets[0];
+  let index = targets.indexOf(gateStep);
+  for (const finding of rework?.findings ?? []) {
+    const i = finding.target ? targets.indexOf(finding.target) : -1;
+    if (i > index) index = i;
+  }
+  return targets[index];
+}
+
+/**
  * 調査そのものがタスクの目的か（調査だけの組み合わせ。PBI-18）。実装する組み合わせの先頭の調査は、
  * 後の工程のための前段の調査で、人間は承認しない（PBI-29）。
  */
@@ -4024,4 +4067,18 @@ export function deliveredWithoutChanges(task: Task): boolean {
   const submission = task.noChanges?.submission;
   if (submission === undefined || task.pullRequest) return false;
   return task.submissions.implement === submission;
+}
+
+/**
+ * 取り込んだ指摘の項目のうち、AI のレビューの指摘の位置（offset から数える）ごとの、投稿したレビューのタスクと回（PBI-332）。
+ */
+function reviewFromOf(
+  items: readonly { source?: "sacty_review"; review?: string }[],
+  offset: number,
+): Record<string, string> {
+  return Object.fromEntries(
+    items.flatMap((item, i) =>
+      item.source === "sacty_review" && item.review ? [[String(offset + i), item.review]] : [],
+    ),
+  );
 }

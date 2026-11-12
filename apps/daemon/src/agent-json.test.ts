@@ -258,6 +258,35 @@ describe("エージェントの JSON の答えを、囲み方が揺らいでも�
     ).toMatchObject({ reason });
   });
 
+  it("判定のブロックの rework から、指摘ごとの戻し先と原因を読む。知らない値は無いものにする（PBI-332）", () => {
+    const verdict = (rework: unknown) =>
+      extractReviewComments(
+        `本文\n\n${JSON.stringify({ "sacty-review-verdict": { verdict: "changes_required", rework } })}`,
+        diff,
+      ).rework;
+    expect(
+      verdict({
+        findings: [
+          { finding: "上限を変える", target: "requirements", reason: "決定を変える" },
+          { finding: "誤字", target: "undecidable", reason: "不明" },
+          { finding: "形", target: 3, reason: "" },
+          "文字列",
+        ],
+        cause: "guardian_missed",
+      }),
+    ).toEqual({
+      findings: [
+        { finding: "上限を変える", target: "requirements", reason: "決定を変える" },
+        { finding: "誤字", reason: "不明" },
+        { finding: "形", reason: "" },
+      ],
+      cause: "guardian_missed",
+    });
+    expect(verdict({ findings: "x", cause: "unknown" })).toEqual({ findings: [] });
+    expect(verdict(["x"])).toBeUndefined();
+    expect(verdict(undefined)).toBeUndefined();
+  });
+
   it("説明の文の中の波括弧・引用符で、後ろの JSON を読み落とさない", () => {
     const output = [
       '設定は {name} と { "閉じない括弧、引用符 " も書いた。',

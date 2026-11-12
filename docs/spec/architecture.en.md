@@ -105,7 +105,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 Each dashboard section contains the following.
 
 - Needs you
-  - The open tasks whose state display is a person's turn, longest wait first. A person's turn means `statusTone` is `person` (awaiting approval, paused, escalated). Tasks awaiting approval are excluded while the goal guardian is judging PR feedback.
+  - The open tasks whose state display is a person's turn, longest wait first. A person's turn means `statusTone` is `person` (awaiting approval, paused, escalated). Tasks awaiting approval are excluded while sacty is deciding where to send PR feedback back to.
   - Each row shows the title, the project, the state, and the waiting time. The title links to where the person decides (`personAction`). For steps reviewed on a PR, it opens the PR in a new tab (see [Approval and request changes](approval.en.md#approval-through-prs)).
   - The wait starts at the latest activity record that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`). When there is no record, it starts at `updatedAt`.
   - The waiting time is one of minutes, hours, or days (rounded down; "under a minute" below one minute; `durationText`).
@@ -143,9 +143,9 @@ Each dashboard section contains the following.
   - Counts for the last 30 days including today.
   - A send-back is counted once, by the record of the actual send-back (`ChangesRequested`).
     - Those whose comments are all from sacty's own AI review (`remarks[].source` is `sacty_review`) count as "rework from AI review" (`aiReviewRework`) (if even one person's comment is mixed in, they are split as below).
-    - Those the goal guardian made from PR feedback (the projection keeps that record's time in `prRework`) count as "rework from PR feedback", and the others as "changes requested by a person".
+    - Those made by deciding where to send PR feedback back to (the projection keeps that record's time in `prRework`) count as "rework from PR feedback", and the others as "changes requested by a person".
     - A judgement `ReworkJudged` that did not lead to a send-back is not counted.
-  - So that rework that is not a miss can be told apart, send-backs are also counted by cause (`cause` of `ChangesRequested`; `reworkByCause`). A record without a cause (including the activity log from before causes were recorded) counts as "unknown cause" (`unspecified`). This covers a request for changes where a person chose no cause, and PR feedback whose cause the Goal Guardian could not judge.
+  - So that rework that is not a miss can be told apart, send-backs are also counted by cause (`cause` of `ChangesRequested`; `reworkByCause`). A record without a cause (including the activity log from before causes were recorded) counts as "unknown cause" (`unspecified`). This covers a request for changes where a person chose no cause, and PR feedback whose cause could not be decided when deciding where to send it back to.
     For the activity log from before causes were recorded, a request for changes counts as `guardian_missed` when `GuardianMissed` comes right before it (the previous record of the same task), and as `unspecified` otherwise.
     The goal guardian miss count is the number of `GuardianMissed`, so it is not always equal to the number of send-backs whose cause is `guardian_missed` (no miss is recorded when there was no passed final review).
   - It also counts goal guardian misses (`GuardianMissed`, recorded only by a send-back whose cause is a miss), integration review failures (`IntegrationReviewed` with `passed` false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`).

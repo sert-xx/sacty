@@ -53,6 +53,7 @@ import {
   questionBlocked,
   resumeNoteRoom,
   reviewedPullRequest,
+  reviewReworkTarget,
   reworkingPullRequest,
   reworkTargets,
   skippableSteps,
@@ -5920,5 +5921,43 @@ describe("依存先の PR に重ねた子タスク（PBI-317）", () => {
     expect(implementationMerged({ ...base, pullRequestState: "merged" })).toBe(true);
     expect(implementationMerged({ ...base, pullRequestState: "merged_outdated" })).toBe(true);
     expect(implementationMerged(base)).toBe(false);
+  });
+});
+
+describe("レビューの子タスクの指摘ごとの戻し先から、差し戻す工程を決める（PBI-332）", () => {
+  const targets = ["implement", "design", "requirements"] as const;
+  const finding = (target?: string) =>
+    ({ finding: "f", reason: "r", ...(target ? { target } : {}) }) as {
+      finding: string;
+      reason: string;
+      target?: "implement" | "design" | "requirements";
+    };
+  it("決定を変える指摘があればその工程、複数なら前の工程、無ければ PR の工程", () => {
+    expect(reviewReworkTarget({ findings: [finding("implement")] }, targets, "implement")).toBe(
+      "implement",
+    );
+    expect(
+      reviewReworkTarget(
+        { findings: [finding("implement"), finding("design")] },
+        targets,
+        "implement",
+      ),
+    ).toBe("design");
+    expect(
+      reviewReworkTarget(
+        { findings: [finding("requirements"), finding("design")] },
+        targets,
+        "implement",
+      ),
+    ).toBe("requirements");
+  });
+  it("読めない・候補に無い戻し先・答えが無いときは、その PR の工程", () => {
+    expect(reviewReworkTarget(undefined, targets, "implement")).toBe("implement");
+    expect(reviewReworkTarget({ findings: [finding()] }, targets, "implement")).toBe("implement");
+    // 候補に無い工程（飛ばした設計など）
+    expect(reviewReworkTarget({ findings: [finding("design")] }, ["implement"], "implement")).toBe(
+      "implement",
+    );
+    expect(reviewReworkTarget({ findings: [] }, [], "implement")).toBeUndefined();
   });
 });

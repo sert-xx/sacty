@@ -38,6 +38,7 @@ export function StepCosts({
   const roleLabel = (role: CostRole) =>
     role === "chat" ||
     role === "errorAnalysis" ||
+    role === "rework" ||
     role === "export" ||
     role === "gather" ||
     role === "triage" ||

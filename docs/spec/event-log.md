@@ -110,7 +110,8 @@
   | `QuestionAnswered` | 質問への答え（`chat`） |
   | `ErrorAnalyzed` | エラーの分析（`errorAnalysis`。[エラーレポート](error-report.md)） |
   | `DeploymentChecked` | マージの後の監視の工程（`deployment`。[マージの後の監視](deployment-watch.md)） |
-  | `ChangeJudged`・`ReworkJudged`・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
+  | `ReworkJudged`（actor が `agent`。PBI-332） | 戻し先の判断（`rework`）。actor が `sacty`（`reviewTaskId` があり、PR のレビューの子タスクの答えから決めた）のものは実行していないので、行にしない |
+  | `ChangeJudged`・`ReworkJudged`（actor が `guardian`。以前の版）・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。
   一覧に無い種類が `costUsd` を持つと、型の検査で typecheck が通らない。
@@ -174,7 +175,7 @@
      - 工程の一覧に無い工程の記録も出す。
      - デプロイの確認は、マージの後の監視の工程の行に入れる。
        実行中も出す。
-  3. 書き出し・質問への答え・エラーの分析・ゴールガーディアン（記録があるときだけ）
+  3. 書き出し・質問への答え・エラーの分析・戻し先の判断・ゴールガーディアン（記録があるときだけ）
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足す。
   そのため、タスクの費用（`budget.usedUsd`・`budget.estimated`）と一致する。
