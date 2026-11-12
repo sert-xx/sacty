@@ -1,0 +1,38 @@
+# 最小の CI：PR と main への push で、lint・型検査・テストを実行する。
+# 外部の Action はコミットの SHA で固定する（タグの付け替えで中身が変わらないように）。上げるときは、タグとコメントを一緒に変える。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # PR は同じ PR の後の push で取り消す。main への push はコミットごとに別のグループにし、待機中のものも取り消さない
+  # （どのコミットで落ちたか分かるように。同じグループでは、待機中の実行が後の実行に置き換えられる）
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # 画面のテスト（*.browser.test.ts）が使う Chromium。版は依存の playwright に合わせて入る
+      - run: npx playwright install --with-deps --only-shell chromium
+      # 時間が入力の長さに比例するかを測るテストが、ほかのテストと CPU を取り合って落ちないよう、ファイルを1つずつ動かす
+      # （2つずつでも上限を超えたことがある）
+      - run: npx vitest run --no-file-parallelism
