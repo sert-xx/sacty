@@ -33,7 +33,21 @@ RUN if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
     rm -rf /opt/sacty-node; \
   elif [ -x /opt/sacty-node/bin/node ] && [ -f /opt/sacty-node/lib/node_modules/npm/bin/npm-cli.js ]; then \
     ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/sacty-node/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx; \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx \
+    && if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then \
+      echo "sacty: 写した Node.js を動かすための共有ライブラリ（libatomic・libstdc++）を入れます。"; \
+      if command -v apt-get >/dev/null 2>&1; then \
+        { apt-get update && apt-get install -y --no-install-recommends libatomic1 libstdc++6; } || true; \
+        rm -rf /var/lib/apt/lists/*; \
+      elif command -v dnf >/dev/null 2>&1; then { dnf install -y libatomic libstdc++ && dnf clean all; } || true; \
+      elif command -v microdnf >/dev/null 2>&1; then { microdnf install -y libatomic libstdc++ && microdnf clean all; } || true; \
+      elif command -v yum >/dev/null 2>&1; then { yum install -y libatomic libstdc++ && yum clean all; } || true; \
+      fi; \
+      if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then \
+        echo "sacty: 写した Node.js（images の node_image か image_build.base_image）が、元のイメージで動きません：$(/opt/sacty-node/bin/node --version 2>&1 | head -n 3)。元のイメージに足りない共有ライブラリが入れられないか、C ライブラリが違います（Alpine など musl のイメージには写せません）。元のイメージで動く Node.js のイメージを node_image に書くか、Node.js 18 以上と npm の入った元のイメージを使ってください。" >&2; \
+        exit 1; \
+      fi; \
+    fi; \
   else \
     echo "sacty: 元のイメージに Node.js 18 以上と npm が無く、Node.js を写す元のイメージ（images の node_image か image_build.base_image）にも node と npm が見つかりません。node と npm の入ったイメージを node_image に書いてください。" >&2; \
     exit 1; \

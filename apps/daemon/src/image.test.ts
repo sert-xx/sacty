@@ -496,6 +496,18 @@ describe("既定のイメージの固定（セキュリティチェックの指�
     expect(at("COPY --chmod=755 drawio-shim.cjs")).toBeGreaterThan(lastHeavy);
   });
 
+  it("写した Node.js が動かなければ、要る共有ライブラリを入れ、それでも動かなければ理由を示して止める（素のイメージ）", () => {
+    const dockerfile = read("Dockerfile");
+    const lang = dockerfile.slice(
+      dockerfile.indexOf("AS base-lang"),
+      dockerfile.indexOf("# root では動かさない。元のイメージに node ユーザー"),
+    );
+    expect(lang).toContain("if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then");
+    expect(lang).toContain("apt-get install -y --no-install-recommends libatomic1 libstdc++6");
+    expect(lang).toContain("dnf install -y libatomic libstdc++");
+    expect(lang).toMatch(/元のイメージで動きません[^\n]*\n\s*exit 1;/);
+  });
+
   it("取得物は BuildKit の cache マウントに置き、イメージに npm のキャッシュを残さない", () => {
     const dockerfile = read("Dockerfile");
     for (const script of ["install-tools.sh", "install-security-tools.sh", "install-drawio.sh"]) {

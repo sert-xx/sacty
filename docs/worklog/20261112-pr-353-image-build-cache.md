@@ -34,6 +34,17 @@
   - できたイメージに、キャッシュの場所と `APT_CONFIG` は残らない。各 CLI の版と、Maven のミラーの設定を確かめた。
   - `docker build --no-cache` では cache マウントも新しくなる（確かめ方として使えない）。
 
+## 素のイメージで、写した Node.js が動かないのを直す
+
+- 確かめているときに見つけた。`ubuntu:24.04` のような素のイメージに `node:26-bookworm-slim` から Node.js を写すと、`node` が `libatomic.so.1` を見つけられず、エージェントの CLI の手順が終了コード 127 で止まっていた（この PR より前から）。`node` は `libatomic`・`libstdc++`・`libgcc_s` を使う（`ldd`）。
+- 同じ PR に含めた（このセッションで push してよいのは、この PR のブランチだけのため）。
+- `base-lang` で Node.js を写したら、`node --version` が動くかを確かめる。動かなければ、元のイメージのパッケージの管理のコマンドで `libatomic`・`libstdc++` を入れ、それでも動かなければ、理由と直し方を示して止める。
+  - この手順の後の `packages`・`run` では間に合わないので、ここで入れる。
+- 確かめたこと（実際の `docker build`）：
+  - `ubuntu:24.04`：「共有ライブラリ（libatomic・libstdc++）を入れます」を出して入れ、`node v26.13.1`・`claude 2.1.318` が動いた。
+  - `alpine:3.20`：パッケージの管理のコマンドが無いので入れられず、`not found` と「Alpine など musl のイメージには写せません」を示して止まった。
+  - RHEL 系のミラーにはこの環境から届かないので、dnf・microdnf・yum の分岐は試していない。
+
 ## レビューの指摘と対応
 
 - なし（レビューを待っている）。

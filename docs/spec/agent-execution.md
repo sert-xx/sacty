@@ -291,6 +291,7 @@
     最後に `USER node`・`WORKDIR /workspace`。
   - 言語ごとのイメージは、元のイメージに Node.js 18 以上と npm があればそれを使う。
     無ければ `node_image`（無ければ `image_build.base_image`、それも無ければ `node:26-bookworm-slim`）から写す。
+    写した `node` が動かなければ、元のイメージにある apt-get・dnf・microdnf・yum で `libatomic`・`libstdc++`（apt-get は `libatomic1`・`libstdc++6`）を入れ、それでも動かなければ、理由（`node --version` の出力の先頭 3 行）と直し方を示して止める（Alpine など musl のイメージには写せない）。
     `node` ユーザーが無ければ作り、`HOME=/home/node`・`GOPATH=/home/node/go` にする。
     `maven_mirror` があれば Maven の `settings.xml` と Gradle の init スクリプトを書く。
   - `packages` は元のイメージにある dnf・microdnf・yum・apt-get で root で入れ、`enable_repos` はその `--enablerepo` にする（apt-get では失敗）。
