@@ -120,9 +120,11 @@ function fail(message) {
 }
 
 /**
- * mise で入れた後の確かめ。found（mise which sacty の結果）が launcher（置いた入口）か。注意を warnings で返す。
+ * mise で入れた後の確かめ。found（mise which sacty の結果）が launcher（置いた入口）か、onPath（シェルの PATH で最初に
+ * 見つかる sacty）が入口か mise のシム（miseBin へのリンク）か。mise が選べても、シェルに mise activate やシムの PATH の
+ * 設定が無ければ実行できないので、両方を確かめる。注意を warnings で返す。
  */
-export function checkMise({ launcher, found, resolveReal = real }) {
+export function checkMise({ launcher, found, onPath, miseBin, resolveReal = real }) {
   const warnings = [];
   if (!found) {
     warnings.push(
@@ -131,6 +133,19 @@ export function checkMise({ launcher, found, resolveReal = real }) {
   } else if (resolveReal(found) !== resolveReal(launcher)) {
     warnings.push(
       `mise が選ぶ sacty（${found}）は、いま置いた入口ではありません。mise.toml で sacty の版を指定していないか確かめてください。`,
+    );
+  }
+  const onPathReal = onPath ? resolveReal(onPath) : undefined;
+  if (!onPath) {
+    warnings.push(
+      "いまのシェルの PATH では sacty が見つかりません。mise activate を使っていれば、新しいシェル（次のプロンプト）から使えます。シムを使うなら、mise のシムのディレクトリ（mise の既定では ~/.local/share/mise/shims）を PATH に入れてください。",
+    );
+  } else if (
+    onPathReal !== resolveReal(launcher) &&
+    (!miseBin || onPathReal !== resolveReal(miseBin))
+  ) {
+    warnings.push(
+      `PATH で先に見つかる sacty（${onPath}）は、mise で入れたものではありません。そちらを消すか、PATH の順を変えてください。`,
     );
   }
   return { warnings };
@@ -149,12 +164,23 @@ export function miseToolDir({ version, env = process.env, home = homedir() }) {
 
 /**
  * mise に、dir を sacty の版 version として登録し（mise link）、利用者全体で使う版にする（mise use --global）。
+ * 同じ版が既に登録されていれば（mise where）、その登録先が dir のときだけ置き換える（--force）。別のもの（ほかの方法で
+ * 入れた sacty）なら、消さずに失敗を返す（mise link --force は、元の登録先を消してから作り直すため）。
  * 失敗したら、どのコマンドがどう失敗したかを返す。
  */
-export function installWithMise({ version, dir, run }) {
+export function installWithMise({ version, dir, run, resolveReal = real }) {
+  const tool = `sacty@${version}`;
+  const where = run("mise", ["where", tool]);
+  const registered = where.status === 0 ? where.stdout?.trim() : "";
+  if (registered && resolveReal(registered) !== resolveReal(dir)) {
+    return {
+      ok: false,
+      error: `mise に ${tool} が、ほかの場所（${registered}）で登録されているため、上書きしません`,
+    };
+  }
   for (const args of [
-    ["link", "--force", `sacty@${version}`, dir],
-    ["use", "--global", `sacty@${version}`],
+    ["link", ...(registered ? ["--force"] : []), tool, dir],
+    ["use", "--global", tool],
   ]) {
     const result = run("mise", args);
     if (result.status !== 0) {
@@ -253,7 +279,12 @@ function main() {
   // mise で入れたら、mise が選ぶ sacty が入口か（シムを使う設定では、PATH にはシムが見つかるため、mise に尋ねる）
   const { warnings } =
     via === "mise"
-      ? checkMise({ launcher, found: run("mise", ["which", "sacty"]).stdout?.trim() || undefined })
+      ? checkMise({
+          launcher,
+          found: run("mise", ["which", "sacty"]).stdout?.trim() || undefined,
+          onPath: findOnPath("sacty"),
+          miseBin: findOnPath("mise"),
+        })
       : checkPath({ launcher, onPath: findOnPath("sacty") });
   for (const line of warnings) console.warn(`[sacty] 注意：${line}`);
   console.log(

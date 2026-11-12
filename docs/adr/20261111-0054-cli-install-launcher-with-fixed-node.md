@@ -18,9 +18,10 @@ mise などで Node.js を管理していると、npm のグローバルの場�
 
 - `npm run cli:install` は、`npm link` をやめ、Node.js の版に関係しない場所（`SACTY_BIN_DIR`、無ければ `~/.local/bin`）に、`sacty` の起動の入口（シェルのスクリプト）を置く。
 - 入口には、`cli:install` を動かした Node.js（`process.execPath`。sacty のリポジトリで mise などが選んだ版）の絶対パスと、このリポジトリの `packages/cli/bin/sacty.js` を書き、その Node.js で動かす。`PATH` の `node` は使わない。
-- `PATH` に `mise` があり、`SACTY_BIN_DIR` を指定していなければ、入口を版ごとのディレクトリ（`~/.local/share/sacty/mise/<版>/bin/sacty`）に置き、`mise link --force sacty@<版>` と `mise use --global sacty@<版>` で mise に登録する（依頼者の求め）。
+- `PATH` に `mise` があり、`SACTY_BIN_DIR` を指定していなければ、入口を版ごとのディレクトリ（`~/.local/share/sacty/mise/<版>/bin/sacty`）に置き、`mise link sacty@<版>` と `mise use --global sacty@<版>` で mise に登録する（依頼者の求め）。
+  同じ版が既に登録されていれば、登録先がそのディレクトリのときだけ `--force` で置き換え、ほかの場所の登録は上書きしない（PR #338 のレビュー）。
   登録に失敗したら、理由を知らせて `~/.local/bin` などに置く。mise で入れたら、前に `~/.local/bin` などに置いた入口を消す。
-  mise で入れたときは、`PATH` の代わりに `mise which sacty` で、mise が選ぶ sacty が入口かを確かめる。
+  mise で入れたときは、`mise which sacty` で mise が選ぶ sacty が入口かを、`PATH` で最初に見つかる sacty が入口か mise のシムかを確かめる（PR #338 のレビュー）。
 - 入口の Node.js か `sacty.js` が無くなったら、入口は `npm run cli:install` のやり直しを知らせて止まる。
 - 置き場所に、sacty の入口の目印の無いファイルがあれば上書きしない。
 - 前のやり方で、いまの Node.js のグローバルに入れたこのリポジトリの `@sacty/cli` があれば外す。
@@ -37,7 +38,7 @@ mise などで Node.js を管理していると、npm のグローバルの場�
   登録するものは同じ入口にして、Node.js の版の問題は入口が受け持つ。mise は、どのディレクトリでも `sacty` を `PATH` に載せることを受け持つ。
   mise が選ぶ Node.js で動かす（入口を使わない）と、ディレクトリごとの Node.js の版で動く問題が残るので採らなかった。
   版ごとのディレクトリにしたのは、`mise ls sacty` で版が分かり、版を上げたら新しい版を登録して切り替えられるため。
-- 更新で Node.js の版が変わったときに `cli:install` のやり直しが要るのは、入口に版を固定して書くため。古い版を消した後は、入口がやり直しを知らせる。消していなければ古い版で動き続けるので、更新の手順で `npm run build` の代わりに `npm run cli:install` を実行するよう案内する。
+- 更新で Node.js の版が変わったときに `cli:install` のやり直しが要るのは、入口に版を固定して書くため。古い版を消した後は、入口がやり直しを知らせる。消していなければ古い版で動き続けるので、更新の手順（ユーザードキュメントと、画面の更新の知らせ）で `npm run build` の代わりに `npm run cli:install` を実行するよう案内する（画面の知らせは PR #338 のレビュー）。
 - 前のやり方のリンクを外すのは、mise では Node.js の bin が `PATH` の前の方に入るため、残すと新しい入口より先に見つかり、前の問題が残るため。いまの Node.js の版のものしか外せないので、ほかの版のものは文書で案内する。
 
 ## 影響

@@ -160,42 +160,88 @@ describe("mise で入れる", () => {
     ).toBe("/data/sacty/mise/1.22.1");
   });
 
-  it("mise link で版を登録してから、mise use --global でその版にする。失敗したら、どのコマンドが失敗したかを返す", () => {
+  it("登録が無ければ mise link で登録し、mise use --global でその版にする。失敗したら、どのコマンドが失敗したかを返す", () => {
     const calls: string[][] = [];
     const ok = installWithMise({
       version: "1.22.1",
       dir: "/d",
       run: (_command: string, args: string[]) => {
         calls.push(args);
-        return { status: 0 };
+        return args[0] === "where" ? { status: 1, stderr: "not installed" } : { status: 0 };
       },
     });
     expect(ok).toEqual({ ok: true });
     expect(calls).toEqual([
-      ["link", "--force", "sacty@1.22.1", "/d"],
+      ["where", "sacty@1.22.1"],
+      ["link", "sacty@1.22.1", "/d"],
       ["use", "--global", "sacty@1.22.1"],
     ]);
     const failed = installWithMise({
       version: "1.22.1",
       dir: "/d",
-      run: () => ({ status: 1, stderr: "unknown tool" }),
+      run: (_command: string, args: string[]) =>
+        args[0] === "where" ? { status: 1 } : { status: 1, stderr: "unknown tool" },
     });
     expect(failed.ok).toBe(false);
-    expect(failed.error).toContain("mise link --force sacty@1.22.1 /d");
+    expect(failed.error).toContain("mise link sacty@1.22.1 /d");
     expect(failed.error).toContain("unknown tool");
   });
 
-  it("mise が選ぶ sacty が入口でない・見つからないときは、注意にする", () => {
+  it("同じ版が登録済みなら、登録先がこの入口のディレクトリのときだけ --force で置き換え、ほかの場所なら上書きしない", () => {
+    const calls: string[][] = [];
+    const ours = installWithMise({
+      version: "1.22.1",
+      dir: "/d",
+      resolveReal: (p: string) => (p === "/mise/installs/sacty/1.22.1" ? "/d" : p),
+      run: (_command: string, args: string[]) => {
+        calls.push(args);
+        return args[0] === "where"
+          ? { status: 0, stdout: "/mise/installs/sacty/1.22.1\n" }
+          : { status: 0 };
+      },
+    });
+    expect(ours).toEqual({ ok: true });
+    expect(calls[1]).toEqual(["link", "--force", "sacty@1.22.1", "/d"]);
+    const others: string[][] = [];
+    const other = installWithMise({
+      version: "1.22.1",
+      dir: "/d",
+      resolveReal: (p: string) => p,
+      run: (_command: string, args: string[]) => {
+        others.push(args);
+        return { status: 0, stdout: "/opt/other-sacty\n" };
+      },
+    });
+    expect(other.ok).toBe(false);
+    expect(other.error).toContain("/opt/other-sacty");
+    expect(others).toEqual([["where", "sacty@1.22.1"]]);
+  });
+
+  it("mise が選ぶ sacty と、シェルの PATH の sacty（入口か mise のシム）を確かめ、違う・見つからないときは注意にする", () => {
     const launcher = "/home/u/.local/share/sacty/mise/1.22.1/bin/sacty";
-    const same = (p: string) => (p.includes("installs") ? launcher : p);
+    const miseBin = "/usr/local/bin/mise";
+    const resolveReal = (p: string) =>
+      p.includes("installs") ? launcher : p.includes("shims") ? miseBin : p;
+    const found = "/mise/installs/sacty/1.22.1/bin/sacty";
+    // mise activate（PATH に入口）でも、シム（mise へのリンク）でもよい
+    for (const onPath of [found, "/mise/shims/sacty"]) {
+      expect(checkMise({ launcher, found, onPath, miseBin, resolveReal })).toEqual({
+        warnings: [],
+      });
+    }
     expect(
-      checkMise({ launcher, found: "/mise/installs/sacty/1.22.1/bin/sacty", resolveReal: same }),
-    ).toEqual({ warnings: [] });
-    expect(checkMise({ launcher, found: undefined, resolveReal: same }).warnings[0]).toContain(
-      "見つけられません",
-    );
+      checkMise({ launcher, found: undefined, onPath: found, miseBin, resolveReal }).warnings[0],
+    ).toContain("見つけられません");
     expect(
-      checkMise({ launcher, found: "/other/sacty", resolveReal: (p: string) => p }).warnings[0],
+      checkMise({ launcher, found: "/other/sacty", onPath: found, miseBin, resolveReal })
+        .warnings[0],
     ).toContain("/other/sacty");
+    // mise は選べても、シェルの PATH に無い（activate もシムも設定していない）
+    expect(
+      checkMise({ launcher, found, onPath: undefined, miseBin, resolveReal }).warnings[0],
+    ).toContain("mise activate");
+    expect(
+      checkMise({ launcher, found, onPath: "/opt/old/sacty", miseBin, resolveReal }).warnings[0],
+    ).toContain("/opt/old/sacty");
   });
 });

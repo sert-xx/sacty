@@ -35,13 +35,21 @@
   - `mise link` が失敗するとき：理由を注意に出して、`~/.local/bin/sacty` に置き、終了コード 0。
   - `SACTY_BIN_DIR` を指定したとき：mise を呼ばずに、指定した場所に置いた。
 - `npm run lint`・`npm run typecheck`：成功。`npx vitest run tests/scripts tests/docs packages/cli`：121 件すべて成功。
+- レビューの対応の後、偽の `mise`（`where`・`link`（`--force` が無いと既存を拒む）・`use --global`・`which` とシムをまねるもの）で `node scripts/cli-install.mjs` を動かした。
+  - 1回目：`where` → `link`（`--force` なし）→ `use --global` → `which` の順に呼び、終了コード 0。
+  - 2回目（自分の登録の入れ直し）：`link --force` で置き換えた。
+  - シェルの `PATH` に `sacty` が無いとき：`mise activate` かシムの設定を案内する注意を出した。
+  - ほかの場所で同じ版が登録済みのとき：上書きせず（登録はほかの場所を指したまま）、`~/.local/bin/sacty` に置いた。
 - mise のやり方を足した後：`npx vitest run tests/scripts`（12 件）・`npx vitest run tests/docs`（93 件）：成功。`npm run lint`・`npm run typecheck`：成功。
 
 ## レビューの指摘と対応
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | なし |
+| sacty のレビュー［要修正］：画面の更新の知らせの手順が `npm run build` のままで、`cli:install` で入れた人が更新しても入口の Node.js が古いまま | 知らせのコマンドの下に、`cli:install` で入れたなら `build` の代わりに `cli:install` を実行するよう1文を足した（`apps/web/src/components/shell/update-notice-view.tsx`・`apps/web/src/i18n/messages/shell.ts` の `cliInstall`。日本語は本文の上限の 60 文字に収めた）。テストを足し、仕様書（`daemon-lifecycle`）と ADR を直した |
+| sacty のレビュー［要修正］：`mise link --force` が、同じ版がほかの方法で登録されていても、確かめずに置き換える | `mise where sacty@<版>` で登録を確かめ、登録先がこの入口のディレクトリのときだけ `--force` で置き換え、ほかの場所なら上書きせずに `~/.local/bin` に置くようにした（`installWithMise`）。登録が無ければ `--force` を付けない |
+| sacty のレビュー［要修正］：mise で入れたとき、`mise which` だけを確かめ、シェルの `PATH` で実行できるかを確かめていない | `PATH` で最初に見つかる `sacty` が、入口か mise のシム（`mise` へのリンク）かも確かめ、見つからないときは `mise activate` かシムの設定を案内するようにした（`checkMise`） |
+| sacty のレビュー［提案］：`XDG_DATA_HOME` を指定したときの消す場所が書かれていない | 日英の「はじめに」に `$XDG_DATA_HOME/sacty/mise` を書いた |
 
 ## 残したこと
 

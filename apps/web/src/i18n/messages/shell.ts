@@ -35,6 +35,7 @@ const ja = {
       `Sacty ${latest} がリリースされました（動いているのは ${current}）。更新すると推奨のモデルや修正が入ります。`,
     release: "リリースの内容を見る",
     steps: "動いている sacty up を Ctrl+C で止めてから、Sacty のリポジトリで次を実行してください。",
+    cliInstall: "cli:install で入れたなら、build の代わりに cli:install を実行してください。",
   },
   /** Docker とエージェントのイメージの注意（PBI-148）。 */
   docker: {
@@ -96,6 +97,8 @@ const en: ShellMessages = {
       `Sacty ${latest} has been released (you are running ${current}). Updating brings the recommended models and fixes.`,
     release: "See the release notes",
     steps: "Stop the running sacty up with Ctrl+C, then run these in the Sacty repository.",
+    cliInstall:
+      "If you installed sacty with npm run cli:install, run npm run cli:install instead of npm run build.",
   },
   docker: {
     title: "Docker is not ready",
