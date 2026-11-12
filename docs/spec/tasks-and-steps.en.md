@@ -674,8 +674,9 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
     - If the task is sent back, the PR is updated, a re-review of the child task starts, or the head changes while the draft is being removed again, or the answer to removing the draft is not received,
       sacty turns the PR back into a draft when the task is not finished and the PR number is the same. If the answer to removing the draft is not received while the record is unchanged, the request might still arrive later,
       so sacty turns the PR back into a draft at every check, also for the next submission, until it removes the draft after no findings (`undraftUnsettled`).
-    - For a paused task, too, if its PR is not a draft on GitHub and it is not decided that the PR should not be a draft, sacty turns it back into a draft (`settlePausedDrafts`;
-      for when the task was paused while the draft was being removed again, or a person added a commit while it was paused. sacty tries again at every check while it is paused).
+    - For a paused task, if its PR is not a draft on GitHub, sacty turns it back into a draft (`settlePausedDrafts`; the PR is not to be merged while the task is paused. A PR waiting for no findings that is stacked on a dependency's PR is excluded).
+      Even when the task was paused while the draft was being removed again, the redraft failed, or no answer came back (`DRAFT_TIMEOUT_MS`), sacty tries again at every check while it is paused.
+      After the task is resumed, sacty removes the draft of a PR recorded after no findings again, as above.
   - The date and subject of the implementation PR's commit are those of when the Implementation step finished (`outputAt`), because there is no final review date.
   - If the answer to removing the draft says the PR is still a draft, sacty does not record it and tries again at the next check.
   - After the draft is removed, checks compare the reviewed head with the head that got no findings (`reviewedCommit`), so the same head is not reviewed again.

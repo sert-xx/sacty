@@ -309,7 +309,7 @@ The Implementation step's agent still runs tests while it works.
 3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft), and the child task reviews it again.
 4. When the child task gives "no findings", sacty removes the draft. Merging this PR approves the implementation.
    Check the PR's CI result before merging (sacty does not wait for the CI).
-   If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again at every PR check. To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub.
+   If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again at every PR check. To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub. When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it.
 
 - In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
 - A task that was in the middle of the final review or the CI wait in an older version moves on to this flow the next time it runs (a stopped task, when you resume it).

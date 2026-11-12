@@ -29704,6 +29704,66 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         activity.close();
       });
 
+      it("外し直す間に親だけを一時停止し、戻せなかったら、一時停止の間も確認のたびに戻し、再開したら外し直す（PR #348 12回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        pulls.drafts[7] = true;
+        const gate = Promise.withResolvers<void>();
+        pulls.setDraftGate = gate.promise;
+        pulls.setDraftStarted = Promise.withResolvers<void>();
+        const checking = service.checkPullRequests();
+        await pulls.setDraftStarted.promise;
+        // 外し直す間に、親だけを一時停止した（子タスクは同じ先頭を指摘なしにしたまま）
+        service.pause(id);
+        pulls.setDraftGate = undefined;
+        gate.resolve();
+        pulls.setDraftFail = "GitHub が落ちている";
+        await checking;
+        expect(taskOf(service, id).status).toBe("paused");
+        expect(pulls.drafts[7]).toBe(false);
+        // 戻せないうちは、一時停止の間も確認のたびに戻そうとする
+        const tries = pulls.draftChanges.length;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        pulls.setDraftFail = undefined;
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        expect(pulls.draftChanges.length).toBeGreaterThan(tries);
+        // 再開したら、指摘なしにした先頭のまま外し直す
+        service.resume(id, {});
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(false);
+        activity.close();
+      });
+
+      it("一時停止したタスクの PR の状態の答えが返らなくても、PR の確認を止めない（PR #348 12回目のレビュー指摘）", async () => {
+        const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")], [], {
+          draftTimeoutMs: 50,
+        });
+        const { activity, service, pulls, id } = made;
+        const childId = childOf(service, id);
+        pulls.prInfo = { ...pulls.prInfo, number: 7, headSha: commitOf(service, id) };
+        await runReview(service, childId);
+        await service.checkPullRequests();
+        service.pause(id);
+        const original = pulls.status.bind(pulls);
+        const status = vi.spyOn(pulls, "status");
+        // 一時停止したタスクの PR を確かめる答えだけが返らない
+        status.mockImplementation((input) =>
+          new Error().stack?.includes("settlePausedDrafts") ? new Promise(() => {}) : original(input),
+        );
+        await service.checkPullRequests();
+        status.mockRestore();
+        // 次の確認でやり直し、ドラフトに戻す
+        await service.checkPullRequests();
+        expect(pulls.drafts[7]).toBe(true);
+        activity.close();
+      });
+
       it("外し直す答えを受け取れなければ、ドラフトに戻し、次の確認で外し直す（PR #348 11回目のレビュー指摘）", async () => {
         const made = await implemented([verdictOut("no_findings", "# 評価\n\n問題なし")]);
         const { activity, service, pulls, id } = made;

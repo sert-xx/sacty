@@ -27,7 +27,8 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 
 ## Approval through PRs
 
-Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened as a draft inside the Implementation step before the final review ([Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)), and is marked ready for review once it passes verification ([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
+Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened as a draft when the Implementation step finishes, and its draft is removed once the PR review child task reports no findings ([Tasks and steps](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+In the older flow with the final review (when the `finalReview` dependency is enabled), it is opened as a draft before the final review ([Tasks and steps](tasks-and-steps.en.md#the-implementation-pr-and-ci-before-the-final-review)), and is marked ready for review once it passes verification ([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
 When Requirements, Design, and Implementation are all approved through PRs, the branches look like this (an example where the task ID starts with 1a2b3c4d).
 
@@ -80,7 +81,8 @@ Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `pub
 When opening the PR for a verified implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
 
 - If no implementation PR has been opened yet, `NoChangesFound` (the Implementation round to be submitted next) is recorded, and the implementation is submitted (`StepSubmitted`). Since there is no PR, it can be approved in the web UI. This applies to every task (not only template tasks).
-- Before the submission, the tests and the final review (verification per viewpoint) have passed as usual. The web UI shows the approval wait as "Implement awaiting approval with no changes". The approval screen says the implementation changed nothing and asks you to check the reason no change is needed in the implementation notes.
+- Before the submission, sacty runs neither the tests nor the final review (sacty does not run tests; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)). Since there is no PR, no PR review child task is created either.
+  In the older flow with the final review, the tests and the final review (verification per viewpoint) have passed as usual. The web UI shows the approval wait as "Implement awaiting approval with no changes". The approval screen says the implementation changed nothing and asks you to check the reason no change is needed in the implementation notes.
 - Approving completes the task without opening a PR ("Done (no changes)"). Requesting changes redoes the work from Implementation as usual, and a PR is opened if there are changes. The no-changes handling applies only to that submission round (`deliveredWithoutChanges`: `noChanges.submission` is the current Implementation round and there is no PR).
 - The same applies when there is a task branch (with the requirements and design PRs merged). No PR to the base branch is opened, and the task branch remains.
 - In a task that already opened an implementation PR, if the redone implementation ends up with no changes, the reason (`pr.failed`, `git.nothingToCommit`) is recorded and the task stops, as before. A person decides what to do with the open PR.

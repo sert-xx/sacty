@@ -11836,9 +11836,9 @@ export class TaskService {
   }
 
   /**
-   * 一時停止したタスクの実装の PR が、ドラフトであるべきなのにドラフトでなければ、ドラフトに戻す（PBI-331。外し直す間・外す
-   * 間に一時停止した、などのため。一時停止の間は外さない）。GitHub の状態で決めるので、再起動の後も、戻せなかったときも次の
-   * 確認でやり直す。
+   * 一時停止したタスクの実装の PR がドラフトでなければ、ドラフトに戻す（PBI-331。一時停止の間はマージさせない。外し直す間・
+   * 外す間に一時停止した、などのときも。再開したら、指摘なしで記録した PR は PR の確認で外し直す）。GitHub の状態で決めるので、
+   * 再起動の後も、戻せなかった・答えが返らなかったときも次の確認でやり直す。依存先の PR に重ねた、指摘なしを待つ PR は除く。
    */
   private async settlePausedDrafts(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
@@ -11851,20 +11851,17 @@ export class TaskService {
       const usedSecrets: string[] = [];
       try {
         const token = await this.githubToken(task, pr.repo, usedSecrets);
-        const status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+        // 答えが返らなくても PR の確認全体を止めない（時間切れは次の確認でやり直す）
+        const status = await withDeadline(
+          this.deps.pulls.status({ repo: pr.repo, token, number: pr.number }),
+          this.draftTimeoutMs(),
+        );
         if (status.state !== "open" || status.draft !== false) continue;
         const latest = this.tasks.get(task.id);
         if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) continue;
-        if (this.wantsDraft(latest, pr.repo, status.headSha?.trim() || undefined) === false) {
-          continue;
-        }
-        await this.redraftFor(
-          task.id,
-          pr.repo,
-          pr.number,
-          token,
-          "一時停止の間も指摘なしになっていない",
-        );
+        // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
+        if (latest.pullRequest.awaitingReview && latest.stack) continue;
+        await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
       } catch (error) {
         console.warn(
           `[daemon] 一時停止したタスクの PR #${pr.number}（${pr.repo}）のドラフトを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
