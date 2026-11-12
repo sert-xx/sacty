@@ -32,5 +32,6 @@ jobs:
       - run: npm run typecheck
       # 画面のテスト（*.browser.test.ts）が使う Chromium。版は依存の playwright に合わせて入る
       - run: npx playwright install --with-deps --only-shell chromium
-      # 時間が入力の長さに比例するかを測るテストが、ほかのテストと CPU を取り合って落ちないよう、同時に動かすファイルを絞る
-      - run: npx vitest run --maxWorkers=2
+      # 時間が入力の長さに比例するかを測るテストが、ほかのテストと CPU を取り合って落ちないよう、ファイルを1つずつ動かす
+      # （2つずつでも上限を超えたことがある）
+      - run: npx vitest run --no-file-parallelism
