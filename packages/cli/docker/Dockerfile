@@ -33,7 +33,21 @@ RUN if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
     rm -rf /opt/sacty-node; \
   elif [ -x /opt/sacty-node/bin/node ] && [ -f /opt/sacty-node/lib/node_modules/npm/bin/npm-cli.js ]; then \
     ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/sacty-node/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx; \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx \
+    && if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then \
+      echo "sacty: 写した Node.js を動かすための共有ライブラリ（libatomic・libstdc++）を入れます。"; \
+      if command -v apt-get >/dev/null 2>&1; then \
+        { apt-get update && apt-get install -y --no-install-recommends libatomic1 libstdc++6; } || true; \
+        rm -rf /var/lib/apt/lists/*; \
+      elif command -v dnf >/dev/null 2>&1; then { dnf install -y libatomic libstdc++ && dnf clean all; } || true; \
+      elif command -v microdnf >/dev/null 2>&1; then { microdnf install -y libatomic libstdc++ && microdnf clean all; } || true; \
+      elif command -v yum >/dev/null 2>&1; then { yum install -y libatomic libstdc++ && yum clean all; } || true; \
+      fi; \
+      if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then \
+        echo "sacty: 写した Node.js（images の node_image か image_build.base_image）が、元のイメージで動きません：$(/opt/sacty-node/bin/node --version 2>&1 | head -n 3)。元のイメージに足りない共有ライブラリが入れられないか、C ライブラリが違います（Alpine など musl のイメージには写せません）。元のイメージで動く Node.js のイメージを node_image に書くか、Node.js 18 以上と npm の入った元のイメージを使ってください。" >&2; \
+        exit 1; \
+      fi; \
+    fi; \
   else \
     echo "sacty: 元のイメージに Node.js 18 以上と npm が無く、Node.js を写す元のイメージ（images の node_image か image_build.base_image）にも node と npm が見つかりません。node と npm の入ったイメージを node_image に書いてください。" >&2; \
     exit 1; \
@@ -58,16 +72,21 @@ ENV HOME=/home/node \
   PATH=/opt/sacty-node/bin:$PATH:/home/node/go/bin
 
 FROM base-${BASE_KIND}
-# イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
-ARG NPM_VERSION=
-# Maven・Gradle の取得先にする組織のミラー（言語ごとのイメージの maven_mirror。空なら設定しない。PBI-41）
-ARG MAVEN_MIRROR=
+# ビルドの引数（ARG）は、使う RUN の直前で宣言する。宣言より後の RUN は、使わなくても値が変わるとキャッシュが外れるため
+# （npm の版を変えただけで、OS のツールや draw.io を入れ直さないように）
 
 USER root
 
+# ビルドのキャッシュ（BuildKit の cache マウント。イメージには残らない）。apt-get が取得した .deb と、draw.io・
+# セキュリティの道具の取得物を置き、層のキャッシュが外れたとき（元のイメージを上げた・ビルドのキャッシュが消えた・
+# 言語ごとのイメージ）に取り直さない。中身は with-build-cache.sh を参照
+COPY --chmod=755 with-build-cache.sh /opt/sacty/lib/with-build-cache.sh
+
 # git が無ければ入れる（元のイメージに入っていれば、パッケージのミラーに届かない環境でも作れる）。
 # Debian・Ubuntu 系は apt-get、RHEL 系は dnf・microdnf・yum
-RUN if ! command -v git >/dev/null 2>&1; then \
+RUN --mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharing=locked \
+  /opt/sacty/lib/with-build-cache.sh sh -c '\
+  if ! command -v git >/dev/null 2>&1; then \
     if command -v apt-get >/dev/null 2>&1; then \
       apt-get update \
       && apt-get install -y --no-install-recommends git ca-certificates \
@@ -77,41 +96,49 @@ RUN if ! command -v git >/dev/null 2>&1; then \
     elif command -v yum >/dev/null 2>&1; then yum install -y git && yum clean all; \
     else echo "sacty: git が無く、パッケージの管理のコマンドも見つかりません。git の入った元のイメージを使ってください。" >&2; exit 1; \
     fi; \
-  fi
+  fi'
 
 # エージェントの作業で使う CLI（jq・rg・fd・python3 など）。元のイメージに無いものだけを、OS のパッケージで入れる。
 # パッケージのミラーに届かないなどで入れられないものは、警告して続ける（中身は install-tools.sh）
 COPY --chmod=755 install-tools.sh /opt/sacty/lib/install-tools.sh
-RUN /opt/sacty/lib/install-tools.sh
-
-# draw.io の CLI（既定のスキル drawio が使う）。公式のリリースのパッケージを、版とハッシュを固定して入れ、画面の無い
-# コンテナで動かすための包むスクリプトを /opt/sacty/bin/drawio に置く（config.yaml の image_build.drawio が false なら
-# 入れない）。取得できないときは警告して続け、ハッシュが合わないときは止める（中身は install-drawio.sh）
-ARG SACTY_DRAWIO=1
-COPY --chmod=755 install-drawio.sh drawio-shim.cjs /opt/sacty/lib/
-RUN /opt/sacty/lib/install-drawio.sh
+RUN --mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharing=locked \
+  /opt/sacty/lib/with-build-cache.sh /opt/sacty/lib/install-tools.sh
 
 # セキュリティの検査の道具（osv-scanner・gitleaks。進め方 security-check・security-fix が使う）。公式のリリースの単体の
 # バイナリを、版とアーキテクチャごとのハッシュを固定して取り、そのハッシュで確かめて入れる。取得できないときは警告して続け、
-# ハッシュが合わないときは止める（中身は install-security-tools.sh）
+# ハッシュが合わないときは止める（中身は install-security-tools.sh）。draw.io の引数（SACTY_DRAWIO）より前に置き、
+# draw.io の入れる・入れないを変えても入れ直さない
 COPY --chmod=755 install-security-tools.sh /opt/sacty/lib/install-security-tools.sh
-RUN /opt/sacty/lib/install-security-tools.sh
+RUN --mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharing=locked \
+  /opt/sacty/lib/with-build-cache.sh /opt/sacty/lib/install-security-tools.sh
+
+# draw.io の CLI（既定のスキル drawio が使う）。公式のリリースのパッケージを、版とハッシュを固定して入れ、画面の無い
+# コンテナで動かすための包むスクリプトを /opt/sacty/bin/drawio に置く（config.yaml の image_build.drawio が false なら
+# 入れない）。取得できないときは警告して続け、ハッシュが合わないときは止める（中身は install-drawio.sh）。
+# 包むスクリプト（drawio-shim.cjs）は後で写す（直しても draw.io を入れ直さない）
+ARG SACTY_DRAWIO=1
+COPY --chmod=755 install-drawio.sh /opt/sacty/lib/install-drawio.sh
+RUN --mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharing=locked \
+  /opt/sacty/lib/with-build-cache.sh /opt/sacty/lib/install-drawio.sh
 
 # エージェントのCLI（claude・codex）。版と推移依存は agent-cli/package.json・package-lock.json で固定し、npm ci で
 # ロックのとおりに入れる。上げるときは、agent-cli/package.json の版を変えて lockfile を作り直す（CONTRIBUTING.md）。
 # lockfile には取得元の URL（resolved）を書かず、設定したレジストリから取る（プライベートのレジストリでも同じ lockfile を
 # 使えるように。中身は integrity で確かめる）。コマンドは /opt/sacty/bin に置き、node ユーザーの PATH から使えるようにする。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
-# キャッシュは一時的な場所に置いて消す（HOME の下に root の持ち物を残すと、node ユーザーの npm が書けなくなるため）
+# npm のキャッシュはビルドのキャッシュ（cache マウント）に置き、イメージには残さない（HOME の下に root の持ち物を残すと、
+# node ユーザーの npm が書けなくなるため）。CLI の版を上げても、変わらないパッケージは取り直さない。
+# イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
+ARG NPM_VERSION=
 COPY agent-cli/package.json agent-cli/package-lock.json /opt/sacty/agent-cli/
 RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
-  export NPM_CONFIG_USERCONFIG=/run/secrets/npmrc NPM_CONFIG_CACHE=/tmp/sacty-npm-cache \
+  --mount=type=cache,id=sacty-npm-cache,target=/var/cache/sacty-npm,sharing=locked \
+  export NPM_CONFIG_USERCONFIG=/run/secrets/npmrc NPM_CONFIG_CACHE=/var/cache/sacty-npm \
   && (cd /opt/sacty/agent-cli && npm ci --omit=dev --no-audit --no-fund) \
   && mkdir -p /opt/sacty/bin \
   && ln -s ../agent-cli/node_modules/.bin/claude /opt/sacty/bin/claude \
   && ln -s ../agent-cli/node_modules/.bin/codex /opt/sacty/bin/codex \
-  && if [ -n "$NPM_VERSION" ]; then npm install -g "npm@$NPM_VERSION" --no-audit --no-fund; fi \
-  && rm -rf /tmp/sacty-npm-cache
+  && if [ -n "$NPM_VERSION" ]; then npm install -g "npm@$NPM_VERSION" --no-audit --no-fund; fi
 # /opt/sacty/bin を PATH の先頭にする。後の手順（images の run など）からも claude・codex を呼べるように、ここで通す
 # （gh の代わりは、run の後に同じ場所に置く。run の中の gh は、これまでどおり元のイメージのもの）
 ENV PATH=/opt/sacty/bin:$PATH
@@ -129,6 +156,10 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   fi \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
+
+# draw.io の CLI の包むスクリプト（/opt/sacty/bin/drawio は、install-drawio.sh がここへのリンクにしてある）。
+# draw.io の本体・エージェントの CLI の後に写し（直しても入れ直さない）、images の run より前に置く（run から drawio を使える）
+COPY --chmod=755 drawio-shim.cjs /opt/sacty/lib/drawio-shim.cjs
 
 # イメージを作るときに入れる OS のパッケージと、実行するコマンド（言語ごとのイメージの packages・run。PBI-50）。
 # パッケージは、元のイメージにあるパッケージの管理のコマンド（dnf・microdnf・yum・apt-get）で入れる。コマンドは
@@ -172,7 +203,9 @@ USER node
 WORKDIR /workspace
 
 # Maven・Gradle の取得先を、組織のミラーに向ける（PBI-41）。Maven は settings.xml の mirror、Gradle は init スクリプトで、
-# プロジェクトに書かれたすべての Maven のリポジトリ（プラグインの取得先も含む）の URL をミラーに置き換える
+# プロジェクトに書かれたすべての Maven のリポジトリ（プラグインの取得先も含む）の URL をミラーに置き換える。
+# 取得先にする組織のミラー（言語ごとのイメージの maven_mirror。空なら設定しない）
+ARG MAVEN_MIRROR=
 RUN if [ -n "$MAVEN_MIRROR" ]; then \
     mkdir -p "$HOME/.m2" "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d" \
     && printf '%s\n' \

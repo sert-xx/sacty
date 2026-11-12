@@ -471,6 +471,59 @@ describe("既定のイメージの固定（セキュリティチェックの指�
     expect(setup).toBeGreaterThan(path);
   });
 
+  it("引数は使う手順の直前で宣言し、重い手順のキャッシュを外さない（npm の版・Maven のミラー・draw.io の切り替え）", () => {
+    const dockerfile = read("Dockerfile");
+    const at = (text: string) => {
+      const index = dockerfile.indexOf(text);
+      expect(index, text).toBeGreaterThan(0);
+      return index;
+    };
+    const heavy = [
+      "/opt/sacty/lib/install-tools.sh\n",
+      "/opt/sacty/lib/install-security-tools.sh\n",
+      "/opt/sacty/lib/install-drawio.sh\n",
+    ].map((text) => dockerfile.lastIndexOf(text));
+    for (const index of heavy) expect(index).toBeGreaterThan(0);
+    const lastHeavy = Math.max(...heavy);
+    expect(at("ARG NPM_VERSION=")).toBeGreaterThan(lastHeavy);
+    expect(at("ARG MAVEN_MIRROR=")).toBeGreaterThan(at("ENV PATH=/opt/sacty/bin:$PATH"));
+    // draw.io を入れる・入れないの引数より前に、セキュリティの道具を入れる
+    expect(at("ARG SACTY_DRAWIO=")).toBeGreaterThan(
+      dockerfile.lastIndexOf("/opt/sacty/lib/install-security-tools.sh\n"),
+    );
+    // 包むスクリプトは draw.io の本体と別に写す（直しても draw.io を入れ直さない）
+    expect(dockerfile).not.toMatch(/^COPY .*install-drawio\.sh.*drawio-shim\.cjs/m);
+    // エージェントの CLI の後、images の run より前（run から drawio を使える。レビュー指摘）
+    const shim = at("COPY --chmod=755 drawio-shim.cjs");
+    expect(shim).toBeGreaterThan(at("npm ci --omit=dev"));
+    expect(shim).toBeLessThan(at("/run/secrets/setup;"));
+  });
+
+  it("写した Node.js が動かなければ、要る共有ライブラリを入れ、それでも動かなければ理由を示して止める（素のイメージ）", () => {
+    const dockerfile = read("Dockerfile");
+    const lang = dockerfile.slice(
+      dockerfile.indexOf("AS base-lang"),
+      dockerfile.indexOf("# root では動かさない。元のイメージに node ユーザー"),
+    );
+    expect(lang).toContain("if ! /opt/sacty-node/bin/node --version >/dev/null 2>&1; then");
+    expect(lang).toContain("apt-get install -y --no-install-recommends libatomic1 libstdc++6");
+    expect(lang).toContain("dnf install -y libatomic libstdc++");
+    expect(lang).toMatch(/元のイメージで動きません[^\n]*\n\s*exit 1;/);
+  });
+
+  it("取得物は BuildKit の cache マウントに置き、イメージに npm のキャッシュを残さない", () => {
+    const dockerfile = read("Dockerfile");
+    for (const script of ["install-tools.sh", "install-security-tools.sh", "install-drawio.sh"]) {
+      expect(dockerfile).toContain(
+        `--mount=type=cache,id=sacty-build-cache,target=/var/cache/sacty-build,sharing=locked \\\n  /opt/sacty/lib/with-build-cache.sh /opt/sacty/lib/${script}`,
+      );
+    }
+    expect(dockerfile).toContain("NPM_CONFIG_CACHE=/var/cache/sacty-npm");
+    expect(dockerfile).toContain(
+      "--mount=type=cache,id=sacty-npm-cache,target=/var/cache/sacty-npm",
+    );
+  });
+
   it("エージェントの CLI は lockfile のとおりに入れ、lockfile には取得元の URL を書かない（プライベートのレジストリ）", () => {
     const dockerfile = read("Dockerfile");
     expect(dockerfile).toContain("npm ci --omit=dev");
