@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-13（UTC）
 - タスク: PBI-337
-- PR: （作成後に書く）
+- PR: #357
 - ブランチ: feat/issue-337-tests-decision-only-when-stopped-for-tests
 
 ## 目的
