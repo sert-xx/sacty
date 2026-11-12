@@ -2568,8 +2568,16 @@ export class TaskService {
     const watchStepped = atStart.steps.some((s) => s.key === "deployment");
     const imageName =
       atStart.image ?? (watchStepped ? atStart.images?.deployment : atStart.images?.implement);
-    const image = resolveImage(this.projectImagesConfig(config, task.projectId), imageName);
-    const usedImage = image.ok ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
+    const images = this.projectImagesConfig(config, task.projectId);
+    const image = resolveImage(images, imageName);
+    // 作成中・作成に失敗したコンテキストのイメージ（PBI-325）は、既定のイメージに倒さず、理由を示して確認を止める（要る
+    // ツールの無いイメージで確かめないため）。images から消した名前は、これまでどおり既定のイメージで確かめる
+    const unavailable =
+      !image.ok && imageName !== undefined && imageDefined(images, imageName)
+        ? image.message
+        : undefined;
+    const usedImage =
+      image.ok || unavailable ? (imageName ?? DEFAULT_IMAGE_NAME) : DEFAULT_IMAGE_NAME;
     this.append(task, [
       {
         actor: "sacty",
@@ -2615,6 +2623,7 @@ export class TaskService {
         ...cost,
         ...(stepped ? { retry: true as const } : {}),
       });
+    if (unavailable) return fail(unavailable);
     const workspaceDir = join(this.deps.workspaceRoot, "_deployment", runId);
     let context: RunContext | undefined;
     let executed: Executed;

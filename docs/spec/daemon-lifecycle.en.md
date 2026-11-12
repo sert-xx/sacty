@@ -190,6 +190,7 @@ Images in `images.yaml` of context repositories ([Context composition](context.e
 - Use: tasks of a project choose from `images` of `config.yaml` plus that project's context images (`projectImagesConfig`; for the same name, the one in `config.yaml`).
   - Images being built or failed can still be chosen (`imageDefined`).
     At run time they are not used; the run stops with the reason (`contextImage.building`, `contextImage.failed`) (`resolveImage`).
+    The deployment check after a merge also does not fall back to the default image; it records the reason as a check that could not be made (`deploy.checkFailed`).
   - The choices on the screen (creating a task, requesting changes, task details, project targets) include that project's images too (`projectImages`).
 - Waiting: before the project's context is read, while it is read, and while images are queued or being built, tasks that may use those images do not start (`awaitingContextImages`; no in-flight mark is set, and the worker checks again every 2 seconds).
   - Tasks that may use them are tasks whose image is not decided (no steps, and neither a person nor the project targets chose one) and tasks whose decided name is neither `default` nor in `images` of `config.yaml`.

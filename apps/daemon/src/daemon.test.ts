@@ -32895,6 +32895,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       skill?: boolean;
       /** オーケストレーターが選ぶ工程（既定は実装とマージの後の監視）。 */
       steps?: StepKey[];
+      /** コンテキストのイメージ（PBI-325）。 */
+      contextImages?: ServiceDeps["contextImages"];
     } = {},
   ) {
     const activity = options.activity ?? new SqliteActivityStore(dbPath);
@@ -32912,6 +32914,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       ...(options.config ? { config: options.config } : {}),
       ...(options.pulls ? { pulls: options.pulls } : {}),
       ...(options.templates ? { templates: options.templates } : {}),
+      ...(options.contextImages ? { contextImages: options.contextImages } : {}),
       planner: async () => ({
         steps: options.steps ?? ["implement", "deployment"],
         fallback: false,
@@ -34039,6 +34042,54 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     expect(checks?.map((e) => e.type === "DeploymentCheckStarted" && e.payload.image)).toEqual([
       "web",
     ]);
+    t.activity.close();
+  });
+
+  it("作成に失敗したコンテキストのイメージなら、既定のイメージに倒さず、理由を示して確認を止める（PBI-325 レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    let failed = false;
+    const entry = () => ({
+      name: "web",
+      description: "ブラウザ",
+      from: "acme",
+      image: "sacty-ctx-x-default-web:0123456789abcdef",
+      language: {
+        name: "web",
+        image: "sacty-ctx-x-default-web:0123456789abcdef",
+        description: "ブラウザ",
+        baseImage: "node:26",
+        env: {},
+      },
+      state: failed ? ("failed" as const) : ("ready" as const),
+      ...(failed ? { error: "イメージを作成できませんでした。" } : {}),
+      log: "",
+    });
+    const contextImages: NonNullable<ServiceDeps["contextImages"]> = {
+      images: () => [entry()],
+      pending: () => false,
+      view: () => [],
+      rebuild: () => ({ ok: true }),
+      refresh: async () => {},
+    };
+    const t = setup({ ci, repos, contextImages, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.service.runNext(id);
+    t.service.changeTaskImage(id, { image: "web" });
+    await t.merge(id);
+    failed = true;
+    const runs = t.executor.images.length;
+    await t.service.runNext(id);
+    // 確認のエージェントは動かさない（既定のイメージでも動かさない）
+    expect(t.executor.images.length).toBe(runs);
+    const started = t.service.get(id)?.activity.filter((e) => e.type === "DeploymentCheckStarted");
+    expect(started?.map((e) => e.type === "DeploymentCheckStarted" && e.payload.image)).toEqual([
+      "web",
+    ]);
+    const checked = t.service.get(id)?.activity.findLast((e) => e.type === "DeploymentChecked");
+    expect(JSON.stringify(checked)).toContain("contextImage.failed");
     t.activity.close();
   });
 
