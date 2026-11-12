@@ -23,6 +23,12 @@ Node.js の 2026-11 のセキュリティリリース（26.x の修正版は v26
 - エージェント実行用のイメージの元のイメージに固定したダイジェストが、`node:26.13.1-bookworm-slim` と同じこと（`docker buildx imagetools inspect`）。
 - Node.js 26.13.1（`mise exec`）で `npm ci`・`npm run lint`・`npm run typecheck`・`npx vitest run`。
 
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| `npm run cli:install` の入口はインストールしたときの Node.js で動くので、版を上げた後に入れ直す手順を ADR の影響に書く | ADR の影響に書いた |
+
 ## 残したこと
 
 - なし
