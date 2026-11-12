@@ -104,7 +104,7 @@ const ja = {
     auth: "認証に失敗しました。トークンや API キーを確かめてから再開してください。",
     error: "エラーで止まりました。原因を確かめてから再開すると、止まった工程を実行し直します。",
     verification:
-      "実装がテストか最終レビューに続けて通りません。再開すると実装をやり直し、PR を確かめて人が判断するならレビューへ進められます。",
+      "実装がテストか最終レビューに続けて通らず止まりました（以前の版の一時停止）。再開すると実装をやり直し、PR のレビューに進みます。",
     manual: "人が一時停止しました。再開すると、止めたところから続けます。",
     child_cancelled:
       "子タスクが中止されました。再開すると中止した子タスクを除いて進め、中止すると終わっていない子タスクも中止します。",
@@ -777,7 +777,7 @@ const en: LabelMessages = {
     auth: "Authentication failed. Check the token or API key, then resume.",
     error: "Stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
-      "The implementation keeps failing the tests or the final review. Resume to implement again, or check the PR and move it to review yourself.",
+      "Stopped because the implementation kept failing the tests or the final review (a pause from older versions). Resume to implement again and go on to the PR review.",
     manual: "A person paused this task. Resume to continue from where it stopped.",
     child_cancelled:
       "A subtask was cancelled. Resume to continue without it, or cancel to also cancel the unfinished subtasks.",

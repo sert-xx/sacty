@@ -1013,11 +1013,14 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   PR の本文の結論には、最終レビューの行の代わりに、レビューの子タスクがレビューし、指摘なしでドラフトを外すことと、CI の結果は PR で確かめることを書く（`reviewBodyLine`）。
 - PR を作ったら、その PR をレビューする子タスクを作る（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   子タスクの判定が今のコミットで指摘なしになったら、PR の確認で sacty がドラフトを外し、`PullRequestMarkedReady`（PR の番号・コミット・子タスク）を記録する（`markReady`）。これで PR は人の承認（マージ）を待つ。
+  - 今のコミットは、GitHub の PR の今の先頭（`pullRequestHead`）。レビューの間に人がコミットを足したら、子タスクにその先頭を再レビューさせ、レビューしていない先頭のドラフトは外さない。先頭を読めなければ、次の確認でやり直す。
+  - 台帳の `draft` にかかわらず、GitHub の状態を読んで外す（すでに外れていれば何もしない）。外せたときだけ記録する。
+  - 外す間に差し戻された・PR を更新したら、記録せず、まだレビューを待つ PR ならドラフトに戻す（外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）。
   外せなければ記録せず、次の PR の確認でやり直す。外す間に親が変わったら（差し戻し・PR の更新）記録しない。
 - sacty は PR の CI を待たない・再実行しない（PR の確認で `checkVerificationCi` を動かさない）。不安定なテストの台帳に新しい記録はできない。
 - 実装を含むのに、オーケストレーターがテストのコマンドを決められなくても止めない（`orchestrator.testCommandUnknown` で止まらない。sacty はテストを実行しないため）。
 
-コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
+コード: `apps/daemon/src/service.ts`（`awaitingVerification`・`awaitsReview`・`publish`・`reconcileReviewTasks`・`markReady`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/main.ts`、`apps/daemon/src/prompts.ts`（`reviewBodyLine`・`reviewCiLines`）、`packages/core/src/events.ts`（`FinalReviewSkipped`・`PullRequestMarkedReady`・`PullRequestPublished`）、`packages/core/src/projection.ts`（`reviewedPullRequest`）
 
 ### 最終レビューをする流れ
 

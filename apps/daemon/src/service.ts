@@ -11448,21 +11448,26 @@ export class TaskService {
       const child = record && this.tasks.get(record.taskId);
       if (!child || !canRereview(child) || child.status === "paused") continue;
       if (this.cancelling.has(child.id) || this.pauseRequested.has(child.id)) continue;
-      if (child.reviewTarget?.headCommit === gate.commit) {
-        // 今のコミットを指摘なしにしたら、レビューを待つ実装の PR のドラフトを外す（PBI-331）
-        if (gate.step === "implement" && reviewCleared(child)) {
-          await this.markReady(parent, child, gate.commit);
-        }
+      // 子タスクの指摘なしでドラフトを外す実装の PR（PBI-331）は、GitHub の今の先頭をレビューの対象にする（レビューの間に
+      // 人がコミットを足しても、レビューしていない先頭のドラフトを外さない）。読めなければ、次の確認でやり直す
+      const awaiting = gate.step === "implement" && parent.pullRequest?.awaitingReview === true;
+      const target = awaiting
+        ? await this.pullRequestHead(parent, gate.repo, gate.number)
+        : gate.commit;
+      if (!target) continue;
+      if (child.reviewTarget?.headCommit === target) {
+        // 今の先頭を指摘なしにしたら、ドラフトを外す（PBI-331）
+        if (awaiting && reviewCleared(child)) await this.markReady(parent, child, target);
         continue;
       }
-      if (child.reviewRestartCommit === gate.commit) continue;
+      if (child.reviewRestartCommit === target) continue;
       try {
         this.append(child, [
           {
             actor: "sacty",
             event: {
               type: "ReviewRestarted",
-              payload: { reason: "updated", commit: gate.commit },
+              payload: { reason: "updated", commit: target },
             },
           },
         ]);
@@ -11474,10 +11479,30 @@ export class TaskService {
     }
   }
 
+  /** PR の GitHub の今の先頭（PBI-331）。開いていない・読めなければ undefined。 */
+  private async pullRequestHead(
+    task: Task,
+    repo: string,
+    number: number,
+  ): Promise<string | undefined> {
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, repo, usedSecrets);
+      const status = await this.deps.pulls.status({ repo, token, number });
+      return status.state === "open" ? status.headSha : undefined;
+    } catch (error) {
+      console.warn(
+        `[daemon] PR #${number}（${repo}）の先頭を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return undefined;
+    }
+  }
+
   /**
-   * PR のレビューの子タスクが今のコミットを指摘なしにした、レビューを待つ実装の PR のドラフトを外し、人の承認（マージ）待ちに
-   * する（PBI-331）。ドラフトでなければ（ドラフトを使えないリポジトリ・人が外した）記録だけする。外せなければ、記録せずに次の
-   * 確認でやり直す。外す間にタスクが変わったら（差し戻し・PR の更新）、記録しない（次の提出がドラフトに戻す）。
+   * PR のレビューの子タスクが GitHub の今の先頭（commit）を指摘なしにした、レビューを待つ実装の PR のドラフトを外し、人の承認
+   * （マージ）待ちにする（PBI-331）。台帳の draft にかかわらず GitHub の状態を読んで外し（すでに外れていれば何もしない）、外せた
+   * ときだけ記録する。外せなければ、記録せずに次の確認でやり直す。外す間にタスクが変わったら（差し戻し・PR の更新）、記録せず、
+   * まだレビューを待つ PR ならドラフトに戻す（外す要求が、次の提出のドラフトに戻す要求より後に届いたときのため）。
    */
   private async markReady(parent: Task, child: Task, commit: string): Promise<void> {
     const pr = parent.pullRequest;
@@ -11486,7 +11511,6 @@ export class TaskService {
       !pr?.awaitingReview ||
       !pr.number ||
       !pr.repo ||
-      pr.commit !== commit ||
       parent.stack
     ) {
       return;
@@ -11495,10 +11519,8 @@ export class TaskService {
     this.readying.add(parent.id);
     const usedSecrets: string[] = [];
     try {
-      if (pr.draft) {
-        const token = await this.githubToken(parent, pr.repo, usedSecrets);
-        await this.deps.pulls.setDraft({ repo: pr.repo, token, number: pr.number, draft: false });
-      }
+      const token = await this.githubToken(parent, pr.repo, usedSecrets);
+      await this.deps.pulls.setDraft({ repo: pr.repo, token, number: pr.number, draft: false });
       const latest = this.tasks.get(parent.id);
       const now = latest?.pullRequest;
       if (
@@ -11506,8 +11528,19 @@ export class TaskService {
         this.cancelling.has(latest.id) ||
         !now?.awaitingReview ||
         now.number !== pr.number ||
-        now.commit !== commit
+        now.commit !== pr.commit
       ) {
+        // 外す間に差し戻された・PR を更新した：まだレビューを待つなら、ドラフトに戻す（戻せなくても、次の提出が戻す）
+        const reworking = latest?.status === "queued" || latest?.status === "running";
+        if (latest && (reworking || now?.awaitingReview) && now?.number === pr.number) {
+          await this.deps.pulls
+            .setDraft({ repo: pr.repo, token, number: pr.number, draft: true })
+            .catch((error: unknown) => {
+              console.warn(
+                `[daemon] PR #${pr.number}（${pr.repo}）をドラフトに戻せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+              );
+            });
+        }
         return;
       }
       this.append(latest, [

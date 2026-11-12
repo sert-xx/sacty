@@ -647,11 +647,14 @@ The other items in this section (the final review, the CI wait, flaky tests, a p
   In the conclusion of the PR body, instead of the final review line, sacty writes that the review child task reviews it and the draft is removed when there are no findings, and that the CI result should be checked on the PR (`reviewBodyLine`).
 - When the PR is opened, a child task that reviews it is created ([The review child task of a PR](approval.en.md#the-review-child-task-of-a-pr)).
   When the child task's verdict on the current commit is no findings, the PR check has sacty remove the draft and record `PullRequestMarkedReady` (the PR number, commit, and child task; `markReady`). The PR then waits for a person's approval (merge).
+  - The current commit is the current head of the PR on GitHub (`pullRequestHead`). If a person adds a commit during the review, sacty has the child task review that head again and does not remove the draft from a head that was not reviewed. If the head cannot be read, sacty tries again at the next check.
+  - sacty reads the state on GitHub and removes the draft whatever `draft` in the ledger says (nothing happens if it is already removed). It records only when the draft was removed.
+  - If the task is sent back or the PR is updated while the draft is being removed, sacty does not record it and turns the PR back into a draft if it still waits for the review (in case the request to remove the draft arrives after the next submission's request to make it a draft).
   If the draft cannot be removed, nothing is recorded and the next PR check tries again. If the parent changes while removing it (request changes, a PR update), nothing is recorded.
 - sacty neither waits for nor reruns the PR's CI (the PR check does not run `checkVerificationCi`). No new entries are added to the flaky test ledger.
 - Even when the orchestrator cannot decide the test command for a task that includes implementation, the task does not stop (it does not stop with `orchestrator.testCommandUnknown`, because sacty does not run the tests).
 
-Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `reviewCiOf`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
+Code: `apps/daemon/src/service.ts` (`awaitingVerification`, `awaitsReview`, `publish`, `reconcileReviewTasks`, `markReady`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/main.ts`, `apps/daemon/src/prompts.ts` (`reviewBodyLine`, `reviewCiLines`), `packages/core/src/events.ts` (`FinalReviewSkipped`, `PullRequestMarkedReady`, `PullRequestPublished`), `packages/core/src/projection.ts` (`reviewedPullRequest`)
 
 ### The flow with the final review
 

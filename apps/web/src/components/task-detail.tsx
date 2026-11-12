@@ -583,7 +583,10 @@ function GateNotice({ task }: { task: Task }) {
                       : watched?.state === "merged_outdated"
                         ? m.gate.prMergedOutdatedHelp
                         : watched?.step === "implement"
-                          ? m.gate.prHelp
+                          ? // 子タスクの指摘なしを待つ間は、マージの前にレビューの完了を待つ（PBI-331）
+                            task.pullRequest?.awaitingReview
+                            ? m.gate.prReviewingHelp
+                            : m.gate.prHelp
                           : task.gate?.step === "implement" && deliveredWithoutChanges(task)
                             ? m.gate.noChangesHelp
                             : watched

@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、apps/web/src/components/flaky-tests.tsx、packages/core/src/flaky-tests.ts、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、apps/daemon/src/memory.ts、apps/daemon/default-context/skills/memory/SKILL.md、packages/core/src/audit.ts -->
+<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、packages/core/src/flaky-tests.ts、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、apps/daemon/src/memory.ts、apps/daemon/default-context/skills/memory/SKILL.md、packages/core/src/audit.ts -->
 
 **日本語** | [English](audit.en.md)
 
@@ -98,7 +98,6 @@ SACTY_AUDIT_MOCK=1 npx sacty up
   - 再発を先に、目立たせて出します。
 - **改修の提案**：判断待ちを先に出します。
   どのタスクの監査で出た提案かも出し、ここからも採用・却下できます。
-- **不安定なテスト**：最終レビューが認めた不安定なテストの台帳です（[不安定なテストの台帳](#不安定なテストの台帳)）。
 - **監査したタスク**：状態・差し戻しと指摘の件数・費用・監査の完了の時刻です。
 - **レポート**：開始日と終了日を選んで「レポートを出力する」を押すと、期間に完了した監査の原因・提案・判断を Markdown のファイルでダウンロードします。
   見出しは画面の言語で、監査の結果の文は訳しません。

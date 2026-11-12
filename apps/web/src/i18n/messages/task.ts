@@ -92,6 +92,9 @@ const ja = {
     noChangesHelp:
       "実装に変更が無く、PR はありません。変更なしで完了にするなら承認、変更が要るなら差し戻してください。",
     prHelp: "GitHub の PR で判断します。マージで承認、コメントで差し戻しです。",
+    /** 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにしている間（PBI-331）。 */
+    prReviewingHelp:
+      "レビューの子タスクが PR を確かめています。指摘なしでドラフトが外れたら、マージで承認します。",
     stepPrHelp: (step: string) =>
       `GitHub の PR で判断します。マージで${step}を承認し、次の工程に進みます。`,
     rework: "PR の指摘の戻し先の確認待ち",
@@ -611,6 +614,8 @@ const en: TaskMessages = {
     noChangesHelp:
       "The implementation changed nothing and there is no PR. Approve to finish without changes, or request changes.",
     prHelp: "Decide on the GitHub PR. Merging approves; comments request changes.",
+    prReviewingHelp:
+      "The review child task is checking the PR. When it has no findings, the draft is removed; then approve by merging.",
     stepPrHelp: (step) =>
       `Decide on the GitHub PR. Merging approves the ${step} and moves on to the next step.`,
     rework: "Step to redo for PR comments needs your decision",

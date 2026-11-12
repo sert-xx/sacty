@@ -155,3 +155,33 @@ describe("タスクの詳細の並び", () => {
     expect(render(task)).not.toContain('id="proposals"');
   });
 });
+
+describe("実装の PR の承認待ちの案内（PBI-331・PR #348 レビュー指摘）", () => {
+  const awaiting = (awaitingReview: boolean): Task => ({
+    ...newTask(),
+    status: "awaiting_approval",
+    gate: { step: "implement", submission: 1 },
+    pullRequest: {
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      repo: "https://github.com/acme/app",
+      branch: "sacty/task-1",
+      commit: "c1",
+      ...(awaitingReview ? { draft: true as const, awaitingReview: true as const } : {}),
+    },
+  });
+
+  it("レビューの子タスクの指摘なしを待つ間は、マージではなくレビューの完了を待つ案内を出す（日英）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const gate = messagesFor(lang).task.gate;
+      const html = render(awaiting(true));
+      expect(html).toContain(gate.prReviewingHelp);
+      expect(html).not.toContain(gate.prHelp);
+      const ready = render(awaiting(false));
+      expect(ready).toContain(gate.prHelp);
+      expect(ready).not.toContain(gate.prReviewingHelp);
+    }
+    locale = "ja";
+  });
+});
