@@ -2936,6 +2936,27 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     }
   });
 
+  it("要求要件と設計の指示は、スコープの節を確認したいことより前に置かせ、確認したいことに確認しない場合の懸念を書かせる（PBI-340）", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step);
+      const scope = prompt.indexOf("  - 「スコープ」：何を実現するか（1〜3文）と、範囲。");
+      const questions = prompt.indexOf(
+        "  - 「確認したいこと」：人間が決めないと確定できないこと。",
+      );
+      const decisions = prompt.indexOf("  - 「既定で決めたこと」：");
+      expect(scope, step).toBeGreaterThan(-1);
+      expect(scope, step).toBeLessThan(questions);
+      expect(questions, step).toBeLessThan(decisions);
+      expect(prompt, step).toContain(
+        "確認しないまま推奨の答えで進めた場合の具体的な懸念（何が・誰に・どう困るか。一般論にしない）",
+      );
+    }
+    expect(buildPrompt(t, "requirements")).toContain(
+      "何を実現するかは、下の「スコープ」の節に1〜3文で書く",
+    );
+  });
+
   it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、理由の分からない ID の欠番と参照だけの項目を残さないことを書く", () => {
     const t = task(["requirements", "design", "implement"]);
     for (const [step, name] of [
@@ -3461,7 +3482,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
 
   it("質の基準（確認したいこと・EARS・ID・分量）は、作り直しでも守らせる", () => {
     const prompt = buildPrompt(redo(), "requirements");
-    expect(prompt).toContain("冒頭の「確認したいこと」「既定で決めたこと」の節");
+    expect(prompt).toContain("冒頭の「スコープ」「確認したいこと」「既定で決めたこと」の節");
     expect(prompt).toContain("ID（R-n。付け直さない。消した ID は使い回さない）");
     expect(prompt).toContain(
       "その答えを関わる所に反映し、その項目を「確認したいこと」から外す。直した結果、人間が決めることが新しく出たら、「確認したいこと」に足す",
