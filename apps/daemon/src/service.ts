@@ -7802,7 +7802,9 @@ export class TaskService {
         number: pr.number,
         retarget: true,
       });
-      if (sent.record) this.recordPullRequestBody(task.id, pr.repo, pr.number, body);
+      if (sent.record) {
+        this.recordPullRequestBody(task.id, pr.repo, pr.number, body, sent.overwritten);
+      }
       // PR のレビューの子タスクの指摘なしを待つ PR は、ドラフトのままにする（指摘なしで外す。PBI-331）
       const ready = !task.stack && !pr.awaitingReview;
       if (!unchanged()) return;
@@ -10114,7 +10116,9 @@ export class TaskService {
         body: sent.body,
         ...(reuse ? { number: reuse.number } : {}),
       });
-      if (sent.record && !pr.existing) this.recordPullRequestBody(task.id, repo, pr.number, body);
+      if (sent.record && !pr.existing) {
+        this.recordPullRequestBody(task.id, repo, pr.number, body, sent.overwritten);
+      }
       // 作った PR は、中止・一時停止を求められていても記録する（中止の後片付けで閉じるため）
       const latest = this.mustGet(task.id);
       if (this.awaitingStepPullRequest(latest) !== step) return;
@@ -10228,7 +10232,7 @@ export class TaskService {
   private async reconcilePullRequestBody(
     task: Task,
     input: { repo: string; token: string; number: number; generated: string; agent?: boolean },
-  ): Promise<{ body?: string; record: boolean; stop?: true }> {
+  ): Promise<{ body?: string; record: boolean; stop?: true; overwritten?: DaemonText }> {
     const generated = input.generated;
     const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
     if (base === undefined) return { body: generated, record: true };
@@ -10242,22 +10246,12 @@ export class TaskService {
     try {
       human = await read();
     } catch (error) {
-      // 人の直しを確かめられないまま上書きすることを、作業履歴に残す（画面で分かるように）
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: {
-            type: "PullRequestBodyResolved",
-            payload: {
-              repo: input.repo,
-              number: input.number,
-              outcome: "overwritten",
-              reason: message("pr.bodyReadFailed", { detail: errorText(error) }),
-            },
-          },
-        },
-      ]);
-      return { body: generated, record: true };
+      // 人の直しを確かめられないまま上書きする。作業履歴には、PR を更新できた後に残す（recordPullRequestBody）
+      return {
+        body: generated,
+        record: true,
+        overwritten: message("pr.bodyReadFailed", { detail: errorText(error) }),
+      };
     }
     let merged: Awaited<ReturnType<typeof mergePullRequestBody>>;
     try {
@@ -10363,16 +10357,34 @@ export class TaskService {
     return { body, record: true };
   }
 
-  /** sacty が組み立てた本文を、前回の版として記録する（PBI-334。PR を作った・更新した後）。 */
-  private recordPullRequestBody(taskId: string, repo: string, number: number, body: string): void {
+  /**
+   * sacty が組み立てた本文を、前回の版として記録する（PBI-334。PR を作った・更新した後）。overwritten があれば（今の本文を
+   * 読めずに、人の直しを確かめないまま上書きした）、そのことも作業履歴に残す（PR を更新できた後だけ）。
+   */
+  private recordPullRequestBody(
+    taskId: string,
+    repo: string,
+    number: number,
+    body: string,
+    overwritten?: DaemonText,
+  ): void {
     const latest = this.tasks.get(taskId);
-    if (!latest || latest.pullRequestBodies?.[pullRequestBodyKey(repo, number)] === body) return;
-    this.append(latest, [
-      {
-        actor: "sacty",
-        event: { type: "PullRequestBodyWritten", payload: { repo, number, body } },
-      },
-    ]);
+    if (!latest) return;
+    const events: EventInput[] = [];
+    if (overwritten) {
+      events.push({
+        type: "PullRequestBodyResolved",
+        payload: { repo, number, outcome: "overwritten", reason: overwritten },
+      });
+    }
+    if (latest.pullRequestBodies?.[pullRequestBodyKey(repo, number)] !== body) {
+      events.push({ type: "PullRequestBodyWritten", payload: { repo, number, body } });
+    }
+    if (events.length === 0) return;
+    this.append(
+      latest,
+      events.map((event) => ({ actor: "sacty" as const, event })),
+    );
   }
 
   /**
@@ -10626,7 +10638,7 @@ export class TaskService {
         ...(stacked ? { retarget: true } : {}),
       });
       if (sent.record && !pr.existing) {
-        this.recordPullRequestBody(task.id, prRepo, pr.number, body);
+        this.recordPullRequestBody(task.id, prRepo, pr.number, body, sent.overwritten);
       }
       let draft = pr.draft;
       let draftError: unknown;

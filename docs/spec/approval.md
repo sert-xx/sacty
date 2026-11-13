@@ -437,7 +437,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
   タスクの一覧の API（`/api/tasks`）では送らない（画面では使わず、PR ごとに本文の全文があるため）。
 - 更新の本文（`reconcilePullRequestBody`）：
   1. 前回の版の記録が無い（この版より前に書いた本文）なら、これまでどおり新しく組み立てた本文にする。
-  2. GitHub の今の本文を読む（`pullRequestBody`）。読めなければ、新しく組み立てた本文にし、人の直しを確かめずに上書きしたことを `PullRequestBodyResolved`（`overwritten`。理由は `pr.bodyReadFailed`）に残す（エージェントは実行しない）。
+  2. GitHub の今の本文を読む（`pullRequestBody`）。読めなければ、新しく組み立てた本文にし、PR を更新できた後に、人の直しを確かめずに上書きしたことを `PullRequestBodyResolved`（`overwritten`。理由は `pr.bodyReadFailed`）に残す（エージェントは実行しない。更新できなかったときは残さない）。
   3. 前回の版を共通の祖先にして、今の本文（人の側）と新しく組み立てた本文（sacty の側）を、行の単位で3方向にマージする（`mergePullRequestBody`。`git merge-file --diff3`）。
      改行は LF にそろえる（GitHub の画面で直した本文は CRLF になる）。
      人が直していなければ、新しく組み立てた本文になる。

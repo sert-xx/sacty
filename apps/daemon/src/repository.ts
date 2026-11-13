@@ -978,6 +978,42 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
             message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
           );
         }
+        // 競合したのに目印を入れられなかったファイル（バイナリ・片方での削除など）は、目印の検査では解消を確かめられず、片側の
+        // 内容だけが残る（人が足したコミットの変更が黙って消えうる）ので、作業領域を書き換える前に止める（PBI-334）。git が
+        // 避けた名前（`<名前>~<ID>`）と、その元の名前は、残っているかで確かめるので除く
+        const unmarked: string[] = [];
+        for (const path of conflicts) {
+          if (RENAMED_CONFLICT_RE.test(path)) continue;
+          if (conflicts.some((c) => c.startsWith(`${path}~`) && RENAMED_CONFLICT_RE.test(c)))
+            continue;
+          const entry = (await run("ls-tree", ["ls-tree", "-z", tree, "--", path]))
+            .split("\0")
+            .find(Boolean);
+          const match = entry?.match(/^\d+ (\w+) ([0-9a-f]+)\t/);
+          if (!match) {
+            // 結果に無い：両側とも消した（同じファイルを両側が別名へ改名した、など）なら、どちらの変更も消えない
+            const has = async (treeish: string) =>
+              (await run("ls-tree", ["ls-tree", "-z", treeish, "--", path])) !== "";
+            if ((await has(mineTree)) || (await has(targetTree))) unmarked.push(path);
+            continue;
+          }
+          if (match[1] !== "blob" || !match[2]) {
+            unmarked.push(path);
+            continue;
+          }
+          const size = Number((await run("cat-file", ["cat-file", "-s", match[2]])).trim());
+          const text =
+            size <= MARKER_SCAN_LIMIT ? await run("cat-file", ["cat-file", "blob", match[2]]) : "";
+          if (!CONFLICT_MARKER_RE.test(text)) unmarked.push(path);
+        }
+        if (unmarked.length > 0) {
+          throw new MessageError(
+            message("git.conflictWithoutMarkers", {
+              paths: unmarked.slice(0, 10).join(", "),
+              count: unmarked.length,
+            }),
+          );
+        }
         // 外したパスは、作業領域の内容（mine）のものを戻す（マージの結果のツリーには無い）
         let result = tree;
         if (exclude.length > 0) {

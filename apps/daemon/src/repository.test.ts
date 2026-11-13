@@ -1479,6 +1479,41 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       },
     );
 
+    itMerge(
+      "目印を入れられない競合（両側が同じバイナリを変えた・片方で消してもう片方で変えた）は、作業領域を書き換えずに失敗する（PBI-334）",
+      async () => {
+        const { origin, workspace } = await prepareMerge();
+        const binary = (n: number) => Buffer.from([0, 1, 2, n, 0, 255]);
+        writeFileSync(join(origin, "logo.png"), binary(1));
+        writeFileSync(join(origin, "old.txt"), "old\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "assets");
+        // 作業領域を、その先頭から用意し直す
+        const again = join(dir, "task2", "repo");
+        const gitDir2 = join(dir, "_git", "task2.git");
+        const prepared = await workspace.prepare(again, gitDir2, origin, "main");
+        // 実装は画像を変えて old.txt を消し、相手の側は同じ画像を別に変えて old.txt も変えた
+        writeFileSync(join(again, "logo.png"), binary(2));
+        rmSync(join(again, "old.txt"));
+        writeFileSync(join(origin, "logo.png"), binary(3));
+        writeFileSync(join(origin, "old.txt"), "changed\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "main: assets");
+        const tip = await workspace.fetchBranch(gitDir2, "main");
+        await expect(
+          workspace.mergeBase({
+            dir: again,
+            gitDir: gitDir2,
+            base: prepared.baseCommit,
+            target: tip,
+          }),
+        ).rejects.toThrow(/競合の目印を入れられないファイルが競合しました（logo.png, old.txt/);
+        // 作業領域は書き換えない（実装の側のまま）
+        expect(readFileSync(join(again, "logo.png"))).toEqual(binary(2));
+        expect(existsSync(join(again, "old.txt"))).toBe(false);
+      },
+    );
+
     it("外すパスに、作業領域の外を指すものや .git は受け付けない（PBI-334）", async () => {
       const { workspace, clone, gitDir, baseCommit } = await prepareMerge();
       for (const exclude of [["../x"], [".git/config"], ["/etc/passwd"], ["a//b"]]) {

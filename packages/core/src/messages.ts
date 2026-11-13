@@ -505,6 +505,7 @@ const PARAMS = {
   "git.mergeTreeUnsupported": null,
   "git.tooManyConflicts": z.object({ count: z.number(), limit: z.number() }),
   "git.conflictWithoutFiles": null,
+  "git.conflictWithoutMarkers": z.object({ paths: TextParam, count: z.number() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.invalidPath": null,
@@ -1441,6 +1442,8 @@ const ja: MessageDictionary = {
     `ベースブランチとの競合が ${count} 件あり、取り込める上限（${limit} 件）を超えています。作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
   "git.conflictWithoutFiles":
     "取り込みが競合しましたが、git が競合したファイルを示しませんでした（ディレクトリの移動先を決められないなど）。解消を確かめられないので、作業領域は書き換えていません。人が競合を解消してから、再開してください。",
+  "git.conflictWithoutMarkers": ({ paths, count }, text) =>
+    `取り込みで、競合の目印を入れられないファイルが競合しました（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}。バイナリのファイル・片方での削除など）。解消を確かめられず、片方の変更が消えうるので、作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.invalidPath": "コミットするファイルのパスが不正です。",
@@ -2228,6 +2231,8 @@ const en: MessageDictionary = {
     `Merging the base branch conflicts in ${count} files, over the limit of ${limit}. The workspace was not changed. Have a person resolve the conflicts, then resume.`,
   "git.conflictWithoutFiles":
     "The merge conflicted, but git did not report which files conflicted (for example, it could not decide where a directory moved). The resolution cannot be checked, so the workspace was not changed. Have a person resolve the conflict, then resume.",
+  "git.conflictWithoutMarkers": ({ paths, count }, text) =>
+    `The merge conflicted in files where no conflict markers can be written (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}; binary files, a deletion on one side, and so on). The resolution cannot be checked and one side's changes could be lost, so the workspace was not changed. Have a person resolve the conflicts, then resume.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
   "git.invalidPath": "The path of the file to commit is not valid.",
