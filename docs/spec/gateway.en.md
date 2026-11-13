@@ -117,9 +117,10 @@ The relay flows as follows.
 ![Relaying an internal PF request](images/gateway-pf.en.svg)
 
 - Lookup order is the host's PFs, then, if not found, the PFs of the project context bound to the run's token. Tokens of tasks in other projects do not find them (404).
-- The checks run in this order: an unknown token (of a run that has ended) (401), a PF outside the range of a run that decides its destinations (403), a PF that is not found (404), a path that changes when made into a URL (400), a query that overrides the method (400), anything other than GET and HEAD for a read-only run (403), and matching `allow` (403). The first one that applies refuses the request.
+- The checks run in this order: an unknown token (of a run that has ended) (401), a PF outside the range of a run that decides its destinations (403), a PF that is not found (404), a path that changes when made into a URL (400), a query that overrides the method (400), anything other than GET and HEAD for a read-only run (403), matching `allow` (403), reading the body, and checking the form body (400). The first one that applies refuses the request.
 - A run that decides its destinations (operation and export; `access` of `register`) can use only the PFs it decided. Other PFs get 403 even if they match `allow` (they are not sent upstream).
 - If the query has a name that overrides the method (`_method`, `x-http-method-override`, `x-http-method`, `x-method-override`; case, `-`, `_`, `.`, spaces, `%` encoding, and a trailing `[]` are treated alike, `;` is also read as a separator, and the name is compared after dropping everything from a NUL and trimming surrounding whitespace), 400 (it is not sent upstream; `overridesMethodInQuery`).
+- A forwarded `application/x-www-form-urlencoded` or `multipart/form-data` body with a method override name as in the query is rejected with 400. Form bodies with a `Content-Encoding` other than `identity` and multipart bodies that cannot be parsed or contain a backslash in a field name, `name*=` in the body, or duplicate name attributes or Content-Disposition headers in a part are also rejected with 400.
 - Matching `allow`
   - `*` matches one segment and `**` matches everything below (a trailing `/**` also matches that segment itself).
   - The query is ignored.

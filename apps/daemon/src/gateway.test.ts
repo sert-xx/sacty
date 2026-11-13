@@ -420,6 +420,96 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     );
   });
 
+  it("メソッドを上書きするフォーム本文は上流に送らずに拒否する", async () => {
+    const g = await startPf([json(201, {}), json(201, {})]);
+    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    for (const body of [
+      "_method=DELETE",
+      "text=ok;%5FMETHOD%5B%5D=DELETE",
+      "x.http.method.override=DELETE",
+    ]) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      expect(res.status, body).toBe(400);
+    }
+    const form = new FormData();
+    form.append("_method", "DELETE");
+    expect((await fetch(url, { method: "POST", body: form })).status).toBe(400);
+    const ambiguous = new FormData();
+    ambiguous.append("_meth\\od", "DELETE");
+    expect((await fetch(url, { method: "POST", body: ambiguous })).status).toBe(400);
+    const duplicateHeader =
+      '--boundary\r\nContent-Disposition: form-data; name="_method"\r\nContent-Disposition: form-data; name="safe"\r\n\r\nDELETE\r\n--boundary--\r\n';
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=boundary" },
+          body: duplicateHeader,
+        })
+      ).status,
+    ).toBe(400);
+    const duplicate =
+      '--boundary\r\nContent-Disposition: form-data; name="_method"; NAME="safe"\r\n\r\nDELETE\r\n--boundary--\r\n';
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=boundary" },
+          body: duplicate,
+        })
+      ).status,
+    ).toBe(400);
+    const conflicting =
+      "--boundary\r\nContent-Disposition: form-data; name=\"_method\"; name*=utf-8''safe\r\n\r\nDELETE\r\n--boundary--\r\n";
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=boundary" },
+          body: conflicting,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=missing" },
+          body: "invalid",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "content-encoding": "gzip",
+          },
+          body: "data",
+        })
+      ).status,
+    ).toBe(400);
+    expect(g.calls).toHaveLength(0);
+    const ok = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "method_name=DELETE&text=ok",
+    });
+    expect(ok.status).toBe(201);
+    expect(g.calls[0]?.body).toBe("method_name=DELETE&text=ok");
+    const normalForm = new FormData();
+    normalForm.append("text", "hello");
+    expect((await fetch(url, { method: "POST", body: normalForm })).status).toBe(201);
+    expect(g.calls[1]?.body).toContain('name="text"');
+    expect(g.calls[1]?.body).toContain("hello");
+  });
+
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {
     const g = await startPf([json(200, { id: 42 })]);
     const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {

@@ -575,6 +575,59 @@ export class AiGateway {
     } catch (error) {
       return refuseBody(req, res, error);
     }
+    const contentType = req.headers["content-type"] ?? "";
+    const formType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+    if (
+      body.length > 0 &&
+      method !== "GET" &&
+      method !== "HEAD" &&
+      (formType === "application/x-www-form-urlencoded" || formType === "multipart/form-data")
+    ) {
+      let override = false;
+      try {
+        if (
+          req.headers["content-encoding"] &&
+          req.headers["content-encoding"].toLowerCase() !== "identity"
+        ) {
+          throw new Error("encoded form");
+        }
+        if (formType === "application/x-www-form-urlencoded") {
+          for (const [part] of body.toString("utf8").matchAll(/[^&;]+/g)) {
+            if (overridesMethodInQuery(`?${part}`)) {
+              override = true;
+              break;
+            }
+          }
+        } else {
+          const rawForm = body.toString("latin1");
+          if (
+            /name\s*\*\s*=/i.test(rawForm) ||
+            /content-disposition:[^\r\n]*;\s*name\s*=[^\r\n]*;\s*name\s*=/i.test(rawForm) ||
+            /content-disposition:[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*content-disposition:/i.test(rawForm)
+          ) {
+            throw new Error("ambiguous form name");
+          }
+          const form = await new Response(body, {
+            headers: { "content-type": contentType },
+          }).formData();
+          if (Array.from(form.keys()).some((key) => key.includes("\\"))) {
+            throw new Error("ambiguous form name");
+          }
+          override = Array.from(form.keys()).some((key) =>
+            overridesMethodInQuery(`?${new URLSearchParams([[key, ""]])}`),
+          );
+        }
+      } catch {
+        return fail(res, 400, `sacty gateway: cannot inspect form body for "${platform.name}"`);
+      }
+      if (override) {
+        return fail(
+          res,
+          400,
+          `sacty gateway: form parameters that override the HTTP method (such as _method) are not relayed for "${platform.name}"`,
+        );
+      }
+    }
     const authHeader = platform.auth.header.toLowerCase();
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {
