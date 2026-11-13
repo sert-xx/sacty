@@ -441,39 +441,6 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const ambiguous = new FormData();
     ambiguous.append("_meth\\od", "DELETE");
     expect((await fetch(url, { method: "POST", body: ambiguous })).status).toBe(400);
-    const duplicateHeader =
-      '--boundary\r\nContent-Disposition: form-data; name="_method"\r\nContent-Disposition: form-data; name="safe"\r\n\r\nDELETE\r\n--boundary--\r\n';
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=boundary" },
-          body: duplicateHeader,
-        })
-      ).status,
-    ).toBe(400);
-    const duplicate =
-      '--boundary\r\nContent-Disposition: form-data; name="_method"; NAME="safe"\r\n\r\nDELETE\r\n--boundary--\r\n';
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=boundary" },
-          body: duplicate,
-        })
-      ).status,
-    ).toBe(400);
-    const conflicting =
-      "--boundary\r\nContent-Disposition: form-data; name=\"_method\"; name*=utf-8''safe\r\n\r\nDELETE\r\n--boundary--\r\n";
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=boundary" },
-          body: conflicting,
-        })
-      ).status,
-    ).toBe(400);
     expect(
       (
         await fetch(url, {
@@ -523,32 +490,84 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls[0]?.body).toBe(body);
   });
 
-  it("多数の multipart 項目を展開せずに検査し末尾の上書きを拒否する", async () => {
+  it("multipart の曖昧な境界と名前を拒否する", async () => {
     const g = await startPf([]);
-    const part =
-      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
-    const body =
-      part.repeat(100_000) +
-      '--boundary\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--boundary--\r\n';
-    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
-      method: "POST",
-      headers: { "content-type": "multipart/form-data; boundary=boundary" },
-      body,
-    });
-    expect(res.status).toBe(400);
+    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    const part = (name: string) =>
+      `--evil\r\nContent-Disposition: form-data; ${name}\r\n\r\nvalue\r\n--evil--\r\n`;
+    for (const [type, body] of [
+      [
+        "multipart/form-data; boundary=safe; boundary=evil",
+        `--safe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--safe--\r\n${part('name="_method"')}`,
+      ],
+      ["multipart/form-data; boundary=evil", `--evil--junk\r\n${part('name="_method"')}`],
+      [
+        'multipart/form-data; boundary="s\\\\afe"',
+        '--s\\\\afe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--s\\\\afe--\r\n--s\\afe\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--s\\afe--\r\n',
+      ],
+      ["multipart/form-data; boundary=evil", part('name="%5Fmethod"')],
+      ["multipart/form-data; boundary=evil", part(`name="${"a".repeat(20_000)}"`)],
+      [
+        "multipart/form-data; boundary=evil",
+        part('name="safe"').replace("value", "\r\n--evilX".repeat(10_001)),
+      ],
+      ["multipart/form-data; boundary=evil", part('name="safe"; name="other"')],
+      ["multipart/form-data; boundary=evil", part("name=\"safe\"; name*=utf-8''other")],
+      [
+        "multipart/form-data; boundary=evil",
+        part('name="safe"\r\nContent-Disposition: form-data; name="other"'),
+      ],
+    ]) {
+      const res = await fetch(url, { method: "POST", headers: { "content-type": type }, body });
+      expect(res.status).toBe(400);
+    }
     expect(g.calls).toHaveLength(0);
   });
 
-  it("multipart の過大なパートヘッダーを拒否する", async () => {
-    const g = await startPf([]);
-    const body = `--boundary\r\nContent-Disposition: form-data; name="file"; filename="${"a".repeat(20_000)}"\r\n\r\nvalue\r\n--boundary--\r\n`;
-    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
-      method: "POST",
-      headers: { "content-type": "multipart/form-data; boundary=boundary" },
-      body,
-    });
-    expect(res.status).toBe(400);
+  it("preamble を含む multipart を検査して転送する", async () => {
+    const g = await startPf([json(201, {}), json(201, {})]);
+    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    const body =
+      'preamble\r\n--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nhello\r\n--boundary--\r\n';
+    const headers = { "content-type": "multipart/form-data; boundary=boundary" };
+    expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
+    expect(g.calls[0]?.body).toBe(body);
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers,
+          body: body.replace('name="text"', 'name="_method"'),
+        })
+      ).status,
+    ).toBe(400);
+    headers["content-type"] = 'multipart/form-data; boundary=boundary; foo="x; boundary=evil"';
+    expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
+    expect(g.calls).toHaveLength(2);
+  });
+
+  it("大量のフォーム項目を上限で拒否し後続の要求を処理する", async () => {
+    const g = await startPf([json(201, {})]);
+    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+    expect(
+      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(100_001) })).status,
+    ).toBe(400);
     expect(g.calls).toHaveLength(0);
+    const part =
+      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
+    expect(
+      (
+        await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=boundary" },
+          body: `${part.repeat(10_001)}--boundary--\r\n`,
+        })
+      ).status,
+    ).toBe(400);
+    expect(g.calls).toHaveLength(0);
+    expect((await fetch(url, { method: "POST", headers, body: "a=1" })).status).toBe(201);
+    expect(g.calls).toHaveLength(1);
   });
 
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {

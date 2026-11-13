@@ -3,7 +3,7 @@
 - 日付: 2026-11-13（UTC）
 - タスク: なし
 - PR: #364
-- ブランチ: main
+- ブランチ: sacty/task-dcf4eb65
 - 関係する ADR: なし
 
 ## 目的
@@ -12,20 +12,18 @@
 
 ## したこと
 
-URL エンコード形式と multipart 形式のフォームを検査し、メソッド上書きの名前があれば転送せずに拒否する。
-`identity` 以外の `Content-Encoding` を指定したフォームとパートのヘッダーが 16 KiB を超えるか解析できない multipart と名前にバックスラッシュ、Content-Disposition に `name*` 属性、または同じパートに重複した名前属性や Content-Disposition を含む multipart も拒否する。
-仕様書とユーザードキュメントを日英とも更新した。
+URL エンコード形式と multipart 形式のフォームを検査し、メソッド上書きの名前があるフォーム、`identity` 以外の `Content-Encoding` を指定したフォーム、パートのヘッダーが 16 KiB を超えるか解析できない multipart、名前にバックスラッシュ、Content-Disposition に `name*` 属性、または同じパートに重複した名前属性や Content-Disposition を含む multipart を転送せず拒否する。
 
 ## 確かめたこと
 
-`npx vitest run apps/daemon/src/gateway.test.ts tests/docs` で回帰テストと文書の検査が通った。
+`npm run lint`、`npm run typecheck`、`npm run build`、`npx vitest run --no-file-parallelism` が通った。
 回帰テストは修正前のコードで `_method=DELETE` が転送されて失敗することを確かめた。
 
 ## レビューの指摘と対応
 
 multipart の境界とヘッダーだけを順に検査し、値やファイルの内容を誤って拒否せず、全項目の展開によるメモリー増幅を防いだ。
-値とファイルの内容、多数の項目を含む回帰テストを足した。
+重複した境界を拒否し、preamble とパーセントエンコードされた名前を検査し、境界候補と項目数を 10,000 に制限する。
 
 ## 残したこと
 
-なし。
+全展開によるメモリー増幅そのものを測定して検出するテストはない。
