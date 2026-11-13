@@ -1812,6 +1812,9 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
         id,
       ) as Task;
       expect(decidedTask.testCommand).toBe("make check");
+      // 工程の選択からやり直した再開（rechooseSteps）の記録も読み込める
+      const rechosen = project([...events, resumed(id, true)]).get(id) as Task;
+      expect(rechosen.status).toBe("queued");
     });
     // テストが決まらないことを理由に止まったタスク（以前の版）は、決められる
     for (const code of [
@@ -1833,6 +1836,7 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
         } as EventInput),
       ]).get(id) as Task;
       expect(canDecideTests(paused)).toBe(true);
+      expect(canRechooseSteps(paused)).toBe(true);
     }
   });
 
