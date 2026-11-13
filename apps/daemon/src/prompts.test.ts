@@ -53,6 +53,7 @@ import {
   postedLatestCommit,
   pullRequestInText,
   scopeComesFirst,
+  scopeIsWritten,
   selectablePlans,
   servicePromptLines,
 } from "./prompts.js";
@@ -2956,6 +2957,31 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     expect(scopeComesFirst(undefined)).toBe(false);
   });
 
+  it("前回の下書きの冒頭のスコープの節に、対象と対象外の行があるかを見分ける（PR #363 の再レビュー）", () => {
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n## 確認したいこと",
+      ),
+    ).toBe(true);
+    // 対象外の行が無い・対象の行が無い
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n\n## 確認したいこと\n\n- 対象外：詳細",
+      ),
+    ).toBe(false);
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ\n\n- 対象外：なし")).toBe(false);
+    // 見出しの「対象・対象外」は、本文の行に数えない
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ（対象・対象外）\n\n一覧を速くする。")).toBe(
+      false,
+    );
+    // 冒頭に無ければ、対象と対象外があっても形になっていない
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## 確認したいこと\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし",
+      ),
+    ).toBe(false);
+  });
+
   it("要求要件と設計の指示は、スコープの節を確認したいことより前に置かせ、確認したいことに確認しない場合の懸念を書かせる（PBI-340）", () => {
     const t = task(["requirements", "design", "implement"]);
     for (const step of ["requirements", "design"] as const) {
@@ -3468,7 +3494,8 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
     } as Partial<Task>);
 
   it("通常の差し戻しでも、前回の下書きの冒頭にスコープの節が無ければ、足して並べ直すことを例外として許す（PR #363 の再レビュー）", () => {
-    const EXCEPTION = "例外：前回の下書きには、冒頭に「スコープ」の節がありません";
+    const EXCEPTION =
+      "例外：前回の下書きには、冒頭に、対象と対象外を書いた「スコープ」の節がありません";
     for (const step of ["requirements", "design"] as const) {
       const old = buildPrompt(
         redo({
@@ -3488,7 +3515,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       );
       expect(old, step).toContain("指摘に関わる所だけを書き換える");
       expect(old, step).toContain(EXCEPTION);
-      expect(old, step).toContain("後ろにあれば冒頭に移して");
+      expect(old, step).toContain("後ろにあれば冒頭に移し");
       const scoped = buildPrompt(
         redo({
           outputs: {
@@ -3507,6 +3534,25 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       );
       expect(scoped, step).toContain("指摘に関わる所だけを書き換える");
       expect(scoped, step).not.toContain(EXCEPTION);
+      // スコープの節はあるが対象外の行が無い下書きも、補うことを例外として許す
+      const noOut = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n## スコープ\n\n- 対象：一覧\n\n- R-1 …",
+            design: "# 設計 v1\n\n## スコープ\n\n- 対象：一覧\n\n## 構成",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(noOut, step).toContain(EXCEPTION);
+      expect(noOut, step).toContain("対象・対象外の行が無ければ足して");
     }
   });
 

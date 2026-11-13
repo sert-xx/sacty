@@ -544,7 +544,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
   - `as_recommended` で、判断した戻し先がその PR の工程（要求要件・設計）のときだけ、答えの反映だけの軽い直しにする（`settleReview` が `ChangesRequested` に `answer: as_recommended` を残す）。
     前の工程へ戻す・実装の PR・戻し先を判断できない・`answer` が無いときは、`as_recommended` を残さず、今までどおりの直し。`changes_decision` は、そのまま `answer` に残して今までどおりの直し（成果物を作り直し、セルフレビューをする）。
   - 軽い直し（`isAnswerOnlyRework`）：その差し戻しの指摘（判断した指摘の集合そのもの）で始まった要求要件・設計の実行は、前回の下書きを元に、答えた項目を「確認したいこと」から外し、答えを反映する所だけを直す。ほかの節・項目・表の行・ID は一字一句そのまま保つ（`answerOnlyReworkLines`）。
-    前回の下書きの冒頭（題の見出しの次の最初の節）が「スコープ」の節でない（PBI-340 より前に作った下書き。`scopeComesFirst`。「スコープ外」など別の名前の節や、後ろにあるスコープの節は数えない）ときだけ、例外として、スコープの節を足すか冒頭に移し、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直させる。提出の前の確認も、その順になっていることに置き換える。
+    前回の下書きの冒頭（題の見出しの次の最初の節）に、対象と対象外の行を書いた「スコープ」の節が無い（PBI-340 より前に作った下書き。`scopeIsWritten`。「スコープ外」など別の名前の節や、後ろにあるスコープの節は数えない）ときだけ、例外として、スコープの節を足すか冒頭に移し、足りない対象・対象外の行を補って、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直させる。提出の前の確認も、その順になっていることに置き換える。
     セルフレビュー（観点の担当の起動）は行わず、提出の前に本文を読み直して3点（答えた項目が外れている・反映した所以外が前回と同じ・ID に欠番や重複が無い）だけ確かめさせる。セルフレビューの報告（`sacty-self-review`）は付けさせない（`answerOnlyCheckLines`。記録なしとして扱い、次の直しは全体をレビューする）。
     出典の分類（確かめる所の表）と、指摘ごとの対応の報告は、今までどおり。答えが推奨どおりでないと分かったら、軽い直しをやめて通常の直しをさせる（指摘への対応に理由を書かせる）。
     前回の下書きが空で読めないときは、軽い直しにしない。
@@ -673,7 +673,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
   画面は、タスクのイメージと、やり直す工程とそれより後の工程（飛ばした工程を除く）のエージェントを出し、折りたたみを開いたときに候補を読む（`/step-options`）。人が変えたものだけを送る（`changedStepChoices`）。
 - 差し戻しの指摘の本文は、承認待ちでなくても、タスクの詳細の作業履歴の差し戻しの行の「詳細」で読める（[画面の文言と補足](ui-wording.md)）。
 
-コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`ReworkAnswer`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`・`isAnswerOnlyRework`・`answerOnlyReworkLines`・`answerOnlyCheckLines`・`scopeComesFirst`・`lineContextText`・`lineContextNote`）、`apps/daemon/src/github.ts`（`lineContextOf`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
+コード: `apps/daemon/src/service.ts`（`requestChanges`・`stepSettingChanges`・`voidRemark`）、`packages/core/src/events.ts`（`ReworkCause`・`ReworkAnswer`・`RequestChangesInput`）、`packages/core/src/projection.ts`（`reworkTargets`・`reopen`・`changeRounds`）、`apps/daemon/src/prompts.ts`（`buildReworkPrompt`・`extractRework`・`isAnswerOnlyRework`・`answerOnlyReworkLines`・`answerOnlyCheckLines`・`scopeIsWritten`・`lineContextText`・`lineContextNote`）、`apps/daemon/src/github.ts`（`lineContextOf`）、`apps/web/src/lib/labels.ts`（`describeEventParts`）、`apps/web/src/components/gate-form.tsx`（`GateStepSettings`）
 
 ## エスカレーション
 

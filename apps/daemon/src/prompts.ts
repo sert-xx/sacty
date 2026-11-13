@@ -1312,35 +1312,65 @@ const BOLD_LABEL_LINE = /^ {0,3}\*\*(.+?)\*\*[ \t]*[：:]?[ \t]*$/;
 const SCOPE_NAME = /^スコープ(?:$|[ \t（(：:])/;
 
 /**
- * 前回の下書きで、「スコープ」の節が冒頭（文書の題の見出しの次の、最初の節）にあるか（PBI-340）。スコープの節を求める前の版で
- * 作った下書きには無く、ほかの節より後ろに置かれた下書きもありうる。文書の中のどこかに「## スコープ」や「## スコープ外」があるだけでは、
- * 冒頭にあるとみなさない（PR #363 の再レビュー）。コードブロックの中の行は見出しとして数えない。
+ * 前回の下書きの、冒頭（文書の題の見出しの次の、最初の節）にある「スコープ」の節の本文の行（PBI-340）。冒頭の節がスコープで
+ * なければ undefined。スコープの節を求める前の版で作った下書きには無く、ほかの節より後ろに置かれた下書きもありうる。文書の中の
+ * どこかに「## スコープ」や「## スコープ外」があるだけでは、冒頭にあるとみなさない（PR #363 の再レビュー）。コードブロックの中の
+ * 行は見出しとして数えない。
  */
-export function scopeComesFirst(draft: string | undefined): boolean {
+function leadingScopeLines(draft: string | undefined): string[] | undefined {
   let fence: CodeFence | undefined;
   let first = true;
+  let scope: string[] | undefined;
   for (const line of (draft ?? "").split("\n")) {
     if (fence) {
       if (closesFence(line, fence)) fence = undefined;
+      scope?.push(line);
       continue;
     }
     const opened = openingFence(line);
     if (opened) {
       fence = opened;
+      scope?.push(line);
       continue;
     }
     const heading = HEADING_LINE.exec(line);
     const label = heading ? undefined : BOLD_LABEL_LINE.exec(line);
-    if (!heading && !label) continue;
+    if (!heading && !label) {
+      scope?.push(line);
+      continue;
+    }
+    // スコープの節は、次の見出し（太字の札を含む）で終わる
+    if (scope) return scope;
     // 文書の題（最初の H1）は節ではないので飛ばす
     if (first && heading?.[1] === "#") {
       first = false;
       continue;
     }
     const name = (heading ? heading[2] : label?.[1]) ?? "";
-    return SCOPE_NAME.test(name.trim());
+    if (!SCOPE_NAME.test(name.trim())) return undefined;
+    scope = [];
   }
-  return false;
+  return scope;
+}
+
+/** 前回の下書きで、「スコープ」の節が冒頭にあるか（PBI-340）。 */
+export function scopeComesFirst(draft: string | undefined): boolean {
+  return leadingScopeLines(draft) !== undefined;
+}
+
+/** 対象外の行（「対象外：なし」を含む）。 */
+const OUT_OF_SCOPE_LINE = /対象外/;
+/** 対象の行。「対象外」は含めない。 */
+const IN_SCOPE_LINE = /対象(?!外)/;
+
+/**
+ * 前回の下書きの冒頭に、決まりの形の「スコープ」の節（対象と対象外の行がある）があるか（PBI-340）。対象外を必ず書かせる前の
+ * 下書きでは、スコープの節があっても対象外の行が無いことがある（PR #363 の再レビュー）。
+ */
+export function scopeIsWritten(draft: string | undefined): boolean {
+  const lines = leadingScopeLines(draft);
+  if (!lines) return false;
+  return lines.some((l) => IN_SCOPE_LINE.test(l)) && lines.some((l) => OUT_OF_SCOPE_LINE.test(l));
 }
 
 /**
@@ -1348,9 +1378,9 @@ export function scopeComesFirst(draft: string | undefined): boolean {
  * 下書き）の例外の指示。関係の無い節を保つ決まりのままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
  */
 function missingScopeLines(previous: string | undefined): string[] {
-  if (scopeComesFirst(previous)) return [];
+  if (scopeIsWritten(previous)) return [];
   return [
-    "- 例外：前回の下書きには、冒頭に「スコープ」の節がありません（無いか、ほかの節より後ろにあります。この節を求める前に作った下書きです）。「一字一句そのまま保つ」の決まりの例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
+    "- 例外：前回の下書きには、冒頭に、対象と対象外を書いた「スコープ」の節がありません（節が無い、ほかの節より後ろにある、または対象・対象外の行が無い。今の決まりの前に作った下書きです）。「一字一句そのまま保つ」の決まりの例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移し、対象・対象外の行が無ければ足して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
   ];
 }
 
@@ -1383,14 +1413,14 @@ function answerOnlyReworkLines(
  * セルフレビューの報告（sacty-self-review）は付けない（sacty は記録なしとして扱い、次の回は全体をレビューする）。
  */
 function answerOnlyCheckLines(deliverable: string, previous: string | undefined): string[] {
-  const scopeAdded = !scopeComesFirst(previous);
+  const scopeAdded = !scopeIsWritten(previous);
   return [
     "",
     "--- 提出の前の確認（セルフレビューは行わない） ---",
     `- この実行は、答えの反映だけの直しなので、セルフレビュー（既定のスキル review-dispatch、観点の担当の起動）は行わない。代わりに、提出の前に${deliverable}を最初から最後まで読み直して、次の3点だけを確かめ、崩れていれば直す`,
     "  - 答えた項目が「確認したいこと」から外れ、答えていない項目は残っている",
     scopeAdded
-      ? "  - 冒頭に「スコープ」の節があり、「スコープ」「確認したいこと」「既定で決めたこと」の順になっている。答えを反映した所と足したスコープの節、節の並べ直し以外が、前回の下書きと一字一句同じである"
+      ? "  - 冒頭に「スコープ」の節があり、「スコープ」「確認したいこと」「既定で決めたこと」の順になっている。スコープの節に対象と対象外の行がある。答えを反映した所と足したスコープの節、節の並べ直し以外が、前回の下書きと一字一句同じである"
       : "  - 答えを反映した所以外が、前回の下書きと一字一句同じである",
     "  - 要求・テスト観点などの ID に、欠番・重複・付け直しが無い",
     "- セルフレビューの報告（sacty-self-review の JSON）は付けない",
