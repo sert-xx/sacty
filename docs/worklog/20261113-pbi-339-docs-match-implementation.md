@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-13（UTC）
 - タスク: PBI-339
-- PR: なし（作成時に追記）
+- PR: #362
 - ブランチ: feat/issue-339-docs-match-implementation
 - 関係する ADR: なし
 
