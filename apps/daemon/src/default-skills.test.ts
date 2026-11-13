@@ -939,3 +939,69 @@ describe("既定の review スキルの、対象のリポジトリの指示（�
     expect(aggregation).toContain('"searched": true');
   });
 });
+
+describe("既定の review スキルの、方針の妥当性と指摘の出し切り（PBI-342）", () => {
+  const catalog = () => read("skills/review/review-dispatch/references/viewpoints.md");
+  const aggregation = () => read("skills/review/review-dispatch/references/aggregation.md");
+
+  it("コードの必須観点に方針の妥当性を見る C-17 があり、advanced で起動し、隣の観点と境界を分ける", () => {
+    const required = catalog().split("### 条件付き")[0] ?? "";
+    expect(required).toMatch(
+      /^\| C-17 \| 方針の妥当性 \| .*もっと単純で確実な方針.* \| 方針の中の個々の欠陥（C-1・C-2・C-3 など）、要らないコード（C-15）、責務の分け方・命名（C-5） \|$/m,
+    );
+    expect(catalog()).toMatch(/^\| C-5 \| .*方針の選び方そのもの（C-17）.* \|$/m);
+    expect(catalog()).toMatch(/^\| C-15 \| .*方針の選び方そのもの（C-17） \|$/m);
+    expect(catalog()).toMatch(/^\| `advanced` \| .*C-17、/m);
+    const c17 = read("skills/review/review-execution/references/C-17.md");
+    expect(c17).toMatch(/^# C-17 方針の妥当性$/m);
+    for (const heading of [
+      "## 確かめる手順",
+      "## チェックポイント",
+      "## NG 例",
+      "## 見落としやすい所",
+    ]) {
+      expect(c17).toContain(heading);
+    }
+    // 別の方針で失うものを確かめさせ、承認済みの設計が決めた方針は must にしない
+    expect(c17).toContain("`suggestion` に失うものを書く");
+    expect(c17).toContain(
+      "承認済みの要求要件・設計が方針を決めているときは、方針を変える `must` にしない",
+    );
+    expect(read("skills/review/review-execution/SKILL.md")).toContain("C-1〜C-17");
+  });
+
+  it("担当は同じ原因のほかの現れを探して1件にまとめ、親は観点をまたいでまとめる", () => {
+    expect(read("skills/review/review-execution/SKILL.md")).toContain(
+      "指摘を1回のレビューで出し切る。確かめた候補ごとに、原因を1文で書き、同じ原因に当たるほかの現れを探す",
+    );
+    expect(aggregation()).toContain(
+      "同じ問題の別の現れ（同じ原因で複数箇所・複数の入力）は、観点をまたいでも1件にまとめる",
+    );
+    expect(aggregation()).toContain("その現れは C-17 の指摘にまとめて列挙し、別の指摘にしない");
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "指摘は1回のレビューで出し切る",
+    );
+  });
+
+  it("再レビューで前回までと同じ原因の別の現れが続けば、C-17 に方針を見直させる（self-review でも起動する）", () => {
+    const text = aggregation();
+    expect(text).toContain("## 回をまたいで同じ原因が続くとき");
+    expect(text).toContain("C-17 の担当を1回だけ起動する（起動し直す）");
+    expect(text).toContain("親は自分で方針を判断しない");
+    // 方針を見る観点はコードの C-17 と設計書の D-1。利用者向け文書には当てはめない
+    expect(text).toContain("主対象が `design-doc` のときは、C-17 の代わりに D-1");
+    expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
+      "前回までの `must`（前回の指摘と、前回のレビューが「前回の指摘」として挙げたもの）と同じ原因の別の現れなら、現れをもう1件足さない",
+    );
+    const self = read("skills/review/review-dispatch/references/self-review.md");
+    expect(self).toContain(
+      "前回までの `must` と同じ原因の別の現れが今回も見つかったときは、C-17（方針の妥当性）を起動する。前回の回で `must` を出していなくても起動する",
+    );
+    expect(self).toContain(
+      "今回の指摘と同じ原因の別の現れが、直した後にも見つかったときは、C-17（方針の妥当性）を起動する",
+    );
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "ただし、前回までの `must` と同じ原因の別の現れが今回も見つかったときは、C-17 を起動する",
+    );
+  });
+});
