@@ -420,7 +420,7 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     );
   });
   it("メソッドを上書きするフォーム本文と曖昧な multipart を拒否する", async () => {
-    const g = await startPf([json(201, {}), json(201, {})]);
+    const g = await startPf([json(201, {}), json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
     const send = (body: string, type: string, extra = {}) =>
       fetch(url, { method: "POST", headers: { "content-type": type, ...extra }, body });
@@ -455,9 +455,9 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
         'multipart/form-data; foo="boundary=evil;bar"; boundary=safe',
         `${part('name="_method"')}${part('name="safe"').replaceAll("evil", "safe")}`,
       ],
-      ...["\v", "\f", "\r"].map((space) => [
+      ...["\v\r\n", "\f\r\n", "\r\r\n", "\n"].map((space) => [
         type,
-        `--evil${space}\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n${part('name="safe"')}`,
+        `--evil${space}Content-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n${part('name="safe"')}`,
       ]),
       [type, part('name="%5Fmethod"')],
       [type, part('name="_meth\\od"')],
@@ -483,6 +483,8 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const normal = part('name="text"');
     expect((await send(normal, type)).status).toBe(201);
     expect(g.calls[1]?.body).toBe(normal);
+    expect((await send("--evil--\r\n", type)).status).toBe(201);
+    expect(g.calls[2]?.body).toBe("--evil--\r\n");
   });
   it("multipart の preamble、値、ファイル内容と最終境界の空白を転送する", async () => {
     const g = await startPf([json(201, {}), json(201, {})]);

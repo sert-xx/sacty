@@ -633,7 +633,8 @@ export class AiGateway {
           const marker = Buffer.concat([Buffer.from("\r\n"), delimiter]);
           const boundarySuffix = (start: number) => {
             while (body[start] === 32 || body[start] === 9) start++;
-            if (body[start] === 11 || body[start] === 12) throw new Error("ambiguous boundary");
+            if (body[start] === 10 || body[start] === 11 || body[start] === 12)
+              throw new Error("ambiguous boundary");
             if (body[start] === 13 && body[start + 1] !== 10) throw new Error("ambiguous boundary");
             return body.toString("latin1", start, start + 2);
           };
@@ -659,7 +660,6 @@ export class AiGateway {
               throw new Error("invalid boundary");
             pos += delimiter.length;
             if (body.subarray(pos, pos + 2).equals(Buffer.from("--"))) {
-              if (count === 0) throw new Error("premature closing boundary");
               pos += 2;
               while (body[pos] === 32 || body[pos] === 9) pos++;
               if (pos !== body.length && body.toString("latin1", pos, pos + 2) !== "\r\n")
