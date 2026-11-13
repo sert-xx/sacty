@@ -11581,6 +11581,8 @@ export class TaskService {
         verifying || !this.finalReview
           ? this.outputAt(task, "implement")
           : (task.lastReview?.at ?? task.createdAt);
+      // 認証・タスクブランチの取得などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの直前に確かめる）
+      if (this.stopRequested(task.id)) return "stopped";
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
