@@ -52,6 +52,8 @@ import {
   operationSucceeded,
   postedLatestCommit,
   pullRequestInText,
+  scopeComesFirst,
+  scopeIsWritten,
   selectablePlans,
   servicePromptLines,
 } from "./prompts.js";
@@ -2910,7 +2912,7 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       expect(prompt, step).toContain("確認したいことの should が 5 件を超えるときは");
       expect(prompt, step).toContain("問い・推奨の答え・その理由");
       expect(prompt, step).toContain("人間が異論を持ちうるもの。最大 5 件、1件1行");
-      expect(prompt, step).toContain("小さな変更なら 20 行、大きな変更でも 60 行ほどまで");
+      expect(prompt, step).toContain("小さな変更なら 25 行、大きな変更でも 65 行ほどまで");
       expect(prompt, step).toContain("今回の変更で変わらない振る舞い");
       expect(prompt, step).toContain("当てはまらない観点のための「対象外」の節や行");
       expect(prompt, step).toContain("検討して採らなかった案");
@@ -2934,6 +2936,113 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       // should の上限を超えたときも、不利益な既定は既定に回さない
       expect(prompt, step).toContain("これらは「既定で決めたこと」に回さず、害の小さいものを回す");
     }
+  });
+
+  it("前回の下書きで、スコープの節が冒頭にあるかを、節の名前と位置で見分ける（PBI-340）", () => {
+    expect(scopeComesFirst("# 要求要件\n\n## スコープ\n\n- 対象：一覧")).toBe(true);
+    expect(scopeComesFirst("## スコープ（対象・対象外）\n- 対象：一覧")).toBe(true);
+    expect(scopeComesFirst("**スコープ**\n- 対象：一覧")).toBe(true);
+    // 後ろにある・別の名前の節は、冒頭にあるとみなさない（PR #363 の再レビュー）
+    expect(
+      scopeComesFirst("# 要求要件\n\n## 確認したいこと\n\n- なし\n\n## スコープ\n\n- 対象：一覧"),
+    ).toBe(false);
+    expect(scopeComesFirst("# 要求要件\n\n## スコープ外\n\n- 詳細の画面")).toBe(false);
+    expect(scopeComesFirst("# 要求要件\n\n## 確認したいこと\n\n## スコープ外")).toBe(false);
+    // コードブロックの中の見出しは数えない
+    expect(scopeComesFirst("# 要求要件\n\n```md\n## スコープ\n```\n\n## 確認したいこと")).toBe(
+      false,
+    );
+    expect(scopeComesFirst("# 要求要件\n\nスコープは一覧だけ")).toBe(false);
+    expect(scopeComesFirst("")).toBe(false);
+    expect(scopeComesFirst(undefined)).toBe(false);
+  });
+
+  it("前回の下書きの冒頭のスコープの節に、対象と対象外の行があるかを見分ける（PR #363 の再レビュー）", () => {
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n## 確認したいこと",
+      ),
+    ).toBe(true);
+    // 対象外の行が無い・対象の行が無い
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n\n## 確認したいこと\n\n- 対象外：詳細",
+      ),
+    ).toBe(false);
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ\n\n- 対象外：なし")).toBe(false);
+    // 見出しの「対象・対象外」は、本文の行に数えない
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ（対象・対象外）\n\n一覧を速くする。")).toBe(
+      false,
+    );
+    // 説明の文の中の「対象外」は、対象外の札の行に数えない（PR #363 の再レビュー）
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n- 今回は対象外の記載がない\n\n## 確認したいこと",
+      ),
+    ).toBe(false);
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ\n\n一覧が対象で、詳細は対象外とする。")).toBe(
+      false,
+    );
+    // 札の書き方の違い（太字・表・小見出し）は数える
+    expect(scopeIsWritten("## スコープ\n\n**対象**：一覧\n**対象外**：なし")).toBe(true);
+    expect(scopeIsWritten("## スコープ\n\n| 対象 | 一覧 |\n| 対象外 | なし |")).toBe(true);
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n### 対象\n\n- 一覧\n\n### 対象外\n\n- なし\n\n## 確認したいこと",
+      ),
+    ).toBe(true);
+    // コードブロックの中の例は、札の行に数えない（PR #363 の再レビュー）
+    expect(
+      scopeIsWritten(
+        "## スコープ\n\n- 対象：一覧\n\n書き方の例\n\n```text\n- 対象外：なし\n```\n\n## 確認したいこと",
+      ),
+    ).toBe(false);
+    // 太字のスコープの下に、太字の札を1行で置いた形も数える（PR #363 の再レビュー）
+    expect(
+      scopeIsWritten(
+        "**スコープ**\n\n**対象**\n\n- 一覧\n\n**対象外**\n\n- なし\n\n**確認したいこと**\n\n- なし",
+      ),
+    ).toBe(true);
+    // 太字のスコープは、ほかの名前の太字の札で終わる
+    expect(
+      scopeIsWritten("**スコープ**\n\n- 対象：一覧\n\n**確認したいこと**\n\n- 対象外：詳細"),
+    ).toBe(false);
+    // 次の同じ深さの節にある対象外は、スコープの節に数えない
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n\n## 確認したいこと\n\n- 対象外：詳細",
+      ),
+    ).toBe(false);
+    // 冒頭に無ければ、対象と対象外があっても形になっていない
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## 確認したいこと\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし",
+      ),
+    ).toBe(false);
+  });
+
+  it("要求要件と設計の指示は、スコープの節を確認したいことより前に置かせ、確認したいことに確認しない場合の懸念を書かせる（PBI-340）", () => {
+    const t = task(["requirements", "design", "implement"]);
+    for (const step of ["requirements", "design"] as const) {
+      const prompt = buildPrompt(t, step);
+      const scope = prompt.indexOf("  - 「スコープ」：何を実現するか（1〜3文）と、範囲。");
+      const questions = prompt.indexOf(
+        "  - 「確認したいこと」：人間が決めないと確定できないこと。",
+      );
+      const decisions = prompt.indexOf("  - 「既定で決めたこと」：");
+      expect(scope, step).toBeGreaterThan(-1);
+      expect(scope, step).toBeLessThan(questions);
+      expect(questions, step).toBeLessThan(decisions);
+      expect(prompt, step).toContain(
+        "確認しないまま推奨の答えで進めた場合の具体的な懸念（何が・誰に・どう困るか。一般論にしない）",
+      );
+      expect(prompt, step).toContain(
+        "対象と対象外は必ず両方書き、対象外が本当に無ければ「対象外：なし」と書く",
+      );
+    }
+    expect(buildPrompt(t, "requirements")).toContain(
+      "何を実現するかは、下の「スコープ」の節に1〜3文で書く",
+    );
   });
 
   it("要求要件と設計の指示に、本文に作業の経過・指摘への対応の報告・エージェント向けのメモを書かないこと、理由の分からない ID の欠番と参照だけの項目を残さないことを書く", () => {
@@ -3423,6 +3532,69 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       ...extra,
     } as Partial<Task>);
 
+  it("通常の差し戻しでも、前回の下書きの冒頭にスコープの節が無ければ、足して並べ直すことを例外として許す（PR #363 の再レビュー）", () => {
+    const EXCEPTION =
+      "例外：前回の下書きには、冒頭に、対象と対象外を書いた「スコープ」の節がありません";
+    for (const step of ["requirements", "design"] as const) {
+      const old = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n- R-1 …",
+            design: "# 設計 v1\n\n## 構成\n\n- …",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(old, step).toContain("指摘に関わる所だけを書き換える");
+      expect(old, step).toContain(EXCEPTION);
+      expect(old, step).toContain("後ろにあれば冒頭に移し");
+      const scoped = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n- R-1 …",
+            design: "# 設計 v1\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n## 構成",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(scoped, step).toContain("指摘に関わる所だけを書き換える");
+      expect(scoped, step).not.toContain(EXCEPTION);
+      // スコープの節はあるが対象外の行が無い下書きも、補うことを例外として許す
+      const noOut = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n## スコープ\n\n- 対象：一覧\n\n- R-1 …",
+            design: "# 設計 v1\n\n## スコープ\n\n- 対象：一覧\n\n## 構成",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(noOut, step).toContain(EXCEPTION);
+      expect(noOut, step).toContain("対象・対象外の行が無ければ足して");
+    }
+  });
+
   it("要求要件の差し戻しに、前回の下書きと指摘を渡し、指摘に関わる所だけを書き換えさせる", () => {
     const prompt = buildPrompt(redo(), "requirements");
     expect(prompt).toContain("--- 前回の下書き ---\n# 要求要件 v1\n\n- R-1 …\n- R-2 …");
@@ -3461,7 +3633,7 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
 
   it("質の基準（確認したいこと・EARS・ID・分量）は、作り直しでも守らせる", () => {
     const prompt = buildPrompt(redo(), "requirements");
-    expect(prompt).toContain("冒頭の「確認したいこと」「既定で決めたこと」の節");
+    expect(prompt).toContain("冒頭の「スコープ」「確認したいこと」「既定で決めたこと」の節");
     expect(prompt).toContain("ID（R-n。付け直さない。消した ID は使い回さない）");
     expect(prompt).toContain(
       "その答えを関わる所に反映し、その項目を「確認したいこと」から外す。直した結果、人間が決めることが新しく出たら、「確認したいこと」に足す",

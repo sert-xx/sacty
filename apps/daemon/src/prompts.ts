@@ -320,7 +320,7 @@ function sharedMechanismLines(
         ]
       : []),
     unverified === "humanChecks"
-      ? "- 確かめられなかったとき（実行できない・失敗の起こし方が分からないなど）は、何を確かめられなかったかと理由を humanChecks に書く"
+      ? "- 確かめられなかったとき（実行できない・失敗の起こし方が分からないなど）は、何を確かめられなかったかと理由、人が確かめないまま進めた場合の具体的な懸念を、humanChecks に書く"
       : "- 確かめられなかったとき（実行できない・失敗の起こし方が分からないなど）は、何を確かめられなかったかと理由を、判定の説明に書く（findings には書かない）",
     "",
   ];
@@ -1036,8 +1036,8 @@ function earsLines(): string[] {
 const SHOULD_QUESTIONS_MAX = 5;
 /** 既定で決めたことの件数の上限。人間が異論を持ちうるものだけを書かせる。 */
 const DECISIONS_MAX = 5;
-/** 要求要件・設計の全体の行数の目安（テスト観点の JSON を除く）。小さな変更・大きな変更。 */
-const DRAFT_LINES = { small: 20, large: 60 } as const;
+/** 要求要件・設計の全体の行数の目安（テスト観点の JSON を除く）。小さな変更・大きな変更。冒頭のスコープの節の分を足してある（PBI-340）。 */
+const DRAFT_LINES = { small: 25, large: 65 } as const;
 
 /**
  * 人間が読む成果物（要求要件・設計・文書・調査の結果）の分量。読む人間は前提（暗黙知）を持っているので、初版は判断と作業に
@@ -1074,8 +1074,9 @@ function readerLoadLines(deliverable: string): string[] {
         "今回の変更で新しく起こりえない異常系・境界・非機能（性能・移行・運用など）。当てはまらない観点のための「対象外」の節や行",
       ],
     ),
-    `- ${deliverable}の最初（何を実現するかの短い要約を書くなら、その直後）に、次の2つの節を置き、詳細はそのあとに書く。人間がこの2つの節を読めば、承認するかを決められるようにする`,
-    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、1件ごとに、問い・推奨の答え・その理由を1〜2行で書く。無ければ「なし」と書く",
+    `- ${deliverable}は、次の順に節を置き、詳細はそのあとに書く。人間がこの3つの節を読めば、範囲が意図どおりかと、承認するかを決められるようにする（要求の一覧から範囲を読み取るのは、人間には難しい）`,
+    "  - 「スコープ」：何を実現するか（1〜3文）と、範囲。対象（今回変えるもの）と対象外（読む人が含まれると思いそうだが、今回はやらないこと）を箇条書きで書く。対象と対象外は必ず両方書き、対象外が本当に無ければ「対象外：なし」と書く（考え忘れと区別できるようにする）。当てはまらない観点を対象外に並べない（「性能：対象外」など）。上の「書かないこと」の「対象外」の行は、この「対象外：なし」を含まない",
+    "  - 「確認したいこと」：人間が決めないと確定できないこと。次の must・should に分け、1件ごとに、問い・推奨の答え・その理由と、確認しないまま推奨の答えで進めた場合の具体的な懸念（何が・誰に・どう困るか。一般論にしない）を、2〜3行で書く。無ければ「なし」と書く",
     "    - must：後で答えが違うと分かったら、それまでの作業が無駄になること（要求や設計の前提が覆ること）。件数の上限は無いが、本当にそうなるものだけにする。依頼の目的に関わる判断（何をどこまで・何を優先して実現するか、依頼者が一番決めたいこと）は、should に置かず、ここに置く",
     `    - should：後で答えが違うと分かったら、追加の作業が要ること。最大 ${SHOULD_QUESTIONS_MAX} 件`,
     "    - 並べ方：依頼者が一番決めたいこと（依頼の目的に直結すること）から順に書く。規約や慣習から決まりやすいことを先に置かない。推奨の答えは、依頼の意図に沿う向きにする",
@@ -1270,6 +1271,7 @@ function reworkLines(
   step: "requirements" | "design",
   deliverable: string,
   mode: ReworkMode | undefined,
+  previous: string | undefined,
 ): string[] {
   if (!mode) return [];
   const remarks = humanRemarks(task).filter((r) => r.step === step);
@@ -1288,6 +1290,7 @@ function reworkLines(
     `--- 差し戻しの直し方（前回の${deliverable}を元に、指摘に関わる所だけを書き換える） ---`,
     `- 上の「前回の下書き」を元にして、最初から書き直さない。今回の指摘（${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
     "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない。ただし、上の「本文に書くもの」で書かないとしたもの（作業の報告など）が前回の下書きに残っていれば、関係の無い所でも取り除く",
+    ...missingScopeLines(previous),
     ...(earlier > 0
       ? [
           "- 前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている。今回の直しで崩さない。人間の求めで足した記述も削らない",
@@ -1295,9 +1298,106 @@ function reworkLines(
       : []),
     "- 指摘が複数の節にまたがるときは、関わる節をすべて直す（一部だけ直して、節の間に食い違いを残さない）",
     "- 指摘が成果物の方針（目的・範囲・方式）を変えるときは、方針に関わる所を、全体に及ぶまで直す。方針に関わらない所は保つ",
-    `- 質の基準は、初回と同じに保つ。冒頭の「確認したいこと」「既定で決めたこと」の節・必須の節・${step === "requirements" ? "EARS の形式・ID（R-n。付け直さない。消した ID は使い回さない）" : "節の選び方・テスト観点の書き方"}・分量の目安を、直したあとも守る`,
+    `- 質の基準は、初回と同じに保つ。冒頭の「スコープ」「確認したいこと」「既定で決めたこと」の節・必須の節・${step === "requirements" ? "EARS の形式・ID（R-n。付け直さない。消した ID は使い回さない）" : "節の選び方・テスト観点の書き方"}・分量の目安を、直したあとも守る`,
     "- 指摘が「確認したいこと」への答えなら、その答えを関わる所に反映し、その項目を「確認したいこと」から外す。直した結果、人間が決めることが新しく出たら、「確認したいこと」に足す",
     `- ${deliverable}の全体を出し直す（直した所だけを返さない）。指摘ごとの対応は、上の形式で付ける`,
+  ];
+}
+
+/** 見出しの行（ATX）。 */
+const HEADING_LINE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/;
+/** 太字だけの札の行（`**スコープ**`）。見出しの代わりに節の名前に使われる。 */
+const BOLD_LABEL_LINE = /^ {0,3}\*\*(.+?)\*\*[ \t]*[：:]?[ \t]*$/;
+/** スコープの節の中の札の名前（「対象」「対象外」）。 */
+const SCOPE_LABEL_NAME = /^対象外?$/;
+/** 節の名前が「スコープ」か。「スコープ外」などの別の名前は含めない。「スコープ（対象・対象外）」のような補足は許す。 */
+const SCOPE_NAME = /^スコープ(?:$|[ \t（(：:])/;
+
+/**
+ * 前回の下書きの、冒頭（文書の題の見出しの次の、最初の節）にある「スコープ」の節の本文の行（PBI-340）。冒頭の節がスコープで
+ * なければ undefined。スコープの節を求める前の版で作った下書きには無く、ほかの節より後ろに置かれた下書きもありうる。文書の中の
+ * どこかに「## スコープ」や「## スコープ外」があるだけでは、冒頭にあるとみなさない（PR #363 の再レビュー）。コードブロックの中の
+ * 行は見出しとして数えない。
+ */
+function leadingScopeLines(draft: string | undefined): string[] | undefined {
+  let fence: CodeFence | undefined;
+  let first = true;
+  // スコープの節の見出しの深さ（太字の札は 7）。これより深い見出しは節の中、同じか浅い見出しで節が終わる
+  let scopeLevel: number | undefined;
+  const scope: string[] = [];
+  for (const line of (draft ?? "").split("\n")) {
+    // コードブロックの中の行（例に書いた「対象外：なし」など）は、見出しにも札の行にも数えない（PR #363 の再レビュー）
+    if (fence) {
+      if (closesFence(line, fence)) fence = undefined;
+      continue;
+    }
+    const opened = openingFence(line);
+    if (opened) {
+      fence = opened;
+      continue;
+    }
+    const heading = HEADING_LINE.exec(line);
+    const label = heading ? undefined : BOLD_LABEL_LINE.exec(line);
+    if (!heading && !label) {
+      if (scopeLevel !== undefined) scope.push(line);
+      continue;
+    }
+    const level = heading ? (heading[1] as string).length : 7;
+    const name = ((heading ? heading[2] : label?.[1]) ?? "").trim();
+    if (scopeLevel !== undefined) {
+      // 「対象」「対象外」の札は、太字のスコープの下に同じ太字で置いても、節の終わりにしない（PR #363 の再レビュー）
+      if (level <= scopeLevel && !(label && SCOPE_LABEL_NAME.test(name))) return scope;
+      // 節の中の小見出し・札（「### 対象外」「**対象**」）は、札の行として残す
+      scope.push(name);
+      continue;
+    }
+    // 文書の題（最初の H1）は節ではないので飛ばす
+    if (first && level === 1) {
+      first = false;
+      continue;
+    }
+    if (!SCOPE_NAME.test(name)) return undefined;
+    scopeLevel = level;
+  }
+  return scopeLevel === undefined ? undefined : scope;
+}
+
+/** 前回の下書きで、「スコープ」の節が冒頭にあるか（PBI-340）。 */
+export function scopeComesFirst(draft: string | undefined): boolean {
+  return leadingScopeLines(draft) !== undefined;
+}
+
+/**
+ * 対象・対象外を定める札の行。行の頭（箇条書きの記号・太字・表の区切りの後ろ）に札を置き、コロンか行末か表の区切りが続く行だけを
+ * 数える（「- 対象外：なし」「**対象外**：…」「| 対象外 | … |」「対象外」）。説明の文の中の「対象外」は数えない（PR #363 の再レビュー）。
+ */
+const scopeLabelLine = (name: string) =>
+  new RegExp(
+    `^[ \\t]*(?:[-*+][ \\t]+|\\d+[.)][ \\t]+|\\|[ \\t]*)?(?:\\*\\*)?${name}(?:\\*\\*)?[ \\t]*(?:[：:]|\\||$)`,
+  );
+/** 対象外の札の行（「対象外：なし」を含む）。 */
+const OUT_OF_SCOPE_LINE = scopeLabelLine("対象外");
+/** 対象の札の行。 */
+const IN_SCOPE_LINE = scopeLabelLine("対象");
+
+/**
+ * 前回の下書きの冒頭に、決まりの形の「スコープ」の節（対象と対象外の行がある）があるか（PBI-340）。対象外を必ず書かせる前の
+ * 下書きでは、スコープの節があっても対象外の行が無いことがある（PR #363 の再レビュー）。
+ */
+export function scopeIsWritten(draft: string | undefined): boolean {
+  const lines = leadingScopeLines(draft);
+  if (!lines) return false;
+  return lines.some((l) => IN_SCOPE_LINE.test(l)) && lines.some((l) => OUT_OF_SCOPE_LINE.test(l));
+}
+
+/**
+ * 差し戻しの直し（答えの反映だけの直しと、通常の部分的な直し）で、前回の下書きの冒頭にスコープの節が無いとき（PBI-340 より前の
+ * 下書き）の例外の指示。関係の無い節を保つ決まりのままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
+ */
+function missingScopeLines(previous: string | undefined): string[] {
+  if (scopeIsWritten(previous)) return [];
+  return [
+    "- 例外：前回の下書きには、冒頭に、対象と対象外を書いた「スコープ」の節がありません（節が無い、ほかの節より後ろにある、または対象・対象外の行が無い。今の決まりの前に作った下書きです）。「一字一句そのまま保つ」の決まりの例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移し、対象・対象外の行が無ければ足して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
   ];
 }
 
@@ -1309,6 +1409,7 @@ function answerOnlyReworkLines(
   task: Task,
   step: "requirements" | "design",
   deliverable: string,
+  previous: string | undefined,
 ): string[] {
   const current = currentRemarks(task, step);
   return [
@@ -1316,6 +1417,7 @@ function answerOnlyReworkLines(
     `--- 差し戻しの直し方（「確認したいこと」への答えの反映だけ。承認済みの決定を変えない） ---`,
     `- 今回の指摘（${current.map((r) => r.id).join("・")}）は、「確認したいこと」への答えだけです。戻し先の判断で、すべて推奨の答えどおりで、承認済みの決定を変えないと判断しました（上の判断を参照）。前回の${deliverable}を元にして、最初から書き直さない`,
     "- 答えを反映する所だけを直す。答えた項目を「確認したいこと」から外し、推奨の答えがすでに本文に書かれていれば本文は変えない。書かれていなければ、答えのとおりに、関わる所だけを書き足す・直す",
+    ...missingScopeLines(previous),
     "- ほかの節・項目・表の行は、一字一句そのまま保つ（言い回しの整え・順序の入れ替え・要約・追記もしない）。答えが付かなかった「確認したいこと」の項目は、そのまま残す",
     `- 本文に書かないもの（作業の報告など）、${step === "requirements" ? "要求の ID（R-n）" : "テスト観点・節の構成"}は、前回のまま保つ（付け直さない）`,
     "- 指摘を読むと、答えが推奨どおりでない・承認済みの決定を変える・質問への答え以外の要望を含むと分かったときは、この軽い直しをやめ、指摘に応えて通常の直しをする。指摘への対応に、そう判断した理由を書く",
@@ -1327,13 +1429,16 @@ function answerOnlyReworkLines(
  * 答えの反映だけの直し（PBI-302 B1）の、提出の前の確認。セルフレビュー（観点の担当の起動）をせず、読み直す3点だけを確かめる。
  * セルフレビューの報告（sacty-self-review）は付けない（sacty は記録なしとして扱い、次の回は全体をレビューする）。
  */
-function answerOnlyCheckLines(deliverable: string): string[] {
+function answerOnlyCheckLines(deliverable: string, previous: string | undefined): string[] {
+  const scopeAdded = !scopeIsWritten(previous);
   return [
     "",
     "--- 提出の前の確認（セルフレビューは行わない） ---",
     `- この実行は、答えの反映だけの直しなので、セルフレビュー（既定のスキル review-dispatch、観点の担当の起動）は行わない。代わりに、提出の前に${deliverable}を最初から最後まで読み直して、次の3点だけを確かめ、崩れていれば直す`,
     "  - 答えた項目が「確認したいこと」から外れ、答えていない項目は残っている",
-    "  - 答えを反映した所以外が、前回の下書きと一字一句同じである",
+    scopeAdded
+      ? "  - 冒頭に「スコープ」の節があり、「スコープ」「確認したいこと」「既定で決めたこと」の順になっている。スコープの節に対象と対象外の行がある。答えを反映した所と足したスコープの節、節の並べ直し以外が、前回の下書きと一字一句同じである"
+      : "  - 答えを反映した所以外が、前回の下書きと一字一句同じである",
     "  - 要求・テスト観点などの ID に、欠番・重複・付け直しが無い",
     "- セルフレビューの報告（sacty-self-review の JSON）は付けない",
   ];
@@ -1347,7 +1452,7 @@ function acceptanceCheckLines(): string[] {
   return [
     "- 受け入れの確かめ方を書くときは、次の2つに分けて書く",
     "  - 自動のテストで確かめること：エージェントが作業領域（コンテナ）でテストを実行して確かめる。実機や特定の環境の振る舞いは、合成の入力・イベントで模擬して確かめる形にする",
-    "  - 人が確かめること：作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）。最終承認で人が確かめる項目になる。無ければ書かない",
+    "  - 人が確かめること：作業領域では確かめられないもの（実機・特定の OS・入力方式・外部のサービス・目視など）。最終承認で人が確かめる項目になる。項目ごとに、確かめないまま進めた場合の具体的な懸念（何が・誰に・どう困るか）を1文で添える。無ければ書かない",
   ];
 }
 
@@ -2632,7 +2737,7 @@ export function buildPrompt(
         "あなたはソフトウェア開発の工程エージェントです。",
         "次のタスクから、要求要件をMarkdownで書いてください。",
         "",
-        "- 何を実現するかを1〜3文で書く",
+        "- 何を実現するかは、下の「スコープ」の節に1〜3文で書く",
         ...earsLines(),
         "- 実装方法には踏み込まない",
         ...acceptanceCheckLines(),
@@ -2654,14 +2759,14 @@ export function buildPrompt(
       const light = rework === "partial" && isAnswerOnlyRework(task, "requirements");
       lines.push(
         ...(light
-          ? answerOnlyReworkLines(task, "requirements", "要求要件")
-          : reworkLines(task, "requirements", "要求要件", rework)),
+          ? answerOnlyReworkLines(task, "requirements", "要求要件", previous)
+          : reworkLines(task, "requirements", "要求要件", rework, previous)),
       );
       const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
         ...documentVerificationLines(task, "requirements"),
         ...(light
-          ? answerOnlyCheckLines("要求要件")
+          ? answerOnlyCheckLines("要求要件", previous)
           : selfReviewLines(
               "design-doc",
               "要求要件",
@@ -2732,14 +2837,14 @@ export function buildPrompt(
       const light = rework === "partial" && isAnswerOnlyRework(task, "design");
       lines.push(
         ...(light
-          ? answerOnlyReworkLines(task, "design", "設計とテスト観点")
-          : reworkLines(task, "design", "設計とテスト観点", rework)),
+          ? answerOnlyReworkLines(task, "design", "設計とテスト観点", previous)
+          : reworkLines(task, "design", "設計とテスト観点", rework, previous)),
       );
       const narrowed = reviewRework(task, "design", rework);
       lines.push(
         ...documentVerificationLines(task, "design"),
         ...(light
-          ? answerOnlyCheckLines("設計とテスト観点")
+          ? answerOnlyCheckLines("設計とテスト観点", previous)
           : selfReviewLines(
               "design-doc",
               "設計とテスト観点",
