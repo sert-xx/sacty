@@ -10462,9 +10462,20 @@ export class TaskService {
     if (!repositoryNow) return fail(message("pr.workspaceMissing"));
     try {
       const authEnv = await this.gitAuth(task, repositoryNow.url, usedSecrets);
-      // 人が PR のブランチに足したコミットを取り込んでいれば、その先頭に積む（PBI-334。強制プッシュしない）
+      // 人が PR のブランチに足したコミットを取り込んでいれば、その先頭に積む（PBI-334。強制プッシュしない）。PR の更新の前に
+      // 止まって再開したときは、同じブランチにプッシュ済みのコミットに積む（取り込んだ先頭を親にしたコミットを、そのまま使い直す。
+      // 前の PR のコミットに戻すと、別のコミットになって早送りでプッシュできない）
+      const pushedHere =
+        task.headMerge?.branch === branch &&
+        task.pushedBranch?.branch === branch &&
+        task.pushedBranch.commit !== task.pullRequest?.commit
+          ? task.pushedBranch.commit
+          : undefined;
       let parent =
-        pendingHeadMerge(task)?.commit ?? task.pullRequest?.commit ?? repositoryNow.baseCommit;
+        pendingHeadMerge(task)?.commit ??
+        pushedHere ??
+        task.pullRequest?.commit ??
+        repositoryNow.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
       if (taskBranch) {
         // タスクブランチの最新（マージした要求要件・設計の PR を含む）に積む。要求要件・設計のファイルは実装の作業領域に

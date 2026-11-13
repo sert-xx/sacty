@@ -10801,6 +10801,27 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       made.activity.close();
     });
 
+    it("人の先頭に積んでプッシュした後、PR の更新に失敗して再開したら、プッシュ済みのコミットに積む（前の PR のコミットに戻さない）", async () => {
+      const { activity, service, repos, pulls, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      pulls.fail = "network";
+      sendBack(service, id);
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(repos.published[1]).toMatchObject({ parent: human });
+      const repushed = service.get(id)?.task.pushedBranch?.commit;
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      // 早送りでプッシュできるよう、プッシュ済みのコミット（人の先頭を親にしたもの）に積む
+      expect(repos.published.at(-1)?.parent).toBe(repushed);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
     it("人のコミットと競合したら、競合したファイルを、人の側を残して解消するよう実装に渡す", async () => {
       const { activity, service, executor, repos, id } = await toImplementGate(rework());
       const pushed = service.get(id)?.task.pushedBranch;
