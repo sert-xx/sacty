@@ -420,126 +420,71 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     );
   });
 
-  it("メソッドを上書きするフォーム本文は上流に送らずに拒否する", async () => {
+  it("メソッドを上書きするフォーム本文と曖昧な multipart を拒否する", async () => {
     const g = await startPf([json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    const send = (body: string, type: string, extra = {}) =>
+      fetch(url, { method: "POST", headers: { "content-type": type, ...extra }, body });
+    const encoded = "application/x-www-form-urlencoded";
     for (const body of [
       "_method=DELETE",
       "text=ok;%5FMETHOD%5B%5D=DELETE",
       "x.http.method.override=DELETE",
     ]) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      expect(res.status, body).toBe(400);
+      expect((await send(body, encoded)).status).toBe(400);
     }
-    const form = new FormData();
-    form.append("_method", "DELETE");
-    expect((await fetch(url, { method: "POST", body: form })).status).toBe(400);
-    const ambiguous = new FormData();
-    ambiguous.append("_meth\\od", "DELETE");
-    expect((await fetch(url, { method: "POST", body: ambiguous })).status).toBe(400);
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=missing" },
-          body: "invalid",
-        })
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/x-www-form-urlencoded",
-            "content-encoding": "gzip",
-          },
-          body: "data",
-        })
-      ).status,
-    ).toBe(400);
-    expect(g.calls).toHaveLength(0);
-    const ok = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: "method_name=DELETE&text=ok",
-    });
-    expect(ok.status).toBe(201);
-    expect(g.calls[0]?.body).toBe("method_name=DELETE&text=ok");
-    const normalForm = new FormData();
-    normalForm.append("text", "hello");
-    expect((await fetch(url, { method: "POST", body: normalForm })).status).toBe(201);
-    expect(g.calls[1]?.body).toContain('name="text"');
-    expect(g.calls[1]?.body).toContain("hello");
-  });
-
-  it("multipart の値とファイル内のヘッダーに似た文字列を転送する", async () => {
-    const g = await startPf([json(201, {})]);
-    const body =
-      '--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nname*=value\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary\r\nContent-Disposition: form-data; name="file"; filename="a; name=x.txt"\r\n\r\n--boundary-more\r\nname*=file\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary--\r\n';
-    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
-      method: "POST",
-      headers: { "content-type": "multipart/form-data; boundary=boundary" },
-      body,
-    });
-    expect(res.status).toBe(201);
-    expect(g.calls[0]?.body).toBe(body);
-  });
-
-  it("multipart の曖昧な境界と名前を拒否する", async () => {
-    const g = await startPf([]);
-    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    expect((await send("data", encoded, { "content-encoding": "gzip" })).status).toBe(400);
+    const type = "multipart/form-data; boundary=evil";
     const part = (name: string) =>
       `--evil\r\nContent-Disposition: form-data; ${name}\r\n\r\nvalue\r\n--evil--\r\n`;
-    for (const [type, body] of [
+    for (const [contentType, body] of [
+      ["multipart/form-data; boundary=missing", "invalid"],
       [
         "multipart/form-data; boundary=safe; boundary=evil",
         `--safe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--safe--\r\n${part('name="_method"')}`,
       ],
-      ["multipart/form-data; boundary=evil", `--evil--junk\r\n${part('name="_method"')}`],
+      [type, `--evil--junk\r\n${part('name="_method"')}`],
+      [type, `--evil--\r\n${part('name="_method"')}`],
+      [type, `${part('name="safe"')}${part('name="_method"')}`],
       [
         'multipart/form-data; boundary="s\\\\afe"',
         '--s\\\\afe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--s\\\\afe--\r\n--s\\afe\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--s\\afe--\r\n',
       ],
-      ["multipart/form-data; boundary=evil", part('name="%5Fmethod"')],
+      [type, part('name="_method"')],
+      [type, part('name="%5Fmethod"')],
+      [type, part('name="_meth\\od"')],
       [
-        "multipart/form-data; boundary=evil",
+        type,
         part('name="safe"').replace(
           "Content-Disposition:",
           'X-Test: x\nContent-Disposition: form-data; name="_method"\r\nContent-Disposition:',
         ),
       ],
       [
-        "multipart/form-data; boundary=evil",
+        type,
         part('name="safe"').replace("Content-Disposition:", "X-Test: x\rContent-Disposition:"),
       ],
-      ["multipart/form-data; boundary=evil", part(`name="${"a".repeat(20_000)}"`)],
-      [
-        "multipart/form-data; boundary=evil",
-        part('name="safe"').replace("value", "\r\n--evilX".repeat(10_001)),
-      ],
-      ["multipart/form-data; boundary=evil", part('name="safe"; name="other"')],
-      ["multipart/form-data; boundary=evil", part("name=\"safe\"; name*=utf-8''other")],
-      [
-        "multipart/form-data; boundary=evil",
-        part('name="safe"\r\nContent-Disposition: form-data; name="other"'),
-      ],
-    ]) {
-      const res = await fetch(url, { method: "POST", headers: { "content-type": type }, body });
-      expect(res.status).toBe(400);
-    }
+      [type, part(`name="${"a".repeat(20_000)}"`)],
+      [type, part('name="safe"').replace("value", "\r\n--evilX".repeat(10_001))],
+      [type, part('name="safe"; name="other"')],
+      [type, part("name=\"safe\"; name*=utf-8''other")],
+      [type, part('name="safe"\r\nContent-Disposition: form-data; name="other"')],
+    ])
+      expect((await send(body, contentType)).status, body.slice(0, 100)).toBe(400);
     expect(g.calls).toHaveLength(0);
+    const body = "method_name=DELETE&text=ok";
+    expect((await send(body, encoded)).status).toBe(201);
+    expect(g.calls[0]?.body).toBe(body);
+    const normal = part('name="text"');
+    expect((await send(normal, type)).status).toBe(201);
+    expect(g.calls[1]?.body).toBe(normal);
   });
 
-  it("preamble を含む multipart を検査して転送する", async () => {
+  it("multipart の preamble、値、ファイル内容と最終境界の空白を転送する", async () => {
     const g = await startPf([json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
     const body =
-      'preamble\r\n--boundaryX\r\n--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nhello\r\n--boundary--\r\n';
+      'preamble\r\n--boundaryX\r\n--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nname*=value\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary\r\nContent-Disposition: form-data; name="file"; filename="a; name=x.txt"\r\n\r\n--boundary-more\r\nname*=file\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary-- \t\r\n';
     const headers = { "content-type": "multipart/form-data; boundary=boundary" };
     expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
     expect(g.calls[0]?.body).toBe(body);
@@ -561,22 +506,15 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const g = await startPf([json(201, {}), json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
     const headers = { "content-type": "application/x-www-form-urlencoded" };
-    expect(
-      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(10_000) })).status,
-    ).toBe(201);
-    expect(
-      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(10_001) })).status,
-    ).toBe(400);
-    expect((await fetch(url, { method: "POST", headers, body: "&".repeat(10_001) })).status).toBe(
-      400,
-    );
+    const send = (body: string) => fetch(url, { method: "POST", headers, body });
+    expect((await send("a=1&".repeat(10_000))).status).toBe(201);
+    expect((await send("a=1&".repeat(10_001))).status).toBe(400);
+    expect((await send("&".repeat(10_001))).status).toBe(400);
     expect(g.calls).toHaveLength(1);
     const largeValue = `a=${"x".repeat(2 * 1024 * 1024)}`;
-    expect((await fetch(url, { method: "POST", headers, body: largeValue })).status).toBe(201);
+    expect((await send(largeValue)).status).toBe(201);
     expect(g.calls[1]?.body).toBe(largeValue);
-    expect(
-      (await fetch(url, { method: "POST", headers, body: "x".repeat(16 * 1024 + 1) })).status,
-    ).toBe(400);
+    expect((await send("x".repeat(16 * 1024 + 1))).status).toBe(400);
     const part =
       '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
     expect(
@@ -589,7 +527,7 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
       ).status,
     ).toBe(400);
     expect(g.calls).toHaveLength(2);
-    expect((await fetch(url, { method: "POST", headers, body: "a=1" })).status).toBe(201);
+    expect((await send("a=1")).status).toBe(201);
     expect(g.calls).toHaveLength(3);
   });
 

@@ -650,8 +650,12 @@ export class AiGateway {
               throw new Error("invalid boundary");
             pos += delimiter.length;
             if (body.subarray(pos, pos + 2).equals(Buffer.from("--"))) {
-              if (pos + 2 !== body.length && body.toString("latin1", pos + 2, pos + 4) !== "\r\n")
+              if (count === 0) throw new Error("premature closing boundary");
+              pos += 2;
+              while (body[pos] === 32 || body[pos] === 9) pos++;
+              if (pos !== body.length && body.toString("latin1", pos, pos + 2) !== "\r\n")
                 throw new Error("invalid closing boundary");
+              if (body.indexOf(marker, pos) >= 0) throw new Error("boundary after closing");
               break;
             }
             if (++count > 10_000) throw new Error("too many form fields");
