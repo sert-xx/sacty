@@ -1792,6 +1792,56 @@ describe("テストが決まらずに止まったタスクの再開（人がテ�
       "person",
     );
 
+  it("テストが決まっていなくても、予算・ほかのエラー・人の一時停止で止まったタスクでは決められない。以前の版にその記録があっても読み込める（PBI-337）", () => {
+    seq = 0;
+    const stops = [
+      { reason: "budget" },
+      { reason: "error", message: { code: "pr.failed", params: { detail: "boom" } } },
+      { reason: "manual" },
+    ];
+    stops.forEach((payload, i) => {
+      const id = `s${i}`;
+      const events = [
+        created(id),
+        ev(id, chosen(STEP_PLANS.direct)),
+        ev(id, { type: "TaskPaused", payload } as EventInput),
+      ];
+      const paused = project(events).get(id) as Task;
+      expect(paused.status).toBe("paused");
+      expect(canDecideTests(paused)).toBe(false);
+      // 以前の版は、止まった理由を見ずに決められたので、その記録は読み込める
+      const decidedTask = project([...events, decided(id, { testCommand: "make check" })]).get(
+        id,
+      ) as Task;
+      expect(decidedTask.testCommand).toBe("make check");
+      // 工程の選択からやり直した再開（rechooseSteps）の記録も読み込める
+      const rechosen = project([...events, resumed(id, true)]).get(id) as Task;
+      expect(rechosen.status).toBe("queued");
+    });
+    // テストが決まらないことを理由に止まったタスク（以前の版）は、決められる
+    for (const code of [
+      "orchestrator.noTestsUncertain",
+      "orchestrator.noTestsContradicted",
+      "orchestrator.bugfixNeedsTests",
+    ]) {
+      const id = code;
+      const params =
+        code === "orchestrator.noTestsContradicted"
+          ? { reason: "r", files: "a.test.ts" }
+          : { reason: "r" };
+      const paused = project([
+        created(id),
+        ev(id, chosen(STEP_PLANS.direct)),
+        ev(id, {
+          type: "TaskPaused",
+          payload: { reason: "error", message: { code, params } },
+        } as EventInput),
+      ]).get(id) as Task;
+      expect(canDecideTests(paused)).toBe(true);
+      expect(canRechooseSteps(paused)).toBe(true);
+    }
+  });
+
   it("人がテストのコマンドかテストなしの理由を決めると、タスクに持ち、人が決めたことがわかる", () => {
     seq = 0;
     const events = undecided("t1", chosen(STEP_PLANS.direct));
@@ -3893,22 +3943,6 @@ describe("人が PR のブランチに足したコミットの取り込みと、
     const clean = project([...events, headMerged("t1", "p1", "h1")]).get("t1");
     expect(clean?.publishPending).toBe(true);
     expect(clean?.verifyFeedback).toBeUndefined();
-  });
-
-  it("最終レビューをする流れで、検証に通った後に取り込んだら（reverify）、PR を出さずに検証の待ちに戻す", () => {
-    seq = 0;
-    const events = [...prepared("t1"), ...verifiedImplementation("t1"), pushed("t1", "p1")];
-    const task = project([
-      ...events,
-      ev("t1", {
-        type: "PullRequestHeadMerged",
-        payload: { branch: "sacty/t", from: "p1", commit: "h1", conflicts: [], reverify: true },
-      }),
-    ]).get("t1");
-    expect(task?.publishPending).toBeUndefined();
-    expect(task?.verification).toBe("pending");
-    expect(task?.status).toBe("idle");
-    expect(task && pendingHeadMerge(task)?.commit).toBe("h1");
   });
 
   it("sacty が組み立てた PR の本文を、PR ごとに最後のものだけ記録する", () => {

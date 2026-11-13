@@ -1,17 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import {
-  access,
-  chmod,
-  constants,
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, constants, cp, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -146,21 +135,13 @@ export interface RepositoryWorkspace {
    */
   snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
   /**
-   * 実装の作業領域の内容（.git を除く）を outDir に写す。ゴールガーディアンに、実装後のコードを使い捨ての写しで
-   * 読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。gitDir があれば、写しの .git は、作業領域の .git
-   * （エージェントが書き換えられる）ではなく、退避したメタデータの写しにする（最終レビューのテストが git を参照できるように）。
-   * include を渡すと、写した後に、そのパス（リポジトリの根からの相対パス）のファイルを、gitDir の commit にある内容で
-   * 置き換える（commit に無いパスは、写しからも消す）。実装の PR に sacty が足す成果物のファイル（要求要件・設計）を、
-   * PR と同じ中身で写しに入れるため（`publish` の keep と同じ扱い）。include には gitDir が要る。
+   * 実装の作業領域の内容（.git を除く）を outDir に写す。PR の指摘の戻し先の判断・監査のエージェントに、実装後のコードを
+   * 使い捨ての写しで読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。gitDir があれば、写しの .git は、
+   * 作業領域の .git（エージェントが書き換えられる）ではなく、退避したメタデータの写しにする（エージェントが git を参照できるように）。
    * 読めないファイル・ディレクトリ（権限 0000 のファイルなど。エージェントが展開したツールにある。PBI-278）は、全体を失敗に
    * せず、写さずに skipped で返す。
    */
-  copyWorkingTree(
-    dir: string,
-    outDir: string,
-    gitDir?: string,
-    include?: { commit: string; paths: string[] },
-  ): Promise<WorkingTreeCopy>;
+  copyWorkingTree(dir: string, outDir: string, gitDir?: string): Promise<WorkingTreeCopy>;
   /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
@@ -655,14 +636,8 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return { baseCommit, baseBranch: branch };
   }
 
-  async copyWorkingTree(
-    dir: string,
-    outDir: string,
-    gitDir?: string,
-    include?: { commit: string; paths: string[] },
-  ) {
+  async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (!existsSync(dir)) throw new MessageError(message("verify.workspaceMissing"));
-    if (include && !gitDir) throw new MessageError(message("git.invalidPath"));
     mkdirSync(dirname(outDir), { recursive: true });
     const skipped = { count: 0, paths: [] as string[] };
     // 数 GB・数万ファイルになりうるので、非同期で写す（写す間もデーモンが応答し続ける。PBI-156）
@@ -683,55 +658,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     });
     // 退避したメタデータ（エージェントが触る前のもの）の写しを .git にする。写しなので、退避したものは書き換えられない
     if (gitDir) await cp(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
-    // PR に足すファイルを、PR のコミットの内容にする（作業領域にあった同じパスのファイルは、PR には入らないので消す）
-    if (include && gitDir) {
-      // 写しの .git のインデックスにも、同じ内容を反映する（`git ls-files` で追跡ファイルを列挙する検査が、PR と同じファイルを見るように）
-      const indexEnv = isolatedEnv(join(outDir, ".git", "index"));
-      const inIndex = (args: string[]) =>
-        git(
-          args[0] ?? "git",
-          ["--git-dir", join(outDir, ".git"), "--work-tree", outDir, ...SAFE_CONFIG, ...args],
-          indexEnv,
-        );
-      for (const path of include.paths) {
-        if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
-        const blob = await this.readBlob(gitDir, include.commit, path);
-        const target = await this.clearPath(outDir, path);
-        // 置き換え・削除に備えて、そのパス（ディレクトリだったときは、その下も）のインデックスの項目を外す
-        await inIndex(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", path]);
-        if (blob === undefined) continue;
-        await mkdir(dirname(target), { recursive: true });
-        // 読んだバイト列をそのまま書く（UTF-8 の BOM も、コミットのとおりに残す）
-        await writeFile(target, blob.bytes);
-        // 実行ビットも、コミットのファイルの種類に合わせる（作業ツリーとインデックスで、ファイルの種類の差分が出ないように）
-        await chmod(target, blob.mode === "100755" ? 0o755 : 0o644);
-        await inIndex([
-          "update-index",
-          "--add",
-          "--replace",
-          "--cacheinfo",
-          `${blob.mode},${blob.object},${path}`,
-        ]);
-      }
-    }
     return { skipped };
-  }
-
-  /**
-   * outDir の中の path のファイルの場所を空け、その絶対パスを返す。作業領域はエージェントが書き換えられるので、途中の
-   * ディレクトリの場所にシンボリックリンクやファイルがあれば消す（リンクの先に書いて、写しの外を書き換えないため）。
-   */
-  private async clearPath(outDir: string, path: string): Promise<string> {
-    const parts = path.split("/");
-    let current = outDir;
-    for (const part of parts.slice(0, -1)) {
-      current = join(current, part);
-      const stat = await lstat(current).catch(() => undefined);
-      if (stat && !stat.isDirectory()) await rm(current, { force: true });
-    }
-    const target = join(current, parts[parts.length - 1] ?? "");
-    await rm(target, { recursive: true, force: true });
-    return target;
   }
 
   async snapshot(gitDir: string, baseCommit: string, outDir: string) {

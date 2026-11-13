@@ -2,106 +2,18 @@ import type { FinalReview, Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { fillTemplate, limitBody, PR_BODY_MAX } from "./pr-template.js";
 import {
-  buildFinalReviewPrompt,
   buildPrompt,
   buildPullRequestBody,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
   chatJudgementLines,
-  extractFinalReview,
   HUMAN_CHECK_ITEM_MAX,
   HUMAN_CHECKS_BODY_MAX,
 } from "./prompts.js";
 
 // 環境が原因のテストの失敗と、作業領域では確かめられない確かめ方を、人が最終承認で確かめる項目に回す（PBI-155）
 
-const block = (b: Record<string, unknown>) =>
-  `\`\`\`json\n${JSON.stringify({ "sacty-final-review": b })}\n\`\`\``;
-
-const verdict = (extra: Record<string, unknown> = {}) =>
-  block({
-    viewpoints: [{ id: "REQ", verified: true, reason: "検証している" }],
-    remarks: [],
-    summary: "ok",
-    ...extra,
-  });
-
-const read = (output: string, testCommand: string | null = "npm test") =>
-  extractFinalReview(output, ["REQ"], [], testCommand ? { testCommand } : {});
-
 const FAILURE = "processes.test.ts：止めたプロセスが残る。起点のコミットでも同じく失敗する";
-
-describe("最終レビューの、環境によるテストの失敗（PBI-155）", () => {
-  it("終了コードが 0 でなくても、失敗がすべて環境によるものと申告されれば合格にし、失敗を記録する", () => {
-    const review = read(
-      verdict({ tests: { exitCode: 1, output: "16 failed", environmentFailures: [FAILURE] } }),
-    );
-    expect(review.passed).toBe(true);
-    expect(review.tests).toEqual({
-      command: "npm test",
-      exitCode: 1,
-      output: "16 failed",
-      environmentFailures: [FAILURE],
-    });
-  });
-
-  it("環境による失敗の申告が無ければ、終了コードが 0 でないときは、これまでどおり不合格にする", () => {
-    for (const environmentFailures of [undefined, [], ["", "  "], [1, null]]) {
-      const review = read(verdict({ tests: { exitCode: 1, output: "", environmentFailures } }));
-      expect(review.passed, JSON.stringify(environmentFailures)).toBe(false);
-      expect(review.tests).not.toHaveProperty("environmentFailures");
-    }
-  });
-
-  it("終了コードの申告が無ければ、環境による失敗の申告があっても不合格にする", () => {
-    const review = read(verdict({ tests: { output: "", environmentFailures: [FAILURE] } }));
-    expect(review.passed).toBe(false);
-    expect(review.tests).not.toHaveProperty("environmentFailures");
-  });
-
-  it("終了コードが 0 なら、環境による失敗の申告は記録しない（合格のまま）", () => {
-    const review = read(
-      verdict({ tests: { exitCode: 0, output: "", environmentFailures: [FAILURE] } }),
-    );
-    expect(review.passed).toBe(true);
-    expect(review.tests).not.toHaveProperty("environmentFailures");
-  });
-
-  it("環境による失敗だけでも、観点を検証していなければ不合格にする", () => {
-    const review = read(
-      block({
-        viewpoints: [{ id: "REQ", verified: false, reason: "形だけ" }],
-        remarks: [],
-        tests: { exitCode: 1, output: "", environmentFailures: [FAILURE] },
-        summary: "ng",
-      }),
-    );
-    expect(review.passed).toBe(false);
-    expect(review.tests?.environmentFailures).toEqual([FAILURE]);
-  });
-});
-
-describe("最終レビューの、人が確かめること（PBI-155）", () => {
-  it("humanChecks を、文字列の項目だけ読んで記録する（合否には関わらない）", () => {
-    const review = read(
-      verdict({
-        tests: { exitCode: 0, output: "" },
-        humanChecks: [" macOS の日本語入力で、変換中の確定で送らない ", "", 3, null],
-      }),
-    );
-    expect(review.passed).toBe(true);
-    expect(review.humanChecks).toEqual(["macOS の日本語入力で、変換中の確定で送らない"]);
-  });
-
-  it("テストのコマンドが無いタスクでも読む。無ければ記録しない", () => {
-    expect(read(verdict({ humanChecks: ["実機で確かめる"] }), null)).toMatchObject({
-      passed: true,
-      humanChecks: ["実機で確かめる"],
-    });
-    expect(read(verdict(), null)).not.toHaveProperty("humanChecks");
-    expect(read(verdict({ humanChecks: [] }), null)).not.toHaveProperty("humanChecks");
-  });
-});
 
 const task = (extra: Partial<Task> = {}) =>
   ({
@@ -154,137 +66,6 @@ describe("人が確かめることの指示と出し方（PBI-155）", () => {
     expect(requirements).toContain("最終承認で人が確かめる項目になる");
     // ほかの工程には出さない
     expect(buildPrompt(task(), "implement")).not.toContain("受け入れの確かめ方を書くときは");
-  });
-
-  it("最終レビューの指示に、人が確かめることと、環境によるテストの失敗の扱いを書く", () => {
-    const prompt = buildFinalReviewPrompt(task(), "diff", { testCommand: "npm test" });
-    expect(prompt).toContain("--- 人が確かめること ---");
-    expect(prompt).toContain("作業領域では確かめられないもの（実機・特定の OS・入力方式");
-    expect(prompt).toContain(
-      "テストやコードで確かめられるのに確かめていないことは、humanChecks に回さずに不合格の理由にする",
-    );
-    expect(prompt).toContain("--- 環境によるテストの失敗 ---");
-    expect(prompt).toContain("変更を外した起点の状態でも同じように失敗する");
-    expect(prompt).toContain(
-      "1件でも、変更によるもの・環境によるとも不安定とも確かめられないものがあれば、environmentFailures を空にして",
-    );
-    expect(prompt).toContain('"environmentFailures":[]');
-    expect(prompt).toContain('"humanChecks":[]');
-  });
-
-  // 要求要件・設計の PR をマージ済みのタスク（成果物のファイルは、タスクブランチにあり、実装の PR に入る）
-  const withDocuments = (documentsDir = "docs/sacty") =>
-    ({
-      stepPullRequests: ["requirements", "design"].map((step) => ({
-        step,
-        path: `${documentsDir}/t-1/${step}.md`,
-      })),
-      ...(documentsDir === "docs/sacty" ? {} : { documentsDir }),
-    }) as unknown as Partial<Task>;
-
-  it("要求要件・設計の成果物を PR に足すタスクの最終レビューの指示に、写しには成果物が無く、リポジトリ全体の検査の結果は違いうることを書く。写しで通ったものは未確認として人の確認に回し、写しで失敗したものはこれまでどおり不合格にする", () => {
-    for (const testCommand of ["npm test", undefined]) {
-      const prompt = buildFinalReviewPrompt(
-        task(withDocuments()),
-        "diff",
-        testCommand ? { testCommand } : undefined,
-      );
-      expect(prompt).toContain("--- PR の中身と作業領域の写し ---");
-      // 成果物の置き場所(タスクの短い ID のディレクトリ)を示す
-      expect(prompt).toContain("sacty が docs/sacty/t-1/ の下に足す成果物");
-      expect(prompt).toContain("作業領域の写しには、このファイルが無い");
-      expect(prompt).toContain("prettier --check .");
-      // 写しで通った検査は、PR の中身では未確認として humanChecks に書く
-      expect(prompt).toContain("作業領域の写しで通った、リポジトリ全体に効く検査は");
-      expect(prompt).toContain("PR の中身で通るかは未確認");
-      expect(prompt).toContain("humanChecks に書いて、人の確認に回す");
-      // 写しで失敗した検査は、これまでどおり不合格の理由にする(人の確認に逃がさない)
-      expect(prompt).toContain("作業領域の写しで失敗した検査は、これまでどおり不合格の理由にする");
-      expect(prompt).toContain("humanChecks に回さない");
-      // 写しで失敗した検査まで、不合格にしないと読める文言は無い
-      expect(prompt).not.toContain("それを理由に不合格にはせず");
-    }
-  });
-
-  it("成果物のファイルを写しに入れた最終レビューの指示は、検査を PR と同じ中身で行わせ、成果物が原因の失敗も不合格にし、成果物を範囲・過剰さの判定に含めず、直し方（リポジトリの方針に合わせる）を指摘に添えさせる", () => {
-    for (const testCommand of ["npm test", undefined]) {
-      const prompt = buildFinalReviewPrompt(task(withDocuments()), "diff", {
-        ...(testCommand ? { testCommand } : {}),
-        stepDocumentsIncluded: true,
-      });
-      expect(prompt).toContain("--- PR の中身と作業領域の写し ---");
-      expect(prompt).toContain("sacty が docs/sacty/t-1/ の下に足す成果物");
-      expect(prompt).toContain("このファイルを PR のコミットと同じ内容で入れてある");
-      expect(prompt).toContain("PR の中身と同じ範囲で実行される");
-      // 成果物が原因の失敗も、人の確認に逃がさず不合格にする。写しには無い前提の文言は出さない
-      expect(prompt).toContain("成果物のファイルが原因で失敗した検査も、PR の中身で失敗するので");
-      expect(prompt).toContain("humanChecks に回さない");
-      expect(prompt).not.toContain("PR の中身で通るかは未確認");
-      expect(prompt).not.toContain("作業領域の写しには、このファイルが無い");
-      // 成果物は、実装の変更ではないので、範囲・過剰さ・観点の判定に含めない
-      expect(prompt).toContain("今回の実装の変更ではなく、下の差分には出ない");
-      expect(prompt).toContain("変更の範囲・過剰さ・観点の判定に含めない");
-      // 直し方：実装は書き換えられないので、検査の設定をリポジトリの方針に合わせる。タスクごとに行を足さない
-      expect(prompt).toContain("実装が書き換えても PR には残らないので、ファイルの書式を直さない");
-      expect(prompt).toContain("リポジトリの方針に合わせて直す");
-      expect(prompt).toContain("成果物の置き場所（docs/sacty/）をまとめて対象外にする");
-      expect(prompt).toContain("タスクの ID ごとのファイルやディレクトリを1つずつ足さない");
-      // その直しは範囲外・過剰にしない。確かめるだけのテストは足させない
-      expect(prompt).toContain("変更の範囲外・過剰とはしない");
-      expect(prompt).toContain("設定を確かめるだけのテストは足さない");
-    }
-  });
-
-  it("成果物を写しに入れていても、成果物を PR に足さないタスクには、この節を入れない", () => {
-    for (const extra of [{}, { ...withDocuments(), continuedPullRequest: { number: 7 } }]) {
-      const prompt = buildFinalReviewPrompt(task(extra as unknown as Partial<Task>), "diff", {
-        stepDocumentsIncluded: true,
-      });
-      expect(prompt).not.toContain("--- PR の中身と作業領域の写し ---");
-      expect(prompt).not.toContain("PR のコミットと同じ内容で入れてある");
-    }
-  });
-
-  it("成果物のディレクトリをオーケストレーターが決めていれば、そのディレクトリを書く", () => {
-    const prompt = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff");
-    expect(prompt).toContain("sacty が docs/ai/t-1/ の下に足す成果物");
-    // 写しに入れたときの、まとめて対象外にする置き場所も、そのディレクトリにする
-    const included = buildFinalReviewPrompt(task(withDocuments("docs/ai")), "diff", {
-      stepDocumentsIncluded: true,
-    });
-    // 既定でない置き場所は、ほかのファイルと共有されうるので、全体は対象外にしない
-    expect(included).toContain("成果物のディレクトリ（docs/ai/t-1/）に当たる範囲を対象外にする");
-    expect(included).toContain("置き場所（docs/ai/）はリポジトリのほかのファイルと共有されうる");
-    expect(included).not.toContain("docs/sacty/");
-    expect(prompt).not.toContain("docs/sacty/");
-  });
-
-  it("成果物を PR に足さないタスク(要求要件・設計の PR が無い・既存の PR を引き継ぐ)の最終レビューの指示には、この節を入れない", () => {
-    for (const extra of [
-      {},
-      { continuedPullRequest: { number: 7, url: "https://github.com/acme/app/pull/7" } },
-      { ...withDocuments(), continuedPullRequest: { number: 7 } },
-    ]) {
-      const prompt = buildFinalReviewPrompt(task(extra as unknown as Partial<Task>), "diff", {
-        testCommand: "npm test",
-      });
-      expect(prompt).not.toContain("--- PR の中身と作業領域の写し ---");
-      expect(prompt).not.toContain("作業領域の写しには、このファイルが無い");
-      expect(prompt).not.toContain("PR の中身で通るかは未確認");
-      // ほかの節は残る
-      expect(prompt).toContain("--- 人が確かめること ---");
-    }
-  });
-
-  it("テストのコマンドが無い最終レビューでは、人が確かめることだけを書く", () => {
-    const prompt = buildFinalReviewPrompt(
-      task({ noTestsReason: "テストが無い" } as Partial<Task>),
-      "diff",
-    );
-    expect(prompt).toContain("--- 人が確かめること ---");
-    expect(prompt).toContain('"humanChecks":[]');
-    expect(prompt).not.toContain("--- 環境によるテストの失敗 ---");
-    expect(prompt).not.toContain("environmentFailures");
   });
 
   it("テストを前の段の結果から使い回したら、PR の本文のテストの行にそう書く（PBI-305）", () => {

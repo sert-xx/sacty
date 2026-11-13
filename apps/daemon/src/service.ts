@@ -15,11 +15,9 @@ import {
   activeStep,
   applyEvent,
   auditOpen,
-  awaitingCiAfterReview,
   awaitingDeploymentCheck,
   awaitingDeploymentCi,
   awaitingGathering,
-  awaitingPullRequestCi,
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
@@ -35,7 +33,6 @@ import {
   canDecideTests,
   canDerive,
   canOverrideVerification,
-  canRechooseSteps,
   canRereview,
   canRerun,
   canRetryExport,
@@ -77,14 +74,12 @@ import {
   isFinished,
   isRepoless,
   isSecurityTask,
-  knownFlakyTests,
   lastChangeRound,
   latestStepPullRequest,
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
-  MAX_UNREADABLE_REVIEWS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
   MEMORY_SUMMARY_MAX,
@@ -101,10 +96,6 @@ import {
   ProjectDefinition,
   ProjectExport,
   type ProjectFlakyTests,
-  PULL_REQUEST_CI_GRACE_MS,
-  PULL_REQUEST_CI_TIMEOUT_MS,
-  PULL_REQUEST_NO_CI_GRACE_MS,
-  type PullRequestCi,
   type PullRequestMerge,
   type PullRequestTemplateUse,
   parseOrgUrl,
@@ -201,13 +192,7 @@ import {
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
-import {
-  CI_FAILURES_MAX,
-  type CiStatusReader,
-  isFailedConclusion,
-  redactLog,
-  rerunNotStarted,
-} from "./ci.js";
+import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
 import {
   COMMIT_CONVENTION_FILES,
   type CommitKind,
@@ -347,7 +332,6 @@ import {
   buildErrorAnalysisPrompt,
   buildExportDocument,
   buildExportPrompt,
-  buildFinalReviewPrompt,
   buildGatherPrompt,
   buildIntegrationReviewPrompt,
   buildInvestigationComment,
@@ -369,13 +353,11 @@ import {
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
   type ChatLogs,
-  carriedHumanChecks,
   changeableSteps,
   checkProvenance,
   continuablePullRequest,
   deriveBody,
   deriveRecord,
-  diffMatchesFiles,
   ERROR_REPORT_FILE,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -383,7 +365,6 @@ import {
   extractBlocks,
   extractDocumentPages,
   extractExport,
-  extractFinalReview,
   extractGathered,
   extractIntegrationReview,
   extractReproduction,
@@ -394,18 +375,9 @@ import {
   extractStepPlan,
   extractStepReview,
   extractTicketTriage,
-  finalReviewUnreadableDetail,
-  finalReviewVerdictIds,
-  finalReviewViewpointIds,
-  type InternalNameHit,
   integrationViewpointIds,
-  internalNameAllowance,
-  internalNamesInDiff,
   investigationMarker,
-  KNOWN_FLAKY_IN_PROMPT,
-  limitInternalNames,
   lineContextText,
-  mappedViewpointIds,
   operationSucceeded,
   passedContinuedFeedback,
   postedLatestCommit,
@@ -425,7 +397,6 @@ import {
   selectablePlans,
   servicePromptLines,
   skippedFilesLines,
-  type UncheckedInternalName,
   verificationBasis,
   viewpointRename,
   withoutInternalPaths,
@@ -481,7 +452,7 @@ import {
 } from "./shared-compose.js";
 import { prepareTaskCache, taskCachePromptLines } from "./task-cache.js";
 import { templateTask } from "./task-templates.js";
-import { findTestFiles, isDocumentsOnly, noTestsStop } from "./test-files.js";
+import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import {
   type ContinuePlan,
@@ -490,12 +461,6 @@ import {
   timeoutResumeLines,
 } from "./timeout-resume.js";
 import type { UpdateStatus } from "./update-check.js";
-import {
-  extractVerificationRecord,
-  fullRunRecorded,
-  partialTestsOnly,
-  withoutStepDocuments,
-} from "./verification-reuse.js";
 import {
   CODE_COPY_DIR,
   idEntries,
@@ -516,8 +481,6 @@ const REVIEW_DIFF_FILE = "pr.diff";
 
 /** 共用の compose の取得の失敗の理由（git の出力）の上限（PBI-70）。 */
 const SHARED_FETCH_DETAIL_MAX = 2000;
-/** デーモンのログに出す、CI を再実行できなかった理由の上限（文字数。伏せた後に切り詰める。PBI-311）。 */
-const CI_RERUN_REASON_MAX = 500;
 
 /**
  * 取り込みの1つの検索に入れる対象（repo:・org:）の数の上限（PBI-140）。GitHub の検索は 80 個でも答えるが、URL の長さに
@@ -601,9 +564,8 @@ type CleanupResult = {
   detail?: DaemonText;
 };
 
-/** 実装の検証（テストを実行する最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
 /**
- * 起動したサービスに、エージェントのコンテナ（工程・テストを実行する最終レビュー）からつなぐ設定（PBI-47）。ネットワークと、
+ * 起動したサービスに、エージェントのコンテナ（工程）からつなぐ設定（PBI-47）。ネットワークと、
  * localhost に転送するポート（PBI-60。転送するものが無ければ渡さない）。
  */
 function serviceConnection(started: StartedServices): {
@@ -614,15 +576,12 @@ function serviceConnection(started: StartedServices): {
   return { network: started.network, ...(forwards.length > 0 ? { forwards } : {}) };
 }
 
-function awaitingVerification(task: Task, finalReview = true): boolean {
-  return (
-    task.status === "idle" &&
-    task.verification !== undefined &&
-    !openProposal(task) &&
-    // 最終レビューの前に作った実装の PR の CI を待つ間も、最終レビューは並べて進める（PBI-314）。合格した後は、CI の結果だけを
-    // 待つ（PR の確認が CI を読み、通れば承認待ちに進む）。最終レビューをしないなら、CI を待っていた古いタスクも進める（PBI-331）
-    (!finalReview || !awaitingCiAfterReview(task))
-  );
+/**
+ * 実装の工程の後の、PR の作成の前の確かめ（競合の目印・セキュリティ対応の修正の範囲）を待っているか。変更の申し出の判断待ちの
+ * 間は進めない。最終レビュー・CI の待ちの途中だった以前の版のタスクも、ここから新しい流れに乗る（PBI-331）。
+ */
+function awaitingVerification(task: Task): boolean {
+  return task.status === "idle" && task.verification !== undefined && !openProposal(task);
 }
 
 /** 戻し先の判断の記録の担い手（PBI-332）。レビューの子タスクの答えから決めたなら sacty、工程のエージェントが判断したなら agent。 */
@@ -675,12 +634,6 @@ export type ServiceDeps = {
    * エージェントの実行を使わないように）。main.ts が有効にする。
    */
   reviewTasks?: boolean;
-  /**
-   * 実装の工程の後に、最終レビュー（ゴールガーディアンが作業領域でテストを実行して判定する）と、実装の PR の CI の待ち・
-   * 失敗した CI の再実行を行うか。false なら行わず、実装の PR をドラフトで作って PR のレビューの子タスクに渡し、指摘なしに
-   * なったらドラフトを外す（PBI-331）。既定は行う（工程の流れを確かめる既存のテストのため）。main.ts が false にする。
-   */
-  finalReview?: boolean;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -807,12 +760,12 @@ export type ServiceDeps = {
    */
   stepPullRequests?: boolean;
   /**
-   * 実装の PR を、ゴールガーディアンの最終レビューの前にドラフトで作り、CI と並べて最終レビューに進むか。既定は作る。
-   * false なら、検証に通った後に PR を作る（PR の CI を待たない流れを確かめるテストで切る）。
+   * 実装の PR をドラフトで作り、PR のレビューの子タスクの指摘なしまでドラフトのまま待つか（PBI-331）。既定は待つ。
+   * false なら、ドラフトにせずに実装の承認待ちにする（ドラフトの扱いを確かめないテストで切る）。
    */
   draftPullRequests?: boolean;
   /**
-   * 実装の作業領域に、ベースブランチの最新を取り込むか（実装を始めるとき・最終レビューの前。取り込んだら、提出する
+   * 実装の作業領域に、ベースブランチの最新を取り込むか（実装を始めるとき。取り込んだら、提出する
    * コミットはベースブランチの先頭を第2の親にしたマージコミットになる）。既定は取り込む。false なら取り込まない
    * （取り込みを確かめないテストで切る）。
    */
@@ -1183,12 +1136,6 @@ export class TaskService {
    * 再起動の後は1回ぶん余分に待つ。
    */
   private readonly ciSettled = new Map<string, string>();
-  /**
-   * 実装の PR の CI を待つタスクの、リポジトリに CI が無いかを確かめた結果（タスクごと。commit は確かめたときのコミット。
-   * PBI-309）。読めなかったときは覚えず、次の確認でやり直す。メモリーだけに持ち、再起動の後は1回確かめ直す。
-   */
-  private readonly noCiChecks = new Map<string, { commit: string; noCi: boolean }>();
-
   /** ダッシュボードの集計の元（作業履歴を畳み込んで持つ。PBI-118）。 */
   private readonly dashboardStats = new DashboardStats();
   /**
@@ -1461,9 +1408,7 @@ export class TaskService {
     // 承認待ちの PR のレビューの子タスク：止まって作れなかったものを作り、親が PR を更新していたら再レビューする（PBI-330）
     await this.reconcileReviewTasks();
     // 一時停止したタスクの実装の PR のドラフト（PBI-331）
-    if (this.deps.reviewTasks === true && !this.finalReview) await this.settlePausedDrafts();
-    // 最終レビューの前に作った実装の PR の CI（最終レビューをしないなら、CI を待たない。PBI-331）
-    if (this.finalReview) await this.checkVerificationCi();
+    if (this.deps.reviewTasks === true) await this.settlePausedDrafts();
     // マージの後の CI/CD とデプロイの監視（PBI-89）
     await this.checkDeployments();
   }
@@ -2008,165 +1953,6 @@ export class TaskService {
   }
 
   /**
-   * 最終レビューの前に作った（更新した）実装の PR の CI を待っているタスクの CI を読み、終わっていれば結果を記録する。
-   * PR の確認（60秒ごと）から呼ぶ。一時停止したタスクは読まない（再開すると続ける。待つ時間は PR を作った時刻から数える）。
-   * 失敗で終わったら、コミットごとに1回だけ失敗したジョブを再実行して待ち直す（PBI-311。待つ時間は再実行の時刻から数え直す）。
-   * 記録すると、最終レビューに進む。1つのタスクの失敗は、ほかのタスクを止めない。
-   */
-  async checkVerificationCi(): Promise<void> {
-    for (const task of [...this.tasks.values()]) {
-      if (!awaitingPullRequestCi(task)) this.noCiChecks.delete(task.id);
-      const ci = task.pullRequestCi;
-      const repo = task.pullRequest?.repo;
-      if (!ci || !repo || !awaitingPullRequestCi(task) || task.status !== "idle") continue;
-      if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) continue;
-      const pauses = this.pauseCounts.get(task.id) ?? 0;
-      const usedSecrets: string[] = [];
-      // 読んでいる間に一時停止・中止した、実装をやり直した、再実行を頼んだなら記録しない（再開した後の確認で取り直す）
-      const unchangedSince = (read: PullRequestCi): Task | undefined => {
-        const latest = this.tasks.get(task.id);
-        return latest?.status !== "idle" ||
-          !awaitingPullRequestCi(latest) ||
-          latest.pullRequestCi?.commit !== read.commit ||
-          latest.pullRequestCi?.rerun?.at !== read.rerun?.at ||
-          this.cancelling.has(task.id) ||
-          this.pauseRequested.has(task.id) ||
-          (this.pauseCounts.get(task.id) ?? 0) !== pauses
-          ? undefined
-          : latest;
-      };
-      // PR の向き先。引き継いだ既存の PR は、作業領域のベースブランチではなく PR の向き先
-      const baseBranch = task.continuedPullRequest?.baseBranch ?? task.repository?.baseBranch;
-      try {
-        // 同じコミットの待ち直しで戻した再実行は、今の待ち時間に関係しない
-        const awaited = ci.rerun?.restored ? undefined : ci.rerun;
-        const sinceRerun = awaited ? this.now() - Date.parse(awaited.at) : undefined;
-        const result = await this.readCi(task, {
-          repo,
-          commit: ci.commit,
-          elapsed: sinceRerun ?? this.now() - Date.parse(ci.startedAt),
-          key: `${task.id} pr`,
-          graceMs: PULL_REQUEST_CI_GRACE_MS,
-          timeoutMs: PULL_REQUEST_CI_TIMEOUT_MS,
-          usedSecrets,
-          // 再実行が始まらないまま猶予を過ぎたら（頼めなかったまま再起動したなど）、今の失敗を結果にする
-          ...(awaited && (sinceRerun as number) < PULL_REQUEST_CI_GRACE_MS
-            ? { rerunRuns: awaited.runs }
-            : {}),
-          ...(baseBranch ? { noCi: { graceMs: PULL_REQUEST_NO_CI_GRACE_MS, baseBranch } } : {}),
-        });
-        if (!result) continue;
-        const latest = unchangedSince(ci);
-        if (!latest) continue;
-        let finished: typeof result & { rerunSkipped?: true } = result;
-        if (
-          result.result === "failed" &&
-          !latest.pullRequestCiReruns?.some((r) => r.commit === ci.commit)
-        ) {
-          const rerun = await this.rerunFailedCi(
-            task,
-            ci,
-            repo,
-            result.failures,
-            usedSecrets,
-            unchangedSince,
-          );
-          if (rerun.outcome !== "skipped") continue;
-          finished = { ...result, rerunSkipped: true };
-          if (!unchangedSince(rerun.read)) continue;
-        }
-        this.append(this.mustGet(task.id), [
-          {
-            actor: "sacty",
-            event: { type: "PullRequestCiFinished", payload: { commit: ci.commit, ...finished } },
-          },
-        ]);
-      } catch (error) {
-        console.warn(
-          `[daemon] タスク ${task.id} の PR の CI を確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-        );
-      }
-    }
-  }
-
-  /**
-   * 実装の PR の CI の失敗したジョブを再実行する（PBI-311）。できなければスキップする（タスクを止めない・失敗にしない）。
-   * 頼む前に PullRequestCiRerunRequested を記録する（頼んだ後に再起動しても、2回頼まない）。1つでも頼めたら requested、
-   * 読んでいる間・頼む間にタスクが変わったなら changed（残りは頼まない）、1つも頼めなければ skipped（read は、確かめ直す基準の
-   * CI の記録）。
-   */
-  private async rerunFailedCi(
-    task: Task,
-    ci: PullRequestCi,
-    repo: string,
-    failures: CiFailure[],
-    usedSecrets: string[],
-    unchangedSince: (read: PullRequestCi) => Task | undefined,
-  ): Promise<{ outcome: "requested" | "changed" } | { outcome: "skipped"; read: PullRequestCi }> {
-    // 伏せてから切り詰める（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）
-    const reasonOf = (error: unknown): string =>
-      redactLog(renderMessage(redactText(errorText(error), usedSecrets), "ja"), usedSecrets).slice(
-        0,
-        CI_RERUN_REASON_MAX,
-      );
-    const reader = this.deps.ci;
-    let token: string;
-    let runs: { id: number; attempt?: number }[];
-    try {
-      if (!reader) throw new Error("CI/CD の状態を読む口がありません");
-      token = await this.githubToken(task, repo, usedSecrets);
-      const snapshot = await reader.snapshot({ repo, token, commit: ci.commit });
-      runs = snapshot.failedRuns.map(({ id, attempt }) => ({
-        id,
-        ...(attempt !== undefined ? { attempt } : {}),
-      }));
-      if (runs.length === 0) throw new Error("GitHub Actions 以外のチェックだけの失敗です");
-    } catch (error) {
-      console.warn(
-        `[daemon] タスク ${task.id} の PR の CI を再実行できませんでした。再実行せずに進みます：${reasonOf(error)}`,
-      );
-      return { outcome: "skipped", read: ci };
-    }
-    const latest = unchangedSince(ci);
-    if (!latest) return { outcome: "changed" };
-    this.append(latest, [
-      {
-        actor: "sacty",
-        event: {
-          type: "PullRequestCiRerunRequested",
-          payload: { commit: ci.commit, runs, failures },
-        },
-      },
-    ]);
-    const read = this.mustGet(task.id).pullRequestCi as PullRequestCi;
-    let requested = 0;
-    for (const run of runs) {
-      // 前の実行の応答を待つ間に止めたなら、残りを頼まない
-      if (!unchangedSince(read)) return { outcome: "changed" };
-      try {
-        await reader.rerunFailedJobs({ repo, token, runId: run.id });
-        requested += 1;
-      } catch (error) {
-        console.warn(
-          `[daemon] タスク ${task.id} の PR の CI の実行 ${run.id} を再実行できませんでした：${reasonOf(error)}`,
-        );
-      }
-    }
-    if (requested === 0) {
-      console.warn(
-        `[daemon] タスク ${task.id} の PR の CI を1つも再実行できませんでした。再実行せずに進みます`,
-      );
-      return { outcome: "skipped", read };
-    }
-    if (requested < runs.length) {
-      console.warn(
-        `[daemon] タスク ${task.id} の PR の CI の再実行を ${runs.length} 件中 ${requested} 件だけ頼めました。頼めた再実行を待ちます`,
-      );
-    }
-    return { outcome: "requested" };
-  }
-
-  /**
    * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
    * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
    * パスだけ。読むコミットは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭のコミット）で、
@@ -2335,12 +2121,10 @@ export class TaskService {
   }
 
   /**
-   * コミットの CI/CD の状態を読み、終わっていれば結果を返す（PBI-89。マージの後の監視と、最終レビューの前に作った実装の PR）。
-   * 待つなら undefined。読めない（認証・ネットワーク）なら待ち、時間の上限（timeoutMs）を過ぎていれば時間切れ。1つも無ければ
-   * graceMs を過ぎるまで待ってから none（noCi があれば、その短い猶予を過ぎた所でリポジトリに CI が無いと確かめられても
-   * none。PBI-309）。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。
-   * 失敗があれば、失敗したジョブとログの抜粋を読む。rerunRuns があれば、その実行の再実行が始まるまで待つ（PBI-311。頼んだ
-   * 直後の答えの古い失敗を、結果にしない）。
+   * コミットの CI/CD の状態を読み、終わっていれば結果を返す（PBI-89。マージの後の監視）。待つなら undefined。読めない
+   * （認証・ネットワーク）なら待ち、時間の上限（timeoutMs）を過ぎていれば時間切れ。1つも無ければ graceMs を過ぎるまで
+   * 待ってから none。すべて終わっていても、前の確認（key ごとに覚える）と同じ並びになるまで1回待つ。失敗があれば、失敗した
+   * ジョブとログの抜粋を読む。
    */
   private async readCi(
     task: Task,
@@ -2352,8 +2136,6 @@ export class TaskService {
       graceMs: number;
       timeoutMs: number;
       usedSecrets: string[];
-      rerunRuns?: readonly { id: number; attempt?: number }[];
-      noCi?: { graceMs: number; baseBranch: string };
     },
   ): Promise<
     | {
@@ -2378,7 +2160,6 @@ export class TaskService {
         ? { result: "timed_out", checks: [], failures: [] }
         : undefined;
     }
-    if (input.rerunRuns && rerunNotStarted(snapshot, input.rerunRuns)) return undefined;
     // 記録するのは、失敗・終わっていないものを先に 50 件まで（作業履歴を膨らませない）
     const checks = [...snapshot.checks]
       .sort(
@@ -2389,19 +2170,7 @@ export class TaskService {
       .slice(0, 50);
     if (snapshot.checks.length === 0) {
       // ワークフローの作成には少し時間がかかるので、しばらく待ってから CI/CD が無いと決める
-      const absent =
-        elapsed >= input.graceMs ||
-        (input.noCi !== undefined &&
-          elapsed >= input.noCi.graceMs &&
-          (await this.repositoryHasNoCi(
-            task,
-            repo,
-            commit,
-            input.noCi.baseBranch,
-            token,
-            usedSecrets,
-          )));
-      return absent ? { result: "none", checks: [], failures: [] } : undefined;
+      return elapsed >= input.graceMs ? { result: "none", checks: [], failures: [] } : undefined;
     }
     if (snapshot.checks.some((c) => c.status === "pending")) {
       this.ciSettled.delete(key);
@@ -2441,32 +2210,6 @@ export class TaskService {
       });
     }
     return { result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) };
-  }
-
-  /**
-   * リポジトリに CI が無いと確かめられるか（PBI-309）。結果はタスクとコミットごとに覚える。読めなければ覚えず、CI が無いとは
-   * 決めない（次の確認でやり直す）。
-   */
-  private async repositoryHasNoCi(
-    task: Task,
-    repo: string,
-    commit: string,
-    baseBranch: string,
-    token: string,
-    usedSecrets: string[],
-  ): Promise<boolean> {
-    const known = this.noCiChecks.get(task.id);
-    if (known?.commit === commit) return known.noCi;
-    try {
-      const noCi = (await this.deps.ci?.repositoryHasNoCi({ repo, token, baseBranch })) === true;
-      this.noCiChecks.set(task.id, { commit, noCi });
-      return noCi;
-    } catch (error) {
-      console.warn(
-        `[daemon] ${repo} に CI が無いかを確かめられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-      );
-      return false;
-    }
   }
 
   /**
@@ -3245,11 +2988,6 @@ export class TaskService {
       context?: ExecuteRun["context"];
       contextMcp?: ExecuteRun["contextMcp"];
       estimateCost?: boolean;
-      /**
-       * 実装後のコードの写しに、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物）を、PR のコミットの内容で
-       * 入れる（最終レビュー。リポジトリ全体の検査を PR と同じ中身で行わせるため。実装の作業領域には入れない）。
-       */
-      include?: { commit: string; paths: string[] };
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
@@ -3277,13 +3015,12 @@ export class TaskService {
               workspaceDir,
             );
           } else {
-            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
+            // エージェントが git を参照できるように、退避したメタデータの写しを .git にする。写す間も画面や API に
             // 応答し続けるよう、非同期で写す（写しの途中で止められたら、execute が起動の前に止める。PBI-156）
             const copied = await this.deps.repos.copyWorkingTree(
               this.repoDir(task),
               workspaceDir,
               this.trustedGitDir(task),
-              ...(run.include ? [run.include] : []),
             );
             // 読めないファイル（エージェントが展開したツールの権限 0000 のファイルなど）は、写し全体を失敗にせず、
             // 写さずに作業履歴に残して、エージェントに知らせる（PBI-278）
@@ -7518,10 +7255,10 @@ export class TaskService {
             ? t.status !== "cancelled" && !isCompleted(t)
             : // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
               (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
-              // 再開した後に、一時停止の間に届いた PR の指摘を反映する。最終レビューの前の PR の CI を待つタスクのように、
-              // 検証の待ちから外れていても、先に反映する（PBI-279）
+              // 再開した後に、一時停止の間に届いた PR の指摘を反映する。PR の作成の前の確かめの待ちから外れていても、先に
+              // 反映する（PBI-279）
               this.heldReviewDue(t) ||
-              awaitingVerification(t, this.finalReview) ||
+              awaitingVerification(t) ||
               // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
               awaitingIssueComment(t) ||
               // 書いたレビューを、対象の PR に投稿する（PBI-19）
@@ -8035,7 +7772,6 @@ export class TaskService {
         secrets: usedSecrets,
         aiReview,
         ...(stackedOn ? { stackedOn } : {}),
-        ...(!this.finalReview ? { reviewing: true } : {}),
       };
       // 本文は、待つ間に人が変えた題で書く（テンプレートを読んだ後に作る。PBI-323）
       const { body } = await this.pullRequestBody(
@@ -8231,11 +7967,6 @@ export class TaskService {
    */
   private async syncPullRequestHead(
     task: Task,
-    /**
-     * reverify：検証に通った後、PR を出す直前の取り込み（最終レビューをする流れ）。取り込んだら検証からやり直す。
-     * strict：ブランチを読めなければ failed にする（検証していない人の変更を含む PR を出さないための、PR を更新する直前の確認）。
-     */
-    options: { reverify?: boolean; strict?: boolean } = {},
   ): Promise<
     | { kind: "clean"; merged?: true }
     | { kind: "conflicts"; files: string[]; fresh: boolean }
@@ -8275,12 +8006,6 @@ export class TaskService {
       head = await this.deps.repos.fetchBranch(gitDir, pushed.branch, authEnv);
     } catch (error) {
       const detail = redactText(errorText(error), usedSecrets);
-      if (options.strict) {
-        return {
-          kind: "failed",
-          message: message("pr.headMergeFailed", { branch: pushed.branch, detail }),
-        };
-      }
       console.warn(
         `[daemon] PR のブランチ ${pushed.branch} を読めないため、人が足したコミットを確かめませんでした：${renderMessage(detail, "ja")}`,
       );
@@ -8309,7 +8034,6 @@ export class TaskService {
               from: pushed.commit,
               commit: head,
               conflicts,
-              ...(options.reverify ? { reverify: true as const } : {}),
             },
           },
         },
@@ -8631,29 +8355,24 @@ export class TaskService {
     if (initial && submittedComments) {
       return this.postGitHubComments(initial, submittedComments, "submitted");
     }
-    if (initial && awaitingVerification(initial, this.finalReview)) {
-      // 最終レビューをしない（PBI-331）：テストも CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする）
-      if (!this.finalReview) {
-        // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
-        // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
-        if (!(await this.headSyncedBeforePublish(initial))) return;
-        if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
-        const securityScope = await this.checkSecurityScope(initial);
-        if (securityScope === "stopped") return;
-        this.append(initial, [
-          {
-            actor: "sacty",
-            event: {
-              type: "FinalReviewSkipped",
-              payload: securityScope ? { securityScope } : {},
-            },
+    if (initial && awaitingVerification(initial)) {
+      // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
+      // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
+      // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+      if (!(await this.headSyncedBeforePublish(initial))) return;
+      if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
+      const securityScope = await this.checkSecurityScope(initial);
+      if (securityScope === "stopped") return;
+      this.append(initial, [
+        {
+          actor: "sacty",
+          event: {
+            type: "FinalReviewSkipped",
+            payload: securityScope ? { securityScope } : {},
           },
-        ]);
-        return;
-      }
-      // CI を待つ間の最終レビュー（PBI-314）は、CI を待っている PR のコミットを見るので、ベースブランチを取り込まない
-      if (!awaitingPullRequestCi(initial) && !(await this.syncBeforeVerify(initial))) return;
-      return this.verify(this.mustGet(taskId));
+        },
+      ]);
+      return;
     }
     // 要求要件・設計の成果を、タスクブランチへの PR にして承認待ちにする（PBI-57）
     const waitingPr = initial && this.awaitingStepPullRequest(initial);
@@ -8902,10 +8621,9 @@ export class TaskService {
           detail: rebased.message,
         });
       }
-      // テストの仕組みが無いという判断（PBI-94）を確かめる。使えなければ、テストのコマンドを決められなかったものとして
-      // 記録せずに止める（再開しても、テストを飛ばして通らないように）
-      const noTests = this.checkNoTests(latest, chosen);
-      if (noTests.stop) delete chosen.noTestsReason;
+      // テストの仕組みが無いという判断（PBI-94）を確かめる。使えなければ、その判断を記録しない（sacty はテストを実行しない
+      // ので止めない。実装の工程のエージェントが、リポジトリから決めて実行する。PBI-331）
+      if (this.checkNoTests(latest, chosen).stop) delete chosen.noTestsReason;
       // 選んだ組み合わせに予算を設定していれば、タスクの予算の上限をそれにする。人が上限を上げた後は、その上限を残す
       const planCap = chosen.plan && config.config.budgetPerPlanUsd?.[chosen.plan];
       if (planCap && !latest.budget.raised) chosen.budgetCapUsd = planCap;
@@ -8915,26 +8633,6 @@ export class TaskService {
         actor: review && chosen.imageSource !== "orchestrator" ? "sacty" : "orchestrator",
         event: { type: "StepsChosen", payload: chosen },
       });
-      // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）。
-      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）。最終レビューをしない（PBI-331）なら、sacty は
-      // テストを実行しないので止めない（実装の工程のエージェントが、リポジトリから決めて実行する）
-      if (
-        this.finalReview &&
-        chosen.steps.includes("implement") &&
-        !chosen.testCommand &&
-        !chosen.noTestsReason
-      ) {
-        events.push({
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: noTests.stop ?? message("orchestrator.testCommandUnknown"),
-            },
-          },
-        });
-      }
       this.append(latest, events);
     }
     // 工程が終わったら、次の工程を実行する前に、オーケストレーターが残りの工程を見直し、要らない工程を飛ばす（工程の見直し）
@@ -9296,8 +8994,6 @@ export class TaskService {
             ...(reviewVerification ? { reviewVerification } : {}),
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
-            // 最終レビューをしない流れ（PBI-331）では、実装が用意したテストを自分で実行させる
-            ...(this.finalReview ? {} : { finalReview: false }),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
@@ -9891,7 +9587,7 @@ export class TaskService {
         imageEnv: image.env,
         workspaceDir,
         prompt: [
-          buildPrompt(latest, step, { finalReview: this.finalReview }),
+          buildPrompt(latest, step),
           ...platformPromptLines(platform ? [platform] : []),
         ].join("\n"),
         ...(platform ? { platforms: [platform] } : {}),
@@ -10178,749 +9874,9 @@ export class TaskService {
   }
 
   /**
-   * 検証（最終レビュー）の前に、ベースブランチの最新を作業領域に取り込む（実装の実行の間にベースブランチが進んだとき。
-   * 競合で一時停止したタスクを再開して、実装をやり直さずに検証へ戻ったときも）。最終レビューは取り込んだ後のコードで行い、
-   * PR は取り込んだマージコミットで出す。PR の CI を待つ間は、ここに来ない（待つ間は検証に進まない）。CI の結果が出た後に
-   * ベースブランチが進んでいれば取り込み、PR を作り直して CI を待ち直す（前の CI の結果は、取り込む前のコードのもの）。
-   * 競合の目印が残っていれば、最終レビューに進まず、競合した
-   * ファイルを渡して実装をやり直す（続けて解消できなければ一時停止する）。取り込めなければ止める。
-   * 検証に進んでよければ true。
-   */
-  private async syncBeforeVerify(task: Task): Promise<boolean> {
-    if (
-      !this.mergesBase(task) ||
-      budgetState(task.budget) === "exceeded" ||
-      !existsSync(this.repoDir(task)) ||
-      !existsSync(this.trustedGitDir(task))
-    ) {
-      return true;
-    }
-    const synced = await this.syncBase(task);
-    if (synced.kind === "clean") return true;
-    if (synced.kind === "failed") {
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: synced.message } },
-        },
-      ]);
-      return false;
-    }
-    // 実行の間にベースブランチが進んで新しく競合したのは、エージェントの誤りではないので、数えずにやり直す。
-    // 前の取り込みの目印が残っているときは、検証に通らなかったものとして数える
-    const failed = this.append(this.mustGet(task.id), [
-      {
-        actor: "sacty",
-        event: {
-          type: "BaseConflictsRemained",
-          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
-        },
-      },
-    ]);
-    if (!synced.fresh) this.pauseIfVerificationKeepsFailing(failed);
-    return false;
-  }
-
-  /**
-   * 差分の追加された行にある内部の名前のうち、起点のコミットのそのファイルにすでにある名前を除く（PBI-302 A1 の DA の見直し）。
-   * リポジトリがもともと使っている名前（sacty 自身のリポジトリの文書が `.sacty-tools` を説明している、など）を足した行は、
-   * 持ち込みではない。起点に無いファイル（新しく足したファイル）は、除かずに残す（見つけたまま）。
-   * 起点のファイルを読めない（通常のファイルでない・大きすぎる・テキストでないなど）ときは、もともとある名前かを確かめられないので、
-   * 範囲外の変更にはせず、読めなかった理由とともに unchecked に分ける（誤って不合格にしない。PR #304 のレビュー）。
-   * 日本語・空白を含む名前のファイルも読めるよう、任意の名前の相対パスとして読む（anyName）。
-   */
-  private async introducedInternalNames(
-    task: Task,
-    dir: string,
-    diff: string,
-    allowed: string,
-  ): Promise<{ introduced: InternalNameHit[]; unchecked: UncheckedInternalName[] }> {
-    // 見出しを読み直した位置で、まず名前があるかを見る（無ければ、ファイルの一覧を取らない）
-    const found = internalNamesInDiff(diff, allowed);
-    if (found.length === 0 || !task.repository) return { introduced: found, unchecked: [] };
-    const repository = task.repository;
-    const gitDir = this.trustedGitDir(task);
-    const baseCommit = workBaseCommit(repository, task.baseMerge);
-    // 差分の節を、git が出したファイルの一覧（引用されていないパスと、名前の変更の前後）に結び付けて、位置と起点の側のパスを
-    // 決める（PR #304 のレビュー）。一覧を取れない・結び付けられないときは、起点と比べられないので、不合格にせず人に回す
-    let hits: InternalNameHit[];
-    try {
-      const files = await this.deps.repos.diffFiles(dir, gitDir, baseCommit);
-      if (!diffMatchesFiles(diff, files)) {
-        throw new Error("差分の節の数が、変更したファイルの一覧と合わない");
-      }
-      hits = internalNamesInDiff(diff, allowed, files);
-    } catch (error) {
-      const reason = `変更したファイルの一覧を取れない（${renderMessage(errorText(error), "ja")}）`;
-      return { introduced: [], unchecked: found.map((hit) => ({ ...hit, reason })) };
-    }
-    if (hits.length === 0) return { introduced: [], unchecked: [] };
-    const base = new Map<string, { text?: string; error?: string }>();
-    for (const path of new Set(hits.map((h) => h.basePath ?? h.path))) {
-      try {
-        const text = await this.deps.repos.readFile(gitDir, baseCommit, path, { anyName: true });
-        base.set(path, text === undefined ? {} : { text });
-      } catch (error) {
-        base.set(path, { error: renderMessage(errorText(error), "ja") });
-      }
-    }
-    const introduced: InternalNameHit[] = [];
-    const unchecked: UncheckedInternalName[] = [];
-    for (const hit of hits) {
-      // 起点の側は、名前を変える前のパスで比べる。表示する位置（path・line）は変えた後のまま
-      const read = base.get(hit.basePath ?? hit.path);
-      if (read?.error !== undefined) unchecked.push({ ...hit, reason: read.error });
-      else if (!read?.text?.includes(hit.name)) introduced.push(hit);
-    }
-    return { introduced, unchecked };
-  }
-
-  /**
-   * 最終レビューの写しに入れる、実装の PR に sacty が足すファイル（承認済みの要求要件・設計の成果物。PBI-57）と、その
-   * 内容を持つコミット。コミットは、最終レビューの前に作った実装の PR のコミット（CI を待つコミット）で、PR の中身そのもの
-   * （人が PR の中で直してマージした内容を含む）。要求要件・設計の PR が無いタスク・既存の PR を引き継いだタスク・PR を
-   * まだ作っていないタスクは undefined。コミットを取得できない・ファイルを写しに書けない（通常のファイルでない・大きすぎる・テキストでない）ときも（警告だけ出して）undefined にする。写しに入れられなくても、
-   * 最終レビューは、成果物が無い写しで（指示でその違いを伝えて）続ける。
-   */
-  private async stepDocumentsForReview(
-    task: Task,
-  ): Promise<{ commit: string; paths: string[] } | undefined> {
-    // (テストが作る不完全なタスクでも読めるよう、項目が無いときは空として扱う)
-    const stepPullRequests = task.stepPullRequests ?? [];
-    const commit = task.pullRequestCi?.commit;
-    if (!task.repository || !task.taskBranch || task.continuedPullRequest || !commit) return;
-    if (stepPullRequests.length === 0) return;
-    const usedSecrets: string[] = [];
-    const paths = [...new Set(stepPullRequests.map((p) => p.path))];
-    const gitDir = this.trustedGitDir(task);
-    try {
-      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
-      // 作ったコミットは退避したメタデータにあるので、通常は取得しない（用意し直したときだけ、リモートから取得する）
-      await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
-      // 写しに書けるファイルか（通常のファイル・大きすぎない・テキスト）も、写す前に確かめる。写しの作成の途中で失敗して
-      // 最終レビューが止まるのではなく、取得の失敗と同じく、成果物が無い写しで続ける（指示でその違いを伝える）
-      for (const path of paths) await this.deps.repos.readFile(gitDir, commit, path);
-    } catch (error) {
-      console.warn(
-        `[daemon] 最終レビューの写しに成果物を入れられませんでした（${task.id}）：`,
-        renderMessage(redactText(errorText(error), usedSecrets), "ja"),
-      );
-      return;
-    }
-    return { commit, paths };
-  }
-
-  /**
-   * 実装を検証する。ゴールガーディアンが新しいセッションで、タスクのイメージ・サービスにつないだ実装後のコードの写しで
-   * テスト（検証）のコマンドを実行し、その結果と差分・コードから最終レビューする（sacty はテストを別に実行しない）。
-   * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
-   */
-  private async verify(task: Task): Promise<void> {
-    const config = this.deps.config();
-    if (!config.ok) return;
-    if (budgetState(task.budget) === "exceeded") {
-      this.append(task, [
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
-      ]);
-      return;
-    }
-    const target = this.targetRepository(task, config.config);
-    const dir = this.repoDir(task);
-    if (
-      !target.ok ||
-      !task.repository ||
-      !existsSync(dir) ||
-      !existsSync(this.trustedGitDir(task))
-    ) {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: !target.ok
-                ? message("verify.testsUnavailable", { detail: target.message })
-                : message("verify.workspaceMissing"),
-            },
-          },
-        },
-      ]);
-      return;
-    }
-    const repo = target.repo;
-    // テストの仕組みが無いタスク（PBI-94）は、実装が用意して申告したテストのコマンドがあれば、それで検証する
-    const testCommand =
-      repo.testCommand ?? (task.noTestsReason ? task.addedTestCommand : undefined);
-    // 最終レビューは、タスクのイメージで実行する（テストを実行するため。PBI-318。古い版の作業履歴なら、実装（不具合の修正
-    // では再現）の工程のイメージ）。images から消えていれば、実行せずに理由を示して止める
-    const imageName = verificationImageOf(task);
-    const testImage = resolveImage(
-      this.projectImagesConfig(config.config, task.projectId),
-      imageName,
-    );
-    if (!testImage.ok) {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: message("verify.testsUnavailable", { detail: testImage.message }),
-            },
-          },
-        },
-      ]);
-      return;
-    }
-    // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める。
-    // テストの仕組みが無いタスク（PBI-94）は、止めずにテストなしで、最終レビューで目的から判定する
-    if (!testCommand && !task.noTestsReason) {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: { reason: "error", message: message("orchestrator.testCommandUnknown") },
-          },
-        },
-      ]);
-      return;
-    }
-    // 最終レビューの前に、実装の PR をドラフトで作り（更新し）、CI の結果を待たずに最終レビューに進む（PBI-314。PR の確認が
-    // CI を並べて読む）。CI が終わっていれば、その結果を最終レビューの判断の材料にする。実装に変更が無ければ、PR を作らずに進む
-    if (!task.pullRequestCi && this.draftsPullRequest(task)) {
-      const drafted = await this.publish(task, config.config, { verifying: true });
-      if (drafted !== "no_changes") return;
-    }
-    const prCi = this.mustGet(task.id).pullRequestCi;
-    // CI の結果を待たずに行う最終レビュー（PBI-314）。CI の結果は、届いてから sacty が合わせて判定する
-    const ciPending = prCi !== undefined && prCi.result === undefined;
-    // CI の結果を待たずに合格した最終レビューの検証の記録。CI が落ちて最終レビューし直すときに使い回させる（作業領域は同じ）
-    const reviewedBefore =
-      prCi?.reviewedBeforeResult && task.lastReview?.beforeCi?.commit === prCi.commit
-        ? task.lastReview.verificationRecord
-        : undefined;
-    // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
-    // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
-    const viewpointIds = finalReviewViewpointIds(task);
-    // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
-    // テストを書かずに差分で確かめると申告した観点も、対応させたものにする（判定はゴールガーディアンが差分で行う）
-    const mapped = mappedViewpointIds(task);
-    const unmappedViewpoints = task.noTestsReason
-      ? []
-      : viewpointIds.filter((id) => !mapped.has(id));
-    const current = task;
-
-    // 差分は、テストが観点を検証しているかを判断するのに欠かせない。取れなければ最終レビューをせずに止める
-    // （再開すると、差分の取得からやり直す）
-    let diff: string;
-    try {
-      diff = await this.deps.repos.diff(
-        dir,
-        this.trustedGitDir(task),
-        workBaseCommit(task.repository, task.baseMerge),
-      );
-    } catch (error) {
-      this.append(current, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: message("verify.diffUnavailable", { detail: errorText(error) }),
-            },
-          },
-        },
-      ]);
-      return;
-    }
-    // セキュリティ対応は、差分を前段の調査が宣言した修正の範囲と照らす。守っていなければ、観点 SEC-MIN を不合格にする
-    // （ゴールガーディアンにも伝え、やり直しの指示に理由が渡る）。エージェントに渡す差分は切り詰めるので、照合には
-    // 切り詰めていないファイルごとの変更を使う。取れなければ、差分と同じく最終レビューをせずに止める
-    let scopeViolated: ReturnType<typeof scopeViolation>;
-    if (isSecurityFix(task)) {
-      try {
-        const changes = await this.deps.repos.diffStats(
-          dir,
-          this.trustedGitDir(task),
-          workBaseCommit(task.repository, task.baseMerge),
-        );
-        scopeViolated = scopeViolation(securityScope(task), changes);
-      } catch (error) {
-        this.append(current, [
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: "error",
-                message: message("verify.diffUnavailable", { detail: errorText(error) }),
-              },
-            },
-          },
-        ]);
-        return;
-      }
-    }
-    // オーケストレーターが依頼を文書だけと判断した（PBI-284）なら、テストのコマンドにコードの検証が入っていない。差分に文書の
-    // ファイル以外が1つでもあれば、コードの変更が検証されないので、最終レビューをせずに止める（判断と差分が食い違ったとき。
-    // 人がテストの扱いを決めるまで、再開しても同じ理由で止まる）
-    if (task.documentsOnly) {
-      let outside: string[];
-      try {
-        outside = await this.changesOutsideDocuments(task, dir);
-      } catch (error) {
-        this.append(current, [
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: "error",
-                message: message("verify.diffUnavailable", { detail: errorText(error) }),
-              },
-            },
-          },
-        ]);
-        return;
-      }
-      if (outside.length > 0) {
-        this.append(current, [
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: "error",
-                message: message("verify.documentsOnlyContradicted", {
-                  files: outside.slice(0, 5).join("、"),
-                  total: outside.length,
-                }),
-              },
-            },
-          },
-        ]);
-        return;
-      }
-    }
-    // 人間が止めたなら、最終レビューを始めない（再開すると最終レビューからやり直す）
-    if (this.pauseRequested.has(task.id)) return;
-    // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする
-    const agent = this.usableAgent(
-      config.config,
-      config.config.defaultAgent,
-      task.id,
-      "final-review",
-    );
-    // 最終レビューは、実装後のコードを使い捨ての写しで読ませ、テストを実行させる（差分もこれまでどおり渡す）。
-    // テストを実行するなら、実装の工程で使うサービス（PBI-47）を、実行の前に起動してつなぎ、終わったら消す。
-    // 起動する前に、イメージを ID に確定させ、その ID で実行する（PBI-130）
-    const runId = randomUUID();
-    this.track(runId);
-    const services = testCommand
-      ? await this.startServices(current, "implement", runId, dir, true, testImage.image)
-      : undefined;
-    // 人間が止めたなら、記録しない（止めた記録は runNext の後始末で行う。再開すると最終レビューからやり直す）
-    if (this.pauseRequested.has(task.id)) {
-      if (services?.ok) await this.stopServices(current, "implement", runId);
-      return;
-    }
-    // サービスを起動できなければ、最終レビューをせずに止める（再開すると最終レビューからやり直す。PBI-47）
-    if (services && !services.ok) {
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: message("verify.testsUnavailable", { detail: services.message }),
-            },
-          },
-        },
-      ]);
-      return;
-    }
-    const started = services?.started;
-    // 実装の PR に sacty が足す成果物は、実装の作業領域に無いので、最終レビューの写しに PR の内容で入れる。入れられなければ、
-    // 入っていないものとして指示を作る（指示が、写しで通った検査を未確認として人の確認に回させる）
-    const include = await this.stepDocumentsForReview(this.mustGet(task.id));
-    // 差分に追加された行にある、sacty の作業領域の内部の名前（.sacty-tools など）。依頼・要求要件・設計に無いものは、範囲外の
-    // 変更として不合格にする（PBI-302 A1）
-    // 件数は、起点にある名前を除いた後で絞る（PR #304 のレビュー）
-    const sortedNames = await this.introducedInternalNames(
-      current,
-      dir,
-      diff,
-      internalNameAllowance(current),
-    );
-    const internalNames = limitInternalNames(sortedNames.introduced);
-    const uncheckedInternalNames = limitInternalNames(sortedNames.unchecked);
-    // プロジェクトの台帳の既知の不安定なテスト（PBI-312）。指示に渡したものだけを、申告を確かめるのにも使う
-    const knownFlaky = knownFlakyTests([...this.tasks.values()], current).slice(
-      0,
-      KNOWN_FLAKY_IN_PROMPT,
-    );
-    let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
-    try {
-      executed = await this.runGuardian(
-        current,
-        {
-          agent,
-          image: services?.image || testImage.image,
-          imageEnv: testImage.env,
-          taskCache: true,
-          runId,
-          ...(include ? { include } : {}),
-          prompt: [
-            buildFinalReviewPrompt(current, diff, {
-              ...(testCommand ? { testCommand } : {}),
-              ...(include ? { stepDocumentsIncluded: true } : {}),
-              ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
-              ...(internalNames.length > 0 ? { internalNames } : {}),
-              // 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305。取り込みなどで作業領域が変われば消えている）
-              ...(current.implementVerification
-                ? { implementVerification: current.implementVerification }
-                : {}),
-              ...(reviewedBefore ? { reviewBeforeCiVerification: reviewedBefore } : {}),
-              ...(ciPending ? { pullRequestCiPending: true } : {}),
-              ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
-              ...(prCi?.result
-                ? {
-                    pullRequest: {
-                      ...(current.pullRequest?.url ? { url: current.pullRequest.url } : {}),
-                      ci: prCi,
-                    },
-                  }
-                : {}),
-            }),
-            // 起動したサービスの接続先（PBI-47）
-            ...servicePromptLines(started?.services ?? []),
-          ].join("\n"),
-          role: "final-review",
-          ...(started ? serviceConnection(started) : {}),
-        },
-        "implemented",
-      );
-    } finally {
-      if (services?.ok) await this.stopServices(current, "implement", runId);
-    }
-    const { outcome, costUsd, estimated } = executed;
-    if (outcome.kind === "failed") {
-      // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
-      // 使った分の費用は記録し、予算に入れる
-      const failure = message("verify.finalReviewFailed", { detail: outcome.message });
-      this.append(current, [
-        {
-          actor: "guardian",
-          event: {
-            type: "FinalReviewFailed",
-            payload: {
-              reason: outcome.reason,
-              message: failure,
-              agentId: agent.id,
-              ...agentSetting(agent),
-              runId: executed.runId,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-              ...unknownCost(executed),
-            },
-          },
-        },
-        // 失敗したら、止めずに代わりのエージェントでレビューし直す
-        this.pauseOrFallBack(
-          task.id,
-          {
-            runId,
-            role: "final-review",
-            agent,
-            selected: config.config.defaultAgent,
-          },
-          outcome.reason,
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: this.stopReason(task.id, outcome.reason),
-                message: failure,
-                ...(await this.manualPauseInfo(task.id)),
-              },
-            },
-          },
-          config.config,
-        ),
-      ]);
-      this.warnIfNeeded(this.mustGet(task.id));
-      return;
-    }
-    // 人間が止めたときに、判定を記録せず、使った分の費用だけ記録する（再開すると最終レビューからやり直す）
-    const recordStopped = () =>
-      this.append(current, [
-        {
-          actor: "guardian",
-          event: {
-            type: "FinalReviewFailed",
-            payload: {
-              reason: "error",
-              message: message("verify.stoppedByPerson"),
-              agentId: agent.id,
-              ...agentSetting(agent),
-              runId,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-            },
-          },
-        },
-      ]);
-    // 崩れを直して読んだ判定の文字列から、秘密情報を伏せる（PBI-298）。秘密情報の取り出しを待つ間に人間が止めたなら、
-    // 判定を記録しない（合格を記録すると、再開したときに最終レビューをやり直さずに公開へ進んでしまう）
-    const hide = await this.reviewRedactor(task, config.config);
-    if (this.stopRequested(task.id)) {
-      recordStopped();
-      return;
-    }
-    const extractReview = (documentsOnly: boolean) =>
-      extractFinalReview(
-        outcome.output,
-        // セキュリティ対応は、テストを対応させない観点 SEC-MIN（差分が最小限か）も判定させる
-        finalReviewVerdictIds(task),
-        current.remarks.filter((r) => !r.voided).map((r) => r.id),
-        {
-          ...(testCommand ? { testCommand } : {}),
-          unmappedViewpoints,
-          // 前の回が人が確かめることに挙げた項目は、理由なしには落とさず、次の回へ引き継ぐ（PBI-294）
-          previousHumanChecks: carriedHumanChecks(current),
-          hide,
-          ...(scopeViolated ? { scopeViolation: scopeViolated } : {}),
-          ...(internalNames.length > 0 ? { internalNames } : {}),
-          ...(uncheckedInternalNames.length > 0 ? { uncheckedInternalNames } : {}),
-          internalAllowance: internalNameAllowance(current),
-          ...(documentsOnly ? { documentsOnly } : {}),
-          ...(changedFiles ? { changedFiles } : {}),
-          ...(knownFlaky.length > 0 ? { knownFlaky } : {}),
-          // 関係するテストだけの記録を、全件の結果として使い回させない（PBI-316）。CI の結果の前の最終レビュー（PBI-314）が
-          // 全件を実行していれば、その使い回しは認める（reusedFrom に、その段を表す値が無いため）
-          previousPartialTestsOnly:
-            partialTestsOnly(current.implementVerification, testCommand) &&
-            !fullRunRecorded(reviewedBefore, testCommand),
-        },
-      );
-    // 不安定な失敗の申告を確かめるのに使う（PBI-310）。申告があるときだけ読む
-    const changedFiles = outcome.output.includes("flakyFailures")
-      ? await this.changedFiles(current, dir)
-      : undefined;
-    // 差分を読む間に人間が止めたなら、判定を記録しない（合格を記録すると、再開で最終レビューをやり直さずに公開へ進む）
-    if (this.stopRequested(task.id)) {
-      recordStopped();
-      return;
-    }
-    let { missingCommands, unreadable, reuseRejected, ...review } = extractReview(false);
-    // 出力から判定を読み取れなかったときは、ゴールガーディアンの判定ではないので、不合格として記録せず（実装に戻さず、
-    // 過去の指摘を再発と数えず）、最終レビューを出し直させる。続けて MAX_UNREADABLE_REVIEWS 回読み取れなければ、
-    // 実装の問題ではないので、止めて人に知らせる（再開すると最終レビューからやり直す）。
-    // テストの全件の結果が無いのに、実装の工程から使い回したと申告したとき（PBI-316）も、誰も全件を実行していないので同じにする
-    if (unreadable || reuseRejected) {
-      const count = (this.mustGet(task.id).unreadableReviews ?? 0) + 1;
-      const path = `runs/${task.id}/${runId}.jsonl`;
-      const stop = count >= MAX_UNREADABLE_REVIEWS;
-      // 何が読めなかったか（JSON の何行目の何文字目で壊れているか。PBI-298）。秘密情報は伏せる
-      const detail = unreadable
-        ? finalReviewUnreadableDetail(outcome.output, hide)
-        : message("verify.partialTestsReused");
-      const failure = stop
-        ? message("verify.finalReviewUnreadableStopped", {
-            max: MAX_UNREADABLE_REVIEWS,
-            path,
-            ...(detail ? { detail } : {}),
-          })
-        : message("verify.finalReviewUnreadable", {
-            count,
-            max: MAX_UNREADABLE_REVIEWS,
-            path,
-            ...(detail ? { detail } : {}),
-          });
-      this.append(current, [
-        {
-          actor: "guardian",
-          event: {
-            type: "FinalReviewFailed",
-            payload: {
-              reason: "error",
-              message: failure,
-              verdictUnreadable: true,
-              agentId: agent.id,
-              ...agentSetting(agent),
-              runId,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-            },
-          },
-        },
-        ...(stop
-          ? [
-              {
-                actor: "sacty" as const,
-                event: {
-                  type: "TaskPaused" as const,
-                  payload: {
-                    reason: this.stopReason(task.id, "error"),
-                    message: failure,
-                    ...(await this.manualPauseInfo(task.id)),
-                  },
-                },
-              },
-            ]
-          : []),
-      ]);
-      this.warnIfNeeded(this.mustGet(task.id));
-      return;
-    }
-    // 差分が文書のファイルだけなら、ツールが無くて実行できなかった検証を止めずに人の確認へ回す（PBI-158）。実行される
-    // 振る舞いの無い変更で、イメージを直しても検証の結果は変わらないため。コードなど文書でないファイルが1つでもあれば止める
-    if (missingCommands.length > 0) {
-      const documentsOnly = await this.changesOnlyDocuments(current, dir);
-      // 差分を取る間に人間が止めたら、判定を記録しない（使った分の費用だけ記録する。一時停止は runNext の後始末で
-      // 記録し、再開すると最終レビューからやり直す）
-      if (this.stopRequested(task.id)) {
-        recordStopped();
-        return;
-      }
-      if (documentsOnly)
-        ({ missingCommands, unreadable, reuseRejected, ...review } = extractReview(true));
-    }
-    // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
-    // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
-    if (missingCommands.length > 0) {
-      const missing = message("verify.commandMissing", {
-        commands: missingCommands,
-        image: imageName ?? DEFAULT_IMAGE_NAME,
-        step: "implement",
-        // 再開のときにテストの扱いを決め直せるか（testToolsMissing と同じ条件。PBI-158）
-        ...(task.testCommand && !task.noTestsReason ? { testsDecidable: true } : {}),
-      });
-      this.append(current, [
-        {
-          actor: "guardian",
-          event: {
-            type: "FinalReviewFailed",
-            payload: {
-              reason: "error",
-              message: missing,
-              agentId: agent.id,
-              ...agentSetting(agent),
-              runId,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-            },
-          },
-        },
-        {
-          actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: "error", message: missing } },
-        },
-      ]);
-      return;
-    }
-    // 検証の記録（PBI-305）。最終レビューの前に作った実装の PR のコミットに結び付け、PR のレビューが同じコミットで使い回す。
-    // PR に sacty が足す成果物のファイルを写しに入れられなかったときは、写しが PR のコミットと同じ内容ではないので、どの検証も
-    // 成果物のファイルを覆っていない（一部だけ）として残す（PR のレビューは、そのファイルの分を実行する）
-    const verification = withoutStepDocuments(
-      extractVerificationRecord(outcome.output, "guardian").record,
-      include || current.continuedPullRequest
-        ? []
-        : [...new Set((current.stepPullRequests ?? []).map((p) => p.path))],
-    );
-    const reviewed = this.append(current, [
-      {
-        actor: "guardian",
-        event: {
-          type: "FinalReviewed",
-          payload: {
-            ...review,
-            ...(ciPending && prCi ? { beforeCi: { commit: prCi.commit } } : {}),
-            ...(verification
-              ? {
-                  verificationRecord: {
-                    ...(prCi?.commit ? { commit: prCi.commit } : {}),
-                    commands: verification.commands,
-                  },
-                }
-              : {}),
-            agentId: agent.id,
-            ...agentSetting(agent),
-            runId,
-            usage: outcome.usage,
-            costUsd,
-            estimated,
-          },
-        },
-      },
-    ]);
-    // CI を待つ間に合格したら、CI の結果だけを待つ（費用はかからない）。予算の上限に達していても止めず、警告だけ記録する。
-    // CI が落ちて最終レビューをし直すときは、実行の前に予算で止める（PBI-314）
-    if (review.passed && awaitingCiAfterReview(reviewed)) this.warnIfNeeded(reviewed);
-    else if (review.passed) this.checkBudget(reviewed);
-    else this.pauseIfVerificationKeepsFailing(reviewed);
-  }
-
-  /**
-   * タスクの差分（起点からの変更）が、文書のファイルだけか（PBI-158）。名前の変更は変更元と変更先に分けて見るので、コードを
-   * 文書の名前に変えても通らない。差分を取れなければ、文書だけとは見なさない（止める側に倒す）。
-   */
-  private async changedFiles(task: Task, dir: string): Promise<string[] | undefined> {
-    if (!task.repository) return undefined;
-    try {
-      const changes = await this.deps.repos.diffStats(
-        dir,
-        this.trustedGitDir(task),
-        workBaseCommit(task.repository, task.baseMerge),
-      );
-      return changes.map((c) => c.path);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async changesOnlyDocuments(task: Task, dir: string): Promise<boolean> {
-    if (!task.repository) return false;
-    try {
-      const changes = await this.deps.repos.diffStats(
-        dir,
-        this.trustedGitDir(task),
-        workBaseCommit(task.repository, task.baseMerge),
-      );
-      return isDocumentsOnly(changes.map((c) => c.path));
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * タスクの差分（起点からの変更）にある、文書のファイルでないもののパス（PBI-284）。名前の変更は変更元と変更先に分けて見る。
-   * 差分を取れなければ throw する（呼び出し側が、差分を取れないものとして止める）。
-   */
-  private async changesOutsideDocuments(task: Task, dir: string): Promise<string[]> {
-    if (!task.repository) return [];
-    const changes = await this.deps.repos.diffStats(
-      dir,
-      this.trustedGitDir(task),
-      workBaseCommit(task.repository, task.baseMerge),
-    );
-    return changes.map((c) => c.path).filter((path) => !isDocumentsOnly([path]));
-  }
-
-  /**
    * オーケストレーターの「テストの仕組みが無い」という判断（PBI-94）を確かめる。判断が無い・テストのコマンドがある・
    * 実装を含まない組み合わせなら確かめない。不具合の修正を選んだ（再現はテストで確かめる）・起点のコードにテストのファイルが
-   * 見つかった・確かめきれなかったなら、止める理由を返す（黙ってテストなしで通さないための歯止め）。
+   * 見つかった・確かめきれなかったなら、判断を使えない理由を返す（黙ってテストなしとして扱わないための歯止め）。
    */
   private checkNoTests(task: Task, chosen: ChosenSteps): { stop?: DaemonText } {
     const reason = chosen.noTestsReason;
@@ -10928,8 +9884,7 @@ export class TaskService {
     if (chosen.steps.includes("reproduce")) {
       return { stop: message("orchestrator.bugfixNeedsTests", { reason }) };
     }
-    // 文書だけの依頼（PBI-284）は、テストのファイルがあっても、テストなしで進めてよい。実装の差分に文書でないファイルが
-    // あれば、最終レビューの前に止める（コードの変更を検証なしで通さない）ので、ここでテストのファイルを探さない
+    // 文書だけの依頼（PBI-284）は、テストのファイルがあっても、テストなしで進めてよい（ここでテストのファイルを探さない）
     if (chosen.documentsOnly) return {};
     // 工程を選ぶ前なので、作業領域は起点のコードのまま
     const stop = noTestsStop(reason, findTestFiles(this.repoDir(task)));
@@ -11408,41 +10363,19 @@ export class TaskService {
   }
 
   /**
-   * 最終レビューの前に、実装の PR（ドラフト）を作るタスクか。既存の PR を引き継ぐタスクは、人の PR なので作らない（検証に
-   * 通ってから積む）。
-   */
-  private draftsPullRequest(task: Task): boolean {
-    return this.deps.draftPullRequests !== false && !task.continuedPullRequest && !!task.repository;
-  }
-
-  /** 実装の工程の後に、最終レビューと CI の待ちを行うか（PBI-331。ServiceDeps の finalReview）。 */
-  private get finalReview(): boolean {
-    return this.deps.finalReview !== false;
-  }
-
-  /**
-   * 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにして待つか（PBI-331）。最終レビューをしないタスクで、
-   * sacty が作る PR だけ（引き継いだ人の PR は、人の PR なのでドラフトにしない）。
+   * 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにして待つか（PBI-331）。sacty が作る PR だけ（引き継いだ
+   * 人の PR は、人の PR なのでドラフトにしない）。ServiceDeps の draftPullRequests を false にしたテストでは待たない。
    */
   private awaitsReview(task: Task): boolean {
-    return !this.finalReview && this.draftsPullRequest(task);
+    return this.deps.draftPullRequests !== false && !task.continuedPullRequest && !!task.repository;
   }
 
   /**
    * 実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作る（PBI-110）。コミットは、エージェントが
-   * 触れない退避した git のメタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
-   * - verifying（最終レビューの前）：PR をドラフトで作り（更新したなら、ドラフトに戻し）、承認待ちにせずに CI を待つ。
-   *   実装に変更が無く、まだ PR が無ければ、何も記録せずに no_changes を返す（最終レビューに進み、通った後にここで
-   *   変更なしを記録する）
-   * - そうでなければ（検証に通った・人がレビューへ進めた）：PR のドラフトを外し、実装の承認待ちで止め、レビュー用の
-   *   ラベルを付ける
+   * 触れない退避した git のメタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。PR は、PR のレビューの
+   * 子タスクの指摘なしまでドラフトのまま、実装の承認待ちで止め、レビュー用のラベルを付ける（PBI-331）。
    */
-  private async publish(
-    task: Task,
-    config: SactyConfig,
-    options: { verifying?: boolean } = {},
-  ): Promise<"published" | "no_changes" | "stopped"> {
-    const verifying = options.verifying === true;
+  private async publish(task: Task, config: SactyConfig): Promise<"published" | "stopped"> {
     const target = this.targetRepository(task, config);
     const dir = this.repoDir(task);
     const gitDir = this.trustedGitDir(task);
@@ -11498,32 +10431,17 @@ export class TaskService {
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
     // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
     if (this.stopRequested(task.id)) return "stopped";
-    // PR を出す直前にも、人が PR のブランチに足したコミットを取り込む（PBI-334。最終レビューの間などに足されたもの）。
+    // PR を出す直前にも、人が PR のブランチに足したコミットを取り込む（PBI-334。PR を出す前の取り込みの後に足されたもの）。
     // 競合したら、PR を出さずに実装をやり直す（PR の作成の待ちなら、PullRequestHeadMerged の投影がやり直しに戻す）
     const waitingPublish = task.publishPending === true;
-    // 最終レビューをする流れで、検証に通った後に取り込んだら、取り込んだ内容は検証していないので、検証からやり直す
-    const reverify = waitingPublish && this.finalReview;
-    const head = await this.syncPullRequestHead(task, reverify ? { reverify: true } : {});
+    const head = await this.syncPullRequestHead(task);
     if (head.kind === "failed") return fail(head.message);
     if (head.kind === "conflicts") {
       // 新しく競合したなら、PullRequestHeadMerged の投影が実装のやり直しに戻した
       if (waitingPublish && head.fresh) return "stopped";
-      // 最終レビューの前のドラフトの PR（verifying）で新しく競合したら、検証に進まず、競合したファイルを渡して実装をやり直す
-      // （数えない。エージェントの誤りではない）
-      if (verifying && head.fresh) {
-        this.append(this.mustGet(task.id), [
-          {
-            actor: "sacty",
-            event: { type: "BaseConflictsRemained", payload: { files: head.files, fresh: true } },
-          },
-        ]);
-        return "stopped";
-      }
-      // 前の取り込みの目印が残っている・最終レビューの前のドラフトの PR（verifying）は、目印のある内容をプッシュせずに止める
+      // 前の取り込みの目印が残っているなら、目印のある内容をプッシュせずに止める
       return fail(message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }));
     }
-    // 検証からやり直す（PullRequestHeadMerged の投影が、PR の作成の待ちを検証の待ちに戻した）
-    if (head.kind === "clean" && head.merged && reverify) return "stopped";
     // 先頭を読む間に一時停止・中止を求められたら、プッシュしない
     if (this.stopRequested(task.id)) return "stopped";
     task = this.mustGet(task.id);
@@ -11576,11 +10494,8 @@ export class TaskService {
           }
         }
       }
-      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする（最終レビューの日時が無い・前の提出のもののため）
-      const date =
-        verifying || !this.finalReview
-          ? this.outputAt(task, "implement")
-          : (task.lastReview?.at ?? task.createdAt);
+      // 実装の工程が終わったときにする（PBI-331）
+      const date = this.outputAt(task, "implement");
       // 認証・タスクブランチの取得などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの直前に確かめる）
       if (this.stopRequested(task.id)) return "stopped";
       const { commit } = await this.deps.repos.publish({
@@ -11594,9 +10509,7 @@ export class TaskService {
         branch,
         // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
         message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), this.titleAt(task, date))}\n\nsacty task ${task.id}`,
-        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。最終レビューの前は
-        // 実装の工程が終わった時刻、それより後は最終レビューの日時。最終レビューの前に作った PR は、検証に通った後も
-        // 内容が同じなので、そのコミットのままになる
+        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
         date,
         authEnv,
         ...(keep ? { keep } : {}),
@@ -11634,8 +10547,8 @@ export class TaskService {
       // 重ねている間は、検証に通った後もドラフトのままにする（依存先より先にマージさせない）
       const stackedOn = this.stackedPullRequest(task);
       const stacked = this.recordsPullRequestBase(task);
-      // 最終レビューをしないなら、PR のレビューの子タスクが指摘なしにするまでドラフトにする（PBI-331）
-      const awaitsReview = !verifying && this.awaitsReview(task);
+      // PR のレビューの子タスクが指摘なしにするまでドラフトにする（PBI-331）
+      const awaitsReview = this.awaitsReview(task);
       // 本文の「sacty のタスク「…」」は、待つ間に人が変えた題にする（テンプレートを読んだ後に作る。PBI-323）
       const { body, template } = await this.pullRequestBody(
         prRepo,
@@ -11643,16 +10556,12 @@ export class TaskService {
         usedSecrets,
         () =>
           buildPullRequestBodyText(this.latestTitled(task), {
-            verifying,
-            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
           }),
         () =>
           buildPullRequestBodyParts(this.latestTitled(task), {
-            verifying,
-            ...(awaitsReview || !this.finalReview ? { reviewing: true } : {}),
             secrets: usedSecrets,
             aiReview,
             ...(stackedOn ? { stackedOn } : {}),
@@ -11672,18 +10581,6 @@ export class TaskService {
           })
         : { body, record: true };
       if ("stop" in sent || this.stopRequested(task.id)) return "stopped";
-      // 最終レビューをする流れで、本文を用意する間（エージェントがまとめる間など）に人がコミットを足していたら、検証していない
-      // 内容の PR を出さない（取り込んで、検証からやり直す）
-      if (reverify) {
-        const moved = await this.syncPullRequestHead(this.mustGet(task.id), {
-          reverify: true,
-          strict: true,
-        });
-        if (moved.kind === "failed") return fail(moved.message);
-        if (moved.kind === "conflicts" || moved.merged) return "stopped";
-      }
-      // 先頭を読む間に一時停止・中止を求められたら、PR を更新しない
-      if (this.stopRequested(task.id)) return "stopped";
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
@@ -11693,7 +10590,7 @@ export class TaskService {
         title: this.latestTitled(task).title,
         body: sent.body,
         number,
-        ...(verifying || awaitsReview || task.stack ? { draft: true } : {}),
+        ...(awaitsReview || task.stack ? { draft: true } : {}),
         // 重ねている間は、ドラフトを使えないリポジトリでも、ドラフトでない PR にしない（PBI-317）
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
@@ -11704,8 +10601,8 @@ export class TaskService {
       let draft = pr.draft;
       let draftError: unknown;
       const baseRecord = stacked ? { baseBranch: repositoryNow.baseBranch } : {};
-      if (verifying || awaitsReview || task.stack) {
-        // 前の提出でレビューへ進めた PR を更新した（PR の指摘で実装をやり直した）なら、検証の間はドラフトに戻す。戻せなく
+      if (awaitsReview || task.stack) {
+        // 前の提出でドラフトを外した PR を更新した（PR の指摘で実装をやり直した）なら、ドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
         // ドラフトにする（PBI-317。作った PR がドラフトでなかったときも）
         if ((number || task.stack) && !draft) {
@@ -11737,34 +10634,12 @@ export class TaskService {
           }),
         );
       }
-      if (verifying) {
-        this.append(task, [
-          {
-            actor: "sacty",
-            event: {
-              type: "PullRequestPublished",
-              payload: {
-                branch,
-                commit,
-                template,
-                url: pr.url,
-                number: pr.number,
-                repo: prRepo,
-                verifying: true,
-                ...(draft ? { draft: true as const } : {}),
-                ...baseRecord,
-              },
-            },
-          },
-        ]);
-        return "published";
-      }
       // レビューへ進める（検証に通った・人がレビューへ進めた）ので、ドラフトを外す。外せない・今の状態を確かめられなければ、
       // 承認待ちにせずに止める（再開すると、ここからやり直す）。ドラフトかは、台帳や PR の更新の答えではなく、外す前に
       // GitHub の今の PR を読んで決める（ドラフトに戻した答え・更新の答えを受け取れなかったときも外すため）。すでに
       // 外れていれば（人が外した・ドラフトを使えないリポジトリ）何もしない
       // 依存先の PR に重ねている間は、ドラフトのまま承認待ちにする（依存先がマージされたら、向き先を付け替えて外す。PBI-317）
-      // 最終レビューをしないなら、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
+      // sacty が作る PR は、ドラフトのまま承認待ちにし、PR のレビューの子タスクの指摘なしで外す（PBI-331）
       if (!task.stack && !awaitsReview) {
         try {
           await this.deps.pulls.setDraft({ repo: prRepo, token, number: pr.number, draft: false });
@@ -11802,8 +10677,6 @@ export class TaskService {
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
       // 今までどおり止める（開いている PR をどうするかは人が決める）
       if (error instanceof NothingToCommitError && !task.pullRequest) {
-        // 最終レビューの前なら、PR を作らずに最終レビューに進む（通った後に、変更なしを記録する）
-        if (verifying) return "no_changes";
         const submitted = this.append(task, [
           {
             actor: "sacty",
@@ -11842,11 +10715,9 @@ export class TaskService {
     if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
-      // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-      // 最終レビューをしない流れ（PBI-331）では、実装の工程が終わったときにする
-      const date = this.finalReview
-        ? (task.lastReview?.at ?? task.createdAt)
-        : this.outputAt(task, "implement");
+      // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）。実装の工程が終わった
+      // ときにする（PBI-331）
+      const date = this.outputAt(task, "implement");
       // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
       const subject = await this.commitSubjectFor(
         task,
@@ -11966,8 +10837,8 @@ export class TaskService {
     if (this.deps.reviewTasks !== true) return;
     try {
       if (parent.status === "cancelled" || this.cancelling.has(parent.id)) return;
-      // 依存先に重ねた実装の PR は、依存先がマージされて向き先を付け替えるまでレビューしない。最終レビューをする流れでは、
-      // ドラフトを外したとき（付け替えの後）に作る。しない流れ（PBI-331）では、ドラフトのままレビューし、指摘なしで外す
+      // 依存先に重ねた実装の PR は、依存先がマージされて向き先を付け替えるまでレビューしない。ドラフトのままレビューし、
+      // 指摘なしで外す（PBI-331）。指摘なしを待たない PR（以前の版の記録など）は、ドラフトを外したとき（付け替えの後）に作る
       const pr = parent.pullRequest;
       if (step === "implement" && pr?.number === number) {
         const retargeted =
@@ -12185,7 +11056,7 @@ export class TaskService {
   }
 
   /**
-   * 最終レビューをしない流れ（PBI-331）で、実装の実行の間に人が PR のブランチに足したコミットを、PR を出す前に取り込む
+   * 実装の実行の間に人が PR のブランチに足したコミットを、PR を出す前に取り込む
    * （PBI-334）。新しく競合したら BaseConflictsRemained（fresh。数えない）を記録して実装をやり直させ、false。取り込めなければ
    * 一時停止して false。
    */
@@ -12217,8 +11088,7 @@ export class TaskService {
   }
 
   /**
-   * 最終レビューをしない流れ（PBI-331）で、実装の前のベースブランチの取り込みで競合した目印が、実装の後に残っていないか
-   * 確かめる（最終レビューの前の syncBeforeVerify と同じ扱い。取り込み直しはしない）。残っていれば BaseConflictsRemained を
+   * 実装の前のベースブランチの取り込みで競合した目印が、実装の後に残っていないか確かめる（PBI-331。取り込み直しはしない）。残っていれば BaseConflictsRemained を
    * 記録して実装をやり直させ（続けて解消できなければ一時停止する）、false。確かめられなければ一時停止して false。
    */
   private async conflictsResolved(task: Task): Promise<boolean> {
@@ -12251,9 +11121,8 @@ export class TaskService {
   }
 
   /**
-   * 最終レビューをしない流れ（PBI-331）で、セキュリティ対応の差分を前段の調査が宣言した修正の範囲と照らす（最終レビューの
-   * 照合と同じ。PR の本文と PR のレビューの子タスクに渡す）。セキュリティ対応でなければ undefined。差分を取れなければ、
-   * 最終レビューと同じく止める（"stopped"）。
+   * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らす（PBI-331。PR の本文と PR のレビューの子タスクに
+   * 渡す）。セキュリティ対応でなければ undefined。差分を取れなければ止める（"stopped"）。
    */
   private async checkSecurityScope(
     task: Task,
@@ -14288,7 +13157,7 @@ export class TaskService {
       return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
     }
     if (!GATED_STEPS.includes(step)) return [];
-    // 実装は、検証（テストと最終レビュー）に通り、PR を作ってから承認待ちにする（PBI-110。publish の implementSubmitted）
+    // 実装は、PR を作ってから承認待ちにする（PBI-110。publish の implementSubmitted）
     if (step === "implement") return [];
     // PR で承認する工程（PBI-57）は、成果を PR にしてから承認待ちにする（PR の記録と一緒に提出する）
     if (isStepPullRequestKey(step) && this.stepPullRequestsOn(task)) return [];
@@ -16568,15 +15437,8 @@ export class TaskService {
       }
       events.push({ actor: "person", event: { type: "TestsDecided", payload: input.tests } });
     }
-    // 最終レビューをしない流れ（PBI-331）では、テストが決まらないことで止めないので、それを理由に工程を選び直さない
-    const rechooseSteps = !input.tests && this.finalReview && canRechooseSteps(task);
-    // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。工程の選択からやり直すときは、
-    // 選んだ工程に結びつく変更が消えるので断る（黙って人の指定を失わないため）
-    const settingCount =
-      (input.image !== undefined ? 1 : 0) + Object.keys(input.agents ?? {}).length;
-    if (rechooseSteps && settingCount > 0) {
-      throw new InvalidOperationError(message("resume.stepSettingsRechoose"));
-    }
+    // 再開と一緒に、タスクのイメージ・工程のエージェントを変える（タスクの詳細で変えるのと同じ）。テストが決まらないことで
+    // 止めない（PBI-331）ので、それを理由に工程の選択からやり直すことはない
     events.push(...this.stepSettingChanges(task, input));
     // 補足を足した説明が、再実行の画面で直す説明の上限を超えるなら断る（人が自分の補足を削らないと再実行できなくなる）。
     // 確かめるのは再開の時点の説明（チケットのトリアージで説明を書き換えるタスクは、その後に超えることがある）
@@ -16592,7 +15454,6 @@ export class TaskService {
         type: "TaskResumed",
         payload: {
           retry: task.resumeTo === "queued",
-          ...(rechooseSteps ? { rechooseSteps: true as const } : {}),
           ...(input.note ? { note: input.note } : {}),
         },
       },

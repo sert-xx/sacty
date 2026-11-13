@@ -28,7 +28,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
 | `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
-| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review`, the reproduction `reproduce`, and the PR review `review`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `rework: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. When you resume, the run continues the session of the stopped run ([Troubleshooting](troubleshooting.en.md)). Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
+| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the reproduction `reproduce` and the PR review `review`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `rework: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. When you resume, the run continues the session of the stopped run ([Troubleshooting](troubleshooting.en.md)). Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
 | `update_check` | Checks daily for a newer sacty release and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
 You set the following two in "Sacty settings" in the web UI, not in config.yaml.
@@ -256,7 +256,7 @@ What happens when an agent's run fails depends on the kind of run.
 
 | Run | On failure |
 | --- | --- |
-| Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, the final review, and deciding where to send PR comments back to | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
+| Steps, the integration review, information gathering, the Orchestrator's choice of steps, reading tickets, and deciding where to send PR comments back to | Whatever the reason (usage limits, authentication errors, other errors), the task is not paused, and the same step runs again with the fallback agent |
 | Exports, the post-merge watch, audits, and answers to questions | The failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on). At a usage limit, the fallback agent is used from the next run |
 
 - If the agent's final result is empty but an earlier result has content, that result is used as the answer. If no result has any content, sacty treats the run as failed instead of producing an empty deliverable (a switch to a fallback agent or a pause, as in the table above).

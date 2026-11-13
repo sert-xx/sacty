@@ -1465,11 +1465,6 @@ const PullRequestHeadMerged = z.object({
     from: z.string().min(1),
     commit: z.string().min(1),
     conflicts: z.array(z.string().min(1)).max(MAX_BASE_CONFLICTS),
-    /**
-     * 検証（最終レビュー）に通った後、PR を出す直前に取り込んだ（最終レビューをする流れ）。取り込んだ内容は検証していないので、
-     * PR を出さずに検証からやり直す。
-     */
-    reverify: z.literal(true).optional(),
   }),
 });
 
@@ -2997,12 +2992,6 @@ export const MAX_FIX_CHAIN = 3;
 export const DEPLOYMENT_CI_GRACE_MS = 5 * 60_000;
 /** CI/CD が終わるのを待つ上限（監視を始めた時刻から。PBI-89）。 */
 export const DEPLOYMENT_CI_TIMEOUT_MS = 60 * 60_000;
-/** 最終レビューの前に作った実装の PR で、CI が1つも現れないまま、これだけたったら CI が無いとみなす。 */
-export const PULL_REQUEST_CI_GRACE_MS = 5 * 60_000;
-/** 上の待ち時間のうち、リポジトリに CI が無いと確かめられたときの短い猶予（PBI-309）。 */
-export const PULL_REQUEST_NO_CI_GRACE_MS = 60_000;
-/** 最終レビューの前に作った実装の PR の CI が終わるのを待つ上限（PR を作った・更新した時刻から）。 */
-export const PULL_REQUEST_CI_TIMEOUT_MS = 60 * 60_000;
 
 /** CI/CD の実行・チェック・コミットの状態の1件（PBI-89）。conclusion は終わったものだけ。 */
 export const CiCheck = z.object({

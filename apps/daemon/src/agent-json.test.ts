@@ -13,7 +13,6 @@ import {
 import {
   extractBlocks,
   extractExport,
-  extractFinalReview,
   extractIntegrationReview,
   extractReproduction,
   extractReviewComments,
@@ -112,17 +111,6 @@ const calls: {
         cause: "base_changed",
         reason: "競合",
       }),
-  },
-  {
-    name: "最終レビュー",
-    json: {
-      "sacty-final-review": {
-        viewpoints: [{ id: "TV-1", verified: true, reason: "通る" }],
-        remarks: [],
-        summary: "合格",
-      },
-    },
-    check: (o) => expect(extractFinalReview(o, ["TV-1"], [])).toMatchObject({ passed: true }),
   },
   {
     name: "統合レビュー",

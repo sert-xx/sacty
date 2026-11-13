@@ -31,4 +31,4 @@
 
 - 1行目の長さは変えない。長さの上限（commitlint の `header-max-length` など）を定めるリポジトリでは、長い題が収まらないことがある。
 - commitlint が1行目の形を独自に決めている設定（`headerPattern`・`parserPreset`）と、`type-enum` で種類を限る設定は、読み解かない。種類が許されないと、リポジトリの検査に通らない。
-- [タスクと工程](../spec/tasks-and-steps.md#最終レビューの前の実装の-pr-と-ci)
+- [タスクと工程](../spec/tasks-and-steps.md#実装の-pr-の作成)

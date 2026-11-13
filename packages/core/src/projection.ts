@@ -1310,10 +1310,13 @@ export function applyEvent(
   if (!current) throw new ActivityIntegrityError(event, "unknown task");
   // 写したエージェントのファイルの記録（PBI-66）は、中止の後にも受け付ける（中止で止めた実行の後に写すため）
   // オーケストレーターのセッションの記録（PBI-67）も同じ（中止で止めた実行の後に記録する）
+  // 監査が登録したメモリーの削除（PBI-126）も受け付ける（監査の後に中止したタスクのメモリーも、上限・残す日数・昇格・人の
+  // 操作で消す。タスクの状態は変えない。受け付けないと、起動のときの削除でデーモンが起動できなくなる。PBI-335）
   if (
     current.status === "cancelled" &&
     event.type !== "AgentSessionArchived" &&
-    event.type !== "OrchestratorSessionUsed"
+    event.type !== "OrchestratorSessionUsed" &&
+    event.type !== "AuditMemoryDeleted"
   ) {
     throw new ActivityIntegrityError(event, "the task is cancelled");
   }
@@ -1836,12 +1839,6 @@ export function applyEvent(
       if (task.publishPending && event.payload.conflicts.length > 0) {
         task.publishPending = undefined;
         task.verifyFeedback = { kind: "merge", files: event.payload.conflicts };
-      } else if (task.publishPending && event.payload.reverify) {
-        // 検証に通った後に取り込んだ内容は検証していないので、PR を出さずに検証（最終レビュー）からやり直す
-        task.publishPending = undefined;
-        task.verification = "pending";
-        task.status = "idle";
-        task.pullRequestCi = undefined;
       }
       break;
 
@@ -3179,7 +3176,7 @@ export function applyEvent(
     }
 
     case "TestsDecided":
-      if (!canDecideTests(task)) {
+      if (!testsDecisionRecordable(task)) {
         throw new ActivityIntegrityError(event, "the tests are not undecided");
       }
       if (event.payload.testCommand !== undefined) {
@@ -4000,11 +3997,46 @@ export function documentsOnlyContradicted(task: Task): boolean {
 }
 
 /**
- * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらずに止まったタスクと、
- * 決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）、文書だけの依頼と判断したのに差分に
- * 文書でないファイルがあって止まったタスク（PBI-284）。
+ * テストが決まらないことを理由に止まったときの、止まった理由のコード（PBI-337）。今の版では、テストが決まらないことでは
+ * 止まらない（テストなしの判断を使えなければ、判断を捨てて進む）ので、以前の版で止まったタスクだけが持つ。
+ */
+const TESTS_UNDECIDED_STOP_CODES: ReadonlySet<string> = new Set([
+  "orchestrator.testCommandUnknown",
+  "orchestrator.noTestsContradicted",
+  "orchestrator.noTestsUncertain",
+  "orchestrator.noTestsUnreadable",
+  "orchestrator.bugfixNeedsTests",
+]);
+
+/** テストが決まらないことを理由に止まったタスクか（PBI-337。以前の版で止まったもの）。 */
+function stoppedForUndecidedTests(task: Task): boolean {
+  const stopped = task.pausedMessage;
+  return (
+    task.pausedReason === "error" &&
+    typeof stopped === "object" &&
+    TESTS_UNDECIDED_STOP_CODES.has(stopped.code) &&
+    testsUndecided(task)
+  );
+}
+
+/**
+ * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらないことを理由に止まったタスク
+ * （以前の版。PBI-337）と、決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）、文書だけの依頼と
+ * 判断したのに差分に文書でないファイルがあって止まったタスク（PBI-284）。予算・ほかのエラー・人の一時停止で止まったタスクは
+ * 含めない。
  */
 export function canDecideTests(task: Task): boolean {
+  return (
+    task.status === "paused" &&
+    (stoppedForUndecidedTests(task) || testToolsMissing(task) || documentsOnlyContradicted(task))
+  );
+}
+
+/**
+ * 台帳の TestsDecided・TaskResumed の rechooseSteps を読み込めるか（PBI-337）。以前の版は、止まった理由を見ずに、テストが
+ * 決まっていないだけで決められた（canDecideTests より広い）ので、その版の記録も読み込めるよう、読み込みではこちらで確かめる。
+ */
+function testsDecisionRecordable(task: Task): boolean {
   return (
     task.status === "paused" &&
     (testsUndecided(task) || testToolsMissing(task) || documentsOnlyContradicted(task))
@@ -4017,7 +4049,7 @@ export function canDecideTests(task: Task): boolean {
  */
 export function canRechooseSteps(task: Task): boolean {
   return (
-    canDecideTests(task) &&
+    testsDecisionRecordable(task) &&
     // ツールが無くて止まったタスク（PBI-158）は、工程の選択をやり直しても同じテストのコマンドになりうる。決め直すか、そのまま再開する
     !testToolsMissing(task) &&
     !documentsOnlyContradicted(task) &&

@@ -30,7 +30,7 @@ Code: `apps/daemon/src/memory.ts` (`memoryLayerDir`, `repositoryMemoryKey`, `ren
 
 ## Source of truth and writing
 
-The activity log is the source of truth. The daemon records registrations in the deep-dive result (`memories` of `AuditDeepDived`) and deletions in `AuditMemoryDeleted` (`memoryId`, `reason`). It appends both to the activity log of the audited task that registered the memory. `reason` is one of the following.
+The activity log is the source of truth. The daemon records registrations in the deep-dive result (`memories` of `AuditDeepDived`) and deletions in `AuditMemoryDeleted` (`memoryId`, `reason`). It appends both to the activity log of the audited task that registered the memory. Even if that task was cancelled after the audit, it appends the deletion to the same task (`AuditMemoryDeleted` can be appended to a cancelled task). `reason` is one of the following.
 
 | Value | Why it was deleted |
 | --- | --- |
@@ -170,7 +170,7 @@ Code: `apps/daemon/src/memory.ts` (`expiredMemories`, `MEMORY_CLEANUP_INTERVAL_M
     Even if a memory describes a procedure, when it conflicts with those (a procedure that changes more than the step instructions allow, writes what it was told not to write, or overturns a decided judgement), the agent does not use the procedure and follows those instead.
 - The audit (survey and deep dive) gets the same mounts (to check for duplicates). sacty does not add the reading instructions there.
 - The following get none.
-  - The runs that judge (final review, integration review, and deciding where to send PR remarks back (role `rework`))
+  - The runs that judge (integration review and deciding where to send PR remarks back (role `rework`))
   - Information gathering (at the start of a task; role `gather`)
   - The orchestrator (choosing steps, reading tickets, and so on; ticket reading also runs as role `orchestrator`)
   - Question answers

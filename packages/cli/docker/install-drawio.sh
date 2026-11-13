@@ -48,15 +48,32 @@ command -v curl >/dev/null 2>&1 || warn "curl が無い"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-# 接続や転送が止まっても、いつまでも待たずに警告して続ける
-# （接続 30 秒、60 秒のあいだ 1KB/s を下回れば打ち切り、1 回 900 秒。再試行は 3 回までで、最初から 1200 秒を過ぎたら始めない。
-# 1200 秒の前に始めた再試行は最大 900 秒続くので、全体は 1200 秒を超えることがある（最長でおよそ 2100 秒））
-curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 --max-time 900 \
-  --retry 3 --retry-max-time 1200 -o "$dir/$file" "$BASE_URL/$file" \
-  || warn "$BASE_URL/$file を取得できない"
-if ! echo "$sha  $dir/$file" | sha256sum -c - >/dev/null; then
-  echo "sacty: 取得した draw.io のパッケージ（$file）のハッシュが合いません。取得したものが壊れているか、すり替わっています。" >&2
-  exit 1
+# 取得物を置いておく場所（Dockerfile が BuildKit の cache マウントで渡す。with-build-cache.sh）。無ければ使わない。
+# 固定したハッシュと合うものがあれば、それを使う（取得しない）
+cache="${SACTY_DOWNLOAD_CACHE:-}"
+slot="$cache/drawio/$VERSION"
+if [ -n "$cache" ] && [ -f "$slot/$file" ] \
+  && echo "$sha  $slot/$file" | sha256sum -c - >/dev/null 2>&1 \
+  && cp "$slot/$file" "$dir/$file"; then
+  echo "sacty: ビルドのキャッシュにある $file を使います。"
+else
+  # 接続や転送が止まっても、いつまでも待たずに警告して続ける
+  # （接続 30 秒、60 秒のあいだ 1KB/s を下回れば打ち切り、1 回 900 秒。再試行は 3 回までで、最初から 1200 秒を過ぎたら始めない。
+  # 1200 秒の前に始めた再試行は最大 900 秒続くので、全体は 1200 秒を超えることがある（最長でおよそ 2100 秒））
+  curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 --max-time 900 \
+    --retry 3 --retry-max-time 1200 -o "$dir/$file" "$BASE_URL/$file" \
+    || warn "$BASE_URL/$file を取得できない"
+  if ! echo "$sha  $dir/$file" | sha256sum -c - >/dev/null; then
+    echo "sacty: 取得した draw.io のパッケージ（$file）のハッシュが合いません。取得したものが壊れているか、すり替わっています。" >&2
+    exit 1
+  fi
+  # キャッシュに置き、ほかの版を消す（置けなくても続ける）
+  if [ -n "$cache" ]; then
+    { mkdir -p "$slot" && cp "$dir/$file" "$slot/$file.tmp" && mv -f "$slot/$file.tmp" "$slot/$file"; } 2>/dev/null || true
+    for old in "$cache/drawio"/*; do
+      [ "$old" = "$slot" ] || rm -rf "$old"
+    done
+  fi
 fi
 
 # 画面の無いコンテナで動かすための仮想の画面（Xvfb）と、Electron が読む音のライブラリ（パッケージの依存に無い）を一緒に入れる
