@@ -510,6 +510,47 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls[1]?.body).toContain("hello");
   });
 
+  it("multipart の値とファイル内のヘッダーに似た文字列を転送する", async () => {
+    const g = await startPf([json(201, {})]);
+    const body =
+      '--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nname*=value\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary\r\nContent-Disposition: form-data; name="file"; filename="a; name=x.txt"\r\n\r\n--boundary-more\r\nname*=file\r\nContent-Disposition: form-data; name="_method"\r\n\r\n--boundary--\r\n';
+    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=boundary" },
+      body,
+    });
+    expect(res.status).toBe(201);
+    expect(g.calls[0]?.body).toBe(body);
+  });
+
+  it("多数の multipart 項目を展開せずに検査し末尾の上書きを拒否する", async () => {
+    const g = await startPf([]);
+    const part =
+      '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
+    const body =
+      part.repeat(100_000) +
+      '--boundary\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--boundary--\r\n';
+    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=boundary" },
+      body,
+    });
+    expect(res.status).toBe(400);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("multipart の過大なパートヘッダーを拒否する", async () => {
+    const g = await startPf([]);
+    const body = `--boundary\r\nContent-Disposition: form-data; name="file"; filename="${"a".repeat(20_000)}"\r\n\r\nvalue\r\n--boundary--\r\n`;
+    const res = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=boundary" },
+      body,
+    });
+    expect(res.status).toBe(400);
+    expect(g.calls).toHaveLength(0);
+  });
+
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {
     const g = await startPf([json(200, { id: 42 })]);
     const run = gateway?.register(undefined, undefined, undefined, undefined, undefined, {

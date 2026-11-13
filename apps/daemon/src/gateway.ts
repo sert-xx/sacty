@@ -599,23 +599,57 @@ export class AiGateway {
             }
           }
         } else {
-          const rawForm = body.toString("latin1");
-          if (
-            /name\s*\*\s*=/i.test(rawForm) ||
-            /content-disposition:[^\r\n]*;\s*name\s*=[^\r\n]*;\s*name\s*=/i.test(rawForm) ||
-            /content-disposition:[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*content-disposition:/i.test(rawForm)
-          ) {
-            throw new Error("ambiguous form name");
-          }
-          const form = await new Response(body, {
-            headers: { "content-type": contentType },
-          }).formData();
-          if (Array.from(form.keys()).some((key) => key.includes("\\"))) {
-            throw new Error("ambiguous form name");
-          }
-          override = Array.from(form.keys()).some((key) =>
-            overridesMethodInQuery(`?${new URLSearchParams([[key, ""]])}`),
+          const boundary = /(?:^|;)\s*boundary\s*=\s*(?:"([^"\r\n]+)"|([^;\s]+))/i.exec(
+            contentType,
           );
+          if (!boundary) throw new Error("missing boundary");
+          const delimiter = Buffer.from(`--${boundary[1] ?? boundary[2]}`);
+          let pos = 0;
+          while (true) {
+            if (!body.subarray(pos, pos + delimiter.length).equals(delimiter))
+              throw new Error("invalid boundary");
+            pos += delimiter.length;
+            if (body.subarray(pos, pos + 2).equals(Buffer.from("--"))) break;
+            if (body.toString("latin1", pos, pos + 2) !== "\r\n")
+              throw new Error("invalid boundary");
+            pos += 2;
+            const end = body.indexOf("\r\n\r\n", pos);
+            if (end < 0 || end - pos > 16 * 1024) throw new Error("invalid headers");
+            const headers = body.toString("latin1", pos, end);
+            const dispositions = headers
+              .split("\r\n")
+              .filter((line) => /^content-disposition\s*:/i.test(line));
+            if (dispositions.length !== 1 || /\r\n[ \t]/.test(headers))
+              throw new Error("invalid disposition");
+            const disposition = dispositions[0] ?? "";
+            let name: string | undefined;
+            const attributes = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;\s]*))\s*/gy;
+            attributes.lastIndex = disposition.indexOf(";");
+            while (attributes.lastIndex > 0 && attributes.lastIndex < disposition.length) {
+              const attribute = attributes.exec(disposition);
+              if (!attribute) throw new Error("invalid disposition");
+              const key = attribute[1]?.toLowerCase();
+              if (key === "name*" || (key === "name" && name !== undefined))
+                throw new Error("ambiguous form name");
+              if (key === "name") name = attribute[2] ?? attribute[3] ?? "";
+            }
+            if (name === undefined) throw new Error("ambiguous form name");
+            if (name.includes("\\")) throw new Error("ambiguous form name");
+            if (overridesMethodInQuery(`?${new URLSearchParams([[name, ""]])}`)) override = true;
+            const marker = Buffer.concat([Buffer.from("\r\n"), delimiter]);
+            let next = body.indexOf(marker, end + 4);
+            while (next >= 0) {
+              const suffix = body.toString(
+                "latin1",
+                next + marker.length,
+                next + marker.length + 2,
+              );
+              if (suffix === "\r\n" || suffix === "--") break;
+              next = body.indexOf(marker, next + marker.length);
+            }
+            if (next < 0) throw new Error("missing boundary");
+            pos = next + 2;
+          }
         }
       } catch {
         return fail(res, 400, `sacty gateway: cannot inspect form body for "${platform.name}"`);
