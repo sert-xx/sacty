@@ -1320,37 +1320,44 @@ const SCOPE_NAME = /^スコープ(?:$|[ \t（(：:])/;
 function leadingScopeLines(draft: string | undefined): string[] | undefined {
   let fence: CodeFence | undefined;
   let first = true;
-  let scope: string[] | undefined;
+  // スコープの節の見出しの深さ（太字の札は 7）。これより深い見出しは節の中、同じか浅い見出しで節が終わる
+  let scopeLevel: number | undefined;
+  const scope: string[] = [];
   for (const line of (draft ?? "").split("\n")) {
     if (fence) {
       if (closesFence(line, fence)) fence = undefined;
-      scope?.push(line);
+      if (scopeLevel !== undefined) scope.push(line);
       continue;
     }
     const opened = openingFence(line);
     if (opened) {
       fence = opened;
-      scope?.push(line);
+      if (scopeLevel !== undefined) scope.push(line);
       continue;
     }
     const heading = HEADING_LINE.exec(line);
     const label = heading ? undefined : BOLD_LABEL_LINE.exec(line);
     if (!heading && !label) {
-      scope?.push(line);
+      if (scopeLevel !== undefined) scope.push(line);
       continue;
     }
-    // スコープの節は、次の見出し（太字の札を含む）で終わる
-    if (scope) return scope;
+    const level = heading ? (heading[1] as string).length : 7;
+    const name = ((heading ? heading[2] : label?.[1]) ?? "").trim();
+    if (scopeLevel !== undefined) {
+      if (level <= scopeLevel) return scope;
+      // 節の中の小見出し・札（「### 対象外」「**対象**」）は、札の行として残す
+      scope.push(name);
+      continue;
+    }
     // 文書の題（最初の H1）は節ではないので飛ばす
-    if (first && heading?.[1] === "#") {
+    if (first && level === 1) {
       first = false;
       continue;
     }
-    const name = (heading ? heading[2] : label?.[1]) ?? "";
-    if (!SCOPE_NAME.test(name.trim())) return undefined;
-    scope = [];
+    if (!SCOPE_NAME.test(name)) return undefined;
+    scopeLevel = level;
   }
-  return scope;
+  return scopeLevel === undefined ? undefined : scope;
 }
 
 /** 前回の下書きで、「スコープ」の節が冒頭にあるか（PBI-340）。 */
@@ -1358,10 +1365,18 @@ export function scopeComesFirst(draft: string | undefined): boolean {
   return leadingScopeLines(draft) !== undefined;
 }
 
-/** 対象外の行（「対象外：なし」を含む）。 */
-const OUT_OF_SCOPE_LINE = /対象外/;
-/** 対象の行。「対象外」は含めない。 */
-const IN_SCOPE_LINE = /対象(?!外)/;
+/**
+ * 対象・対象外を定める札の行。行の頭（箇条書きの記号・太字・表の区切りの後ろ）に札を置き、コロンか行末か表の区切りが続く行だけを
+ * 数える（「- 対象外：なし」「**対象外**：…」「| 対象外 | … |」「対象外」）。説明の文の中の「対象外」は数えない（PR #363 の再レビュー）。
+ */
+const scopeLabelLine = (name: string) =>
+  new RegExp(
+    `^[ \\t]*(?:[-*+][ \\t]+|\\d+[.)][ \\t]+|\\|[ \\t]*)?(?:\\*\\*)?${name}(?:\\*\\*)?[ \\t]*(?:[：:]|\\||$)`,
+  );
+/** 対象外の札の行（「対象外：なし」を含む）。 */
+const OUT_OF_SCOPE_LINE = scopeLabelLine("対象外");
+/** 対象の札の行。 */
+const IN_SCOPE_LINE = scopeLabelLine("対象");
 
 /**
  * 前回の下書きの冒頭に、決まりの形の「スコープ」の節（対象と対象外の行がある）があるか（PBI-340）。対象外を必ず書かせる前の

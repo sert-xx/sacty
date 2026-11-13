@@ -2974,6 +2974,29 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     expect(scopeIsWritten("# 要求要件\n\n## スコープ（対象・対象外）\n\n一覧を速くする。")).toBe(
       false,
     );
+    // 説明の文の中の「対象外」は、対象外の札の行に数えない（PR #363 の再レビュー）
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n- 今回は対象外の記載がない\n\n## 確認したいこと",
+      ),
+    ).toBe(false);
+    expect(scopeIsWritten("# 要求要件\n\n## スコープ\n\n一覧が対象で、詳細は対象外とする。")).toBe(
+      false,
+    );
+    // 札の書き方の違い（太字・表・小見出し）は数える
+    expect(scopeIsWritten("## スコープ\n\n**対象**：一覧\n**対象外**：なし")).toBe(true);
+    expect(scopeIsWritten("## スコープ\n\n| 対象 | 一覧 |\n| 対象外 | なし |")).toBe(true);
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n### 対象\n\n- 一覧\n\n### 対象外\n\n- なし\n\n## 確認したいこと",
+      ),
+    ).toBe(true);
+    // 次の同じ深さの節にある対象外は、スコープの節に数えない
+    expect(
+      scopeIsWritten(
+        "# 要求要件\n\n## スコープ\n\n- 対象：一覧\n\n## 確認したいこと\n\n- 対象外：詳細",
+      ),
+    ).toBe(false);
     // 冒頭に無ければ、対象と対象外があっても形になっていない
     expect(
       scopeIsWritten(
