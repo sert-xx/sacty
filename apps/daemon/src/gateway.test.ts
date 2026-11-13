@@ -425,13 +425,8 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const send = (body: string, type: string, extra = {}) =>
       fetch(url, { method: "POST", headers: { "content-type": type, ...extra }, body });
     const encoded = "application/x-www-form-urlencoded";
-    for (const body of [
-      "_method=DELETE",
-      "text=ok;%5FMETHOD%5B%5D=DELETE",
-      "x.http.method.override=DELETE",
-    ]) {
+    for (const body of ["_method=DELETE", "%5FMETHOD%5B%5D=x", "x.http.method.override=x"])
       expect((await send(body, encoded)).status).toBe(400);
-    }
     expect((await send("data", encoded, { "content-encoding": "gzip" })).status).toBe(400);
     const type = "multipart/form-data; boundary=evil";
     const part = (name: string) =>
@@ -454,6 +449,16 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
         '--evil\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\n--evil\nContent-Disposition: form-data; name="_method"\n\nDELETE\r\n--evil--\r\n',
       ],
       [type, part('name="_method"')],
+      [type, part("name='_method'")],
+      [type, part('name="_method')],
+      [
+        'multipart/form-data; foo="boundary=evil;bar"; boundary=safe',
+        `${part('name="_method"')}${part('name="safe"').replaceAll("evil", "safe")}`,
+      ],
+      ...["\v", "\f", "\r"].map((space) => [
+        type,
+        `--evil${space}\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n${part('name="safe"')}`,
+      ]),
       [type, part('name="%5Fmethod"')],
       [type, part('name="_meth\\od"')],
       [
@@ -463,10 +468,7 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
           'X-Test: x\nContent-Disposition: form-data; name="_method"\r\nContent-Disposition:',
         ),
       ],
-      [
-        type,
-        part('name="safe"').replace("Content-Disposition:", "X-Test: x\rContent-Disposition:"),
-      ],
+      [type, part('name="safe"').replace("Content-Disposition:", "X: x\rContent-Disposition:")],
       [type, part(`name="${"a".repeat(20_000)}"`)],
       [type, part('name="safe"').replace("value", "\r\n--evilX".repeat(10_001))],
       [type, part('name="safe"; name="other"')],
@@ -490,11 +492,6 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const headers = { "content-type": "multipart/form-data; boundary=boundary" };
     expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
     expect(g.calls[0]?.body).toBe(body);
-    const overridden = body.replace('name="text"', 'name="_method"');
-    expect((await fetch(url, { method: "POST", headers, body: overridden })).status).toBe(400);
-    headers["content-type"] = 'multipart/form-data; boundary=boundary; foo="x; boundary=evil"';
-    expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
-    expect(g.calls).toHaveLength(2);
   });
   it("空白付き multipart 境界の全パートを検査する", async () => {
     const g = await startPf([json(201, {})]);

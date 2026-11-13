@@ -625,13 +625,16 @@ export class AiGateway {
             boundaries.length !== 1 ||
             !boundary ||
             !(boundary[2] ?? boundary[3]) ||
-            boundary[2]?.includes("\\")
+            boundary[2]?.includes("\\") ||
+            [...contentType.matchAll(/boundary\s*=/gi)].length !== 1
           )
             throw new Error("invalid boundary");
           const delimiter = Buffer.from(`--${boundary[2] ?? boundary[3]}`);
           const marker = Buffer.concat([Buffer.from("\r\n"), delimiter]);
           const boundarySuffix = (start: number) => {
             while (body[start] === 32 || body[start] === 9) start++;
+            if (body[start] === 11 || body[start] === 12) throw new Error("ambiguous boundary");
+            if (body[start] === 13 && body[start + 1] !== 10) throw new Error("ambiguous boundary");
             return body.toString("latin1", start, start + 2);
           };
           let candidates = 0;
@@ -691,7 +694,7 @@ export class AiGateway {
               if (key === "name") name = attribute[2] ?? attribute[3] ?? "";
             }
             if (name === undefined) throw new Error("ambiguous form name");
-            if (name.includes("\\")) throw new Error("ambiguous form name");
+            if (/[\\'"]/.test(name)) throw new Error("ambiguous form name");
             if (
               overridesMethodInQuery(
                 `?${name.replaceAll("&", "%26").replaceAll(";", "%3B").replaceAll("=", "%3D")}`,
