@@ -188,7 +188,7 @@
   観点の数は受け入れ条件を確かめるのに要る分だけにさせ、観点ごとに1文で書かせる。
 - sacty は、冒頭の3つの節を読み取らない（成果物の本文のまま、承認の画面・PR に出る）。
 
-関係する ADR: [要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
+関係する ADR: [要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-superseded-minimal-first-drafts.md)、[要求要件・設計はスコープを最初に置き、人への確認には確認しない場合の懸念を添える](../adr/20261113-0708-scope-first-and-concerns-in-questions.md)
 
 コード: `apps/daemon/src/prompts.ts`（`minimalDraftLines`・`readerLoadLines`・`deliverableBodyLines`・`keepRequirementsReasonLines`・`withoutWorkReport`・`SHOULD_QUESTIONS_MAX`・`DECISIONS_MAX`・`DRAFT_LINES`・`earsLines`）
 

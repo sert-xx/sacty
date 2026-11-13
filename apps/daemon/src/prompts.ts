@@ -1306,10 +1306,30 @@ function reworkLines(
  * 確認したいことへの答えだけで、すべて推奨の答えどおり（決定を変えない）の差し戻しの直し方（PBI-302 B1）。前回の下書きの、答えた項目を
  * 「確認したいこと」から外し、答えを反映する所だけを直す。成果物を丸ごと作り直さない。
  */
+/**
+ * 前回の下書きに、冒頭の「スコープ」の節があるか（PBI-340）。スコープの節を求める前の版で作った下書きには無い。
+ * 見出し（`## スコープ`）か、太字の札（`**スコープ**`）で始まる行を節とみなす。
+ */
+export function hasScopeSection(draft: string | undefined): boolean {
+  return /^(?:#{1,6}[ \t]*|\*\*)スコープ/m.test(draft ?? "");
+}
+
+/**
+ * 答えの反映だけの直しで、前回の下書きにスコープの節が無いとき（PBI-340 より前の下書き）の例外の指示。ほかの節を保つ決まりの
+ * ままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
+ */
+function missingScopeLines(previous: string | undefined): string[] {
+  if (hasScopeSection(previous)) return [];
+  return [
+    "- 例外：前回の下書きには、冒頭の「スコープ」の節がありません（この節を求める前に作った下書きです）。下の「一字一句そのまま保つ」の例外として、最初に「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を足し、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
+  ];
+}
+
 function answerOnlyReworkLines(
   task: Task,
   step: "requirements" | "design",
   deliverable: string,
+  previous: string | undefined,
 ): string[] {
   const current = currentRemarks(task, step);
   return [
@@ -1317,6 +1337,7 @@ function answerOnlyReworkLines(
     `--- 差し戻しの直し方（「確認したいこと」への答えの反映だけ。承認済みの決定を変えない） ---`,
     `- 今回の指摘（${current.map((r) => r.id).join("・")}）は、「確認したいこと」への答えだけです。戻し先の判断で、すべて推奨の答えどおりで、承認済みの決定を変えないと判断しました（上の判断を参照）。前回の${deliverable}を元にして、最初から書き直さない`,
     "- 答えを反映する所だけを直す。答えた項目を「確認したいこと」から外し、推奨の答えがすでに本文に書かれていれば本文は変えない。書かれていなければ、答えのとおりに、関わる所だけを書き足す・直す",
+    ...missingScopeLines(previous),
     "- ほかの節・項目・表の行は、一字一句そのまま保つ（言い回しの整え・順序の入れ替え・要約・追記もしない）。答えが付かなかった「確認したいこと」の項目は、そのまま残す",
     `- 本文に書かないもの（作業の報告など）、${step === "requirements" ? "要求の ID（R-n）" : "テスト観点・節の構成"}は、前回のまま保つ（付け直さない）`,
     "- 指摘を読むと、答えが推奨どおりでない・承認済みの決定を変える・質問への答え以外の要望を含むと分かったときは、この軽い直しをやめ、指摘に応えて通常の直しをする。指摘への対応に、そう判断した理由を書く",
@@ -1328,13 +1349,16 @@ function answerOnlyReworkLines(
  * 答えの反映だけの直し（PBI-302 B1）の、提出の前の確認。セルフレビュー（観点の担当の起動）をせず、読み直す3点だけを確かめる。
  * セルフレビューの報告（sacty-self-review）は付けない（sacty は記録なしとして扱い、次の回は全体をレビューする）。
  */
-function answerOnlyCheckLines(deliverable: string): string[] {
+function answerOnlyCheckLines(deliverable: string, previous: string | undefined): string[] {
+  const scopeAdded = !hasScopeSection(previous);
   return [
     "",
     "--- 提出の前の確認（セルフレビューは行わない） ---",
     `- この実行は、答えの反映だけの直しなので、セルフレビュー（既定のスキル review-dispatch、観点の担当の起動）は行わない。代わりに、提出の前に${deliverable}を最初から最後まで読み直して、次の3点だけを確かめ、崩れていれば直す`,
     "  - 答えた項目が「確認したいこと」から外れ、答えていない項目は残っている",
-    "  - 答えを反映した所以外が、前回の下書きと一字一句同じである",
+    scopeAdded
+      ? "  - 冒頭に「スコープ」の節があり、「スコープ」「確認したいこと」「既定で決めたこと」の順になっている。答えを反映した所と足したスコープの節、節の並べ直し以外が、前回の下書きと一字一句同じである"
+      : "  - 答えを反映した所以外が、前回の下書きと一字一句同じである",
     "  - 要求・テスト観点などの ID に、欠番・重複・付け直しが無い",
     "- セルフレビューの報告（sacty-self-review の JSON）は付けない",
   ];
@@ -2655,14 +2679,14 @@ export function buildPrompt(
       const light = rework === "partial" && isAnswerOnlyRework(task, "requirements");
       lines.push(
         ...(light
-          ? answerOnlyReworkLines(task, "requirements", "要求要件")
+          ? answerOnlyReworkLines(task, "requirements", "要求要件", previous)
           : reworkLines(task, "requirements", "要求要件", rework)),
       );
       const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
         ...documentVerificationLines(task, "requirements"),
         ...(light
-          ? answerOnlyCheckLines("要求要件")
+          ? answerOnlyCheckLines("要求要件", previous)
           : selfReviewLines(
               "design-doc",
               "要求要件",
@@ -2733,14 +2757,14 @@ export function buildPrompt(
       const light = rework === "partial" && isAnswerOnlyRework(task, "design");
       lines.push(
         ...(light
-          ? answerOnlyReworkLines(task, "design", "設計とテスト観点")
+          ? answerOnlyReworkLines(task, "design", "設計とテスト観点", previous)
           : reworkLines(task, "design", "設計とテスト観点", rework)),
       );
       const narrowed = reviewRework(task, "design", rework);
       lines.push(
         ...documentVerificationLines(task, "design"),
         ...(light
-          ? answerOnlyCheckLines("設計とテスト観点")
+          ? answerOnlyCheckLines("設計とテスト観点", previous)
           : selfReviewLines(
               "design-doc",
               "設計とテスト観点",

@@ -137,7 +137,7 @@ Code: `apps/daemon/src/prompts.ts` (`investigate` in `buildPrompt`)
   The number of viewpoints is only what is needed to check the acceptance criteria, and each viewpoint is written in one sentence.
 - sacty does not parse the three sections at the start (they stay in the deliverable's body and appear on the approval screen and in the PR).
 
-Related ADRs: [Put what a person decides at the top of requirements and designs, keep their length in proportion to the change, and add an over-writing viewpoint to self-review](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md), [Keep the first draft of deliverables that people read minimal, and add detail when a person sends it back](../adr/20261025-0222-minimal-first-drafts.md)
+Related ADRs: [Put what a person decides at the top of requirements and designs, keep their length in proportion to the change, and add an over-writing viewpoint to self-review](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md), [Keep the first draft of deliverables that people read minimal, and add detail when a person sends it back](../adr/20261025-0222-superseded-minimal-first-drafts.md), [Put the scope first in requirements and designs, and add the concern if a person does not confirm to items that ask a person](../adr/20261113-0708-scope-first-and-concerns-in-questions.md)
 
 Code: `apps/daemon/src/prompts.ts` (`minimalDraftLines`, `readerLoadLines`, `deliverableBodyLines`, `keepRequirementsReasonLines`, `withoutWorkReport`, `SHOULD_QUESTIONS_MAX`, `DECISIONS_MAX`, `DRAFT_LINES`, `earsLines`)
 

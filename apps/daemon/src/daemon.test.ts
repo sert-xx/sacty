@@ -23554,6 +23554,35 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(prompt).toContain("--- 提出の前の確認（セルフレビューは行わない） ---");
       expect(prompt).not.toContain("--- 提出の前のセルフレビュー ---");
       expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 2 });
+      // スコープの節の無い前回の下書き（PBI-340 より前）には、スコープを足して並べ直すことを例外として許す（PR #363 のレビュー）
+      expect(prompt).toContain("例外：前回の下書きには、冒頭の「スコープ」の節がありません");
+      expect(prompt).toContain(
+        "冒頭に「スコープ」の節があり、「スコープ」「確認したいこと」「既定で決めたこと」の順になっている",
+      );
+      activity.close();
+    });
+
+    it("前回の下書きにスコープの節があれば、答えの反映だけの直しにスコープの例外を足さない（PBI-340）", async () => {
+      const scoped = [
+        "# 要求要件 v1",
+        "",
+        "## スコープ",
+        "",
+        "- 対象：一覧",
+        "- 対象外：なし",
+        "",
+        v1.split("\n").slice(2).join("\n"),
+      ].join("\n");
+      const made = await start([out(scoped), answerJudged("as_recommended"), out("# 要求要件 v2")]);
+      const { activity, service, executor, pulls, id } = made;
+      pulls.feedbackBy[7] = [item("comment:1", { body: "推奨どおりでお願いします" })];
+      await service.checkPullRequests();
+      const before = executor.calls.length;
+      await service.runNext(id);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("「確認したいこと」への答えの反映だけ");
+      expect(prompt).not.toContain("例外：前回の下書きには、冒頭の「スコープ」の節がありません");
+      expect(prompt).toContain("答えを反映した所以外が、前回の下書きと一字一句同じである");
       activity.close();
     });
 

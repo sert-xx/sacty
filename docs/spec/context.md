@@ -207,7 +207,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 同じ規則は、人に確認・判断を求めるとき（確認したいこと、人が確かめること、質問、変更の申し出など）に、確認しないで進めた場合の具体的な懸念を項目ごとに1〜2文で添えることも求める（PBI-340）。
 同じ規則は、人が読む文章に、sacty の作業領域の内部のパス（`/sacty-input` など、コンテナの内部のパス）を書かないことも求める。人は辿れないので、リポジトリのパス・タスクの依頼の文言・人の指摘の ID で示させる（PBI-301 A7）。
 
-関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)
+関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-superseded-minimal-first-drafts.md)、[要求要件・設計はスコープを最初に置き、人への確認には確認しない場合の懸念を添える](../adr/20261113-0708-scope-first-and-concerns-in-questions.md)
 
 コード: `apps/daemon/default-context/rules.md`、`apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`、`apps/daemon/default-context/skills/writing/references/wording.md`
 
@@ -229,7 +229,7 @@ ID は、直しても付け直さず、消した要求の ID は使い回さな�
 対象のリポジトリのエージェント向けの指示の文書（スキルの SKILL.md と references・AGENTS.md・CLAUDE.md・規則・プロンプトの文など。`AGENT_INSTRUCTIONS`）を書く・直すタスクでは、要求をエージェントの振る舞いではなく文書に何が書かれているべきかで書かせ、受け入れの確かめ方を、自動のテストではなく差分で文書の中身を確かめることとして書かせる（[タスクと工程](tasks-and-steps.md#実装の検証)）。
 既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
 
-関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-minimal-first-drafts.md)、[要求要件の受け入れ条件を文型ごとの見出しと表で書き出させる](../adr/20261025-0630-ears-tables-by-pattern.md)
+関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)、[要求要件・設計の冒頭に人間が判断することを分けて置き、書く量を変更に比例させ、セルフレビューに書きすぎの観点を足す](../adr/20261024-1330-superseded-reader-load-of-requirements-and-design.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-superseded-minimal-first-drafts.md)、[要求要件の受け入れ条件を文型ごとの見出しと表で書き出させる](../adr/20261025-0630-ears-tables-by-pattern.md)
 
 コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`・`acceptanceCheckLines`）
 

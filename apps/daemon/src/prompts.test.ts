@@ -49,6 +49,7 @@ import {
   extractSplitPlan,
   extractStepPlan,
   extractStepReview,
+  hasScopeSection,
   operationSucceeded,
   postedLatestCommit,
   pullRequestInText,
@@ -2934,6 +2935,14 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       // should の上限を超えたときも、不利益な既定は既定に回さない
       expect(prompt, step).toContain("これらは「既定で決めたこと」に回さず、害の小さいものを回す");
     }
+  });
+
+  it("前回の下書きのスコープの節を、見出しか太字の札で見分ける（PBI-340）", () => {
+    expect(hasScopeSection("# 要求要件\n\n## スコープ\n\n- 対象：一覧")).toBe(true);
+    expect(hasScopeSection("**スコープ**\n- 対象：一覧")).toBe(true);
+    expect(hasScopeSection("# 要求要件\n\n## 確認したいこと\n\nスコープは一覧だけ")).toBe(false);
+    expect(hasScopeSection("")).toBe(false);
+    expect(hasScopeSection(undefined)).toBe(false);
   });
 
   it("要求要件と設計の指示は、スコープの節を確認したいことより前に置かせ、確認したいことに確認しない場合の懸念を書かせる（PBI-340）", () => {
