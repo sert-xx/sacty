@@ -986,14 +986,24 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           if (RENAMED_CONFLICT_RE.test(path)) continue;
           if (conflicts.some((c) => c.startsWith(`${path}~`) && RENAMED_CONFLICT_RE.test(c)))
             continue;
-          const entry = (await run("ls-tree", ["ls-tree", "-z", tree, "--", path]))
+          // パスは、git のパス指定の記法として読ませない（`:(literal)…` などの名前も、文字どおりのファイルとして確かめる）
+          const entry = (
+            await run("ls-tree", ["--literal-pathspecs", "ls-tree", "-z", tree, "--", path])
+          )
             .split("\0")
             .find(Boolean);
           const match = entry?.match(/^\d+ (\w+) ([0-9a-f]+)\t/);
           if (!match) {
             // 結果に無い：両側とも消した（同じファイルを両側が別名へ改名した、など）なら、どちらの変更も消えない
             const has = async (treeish: string) =>
-              (await run("ls-tree", ["ls-tree", "-z", treeish, "--", path])) !== "";
+              (await run("ls-tree", [
+                "--literal-pathspecs",
+                "ls-tree",
+                "-z",
+                treeish,
+                "--",
+                path,
+              ])) !== "";
             if ((await has(mineTree)) || (await has(targetTree))) unmarked.push(path);
             continue;
           }
@@ -1018,7 +1028,15 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         let result = tree;
         if (exclude.length > 0) {
           await sideRun("read-tree", ["read-tree", tree]);
-          const listed = await sideRun("ls-tree", ["ls-tree", "-r", "-z", mine, "--", ...exclude]);
+          const listed = await sideRun("ls-tree", [
+            "--literal-pathspecs",
+            "ls-tree",
+            "-r",
+            "-z",
+            mine,
+            "--",
+            ...exclude,
+          ]);
           for (const entry of listed.split("\0").filter(Boolean)) {
             const match = entry.match(/^(\d+) (?:blob|commit) ([0-9a-f]+)\t(.+)$/s);
             if (!match) continue;

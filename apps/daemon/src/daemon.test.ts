@@ -10970,6 +10970,19 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       activity.close();
     });
 
+    it("今の本文を読めず、PR の更新にも失敗したら、上書きしたとは記録しない", async () => {
+      const { activity, service, pulls, id } = await toImplementGate(rework());
+      pulls.bodies[7] = "人が全部書き直した本文";
+      pulls.bodyFail = "network";
+      pulls.fail = "GitHub API 502";
+      sendBack(service, id);
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(pulls.bodies[7]).toBe("人が全部書き直した本文");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
+      activity.close();
+    });
+
     it("今の本文を読めなければ、これまでどおり sacty の本文で更新する", async () => {
       const { activity, service, pulls, id } = await toImplementGate(rework());
       pulls.bodies[7] = "人が全部書き直した本文";

@@ -1485,6 +1485,9 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
         const { origin, workspace } = await prepareMerge();
         const binary = (n: number) => Buffer.from([0, 1, 2, n, 0, 255]);
         writeFileSync(join(origin, "logo.png"), binary(1));
+        // git のパス指定の記法に見える名前も、文字どおりのファイルとして確かめる
+        const magic = ":(literal)icon.png";
+        writeFileSync(join(origin, magic), binary(1));
         writeFileSync(join(origin, "old.txt"), "old\n");
         git(origin, "add", "--all");
         git(origin, "commit", "-m", "assets");
@@ -1494,8 +1497,10 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
         const prepared = await workspace.prepare(again, gitDir2, origin, "main");
         // 実装は画像を変えて old.txt を消し、相手の側は同じ画像を別に変えて old.txt も変えた
         writeFileSync(join(again, "logo.png"), binary(2));
+        writeFileSync(join(again, magic), binary(2));
         rmSync(join(again, "old.txt"));
         writeFileSync(join(origin, "logo.png"), binary(3));
+        writeFileSync(join(origin, magic), binary(3));
         writeFileSync(join(origin, "old.txt"), "changed\n");
         git(origin, "add", "--all");
         git(origin, "commit", "-m", "main: assets");
@@ -1507,7 +1512,9 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
             base: prepared.baseCommit,
             target: tip,
           }),
-        ).rejects.toThrow(/競合の目印を入れられないファイルが競合しました（logo.png, old.txt/);
+        ).rejects.toThrow(
+          /競合の目印を入れられないファイルが競合しました（:\(literal\)icon\.png, logo\.png, old\.txt/,
+        );
         // 作業領域は書き換えない（実装の側のまま）
         expect(readFileSync(join(again, "logo.png"))).toEqual(binary(2));
         expect(existsSync(join(again, "old.txt"))).toBe(false);
