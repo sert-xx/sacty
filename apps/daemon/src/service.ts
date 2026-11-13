@@ -10335,7 +10335,8 @@ export class TaskService {
     } catch {
       now = undefined;
     }
-    if (now === undefined || normalizeNewlines(now) !== normalizeNewlines(human)) {
+    if (now === undefined) return kept(message("pr.bodyRereadFailed"), ran.cost);
+    if (normalizeNewlines(now) !== normalizeNewlines(human)) {
       return kept(message("pr.bodyEditedDuringMerge"), ran.cost);
     }
     this.append(this.mustGet(task.id), [

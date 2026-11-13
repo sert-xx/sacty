@@ -481,6 +481,7 @@ const PARAMS = {
   "pr.bodyMergeDeferred": null,
   "pr.bodyMergeError": z.object({ detail: TextParam }),
   "pr.bodyEditedDuringMerge": null,
+  "pr.bodyRereadFailed": null,
   "pr.readyFailed": z.object({ detail: TextParam }),
   "pr.stackDraftFailed": z.object({ detail: TextParam }),
   "pr.notDraft": z.object({ number: z.number() }),
@@ -1399,6 +1400,8 @@ const ja: MessageDictionary = {
     "PR の向き先の付け替えでは、エージェントに本文をまとめさせません（次に実装を直して PR を更新するときにまとめます）。",
   "pr.bodyEditedDuringMerge":
     "エージェントが本文をまとめる間に、人が PR の本文をまた直したため、本文を更新しませんでした（次に PR を更新するときにまとめ直します）。",
+  "pr.bodyRereadFailed":
+    "エージェントが本文をまとめた後に PR の今の本文を読み直せなかったため、人の直しを上書きしないよう、本文を更新しませんでした（次に PR を更新するときにまとめ直します）。",
   "pr.readyFailed": ({ detail }, text) =>
     `PR のドラフトを外せませんでした（レビューへ進められません）：${text(detail)}`,
   "pr.notDraft": ({ number }) => `PR #${number} がドラフトになっていません`,
@@ -2180,6 +2183,8 @@ const en: MessageDictionary = {
     "When retargeting a PR, an agent does not reconcile the body (it is reconciled the next time the implementation is fixed and the PR is updated).",
   "pr.bodyEditedDuringMerge":
     "A person edited the PR body again while an agent was reconciling it, so the body was not updated (it is reconciled again the next time the PR is updated).",
+  "pr.bodyRereadFailed":
+    "The current PR body could not be read again after an agent reconciled it, so the body was not updated to avoid overwriting a person's edits (it is reconciled again the next time the PR is updated).",
   "pr.readyFailed": ({ detail }, text) =>
     `Could not mark the PR as ready for review (the task cannot move to review): ${text(detail)}`,
   "pr.notDraft": ({ number }) => `PR #${number} is not a draft`,

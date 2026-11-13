@@ -414,7 +414,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
      - the budget cap has been reached (`pr.bodyMergeBudget`)
      - the agent run failed (`pr.bodyMergeFailed`). If it could not be confirmed that the container stopped, the PR is not updated and the task pauses (with the run failure's reason; stopping is confirmed on resume or cancel)
      - the answer cannot be read (`orchestrator.unreadable`; no marker lines, empty, merge markers left, or too long)
-     - the person edited the body again while it was being reconciled, or it cannot be read again (`pr.bodyEditedDuringMerge`)
+     - the person edited the body again while it was being reconciled (`pr.bodyEditedDuringMerge`), or it cannot be read again (`pr.bodyRereadFailed`)
      - when retargeting a stacked PR (`retargetPullRequest`); retargeting runs outside the task's run, so no agent is run (`pr.bodyMergeDeferred`)
      - the merge itself failed (`pr.bodyMergeError`)
 - Cost: the cost of `PullRequestBodyResolved` is charged to the task budget (`CHARGED_EVENT_TYPES`). In the per-step cost table, it appears in the orchestrator row.

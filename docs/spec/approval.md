@@ -460,7 +460,7 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
      - 予算の上限に達している（`pr.bodyMergeBudget`）
      - エージェントの実行に失敗した（`pr.bodyMergeFailed`）。コンテナが止まったことを確かめられなかったときは、PR を更新せずに一時停止する（実行の失敗の理由。再開・中止のときに、止まったことを確かめる）
      - 答えを読めない（`orchestrator.unreadable`。目印の行が無い・空・マージの目印が残っている・長すぎる）
-     - まとめる間に人が本文をまた直した・読み直せない（`pr.bodyEditedDuringMerge`）
+     - まとめる間に人が本文をまた直した（`pr.bodyEditedDuringMerge`）・読み直せない（`pr.bodyRereadFailed`）
      - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
      - マージに失敗した（`pr.bodyMergeError`）
 - 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
