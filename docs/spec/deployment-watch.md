@@ -49,7 +49,7 @@ sacty のタスクの実装の PR がマージされたら、sacty はマージ�
   失敗しても、タスクは止めない。
 - 監視の間は、タスクは完了でない（`isCompleted`・`isFinished` が偽）。
   ダッシュボードとタスクの一覧で、終わっていないタスクとして出る。
-  画面の状態は「マージの後の監視中（CI/CD を待っている）」か「マージの後の監視中（スキルで確かめている）」。
+  画面の状態は「マージの後の監視・CI/CD 待ち」（CI/CD を待っている）か「マージの後の監視・確認中」（スキルで確かめている）。
   人の出番ではない。
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`deploymentWatchEvents`・`nextAfterApproval`）、`packages/core/src/projection.ts`（`settleDeploymentStep`・`isCompleted`・`isFinished`）、`packages/core/src/events.ts`（`DeploymentWatchStarted`）、`apps/web/src/lib/labels.ts`（`statusText`）

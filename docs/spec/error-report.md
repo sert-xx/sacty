@@ -18,7 +18,7 @@ sacty の処理（作業履歴）・各実行のエージェントの動き（�
 | --- | --- |
 | `error`（失敗） | 種類の名前が `Failed` で終わる記録（`AgentRunFailed`・`OrchestratorFailed`・`FinalReviewFailed`・`IssueCommentFailed`・`PullRequestLabelFailed`・`AuditFailed`）と、`failed` を持つか `runResult` が `failed` の記録（書き出し・質問への答えなど） |
 | `stop`（停止） | `TaskPaused`（理由が `manual` のものを除く）・`TaskEscalated` |
-| `check`（確認の不合格） | 通らなかった `TestsRun`・`failed` か `timed_out` の `PullRequestCiFinished`・`unhealthy` の `DeploymentChecked` |
+| `check`（確認の不合格） | 通らなかった `TestsRun`・ベースブランチとの競合の目印が残った `BaseConflictsRemained`・`failed` か `timed_out` の `PullRequestCiFinished`・`unhealthy` の `DeploymentChecked` |
 
 `DeploymentChecked` のうち、確認の実行そのものが失敗した記録（`failed` を持つか、`runResult` が `failed`）は `error` にする。
 エラーの分析の記録（`ErrorAnalysisRequested`・`ErrorAnalyzed`）は、分析が失敗してもエラーに数えない。

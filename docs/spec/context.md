@@ -297,7 +297,7 @@ sacty の工程の選び方を扱うスキルなので sacty の名前を書い�
 
 ## コンテキストリポジトリのファイル
 
-読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`images.yaml`・`rules.md・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。
+読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`images.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。
 
 - これらの中に通常のファイル・ディレクトリでないもの（シンボリックリンクなど）があれば止める（`context.notPlainFile`）。
 - YAML が無ければ既定値を使う。

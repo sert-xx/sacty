@@ -35,7 +35,7 @@ Code: `packages/core/src/events.ts` (`STEP_PLANS`, `StepsChosen`), `apps/daemon/
 - When the watch ends, this step becomes `done` and the task is completed (`settleDeploymentStep`). The watch ends when `state` below is no longer `waiting`, and for `failed`, after deciding about a fix task. Even on failure, the task is not stopped.
 - During the watch, the task is not completed (`isCompleted` and `isFinished` are false). The dashboard and the task list show it as an unfinished task.
 
-  The task's state shows "After-merge watch (waiting for CI/CD)" or "After-merge watch (checking with the skill)". It is not waiting for a person.
+  The task's state shows "After-merge watch · waiting for CI/CD" (waiting for CI/CD) or "After-merge watch · checking" (checking with the skill). It is not waiting for a person.
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `deploymentWatchEvents`, `nextAfterApproval`), `packages/core/src/projection.ts` (`settleDeploymentStep`, `isCompleted`, `isFinished`), `packages/core/src/events.ts` (`DeploymentWatchStarted`), `apps/web/src/lib/labels.ts` (`statusText`)
 

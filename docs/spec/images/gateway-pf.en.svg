@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 600" width="1040" height="600" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/gateway-pf.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">Relaying an internal PF request</title>
-  <desc id="desc">The gateway looks up the PF, matches allow, fetches a token if needed, and sends the request with the auth header. On 401 or 403 it refreshes the token and resends once.</desc>
+  <desc id="desc">The gateway checks the token and the run's scope, looks up the PF, checks the path, method overrides, read-only, and allow, fetches a token if needed, and sends the request with the auth header. On 401 or 403 it refreshes the token and resends once.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -74,10 +74,10 @@
   <svg x="851" y="33" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><rect x="3.5" y="3.5" width="17" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.5"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg>
   <text x="887" y="51" class="title">PF (upstream)</text>
   <text x="259" y="103" class="label" text-anchor="middle">/r/token/pf/name/path</text>
-  <rect x="439" y="135" width="341.9" height="18" rx="4" class="label-bg"/>
-  <text x="444" y="148" class="label" text-anchor="start">Look up the host PF, else the token's project PF (404 if none)</text>
-  <rect x="439" y="185" width="322.8" height="18" rx="4" class="label-bg"/>
-  <text x="444" y="198" class="label" text-anchor="start">Match against allow (403 with the allowed APIs if no match)</text>
+  <rect x="439" y="135" width="377.3" height="18" rx="4" class="label-bg"/>
+  <text x="444" y="148" class="label" text-anchor="start">Check token (401) and run scope (403); find host or project PF (404)</text>
+  <rect x="439" y="185" width="324.4" height="18" rx="4" class="label-bg"/>
+  <text x="444" y="198" class="label" text-anchor="start">Path changes, method overrides: 400; read-only, allow: 403</text>
   <text x="544" y="275" class="label" text-anchor="middle">Request a token with the key</text>
   <text x="546" y="313" class="label" text-anchor="middle">Token and expiry</text>
   <text x="664" y="373" class="label" text-anchor="middle">Drop the agent's auth and cookies, add the auth header, send</text>

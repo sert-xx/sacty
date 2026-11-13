@@ -133,11 +133,15 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   一時停止・中止を求められた親は除く。
   - 子タスクの記録が無ければ作る（公開を記録した後、作る前に止まった（停止・クラッシュ）とき）。
     子タスクだけ作って親に記録する前に止まっていたら、作り直さずに記録だけ足す。
-  - 子タスクがレビューを投稿して終わっていて（「再レビュー」できる状態）、レビューした先頭のコミット（`reviewTarget.headCommit`）が、親が PR に積んだ今のコミットと違えば、再レビューを始める（`ReviewRestarted`、`reason: updated`、`commit` に親のコミット。actor `sacty`）。
-    親が指摘を直して PR を更新し、承認待ちに戻ったときにあたる。直している間（承認待ちでない）は始めない。
+  - 子タスクがレビューを投稿して終わっていて（「再レビュー」できる状態）、レビューした先頭のコミット（`reviewTarget.headCommit`）が、次の先頭と違えば、再レビューを始める（`ReviewRestarted`、`reason: updated`、`commit` にその先頭。actor `sacty`）。
+    - 指摘なしを待つ実装の PR（`awaitingReview`）：GitHub の今の PR の先頭（`pullRequestHead`。人が足したコミットを含む）。読めなければ、次の確認でやり直す。
+    - 指摘なしでドラフトを外した後の実装の PR：PR の確認で読んだ GitHub の先頭が、指摘なしにした先頭（`reviewedCommit`）と違えば（外した後に人がコミットを足した）その先頭、同じなら `reviewedCommit`。
+    - ほかの PR（要求要件・設計の PR）：親が PR に積んだ今のコミット。
+    親が指摘を直して PR を更新し承認待ちに戻ったときと、人が PR にコミットを足したときにあたる。直している間（承認待ちでない）は始めない。
     同じコミットでは1回だけ始める（`Task.reviewRestartCommit`。ほかで push されてレビューした先頭が親のコミットと違っても、繰り返さない）。
     一時停止した・一時停止や中止を求められた子タスクは動かさない。
-- 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず再レビューも起きないので、PR は人の承認（マージ）を待つ。
+- 子タスクの判定が指摘なし（`no_findings`）なら、親には届かず、判定そのものでは再レビューも起きないので、PR は人の承認（マージ）を待つ。指摘なしの後でも、PR の先頭が変われば（人がコミットを足したときなど）、上のとおり再レビューを始める。
+  指摘なしを待つ実装の PR は、子タスクが今の先頭を指摘なしにするまで、確認のたびにドラフトに戻す（`redraftAwaiting`。提出のときに戻せなかった PR も、レビューの途中も）。
   実装の PR（`awaitingReview`）は、PR の今のコミットを指摘なしにしたら、PR の確認で sacty がドラフトを外す（`PullRequestMarkedReady`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
 - 子タスクには、レビューする先頭のコミットの CI の状態（ワークフローの実行・チェック・コミットの状態と、ワークフローの中のジョブ（GitHub Actions のチェック。ワークフローが成功でも、実行されなかったジョブを伝えるため）。チェックの名前・状態・結論・URL。失敗・実行中のものはすべて、成功したもの（`success`・`neutral`。実行されなかった `skipped` は省かない）は合わせて `REVIEW_CI_MAX` 件まで並べ、残りは件数だけ）を sacty が読んで渡す（`reviewCiOf`・`reviewCiLines`）。sacty は CI を待たないので、子タスクに、変更による失敗を要修正の指摘に、変更と関係が無いと確かめた失敗を本文の人が確かめることにさせ、終わっていないものは待たずに実行中と書かせる。
   CI の読み取りは `REVIEW_CI_TIMEOUT_MS`（30秒）まで待ち、答えが返らなければ、読めなかったものとしてレビューを続ける。
@@ -151,7 +155,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   PR の確認は、子タスクの中止（片付けと記録）を待ってから終わる。
 - 以前の版の記録（PR の公開の記録の `label`・`intakeLabel`、`PullRequestLabeled`・`PullRequestLabelFailed`）は読み込めるが、ラベルを付ける予定としては扱わない（台帳は書き換えない）。
 
-コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
+コード: `apps/daemon/src/service.ts`（`ensureReviewTask`・`needsReviewTask`・`reconcileReviewTasks`・`reviewTaskTitle`・`retargetPullRequest`・`publishStepPullRequest`・`publish`・`markReady`・`redraftAwaiting`・`pullRequestHead`・`reviewCiOf`）、`apps/daemon/src/prompts.ts`（`reviewCiLines`・`REVIEW_CI_MAX`・`reviewSecurityLines`）、`apps/daemon/src/service.ts`（`REVIEW_CI_TIMEOUT_MS`）、`packages/core/src/events.ts`（`ReviewTaskCreated`・`TaskCreated`・`ReviewRestarted`）、`packages/core/src/projection.ts`（`reviewTasks`・`reviewOf`・`reviewRestartCommit`）、`apps/web/src/components/task-detail.tsx`（`Properties`）
 
 ## PR の確認
 
@@ -166,17 +170,25 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
   画面から承認はできない（差し戻すか中止する）。
 - 開き直された：`PullRequestReopened` を記録して見守りを続ける。
 - 変わっていない：PR が開いたままで状態が `awaiting_approval` なら、次を順に行う。
-  1. 実装の PR なら、ベースブランチとの競合の変化を記録する（[ベースブランチとの競合の表示](#ベースブランチとの競合の表示)）。
-  2. レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
+  1. GitHub の今の PR の先頭を覚える（`latestHeads`。人が足したコミットで変わる。再レビューの先頭を決めるのに使う）。
+  2. 実装の PR なら、ベースブランチとの競合の変化を記録する（[ベースブランチとの競合の表示](#ベースブランチとの競合の表示)）。
+  3. 実装の PR なら、GitHub のドラフトの状態を台帳に合わせる（`settleDraft`。指摘なしを待つ PR（依存先の PR に重ねた PR を除く）がドラフトでなければドラフトに戻し、指摘なしで外した PR は、GitHub の今の先頭をレビューの子タスクが指摘なしにしていれば、ドラフトなら外し直し、外した後に人がコミットを足して先頭が変わっていれば、再レビューでその先頭が指摘なしになるまでドラフトに戻す（`wantsDraft`）。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+  4. レビュー・コメントを指摘として取り込む（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
 - 指摘の取り込みの間（戻し先の判断の最中など）にマージされた・マージされずに閉じられたときは、差し戻さない。同じ確認の中で状態を読み直し、上のマージ・閉じられた場合として記録する（[PR の指摘の取り込み](#pr-の指摘の取り込み)）。
 - 実装の PR のマージでは、マージの後の監視の工程を飛ばしていなければ、同じ追記でマージの後の監視を始める（[マージの後の監視](deployment-watch.md)）。
-- 確認の初めに、承認待ちではなく、実装を作り直している間のタスクの実装の PR も確かめる（[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。
+- 確認の初めに、次を順に行う。
+  1. 承認待ちではなく、実装を作り直している間のタスクの実装の PR も確かめる（`checkReworkMerges`。[実装の作り直しの間のマージ](#実装の作り直しの間のマージ)）。
+  2. 依存先の PR に重ねた子タスクの承認待ちの PR の向き先を付け替える（`retargetPullRequest`。[依存先の PR に重ねる子タスク](split-and-integrate.md#依存先の-pr-に重ねる子タスク)）。
+  3. 一時停止中のタスクの実装の PR に届いた指摘を、未反映として残す（`checkHeldFeedback`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。
 - 確認の終わりに、次を順に行う。
   1. コンテキストにする改修の PR がマージされたメモリーを消す（`cleanupPromotedMemories`。[メモリー](memory.md#コンテキストへの昇格)）。
   2. PR のレビューの取り込みのタスクのうち終わっていないものの PR を確かめ、マージされた・マージせずに閉じられたら中止する（`checkReviewPullRequests`）。
   3. 承認待ちの PR のレビューの子タスクを整える（作る前に止まったものを作り、親が PR を更新していたら再レビューを始める。`reconcileReviewTasks`。[PR のレビューの子タスク](#pr-のレビューの子タスク)）。
-  4. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
+  4. 一時停止したタスクの実装の PR が、GitHub でドラフトでなければドラフトに戻す（`settlePausedDrafts`。[最終レビューをしない流れ](tasks-and-steps.md#最終レビューをしない流れ)）。
+  5. マージの後の監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
+
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`latestHeads`・`settleDraft`・`settlePausedDrafts`）、`apps/daemon/src/pr-watcher.ts`
 
 ### 実装の作り直しの間のマージ
 
@@ -508,8 +520,8 @@ sacty は、すでにある PR を更新するとき、人の直しを残した�
 - 取り込んだら、戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに差し戻す。
   - 担い手（PBI-332。以前の版ではゴールガーディアン（actor `guardian`））：
     - 指摘が AI のレビューの指摘だけで、すべてがその PR のレビューの子タスクの最後の回の投稿（取り込んだときに目印から読んだ、投稿したタスクと回。`PullRequestReviewImported` の items の `review`）のときは、子タスクが最後の回の判定のブロック（`sacty-review-verdict` の `rework`）に指摘ごとに示した戻し先と原因から決める（`reviewTaskRework`・`reviewReworkTarget`）。判断の実行はしない（費用は 0。作業履歴は actor `sacty` で、`reviewTaskId` に子タスク）。
-      戻し先が読めない・候補に無い・知らない値の指摘は、その PR の工程で直す。`rework` が無ければ、その PR の工程をやり直す（理由は `rework.reviewTaskUnreadable`）。子タスクの答えに `answer` は無い（AI のレビューの指摘は、質問への答えではない）。
-    - 人の指摘を含むとき・子タスクが無いとき（ラベル・依頼で取り込んだレビューだけのタスクの投稿だけのときを含む）・ほかのレビューのタスクや前の回の投稿・出どころの回が分からない（以前の版の記録）指摘を含むときは、その PR の工程のエージェント（人が選んだもの。無ければ `step_agents` か `default_agent`）に、新しいセッションで判断させる（作業履歴は actor `agent`）。
+      戻し先が読めない・候補に無い・知らない値の指摘は、その PR の工程で直す。`rework` が無ければ（回の記録はあるが判定や戻し先を読めなかったときを含む）、その PR の工程をやり直す（理由は `rework.reviewTaskUnreadable`）。子タスクの答えに `answer` は無い（AI のレビューの指摘は、質問への答えではない）。
+    - 人の指摘を含むとき・子タスクが無いとき（ラベル・依頼で取り込んだレビューだけのタスクの投稿だけのときを含む）・ほかのレビューのタスクや前の回の投稿・出どころの回が分からない（以前の版の記録）指摘を含むとき・子タスクの最後の回の判定の記録が無い、または指摘なし（`no_findings`）のときは、その PR の工程のエージェント（人が選んだもの。無ければ `step_agents` か `default_agent`）に、新しいセッションで判断させる（作業履歴は actor `agent`）。
       人が選んだエージェントが設定から消えていれば、既定のエージェントで判断せずに、理由を示して一時停止し（`agent.chosenMissing`）、指摘は未判断のまま残す（再開したら判断し直す）。
     - 子タスクには、レビューの指示で、戻し先の候補・下の基準・承認済みの前の工程の成果物・原因の選択肢（`guardian_missed`・`base_changed`）を渡す（`reviewReworkLines`）。
   - 戻し先は、指摘が承認済みの前の工程の決定（受け入れ条件・振る舞い・画面・API やデータの形・テスト観点・確認して決めたこと）を変えるかで決める。
@@ -668,7 +680,7 @@ PR の指摘を受けた作り直しで、指摘の意図が合っているか�
 | --- | --- |
 | `too_many_changes` | 同じ工程への人の差し戻しが `MAX_CHANGE_REQUESTS`（3）回に達した後の差し戻し（AI のレビューの指摘だけの回は数えない）。書きかけの指摘は残す。上限を超えて続けるには、明示して差し戻す（`overLimit`） |
 | `change_proposed` | 工程のエージェントが変更の申し出をした。AI の判定を挟まずに人が判断する（`ChangeDecided`。[変更の申し出](tasks-and-steps.md#変更の申し出)） |
-| `change_undecidable` | 以前の版の記録（AI が変更の申し出を判定できなかった。いまは記録しない）。人が判断する（`ChangeDecided`） |
+| `change_undecidable` | 以前の版の記録（AI が変更の申し出を判定できなかった）。いまは、以前の版で判定できなかった判定（`ChangeJudged`）を記録した後、後始末を記録する前に止まったタスクを進めるとき（`resumeSettlement`）だけ記録する。人が判断する（`ChangeDecided`） |
 | `rework_confirmation` | 以前の版の記録（いまは記録しない） |
 
 コード: `apps/daemon/src/service.ts`（`requestChanges`・`decideChange`）、`packages/core/src/events.ts`（`TaskEscalated`・`MAX_CHANGE_REQUESTS`）、`packages/core/src/projection.ts`（`changeRounds`）

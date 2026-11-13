@@ -30,8 +30,8 @@ export default {
   height: 600,
   title: t("組織内 PF の中継の流れ", "Relaying an internal PF request"),
   desc: t(
-    "ゲートウェイは PF を探し、allow と照合し、必要ならトークンを取得してから、認証のヘッダーを付けて PF に送る。401・403 ならトークンを取り直して1回だけ送り直す。",
-    "The gateway looks up the PF, matches allow, fetches a token if needed, and sends the request with the auth header. On 401 or 403 it refreshes the token and resends once.",
+    "ゲートウェイはトークン・実行の範囲を確かめて PF を探し、パス・メソッドの上書き・読み取りだけ・allow を確かめ、必要ならトークンを取得してから、認証のヘッダーを付けて PF に送る。401・403 ならトークンを取り直して1回だけ送り直す。",
+    "The gateway checks the token and the run's scope, looks up the PF, checks the path, method overrides, read-only, and allow, fetches a token if needed, and sends the request with the auth header. On 401 or 403 it refreshes the token and resends once.",
   ),
   items: [
     head("a", X.agent, "box", "blue", t("エージェント", "Agent")),
@@ -43,15 +43,15 @@ export default {
     self(
       135,
       t(
-        "ホストの PF、無ければトークンのプロジェクトの PF を探す（無ければ 404）",
-        "Look up the host PF, else the token's project PF (404 if none)",
+        "トークン（401）・実行の範囲（403）を確かめ、PF を探す（404）",
+        "Check token (401) and run scope (403); find host or project PF (404)",
       ),
     ),
     self(
       185,
       t(
-        "allow と照合する（合わなければ 403 と使える API の一覧）",
-        "Match against allow (403 with the allowed APIs if no match)",
+        "URL で変わるパス・メソッドの上書きは 400、読み取りだけ・allow は 403",
+        "Path changes, method overrides: 400; read-only, allow: 403",
       ),
     ),
     {

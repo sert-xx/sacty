@@ -44,19 +44,18 @@ export function statusText(task: Task, l: LabelMessages): string {
     // 実装に変更が無く、PR を作らずに完了した（PBI-90）
     return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
   }
-  // 最終レビューに合格し、実装の PR の CI の結果を待っている（sacty が待つ。人の出番ではない）。CI を待つ間の最終レビュー
-  // （PBI-314）は、下の検証中にする
+  // 以前の版の、最終レビューに合格して実装の PR の CI の結果を待っていたタスク（今の版は CI を待たない。PBI-331）
   if (task.status === "idle" && task.verification === "pending" && awaitingCiAfterReview(task)) {
     return l.state.waitingPullRequestCi;
   }
-  if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
+  // 実装の提出の後、sacty が PR を作る前に確かめている（競合の目印・セキュリティ対応の範囲。PBI-331）。以前の版の最終レビュー・
+  // テストの途中で止まったタスク（tests_passed を含む）も、ここから新しい流れに乗る
+  if (task.status === "idle" && task.verification !== undefined)
+    return l.state.checkingBeforePullRequest;
   if (task.status === "idle" && task.reproductionPending) return l.state.testsRunning;
   // マージの後の監視の工程（PBI-116）。sacty が CI/CD を待ち、スキルで確かめている（人の出番ではない）
   if (task.status === "idle" && activeStep(task) === "deployment") {
     return task.deployment?.phase === "check" ? l.state.watchingCheck : l.state.watchingCi;
-  }
-  if (task.status === "idle" && task.verification === "tests_passed") {
-    return l.state.finalReviewing;
   }
   if (task.status === "escalated" && openProposal(task)) return l.state.changeUndecided;
   if (task.status === "escalated" && task.escalation?.reason === "rework_confirmation") {

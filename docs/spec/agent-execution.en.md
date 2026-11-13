@@ -18,7 +18,7 @@ Related ADRs: [Claude Code runs get a mode that asks for no permission confirmat
   - The container receives only variables sacty decides (authentication, the config location, the image's `env`, and so on).
   - For the same name, the run's value takes precedence over the image's `env`.
 - `run_timeout` in `config.yaml` (PBI-150) sets the limit for the whole run.
-  - If `roles` has an override for the role (a step, `guardian`, `orchestrator`, and so on), sacty uses it.
+  - If `roles` has an override for the role (a step, `orchestrator`, `rework`, and so on), sacty uses it.
   - Without an override, the limit is `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`).
   - For the roles that run tests (`reproduce`, `review`; the earlier version's final review role `final-review` also counts, but it no longer runs), without an override the limit is `agent_minutes` plus `test_minutes` (default 20 minutes).
   - If sacty cannot read the config, the limit is 30 minutes for ordinary roles and 50 minutes (30 plus 20) for reproduction and PR review.

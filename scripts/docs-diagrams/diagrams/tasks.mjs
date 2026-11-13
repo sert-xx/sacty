@@ -69,7 +69,7 @@ export const tasksFlow = {
       title: t("工程を実行する", "Run the next step"),
       lines: [
         t("工程のエージェント", "Step agent"),
-        t("実装は検証と PR の作成まで", "Implementation runs to verification and PR"),
+        t("実装は PR をドラフトで作る", "Implementation opens a draft PR"),
       ],
     },
     {
@@ -93,8 +93,8 @@ export const tasksFlow = {
       strong: true,
       title: t("承認待ち", "Awaiting approval"),
       lines: [
-        t("人が判断する", "A person decides"),
-        t("画面か、PR のマージ", "In the UI or by merging the PR"),
+        t("人が判断する（画面か、PR のマージ）", "A person decides (UI or PR merge)"),
+        t("実装の PR はレビューの子タスクの後", "Impl. PR: after the review child task"),
       ],
     },
     {

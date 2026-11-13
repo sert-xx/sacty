@@ -15,14 +15,14 @@ export type FlowSum = { completed: number; cancelled: number; medianLeadMs: numb
 export type QualityKind =
   /** 人が差し戻した（ChangesRequested のうち、PR の指摘によるものでないもの）。 */
   | "changesRequested"
-  /** PR の指摘で差し戻した（ChangesRequested のうち、ゴールガーディアンの判断で戻したもの。Task の prRework）。 */
+  /** PR の指摘で差し戻した（ChangesRequested のうち、PR の指摘の戻し先の判断で戻したもの。Task の prRework）。 */
   | "pullRequestRework"
   /**
    * sacty 自身の AI のレビューの指摘だけで差し戻した（ChangesRequested の指摘がすべて AI のレビューのもの。人の指摘が
    * 1件でも混ざれば pullRequestRework。PBI-275）。
    */
   | "aiReviewRework"
-  /** ゴールガーディアンの見逃し（GuardianMissed）。 */
+  /** 合格の見逃し（GuardianMissed。統合レビュー・以前の版の最終レビューで合格にした成果物が、見逃しとして差し戻された）。 */
   | "guardianMissed"
   /** 統合レビューの不合格（IntegrationReviewed の passed が偽）。 */
   | "integrationFailed"
@@ -30,7 +30,7 @@ export type QualityKind =
   | "fixTask";
 
 /**
- * 差し戻しの原因の集計の区分（PBI-268）。unspecified は、原因が分からない差し戻し（人が原因を選ばず、ゴールガーディアンも判断していない。
+ * 差し戻しの原因の集計の区分（PBI-268）。unspecified は、原因が分からない差し戻し（人が原因を選ばず、戻し先の判断でも原因が決まっていない。
  * 原因を記録する前の作業履歴で、見逃しの記録（GuardianMissed）が直前に無いものを含む）。
  */
 export type ReworkCauseKey = ReworkCause | "unspecified";
@@ -74,8 +74,8 @@ export type DashboardSummary = {
     /** 工程ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。差し戻した工程＝承認ゲートで止まっていた工程）。 */
     reworkBySteps: Partial<Record<StepKey, number>>;
     /**
-     * 原因ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。PBI-268）。guardian_missed は、差し戻した人かゴールガーディアンが
-     * 見逃しと判断したもの。ゴールガーディアンの見逃し（counts.guardianMissed）は、そのうち合格の最終レビューがあったものを数えるので、
+     * 原因ごとの差し戻しの回数（人の差し戻しと PR の指摘の差し戻し。PBI-268）。guardian_missed は、差し戻した人か戻し先の判断が
+     * 見逃しと判断したもの。合格の見逃し（counts.guardianMissed）は、そのうち合格のレビュー（統合レビュー・以前の版の最終レビュー）があったものを数えるので、
      * 同じ数とは限らない。unspecified は原因が分からないもの（見逃しかどうか分からない）で、見逃しの数と並べて出す。
      */
     reworkByCause: Record<ReworkCauseKey, number>;
@@ -179,7 +179,7 @@ export class DashboardStats {
         if (!event.payload.reproduced) this.waiting.set(event.taskId, event.at);
         break;
       case "ChangesRequested": {
-        // 差し戻しは、実際に差し戻した記録（ChangesRequested）を1回として数える。PR の指摘でゴールガーディアンが戻したものは、
+        // 差し戻しは、実際に差し戻した記録（ChangesRequested）を1回として数える。PR の指摘で戻し先の判断が戻したものは、
         // 投影がこの記録の時刻で prRework に残す（PBI-58）。判断（ReworkJudged）だけで差し戻されなかった（上限で
         // エスカレーションした）ものは数えない
         const remarks = event.payload.remarks ?? [];

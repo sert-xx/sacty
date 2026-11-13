@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 410" width="1040" height="410" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/budget-flow.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">Budget cap and pausing</title>
-  <desc id="desc">A task's budget cap is budget.default_per_task_usd at creation; when steps are chosen, it becomes the plan's budget in budget.per_plan_usd if there is one (unless a person raised the cap). Run costs are added to the amount used, and BudgetWarned is recorded at 80% (the notice is reset when choosing steps changes the cap). At the cap, the task pauses before choosing steps, running a step (except opening the PR for a verified implementation), or verifying; when a person sets a new cumulative cap and resumes, it continues from where it stopped.</desc>
+  <desc id="desc">A task's budget cap is budget.default_per_task_usd at creation; when steps are chosen, it becomes the plan's budget in budget.per_plan_usd if there is one (unless a person raised the cap). Run costs are added to the amount used, and BudgetWarned is recorded at 80% (the notice is reset when choosing steps changes the cap). At the cap, the task pauses before choosing steps or running a step (except opening the implementation PR); when a person sets a new cumulative cap and resumes, it continues from where it stopped.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -81,8 +81,7 @@
   <text x="642" y="272" class="title">Checks the cap</text>
   <text x="606" y="300" class="sub">Before choosing steps</text>
   <text x="606" y="320" class="sub">Before running a step</text>
-  <text x="606" y="340" class="sub">(except opening a verified PR)</text>
-  <text x="606" y="360" class="sub">Before verification</text>
+  <text x="606" y="340" class="sub">(except opening the implementation PR)</text>
   <rect x="300" y="240" width="250" height="150" rx="10" class="card" style=""/>
   <svg x="316" y="254" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
   <text x="352" y="272" class="title">Paused</text>

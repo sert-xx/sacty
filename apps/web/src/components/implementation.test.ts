@@ -310,7 +310,7 @@ describe("Implementation の、終了コードが 0 でないのに合格にし�
       ),
     );
     expect(html).toContain(
-      "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため",
+      "失敗が Sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため",
     );
     expect(html).not.toContain("人が確かめること");
     expect(html).not.toContain(WORKSPACE_FILE_FAILURE);

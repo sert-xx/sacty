@@ -79,7 +79,7 @@ Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `pub
 
 ## When the implementation has no changes
 
-When opening the PR for a verified implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
+When opening the PR for an implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
 
 - If no implementation PR has been opened yet, `NoChangesFound` (the Implementation round to be submitted next) is recorded, and the implementation is submitted (`StepSubmitted`). Since there is no PR, it can be approved in the web UI. This applies to every task (not only template tasks).
 - Before the submission, sacty runs neither the tests nor the final review (sacty does not run tests; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)). Since there is no PR, no PR review child task is created either.
@@ -118,12 +118,16 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   Parents for which pause or cancel was requested are excluded.
   - If there is no record of a child task, one is created (when it stopped (shutdown or crash) after the publish was recorded but before creating it).
     If only the child task was created and it stopped before recording it on the parent, only the record is added without creating it again.
-  - If the child task has posted its review and finished (it can be re-reviewed), and the head commit it reviewed (`reviewTarget.headCommit`) differs from the commit the parent currently has on the PR, a re-review starts (`ReviewRestarted`, `reason: updated`, the parent's commit in `commit`; actor `sacty`).
-    This is when the parent fixed the findings, updated the PR, and went back to waiting for approval. It does not start while fixing (not waiting for approval).
+  - If the child task has posted its review and finished (it can be re-reviewed), and the head commit it reviewed (`reviewTarget.headCommit`) differs from the following head, a re-review starts (`ReviewRestarted`, `reason: updated`, that head in `commit`; actor `sacty`).
+    - An implementation PR waiting for no findings (`awaitingReview`): the PR's current head on GitHub (`pullRequestHead`; including commits a person added). If it cannot be read, the next check tries again.
+    - An implementation PR whose draft was removed after no findings: the GitHub head read in the PR check if it differs from the head given no findings (`reviewedCommit`) (a person added commits after the draft was removed), otherwise `reviewedCommit`.
+    - Other PRs (Requirements and Design PRs): the commit the parent currently has on the PR.
+    This is when the parent fixed the findings, updated the PR, and went back to waiting for approval, and when a person added commits to the PR. It does not start while fixing (not waiting for approval).
     It starts only once for the same commit (`Task.reviewRestartCommit`; even if a push elsewhere makes the reviewed head differ from the parent's commit, it does not repeat).
     Child tasks that are paused, or for which pause or cancel was requested, are left alone.
-- If the child task's verdict is no findings (`no_findings`), nothing is delivered to the parent and no re-review happens, so the PR waits for a person's approval (merge).
+- If the child task's verdict is no findings (`no_findings`), nothing is delivered to the parent and the verdict itself starts no re-review, so the PR waits for a person's approval (merge). Even after no findings, a re-review starts as above when the PR's head changes (for example when a person adds commits).
   For an implementation PR (`awaitingReview`), when the current commit of the PR gets no findings, the PR check has sacty remove the draft (`PullRequestMarkedReady`; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+  An implementation PR waiting for no findings is turned back into a draft at every check until the child task gives the current head no findings (`redraftAwaiting`; also for a PR that could not be turned back into a draft at submission, and during the review).
 - sacty reads the CI state of the head commit being reviewed (workflow runs, checks, commit statuses, and the jobs inside workflows (GitHub Actions checks, so that jobs that did not run are passed even when the workflow succeeded); check names, status, conclusion, and URL; all failed and running checks are listed, succeeded ones (`success`, `neutral`; `skipped`, which did not run, is not left out) only up to `REVIEW_CI_MAX` in total, and the rest as a count) and passes it to the child task (`reviewCiOf`, `reviewCiLines`). Because sacty does not wait for the CI, the child task is told to make failures caused by the change required fixes, to write failures confirmed to be unrelated to the change as things a person should check in the body, and to review without waiting for unfinished checks, writing that they are running.
   sacty waits up to `REVIEW_CI_TIMEOUT_MS` (30 seconds) to read the CI. If there is no answer, it continues the review as if the CI could not be read.
   If it cannot be read, that is passed instead (the review does not stop).
@@ -136,7 +140,7 @@ No label is attached to the PR (the review label `reviewLabel` is used only for 
   The PR check finishes only after the child tasks' cancellation (cleanup and records) finishes.
 - Records from older versions (`label` and `intakeLabel` in the PR publish records, `PullRequestLabeled` and `PullRequestLabelFailed`) can still be read but are not treated as a plan to attach a label (the ledger is not rewritten).
 
-Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `markReady`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`, `reviewSecurityLines`), `apps/daemon/src/service.ts` (`REVIEW_CI_TIMEOUT_MS`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
+Code: `apps/daemon/src/service.ts` (`ensureReviewTask`, `needsReviewTask`, `reconcileReviewTasks`, `reviewTaskTitle`, `retargetPullRequest`, `publishStepPullRequest`, `publish`, `markReady`, `redraftAwaiting`, `pullRequestHead`, `reviewCiOf`), `apps/daemon/src/prompts.ts` (`reviewCiLines`, `REVIEW_CI_MAX`, `reviewSecurityLines`), `apps/daemon/src/service.ts` (`REVIEW_CI_TIMEOUT_MS`), `packages/core/src/events.ts` (`ReviewTaskCreated`, `TaskCreated`, `ReviewRestarted`), `packages/core/src/projection.ts` (`reviewTasks`, `reviewOf`, `reviewRestartCommit`), `apps/web/src/components/task-detail.tsx` (`Properties`)
 
 ## The PR check
 
@@ -148,17 +152,25 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - Closed without merging: `PullRequestClosed` is recorded, and instead of approving, the task waits for a person's decision. It cannot be approved from the web UI (request changes or cancel).
 - Reopened: `PullRequestReopened` is recorded and watching continues.
 - Unchanged: if the PR is still open and the task is `awaiting_approval`, the following are done in order.
-  1. For an implementation PR, a change in the conflict with the base branch is recorded ([Showing a conflict with the base branch](#showing-a-conflict-with-the-base-branch)).
-  2. Reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
+  1. The PR's current head on GitHub is remembered (`latestHeads`; it changes when a person adds commits; used to decide the head to re-review).
+  2. For an implementation PR, a change in the conflict with the base branch is recorded ([Showing a conflict with the base branch](#showing-a-conflict-with-the-base-branch)).
+  3. For an implementation PR, the draft state on GitHub is matched to the ledger (`settleDraft`; a PR waiting for no findings (except a PR stacked on a dependency's PR) that is not a draft is turned back into a draft, and for a PR whose draft was removed after no findings, if the review child task has given no findings for the current head on GitHub, it is made ready again when it is a draft, and if a person added commits after the draft was removed and the head changed, it is turned back into a draft until the re-review gives no findings for that head (`wantsDraft`); [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+  4. Reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
 - If the status, PR, or commit changes during the check, nothing is recorded.
 - If the PR is merged, or closed without merging, while comments are being imported (for example while the step to redo is being decided), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
 - When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append ([After-merge watch](deployment-watch.en.md)).
-- At the start of the check, the implementation PR of a task that is reworking the implementation (not waiting for approval) is also checked ([Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)).
+- At the start of the check, the following are done in order.
+  1. The implementation PR of a task that is reworking the implementation (not waiting for approval) is also checked (`checkReworkMerges`; [Merging during a rework of the implementation](#merging-during-a-rework-of-the-implementation)).
+  2. The base of the PRs waiting for approval of child tasks stacked on a dependency's PR is changed (`retargetPullRequest`; [Child tasks stacked on a dependency's PR](split-and-integrate.en.md#child-tasks-stacked-on-a-dependencys-pr)).
+  3. Comments that arrived on the implementation PR of a paused task are kept as not yet addressed (`checkHeldFeedback`; [Comments that arrive while paused](#comments-that-arrive-while-paused)).
 - At the end of the check, the following are done in order.
   1. Memories whose PR promoting them to context was merged are deleted (`cleanupPromotedMemories`; [Memory](memory.en.md#promotion-to-context)).
   2. For PR review intake tasks that have not finished, the PR is checked, and the task is cancelled if the PR was merged or closed without merging (`checkReviewPullRequests`).
   3. The review child tasks of PRs waiting for approval are put in order (one that stopped before being created is created, and if the parent updated the PR, a re-review starts; `reconcileReviewTasks`; [The review child task of a PR](#the-review-child-task-of-a-pr)).
-  4. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
+  4. The implementation PRs of paused tasks that are not drafts on GitHub are turned back into drafts (`settlePausedDrafts`; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+  5. The CI/CD of tasks waiting for the after-merge watch is checked (`checkDeployments`).
+
+Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `latestHeads`, `settleDraft`, `settlePausedDrafts`), `apps/daemon/src/pr-watcher.ts`
 
 ### Merging during a rework of the implementation
 
@@ -458,7 +470,7 @@ Code: `apps/daemon/src/service.ts` (`reconcilePullRequestBody`, `recordPullReque
   - Who decides (PBI-332; in older versions, the Goal Guardian (actor `guardian`)):
     - When the comments are only AI review comments and all of them were posted in the last round of the PR's review child task (the posting task and round read from the marker at import; `review` of the items of `PullRequestReviewImported`), the step comes from the step to redo and the cause that the child task gave for each finding in the verdict block of its last round (`rework` of `sacty-review-verdict`) (`reviewTaskRework`, `reviewReworkTarget`). No judging run is made (the cost is 0; the activity has actor `sacty` and the child task in `reviewTaskId`).
       A finding whose step cannot be read, is not a candidate, or is an unknown value is fixed in the step of that PR. Without `rework`, the step of that PR is redone (the reason is `rework.reviewTaskUnreadable`). The child task's answer has no `answer` (AI review comments are not answers to questions).
-    - When a person's comment is included, there is no child task (including when only a review-only task taken in by label or request posted), or a comment is from another review task, from an earlier round, or of an unknown round (records of older versions), the agent of that PR's step (the one a person chose; otherwise `step_agents` or `default_agent`) decides in a new session (the activity has actor `agent`).
+    - When a person's comment is included, there is no child task (including when only a review-only task taken in by label or request posted), or a comment is from another review task, from an earlier round, or of an unknown round (records of older versions), or the child task's last round has no verdict record or a verdict of no findings (`no_findings`), the agent of that PR's step (the one a person chose; otherwise `step_agents` or `default_agent`) decides in a new session (the activity has actor `agent`).
       If the agent a person chose is no longer in the configuration, sacty does not decide with the default agent; it pauses the task with the reason (`agent.chosenMissing`) and keeps the comments undecided (they are decided again after resuming).
     - The child task's review instructions give the candidate steps, the rules below, the approved outputs of earlier steps, and the cause choices (`guardian_missed`, `base_changed`) (`reviewReworkLines`).
   - The decider is asked to start the reason (`reason` of `ReworkJudged`) with which decision the comment changes or does not change.
@@ -597,7 +609,7 @@ Code: `apps/daemon/src/service.ts` (`requestChanges`, `stepSettingChanges`, `voi
 | --- | --- |
 | `too_many_changes` | A Request changes after requests for changes by a person to the same step reached `MAX_CHANGE_REQUESTS` (3) (rounds of AI review comments only are not counted). Comments in progress are kept. To continue beyond the limit, request changes explicitly (`overLimit`) |
 | `change_proposed` | A step agent made a change request. A person decides without an AI judging it (`ChangeDecided`; [Change requests](tasks-and-steps.en.md#change-requests)) |
-| `change_undecidable` | A record from earlier versions (the AI could not judge a change request; no longer recorded). A person decides (`ChangeDecided`) |
+| `change_undecidable` | A record from earlier versions (the AI could not judge a change request). Now it is recorded only when moving on a task that stopped after an earlier version recorded an undecided judgment (`ChangeJudged`) but before recording the follow-up (`resumeSettlement`). A person decides (`ChangeDecided`) |
 | `rework_confirmation` | A record from an earlier version (no longer recorded) |
 
 Code: `apps/daemon/src/service.ts` (`requestChanges`, `decideChange`), `packages/core/src/events.ts` (`TaskEscalated`, `MAX_CHANGE_REQUESTS`), `packages/core/src/projection.ts` (`changeRounds`)

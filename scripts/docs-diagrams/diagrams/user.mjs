@@ -769,8 +769,8 @@ export const tasksUser = {
   height: 600,
   title: t("タスクの進み方", "How a task proceeds"),
   desc: t(
-    "タスクに関係する情報を集めてから、オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し、差し戻すとやり直す。",
-    "After the information related to the task is gathered, the orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR; requesting changes redoes the work.",
+    "タスクに関係する情報を集めてから、オーケストレーターが進め方を選び、工程エージェントが工程を実行する。承認が要る工程ではあなたが画面か PR のマージで判断し（実装の PR は、レビューの子タスクが指摘なしにしてから）、差し戻すとやり直す。",
+    "After the information related to the task is gathered, the orchestrator chooses the plan and step agents run the steps. At steps that need approval you decide in the UI or by merging the PR (an implementation PR after the review child task finds nothing); requesting changes redoes the work.",
   ),
   items: [
     {
@@ -821,12 +821,15 @@ export const tasksUser = {
       id: "you",
       ...U,
       y: 440,
-      h: 76,
+      h: 96,
       icon: "user",
       tone: "purple",
       strong: true,
       title: t("あなたが判断する", "You decide"),
-      lines: [t("画面か、PR のマージ", "In the UI or by merging the PR")],
+      lines: [
+        t("画面か、PR のマージ", "In the UI or by merging the PR"),
+        t("実装の PR はレビューの子タスクの後", "Impl. PR: after the review child task"),
+      ],
     },
     {
       kind: "card",

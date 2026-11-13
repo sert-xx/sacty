@@ -163,7 +163,7 @@ const ja = {
     waitingPullRequestCi: "PR の CI を待っている",
     watchingCi: "マージの後の監視・CI/CD 待ち",
     watchingCheck: "マージの後の監視・確認中",
-    finalReviewing: "最終レビュー中",
+    checkingBeforePullRequest: "PR の提出・更新の前の確認中",
     changeUndecided: "変更の申し出の判断待ち",
     reworkConfirmation: "PR の指摘の戻し先の確認待ち",
     reworkJudging: "PR の指摘の戻し先を判断中",
@@ -479,7 +479,7 @@ const ja = {
       reason: "pull_request_merged" | "pull_request_closed" | "parent_cancelled",
     ) =>
       `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : reason === "pull_request_closed" ? "PR が閉じられたため" : "レビューする PR の元のタスクが中止されたため"}）`,
-    GuardianMissed: "最終レビューの見逃し：合格にした成果物が差し戻された",
+    GuardianMissed: "合格の見逃し：合格にした成果物が差し戻された",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
     AgentSessionArchived: (files: number, truncated: number) =>
@@ -851,7 +851,7 @@ const en: LabelMessages = {
     waitingPullRequestCi: "Waiting for the PR's CI",
     watchingCi: "After-merge watch · waiting for CI/CD",
     watchingCheck: "After-merge watch · checking",
-    finalReviewing: "Doing the final review",
+    checkingBeforePullRequest: "Checking before submitting or updating the PR",
     changeUndecided: "Change request needs you",
     reworkConfirmation: "Step to redo for PR comments needs you",
     reworkJudging: "Deciding the step to redo for PR comments",
@@ -1085,7 +1085,7 @@ const en: LabelMessages = {
       `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
     GitHubCommentPosted: (url) => `posted (${url})`,
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
-    GuardianMissed: "Final review miss: a deliverable that passed the final review was sent back",
+    GuardianMissed: "Miss after a pass: a deliverable that passed a review was sent back",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
     AgentSessionArchived: (files, truncated) =>

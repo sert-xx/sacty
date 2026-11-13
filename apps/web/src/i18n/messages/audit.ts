@@ -94,7 +94,7 @@ const ja = {
     contextOwn: "プロジェクトの層",
     contextUpper: (n: number) => `上位 ${n} 層`,
     sacty: "Sacty の既定のコンテキスト",
-    sactyHint: "sacty のプロンプトと、既定のスキル。",
+    sactyHint: "Sacty のプロンプトと、既定のスキル。",
   },
   proposal: {
     pending: "判断待ち",

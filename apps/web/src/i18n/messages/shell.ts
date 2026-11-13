@@ -114,7 +114,7 @@ const en: ShellMessages = {
     release: "See the release notes",
     steps: "Stop the running sacty up with Ctrl+C, then run these in the Sacty repository.",
     cliInstall:
-      "If you installed sacty with npm run cli:install, run npm run cli:install instead of npm run build.",
+      "If you installed Sacty with npm run cli:install, run npm run cli:install instead of npm run build.",
   },
   docker: {
     title: "Docker is not ready",
