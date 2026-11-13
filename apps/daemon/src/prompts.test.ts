@@ -2951,6 +2951,9 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       expect(prompt, step).toContain(
         "確認しないまま推奨の答えで進めた場合の具体的な懸念（何が・誰に・どう困るか。一般論にしない）",
       );
+      expect(prompt, step).toContain(
+        "対象と対象外は必ず両方書き、対象外が本当に無ければ「対象外：なし」と書く",
+      );
     }
     expect(buildPrompt(t, "requirements")).toContain(
       "何を実現するかは、下の「スコープ」の節に1〜3文で書く",

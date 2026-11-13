@@ -615,7 +615,7 @@ Requirements and designs start with the following three sections. They are writt
 
 | Section | Contents | What to do |
 | --- | --- | --- |
-| スコープ (scope) | What the change achieves, what is in scope (what this change changes), and what is out of scope (what may seem included but this change does not do) | If the scope is not what you intended, write it in a remark and request changes |
+| スコープ (scope) | What the change achieves, what is in scope (what this change changes), and what is out of scope (what may seem included but this change does not do; "なし" if none) | If the scope is not what you intended, write it in a remark and request changes |
 | 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer, its reason, and the concern if the work goes ahead with the recommended answer unconfirmed, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
 | 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
 
