@@ -864,7 +864,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     /** ブランチをベースブランチにマージするとき、競合するか（GitHub の「マージできる」の判定と同じ3方向のマージ）。 */
     const conflictsWith = (origin: string, main: string, branch: string) => {
       try {
-        git(origin, "merge-tree", "--write-tree", "--quiet", main, branch);
+        git(origin, "merge-tree", "--write-tree", "--name-only", main, branch);
         return false;
       } catch {
         return true;
@@ -1386,6 +1386,155 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
         ).rejects.toThrow();
       },
     );
+
+    itMerge(
+      "人が PR のブランチに足したコミットを、sacty が最後にプッシュしたコミットを共通の祖先にして取り込み、その先頭に積める（外すパスは取り込まない。PBI-334）",
+      async () => {
+        const { origin, workspace, clone, gitDir, baseCommit, branch } = await prepareMerge();
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+        const pushed = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit,
+          parent: baseCommit,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T01:00:00.000Z",
+        });
+        // 人が、PR のブランチに、README の直しと新しいファイルと、外すパス（タスクブランチの要求要件）の変更を積んだ
+        const human = join(dir, "human");
+        git(origin, "worktree", "add", human, branch);
+        writeFileSync(
+          join(human, "README.md"),
+          "# app\n\n1. one\n2. two\n3. three（人が直した）\n",
+        );
+        writeFileSync(join(human, "human.ts"), "export const human = 1;\n");
+        mkdirSync(join(human, "docs"), { recursive: true });
+        writeFileSync(join(human, "docs", "req.md"), "# 要求要件\n");
+        git(human, "add", "--all");
+        git(human, "commit", "-m", "human");
+        const head = git(human, "rev-parse", "HEAD");
+        expect(await workspace.fetchBranch(gitDir, branch)).toBe(head);
+        // sacty はその間に、作業領域で実装を直していた
+        writeFileSync(join(clone, "pay.ts"), "export const pay = () => 2;\n");
+
+        const merged = await workspace.mergeBase({
+          dir: clone,
+          gitDir,
+          base: pushed.commit,
+          target: head,
+          exclude: ["docs/req.md"],
+        });
+        expect(merged).toEqual({ status: "merged", conflicts: [] });
+        expect(readFileSync(join(clone, "README.md"), "utf8")).toContain("3. three（人が直した）");
+        expect(readFileSync(join(clone, "human.ts"), "utf8")).toBe("export const human = 1;\n");
+        expect(readFileSync(join(clone, "pay.ts"), "utf8")).toBe("export const pay = () => 2;\n");
+        // 外したパスは、作業領域に入れない（提出のときに keep で引き継ぐ）
+        expect(existsSync(join(clone, "docs", "req.md"))).toBe(false);
+
+        // 人の先頭を親にして積めば、強制プッシュせずに更新できる
+        const next = await workspace.publish({
+          dir: clone,
+          gitDir,
+          baseCommit,
+          parent: head,
+          branch,
+          message: "決済API",
+          date: "2026-10-10T02:00:00.000Z",
+        });
+        expect(parents(origin, next.commit)).toEqual([head]);
+        expect(git(origin, "show", `${branch}:pay.ts`)).toBe("export const pay = () => 2;");
+        expect(git(origin, "show", `${branch}:human.ts`)).toBe("export const human = 1;");
+      },
+    );
+
+    itMerge(
+      "競合したのに git が競合したファイルを示さないとき（ディレクトリの移動先を決められない）は、作業領域を書き換えずに失敗する（PBI-334）",
+      async () => {
+        const origin = makeOrigin();
+        git(origin, "config", "receive.denyCurrentBranch", "ignore");
+        mkdirSync(join(origin, "a"));
+        writeFileSync(join(origin, "a", "x"), "x\n");
+        writeFileSync(join(origin, "a", "y"), "y\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "dir");
+        const workspace = new GitRepositoryWorkspace();
+        const clone = join(dir, "task", "repo");
+        const gitDir = join(dir, "_git", "task.git");
+        const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+        // 実装は a/ の中身を b/ と c/ に分けて移し、ベースブランチの側は a/ にファイルを足した（足したファイルの行き先が決まらない）
+        mkdirSync(join(clone, "b"));
+        mkdirSync(join(clone, "c"));
+        renameSync(join(clone, "a", "x"), join(clone, "b", "x"));
+        renameSync(join(clone, "a", "y"), join(clone, "c", "y"));
+        writeFileSync(join(origin, "a", "z"), "z\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "main: a/z");
+        const tip = await workspace.fetchBranch(gitDir, "main");
+        await expect(
+          workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip }),
+        ).rejects.toThrow(/競合したファイルを示しませんでした/);
+        expect(existsSync(join(clone, "a", "z"))).toBe(false);
+        expect(existsSync(join(clone, "b", "x"))).toBe(true);
+      },
+    );
+
+    itMerge(
+      "目印を入れられない競合（両側が同じバイナリを変えた・片方で消してもう片方で変えた）は、作業領域を書き換えずに失敗する（PBI-334）",
+      async () => {
+        const { origin, workspace } = await prepareMerge();
+        const binary = (n: number) => Buffer.from([0, 1, 2, n, 0, 255]);
+        writeFileSync(join(origin, "logo.png"), binary(1));
+        // git のパス指定の記法に見える名前も、文字どおりのファイルとして確かめる
+        const magic = ":(literal)icon.png";
+        writeFileSync(join(origin, magic), binary(1));
+        writeFileSync(join(origin, "old.txt"), "old\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "assets");
+        // 作業領域を、その先頭から用意し直す
+        const again = join(dir, "task2", "repo");
+        const gitDir2 = join(dir, "_git", "task2.git");
+        const prepared = await workspace.prepare(again, gitDir2, origin, "main");
+        // 実装は画像を変えて old.txt を消し、相手の側は同じ画像を別に変えて old.txt も変えた
+        writeFileSync(join(again, "logo.png"), binary(2));
+        writeFileSync(join(again, magic), binary(2));
+        rmSync(join(again, "old.txt"));
+        writeFileSync(join(origin, "logo.png"), binary(3));
+        writeFileSync(join(origin, magic), binary(3));
+        writeFileSync(join(origin, "old.txt"), "changed\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "main: assets");
+        const tip = await workspace.fetchBranch(gitDir2, "main");
+        await expect(
+          workspace.mergeBase({
+            dir: again,
+            gitDir: gitDir2,
+            base: prepared.baseCommit,
+            target: tip,
+          }),
+        ).rejects.toThrow(
+          /競合の目印を入れられないファイルが競合しました（:\(literal\)icon\.png, logo\.png, old\.txt/,
+        );
+        // 作業領域は書き換えない（実装の側のまま）
+        expect(readFileSync(join(again, "logo.png"))).toEqual(binary(2));
+        expect(existsSync(join(again, "old.txt"))).toBe(false);
+      },
+    );
+
+    it("外すパスに、作業領域の外を指すものや .git は受け付けない（PBI-334）", async () => {
+      const { workspace, clone, gitDir, baseCommit } = await prepareMerge();
+      for (const exclude of [["../x"], [".git/config"], ["/etc/passwd"], ["a//b"]]) {
+        await expect(
+          workspace.mergeBase({
+            dir: clone,
+            gitDir,
+            base: baseCommit,
+            target: baseCommit,
+            exclude,
+          }),
+        ).rejects.toThrow();
+      }
+    });
   });
 
   /**

@@ -35,6 +35,7 @@ import {
   PROVENANCE_KINDS,
   type Provenance,
   type ProvenanceItem,
+  pendingHeadMerge,
   RERUN_NOTE_HEADING,
   RERUN_RECORD_HEADING,
   type RemarkResponse,
@@ -727,6 +728,49 @@ function promptPath(path: string): string {
  * PR に積む。
  */
 function mergeConflictLines(task: Task, files: readonly string[]): string[] {
+  const head = pendingHeadMerge(task);
+  const headFiles = new Set(head?.conflicts ?? []);
+  return [
+    ...headMergeLines(
+      task,
+      files.filter((f) => headFiles.has(f)),
+    ),
+    ...baseConflictLines(
+      task,
+      files.filter((f) => !headFiles.has(f)),
+    ),
+  ];
+}
+
+/**
+ * 人が PR のブランチに足したコミットを、sacty が作業領域に取り込んだこと（PBI-334）。人の変更を消さない・書き直さないことと、
+ * 競合したファイルの解消の仕方を伝える。まだ提出していない取り込みが無ければ、何も出さない。
+ */
+function headMergeLines(task: Task, files: readonly string[]): string[] {
+  // 取り込んだ先頭に積んでプッシュした後（最終レビューで不合格になってやり直すときなど）も、作業領域には人の変更が入っているので、
+  // 守る指示は出し続ける（競合したファイルは、まだ提出していない取り込みのものだけ）
+  const head = pendingHeadMerge(task) ?? task.headMerge;
+  if (!head) return [];
+  return [
+    "",
+    "--- 人が PR に足したコミット ---",
+    `人が PR のブランチ（${head.branch}）にコミットを足していた（レビューの提案の適用など）ので、sacty が先頭（${head.commit.slice(0, 7)}）を作業領域の内容にマージしました。作業領域には、その変更が入っています。`,
+    "- 人が足した変更は、人の判断で入れたものです。消したり、元に戻したり、別の形に書き直したりしないでください（今回の指摘がその変更を直すよう求めているときだけ直す）",
+    ...(files.length > 0
+      ? [
+          "- 次のファイルは、あなたの実装の変更と競合したため、目印（<<<<<<<・=======・>>>>>>>）が入っています。上側（<<<<<<< と ======= の間）があなたの実装の側、下側（======= と >>>>>>> の間）が人の足した側です",
+          ...files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+          ...(files.length > MERGE_FILES_IN_PROMPT
+            ? [`- ほか ${files.length - MERGE_FILES_IN_PROMPT} 件`]
+            : []),
+          "- 人の変更を生かしたうえで、実装の意図も生きる内容にして、目印の行をすべて消す（<<<<<<< と >>>>>>> の行には長い ID が付いている。=======の行も消す。1行でも残ると解消したことになりません）",
+        ]
+      : []),
+    "- git でのマージ・リベース・フェッチ・コミット・プッシュはしない（sacty が、人のコミットの上に積んで PR を更新します）",
+  ];
+}
+
+function baseConflictLines(task: Task, files: readonly string[]): string[] {
   if (files.length === 0) return [];
   const merged = task.baseMerge ? task.baseMerge.commit.slice(0, 7) : undefined;
   return [
@@ -774,9 +818,14 @@ function feedbackLines(task: Task): string[] {
   const feedback = task.verifyFeedback;
   if (!feedback) return [];
   if (feedback.kind === "merge") {
+    // 人が PR に足したコミットを取り込んで競合したファイルだけなら、そう伝える（PBI-334）
+    const head = new Set(pendingHeadMerge(task)?.conflicts ?? []);
+    const fromHead = feedback.files.length > 0 && feedback.files.every((f) => head.has(f));
     return [
       "",
-      "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
+      fromHead
+        ? "--- 前回の検証：人が PR に足したコミットとの競合の目印が残っていました ---"
+        : "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
       "実装の PR を作る前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。PR は、まだ作っていません（更新もしていません）。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
     ];
@@ -2852,7 +2901,12 @@ export function buildPrompt(
         const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
         lines.push(...earlierRemarkSections(remarks));
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
-        lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
+        lines.push(
+          ...feedbackLines(task),
+          ...remarkLines(task, step, "観点ごとのテストの対応"),
+          // 取り込みで競合したファイルと、人が PR に足したコミットのこと（ほかの実装の指示と同じ。PBI-334）
+          ...mergeConflictLines(task, extra.mergeConflicts ?? []),
+        );
         lines.push(...implementSelfReviewLines(task, "修正"));
         return lines.join("\n");
       }

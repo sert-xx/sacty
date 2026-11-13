@@ -656,6 +656,21 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
       );
     case "BaseConflictsRemained":
       return e.BaseConflictsRemained(event.payload.files.slice(0, 5).join(", "));
+    case "PullRequestHeadMerged":
+      return e.PullRequestHeadMerged(
+        event.payload.branch,
+        event.payload.commit.slice(0, 7),
+        event.payload.conflicts.length,
+        event.payload.conflicts.slice(0, 5).join(", "),
+      );
+    case "PullRequestBodyWritten":
+      return e.PullRequestBodyWritten(event.payload.number);
+    case "PullRequestBodyResolved":
+      return e.PullRequestBodyResolved(
+        event.payload.number,
+        event.payload.outcome,
+        event.payload.reason ? l.text(event.payload.reason) : "",
+      );
     case "TestsRun":
       return e.TestsRun(
         event.payload.passed,

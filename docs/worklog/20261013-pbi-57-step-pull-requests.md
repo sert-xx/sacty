@@ -4,7 +4,7 @@
 - タスク: PBI-57
 - PR: #67
 - ブランチ: feat/issue-57-step-pull-requests
-- 関係する ADR: [Git 管理のリポジトリでは、要求要件・設計を工程ごとにタスクブランチへの PR にし、そのマージを人の承認とする](../adr/20261013-1318-superseded-step-pull-request-approval.md)、[タスクブランチに sacty が積んでいない変更があれば、実装を積まずに止め、人の変更を自動では取り込まない](../adr/20261013-1318-stop-on-unexpected-task-branch-changes.md)
+- 関係する ADR: [Git 管理のリポジトリでは、要求要件・設計を工程ごとにタスクブランチへの PR にし、そのマージを人の承認とする](../adr/20261013-1318-superseded-step-pull-request-approval.md)、[タスクブランチに sacty が積んでいない変更があれば、実装を積まずに止め、人の変更を自動では取り込まない](../adr/20261013-1318-superseded-stop-on-unexpected-task-branch-changes.md)
 
 ## 目的
 

@@ -256,6 +256,19 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
         });
         return;
       }
+      // 人が直した PR の本文と、sacty の新しい本文の競合をまとめた実行（PBI-334。オーケストレーターのエージェントで行う）
+      case "PullRequestBodyResolved":
+        if (event.payload.agentId) {
+          push(
+            "orchestrator",
+            runOf(
+              event,
+              event.payload,
+              event.payload.outcome === "resolved" ? "completed" : "failed",
+            ),
+          );
+        }
+        return;
       default:
         return event satisfies never;
     }

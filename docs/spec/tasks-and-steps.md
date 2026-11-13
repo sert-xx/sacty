@@ -1093,9 +1093,10 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 取り込み方：
   1. ベースブランチ（`repository.baseBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
      作業領域が今ベースにしているコミット（`workBaseCommit`。取り込み前は起点のコミット、取り込み後は最後に取り込んだ先頭）と同じなら、何もしない。
-  2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものと、ツールの置き場所は除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree --merge-base`。ホストの git は 2.40 以上が必要で、古ければ `git.mergeTreeUnsupported` を示す）。
+  2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものと、ツールの置き場所は除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree --merge-base`。ホストの git は 2.40 以上が必要で、古ければ `git.mergeTreeUnsupported` を示す）。git 2.40〜2.44 の `merge-tree` はツリーを受け付けないので、作業領域の内容（と、外すパスを除いたツリー）は、どのブランチにも付けない一時的なコミット（作者と日時は固定）にして渡す。
+     競合したのに git が競合したファイルを示さない（ディレクトリの移動先を決められないなど、目印を入れられない）ときは、解消を確かめられないので、作業領域を書き換えずに止める（`git.conflictWithoutFiles`。人が PR に足したコミットの取り込みも同じ）。
      競合したファイルが `MAX_BASE_CONFLICTS`（1000）件を超えるときは、作業領域を書き換えずに、件数と上限を示して止める（`git.tooManyConflicts`。`merge.failed` で一時停止）。
-     作業領域の git の設定・フィルター・フックは使わず、コミットも作らない。
+     作業領域の git の設定・フィルター・フックは使わず、ブランチにコミットを積まない（`merge-tree` に渡す一時的なコミットは作るが、どのブランチにも付けない）。
   3. 結果を作業領域に書く（`git read-tree -m -u`）。競合したファイルには、目印（`<<<<<<<`・`=======`・`>>>>>>>`）を残す。上が実装の側、下がベースブランチの側。
   4. 取り込んだ先頭と、競合したファイルの一覧（全件。切り捨てない）を `BaseBranchMerged` に記録する。`Task.baseMerge` に最後の取り込みを持つ。
      記録した起点のコミット（`Task.repository.baseCommit`）は変えない。ベースブランチを選び直して作業領域を用意し直したとき（`RepositoryPrepared`）は、`baseMerge` を消す。
@@ -1105,12 +1106,12 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   - ディレクトリとファイルの名前が衝突して git が避けた名前（`<名前>~<ID>`）のパスで、まだ存在するもの。
   通常のファイルだけを読み（シンボリックリンクと、作業領域の外を指すものは読まない）、20 MiB を超えるファイルは読まない。
   目印が残っているうちは、さらに取り込まず、そのファイルを返す。
-  目印を入れられない競合（バイナリ・片方での削除など）は、目印では解消を確かめられない。
+  目印を入れられない競合（バイナリ・片方での削除など）は、目印では解消を確かめられず、片側の内容だけが残る（もう片側の変更が消えうる）ので、取り込みのときに、作業領域を書き換えずに止める（`git.conflictWithoutMarkers`。人が PR に足したコミットの取り込みも同じ）。競合したファイルごとに結果の内容を読み、目印の行が無いものを数える。結果に無いパスは、両側とも消した（同じファイルを両側が別名へ改名したなど）なら数えない。git が避けた名前（`<名前>~<ID>`）と、その元の名前は、残っているかで確かめるので数えない。
 - 実装の指示（`mergeConflictLines`）：実装の実行を始める前に、目印が残っているファイルがあれば、一覧と解消の仕方を渡す。
   上下の意味、両方の意図を生かすこと、ベースブランチ側の変更を自分の変更として書き直したり消したりしないこと、目印の行をすべて消すこと、避けた名前（`<名前>~<ID>`）のファイルがあれば、残す内容を正しい名前にして避けた名前のファイルを消すこと、git でのマージ・リベース・フェッチ・コミット・プッシュをしないことを書く。
 - PR を作る前（`FinalReviewSkipped` の前。`conflictsResolved`）に目印が残っていれば、PR を作らずに、`BaseConflictsRemained` を記録して実装をやり直す。
   - 検証に通らなかったものとして数える（`verifyFailures`。やり直しの指示には「前回の検証：ベースブランチとの競合の目印が残っていました」と一覧を渡す）。
-    以前の版で、検証の前の取り込みで新しく競合した（実装の実行の間にベースブランチが進んだ）ときの記録（`BaseConflictsRemained` の `fresh`）は、エージェントの誤りではないので数えない。今の版は検証の前に取り込まないので、`fresh` を記録しない。
+    以前の版で、検証の前の取り込みで新しく競合した（実装の実行の間にベースブランチが進んだ）ときの記録（`BaseConflictsRemained` の `fresh`）は、エージェントの誤りではないので数えない。今の版はベースブランチを検証の前に取り込まないので、ベースブランチの取り込みでは `fresh` を記録しない（人が PR に足したコミットの取り込みでは記録する。[人が PR に足したコミットの取り込み](#人が-pr-に足したコミットの取り込み)）。
   - 続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にし、競合したファイルを示す（`verify.mergeConflictsRemain`）。再開すると数え直し、目印のあるファイルを渡して実装をやり直す。
   - 目印が残って止まったタスクは、人が「レビューへ進める」ことはできない（`canOverrideVerification`）。
 - 取得・マージに失敗したときは、実装を実行せずに（`AgentRunFailed`）、理由を示して一時停止する（`merge.failed`）。
@@ -1124,11 +1125,61 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 コード: `apps/daemon/src/service.ts`（`mergesBase`・`syncBase`・`runNextInner`・`publish`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/repository.ts`（`mergeBase`・`conflictMarkers`・`publish`）、`apps/daemon/src/prompts.ts`（`mergeConflictLines`）、`packages/core/src/events.ts`（`BaseBranchMerged`・`BaseConflictsRemained`）、`packages/core/src/projection.ts`（`baseMerge`・`workBaseCommit`・`canOverrideVerification`）
 
+### 人が PR に足したコミットの取り込み
+
+sacty が作った PR のブランチに、人がコミットを足していること（レビューの提案の適用・GitHub の画面でのベースブランチの取り込みなど）がある。
+sacty は、そのコミットを実装の作業領域に取り込んでから、その先頭に積む。
+人の変更を消さず、強制プッシュもしない。
+既存の PR を引き継ぐタスク（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）は、人の PR のブランチに積むので、取り込まない（`publishContinued` が、前にプッシュしたコミットか先頭に積む）。
+
+関係する ADR: [人が sacty の PR に足したコミットを作業領域に取り込み、人が直した PR の本文を3方向でマージして残す](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
+
+- 取り込む時点（`syncPullRequestHead`）：
+  - 実装の実行を始める前（`syncBase` の中で、ベースブランチの取り込みより先に）。差し戻し・PR の指摘の取り込み・再レビューで実装をやり直すときも同じ。
+  - PR を出す前（`headSyncedBeforePublish`。実装の実行の間に足されたもの）。
+  - PR を出す直前（`publish`）。
+  - 設定 `ServiceDeps.mergeBase`（テスト用）が `false` でも取り込む（`false` で止まるのは、ベースブランチの取り込みだけ）。
+- 取り込み方：
+  1. sacty がまだプッシュしていなければ、何もしない。
+     まだ提出していない取り込み（`pendingHeadMerge`）で競合したファイルに目印が残っていれば、先頭を取得せず、さらに取り込まずに、そのファイルを返す（新しい取り込みの記録で、残った目印の記録を消さない）。
+  2. sacty が最後にプッシュしたブランチ（`Task.pushedBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
+     取得できない（PR がマージされてブランチが消えたなど）ときは、取り込まずに進め、理由をデーモンのログに出す。
+  3. sacty が最後にプッシュしたコミット（まだ提出していない取り込みがあれば、その先頭）と同じなら、何もしない。
+  4. 違えば、sacty が最後にプッシュしたコミット（まだ提出していない取り込みがあれば、その先頭）を共通の祖先にして、作業領域の内容と先頭を3方向でマージする（`mergeBase`。ベースブランチの取り込みと同じ仕組み・同じ上限）。
+     タスクブランチから引き継ぐ要求要件・設計のファイル（`stepPullRequests` の `path`）は、両側のツリーから外してマージする（`mergeBase` の `exclude`）。
+     作業領域のそのパスは変えない（提出のときに、タスクブランチのものを引き継ぐ）。
+  5. `PullRequestHeadMerged`（ブランチ・取り込む前の sacty のコミット・取り込んだ先頭・競合したファイルの全件）を記録する。
+     `Task.headMerge` に最後の取り込みを持つ。
+     sacty がまだその先頭に積んでいない間（`from` が今プッシュしてあるコミットで、同じブランチ）を、まだ提出していない取り込み（`pendingHeadMerge`）とする。
+     取り込みで作業領域の内容が変わるので、実装の工程の検証の結果（`implementVerification`）を捨てる。
+     ベースブランチを選び直して作業領域を用意し直したとき（`RepositoryPrepared`）は消す。
+- 競合したとき：
+  - 実装の実行の前なら、競合したファイルを実装の指示に渡す（下の「実装の指示」）。
+  - PR を出す前なら、`BaseConflictsRemained` を記録して実装をやり直す。新しく競合したときは数えず（`fresh`）、前の取り込みの目印が残っているときは数える。
+  - PR を出す直前（PR の作成の待ち。`publishPending`）なら、PR を出さずに、競合したファイルを `verifyFeedback`（`merge`）にして実装をやり直す（`PullRequestHeadMerged` の投影。数えない）。
+  - 目印が残っているかは、ベースブランチの取り込みと同じく確かめる（`pendingConflicts` は、ベースブランチの取り込みと、まだ提出していない取り込みの、競合したファイルを合わせたもの）。
+    PR を出す直前に、まだ提出していない取り込みの目印が残っていれば、プッシュしないで一時停止する（`pr.headConflicted`）。
+  - マージできなければ、理由を示して一時停止する（`pr.headMergeFailed`）。
+- 一時停止・中止：先頭の取得を待った後と、認証などの準備を済ませたプッシュの直前に、一時停止・中止を求められていないかを確かめ、求められていればプッシュも PR の更新もしない。
+- 提出（`publish`）：
+  - まだ提出していない取り込みがあれば、取り込んだ先頭を親にして積む（無ければ、これまでどおり前の PR のコミット）。人の先頭に積んでプッシュした後、PR の更新の前に止まって再開したときは、同じブランチにプッシュ済みのコミットに積む（前の PR のコミットに戻すと、早送りでプッシュできない）。
+    人の先頭の上に積むので、早送りでプッシュできる。
+  - タスクブランチに積むタスクは、sacty が積んでいない変更があるかの確認（`pr.taskBranchChanged`）の起点を、取り込んだ先頭にする。
+    取り込んだ人の変更は、確かめ直さない。
+    sacty がまだ実装を積んでいない（初めての提出の）ときは、これまでどおり起点から確かめて止める。
+- 実装の指示（`mergeConflictLines`・`headMergeLines`。不具合の修正の流れも同じ）：取り込んだことがあれば（`Task.headMerge`。取り込んだ先頭に積んでプッシュした後のやり直しも）、人が PR のブランチにコミットを足したこと、取り込んだ先頭、人の変更を消したり戻したり書き直したりしないこと（今回の指摘が直すよう求めているときだけ直す）、git でのマージ・リベース・フェッチ・コミット・プッシュをしないことを書く。
+  競合したファイルがあれば、一覧と、目印の上側が実装の側・下側が人の足した側であること、人の変更を生かして目印の行をすべて消すことを書く。
+  ベースブランチとの競合は、これまでどおり別の節（`baseConflictLines`）で渡す。
+  前回の検証で、人の取り込みで競合したファイルだけの目印が残っていたときは、見出しを「前回の検証：人が PR に足したコミットとの競合の目印が残っていました」にする（`feedbackLines`）。
+- 作業履歴の表示：「人が PR のブランチ … に足したコミット（…）を作業領域に取り込み」と、競合したファイルの数と先頭の5件を出す。
+
+コード: `apps/daemon/src/service.ts`（`syncPullRequestHead`・`syncBase`・`headSyncedBeforePublish`・`conflictsResolved`・`publish`・`pendingConflicts`）、`apps/daemon/src/repository.ts`（`mergeBase`）、`apps/daemon/src/prompts.ts`（`mergeConflictLines`・`headMergeLines`・`baseConflictLines`・`feedbackLines`）、`packages/core/src/events.ts`（`PullRequestHeadMerged`）、`packages/core/src/projection.ts`（`headMerge`・`pendingHeadMerge`）、`apps/web/src/lib/labels.ts`
+
 ### 実装の PR の作成
 
 - `FinalReviewSkipped` を記録すると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。
   続けて sacty が、実装の作業領域をコミットしてプッシュし、実装の PR をドラフトで作る（すでに PR があれば更新して、ドラフトに戻す。[最終レビューをしない流れ](#最終レビューをしない流れ)）。
-  エージェントは使わない。
+  エージェントは使わない。ただし、すでにある PR を更新するときに、人が直した本文と sacty の新しい本文が同じ箇所で重なったら、オーケストレーターのエージェントにまとめさせる（[人が直した本文の更新](approval.md#人が直した本文の更新)。費用はタスクの予算に入れる）。
   コミットの日時は、実装の工程が終わった時刻にする（再開しても同じコミットになる）。
   - コミットの1行目（`commitSubject`・`detectCommitConvention`。PBI-301 A8。実験 S5 r2）：リポジトリが Conventional Commits の形を定めているときだけ、題に種類を付ける（`feat: <題>`）。定めているのは、次のどれか。Commitizen・commitlint の設定のファイル（`.czrc`・`.cz.json`・`commitlint.config.*`・`.commitlintrc*` など）がある。`package.json` に commitlint・commitizen の設定か依存がある。AGENTS.md・CLAUDE.md・CONTRIBUTING・README が Conventional Commits・Commitizen・commitlint に触れるか、`feat:` と `fix:` の両方を例に挙げている。commitlint が1行目の形を独自に決めている設定（`headerPattern`・`parserPreset`）は読み解けないので、定めていないものとして扱う（`package.json` の依存や別のファイルの設定があっても、独自の形があれば優先し、種類を付けない）。定めは、エージェントが書き換えた作業領域ではなく、起点のコミットから読む（`COMMIT_CONVENTION_FILES`。再開しても同じコミットになる。読めなかったときは定めが無いものとして題のまま）。種類は、文書だけの依頼の実装は `docs`、不具合の修正は `fix`、それ以外は `feat`。要求要件・設計の PR のコミットは `docs`。題がすでに種類の付いた形（`feat: …`・`fix(api): …`）なら重ねて付けない。定めが無いリポジトリでは、今までどおり題のまま。2行目以降の `sacty task <ID>` は変えない。既存の PR を引き継ぐタスクが積むコミットも同じ。1行目の長さは変えない（長さの上限を定めるリポジトリでは、長い題が収まらないことがある）。
   - リポジトリがドラフトの PR を使えない（GitHub の 422）なら、ドラフトでない PR にする（依存先の PR に重ねた子タスクは、ドラフトにできなければ記録せずに止める。[タスク分割と統合レビュー](split-and-integrate.md#依存先の-pr-に重ねる子タスク)）。
@@ -1137,7 +1188,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   実装に変更が無く、まだ PR が無ければ、PR を作らずに `NoChangesFound` と実装の提出を記録する（[承認と差し戻し](approval.md#実装に変更が無いとき)）。
 - PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。
   再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、一時停止・再起動の後も残る）。
-- 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。
+- 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。本文が重なったときのエージェントは、予算の上限に達していれば実行せず、人の本文のまま変えない。
 - 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。再開すると作る）。
   PR を作り始めた後に求められたら、PR を作り終えて記録してから（作った PR を記録しないまま止めると、再開で PR を二重に作りうる・中止で閉じられないため）、求めたものによって次の状態になる。
   - 一時停止：実装の承認待ちのまま、一時停止はしない。
@@ -1158,7 +1209,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 記録（`VerificationRecord`）は、コマンドごとに、種類（`kind`）・コマンド・覆った範囲（`coverage`。`full` はコマンドが定める対象の全体、`partial` は一部だけで、`note` に範囲を書く）・結果（`status`。`passed`・`failed`）・終了コード・結果の抜粋・実行した段（`by`。`self-review`・`guardian`・`ci`。`guardian` は以前の版の最終レビュー）を持つ。
   エージェントは、見出し `sacty-verification` の JSON で申告する（`extractVerificationRecord`）。最後の申告だけを使い、最後の申告が JSON として読めなければ、前の申告に戻らず記録なしにする。結果の出ていないもの・種類の分からないものは捨て、`coverage` が `full` でないものは `partial` として読む。
 - 実装の工程：作業領域を最後に変えた後に実行した検証だけを申告させる（`implementVerificationRecordLines`）。提出の前の検証とセルフレビューの検証は、同じ内容なら1回の実行で両方に使わせる。
-  申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・実装の本文を工程の外で差し替えたら消す。今の版では、この記録を後の段に渡さない。
+  申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・人が PR に足したコミットを作業領域に取り込んだら（`PullRequestHeadMerged`）・実装の本文を工程の外で差し替えたら消す。今の版では、この記録を後の段に渡さない。
 - PR のレビュー：前の段の記録と CI の結果から、覆われていない分だけを実行させる（`reuseVerificationLines`）。sacty が作った PR のレビューのタスク（`source.review` が `sacty`）では、その PR を作ったタスクの以前の版の最終レビューの記録（`FinalReviewed` の `verificationRecord`）を、記録のコミットがレビューする先頭のコミット（`reviewTarget.headCommit`）と同じときだけ渡す（`reviewVerification`）。それ以外（人の PR・今の版で作った PR）では記録は無く、CI の結果だけを使い回せる。
 - 使い回しの規則（エージェントへの指示と、既定のスキルの `verification-run` の「1.5 使い回せる結果を探す」）：
   - 使い回せるのは、同じ内容で全体（`full`）を実行して結果が出たものだけ。`partial` の記録は、覆った範囲を除いた残りを実行させる。

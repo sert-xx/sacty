@@ -47,8 +47,10 @@ import {
   isRepoless,
   lastChangeRound,
   pendingErrorAnalysis,
+  pendingHeadMerge,
   pendingQuestion,
   project,
+  pullRequestBodyKey,
   pullRequestConflict,
   questionBlocked,
   resumeNoteRoom,
@@ -3873,6 +3875,90 @@ describe("実装の工程の検証の記録（PBI-305）", () => {
       ev("t1", { type: "BaseBranchMerged", payload: { from: "b1", commit: "n1", conflicts: [] } }),
     ]).get("t1");
     expect(task?.implementVerification).toBeUndefined();
+  });
+});
+
+describe("人が PR のブランチに足したコミットの取り込みと、PR の本文の記録（PBI-334）", () => {
+  const prepared = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+  ];
+  const pushed = (id: string, commit: string) =>
+    ev(id, { type: "BranchPushed", payload: { branch: "sacty/t", commit } });
+  const headMerged = (id: string, from: string, commit: string, conflicts: string[] = []) =>
+    ev(id, {
+      type: "PullRequestHeadMerged",
+      payload: { branch: "sacty/t", from, commit, conflicts },
+    });
+
+  it("取り込みを記録し、sacty がまだプッシュしていない間だけ、次の提出の親にする取り込みとして扱う", () => {
+    seq = 0;
+    const task = project([
+      ...prepared("t1"),
+      ...verifiedImplementation("t1"),
+      pushed("t1", "p1"),
+      headMerged("t1", "p1", "h1"),
+    ]).get("t1");
+    expect(task?.headMerge).toMatchObject({ branch: "sacty/t", from: "p1", commit: "h1" });
+    expect(task && pendingHeadMerge(task)?.commit).toBe("h1");
+    // その先頭に積んでプッシュしたら、もう取り込みは済んでいる
+    const after = project([
+      ...prepared("t2"),
+      ...verifiedImplementation("t2"),
+      pushed("t2", "p1"),
+      headMerged("t2", "p1", "h1"),
+      pushed("t2", "p2"),
+    ]).get("t2");
+    expect(after && pendingHeadMerge(after)).toBeUndefined();
+    // リポジトリを用意する前には取り込めない。用意し直したら消える
+    expect(() => project([created("t3"), headMerged("t3", "p1", "h1")])).toThrow(/not prepared/);
+    const again = project([
+      ...prepared("t4"),
+      ...verifiedImplementation("t4"),
+      pushed("t4", "p1"),
+      headMerged("t4", "p1", "h1"),
+      ev("t4", {
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "develop", baseCommit: "d1" },
+      }),
+    ]).get("t4");
+    expect(again?.headMerge).toBeUndefined();
+  });
+
+  it("PR を出す直前の取り込みで競合したら、PR を出さずに、競合したファイルを渡して実装をやり直す（数えない）", () => {
+    seq = 0;
+    const events = [...prepared("t1"), ...verifiedImplementation("t1"), pushed("t1", "p1")];
+    const before = project(events).get("t1");
+    expect(before?.publishPending).toBe(true);
+    const task = project([...events, headMerged("t1", "p1", "h1", ["src/a.ts"])]).get("t1");
+    expect(task?.publishPending).toBeUndefined();
+    expect(task?.verifyFeedback).toEqual({ kind: "merge", files: ["src/a.ts"] });
+    expect(task?.status).toBe("queued");
+    expect(task?.verifyFailures ?? 0).toBe(0);
+    // 競合しなければ、そのまま PR を出す
+    const clean = project([...events, headMerged("t1", "p1", "h1")]).get("t1");
+    expect(clean?.publishPending).toBe(true);
+    expect(clean?.verifyFeedback).toBeUndefined();
+  });
+
+  it("sacty が組み立てた PR の本文を、PR ごとに最後のものだけ記録する", () => {
+    seq = 0;
+    const written = (number: number, body: string) =>
+      ev("t1", {
+        type: "PullRequestBodyWritten",
+        payload: { repo: "https://github.com/acme/app", number, body },
+      });
+    const task = project([created("t1"), written(7, "v1"), written(8, "s1"), written(7, "v2")]).get(
+      "t1",
+    );
+    expect(task?.pullRequestBodies).toEqual({
+      [pullRequestBodyKey("https://github.com/acme/app", 7)]: "v2",
+      [pullRequestBodyKey("https://github.com/acme/app", 8)]: "s1",
+    });
   });
 });
 

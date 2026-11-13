@@ -101,10 +101,12 @@ import {
   parseOrgUrl,
   parseRepoUrl,
   pendingErrorAnalysis,
+  pendingHeadMerge,
   pendingQuestion,
   project,
   projectConflicts,
   proposalAccepted,
+  pullRequestBodyKey,
   questionBlocked,
   queueOverSince,
   RejectAuditProposalInput,
@@ -306,6 +308,12 @@ import {
   platformSummary,
   readOnlyPlatforms,
 } from "./platforms.js";
+import {
+  buildPullRequestBodyMergePrompt,
+  extractMergedPullRequestBody,
+  mergePullRequestBody,
+  normalizeNewlines,
+} from "./pr-body-merge.js";
 import {
   fillTemplate,
   limitBody,
@@ -7773,6 +7781,15 @@ export class TaskService {
         () => buildPullRequestBodyText(this.latestTitled(task), stage),
         () => buildPullRequestBodyParts(this.latestTitled(task), stage),
       );
+      // 人が直した本文は、3方向でマージして残す（PBI-334）
+      // 付け替えはタスクの実行の外なので、重なってもエージェントは実行しない（次のやり直しの提出でまとめる）
+      const sent = await this.reconcilePullRequestBody(task, {
+        repo: pr.repo,
+        token,
+        number: pr.number,
+        generated: body,
+        agent: false,
+      });
       // 認証・本文の用意を待つ間に変わったら、古い向き先・本文で PR を更新しない
       if (!unchanged()) return;
       await this.deps.pulls.upsert({
@@ -7781,10 +7798,13 @@ export class TaskService {
         branch: pr.branch,
         baseBranch: repository.baseBranch,
         title: task.title,
-        body,
+        body: sent.body,
         number: pr.number,
         retarget: true,
       });
+      if (sent.record) {
+        this.recordPullRequestBody(task.id, pr.repo, pr.number, body, sent.overwritten);
+      }
       // PR のレビューの子タスクの指摘なしを待つ PR は、ドラフトのままにする（指摘なしで外す。PBI-331）
       const ready = !task.stack && !pr.awaitingReview;
       if (!unchanged()) return;
@@ -7858,11 +7878,12 @@ export class TaskService {
   }
 
   /**
-   * 実装の作業領域に、ベースブランチの最新を取り込むタスクか。sacty が PR を作る実装だけ。既存の PR を引き継ぐタスクは、
-   * 人の PR のブランチに積むので取り込まない。
+   * 実装の作業領域に、ベースブランチの最新と、人が PR のブランチに足したコミット（PBI-334）を取り込むタスクか。sacty が PR を
+   * 作る実装だけ。既存の PR を引き継ぐタスクは、人の PR のブランチに積むので取り込まない。ベースブランチの取り込みは、
+   * 設定 mergeBase（テスト用）が false なら行わない（`syncBase`）。
    */
   private mergesBase(task: Task): boolean {
-    return this.deps.mergeBase !== false && !!task.repository && !task.continuedPullRequest;
+    return !!task.repository && !task.continuedPullRequest;
   }
 
   /**
@@ -7888,11 +7909,16 @@ export class TaskService {
     const usedSecrets: string[] = [];
     try {
       // 前に取り込んで競合した目印が残っていれば、先に解消させる（目印の上に、さらに取り込まない）
-      const pending = task.baseMerge?.conflicts ?? [];
+      const pending = pendingConflicts(task);
       if (pending.length > 0) {
         const remaining = await this.deps.repos.conflictMarkers(dir, pending);
         if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
       }
+      // 人が PR のブランチに足したコミットを、先に取り込む（PBI-334。取り込まずに積むと、プッシュできないか、人の変更が消える）
+      const head = await this.syncPullRequestHead(task);
+      if (head.kind !== "clean") return head;
+      if (this.deps.mergeBase === false) return { kind: "clean" };
+      task = this.mustGet(task.id);
       const base = workBaseCommit(repository, task.baseMerge);
       // 依存先の PR に重ねた子タスクは、依存先の PR の合格したコミットを取り込む（依存先が直されて合格し直したとき。PBI-317）。
       // 依存先が作り直しの途中（合格した PR が無い）なら、取り込まない
@@ -7927,6 +7953,103 @@ export class TaskService {
       return {
         kind: "failed",
         message: message("merge.failed", { detail: redactText(errorText(error), usedSecrets) }),
+      };
+    }
+  }
+
+  /**
+   * 人が sacty の PR のブランチに足したコミット（レビューの提案の適用・ベースブランチの取り込みなど）を、実装の作業領域に
+   * 取り込む（PBI-334）。sacty が最後にプッシュしたコミット（取り込み済みならその先頭）を共通の祖先にして、作業領域の内容と
+   * ブランチの先頭を3方向でマージする（`mergeBase`。タスクブランチから引き継ぐ要求要件・設計のファイルは外す）。取り込んだら
+   * PullRequestHeadMerged を記録し、次の提出はその先頭を親にして積む（強制プッシュしない）。
+   * - 取り込むもの（sacty がまだプッシュしていない・ブランチが進んでいない）が無ければ clean
+   * - ブランチを読めない（PR がマージされてブランチが消えたなど）ときは、取り込まずに clean（ログに出す。プッシュで止まる）
+   * - 競合したファイルには目印が入り、conflicts（fresh）を返す。マージできなければ failed
+   * エージェントの実行中は呼ばない（作業領域を書き換えるため）。
+   */
+  private async syncPullRequestHead(
+    task: Task,
+  ): Promise<
+    | { kind: "clean"; merged?: true }
+    | { kind: "conflicts"; files: string[]; fresh: boolean }
+    | { kind: "failed"; message: DaemonText }
+  > {
+    const repository = task.repository;
+    const pushed = task.pushedBranch;
+    // ベースブランチの取り込みの設定（テスト用の mergeBase）とは関係なく取り込む。引き継いだ人の PR は、人のブランチなので
+    // 取り込まない（publishContinued が、前にプッシュしたコミットか先頭に積む）
+    if (!repository || !pushed || task.continuedPullRequest) return { kind: "clean" };
+    const pending = pendingHeadMerge(task);
+    // 前の取り込みで競合した目印が残っていれば、さらに取り込まず、先に解消させる（新しい取り込みの記録で、残った目印の記録を
+    // 消さない）
+    if (pending && pending.conflicts.length > 0) {
+      try {
+        const remaining = await this.deps.repos.conflictMarkers(
+          this.repoDir(task),
+          pending.conflicts,
+        );
+        if (remaining.length > 0) return { kind: "conflicts", files: remaining, fresh: false };
+      } catch (error) {
+        return {
+          kind: "failed",
+          message: message("pr.headMergeFailed", {
+            branch: pushed.branch,
+            detail: errorText(error),
+          }),
+        };
+      }
+    }
+    const known = pending?.commit ?? pushed.commit;
+    const gitDir = this.trustedGitDir(task);
+    const usedSecrets: string[] = [];
+    let head: string;
+    try {
+      const authEnv = await this.gitAuth(task, repository.url, usedSecrets);
+      head = await this.deps.repos.fetchBranch(gitDir, pushed.branch, authEnv);
+    } catch (error) {
+      const detail = redactText(errorText(error), usedSecrets);
+      console.warn(
+        `[daemon] PR のブランチ ${pushed.branch} を読めないため、人が足したコミットを確かめませんでした：${renderMessage(detail, "ja")}`,
+      );
+      return { kind: "clean" };
+    }
+    if (head === known) return { kind: "clean" };
+    try {
+      const keep = [...new Set(task.stepPullRequests.map((p) => p.path))];
+      const merged = await this.deps.repos.mergeBase({
+        dir: this.repoDir(task),
+        gitDir,
+        base: known,
+        target: head,
+        maxConflicts: MAX_BASE_CONFLICTS,
+        ...(keep.length > 0 ? { exclude: keep } : {}),
+      });
+      // 先頭が、sacty がプッシュしたものの履歴に含まれる（人が戻した）ときも、次の提出はその先頭に積む
+      const conflicts = merged.conflicts;
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestHeadMerged",
+            payload: {
+              branch: pushed.branch,
+              from: pushed.commit,
+              commit: head,
+              conflicts,
+            },
+          },
+        },
+      ]);
+      return conflicts.length > 0
+        ? { kind: "conflicts", files: conflicts, fresh: true }
+        : { kind: "clean", merged: true };
+    } catch (error) {
+      return {
+        kind: "failed",
+        message: message("pr.headMergeFailed", {
+          branch: pushed.branch,
+          detail: redactText(errorText(error), usedSecrets),
+        }),
       };
     }
   }
@@ -8236,8 +8359,10 @@ export class TaskService {
     }
     if (initial && awaitingVerification(initial)) {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
-      // ベースブランチは取り込み直さないが、実装の前の取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
-      if (!(await this.conflictsResolved(initial))) return;
+      // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
+      // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+      if (!(await this.headSyncedBeforePublish(initial))) return;
+      if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
       const securityScope = await this.checkSecurityScope(initial);
       if (securityScope === "stopped") return;
       this.append(initial, [
@@ -9969,6 +10094,18 @@ export class TaskService {
         () => buildStepPullRequestBodyText(this.latestTitled(current), step, path, aiReview),
         () => buildStepPullRequestBodyParts(this.latestTitled(current), step, path, aiReview),
       );
+      // 同じ PR を更新するときは、人が直した本文を3方向でマージして残す（PBI-334）
+      const sent = reuse
+        ? await this.reconcilePullRequestBody(current, {
+            repo,
+            token,
+            number: reuse.number,
+            generated: body,
+          })
+        : { body, record: true };
+      // 本文をまとめる間に一時停止・中止を求められた・まとめたコンテナが止まったか確かめられなかったら、PR を更新しない
+      // （同じ PR がすでにあるので、作った PR を記録し損ねることはない。再開すると、ここからやり直す）
+      if (reuse && ("stop" in sent || this.stopRequested(task.id))) return;
       const pr = await this.deps.pulls.upsert({
         repo,
         token,
@@ -9976,9 +10113,12 @@ export class TaskService {
         baseBranch: taskBranch.branch,
         // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
         title: buildStepPullRequestTitle(this.latestTitled(current), step),
-        body,
+        body: sent.body,
         ...(reuse ? { number: reuse.number } : {}),
       });
+      if (sent.record && !pr.existing) {
+        this.recordPullRequestBody(task.id, repo, pr.number, body, sent.overwritten);
+      }
       // 作った PR は、中止・一時停止を求められていても記録する（中止の後片付けで閉じるため）
       const latest = this.mustGet(task.id);
       if (this.awaitingStepPullRequest(latest) !== step) return;
@@ -10078,6 +10218,176 @@ export class TaskService {
   }
 
   /**
+   * すでにある PR を更新するときの本文（PBI-334）。sacty が前回組み立てた本文（`pullRequestBodies`）を共通の祖先にして、
+   * GitHub の今の本文（人が補足・整形したもの）と、今回組み立てた本文（generated）を3方向でマージする。
+   * - 前回の記録が無い（PBI-334 より前に書いた本文）・今の本文を読めないときは、これまでどおり generated にする
+   * - 人が直していない・重ならずにマージできたら、その結果にする
+   * - 同じ箇所で重なった（長さの上限を超えた）ら、オーケストレーターのエージェントにまとめさせ、PullRequestBodyResolved を記録する。
+   *   まとめられなければ（予算の上限・実行の失敗・答えを読めない・まとめる間に人が本文をまた直した）、本文に触れない
+   *   （body が undefined。読んだ時点の古い本文を書き戻さない）。agent が false なら（タスクの実行の外の、向き先の付け替え）、
+   *   エージェントを実行せずに本文に触れない（次のやり直しの提出で、もう一度まとめる）
+   * record は、更新した後に generated を前回の版として記録するか（本文に触れなかったときは記録しない。次の更新で、もう一度
+   * 今回の sacty の更新を取り込むため）。
+   */
+  private async reconcilePullRequestBody(
+    task: Task,
+    input: { repo: string; token: string; number: number; generated: string; agent?: boolean },
+  ): Promise<{ body?: string; record: boolean; stop?: true; overwritten?: DaemonText }> {
+    const generated = input.generated;
+    const base = task.pullRequestBodies?.[pullRequestBodyKey(input.repo, input.number)];
+    if (base === undefined) return { body: generated, record: true };
+    const read = () =>
+      this.deps.pulls.pullRequestBody({
+        repo: input.repo,
+        token: input.token,
+        number: input.number,
+      });
+    let human: string;
+    try {
+      human = await read();
+    } catch (error) {
+      // 人の直しを確かめられないまま上書きする。作業履歴には、PR を更新できた後に残す（recordPullRequestBody）
+      return {
+        body: generated,
+        record: true,
+        overwritten: message("pr.bodyReadFailed", { detail: errorText(error) }),
+      };
+    }
+    let merged: Awaited<ReturnType<typeof mergePullRequestBody>>;
+    try {
+      merged = await mergePullRequestBody({ base, human, generated });
+    } catch (error) {
+      // 本文に触れず、理由を作業履歴に残す（画面で、本文に今回の内容が入らなかったことが分かるように）
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestBodyResolved",
+            payload: {
+              repo: input.repo,
+              number: input.number,
+              outcome: "kept",
+              reason: message("pr.bodyMergeError", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
+      return { record: false };
+    }
+    if (merged.conflicts === 0 && merged.text.length <= PR_BODY_MAX) {
+      return { body: merged.text, record: true };
+    }
+    // 重なった箇所は、エージェントにまとめさせる
+    const kept = (reason: DaemonText, cost: Record<string, unknown> = {}) => {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestBodyResolved",
+            payload: { repo: input.repo, number: input.number, outcome: "kept", reason, ...cost },
+          },
+        },
+      ]);
+      return { record: false };
+    };
+    if (input.agent === false) return kept(message("pr.bodyMergeDeferred"));
+    const config = this.deps.config();
+    if (!config.ok) return kept(message("pr.bodyMergeUnavailable", { detail: config.problem }));
+    if (budgetState(this.mustGet(task.id).budget) === "exceeded") {
+      return kept(message("pr.bodyMergeBudget"));
+    }
+    const ran = await this.runOrchestrator(this.mustGet(task.id), config.config, () =>
+      buildPullRequestBodyMergePrompt({
+        taskId: task.id,
+        number: input.number,
+        base,
+        human,
+        generated,
+        merged: merged.text,
+        maxLength: PR_BODY_MAX,
+      }),
+    );
+    if ("failure" in ran) {
+      const { reason: _reason, message: detail, ...cost } = ran.failure;
+      const result = kept(message("pr.bodyMergeFailed", { detail }), cost);
+      // コンテナが止まったことを確かめられなかった実行（元のコンテナが動いたままかもしれない）なら、ほかの実行と重ならないように
+      // PR を更新せずに一時停止する（再開・中止のときに、止まったことを確かめる。工程の見直しと同じ）
+      const runId = ran.failure.runId;
+      if (runId && this.unconfirmedRuns.delete(runId)) {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、残ったコンテナを確かめ直す）
+              payload: {
+                reason: ran.failure.reason,
+                message: ran.failure.message,
+                unstoppedRuns: [runId],
+              },
+            },
+          },
+        ]);
+        return { ...result, stop: true };
+      }
+      return result;
+    }
+    const body = extractMergedPullRequestBody(ran.output, PR_BODY_MAX);
+    if (!body) return kept(message("orchestrator.unreadable"), ran.cost);
+    // まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（次の更新で、もう一度まとめる）
+    let now: string | undefined;
+    try {
+      now = await read();
+    } catch {
+      now = undefined;
+    }
+    if (now === undefined) return kept(message("pr.bodyRereadFailed"), ran.cost);
+    if (normalizeNewlines(now) !== normalizeNewlines(human)) {
+      return kept(message("pr.bodyEditedDuringMerge"), ran.cost);
+    }
+    this.append(this.mustGet(task.id), [
+      {
+        actor: "orchestrator",
+        event: {
+          type: "PullRequestBodyResolved",
+          payload: { repo: input.repo, number: input.number, outcome: "resolved", ...ran.cost },
+        },
+      },
+    ]);
+    return { body, record: true };
+  }
+
+  /**
+   * sacty が組み立てた本文を、前回の版として記録する（PBI-334。PR を作った・更新した後）。overwritten があれば（今の本文を
+   * 読めずに、人の直しを確かめないまま上書きした）、そのことも作業履歴に残す（PR を更新できた後だけ）。
+   */
+  private recordPullRequestBody(
+    taskId: string,
+    repo: string,
+    number: number,
+    body: string,
+    overwritten?: DaemonText,
+  ): void {
+    const latest = this.tasks.get(taskId);
+    if (!latest) return;
+    const events: EventInput[] = [];
+    if (overwritten) {
+      events.push({
+        type: "PullRequestBodyResolved",
+        payload: { repo, number, outcome: "overwritten", reason: overwritten },
+      });
+    }
+    if (latest.pullRequestBodies?.[pullRequestBodyKey(repo, number)] !== body) {
+      events.push({ type: "PullRequestBodyWritten", payload: { repo, number, body } });
+    }
+    if (events.length === 0) return;
+    this.append(
+      latest,
+      events.map((event) => ({ actor: "sacty" as const, event })),
+    );
+  }
+
+  /**
    * 実装の PR を、PR のレビューの子タスクの指摘なしまでドラフトにして待つか（PBI-331）。sacty が作る PR だけ（引き継いだ
    * 人の PR は、人の PR なのでドラフトにしない）。ServiceDeps の draftPullRequests を false にしたテストでは待たない。
    */
@@ -10146,9 +10456,51 @@ export class TaskService {
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
     // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
     if (this.stopRequested(task.id)) return "stopped";
+    // PR を出す直前にも、人が PR のブランチに足したコミットを取り込む（PBI-334。PR を出す前の取り込みの後に足されたもの）。
+    // 競合したら、PR を出さずに実装をやり直す（PR の作成の待ちなら、PullRequestHeadMerged の投影がやり直しに戻す）
+    const waitingPublish = task.publishPending === true;
+    const head = await this.syncPullRequestHead(task);
+    if (head.kind === "failed") return fail(head.message);
+    if (head.kind === "conflicts") {
+      // 新しく競合したなら、PullRequestHeadMerged の投影が実装のやり直しに戻した
+      if (waitingPublish && head.fresh) return "stopped";
+      // 前の取り込みの目印が残っているなら、目印のある内容をプッシュせずに止める
+      return fail(message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }));
+    }
+    // 先頭を読む間に一時停止・中止を求められたら、プッシュしない
+    if (this.stopRequested(task.id)) return "stopped";
+    task = this.mustGet(task.id);
+    // 取り込みで競合した目印が残っていれば、目印のある内容をプッシュしない
+    const unresolved = pendingHeadMerge(task)?.conflicts ?? [];
+    if (unresolved.length > 0) {
+      try {
+        if ((await this.deps.repos.conflictMarkers(dir, unresolved)).length > 0) {
+          return fail(
+            message("pr.headConflicted", { branch: task.pushedBranch?.branch ?? branch }),
+          );
+        }
+      } catch (error) {
+        return fail(message("pr.failed", { detail: errorText(error) }));
+      }
+    }
+    const repositoryNow = task.repository;
+    if (!repositoryNow) return fail(message("pr.workspaceMissing"));
     try {
-      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
-      let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
+      const authEnv = await this.gitAuth(task, repositoryNow.url, usedSecrets);
+      // 人が PR のブランチに足したコミットを取り込んでいれば、その先頭に積む（PBI-334。強制プッシュしない）。PR の更新の前に
+      // 止まって再開したときは、同じブランチにプッシュ済みのコミットに積む（取り込んだ先頭を親にしたコミットを、そのまま使い直す。
+      // 前の PR のコミットに戻すと、別のコミットになって早送りでプッシュできない）
+      const pushedHere =
+        task.headMerge?.branch === branch &&
+        task.pushedBranch?.branch === branch &&
+        task.pushedBranch.commit !== task.pullRequest?.commit
+          ? task.pushedBranch.commit
+          : undefined;
+      let parent =
+        pendingHeadMerge(task)?.commit ??
+        pushedHere ??
+        task.pullRequest?.commit ??
+        repositoryNow.baseCommit;
       let keep: { commit: string; paths: string[] } | undefined;
       if (taskBranch) {
         // タスクブランチの最新（マージした要求要件・設計の PR を含む）に積む。要求要件・設計のファイルは実装の作業領域に
@@ -10161,8 +10513,8 @@ export class TaskService {
         // ファイルのほかに変更があれば、消さないように公開を止める（人が判断する）
         const known =
           task.pushedBranch?.branch === taskBranch.branch
-            ? task.pushedBranch.commit
-            : task.repository.baseCommit;
+            ? (pendingHeadMerge(task)?.commit ?? task.pushedBranch.commit)
+            : repositoryNow.baseCommit;
         if (known !== parent) {
           const unexpected = (await this.deps.repos.changedPaths(gitDir, known, parent)).filter(
             (p) => !paths.includes(p),
@@ -10180,17 +10532,25 @@ export class TaskService {
       }
       // 実装の工程が終わったときにする（PBI-331）
       const date = this.outputAt(task, "implement");
+      // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
+      const subject = await this.commitSubjectFor(
+        task,
+        this.implementCommitKind(task),
+        this.titleAt(task, date),
+      );
+      // 認証・タスクブランチの取得・コミットの題の用意などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの
+      // 直前に確かめる。この後は、プッシュまで await しない）
+      if (this.stopRequested(task.id)) return "stopped";
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
         // ベースブランチの最新を取り込んでいれば、作業領域はそのコミットに実装の変更を加えたもの。コミットは、そのコミットを
         // 第2の親にしたマージコミットにする（まだ parent の履歴に含まれていなければ）
-        baseCommit: workBaseCommit(task.repository, task.baseMerge),
+        baseCommit: workBaseCommit(repositoryNow, task.baseMerge),
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
-        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), this.titleAt(task, date))}\n\nsacty task ${task.id}`,
+        message: `${subject}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
         date,
         authEnv,
@@ -10253,23 +10613,36 @@ export class TaskService {
       // 記録する（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。検証に通った後なら、そのときの
       // 一時停止は、承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
       if (this.stopRequested(task.id)) return "stopped";
+      // 同じ PR を更新するときは、人が直した本文を3方向でマージして残す（PBI-334）
+      const sent = number
+        ? await this.reconcilePullRequestBody(task, {
+            repo: prRepo,
+            token,
+            number,
+            generated: body,
+          })
+        : { body, record: true };
+      if ("stop" in sent || this.stopRequested(task.id)) return "stopped";
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
         branch,
-        baseBranch: task.repository.baseBranch,
+        baseBranch: repositoryNow.baseBranch,
         // 作るときだけ使う（すでにある PR の題は変えない）。待つ間に人が変えた題にする（PBI-323）
         title: this.latestTitled(task).title,
-        body,
+        body: sent.body,
         number,
         ...(awaitsReview || task.stack ? { draft: true } : {}),
         // 重ねている間は、ドラフトを使えないリポジトリでも、ドラフトでない PR にしない（PBI-317）
         ...(task.stack ? { requireDraft: true } : {}),
         ...(stacked ? { retarget: true } : {}),
       });
+      if (sent.record && !pr.existing) {
+        this.recordPullRequestBody(task.id, prRepo, pr.number, body, sent.overwritten);
+      }
       let draft = pr.draft;
       let draftError: unknown;
-      const baseRecord = stacked ? { baseBranch: task.repository.baseBranch } : {};
+      const baseRecord = stacked ? { baseBranch: repositoryNow.baseBranch } : {};
       if (awaitsReview || task.stack) {
         // 前の提出でドラフトを外した PR を更新した（PR の指摘で実装をやり直した）なら、ドラフトに戻す。戻せなく
         // ても（リポジトリがドラフトを使えないなど）、PR の作成は失敗にしない。依存先の PR に重ねている間は、検証に通った後も
@@ -10725,11 +11098,43 @@ export class TaskService {
   }
 
   /**
+   * 実装の実行の間に人が PR のブランチに足したコミットを、PR を出す前に取り込む
+   * （PBI-334）。新しく競合したら BaseConflictsRemained（fresh。数えない）を記録して実装をやり直させ、false。取り込めなければ
+   * 一時停止して false。
+   */
+  private async headSyncedBeforePublish(task: Task): Promise<boolean> {
+    if (!existsSync(this.repoDir(task)) || !existsSync(this.trustedGitDir(task))) return true;
+    const synced = await this.syncPullRequestHead(task);
+    if (synced.kind === "clean") return true;
+    if (synced.kind === "failed") {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: synced.message } },
+        },
+      ]);
+      return false;
+    }
+    const failed = this.append(this.mustGet(task.id), [
+      {
+        actor: "sacty",
+        event: {
+          type: "BaseConflictsRemained",
+          payload: { files: synced.files, ...(synced.fresh ? { fresh: true } : {}) },
+        },
+      },
+    ]);
+    // 前の取り込みの目印が残っているときは、検証に通らなかったものとして数える
+    if (!synced.fresh) this.pauseIfVerificationKeepsFailing(failed);
+    return false;
+  }
+
+  /**
    * 実装の前のベースブランチの取り込みで競合した目印が、実装の後に残っていないか確かめる（PBI-331。取り込み直しはしない）。残っていれば BaseConflictsRemained を
    * 記録して実装をやり直させ（続けて解消できなければ一時停止する）、false。確かめられなければ一時停止して false。
    */
   private async conflictsResolved(task: Task): Promise<boolean> {
-    const pending = task.baseMerge?.conflicts ?? [];
+    const pending = pendingConflicts(task);
     if (pending.length === 0 || !existsSync(this.repoDir(task))) return true;
     let remaining: string[];
     try {
@@ -15438,6 +15843,19 @@ function splitWithRepositories(
     children.push({ ...child, repo: found });
   }
   return { ...plan, children };
+}
+
+/**
+ * 作業領域に残っているかを確かめる、取り込みで競合したファイル（ベースブランチの取り込みと、まだ提出していない、人が PR に
+ * 足したコミットの取り込み。PBI-334）。
+ */
+function pendingConflicts(task: Task): string[] {
+  return [
+    ...new Set([
+      ...(task.baseMerge?.conflicts ?? []),
+      ...(pendingHeadMerge(task)?.conflicts ?? []),
+    ]),
+  ];
 }
 
 function sameRepo(a: string, b: string): boolean {

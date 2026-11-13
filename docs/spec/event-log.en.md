@@ -48,7 +48,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   3. The event is applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw. Even for a cancelled task, however, the session-saving records `AgentSessionArchived` and `OrchestratorSessionUsed`, and `AuditMemoryDeleted` (deleting a memory the audit registered), are accepted.
 - Some events are records only and do not change state (`AiRequestsRetried`, `RunCostRecorded`, `ReviewGitHubRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`, `AgentRunTimedOut`, `AgentRunContinued`, `WorkspaceFilesSkipped`).
-- When an event that carries cost (the 16 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
+- When an event that carries cost (the 17 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
 - Main fields of `Task`
   - `status`
   - `steps` (`todo`, `active`, `done`, or `skip` per step)
@@ -83,7 +83,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 - Subscription and stub runs are treated as an estimated cost (`estimated`) converted at the same unit prices, and are used for budget checks.
 - A run's cost is the amount the CLI reported (`total_cost_usd` for Claude Code) if there is one. Otherwise it is each model's usage converted with that model's price (a model with no configured price uses the step agent's price) ([Agent execution](agent-execution.en.md#output-handling)).
   For a run that used the CLI's report and a run converted per model, which one was used is recorded in `RunCostRecorded` (`reported` or `converted`, with the amount converted at the configured prices). Only the `costUsd` of the run's result event is added to the budget.
-- The events that carry cost counted toward the task budget are the following 16 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
+- The events that carry cost counted toward the task budget are the following 17 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`. The integration review's `IntegrationReviewed` carries no cost; its cost is recorded in the following `AgentRunCompleted`.
 
   | Event | Row in the per-step cost table |
   | --- | --- |
@@ -91,6 +91,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `TicketTriaged` | Ticket reading (`triage`; when done by information gathering it carries no cost and gets no row) |
   | `RepositoryChosen` | Repository selection (`repository`) |
   | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` (except those whose actor is `gatherer`) | Orchestrator (`orchestrator`) |
+  | `PullRequestBodyResolved` (PBI-334) | Orchestrator (`orchestrator`; a run that reconciled a person's edits to the PR body. One that ran no agent (no `agentId`) gets no row; [Updating a body a person edited](approval.en.md#updating-a-body-a-person-edited)) |
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |
@@ -100,7 +101,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `ChangeJudged`, `ReworkJudged` (actor `guardian`; older versions), `FinalReviewed`, `FinalReviewFailed` | AI verdict in an earlier version (`guardian`; the final review also goes in this row) |
 
 - For a run stopped (for example by a timeout) before the usage of the whole run could be read, sacty adds the part it could read (a lower bound) to `costUsd` and marks the event with `costUnknown` (PBI-281).
-  - The mark goes on the events that can record a failed run: `AgentRunFailed`, `OrchestratorFailed`, `StepsSkipped`, `ChangeJudged`, `ReworkJudged`, `FinalReviewFailed`, `QuestionAnswered`, `ErrorAnalyzed`, `OutputExported`, and `DeploymentChecked`.
+  - The mark goes on the events that can record a failed run: `AgentRunFailed`, `OrchestratorFailed`, `StepsSkipped`, `ChangeJudged`, `ReworkJudged`, `FinalReviewFailed`, `QuestionAnswered`, `ErrorAnalyzed`, `OutputExported`, `DeploymentChecked`, and `PullRequestBodyResolved`.
   - If nothing could be read, `costUsd` stays 0, and this 0 means unknown, not that nothing was spent. How it is read is under output handling in [Agent execution](agent-execution.en.md).
   - For a judgement redone with a fallback agent after a failure, or a run restarted in a new session after a resume was refused, the total is unknown if the earlier run was unknown. So the events that record a success (`AgentRunCompleted`, `StepsChosen`, `TicketTriaged`, `RepositoryChosen`, `InformationGathered`, and `FinalReviewed`) can carry `costUnknown` too.
   - `chargeBudget` counts the marked events in `budget.unknownRuns` (absent when none). The part that could be read counts toward the budget check.

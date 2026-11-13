@@ -128,7 +128,8 @@ export function createApp(
   // ?open=1 なら、終わっていないタスクだけ（ダッシュボードとヘッダーが3秒ごとに取るので、完了したタスクの成果物を毎回
   // 送らない。PBI-114）
   app.get("/api/tasks", (c) => {
-    const tasks = service.list();
+    // sacty が PR に書いた本文の記録（PBI-334）は、画面では使わないので送らない（PR ごとに本文の全文があり大きい）
+    const tasks = service.list().map(({ pullRequestBodies: _bodies, ...task }) => task);
     return c.json({
       tasks: c.req.query("open") === "1" ? tasks.filter((t) => !isFinished(t)) : tasks,
     });

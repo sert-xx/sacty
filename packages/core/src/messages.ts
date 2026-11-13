@@ -473,6 +473,16 @@ const PARAMS = {
   "pr.continuedBranchMoved": z.object({ branch: TextParam, number: z.number() }),
   "pr.continuedNotOpen": z.object({ number: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
+  "pr.headMergeFailed": z.object({ branch: TextParam, detail: TextParam }),
+  "pr.headConflicted": z.object({ branch: TextParam }),
+  "pr.bodyMergeUnavailable": z.object({ detail: TextParam }),
+  "pr.bodyMergeBudget": null,
+  "pr.bodyMergeFailed": z.object({ detail: TextParam }),
+  "pr.bodyMergeDeferred": null,
+  "pr.bodyMergeError": z.object({ detail: TextParam }),
+  "pr.bodyEditedDuringMerge": null,
+  "pr.bodyRereadFailed": null,
+  "pr.bodyReadFailed": z.object({ detail: TextParam }),
   "pr.readyFailed": z.object({ detail: TextParam }),
   "pr.stackDraftFailed": z.object({ detail: TextParam }),
   "pr.notDraft": z.object({ number: z.number() }),
@@ -494,6 +504,8 @@ const PARAMS = {
   "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.mergeTreeUnsupported": null,
   "git.tooManyConflicts": z.object({ count: z.number(), limit: z.number() }),
+  "git.conflictWithoutFiles": null,
+  "git.conflictWithoutMarkers": z.object({ paths: TextParam, count: z.number() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.invalidPath": null,
@@ -1376,6 +1388,25 @@ const ja: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `タスクブランチ ${text(branch)} に、Sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、Sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "pr.headMergeFailed": ({ branch, detail }, text) =>
+    `人が PR のブランチ ${text(branch)} に足したコミットを、作業領域に取り込めませんでした：${text(detail)}`,
+  "pr.headConflicted": ({ branch }, text) =>
+    `人が PR のブランチ ${text(branch)} に足したコミットが、Sacty の変更と競合しています。競合の目印が残っているので、PR を更新しませんでした。PR の指摘か差し戻しで実装をやり直すと、Sacty が解消します。`,
+  "pr.bodyMergeUnavailable": ({ detail }, text) =>
+    `設定を読めないため、エージェントに本文をまとめさせられませんでした：${text(detail)}`,
+  "pr.bodyMergeBudget": "予算の上限に達しているため、エージェントに本文をまとめさせませんでした。",
+  "pr.bodyMergeFailed": ({ detail }, text) =>
+    `エージェントが本文をまとめられませんでした：${text(detail)}`,
+  "pr.bodyMergeError": ({ detail }, text) =>
+    `人が直した PR の本文と、Sacty の新しい本文をマージできませんでした：${text(detail)}`,
+  "pr.bodyMergeDeferred":
+    "PR の向き先の付け替えでは、エージェントに本文をまとめさせません（次に実装を直して PR を更新するときにまとめます）。",
+  "pr.bodyEditedDuringMerge":
+    "エージェントが本文をまとめる間に、人が PR の本文をまた直したため、本文を更新しませんでした（次に PR を更新するときにまとめ直します）。",
+  "pr.bodyReadFailed": ({ detail }, text) =>
+    `PR の今の本文を読めなかったため、人の直しを確かめずに Sacty の本文で更新しました：${text(detail)}`,
+  "pr.bodyRereadFailed":
+    "エージェントが本文をまとめた後に PR の今の本文を読み直せなかったため、人の直しを上書きしないよう、本文を更新しませんでした（次に PR を更新するときにまとめ直します）。",
   "pr.readyFailed": ({ detail }, text) =>
     `PR のドラフトを外せませんでした（レビューへ進められません）：${text(detail)}`,
   "pr.notDraft": ({ number }) => `PR #${number} がドラフトになっていません`,
@@ -1409,6 +1440,10 @@ const ja: MessageDictionary = {
     "ベースブランチを取り込むには、ホストの git が 2.40 以上（git merge-tree --write-tree と --merge-base が使える版）である必要があります。git を更新してください。",
   "git.tooManyConflicts": ({ count, limit }) =>
     `ベースブランチとの競合が ${count} 件あり、取り込める上限（${limit} 件）を超えています。作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
+  "git.conflictWithoutFiles":
+    "取り込みが競合しましたが、git が競合したファイルを示しませんでした（ディレクトリの移動先を決められないなど）。解消を確かめられないので、作業領域は書き換えていません。人が競合を解消してから、再開してください。",
+  "git.conflictWithoutMarkers": ({ paths, count }, text) =>
+    `取り込みで、競合の目印を入れられないファイルが競合しました（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}。バイナリのファイル・片方での削除など）。解消を確かめられず、片方の変更が消えうるので、作業領域は書き換えていません。人が競合を解消してから、再開してください。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.invalidPath": "コミットするファイルのパスが不正です。",
@@ -2142,6 +2177,25 @@ const en: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `The task branch ${text(branch)} has changes that Sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and Sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "pr.headMergeFailed": ({ branch, detail }, text) =>
+    `Could not merge the commits a person added to the PR branch ${text(branch)} into the workspace: ${text(detail)}`,
+  "pr.headConflicted": ({ branch }, text) =>
+    `Commits a person added to the PR branch ${text(branch)} conflict with Sacty's changes. Conflict markers remain, so the PR was not updated. Send the implementation back (or comment on the PR) and Sacty will resolve them in the rework.`,
+  "pr.bodyMergeUnavailable": ({ detail }, text) =>
+    `The settings could not be read, so an agent could not reconcile the body: ${text(detail)}`,
+  "pr.bodyMergeBudget": "The budget cap has been reached, so an agent did not reconcile the body.",
+  "pr.bodyMergeFailed": ({ detail }, text) =>
+    `An agent could not reconcile the body: ${text(detail)}`,
+  "pr.bodyMergeError": ({ detail }, text) =>
+    `Could not merge the person's edits to the PR body with Sacty's new body: ${text(detail)}`,
+  "pr.bodyMergeDeferred":
+    "When retargeting a PR, an agent does not reconcile the body (it is reconciled the next time the implementation is fixed and the PR is updated).",
+  "pr.bodyEditedDuringMerge":
+    "A person edited the PR body again while an agent was reconciling it, so the body was not updated (it is reconciled again the next time the PR is updated).",
+  "pr.bodyReadFailed": ({ detail }, text) =>
+    `The current PR body could not be read, so the PR was updated with Sacty's body without checking for a person's edits: ${text(detail)}`,
+  "pr.bodyRereadFailed":
+    "The current PR body could not be read again after an agent reconciled it, so the body was not updated to avoid overwriting a person's edits (it is reconciled again the next time the PR is updated).",
   "pr.readyFailed": ({ detail }, text) =>
     `Could not mark the PR as ready for review (the task cannot move to review): ${text(detail)}`,
   "pr.notDraft": ({ number }) => `PR #${number} is not a draft`,
@@ -2175,6 +2229,10 @@ const en: MessageDictionary = {
     "Merging the base branch needs git 2.40 or later on the host (a version with git merge-tree --write-tree and --merge-base). Update git.",
   "git.tooManyConflicts": ({ count, limit }) =>
     `Merging the base branch conflicts in ${count} files, over the limit of ${limit}. The workspace was not changed. Have a person resolve the conflicts, then resume.`,
+  "git.conflictWithoutFiles":
+    "The merge conflicted, but git did not report which files conflicted (for example, it could not decide where a directory moved). The resolution cannot be checked, so the workspace was not changed. Have a person resolve the conflict, then resume.",
+  "git.conflictWithoutMarkers": ({ paths, count }, text) =>
+    `The merge conflicted in files where no conflict markers can be written (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}; binary files, a deletion on one side, and so on). The resolution cannot be checked and one side's changes could be lost, so the workspace was not changed. Have a person resolve the conflicts, then resume.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
   "git.invalidPath": "The path of the file to commit is not valid.",

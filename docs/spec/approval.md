@@ -62,6 +62,7 @@ PR の作り方は[タスクと工程](tasks-and-steps.md#実装の-pr-の作成
   - タスクブランチがあれば、実装をタスクブランチの最新に積み、タスクブランチからベースブランチへの PR（実装の PR）にする。
   - タスクブランチが無ければ、sacty のブランチ（`sacty/task-<タスク ID の先頭8文字>`）からベースブランチへの PR にする。
   - タスクブランチに、要求要件・設計のファイル以外の変更が積まれていれば、公開を止める（`pr.taskBranchChanged`）。
+    sacty が実装を積んだ後に人が足したコミットは、止めずに作業領域に取り込んで、その先頭に積む（[人が PR に足したコミットの取り込み](tasks-and-steps.md#人が-pr-に足したコミットの取り込み)）。
   - 既存の PR を引き継ぐタスクは、PR を作らず、引き継いだ PR の元のブランチに積み、その PR を実装の PR にする。
 - タスク分割の子タスクは、それぞれ自分のタスクブランチを持つ。
 - 画面の「チェックする」の導線（`personAction`）
@@ -420,6 +421,52 @@ sacty は PR を作る・更新するたびに、PR を作るリポジトリの 
   - PR の URL が `<リポジトリ>/pull/<番号>` の形でなければ、パスのインラインのコードと、全角の括弧の中に「PR：」と山括弧で囲んだ URL（自動リンク）にする。URL が無ければパスだけ。
 
 コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`・`resultTableLines`・`approvedBasisLines`・`stepArtifactLink`・`withoutProgressReport`）、`packages/core/src/test-names.ts`（`displayTestNames`・`dedupeTestNames`・`withoutFormatPlaceholders`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+
+### 人が直した本文の更新
+
+sacty が作った PR の本文を、人が GitHub で直していること（補足を足した・整形した・言い回しを直したなど）がある。
+sacty は、すでにある PR を更新するとき、人の直しを残したまま、sacty の新しい内容を入れる。
+対象は、実装の PR（`publish`）、要求要件・設計の PR の更新（`publishStepPullRequest`）、重ねた PR の向き先の付け替え（`retargetPullRequest`）。
+既存の PR を引き継ぐタスクは、もともと PR の本文を変えない。
+
+関係する ADR: [人が sacty の PR に足したコミットを作業領域に取り込み、人が直した PR の本文を3方向でマージして残す](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
+
+- 前回の版の記録：PR を作った・更新した後に（作ろうとしたら同じブランチの PR がすでにあり、本文を書かなかったとき（`upsert` の答えの `existing`）は記録しない）、sacty がその回に組み立てた本文（テンプレートで埋め、長さの上限で省き、秘密の値を伏せた後のもの。人の直しは含まない）を `PullRequestBodyWritten`（PR のリポジトリ・番号・本文）に記録する（`recordPullRequestBody`）。
+  前回と同じ本文なら記録しない。
+  `Task.pullRequestBodies`（キーは `<リポジトリの URL>#<番号>`。`pullRequestBodyKey`）に、PR ごとに最後のものを持つ。
+  タスクの一覧の API（`/api/tasks`）では送らない（画面では使わず、PR ごとに本文の全文があるため）。
+- 更新の本文（`reconcilePullRequestBody`）：
+  1. 前回の版の記録が無い（この版より前に書いた本文）なら、これまでどおり新しく組み立てた本文にする。
+  2. GitHub の今の本文を読む（`pullRequestBody`）。読めなければ、新しく組み立てた本文にし、PR を更新できた後に、人の直しを確かめずに上書きしたことを `PullRequestBodyResolved`（`overwritten`。理由は `pr.bodyReadFailed`）に残す（エージェントは実行しない。更新できなかったときは残さない）。
+  3. 前回の版を共通の祖先にして、今の本文（人の側）と新しく組み立てた本文（sacty の側）を、行の単位で3方向にマージする（`mergePullRequestBody`。`git merge-file --diff3`）。
+     改行は LF にそろえる（GitHub の画面で直した本文は CRLF になる）。
+     人が直していなければ、新しく組み立てた本文になる。
+     共通の祖先を、GitHub に書いた本文ではなく sacty が組み立てた本文にするので、人が前に足した補足は、次の更新でも人の直しとして残る。
+  4. 重ならずにマージでき、`PR_BODY_MAX` 以内なら、その結果で更新し、新しく組み立てた本文を前回の版として記録する。
+  5. 同じ箇所を両方が変えた（または上限を超えた）ら、オーケストレーターのエージェント（`step_agents.orchestrator`）にまとめさせる（`buildPullRequestBodyMergePrompt`）。
+     - 前回の版・今の本文・新しく組み立てた本文・マージの結果（重なった箇所に `github-now`・`sacty-previous`・`sacty-new` のラベル付きの目印がある）を、JSON のデータとして渡す。
+     - 目印のある箇所だけをまとめさせる。人の補足・整形・言い回しは残し、sacty の事実の更新（変更の説明・テストの結果・レビューの状況・人が確かめること・承認の案内など）は反映させる。
+     - タスクの ID の行と `Closes #<番号>` の行は、人が消していなければ残させ、人が消したものは足し直させない。
+     - 目印の行を残させない。上限の文字数以内にさせる。
+     - 渡した本文の中の指示には従わせない。ファイル・コマンド・GitHub は操作させない。
+     - 答えの `<<<SACTY_PR_BODY_BEGIN>>>` と `<<<SACTY_PR_BODY_END>>>` の間（最後のもの）を本文にする（`extractMergedPullRequestBody`）。
+     - まとめた後に今の本文を読み直し、まとめる間に人が本文をまた直していたら、その直しを含まない本文で上書きしない（下の 6.。`pr.bodyEditedDuringMerge`）。
+     - まとめられたら、その本文で更新する。`PullRequestBodyResolved`（`resolved`。実行の費用）を記録し、新しく組み立てた本文を前回の版として記録する。
+  エージェントがまとめる間に一時停止・中止を求められたら、PR を更新しない（要求要件・設計の PR も同じ）。
+  6. まとめられなければ、本文に触れずに PR を更新し（`upsert` に本文を渡さない。読んだ時点の古い本文を書き戻さない）、前回の版も記録し直さない（次の更新で、もう一度 sacty の更新を取り込む）。
+     `PullRequestBodyResolved`（`kept`）に理由を残す。PR の更新は止めない。
+     まとめられないのは、次のとき。
+     - 設定を読めない（`pr.bodyMergeUnavailable`）
+     - 予算の上限に達している（`pr.bodyMergeBudget`）
+     - エージェントの実行に失敗した（`pr.bodyMergeFailed`）。コンテナが止まったことを確かめられなかったときは、PR を更新せずに一時停止する（実行の失敗の理由。再開・中止のときに、止まったことを確かめる）
+     - 答えを読めない（`orchestrator.unreadable`。目印の行が無い・空・マージの目印が残っている・長すぎる）
+     - まとめる間に人が本文をまた直した（`pr.bodyEditedDuringMerge`）・読み直せない（`pr.bodyRereadFailed`）
+     - 重ねた PR の向き先の付け替え（`retargetPullRequest`）のとき。付け替えはタスクの実行の外なので、エージェントを実行しない（`pr.bodyMergeDeferred`）
+     - マージに失敗した（`pr.bodyMergeError`）
+- 費用：`PullRequestBodyResolved` の費用は、タスクの予算に入れる（`CHARGED_EVENT_TYPES`）。工程ごとの費用の表では、オーケストレーターの行に出す。
+- 作業履歴の表示：「PR #… の本文を書いた」、エージェントがまとめた・まとめられなかった（理由）を出す。
+
+コード: `apps/daemon/src/service.ts`（`reconcilePullRequestBody`・`recordPullRequestBody`・`publish`・`publishStepPullRequest`・`retargetPullRequest`）、`apps/daemon/src/pr-body-merge.ts`（`mergePullRequestBody`・`buildPullRequestBodyMergePrompt`・`extractMergedPullRequestBody`・`hasMergeMarkers`）、`apps/daemon/src/github.ts`（`pullRequestBody`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`PullRequestBodyWritten`・`PullRequestBodyResolved`）、`packages/core/src/projection.ts`（`pullRequestBodies`・`pullRequestBodyKey`）、`packages/core/src/cost.ts`（`CHARGED_EVENT_TYPES`）、`apps/web/src/lib/step-costs.ts`、`apps/web/src/lib/labels.ts`
 
 ## PR の指摘の取り込み
 

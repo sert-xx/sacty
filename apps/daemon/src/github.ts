@@ -12,7 +12,11 @@ export interface PullRequests {
     branch: string;
     baseBranch: string;
     title: string;
-    body: string;
+    /**
+     * 本文。更新（number）で無ければ、本文を変えない（人が直した本文を、sacty がまとめられなかったとき。PBI-334）。作るときは
+     * 必ず渡す。
+     */
+    body?: string;
     number?: number;
     /**
      * 新しく作る PR をドラフトにする。リポジトリがドラフトを使えなければ（422）、ドラフトでない PR にする（答えの draft が
@@ -29,7 +33,16 @@ export interface PullRequests {
      * 向き先を変えない。
      */
     retarget?: boolean;
-  }): Promise<{ url: string; number: number; draft: boolean }>;
+  }): Promise<{
+    url: string;
+    number: number;
+    draft: boolean;
+    /**
+     * 作ろうとしたら、同じブランチの PR がすでにあったので、それを返した（前回、作成の後の記録の前に止まったなど）。本文は
+     * 書いていない（PBI-334。前回の版として記録しない）。
+     */
+    existing?: true;
+  }>;
   /**
    * PR をドラフトにする・ドラフトを外す（レビューへ進める）。すでにその状態なら何もしない。GitHub の REST API では
    * 変えられないので、GraphQL の convertPullRequestToDraft・markPullRequestReadyForReview を使う。答えは変えた後の状態
@@ -138,6 +151,10 @@ export interface PullRequests {
   repositories(input: { org: string; token: string }): Promise<string[]>;
   /** レビューの対象の PR（PBI-19）。 */
   pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
+  /**
+   * PR の今の本文（PBI-334。人が GitHub で直したかを見分ける）。本文が無ければ空。読めなければ失敗する（空とは扱わない）。
+   */
+  pullRequestBody(input: { repo: string; token: string; number: number }): Promise<string>;
   /**
    * PR で reviewer に最後にレビューを依頼した日時（ISO。PBI-143）。依頼が無ければ undefined。個人への依頼だけ
    * （チームへの依頼は含めない）。再依頼が、前回のレビューの投稿より後かを確かめるため。
@@ -680,6 +697,21 @@ export class GitHubPullRequests implements PullRequests {
     return [...names.values()].sort((a, b) => a.localeCompare(b));
   }
 
+  async pullRequestBody(input: Parameters<PullRequests["pullRequestBody"]>[0]): Promise<string> {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!res.ok) throw apiError("getPr", res.status, json ?? {});
+    // 答えを読めない（JSON でない）ときは、空の本文と取り違えない
+    if (!json || typeof json !== "object") throw apiError("getPr", res.status, {});
+    return typeof json.body === "string" ? json.body : "";
+  }
+
   async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {
     const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
       headers: {
@@ -900,7 +932,7 @@ export class GitHubPullRequests implements PullRequests {
       const { res, json } = await call(`${base}/${input.number}`, {
         method: "PATCH",
         body: JSON.stringify({
-          body: input.body,
+          ...(input.body !== undefined ? { body: input.body } : {}),
           ...(input.retarget ? { base: input.baseBranch } : {}),
         }),
       });
@@ -915,7 +947,7 @@ export class GitHubPullRequests implements PullRequests {
           title: input.title,
           head: input.branch,
           base: input.baseBranch,
-          body: input.body,
+          body: input.body ?? "",
           ...(draft ? { draft: true } : {}),
         }),
       });
@@ -934,7 +966,7 @@ export class GitHubPullRequests implements PullRequests {
       );
       const list = found.json as unknown;
       if (found.res.ok && Array.isArray(list) && list[0]) {
-        return result(list[0] as Record<string, unknown>);
+        return { ...result(list[0] as Record<string, unknown>), existing: true as const };
       }
     }
     throw apiError("createPr", res.status, json);

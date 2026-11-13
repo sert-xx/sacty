@@ -50,6 +50,7 @@ import {
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
+  pendingHeadMerge,
   pullRequestConflict,
   QUESTION_MAX,
   RERUN_RECORD_HEADING,
@@ -104,6 +105,7 @@ import { NotificationFeed } from "./notification-feed.js";
 import { notificationText, SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
+import { BODY_BEGIN, BODY_END } from "./pr-body-merge.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
 import {
@@ -623,13 +625,14 @@ class FakeRepos implements RepositoryWorkspace {
     conflicts: [],
   };
   mergeFail?: string;
-  merges: { dir: string; gitDir: string; base: string; target: string }[] = [];
+  merges: { dir: string; gitDir: string; base: string; target: string; exclude?: string[] }[] = [];
   async mergeBase(input: {
     dir: string;
     gitDir: string;
     base: string;
     target: string;
     maxConflicts?: number;
+    exclude?: string[];
   }) {
     this.merges.push(input);
     if (this.mergeFail) throw new Error(this.mergeFail);
@@ -743,12 +746,29 @@ class FakePulls implements PullRequests {
     }
     this.calls.push(input);
     const number = input.number ?? this.nextNumber++;
+    // GitHub と同じく、書いた本文を今の本文にする（本文を渡さない更新では変えない。PBI-334）
+    if (input.body !== undefined) this.bodies[number] = input.body;
+    this.bodyWrites += 1;
     // ドラフトを使えないリポジトリ（draftUnsupported）なら、ドラフトでない PR にする
     const draft = input.number
       ? (this.drafts[number] ?? false)
       : input.draft === true && !this.draftUnsupported;
     this.drafts[number] = draft;
     return { url: `https://github.com/acme/app/pull/${number}`, number, draft };
+  }
+  /** PR ごとの、GitHub の今の本文（upsert で書いたもの。人が直したことは、テストで書き換えて表す。PBI-334）。 */
+  bodies: Record<number, string> = {};
+  bodyFail?: string;
+  bodyWrites = 0;
+  /** あれば、本文を読むたびに呼ぶ（読んだ回数を渡す。本文の読み取りの後に人がまた直したことを表す。PBI-334）。 */
+  onBodyRead?: (reads: number) => void;
+  bodyReads = 0;
+  async pullRequestBody(input: { repo: string; token: string; number: number }) {
+    if (this.bodyFail) throw new Error(this.bodyFail);
+    this.bodyReads += 1;
+    const body = this.bodies[input.number] ?? "";
+    this.onBodyRead?.(this.bodyReads);
+    return body;
   }
   /** PR ごとの、ドラフトか。 */
   drafts: Record<number, boolean> = {};
@@ -4337,6 +4357,101 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const done = service.get(id)?.task as Task;
       expect(done.gate).toEqual({ step: "implement", submission: 1 });
       expect(done.verifyFeedback).toBeUndefined();
+      activity.close();
+    });
+
+    it("実装の実行の間に人が PR のブランチに足したコミットも、PR を出す前に取り込んで、その先頭に積む（PBI-334）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), HOLD],
+        { repos },
+      );
+      await drain(service);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      // 実装の実行の間に、人が PR のブランチにコミットを足した
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      executor.finishHeld(runId, implement("# 実装 v2"));
+      await running;
+      await drain(service);
+      expect(repos.merges).toEqual([
+        expect.objectContaining({ base: pushed.commit, target: human }),
+      ]);
+      expect(repos.published.at(-1)).toMatchObject({ parent: human, branch: pushed.branch });
+      expect(types(service, id)).toContain("FinalReviewSkipped");
+      activity.close();
+    });
+
+    it("前の人のコミットとの競合の目印が残っていれば、実装の間に新しく足されたコミットを取り込まず、目印の解消を先にさせる（PBI-334）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), HOLD, implement("# 実装 v3")],
+        { repos },
+      );
+      await drain(service);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      // 人がコミットを足し、実装のやり直しの前の取り込みで競合した
+      repos.remote[pushed.branch] = "d".repeat(40);
+      repos.mergeResult = { status: "conflicted", conflicts: ["src/retry.ts"] };
+      repos.markers = ["src/retry.ts"];
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      // 実装の間に、人がさらにコミットを足した（今度は競合しない）。エージェントは目印を消さずに提出する
+      repos.remote[pushed.branch] = "e".repeat(40);
+      repos.mergeResult = { status: "merged", conflicts: [] };
+      executor.finishHeld(runId, implement("# 実装 v2"));
+      await running;
+      await service.runNext(id);
+      // 新しい先頭は取り込まない（取り込むと、残った目印の記録が消えて、目印のまま PR を出してしまう）
+      expect(
+        service
+          .get(id)
+          ?.activity.filter((e) => e.type === "PullRequestHeadMerged")
+          .map((e) => (e.payload as { commit: string }).commit),
+      ).toEqual(["d".repeat(40)]);
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(repos.published).toHaveLength(1);
+      activity.close();
+    });
+
+    it("PR を出す前の取り込みが人のコミットと競合したら、PR を出さずに実装をやり直す（数えない。PBI-334）", async () => {
+      const repos = new FakeRepos();
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装 v1"), HOLD, implement("# 実装 v3")],
+        { repos },
+      );
+      await drain(service);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+      const running = service.runNext(id);
+      const runId = await executor.started.promise;
+      repos.remote[pushed.branch] = "d".repeat(40);
+      repos.mergeResult = { status: "conflicted", conflicts: ["src/retry.ts"] };
+      repos.markers = ["src/retry.ts"];
+      executor.finishHeld(runId, implement("# 実装 v2"));
+      await running;
+      await service.runNext(id);
+      const failed = service.get(id)?.task as Task;
+      expect(types(service, id).at(-1)).toBe("BaseConflictsRemained");
+      expect(failed.verifyFeedback).toEqual({ kind: "merge", files: ["src/retry.ts"] });
+      expect(failed.verifyFailures ?? 0).toBe(0);
+      expect(repos.published).toHaveLength(1);
+      // やり直しの実装に、人の側の競合として渡し、解消したら人の先頭に積む
+      repos.markers = [];
+      await drain(service);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain(
+        "--- 前回の検証：人が PR に足したコミットとの競合の目印が残っていました ---",
+      );
+      expect(prompt).toContain("--- 人が PR に足したコミット ---");
+      expect(repos.published.at(-1)).toMatchObject({ parent: "d".repeat(40) });
       activity.close();
     });
 
@@ -9036,9 +9151,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     expect(task?.lastReview).toBeUndefined();
     expect(task?.lastTests).toBeUndefined();
     // sacty の PR にラベルは付けない（レビューは子タスク。PBI-330）
-    expect(types(service, id).slice(-4)).toEqual([
+    expect(types(service, id).slice(-5)).toEqual([
       "FinalReviewSkipped",
       "BranchPushed",
+      "PullRequestBodyWritten",
       "PullRequestPublished",
       "StepSubmitted",
     ]);
@@ -9335,8 +9451,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       url: "https://github.com/acme/app/pull/7",
       number: 7,
     });
-    expect(types(service, id).slice(-3)).toEqual([
+    expect(types(service, id).slice(-4)).toEqual([
       "BranchPushed",
+      "PullRequestBodyWritten",
       "PullRequestPublished",
       "StepSubmitted",
     ]);
@@ -10140,9 +10257,10 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       const gated = service.get(id)?.task;
       expect(gated?.gate).toEqual({ step: "implement", submission: 1 });
       expect(gated?.steps.at(-1)).toEqual({ key: "implement", state: "active" });
-      expect(types(service, id).slice(-4)).toEqual([
+      expect(types(service, id).slice(-5)).toEqual([
         "FinalReviewSkipped",
         "BranchPushed",
+        "PullRequestBodyWritten",
         "PullRequestPublished",
         "StepSubmitted",
       ]);
@@ -10565,6 +10683,328 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
     activity.close();
   });
 
+  describe("人が sacty の PR に手を入れた後の更新（PBI-334）", () => {
+    /** 差し戻した実装のやり直し（PBI-10b のテストと同じ）。 */
+    const rework = (): AgentOutcome[] => [
+      out(
+        [
+          "# 実装の説明 v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["a"] },
+              { viewpointId: "TV-2", tests: ["b"] },
+            ],
+          }),
+          block({ "sacty-responses": [{ remarkId: "implement-1-1", text: "ログを足した" }] }),
+        ].join("\n\n"),
+      ),
+    ];
+    const sendBack = (service: TaskService, id: string) =>
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 1,
+        comments: ["失敗時のログが無い"],
+      });
+    const eventsOf = (service: TaskService, id: string, type: string) =>
+      (service.get(id)?.activity ?? []).filter((e) => e.type === type);
+
+    it("人が PR のブランチに足したコミットを、実装のやり直しの前に作業領域に取り込み、その先頭に積んで同じ PR を更新する（強制プッシュしない）", async () => {
+      const { activity, service, executor, repos, pulls, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      expect(pushed).toBeDefined();
+      if (!pushed) return;
+      // 人がレビューの提案を適用して、PR のブランチにコミットを足した
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      sendBack(service, id);
+      await drain(service);
+      // sacty が最後にプッシュしたコミットを共通の祖先にして、人の先頭を取り込む
+      expect(repos.merges).toContainEqual(
+        expect.objectContaining({ base: pushed.commit, target: human }),
+      );
+      expect(eventsOf(service, id, "PullRequestHeadMerged").map((e) => e.payload)).toEqual([
+        { branch: pushed.branch, from: pushed.commit, commit: human, conflicts: [] },
+      ]);
+      // 実装のやり直しに、人の変更を消さないことを伝える
+      expect(promptOf(executor, 4)).toContain("--- 人が PR に足したコミット ---");
+      expect(promptOf(executor, 4)).toContain(human.slice(0, 7));
+      // 人の先頭を親にして積み、同じ PR を更新する
+      expect(repos.published[1]).toMatchObject({ parent: human, branch: pushed.branch });
+      expect(pulls.calls[1]?.number).toBe(7);
+      const task = service.get(id)?.task;
+      expect(task?.gate).toEqual({ step: "implement", submission: 2 });
+      // 提出した後は、取り込みは済んでいる（次の指示に出さない）
+      expect(task && pendingHeadMerge(task)).toBeUndefined();
+      activity.close();
+    });
+
+    it("取り込んだ先頭に積んで出した後のやり直しでも、人の変更を消さない指示を実装に渡す", async () => {
+      const { activity, service, executor, repos, id } = await toImplementGate([
+        ...rework(),
+        ...rework(),
+      ]);
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      repos.remote[pushed.branch] = "d".repeat(40);
+      sendBack(service, id);
+      await drain(service);
+      // 人の先頭に積んで出したので、まだ提出していない取り込みは無い
+      const task = service.get(id)?.task;
+      expect(task && pendingHeadMerge(task)).toBeUndefined();
+      service.requestChanges(id, {
+        step: "implement",
+        submission: 2,
+        comments: ["もう一度直して"],
+      });
+      await drain(service);
+      const prompt = promptOf(executor, 5);
+      expect(prompt).toContain("あなたはソフトウェア開発の工程エージェントです。");
+      expect(prompt).toContain("--- 人が PR に足したコミット ---");
+      expect(prompt).toContain("人が足した変更は、人の判断で入れたものです");
+      activity.close();
+    });
+
+    it("PR を出す直前に PR のブランチを読む間に一時停止を求められたら、プッシュも PR の更新もしない", async () => {
+      const repos = new FakeRepos();
+      let service: TaskService | undefined;
+      let taskId = "";
+      let armed = false;
+      let paused = false;
+      // 実装の実行の後の、PR のブランチの読み取りの回数（1回目は PR を出す前の取り込み、2回目は PR を出す直前の取り込み）
+      let reads = 0;
+      const fetch = repos.fetchBranch.bind(repos);
+      repos.fetchBranch = async (gitDir, branch, authEnv) => {
+        if (armed && branch !== "main") reads += 1;
+        if (reads === 2 && !paused && service) {
+          paused = true;
+          void service.pause(taskId);
+        }
+        return fetch(gitDir, branch, authEnv);
+      };
+      const made = await toImplementGate(rework(), { repos });
+      service = made.service;
+      taskId = made.id;
+      sendBack(made.service, made.id);
+      // PR を出す直前の取り込みで、PR のブランチを読む間に一時停止を求める
+      const runs = made.executor.calls.length;
+      const run = made.executor.run.bind(made.executor);
+      made.executor.run = async (input) => {
+        const result = await run(input);
+        if (made.executor.calls.length > runs) armed = true;
+        return result;
+      };
+      await drain(made.service);
+      expect(paused).toBe(true);
+      expect(repos.published).toHaveLength(1);
+      expect(made.pulls.calls).toHaveLength(1);
+      expect(made.service.get(made.id)?.task.status).toBe("paused");
+      made.activity.close();
+    });
+
+    it("人の先頭に積んでプッシュした後、PR の更新に失敗して再開したら、プッシュ済みのコミットに積む（前の PR のコミットに戻さない）", async () => {
+      const { activity, service, repos, pulls, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      const human = "d".repeat(40);
+      repos.remote[pushed.branch] = human;
+      pulls.fail = "network";
+      sendBack(service, id);
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(repos.published[1]).toMatchObject({ parent: human });
+      const repushed = service.get(id)?.task.pushedBranch?.commit;
+      pulls.fail = undefined;
+      service.resume(id, {});
+      await drain(service);
+      // 早送りでプッシュできるよう、プッシュ済みのコミット（人の先頭を親にしたもの）に積む
+      expect(repos.published.at(-1)?.parent).toBe(repushed);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
+    it("人のコミットと競合したら、競合したファイルを、人の側を残して解消するよう実装に渡す", async () => {
+      const { activity, service, executor, repos, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      if (!pushed) throw new Error("no pushed branch");
+      repos.remote[pushed.branch] = "d".repeat(40);
+      repos.mergeResult = { status: "conflicted", conflicts: ["src/retry.ts"] };
+      sendBack(service, id);
+      await drain(service);
+      const prompt = promptOf(executor, 4);
+      expect(prompt).toContain("- src/retry.ts");
+      expect(prompt).toContain("下側（======= と >>>>>>> の間）が人の足した側です");
+      // ベースブランチとの競合としては伝えない
+      expect(prompt).not.toContain("--- ベースブランチとの競合（解消してください） ---");
+      activity.close();
+    });
+
+    it("人のコミットが無ければ、取り込まずに前回プッシュしたコミットに積む", async () => {
+      const { activity, service, repos, id } = await toImplementGate(rework());
+      const pushed = service.get(id)?.task.pushedBranch;
+      sendBack(service, id);
+      await drain(service);
+      expect(eventsOf(service, id, "PullRequestHeadMerged")).toEqual([]);
+      expect(repos.merges.filter((m) => m.base === pushed?.commit)).toEqual([]);
+      expect(repos.published[1]).toMatchObject({ parent: pushed?.commit });
+      activity.close();
+    });
+
+    it("人が PR の本文に足した補足は、更新しても残し、sacty の新しい内容も入れる（重ならなければエージェントは使わない）", async () => {
+      const { activity, service, executor, pulls, id } = await toImplementGate(rework());
+      const first = pulls.calls[0]?.body ?? "";
+      // 人が、GitHub の画面で本文の先頭に補足を足した（画面で直した本文は CRLF になる）
+      pulls.bodies[7] = `> 人のメモ：リリースノートに載せる\r\n\r\n${first.replace(/\n/g, "\r\n")}`;
+      const before = executor.calls.length;
+      sendBack(service, id);
+      await drain(service);
+      // 実行は、実装のやり直しの1回だけ（本文をまとめるエージェントは実行しない）
+      expect(executor.calls.length).toBe(before + 1);
+      expect(executor.calls.some((_, i) => promptOf(executor, i).includes("githubNow"))).toBe(
+        false,
+      );
+      const updated = pulls.calls[1]?.body ?? "";
+      expect(updated.startsWith("> 人のメモ：リリースノートに載せる\n\n")).toBe(true);
+      // sacty の更新（新しい head・最後の直し）も入る
+      expect(updated).toContain("c200000");
+      expect(updated).toContain("実装の説明 v2");
+      expect(updated).not.toContain("\r");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
+      // 前回の版としては、sacty が組み立てた本文（人の補足を含まない）を記録する
+      const recorded = service.get(id)?.task.pullRequestBodies?.["https://github.com/acme/app#7"];
+      expect(recorded).toBeDefined();
+      expect(recorded).not.toContain("人のメモ");
+      activity.close();
+    });
+
+    it("人が直した本文と、sacty の新しい本文が同じ箇所で重なったら、エージェントにまとめさせて、その本文で更新する", async () => {
+      const merged = "## まとめた本文\n\n人の書き方で、新しい結果を書いた";
+      const { activity, service, executor, pulls, id } = await toImplementGate([
+        ...rework(),
+        out(`まとめました\n${BODY_BEGIN}\n${merged}\n${BODY_END}`),
+      ]);
+      // 人が本文を丸ごと書き直した
+      pulls.bodies[7] = "人が全部書き直した本文";
+      sendBack(service, id);
+      await drain(service);
+      expect(pulls.calls[1]?.body).toBe(merged);
+      const prompt = promptOf(executor, executor.calls.length - 1);
+      expect(prompt).toContain("人が全部書き直した本文");
+      expect(prompt).toContain("<<<<<<< github-now");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        { actor: "orchestrator", payload: { number: 7, outcome: "resolved" } },
+      ]);
+      activity.close();
+    });
+
+    it("まとめた本文を読めなければ、人の本文のまま変えず、sacty の前回の版も記録し直さない", async () => {
+      const { activity, service, pulls, id } = await toImplementGate([
+        ...rework(),
+        out("答えの形になっていない"),
+      ]);
+      const before = service.get(id)?.task.pullRequestBodies?.["https://github.com/acme/app#7"];
+      pulls.bodies[7] = "人が全部書き直した本文";
+      sendBack(service, id);
+      await drain(service);
+      // 本文は渡さずに更新する（読んだ時点の本文を書き戻さない）
+      expect(pulls.calls[1]).toBeDefined();
+      expect(pulls.calls[1]?.body).toBeUndefined();
+      expect(pulls.bodies[7]).toBe("人が全部書き直した本文");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        { payload: { number: 7, outcome: "kept" } },
+      ]);
+      expect(service.get(id)?.task.pullRequestBodies?.["https://github.com/acme/app#7"]).toBe(
+        before,
+      );
+      // PR の更新は止めない（承認待ちに進む）
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 2 });
+      activity.close();
+    });
+
+    it("エージェントがまとめる間に人が本文をまた直したら、まとめた本文で上書きせず、本文に触れない", async () => {
+      const merged = "## まとめた本文";
+      const { activity, service, pulls, id } = await toImplementGate([
+        ...rework(),
+        out(`${BODY_BEGIN}\n${merged}\n${BODY_END}`),
+      ]);
+      pulls.bodies[7] = "人が全部書き直した本文";
+      // 1回目の読み取り（マージの前）の後に、人がもう一度直した
+      pulls.onBodyRead = (reads) => {
+        if (reads === 1) pulls.bodies[7] = "人がもう一度直した本文";
+      };
+      sendBack(service, id);
+      await drain(service);
+      expect(pulls.calls[1]?.body).toBeUndefined();
+      expect(pulls.bodies[7]).toBe("人がもう一度直した本文");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        { payload: { number: 7, outcome: "kept" } },
+      ]);
+      const resolved = eventsOf(service, id, "PullRequestBodyResolved")[0];
+      expect(ja((resolved?.payload as { reason?: unknown } | undefined)?.reason)).toContain(
+        "人が PR の本文をまた直した",
+      );
+      activity.close();
+    });
+
+    it("本文をまとめたコンテナが止まったことを確かめられなければ、PR を更新せずに一時停止する", async () => {
+      const { activity, service, executor, pulls, id } = await toImplementGate(rework());
+      pulls.bodies[7] = "人が全部書き直した本文";
+      const run = executor.run.bind(executor);
+      executor.run = async (input) => {
+        const prompt = input.invocation.stdin ?? input.invocation.command.join(" ");
+        if (!prompt.includes("githubNow")) return run(input);
+        const error = new AgentTimeoutError(message("run.timeout", { minutes: 3 }));
+        error.unconfirmedContainer = "sacty-run-body";
+        throw error;
+      };
+      sendBack(service, id);
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedMessage).toMatchObject({
+        code: "orchestrator.failed",
+        params: { detail: { code: "run.containerNotConfirmed" } },
+      });
+      // 止まったことを確かめられなかった実行を記録する（再開・中止の前に、確かめ直す）
+      expect(task?.unstoppedRuns).toHaveLength(1);
+      expect(pulls.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("今の本文を読めず、PR の更新にも失敗したら、上書きしたとは記録しない", async () => {
+      const { activity, service, pulls, id } = await toImplementGate(rework());
+      pulls.bodies[7] = "人が全部書き直した本文";
+      pulls.bodyFail = "network";
+      pulls.fail = "GitHub API 502";
+      sendBack(service, id);
+      await drain(service);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(pulls.bodies[7]).toBe("人が全部書き直した本文");
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
+      activity.close();
+    });
+
+    it("今の本文を読めなければ、これまでどおり sacty の本文で更新する", async () => {
+      const { activity, service, pulls, id } = await toImplementGate(rework());
+      pulls.bodies[7] = "人が全部書き直した本文";
+      pulls.bodyFail = "network";
+      sendBack(service, id);
+      await drain(service);
+      expect(pulls.calls[1]?.body).toContain("c200000");
+      expect(pulls.calls[1]?.body).not.toContain("人が全部書き直した本文");
+      // 人の直しを確かめずに上書きしたことを、作業履歴に残す
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        {
+          payload: {
+            number: 7,
+            outcome: "overwritten",
+            reason: { code: "pr.bodyReadFailed" },
+          },
+        },
+      ]);
+      activity.close();
+    });
+  });
+
   it("差し戻しの間に前の PR がマージされたら、新しい PR は作らず、マージを承認として完了する（PBI-14a レビュー指摘・PBI-276）", async () => {
     const { activity, service, pulls, id } = await toImplementGate([
       out(
@@ -10633,8 +11073,9 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       expect(pulls.calls).toHaveLength(1);
       const log = service.get(id)?.activity ?? [];
       expect(log.find((e) => e.type === "VerificationOverridden")?.actor).toBe("person");
-      expect(types(service, id).slice(-3)).toEqual([
+      expect(types(service, id).slice(-4)).toEqual([
         "BranchPushed",
+        "PullRequestBodyWritten",
         "PullRequestPublished",
         "StepSubmitted",
       ]);
@@ -18807,7 +19248,8 @@ describe("依存先の PR に重ねる子タスク（PBI-317）", () => {
     service.requestChanges(b, { step: "implement", submission: 1, comments: ["文言を直す"] });
     await drain(service);
     expect(repos.merges).toMatchObject([{ base: depCommit, target: "f".repeat(40) }]);
-    expect(repos.fetchedBranches.at(-1)?.branch).toBe("main");
+    // 取り込むのはベースブランチ（PR を出す前に、人が足したコミットが無いかを PR のブランチでも確かめる。PBI-334）
+    expect(repos.fetchedBranches.map((f) => f.branch)).toContain("main");
     expect(pulls.calls.at(-1)).toMatchObject({ number: 8, baseBranch: "main", retarget: true });
     expect(pulls.drafts[8]).toBe(false);
     // 子のマージで、親の子タスクがすべて片付く
@@ -20066,6 +20508,33 @@ describe("再現の工程（PBI-29）", () => {
       { image: "sacty-agent-node:test", env: { TOOL: "node" } },
     ]);
     expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
+    activity.close();
+  });
+
+  it("不具合の修正のやり直しでも、人が PR に足したコミットを取り込んだことと、競合したファイルを実装に渡す（PBI-334）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(
+      activity,
+      [
+        reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]),
+        implement(),
+        implement("# 直した修正"),
+      ],
+      { planner },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await drain(service);
+    const pushed = service.get(id)?.task.pushedBranch;
+    if (!pushed) throw new Error("no pushed branch");
+    repos.remote[pushed.branch] = "d".repeat(40);
+    repos.mergeResult = { status: "conflicted", conflicts: ["src/pay.ts"] };
+    repos.markers = ["src/pay.ts"];
+    service.requestChanges(id, { step: "implement", submission: 1, comments: ["直して"] });
+    await service.runNext(id);
+    const fix = promptOf(executor, executor.calls.length - 1);
+    expect(fix).toContain("そのテストが通るように不具合を直してください");
+    expect(fix).toContain("--- 人が PR に足したコミット ---");
+    expect(fix).toContain("- src/pay.ts");
     activity.close();
   });
 
@@ -22762,19 +23231,27 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(repos.published).toHaveLength(1);
     const implPr = pulls.calls.filter((c) => c.baseBranch === "main");
     expect(implPr).toHaveLength(1);
-    // 実装の PR の指摘で実装をやり直して出し直すときは、sacty が積んだ実装のコミットの後の変更を確かめる
-    // （起点から確かめると、sacty 自身の実装の変更を人の変更と取り違える）
+    // 実装の PR の指摘で実装をやり直して出し直すときは、sacty が積んだ実装のコミットの後に人が足したコミットを、作業領域に
+    // 取り込んでから、その先頭に積む（PBI-334。要求要件・設計のファイルは、タスクブランチのものを引き継ぐので取り込みから外す）
     const pushed = taskOf(service, id).pushedBranch?.commit ?? "";
     expect(pushed).not.toBe("");
-    // タスクブランチは、sacty の実装のコミットの後に進んでいる（GitHub の画面で PR のブランチを更新したなど。中身は同じ）
+    // タスクブランチは、sacty の実装のコミットの後に進んでいる（GitHub の画面で PR のブランチを更新したなど）
     repos.remote[taskBranchOf(id)] = "d".repeat(40);
     repos.changed = [];
+    const checked = repos.changedCalls.length;
     const number = taskOf(service, id).pullRequest?.number ?? 0;
     pulls.feedbackBy[number] = [item("comment:50", { body: "エラー時の処理が無い" })];
     await service.checkPullRequests();
     await drain(service);
-    expect(repos.changedCalls.at(-1)?.from).toBe(pushed);
+    expect(repos.merges.at(-1)).toMatchObject({
+      base: pushed,
+      target: "d".repeat(40),
+      exclude: [docOf(id, "requirements"), docOf(id, "design")],
+    });
+    // 取り込んだ先頭は、人の変更として確かめ直さない
+    expect(repos.changedCalls).toHaveLength(checked);
     expect(repos.published).toHaveLength(2);
+    expect(repos.published[1]?.parent).toBe("d".repeat(40));
     made.activity.close();
   });
 
@@ -22795,10 +23272,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const taskBranch = taskBranchOf(id);
     // 1. タスクブランチ（起点のコミットから）と、要求要件のブランチ・PR
     expect(repos.pushedCommits).toEqual([{ commit: "base123", branch: taskBranch }]);
-    expect(types(service, id).slice(-5)).toEqual([
+    expect(types(service, id).slice(-6)).toEqual([
       "AgentRunCompleted",
       "TaskBranchCreated",
       "StepBranchPushed",
+      "PullRequestBodyWritten",
       "StepPullRequestPublished",
       "StepSubmitted",
     ]);

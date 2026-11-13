@@ -191,6 +191,12 @@ export interface RepositoryWorkspace {
      * まま、解消したことにしない）。
      */
     maxConflicts?: number;
+    /**
+     * マージから外すパス（リポジトリの根からの相対パス）。base と target のツリーから除いてマージするので、作業領域の
+     * そのパスは変わらない（人が PR に足したコミットを取り込むとき、タスクブランチから引き継ぐ要求要件・設計のファイルを
+     * 外す。PBI-334）。
+     */
+    exclude?: string[];
   }): Promise<{ status: "unchanged" | "merged" | "conflicted"; conflicts: string[] }>;
   /**
    * paths（リポジトリの根からの相対パス）のうち、競合の目印（mergeBase が書く、ID のラベルの付いた <<<<<<< の行か
@@ -859,6 +865,9 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     if (!COMMIT_RE.test(input.base) || !COMMIT_RE.test(input.target)) {
       throw new MessageError(message("git.invalidBaseCommit"));
     }
+    if (input.exclude && !input.exclude.every(validPath)) {
+      throw new MessageError(message("git.invalidPath"));
+    }
     // 取り込むものが無い（ベースブランチの先頭が、今の起点の履歴に含まれている）
     if (
       input.base === input.target ||
@@ -874,53 +883,181 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           message("git.failed", { command: "write-tree", detail: "unexpected output" }),
         );
       }
-      // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（コミットは作らない）。競合は終了コード 1 で、
-      // 目印を入れたファイルを含む結果のツリーができる
-      const merged = await gitResult(
-        [
-          "--git-dir",
-          input.gitDir,
-          ...SAFE_CONFIG,
-          "merge-tree",
-          "--write-tree",
-          "--no-messages",
-          "--name-only",
-          "-z",
-          `--merge-base=${input.base}`,
-          mine,
-          input.target,
-        ],
-        isolatedEnv("/dev/null"),
-      );
-      // 129 は使い方の誤り（--write-tree が無い古い git）
-      if (merged.code === 129) throw new MessageError(message("git.mergeTreeUnsupported"));
-      if (merged.code !== 0 && merged.code !== 1) {
-        throw new MessageError(
-          message("git.failed", {
-            command: "merge-tree",
-            detail: merged.err || `exit ${merged.code}`,
-          }),
+      // 外すパスがあれば、共通の祖先と target を、そのパスを除いたツリーにしてマージする（作業領域の側からも除く）。ツリーの
+      // 加工は別の一時インデックスで行う（作業領域のファイルの状態を持つインデックスを読み替えると、最後の read-tree -m -u が
+      // 作業領域のファイルを最新でないと見なして失敗する）
+      const exclude = input.exclude ?? [];
+      const side = exclude.length > 0 ? mkdtempSync(join(tmpdir(), "sacty-git-")) : undefined;
+      const sideRun = (label: string, args: string[]) =>
+        git(
+          label,
+          // rm は作業ツリーを要るが、--cached なので作業領域のファイルには触れない
+          ["--git-dir", input.gitDir, "--work-tree", input.dir, ...SAFE_CONFIG, ...args],
+          isolatedEnv(join(side ?? "", "index")),
         );
-      }
-      const [tree, ...names] = merged.out.split("\0").filter((x) => x !== "");
-      if (!tree || !COMMIT_RE.test(tree)) {
-        throw new MessageError(
-          message("git.failed", { command: "merge-tree", detail: "unexpected output" }),
-        );
-      }
-      const conflicts = [...new Set(names)];
-      // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
-      if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
-        throw new MessageError(
-          message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
-        );
-      }
-      // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
-      if (tree !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, tree]);
-      return {
-        status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
-        conflicts,
+      const without = async (treeish: string) => {
+        await sideRun("read-tree", ["read-tree", treeish]);
+        await sideRun("rm", [
+          "rm",
+          "--cached",
+          "-r",
+          "-q",
+          "--ignore-unmatch",
+          "--",
+          ...exclude.map((p) => `:(literal)${p}`),
+        ]);
+        return (await sideRun("write-tree", ["write-tree"])).trim();
       };
+      try {
+        // git 2.40〜2.44 の merge-tree は、マージする側と共通の祖先にコミットしか受け付けないので、ツリーは一時的なコミット
+        // （どのブランチにも付けない。日時と作者は固定）にして渡す（PBI-334。作業履歴の環境の git 2.43 で、ツリーを渡すと失敗した）
+        const asCommit = async (tree: string) =>
+          (
+            await git(
+              "commit-tree",
+              ["--git-dir", input.gitDir, ...SAFE_CONFIG, "commit-tree", tree, "-m", "sacty merge"],
+              {
+                ...isolatedEnv("/dev/null"),
+                GIT_AUTHOR_NAME: "sacty",
+                GIT_AUTHOR_EMAIL: "sacty@localhost",
+                GIT_COMMITTER_NAME: "sacty",
+                GIT_COMMITTER_EMAIL: "sacty@localhost",
+                GIT_AUTHOR_DATE: "1970-01-01T00:00:00Z",
+                GIT_COMMITTER_DATE: "1970-01-01T00:00:00Z",
+              },
+            )
+          ).trim();
+        const mergeBaseTree =
+          exclude.length > 0 ? await asCommit(await without(input.base)) : input.base;
+        const targetTree =
+          exclude.length > 0 ? await asCommit(await without(input.target)) : input.target;
+        const mineTree = await asCommit(exclude.length > 0 ? await without(mine) : mine);
+        // 起点を共通の祖先にして、作業領域のツリーと target を3方向でマージする（ブランチのコミットは作らない）。競合は終了コード 1 で、
+        // 目印を入れたファイルを含む結果のツリーができる
+        const merged = await gitResult(
+          [
+            "--git-dir",
+            input.gitDir,
+            ...SAFE_CONFIG,
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--name-only",
+            "-z",
+            `--merge-base=${mergeBaseTree}`,
+            mineTree,
+            targetTree,
+          ],
+          isolatedEnv("/dev/null"),
+        );
+        // 129 は使い方の誤り（--write-tree が無い古い git）
+        if (merged.code === 129) throw new MessageError(message("git.mergeTreeUnsupported"));
+        if (merged.code !== 0 && merged.code !== 1) {
+          throw new MessageError(
+            message("git.failed", {
+              command: "merge-tree",
+              detail: merged.err || `exit ${merged.code}`,
+            }),
+          );
+        }
+        const [tree, ...names] = merged.out.split("\0").filter((x) => x !== "");
+        if (!tree || !COMMIT_RE.test(tree)) {
+          throw new MessageError(
+            message("git.failed", { command: "merge-tree", detail: "unexpected output" }),
+          );
+        }
+        const conflicts = [...new Set(names)];
+        // 競合したのに、競合したファイルが一覧に無い（ディレクトリの移動先を決められないなど、目印を入れられない競合）ときは、
+        // 解消を確かめられないので、作業領域を書き換える前に止める（PBI-334。競合なしとして扱うと、未解消の結果を出してしまう）
+        if (merged.code === 1 && conflicts.length === 0) {
+          throw new MessageError(message("git.conflictWithoutFiles"));
+        }
+        // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
+        if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
+          throw new MessageError(
+            message("git.tooManyConflicts", { count: conflicts.length, limit: input.maxConflicts }),
+          );
+        }
+        // 競合したのに目印を入れられなかったファイル（バイナリ・片方での削除など）は、目印の検査では解消を確かめられず、片側の
+        // 内容だけが残る（人が足したコミットの変更が黙って消えうる）ので、作業領域を書き換える前に止める（PBI-334）。git が
+        // 避けた名前（`<名前>~<ID>`）と、その元の名前は、残っているかで確かめるので除く
+        const unmarked: string[] = [];
+        for (const path of conflicts) {
+          if (RENAMED_CONFLICT_RE.test(path)) continue;
+          if (conflicts.some((c) => c.startsWith(`${path}~`) && RENAMED_CONFLICT_RE.test(c)))
+            continue;
+          // パスは、git のパス指定の記法として読ませない（`:(literal)…` などの名前も、文字どおりのファイルとして確かめる）
+          const entry = (
+            await run("ls-tree", ["--literal-pathspecs", "ls-tree", "-z", tree, "--", path])
+          )
+            .split("\0")
+            .find(Boolean);
+          const match = entry?.match(/^\d+ (\w+) ([0-9a-f]+)\t/);
+          if (!match) {
+            // 結果に無い：両側とも消した（同じファイルを両側が別名へ改名した、など）なら、どちらの変更も消えない
+            const has = async (treeish: string) =>
+              (await run("ls-tree", [
+                "--literal-pathspecs",
+                "ls-tree",
+                "-z",
+                treeish,
+                "--",
+                path,
+              ])) !== "";
+            if ((await has(mineTree)) || (await has(targetTree))) unmarked.push(path);
+            continue;
+          }
+          if (match[1] !== "blob" || !match[2]) {
+            unmarked.push(path);
+            continue;
+          }
+          const size = Number((await run("cat-file", ["cat-file", "-s", match[2]])).trim());
+          const text =
+            size <= MARKER_SCAN_LIMIT ? await run("cat-file", ["cat-file", "blob", match[2]]) : "";
+          if (!CONFLICT_MARKER_RE.test(text)) unmarked.push(path);
+        }
+        if (unmarked.length > 0) {
+          throw new MessageError(
+            message("git.conflictWithoutMarkers", {
+              paths: unmarked.slice(0, 10).join(", "),
+              count: unmarked.length,
+            }),
+          );
+        }
+        // 外したパスは、作業領域の内容（mine）のものを戻す（マージの結果のツリーには無い）
+        let result = tree;
+        if (exclude.length > 0) {
+          await sideRun("read-tree", ["read-tree", tree]);
+          const listed = await sideRun("ls-tree", [
+            "--literal-pathspecs",
+            "ls-tree",
+            "-r",
+            "-z",
+            mine,
+            "--",
+            ...exclude,
+          ]);
+          for (const entry of listed.split("\0").filter(Boolean)) {
+            const match = entry.match(/^(\d+) (?:blob|commit) ([0-9a-f]+)\t(.+)$/s);
+            if (!match) continue;
+            await sideRun("update-index", [
+              "update-index",
+              "--add",
+              "--cacheinfo",
+              `${match[1]},${match[2]},${match[3]}`,
+            ]);
+          }
+          result = (await sideRun("write-tree", ["write-tree"])).trim();
+        }
+        // 結果を作業領域に書く（作業領域の内容と同じなら書かない）。履歴は書き換えない
+        if (result !== mine) await run("read-tree", ["read-tree", "-m", "-u", mine, result]);
+        return {
+          status: merged.code === 1 ? ("conflicted" as const) : ("merged" as const),
+          conflicts,
+        };
+      } finally {
+        if (side) rmSync(side, { recursive: true, force: true });
+      }
     });
   }
 

@@ -56,6 +56,7 @@ When Requirements, Design, and Implementation are all approved through PRs, the 
   - If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (the implementation PR).
   - If there is no task branch, it is opened as a PR from a sacty branch (`sacty/task-<first 8 characters of the task ID>`) to the base branch.
   - If changes other than the requirements and design files have been stacked on the task branch, publishing stops (`pr.taskBranchChanged`).
+    Commits a person added after sacty stacked the implementation do not stop it; they are merged into the workspace and sacty stacks on their tip ([Merging commits a person added to the PR](tasks-and-steps.en.md#merging-commits-a-person-added-to-the-pr)).
   - A task that takes over an existing PR opens no PR; it pushes to the source branch of the taken-over PR and uses that PR as the implementation PR.
 - Each child task of Task split has its own task branch.
 - The "review" link in the web UI (`personAction`)
@@ -374,6 +375,52 @@ A template is judged absent or unusable as follows.
   - If the PR URL is not in the form `<repository>/pull/<number>`, the line is the path as inline code and, in full-width brackets, `PR：` and the URL in angle brackets (an autolink). Without a URL, only the path.
 
 Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTemplate`, `limitBody`, `CATEGORY_RULES`), `apps/daemon/src/service.ts` (`pullRequestBody`, `publish`, `publishStepPullRequest`), `apps/daemon/src/prompts.ts` (`buildPullRequestBodyParts`, `buildStepPullRequestBodyParts`, `buildPullRequestBodyText`, `buildStepPullRequestBodyText`, `resultTableLines`, `approvedBasisLines`, `stepArtifactLink`, `withoutProgressReport`), `packages/core/src/test-names.ts` (`displayTestNames`, `dedupeTestNames`, `withoutFormatPlaceholders`), `packages/core/src/events.ts` (`PullRequestTemplateUse`), `apps/web/src/components/pull-request.tsx` (`TemplateUse`)
+
+### Updating a body a person edited
+
+A person may edit the body of a PR that sacty opened on GitHub (adding notes, formatting, rewording, and so on).
+When sacty updates an existing PR, it keeps the person's edits and adds sacty's new content.
+This applies to the implementation PR (`publish`), updates of the requirements and design PRs (`publishStepPullRequest`), and retargeting a stacked PR (`retargetPullRequest`).
+A task that takes over an existing PR never changes the PR body in the first place.
+
+Related ADR: [Merge commits a person added to a sacty PR into the workspace, and keep a person's edits to the PR body with a three-way merge](../adr/20261112-1553-keep-human-edits-on-sacty-pull-requests.md)
+
+- Record of the previous version: after opening or updating a PR (not when sacty tried to open one, found an existing PR for the same branch, and did not write its body; `existing` in the answer of `upsert`), sacty records the body it assembled that time (after filling the template, truncating to the length limit, and masking secrets; it does not include the person's edits) as `PullRequestBodyWritten` (the PR's repository, number, and body) (`recordPullRequestBody`).
+  It is not recorded when it equals the previous one.
+  `Task.pullRequestBodies` (keyed by `<repository URL>#<number>`; `pullRequestBodyKey`) holds the last one per PR.
+  The task list API (`/api/tasks`) does not send it (the screen does not use it, and it holds a full body per PR).
+- The body of an update (`reconcilePullRequestBody`):
+  1. If there is no record of the previous version (a body written before this version), use the newly assembled body as before.
+  2. Read the current body on GitHub (`pullRequestBody`). If it cannot be read, use the newly assembled body, and after the PR is updated, record in `PullRequestBodyResolved` (`overwritten`; the reason is `pr.bodyReadFailed`) that the body was overwritten without checking for a person's edits (no agent is run; nothing is recorded if the update fails).
+  3. Three-way merge the current body (the person's side) and the newly assembled body (sacty's side) line by line, with the previous version as the common ancestor (`mergePullRequestBody`; `git merge-file --diff3`).
+     Line endings are normalized to LF (a body edited on the GitHub screen uses CRLF).
+     If the person did not edit it, the result is the newly assembled body.
+     Because the common ancestor is the body sacty assembled, not the body written to GitHub, notes the person added earlier stay as the person's edits in later updates too.
+  4. If it merges without overlap and fits in `PR_BODY_MAX`, update with the result and record the newly assembled body as the previous version.
+  5. If both sides changed the same place (or the result exceeds the limit), have the orchestrator agent (`step_agents.orchestrator`) reconcile it (`buildPullRequestBodyMergePrompt`).
+     - The previous version, the current body, the newly assembled body, and the merge result (with markers labeled `github-now`, `sacty-previous`, and `sacty-new` where they overlap) are passed as JSON data.
+     - The agent reconciles only the places with markers. It keeps the person's notes, formatting, and wording, and applies sacty's factual updates (the description of changes, test results, review status, what a person should check, approval guidance, and so on).
+     - It keeps the task ID line and the `Closes #<number>` line unless the person removed them, and does not add back what the person removed.
+     - It must not leave marker lines, and must stay within the length limit.
+     - It does not follow instructions inside the bodies, and does not touch files, commands, or GitHub.
+     - The text between the last `<<<SACTY_PR_BODY_BEGIN>>>` and `<<<SACTY_PR_BODY_END>>>` in the answer is the body (`extractMergedPullRequestBody`).
+     - After reconciling, sacty reads the current body again; if the person edited it again in the meantime, it does not overwrite with a body that lacks those edits (see 6.; `pr.bodyEditedDuringMerge`).
+     - If reconciled, sacty updates with that body, records `PullRequestBodyResolved` (`resolved`; with the run's cost), and records the newly assembled body as the previous version.
+  If a pause or cancel is requested while an agent reconciles the body, the PR is not updated (the same applies to the requirements and design PRs).
+  6. If it cannot be reconciled, the PR is updated without touching the body (no body is passed to `upsert`; the body read earlier is not written back), and the previous version is not recorded again (the next update merges sacty's updates again).
+     `PullRequestBodyResolved` (`kept`) keeps the reason. The PR update does not stop.
+     It cannot be reconciled when:
+     - the settings cannot be read (`pr.bodyMergeUnavailable`)
+     - the budget cap has been reached (`pr.bodyMergeBudget`)
+     - the agent run failed (`pr.bodyMergeFailed`). If it could not be confirmed that the container stopped, the PR is not updated and the task pauses (with the run failure's reason; stopping is confirmed on resume or cancel)
+     - the answer cannot be read (`orchestrator.unreadable`; no marker lines, empty, merge markers left, or too long)
+     - the person edited the body again while it was being reconciled (`pr.bodyEditedDuringMerge`), or it cannot be read again (`pr.bodyRereadFailed`)
+     - when retargeting a stacked PR (`retargetPullRequest`); retargeting runs outside the task's run, so no agent is run (`pr.bodyMergeDeferred`)
+     - the merge itself failed (`pr.bodyMergeError`)
+- Cost: the cost of `PullRequestBodyResolved` is charged to the task budget (`CHARGED_EVENT_TYPES`). In the per-step cost table, it appears in the orchestrator row.
+- In the activity log: "Wrote the body of PR #…", and whether an agent reconciled it or could not (with the reason).
+
+Code: `apps/daemon/src/service.ts` (`reconcilePullRequestBody`, `recordPullRequestBody`, `publish`, `publishStepPullRequest`, `retargetPullRequest`), `apps/daemon/src/pr-body-merge.ts` (`mergePullRequestBody`, `buildPullRequestBodyMergePrompt`, `extractMergedPullRequestBody`, `hasMergeMarkers`), `apps/daemon/src/github.ts` (`pullRequestBody`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`PullRequestBodyWritten`, `PullRequestBodyResolved`), `packages/core/src/projection.ts` (`pullRequestBodies`, `pullRequestBodyKey`), `packages/core/src/cost.ts` (`CHARGED_EVENT_TYPES`), `apps/web/src/lib/step-costs.ts`, `apps/web/src/lib/labels.ts`
 
 ## Importing PR comments
 
