@@ -630,16 +630,22 @@ export class AiGateway {
             throw new Error("invalid boundary");
           const delimiter = Buffer.from(`--${boundary[2] ?? boundary[3]}`);
           const marker = Buffer.concat([Buffer.from("\r\n"), delimiter]);
+          const boundarySuffix = (start: number) => {
+            while (body[start] === 32 || body[start] === 9) start++;
+            return body.toString("latin1", start, start + 2);
+          };
+          let candidates = 0;
+          const lfMarker = marker.subarray(1);
+          for (let lf = body.indexOf(lfMarker); lf >= 0; lf = body.indexOf(lfMarker, lf + 1)) {
+            if (++candidates > 10_000) throw new Error("too many boundary candidates");
+            if (body[lf - 1] !== 13) throw new Error("ambiguous boundary");
+          }
+          candidates = 0;
           const firstMarker = body.indexOf(marker);
           let pos = body.indexOf(delimiter) === 0 ? 0 : firstMarker < 0 ? -1 : firstMarker + 2;
-          let candidates = 0;
           let count = 0;
           while (pos >= 2 || pos === 0) {
-            const suffix = body.toString(
-              "latin1",
-              pos + delimiter.length,
-              pos + delimiter.length + 2,
-            );
+            const suffix = boundarySuffix(pos + delimiter.length);
             if (suffix === "\r\n" || suffix === "--") break;
             if (++candidates > 10_000) throw new Error("too many boundary candidates");
             const next = body.indexOf(marker, pos + delimiter.length);
@@ -659,6 +665,7 @@ export class AiGateway {
               break;
             }
             if (++count > 10_000) throw new Error("too many form fields");
+            while (body[pos] === 32 || body[pos] === 9) pos++;
             if (body.toString("latin1", pos, pos + 2) !== "\r\n")
               throw new Error("invalid boundary");
             pos += 2;
@@ -694,11 +701,7 @@ export class AiGateway {
             let next = body.indexOf(marker, end + 4);
             while (next >= 0) {
               if (++candidates > 10_000) throw new Error("too many boundary candidates");
-              const suffix = body.toString(
-                "latin1",
-                next + marker.length,
-                next + marker.length + 2,
-              );
+              const suffix = boundarySuffix(next + marker.length);
               if (suffix === "\r\n" || suffix === "--") break;
               next = body.indexOf(marker, next + marker.length);
             }

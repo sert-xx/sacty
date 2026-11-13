@@ -419,7 +419,6 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
       "https://ticket.internal.example.com/api/v1/tickets/42?http_method_name=x&methods=1",
     );
   });
-
   it("メソッドを上書きするフォーム本文と曖昧な multipart を拒否する", async () => {
     const g = await startPf([json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
@@ -450,6 +449,10 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
         'multipart/form-data; boundary="s\\\\afe"',
         '--s\\\\afe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--s\\\\afe--\r\n--s\\afe\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--s\\afe--\r\n',
       ],
+      [
+        type,
+        '--evil\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\n--evil\nContent-Disposition: form-data; name="_method"\n\nDELETE\r\n--evil--\r\n',
+      ],
       [type, part('name="_method"')],
       [type, part('name="%5Fmethod"')],
       [type, part('name="_meth\\od"')],
@@ -479,7 +482,6 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect((await send(normal, type)).status).toBe(201);
     expect(g.calls[1]?.body).toBe(normal);
   });
-
   it("multipart の preamble、値、ファイル内容と最終境界の空白を転送する", async () => {
     const g = await startPf([json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
@@ -488,20 +490,29 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const headers = { "content-type": "multipart/form-data; boundary=boundary" };
     expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
     expect(g.calls[0]?.body).toBe(body);
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers,
-          body: body.replace('name="text"', 'name="_method"'),
-        })
-      ).status,
-    ).toBe(400);
+    const overridden = body.replace('name="text"', 'name="_method"');
+    expect((await fetch(url, { method: "POST", headers, body: overridden })).status).toBe(400);
     headers["content-type"] = 'multipart/form-data; boundary=boundary; foo="x; boundary=evil"';
     expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
     expect(g.calls).toHaveLength(2);
   });
-
+  it("空白付き multipart 境界の全パートを検査する", async () => {
+    const g = await startPf([json(201, {})]);
+    const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
+    const headers = { "content-type": "multipart/form-data; boundary=x" };
+    const part = (boundary: string, name: string) =>
+      `--x${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\nvalue\r\n`;
+    const safe = `${part(" \t", "one")}${part("\t ", "two")}--x--\r\n`;
+    for (const body of [
+      safe.replace('name="one"', 'name="_method"').replace("--x\t ", "--x"),
+      `${safe.replace('name="two"', 'name="_method"').replace("--x--", '--x\r\nContent-Disposition: form-data; name="three"\r\n\r\nvalue\r\n--x--')}`,
+    ]) {
+      expect((await fetch(url, { method: "POST", headers, body })).status).toBe(400);
+    }
+    expect(g.calls).toHaveLength(0);
+    expect((await fetch(url, { method: "POST", headers, body: safe })).status).toBe(201);
+    expect(g.calls[0]?.body).toBe(safe);
+  });
   it("大量のフォーム項目を上限で拒否し後続の要求を処理する", async () => {
     const g = await startPf([json(201, {}), json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
@@ -517,15 +528,9 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect((await send("x".repeat(16 * 1024 + 1))).status).toBe(400);
     const part =
       '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
-    expect(
-      (
-        await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "multipart/form-data; boundary=boundary" },
-          body: `${part.repeat(10_001)}--boundary--\r\n`,
-        })
-      ).status,
-    ).toBe(400);
+    const multipart = { "content-type": "multipart/form-data; boundary=boundary" };
+    const many = `${part.repeat(10_001)}--boundary--\r\n`;
+    expect((await fetch(url, { method: "POST", headers: multipart, body: many })).status).toBe(400);
     expect(g.calls).toHaveLength(2);
     expect((await send("a=1")).status).toBe(201);
     expect(g.calls).toHaveLength(3);
