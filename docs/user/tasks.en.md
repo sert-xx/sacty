@@ -336,7 +336,7 @@ The Implementation step's agent runs the tests and checks it decides from the re
   - For Terraform: `terraform validate`
   - For YAML: `yamllint`, and so on
 - The decided command appears as "Test command" in the "Step settings" tab of the task details and as "Tests" in the properties in the right column.
-- The decided command is passed to the child task that reviews the PR as a candidate verification command. It is also passed to the Reproduce step of a bug fix.
+- The decided command is passed to the Reproduce step of a bug fix. It is not passed to the child task that reviews the PR. That child task decides its verification commands from the repository's instructions and CI configuration.
 - Besides the tests, the Implementation step's agent runs the checks the repository defines, such as formatters, linters, and type checks, on every change that goes into the PR (code, tests, documents, configuration).
   For a check it did not run, it writes the reason in the implementation's description.
 - In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself, confirms that it fails because of the bug, and reports it.
