@@ -593,12 +593,26 @@ export class AiGateway {
         }
         if (formType === "application/x-www-form-urlencoded") {
           let count = 0;
-          for (const [part] of body.toString("utf8").matchAll(/[^&;]+/g)) {
+          let start = 0;
+          let amp = body.indexOf(38);
+          let semi = body.indexOf(59);
+          while (start < body.length) {
+            const end = Math.min(amp < 0 ? body.length : amp, semi < 0 ? body.length : semi);
+            if (amp === end) amp = body.indexOf(38, end + 1);
+            if (semi === end) semi = body.indexOf(59, end + 1);
             if (++count > 10_000) throw new Error("too many form fields");
-            if (overridesMethodInQuery(`?${part}`)) {
+            if (end === start) {
+              start++;
+              continue;
+            }
+            const equals = body.subarray(start, end).indexOf(61);
+            const nameEnd = equals < 0 ? end : start + equals;
+            if (nameEnd - start > 16 * 1024) throw new Error("form name too long");
+            if (overridesMethodInQuery(`?${body.toString("utf8", start, nameEnd)}`)) {
               override = true;
               break;
             }
+            start = end + 1;
           }
         } else {
           const boundaries = [
@@ -616,9 +630,21 @@ export class AiGateway {
             throw new Error("invalid boundary");
           const delimiter = Buffer.from(`--${boundary[2] ?? boundary[3]}`);
           const marker = Buffer.concat([Buffer.from("\r\n"), delimiter]);
-          let pos = body.indexOf(delimiter) === 0 ? 0 : body.indexOf(marker) + 2;
+          const firstMarker = body.indexOf(marker);
+          let pos = body.indexOf(delimiter) === 0 ? 0 : firstMarker < 0 ? -1 : firstMarker + 2;
           let candidates = 0;
           let count = 0;
+          while (pos >= 2 || pos === 0) {
+            const suffix = body.toString(
+              "latin1",
+              pos + delimiter.length,
+              pos + delimiter.length + 2,
+            );
+            if (suffix === "\r\n" || suffix === "--") break;
+            if (++candidates > 10_000) throw new Error("too many boundary candidates");
+            const next = body.indexOf(marker, pos + delimiter.length);
+            pos = next < 0 ? -1 : next + 2;
+          }
           while (true) {
             if (!body.subarray(pos, pos + delimiter.length).equals(delimiter))
               throw new Error("invalid boundary");
@@ -635,6 +661,7 @@ export class AiGateway {
             const end = body.indexOf("\r\n\r\n", pos);
             if (end < 0 || end - pos > 16 * 1024) throw new Error("invalid headers");
             const headers = body.toString("latin1", pos, end);
+            if (/[\r\n]/.test(headers.replaceAll("\r\n", ""))) throw new Error("invalid headers");
             const dispositions = headers
               .split("\r\n")
               .filter((line) => /^content-disposition\s*:/i.test(line));

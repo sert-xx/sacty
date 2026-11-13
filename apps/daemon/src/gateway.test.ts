@@ -506,6 +506,17 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
         '--s\\\\afe\r\nContent-Disposition: form-data; name="safe"\r\n\r\nvalue\r\n--s\\\\afe--\r\n--s\\afe\r\nContent-Disposition: form-data; name="_method"\r\n\r\nDELETE\r\n--s\\afe--\r\n',
       ],
       ["multipart/form-data; boundary=evil", part('name="%5Fmethod"')],
+      [
+        "multipart/form-data; boundary=evil",
+        part('name="safe"').replace(
+          "Content-Disposition:",
+          'X-Test: x\nContent-Disposition: form-data; name="_method"\r\nContent-Disposition:',
+        ),
+      ],
+      [
+        "multipart/form-data; boundary=evil",
+        part('name="safe"').replace("Content-Disposition:", "X-Test: x\rContent-Disposition:"),
+      ],
       ["multipart/form-data; boundary=evil", part(`name="${"a".repeat(20_000)}"`)],
       [
         "multipart/form-data; boundary=evil",
@@ -528,7 +539,7 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     const g = await startPf([json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
     const body =
-      'preamble\r\n--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nhello\r\n--boundary--\r\n';
+      'preamble\r\n--boundaryX\r\n--boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nhello\r\n--boundary--\r\n';
     const headers = { "content-type": "multipart/form-data; boundary=boundary" };
     expect((await fetch(url, { method: "POST", headers, body })).status).toBe(201);
     expect(g.calls[0]?.body).toBe(body);
@@ -547,13 +558,25 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
   });
 
   it("大量のフォーム項目を上限で拒否し後続の要求を処理する", async () => {
-    const g = await startPf([json(201, {})]);
+    const g = await startPf([json(201, {}), json(201, {}), json(201, {})]);
     const url = `${g.base}/ticket/api/v1/tickets/42/comments`;
     const headers = { "content-type": "application/x-www-form-urlencoded" };
     expect(
-      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(100_001) })).status,
+      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(10_000) })).status,
+    ).toBe(201);
+    expect(
+      (await fetch(url, { method: "POST", headers, body: "a=1&".repeat(10_001) })).status,
     ).toBe(400);
-    expect(g.calls).toHaveLength(0);
+    expect((await fetch(url, { method: "POST", headers, body: "&".repeat(10_001) })).status).toBe(
+      400,
+    );
+    expect(g.calls).toHaveLength(1);
+    const largeValue = `a=${"x".repeat(2 * 1024 * 1024)}`;
+    expect((await fetch(url, { method: "POST", headers, body: largeValue })).status).toBe(201);
+    expect(g.calls[1]?.body).toBe(largeValue);
+    expect(
+      (await fetch(url, { method: "POST", headers, body: "x".repeat(16 * 1024 + 1) })).status,
+    ).toBe(400);
     const part =
       '--boundary\r\nContent-Disposition: form-data; name="file"; filename="a"\r\n\r\n\r\n';
     expect(
@@ -565,9 +588,9 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
         })
       ).status,
     ).toBe(400);
-    expect(g.calls).toHaveLength(0);
+    expect(g.calls).toHaveLength(2);
     expect((await fetch(url, { method: "POST", headers, body: "a=1" })).status).toBe(201);
-    expect(g.calls).toHaveLength(1);
+    expect(g.calls).toHaveLength(3);
   });
 
   it("読み取りだけの実行（情報収集）は、ホワイトリストに合っても GET・HEAD 以外を上流に送らずに拒否する", async () => {

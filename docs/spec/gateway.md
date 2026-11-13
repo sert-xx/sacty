@@ -143,7 +143,7 @@ sacty はキーを伏せてから、理由を600文字に切り詰める。
 - 判定の順は、知らない（終わった実行の）トークン（401）、接続先を決めて使う実行の範囲の外の PF（403）、見つからない PF（404）、URL にすると変わるパス（400）、メソッドを上書きするクエリ（400）、読み取りだけの実行の GET・HEAD 以外（403）、`allow` の照合（403）、本文の読み取り、フォーム本文の検査（400）。先に当たったもので断る。
 - 接続先を決めて使う実行（操作・書き出し。`register` の `access`）は、決めた PF だけを使える。ほかの PF は、`allow` に合っても 403 にする（上流に送らない）。
 - クエリにメソッドを上書きする名前（`_method`・`x-http-method-override`・`x-http-method`・`x-method-override`。大文字と小文字、`-`・`_`・`.`・空白、`%` のエンコード、`[]` の付いた形も同じに扱い、`;` も区切りとして読み、NUL より後ろを捨てて前後の空白を除いてから比べる）があれば、400 にする（上流に送らない。`overridesMethodInQuery`）。
-- 転送する `application/x-www-form-urlencoded`・`multipart/form-data` の本文に、クエリと同じメソッド上書きの名前があれば 400 にする。10,000 項目を超えるフォーム本文、10,000 個を超える境界候補を含む multipart 本文、`identity` 以外の `Content-Encoding` を指定したフォーム本文やパートのヘッダーが 16 KiB を超えるか解析できないか境界が重複するか引用符付きの境界にバックスラッシュがある multipart 本文と名前にバックスラッシュ、Content-Disposition に `name*` 属性、または同じパートに重複した名前属性や Content-Disposition を含む multipart 本文も 400 にする。
+- 転送する `application/x-www-form-urlencoded`・`multipart/form-data` の本文に、クエリと同じメソッド上書きの名前があれば 400 にする。10,000 項目を超えるフォーム本文（URL エンコード形式では空項目も数える）、名前が 16 KiB を超える URL エンコード形式のフォーム本文、10,000 個を超える境界候補を含む multipart 本文、`identity` 以外の `Content-Encoding` を指定したフォーム本文やパートのヘッダーが 16 KiB を超えるか解析できないか境界が重複するか引用符付きの境界にバックスラッシュがある multipart 本文と名前にバックスラッシュ、Content-Disposition に `name*` 属性、または同じパートに重複した名前属性や Content-Disposition を含む multipart 本文も 400 にする。
 - `allow` の照合
   - `*` は1階層、`**` はそれより下のすべて（末尾の `/**` はその階層そのものにも合う）。
   - クエリは見ない。
