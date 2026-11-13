@@ -1308,6 +1308,8 @@ function reworkLines(
 const HEADING_LINE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/;
 /** 太字だけの札の行（`**スコープ**`）。見出しの代わりに節の名前に使われる。 */
 const BOLD_LABEL_LINE = /^ {0,3}\*\*(.+?)\*\*[ \t]*[：:]?[ \t]*$/;
+/** スコープの節の中の札の名前（「対象」「対象外」）。 */
+const SCOPE_LABEL_NAME = /^対象外?$/;
 /** 節の名前が「スコープ」か。「スコープ外」などの別の名前は含めない。「スコープ（対象・対象外）」のような補足は許す。 */
 const SCOPE_NAME = /^スコープ(?:$|[ \t（(：:])/;
 
@@ -1324,15 +1326,14 @@ function leadingScopeLines(draft: string | undefined): string[] | undefined {
   let scopeLevel: number | undefined;
   const scope: string[] = [];
   for (const line of (draft ?? "").split("\n")) {
+    // コードブロックの中の行（例に書いた「対象外：なし」など）は、見出しにも札の行にも数えない（PR #363 の再レビュー）
     if (fence) {
       if (closesFence(line, fence)) fence = undefined;
-      if (scopeLevel !== undefined) scope.push(line);
       continue;
     }
     const opened = openingFence(line);
     if (opened) {
       fence = opened;
-      if (scopeLevel !== undefined) scope.push(line);
       continue;
     }
     const heading = HEADING_LINE.exec(line);
@@ -1344,7 +1345,8 @@ function leadingScopeLines(draft: string | undefined): string[] | undefined {
     const level = heading ? (heading[1] as string).length : 7;
     const name = ((heading ? heading[2] : label?.[1]) ?? "").trim();
     if (scopeLevel !== undefined) {
-      if (level <= scopeLevel) return scope;
+      // 「対象」「対象外」の札は、太字のスコープの下に同じ太字で置いても、節の終わりにしない（PR #363 の再レビュー）
+      if (level <= scopeLevel && !(label && SCOPE_LABEL_NAME.test(name))) return scope;
       // 節の中の小見出し・札（「### 対象外」「**対象**」）は、札の行として残す
       scope.push(name);
       continue;
