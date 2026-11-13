@@ -76,12 +76,13 @@ else
   fi
 fi
 
-# 画面の無いコンテナで動かすための仮想の画面（Xvfb）と、Electron が読む音のライブラリ（パッケージの依存に無い）を一緒に入れる
+# 画面の無いコンテナで動かすための仮想の画面（Xvfb）と、Electron が読む音と GBM のライブラリ（パッケージの依存に無い。
+# --no-install-recommends では入らず、無いと本体が起動しない）を一緒に入れる
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update || warn "パッケージのミラーに届かない"
   # Ubuntu 24.04 からは libasound2t64 という名前
   alsa=libasound2; apt-cache show libasound2t64 >/dev/null 2>&1 && alsa=libasound2t64
-  apt-get install -y --no-install-recommends "$dir/$file" xvfb "$alsa" \
+  apt-get install -y --no-install-recommends "$dir/$file" xvfb "$alsa" libgbm1 \
     || { rm -rf /var/lib/apt/lists/*; warn "draw.io と依存のパッケージを入れられない"; }
   # 日本語などのラベルを書き出せるように、CJK のフォントを入れる（無くても動く）
   apt-get install -y --no-install-recommends fonts-noto-cjk \
@@ -90,7 +91,7 @@ if command -v apt-get >/dev/null 2>&1; then
 else
   opts="-y --setopt=install_weak_deps=False"
   # shellcheck disable=SC2086
-  $pm install $opts "$dir/$file" xorg-x11-server-Xvfb alsa-lib \
+  $pm install $opts "$dir/$file" xorg-x11-server-Xvfb alsa-lib mesa-libgbm \
     || { $pm clean all >/dev/null 2>&1; warn "draw.io と依存のパッケージを入れられない"; }
   # shellcheck disable=SC2086
   $pm install $opts google-noto-sans-cjk-ttc-fonts \
@@ -99,6 +100,13 @@ else
 fi
 
 if [ ! -x /opt/drawio/drawio ]; then warn "/opt/drawio/drawio が見つからない"; fi
+# 本体が読めない共有ライブラリが残っていれば知らせる（パッケージの依存の書き漏れ。入れたまま続ける）
+if command -v ldd >/dev/null 2>&1; then
+  missing="$(ldd /opt/drawio/drawio 2>/dev/null | awk '/not found/ { print $1 }' | tr '\n' ' ')"
+  if [ -n "$missing" ]; then
+    echo "sacty: 警告：draw.io の CLI が読めないライブラリがあります（${missing% }）。drawio は起動しません。" >&2
+  fi
+fi
 # Chromium のサンドボックスの補助（setuid root）は使わない。コンテナは no-new-privileges で動かすので効かず、
 # 包むスクリプトが --no-sandbox で起動する。使わない setuid のファイルを残さない
 if [ -f /opt/drawio/chrome-sandbox ]; then chmod 0755 /opt/drawio/chrome-sandbox; fi
