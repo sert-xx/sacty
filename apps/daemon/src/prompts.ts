@@ -1302,16 +1302,43 @@ function reworkLines(
   ];
 }
 
+/** 見出しの行（ATX）。 */
+const HEADING_LINE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/;
+/** 太字だけの札の行（`**スコープ**`）。見出しの代わりに節の名前に使われる。 */
+const BOLD_LABEL_LINE = /^ {0,3}\*\*(.+?)\*\*[ \t]*[：:]?[ \t]*$/;
+/** 節の名前が「スコープ」か。「スコープ外」などの別の名前は含めない。「スコープ（対象・対象外）」のような補足は許す。 */
+const SCOPE_NAME = /^スコープ(?:$|[ \t（(：:])/;
+
 /**
- * 確認したいことへの答えだけで、すべて推奨の答えどおり（決定を変えない）の差し戻しの直し方（PBI-302 B1）。前回の下書きの、答えた項目を
- * 「確認したいこと」から外し、答えを反映する所だけを直す。成果物を丸ごと作り直さない。
+ * 前回の下書きで、「スコープ」の節が冒頭（文書の題の見出しの次の、最初の節）にあるか（PBI-340）。スコープの節を求める前の版で
+ * 作った下書きには無く、ほかの節より後ろに置かれた下書きもありうる。文書の中のどこかに「## スコープ」や「## スコープ外」があるだけでは、
+ * 冒頭にあるとみなさない（PR #363 の再レビュー）。コードブロックの中の行は見出しとして数えない。
  */
-/**
- * 前回の下書きに、冒頭の「スコープ」の節があるか（PBI-340）。スコープの節を求める前の版で作った下書きには無い。
- * 見出し（`## スコープ`）か、太字の札（`**スコープ**`）で始まる行を節とみなす。
- */
-export function hasScopeSection(draft: string | undefined): boolean {
-  return /^(?:#{1,6}[ \t]*|\*\*)スコープ/m.test(draft ?? "");
+export function scopeComesFirst(draft: string | undefined): boolean {
+  let fence: CodeFence | undefined;
+  let first = true;
+  for (const line of (draft ?? "").split("\n")) {
+    if (fence) {
+      if (closesFence(line, fence)) fence = undefined;
+      continue;
+    }
+    const opened = openingFence(line);
+    if (opened) {
+      fence = opened;
+      continue;
+    }
+    const heading = HEADING_LINE.exec(line);
+    const label = heading ? undefined : BOLD_LABEL_LINE.exec(line);
+    if (!heading && !label) continue;
+    // 文書の題（最初の H1）は節ではないので飛ばす
+    if (first && heading?.[1] === "#") {
+      first = false;
+      continue;
+    }
+    const name = (heading ? heading[2] : label?.[1]) ?? "";
+    return SCOPE_NAME.test(name.trim());
+  }
+  return false;
 }
 
 /**
@@ -1319,12 +1346,16 @@ export function hasScopeSection(draft: string | undefined): boolean {
  * ままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
  */
 function missingScopeLines(previous: string | undefined): string[] {
-  if (hasScopeSection(previous)) return [];
+  if (scopeComesFirst(previous)) return [];
   return [
-    "- 例外：前回の下書きには、冒頭の「スコープ」の節がありません（この節を求める前に作った下書きです）。下の「一字一句そのまま保つ」の例外として、最初に「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を足し、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
+    "- 例外：前回の下書きには、冒頭に「スコープ」の節がありません（無いか、ほかの節より後ろにあります。この節を求める前に作った下書きです）。下の「一字一句そのまま保つ」の例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
   ];
 }
 
+/**
+ * 確認したいことへの答えだけで、すべて推奨の答えどおり（決定を変えない）の差し戻しの直し方（PBI-302 B1）。前回の下書きの、答えた項目を
+ * 「確認したいこと」から外し、答えを反映する所だけを直す。成果物を丸ごと作り直さない。
+ */
 function answerOnlyReworkLines(
   task: Task,
   step: "requirements" | "design",
@@ -1350,7 +1381,7 @@ function answerOnlyReworkLines(
  * セルフレビューの報告（sacty-self-review）は付けない（sacty は記録なしとして扱い、次の回は全体をレビューする）。
  */
 function answerOnlyCheckLines(deliverable: string, previous: string | undefined): string[] {
-  const scopeAdded = !hasScopeSection(previous);
+  const scopeAdded = !scopeComesFirst(previous);
   return [
     "",
     "--- 提出の前の確認（セルフレビューは行わない） ---",

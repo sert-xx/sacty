@@ -49,10 +49,10 @@ import {
   extractSplitPlan,
   extractStepPlan,
   extractStepReview,
-  hasScopeSection,
   operationSucceeded,
   postedLatestCommit,
   pullRequestInText,
+  scopeComesFirst,
   selectablePlans,
   servicePromptLines,
 } from "./prompts.js";
@@ -2937,12 +2937,23 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
     }
   });
 
-  it("前回の下書きのスコープの節を、見出しか太字の札で見分ける（PBI-340）", () => {
-    expect(hasScopeSection("# 要求要件\n\n## スコープ\n\n- 対象：一覧")).toBe(true);
-    expect(hasScopeSection("**スコープ**\n- 対象：一覧")).toBe(true);
-    expect(hasScopeSection("# 要求要件\n\n## 確認したいこと\n\nスコープは一覧だけ")).toBe(false);
-    expect(hasScopeSection("")).toBe(false);
-    expect(hasScopeSection(undefined)).toBe(false);
+  it("前回の下書きで、スコープの節が冒頭にあるかを、節の名前と位置で見分ける（PBI-340）", () => {
+    expect(scopeComesFirst("# 要求要件\n\n## スコープ\n\n- 対象：一覧")).toBe(true);
+    expect(scopeComesFirst("## スコープ（対象・対象外）\n- 対象：一覧")).toBe(true);
+    expect(scopeComesFirst("**スコープ**\n- 対象：一覧")).toBe(true);
+    // 後ろにある・別の名前の節は、冒頭にあるとみなさない（PR #363 の再レビュー）
+    expect(
+      scopeComesFirst("# 要求要件\n\n## 確認したいこと\n\n- なし\n\n## スコープ\n\n- 対象：一覧"),
+    ).toBe(false);
+    expect(scopeComesFirst("# 要求要件\n\n## スコープ外\n\n- 詳細の画面")).toBe(false);
+    expect(scopeComesFirst("# 要求要件\n\n## 確認したいこと\n\n## スコープ外")).toBe(false);
+    // コードブロックの中の見出しは数えない
+    expect(scopeComesFirst("# 要求要件\n\n```md\n## スコープ\n```\n\n## 確認したいこと")).toBe(
+      false,
+    );
+    expect(scopeComesFirst("# 要求要件\n\nスコープは一覧だけ")).toBe(false);
+    expect(scopeComesFirst("")).toBe(false);
+    expect(scopeComesFirst(undefined)).toBe(false);
   });
 
   it("要求要件と設計の指示は、スコープの節を確認したいことより前に置かせ、確認したいことに確認しない場合の懸念を書かせる（PBI-340）", () => {
