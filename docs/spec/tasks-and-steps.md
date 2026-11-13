@@ -1094,6 +1094,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
   1. ベースブランチ（`repository.baseBranch`）の先頭を、退避したメタデータに取得する（`fetchBranch`）。
      作業領域が今ベースにしているコミット（`workBaseCommit`。取り込み前は起点のコミット、取り込み後は最後に取り込んだ先頭）と同じなら、何もしない。
   2. 先頭が、そのコミットの履歴に含まれていれば何もしない。そうでなければ、作業領域の内容（新しく作ったファイルを含む。`.gitignore` で除くものと、ツールの置き場所は除く）と先頭を、そのコミットを共通の祖先にして 3 方向でマージする（`mergeBase`。`git merge-tree --write-tree --merge-base`。ホストの git は 2.40 以上が必要で、古ければ `git.mergeTreeUnsupported` を示す）。git 2.40〜2.44 の `merge-tree` はツリーを受け付けないので、作業領域の内容（と、外すパスを除いたツリー）は、どのブランチにも付けない一時的なコミット（作者と日時は固定）にして渡す。
+     競合したのに git が競合したファイルを示さない（ディレクトリの移動先を決められないなど、目印を入れられない）ときは、解消を確かめられないので、作業領域を書き換えずに止める（`git.conflictWithoutFiles`。人が PR に足したコミットの取り込みも同じ）。
      競合したファイルが `MAX_BASE_CONFLICTS`（1000）件を超えるときは、作業領域を書き換えずに、件数と上限を示して止める（`git.tooManyConflicts`。`merge.failed` で一時停止）。
      作業領域の git の設定・フィルター・フックは使わず、ブランチにコミットを積まない（`merge-tree` に渡す一時的なコミットは作るが、どのブランチにも付けない）。
   3. 結果を作業領域に書く（`git read-tree -m -u`）。競合したファイルには、目印（`<<<<<<<`・`=======`・`>>>>>>>`）を残す。上が実装の側、下がベースブランチの側。
@@ -1208,7 +1209,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 - 記録（`VerificationRecord`）は、コマンドごとに、種類（`kind`）・コマンド・覆った範囲（`coverage`。`full` はコマンドが定める対象の全体、`partial` は一部だけで、`note` に範囲を書く）・結果（`status`。`passed`・`failed`）・終了コード・結果の抜粋・実行した段（`by`。`self-review`・`guardian`・`ci`。`guardian` は以前の版の最終レビュー）を持つ。
   エージェントは、見出し `sacty-verification` の JSON で申告する（`extractVerificationRecord`）。最後の申告だけを使い、最後の申告が JSON として読めなければ、前の申告に戻らず記録なしにする。結果の出ていないもの・種類の分からないものは捨て、`coverage` が `full` でないものは `partial` として読む。
 - 実装の工程：作業領域を最後に変えた後に実行した検証だけを申告させる（`implementVerificationRecordLines`）。提出の前の検証とセルフレビューの検証は、同じ内容なら1回の実行で両方に使わせる。
-  申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・実装の本文を工程の外で差し替えたら消す。今の版では、この記録を後の段に渡さない。
+  申告は `AgentRunCompleted` の `verificationRecord` に残し、実装の説明（PR の本文）からは取り除く。タスクの `implementVerification` に持ち、ベースブランチを作業領域に取り込んだら・人が PR に足したコミットを作業領域に取り込んだら（`PullRequestHeadMerged`）・実装の本文を工程の外で差し替えたら消す。今の版では、この記録を後の段に渡さない。
 - PR のレビュー：前の段の記録と CI の結果から、覆われていない分だけを実行させる（`reuseVerificationLines`）。sacty が作った PR のレビューのタスク（`source.review` が `sacty`）では、その PR を作ったタスクの以前の版の最終レビューの記録（`FinalReviewed` の `verificationRecord`）を、記録のコミットがレビューする先頭のコミット（`reviewTarget.headCommit`）と同じときだけ渡す（`reviewVerification`）。それ以外（人の PR・今の版で作った PR）では記録は無く、CI の結果だけを使い回せる。
 - 使い回しの規則（エージェントへの指示と、既定のスキルの `verification-run` の「1.5 使い回せる結果を探す」）：
   - 使い回せるのは、同じ内容で全体（`full`）を実行して結果が出たものだけ。`partial` の記録は、覆った範囲を除いた残りを実行させる。

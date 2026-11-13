@@ -391,7 +391,7 @@ Related ADR: [Merge commits a person added to a sacty PR into the workspace, and
   The task list API (`/api/tasks`) does not send it (the screen does not use it, and it holds a full body per PR).
 - The body of an update (`reconcilePullRequestBody`):
   1. If there is no record of the previous version (a body written before this version), use the newly assembled body as before.
-  2. Read the current body on GitHub (`pullRequestBody`). If it cannot be read, use the newly assembled body (and write the reason to the daemon log).
+  2. Read the current body on GitHub (`pullRequestBody`). If it cannot be read, use the newly assembled body, and record in `PullRequestBodyResolved` (`overwritten`; the reason is `pr.bodyReadFailed`) that the body was overwritten without checking for a person's edits (no agent is run).
   3. Three-way merge the current body (the person's side) and the newly assembled body (sacty's side) line by line, with the previous version as the common ancestor (`mergePullRequestBody`; `git merge-file --diff3`).
      Line endings are normalized to LF (a body edited on the GitHub screen uses CRLF).
      If the person did not edit it, the result is the newly assembled body.

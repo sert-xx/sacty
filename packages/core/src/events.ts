@@ -1484,14 +1484,15 @@ const PullRequestBodyWritten = z.object({
 /**
  * 人が直した PR の本文と、sacty が新しく組み立てた本文が同じ箇所で競合したので、エージェントにまとめさせた（PBI-334）。
  * resolved：まとめた本文で更新する。kept：まとめられなかった（実行の失敗・答えを読めない）ので、人の本文のまま変えない
- * （reason に理由）。
+ * （reason に理由）。overwritten：GitHub の今の本文を読めなかったので、人の直しを確かめられないまま sacty の本文で更新した
+ * （reason に理由。エージェントは実行していない）。
  */
 const PullRequestBodyResolved = z.object({
   type: z.literal("PullRequestBodyResolved"),
   payload: z.object({
     repo: z.string().min(1),
     number: z.number().int().positive(),
-    outcome: z.enum(["resolved", "kept"]),
+    outcome: z.enum(["resolved", "kept", "overwritten"]),
     reason: DaemonText.optional(),
     agentId: z.string().optional(),
     ...AgentSetting,

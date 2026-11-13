@@ -10978,7 +10978,16 @@ describe("実装の工程と実装の PR（PBI-10a）", () => {
       await drain(service);
       expect(pulls.calls[1]?.body).toContain("c200000");
       expect(pulls.calls[1]?.body).not.toContain("人が全部書き直した本文");
-      expect(eventsOf(service, id, "PullRequestBodyResolved")).toEqual([]);
+      // 人の直しを確かめずに上書きしたことを、作業履歴に残す
+      expect(eventsOf(service, id, "PullRequestBodyResolved")).toMatchObject([
+        {
+          payload: {
+            number: 7,
+            outcome: "overwritten",
+            reason: { code: "pr.bodyReadFailed" },
+          },
+        },
+      ]);
       activity.close();
     });
   });

@@ -1448,6 +1448,37 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       },
     );
 
+    itMerge(
+      "競合したのに git が競合したファイルを示さないとき（ディレクトリの移動先を決められない）は、作業領域を書き換えずに失敗する（PBI-334）",
+      async () => {
+        const origin = makeOrigin();
+        git(origin, "config", "receive.denyCurrentBranch", "ignore");
+        mkdirSync(join(origin, "a"));
+        writeFileSync(join(origin, "a", "x"), "x\n");
+        writeFileSync(join(origin, "a", "y"), "y\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "dir");
+        const workspace = new GitRepositoryWorkspace();
+        const clone = join(dir, "task", "repo");
+        const gitDir = join(dir, "_git", "task.git");
+        const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+        // 実装は a/ の中身を b/ と c/ に分けて移し、ベースブランチの側は a/ にファイルを足した（足したファイルの行き先が決まらない）
+        mkdirSync(join(clone, "b"));
+        mkdirSync(join(clone, "c"));
+        renameSync(join(clone, "a", "x"), join(clone, "b", "x"));
+        renameSync(join(clone, "a", "y"), join(clone, "c", "y"));
+        writeFileSync(join(origin, "a", "z"), "z\n");
+        git(origin, "add", "--all");
+        git(origin, "commit", "-m", "main: a/z");
+        const tip = await workspace.fetchBranch(gitDir, "main");
+        await expect(
+          workspace.mergeBase({ dir: clone, gitDir, base: baseCommit, target: tip }),
+        ).rejects.toThrow(/競合したファイルを示しませんでした/);
+        expect(existsSync(join(clone, "a", "z"))).toBe(false);
+        expect(existsSync(join(clone, "b", "x"))).toBe(true);
+      },
+    );
+
     it("外すパスに、作業領域の外を指すものや .git は受け付けない（PBI-334）", async () => {
       const { workspace, clone, gitDir, baseCommit } = await prepareMerge();
       for (const exclude of [["../x"], [".git/config"], ["/etc/passwd"], ["a//b"]]) {

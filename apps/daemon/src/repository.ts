@@ -967,6 +967,11 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
           );
         }
         const conflicts = [...new Set(names)];
+        // 競合したのに、競合したファイルが一覧に無い（ディレクトリの移動先を決められないなど、目印を入れられない競合）ときは、
+        // 解消を確かめられないので、作業領域を書き換える前に止める（PBI-334。競合なしとして扱うと、未解消の結果を出してしまう）
+        if (merged.code === 1 && conflicts.length === 0) {
+          throw new MessageError(message("git.conflictWithoutFiles"));
+        }
         // 多すぎるときは、作業領域を書き換える前に止める（書いてしまうと、記録できない競合の目印が作業領域に残る）
         if (input.maxConflicts !== undefined && conflicts.length > input.maxConflicts) {
           throw new MessageError(

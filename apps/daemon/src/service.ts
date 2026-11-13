@@ -10242,9 +10242,21 @@ export class TaskService {
     try {
       human = await read();
     } catch (error) {
-      console.warn(
-        `[daemon] PR #${input.number}（${input.repo}）の今の本文を読めないため、sacty の本文で更新します：${renderMessage(errorText(error), "ja")}`,
-      );
+      // 人の直しを確かめられないまま上書きすることを、作業履歴に残す（画面で分かるように）
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestBodyResolved",
+            payload: {
+              repo: input.repo,
+              number: input.number,
+              outcome: "overwritten",
+              reason: message("pr.bodyReadFailed", { detail: errorText(error) }),
+            },
+          },
+        },
+      ]);
       return { body: generated, record: true };
     }
     let merged: Awaited<ReturnType<typeof mergePullRequestBody>>;
