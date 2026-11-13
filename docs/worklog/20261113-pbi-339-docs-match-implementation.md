@@ -29,7 +29,7 @@ main（1.24.1）の docs と実装を突き合わせたところ、ゴールガ�
 - 図：tasksFlow・budgetFlow・tasksUser・gateway-pf を直し、`npm run docs:diagrams` で作り直した。
 - コード
   - `config init` の雛形の run_timeout の役割の例から `guardian`・`final-review` を外した。
-  - 画面の状態：`verification` が残る idle（PR を作る前の確かめ、以前の版の最終レビューの途中）を「PR の作成の前の確認中」にまとめた
+  - 画面の状態：`verification` が残る idle（PR を作る前の確かめ、以前の版の最終レビューの途中）を「PR の提出・更新の前の確認中」にまとめた
     （以前は「テストを実行中」「最終レビュー中」で、今の版の状態に合っていなかった）。
   - ダッシュボードと作業履歴の `GuardianMissed` の表示を「合格の見逃し」にした（統合レビューの見逃しも数えるため）。
   - 画面の文の小文字の「sacty」を「Sacty」にした（識別子は除く）。
@@ -58,6 +58,9 @@ main（1.24.1）の docs と実装を突き合わせたところ、ゴールガ�
 | （sacty のレビュー）service.ts の戻し先の判断のコメントが、子タスクの答えを使う条件を省いている | `reviewTaskRework` の条件（最後の回の投稿だけ・指摘ありの判定）と、それ以外は工程のエージェントと、3 か所に書いた |
 | （sacty の再レビュー）戻し先の判断：回の記録はあるが判定を読めなかったときは、子タスクの答えの経路に進む | `reviewTaskRework` と `reviewVerdicts` の投影で確かめ、「判定の記録が無い」ときと「判定や戻し先を読めなかった」とき（その PR の工程をやり直す答え）を分けて、service.ts のコメント 3 か所と approval（日英）に書いた |
 | （sacty の再レビュー 3 回目）「統合レビュー（以前の版では最終レビュー）」は、最終レビューが統合レビューの以前の名前だと読める | 別のレビューとして並べる書き方にした（ダッシュボードの補足の日英、user/tasks の日英） |
+| （sacty の再レビュー 4 回目）approval.en：変更なしの判定を「検証済みの実装」の PR の作成と書いている | 日本語版に合わせて `verified` を外した |
+| （sacty の再レビュー 4 回目）画面の状態「PR の作成の前の確認中」は、既存の PR を更新するときにも出る | 「PR の提出・更新の前の確認中」（英語は「Checking before submitting or updating the PR」）にした |
+| （sacty の再レビュー 4 回目）ドラフトを外した後に人がコミットを足すと、今の先頭が指摘なしになるまでドラフトを保つ | `wantsDraft` で確かめ、user/tasks と approval の PR の確認の手順（日英）に書いた |
 
 - 対応の後：`npm run lint`・`npm run typecheck` は通過。`npx vitest run tests/docs apps/web/src` は、ブラウザのテストが回によって 0〜3 件落ちた
   （`question-form`・`menus`。この PR で触っていない部品で、同じブランチでも全部通る回がある）。

@@ -79,7 +79,7 @@ Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `pub
 
 ## When the implementation has no changes
 
-When opening the PR for a verified implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
+When opening the PR for an implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
 
 - If no implementation PR has been opened yet, `NoChangesFound` (the Implementation round to be submitted next) is recorded, and the implementation is submitted (`StepSubmitted`). Since there is no PR, it can be approved in the web UI. This applies to every task (not only template tasks).
 - Before the submission, sacty runs neither the tests nor the final review (sacty does not run tests; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)). Since there is no PR, no PR review child task is created either.
@@ -154,7 +154,7 @@ Every 60 seconds the daemon checks the PRs of tasks that have a PR for the curre
 - Unchanged: if the PR is still open and the task is `awaiting_approval`, the following are done in order.
   1. The PR's current head on GitHub is remembered (`latestHeads`; it changes when a person adds commits; used to decide the head to re-review).
   2. For an implementation PR, a change in the conflict with the base branch is recorded ([Showing a conflict with the base branch](#showing-a-conflict-with-the-base-branch)).
-  3. For an implementation PR, the draft state on GitHub is matched to the ledger (`settleDraft`; a PR waiting for no findings (except a PR stacked on a dependency's PR) that is not a draft is turned back into a draft, and a PR whose draft was removed after no findings is made ready again if it is a draft; [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
+  3. For an implementation PR, the draft state on GitHub is matched to the ledger (`settleDraft`; a PR waiting for no findings (except a PR stacked on a dependency's PR) that is not a draft is turned back into a draft, and for a PR whose draft was removed after no findings, if the review child task has given no findings for the current head on GitHub, it is made ready again when it is a draft, and if a person added commits after the draft was removed and the head changed, it is turned back into a draft until the re-review gives no findings for that head (`wantsDraft`); [The flow without the final review](tasks-and-steps.en.md#the-flow-without-the-final-review)).
   4. Reviews and comments are imported as comments to address ([Importing PR comments](#importing-pr-comments)).
 - If the status, PR, or commit changes during the check, nothing is recorded.
 - If the PR is merged, or closed without merging, while comments are being imported (for example while the step to redo is being decided), changes are not requested. The status is read again within the same check and recorded as the merged or closed case above ([Importing PR comments](#importing-pr-comments)).
