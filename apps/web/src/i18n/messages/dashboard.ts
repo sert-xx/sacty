@@ -105,7 +105,7 @@ const ja = {
       "Sacty 自身のレビューのタスクが PR に投稿した指摘だけで、工程をやり直した回数です。人の差し戻しには数えません。",
     guardianMissed: "合格の見逃し",
     guardianMissedHint:
-      "統合レビュー（以前の版では最終レビュー）で合格にした成果物を、見逃しが原因として差し戻した回数です（人の差し戻しと、AI のレビューの指摘による差し戻しの両方）。競合や新しい要望による差し戻しは数えません。",
+      "統合レビュー、または以前の版の最終レビュー（別のレビュー）で合格にした成果物を、見逃しが原因として差し戻した回数です（人の差し戻しと、AI のレビューの指摘による差し戻しの両方）。競合や新しい要望による差し戻しは数えません。",
     integrationFailed: "統合レビューの不合格",
     integrationFailedHint: "子タスクの成果を組み合わせた統合レビューで、不合格になった回数です。",
     fixTask: "監視で作った修正のタスク",
@@ -234,7 +234,7 @@ const en: DashboardMessages = {
       "How many times only remarks that Sacty's own review task posted on a PR sent a step back for rework. Not counted as a person's changes.",
     guardianMissed: "Misses after a pass",
     guardianMissedHint:
-      "How many times a deliverable the integration review (the final review in earlier versions) had passed was sent back with a miss as the cause (both by a person and from AI review remarks). Rework caused by conflicts or new requests is not counted.",
+      "How many times a deliverable that had passed the integration review, or the final review of earlier versions (a separate review), was sent back with a miss as the cause (both by a person and from AI review remarks). Rework caused by conflicts or new requests is not counted.",
     integrationFailed: "Integration review failures",
     integrationFailedHint:
       "How many times the integration review of combined subtask results did not pass.",

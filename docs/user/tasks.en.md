@@ -579,7 +579,7 @@ When you request changes on the approval screen, you can choose a "Cause of the 
 | Choice | When to use it |
 | --- | --- |
 | Don't choose (initial choice) | Request changes without deciding the cause. It is not counted as a miss, and is counted under "Rework with unknown cause" on the dashboard |
-| Miss (a flaw that could be caught) | A flaw the Integration review (the final review in earlier versions) could have caught. When you send back a deliverable it had passed, a miss is recorded |
+| Miss (a flaw that could be caught) | A flaw the Integration review, or the final review of earlier versions (a review separate from the Integration review), could have caught. When you send back a deliverable it had passed, a miss is recorded |
 | A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
 | A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
 
