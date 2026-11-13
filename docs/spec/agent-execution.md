@@ -332,11 +332,12 @@
     - draw.io Desktop の公式のリリース（`jgraph/drawio-desktop` の `v32.4.1`）の deb（apt-get。`amd64`・`arm64`）か rpm（dnf・yum。`x86_64`・`aarch64`）を `curl` で取る。
       取るときは、接続 30 秒・60 秒のあいだ 1KB/s を下回れば打ち切り・1 回 900 秒・再試行は 3 回までで、最初から 1200 秒を過ぎたら始めない。
       全体は 1200 秒を超えることがある。
-    - 版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・`alsa-lib` と一緒に入れる。
+    - 版ごとに固定した SHA-256 で確かめてから、`Xvfb`（`xvfb`・`xorg-x11-server-Xvfb`）と `libasound2`（Ubuntu 24.04 からは `libasound2t64`）・`alsa-lib`、`libgbm1`・`mesa-libgbm`（パッケージの依存に無く、無いと本体が起動しない）と一緒に入れる。
       CJK のフォント（`fonts-noto-cjk`・`google-noto-sans-cjk-ttc-fonts`）は、入れられなければ警告して続ける。
     - ハッシュが合わなければ止める。
       ほかの理由（取得できない・パッケージの管理のコマンドや `curl` が無い・アーキテクチャが違う・入れられない）では警告して続ける。
     - 入れたら `/opt/drawio/chrome-sandbox` の setuid を外し（`0755`）、`/tmp/.X11-unix` を `1777` で作り、`/opt/sacty/bin/drawio` を `packages/cli/docker/drawio-shim.cjs` へのリンクにする。
+    - `ldd` で `/opt/drawio/drawio` が読めない共有ライブラリがあれば、名前を示して警告し、続ける。
   - セキュリティの検査の道具（`packages/cli/docker/install-security-tools.sh`）は、`osv-scanner`（`google/osv-scanner` の `v2.7.0`）と `gitleaks`（`gitleaks/gitleaks` の `v8.30.1`）。
     - 元のイメージに無いものだけを、公式のリリースの添付物（`osv-scanner_linux_<amd64|arm64>`・`gitleaks_<版>_linux_<x64|arm64>.tar.gz`）を `curl` で取り、`/usr/local/bin` に入れる（取り方の上限は draw.io と同じ）。
     - スクリプトに版・アーキテクチャごとに固定した SHA-256 で確かめ、合わなければ止める（取得元のリリースのハッシュのファイルは取らない）。

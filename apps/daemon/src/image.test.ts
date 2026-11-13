@@ -1,5 +1,16 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -539,6 +550,48 @@ describe("既定のイメージの固定（セキュリティチェックの指�
       if (path === "") continue;
       expect(entry).not.toHaveProperty("resolved");
       expect(entry).toHaveProperty("integrity");
+    }
+  });
+
+  it("draw.io は依存に無い GBM のライブラリも一緒に入れる（PBI-338）", () => {
+    const script = read("install-drawio.sh");
+    // パッケージの依存に libgbm1 が無く、--no-install-recommends では入らない（無いと本体が起動しない）
+    expect(script).toContain(
+      'apt-get install -y --no-install-recommends "$dir/$file" xvfb "$alsa" libgbm1 \\',
+    );
+    expect(script).toContain(
+      '$pm install $opts "$dir/$file" xorg-x11-server-Xvfb alsa-lib mesa-libgbm \\',
+    );
+  });
+
+  it("draw.io の本体が読めない共有ライブラリがあれば、名前を示して警告し、続ける（PBI-338）", () => {
+    const script = read("install-drawio.sh");
+    const start = script.indexOf("# 本体が読めない共有ライブラリ");
+    const block = script.slice(start, script.indexOf("\nfi\n", start) + 4);
+    expect(start).toBeGreaterThan(script.indexOf('warn "/opt/drawio/drawio が見つからない"'));
+    const dir = mkdtempSync(join(tmpdir(), "sacty-drawio-ldd-"));
+    // ldd の出力を差し替えて、警告の部分だけを動かす（終了コード 0 で続くこと・stderr の警告）
+    const run = (lddOutput: string) => {
+      writeFileSync(join(dir, "ldd"), `#!/bin/sh\nprintf '${lddOutput}'\n`);
+      chmodSync(join(dir, "ldd"), 0o755);
+      const result = spawnSync("sh", ["-c", `${block}\necho done`], {
+        env: { PATH: `${dir}:/usr/bin:/bin` },
+        encoding: "utf8",
+      });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+    try {
+      expect(run("\\tlibnss3.so => /usr/lib/libnss3.so (0x1)\\n")).toEqual({
+        status: 0,
+        stdout: "done\n",
+        stderr: "",
+      });
+      const missing = run("\\tlibgbm.so.1 => not found\\n\\tlibfoo.so.2 => not found\\n");
+      expect(missing.status).toBe(0);
+      expect(missing.stdout).toBe("done\n");
+      expect(missing.stderr).toContain("読めないライブラリがあります（libgbm.so.1 libfoo.so.2）");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

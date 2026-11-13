@@ -59,6 +59,7 @@ sacty fetches the official release of draw.io Desktop (Apache-2.0) from GitHub a
 
 - The image becomes larger (about 800MB uncompressed). In environments that cannot reach GitHub releases (`github.com` and `release-assets.githubusercontent.com`), or when you want a smaller image, set `image_build.drawio` to `false`. Even without the CLI, the skill can make diagrams (`.drawio`) in XML.
 - When GitHub is unreachable, the build shows a warning in the build log and builds the image without the draw.io CLI. When the hash of the fetched file does not match, the build stops.
+- When the installed draw.io CLI cannot load some libraries, the build also shows a warning with their names in the build log (`drawio` does not start in that case).
 
 ```yaml
 image_build:
