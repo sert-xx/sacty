@@ -1,13 +1,13 @@
 import { isCompleted, type Task } from "@sacty/core";
 
 /** 一覧の親（分割の親、またはレビューする PR を作ったタスク。PBI-27・PBI-341）。 */
-function listParentOf(task: Task): string | undefined {
+export function listParentOf(task: Task): string | undefined {
   return task.parent?.taskId ?? task.reviewOf?.taskId;
 }
 
 /**
  * 一覧の並び。分割で作った子タスクは、親のすぐ下に、分割で決めた順に並べる（PBI-27）。PR のレビューの子タスク（reviewOf。
- * PBI-330）も、レビューする PR を作ったタスクのすぐ下に、分割の子の後に、作った順（一覧の順）で並べる（PBI-341）。分割の子の
+ * PBI-330）も、レビューする PR を作ったタスクのすぐ下に、分割の子の後に、作った日時の昇順で並べる（PBI-341）。分割の子の
  * レビューの子は、その分割の子の下にもう一段字下げする（depth は字下げの段。子なら1以上）。
  * 親が一覧に無い子タスク（ほかのプロジェクトに移ったなど）は、そのままの位置に出す。
  */

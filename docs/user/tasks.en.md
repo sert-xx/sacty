@@ -777,6 +777,7 @@ Child tasks are indented directly under their parent task.
 - The child tasks of a task split are listed in the order the split decided.
 - A child task that reviews a PR sacty opened is listed under the task that opened the PR (after its split child tasks, if any). The list shows which task it reviews.
 - The review child task of a PR opened by a split child task is indented one more level under that split child task.
+- When the parent task is not in the list (it is in another project, or the filter hides it), the child task is listed without indent.
 
 ### Find and filter tasks
 

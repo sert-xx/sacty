@@ -20,6 +20,7 @@ import {
   type TaskFilter,
 } from "@/lib/task-filter";
 import type { TaskListData, TaskRow } from "@/lib/task-list-data";
+import { indentShown } from "@/lib/task-rows";
 import { useLiveData } from "@/lib/use-live-data";
 
 /** タスクの一覧のデータを取り直す先。プロジェクトは、URL のプロジェクト（PBI-114）。 */
@@ -126,7 +127,8 @@ export function LiveTaskList({
                   </thead>
                   <tbody>
                     {/* 分割で作った子タスク・PR のレビューの子タスクは、親のすぐ下に字下げして出す（PBI-27・PBI-341） */}
-                    {rows.map((task) => (
+                    {/* 絞り込みで親が隠れた子は、無関係なタスクの子に見えないよう字下げしない（PBI-341） */}
+                    {indentShown(rows).map((task) => (
                       <tr
                         key={task.id}
                         className="border-t border-border hover:bg-muted"
@@ -134,14 +136,14 @@ export function LiveTaskList({
                       >
                         <td
                           className={
-                            task.depth >= 2
+                            task.shownDepth >= 2
                               ? "py-3.5 pr-5 pl-16"
-                              : task.child
+                              : task.shownDepth === 1
                                 ? "py-3.5 pr-5 pl-10"
                                 : "px-5 py-3.5"
                           }
                         >
-                          {task.child && (
+                          {task.shownDepth > 0 && (
                             <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
                               ↳
                             </span>
@@ -152,6 +154,10 @@ export function LiveTaskList({
                           >
                             {task.title}
                           </Link>
+                          {/* 字下げは読み上げられないので、親を文で伝える（PBI-341） */}
+                          {task.parentTitle !== undefined && (
+                            <span className="sr-only">{m.childOf(task.parentTitle)}</span>
+                          )}
                           {/* 作業するリポジトリ（repo だけ。PBI-141） */}
                           {task.repoName && (
                             <span

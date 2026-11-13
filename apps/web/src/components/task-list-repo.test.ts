@@ -110,8 +110,10 @@ describe("タスクの一覧のリポジトリ名（PBI-141）", () => {
       needsYou: [],
       rows: [
         row({ id: "p", title: "親" }),
-        row({ id: "a", title: "分割の子", child: true, depth: 1 }),
-        row({ id: "r", title: "[PR #2] 分割の子のレビュー", child: true, depth: 2 }),
+        row({ id: "a", title: "分割の子", child: true, depth: 1, parentId: "p" }),
+        row({ id: "r", title: "[PR #2] 分割の子のレビュー", child: true, depth: 2, parentId: "a" }),
+        // 親が別のプロジェクトにある（一覧に無い）子は字下げしない
+        row({ id: "o", title: "親の無いレビュー", child: true, depth: 0, parentId: "x" }),
       ],
     };
     const div = document.createElement("div");
@@ -127,5 +129,11 @@ describe("タスクの一覧のリポジトリ名（PBI-141）", () => {
     expect(cell("a")?.className).toContain("pl-10");
     expect(cell("r")?.className).toContain("pl-16");
     expect(cell("r")?.textContent).toContain("↳");
+    // 字下げは読み上げられないので、読み上げ用の文で親を伝える
+    expect(cell("r")?.querySelector(".sr-only")?.textContent).toBe("（分割の子 の子タスク）");
+    expect(cell("p")?.querySelector(".sr-only")).toBeNull();
+    expect(cell("o")?.className).not.toContain("pl-");
+    expect(cell("o")?.textContent).not.toContain("↳");
+    expect(cell("o")?.querySelector(".sr-only")).toBeNull();
   });
 });
