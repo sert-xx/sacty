@@ -978,6 +978,13 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
       "同じ問題の別の現れ（同じ原因で複数箇所・複数の入力）は、観点をまたいでも1件にまとめる",
     );
     expect(aggregation()).toContain("その現れは C-17 の指摘にまとめて列挙し、別の指摘にしない");
+    // まとめた指摘の重要度は高い方。方針の指摘が should なら must の現れはまとめずに残す
+    expect(aggregation()).toContain(
+      "まとめた指摘の重要度は、C-17 とまとめた現れのうち最も高いものにする",
+    );
+    expect(aggregation()).toContain(
+      "C-17 の方針の指摘が `should`（承認済みの設計が方針を決めているときなど）なら、他の観点の `must` の現れはまとめない",
+    );
     expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
       "指摘は1回のレビューで出し切る",
     );
@@ -995,13 +1002,27 @@ describe("既定の review スキルの、方針の妥当性と指摘の出し�
     );
     const self = read("skills/review/review-dispatch/references/self-review.md");
     expect(self).toContain(
-      "前回までの `must` と同じ原因の別の現れが今回も見つかったときは、C-17（方針の妥当性）を起動する。前回の回で `must` を出していなくても起動する",
+      "前回までの `must` と同じ原因の別の現れが今回も見つかったときは、方針の観点（主対象が `code` なら C-17、`design-doc` なら D-1。`user-doc` には無いので起動しない）を起動する。前回の回で `must` を出していなくても起動する",
     );
     expect(self).toContain(
-      "今回の指摘と同じ原因の別の現れが、直した後にも見つかったときは、C-17（方針の妥当性）を起動する",
+      "今回の指摘と同じ原因の別の現れが、直した後にも見つかったときは、方針の観点（主対象が `code` なら C-17、`design-doc` なら D-1。`user-doc` には無いので起動しない）を起動する",
     );
     expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
-      "ただし、前回までの `must` と同じ原因の別の現れが今回も見つかったときは、C-17 を起動する",
+      "ただし、前回までの `must` と同じ原因の別の現れが今回も見つかったときは、方針の観点（主対象が `code` なら C-17、`design-doc` なら D-1。`user-doc` には無いので起動しない）を起動する",
     );
+  });
+});
+
+describe("既定の review スキルの、観点の資料が無いときの扱い（PBI-342）", () => {
+  it("担当への依頼文で、観点の資料が無ければ見るもの・見ないものだけで見させ、failed にしない", () => {
+    // review-execution だけを古い版で差し替えた環境でも、新しい観点の担当がレビューを完了できるようにする
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "- 観点の資料：review-execution の references/<観点ID>.md が無いときは、上の「見るもの」「見ないもの」だけを基準に見て、資料が無かったことを limitations に書く（それだけで failed にしない）",
+    );
+  });
+
+  it("C-17 の Go の例は、シンボリックリンクによる脱出を防げる開き方を勧める", () => {
+    const c17 = read("skills/review/review-execution/references/C-17.md");
+    expect(c17).toContain("基準のディレクトリの中に外を指すシンボリックリンクがあると防げない");
   });
 });
