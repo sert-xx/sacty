@@ -3467,6 +3467,49 @@ describe("差し戻しは前回の成果物を元に、指摘の所だけ直す�
       ...extra,
     } as Partial<Task>);
 
+  it("通常の差し戻しでも、前回の下書きの冒頭にスコープの節が無ければ、足して並べ直すことを例外として許す（PR #363 の再レビュー）", () => {
+    const EXCEPTION = "例外：前回の下書きには、冒頭に「スコープ」の節がありません";
+    for (const step of ["requirements", "design"] as const) {
+      const old = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n- R-1 …",
+            design: "# 設計 v1\n\n## 構成\n\n- …",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(old, step).toContain("指摘に関わる所だけを書き換える");
+      expect(old, step).toContain(EXCEPTION);
+      expect(old, step).toContain("後ろにあれば冒頭に移して");
+      const scoped = buildPrompt(
+        redo({
+          outputs: {
+            requirements: "# 要求要件 v1\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n- R-1 …",
+            design: "# 設計 v1\n\n## スコープ\n\n- 対象：一覧\n- 対象外：なし\n\n## 構成",
+          },
+          approved: { requirements: { output: "# 要求要件 v1", submission: 1 } },
+          selfReviews: {},
+          remarks: [remark(`${step}-1-1`, step, 1, "R-1 の文言を直す")],
+          steps: [
+            { key: "requirements", state: step === "design" ? "done" : "todo" },
+            { key: "design", state: "todo" },
+          ],
+        } as Partial<Task>),
+        step,
+      );
+      expect(scoped, step).toContain("指摘に関わる所だけを書き換える");
+      expect(scoped, step).not.toContain(EXCEPTION);
+    }
+  });
+
   it("要求要件の差し戻しに、前回の下書きと指摘を渡し、指摘に関わる所だけを書き換えさせる", () => {
     const prompt = buildPrompt(redo(), "requirements");
     expect(prompt).toContain("--- 前回の下書き ---\n# 要求要件 v1\n\n- R-1 …\n- R-2 …");

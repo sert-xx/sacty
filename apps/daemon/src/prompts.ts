@@ -1271,6 +1271,7 @@ function reworkLines(
   step: "requirements" | "design",
   deliverable: string,
   mode: ReworkMode | undefined,
+  previous: string | undefined,
 ): string[] {
   if (!mode) return [];
   const remarks = humanRemarks(task).filter((r) => r.step === step);
@@ -1289,6 +1290,7 @@ function reworkLines(
     `--- 差し戻しの直し方（前回の${deliverable}を元に、指摘に関わる所だけを書き換える） ---`,
     `- 上の「前回の下書き」を元にして、最初から書き直さない。今回の指摘（${current.map((r) => r.id).join("・")}）に関わる所と、その直しで食い違いが出る所だけを書き換える`,
     "- 指摘に関係の無い節・項目・表の行は、一字一句そのまま保つ。言い回しの整え・順序の入れ替え・要約・追記もしない。ただし、上の「本文に書くもの」で書かないとしたもの（作業の報告など）が前回の下書きに残っていれば、関係の無い所でも取り除く",
+    ...missingScopeLines(previous),
     ...(earlier > 0
       ? [
           "- 前の差し戻しの指摘（今回の指摘より前のもの）への対応は、前回の下書きに入っている。今回の直しで崩さない。人間の求めで足した記述も削らない",
@@ -1342,13 +1344,13 @@ export function scopeComesFirst(draft: string | undefined): boolean {
 }
 
 /**
- * 答えの反映だけの直しで、前回の下書きにスコープの節が無いとき（PBI-340 より前の下書き）の例外の指示。ほかの節を保つ決まりの
- * ままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
+ * 差し戻しの直し（答えの反映だけの直しと、通常の部分的な直し）で、前回の下書きの冒頭にスコープの節が無いとき（PBI-340 より前の
+ * 下書き）の例外の指示。関係の無い節を保つ決まりのままだと、スコープを足せずに、冒頭の構成を求める指示と食い違う（PR #363 のレビュー）。
  */
 function missingScopeLines(previous: string | undefined): string[] {
   if (scopeComesFirst(previous)) return [];
   return [
-    "- 例外：前回の下書きには、冒頭に「スコープ」の節がありません（無いか、ほかの節より後ろにあります。この節を求める前に作った下書きです）。下の「一字一句そのまま保つ」の例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
+    "- 例外：前回の下書きには、冒頭に「スコープ」の節がありません（無いか、ほかの節より後ろにあります。この節を求める前に作った下書きです）。「一字一句そのまま保つ」の決まりの例外として、「スコープ」の節（何を実現するかと、対象・対象外。対象外が無ければ「対象外：なし」）を、無ければ足し、後ろにあれば冒頭に移して、冒頭の節を「スコープ」「確認したいこと」「既定で決めたこと」の順に並べ直す。スコープの中身は、前回の下書きと承認済みの内容から書き、新しい要求・対象を足さない。ほかの節の中身は保つ",
   ];
 }
 
@@ -2711,7 +2713,7 @@ export function buildPrompt(
       lines.push(
         ...(light
           ? answerOnlyReworkLines(task, "requirements", "要求要件", previous)
-          : reworkLines(task, "requirements", "要求要件", rework)),
+          : reworkLines(task, "requirements", "要求要件", rework, previous)),
       );
       const narrowed = reviewRework(task, "requirements", rework);
       lines.push(
@@ -2789,7 +2791,7 @@ export function buildPrompt(
       lines.push(
         ...(light
           ? answerOnlyReworkLines(task, "design", "設計とテスト観点", previous)
-          : reworkLines(task, "design", "設計とテスト観点", rework)),
+          : reworkLines(task, "design", "設計とテスト観点", rework, previous)),
       );
       const narrowed = reviewRework(task, "design", rework);
       lines.push(
