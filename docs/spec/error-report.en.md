@@ -18,7 +18,7 @@ Records that match none of them are not errors.
 | --- | --- |
 | `error` (failure) | Records whose type ends in `Failed` (`AgentRunFailed`, `OrchestratorFailed`, `FinalReviewFailed`, `IssueCommentFailed`, `PullRequestLabelFailed`, `AuditFailed`), and records that have `failed` or whose `runResult` is `failed` (exports, answers to questions, and so on) |
 | `stop` (stopped) | `TaskPaused` (except for the reason `manual`) and `TaskEscalated` |
-| `check` (check failed) | `TestsRun` that did not pass, `PullRequestCiFinished` that is `failed` or `timed_out`, and `DeploymentChecked` that is `unhealthy` |
+| `check` (check failed) | `TestsRun` that did not pass, `BaseConflictsRemained` (conflict markers with the base branch remained), `PullRequestCiFinished` that is `failed` or `timed_out`, and `DeploymentChecked` that is `unhealthy` |
 
 A `DeploymentChecked` record whose check run itself failed (it has `failed`, or its `runResult` is `failed`) is an `error`.
 The error-analysis records (`ErrorAnalysisRequested`, `ErrorAnalyzed`) are not counted as errors, even when the analysis failed.

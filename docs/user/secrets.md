@@ -54,7 +54,8 @@ onepassword:
 `sacty up` は、起動のときに、使う秘密情報を次の所からまとめて取り出します。
 
 - 使うエージェントの `providers` の認証
-- `gateway.platforms`・`gateway.mcp_servers` の環境変数
+- `gateway.platforms` の認証（`auth.secret`・`auth.token.secret`）
+- `gateway.mcp_servers` の環境変数
 - 「Sacty の設定」の Slack の通知先
 - プロジェクトのコンテキストリポジトリの `mcp.yaml`・`platforms.yaml`
 

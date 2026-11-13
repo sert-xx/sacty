@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 410" width="1040" height="410" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/budget-flow.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">予算の上限と一時停止</title>
-  <desc id="desc">タスクの予算の上限は、作成時に budget.default_per_task_usd にし、工程の選択で選んだ組み合わせに budget.per_plan_usd の予算があれば（人が上限を上げていなければ）その値にする。実行の費用を使った額に足し、80% で BudgetWarned を記録する（工程の選択で上限が変わったら、通知はし直す）。上限に達したら、工程の選択・工程の実行（検証に通った実装の PR の作成を除く）・検証の前に一時停止し、人が累計の新しい上限を決めて再開すると、止まったところから続ける。</desc>
+  <desc id="desc">タスクの予算の上限は、作成時に budget.default_per_task_usd にし、工程の選択で選んだ組み合わせに budget.per_plan_usd の予算があれば（人が上限を上げていなければ）その値にする。実行の費用を使った額に足し、80% で BudgetWarned を記録する（工程の選択で上限が変わったら、通知はし直す）。上限に達したら、工程の選択・工程の実行（実装の PR の作成を除く）の前に一時停止し、人が累計の新しい上限を決めて再開すると、止まったところから続ける。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -81,8 +81,7 @@
   <text x="642" y="272" class="title">上限を確かめる</text>
   <text x="606" y="300" class="sub">工程の選択の前</text>
   <text x="606" y="320" class="sub">工程の実行の前</text>
-  <text x="606" y="340" class="sub">（検証済みの PR の作成を除く）</text>
-  <text x="606" y="360" class="sub">検証の前</text>
+  <text x="606" y="340" class="sub">（実装の PR の作成を除く）</text>
   <rect x="300" y="240" width="250" height="150" rx="10" class="card" style=""/>
   <svg x="316" y="254" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--red)"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7M14 8.5v7"/></svg>
   <text x="352" y="272" class="title">一時停止</text>

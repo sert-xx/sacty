@@ -48,7 +48,7 @@ Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.send`, `SLACK_USERNAME`, `SL
   | Kind | Step | Body (English example) |
   | --- | --- | --- |
   | `approval` | The step awaiting approval (`gate.step`) | `Design is waiting for your approval`. The reproduction decision is `Reproduce: the bug was not reproduced; …` and the integration review decision is `Integration review keeps failing; …`. Without a step, `Waiting for your approval` |
-  | `escalation` | The step that escalated (`escalation.step`, or `gate.step` if absent) | `Escalated in Requirements; your decision is needed`. Confirming the step to redo for PR comments is `Escalated in Implement: confirm the step to redo for the PR comments` |
+  | `escalation` | The step that escalated (`escalation.step`, or `gate.step` if absent) | `Escalated in Requirements; your decision is needed`. Confirming the step to redo for PR comments is `Escalated in Implement: confirm the step to redo for the PR comments`. Waiting for a decision on a change request is `A change to an approved deliverable was proposed in Design; decide whether to accept it` |
   | `paused` | The step when it stopped (the `active` step) | `Paused in Implement (budget cap)`. Before the steps are decided (no steps), `Paused before the steps were decided (…)`; if the step is unknown, `Paused (…)` |
   | `completed` | None | `Done` |
 

@@ -36,7 +36,7 @@ const ja = {
     testsPassed: "テスト合格",
     testsPassedEnvironment: "テスト合格（環境による失敗のみ）",
     environmentPassNote: (exitCode: number | undefined, workspaceOnly: boolean, flaky = false) =>
-      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
+      `終了コードは ${exitCode ?? "申告なし"} ですが、${workspaceOnly ? "失敗が Sacty の作業用のファイルによるものだけで、リポジトリの検査の対象ではないため" : flaky ? "失敗が環境によるものか、差分と無関係で実行し直すと結果が変わる（既知の不安定なテストは、実行し直しを省いた）ものだけと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）" : "失敗がすべて環境によるものと最終レビューで判断したため（失敗の内容は「人が確かめること」にあります）"}、合格にしました。`,
     testsFailed: "テスト不合格",
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
@@ -206,7 +206,7 @@ const ja = {
       keepRechooseHint: "オーケストレーターが、工程の選択からやり直します。",
       command: "テストのコマンドを指定する",
       commandLabel: "テストのコマンド",
-      commandHint: "実装の工程のエージェントへの指示に渡します（sacty は実行しません）。",
+      commandHint: "実装の工程のエージェントへの指示に渡します（Sacty は実行しません）。",
       none: "テストなしで進める",
       noneHint:
         "テストを書かないリポジトリ（スキルやドキュメントを置くだけなど）向けです。テストを書かずに進めます。",
@@ -494,7 +494,7 @@ const en: PartsMessages = {
       command: "Specify the test command",
       commandLabel: "Test command",
       commandHint:
-        "Passed to the Implementation step agent's instructions (sacty does not run it).",
+        "Passed to the Implementation step agent's instructions (Sacty does not run it).",
       none: "Proceed without tests",
       noneHint:
         "For repositories without tests (only skills or documents, for example). The task proceeds without writing tests.",

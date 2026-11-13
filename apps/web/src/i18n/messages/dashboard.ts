@@ -102,10 +102,10 @@ const ja = {
     pullRequestReworkHint: "取り込んだ PR の指摘で、工程をやり直した回数です。",
     aiReviewRework: "AI のレビューの差し戻し",
     aiReviewReworkHint:
-      "sacty 自身のレビューのタスクが PR に投稿した指摘だけで、工程をやり直した回数です。人の差し戻しには数えません。",
-    guardianMissed: "最終レビューの見逃し",
+      "Sacty 自身のレビューのタスクが PR に投稿した指摘だけで、工程をやり直した回数です。人の差し戻しには数えません。",
+    guardianMissed: "合格の見逃し",
     guardianMissedHint:
-      "最終レビューで合格にした成果物を、見逃しが原因として人が実装の承認で差し戻した回数です。競合や新しい要望による差し戻しは数えません。",
+      "統合レビュー（以前の版では最終レビュー）で合格にした成果物を、見逃しが原因として人が差し戻した回数です。競合や新しい要望による差し戻しは数えません。",
     integrationFailed: "統合レビューの不合格",
     integrationFailedHint: "子タスクの成果を組み合わせた統合レビューで、不合格になった回数です。",
     fixTask: "監視で作った修正のタスク",
@@ -231,10 +231,10 @@ const en: DashboardMessages = {
     pullRequestReworkHint: "How many times imported PR feedback sent a step back for rework.",
     aiReviewRework: "Rework from AI review",
     aiReviewReworkHint:
-      "How many times only remarks that sacty's own review task posted on a PR sent a step back for rework. Not counted as a person's changes.",
-    guardianMissed: "Final review misses",
+      "How many times only remarks that Sacty's own review task posted on a PR sent a step back for rework. Not counted as a person's changes.",
+    guardianMissed: "Misses after a pass",
     guardianMissedHint:
-      "How many times a person sent back, at implementation approval, a deliverable the final review had passed, with a miss as the cause. Rework caused by conflicts or new requests is not counted.",
+      "How many times a person sent back a deliverable the integration review (the final review in earlier versions) had passed, with a miss as the cause. Rework caused by conflicts or new requests is not counted.",
     integrationFailed: "Integration review failures",
     integrationFailedHint:
       "How many times the integration review of combined subtask results did not pass.",

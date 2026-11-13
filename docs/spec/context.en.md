@@ -212,7 +212,7 @@ Code: `apps/daemon/default-context/skills/drawio/SKILL.md`, `apps/daemon/default
 
 ## Context repository files
 
-Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `images.yaml`, `rules.md, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
+Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `images.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
 
 - If any of these contains something that is not a regular file or directory (a symbolic link, for example), composition stops (`context.notPlainFile`).
 - A missing YAML file means the defaults.

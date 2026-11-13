@@ -8,7 +8,7 @@ Related ADRs: none
 
 ## Event shape
 
-- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 106 kinds (task creation and split, step progress, agent runs, budget, pause, resume, and cancel, change proposals and their decisions, verification, git and PRs, CI of the draft PR before the final review in an earlier version, reviews, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
+- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 117 kinds (task creation and split, the merge of the dependency of a stacked child task, step progress, agent runs, budget, pause, resume, and cancel, changes to a task's title and image, change proposals and their decisions, verification, git and PRs, marking a PR ready for review, retargeting it, and requesting a CI rerun, merging commits a person added to a PR, recording PR bodies and reconciling bodies a person edited, CI of the draft PR before the final review in an earlier version, reviews, creating review child tasks of PRs, replies to the intake source, questions, error analysis, export, PR labels, the after-merge watch, requests for security-fix tasks, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds the following to the shape for writing.
   - `seq` (increasing monotonically across the whole activity log)
   - `id` (UUID)
@@ -47,7 +47,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
   2. The event is written to the activity log.
   3. The event is applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw. Even for a cancelled task, however, the session-saving records `AgentSessionArchived` and `OrchestratorSessionUsed`, and `AuditMemoryDeleted` (deleting a memory the audit registered), are accepted.
-- Some events are records only and do not change state (`AiRequestsRetried`, `RunCostRecorded`, `ReviewGitHubRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`, `AgentRunTimedOut`, `AgentRunContinued`, `WorkspaceFilesSkipped`).
+- Some events are records only and do not change state (`AiRequestsRetried`, `RunCostRecorded`, `ReviewGitHubRetried`, `AgentFellBack`, `ServicesStarted`, `AgentSessionArchived`, `AgentRunTimedOut`, `AgentRunContinued`, `WorkspaceFilesSkipped`, `PullRequestBodyResolved`; those with a cost are added to the budget as below).
 - When an event that carries cost (the 17 kinds in [Cost](#cost)) is applied, its `costUsd` is added to the task's `budget.usedUsd` (rounded to 6 decimal places). If even one is `estimated`, `budget.estimated` is set.
 - Main fields of `Task`
   - `status`

@@ -54,7 +54,7 @@ sacty は、5つのパッケージでできている。
 | 種類 | パス |
 | --- | --- |
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
-| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,images,questions,rereview,error-analysis}`・`GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
+| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,rerun,derive,submit-for-review,security-fixes,repository,agents,title,image,questions,rereview,error-analysis}`・`GET /api/tasks/:id/{cleanup-plan,security-findings,error-report}`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT/DELETE /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/:id/local-sessions`・`DELETE /api/local-sessions/:id`・`POST /api/projects/import` |
 | スケジュールタスク | `GET/POST /api/projects/:id/schedules`・`GET/PUT/DELETE /api/schedules/:id` |
@@ -191,12 +191,13 @@ sacty は、5つのパッケージでできている。
   - 見逃しではない差し戻しも区別できるよう、差し戻しは原因（`ChangesRequested` の `cause`）ごとにも数える（`reworkByCause`）。
     原因が無い記録は「原因が分からない」（`unspecified`）に数える。人が原因を選ばなかった差し戻しや、戻し先の判断で原因を決められなかった指摘の差し戻しが当たる。
     原因を記録する前の作業履歴は、差し戻しの直前（同じタスクの直前の記録）に `GuardianMissed` があれば `guardian_missed`、無ければ `unspecified` に数える。
-    見逃しの回数は `GuardianMissed` の数なので、原因が `guardian_missed` の差し戻しの数とは限らない（合格の最終レビューが無いものは見逃しを記録しない）。
-  - ほかに、最終レビューの見逃し（`GuardianMissed`。原因が見逃しの差し戻しだけが記録する）、統合レビューの不合格（`IntegrationReviewed` の `passed` が偽）、監視で作った修正のタスク（`DeploymentFixRegistered`）を数える。
+    見逃しの回数は `GuardianMissed` の数なので、原因が `guardian_missed` の差し戻しの数とは限らない（見逃しを記録するのは、差し戻した成果物が合格の判定を経ていたときだけ。下を参照）。
+  - ほかに、見逃し（`GuardianMissed`）を数える。記録するのは、原因が見逃しの差し戻しで、差し戻した成果物が合格の判定を経ていたとき（統合レビューの差し戻しなら統合レビューの合格（`IntegrationReviewed` の `passed`）、実装の差し戻しなら以前の版の最終レビューの合格（`FinalReviewed`））だけ。今の版は実装の最終レビューをしないので、実装の側で増えるのは以前の版の記録を持つタスクだけになる。
+    あわせて、統合レビューの不合格（`IntegrationReviewed` の `passed` が偽）、監視で作った修正のタスク（`DeploymentFixRegistered`）を数える。
   - 工程ごとの差し戻しは、人の差し戻しと PR の指摘の差し戻しと AI のレビューの差し戻しを、差し戻された成果物の工程ごとに数える。
     工程は `ChangesRequested` の `step`（承認ゲートで止まっていた工程）。
     要求要件・設計・実装（`REWORK_STEPS`）は常に、ほかの工程は回数があるときだけ出す。
-  - 「原因が分からない差し戻し」（`reworkByCause.unspecified`）を、「最終レビューの見逃し」の下に並べて出す（見逃しかどうか分からない差し戻しが、見えなくならないように）。
+  - 「原因が分からない差し戻し」（`reworkByCause.unspecified`）を、「合格の見逃し」の下に並べて出す（見逃しかどうか分からない差し戻しが、見えなくならないように）。
   - 見逃しではないと分かっている差し戻しは、「新しい要望・方針の変更」「質問への答え」「ベースの変化による競合」を原因ごとに出す。
 - 期間の境は、画面の言語ではなく、sacty を動かしているマシン（デーモン）のローカルの日付で決める。
   - 今日：その日の 0 時から。
@@ -312,10 +313,11 @@ sacty は、5つのパッケージでできている。
   | `GET /live/projects` | プロジェクトの一覧と、取り込みの状況（`loadProjectList`） |
   | `GET /live/update` | sacty の新しい版の知らせ（`loadUpdateData`。30秒ごと。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
   | `GET /live/docker` | Docker とエージェントのイメージの注意（`loadDockerData`。30秒ごと。[デーモンの起動と終了](daemon-lifecycle.md#docker-とエージェントのイメージの確かめ)） |
+  | `GET /live/context-images` | コンテキストのイメージの作成の状況（`loadContextImagesData`。5秒ごと。[デーモンの起動と終了](daemon-lifecycle.md#コンテキストのイメージの作成)） |
   | `GET /live/notifications?after=<番号>` | デスクトップ通知に出す、番号より後の通知（`loadDesktopFeed`。5秒ごと。このブラウザでデスクトップ通知を On にしているときだけ取り直し、版の比べは使わず、タブが隠れている間も取り直す。[通知](notifications.md#デスクトップ通知)） |
 
 - 間隔は3秒（`LIVE_INTERVAL_MS`）。
-  ただし、`/live/update`・`/live/docker`（どの画面にも出す知らせ）は30秒（`UPDATE_LIVE_INTERVAL_MS`・`DOCKER_LIVE_INTERVAL_MS`）、`/live/notifications` は5秒（`DESKTOP_INTERVAL_MS`）。
+  ただし、`/live/update`・`/live/docker`（どの画面にも出す知らせ）は30秒（`UPDATE_LIVE_INTERVAL_MS`・`DOCKER_LIVE_INTERVAL_MS`）、`/live/context-images`（作成中のログを追うため）と `/live/notifications` は5秒（`CONTEXT_IMAGES_LIVE_INTERVAL_MS`・`DESKTOP_INTERVAL_MS`）。
   タスクの状態によらず、タスクが無いとき・すべてが承認待ち・一時停止・完了のときも取り直す。
   前の取り直しが終わってから次の間隔を数えるので、問い合わせは重ならない。
 - `{ missing: true }` のとき、表示は最後のデータのまま残す。タスクの詳細・成果物のレビュー・実行のログは、画面を描き直す（`RefreshWhenMissing`。
@@ -370,7 +372,7 @@ sacty は、5つのパッケージでできている。
 `apps/web/src/components/run-log.tsx`（`LiveRunLog`・`applyChunk`）、`apps/web/src/lib/run-log-data.ts`（`loadAgentFiles`）、
 `apps/web/src/components/live-status.tsx`（`StaleNotice`・`FollowProjectAfterRecovery`）、`apps/daemon/src/session-logs.ts`（`completeUtf8Length`）、`apps/web/src/lib/daemon-signal.ts`（`withDaemonSignal`・`LIVE_SERVER_TIMEOUT_MS`）、
 `apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）、
-`apps/web/src/app/live/update/route.ts`、`apps/web/src/components/shell/update-notice-live.tsx`（`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/docker/route.ts`、`apps/web/src/components/shell/docker-notice-live.tsx`（`DOCKER_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/notifications/route.ts`、`apps/web/src/lib/desktop-notifications.ts`（`DESKTOP_INTERVAL_MS`）
+`apps/web/src/app/live/update/route.ts`、`apps/web/src/components/shell/update-notice-live.tsx`（`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/docker/route.ts`、`apps/web/src/components/shell/docker-notice-live.tsx`（`DOCKER_LIVE_INTERVAL_MS`）、`apps/web/src/app/live/context-images/route.ts`、`apps/web/src/lib/context-images-data.ts`（`loadContextImagesData`）、`apps/web/src/app/live/notifications/route.ts`、`apps/web/src/lib/desktop-notifications.ts`（`DESKTOP_INTERVAL_MS`）
 
 ## データの置き場所（SACTY_HOME）
 

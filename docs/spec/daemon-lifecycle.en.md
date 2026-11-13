@@ -52,7 +52,7 @@ Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib
 
 1. If `SACTY_DAEMON_TOKEN` is missing, the daemon tells you to start it from `sacty up` and exits with exit code 1. The port is `SACTY_DAEMON_PORT` (default 4710).
 2. It creates the `SACTY_HOME` directory and takes the instance lock (see "Duplicate start" below). If it cannot, it exits before touching the activity log or anything else.
-3. It opens `SACTY_HOME/sacty.db` (activity log, projects, sacty settings). It rereads the configuration (`config.yaml`) every time it uses it.
+3. It opens `SACTY_HOME/sacty.db` (activity log, projects, sacty settings). It rereads the configuration (`config.yaml`) every time it uses it. Next, it removes tasks from earlier versions that contain the "PR作成" step from the activity log (`purgeLegacyTasksAtStartup`; it prints the number removed to the terminal). While the configuration has errors, it does not remove them; it prints the number and the error to the terminal and exits with exit code 1.
 4. It cleans up docker compose services left by the previous daemon, and the per-run fetches of shared compose.
 5. It cleans up host MCP server processes left by the previous daemon ([Gateway](gateway.en.md)). It cleans up those of the context's command MCP servers too, from the same records.
 6. It starts listening on the gateway.
@@ -61,12 +61,18 @@ Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib
    - A deployment check that was in the middle of running is recorded as interrupted. For the after-merge watch step, the task is paused (`TaskPaused`, reason `error`) and checked again on resume. For tasks from before the step, it ends as not determined ([After-merge watch](deployment-watch.en.md)).
    - A change request that was in the middle of the AI's judgment in an earlier version is put into waiting for a person's decision (`TaskEscalated`, reason `change_proposed`; [Change requests](tasks-and-steps.en.md#change-requests)).
    - Tasks that were running (`running`) are recorded as a run failure (`AgentRunFailed`) and paused (`TaskPaused`, reason `error`).
+   - An error analysis that did not finish is recorded as interrupted (so the next analysis is accepted; [Error report](error-report.en.md#orchestrators-analysis)).
 8. It starts removing workspaces left by the previous daemon (`cleanupWorkspacesAtStartup`; [Tasks and steps](tasks-and-steps.en.md#cleaning-up-the-workspaces-of-finished-tasks)).
    - Per-run scratch directories that do not belong to a running run.
    - Workspaces and set-aside git metadata of completed tasks that no longer use them, and of no task.
 
    It moves on without waiting for the removal to finish (so listening for the API is not delayed; `sacty up` waits up to 15 seconds to confirm the start).
    If it cannot remove them, it prints the reason to the terminal and keeps starting.
+
+   Without waiting for the removal, it then does the following.
+   - It creates the audit fix tasks whose adoption was recorded but that stopped before being created, and the security fix tasks likewise (`resumeAuditFixTasks`, `resumeSecurityFixTasks`).
+   - It rewrites the memories registered by audits to match the activity log and deletes those past the retention days (`syncMemories`; it keeps deleting them periodically afterwards; [Memory](memory.en.md)).
+   - It starts checking for a newer version and checking Docker and the agent images ("Checking for a newer version" and "Checking Docker and the agent images" below).
 9. It queues steps that were waiting because they could not run (`queueWaitingSteps`).
 10. It prints startup problems (such as configuration errors) to the terminal.
 11. It listens for the API on `127.0.0.1:<port>`. Once listening, it retrieves the secrets it uses all at once (including the secrets in project contexts; fetching the contexts waits at most 30 seconds; [Secrets](secrets.en.md)). After that, once the removal in step 8 has finished, it starts the following (not if it has started shutting down in the meantime).
@@ -223,10 +229,10 @@ Code: `apps/daemon/src/instance-lock.ts` (`acquireInstanceLock`, `alreadyRunning
 On SIGINT or SIGTERM, the daemon does the following, only once.
 
 1. It stops the git processes fetching contexts for retrieving secrets, together with their process groups (`stopFetchProcessesSync`). These git processes run in their own process groups.
-2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up. It also waits for error analyses started from the UI to be recorded and cleaned up (after stopping starts, analyses are not accepted; [Error report](error-report.en.md#orchestrators-analysis)).
+2. It starts stopping the worker, intake, and PR watching. The worker starts no new runs and waits for in-progress work to clean up. It also waits for error analyses started from the UI to be recorded and cleaned up (after stopping starts, analyses are not accepted; [Error report](error-report.en.md#orchestrators-analysis)). It also stops the docker build of a context image being built and waits for its cleanup.
 3. It starts stopping the host MCP servers and the context's command MCP servers. It does not wait for cleanup. For the context's servers, it also removes the layer copies.
 4. It stops the running agent containers. After this, it starts no new containers (a run that was copying its workspace ends with `run.daemonStopped` without starting, even after the copy finishes).
-5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. If it has not finished after 3 seconds (`DRAIN_REPORT_MS`), it shows what has not finished yet (running tasks, error analyses, intake, PR checks, scheduled task checks). After 20 seconds, it shows a warning and continues.
+5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. If it has not finished after 3 seconds (`DRAIN_REPORT_MS`), it shows what has not finished yet (running tasks, error analyses, intake, PR checks, scheduled task checks, building context images). After 20 seconds, it shows a warning and continues.
 6. It closes the gateway, waits for the host MCP servers to stop, and closes the API listener. If the host MCP servers have not stopped after 3 seconds, it also shows that it is waiting for them. Then it closes the DB, releases the lock (also removing the `daemon-owner.json` it wrote), and exits with exit code 0.
 
 On `FORCE_STOP_SIGNAL` (SIGUSR2; `sacty up` sends it when Ctrl+C is pressed again) while stopping, it exits with exit code 1 without waiting for cleanup. Runs that were being cleaned up are recovered as interrupted at the next start (step 7 of "Daemon startup order" above).

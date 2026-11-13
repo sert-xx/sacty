@@ -46,7 +46,8 @@ onepassword:
 When `sacty up` starts, it fetches the secrets in use all at once from the following places.
 
 - Authentication in `providers` of the agents in use
-- The environment variables of `gateway.platforms` and `gateway.mcp_servers`
+- The authentication of `gateway.platforms` (`auth.secret`, `auth.token.secret`)
+- The environment variables of `gateway.mcp_servers`
 - The Slack notification destination in the "Sacty settings"
 - `mcp.yaml` and `platforms.yaml` in the projects' context repositories
 

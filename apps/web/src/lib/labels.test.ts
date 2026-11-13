@@ -73,9 +73,10 @@ const task = (patch: Partial<Task> = {}): Task => ({
 });
 
 describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
-  it("最終レビュー中は、待機（idle）でもそれと分かるように出す", () => {
-    // 実装の検証中（テスト・最終レビュー）は、待機（idle）のまま（PBI-10a）
-    expect(statusText(task({ verification: "tests_passed" }))).toBe("最終レビュー中");
+  it("PR の作成の前の確認中は、待機（idle）でもそれと分かるように出す（以前の版の最終レビューの途中のタスクも）", () => {
+    // 実装の提出の後、PR を作る前の確かめの間は、待機（idle）のまま（PBI-10a・PBI-331）
+    expect(statusText(task({ verification: "pending" }))).toBe("PR の作成の前の確認中");
+    expect(statusText(task({ verification: "tests_passed" }))).toBe("PR の作成の前の確認中");
   });
 
   it("人の判断を待つ申し出（判定の無いもの）も、判断フォームのある「変更の申し出」へ誘導する（PBI-333）", () => {
@@ -1550,12 +1551,12 @@ describe("状態の表示の種類（PBI-42）", () => {
   it("AI・sacty が進めている状態は working", () => {
     expect(statusTone(task({ status: "running" }))).toBe("working");
     expect(statusTone(task({ status: "waiting_children" }))).toBe("working");
-    // テストの実行を待っている idle（完了していない）
+    // PR の作成の前の確かめを待っている idle（完了していない）
     const verifying = task({
       steps: [{ key: "implement", state: "active" }],
       verification: "pending",
     });
-    expect(statusText(verifying)).toBe("テストを実行中");
+    expect(statusText(verifying)).toBe("PR の作成の前の確認中");
     expect(statusTone(verifying)).toBe("working");
   });
 

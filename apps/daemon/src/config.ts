@@ -1268,13 +1268,13 @@ budget:
 # update_check: false
 
 # エージェントの1回の実行とテストのコマンドの上限（分。1〜720）。過ぎるとコンテナを止め、タスクを一時停止する。
-# roles で役割ごとに上書きする（工程の名前のほか guardian・final-review・rework・orchestrator・gather・chat・export・audit・audit-dive）
+# roles で役割ごとに上書きする（工程の名前のほか rework・orchestrator・gather・chat・export・audit・audit-dive）
 # run_timeout:
 #   agent_minutes: 30   # 既定 30
 #   test_minutes: 20    # 既定 20
 #   roles:
 #     implement: 90
-#     guardian: 45
+#     orchestrator: 15
 
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする

@@ -12,7 +12,7 @@
 
 - 書くときの形は `{ type, payload }`。
   `type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。
-  種類は106（タスクの作成・分割、工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判断、検証、git・PR、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
+  種類は117（タスクの作成・分割、重ねた子タスクの依存先のマージ、工程の進行、エージェントの実行、予算・一時停止・再開・中止、タスクの題・イメージの変更、変更の申し出と判断、検証、git・PR、PR のドラフトの解除・向き先の付け替え・CI のやり直しの依頼、人が PR に足したコミットの取り込み、PR の本文の記録と人が直した本文のまとめ、以前の版の最終レビューの前のドラフトの PR の CI、レビュー、PR のレビューの子タスクの作成、取り込み元への返信、質問、エラーの分析、書き出し、PR のラベル、マージの後の監視、セキュリティ対応のタスクの依頼、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、書くときの形に次を足したもの。
   - `seq`（作業履歴全体で単調に増える）
   - `id`（UUID）
@@ -57,7 +57,7 @@
   3. メモリーの状態に適用する。
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする。
   ただし中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` と、監査が登録したメモリーの削除 `AuditMemoryDeleted` は受け付ける。
-- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`）。
+- 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`RunCostRecorded`・`ReviewGitHubRetried`・`AgentFellBack`・`ServicesStarted`・`AgentSessionArchived`・`AgentRunTimedOut`・`AgentRunContinued`・`WorkspaceFilesSkipped`・`PullRequestBodyResolved`。費用を持つものは、下のとおり予算に足す）。
 - 費用を持つイベント（[費用](#費用)の17種類）を適用できたときは、その `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
   `estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目

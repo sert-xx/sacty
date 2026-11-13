@@ -8,8 +8,8 @@ export const budgetFlow = {
   height: 410,
   title: t("予算の上限と一時停止", "Budget cap and pausing"),
   desc: t(
-    "タスクの予算の上限は、作成時に budget.default_per_task_usd にし、工程の選択で選んだ組み合わせに budget.per_plan_usd の予算があれば（人が上限を上げていなければ）その値にする。実行の費用を使った額に足し、80% で BudgetWarned を記録する（工程の選択で上限が変わったら、通知はし直す）。上限に達したら、工程の選択・工程の実行（検証に通った実装の PR の作成を除く）・検証の前に一時停止し、人が累計の新しい上限を決めて再開すると、止まったところから続ける。",
-    "A task's budget cap is budget.default_per_task_usd at creation; when steps are chosen, it becomes the plan's budget in budget.per_plan_usd if there is one (unless a person raised the cap). Run costs are added to the amount used, and BudgetWarned is recorded at 80% (the notice is reset when choosing steps changes the cap). At the cap, the task pauses before choosing steps, running a step (except opening the PR for a verified implementation), or verifying; when a person sets a new cumulative cap and resumes, it continues from where it stopped.",
+    "タスクの予算の上限は、作成時に budget.default_per_task_usd にし、工程の選択で選んだ組み合わせに budget.per_plan_usd の予算があれば（人が上限を上げていなければ）その値にする。実行の費用を使った額に足し、80% で BudgetWarned を記録する（工程の選択で上限が変わったら、通知はし直す）。上限に達したら、工程の選択・工程の実行（実装の PR の作成を除く）の前に一時停止し、人が累計の新しい上限を決めて再開すると、止まったところから続ける。",
+    "A task's budget cap is budget.default_per_task_usd at creation; when steps are chosen, it becomes the plan's budget in budget.per_plan_usd if there is one (unless a person raised the cap). Run costs are added to the amount used, and BudgetWarned is recorded at 80% (the notice is reset when choosing steps changes the cap). At the cap, the task pauses before choosing steps or running a step (except opening the implementation PR); when a person sets a new cumulative cap and resumes, it continues from where it stopped.",
   ),
   items: [
     {
@@ -86,8 +86,7 @@ export const budgetFlow = {
       lines: [
         t("工程の選択の前", "Before choosing steps"),
         t("工程の実行の前", "Before running a step"),
-        t("（検証済みの PR の作成を除く）", "(except opening a verified PR)"),
-        t("検証の前", "Before verification"),
+        t("（実装の PR の作成を除く）", "(except opening the implementation PR)"),
       ],
     },
     {

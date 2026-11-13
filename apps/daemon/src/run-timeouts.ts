@@ -14,7 +14,10 @@ export const DEFAULT_TEST_TIMEOUT_MINUTES = 20;
 export const RUN_TIMEOUT_MIN_MINUTES = 1;
 export const RUN_TIMEOUT_MAX_MINUTES = 720;
 
-/** 上限を役割ごとに上書きできる役割（工程と、ゴールガーディアン・オーケストレーターなど。エージェントを実行する役割のすべて）。 */
+/**
+ * 上限を役割ごとに上書きできる役割（工程と、オーケストレーターなど。エージェントを実行する役割のすべて）。guardian・final-review は
+ * 以前の版の役割で、今は実行しない。以前の設定を読めるように受け付ける。
+ */
 export const RUN_TIMEOUT_ROLES = [
   ...StepKey.options,
   "guardian",

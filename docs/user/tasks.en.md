@@ -154,7 +154,7 @@ The task details look like this.
 
 - The open tab is kept in the URL (such as `?tab=activity`), so reloading or sharing opens the same tab.
 - Under "Deliverables" on the Overview tab, choose a step to read its deliverable one at a time. At first, the deliverable of the current step (running, awaiting approval, or the last finished step) is shown.
-- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the tests (the test command), the ticket, where the task started from (with the template's name for a task created from a template), related tasks (the parent, the task it reruns, the task it follows up, the task it fixes, and the report), the task it was rerun as, and when the task was created and last updated. The PR, the branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
+- "Properties" in the right column shows the current step, the PR, the cost, the project, the repository, the branch, the tests (the test command), the ticket, where the task started from (with the template's name for a task created from a template), related tasks (the parent, the task whose PR it reviews, the PR review (the child task that reviews the PR, and its state), the task it reruns, the task it follows up, the task it fixes, and the report), the task it was rerun as, and when the task was created and last updated. The PR, the branch, the tests, the ticket, related tasks, and the rerun task are shown only when the task has them.
   For a task with error records, "Error report" appears below it ([Getting an error report](troubleshooting.en.md#getting-an-error-report)).
   Below it, the recent Activity (5 entries) is shown.
 
@@ -310,6 +310,7 @@ The Implementation step's agent still runs tests while it works.
 3. If there are findings, sacty fixes the implementation and updates the PR (putting it back to draft), and the child task reviews it again.
 4. When the child task gives "no findings", sacty removes the draft. Merging this PR approves the implementation.
    Check the PR's CI result before merging (sacty does not wait for the CI).
+   If you remove the draft on GitHub before "no findings", sacty turns the PR back into a draft at every PR check (except stacked PRs; [PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs)).
    If the PR is turned back into a draft on GitHub after sacty removed the draft, sacty removes it again at every PR check. To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub. When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it.
 
 - In "Related tasks" of the task detail, you can see the child task's status, which round the review is in, and its verdict.
@@ -573,12 +574,12 @@ sacty does not have an AI judge the request; it asks you to decide.
 
 ## Cause of a request for changes
 
-When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted as final review misses.
+When you request changes on the approval screen, you can choose a "Cause of the rework". This is so that only real misses are counted in the dashboard's "Misses after a pass".
 
 | Choice | When to use it |
 | --- | --- |
 | Don't choose (initial choice) | Request changes without deciding the cause. It is not counted as a miss, and is counted under "Rework with unknown cause" on the dashboard |
-| Miss (a flaw that could be caught) | A flaw the final review (Integration review) could have caught. When you send back a deliverable it had passed, a miss is recorded |
+| Miss (a flaw that could be caught) | A flaw the Integration review (the final review in earlier versions) could have caught. When you send back a deliverable it had passed, a miss is recorded |
 | A new request or change of direction | You added something later that was not in what you approved. Not counted as a miss |
 | A conflict from changes to the base branch | The base branch moved on (for example an earlier PR was merged) and caused a conflict you now fix. Not counted as a miss |
 
