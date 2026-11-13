@@ -28,6 +28,7 @@ const row = (patch: Partial<TaskRow>): TaskRow => ({
   id: "t1",
   title: "題",
   child: false,
+  depth: 0,
   start: "sacty",
   repoless: false,
   steps: [],

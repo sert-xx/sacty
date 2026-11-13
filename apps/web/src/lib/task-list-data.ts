@@ -11,14 +11,18 @@ import {
   statusTone,
 } from "@/lib/labels";
 import { repoNameOf } from "@/lib/repo-name";
-import { withSubtasks } from "@/lib/subtasks";
+import { listParentOf, withSubtasks } from "@/lib/subtasks";
 
 /** タスクの一覧の1行に出すもの（画面が取り直すのは、これだけ。PBI-108）。 */
 export type TaskRow = {
   id: string;
   title: string;
-  /** 分割で作った子タスク（親のすぐ下に字下げして出す。PBI-27）。 */
+  /** 分割で作った子タスク・PR のレビューの子タスク（親のすぐ下に字下げして出す。PBI-27・PBI-341）。 */
   child: boolean;
+  /** 字下げの段（0 は親の無いタスク。分割の子のレビューの子は 2。PBI-341）。 */
+  depth: number;
+  /** 一覧の親のタスクの ID（分割の親・レビューする PR を作ったタスク。絞り込みで親が隠れたかを見る。PBI-341）。 */
+  parentId?: string;
   start: Task["start"];
   template?: NonNullable<Task["template"]>;
   source?: { repo: string; number: number };
@@ -75,10 +79,12 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       ...(prConflictNote(t, labels) ? { note: prConflictNote(t, labels) } : {}),
       action: personAction(t, labels),
     })),
-    rows: withSubtasks(mine).map(({ task, child }) => ({
+    rows: withSubtasks(mine).map(({ task, child, depth }) => ({
       id: task.id,
       title: task.title,
       child,
+      depth,
+      ...(listParentOf(task) ? { parentId: listParentOf(task) } : {}),
       start: task.start,
       ...(task.template ? { template: task.template } : {}),
       ...(task.source ? { source: { repo: task.source.repo, number: task.source.number } } : {}),

@@ -52,6 +52,7 @@ describe("タスクの一覧のリポジトリ名（PBI-141）", () => {
       id: "t1",
       title: "題",
       child: false,
+      depth: 0,
       start: "sacty",
       repoless: false,
       steps: [],
@@ -90,5 +91,49 @@ describe("タスクの一覧のリポジトリ名（PBI-141）", () => {
     expect(t2).toContain("#7");
     expect(t2).not.toContain("acme/api");
     expect(div.textContent).not.toContain("https://github.com");
+  });
+  it("子タスクは親の下に字下げし、分割の子のレビューの子はもう一段深く字下げする（PBI-341）", () => {
+    const row = (patch: Partial<TaskRow>): TaskRow => ({
+      id: "t1",
+      title: "題",
+      child: false,
+      depth: 0,
+      start: "sacty",
+      repoless: false,
+      steps: [],
+      status: { text: "実行待ち", tone: "waiting" },
+      createdAt: "2026-10-01T12:00:00.000Z",
+      ...patch,
+    });
+    const data: TaskListData = {
+      projectId: "p1",
+      needsYou: [],
+      rows: [
+        row({ id: "p", title: "親" }),
+        row({ id: "a", title: "分割の子", child: true, depth: 1, parentId: "p" }),
+        row({ id: "r", title: "[PR #2] 分割の子のレビュー", child: true, depth: 2, parentId: "a" }),
+        // 親が別のプロジェクトにある（一覧に無い）子は字下げしない
+        row({ id: "o", title: "親の無いレビュー", child: true, depth: 0, parentId: "x" }),
+      ],
+    };
+    const div = document.createElement("div");
+    div.innerHTML = renderToStaticMarkup(
+      h(
+        I18nProvider as unknown as FC<{ locale: "ja" }>,
+        { locale: "ja" },
+        h(LiveTaskList, { projectId: "p1", initial: data, initialVersion: liveVersion(data) }),
+      ),
+    );
+    const cell = (id: string) => div.querySelector(`[data-testid="task-row-${id}"] td`);
+    expect(cell("p")?.className).not.toContain("pl-");
+    expect(cell("a")?.className).toContain("pl-10");
+    expect(cell("r")?.className).toContain("pl-16");
+    expect(cell("r")?.textContent).toContain("↳");
+    // 字下げは読み上げられないので、読み上げ用の文で親を伝える
+    expect(cell("r")?.querySelector(".sr-only")?.textContent).toBe("（分割の子 の子タスク）");
+    expect(cell("p")?.querySelector(".sr-only")).toBeNull();
+    expect(cell("o")?.className).not.toContain("pl-");
+    expect(cell("o")?.textContent).not.toContain("↳");
+    expect(cell("o")?.querySelector(".sr-only")).toBeNull();
   });
 });

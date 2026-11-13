@@ -18,6 +18,8 @@ const ja = {
   },
   /** 工程の列の補足。 */
   stepsHint: "タスクの内容と対象リポジトリを読んで、オーケストレーターが選びます。",
+  /** 子タスクの行で、読み上げに親を伝える（字下げは見た目だけなので。PBI-341）。 */
+  childOf: (parent: string) => `（${parent} の子タスク）`,
   /** 一覧の絞り込み。 */
   filter: {
     label: "タスクを絞り込む",
@@ -64,6 +66,7 @@ const en: TasksMessages = {
     status: "Status",
   },
   stepsHint: "The Orchestrator chooses them from the task and the target repository.",
+  childOf: (parent) => ` (child task of ${parent})`,
   filter: {
     label: "Filter tasks",
     query: "Search",
