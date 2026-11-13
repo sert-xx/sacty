@@ -10496,7 +10496,14 @@ export class TaskService {
       }
       // 実装の工程が終わったときにする（PBI-331）
       const date = this.outputAt(task, "implement");
-      // 認証・タスクブランチの取得などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの直前に確かめる）
+      // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
+      const subject = await this.commitSubjectFor(
+        task,
+        this.implementCommitKind(task),
+        this.titleAt(task, date),
+      );
+      // 認証・タスクブランチの取得・コミットの題の用意などを待つ間に一時停止・中止を求められたら、プッシュしない（プッシュの
+      // 直前に確かめる。この後は、プッシュまで await しない）
       if (this.stopRequested(task.id)) return "stopped";
       const { commit } = await this.deps.repos.publish({
         dir,
@@ -10507,8 +10514,7 @@ export class TaskService {
         ...(task.baseMerge ? { merge: task.baseMerge.commit } : {}),
         parent,
         branch,
-        // 題は、コミットの日時のときの題にする（同じ提出の再試行で、題を変えても同じコミットにする。PBI-323）
-        message: `${await this.commitSubjectFor(task, this.implementCommitKind(task), this.titleAt(task, date))}\n\nsacty task ${task.id}`,
+        message: `${subject}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
         date,
         authEnv,
