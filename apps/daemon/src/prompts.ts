@@ -1036,8 +1036,8 @@ function earsLines(): string[] {
 const SHOULD_QUESTIONS_MAX = 5;
 /** 既定で決めたことの件数の上限。人間が異論を持ちうるものだけを書かせる。 */
 const DECISIONS_MAX = 5;
-/** 要求要件・設計の全体の行数の目安（テスト観点の JSON を除く）。小さな変更・大きな変更。 */
-const DRAFT_LINES = { small: 20, large: 60 } as const;
+/** 要求要件・設計の全体の行数の目安（テスト観点の JSON を除く）。小さな変更・大きな変更。冒頭のスコープの節の分を足してある（PBI-340）。 */
+const DRAFT_LINES = { small: 25, large: 65 } as const;
 
 /**
  * 人間が読む成果物（要求要件・設計・文書・調査の結果）の分量。読む人間は前提（暗黙知）を持っているので、初版は判断と作業に

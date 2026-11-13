@@ -2910,7 +2910,7 @@ describe("人間が読む成果物の分量（初版は最小限にし、詳し�
       expect(prompt, step).toContain("確認したいことの should が 5 件を超えるときは");
       expect(prompt, step).toContain("問い・推奨の答え・その理由");
       expect(prompt, step).toContain("人間が異論を持ちうるもの。最大 5 件、1件1行");
-      expect(prompt, step).toContain("小さな変更なら 20 行、大きな変更でも 60 行ほどまで");
+      expect(prompt, step).toContain("小さな変更なら 25 行、大きな変更でも 65 行ほどまで");
       expect(prompt, step).toContain("今回の変更で変わらない振る舞い");
       expect(prompt, step).toContain("当てはまらない観点のための「対象外」の節や行");
       expect(prompt, step).toContain("検討して採らなかった案");
