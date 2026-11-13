@@ -429,8 +429,8 @@ Even in a repository that has no tests at all, such as one with only a README, t
 
 ### Deciding the tests on resume
 
-When you resume a paused task that is going on with neither a test command nor the judgment of no tests (in the cases above, or when the Orchestrator decided neither), you can choose one of the following in "Tests" of the resume section of the task details (whatever the reason it stopped).
-A task that an earlier version stopped right after choosing the steps, because the test command could not be determined or it could not proceed without tests, can be resumed the same way (you do not need to create the task again).
+A task that an earlier version stopped right after choosing the steps, because the test command could not be determined or it could not proceed without tests, can be resumed by choosing one of the following in "Tests" of the resume section of the task details (you do not need to create the task again).
+In the current version, a task goes on without stopping even when how to handle tests is not decided, so this section does not appear. It does not appear for a task that stopped for the budget, another error, or a person's pause either (a task that an earlier version stopped because a verification tool was not in the image, or because the request was judged documents only but the diff disagreed, is an exception: this section lets you decide how to handle tests again for it; see [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review)).
 
 - **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`).
   It is passed to the agent of the implementation step as the test command a person decided (sacty does not run it).

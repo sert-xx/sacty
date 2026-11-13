@@ -3118,7 +3118,7 @@ export function applyEvent(
     }
 
     case "TestsDecided":
-      if (!canDecideTests(task)) {
+      if (!testsDecisionRecordable(task)) {
         throw new ActivityIntegrityError(event, "the tests are not undecided");
       }
       if (event.payload.testCommand !== undefined) {
@@ -3939,11 +3939,46 @@ export function documentsOnlyContradicted(task: Task): boolean {
 }
 
 /**
- * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらずに止まったタスクと、
- * 決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）、文書だけの依頼と判断したのに差分に
- * 文書でないファイルがあって止まったタスク（PBI-284）。
+ * テストが決まらないことを理由に止まったときの、止まった理由のコード（PBI-337）。今の版では、テストが決まらないことでは
+ * 止まらない（テストなしの判断を使えなければ、判断を捨てて進む）ので、以前の版で止まったタスクだけが持つ。
+ */
+const TESTS_UNDECIDED_STOP_CODES: ReadonlySet<string> = new Set([
+  "orchestrator.testCommandUnknown",
+  "orchestrator.noTestsContradicted",
+  "orchestrator.noTestsUncertain",
+  "orchestrator.noTestsUnreadable",
+  "orchestrator.bugfixNeedsTests",
+]);
+
+/** テストが決まらないことを理由に止まったタスクか（PBI-337。以前の版で止まったもの）。 */
+function stoppedForUndecidedTests(task: Task): boolean {
+  const stopped = task.pausedMessage;
+  return (
+    task.pausedReason === "error" &&
+    typeof stopped === "object" &&
+    TESTS_UNDECIDED_STOP_CODES.has(stopped.code) &&
+    testsUndecided(task)
+  );
+}
+
+/**
+ * 人が再開のときにテストのコマンドかテストなしを決められるか（TestsDecided）。テストが決まらないことを理由に止まったタスク
+ * （以前の版。PBI-337）と、決まっているテストのコマンドのツールがイメージに無くて止まったタスク（PBI-158）、文書だけの依頼と
+ * 判断したのに差分に文書でないファイルがあって止まったタスク（PBI-284）。予算・ほかのエラー・人の一時停止で止まったタスクは
+ * 含めない。
  */
 export function canDecideTests(task: Task): boolean {
+  return (
+    task.status === "paused" &&
+    (stoppedForUndecidedTests(task) || testToolsMissing(task) || documentsOnlyContradicted(task))
+  );
+}
+
+/**
+ * 台帳の TestsDecided・TaskResumed の rechooseSteps を読み込めるか（PBI-337）。以前の版は、止まった理由を見ずに、テストが
+ * 決まっていないだけで決められた（canDecideTests より広い）ので、その版の記録も読み込めるよう、読み込みではこちらで確かめる。
+ */
+function testsDecisionRecordable(task: Task): boolean {
   return (
     task.status === "paused" &&
     (testsUndecided(task) || testToolsMissing(task) || documentsOnlyContradicted(task))
@@ -3956,7 +3991,7 @@ export function canDecideTests(task: Task): boolean {
  */
 export function canRechooseSteps(task: Task): boolean {
   return (
-    canDecideTests(task) &&
+    testsDecisionRecordable(task) &&
     // ツールが無くて止まったタスク（PBI-158）は、工程の選択をやり直しても同じテストのコマンドになりうる。決め直すか、そのまま再開する
     !testToolsMissing(task) &&
     !documentsOnlyContradicted(task) &&
