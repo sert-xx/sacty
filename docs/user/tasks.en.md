@@ -772,6 +772,12 @@ A project's task list looks like this.
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 
+Child tasks are indented directly under their parent task.
+
+- The child tasks of a task split are listed in the order the split decided.
+- A child task that reviews a PR sacty opened is listed under the task that opened the PR (after its split child tasks, if any). The list shows which task it reviews.
+- The review child task of a PR opened by a split child task is indented one more level under that split child task.
+
 ### Find and filter tasks
 
 Use the fields above "All tasks" to filter the list.

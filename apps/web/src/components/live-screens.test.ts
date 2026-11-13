@@ -477,6 +477,7 @@ describe("タスクの詳細：自動の更新で、操作の途中の状態を�
 const row = (id: string, title: string, status: TaskRow["status"]): TaskRow => ({
   id,
   title,
+  depth: 0,
   child: false,
   start: "sacty",
   repoless: false,

@@ -1,28 +1,52 @@
 import { isCompleted, type Task } from "@sacty/core";
 
+/** 一覧の親（分割の親、またはレビューする PR を作ったタスク。PBI-27・PBI-341）。 */
+function listParentOf(task: Task): string | undefined {
+  return task.parent?.taskId ?? task.reviewOf?.taskId;
+}
+
 /**
- * 一覧の並び。分割で作った子タスクは、親のすぐ下に、分割で決めた順に並べる（PBI-27）。
+ * 一覧の並び。分割で作った子タスクは、親のすぐ下に、分割で決めた順に並べる（PBI-27）。PR のレビューの子タスク（reviewOf。
+ * PBI-330）も、レビューする PR を作ったタスクのすぐ下に、分割の子の後に、作った順（一覧の順）で並べる（PBI-341）。分割の子の
+ * レビューの子は、その分割の子の下にもう一段字下げする（depth は字下げの段。子なら1以上）。
  * 親が一覧に無い子タスク（ほかのプロジェクトに移ったなど）は、そのままの位置に出す。
  */
-export function withSubtasks(tasks: Task[]): { task: Task; child: boolean }[] {
+export function withSubtasks(tasks: Task[]): { task: Task; child: boolean; depth: number }[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
+  const reviews = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const of = task.reviewOf?.taskId;
+    if (!of || task.parent) continue;
+    reviews.set(of, [...(reviews.get(of) ?? []), task]);
+  }
   const placed = new Set<string>();
-  const rows: { task: Task; child: boolean }[] = [];
+  const rows: { task: Task; child: boolean; depth: number }[] = [];
+  const place = (task: Task, depth: number) => {
+    rows.push({ task, child: depth > 0, depth });
+    placed.add(task.id);
+    const children = [
+      ...(task.split?.children ?? []).map((c) => byId.get(c.taskId)),
+      // レビューの子は、一覧の並び（新しい順など）にかかわらず、作った順にする
+      ...(reviews.get(task.id) ?? []).toSorted((x, y) => x.createdAt.localeCompare(y.createdAt)),
+    ];
+    for (const child of children) {
+      if (!child || placed.has(child.id)) continue;
+      place(child, depth + 1);
+    }
+  };
   for (const task of tasks) {
     if (placed.has(task.id)) continue;
-    if (task.parent && byId.has(task.parent.taskId)) continue;
-    rows.push({ task, child: false });
-    placed.add(task.id);
-    for (const c of task.split?.children ?? []) {
-      const child = byId.get(c.taskId);
-      if (!child || placed.has(child.id)) continue;
-      rows.push({ task: child, child: true });
-      placed.add(child.id);
-    }
+    const parent = listParentOf(task);
+    if (parent && byId.has(parent)) continue;
+    place(task, 0);
   }
-  // 親が一覧にあるのに、親の分割の一覧に無い子タスク（作業履歴の不整合）も落とさない
+  // 親が一覧にあるのに、親の分割の一覧に無い子タスク（作業履歴の不整合）・親子が輪になった記録も落とさない
   for (const task of tasks) {
-    if (!placed.has(task.id)) rows.push({ task, child: Boolean(task.parent) });
+    if (!placed.has(task.id)) {
+      const child = Boolean(listParentOf(task));
+      rows.push({ task, child, depth: child ? 1 : 0 });
+      placed.add(task.id);
+    }
   }
   return rows;
 }

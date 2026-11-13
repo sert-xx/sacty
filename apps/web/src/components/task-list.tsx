@@ -125,14 +125,22 @@ export function LiveTaskList({
                     </tr>
                   </thead>
                   <tbody>
-                    {/* 分割で作った子タスクは、親のすぐ下に字下げして出す（PBI-27） */}
+                    {/* 分割で作った子タスク・PR のレビューの子タスクは、親のすぐ下に字下げして出す（PBI-27・PBI-341） */}
                     {rows.map((task) => (
                       <tr
                         key={task.id}
                         className="border-t border-border hover:bg-muted"
                         data-testid={`task-row-${task.id}`}
                       >
-                        <td className={task.child ? "py-3.5 pr-5 pl-10" : "px-5 py-3.5"}>
+                        <td
+                          className={
+                            task.depth >= 2
+                              ? "py-3.5 pr-5 pl-16"
+                              : task.child
+                                ? "py-3.5 pr-5 pl-10"
+                                : "px-5 py-3.5"
+                          }
+                        >
                           {task.child && (
                             <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
                               ↳
