@@ -138,10 +138,13 @@ From the API, send `{"template": "docs-setup", "projectId": "<project ID>", "rep
 
 The task details look like this.
 
-![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person, deliverables on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
+![Task details (the title, status, steps, and tabs fixed at the top, the notice for a person and the Sacty AI review, the description, deliverables, PR, and gathered information on the Overview tab, and the properties and recent activity in the right column)](images/task-detail.en.png)
 
 - The title, status, steps, actions (pause, cancel, re-review), and tabs are fixed at the top of the screen and stay visible when you scroll.
 - When the task is waiting for an approval or a decision, or is paused, the notice appears below the tabs whichever tab is open.
+- While the PR awaiting approval is open, "Sacty AI review" appears below the notice.
+  It shows whether a Sacty AI review is attached to the PR's current head (its latest commit): not yet, reviewing, or attached ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+  While sacty has not yet read the current head from GitHub (for example, right after it starts), it says the state is unknown.
 - Switch the view with the tabs.
 
 | Tab | What it shows |
@@ -468,7 +471,7 @@ When the Implementation step changes nothing (it decided the requirements are al
 
 The details of a task waiting for its implementation PR to be merged look like this.
 
-![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button)](images/task-pull-request.en.png)
+![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the Sacty AI review below it)](images/task-pull-request.en.png)
 
 Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval is the merge. Steps that created a PR are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
@@ -768,7 +771,7 @@ You can carry on with follow-up work (handling issues it found, further improvem
 
 A project's task list looks like this.
 
-![The task list (Needs you cards and all tasks)](images/task-list.en.png)
+![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
 
 Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
 

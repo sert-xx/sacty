@@ -169,9 +169,17 @@ docs/user は利用者がそのまま読むページなので、書き方・分�
   - 架空のデータで撮り、実在の組織・人・秘密の値を写さない。
   - データは場面ごとに分ける。設定・操作・トラブルの説明の画面は `scripts/docs-screenshots/seed.mjs`（場面 `docs`）、
     紹介のページの画面は `scripts/docs-screenshots/seed-intro.mjs`（場面 `intro`）。
+  - データは、今の実装が記録する流れで書く（道具は `scripts/docs-screenshots/seed-lib.mjs`）。
+    sacty が作る PR には、レビューを終えた子タスクを入れる。
+    以前の版の流れの記録（実装の前段の調査・最終レビューなど）は、その記録を写す画面に要るときだけ入れ、理由をコメントに書く。
+  - 撮る間は、実際の GitHub に問い合わせない。GitHub の API への問い合わせには、データのとおりの答えを返す
+    （`scripts/docs-screenshots/github-stub.mjs`）。
+  - 撮る間にデーモンが作業履歴に書き足したら、画像を置き換えずに失敗する（データが今の実装の流れと合っていない）。
+    データを今の流れに直してから、撮り直す。
   - 画面には日時が写るので、撮り直すと画像が変わる。直したい場面だけを撮る（例 `node scripts/docs-screenshots/capture.mjs intro`）。
   - 画面を変えて写っている所が変わったら、同じ PR で撮り直す。
 - 図とスクリーンショットにした経緯は [ADR](adr/20261022-1732-docs-svg-diagrams-and-screenshots.md) にある。
+  撮る間の GitHub の答えと、作業履歴への書き足しの確かめを入れた経緯は、[別の ADR](adr/20261114-1419-screenshots-github-answers-and-activity-check.md) にある。
 - これらの方針に従って書く・直すためのスキルを、Claude Code 用（`.claude/skills/sacty-docs/`）と Codex 用
   （`.agents/skills/sacty-docs/`）に置いている。2つの中身は同じで、テストで一致を確かめる。
 - この構成と方針を決めた経緯は [ADR](adr/20261014-0816-superseded-docs-structure-and-policy.md) にある。ユーザードキュメントの文体と

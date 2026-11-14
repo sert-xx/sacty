@@ -72,9 +72,9 @@ When the cause is right but you do not want the proposed fix as it is, press "Ed
 
 ## The audit page
 
-The audit page looks like this (the image uses the audit mock data).
+The audit page looks like this (the image uses the audit mock data and shows the upper part of the page, down to the causes and the proposals that need a decision).
 
-![A project's audit page (causes, improvement proposals, audited tasks)](images/audit.en.png)
+![A project's audit page (causes, and the improvement proposals that need a decision)](images/audit.en.png)
 
 "Audit" in the side menu opens the audit page of the project you are viewing (`/projects/<ID>/audit`).
 
