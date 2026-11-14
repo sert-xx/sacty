@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 420" width="1040" height="420" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-loop.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">It gets better the more you use it</title>
-  <desc id="desc">When a task completes, AI audits its process and proposes fixes for the causes of its stumbles. When you adopt a proposal, it becomes a fix task. Lessons that help later tasks are kept as memories, which the AI reads in the next task.</desc>
+  <desc id="desc">When a task completes, AI audits its process and proposes fixes for the causes of its stumbles. When you adopt a proposal, it becomes a fix task and runs. Lessons that help later tasks are kept as memories, which the AI reads in the next task.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -71,8 +71,8 @@
   <text x="386" y="222" class="sub">Lessons for later tasks</text>
   <rect x="452.6" y="55" width="134.9" height="18" rx="4" class="label-bg"/>
   <text x="520" y="68" class="label" text-anchor="middle">automatically when done</text>
-  <rect x="66.8" y="199" width="126.4" height="18" rx="4" class="label-bg"/>
-  <text x="130" y="212" class="label" text-anchor="middle">applies to later tasks</text>
+  <rect x="77.5" y="199" width="105" height="18" rx="4" class="label-bg"/>
+  <text x="130" y="212" class="label" text-anchor="middle">runs as a fix task</text>
   <rect x="718.7" y="137" width="82.7" height="18" rx="4" class="label-bg"/>
   <text x="760" y="150" class="label" text-anchor="middle">keeps lessons</text>
   <rect x="224.5" y="137" width="111" height="18" rx="4" class="label-bg"/>

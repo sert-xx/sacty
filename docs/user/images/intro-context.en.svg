@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 500" width="1040" height="500" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 460" width="1040" height="460" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-context.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">Layering your team's way of working</title>
-  <desc id="desc">Organization, team, and project contexts are layered on top of sacty's default context. Each lower layer inherits the layer above and adds to or overrides it. The task's AI agents use the combined rules, skills, MCP servers, and internal APIs.</desc>
+  <desc id="desc">The context you set for the project, and the contexts it inherits from, are layered on top of sacty's default context. How many layers there are and how they are divided is up to you; company-wide and team-wide are examples. Each lower layer inherits the layer above and adds to or overrides it. The task's AI agents use the combined rules, skills, MCP servers, and internal APIs.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -43,36 +43,36 @@
     <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
-  <rect x="20" y="20" width="460" height="460" rx="14" style="fill:var(--gray-bg);stroke:var(--gray-line)"/>
+  <rect x="20" y="20" width="460" height="420" rx="14" style="fill:var(--gray-bg);stroke:var(--gray-line)"/>
   <text x="40" y="46" class="zone" style="fill:var(--gray)">Context (layered from the top)</text>
-  <path d="M250 140 L250 166" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M250 242 L250 268" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M250 344 L250 370" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M480 250 L620 260" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 140 L250 162" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 238 L250 260" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 336 L250 358" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M480 230 L620 230" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="40" y="64" width="420" height="76" rx="10" class="card" style=""/>
   <svg x="56" y="78" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="92" y="96" class="title">sacty defaults</text>
   <text x="56" y="124" class="sub">How to review, write, and state requirements</text>
-  <rect x="40" y="166" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
-  <svg x="56" y="180" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="198" class="title">Shared by the organization (optional)</text>
-  <text x="56" y="226" class="sub">Company rules, internal APIs, MCP servers</text>
-  <rect x="40" y="268" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
-  <svg x="56" y="282" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="300" class="title">Shared by the team (optional)</text>
-  <text x="56" y="328" class="sub">Team conventions and skills</text>
-  <rect x="40" y="370" width="420" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="56" y="384" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="402" class="title">Project</text>
-  <text x="56" y="430" class="sub">Additions and overrides for this project</text>
-  <rect x="620" y="196" width="400" height="128" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="636" y="210" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="672" y="228" class="title">The task's AI agents</text>
-  <text x="636" y="256" class="sub">Work with the combined rules, skills,</text>
-  <text x="636" y="276" class="sub">MCP servers, and internal APIs</text>
-  <text x="636" y="296" class="sub">No need to explain each time</text>
-  <rect x="257" y="144" width="123.9" height="18" rx="4" class="label-bg"/>
-  <text x="262" y="157" class="label" text-anchor="start">inherit, add, override</text>
-  <rect x="532.3" y="241" width="55.3" height="18" rx="4" class="label-bg"/>
-  <text x="560" y="254" class="label" text-anchor="middle">combined</text>
+  <rect x="40" y="162" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
+  <svg x="56" y="176" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="194" class="title">Company-wide (example)</text>
+  <text x="56" y="222" class="sub">Company rules, internal APIs, MCP servers</text>
+  <rect x="40" y="260" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
+  <svg x="56" y="274" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="292" class="title">Team-wide (example)</text>
+  <text x="56" y="320" class="sub">Team conventions and skills</text>
+  <rect x="40" y="358" width="420" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="56" y="372" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="390" class="title">Project</text>
+  <text x="56" y="418" class="sub">Additions and overrides for this project</text>
+  <rect x="620" y="166" width="400" height="128" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="636" y="180" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="672" y="198" class="title">The task's AI agents</text>
+  <text x="636" y="226" class="sub">Work with the combined rules, skills,</text>
+  <text x="636" y="246" class="sub">MCP servers, and internal APIs</text>
+  <text x="636" y="266" class="sub">No need to explain each time</text>
+  <rect x="257" y="142" width="123.9" height="18" rx="4" class="label-bg"/>
+  <text x="262" y="155" class="label" text-anchor="start">inherit, add, override</text>
+  <rect x="522.3" y="211" width="55.3" height="18" rx="4" class="label-bg"/>
+  <text x="550" y="224" class="label" text-anchor="middle">combined</text>
 </svg>

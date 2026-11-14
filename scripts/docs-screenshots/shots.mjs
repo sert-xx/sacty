@@ -1,6 +1,8 @@
 // 撮る画面の一覧。name は docs/user/images/<name>.png（英語の版は <name>.en.png）になる。
 // height を書いたものは、ページの上からその高さまでを撮る（幅は capture.mjs の画面の幅）。
 // prepare で操作してから、selector の要素を撮る（maxHeight で高さを切る）。
+// until を書いたものは、ページの上から、その要素の下の端までを撮る。
+// scenario は、撮るときのデータの場面（capture.mjs の SCENARIOS。書かなければ docs）。
 export const SHOTS = [
   { name: "dashboard", path: "/dashboard", height: 880 },
   { name: "task-list", path: "/projects/payments/tasks", height: 960 },
@@ -81,4 +83,19 @@ export const SHOTS = [
     maxHeight: 1100,
   },
   { name: "audit", path: "/projects/payments/audit", height: 1000 },
+  // 紹介のページ（introduction.md）の画面。ふだんの使い方が伝わる状態のデータ（seed-intro.mjs）で撮る
+  {
+    // あなたの出番のカードと、タスクの一覧（工程・PR のレビューの子タスク・状態）
+    name: "intro-tasks",
+    scenario: "intro",
+    path: "/projects/payments/tasks",
+    until: 'section[aria-labelledby="all-tasks"]',
+  },
+  {
+    // 監査が見つけた原因と、改修の提案（判断待ちと、採用して改修のタスクになったもの）
+    name: "intro-audit",
+    scenario: "intro",
+    path: "/projects/payments/audit",
+    until: 'section[aria-labelledby="audit-proposals"]',
+  },
 ];

@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 290" width="1120" height="290" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 380" width="1040" height="380" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-flow.mjs）を直して npm run docs:diagrams で作り直す -->
-  <title id="title">From a request to a merged PR</title>
-  <desc id="desc">You make a request from an issue, JIRA, or the web UI. sacty's AI agents gather the related information, choose how to proceed, do the work, fix it through AI review, and open a PR. You approve by merging the PR, or send it back with a comment.</desc>
+  <title id="title">From a request to your decision on the PR</title>
+  <desc id="desc">You make a request from the web UI, an issue, or JIRA. sacty's AI agents gather the context, choose how to proceed, produce the result of each step, fix it through review by another AI agent, and open a PR. You approve by merging the PR, or send it back with a comment. Approving moves on to the next step; sending it back returns to fixing.</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -43,53 +43,48 @@
     <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
-  <rect x="10" y="20" width="180" height="200" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
-  <text x="30" y="46" class="zone" style="fill:var(--purple)">You</text>
-  <rect x="194" y="20" width="732" height="200" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
-  <text x="214" y="46" class="zone" style="fill:var(--blue)">sacty (AI agents do the work)</text>
-  <rect x="930" y="20" width="180" height="200" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
-  <text x="950" y="46" class="zone" style="fill:var(--purple)">You</text>
-  <path d="M180 132 L204 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M364 132 L388 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M548 132 L572 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M732 132 L756 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M916 132 L940 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M1020 202 L1020 246 Q1020 256 1010 256 L662 256 Q652 256 652 246 L652 202" class="muted" style="" marker-end="url(#ah-arrow)"/>
-  <rect x="20" y="62" width="160" height="140" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
-  <svg x="36" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
-  <text x="72" y="94" class="title">Request</text>
-  <text x="36" y="122" class="sub">Write what you</text>
-  <text x="36" y="142" class="sub">want, in an issue,</text>
-  <text x="36" y="162" class="sub">JIRA, or the UI</text>
-  <rect x="204" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="220" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
-  <text x="256" y="94" class="title">Research</text>
-  <text x="220" y="122" class="sub">Reads tickets,</text>
-  <text x="220" y="142" class="sub">code, and docs</text>
-  <text x="220" y="162" class="sub">for the context</text>
-  <rect x="388" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="404" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
-  <text x="440" y="94" class="title">Plan</text>
-  <text x="404" y="122" class="sub">Chooses the steps</text>
-  <text x="404" y="142" class="sub">that fit the work</text>
-  <rect x="572" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="588" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="624" y="94" class="title">Build</text>
-  <text x="588" y="122" class="sub">Requirements,</text>
-  <text x="588" y="142" class="sub">design, code,</text>
-  <text x="588" y="162" class="sub">and tests</text>
-  <rect x="756" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="772" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
-  <text x="808" y="94" class="title">Review</text>
-  <text x="772" y="122" class="sub">AI reviews the PR</text>
-  <text x="772" y="142" class="sub">and fixes it until</text>
-  <text x="772" y="162" class="sub">nothing is left</text>
-  <text x="772" y="182" class="sub"></text>
-  <rect x="940" y="62" width="160" height="140" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
-  <svg x="956" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
-  <text x="992" y="94" class="title">Approve</text>
-  <text x="956" y="122" class="sub">Merge the PR</text>
-  <text x="956" y="142" class="sub">and you're done</text>
-  <rect x="717.8" y="248" width="236.3" height="18" rx="4" class="label-bg"/>
-  <text x="836" y="261" class="label" text-anchor="middle">Send it back with a comment, and it is fixed</text>
+  <rect x="20" y="20" width="1000" height="150" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
+  <text x="40" y="46" class="zone" style="fill:var(--purple)">You</text>
+  <rect x="20" y="210" width="1000" height="150" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
+  <text x="40" y="236" class="zone" style="fill:var(--blue)">sacty's AI agents</text>
+  <path d="M231 154 L231 252" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M262 298 L286 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M508 298 L532 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M754 298 L778 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M929 252 L929 154" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M778 108 L653 108 Q643 108 643 118 L643 252" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="40" y="62" width="222" height="92" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="56" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <text x="92" y="94" class="title">Request</text>
+  <text x="56" y="122" class="sub">Write what you want in</text>
+  <text x="56" y="142" class="sub">the UI, an issue, or JIRA</text>
+  <rect x="778" y="62" width="222" height="92" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="794" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <text x="830" y="94" class="title">Decide</text>
+  <text x="794" y="122" class="sub">Merge the PR to approve</text>
+  <text x="794" y="142" class="sub">Comment to send it back</text>
+  <rect x="40" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="56" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+  <text x="92" y="284" class="title">Research</text>
+  <text x="56" y="312" class="sub">Gathers the context from</text>
+  <text x="56" y="332" class="sub">tickets, code, and docs</text>
+  <rect x="286" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="302" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
+  <text x="338" y="284" class="title">Plan</text>
+  <text x="302" y="312" class="sub">Chooses the steps</text>
+  <text x="302" y="332" class="sub">that fit the work</text>
+  <rect x="532" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="548" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="584" y="284" class="title">Build</text>
+  <text x="548" y="312" class="sub">Produces each step:</text>
+  <text x="548" y="332" class="sub">requirements, design, code</text>
+  <rect x="778" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="794" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
+  <text x="830" y="284" class="title">AI review</text>
+  <text x="794" y="312" class="sub">Another AI reviews the PR;</text>
+  <text x="794" y="332" class="sub">fixes until none remain</text>
+  <rect x="936" y="183" width="88.4" height="18" rx="4" class="label-bg"/>
+  <text x="941" y="196" class="label" text-anchor="start">the PR arrives</text>
+  <rect x="386.6" y="183" width="244.4" height="18" rx="4" class="label-bg"/>
+  <text x="631" y="196" class="label" text-anchor="end">next step when approved, fix when sent back</text>
 </svg>

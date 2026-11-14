@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 420" width="1040" height="420" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-loop.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">回すほど賢くなる</title>
-  <desc id="desc">タスクが完了すると、AI がその過程を監査して、つまずきの原因と、それを防ぐ改修を提案する。あなたが提案を採用すると、改修のタスクになる。次のタスクにも役立つ知見はメモリーに残り、次のタスクの AI が読む。</desc>
+  <desc id="desc">タスクが完了すると、AI がその過程を監査して、つまずきの原因と、それを防ぐ改修を提案する。あなたが提案を採用すると、改修のタスクになって進む。次のタスクにも役立つ知見はメモリーに残り、次のタスクの AI が読む。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -71,8 +71,8 @@
   <text x="386" y="222" class="sub">次のタスクにも役立つ知見</text>
   <rect x="469" y="55" width="102" height="18" rx="4" class="label-bg"/>
   <text x="520" y="68" class="label" text-anchor="middle">完了したら自動で</text>
-  <rect x="73.3" y="199" width="113.5" height="18" rx="4" class="label-bg"/>
-  <text x="130" y="212" class="label" text-anchor="middle">次のタスクから効く</text>
+  <rect x="61.8" y="199" width="136.5" height="18" rx="4" class="label-bg"/>
+  <text x="130" y="212" class="label" text-anchor="middle">改修のタスクとして進む</text>
   <rect x="726.3" y="137" width="67.5" height="18" rx="4" class="label-bg"/>
   <text x="760" y="150" class="label" text-anchor="middle">知見を残す</text>
   <rect x="229" y="137" width="102" height="18" rx="4" class="label-bg"/>

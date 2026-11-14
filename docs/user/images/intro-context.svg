@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 500" width="1040" height="500" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 460" width="1040" height="460" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-context.mjs）を直して npm run docs:diagrams で作り直す -->
   <title id="title">チームのやり方を層で重ねる</title>
-  <desc id="desc">sacty の既定のコンテキストの上に、組織・チーム・プロジェクトのコンテキストを重ねる。下の層は、上の層を引き継いで足したり上書きしたりする。重ねたルール・スキル・MCP サーバー・社内の API を、タスクの AI エージェントが使う。</desc>
+  <desc id="desc">sacty の既定のコンテキストの上に、プロジェクトに指定したコンテキストと、その継承元を重ねる。継承元の数と分け方は自由で、全社で共通・チームで共通は例。下の層は、上の層を引き継いで足したり上書きしたりする。重ねたルール・スキル・MCP サーバー・社内の API を、タスクの AI エージェントが使う。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -43,36 +43,36 @@
     <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
-  <rect x="20" y="20" width="460" height="460" rx="14" style="fill:var(--gray-bg);stroke:var(--gray-line)"/>
+  <rect x="20" y="20" width="460" height="420" rx="14" style="fill:var(--gray-bg);stroke:var(--gray-line)"/>
   <text x="40" y="46" class="zone" style="fill:var(--gray)">コンテキスト（上から順に重ねる）</text>
-  <path d="M250 140 L250 166" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M250 242 L250 268" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M250 344 L250 370" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M480 250 L620 260" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 140 L250 162" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 238 L250 260" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M250 336 L250 358" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M480 230 L620 230" class="flow" style="" marker-end="url(#ah-arrow)"/>
   <rect x="40" y="64" width="420" height="76" rx="10" class="card" style=""/>
   <svg x="56" y="78" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--green)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
   <text x="92" y="96" class="title">sacty の既定</text>
   <text x="56" y="124" class="sub">レビュー・文章・要求要件の書き方など</text>
-  <rect x="40" y="166" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
-  <svg x="56" y="180" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="198" class="title">組織で共通（任意）</text>
-  <text x="56" y="226" class="sub">全社のルール・社内の API・MCP サーバー</text>
-  <rect x="40" y="268" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
-  <svg x="56" y="282" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="300" class="title">チームで共通（任意）</text>
-  <text x="56" y="328" class="sub">チームの規約・スキル</text>
-  <rect x="40" y="370" width="420" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="56" y="384" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
-  <text x="92" y="402" class="title">プロジェクト</text>
-  <text x="56" y="430" class="sub">このプロジェクトだけの足し・上書き</text>
-  <rect x="620" y="196" width="400" height="128" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
-  <svg x="636" y="210" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="672" y="228" class="title">タスクの AI エージェント</text>
-  <text x="636" y="256" class="sub">重ねたルール・スキル・MCP サーバー・</text>
-  <text x="636" y="276" class="sub">社内の API を使って作業する</text>
-  <text x="636" y="296" class="sub">毎回の説明は要らない</text>
-  <rect x="257" y="144" width="159.5" height="18" rx="4" class="label-bg"/>
-  <text x="262" y="157" class="label" text-anchor="start">引き継いで足す・上書きする</text>
-  <rect x="520.5" y="241" width="79" height="18" rx="4" class="label-bg"/>
-  <text x="560" y="254" class="label" text-anchor="middle">合成して渡す</text>
+  <rect x="40" y="162" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
+  <svg x="56" y="176" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="194" class="title">全社で共通（例）</text>
+  <text x="56" y="222" class="sub">全社のルール・社内の API・MCP サーバー</text>
+  <rect x="40" y="260" width="420" height="76" rx="10" class="card" style="stroke:var(--gray-line);stroke-dasharray:5 4"/>
+  <svg x="56" y="274" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--gray)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="292" class="title">チームで共通（例）</text>
+  <text x="56" y="320" class="sub">チームの規約・スキル</text>
+  <rect x="40" y="358" width="420" height="76" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="56" y="372" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></svg>
+  <text x="92" y="390" class="title">プロジェクト</text>
+  <text x="56" y="418" class="sub">このプロジェクトだけの足し・上書き</text>
+  <rect x="620" y="166" width="400" height="128" rx="10" class="card" style="stroke:var(--blue);stroke-width:1.5"/>
+  <svg x="636" y="180" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="672" y="198" class="title">タスクの AI エージェント</text>
+  <text x="636" y="226" class="sub">重ねたルール・スキル・MCP サーバー・</text>
+  <text x="636" y="246" class="sub">社内の API を使って作業する</text>
+  <text x="636" y="266" class="sub">毎回の説明は要らない</text>
+  <rect x="257" y="142" width="159.5" height="18" rx="4" class="label-bg"/>
+  <text x="262" y="155" class="label" text-anchor="start">引き継いで足す・上書きする</text>
+  <rect x="510.5" y="211" width="79" height="18" rx="4" class="label-bg"/>
+  <text x="550" y="224" class="label" text-anchor="middle">合成して渡す</text>
 </svg>

@@ -1,164 +1,174 @@
 import { t } from "../lib.mjs";
 
 // ユーザードキュメントの紹介のページ（docs/user/introduction.md）の図。
-// はじめて読む人向けなので、工程の名前や設定の名前は出さず、流れだけを描く。
+// はじめて読む人向けなので、工程の名前や設定の名前は出さず、流れと役割だけを描く。
 
-const CARD_W = 160;
-const GAP = 24;
-const LEFT = 20;
-const cardX = (i) => LEFT + i * (CARD_W + GAP);
+const LANE_W = 222;
+const LANE_GAP = 24;
+const laneX = (i) => 40 + i * (LANE_W + LANE_GAP);
 
-/** 依頼から、PR のマージ（承認）までの流れ。 */
+/**
+ * 依頼から、PR での判断までの流れ。上の段があなた、下の段が sacty。
+ * 承認は工程ごとにあるので（大きな作業は要求要件・設計・実装）、判断から作業へ戻る線で繰り返しを表す。
+ */
 export const introFlow = {
   name: "intro-flow",
   outputs: ["user"],
-  width: 1120,
-  height: 290,
-  title: t("依頼から PR のマージまで", "From a request to a merged PR"),
+  width: 1040,
+  height: 380,
+  title: t("依頼から PR での判断まで", "From a request to your decision on the PR"),
   desc: t(
-    "あなたが Issue・JIRA・画面からやりたいことを依頼すると、sacty の AI エージェントが、関係する情報を集め、進め方を選び、作業し、AI のレビューで直してから PR を出す。あなたは PR をマージして承認するか、コメントで差し戻す。",
-    "You make a request from an issue, JIRA, or the web UI. sacty's AI agents gather the related information, choose how to proceed, do the work, fix it through AI review, and open a PR. You approve by merging the PR, or send it back with a comment.",
+    "あなたが画面・Issue・JIRA からやりたいことを依頼すると、sacty の AI エージェントが、前提を集め、進め方を選び、工程ごとに成果を作り、別の AI エージェントのレビューで直してから PR を出す。あなたは PR をマージして承認するか、コメントで差し戻す。承認すると次の工程へ進み、差し戻すと直しに戻る。",
+    "You make a request from the web UI, an issue, or JIRA. sacty's AI agents gather the context, choose how to proceed, produce the result of each step, fix it through review by another AI agent, and open a PR. You approve by merging the PR, or send it back with a comment. Approving moves on to the next step; sending it back returns to fixing.",
   ),
   items: [
     {
       kind: "zone",
-      x: LEFT - 10,
+      x: 20,
       y: 20,
-      w: CARD_W + 20,
-      h: 200,
+      w: 1000,
+      h: 150,
       tone: "purple",
       label: t("あなた", "You"),
     },
     {
       kind: "zone",
-      x: cardX(1) - 10,
-      y: 20,
-      w: CARD_W * 4 + GAP * 3 + 20,
-      h: 200,
+      x: 20,
+      y: 210,
+      w: 1000,
+      h: 150,
       tone: "blue",
-      label: t("sacty（AI エージェントが進める）", "sacty (AI agents do the work)"),
-    },
-    {
-      kind: "zone",
-      x: cardX(5) - 10,
-      y: 20,
-      w: CARD_W + 20,
-      h: 200,
-      tone: "purple",
-      label: t("あなた", "You"),
+      label: t("sacty の AI エージェント", "sacty's AI agents"),
     },
     {
       kind: "card",
       id: "request",
-      x: cardX(0),
+      x: laneX(0),
       y: 62,
-      w: CARD_W,
-      h: 140,
+      w: LANE_W,
+      h: 92,
       icon: "user",
       tone: "purple",
       strong: true,
-      title: t("依頼", "Request"),
+      title: t("依頼する", "Request"),
       lines: [
-        t("やりたいことを書く", "Write what you"),
-        t("Issue・JIRA・", "want, in an issue,"),
-        t("画面から", "JIRA, or the UI"),
+        t("やりたいことを書く", "Write what you want in"),
+        t("画面・Issue・JIRA から", "the UI, an issue, or JIRA"),
+      ],
+    },
+    {
+      kind: "card",
+      id: "decide",
+      x: laneX(3),
+      y: 62,
+      w: LANE_W,
+      h: 92,
+      icon: "merge",
+      tone: "purple",
+      strong: true,
+      title: t("判断する", "Decide"),
+      lines: [
+        t("PR をマージすれば承認", "Merge the PR to approve"),
+        t("コメントすれば差し戻し", "Comment to send it back"),
       ],
     },
     {
       kind: "card",
       id: "gather",
-      x: cardX(1),
-      y: 62,
-      w: CARD_W,
-      h: 140,
+      x: laneX(0),
+      y: 252,
+      w: LANE_W,
+      h: 92,
       icon: "search",
       tone: "blue",
       title: t("下調べ", "Research"),
       lines: [
-        t("チケット・コード・", "Reads tickets,"),
-        t("社内の資料から", "code, and docs"),
-        t("前提を集める", "for the context"),
+        t("チケット・コード・資料から", "Gathers the context from"),
+        t("前提を集める", "tickets, code, and docs"),
       ],
     },
     {
       kind: "card",
       id: "plan",
-      x: cardX(2),
-      y: 62,
-      w: CARD_W,
-      h: 140,
+      x: laneX(1),
+      y: 252,
+      w: LANE_W,
+      h: 92,
       icon: "list",
       tone: "blue",
       title: t("計画", "Plan"),
-      lines: [t("作業に合った", "Chooses the steps"), t("進め方を選ぶ", "that fit the work")],
+      lines: [t("作業に合わせて", "Chooses the steps"), t("進め方を選ぶ", "that fit the work")],
     },
     {
       kind: "card",
       id: "work",
-      x: cardX(3),
-      y: 62,
-      w: CARD_W,
-      h: 140,
+      x: laneX(2),
+      y: 252,
+      w: LANE_W,
+      h: 92,
       icon: "box",
       tone: "blue",
       title: t("作業", "Build"),
       lines: [
-        t("要求要件・設計・", "Requirements,"),
-        t("実装・テスト", "design, code,"),
-        t("", "and tests"),
+        t("工程ごとに成果を作る", "Produces each step:"),
+        t("（要求要件・設計・実装）", "requirements, design, code"),
       ],
     },
     {
       kind: "card",
       id: "review",
-      x: cardX(4),
-      y: 62,
-      w: CARD_W,
-      h: 140,
+      x: laneX(3),
+      y: 252,
+      w: LANE_W,
+      h: 92,
       icon: "check",
       tone: "blue",
-      title: t("レビュー", "Review"),
+      title: t("AI のレビュー", "AI review"),
       lines: [
-        t("AI が PR を", "AI reviews the PR"),
-        t("レビューし、", "and fixes it until"),
-        t("指摘が無くなるまで", "nothing is left"),
-        t("直す", ""),
+        t("別の AI が PR をレビューし、", "Another AI reviews the PR;"),
+        t("指摘が無くなるまで直す", "fixes until none remain"),
       ],
     },
     {
-      kind: "card",
-      id: "approve",
-      x: cardX(5),
-      y: 62,
-      w: CARD_W,
-      h: 140,
-      icon: "merge",
-      tone: "purple",
-      strong: true,
-      title: t("承認", "Approve"),
-      lines: [t("PR をマージする", "Merge the PR"), t("だけ", "and you're done")],
+      kind: "edge",
+      from: "request",
+      to: "gather",
+      fromSide: "b",
+      toSide: "t",
+      straight: true,
+      // 下の段の見出しに重ならないよう、右に寄せる
+      fromOffset: 80,
+      toOffset: 80,
     },
-    { kind: "edge", from: "request", to: "gather", straight: true },
     { kind: "edge", from: "gather", to: "plan", straight: true },
     { kind: "edge", from: "plan", to: "work", straight: true },
     { kind: "edge", from: "work", to: "review", straight: true },
-    { kind: "edge", from: "review", to: "approve", straight: true },
     {
       kind: "edge",
-      from: "approve",
-      to: "work",
-      fromSide: "b",
+      from: "review",
+      to: "decide",
+      fromSide: "t",
       toSide: "b",
-      style: "muted",
-      via: [
-        [cardX(5) + CARD_W / 2, 256],
-        [cardX(3) + CARD_W / 2, 256],
-      ],
+      straight: true,
+      fromOffset: 40,
+      toOffset: 40,
+      label: t("PR が届く", "the PR arrives"),
+      labelAt: [laneX(3) + LANE_W / 2 + 52, 196],
+      labelAnchor: "start",
+    },
+    {
+      kind: "edge",
+      from: "decide",
+      to: "work",
+      fromSide: "l",
+      toSide: "t",
+      via: [[laneX(2) + LANE_W / 2, 108]],
       label: t(
-        "コメントで差し戻すと、直してもう一度",
-        "Send it back with a comment, and it is fixed",
+        "承認したら次の工程へ・差し戻したら直しへ",
+        "next step when approved, fix when sent back",
       ),
-      labelAt: [cardX(4) + CARD_W / 2, 261],
+      labelAt: [laneX(2) + LANE_W / 2 - 12, 196],
+      labelAnchor: "end",
     },
   ],
 };
@@ -173,8 +183,8 @@ export const introLoop = {
   height: 420,
   title: t("回すほど賢くなる", "It gets better the more you use it"),
   desc: t(
-    "タスクが完了すると、AI がその過程を監査して、つまずきの原因と、それを防ぐ改修を提案する。あなたが提案を採用すると、改修のタスクになる。次のタスクにも役立つ知見はメモリーに残り、次のタスクの AI が読む。",
-    "When a task completes, AI audits its process and proposes fixes for the causes of its stumbles. When you adopt a proposal, it becomes a fix task. Lessons that help later tasks are kept as memories, which the AI reads in the next task.",
+    "タスクが完了すると、AI がその過程を監査して、つまずきの原因と、それを防ぐ改修を提案する。あなたが提案を採用すると、改修のタスクになって進む。次のタスクにも役立つ知見はメモリーに残り、次のタスクの AI が読む。",
+    "When a task completes, AI audits its process and proposes fixes for the causes of its stumbles. When you adopt a proposal, it becomes a fix task and runs. Lessons that help later tasks are kept as memories, which the AI reads in the next task.",
   ),
   items: [
     {
@@ -275,7 +285,7 @@ export const introLoop = {
       straight: true,
       fromOffset: -60,
       toOffset: -60,
-      label: t("次のタスクから効く", "applies to later tasks"),
+      label: t("改修のタスクとして進む", "runs as a fix task"),
       labelAt: [130, 212],
     },
     {
@@ -307,18 +317,22 @@ export const introLoop = {
 
 const LAYER_W = 420;
 const LAYER_H = 76;
-const layerY = (i) => 64 + i * (LAYER_H + 26);
+const layerY = (i) => 64 + i * (LAYER_H + 22);
 
-/** コンテキストの層を重ねて、AI エージェントに渡す。 */
+/**
+ * コンテキストの層を重ねて、AI エージェントに渡す。
+ * 決まっているのは、いちばん上が sacty の既定で、いちばん下がプロジェクトに指定したコンテキストであること。
+ * 間の層（継承元）の数と分け方は自由なので、全社・チームは例として点線で描く。
+ */
 export const introContext = {
   name: "intro-context",
   outputs: ["user"],
   width: 1040,
-  height: 500,
+  height: 460,
   title: t("チームのやり方を層で重ねる", "Layering your team's way of working"),
   desc: t(
-    "sacty の既定のコンテキストの上に、組織・チーム・プロジェクトのコンテキストを重ねる。下の層は、上の層を引き継いで足したり上書きしたりする。重ねたルール・スキル・MCP サーバー・社内の API を、タスクの AI エージェントが使う。",
-    "Organization, team, and project contexts are layered on top of sacty's default context. Each lower layer inherits the layer above and adds to or overrides it. The task's AI agents use the combined rules, skills, MCP servers, and internal APIs.",
+    "sacty の既定のコンテキストの上に、プロジェクトに指定したコンテキストと、その継承元を重ねる。継承元の数と分け方は自由で、全社で共通・チームで共通は例。下の層は、上の層を引き継いで足したり上書きしたりする。重ねたルール・スキル・MCP サーバー・社内の API を、タスクの AI エージェントが使う。",
+    "The context you set for the project, and the contexts it inherits from, are layered on top of sacty's default context. How many layers there are and how they are divided is up to you; company-wide and team-wide are examples. Each lower layer inherits the layer above and adds to or overrides it. The task's AI agents use the combined rules, skills, MCP servers, and internal APIs.",
   ),
   items: [
     {
@@ -327,7 +341,7 @@ export const introContext = {
       x: 20,
       y: 20,
       w: LAYER_W + 40,
-      h: 460,
+      h: 420,
       tone: "gray",
       label: t("コンテキスト（上から順に重ねる）", "Context (layered from the top)"),
     },
@@ -355,7 +369,7 @@ export const introContext = {
       icon: "layers",
       tone: "gray",
       dashed: true,
-      title: t("組織で共通（任意）", "Shared by the organization (optional)"),
+      title: t("全社で共通（例）", "Company-wide (example)"),
       lines: [
         t("全社のルール・社内の API・MCP サーバー", "Company rules, internal APIs, MCP servers"),
       ],
@@ -370,7 +384,7 @@ export const introContext = {
       icon: "layers",
       tone: "gray",
       dashed: true,
-      title: t("チームで共通（任意）", "Shared by the team (optional)"),
+      title: t("チームで共通（例）", "Team-wide (example)"),
       lines: [t("チームの規約・スキル", "Team conventions and skills")],
     },
     {
@@ -394,7 +408,7 @@ export const introContext = {
       toSide: "t",
       straight: true,
       label: t("引き継いで足す・上書きする", "inherit, add, override"),
-      labelAt: [262, layerY(1) - 9],
+      labelAt: [262, layerY(1) - 7],
       labelAnchor: "start",
     },
     { kind: "edge", from: "org", to: "team", fromSide: "b", toSide: "t", straight: true },
@@ -403,7 +417,7 @@ export const introContext = {
       kind: "card",
       id: "agent",
       x: 620,
-      y: 196,
+      y: 166,
       w: 400,
       h: 128,
       icon: "box",
@@ -422,27 +436,31 @@ export const introContext = {
       to: "agent",
       straight: true,
       label: t("合成して渡す", "combined"),
-      labelAt: [560, 254],
+      labelAt: [550, 224],
     },
   ],
 };
 
-/** ゲートウェイを通す呼び出しの鍵は、ゲートウェイだけが持ち、コンテナには渡さない。 */
+/**
+ * 社内の API・MCP サーバー・GitHub の鍵は、ゲートウェイだけが持ち、コンテナには渡さない。
+ * AI のサービスの認証は、エージェントが使うのでコンテナに渡る（接続先によってはゲートウェイ経由にできる）。
+ * 守られているものと、そうでないものを分けて描く。
+ */
 export const introGateway = {
   name: "intro-gateway",
   outputs: ["user"],
   width: 1040,
-  height: 360,
+  height: 410,
   title: t("鍵はゲートウェイが持つ", "The gateway holds the keys"),
   desc: t(
-    "AI エージェントは使い捨てのコンテナの中で動き、ゲートウェイを通す呼び出しには実行ごとのトークンだけを使う。社内の API・MCP サーバー・GitHub の読み取りは、あなたのマシンで動くゲートウェイが鍵を付けて中継し、許可していない操作は断る。AI の呼び出しも、設定すればゲートウェイを通せる。",
-    "AI agents run in disposable containers and use only a per-run token for calls through the gateway. The gateway on your machine adds the keys and relays calls to internal APIs, MCP servers, and GitHub reads, and refuses operations that are not allowed. AI calls can also go through the gateway if you configure it.",
+    "AI エージェントは使い捨てのコンテナの中で動く。社内の API・MCP サーバー・GitHub の読み取りは、あなたのマシンで動くゲートウェイが鍵を付けて中継し、許可していない操作は断る。エージェントは、ゲートウェイには実行ごとのトークンで頼む。AI のサービスは、エージェントが AI の認証で直接呼ぶ（接続先によっては、ゲートウェイ経由にできる）。",
+    "AI agents run in disposable containers. The gateway on your machine adds the keys and relays calls to internal APIs, MCP servers, and GitHub reads, and refuses operations that are not allowed. Agents ask the gateway with a per-run token. Agents call the AI service directly with the AI credentials (some endpoints can go through the gateway instead).",
   ),
   items: [
     {
       kind: "zone",
       x: 20,
-      y: 70,
+      y: 50,
       w: 270,
       h: 170,
       tone: "blue",
@@ -452,22 +470,22 @@ export const introGateway = {
       kind: "card",
       id: "agent",
       x: 40,
-      y: 112,
+      y: 92,
       w: 230,
       h: 100,
       icon: "box",
       tone: "blue",
       title: t("AI エージェント", "AI agent"),
       lines: [
-        t("中継する先の鍵は持たない", "No keys for relayed calls,"),
-        t("実行ごとのトークンだけ", "only a per-run token"),
+        t("中継する先の鍵は持たない", "No keys for relayed calls;"),
+        t("持つのは AI の認証だけ", "only the AI credentials"),
       ],
     },
     {
       kind: "card",
       id: "gw",
       x: 370,
-      y: 102,
+      y: 82,
       w: 270,
       h: 120,
       icon: "shield",
@@ -484,7 +502,7 @@ export const introGateway = {
       kind: "card",
       id: "keys",
       x: 370,
-      y: 262,
+      y: 232,
       w: 270,
       h: 76,
       icon: "key",
@@ -497,18 +515,18 @@ export const introGateway = {
       kind: "card",
       id: "api",
       x: 740,
-      y: 20,
+      y: 30,
       w: 280,
       h: 76,
       icon: "server",
-      title: t("社内の API・MCP", "Internal APIs, MCP"),
+      title: t("社内の API・MCP サーバー", "Internal APIs, MCP servers"),
       lines: [t("JIRA・社内の仕組みなど", "JIRA, internal systems")],
     },
     {
       kind: "card",
       id: "github",
       x: 740,
-      y: 124,
+      y: 134,
       w: 280,
       h: 76,
       icon: "branch",
@@ -519,12 +537,12 @@ export const introGateway = {
       kind: "card",
       id: "ai",
       x: 740,
-      y: 228,
+      y: 314,
       w: 280,
       h: 76,
       icon: "cpu",
-      title: t("AI の接続先", "AI endpoint"),
-      lines: [t("設定すればゲートウェイ経由", "Through the gateway if set")],
+      title: t("AI のサービス", "AI service"),
+      lines: [t("Claude・Codex の接続先", "The Claude or Codex endpoint")],
     },
     {
       kind: "edge",
@@ -532,11 +550,10 @@ export const introGateway = {
       to: "gw",
       straight: true,
       label: t("トークン", "token"),
-      labelAt: [320, 156],
+      labelAt: [330, 146],
     },
     { kind: "edge", from: "gw", to: "api", fromOffset: -30 },
-    { kind: "edge", from: "gw", to: "github", fromOffset: 0 },
-    { kind: "edge", from: "gw", to: "ai", fromOffset: 30, style: "muted" },
+    { kind: "edge", from: "gw", to: "github", fromOffset: 10 },
     {
       kind: "edge",
       from: "keys",
@@ -547,7 +564,21 @@ export const introGateway = {
       tone: "amber",
       style: "muted",
       label: t("鍵", "keys"),
-      labelAt: [505, 246],
+      labelAt: [505, 222],
+    },
+    {
+      kind: "edge",
+      from: "agent",
+      to: "ai",
+      fromSide: "b",
+      toSide: "l",
+      style: "muted",
+      via: [[155, 352]],
+      label: t(
+        "AI の認証で直接呼ぶ（接続先によっては、ゲートウェイ経由にできる）",
+        "called directly with the AI credentials (some endpoints can use the gateway)",
+      ),
+      labelAt: [450, 356],
     },
   ],
 };

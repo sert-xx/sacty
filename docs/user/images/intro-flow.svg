@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 290" width="1120" height="290" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 380" width="1040" height="380" role="img" aria-labelledby="title desc">
   <!-- scripts/docs-diagrams で作ったファイル。直すときは定義（scripts/docs-diagrams/diagrams/intro-flow.mjs）を直して npm run docs:diagrams で作り直す -->
-  <title id="title">依頼から PR のマージまで</title>
-  <desc id="desc">あなたが Issue・JIRA・画面からやりたいことを依頼すると、sacty の AI エージェントが、関係する情報を集め、進め方を選び、作業し、AI のレビューで直してから PR を出す。あなたは PR をマージして承認するか、コメントで差し戻す。</desc>
+  <title id="title">依頼から PR での判断まで</title>
+  <desc id="desc">あなたが画面・Issue・JIRA からやりたいことを依頼すると、sacty の AI エージェントが、前提を集め、進め方を選び、工程ごとに成果を作り、別の AI エージェントのレビューで直してから PR を出す。あなたは PR をマージして承認するか、コメントで差し戻す。承認すると次の工程へ進み、差し戻すと直しに戻る。</desc>
   <style>
     svg { --text:#1f2328; --sub:#59636e; --card:#ffffff; --line:#d1d9e0; --arrow:#6e7781; --code-bg:#eff2f5;
           --blue:#0969da; --blue-bg:#ddf4ff; --blue-line:#54aeff;
@@ -43,53 +43,48 @@
     <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--purple)"/></marker>
     <marker id="ah-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--red)"/></marker>
   </defs>
-  <rect x="10" y="20" width="180" height="200" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
-  <text x="30" y="46" class="zone" style="fill:var(--purple)">あなた</text>
-  <rect x="194" y="20" width="732" height="200" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
-  <text x="214" y="46" class="zone" style="fill:var(--blue)">sacty（AI エージェントが進める）</text>
-  <rect x="930" y="20" width="180" height="200" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
-  <text x="950" y="46" class="zone" style="fill:var(--purple)">あなた</text>
-  <path d="M180 132 L204 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M364 132 L388 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M548 132 L572 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M732 132 L756 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M916 132 L940 132" class="flow" style="" marker-end="url(#ah-arrow)"/>
-  <path d="M1020 202 L1020 246 Q1020 256 1010 256 L662 256 Q652 256 652 246 L652 202" class="muted" style="" marker-end="url(#ah-arrow)"/>
-  <rect x="20" y="62" width="160" height="140" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
-  <svg x="36" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
-  <text x="72" y="94" class="title">依頼</text>
-  <text x="36" y="122" class="sub">やりたいことを書く</text>
-  <text x="36" y="142" class="sub">Issue・JIRA・</text>
-  <text x="36" y="162" class="sub">画面から</text>
-  <rect x="204" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="220" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
-  <text x="256" y="94" class="title">下調べ</text>
-  <text x="220" y="122" class="sub">チケット・コード・</text>
-  <text x="220" y="142" class="sub">社内の資料から</text>
-  <text x="220" y="162" class="sub">前提を集める</text>
-  <rect x="388" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="404" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
-  <text x="440" y="94" class="title">計画</text>
-  <text x="404" y="122" class="sub">作業に合った</text>
-  <text x="404" y="142" class="sub">進め方を選ぶ</text>
-  <rect x="572" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="588" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
-  <text x="624" y="94" class="title">作業</text>
-  <text x="588" y="122" class="sub">要求要件・設計・</text>
-  <text x="588" y="142" class="sub">実装・テスト</text>
-  <text x="588" y="162" class="sub"></text>
-  <rect x="756" y="62" width="160" height="140" rx="10" class="card" style=""/>
-  <svg x="772" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
-  <text x="808" y="94" class="title">レビュー</text>
-  <text x="772" y="122" class="sub">AI が PR を</text>
-  <text x="772" y="142" class="sub">レビューし、</text>
-  <text x="772" y="162" class="sub">指摘が無くなるまで</text>
-  <text x="772" y="182" class="sub">直す</text>
-  <rect x="940" y="62" width="160" height="140" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
-  <svg x="956" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
-  <text x="992" y="94" class="title">承認</text>
-  <text x="956" y="122" class="sub">PR をマージする</text>
-  <text x="956" y="142" class="sub">だけ</text>
-  <rect x="727.5" y="248" width="217" height="18" rx="4" class="label-bg"/>
-  <text x="836" y="261" class="label" text-anchor="middle">コメントで差し戻すと、直してもう一度</text>
+  <rect x="20" y="20" width="1000" height="150" rx="14" style="fill:var(--purple-bg);stroke:var(--purple-line)"/>
+  <text x="40" y="46" class="zone" style="fill:var(--purple)">あなた</text>
+  <rect x="20" y="210" width="1000" height="150" rx="14" style="fill:var(--blue-bg);stroke:var(--blue-line)"/>
+  <text x="40" y="236" class="zone" style="fill:var(--blue)">sacty の AI エージェント</text>
+  <path d="M231 154 L231 252" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M262 298 L286 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M508 298 L532 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M754 298 L778 298" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M929 252 L929 154" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <path d="M778 108 L653 108 Q643 108 643 118 L643 252" class="flow" style="" marker-end="url(#ah-arrow)"/>
+  <rect x="40" y="62" width="222" height="92" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="56" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.8-4 3.8-6.5 7.5-6.5s6.7 2.5 7.5 6.5"/></svg>
+  <text x="92" y="94" class="title">依頼する</text>
+  <text x="56" y="122" class="sub">やりたいことを書く</text>
+  <text x="56" y="142" class="sub">画面・Issue・JIRA から</text>
+  <rect x="778" y="62" width="222" height="92" rx="10" class="card" style="stroke:var(--purple);stroke-width:1.5"/>
+  <svg x="794" y="76" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--purple)"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="15" r="2.2"/><path d="M6 7.2v9.6M6 7.2c0 5 4 7.8 9.8 7.8"/></svg>
+  <text x="830" y="94" class="title">判断する</text>
+  <text x="794" y="122" class="sub">PR をマージすれば承認</text>
+  <text x="794" y="142" class="sub">コメントすれば差し戻し</text>
+  <rect x="40" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="56" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+  <text x="92" y="284" class="title">下調べ</text>
+  <text x="56" y="312" class="sub">チケット・コード・資料から</text>
+  <text x="56" y="332" class="sub">前提を集める</text>
+  <rect x="286" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="302" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12M4 6.5h.01M4 12h.01M4 17.5h.01"/></svg>
+  <text x="338" y="284" class="title">計画</text>
+  <text x="302" y="312" class="sub">作業に合わせて</text>
+  <text x="302" y="332" class="sub">進め方を選ぶ</text>
+  <rect x="532" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="548" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+  <text x="584" y="284" class="title">作業</text>
+  <text x="548" y="312" class="sub">工程ごとに成果を作る</text>
+  <text x="548" y="332" class="sub">（要求要件・設計・実装）</text>
+  <rect x="778" y="252" width="222" height="92" rx="10" class="card" style=""/>
+  <svg x="794" y="266" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" class="icon" style="stroke:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="m8 12.2 2.8 2.8 5.2-5.6"/></svg>
+  <text x="830" y="284" class="title">AI のレビュー</text>
+  <text x="794" y="312" class="sub">別の AI が PR をレビューし、</text>
+  <text x="794" y="332" class="sub">指摘が無くなるまで直す</text>
+  <rect x="936" y="183" width="62.2" height="18" rx="4" class="label-bg"/>
+  <text x="941" y="196" class="label" text-anchor="start">PR が届く</text>
+  <rect x="391" y="183" width="240" height="18" rx="4" class="label-bg"/>
+  <text x="631" y="196" class="label" text-anchor="end">承認したら次の工程へ・差し戻したら直しへ</text>
 </svg>
