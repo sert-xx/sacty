@@ -116,6 +116,6 @@ JSON だけを返す（前後に説明を付けない）。人向けの文章は
 ```
 
 - `viewpoint` は、依頼された観点の ID（リポジトリのレビュー用のスキルの担当は `R-1` など）
-- `status` は、`must` か `should` が1件以上なら `changes_required`、無ければ `passed`。入力が足りず観点を見られなかったときは `failed` にし、`limitations` に理由を書く（部分的な結果を `passed` にしない）
+- `status` は、`must` か `should` が1件以上なら `changes_required`、無ければ `passed`。入力が足りず観点を見られなかったときは `failed` にし、`limitations` に理由を書く（部分的な結果を `passed` にしない）。依頼文の範囲の外を見なかったことは `failed` の理由にしない（範囲の外は、もとから見るものではない）
 - `path` と `line` は、コードなら対象のリポジトリのルートからのパスと、対象の先頭（PR の先頭コミット）での行番号。文書なら見出しや行。PR の本文で示された文書の写しなら、`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し。複数箇所に及ぶときは代表の1箇所にして `problem` に他を書く
 - `findings` は `must` → `should` → `nit` の順、同じ重要度では影響の大きい順

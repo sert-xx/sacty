@@ -1640,7 +1640,8 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   sacty は、行についての指摘に `[要修正]` があれば `changes_required`、指摘があるのに `no_findings` なら `suggestions` に直す。
   行についての指摘があるだけでは `changes_required` にしない。
   判定が無い・決めた値でなく、`[要修正]` の指摘も無ければ残さない（読めない）。
-  レビューを完了できなかったときは、判定を付けさせない。
+  差分・コード・対象にした文書を読めなかったときは、判定を付けさせない。
+  見られなかった観点があるときは、見られた範囲で採用した要修正の指摘があれば `changes_required` を付けさせ、無ければ付けさせない（PBI-343）。
   判定のブロックは投稿する本文から取り除き、`AgentRunCompleted` の `reviewVerdict` に残す（回ごとに `reviewVerdicts`）。
   PR のレビューの子タスク（`reviewOf`）には、判定のブロックに指摘ごとの戻し先と原因（`rework`）も付けさせる（PBI-332。[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。読めたものは `AgentRunCompleted` の `reviewRework` に残す（回ごとの `reviewVerdicts` の `rework`）。
   PR のレビューを、その PR を作った元のタスクに届けるのは、`changes_required`・`suggestions` と読めない回（`no_findings` の回は届けない。取り込みの経路（ラベル・依頼・手動）は問わない。[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。

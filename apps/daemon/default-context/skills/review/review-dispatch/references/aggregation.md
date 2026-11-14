@@ -86,7 +86,7 @@ R（リポジトリのレビュー用のスキル）と X-3（リポジトリの
   "repo_guidance": { "searched": true, "not_searched_reason": "", "items": [{ "source": "<リポジトリのルートからのパス>", "name": "<スキルの名前。指示書なら空>", "kind": "review | dev | both | unused", "used_as": ["R-1", "X-3"], "version": "作業領域の版 | 変更前の版 | 基準にしない | PR が消した", "copy": "/tmp/agent-scratch/review-guidance/round-1/<パス>（変更前の版を写したとき）", "reason": "使わない・基準にしない理由。行わなかった指示（投稿・修正・分担など）" }] },
   "adopted": [],
   "dismissed": [{ "viewpoint": "C-5", "title": "…", "reason": "範囲の外（既存の問題）" }],
-  "verdict": "passed | changes_required | incomplete"
+  "verdict": "passed | changes_required | incomplete（見られなかった観点があり、採用した must も無いとき。must があれば changes_required）"
 }
 ```
 
