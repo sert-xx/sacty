@@ -370,6 +370,8 @@ const PREVIOUS_REVIEW_IN_PROMPT = 20_000;
 /** 再レビューのプロンプトに入れる、作者の返答の件数と1件の上限。 */
 const REPLIES_IN_PROMPT = 30;
 const REPLY_IN_PROMPT = 2_000;
+/** 再レビューのプロンプトに入れる、前々回以前のレビューの本文の上限（1件あたり。PBI-342）。 */
+const EARLIER_REVIEW_IN_PROMPT = 5_000;
 
 /**
  * 前の指摘（前回のレビューの指摘・PR にある既存の指摘）の対応を、今回レビューする先頭のコミットの内容で確かめさせる決まり（PBI-302 B2）。
@@ -403,6 +405,19 @@ function rereviewLines(
           : previous.body,
       comments: previous.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
     },
+    ...(task.earlierReviews && task.earlierReviews.length > 0
+      ? {
+          earlierReviews: task.earlierReviews.map((r) => ({
+            round: r.round,
+            commit: r.headCommit,
+            body:
+              r.body.length > EARLIER_REVIEW_IN_PROMPT
+                ? `${r.body.slice(0, EARLIER_REVIEW_IN_PROMPT)}…（長いため省略）`
+                : r.body,
+            comments: r.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
+          })),
+        }
+      : {}),
     ...(replies === "unreadable"
       ? {}
       : {
@@ -426,6 +441,11 @@ function rereviewLines(
     ...HEAD_CHECK_LINES(head ? head.slice(0, 7) : "PR の最新のコミット"),
     "- 未対応の指摘は、新しい指摘として繰り返さない（行へのコメントにもしない）。未対応の前回の [要修正] があれば、判定は changes_required にする",
     "- 作者が「対象外」「後続で対応」と返した論点は、範囲が変わるか、今回の変更が直接の原因になっていない限り、もう一度指摘しない",
+    ...(task.earlierReviews && task.earlierReviews.length > 0
+      ? [
+          `- earlierReviews は、前々回以前に投稿したレビュー（古い順）です。前回までの ${MUST_TAG} と原因を照らすときに、前回の指摘と合わせて使う（対応を確かめて「前回の指摘」の節に書くのは、前回の指摘だけ）`,
+        ]
+      : []),
     replies === "unreadable"
       ? "- PR の作者の返答は読めませんでした。前回の指摘への対応は、コードから確かめてください"
       : "- authorReplies は、前回の投稿の後の、PR の作者のコメント・レビュー（古い順）です",

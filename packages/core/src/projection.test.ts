@@ -1165,6 +1165,56 @@ describe("レビューの工程（PBI-19）", () => {
     expect(restarted?.reviewPost).toBeUndefined();
     expect(restarted?.reviewComments).toEqual([]);
     expect(restarted?.reviewVerdicts).toEqual([{ round: 1, verdict: "changes_required" }]);
+    // 2回目では、前々回以前のレビューはまだ無い（PBI-342）
+    expect(restarted?.earlierReviews).toBeUndefined();
+  });
+
+  it("再レビューを重ねると、置き換えた前回のレビューを前々回以前のレビューとして古い順に残し、新しい5件までにする（PBI-342）", () => {
+    const events = run("t8");
+    const rounds = [...events];
+    // 7回投稿して、そのたびに再レビューする（8回目のレビューの前の状態）。2回目からは、レビューをやり直してから投稿する
+    for (let round = 1; round <= 7; round += 1) {
+      if (round > 1) {
+        const runId = `r${round}`;
+        rounds.push(
+          ev("t8", { type: "ReviewTargetResolved", payload: target }),
+          ev("t8", {
+            type: "AgentRunStarted",
+            payload: { runId, step: "review", agentId: "a", authMode: "subscription" },
+          }),
+          ev("t8", {
+            type: "AgentRunCompleted",
+            payload: {
+              runId,
+              step: "review",
+              agentId: "a",
+              authMode: "subscription",
+              usage,
+              costUsd: 0,
+              estimated: false,
+              output: `# ${round}回目の評価`,
+            },
+          }),
+        );
+      }
+      rounds.push(
+        ev("t8", {
+          type: "PullRequestReviewPosted",
+          payload: { url: `https://x/pull/12#r${round}` },
+        }),
+        ev("t8", { type: "ReviewRestarted", payload: {} }, "person"),
+      );
+    }
+    const task = project(rounds).get("t8");
+    expect(task?.reviewRound).toBe(8);
+    expect(task?.previousReview).toMatchObject({ round: 7, url: "https://x/pull/12#r7" });
+    expect(task?.earlierReviews?.map((r) => [r.round, r.url])).toEqual([
+      [2, "https://x/pull/12#r2"],
+      [3, "https://x/pull/12#r3"],
+      [4, "https://x/pull/12#r4"],
+      [5, "https://x/pull/12#r5"],
+      [6, "https://x/pull/12#r6"],
+    ]);
   });
 
   it("本文が空のレビュー（行へのコメントだけ）も、投稿すると完了する（レビュー指摘）", () => {

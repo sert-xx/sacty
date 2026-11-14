@@ -67,6 +67,9 @@ export type PreviousReview = NonNullable<
 >["previousReview"];
 
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
+
+/** 前々回以前のレビューを残す件数（PBI-342）。再レビューのプロンプトが長くなりすぎないように。 */
+const EARLIER_REVIEWS_MAX = 5;
 /**
  * 最終レビューの前に作った実装の PR の CI（PullRequestPublished の verifying と PullRequestCiFinished）。startedAt は PR を
  * 作った・更新した時刻（待つ時間をここから数える）。result は CI が終わったら（無い・時間切れも）ある。rerun は、失敗した
@@ -921,6 +924,11 @@ export type Task = {
    * 再レビューのプロンプトに渡すため。
    */
   previousReview?: PreviousReview;
+  /**
+   * 前々回以前に投稿したレビュー（古い順。PBI-342）。再レビューで、前回までの要修正と原因を照らすため。「再レビュー」で
+   * 前回のレビューを置き換えるときに積む（新しい 5 件まで）。GitHub の再依頼で作った別のタスクには無い。
+   */
+  earlierReviews?: PreviousReview[];
   /** GitHub再依頼の取り込み済み目印（取消・失敗後も維持）。 */
   reviewRerequest?: PayloadOf<"TaskCreated">["reviewRerequest"];
   /** 何回目のレビューか（「再レビュー」で2回目から。最初のレビューでは無い。PBI-44）。 */
@@ -2336,6 +2344,11 @@ export function applyEvent(
       // 再レビューで対応を確かめるために残す（PBI-111）
       if (!canRereview(task)) throw new ActivityIntegrityError(event, "no posted review to redo");
       if (task.reviewPost && task.reviewTarget) {
+        if (task.previousReview) {
+          task.earlierReviews = [...(task.earlierReviews ?? []), task.previousReview].slice(
+            -EARLIER_REVIEWS_MAX,
+          );
+        }
         task.previousReview = {
           round: task.reviewRound ?? 1,
           url: task.reviewPost.url,

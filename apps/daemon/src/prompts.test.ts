@@ -372,6 +372,47 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(without).not.toContain("再レビューでも、スキル review-dispatch");
   });
 
+  it("3回目以降の再レビューでは、前々回以前のレビューもデータとして渡し、原因の照合に使わせる（PBI-342）", () => {
+    const earlier = {
+      round: 1,
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+      at: "2026-10-16T01:00:00.000Z",
+      headCommit: "e".repeat(40),
+      body: `1回目の総評${"x".repeat(6_000)}`,
+      comments: [
+        { path: "src/new.ts", line: 3, body: "[要修正] エンコードした値で検査をすり抜ける" },
+      ],
+    };
+    const task = reviewTask({
+      reviewRound: 3,
+      previousReview: {
+        round: 2,
+        url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
+        at: "2026-10-16T03:00:00.000Z",
+        headCommit: "p".repeat(40),
+        body: "2回目の総評",
+        comments: [],
+      },
+      earlierReviews: [earlier],
+    });
+    const prompt = buildPrompt(task, "review", { diff, replies: [] });
+    expect(prompt).toContain(
+      "- earlierReviews は、前々回以前に投稿したレビュー（古い順）です。前回までの [要修正] と原因を照らすときに、前回の指摘と合わせて使う（対応を確かめて「前回の指摘」の節に書くのは、前回の指摘だけ）",
+    );
+    const json = prompt.split("```json\n").find((b) => b.includes('"earlierReviews"'));
+    const data = JSON.parse(json?.split("\n```")[0] ?? "{}");
+    expect(data.earlierReviews).toEqual([
+      {
+        round: 1,
+        commit: "e".repeat(40),
+        body: `1回目の総評${"x".repeat(5_000 - "1回目の総評".length)}…（長いため省略）`,
+        comments: [
+          { path: "src/new.ts", line: 3, body: "[要修正] エンコードした値で検査をすり抜ける" },
+        ],
+      },
+    ]);
+  });
+
   it("再レビューでは、前回の指摘と作者の返答をデータとして渡し、前回の指摘ごとに対応を確かめさせる", () => {
     const task = reviewTask({
       reviewRound: 2,
@@ -400,6 +441,8 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain(
       "これは 2 回目のレビューです。前回（1 回目）は ppppppp のコードをレビューして投稿しました。今回は hhhhhhh のコードです。",
     );
+    // 2回目では、前々回以前のレビューは渡さない（PBI-342）
+    expect(prompt).not.toContain("earlierReviews");
     // 同じ原因の別の現れが続いたら、方針を見直す指摘にする（PBI-342）
     expect(prompt).toContain(
       "今回の [要修正] が、前回までの [要修正] と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える [要修正] が出ればその指摘にまとめる。出なければ、または方針の指摘が [提案] なら、現れを [要修正] のまま残す。利用者向け文書のレビューには当てはめない",
