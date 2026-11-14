@@ -102,9 +102,9 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 | --- | --- | --- | --- | --- |
 | C-1 正しさ | 必須 | advanced | | must 1・should 2 |
 | C-7 並行・非同期 | 起動しない | | 並行処理・共有状態の変更が無い | |
-| X-1 横断 | 常時 | expert | | 指摘なし |
+| X-1 横断 | 常時 | advanced | | 指摘なし |
 | X-2 検証結果の分析 | 常時 | 親と同じ | | must 1 |
-| X-3 リポジトリの指示への準拠 | 指示あり | standard | | should 1 |
+| X-3 リポジトリの指示への準拠 | 指示あり | entry | | should 1 |
 | R-1 リポジトリのスキル（db-review） | スキルあり | advanced | | 指摘なし |
 ```
 
@@ -117,7 +117,7 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 | --- | --- | --- | --- | --- |
 | C-1 正しさ | 前回 must | advanced | | 指摘なし（直った） |
 | C-2 堅牢性・エラー処理 | 起動しない | | 再レビュー：前回の回で must なし | |
-| X-1 横断 | 常時 | expert | | 指摘なし |
+| X-1 横断 | 常時 | advanced | | 指摘なし |
 ```
 
 直しの実行の最初のレビューの起動表も、起動しなかった観点を行に残す。
@@ -127,7 +127,7 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 | --- | --- | --- | --- | --- |
 | C-1 正しさ | 今回の指摘 | advanced | | 指摘なし（直った） |
 | C-2 堅牢性・エラー処理 | 起動しない | | 直しの実行：今回の指摘に関わらない | |
-| X-1 横断 | 常時 | expert | | 指摘なし |
+| X-1 横断 | 常時 | advanced | | 指摘なし |
 ```
 
 ## 担当への依頼

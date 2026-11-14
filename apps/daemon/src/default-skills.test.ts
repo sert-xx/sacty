@@ -72,16 +72,55 @@ describe("既定のスキル（git・review）の、PR のレビューの投稿�
 });
 
 describe("既定の review スキルの、段階のサブエージェント（PBI-119）", () => {
-  it("観点カタログに観点ごとの段階の表があり、ultimate を除く段階をすべて使う（PBI-304）", () => {
+  it("観点カタログに観点ごとの段階の表があり、expert・ultimate を除く段階をすべて使う（PBI-344）", () => {
     const text = read("skills/review/review-dispatch/references/viewpoints.md");
     expect(text).toContain("## 観点ごとの段階");
     expect(text).toContain("`lite` < `entry` < `standard` < `advanced` < `expert` < `ultimate`");
-    for (const tier of ["lite", "entry", "standard", "advanced", "expert"]) {
+    for (const tier of ["lite", "entry", "standard", "advanced"]) {
       expect(text, tier).toMatch(new RegExp(`^\\| \`${tier}\` \\|`, "m"));
     }
-    expect(text).not.toMatch(/^\| `ultimate` \|/m);
-    // 横断の欠陥探索は expert。ultimate は既定では使わない
-    expect(text).toMatch(/^\| `expert` \| X-1 \|/m);
+    // expert・ultimate は既定では使わない（人が選んだときだけ）
+    expect(text).not.toMatch(/^\| `(expert|ultimate)` \|/m);
+    expect(text).toContain("下の表で使わない段階（`expert`・`ultimate`）もある。");
+  });
+
+  it("観点ごとの段階は、深い推論が要る観点だけを advanced に置く。どの観点も 1 つの段階にだけ入る（PBI-344）", () => {
+    const text = read("skills/review/review-dispatch/references/viewpoints.md");
+    const section = text.slice(text.indexOf("## 観点ごとの段階"));
+    const tiers = new Map<string, string>();
+    for (const [, tier, cell] of section.matchAll(/^\| `(\w+)` \| ([^|]+) \|/gm)) {
+      for (const id of (cell ?? "").match(/[CDUX]-\d+|R(?=（)/g) ?? []) {
+        expect(tiers.has(id), `${id} が 2 つの段階にある`).toBe(false);
+        tiers.set(id, tier ?? "");
+      }
+    }
+    const expected: Record<string, string[]> = {
+      advanced: ["C-1", "C-3", "C-7", "C-9", "C-17", "D-2", "X-1", "R"],
+      standard: [
+        ...["C-2", "C-4", "C-6", "C-8", "C-10", "C-11", "C-12", "C-16"],
+        ...["D-1", "D-3", "D-5", "D-7", "D-8", "D-9", "D-10", "U-1", "U-2", "U-5"],
+      ],
+      entry: ["C-5", "C-13", "C-14", "C-15", "D-4", "D-6", "U-3", "U-6", "X-2", "X-3"],
+      lite: ["U-4"],
+    };
+    for (const [tier, ids] of Object.entries(expected)) {
+      for (const id of ids) expect(tiers.get(id), id).toBe(tier);
+    }
+    expect(tiers.size).toBe(Object.values(expected).flat().length);
+    // カタログの観点は、すべてどこかの段階に入っている
+    const catalog = new Set(
+      [...text.slice(0, text.indexOf("## 観点ごとの段階")).matchAll(/^\| ([CDUX]-\d+) \|/gm)].map(
+        (m) => m[1],
+      ),
+    );
+    for (const id of catalog) expect(tiers.has(id ?? ""), id).toBe(true);
+    // 起動表の例も、表の段階と食い違わない
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    for (const [, id, tier] of skill.matchAll(
+      /^\| ([CDUX]-\d+|R)[^|]*\| [^|]+ \| (lite|entry|standard|advanced|expert|ultimate) \|/gm,
+    )) {
+      expect(tier, `起動表の例の ${id}`).toBe(tiers.get(id?.startsWith("R") ? "R" : (id ?? "")));
+    }
   });
 
   it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
@@ -767,7 +806,7 @@ describe("既定の review スキルの、対象のリポジトリの指示（�
     expect(catalog()).toMatch(/^\| X-3 \| リポジトリの指示への準拠 \|/m);
     expect(catalog()).toMatch(/^\| R-1・R-2… \| リポジトリのレビュー用のスキル/m);
     expect(catalog()).toMatch(/^\| `advanced` \| .*R（R-1・R-2…） \|/m);
-    expect(catalog()).toMatch(/^\| `standard` \| .*X-3 \|/m);
+    expect(catalog()).toMatch(/^\| `entry` \| .*X-3 \|/m);
     expect(read("skills/review/review-execution/SKILL.md")).toContain(
       "観点 ID が R-1・R-2 など（リポジトリのレビュー用のスキル）のときは、`references/R.md` を読む",
     );

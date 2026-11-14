@@ -210,10 +210,10 @@ To change a tier's model, write `model` under the same name with [Overriding age
 | Tier | Meaning | Intended use |
 | --- | --- | --- |
 | `lite` | Fastest and cheapest | Mechanical checks such as wording and links |
-| `entry` | Enough for everyday work | Wording and fit for the reader |
-| `standard` | Standard | The default for most viewpoints |
-| `advanced` | Hard reasoning | Correctness, robustness, security, concurrency, and design consistency |
-| `expert` | Deeper reasoning | Defect hunting not bound to a viewpoint |
+| `entry` | Enough for everyday work | Wording and fit for the reader, checks against conventions and rules, and analysis of verification results |
+| `standard` | Standard | The default for viewpoints that read the target and judge it |
+| `advanced` | Hard reasoning | Correctness, security, concurrency, and design consistency, and defect hunting not bound to a viewpoint |
+| `expert` | Deeper reasoning | (Not used by default; only when a person chooses it) |
 | `ultimate` | The top tier | (Not used by default; only when a person chooses it) |
 
 - When a step runs, sacty places the tiers of that tool (`claude_*` for Claude Code, `codex_*` for Codex) in the config location as subagent definitions named without the prefix. The location is `agents/<tier>.md` for Claude Code and `agents/<tier>.toml` for Codex.
