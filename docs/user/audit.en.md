@@ -132,7 +132,7 @@ The default cap per audit is `budget.default_per_audit_usd` in config.yaml (defa
 
 ## Returning to an older version
 
-A database with audit records (`Audit…`) and fix tasks cannot be read by an older version without audits. Stop the daemon and back up the data directory before updating, and use the backup to go back ([Back up before updating and returning to an older version](tasks.en.md#back-up-before-updating-and-returning-to-an-older-version)). PRs and other work from fix tasks created after the backup remain, so check them and do not redo the same fix.
+A database with audit records (`Audit…`) and fix tasks cannot be read by an older version without audits. Stop the daemon and back up the data directory before updating, and use the backup to go back ([Back up before updating and returning to an older version](getting-started.en.md#back-up-before-updating-and-returning-to-an-older-version)). PRs and other work from fix tasks created after the backup remain, so check them and do not redo the same fix.
 
 ## Related pages
 

@@ -114,6 +114,20 @@ If you installed `sacty` with `npm run cli:install`, run `npm run cli:install` i
 - Where the internet is not reachable, write `update_check: false` in `config.yaml` to stop the check ([config.yaml settings](config.en.md)).
 - When the default models change, you may see a warning about a model with no price in `available_models`. Add the price of that model.
 
+### Back up before updating and returning to an older version
+
+A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, and so on) cannot be read by an older version that does not support them, and startup fails.
+
+- Stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`) before updating.
+- To return to an older version, use the backup made before the update.
+- If your settings include the new steps, also restore settings compatible with the older version.
+
+Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost.
+
+- External changes, such as calendar updates, are not rolled back.
+- Fix tasks created from adopted audit proposals may already have opened PRs.
+- External operation start records made after the backup are also lost. Check the actual external state and do not repeat changes already made.
+
 ## Where data is stored
 
 - sacty stores the activity log, settings, and workspaces in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.

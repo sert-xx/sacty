@@ -134,6 +134,39 @@ If everything is already in place and nothing needs to change, the task finishes
 
 From the API, send `{"template": "docs-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks`.
 
+## Task list
+
+A project's task list looks like this.
+
+![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
+
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+
+Child tasks are indented directly under their parent task.
+
+- The child tasks of a task split are listed in the order the split decided.
+- A child task that reviews a PR sacty opened is listed under the task that opened the PR (after its split child tasks, if any). The list shows which task it reviews.
+- The review child task of a PR opened by a split child task is indented one more level under that split child task.
+- When the parent task is not in the list (it is in another project, or the filter hides it), the child task is listed without indent.
+
+### Find and filter tasks
+
+Use the fields above "All tasks" to filter the list.
+Only tasks that match every filter are shown.
+
+| Field | How it filters |
+| --- | --- |
+| Search | Tasks whose title contains the text (case-insensitive) |
+| Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
+| Started from | Where the task started, such as Sacty or GitHub Issue |
+| Repository | The repository the task works on. "Not decided / No repository" is for tasks whose repository is not decided yet |
+| Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
+
+The count (such as "1 of 5") is shown on the right of the fields.
+Press "Clear filters" to go back to all tasks.
+The filters stay only while the screen is open (automatic updates keep them; reloading or moving to another project clears them).
+The "Needs you" cards are not filtered.
+
 ## Reading the task details
 
 The task details look like this.
@@ -161,6 +194,27 @@ The task details look like this.
   For a task with error records, "Error report" appears below it ([Getting an error report](troubleshooting.en.md#getting-an-error-report)).
   Below it, the recent Activity (5 entries) is shown.
 
+## Hints on the screen
+
+The text on the screen says only the current state and what to do next, briefly. How things work and why is shown when you hover over the hint mark (i) next to a heading or item.
+
+With the keyboard, it opens when you stop on the mark with Tab; on a phone, it opens on tap. Esc or a tap outside closes it. Items without a hint have no mark.
+
+In the Activity of the task details, press "Details" on a request-for-changes line to see the comments written when changes were requested. You can read past comments again even after approval, completion, or cancellation.
+
+## Automatic updates on the screen
+
+While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
+
+- The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open dialogs and sections, focus, and the scroll position stay as they are.
+- While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
+- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
+- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are writing are not lost.
+- While a run is in progress, the run log adds new lines at the end automatically.
+  - The scroll position does not move while you are reading in the middle. The screen follows new lines only while you are looking at the bottom.
+  - If the list of the agent's original files cannot be read after the run has finished, the screen shows that and that it is retrying, and shows the list once it can be read.
+- The Sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen again or reload it in the browser.
+
 ## Information gathering at the start of a task
 
 When a task starts, before the Orchestrator chooses the plan, the information gatherer collects the information related to the task. For a task taken in from a ticket, it follows the parent story and epic, linked tickets, and URLs in comments, chooses the repository to work in from the gathered information, and also writes the task title and summary (if you renamed the task before that, the title stays as you changed it). If it cannot choose, the task stops and you can choose the repository on the task page and resume (the gathered information is kept, and only the title and summary are rewritten; if you renamed the task, the title stays as you changed it). It also searches for the task's terms with the available MCP servers and external platforms (documents, chat, and so on). It also reads the target repository's code and writes the places in the code related to the task and their current behavior in the summary.
@@ -180,125 +234,166 @@ When a task starts, before the Orchestrator chooses the plan, the information ga
 - Information gathering only reads. It does not change code either. For the gateway's external platforms, only GET and HEAD pass during information gathering, even if `allow` has write APIs. sacty cannot restrict the tools of MCP servers, so the instructions have it use only read operations. Be careful when the context includes an MCP server with write tools.
 - To let it read external documents or chat, add the destination as an external platform of the gateway or an MCP server of the context ([Gateway](gateway.en.md), [Context repository](context.en.md)).
 
-## Documents and one-off external work
+## Self-review before submitting
 
-To create a user guide, a procedure document, meeting notes, or a translated draft, write the audience, purpose, and source contents in the task. To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed). If the Orchestrator chooses a different plan, choose "Document" in "Plan".
+In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
+The first round reviews with every viewpoint. A re-review after fixing (the second round on) uses only the viewpoints that raised a `must` in the previous round, plus X-1, which looks for defects without being tied to a viewpoint (only X-1 when there was no `must` and only `should` findings were fixed).
+The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
+When the target repository has review skills that apply to this change, one reviewer is added per skill and also reviews with the items of that skill. When it has development skills or instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING`, and so on) that apply to this change, a viewpoint (X-3) that checks whether this change follows those rules is added too. Nothing is added for ones that do not apply to this change, such as a skill for an area the change does not touch. Neither reduces the default viewpoints. Fixes, posting, and starting subagents written in the skills or instruction files are not done.
+When the deliverable of a request is judged to be document files only, the self-review of the implementation also uses the document viewpoints (sync with the code, whether the steps work, fit to the reader, static quality) instead of the code viewpoints. A request that also changes code is reviewed with the code viewpoints as before.
+When the agent redoes the work after requested changes from a person or a finding from the AI review, the first review of that run is also treated as a re-review. It uses only the viewpoints related to the findings of this run, plus X-1 (the first run of a task still uses every viewpoint, as before). The viewpoints it did not use are recorded as "not started (fix run: not related to this run's findings)". If the previous submission's self-review did not pass, every viewpoint is used.
+The Requirements and Design deliverables are put into the PR by sacty as repository files (by default under `docs/sacty/<short task ID>/`).
+Before submitting, the agent runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) on that file and makes it pass.
+It does not run verification of code, such as tests, builds, and type checks.
+The reason for any verification it did not run is kept in the self-review report.
 
-- Review the Markdown draft in Document, request changes, and approve it.
-- The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason on the "Step settings" tab of the task details ([Exporting results](result-export.en.md)).
-- An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
-- To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
+When the agent revises requirements or a design after you request changes, working from a non-empty previous deliverable, it narrows the review to the difference from the previous deliverable and what that change directly requires (this range narrowing is not applied to changes requested on the implementation; however, a fix run of the implementation is also reviewed, as described above, with only the viewpoints related to the findings and centered on what was fixed in that run, when the previous submission's self-review passed).
+However, the agent reviews the whole deliverable as usual when the self-review of the previous submission did not pass or has no record (including after a person edited the document), when the previous deliverable is empty, or when the remark changes the direction.
+When the remark is small (at most 2 places to fix, and no change of direction; for example, reflecting the answer to a question, or correcting the wording of one requirement), it is at most 2 rounds including the first.
+If the first review finds no `must` findings, the agent submits at that point.
+For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
+Which one the agent took is written at the start of the self-review summary.
+When a PR comment only answers the "確認したいこと" (questions) and every answer is as recommended, the deliverable is not redone and not self-reviewed ([Cause of the rework](#cause-of-a-request-for-changes)). The agent only removes the answered items and re-reads the text to check, for example, that nothing other than the places reflecting the answers differs from the previous version. The self-review result is then "no record", and the next rework reviews the whole.
 
-Like the other steps, the Document step can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads. To have it use external material, write which destination to read and what to read in the task body or in a Request changes comment. Normally the deliverable is one draft, and you approve the draft shown in the sacty web UI. The draft is not written to external services directly; it is exported after approval.
+The result appears on the deliverable cards, the Implementation card, and the approval screen.
 
-When you want external documents created or edited directly, write so in the task body. The agent writes those documents directly, and the documents it wrote become the deliverable. The deliverable can be more than one document (for example, "Find the pages containing … and fix them together").
+| Shown | Meaning |
+| --- | --- |
+| Self-review: passed · n rounds | Fixed until no `must` findings were left |
+| Self-review: not passed · n rounds · m findings left | `must` findings were still left at the limit. Check them before deciding |
+| No self-review record | The agent did not report a result. Check the deliverable yourself |
 
-- Document shows the content of each document after the fix. The documents written externally are listed under "Pages written externally".
-- When you request changes, the agent edits those documents (it does not create another document with the same content). You can also request changes to add target documents.
-- Documents written externally are changed when the agent writes them, without waiting for approval. Instruct direct editing only when the external documents may change before approval.
-- Because the documents written externally are the deliverable, nothing is exported after approval.
+The cost of the self-review is included in the cost of that step.
 
-A work report (that something was created, the agent ID, and so on) is written neither in the draft nor externally.
+## Approval in PRs (Requirements, Design, Implement)
 
-You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes to a unique target that use one configured destination (they cannot be redone through Request changes; for external documents you want to revise as you go, or several documents fixed together, request them as a Document task above). Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
+The details of a task waiting for its implementation PR to be merged look like this.
 
-1. Write the specific target ID/URL, the change and its preconditions, and the desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. If target or connection details are missing, the task stops before execution starts.
-2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval. Confirm that the request is correct before starting the task.
-3. Check the evidence in the successful result and approve it to complete the task. Failure or an unknown result does not count as completion.
+![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the Sacty AI review below it)](images/task-pull-request.en.png)
 
-After step selection, the task details show the selected destination and connection type, target, requested change, and verification method as read-only information. This view is not a pre-execution approval gate and does not stop the task.
+Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval is the merge. Steps that created a PR are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
-If target details are missing, add the missing information to the request and create a new task. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
+While awaiting approval, if the PR of the current submission is open, you can open the GitHub PR directly in a new tab (without the sacty approval screen in between).
 
-You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone.
+- In the task details and "Needs you" in the task list: press "Review on the PR ↗".
+- In "Needs you" on the dashboard and the header notifications: press the task title (marked with ↗ at the end).
 
-sacty instructs the agent to make every write the request needs (there may be several, such as a parent post and a reply in its thread) and check the result after the change. The agent does not resend the same write; after a failure or an unknown result, it stops the remaining writes and reports, separately, the writes confirmed as successful, those not made, and those whose result is unknown. A write with an unknown result may have succeeded in the external service, so check it there before requesting it in a new task. However, this does not guarantee that the external service prevents duplicates.
+Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
 
-You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12"). The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its output.
+- When the task is escalated, such as when a person chooses the step to redo for PR comments.
+- When the PR was closed without merging, or does not exist yet.
 
-When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push code. To fix a PR's code, create a task with the repository selected ([Fixing an existing PR](#fixing-an-existing-pr)).
+If a person merges the implementation PR while the implementation is being reworked (after a rejection or imported PR comments), the merge is taken as the approval.
+sacty stops the running implementation and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
+The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
+To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task.
+While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
 
-Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
+Approval in PRs proceeds in this order.
 
-## Fixing an existing PR
+1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
+2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
+3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
+4. When the Design PR is merged, the task moves to the Implementation step.
+   - When the Implementation step finishes, the implementation is committed to the task branch and opened as a draft PR from the task branch to the base branch (CI runs). When the PR's review child task gives "no findings", the PR is marked ready ([Review of the implementation PR](#review-of-the-implementation-pr)). The implementation PR also contains the Requirements and Design files.
+   - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no skill and the step was skipped, the task is completed.
+   - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 
-To fix an existing PR itself, for example to address review comments on a PR a person opened, select the target repository and write the PR's link in the title or description (for example "Address the review comments on https://github.com/acme/app/pull/12"). When the Orchestrator judges that the task asks to fix that PR, sacty takes over the PR.
+When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
 
-- The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
-- The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
-- Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
-  If the agent of these steps decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
-- Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
-- "Taking over PR" appears on the "Step settings" tab of the task details.
-- Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
+![Branches when approving through PRs](images/approval-branches.en.svg)
 
-The following PRs cannot be taken over. To avoid opening a new PR, the task stops without choosing the steps. Check the PR, then resume to choose the steps again.
+- If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
+- sacty takes in PR reviews, line comments, and regular comments as findings.
+  - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+  - It checks every minute and takes them in 2 minutes after the last comment.
+  - sacty decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between.
+    When the comments are only from sacty's review child task, sacty follows the step the child task gave for each finding (no run is made for the decision, and it costs nothing).
+    When your comments are included, the agent of that PR's step decides (in older versions, a different AI decided). The decision and its reasons are kept in the Activity and the PR section.
+  - The target depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on). A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR). Only a comment that changes the decision itself goes back to the step that holds it. The reason says which decision is changed or not changed.
+  - The judgment of the step to redo (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
+    The judgment is an interpretation of the comments, so when it disagrees with the original text of your comment, the original text wins.
+    When the target could not be decided, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
+  - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text. The record in the Activity and the judgment passed to the redo stay in full.
+  - When there is something for a person to check, the approval screen and the task details show it in a prominent place as "N things for you to check", and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
+  - If requests for changes to the same step exceed the limit, it becomes an Escalation.
+    What counts toward the limit is the requests for changes by you. A request for changes made only of comments from sacty's own AI review is not counted ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
+- When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
+- If a PR is closed without being merged, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
+- If you edit the PR and then merge it (merged with contents different from what sacty submitted), the merge is still treated as approval and the task moves to the next step. For Requirements and Design, the files you edited become the approved deliverable.
+- In the following cases, no Requirements or Design PRs are created.
+  - Steps that need no approval (such as Reproduce and Review)
+  - Tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design). Investigation-only tasks are approved in the web UI.
+  - Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed. They are still approved in the web UI.
+- Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
+- The form of the PR body
+  - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
+  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, sacty's review (the PR review child task reviews and posts), and what you should confirm (when there is a record of an earlier version's final review) in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint) (with the final review's findings for a task that had the final review in an earlier version). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a send-back or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
+  - Which one was used appears in "Body" in the PR section of the task page.
+  - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated). When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
+  - The "最後の直し" section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows; when it fits in the conclusion, the section is not shown. For a task that had a final review in an earlier version, the summary of that review is usually not shown in the description either (only for a task that a person moved on to review despite a failed final review in an earlier version, the summary is shown in one line as "最終レビューの所見" (final review findings), together with that record). The findings of each viewpoint appear in the collapsed "観点ごとの詳細" (details by viewpoint).
+  - In the viewpoint-test mapping, the same test is shown once (a name with the describe prefix and one without are merged into the one with it). Format characters such as `%j` and `%s` in the name of a parameterized test are replaced with `‹…›`, because the values cannot be known from the name alone.
+  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments (the investigation result, the comments a step requests, and the comment that tells you what to check). They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
+  - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
+- The form of the commit message
+  - When the repository defines the Conventional Commits form (a Commitizen or commitlint configuration exists, or the rules in AGENTS.md or CONTRIBUTING describe it), the first line of the commits sacty makes takes the form `feat: <task title>`.
+  - The type is `docs` for the commit of a documents-only request and of a Requirements or Design PR, `fix` for a bug fix, and `feat` otherwise. A title that already has the form `feat: …` is not prefixed again.
+  - For a repository with no definition, or one whose definition cannot be read, the task title is used as is, as before.
+  - When a commitlint configuration sets the form of the first line itself (for example, it requires a ticket number first), the custom form takes priority even if there is also a commitlint dependency, and no type is added.
 
-- A merged or closed PR
-- A PR from a fork (sacty cannot push to a fork's branch)
-- A PR another sacty task opened or took over (feedback on a PR sacty opened is imported and fixed by that task)
+### Things for a person to check
 
-If a person pushes commits to the PR's branch while sacty works, sacty stops without force-pushing. Cancel the task and create a new one. A task that only refers to a PR (for example "Apply the same fix as PR 12 to the other modules") opens a new PR as before.
+In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
+In the cases below, the approval screen and the task details show "N things for you to check" under the approval notice.
 
-## Security checks and fixes
+- sacty could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
+- The redo run listed something it wants you to check along with its response to the comment: it guessed because it could not read what the comment meant, it recreated a value or wording it no longer had, it changed something the comment did not ask for, or it left a comment unaddressed. The comment it concerns is also shown.
 
-You can check for vulnerabilities and supply chain problems with a report, and fix them with a PR.
+So that the people looking at the PR notice it, the same content is commented on the PR of the redone deliverable (implementation, requirements, or design) when it is back to waiting for approval. One comment per submission.
 
-| Plan | Deliverable | When to use |
+- The comment starts with "Sacty：人に確かめてほしいことがあります". If it is not what you meant, comment on the PR or send the task back on the task screen.
+- This comment is not imported as a comment.
+- For a project with no GitHub account chosen, nothing is commented on the PR (the screen still shows it). If commenting fails, the task does not stop.
+- For security check and security fix tasks, nothing is commented on the PR (so details of a vulnerability or the fix scope are not put in a public place; the screen still shows it).
+- If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
+- Secret values are hidden and long text is cut. Paths inside sacty's workspace are replaced with names a person can follow.
+
+## Reading requirements and designs
+
+Requirements and designs start with the following three sections. They are written so that you can decide whether the scope is as intended and whether to approve by reading these three sections.
+
+| Section | Contents | What to do |
 | --- | --- | --- |
-| Security check | A report (approved in the web UI) | When you want to find where the problems are |
-| Security fix | A PR (approved by merging) | When you want to fix a specific problem (a CVE, a GHSA, an alert, a finding of a check) |
+| スコープ (scope) | What the change achieves, what is in scope (what this change changes), and what is out of scope (what may seem included but this change does not do; "なし" if none) | If the scope is not what you intended, write it in a remark and request changes |
+| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer, its reason, and the concern if the work goes ahead with the recommended answer unconfirmed, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
+| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
 
-### Security check
+The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it. The instructions alone did not keep a report such as "要求要件を直しました。セルフレビューは通りました" from getting in front of the first heading, so sacty removes paragraphs of that kind that stand before the first heading or after the last rule (`---`) before showing the body on the approval screen and in the PR. Anything mixed into the middle of the body cannot be removed, so the self-review checks it. A requirement row removed on a send-back ("R-5（削除：理由）") is not listed under the items to check, nor under "Where to check" in the PR body. However, a condition that the repository's rules (README, CONTRIBUTING, AGENTS.md, the CHANGELOG policy, the PR template, and so on) call for in this kind of change, such as updating a version, the change history, generated files, or documentation, is not removed as a "rewrite of the rules". The rules hold only because the person making the change follows them, so they are not behavior that an existing mechanism guarantees.
 
-1. In "Create task", choose the template "Security check", choose the target repository, and create the task. Choosing this template in a scheduled task runs the check regularly ([Scheduled tasks](scheduled-tasks.en.md)).
-2. The agent checks each of the following categories and writes a report of findings. It uses `osv-scanner` (dependency vulnerabilities) and `gitleaks` (secrets) in the default image.
-   - Dependency vulnerabilities
-   - Supply chain (CI workflows, where dependencies come from and lockfiles, install scripts, pinning image tags)
-   - Code vulnerabilities
-   - Leaked secrets (it writes only the location and the kind, not the value)
-   - Configuration and IaC
-3. Read the report and approve it (you can also request changes). Categories that could not be checked for lack of a tool appear in the report as unchecked scope.
+Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 25 lines for a small change and about 65 lines even for a large change.
 
-### Creating fix tasks from the report
+If you want more detail somewhere, write that part in a remark and request changes (for example, "異常系を詳しく" or "移行の手順を書いて"). The agent adds detail only where you asked and keeps the rest short. Text added for a remark is not removed in later revisions.
 
-The task details of an approved security check show a "Security fixes" section. The findings are listed by category; press "Create fix task" for the category you want to fix.
+## Items to check (provenance)
 
-- One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
-- A category with a task shows a link to it. You cannot create another one for the same category.
-- "Report" in the properties of a fix task's details shows a link to the original report and the category.
-- To fix findings across categories, or only some of them, create a [follow-up task](#create-a-follow-up-task-from-a-completed-task) and write the findings to fix in its description.
+In the Requirements and Design steps, an agent other than the author sorts the basis of each item (`R-n` of the requirements, `TV-n` of the test viewpoints) into the following three.
 
-### Security fix
+| Kind | Meaning |
+| --- | --- |
+| Quote | States as is what the task, the ticket, your remarks, or the approved earlier step says |
+| Derived | Derived from the paired unwanted behavior, the investigation result, or conventions of existing code |
+| Inference | Anything else; what the agent added on its own |
 
-Besides creating it from a report, you can create one in "Create task" by choosing the plan "Security fix" and writing the problem to fix (a CVE number, an alert URL, and so on) in the description.
+The deliverable cards and the approval screen show "Items to check: n". The items to check are inferences, quotes whose original text is not found in the input, and items without a classification. They may not match your intent, so check them one by one. Quotes and derived items are collapsed under "Others"; a quick look is enough.
 
-1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope is not approved.
-2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
-3. sacty checks the diff against the scope and then opens the PR. The review child task of the PR checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, the violation appears in the PR body, the child task makes it a "changes required" finding, and the implementation is fixed. Regression test files may be added outside the scope (their lines are counted). In an earlier version, the Goal Guardian checked this in the final review and, on a violation, failed it and redid the implementation.
-4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
+When you approve the requirements or design on a PR, the same content appears under "Where to check" in the PR body. A requirement row removed on a send-back ("R-5（削除：理由）") is not listed.
 
-- When it cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation's description. You cannot request changes on the preliminary Investigate, so cancel the task and rerun it, writing the scope to widen in the rerun's note. The rerun task also proceeds as "Security fix".
-- The results of security check and security fix tasks are not commented on the source issue or ticket. Comment requests in a step's output (`sacty-github-comments`) are not posted either.
-- A PR is created for a public repository too, as for other implementations. Decide whether it may be public before creating the task.
+In the following cases, check every item.
 
-## Comments on PRs and issues
-
-A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue is needed, the agent writes the comment in the step's output. After a person approves the step's output, sacty posts it with the project's GitHub account.
-
-Nothing is posted unless you approve.
-The exception is a step that is approved by merging its PR (implementation, requirements, and design): sacty posts without waiting for the merge, as soon as the output is awaiting approval (see the list below).
-
-- Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, sacty posts the revised version.
-- Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. sacty does not post to other URLs and shows the reason in the activity history.
-- For a step approved by merging its PR, sacty posts the requested comments to that PR as soon as the output is awaiting approval.
-  This lets the people watching the PR read a reply to a review comment right away.
-  After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
-  The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
-- sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
-- The end of the comment notes that AI wrote it in a sacty task and a person approved it.
-- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop. If it could not be posted, read the record in the activity history and, if needed, write to the PR yourself.
-- The review step, as before, has sacty post the written review to the PR.
+| Shown | Meaning |
+| --- | --- |
+| No subagent could be started, so the author sorted the items itself | The classification may be lenient |
+| No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
 ## Review of the implementation PR
 
@@ -407,173 +502,19 @@ For a request that also changes code, it still includes all the checks that cove
   A request that changes code, comments in code, configuration files, `.txt`, or images is not treated as documents only.
 - When the orchestrator judged a request to be documents only but the implementation's diff has files that are not documents, the task does not stop (the review child task of the PR reviews the diff).
 
-## Repositories without tests
+## How the agent revises after you request changes
 
-Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
+When you send requirements or a design back, the agent starts from the previous deliverable and rewrites only the parts your remarks concern. It does not rewrite from scratch.
+Sections and items unrelated to your remarks stay as they are. What was fixed in an earlier round is not undone either.
 
-- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests.
-  A repository that collects agent skills or only holds documents also falls under this.
-  The "Step settings" tab of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
-- sacty does not run tests.
-  The PR review child task checks the PR from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description, and sacty fixes the implementation when there are findings (as for a task with tests).
-- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests".
-  The test line of the PR body also includes the basis, with "テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。" (it proceeded as a repository without tests, so it was not verified by tests).
-  Because nothing was checked by tests, check the content of the changes yourself before you approve.
-- When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, the agent of the Implementation step runs those tests, and the PR review child task checks the PR including their results (sacty does not run tests).
-  - If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON), the task is paused with an error.
-    Resuming redoes the implementation.
-- Even when the Orchestrator judges that there are no tests, the judgment is not used in the following cases.
-  The task does not stop, and goes on with neither a test command nor the judgment of no tests (the Implementation step's agent decides the tests from the repository and runs them).
-  - A bug fix (Reproduce → Implementation) is chosen (a reproduction is confirmed by tests, so it is not chosen for a repository without tests)
-  - The repository has files that look like tests
-  - It could not be confirmed that there are no test files, because there are too many files, a directory cannot be read, and so on
+- When a remark spans several sections, the agent fixes every section it concerns.
+- When a remark changes the direction of the deliverable (purpose, scope, approach), the agent fixes what concerns the direction throughout.
+- When your remark answers a question, the agent reflects the answer where it applies and removes that item from "確認したいこと".
+- The required sections, IDs, and the handling of questions are the same as in the first draft.
+- When the previous deliverable cannot be read (for example, it is empty), it cannot be the base, so the agent rewrites to handle your remarks.
 
-  The following files count as files that look like tests.
-  Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/README.md` does not match).
-
-  - Files inside `test`, `tests`, and `__tests__` directories
-  - Files with names like `*.test.*`, `*.spec.*`, `*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`
-
-### Deciding the tests on resume
-
-A task that an earlier version stopped right after choosing the steps, because the test command could not be determined or it could not proceed without tests, can be resumed by choosing one of the following in "Tests" of the resume section of the task details (you do not need to create the task again).
-In the current version, a task goes on without stopping even when how to handle tests is not decided, so this section does not appear. It does not appear for a task that stopped for the budget, another error, or a person's pause either (a task that an earlier version stopped because a verification tool was not in the image, or because the request was judged documents only but the diff disagreed, is an exception: this section lets you decide how to handle tests again for it; see [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review)).
-
-- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`).
-  It is passed to the agent of the implementation step as the test command a person decided (sacty does not run it).
-- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents.
-  The reason remains in the Activity, the task details, and the PR body as a reason decided by a person.
-  It cannot be chosen for a bug fix.
-- **Resume without deciding**: the task continues from where it stopped with the chosen steps (the steps are not chosen again).
-  It does not stop because the test command cannot be determined.
-
-For a task that an earlier version stopped right after choosing the steps, choose according to why it stopped.
-
-| Why it stopped | How to choose |
-| --- | --- |
-| The Orchestrator could not determine the test command ("could not determine the test command") | If there are tests, specify the test command. If the repository does not have tests, proceed without tests. |
-| The Orchestrator judged that there are no tests, but some files look like tests ("some files look like tests (…)"; the files found are shown) | If the files found **really are tests**, specify the test command. If a file that is **not a test** (such as a script that is not for testing) was matched by mistake, proceed without tests. |
-| There were too many files to confirm that there are no test files ("too many files to confirm …") | If there are tests, specify the test command. If there really are no tests, proceed without tests. |
-| A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), and fix it. Then specify the test command or choose to proceed without tests. |
-| A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Specify the test command (a bug fix cannot proceed without tests). To fix it without tests, cancel the task and use rerun to redo it as an ordinary task that describes what to fix. |
-
-## When the implementation has no changes
-
-When the Implementation step changes nothing (it decided the requirements are already met and no change is needed), no PR is created. This is the same for every task.
-
-- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence) and the verification results the Implementation step reported (the current version does not run the final review; for a task that had a final review in an earlier version, its result is also shown).
-- If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
-- If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
-- In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
-- If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
-
-## Approval in PRs (Requirements, Design, Implement)
-
-The details of a task waiting for its implementation PR to be merged look like this.
-
-![Details of a task waiting for its implementation PR to be merged (the "Review on the PR" button and the Sacty AI review below it)](images/task-pull-request.en.png)
-
-Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval is the merge. Steps that created a PR are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
-
-While awaiting approval, if the PR of the current submission is open, you can open the GitHub PR directly in a new tab (without the sacty approval screen in between).
-
-- In the task details and "Needs you" in the task list: press "Review on the PR ↗".
-- In "Needs you" on the dashboard and the header notifications: press the task title (marked with ↗ at the end).
-
-Once you merge the PR, the task moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review" or "Decide" in the task details and the task list, and a task title without ↗ on the dashboard and in the notifications).
-
-- When the task is escalated, such as when a person chooses the step to redo for PR comments.
-- When the PR was closed without merging, or does not exist yet.
-
-If a person merges the implementation PR while the implementation is being reworked (after a rejection or imported PR comments), the merge is taken as the approval.
-sacty stops the running implementation and PR update (it does not create a new PR) and moves on to the next step (the after-merge watch, or completion if it is skipped).
-The stopped runs and the comments discarded before being passed to the rework (the ones not yet reflected in the PR) stay in the task's activity as "PR #N was merged, so the rework of the implementation was stopped".
-To handle the discarded comments (including PR comments that arrived while paused and had not been applied yet), create a follow-up task.
-While Requirements or Design is being redone, a merge of the implementation PR does not stop it.
-
-Approval in PRs proceeds in this order.
-
-1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
-2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged, sacty records it as approval of the Requirements and the task moves to the next step.
-3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
-4. When the Design PR is merged, the task moves to the Implementation step.
-   - When the Implementation step finishes, the implementation is committed to the task branch and opened as a draft PR from the task branch to the base branch (CI runs). When the PR's review child task gives "no findings", the PR is marked ready ([Review of the implementation PR](#review-of-the-implementation-pr)). The implementation PR also contains the Requirements and Design files.
-   - Implement waits for approval, and merging the PR approves the implementation and moves on to the after-merge watch step. If the target repository has no skill and the step was skipped, the task is completed.
-   - In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
-
-When Requirements, Design, and Implementation are all approved in PRs, the branches and PRs look like this (an example where the short task ID is 1a2b3c4d).
-
-![Branches when approving through PRs](images/approval-branches.en.svg)
-
-- If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
-- sacty takes in PR reviews, line comments, and regular comments as findings.
-  - It excludes bots and sacty's own posts, but includes posts by the sacty review task that imported that PR ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-  - It checks every minute and takes them in 2 minutes after the last comment.
-  - sacty decides whether to redo that step (updating the same PR) or request changes back to an earlier step. No human check comes in between.
-    When the comments are only from sacty's review child task, sacty follows the step the child task gave for each finding (no run is made for the decision, and it costs nothing).
-    When your comments are included, the agent of that PR's step decides (in older versions, a different AI decided). The decision and its reasons are kept in the Activity and the PR section.
-  - The target depends on whether the comment changes a decision already approved in the requirements or design (acceptance criteria, behavior, screens, the shape of APIs and data, and so on). A comment that does not change a decision (adding to documents, fixing the implementation, reflecting something already decided) is fixed in the step of that PR (the implementation, for the implementation PR). Only a comment that changes the decision itself goes back to the step that holds it. The reason says which decision is changed or not changed.
-  - The judgment of the step to redo (the target and the reasoning on how it read the comment) is also passed to the redo that starts from it.
-    The judgment is an interpretation of the comments, so when it disagrees with the original text of your comment, the original text wins.
-    When the target could not be decided, what could not be read is passed too, and the redo does not make big changes by guessing; it leaves what it could not read in the response field.
-  - The reason and the judgment can run long, so the screen (the PR section and the Activity) shows the first one or two sentences as the gist, and you can open "Details" to read the full text. The record in the Activity and the judgment passed to the redo stay in full.
-  - When there is something for a person to check, the approval screen and the task details show it in a prominent place as "N things for you to check", and the same content is also commented on the PR ([Things for a person to check](#things-for-a-person-to-check)).
-  - If requests for changes to the same step exceed the limit, it becomes an Escalation.
-    What counts toward the limit is the requests for changes by you. A request for changes made only of comments from sacty's own AI review is not counted ([Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)).
-- When the task goes back to an earlier step, the merged PR is not reverted; a new fix PR to the task branch is created. When the fix is merged, the PRs of the later steps are recreated. The previous open PRs are closed (the implementation PR is updated in place).
-- If a PR is closed without being merged, it is not treated as approval and sacty waits for your decision. If you request changes from the web UI, the redone contents are submitted in a new PR.
-- If you edit the PR and then merge it (merged with contents different from what sacty submitted), the merge is still treated as approval and the task moves to the next step. For Requirements and Design, the files you edited become the approved deliverable.
-- In the following cases, no Requirements or Design PRs are created.
-  - Steps that need no approval (such as Reproduce and Review)
-  - Tasks that are investigation only, review only, or bug fixes (tasks without Requirements and Design). Investigation-only tasks are approved in the web UI.
-  - Tasks that submitted Requirements or Design in the web UI in a version before approval in PRs existed. They are still approved in the web UI.
-- Each child task of a Task split has its own task branch. The parent's Requirements and Design are also approved in PRs to the parent's task branch, but the parent's task branch is not merged into the base branch.
-- The form of the PR body
-  - If the target repository (or, if it has none, the org's public `.github` repository) has a PR template (`pull_request_template.md`), the PR body follows its headings. Headings sacty cannot fill are marked "該当なし" (not applicable). Checkboxes are left unchecked (the reviewer checks them).
-  - If there is no template or it cannot be read, sacty uses its own format. In that format, the implementation PR body puts a summary of the change, sacty's review (the PR review child task reviews and posts), and what you should confirm (when there is a record of an earlier version's final review) in the "結論" (conclusion) section at the top. The approved requirements and design are not included in full; the body gives the key points and a link to the PR approved by merging. The table matching viewpoints to tests is kept short, and the inputs and expected results are in the collapsed section "観点ごとの詳細" (details per viewpoint) (with the final review's findings for a task that had the final review in an earlier version). In a body that follows a template, what you should confirm is at the end of the body. After the implementation is redone (however the redo started: a send-back or remarks of an AI review), the body describes the whole PR, not only the last fix. What the last fix changed is shown separately in a "最後の直し" (last fix) section (and one line in the conclusion). The table of viewpoints and tests also keeps the tests mapped in the earlier submissions.
-  - Which one was used appears in "Body" in the PR section of the task page.
-  - The "変更" section is what remains after the first paragraph that the conclusion's "変更" already shows (the same sentence is not repeated). When the implementation's description itself starts with a heading such as "## 変更内容", no empty "変更" heading is put in front of it.
-  - The "最後の直し" section is also what remains after the first paragraph that the conclusion's "最後の直し" already shows; when it fits in the conclusion, the section is not shown. For a task that had a final review in an earlier version, the summary of that review is usually not shown in the description either (only for a task that a person moved on to review despite a failed final review in an earlier version, the summary is shown in one line as "最終レビューの所見" (final review findings), together with that record). The findings of each viewpoint appear in the collapsed "観点ごとの詳細" (details by viewpoint).
-  - In the viewpoint-test mapping, the same test is shown once (a name with the describe prefix and one without are merged into the one with it). Format characters such as `%j` and `%s` in the name of a parameterized test are replaced with `‹…›`, because the values cannot be known from the name alone.
-  - Paths inside sacty's workspace (such as `/sacty-input/task.md:77`) do not appear in the PR body or comments (the investigation result, the comments a step requests, and the comment that tells you what to check). They are replaced with names a person can follow, such as "タスクの依頼" and "人の指摘".
-  - See the [specification](../spec/approval.en.md#pr-body-and-pr-template) for the detailed rules on where templates are looked for and how they are filled.
-- The form of the commit message
-  - When the repository defines the Conventional Commits form (a Commitizen or commitlint configuration exists, or the rules in AGENTS.md or CONTRIBUTING describe it), the first line of the commits sacty makes takes the form `feat: <task title>`.
-  - The type is `docs` for the commit of a documents-only request and of a Requirements or Design PR, `fix` for a bug fix, and `feat` otherwise. A title that already has the form `feat: …` is not prefixed again.
-  - For a repository with no definition, or one whose definition cannot be read, the task title is used as is, as before.
-  - When a commitlint configuration sets the form of the first line itself (for example, it requires a ticket number first), the custom form takes priority even if there is also a commitlint dependency, and no type is added.
-
-### Things for a person to check
-
-In a redo started by PR comments, there can be things you have to check yourself: whether your comment was read as you meant it.
-In the cases below, the approval screen and the task details show "N things for you to check" under the approval notice.
-
-- sacty could not tell what your comment meant. The reason (what could not be read) is shown (if it is long, the first one or two sentences, and you can open the full text). The redo goes ahead with the smallest change it could read. The person who commented should check that the result matches what they meant.
-- The redo run listed something it wants you to check along with its response to the comment: it guessed because it could not read what the comment meant, it recreated a value or wording it no longer had, it changed something the comment did not ask for, or it left a comment unaddressed. The comment it concerns is also shown.
-
-So that the people looking at the PR notice it, the same content is commented on the PR of the redone deliverable (implementation, requirements, or design) when it is back to waiting for approval. One comment per submission.
-
-- The comment starts with "Sacty：人に確かめてほしいことがあります". If it is not what you meant, comment on the PR or send the task back on the task screen.
-- This comment is not imported as a comment.
-- For a project with no GitHub account chosen, nothing is commented on the PR (the screen still shows it). If commenting fails, the task does not stop.
-- For security check and security fix tasks, nothing is commented on the PR (so details of a vulnerability or the fix scope are not put in a public place; the screen still shows it).
-- If it could not be commented while the task was paused, sacty tries again when you resume (it does not write again if a comment for the same submission exists).
-- Secret values are hidden and long text is cut. Paths inside sacty's workspace are replaced with names a person can follow.
-
-## Change requests
-
-When a step's agent cannot proceed without changing the approved requirements or design, it makes a change request (numbered like `CP-1`).
-sacty does not have an AI judge the request; it asks you to decide.
-
-1. When there is a request, the task is escalated ("Change request needs you") and appears in "Needs you".
-2. Press "Decide" to go to the "Change requests" section in the task details. Read the reason, the supporting facts, and the full proposed text.
-3. Press "Accept change" or "Don't accept".
-   - If you accept a change to the requirements, their approval is revoked, so approve them again.
-   - If you accept a change to the design, it replaces the approved design.
-   - If you don't accept it, the requesting step's deliverable is submitted as is (the approved requirements and design do not change).
-
-- While the task waits for your decision, it cannot be paused.
-- A request that an earlier version's AI was in the middle of judging waits for your decision when the updated version starts.
+When the change is small, the number of self-review rounds is also reduced ([Self-review before submitting](#self-review-before-submitting)).
+The aim is that the less needs to change, the less a revision costs.
 
 ## Cause of a request for changes
 
@@ -595,6 +536,39 @@ When you request changes on the approval screen, you can choose a "Cause of the 
 - The quality signals on the dashboard show the number of requests for changes by cause ([Dashboard](dashboard.en.md)).
 - Requests for changes from before the cause could be chosen have no cause. On the dashboard, a request for changes with a miss record is counted as a miss, and the others as "Rework with unknown cause".
 
+## Change requests
+
+When a step's agent cannot proceed without changing the approved requirements or design, it makes a change request (numbered like `CP-1`).
+sacty does not have an AI judge the request; it asks you to decide.
+
+1. When there is a request, the task is escalated ("Change request needs you") and appears in "Needs you".
+2. Press "Decide" to go to the "Change requests" section in the task details. Read the reason, the supporting facts, and the full proposed text.
+3. Press "Accept change" or "Don't accept".
+   - If you accept a change to the requirements, their approval is revoked, so approve them again.
+   - If you accept a change to the design, it replaces the approved design.
+   - If you don't accept it, the requesting step's deliverable is submitted as is (the approved requirements and design do not change).
+
+- While the task waits for your decision, it cannot be paused.
+- A request that an earlier version's AI was in the middle of judging waits for your decision when the updated version starts.
+
+## Comments on PRs and issues
+
+A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue is needed, the agent writes the comment in the step's output. After a person approves the step's output, sacty posts it with the project's GitHub account.
+
+Nothing is posted unless you approve.
+The exception is a step that is approved by merging its PR (implementation, requirements, and design): sacty posts without waiting for the merge, as soon as the output is awaiting approval (see the list below).
+
+- Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, sacty posts the revised version.
+- Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. sacty does not post to other URLs and shows the reason in the activity history.
+- For a step approved by merging its PR, sacty posts the requested comments to that PR as soon as the output is awaiting approval.
+  This lets the people watching the PR read a reply to a review comment right away.
+  After a send-back and rework, sacty posts the request of the new version once. It never posts the same version's request again after the merge.
+  The end of this comment notes that AI wrote it and that the step's output is approved by merging the PR.
+- sacty does not import this comment as a PR remark (so a reply does not become a new remark and keep the send-backs going).
+- The end of the comment notes that AI wrote it in a sacty task and a person approved it.
+- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop. If it could not be posted, read the record in the activity history and, if needed, write to the PR yourself.
+- The review step, as before, has sacty post the written review to the PR.
+
 ## Ask the Orchestrator
 
 Use "Ask the Orchestrator" (the AI icon at the bottom right of the screen) in the task details to ask about the status of the task. Questions and answers stay in the panel that opens on the right of the screen.
@@ -611,88 +585,6 @@ Type in the Question field and send with the Ask button, Ctrl + Enter, or ⌘ + 
 - If a step is running, it also examines that step's log up to the time you asked. When work is taking a long time, ask "What is it doing now?" or "Where is it taking time?" and it answers with the current state, noting as of when.
 - Asking does not change the steps or approved contents. It does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
-
-## Reading requirements and designs
-
-Requirements and designs start with the following three sections. They are written so that you can decide whether the scope is as intended and whether to approve by reading these three sections.
-
-| Section | Contents | What to do |
-| --- | --- | --- |
-| スコープ (scope) | What the change achieves, what is in scope (what this change changes), and what is out of scope (what may seem included but this change does not do; "なし" if none) | If the scope is not what you intended, write it in a remark and request changes |
-| 確認したいこと (questions) | What you must decide before it can be settled, split into must (if the answer later turns out different, the work done until then is wasted; no limit) and should (if it later turns out different, extra work is needed; up to 5). Each has a recommended answer, its reason, and the concern if the work goes ahead with the recommended answer unconfirmed, and they run from what you most want to decide (what bears on the purpose of your request) | If the recommended answers are fine, approve as is. To choose a different answer, write it in a remark and request changes |
-| 既定で決めたこと (decided by default) | Among what the request does not say but the agent decided from the existing code and rules, what you may disagree with (up to 5). A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと | Write a remark and request changes only for the ones you disagree with |
-
-The body holds only the requirements or the design itself. The agent is told not to write a report of the work's progress, a report of how it handled a remark, or notes aimed at agents in the body (how it handled each remark is recorded for that remark, separately from the body). The IDs of requirements (such as R-1) run with no gaps in the first submission. When a requirement is removed on a send-back, the IDs are not closed up; the row is kept like "R-5（削除：理由）" (because remarks and approved documents point to them by ID). An item that refers to another document adds what the referenced content asks for in one line. Before submitting, the agent checks in its self-review that none of these remains, and fixes it. The instructions alone did not keep a report such as "要求要件を直しました。セルフレビューは通りました" from getting in front of the first heading, so sacty removes paragraphs of that kind that stand before the first heading or after the last rule (`---`) before showing the body on the approval screen and in the PR. Anything mixed into the middle of the body cannot be removed, so the self-review checks it. A requirement row removed on a send-back ("R-5（削除：理由）") is not listed under the items to check, nor under "Where to check" in the PR body. However, a condition that the repository's rules (README, CONTRIBUTING, AGENTS.md, the CHANGELOG policy, the PR template, and so on) call for in this kind of change, such as updating a version, the change history, generated files, or documentation, is not removed as a "rewrite of the rules". The rules hold only because the person making the change follows them, so they are not behavior that an existing mechanism guarantees.
-
-Requirements, designs, documents, and investigation results are written minimal in their first draft. Assuming that you know the project's background, the agent writes only what you need to decide and work. It does not write background, general knowledge, or explanations of existing code, behavior that existing mechanisms already guarantee and this change does not alter, or unwanted behavior that this change cannot cause. For requirements and designs, the target is about 25 lines for a small change and about 65 lines even for a large change.
-
-If you want more detail somewhere, write that part in a remark and request changes (for example, "異常系を詳しく" or "移行の手順を書いて"). The agent adds detail only where you asked and keeps the rest short. Text added for a remark is not removed in later revisions.
-
-## How the agent revises after you request changes
-
-When you send requirements or a design back, the agent starts from the previous deliverable and rewrites only the parts your remarks concern. It does not rewrite from scratch.
-Sections and items unrelated to your remarks stay as they are. What was fixed in an earlier round is not undone either.
-
-- When a remark spans several sections, the agent fixes every section it concerns.
-- When a remark changes the direction of the deliverable (purpose, scope, approach), the agent fixes what concerns the direction throughout.
-- When your remark answers a question, the agent reflects the answer where it applies and removes that item from "確認したいこと".
-- The required sections, IDs, and the handling of questions are the same as in the first draft.
-- When the previous deliverable cannot be read (for example, it is empty), it cannot be the base, so the agent rewrites to handle your remarks.
-
-When the change is small, the number of self-review rounds is also reduced ([Self-review before submitting](#self-review-before-submitting)).
-The aim is that the less needs to change, the less a revision costs.
-
-## Self-review before submitting
-
-In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting. It fixes the work until no `must` findings are left, then submits it (up to 5 rounds including the first).
-The first round reviews with every viewpoint. A re-review after fixing (the second round on) uses only the viewpoints that raised a `must` in the previous round, plus X-1, which looks for defects without being tied to a viewpoint (only X-1 when there was no `must` and only `should` findings were fixed).
-The viewpoints a re-review did not use are recorded in the agent's run log as "not started (no `must` in the previous round)".
-When the target repository has review skills that apply to this change, one reviewer is added per skill and also reviews with the items of that skill. When it has development skills or instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING`, and so on) that apply to this change, a viewpoint (X-3) that checks whether this change follows those rules is added too. Nothing is added for ones that do not apply to this change, such as a skill for an area the change does not touch. Neither reduces the default viewpoints. Fixes, posting, and starting subagents written in the skills or instruction files are not done.
-When the deliverable of a request is judged to be document files only, the self-review of the implementation also uses the document viewpoints (sync with the code, whether the steps work, fit to the reader, static quality) instead of the code viewpoints. A request that also changes code is reviewed with the code viewpoints as before.
-When the agent redoes the work after requested changes from a person or a finding from the AI review, the first review of that run is also treated as a re-review. It uses only the viewpoints related to the findings of this run, plus X-1 (the first run of a task still uses every viewpoint, as before). The viewpoints it did not use are recorded as "not started (fix run: not related to this run's findings)". If the previous submission's self-review did not pass, every viewpoint is used.
-The Requirements and Design deliverables are put into the PR by sacty as repository files (by default under `docs/sacty/<short task ID>/`).
-Before submitting, the agent runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) on that file and makes it pass.
-It does not run verification of code, such as tests, builds, and type checks.
-The reason for any verification it did not run is kept in the self-review report.
-
-When the agent revises requirements or a design after you request changes, working from a non-empty previous deliverable, it narrows the review to the difference from the previous deliverable and what that change directly requires (this range narrowing is not applied to changes requested on the implementation; however, a fix run of the implementation is also reviewed, as described above, with only the viewpoints related to the findings and centered on what was fixed in that run, when the previous submission's self-review passed).
-However, the agent reviews the whole deliverable as usual when the self-review of the previous submission did not pass or has no record (including after a person edited the document), when the previous deliverable is empty, or when the remark changes the direction.
-When the remark is small (at most 2 places to fix, and no change of direction; for example, reflecting the answer to a question, or correcting the wording of one requirement), it is at most 2 rounds including the first.
-If the first review finds no `must` findings, the agent submits at that point.
-For a remark that touches many places or changes the direction, or when it is unclear whether it is small, the limit is the normal 5.
-Which one the agent took is written at the start of the self-review summary.
-When a PR comment only answers the "確認したいこと" (questions) and every answer is as recommended, the deliverable is not redone and not self-reviewed ([Cause of the rework](#cause-of-a-request-for-changes)). The agent only removes the answered items and re-reads the text to check, for example, that nothing other than the places reflecting the answers differs from the previous version. The self-review result is then "no record", and the next rework reviews the whole.
-
-The result appears on the deliverable cards, the Implementation card, and the approval screen.
-
-| Shown | Meaning |
-| --- | --- |
-| Self-review: passed · n rounds | Fixed until no `must` findings were left |
-| Self-review: not passed · n rounds · m findings left | `must` findings were still left at the limit. Check them before deciding |
-| No self-review record | The agent did not report a result. Check the deliverable yourself |
-
-The cost of the self-review is included in the cost of that step.
-
-## Items to check (provenance)
-
-In the Requirements and Design steps, an agent other than the author sorts the basis of each item (`R-n` of the requirements, `TV-n` of the test viewpoints) into the following three.
-
-| Kind | Meaning |
-| --- | --- |
-| Quote | States as is what the task, the ticket, your remarks, or the approved earlier step says |
-| Derived | Derived from the paired unwanted behavior, the investigation result, or conventions of existing code |
-| Inference | Anything else; what the agent added on its own |
-
-The deliverable cards and the approval screen show "Items to check: n". The items to check are inferences, quotes whose original text is not found in the input, and items without a classification. They may not match your intent, so check them one by one. Quotes and derived items are collapsed under "Others"; a quick look is enough.
-
-When you approve the requirements or design on a PR, the same content appears under "Where to check" in the PR body. A requirement row removed on a send-back ("R-5（削除：理由）") is not listed.
-
-In the following cases, check every item.
-
-| Shown | Meaning |
-| --- | --- |
-| No subagent could be started, so the author sorted the items itself | The classification may be lenient |
-| No provenance record. Check every item | The agent did not report the classification, or it could not be read, so the items to check cannot be narrowed down |
 
 ## Renaming a task
 
@@ -767,73 +659,167 @@ You can carry on with follow-up work (handling issues it found, further improvem
 - The ticket and the intake source (issue or PR) are not carried over (results are not returned to the ticket or issue).
 - From a security check or security fix task, you can create only a follow-up whose plan is "Security fix" or "Security check" ("Security fix" if you don't choose). This keeps the report's contents out of public places.
 
-## Task list
+## Documents and one-off external work
 
-A project's task list looks like this.
+To create a user guide, a procedure document, meeting notes, or a translated draft, write the audience, purpose, and source contents in the task. To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed). If the Orchestrator chooses a different plan, choose "Document" in "Plan".
 
-![The task list (Needs you cards and all tasks; the child tasks that review PRs are listed under their parent tasks)](images/task-list.en.png)
+- Review the Markdown draft in Document, request changes, and approve it.
+- The draft is exported after approval only if the Orchestrator selected a destination. Check the selected destination and reason on the "Step settings" tab of the task details ([Exporting results](result-export.en.md)).
+- An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
+- To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
-Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number (such as `#7`) under where they started.
+Like the other steps, the Document step can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads. To have it use external material, write which destination to read and what to read in the task body or in a Request changes comment. Normally the deliverable is one draft, and you approve the draft shown in the sacty web UI. The draft is not written to external services directly; it is exported after approval.
 
-Child tasks are indented directly under their parent task.
+When you want external documents created or edited directly, write so in the task body. The agent writes those documents directly, and the documents it wrote become the deliverable. The deliverable can be more than one document (for example, "Find the pages containing … and fix them together").
 
-- The child tasks of a task split are listed in the order the split decided.
-- A child task that reviews a PR sacty opened is listed under the task that opened the PR (after its split child tasks, if any). The list shows which task it reviews.
-- The review child task of a PR opened by a split child task is indented one more level under that split child task.
-- When the parent task is not in the list (it is in another project, or the filter hides it), the child task is listed without indent.
+- Document shows the content of each document after the fix. The documents written externally are listed under "Pages written externally".
+- When you request changes, the agent edits those documents (it does not create another document with the same content). You can also request changes to add target documents.
+- Documents written externally are changed when the agent writes them, without waiting for approval. Instruct direct editing only when the external documents may change before approval.
+- Because the documents written externally are the deliverable, nothing is exported after approval.
 
-### Find and filter tasks
+A work report (that something was created, the agent ID, and so on) is written neither in the draft nor externally.
 
-Use the fields above "All tasks" to filter the list.
-Only tasks that match every filter are shown.
+You can also request an update to a calendar, a register, or an existing external page without choosing a repository. This covers one-off changes to a unique target that use one configured destination (they cannot be redone through Request changes; for external documents you want to revise as you go, or several documents fixed together, request them as a Document task above). Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 
-| Field | How it filters |
+1. Write the specific target ID/URL, the change and its preconditions, and the desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. If target or connection details are missing, the task stops before execution starts.
+2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval. Confirm that the request is correct before starting the task.
+3. Check the evidence in the successful result and approve it to complete the task. Failure or an unknown result does not count as completion.
+
+After step selection, the task details show the selected destination and connection type, target, requested change, and verification method as read-only information. This view is not a pre-execution approval gate and does not stop the task.
+
+If target details are missing, add the missing information to the request and create a new task. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
+
+You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone.
+
+sacty instructs the agent to make every write the request needs (there may be several, such as a parent post and a reply in its thread) and check the result after the change. The agent does not resend the same write; after a failure or an unknown result, it stops the remaining writes and reports, separately, the writes confirmed as successful, those not made, and those whose result is unknown. A write with an unknown result may have succeeded in the external service, so check it there before requesting it in a new task. However, this does not guarantee that the external service prevents duplicates.
+
+You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12"). The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its output.
+
+When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push code. To fix a PR's code, create a task with the repository selected ([Fixing an existing PR](#fixing-an-existing-pr)).
+
+Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
+
+## Fixing an existing PR
+
+To fix an existing PR itself, for example to address review comments on a PR a person opened, select the target repository and write the PR's link in the title or description (for example "Address the review comments on https://github.com/acme/app/pull/12"). When the Orchestrator judges that the task asks to fix that PR, sacty takes over the PR.
+
+- The implementation starts from the head of the PR's branch, and sacty pushes commits to the same branch. It opens no new branch or PR, and does not change the PR's title or description.
+- The reviews and comments on the PR (including sacty's reviews) are passed to the agents of the steps.
+- Requirements and Design steps, if any, are not opened as PRs; you approve them on the sacty screen (so that their files are not mixed into the taken-over PR).
+  If the agent of these steps decides not to address a comment of the PR, it appears under "確認したいこと" with the reason. The agent is not asked to report what it addressed.
+- Merging the PR approves the implementation. Feedback not passed to the implementation (such as feedback added after it started) is imported and fixed, as with other PRs.
+- "Taking over PR" appears on the "Step settings" tab of the task details.
+- Cancelling the task neither closes the PR nor deletes its branch (the pushed commits stay).
+
+The following PRs cannot be taken over. To avoid opening a new PR, the task stops without choosing the steps. Check the PR, then resume to choose the steps again.
+
+- A merged or closed PR
+- A PR from a fork (sacty cannot push to a fork's branch)
+- A PR another sacty task opened or took over (feedback on a PR sacty opened is imported and fixed by that task)
+
+If a person pushes commits to the PR's branch while sacty works, sacty stops without force-pushing. Cancel the task and create a new one. A task that only refers to a PR (for example "Apply the same fix as PR 12 to the other modules") opens a new PR as before.
+
+## Security checks and fixes
+
+You can check for vulnerabilities and supply chain problems with a report, and fix them with a PR.
+
+| Plan | Deliverable | When to use |
+| --- | --- | --- |
+| Security check | A report (approved in the web UI) | When you want to find where the problems are |
+| Security fix | A PR (approved by merging) | When you want to fix a specific problem (a CVE, a GHSA, an alert, a finding of a check) |
+
+### Security check
+
+1. In "Create task", choose the template "Security check", choose the target repository, and create the task. Choosing this template in a scheduled task runs the check regularly ([Scheduled tasks](scheduled-tasks.en.md)).
+2. The agent checks each of the following categories and writes a report of findings. It uses `osv-scanner` (dependency vulnerabilities) and `gitleaks` (secrets) in the default image.
+   - Dependency vulnerabilities
+   - Supply chain (CI workflows, where dependencies come from and lockfiles, install scripts, pinning image tags)
+   - Code vulnerabilities
+   - Leaked secrets (it writes only the location and the kind, not the value)
+   - Configuration and IaC
+3. Read the report and approve it (you can also request changes). Categories that could not be checked for lack of a tool appear in the report as unchecked scope.
+
+### Creating fix tasks from the report
+
+The task details of an approved security check show a "Security fixes" section. The findings are listed by category; press "Create fix task" for the category you want to fix.
+
+- One task with the plan "Security fix" is created per category. Its description contains only the findings of that category.
+- A category with a task shows a link to it. You cannot create another one for the same category.
+- "Report" in the properties of a fix task's details shows a link to the original report and the category.
+- To fix findings across categories, or only some of them, create a [follow-up task](#create-a-follow-up-task-from-a-completed-task) and write the findings to fix in its description.
+
+### Security fix
+
+Besides creating it from a report, you can create one in "Create task" by choosing the plan "Security fix" and writing the problem to fix (a CVE number, an alert URL, and so on) in the description.
+
+1. In Investigate, the agent confirms the problem and decides the fix scope (the files that may change, the dependencies to raise, the command that confirms the fix). The scope is not approved.
+2. In Implement, the agent fixes only inside the scope, with the smallest change that solves the problem. It does not mix in refactoring, reformatting, or unrelated fixes.
+3. sacty checks the diff against the scope and then opens the PR. The review child task of the PR checks that the change is minimal (viewpoint `SEC-MIN`). If files outside the scope changed, or more than 300 lines changed excluding lockfiles, the violation appears in the PR body, the child task makes it a "changes required" finding, and the implementation is fixed. Regression test files may be added outside the scope (their lines are counted). In an earlier version, the Goal Guardian checked this in the final review and, on a violation, failed it and redid the implementation.
+4. The PR body shows "修正の範囲（セキュリティ対応）". Check that the diff stays within the scope, and approve by merging. A task that fixes an existing PR ([Fixing an existing PR](#fixing-an-existing-pr)) does not change the PR body, so check the scope in the Investigate result in the task details.
+
+- When it cannot be fixed without changing something outside the scope, the agent writes the reason and the scope to widen in the implementation's description. You cannot request changes on the preliminary Investigate, so cancel the task and rerun it, writing the scope to widen in the rerun's note. The rerun task also proceeds as "Security fix".
+- The results of security check and security fix tasks are not commented on the source issue or ticket. Comment requests in a step's output (`sacty-github-comments`) are not posted either.
+- A PR is created for a public repository too, as for other implementations. Decide whether it may be public before creating the task.
+
+## Repositories without tests
+
+Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
+
+- The Orchestrator looks at the package settings, Makefile, CI settings, README, and so on, and if it finds no tests, it leaves the basis for judging that the repository has no tests.
+  A repository that collects agent skills or only holds documents also falls under this.
+  The "Step settings" tab of the task details shows "Test command: none · judged by the goal", and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
+- sacty does not run tests.
+  The PR review child task checks the PR from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description, and sacty fixes the implementation when there are findings (as for a task with tests).
+- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests".
+  The test line of the PR body also includes the basis, with "テストの仕組みが無いリポジトリとして進めたため、テストでは検証していません。" (it proceeded as a repository without tests, so it was not verified by tests).
+  Because nothing was checked by tests, check the content of the changes yourself before you approve.
+- When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, the agent of the Implementation step runs those tests, and the PR review child task checks the PR including their results (sacty does not run tests).
+  - If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON), the task is paused with an error.
+    Resuming redoes the implementation.
+- Even when the Orchestrator judges that there are no tests, the judgment is not used in the following cases.
+  The task does not stop, and goes on with neither a test command nor the judgment of no tests (the Implementation step's agent decides the tests from the repository and runs them).
+  - A bug fix (Reproduce → Implementation) is chosen (a reproduction is confirmed by tests, so it is not chosen for a repository without tests)
+  - The repository has files that look like tests
+  - It could not be confirmed that there are no test files, because there are too many files, a directory cannot be read, and so on
+
+  The following files count as files that look like tests.
+  Document files (`.md`, `.txt`, `.rst`, `.adoc`, and so on) do not match (`tests/README.md` does not match).
+
+  - Files inside `test`, `tests`, and `__tests__` directories
+  - Files with names like `*.test.*`, `*.spec.*`, `*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`
+
+### Deciding the tests on resume
+
+A task that an earlier version stopped right after choosing the steps, because the test command could not be determined or it could not proceed without tests, can be resumed by choosing one of the following in "Tests" of the resume section of the task details (you do not need to create the task again).
+In the current version, a task goes on without stopping even when how to handle tests is not decided, so this section does not appear. It does not appear for a task that stopped for the budget, another error, or a person's pause either (a task that an earlier version stopped because a verification tool was not in the image, or because the request was judged documents only but the diff disagreed, is an exception: this section lets you decide how to handle tests again for it; see [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review)).
+
+- **Specify the test command**: enter the command that runs the repository's tests (for example `npm ci && npm test`).
+  It is passed to the agent of the implementation step as the test command a person decided (sacty does not run it).
+- **Proceed without tests**: for repositories without tests, such as one that collects agent skills or only holds documents.
+  The reason remains in the Activity, the task details, and the PR body as a reason decided by a person.
+  It cannot be chosen for a bug fix.
+- **Resume without deciding**: the task continues from where it stopped with the chosen steps (the steps are not chosen again).
+  It does not stop because the test command cannot be determined.
+
+For a task that an earlier version stopped right after choosing the steps, choose according to why it stopped.
+
+| Why it stopped | How to choose |
 | --- | --- |
-| Search | Tasks whose title contains the text (case-insensitive) |
-| Start date (from), (to) | Tasks created between the dates (both days included; either one alone works too) |
-| Started from | Where the task started, such as Sacty or GitHub Issue |
-| Repository | The repository the task works on. "Not decided / No repository" is for tasks whose repository is not decided yet |
-| Status | Not finished, Needs you, In progress, Waiting, Completed, Cancelled |
+| The Orchestrator could not determine the test command ("could not determine the test command") | If there are tests, specify the test command. If the repository does not have tests, proceed without tests. |
+| The Orchestrator judged that there are no tests, but some files look like tests ("some files look like tests (…)"; the files found are shown) | If the files found **really are tests**, specify the test command. If a file that is **not a test** (such as a script that is not for testing) was matched by mistake, proceed without tests. |
+| There were too many files to confirm that there are no test files ("too many files to confirm …") | If there are tests, specify the test command. If there really are no tests, proceed without tests. |
+| A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), and fix it. Then specify the test command or choose to proceed without tests. |
+| A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Specify the test command (a bug fix cannot proceed without tests). To fix it without tests, cancel the task and use rerun to redo it as an ordinary task that describes what to fix. |
 
-The count (such as "1 of 5") is shown on the right of the fields.
-Press "Clear filters" to go back to all tasks.
-The filters stay only while the screen is open (automatic updates keep them; reloading or moving to another project clears them).
-The "Needs you" cards are not filtered.
+## When the implementation has no changes
 
-## Hints on the screen
+When the Implementation step changes nothing (it decided the requirements are already met and no change is needed), no PR is created. This is the same for every task.
 
-The text on the screen says only the current state and what to do next, briefly. How things work and why is shown when you hover over the hint mark (i) next to a heading or item.
-
-With the keyboard, it opens when you stop on the mark with Tab; on a phone, it opens on tap. Esc or a tap outside closes it. Items without a hint have no mark.
-
-In the Activity of the task details, press "Details" on a request-for-changes line to see the comments written when changes were requested. You can read past comments again even after approval, completion, or cancellation.
-
-## Automatic updates on the screen
-
-While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed). As a result, tasks added by intake, approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
-
-- The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open dialogs and sections, focus, and the scroll position stay as they are.
-- While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
-- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
-- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are writing are not lost.
-- While a run is in progress, the run log adds new lines at the end automatically.
-  - The scroll position does not move while you are reading in the middle. The screen follows new lines only while you are looking at the bottom.
-  - If the list of the agent's original files cannot be read after the run has finished, the screen shows that and that it is retrying, and shows the list once it can be read.
-- The Sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen again or reload it in the browser.
-
-## Back up before updating and returning to an older version
-
-A database containing new kinds of records (tasks with Document or Operation, audits of completed tasks and their fix tasks, and so on) cannot be read by an older version that does not support them, and startup fails.
-
-- Stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`) before updating.
-- To return to an older version, use the backup made before the update.
-- If your settings include the new steps, also restore settings compatible with the older version.
-
-Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost.
-
-- External changes, such as calendar updates, are not rolled back.
-- Fix tasks created from adopted audit proposals may already have opened PRs.
-- External operation start records made after the backup are also lost. Check the actual external state and do not repeat changes already made.
+- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence) and the verification results the Implementation step reported (the current version does not run the final review; for a task that had a final review in an earlier version, its result is also shown).
+- If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
+- If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
+- In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
+- If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
 
 ## Tasks from earlier versions (with the Open PR step)
 
