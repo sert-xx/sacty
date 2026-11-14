@@ -4,119 +4,316 @@
 
 # Issue, PR, and ticket intake
 
-sacty regularly imports GitHub issues and PRs and JIRA tickets and turns them into tasks. Intake settings are shared by all projects. You set them in "Sacty settings" (the user menu) in the web UI.
+sacty regularly imports GitHub issues and PRs and JIRA tickets and turns them into tasks.
+You set up intake in "Sacty settings" (the user menu) in the web UI.
+The settings are shared by all projects (only the ticket intake sources are set per project, in the project settings).
 
-## Intake intervals
+This page explains, for each kind of intake, what is imported, how to set it up, what happens after the import, and what to watch out for.
 
-Intake runs at a separate interval for each kind: "Issue intake", "PR review intake", and "Ticket intake". You set the interval in "Intake interval (seconds)" in each section of "Sacty settings".
+- [Issues](#issues): issues with the label to import become tasks.
+- [PR reviews](#pr-reviews): PRs that request your review and PRs with the review label become review-only tasks.
+- [Reviewing PRs that sacty created](#reviewing-prs-that-sacty-created): for the PRs sacty creates, sacty creates a child task that reviews them (no label setting is needed).
+- [JIRA tickets](#jira-tickets): tickets with the label to import become tasks.
 
-- Enter an integer of 60 or more (seconds). If you leave it empty, it is 300 seconds. You cannot save values shorter than 60 or values that are not integers, and the web UI shows the reason.
-- A changed interval takes effect from the next intake without stopping the daemon. When the daemon starts, it imports every kind right away.
-- When you save "Sacty settings", sacty behaves as follows.
-  - Kinds that are On and have their labels and so on set are imported within 30 seconds (without waiting for the interval to pass). After that, they are imported at the new interval.
-  - Kinds that are Off, or that do not have their labels and so on set, are not imported even when you save.
-  - If a kind is being imported when you save, the new intake starts at the check (every 30 seconds) after the current intake ends. If the intake takes long, it starts later than 30 seconds.
-  - For a kind whose intake is stopped, the field shows the interval that will apply when intake starts.
-- Even if one kind fails or hits a GitHub rate limit, the other kinds keep being imported.
-- GitHub searches combine up to 30 targets of the same domain and account, across projects, for each kind. Beyond 30, sacty splits the search. So as long as there are at most 30 targets, adding projects does not add searches. sacty decides which project each item belongs to after it is found.
-- "Import now" on the project page imports every kind without waiting for the interval. The project page shows the last intake for each kind, and the targets that could not be imported together with which kind they belong to (kinds that are not On are not shown).
-- You do not need any intake settings in `config.yaml`. sacty imports JIRA tickets without `github:` too. sacty does not read `github:` (`poll_interval_sec`) from earlier versions even if it is written.
+For how often intake runs, see [Intake intervals](#intake-intervals); for how many tasks run at the same time, see [Running tasks in parallel](#running-tasks-in-parallel).
 
 ## Issues
 
-- sacty imports as tasks the open issues in the project's targets that have the "Label to import" in "Issue intake" of "Sacty settings". If no label is set, nothing is imported.
-- PRs are not imported even if they have the label to import. PRs are imported by "PR reviews" below. If you want sacty to implement a PR, turn it into an issue and import that, or create a task from the web UI. Tasks of PRs that were already imported continue as they are.
+sacty imports as tasks the open issues in the project's targets that have the label to import.
+
+Set up intake as follows.
+
+1. In the "Issue intake" section of "Sacty settings", enter the label in "Label to import".
+2. Save.
+
+These rules apply to the settings.
+
+- If no label is set, nothing is imported.
 - With "Import issues", you can turn this Off while keeping the label.
 - The GitHub account used is the one chosen for that host in the project ([Project settings](project-settings.en.md#github-account)).
 
+An imported issue proceeds as an ordinary task ([Working with tasks](tasks.en.md)).
+
+PRs are not imported even if they have the label to import.
+
+- PRs are imported by [PR reviews](#pr-reviews).
+- If you want sacty to implement a PR, turn it into an issue and import that, or create a task from the web UI.
+- Tasks of PRs that an earlier version imported with this label continue as they are.
+
 ## PR reviews
 
-PRs are imported so that only their review is handed over ("PR review intake" in "Sacty settings").
+sacty imports PRs so that only their review is handed over.
+It reviews an imported PR and posts the result to the PR as a review (comments).
+It does no implementation or PR creation.
 
-- If you turn on "Import PRs that request my review", sacty imports PRs that request a review from you personally. These are requests to the GitHub account chosen for that host in the project (requests to teams are excluded).
-- PRs with the "Label for PR reviews" are imported too. You can turn this Off with "Import PRs with the review label".
-- The review label can have the same name as the label to import (for example, `sacty` for both; names that differ only in upper and lower case count as the same). Even then, issues with that label are taken in as ordinary tasks and PRs as review-only tasks. An issue is never taken in as a review, and a PR never as an ordinary task.
-- For imported PRs, sacty only reviews them, without asking the Orchestrator to choose steps, and posts the review to the PR (as comments). It does no implementation or PR creation. When `images` is configured and no image is decided (not specified by the project's target, at creation, or on rerun), the Orchestrator chooses just the task image. This is because the review runs the project's verification such as tests (see [Container images](images.en.md#which-image-a-task-runs-in)).
-- The agent fetches dependencies for the code at the PR's head commit and runs verification such as tests and type checks before reviewing. In a re-review, it runs them again on the new commit. For verification it could not run (such as checks that need services like a DB, or secrets), it writes the command and the reason in the body.
-  - When the PR's main target is a document (a design document, requirements, an ADR, or user documentation) and it has no code changes, the agent runs only the checks that apply to the changed documents that the repository has (a document formatter, a markdown lint, a link check, and the like). It does not run code tests, builds, or type checks. If there is no such check, it runs no verification. A PR that changes both documents and code (even if its main target is a document) runs all the verification as before.
-  - During verification, the PR's code (dependency install scripts and tests) runs in the agent's container. The PR's code can reach the same things as the agent.
-    - It can read the agent's credentials in the container (such as the token for the AI service).
-    - When codex runs with a subscription, it can rewrite `auth.json` in the container. The rewrite is written back to the host's `auth_file` after the run and stays.
-    - During the run, through the gateway, it can read GitHub with the GitHub account chosen in the project and use the MCP servers given to the agent.
-    - Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
-  - Do not put the review label on, or request a review for, PRs from forks or PRs whose author you do not trust. Intake does not filter by whether a PR comes from a fork or a bot. With settings that add labels automatically, or automatic review requests such as CODEOWNERS, PRs may be imported without a person deciding. The same applies when you choose "Review only" while creating a task.
-- If the PR description links to documents (such as a design written outside Git), the agent decides from the PR title, description, and diff whether each is a review target or only background.
-  - The agent reviews documents it judges to be targets too. It cannot attach those findings to PR lines, so it writes them in the body with the document and section.
-  - To let the agent read the documents, provide something that can read where they live, such as an MCP server, in the agent's environment.
-  - Documents it could not read are listed in the review's scope in the body.
-- When the PR is merged or closed, review tasks that have not finished are cancelled.
-- The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
-  - When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
-  - If you turn on "Mention me instead of the PR author in posted reviews" in "Sacty settings", the @ mention goes to the GitHub account chosen in the project (you, the poster) instead of the author (Off by default). Only the @ mention in the body changes. The review is still posted publicly on the PR, and the author, who usually follows the PR, may still get GitHub's usual review notification.
-  - Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
-  - When some viewpoints could not be checked (for example, checking documents against the implementation could not be finished), the verdict is "読み取れませんでした" (could not be read), and the body starts with the viewpoints that could not be checked. However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).
-  - The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
-- sacty reads the reviews and comments already on the PR and does not repeat the same problem.
-  It checks whether an existing finding is unaddressed against the code and the author's replies. A thread that is merely not marked resolved does not count as unaddressed.
-  Only when it confirms that a finding is unaddressed does the summary say that an existing finding is unaddressed, and then the verdict is not "no findings".
-- When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment: that it stopped, the gist of the reason, and how to resume (a link to the task screen).
-  - Open the task on the screen and press "Resume" to continue from the step that stopped (if the review run stopped, sacty runs it again; if posting stopped, sacty posts the review it already wrote).
-  - If it stops for the same reason again, sacty does not write to the same PR again and again. If it stops for a different reason, it writes a separate comment.
-  - When you resume and the review is posted, the stopped comment is rewritten as "resolved".
-  - sacty does not write when you paused the task yourself. If sacty cannot write to the PR, the task stays paused (the screen and Slack notifications arrive separately).
-  - When sacty's GitHub requests (checking the PR to review and posting the review) fail in a temporary way (a GitHub error, a rate limit, or a network failure), sacty does not stop. It waits and retries automatically (up to 4 times, after 15 seconds, 1 minute, 3 minutes, and 5 minutes).
-    While it retries, it writes no comment to the PR. If it keeps failing, it stops and writes the comment above.
-    The retries appear in the task's activity. A failure that waiting does not fix, such as missing permission or a PR that cannot be found, stops it right away.
-  - For a temporary failure of an agent run, such as a busy model, sacty does not retry on its own. If you write a fallback agent, sacty switches to it instead of stopping ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
-- If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the body which commit was reviewed.
-- When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
-  - For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes Sacty find it at the next intake and create a new review task in the same project. The original completed task keeps its status, post, activity, and cost, while the new task reviews in a new execution session.
-  - Each re-request creates one new task. Repeated intake of the same request and restarts do not add duplicates. A re-request after the new task completes creates another separate task.
-  - PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again").
-  - Automatic re-review applies only to requests made after the review was posted and the task completed. A request made during a review is not queued for another round. If you re-requested during a review, re-request again after completion or use "Review again" in the task details.
-  - If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time. You can also start it manually with "Review again".
-  - "Review again" in the UI continues to rerun the selected task as before.
-  - A re-review says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
-- Only open PRs are imported for review.
-- Except when a GitHub review re-request creates a new task, the same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label to it.
+This section covers the following, in this order.
+
+- What is imported and how to set it up: [Which PRs are imported](#which-prs-are-imported) and [Set up PR review intake](#set-up-pr-review-intake)
+- After the import: [How a review proceeds](#how-a-review-proceeds), [The posted review](#the-posted-review), [Re-review](#re-review), and [When a review stops](#when-a-review-stops)
+- Caution: [Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)
+
+### Which PRs are imported
+
+sacty imports open PRs that match either of the following.
+
+- PRs that request a review from you personally
+  - These are requests to the GitHub account chosen for that host in the project (requests to teams are excluded).
+- PRs with the review label
+
+These rules apply to the intake.
+
+- The same PR is never imported twice (except when a GitHub review re-request creates a new task; see [Re-review](#re-review)).
+  A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label to it.
+- PRs that sacty created are not imported ([Reviewing PRs that sacty created](#reviewing-prs-that-sacty-created)).
 - Tasks of PRs imported by earlier versions remain as they are.
+
+### Set up PR review intake
+
+During a review, the PR's code runs in the agent's container.
+Make sure you do not import PRs you do not trust ([Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)).
+
+1. In the "PR review intake" section of "Sacty settings", set either or both of the following, depending on which PRs you want to import.
+   - To import PRs that request your review: turn on "Import PRs that request my review".
+   - To import PRs with the review label: enter the label in "Label for PR reviews".
+2. Save.
+
+These rules apply to the review label.
+
+- You can turn it Off with "Import PRs with the review label".
+- The review label can have the same name as the label to import (for example, `sacty` for both; names that differ only in upper and lower case count as the same).
+  - Even then, issues with that label are taken in as ordinary tasks and PRs as review-only tasks.
+  - An issue is never taken in as a review, and a PR never as an ordinary task.
+
+In the same section, you can also change who the posted review mentions ([The posted review](#the-posted-review)).
+
+### How a review proceeds
+
+For imported PRs, sacty only reviews them, without asking the Orchestrator to choose steps.
+The task proceeds in this order.
+
+1. The agent fetches dependencies for the code at the PR's head commit and runs verification such as tests and type checks.
+2. The agent reviews the PR.
+3. sacty posts the review to the PR ([The posted review](#the-posted-review)).
+
+When `images` is configured and no image is decided (not specified by the project's target, at creation, or on rerun), the Orchestrator chooses just the task image.
+This is because the review runs the project's verification such as tests (see [Container images](images.en.md#which-image-a-task-runs-in)).
+
+Verification runs as follows.
+
+- In a re-review, the agent runs it again on the new commit.
+- For verification it could not run (such as checks that need services like a DB, or secrets), the agent writes the command and the reason in the review body.
+- When the PR's main target is a document (a design document, requirements, an ADR, or user documentation) and it has no code changes, the agent runs only the checks that apply to the changed documents.
+  - Those are the checks the repository has, such as a document formatter, a markdown lint, and a link check.
+  - The agent does not run code tests, builds, or type checks.
+  - If there is no such check, it runs no verification.
+- A PR that changes both documents and code (even if its main target is a document) runs all the verification.
+- During verification, the PR's code runs in the agent's container ([Do not import PRs you do not trust](#do-not-import-prs-you-do-not-trust)).
+
+If the PR description links to documents (such as a design written outside Git), the agent decides whether each is a review target or only background.
+It decides from the PR title, description, and diff.
+
+- The agent reviews documents it judges to be targets too.
+  It cannot attach those findings to PR lines, so it writes them in the review body with the document and section.
+- To let the agent read the documents, provide something that can read where they live, such as an MCP server, in the agent's environment.
+- Documents it could not read are listed in the review's scope in the review body.
+
+The agent reads the reviews and comments already on the PR and does not repeat the same problem.
+
+- It checks whether an existing finding is unaddressed against the code and the author's replies.
+  A thread that is merely not marked resolved does not count as unaddressed.
+- Only when it confirms that a finding is unaddressed does the summary say that an existing finding is unaddressed, and then the verdict is not "no findings".
+
+If the PR changes before the review finishes, sacty behaves as follows.
+
+- If the PR is pushed to while it is being reviewed, sacty posts the review against the reviewed commit and says in the review body which commit was reviewed.
+- When the PR is merged or closed, review tasks that have not finished are cancelled.
+
+### The posted review
+
+The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
+Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
+
+Who the @ mention goes to is decided as follows.
+
+- When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
+- If you turn on "Mention me instead of the PR author in posted reviews" in "Sacty settings", the @ mention goes to the GitHub account chosen in the project (you, the poster) instead of the author (Off by default).
+  - Only the @ mention in the body changes.
+  - Even when it is on, the review is posted publicly on the PR.
+    The author, who usually follows the PR, may still get GitHub's usual review notification.
+
+When some viewpoints could not be checked (for example, checking documents against the implementation could not be finished), the verdict is "読み取れませんでした" (could not be read), and the body starts with the viewpoints that could not be checked.
+However, if what was checked has a `[要修正]` finding (including an earlier one, or another reviewer's, confirmed as unaddressed), the verdict is "修正が必要" (changes required).
+
+The heading, verdict, and prefixes added by sacty are in Japanese.
+The findings follow the writing rules of the repository (Japanese when there are none).
+
+### Re-review
+
+A re-review reviews the latest commit of the PR again and posts the result.
+It says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
+
+There are two ways to start a re-review.
+
+- From the web UI: when new commits are pushed, press "Review again and post to the PR" in the task details.
+  sacty reruns the selected task.
+- Re-request the review on GitHub (Re-request review): this works for a PR taken in by a review request.
+  sacty finds the re-request at the next intake and creates a new review task in the same project.
+
+A re-request on GitHub is handled as follows.
+
+- The original completed task keeps its status, post, activity, and cost.
+  The new task reviews in a new execution session.
+- Each re-request creates one new task.
+  Repeated intake of the same request and restarts do not add duplicates.
+  A re-request after the new task completes creates another separate task.
+- Automatic re-review applies only to requests made after the review was posted and the task completed.
+  A request made during a review is not queued for another round.
+  If you re-requested during a review, re-request again after completion or use "Review again and post to the PR" in the task details.
+- PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again and post to the PR").
+- If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time.
+  You can also start it manually with "Review again and post to the PR".
+
+### When a review stops
+
+When a review stops (an error, the AI usage limit, an authentication error, or the budget cap), sacty also tells the PR that asked for it, in a comment.
+The comment says that the review stopped, the gist of the reason, and how to resume (a link to the task screen).
+
+To resume, open the task on the screen and press "Resume".
+
+- sacty continues from the step that stopped (if the review run stopped, sacty runs it again; if posting stopped, sacty posts the review it already wrote).
+- When you resume and the review is posted, the stopped comment is rewritten as "resolved".
+
+sacty writes the comment on the PR as follows.
+
+- If the review stops for the same reason again, sacty does not write to the same PR again and again.
+  If it stops for a different reason, sacty writes a separate comment.
+- sacty does not write when you paused the task yourself.
+- Even if sacty cannot write to the PR, the task stays paused (the screen and Slack notifications arrive separately).
+
+Temporary failures are handled differently depending on their kind.
+
+- When sacty's GitHub requests (checking the PR to review and posting the review) fail in a temporary way (a GitHub error, a rate limit, or a network failure), sacty does not stop. It waits and retries automatically (up to 4 times, after 15 seconds, 1 minute, 3 minutes, and 5 minutes).
+  - While it retries, it writes no comment to the PR.
+    If it keeps failing, it stops and writes the comment to the PR.
+  - The retries appear in the task's activity.
+  - A failure that waiting does not fix, such as missing permission or a PR that cannot be found, stops it right away.
+- For a temporary failure of an agent run, such as a busy model, sacty does not retry on its own.
+  If you write a fallback agent, sacty switches to it instead of stopping ([Switching agents on failure](config.en.md#switching-agents-on-failure)).
+
+### Do not import PRs you do not trust
+
+During the verification of a review, the PR's code (dependency install scripts and tests) runs in the agent's container.
+Do not put the review label on, or request a review for, PRs from forks or PRs whose author you do not trust.
+The same applies when you choose "Review only" while creating a task.
+
+The PR's code can reach the same things as the agent.
+
+- It can read the agent's credentials in the container (such as the token for the AI service).
+- When codex runs with a subscription, it can rewrite `auth.json` in the container.
+  The rewrite is written back to the host's `auth_file` after the run and stays.
+- During the run, through the gateway, it can read GitHub with the GitHub account chosen in the project and use the MCP servers given to the agent.
+- Even in a bot's dependency update PR (such as `dependabot[bot]`), the install scripts of the new versions run.
+
+Intake does not filter by whether a PR comes from a fork or a bot.
+With settings that add labels automatically, or automatic review requests such as CODEOWNERS, PRs may be imported without a person deciding.
 
 ## Reviewing PRs that sacty created
 
 For each PR sacty creates (Requirements and Design PRs, and the implementation PR), sacty creates a child task that reviews that PR.
-No label setting is needed, and sacty does not add a label to the PR.
-The implementation PR is opened as a draft, and the child task is created right after it is opened. When the child task gives "no findings", sacty removes the draft ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
-An implementation PR stacked on a dependency's PR gets its child task when the dependency is merged and the PR is retargeted.
+No label setting is needed.
+sacty does not add a label to the PR either.
+
+PRs sacty created are not taken in even if you add the review label or request a review (the child task reviews them).
+The same applies to PRs to which an older version of sacty added the label.
+
+This section covers the following, in this order.
+
+- The child task: [The review child task](#the-review-child-task) and [When the child task is cancelled](#when-the-child-task-is-cancelled)
+- The review findings: [How findings reach the original task](#how-findings-reach-the-original-task) and [How AI review comments are handled](#how-ai-review-comments-are-handled)
+- Caution: [What to check before you approve or merge](#what-to-check-before-you-approve-or-merge)
+
+### The review child task
+
+sacty creates one child task per PR.
+
+- sacty opens the implementation PR as a draft and creates the child task right after it is opened.
+  When the child task gives "no findings", sacty removes the draft ([Review of the implementation PR](tasks.en.md#review-of-the-implementation-pr)).
+- An implementation PR stacked on a dependency's PR gets its child task when the dependency is merged and the PR is retargeted.
+- Updating the PR does not create a new child task.
+- When the PR is recreated (it becomes a PR with a new number), a child task is created for the new PR.
+
+The child task appears on the screen as follows.
 
 - The child task is a "PR review only" task titled "[PR #number] title of the original task" (the same whatever the screen language).
-  In "Related tasks" of the task detail, links to each other appear as "PR review" on the original task and "Reviews the PR of" on the child task.
-  The links on the original task also show the child task's status (queued, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
-  Its cost counts toward the child task's budget.
-- The child task's review is posted to the PR.
-  - If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.
-    They are fixed in the step the child task gave for each finding ([Approval in PRs](tasks.en.md#approval-in-prs-requirements-design-implement)).
-  - When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again.
-    This repeats until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
-  - A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
-  - The findings of this review are told apart as "AI review comments" from the comments you wrote.
-    The review is posted with the same GitHub account as yours, but it is recognized by the marker (`sacty-review:`) put in the post.
-    - The Activity, the approval screen, the dashboard, and the audit show them separately as "AI review".
-    - A request for changes made only of AI review comments is not counted in the number of requests for changes by you, or in the limit on requests for changes to the same step (3).
-    - They are passed to agents separately from your comments. "The previous comment" and similar words in your comments are treated as pointing to your comments.
-  - If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), that review is discarded instead of delivered.
-    That it was discarded, and why, remain in the Activity.
-    The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub). They stay until the PR is merged, so check them before you approve or merge.
-    When the original task goes back to waiting for approval, the child task reviews the current PR again.
-  - The approval screen and the task detail also show whether a Sacty AI review is attached to the current commit of the PR awaiting approval (not attached, reviewing, or attached). A review takes a while to reach a commit created by a rework, so approving or merging before it arrives means going ahead without seeing its comments. Approving and merging are not blocked. The "Conclusion" of the PR body also gets one line with the state when the body was written (a review that arrives later is not reflected, so check the approval screen for the latest state).
-- There is one child task per PR. Updating the PR does not create a new child task. When the PR is recreated (it becomes a PR with a new number), one is created for the new PR.
-- If you merge or close the PR before the child task finishes, the child task is cancelled. It is also cancelled when you cancel the original task.
-  If you reopen a closed PR, a new child task is created and reviews it again (a child task you cancelled is not recreated).
-- PRs sacty created are not taken in even if you add the review label or request a review (the child task reviews them).
-  The same applies to PRs to which an older version of sacty added the label.
+- In "Related tasks" of the task detail, links to each other appear.
+  They appear as "PR review" on the original task and "Reviews the PR of" on the child task.
+- The links on the original task also show the child task's status (queued, cancelled, and so on), so you can tell them apart when a reopened PR has several child tasks.
+- Its cost counts toward the child task's budget.
+
+### When the child task is cancelled
+
+The child task is cancelled in these cases.
+
+- You merge or close the PR before the child task finishes
+- You cancel the original task
+
+If you reopen a closed PR, sacty creates a new child task and reviews it again (a child task you cancelled is not recreated).
+
+### How findings reach the original task
+
+The findings of the child task's review reach the original task as follows.
+
+1. sacty posts the child task's review to the PR.
+2. If its verdict is changes required or suggestions only (OK to merge), the review reaches the original task as PR findings.
+   The original task fixes them in the step the child task gave for each finding ([Approval in PRs](tasks.en.md#approval-in-prs-requirements-design-implement)).
+3. When the original task fixes them, updates the PR, and goes back to waiting for approval, the child task reviews the latest commit again.
+4. Steps 2 and 3 repeat until there are "no findings" (there is no limit on the number of rounds; the cost of repetition stops at each task's budget).
+   A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
+
+### How AI review comments are handled
+
+sacty tells the findings of the child task's review apart, as "AI review comments", from the comments you wrote.
+The review is posted with the same GitHub account as yours, but sacty recognizes it by the marker (`sacty-review:`) put in the post.
+
+- The Activity, the approval screen, the dashboard, and the audit show them separately as "AI review".
+- A request for changes made only of AI review comments is not counted in the number of requests for changes by you, or in the limit on requests for changes to the same step (3).
+- They are passed to agents separately from your comments.
+  "The previous comment" and similar words in your comments are treated as pointing to your comments.
+
+### What to check before you approve or merge
+
+The approval screen and the task detail show the following two things about the AI review.
+
+The first is the comments that sacty discarded without delivering them to the original task.
+
+- If the PR was updated after the review was made (the commit the review targeted differs from the PR's current head), sacty discards that review instead of delivering it.
+  That it was discarded, and why, remain in the Activity.
+- The discarded comments are shown on the approval screen and the task detail as "AI review comments not taken in" (the reason, the PR's commit at the time of discarding, the target commit, the gist of each comment, and a link to GitHub).
+  They stay until the PR is merged, so check them before you approve or merge.
+- When the original task goes back to waiting for approval, the child task reviews the current PR again.
+
+The second is whether a Sacty AI review is attached to the current commit of the PR awaiting approval (not attached, reviewing, or attached).
+
+- A review takes a while to reach a commit created by a rework.
+  Approving or merging before it arrives means going ahead without seeing its comments.
+- sacty does not block approving or merging.
+- The "Conclusion" of the PR body also gets one line with the state when the body was written.
+  A review that arrives later is not reflected, so check the approval screen for the latest state.
 
 ## JIRA tickets
 
-Write the JIRA connection (Jira Cloud, Jira Server / Data Center) as an organization platform (PF) (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository). There are no JIRA-specific settings (see [Gateway](gateway.en.md#organization-platform-pf-apis) for how to write a PF).
+sacty turns unfinished JIRA tickets (Jira Cloud, Jira Server / Data Center) that have the label to import into tasks.
+Set up intake in this order.
+
+1. Write the JIRA connection as an organization platform (PF) ([Write the JIRA connection](#write-the-jira-connection)).
+2. Write the ticket sources in the project settings, and set the label to import in "Sacty settings" ([Set the ticket sources and the label](#set-the-ticket-sources-and-the-label)).
+
+For what happens after the import, see [After a ticket is imported](#after-a-ticket-is-imported).
+
+### Write the JIRA connection
+
+Write the JIRA connection as an organization platform (PF) (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository).
+There are no JIRA-specific settings (see [Gateway](gateway.en.md#organization-platform-pf-apis) for how to write a PF).
 
 ```yaml
 gateway:
@@ -146,7 +343,12 @@ gateway:
         - POST /rest/api/2/issue/*/comment
 ```
 
-To keep the token out of command arguments and your shell history, create the Jira Cloud value (base64 of `email:API token`) as follows (bash or zsh). The commands read the token with hidden input, pass it to `base64` on standard input, and put the result on the clipboard. After you paste it into the 1Password item (`basic` of `JiraCloud` in the example above), clear the clipboard.
+- The daemon does not call APIs that are not in `allow` either.
+- Behavior is not guaranteed if you choose a connection that is not JIRA.
+
+To keep the token out of command arguments and your shell history, create the Jira Cloud value (base64 of `email:API token`) as follows (bash or zsh).
+The commands read the token with hidden input, pass it to `base64` on standard input, and put the result on the clipboard.
+After you paste it into the 1Password item (`basic` of `JiraCloud` in the example settings), clear the clipboard.
 
 ```sh
 printf 'API token: '; read -rs JIRA_TOKEN; echo
@@ -155,19 +357,71 @@ printf '%s' "me@example.com:$JIRA_TOKEN" | base64 | tr -d '\n' | pbcopy; unset J
 pbcopy < /dev/null
 ```
 
-- In "Ticket sources" in the project settings, write the following three items. You can write more than one source per project.
-  - The connection (the name above)
-  - The kind (Jira Cloud / Jira Server, Data Center)
-  - The JIRA project key (such as `PAY`. Uppercase letters, digits, and `_`, starting with an uppercase letter)
-- The same key on the same connection of a PF in `config.yaml` can be written in only one project. sacty identifies PFs in `platforms.yaml` of the context repository together with the project, so you can write ticket sources with the same name and key in different projects (different connections).
-- sacty turns unfinished tickets with the label to import in "Ticket intake" of "Sacty settings" (shared by all ticket sources) into tasks. You can turn this Off with "Import tickets".
-- The daemon searches only for the ticket keys and summaries. When the task starts, the information gatherer reads the ticket through the gateway (up to the parent story and epic, linked tickets, and URLs in comments), chooses the repository to work in from the project's targets based on the gathered information, and writes the task title and summary ([Information gathering at the start of a task](tasks.en.md#information-gathering-at-the-start-of-a-task)). If it cannot choose, the task stops. You can choose the repository on the task page and resume.
+### Set the ticket sources and the label
+
+1. In "Ticket sources" in the project settings, write the following three items.
+   - The connection (the name you wrote for the organization platform)
+   - The kind (Jira Cloud / Jira Server, Data Center)
+   - The JIRA project key (such as `PAY`. Uppercase letters, digits, and `_`, starting with an uppercase letter)
+2. In the "Ticket intake" section of "Sacty settings", enter the label to import and save.
+
+These rules apply to the ticket sources and the label.
+
+- You can write more than one source per project.
+- The same key on the same connection of a PF in `config.yaml` can be written in only one project.
+  sacty identifies PFs in `platforms.yaml` of the context repository together with the project, so you can write ticket sources with the same name and key in different projects (different connections).
+- The label to import is shared by all ticket sources.
+- You can turn ticket intake Off with "Import tickets".
+
+### After a ticket is imported
+
+Ticket intake and the task that follows proceed as follows.
+
+- The daemon searches only for the ticket keys and summaries.
+- When the task starts, the information gatherer reads the ticket through the gateway (up to the parent story and epic, linked tickets, and URLs in comments).
+- From the gathered information, the information gatherer chooses the repository to work in from the project's targets and writes the task title and summary ([Information gathering at the start of a task](tasks.en.md#information-gathering-at-the-start-of-a-task)).
+  - If it cannot choose a repository, the task stops.
+  - You can choose the repository on the task page and resume.
 - sacty comments the investigation results and the PR URL on the ticket (it does not change the ticket status).
-- The daemon does not call APIs that are not in `allow` either. Behavior is not guaranteed if you choose a connection that is not JIRA.
+
+## Intake intervals
+
+Intake runs at a separate interval for each kind: "Issue intake", "PR review intake", and "Ticket intake".
+You set the interval in "Intake interval (seconds)" in each section of "Sacty settings".
+
+- Enter an integer of 60 or more (seconds).
+  If you leave it empty, it is 300 seconds.
+  You cannot save values shorter than 60 or values that are not integers, and the web UI shows the reason.
+- A changed interval takes effect from the next intake without stopping the daemon.
+- For a kind whose intake is stopped, the field shows the interval that will apply once intake starts.
+- Even if one kind fails or hits a GitHub rate limit, the other kinds keep being imported.
+
+In the following cases, sacty imports without waiting for the interval to pass.
+
+- When the daemon starts: sacty imports every kind right away.
+- When you press "Import now" on the project page: sacty imports every kind.
+- When you save "Sacty settings": sacty imports the kinds that are On and have their labels and so on set, within 30 seconds.
+  - After that, they are imported at the new interval.
+  - Kinds that are Off, or that do not have their labels and so on set, are not imported even when you save.
+  - If a kind is being imported when you save, the new intake starts at the check (every 30 seconds) after the current intake ends.
+    If the intake takes long, it starts later than 30 seconds.
+
+The project page shows the last intake for each kind, and the targets that could not be imported together with which kind they belong to (kinds that are not On are not shown).
+
+As long as there are at most 30 targets, adding projects does not add GitHub searches.
+
+- sacty combines up to 30 targets of the same domain and account, across projects, into one search for each kind.
+  Beyond 30, sacty splits the search.
+- sacty decides which project each item belongs to after it is found.
+
+You do not need any intake settings in `config.yaml`.
+sacty imports JIRA tickets without `github:` too.
+sacty does not read `github:` (`poll_interval_sec`) from earlier versions even if it is written.
 
 ## Running tasks in parallel
 
-sacty runs queued tasks at the same time, oldest first, up to "Tasks to run at the same time" in "Sacty settings" (1 to 10. 3 if empty). The more you allow, the more load on your machine and the more of your AI usage limits are consumed.
+sacty runs queued tasks at the same time, oldest first, up to "Tasks to run at the same time" in "Sacty settings" (1 to 10. 3 if empty).
+The more you allow, the more load on your machine and the more of your AI usage limits are consumed.
 
 ## Related pages
 

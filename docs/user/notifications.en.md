@@ -4,18 +4,28 @@
 
 # Notifications (Slack and desktop)
 
-sacty tells you through Slack and browser desktop notifications when you are needed (awaiting approval, Escalation, Pause) and when a task finishes. You set up both in the "Sacty settings" of the web UI (user menu), and you can turn each on or off. For desktop notifications, see [Desktop notifications](#desktop-notifications).
+sacty tells you through Slack and browser desktop notifications when you are needed (awaiting approval, Escalation, Pause) and when a task finishes. You set up both in the "Sacty settings" of the web UI (user menu), and you can turn each on or off. For the Slack setup, see [Slack notifications](#slack-notifications); for the desktop notification setup, see [Desktop notifications](#desktop-notifications).
 
 ## Slack notifications
 
-In "Slack notifications" in the "Sacty settings", choose how to send and the language (Japanese or English. Japanese by default), and save. If you do not set it up, sacty sends nothing.
+You set up Slack notifications in the "Slack notifications" section of the "Sacty settings". If you do not set them up, sacty sends nothing.
 
-There is one destination. sacty sends notifications for tasks in every project to it. Project settings have no notification fields.
+There is one destination. sacty sends notifications for tasks in every project to it. You cannot use a different destination per project. Project settings have no notification fields.
 
 **Before you set it up, make sure that everyone who can see the destination (channel) may receive notifications from every project.**
-Notifications include project names and task titles and links, and depending on the kind of notification, step names too. You can no longer use a different destination per project as before. Notifications from projects meant for different audiences also go to the same channel.
+Notifications include project names and task titles and links, and depending on the kind of notification, step names too. Notifications from projects meant for different audiences also go to the same channel.
+
+Set it up as follows.
+
+1. Choose how to send and write the destination ([How to send](#how-to-send)).
+2. Choose the language (Japanese or English. Japanese by default).
+3. To mention people, choose who to mention and the kinds of notifications ([Mentions (optional)](#mentions-optional)).
+4. Save.
+5. Use "Send a test notification" to check that sending works.
 
 ### How to send
+
+Choose one of these two ways to send.
 
 - Slack API (chat.postMessage, Slack Proxy)
   - Write the URL to send to (`https://slack.com/api/chat.postMessage`, or a Slack Proxy that needs no authentication) and the channel.
@@ -24,11 +34,13 @@ Notifications include project names and task titles and links, and depending on 
 - Incoming Webhook
   - Write the webhook URL as a secret name or a 1Password reference (because the URL itself is a secret).
 
+Secret names and 1Password references are explained in [Secrets](secrets.en.md).
+
 ### Mentions (optional)
 
 Choose who to mention and which kinds of notifications mention them. Mentions work with either way of sending and go at the start of the message (test notifications include them too). If you do not set it up, nobody is mentioned.
 
-- Write the people as IDs (Slack does not deliver to @display names). Separate them with commas or spaces, up to 20.
+Write the people as IDs (Slack does not deliver to @display names). Separate them with commas or spaces, up to 20.
 
 | Who | What to write | Form in the message |
 | --- | --- | --- |
@@ -37,21 +49,27 @@ Choose who to mention and which kinds of notifications mention them. Mentions wo
 | here | `@here` | `<!here>` |
 | channel | `@channel` | `<!channel>` |
 
-- Choose the kinds from awaiting approval, Escalation, Pause, and completion. By default, only the ones where you are needed (awaiting approval, Escalation, Pause) mention; completion does not.
+Choose the kinds of notifications from awaiting approval, Escalation, Pause, and completion. By default, only the ones where you are needed (awaiting approval, Escalation, Pause) mention; completion does not.
 
 ### Notification content and failures
+
+A notification contains the following.
 
 - The first line has `[project name]` and a link to the task (so you can tell which project the task belongs to).
 - The second line says which step the notification is about.
   - For example: "Design is waiting for your approval", "Paused in Implement (budget cap)", and "Escalated in Requirements; your decision is needed"
   - Completion notifications and a Pause before the steps are decided ("Paused before the steps were decided") have no step name.
-- Notifications also include a link to the approval page (and to the PR for steps approved on a PR).
-- Nothing is sent when you pause a task yourself.
-- If a notification cannot be sent, sacty does not stop the task and shows the reason as a warning. The warning disappears the next time sending succeeds. It appears in these places.
-  - The dashboard (with a link to the "Sacty settings")
-  - The "Slack notifications" section of the "Sacty settings"
-  - The task list page (it is a warning for all of sacty, so it appears in the list of every project)
-- Use "Send a test notification" in the "Sacty settings" to check that sending works (you can send after saving).
+- It also includes a link to the approval page (and to the PR for steps approved on a PR).
+
+Nothing is sent when you pause a task yourself.
+
+If a notification cannot be sent, sacty does not stop the task and shows the reason as a warning. The warning disappears the next time sending succeeds. It appears in these places.
+
+- The dashboard (with a link to the "Sacty settings")
+- The "Slack notifications" section of the "Sacty settings"
+- The task list page (it is a warning for all of sacty, so it appears in the list of every project)
+
+Use "Send a test notification" in the "Sacty settings" to check that sending works (you can send after saving).
 
 ### Turning Slack notifications off
 
@@ -69,22 +87,32 @@ An earlier sacty set notifications per project. Notifications set in projects ar
 
 You can also show the same notifications as Slack (approvals, escalations, pauses, and completions) as browser desktop notifications. They work even if Slack notifications are not set up or are turned off.
 
+Set it up as follows.
+
 1. In "Desktop notifications (this browser)" in the "Sacty settings", check "Show desktop notifications in this browser".
 2. When the browser asks for permission to show notifications, allow it.
 3. Use "Show a test notification" to check that a notification appears.
 
-- The setting is per browser. It takes effect as soon as you switch it, with no need to save. To use it in another browser or computer, check it there too.
+The setting is per browser.
+
+- It takes effect as soon as you switch it, with no need to save.
+- To use it in another browser or computer, check it there too.
+
+Notifications arrive as follows.
+
 - Notifications arrive only while a Sacty page is open in some tab (they still arrive while you are using another tab or app). Notifications from while the page was closed do not appear later.
 - A notification shows the task title, `[project name]`, and the kind of notification. Clicking it opens that task.
 - Even if Sacty is open in several tabs of the same browser, each notification appears only once.
 - Browsers may throttle hidden tabs, so notifications can be a little late.
-- It does not work in these cases.
-  - The page is opened at a URL that is neither `https` nor `localhost` (`127.0.0.1`) (a browser restriction).
-  - You denied notifications in the browser. Allow notifications in the browser's site settings, then check the box again.
-  - The OS settings turn off notifications from the browser.
+
+Desktop notifications do not work in these cases.
+
+- The page is opened at a URL that is neither `https` nor `localhost` (`127.0.0.1`) (a browser restriction).
+- You denied notifications in the browser. Allow notifications in the browser's site settings, then check the box again.
+- The OS settings turn off notifications from the browser.
 
 ## Related pages
 
-- [Importing issues, PRs, and tickets](intake.en.md) (the other items in the "Sacty settings")
+- [Issue, PR, and ticket intake](intake.en.md) (the other items in the "Sacty settings")
 - [Project settings](project-settings.en.md)
 - [Secrets](secrets.en.md)

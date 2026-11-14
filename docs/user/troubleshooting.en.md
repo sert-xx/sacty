@@ -5,6 +5,8 @@
 # Troubleshooting
 
 This page lists common ways sacty stops and what to check.
+Find the symptom in the left column of each section's table, and check what the right column says.
+When you want someone to look at a task that stopped with an error, hand them the error report ([Getting an error report](#getting-an-error-report)).
 
 ## Startup and configuration
 
@@ -15,17 +17,34 @@ This page lists common ways sacty stops and what to check.
 | The web UI shows an error in the configuration file | Look at the item (for example `providers.codex.auth.secret`) and the reason shown on the web UI, and fix `config.yaml` ([config.yaml settings](config.en.md)). If the file does not exist, create it with `npx sacty config init` |
 | `sacty context preview` exits saying it cannot find a running sacty | Start sacty first with `npx sacty up` (with the same `SACTY_HOME`) |
 
+## Docker and images
+
+| Symptom | What to check |
+| --- | --- |
+| At startup or at the top of the screen, "The agent image (…) is missing" appears | Create the image with the command shown (such as `npx sacty image build`). After raising the version, the image name changes, so it has to be rebuilt. Once created, the notice disappears in about a minute |
+| "image in config.yaml (…) does not match the image for the running version of Sacty (…)" appears | Sacty was updated, but `image` (or `images.<name>.image`) in `config.yaml` still has the image name of the previous version. Change it as shown, then create the image with the command shown. The notice disappears in about a minute |
+| "Docker is not reachable" appears | Start Docker (Docker Desktop and so on). Once it is running, the check runs again in about a minute and the notice disappears. Tasks cannot run until then |
+| "The docker command was not found" appears | Install Docker and make the `docker` command available in the terminal where you run `sacty up` (put it on PATH) |
+
 ## Secrets
 
 | Symptom | What to check |
 | --- | --- |
 | A warning at startup says a secret could not be retrieved | Prepare the secret for the setting named in the warning (for the Keychain, `npx sacty secret set <name>`; for 1Password, sign in and check the reference). Then press "Get secrets again" in "Sacty settings" ([Secrets](secrets.en.md)) |
 | A task stopped on a 1Password reference | Sign in with `op signin` (or through the 1Password app integration), then resume the task |
-| At startup or at the top of the screen, "The agent image (…) is missing" appears | Create the image with the command shown (such as `npx sacty image build`). After raising the version, the image name changes, so it has to be rebuilt. Once created, the notice disappears in about a minute |
-| "image in config.yaml (…) does not match the image for the running version of Sacty (…)" appears | Sacty was updated, but `image` (or `images.<name>.image`) in `config.yaml` still has the image name of the previous version. Change it as shown, then create the image with the command shown. The notice disappears in about a minute |
-| "Docker is not reachable" appears | Start Docker (Docker Desktop and so on). Once it is running, the check runs again in about a minute and the notice disappears. Tasks cannot run until then |
-| "The docker command was not found" appears | Install Docker and make the `docker` command available in the terminal where you run `sacty up` (put it on PATH) |
 | `sacty image build` says there is no npm token | Save it with `npx sacty secret set <name>` (for a 1Password reference, check the sign-in and the reference) |
+
+## Intake and PR reviews
+
+When issues, PRs, or tickets are not taken in, the reason may appear in "Some targets could not be imported" on the project page.
+
+| Symptom | What to check |
+| --- | --- |
+| Issues are not taken in | Check the following in order ([Intake](intake.en.md)).<br>1. You set the label to import and turned it On in "Issue intake" of "Sacty settings"<br>2. You chose the project's targets and GitHub account |
+| Tickets are not taken in | Check the following in order ([JIRA tickets](intake.en.md#jira-tickets)).<br>1. You set the label and turned it On in "Ticket intake" of "Sacty settings"<br>2. The ticket has that label and is not finished (not in a done status)<br>3. You wrote the connection, the kind, and the JIRA project key in "Ticket sources" in the project settings<br>4. The `upstream`, authentication, and `allow` (the search API) settings of the connection's PF (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository)<br>Note that the issue label to import and the GitHub account are not used for ticket intake |
+| A labeled PR is not taken in | Check the following in order ([PR reviews](intake.en.md#pr-reviews)).<br>1. You saved the "Label for PR reviews" and turned "Import PRs with the review label" On in "Sacty settings"<br>2. The label on the PR has that name (PRs with the label to import are not taken in)<br>3. The PR is open<br>4. The PR does not already have a task (the same PR is never taken in twice, for a task in any project, even a cancelled one)<br>5. You chose the project's targets and GitHub account<br>Note that PRs sacty created are not taken in even with the label (the child task that reviews the PR reviews them; [Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)) |
+| A PR that requests your review is not taken in | Check the following in order ([PR reviews](intake.en.md#pr-reviews)).<br>1. You turned "Import PRs that request my review" On in "Sacty settings"<br>2. The review request is to the GitHub account chosen for that host in the project itself (requests to teams are not taken in) |
+| You asked for a review by label or request, but no review came | Go through the following in order ([When a review stops](intake.en.md#when-a-review-stops)).<br>1. In the task list, check whether that review task is paused. If it is, the PR should also have a comment saying "Sacty のレビューが止まりました" (the Sacty review stopped)<br>2. Check the reason and press "Resume" in the task details<br>When you resume and the review is posted, that comment changes to "resolved" |
 
 ## Tasks stop or do not progress
 
@@ -35,16 +54,11 @@ A paused task's details show why it stopped and a "Resume" button.
 
 | Symptom | What to check |
 | --- | --- |
-| Issues are not taken in | Check that you set the label to import and turned it On in "Issue intake" of "Sacty settings", and that you chose the project's targets and GitHub account. The reason may appear in "Some targets could not be imported" on the project page ([Intake](intake.en.md)) |
-| Tickets are not taken in | Check that you set the label and turned it On in "Ticket intake" of "Sacty settings", that the ticket has that label and is not finished (not in a done status), and that you wrote the connection, the kind, and the JIRA project key in "Ticket sources" in the project settings. Also check the `upstream`, the authentication, and `allow` (the search API) of the connection's PF (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository). The issue label to import and the GitHub account are not used for ticket intake. The reason may appear in "Some targets could not be imported" on the project page ([JIRA tickets](intake.en.md#jira-tickets)) |
-| A labeled PR is not taken in | Check that you saved the "Label for PR reviews" and turned "Import PRs with the review label" On in "Sacty settings", that the label on the PR has that name (PRs with the label to import are not taken in), that the PR is open, that the PR does not already have a task (the same PR is never taken in twice, for a task in any project, even a cancelled one), and that you chose the project's targets and GitHub account. PRs sacty created are not taken in even with the label (the child task that reviews the PR reviews them; [Reviewing PRs that sacty created](intake.en.md#reviewing-prs-that-sacty-created)) ([PR reviews](intake.en.md#pr-reviews)) |
-| A PR that requests your review is not taken in | Check that you turned "Import PRs that request my review" On in "Sacty settings", and that the review request is to the GitHub account chosen for that host in the project itself (requests to teams are not taken in) ([PR reviews](intake.en.md#pr-reviews)) |
-| You asked for a review by label or request, but no review came | In the task list, check whether that review task is paused. If it is, the PR should also have a comment saying "Sacty のレビューが止まりました" (the Sacty review stopped). Check the reason and press "Resume" in the task details. When you resume and the review is posted, that comment changes to "resolved" ([PR reviews](intake.en.md#pr-reviews)) |
 | Paused with "Conflict markers with the base branch stayed in the workspace N times in a row" | The conflicting files appear as the reason. "Resume" redoes the implementation with the files that have markers ([When the base branch moves ahead](tasks.en.md#when-the-base-branch-moves-ahead)) |
 | Paused at the budget cap | Enter a new cumulative cap on the web UI and resume ([config.yaml settings](config.en.md#budget)) |
 | Paused at the AI usage limit | Resume after the subscription limit or rate limit resets. If you write a fallback agent, Sacty switches to it instead of pausing ([Switching agents on failure](config.en.md#switching-agents-on-failure)). The same applies when the gateway reaches its retry limit ([Gateway](gateway.en.md#relaying-ai-calls)) |
-| Stopped with "Stopped the agent because it ran longer than N minutes" | If the step takes a long time, raise the limit with `run_timeout` in `config.yaml` (for example `roles: { implement: 90 }`; for a PR review or reproduction whose tests take long, `test_minutes` or `roles: { review: 90 }`; [config.yaml settings](config.en.md)), then resume. It applies from the next run. Even if you resume without raising it, the run continues the session of the stopped run (when the agent is the same and the session record is intact; for the implementation, the changes made in the workspace before the stop are also kept). If it cannot continue (the agent was changed, the record is missing, and so on), the run starts again from the beginning and the Activity shows the reason. However many times it stops, each resume continues from where it left off. What was used before the stop is counted as far as it could be read, and shown as "unknown" if not |
-| A run that handles a large diff or another run fails with `exec /tini: argument list too long` | The prompt was too large for a command argument. Update Sacty to the latest version, then resume the stopped task (prompts are passed through stdin, so there is no size limit) |
+| Stopped with "Stopped the agent because it ran longer than N minutes" | If the step takes a long time, raise the limit with `run_timeout` in `config.yaml`, then resume. You can also resume without raising it ([When a run stops at its time limit](#when-a-run-stops-at-its-time-limit)) |
+| A run that handles a large diff or another run fails with `exec /tini: argument list too long` | The prompt was too large for a command argument. Update Sacty to the latest version, then resume the stopped task (the latest version passes prompts through stdin, so there is no size limit) |
 | A run that uses a copy of the implemented code (deciding where to send PR comments back to, an audit, and so on) stopped on `EACCES` (permission) | This is the symptom of an older version when a tool the agent installed in the workspace had unreadable files (permission 0000 and the like). Update Sacty to the latest version and resume. The latest version goes on without copying the unreadable files, and the Activity shows "N unreadable file(s) were left out of the workspace copy" |
 | Codex with Bedrock or similar stays at `Reconnecting... error sending request` | With Docker inside a virtual machine (such as Rancher Desktop), set `gateway.host_address` to an address that reaches the host ([Gateway](gateway.en.md#host-address)) |
 | The task list says a host MCP server is not ready | Check that authentication works on the host, and check `command` and `env`. sacty restarts it every minute ([Gateway](gateway.en.md#host-mcp-servers)) |
@@ -53,7 +67,35 @@ A paused task's details show why it stopped and a "Resume" button.
 | Stopped on an image name that is not in `images` | Add it to `images` in `config.yaml`, or fix the image specified for the project's target ([Container images](images.en.md#which-image-a-task-runs-in)) |
 | Stopped because docker compose services could not start | Check whether the settings named in the reason (`privileged`, host networking, mounts outside the workspace, and so on) are used ([docker compose services](compose.en.md#unsupported-settings)) |
 | Cannot connect to MySQL or similar with `localhost` | Write `127.0.0.1`, or connect by service name ([docker compose services](compose.en.md#reaching-services-via-localhost)) |
-| A task stopped with `ENOSPC` or `the volume holding /tmp is full` | Docker's virtual disk can be full even when your Mac has free space. Check the usage with `docker system df`. `npx sacty image build` cleans up old image versions. If that is not enough, free space by removing unused images and running `docker builder prune`, then resume the task. |
+| A task stopped with `ENOSPC` or `the volume holding /tmp is full` | Docker's virtual disk can be full even when your Mac has free space. Go through the following in order.<br>1. Check the usage with `docker system df`<br>2. Run `npx sacty image build` (it cleans up old image versions)<br>3. If that is not enough, free space by removing unused images and running `docker builder prune`<br>4. Resume the task |
+
+### When a run stops at its time limit
+
+Resume a task that stopped with "Stopped the agent because it ran longer than N minutes" as follows.
+
+1. If the step takes a long time, raise the limit with `run_timeout` in `config.yaml` ([config.yaml settings](config.en.md#run-time-limit-run_timeout)).
+   The new limit applies from the next run.
+   - Example: `roles: { implement: 90 }`
+   - For a PR review or reproduction whose tests take long: `test_minutes` or `roles: { review: 90 }`
+2. Resume the task.
+
+After you resume, the task proceeds as follows, whether or not you raised the limit.
+
+- The run continues the session of the stopped run (when the agent is the same and the session record is intact).
+  For the implementation, the changes made in the workspace before the stop are also kept.
+- If it cannot continue (the agent was changed, the record is missing, and so on), the run starts again from the beginning.
+  The Activity shows the reason.
+- However many times it stops, each resume continues from where it left off.
+- What was used before the stop is counted in the cost as far as it could be read.
+  If it could not be read, it is shown as "unknown".
+
+## Notifications
+
+| Symptom | What to check |
+| --- | --- |
+| Slack notifications do not arrive | Look at the reason shown on the dashboard or in "Slack notifications" in the "Sacty settings". You can check whether it can be sent with "Send a test notification" in the "Sacty settings". Notifications set in projects with an earlier sacty are not used, so set them again in the "Sacty settings" ([Notifications](notifications.en.md)) |
+| Mentions do not arrive | Write people by ID (`U…`, `W…`, `S…`) instead of @display name |
+| The sender name and icon are not `Sacty` | Give the Slack app's bot token the `chat:write.customize` scope |
 
 ## Getting an error report
 
@@ -62,27 +104,19 @@ The "Error report" box in the right column of the task page appears only for tas
 
 ![The error report in the right column of the task page (the number of errors, downloading the report, and the button to ask the Orchestrator to analyze)](images/task-error-report.en.png)
 
-1. Press "Download the report".
-   A Markdown file (`sacty-error-report-<short task ID>-<date and time>.md`) with what Sacty did, what each step's agent did, and the details of the errors is downloaded.
-   The headings are in the UI language.
-2. If you want a likely cause, press "Ask the Orchestrator to analyze" first.
-   When the analysis is done, its time appears; download the report after that.
+1. If you want a likely cause, press "Ask the Orchestrator to analyze" first.
+   When the analysis is done, its time appears; go on to the next step after that.
    The analysis goes into the "Orchestrator's analysis" section of the report.
    The cost of the analysis is added to that task's cost.
+2. Press "Download the report".
+   A Markdown file (`sacty-error-report-<short task ID>-<date and time>.md`) with what Sacty did, what each step's agent did, and the details of the errors is downloaded.
+   The headings are in the UI language.
 
 The report is not sent to any server.
 You can hand it over as a file even without a network connection.
 It is kept within 256KB, and the middle of a long activity is left out.
 Secrets are masked, but it includes the task's content, parts of the code, and URLs, so be careful whom you give it to.
 The details of its contents are in [Error report (specification)](../spec/error-report.en.md).
-
-## Notifications
-
-| Symptom | What to check |
-| --- | --- |
-| Slack notifications do not arrive | Look at the reason shown on the dashboard or in "Slack notifications" in the "Sacty settings". You can check with "Send a test notification" in the "Sacty settings". Notifications set in projects with an earlier sacty are not used, so set them again in the "Sacty settings" ([Notifications](notifications.en.md)) |
-| Mentions do not arrive | Write people by ID (`U…`, `W…`, `S…`) instead of @display name |
-| The sender name and icon are not `Sacty` | Give the Slack app's bot token the `chat:write.customize` scope |
 
 ## Related pages
 
