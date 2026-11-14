@@ -56,13 +56,29 @@ Lessons that help later tasks are kept as memories, which the AI reads in the ne
 
 ![The audit screen, with causes and fix proposals](images/audit.en.png)
 
-### 5. You can trust it with the work
+### 5. You can teach it your team's way of working
+
+Gather your team's rules, frequently used procedures (skills), and the MCP servers and internal APIs to use in a context repository.
+sacty layers the organization, team, and project contexts on top of its own defaults, and passes them to the AI.
+Rules shared across the company live in one place, and each team or project can add to or override them.
+Once written, they do not need to be explained for every task.
+
+![Layering your team's way of working](images/intro-context.en.svg)
+
+### 6. You can trust it with the work
+
+The AI runs in a container that is created for each run and thrown away.
+When it uses internal APIs, MCP servers, or GitHub, the gateway on your machine adds the keys and relays the calls, and refuses operations that are not allowed.
+What reaches the AI's container is a token that works only during that run.
+
+![The gateway holds the keys](images/intro-gateway.en.svg)
 
 | Concern | How sacty handles it |
 | --- | --- |
 | Will the AI break my environment? | The AI runs in a container that is created for each run and thrown away |
-| I do not want to hand keys to the AI | API keys and tokens are never passed to the container. sacty adds them outside the container and relays the requests |
+| I do not want to hand keys to the AI | Only the gateway holds the keys for internal APIs, MCP servers, and GitHub. AI calls can also go through the gateway if you configure it |
 | Will the costs grow? | You can set a budget limit per task. When it is reached, the task pauses and you are notified |
+| Will it change GitHub on its own? | The AI can use GitHub directly only for reading. sacty opens the PRs, and you are the one who merges |
 | Can I trace what happened later? | Everything that happens is kept in the activity log, and you can look back at it from the task details |
 
 ## See every task at a glance
@@ -87,11 +103,9 @@ When a decision is needed, sacty also notifies you through Slack or desktop noti
 
 You can write a request in the sacty web UI, or hand it over by adding a set label to a GitHub issue or PR or a JIRA ticket.
 
-## AI you can use, and settings for your organization
+## AI you can use
 
-- You can choose Claude Code or Codex as the AI. You can also change the model for each step.
-- Your team's rules and skills, and the MCP servers and internal APIs to use, can be gathered in a context repository and used in every task.
-  You can also override your organization's shared settings for each project.
+You can choose Claude Code or Codex as the AI. You can also change the model for each step.
 
 ## Try it
 

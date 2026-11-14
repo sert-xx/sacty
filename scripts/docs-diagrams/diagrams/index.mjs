@@ -5,7 +5,7 @@ import { budgetFlow, questionFlow } from "./budget-question.mjs";
 import { contextLayers, contextMcp, contextMerge } from "./context.mjs";
 import gateway from "./gateway.mjs";
 import gatewayPf from "./gateway-pf.mjs";
-import { introFlow, introLoop } from "./intro.mjs";
+import { introContext, introFlow, introGateway, introLoop } from "./intro.mjs";
 import { approvalBranches, tasksFlow } from "./tasks.mjs";
 import {
   auditUser,
@@ -38,6 +38,8 @@ export const DIAGRAMS = [
   // ユーザードキュメント
   introFlow,
   introLoop,
+  introContext,
+  introGateway,
   overview,
   gatewayUser,
   contextExtends,
