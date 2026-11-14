@@ -4,16 +4,27 @@
 
 # Exporting results (Confluence, Notion, and so on)
 
-You can export results that a human has approved, namely Investigation results (for Investigation-only tasks), Requirements, Design (including Test viewpoints), and document drafts, to Confluence, Notion, and similar services. In a Document task, when the agent wrote external documents directly as the task body instructed, those documents are the deliverable and nothing is exported ([Working with tasks](tasks.en.md#documents-and-one-off-external-work)).
+sacty can export results that a human has approved to Confluence, Notion, and similar services. It can export the following results.
+
+- Investigation results (for Investigation-only tasks)
+- Requirements
+- Design (including Test viewpoints)
+- Document drafts
+
+In a Document task, when the agent wrote external documents directly as the task body instructed, those documents are the deliverable and nothing is exported ([Creating or editing external documents directly](tasks.en.md#creating-or-editing-external-documents-directly)).
+
+To export, write the connection for the destination beforehand ([Configure the destinations](#configure-the-destinations)). The Orchestrator decides whether to export and where ([How exporting works](#how-exporting-works)).
 
 ## Configure the destinations
 
-sacty has no settings specific to each kind of destination. You configure a destination as one of the following, and which one you use is up to you ([Gateway](gateway.en.md), [Context repository](context.en.md)).
+You configure a destination as one of the following, and which one you use is up to you ([Gateway](gateway.en.md), [Context repository](context.en.md)).
 
 - Organization platform (PF): `gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository
 - MCP server: `mcp.yaml` in the context repository, or `gateway.mcp_servers` in `config.yaml`
 
-If you write the rules for where things go in the description (`description`), the Orchestrator uses them as a hint for its decision.
+sacty has no settings specific to each kind of destination. If you write the rules for where things go in the description (`description`), the Orchestrator uses them as a hint for its decision.
+
+The following example writes Confluence as an organization platform.
 
 ```yaml
 gateway:
@@ -30,16 +41,26 @@ gateway:
 
 ## How exporting works
 
-- The Orchestrator decides, for each step, whether to export and where when it chooses the steps.
-  - It decides based on the available destinations and their descriptions, the task's content, the intake source, and the conventions in the project's context. It may also decide not to export.
-  - The chosen destination and the reason appear in the Activity and on the "Step settings" tab of the task details.
-  - If no destination is available, it decides nothing.
-- After a step is approved, that step's agent exports using only the chosen destination.
-  - The gateway adds the authentication. The container receives only a per-run token.
-  - The URL of the exported page is shown in the Activity and on the task page, and is also included in the comment on the intake source (Issue, JIRA).
+Exporting proceeds in this order.
+
+1. When the Orchestrator chooses the steps, it decides, for each step, whether to export and where.
+2. After a step is approved, that step's agent exports using only the chosen destination.
+3. sacty shows the URL of the exported page in the Activity and on the task page, and also includes it in the comment on the intake source (Issue, JIRA).
+
+The Orchestrator decides as follows.
+
+- It decides based on the available destinations and their descriptions, the task's content, the intake source, and the conventions in the project's context. It may also decide not to export.
+- If no destination is available, it decides nothing.
+- The chosen destination and the reason appear in the Activity and on the "Step settings" tab of the task details.
+
+The gateway adds the authentication for the export. The container receives only a per-run token.
+
+When you approve again, or when the export fails, sacty behaves as follows.
+
 - When you approve again after Request changes, sacty updates the previously exported page (it does not create a new one). If sacty stops after exporting but before recording it, it finds the same page by a marker in the body and updates it.
-- When the destination cannot be reached or the export fails, sacty records the reason, keeps the result in sacty, and comments on the intake source. The task does not stop. You can export again with "Export again" on the task page.
-- The cost of exporting is included in the task's cost and appears as "Export" in the cost-per-step table.
+- When the destination cannot be reached or the export fails, sacty records the reason, keeps the result in sacty, comments on the intake source, and goes on. The task does not stop. You can export again with "Export again" on the task page.
+
+The cost of exporting is included in the task's cost. It appears as "Export" in the cost-per-step table.
 
 ## Related pages
 

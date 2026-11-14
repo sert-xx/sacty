@@ -1,23 +1,31 @@
 // ユーザードキュメントのスクリーンショット（docs/user/images/*.png）を撮り直す。
-//   npm run build
-//   npm install --no-save playwright   # 撮るときだけ使う（依存には入れない）
+//   npm install && npm run build
 //   npx playwright install chromium     # Playwright のブラウザーが無ければ入れる
 //   node scripts/docs-screenshots/capture.mjs [ja|en]... [docs|intro]...
 // 架空のデータを入れた一時の SACTY_HOME で sacty up を起動し、Playwright で画面を撮る。
-// 実際の AI・GitHub・Docker・キーチェーンは使わない（docker・gh・security は、決まった答えを返す代わりのスクリプト）。
+// 実際の AI・GitHub・Docker・キーチェーンは使わない。
+// - docker・gh・security は、決まった答えを返す代わりのスクリプト（SHIMS）
+// - GitHub の API への問い合わせには、データのとおりの答えを返す（github-stub.mjs。GitHub の API には、実際には問い合わせない）
 // データは場面（シナリオ）ごとに分ける。言語も場面も、書かなければすべてを撮る。
 //   docs ：設定・操作・トラブルの説明の画面（seed.mjs。止まったタスクを含む。監査の画面は監査のモックのデータ）
 //   intro：紹介のページの画面（seed-intro.mjs。ふだんの使い方が伝わる状態だけ。監査の画面は作業履歴の監査の記録）
 // 画面には日時が写るので、撮り直すと画像が変わる。直したい場面だけを撮る（例 node scripts/docs-screenshots/capture.mjs intro）。
+// 撮る間にデーモンが作業履歴に書き足したか、GitHub を変えようとしたら、画像を置き換えずに失敗にする。データが今の実装の
+// 流れと合っていないと、デーモンが起動の後に直そうとして（PR のレビューの子タスクを作って実行する、PR のドラフトを
+// 切り替える、など）、その結果が写るため。データを直してから撮り直す。
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { readActivity, readRefused } from "./seed-lib.mjs";
 import { SHOTS } from "./shots.mjs";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, "..", "..");
 const OUT = process.env.SHOTS_OUT ?? join(ROOT, "docs", "user", "images");
+/** sacty up のプロセスに読み込ませる、GitHub の API の代わりの答え。 */
+const GITHUB_STUB = pathToFileURL(join(HERE, "github-stub.mjs")).href;
 /** 場面ごとの、データを入れるスクリプトと、sacty up に足す環境変数。 */
 const SCENARIOS = {
   // 監査の画面は、監査のモックのデータで撮る
@@ -38,6 +46,8 @@ const scenarios = args.some((a) => a in SCENARIOS)
   : Object.keys(SCENARIOS);
 const WEB_PORT = 4790;
 const DAEMON_PORT = 4791;
+/** 撮るときの画面の大きさ。 */
+const VIEWPORT = { width: 1280, height: 1000 };
 
 const SHIMS = {
   // Docker を使える状態に見せる（画面の上の注意を出さない）。タスクは実行しない
@@ -113,10 +123,13 @@ async function capture(lang, scenario, chromium) {
   try {
     const home = join(work, "home");
     const bin = join(work, "bin");
+    // 撮った画像は、撮る間の書き足しが無いと確かめてから、出力先に置く
+    const staged = join(work, "shots");
     // コンテキストリポジトリを ~/sacty-context に置くので、ホームのディレクトリも一時のものにする
     const userHome = join(work, "user");
     mkdirSync(bin, { recursive: true });
     mkdirSync(userHome, { recursive: true });
+    mkdirSync(staged, { recursive: true });
     const env = {
       ...process.env,
       HOME: userHome,
@@ -137,6 +150,8 @@ async function capture(lang, scenario, chromium) {
     );
     if (seeded.status !== 0) throw new Error("seed failed");
     writeFileSync(join(home, "config.yaml"), CONFIG);
+    // データを入れた時点の作業履歴の件数（撮る間に増えていないかを、撮った後に確かめる）
+    const seededEvents = readActivity(home).length;
 
     up = spawn(
       process.execPath,
@@ -149,7 +164,14 @@ async function capture(lang, scenario, chromium) {
         String(DAEMON_PORT),
       ],
       {
-        env: { ...env, ...scenarioEnv },
+        env: {
+          ...env,
+          ...scenarioEnv,
+          // デーモンと画面のプロセスが、起動のときに読み込む
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${GITHUB_STUB}`]
+            .filter(Boolean)
+            .join(" "),
+        },
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
       },
@@ -163,16 +185,18 @@ async function capture(lang, scenario, chromium) {
     const context = await browser.newContext({
       locale: lang === "en" ? "en-US" : "ja-JP",
       colorScheme: "light",
-      viewport: { width: 1280, height: 1000 },
+      viewport: VIEWPORT,
       deviceScaleFactor: 1.5,
     });
     await context.addCookies([{ name: "sacty-lang", value: lang, url: base }]);
     const page = await context.newPage();
+    const taken = [];
     for (const shot of shots) {
       await page.goto(`${base}${shot.path}`, { waitUntil: "networkidle" });
       await page.waitForTimeout(800);
       if (shot.prepare) await shot.prepare(page, lang);
-      const file = join(OUT, `${shot.name}${lang === "en" ? ".en" : ""}.png`);
+      const name = `${shot.name}${lang === "en" ? ".en" : ""}.png`;
+      const file = join(staged, name);
       if (shot.selector) {
         const box = await page.locator(shot.selector).first().boundingBox();
         if (!box) throw new Error(`${shot.name}: ${shot.selector} is not visible`);
@@ -188,22 +212,55 @@ async function capture(lang, scenario, chromium) {
           },
         });
       } else if (shot.until) {
-        // ページの上から、until の要素の下の端までを撮る（言語で行の折り返しが変わっても、区切りのよい所で切れる）
-        const box = await page.locator(shot.until).first().boundingBox();
-        if (!box) throw new Error(`${shot.name}: ${shot.until} is not visible`);
+        // ページの上から、until の要素の下の端までを撮る（言語で行の折り返しが変わっても、区切りのよい所で切れる）。
+        // 要素をいくつか書いたら、いちばん下の端まで（左右の列の、どちらが長くても切れないように）。下に pad の余白を足す
+        const height = async () => {
+          let bottom = 0;
+          for (const selector of [shot.until].flat()) {
+            const box = await page.locator(selector).first().boundingBox();
+            if (!box) throw new Error(`${shot.name}: ${selector} is not visible`);
+            bottom = Math.max(bottom, box.y + box.height);
+          }
+          return Math.ceil(bottom) + (shot.pad ?? 24);
+        };
+        // 画面の高さを、撮る高さに合わせる。画面の高さで決まるもの（サイドメニューの背景・右下に固定したボタン）が、
+        // 画像の途中で切れたり、途中に重なったりしないように
+        await page.setViewportSize({ width: VIEWPORT.width, height: await height() });
+        await page.waitForTimeout(300);
         await page.screenshot({
           path: file,
           fullPage: true,
-          clip: { x: 0, y: 0, width: 1280, height: Math.ceil(box.y + box.height) + 24 },
+          clip: { x: 0, y: 0, width: VIEWPORT.width, height: await height() },
         });
+        await page.setViewportSize(VIEWPORT);
       } else {
         await page.screenshot({
           path: file,
           fullPage: true,
-          clip: { x: 0, y: 0, width: 1280, height: shot.height },
+          clip: { x: 0, y: 0, width: VIEWPORT.width, height: shot.height },
         });
       }
-      console.log(`wrote ${file}`);
+      taken.push(name);
+    }
+    // 撮る間に、デーモンが作業履歴に書き足していないか・GitHub を変えようとしていないか。どちらかがあれば、その結果が
+    // 写っているかもしれないので、画像を置き換えない
+    const added = readActivity(home).slice(seededEvents);
+    const refused = readRefused(home);
+    if (added.length > 0 || refused.length > 0) {
+      throw new Error(
+        [
+          `${scenario}（${lang}）：撮る間に、デーモンが状態を変えようとしました。画像は置き換えていません。`,
+          ...(added.length > 0 ? [`作業履歴に書き足した記録（${added.length} 件）：`] : []),
+          ...added.map((e) => `  ${e.type}（${e.actor}）：${e.task}`),
+          ...(refused.length > 0 ? ["断った GitHub の API への問い合わせ："] : []),
+          ...refused.map((line) => `  ${line}`),
+          `データ（${seed}）を今の実装の流れに直してから、撮り直してください。`,
+        ].join("\n"),
+      );
+    }
+    for (const name of taken) {
+      copyFileSync(join(staged, name), join(OUT, name));
+      console.log(`wrote ${join(OUT, name)}`);
     }
   } finally {
     try {

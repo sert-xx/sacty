@@ -23,7 +23,10 @@ Read [Working with tasks](tasks.en.md) first for how tasks are created.
 | Time | The time to create the task (the clock of the computer running Sacty) |
 | Days | For Weekly, choose at least one |
 | Day | The day (1 to 31) for Monthly. If the month has no such day (such as the 31st), the task is created on its last day |
-| Task to create | Template, target repository, plan, title, and description (the same fields as "Create task", except that there is no "Set per step", so you cannot set the task image and the agent for each step) |
+| Task to create | Template, target repository, plan, title, and description |
+
+The fields of "Task to create" are the same as in "Create task".
+However, there is no "Set per step", so you cannot set the task image and the agent for each step.
 
 The contents of the task are checked on saving, in the same way as "Create task".
 If they cannot be used, for example the target repository is not in the project's targets, the reason appears and nothing is saved.
@@ -33,7 +36,8 @@ If they cannot be used, for example the target repository is not in the project'
 Sacty runs on your computer, so at a scheduled time the computer may be off, asleep, or offline.
 In that case it works as follows.
 
-- When Sacty is running and online (it checks after starting and then every minute), it creates the task for the latest scheduled time that has not been created yet.
+- When Sacty is running and online, it creates the task for the latest scheduled time that has not been created yet.
+  Sacty checks after starting and then every minute.
 - However many scheduled times were missed, it creates only one, for the latest time.
   It never creates one task per missed time.
 - It never creates the task for the same scheduled time twice.
@@ -57,12 +61,17 @@ In an environment where the name does not resolve (for example, a company networ
 ## Edit, pause, and delete
 
 Click a name in the list to open the details.
+You edit, pause, and delete a scheduled task from the details.
 
-- "Edit" changes the name, the schedule, the contents of the task, and whether it is enabled.
-  When you change the schedule, or enable a paused one again, it counts from the scheduled times after that moment.
-- "Delete" removes it.
+- To edit it, click "Edit".
+  You can change the name, the schedule, the contents of the task, and whether it is enabled.
+- To pause it, clear "Enabled" in "Edit" and save.
+  To enable it again, check the box again and save.
+- When you change the schedule, or enable a paused one again, it counts from the scheduled times after that moment.
+- To delete it, click "Delete".
   The tasks it created stay.
-- Deleting a project also deletes its scheduled tasks.
+
+Deleting a project also deletes its scheduled tasks.
 
 ## See the tasks it created
 
@@ -72,3 +81,9 @@ In the task list, their start is shown as "Scheduled task".
 
 If the task for the last scheduled time could not be created (for example, the project's targets changed), the details show the reason.
 After you fix the contents and save, tasks are created from the next scheduled time.
+
+## Related pages
+
+- [Working with tasks](tasks.en.md)
+- [Project settings](project-settings.en.md)
+- [Issue, PR, and ticket intake](intake.en.md) (creating tasks from issues, PRs, and tickets)

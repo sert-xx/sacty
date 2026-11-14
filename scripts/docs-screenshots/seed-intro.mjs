@@ -54,60 +54,6 @@ const implementation = L(
   "## Implementation\n\n- Added the `payment.timeout_sec` setting (default 10) and passed it to the client.\n- Added tests in `src/client.test.ts`.\n",
 );
 
-/** タスクの開始時の情報収集（集めた情報のまとめ）。 */
-function gather(t, hoursAgo, brief) {
-  t.add(hoursAgo, "gatherer", "InformationGathered", {
-    brief,
-    sources: [],
-    agentId: "codex_lite",
-    authMode: "api-key",
-    model: "gpt-6-luna",
-    usage: usage(30000, 1200),
-    costUsd: 0.05,
-  });
-}
-
-/**
- * PR のレビューの子タスク（指摘なしでレビューを投稿して完了したもの）を入れ、親に記録する。
- * commit は、親が PR に積んだコミット（同じコミットなので、デーモンは再レビューを始めない）。
- */
-function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, commit }) {
-  const url = `${repo}/pull/${number}`;
-  const r = task(id, PAY);
-  r.add(hoursAgo, "sacty", "TaskCreated", {
-    title: `[PR #${number}] ${title}`,
-    body: "",
-    start: "github_pull_request",
-    budgetCapUsd: 5,
-    source: { kind: "github_pull_request", repo, number, url, review: "sacty" },
-    reviewOf: { taskId: parentId, step },
-  });
-  parent.add(hoursAgo, "sacty", "ReviewTaskCreated", { taskId: id, step, repo, number });
-  r.add(hoursAgo - 0.02, "sacty", "StepsChosen", { steps: ["review"] });
-  r.add(hoursAgo - 0.04, "sacty", "ReviewTargetResolved", {
-    repo,
-    number,
-    url,
-    title,
-    headCommit: commit,
-    baseCommit: BASE,
-    author: "acme-dev",
-  });
-  r.run(
-    hoursAgo - 0.06,
-    "review",
-    L(
-      "## 総評\n\n指摘はありません。受け入れ条件を満たし、テストも通っています。\n",
-      "## Summary\n\nNo findings. The acceptance criteria are met and the tests pass.\n",
-    ),
-    0.24,
-    { reviewVerdict: "no_findings" },
-  );
-  r.add(hoursAgo - 0.5, "sacty", "PullRequestReviewPosted", {
-    url: `${url}#pullrequestreview-1`,
-  });
-}
-
 // 1. 実装の PR のマージ待ち（AI のレビューが指摘なしにして、ドラフトを外した）
 {
   const id = "a1c3e5f7-1001";
@@ -126,8 +72,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
     { repo: PAY_REPO },
   );
   t.repo(3.15, PAY_REPO);
-  gather(
-    t,
+  t.gather(
     3.1,
     L(
       "## 目的と背景\n\n決済 API のタイムアウトは `src/client.ts` で 10 秒に固定されている。設定ファイルから読む仕組みは既にある。\n",
@@ -151,7 +96,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
   t.add(2.5, "sacty", "FinalReviewSkipped", {});
   t.pr(2.45, PAY_REPO, 128, { awaitingReview: true, draft: true });
   t.submit(2.45, "implement");
-  reviewed(t, id, 2.4, {
+  t.reviewed(2.4, {
     id: "a1c3e5f7-1101",
     step: "implement",
     repo: PAY_REPO,
@@ -182,8 +127,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
     { repo: WEB_REPO },
   );
   t.repo(25.95, WEB_REPO);
-  gather(
-    t,
+  t.gather(
     25.9,
     L(
       "## 目的と背景\n\n経理が、月末に注文履歴を表計算ソフトで集計している。いまは画面から写している。\n",
@@ -219,12 +163,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
     repo: WEB_REPO,
   });
   t.submit(25.3, "requirements");
-  t.add(20, "sacty", "PullRequestMerged", {
-    number: 44,
-    by: "acme-lead",
-    commit: "1a2b3c4d5e6f",
-    mergeCommit: "5d6e7f8091a2",
-  });
+  t.merged(20, 44, { commit: "1a2b3c4d5e6f", mergeCommit: "5d6e7f8091a2" });
   t.approve(20, "requirements", "queued");
   t.run(
     19.9,
@@ -247,13 +186,15 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
     repo: WEB_REPO,
   });
   t.submit(1.6, "design");
-  reviewed(t, id, 1.55, {
+  t.reviewed(1.55, {
     id: "b2d4f6a8-1102",
     step: "design",
     repo: WEB_REPO,
     number: 45,
     title,
     commit: "2b3c4d5e6f70",
+    // 設計の PR の向き先（タスクブランチ）の先頭は、要求要件の PR をマージしたコミット
+    baseCommit: "5d6e7f8091a2",
   });
 }
 
@@ -267,8 +208,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
     { repo: WEB_REPO },
   );
   t.repo(8.95, WEB_REPO);
-  gather(
-    t,
+  t.gather(
     8.9,
     L(
       "## 目的と背景\n\n請求書 PDF の宛名で、一部の漢字が別の文字になる。\n",
@@ -318,8 +258,7 @@ function reviewed(parent, parentId, hoursAgo, { id, step, repo, number, title, c
 /** 実装まで終えて PR がマージされ、完了したタスク（マージの後の監視は無い）。 */
 function delivered(t, hoursAgo, repo, number, plan, steps, reason, cost) {
   t.repo(hoursAgo - 0.05, repo);
-  gather(
-    t,
+  t.gather(
     hoursAgo - 0.1,
     L("## 目的と背景\n\n依頼のとおり。\n", "## Goal and background\n\nAs requested.\n"),
   );
@@ -586,8 +525,7 @@ const FIX_ID = "c9e1a3b5-1006";
     { repo: PAY_REPO },
   );
   t.repo(73.95, PAY_REPO);
-  gather(
-    t,
+  t.gather(
     73.9,
     L(
       "## 目的と背景\n\n夜間の在庫同期が 2 時間かかる。\n",

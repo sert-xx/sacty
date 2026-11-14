@@ -4,31 +4,47 @@
 
 # Gateway
 
-sacty runs a gateway on the host. The gateway relays AI calls, MCP, and external platform APIs from the step agents' containers. Only the gateway holds authentication values; the agent containers receive only a per-run token.
+The gateway is a relay that sacty runs on the host. It relays AI calls, MCP, organization platform (PF) APIs, and GitHub reads from the step agents' containers, adding the credentials. Only the gateway holds the credentials; the agent containers receive only a per-run token. The gateway listens only on 127.0.0.1 and accepts only requests that carry the token of a running agent.
 
 The paths through the gateway are as follows.
 
 ![Paths through the gateway](images/gateway-overview.en.svg)
 
-- The gateway listens only on 127.0.0.1 and accepts only requests that carry the token of a running agent.
-- Configure it in `gateway` in `config.yaml` (along with `via_gateway` of `providers.codex`).
+The gateway works without any settings. You write settings in the following cases. If none of them applies to you, you do not need the settings on this page.
+
+| When | Section to read |
+| --- | --- |
+| You want Codex's AI calls to keep the API key out of the container and to retry rate limits (when the endpoint is Bedrock or OpenAI-compatible) | [Relaying AI calls](#relaying-ai-calls) |
+| You want to use an OpenAI-compatible endpoint, such as your organization's AI gateway | [OpenAI-compatible endpoints](#openai-compatible-endpoints) |
+| You use Docker inside a virtual machine, such as Rancher Desktop, and containers cannot reach the gateway | [Host address](#host-address) |
+| You want to use an MCP server that authenticates in a browser at startup | [Host MCP servers](#host-mcp-servers) |
+| You want agents to use, through its API, an organization platform (PF) that has no MCP server | [Organization platform (PF) APIs](#organization-platform-pf-apis) |
+
+Reading GitHub works without any settings ([Reading GitHub](#reading-github)).
+
+Write the settings in `gateway` in `config.yaml` (along with `via_gateway` of `providers.codex`). The items of `gateway` are as follows.
 
 | Item | Meaning | Default |
 | --- | --- | --- |
 | `gateway.host_address` | The host's address as seen from containers ([Host address](#host-address)) | `host-gateway` |
-| `gateway.retry.max_attempts` | Maximum number of times one request is sent upstream (including the first attempt; 1 to 50) | `8` |
-| `gateway.retry.max_wait_sec` | Maximum total wait across a run of consecutive failures (seconds; 0 to 86400) | `600` |
+| `gateway.retry.max_attempts` | Maximum number of times one request is sent upstream (including the first attempt; 1 to 50; [Relaying AI calls](#relaying-ai-calls)) | `8` |
+| `gateway.retry.max_wait_sec` | Maximum total wait across a run of consecutive failures (seconds; 0 to 86400; [Relaying AI calls](#relaying-ai-calls)) | `600` |
 | `gateway.mcp_servers` | MCP servers run on the host ([Host MCP servers](#host-mcp-servers)) | None |
 | `gateway.platforms` | Organization platform (PF) APIs ([Organization platform (PF) APIs](#organization-platform-pf-apis)) | None |
 
 ## Relaying AI calls
 
-If you write `via_gateway: true` in `providers.codex`, the AI calls of Codex agents go through sacty's gateway. It works only when `auth.mode` is `bedrock` or `openai-compatible` ([next section](#openai-compatible-endpoints)). Writing it with other authentication methods or in `providers.claude` is an error ([config.yaml settings](config.en.md#connections-and-prices-providers)).
+You can send the AI calls of Codex agents through sacty's gateway. When they go through the gateway, the following applies.
 
 - Only the gateway holds the API key; the agent containers receive only a per-run token.
-- The gateway waits and then retries rate limits (429) and temporary failures (500, 502, 503, 504, connection failures). The wait follows `Retry-After`. If there is no `Retry-After`, the interval starts at 1 second, doubles each time, and caps at 60 seconds.
-- You can change the retry limits with `gateway.retry` (`max_attempts`, `max_wait_sec`). When a limit is reached, the agent pauses as having hit a usage limit. You can retry by resuming it.
-- Runs that were retried record the number of retries and the time waited in the Activity.
+- The gateway waits and then retries rate limits (429) and temporary failures (500, 502, 503, 504, connection failures).
+
+To send them through the gateway, write `via_gateway: true` in `providers.codex` (for an example, see [OpenAI-compatible endpoints](#openai-compatible-endpoints)).
+
+- It works only when `auth.mode` is `bedrock` or `openai-compatible`.
+- Writing it with other authentication methods or in `providers.claude` is an error ([config.yaml settings](config.en.md#connections-and-prices-providers)).
+
+You can change the retry limits with `gateway.retry` (`max_attempts`, `max_wait_sec`). The values in the following example are the defaults.
 
 ```yaml
 gateway:
@@ -37,9 +53,15 @@ gateway:
     max_wait_sec: 600   # maximum total wait across a run of consecutive failures before success
 ```
 
+Retries work as follows.
+
+- The wait follows `Retry-After`. If there is no `Retry-After`, the interval starts at 1 second, doubles each time, and caps at 60 seconds.
+- When a retry limit is reached, the agent pauses as having hit a usage limit. You can retry by resuming it.
+- Runs that were retried record the number of retries and the time waited in the Activity.
+
 ## OpenAI-compatible endpoints
 
-Write an OpenAI-compatible (Responses API) endpoint (such as your organization's AI gateway) in the `auth` of `providers.codex` with `mode: openai-compatible`. Codex's default agents ([Default agents](config.en.md#default-agents)) use this endpoint.
+To use an OpenAI-compatible (Responses API) endpoint, such as your organization's AI gateway, with Codex, write it in the `auth` of `providers.codex` with `mode: openai-compatible`. Codex's default agents ([Default agents](config.en.md#default-agents)) use this endpoint.
 
 ```yaml
 providers:
@@ -60,10 +82,10 @@ providers:
 | --- | --- | --- |
 | `auth.base_url` | The endpoint (an `http` or `https` URL). Required | None |
 | `auth.secret` | The API key (sent as Bearer; a secret name or a 1Password reference). Omit it if no authentication is needed | None |
-| `via_gateway` | Go through sacty's gateway | `false` |
+| `via_gateway` | Go through sacty's gateway ([Relaying AI calls](#relaying-ai-calls)) | `false` |
 
 - When the endpoint uses different model names, change `model` with [Overriding agents](config.en.md#overriding-agents) and write the price for that name in `available_models`.
-- Named `providers` and `provider` of agents from earlier versions are errors. Rewrite them in the form above.
+- The way earlier versions wrote this (named `providers`, and `provider` of agents) is an error. Rewrite it in the form of the example in this section ([Moving from earlier versions](config.en.md#moving-from-earlier-versions)).
 
 ## Host address
 
@@ -78,7 +100,7 @@ gateway:
 
 ## Host MCP servers
 
-Write a local command MCP server that authenticates in a browser at startup (Okta and so on) in `gateway.mcp_servers`, because a browser cannot be opened inside a container. The gateway starts the server on the host, keeps it running, and passes it to step agents as an HTTP MCP server.
+If an MCP server started by a local command authenticates in a browser at startup (Okta and so on), write it in `gateway.mcp_servers`, because a browser cannot be opened inside a container. The gateway starts the server on the host, keeps it running, and passes it to step agents as an HTTP MCP server.
 
 ```yaml
 gateway:
@@ -105,17 +127,23 @@ gateway:
 
 ### Restarts
 
-- The gateway restarts the server every `restart_every_min`, before the authentication expires. It switches over once the new process is ready (authenticated), and then stops the old one. Agents in the middle of using the server are not interrupted.
-- The gateway also restarts the server when the process exits or a tool returns an authentication error. This assumes that browser approval is automated; sacty does not wait for a person.
-- If the server is still not ready after restarting, this is shown on the task list screen and the server is restarted every minute.
+The gateway restarts the server at the following times.
+
+- It restarts the server every `restart_every_min`, before the authentication expires. It switches over once the new process is ready (authenticated), and then stops the old one. Agents in the middle of using the server are not interrupted.
+- It also restarts the server when the process exits or a tool returns an authentication error. This assumes that browser approval is automated; sacty does not wait for a person.
+
+If the server is still not ready after restarting, this is shown on the task list screen and the server is restarted every minute.
 
 ### Before a step agent's run
 
-- Before a step agent's run, sacty checks the MCP servers that run uses against the settings.
-  - For servers that were added or are in the middle of starting or re-authenticating, sacty waits until they are ready (up to `ready_timeout_sec`) before starting the run.
-  - Setting changes take effect immediately without stopping the daemon.
-  - Concurrent runs wait for the same startup to complete.
+Before a step agent's run, sacty checks the MCP servers that run uses against the settings.
+
+- Setting changes take effect immediately without stopping the daemon.
+- For servers that were added or are in the middle of starting or re-authenticating, sacty waits until they are ready (up to `ready_timeout_sec`) before starting the run. Concurrent runs wait for the same startup to complete.
 - If a server is not ready, the run proceeds, and the Activity (the notes of "Context prepared") records which MCP server it is. Results are not exported to that MCP server, and the reason is recorded.
+
+For the run, sacty passes the following to the agent.
+
 - Containers receive only the HTTP MCP URL with a per-run token (it can be passed to both Claude Code and Codex).
 - `startup_timeout_sec` and `tool_timeout_sec` are passed to the agent. The gateway's relay (10 minutes by default for tool calls and 60 seconds for the list) does not cut off before the values you wrote either. Changing only the timeouts does not restart the MCP server.
 
@@ -132,7 +160,9 @@ Processes left behind when the daemon crashed are cleaned up on the next start. 
 
 ## Organization platform (PF) APIs
 
-Organization platforms without an MCP server can be used by agents through their APIs if you write them in `gateway.platforms`. Only the gateway holds the credentials; they are not passed to agents. Per-project platforms can be written in the same form in the context repository's `platforms.yaml` ([Context repository](context.en.md#platformsyaml)).
+Organization platforms (the platforms inside your organization, such as ticket management) without an MCP server can be used by agents through their APIs if you write them in `gateway.platforms`. Only the gateway holds the credentials; they are not passed to agents. Per-project platforms can be written in the same form in the context repository's `platforms.yaml` ([Context repository](context.en.md#platformsyaml)).
+
+The following example has three platforms that write authentication in different ways (adding a fixed key, getting a token with an API key, and sending the key in the query to get a token).
 
 ```yaml
 gateway:
@@ -191,23 +221,33 @@ gateway:
 | `auth.token.ttl_sec` | How long to keep the token when its expiry is unknown (seconds) | `300` |
 | `allow` | Allowed APIs (`<method> <path>`; the method is one of `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`). At least one line is required | None |
 
+Calls from agents are handled as follows.
+
 - sacty includes the list of available platforms and APIs in the step agent's instructions. Agents can call them without dealing with authentication.
-- The gateway rejects requests that are not on the allowlist (403, with a response that says what is allowed).
+- The gateway rejects requests that are not on the allowlist (`allow`) (403, with a response that says what is allowed).
 - A request whose query has a parameter that overrides the method (`_method`, `x-http-method-override`, and so on) is rejected without being sent to the PF, even if it matches the allowlist (400). To use another method, change the method of the request itself and write that method in `allow`.
+
+sacty prepares the credentials as follows.
+
+- It prepares them when the daemon starts. Platforms whose credentials cannot be prepared are shown on the task list screen (other platforms remain usable).
 - The gateway fetches tokens again before they expire. If a request is rejected (401, 403), it fetches the token again and resends the request once.
-- Even when the key is sent in the query, URLs containing the key are not shown in the web UI, logs, the Activity, or responses to agents, including the reasons for fetch failures (they are masked as `[secret]`). The key is sent only to the token endpoint and is not added to the URL forwarded to the platform.
-- When a token endpoint that receives the key in the query returns a failure (non-2xx), the reason shows only the status code, not the endpoint's body (for example `token endpoint returned 403 (the response body is not shown because the key is sent in the query)`). This ensures that the key is never shown, in whatever form it appears in the body. Check the cause in the endpoint's own logs or similar.
-- Credentials are prepared when the daemon starts. Platforms whose credentials cannot be prepared are shown on the task list screen (other platforms remain usable).
-- The platforms are also used as the connection for JIRA intake ([Intake](intake.en.md#jira-tickets)) and result export ([Exporting results](result-export.en.md)).
+
+When the key is sent in the query (`{{secret}}` written in `auth.token.query`), sacty handles the key as follows.
+
+- URLs containing the key are not shown in the web UI, logs, the Activity, or responses to agents, including the reasons for fetch failures (they are masked as `[secret]`).
+- The key is sent only to the token endpoint and is not added to the URL forwarded to the platform.
+- When the token endpoint returns a failure (non-2xx), the reason shows only the status code, not the endpoint's body (for example `token endpoint returned 403 (the response body is not shown because the key is sent in the query)`). This ensures that the key is never shown, in whatever form it appears in the body. Check the cause in the endpoint's own logs or similar.
+
+Organization platforms are also used as the connection for JIRA intake ([Intake](intake.en.md#jira-tickets)) and result export ([Exporting results](result-export.en.md)).
 
 ## Reading GitHub
 
 Step agents can read the GitHub API through the gateway. No setting is needed, and it cannot be turned off. Only the hosts for which a GitHub account is chosen in the project settings ([Project settings](project-settings.en.md)) can be used. The gateway adds the token, and the token is not passed to the agent's container.
 
 - It is read-only. The gateway sends only REST `GET` and `HEAD` and GraphQL `query`, and refuses writes (`POST`, `PATCH`, `mutation`, and so on).
+- For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it ([Working with tasks](tasks.en.md#comments-on-prs-and-issues)).
 - The `gh` in the agent image can use only `gh api` (for example `gh api repos/acme/app/pulls/12/comments`). Other commands such as `gh pr view` cannot be used. With curl, read `$SACTY_GITHUB_URL/<host>/<API path>`.
-- For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it ([Working on tasks](tasks.en.md#comments-on-prs-and-issues)).
-- To use `gh`, you need an image rebuilt with this version (`npx sacty image build`). Even with an image built before that, curl can read.
+- To use `gh`, you need an image that includes this `gh`. Rebuild an image that does not have it (one built with an earlier version of sacty) with `npx sacty image build`. Even with an image built before that, curl can read.
 
 ## Related pages
 
