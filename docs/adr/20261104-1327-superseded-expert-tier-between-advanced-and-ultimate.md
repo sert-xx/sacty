@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-303
 - 置き換え元: なし
-- 置き換え先: [横断の観点 X-1 を expert で動かし、ultimate は既定で使わない](20261104-2323-cross-cutting-viewpoint-on-expert-tier.md)（観点ごとの段階を変えないとした部分）
+- 置き換え先: [横断の観点 X-1 を expert で動かし、ultimate は既定で使わない](20261104-2323-superseded-cross-cutting-viewpoint-on-expert-tier.md)（観点ごとの段階を変えないとした部分）
 
 ## 背景
 
