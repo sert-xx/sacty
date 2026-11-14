@@ -300,9 +300,15 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(prompt).toContain("- no_findings：指摘が無い");
     expect(prompt).toContain('{"sacty-review-verdict": {"verdict": "changes_required"}}');
     expect(prompt).not.toContain("changesRequested");
-    // 完了できなかったときは判定を付けない（スキルの「完了できないとき」と同じ）
+    // 完了できなかったときは判定を付けない。見られなかった観点があっても、要修正があれば changes_required（スキルの「完了できないとき」と同じ。PBI-343）
     expect(prompt).toContain(
-      "レビューを完了できなかった（差分やコード・レビューの対象にした文書を読めなかった・見られなかった観点がある）ときだけは付けません",
+      "差分やコード・レビューの対象にした文書を読めなかったときは付けません。",
+    );
+    expect(prompt).toContain(
+      "見られなかった観点があるときは、今回の先頭のコミットで成り立つ要修正の指摘（見られた範囲で新しく見つけたもの、または今回のコードで未対応と確かめた前回・既存の要修正）があれば changes_required を付け",
+    );
+    expect(prompt).toContain(
+      "、無ければ付けません（sacty は判定を読めなかったものとして本文に書き",
     );
     // PR の説明で示された文書も、対象か根拠かを分け、対象ならレビューする（PBI-142）
     expect(prompt).toContain(
