@@ -5,19 +5,20 @@
 // 架空のデータを入れた一時の SACTY_HOME で sacty up を起動し、Playwright で画面を撮る。
 // 実際の AI・GitHub・Docker・キーチェーンは使わない。
 // - docker・gh・security は、決まった答えを返す代わりのスクリプト（SHIMS）
-// - GitHub の API への問い合わせには、データのとおりの答えを返す（github-stub.mjs。実際の GitHub には問い合わせない）
+// - GitHub の API への問い合わせには、データのとおりの答えを返す（github-stub.mjs。GitHub の API には、実際には問い合わせない）
 // データは場面（シナリオ）ごとに分ける。言語も場面も、書かなければすべてを撮る。
 //   docs ：設定・操作・トラブルの説明の画面（seed.mjs。止まったタスクを含む。監査の画面は監査のモックのデータ）
 //   intro：紹介のページの画面（seed-intro.mjs。ふだんの使い方が伝わる状態だけ。監査の画面は作業履歴の監査の記録）
 // 画面には日時が写るので、撮り直すと画像が変わる。直したい場面だけを撮る（例 node scripts/docs-screenshots/capture.mjs intro）。
-// 撮る間にデーモンが作業履歴に書き足したら、画像を置き換えずに失敗にする。データが今の実装の流れと合っていないと、デーモンが
-// 起動の後に直そうとして（PR のレビューの子タスクを作って実行する、など）、その結果が写るため。データを直してから撮り直す。
+// 撮る間にデーモンが作業履歴に書き足したか、GitHub を変えようとしたら、画像を置き換えずに失敗にする。データが今の実装の
+// 流れと合っていないと、デーモンが起動の後に直そうとして（PR のレビューの子タスクを作って実行する、PR のドラフトを
+// 切り替える、など）、その結果が写るため。データを直してから撮り直す。
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readActivity } from "./seed-lib.mjs";
+import { readActivity, readRefused } from "./seed-lib.mjs";
 import { SHOTS } from "./shots.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -241,14 +242,18 @@ async function capture(lang, scenario, chromium) {
       }
       taken.push(name);
     }
-    // 撮る間に、デーモンが作業履歴に書き足していないか。書き足していたら、その結果が写っているかもしれないので、
-    // 画像を置き換えない
+    // 撮る間に、デーモンが作業履歴に書き足していないか・GitHub を変えようとしていないか。どちらかがあれば、その結果が
+    // 写っているかもしれないので、画像を置き換えない
     const added = readActivity(home).slice(seededEvents);
-    if (added.length > 0) {
+    const refused = readRefused(home);
+    if (added.length > 0 || refused.length > 0) {
       throw new Error(
         [
-          `${scenario}（${lang}）：撮る間に、デーモンが作業履歴に ${added.length} 件を書き足しました。画像は置き換えていません。`,
+          `${scenario}（${lang}）：撮る間に、デーモンが状態を変えようとしました。画像は置き換えていません。`,
+          ...(added.length > 0 ? [`作業履歴に書き足した記録（${added.length} 件）：`] : []),
           ...added.map((e) => `  ${e.type}（${e.actor}）：${e.task}`),
+          ...(refused.length > 0 ? ["断った GitHub の API への問い合わせ："] : []),
+          ...refused.map((line) => `  ${line}`),
           `データ（${seed}）を今の実装の流れに直してから、撮り直してください。`,
         ].join("\n"),
       );

@@ -163,12 +163,7 @@ const implementation = L(
     repo: WEB_REPO,
   });
   t.submit(25.3, "requirements");
-  t.add(20, "person", "PullRequestMerged", {
-    number: 44,
-    by: "acme-lead",
-    commit: "1a2b3c4d5e6f",
-    mergeCommit: "5d6e7f8091a2",
-  });
+  t.merged(20, 44, { commit: "1a2b3c4d5e6f", mergeCommit: "5d6e7f8091a2" });
   t.approve(20, "requirements", "queued");
   t.run(
     19.9,
@@ -198,6 +193,8 @@ const implementation = L(
     number: 45,
     title,
     commit: "2b3c4d5e6f70",
+    // 設計の PR の向き先（タスクブランチ）の先頭は、要求要件の PR をマージしたコミット
+    baseCommit: "5d6e7f8091a2",
   });
 }
 

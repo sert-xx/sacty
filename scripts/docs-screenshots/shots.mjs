@@ -5,6 +5,20 @@
 // until を書いたものは、ページの上から、その要素の下の端までを撮る（要素をいくつか書いたら、いちばん下の端まで）。
 // 下に足す余白は pad（書かなければ 24）。画面の高さは、撮る高さに合わせる。
 // scenario は、撮るときのデータの場面（capture.mjs の SCENARIOS。書かなければ docs）。
+
+/**
+ * タスクの詳細の「Sacty の AI のレビュー」が、付いている状態になるまで待つ。デーモンが起動の後の PR の確認で PR の先頭を
+ * 読むまでは「分かりません」と出るので、読む前に撮らない（読めないままなら、撮影を失敗にする）。
+ */
+async function aiReviewAttached(page) {
+  const attached = page.locator('[data-testid="ai-review"][data-status="attached"]');
+  for (let i = 0; i < 30 && !(await attached.isVisible()); i++) {
+    await page.waitForTimeout(3000);
+    await page.reload({ waitUntil: "networkidle" });
+  }
+  await attached.waitFor({ timeout: 1000 });
+}
+
 export const SHOTS = [
   {
     // 上の2段の欄（あなたの出番・止まっているタスクの理由・終わっていないタスク・費用と予算）まで
@@ -53,9 +67,15 @@ export const SHOTS = [
     // 左の列の最後（折りたたんだ「集めた情報」）と、右の列の最後（最近の作業履歴）の、下にあるほうまでを撮る
     name: "task-detail",
     path: "/tasks/a1c3e5f7-0001",
+    prepare: aiReviewAttached,
     until: ['details[aria-labelledby="gathered"]', 'section[aria-labelledby="recent"]'],
   },
-  { name: "task-pull-request", path: "/tasks/a1c3e5f7-0001", height: 760 },
+  {
+    name: "task-pull-request",
+    path: "/tasks/a1c3e5f7-0001",
+    prepare: aiReviewAttached,
+    height: 760,
+  },
   { name: "task-paused", path: "/tasks/b2d4f6a8-0002", height: 520 },
   { name: "task-budget-paused", path: "/tasks/b8d0f2a4-0008", height: 760 },
   {
@@ -74,6 +94,7 @@ export const SHOTS = [
     name: "task-chat",
     path: "/tasks/a1c3e5f7-0001",
     prepare: async (page) => {
+      await aiReviewAttached(page);
       await page
         .getByRole("button", { name: /^(オーケストレーターに質問|Ask the Orchestrator)$/ })
         .click();

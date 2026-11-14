@@ -10,9 +10,9 @@
 //   起動の後に作って実行し、撮る環境では失敗して「エラーで一時停止」が写る。
 // 以前の版の流れの記録（FinalReviewed など）は、その記録を写す画面に要るときだけ、理由をコメントに書いて入れる。
 // 書くのは、画面に出る状態と、デーモンの PR の確認が読む状態を作る記録だけ（実行ごとの細かい記録は書かない）。
-// 流れが変わってデータが古くなると、撮る間にデーモンが作業履歴に書き足す。capture.mjs は、書き足しを見つけたら、画像を
-// 置き換えずに失敗にする（readActivity）。
-import { mkdirSync, writeFileSync } from "node:fs";
+// 流れが変わってデータが古くなると、撮る間にデーモンが作業履歴に書き足すか、GitHub を変えようとする。capture.mjs は、
+// どちらかを見つけたら、画像を置き換えずに失敗にする（readActivity と、github-stub.mjs が断った問い合わせ）。
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SqliteActivityStore } from "../../apps/daemon/dist/activity.js";
 import { SqliteProjectStore } from "../../apps/daemon/dist/projects.js";
@@ -25,6 +25,8 @@ const BASE_COMMIT = "4f2c9a1e7b3d";
  * 撮る間の GitHub の答えを書くファイル（SACTY_HOME の下。github-stub.mjs が同じ名前で読む）。
  */
 const GITHUB_ANSWERS = "github-answers.json";
+/** github-stub.mjs が、断った GitHub の API への問い合わせを残すファイル（SACTY_HOME の下。同じ名前）。 */
+const GITHUB_REFUSED = "github-refused.log";
 
 /**
  * SACTY_HOME を開き、データを書く道具を返す。
@@ -73,9 +75,10 @@ export function openSeed(name, argv = process.argv.slice(2)) {
           ...extra,
         });
       },
+      /** 対象リポジトリの用意。記録するのは clone の URL（リポジトリの URL に .git を付けたもの）。 */
       repo(hoursAgo, url) {
         add(hoursAgo, "sacty", "RepositoryPrepared", {
-          url,
+          url: `${url}.git`,
           baseBranch: "main",
           baseCommit: BASE_COMMIT,
         });
@@ -143,7 +146,8 @@ export function openSeed(name, argv = process.argv.slice(2)) {
           reason,
           message,
         });
-        add(hoursAgo - 0.1, "sacty", "TaskPaused", { reason, message });
+        // 止まった理由の文は、失敗の記録（AgentRunFailed）にある
+        add(hoursAgo - 0.1, "sacty", "TaskPaused", { reason });
       },
       submit(hoursAgo, step, submission = 1) {
         add(hoursAgo, "sacty", "StepSubmitted", { step, submission });
@@ -185,24 +189,33 @@ export function openSeed(name, argv = process.argv.slice(2)) {
           ...extra,
         });
       },
-      /** 人が PR をマージした（PR の確認が記録する。承認の記録 approve を続けて書く）。 */
-      merged(hoursAgo, number, extra = {}) {
+      /**
+       * 人が PR をマージした（PR の確認が記録する。承認の記録 approve を続けて書く）。
+       * commit はマージされた PR の先頭で、sacty が出したコミット（submitted）と同じ（人は PR の中で直していない）。
+       */
+      merged(hoursAgo, number, { commit = "9e1d0c4b2a7f", ...extra } = {}) {
         add(hoursAgo, "person", "PullRequestMerged", {
           number,
           by: "acme-lead",
-          commit: "9e1d0c4b2a7f",
+          commit,
+          submitted: commit,
           mergeCommit: "b81f3e5d6c20",
           ...extra,
         });
       },
       /**
        * この PR をレビューする子タスク（指摘なしでレビューを投稿して完了したもの）を入れ、このタスクに記録する。
+       * 子タスクも、ほかのタスクと同じく、リポジトリを用意して情報収集をしてから、工程（レビューだけ）が決まる。
        * commit は、このタスクが PR に積んだコミット（同じコミットなので、デーモンは再レビューを始めない）。
        * @param {number} hoursAgo 子タスクを作った時刻（PR を作った直後）
        * @param {{ id: string, step: "requirements" | "design" | "implement", repo: string, number: number,
-       *   title: string, commit: string, output?: string }} child title はこのタスクの題、output はレビューの本文
+       *   title: string, commit: string, baseCommit?: string, output?: string }} child title はこのタスクの題、
+       *   baseCommit は PR の向き先の先頭（書かなければ起点のコミット）、output はレビューの本文
        */
-      reviewed(hoursAgo, { id: childId, step, repo, number, title, commit, output }) {
+      reviewed(
+        hoursAgo,
+        { id: childId, step, repo, number, title, commit, baseCommit = BASE_COMMIT, output },
+      ) {
         const url = `${repo}/pull/${number}`;
         const r = task(childId, projectId);
         r.add(hoursAgo, "sacty", "TaskCreated", {
@@ -214,14 +227,39 @@ export function openSeed(name, argv = process.argv.slice(2)) {
           reviewOf: { taskId: id, step },
         });
         add(hoursAgo, "sacty", "ReviewTaskCreated", { taskId: childId, step, repo, number });
-        r.add(hoursAgo - 0.02, "sacty", "StepsChosen", { steps: ["review"] });
+        r.repo(hoursAgo - 0.005, repo);
+        r.gather(
+          hoursAgo - 0.01,
+          L(
+            `## 目的と背景\n\nPR #${number} のレビュー。\n`,
+            `## Goal and background\n\nReview of PR #${number}.\n`,
+          ),
+        );
+        // 撮るときの設定（capture.mjs の CONFIG）には images があるので、レビューの工程のイメージだけは、
+        // オーケストレーターが選ぶ（既定のイメージ）
+        r.add(hoursAgo - 0.02, "orchestrator", "StepsChosen", {
+          steps: ["review"],
+          plan: "review",
+          reason: { code: "review.reviewOnlyImageChosen", params: { via: "sacty" } },
+          image: "default",
+          imageSource: "orchestrator",
+          defaultImageReason: L(
+            "検証に、既定のイメージに無いツールは要らないため",
+            "The checks need no tool beyond the default image",
+          ),
+          agentId: "codex_lite",
+          authMode: "api-key",
+          model: "gpt-6-luna",
+          usage: usage(12000, 300),
+          costUsd: 0.02,
+        });
         r.add(hoursAgo - 0.04, "sacty", "ReviewTargetResolved", {
           repo,
           number,
           url,
           title,
           headCommit: commit,
-          baseCommit: BASE_COMMIT,
+          baseCommit,
           author: "acme-dev",
         });
         r.run(
@@ -260,8 +298,9 @@ export function openSeed(name, argv = process.argv.slice(2)) {
 /**
  * 撮る間に GitHub の API が返す答え（github-stub.mjs が読む）。台帳のとおりの状態にして、デーモンの PR の確認が、直すものを
  * 見つけないようにする。
- * - pulls：sacty が作った PR。状態・先頭のコミット・ドラフトかは、台帳に記録したまま
+ * - pulls：sacty が作った PR。状態・先頭のコミット・ドラフトか・ベースブランチと競合しているかは、台帳に記録したまま
  * - running：マージの後の監視で CI/CD を待っているコミット（CI が実行中と答える）
+ * PR のレビューとコメントは、答えに入れない（github-stub.mjs が、いつも無いと答える）。
  */
 function githubAnswers(tasks) {
   const pulls = [];
@@ -274,6 +313,7 @@ function githubAnswers(tasks) {
   for (const t of tasks.values()) {
     const pr = t.pullRequest;
     if (pr?.number && pr.repo) {
+      const conflict = t.pullRequestConflict;
       pulls.push({
         repo: pr.repo,
         number: pr.number,
@@ -281,6 +321,8 @@ function githubAnswers(tasks) {
         // 指摘なしでドラフトを外した PR の先頭は、指摘なしにしたコミット
         head: pr.reviewedCommit ?? pr.commit,
         draft: pr.draft === true,
+        // ベースブランチとの競合を記録した PR は、競合している
+        mergeable: !(conflict?.number === pr.number && conflict.commit === pr.commit),
         ...merge(t.pullRequestMerge),
       });
     }
@@ -291,6 +333,7 @@ function githubAnswers(tasks) {
         state: state(p.state),
         head: p.commit,
         draft: false,
+        mergeable: true,
         ...merge(p.merge),
       });
     }
@@ -319,4 +362,16 @@ export function readActivity(home) {
   } finally {
     activity.close();
   }
+}
+
+/**
+ * 撮る間に、github-stub.mjs が断った GitHub の API への問い合わせ（書き込みと、答えを用意していない問い合わせ。重複は除く）。
+ * capture.mjs が、撮る間にデーモンが GitHub を変えようとしていないかを確かめるのに使う。
+ * @param {string} home SACTY_HOME
+ * @returns {string[]}
+ */
+export function readRefused(home) {
+  const file = join(home, GITHUB_REFUSED);
+  if (!existsSync(file)) return [];
+  return [...new Set(readFileSync(file, "utf8").split("\n").filter(Boolean))];
 }
