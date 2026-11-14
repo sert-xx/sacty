@@ -3,8 +3,10 @@
 # ユーザードキュメント
 
 sacty を使う方に向けて、インストール・設定・コマンド・画面の使い方を説明します。
-sacty がどんなものかを知りたい方は、[sacty の紹介](introduction.md) から、はじめての方は、[はじめに](getting-started.md) から読んでください。
-仕組みの詳細は [仕様書](../spec/README.md) にあります。
+
+- sacty がどんなものかを知りたい方は、[sacty の紹介](introduction.md) から読んでください。
+- はじめて使う方は、[はじめに](getting-started.md) の手順で起動し、[タスクを進める](tasks.md) で最初のタスクを進めてください。
+- 仕組みの詳細は、[仕様書](../spec/README.md) にあります。
 
 sacty の全体像は次のとおりです。
 
@@ -12,25 +14,36 @@ sacty の全体像は次のとおりです。
 
 ## 目次
 
-- [デスクトップ版](desktop.md)：提案用アプリの起動と作成
+目的ごとに分けて、読む順に並べています。
 
-1. [sacty の紹介](introduction.md)：sacty でできること・特長・任せられる作業
-2. [はじめに](getting-started.md)：インストール・起動・最初のプロジェクトとタスク・データの置き場所
-3. [ダッシュボード](dashboard.md)：欄の中身・期間の数え方・空のときの表示
-4. [config.yaml の設定](config.md)：項目の一覧・接続先と単価・認証方式・既定のエージェントと上書き・工程ごとのモデル・予算
-5. [秘密情報](secrets.md)：キーチェーン・1Password・起動のときに取り出すもの
-6. [プロジェクトの設定](project-settings.md)：対象・GitHub アカウント・コンテキストリポジトリの指定・エクスポート・削除
-7. [Issue・PR・チケットの取り込み](intake.md)：Sacty の設定・PR のレビュー・JIRA・タスクの並行実行
-8. [タスクを進める](tasks.md)：タスクの作り方・PR での承認・オーケストレーターへの質問・一時停止と中止
-9. [コンテキストリポジトリ](context.md)：雛形・置くファイル・sacty-context.yaml・mcp.yaml・platforms.yaml・プレビュー
-10. [ゲートウェイ](gateway.md)：AI の呼び出しの中継・OpenAI 互換の接続先・ホストの MCP サーバー・組織内 PF の API
-11. [コンテナイメージ](images.md)：プライベートのレジストリ・言語ごとのイメージ
-12. [docker compose のサービス](compose.md)：DB・モック API・共用の compose
-13. [成果の書き出し](result-export.md)：Confluence・Notion などへの書き出し
-14. [通知（Slack・デスクトップ）](notifications.md)：Sacty の設定の送り先・メンション・On/Off、ブラウザーのデスクトップ通知
-15. [マージの後の監視](deployment-watch.md)：実装の後の工程。
-    CI/CD とデプロイ後のアプリの確認・スキルの置き方・修正のタスクの自動の登録
-16. [CLI](cli.md)：sacty コマンドとオプション
-17. [困ったとき](troubleshooting.md)：よくある止まり方と確かめること
-18. [監査](audit.md)：完了したタスクの監査・改修の提案の採用と却下・監査の画面・レポート
-19. [スケジュールタスク](scheduled-tasks.md)：決めた予定でタスクを作る・PC が止まっていたときの動き・編集と削除・作ったタスク
+### はじめる
+
+- [sacty の紹介](introduction.md)：sacty でできること・特長・任せられる作業
+- [はじめに](getting-started.md)：インストールから、起動して、最初のプロジェクトとタスクを作るまで。更新の仕方とデータの置き場所
+- [デスクトップ版](desktop.md)：macOS の試作版のアプリの、起動の仕方と作り方
+
+### タスクを任せる
+
+- [タスクを進める](tasks.md)：タスクの作り方・画面の見方・PR での承認と差し戻し・オーケストレーターへの質問・一時停止と中止
+- [ダッシュボード](dashboard.md)：すべてのプロジェクトの、あなたの出番・止まっているタスク・費用を1つの画面で見る
+- [Issue・PR・チケットの取り込み](intake.md)：GitHub の Issue・PR や JIRA のチケットから、タスクを自動で作る。PR のレビュー・タスクの並行実行
+- [スケジュールタスク](scheduled-tasks.md)：決めた予定で、タスクを自動で作る。PC が止まっていたときの動き・編集と削除
+- [マージの後の監視](deployment-watch.md)：実装の PR をマージした後の、CI/CD とデプロイ後のアプリを確かめる。スキルの置き方・修正のタスクの自動の登録
+- [監査](audit.md)：完了したタスクの監査・改修の提案の採用と却下・監査の画面・レポート
+- [通知（Slack・デスクトップ）](notifications.md)：あなたの出番とタスクの完了を、Slack とブラウザーのデスクトップ通知で受け取る
+- [成果の書き出し](result-export.md)：承認した成果を、Confluence・Notion などへ書き出す
+
+### 設定する
+
+- [config.yaml の設定](config.md)：項目の一覧・接続先と単価・認証方式・既定のエージェントと上書き・工程ごとのモデル・予算
+- [秘密情報](secrets.md)：トークンや API キーを、キーチェーンか 1Password に置く。起動のときに取り出すもの
+- [プロジェクトの設定](project-settings.md)：対象・GitHub アカウント・コンテキストリポジトリの指定・エクスポート・削除
+- [コンテキストリポジトリ](context.md)：規約・スキル・MCP サーバー・外部 PF を、エージェントに渡す。雛形・置くファイル・プレビュー
+- [ゲートウェイ](gateway.md)：AI の呼び出しの中継・OpenAI 互換の接続先・ホストの MCP サーバー・組織内 PF の API
+- [コンテナイメージ](images.md)：エージェントを動かすイメージを作る。プライベートのレジストリ・言語ごとのイメージ
+- [docker compose のサービス](compose.md)：テストに要る DB・モック API を起動する。共用の compose
+
+### 調べる
+
+- [CLI](cli.md)：sacty コマンドとオプション
+- [困ったとき](troubleshooting.md)：よくある止まり方と、確かめること
