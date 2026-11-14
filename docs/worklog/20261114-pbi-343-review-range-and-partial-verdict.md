@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-14（UTC）
 - タスク: PBI-343
-- PR: （作成後に書く）
+- PR: #367
 - ブランチ: feat/issue-343-review-scope-diff
 - 関係する ADR: [PR のレビューでは文書の照合を差分の範囲に絞り、観点を見きれなくても要修正があれば判定を出す](../adr/20261114-0158-review-range-and-partial-verdict.md)
 
@@ -25,4 +25,6 @@ PR #365 の再レビューが2回続けて判定「読み取れませんでし�
 
 ## 確かめたこと
 
-（実行後に書く）
+- `npm run lint`・`npm run typecheck`：エラーなし。
+- `npx vitest run --no-file-parallelism`：219 ファイルのうち、作業履歴の PR の番号の行（PR を作る前で空だった）の1件を除いて通った。番号を書いた後に `tests/docs` と `prompts.test.ts` を実行し直した（下）。
+- プロンプトのテスト（`prompts.test.ts`）：判定の指示が、読めなかったときは付けない・見られなかった観点があっても要修正があれば `changes_required` を付ける・無ければ付けない、の3つを含むことを確かめた。
