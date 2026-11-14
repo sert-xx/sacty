@@ -1670,4 +1670,4 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）、`packages/core/src/projection.ts`（`applyEvent` の `ReviewRestarted`・`EARLIER_REVIEWS_MAX`）
