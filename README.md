@@ -23,6 +23,7 @@ npx sacty up            # デーモンと画面を起動し、画面の入り口
 
 ## ドキュメント
 
+- [sacty の紹介](docs/user/introduction.md)：sacty でできること・特長を、図と画面で紹介する
 - [ユーザードキュメント](docs/user/README.md)：設定・コマンド・使い方（目次から目的のページを引ける）
 - [docs の入口](docs/README.md)：仕様書・ADR・作業履歴を含む、ドキュメント全体の構成
 

@@ -21,6 +21,7 @@ See [Getting started](docs/user/getting-started.en.md) for the detailed steps.
 
 ## Documentation
 
+- [Introducing sacty](docs/user/introduction.en.md): what sacty does and what makes it different, with diagrams and screenshots
 - [User documentation](docs/user/README.en.md): settings, commands, and usage (find the page you need from the contents)
 - [Docs overview](docs/README.md): how all the documentation is organized, including the specifications, ADRs, and work logs (in Japanese)
 

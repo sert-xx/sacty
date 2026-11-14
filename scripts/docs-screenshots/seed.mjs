@@ -1,28 +1,14 @@
 // ユーザードキュメントのスクリーンショット用に、架空のプロジェクトとタスクを SACTY_HOME に入れる。
-// 実際の AI・GitHub・Docker は使わない。作業履歴に、タスクの状態を作るイベントを直接書く。
+// 実際の AI・GitHub・Docker は使わない。作業履歴に、タスクの状態を作るイベントを直接書く（道具は seed-lib.mjs）。
 //   node scripts/docs-screenshots/seed.mjs <SACTY_HOME> <ja|en>
 // デーモンのビルド（npm run build）が要る。
+// 紹介のページ（docs/user/introduction.md）の画面は、別のデータ（seed-intro.mjs）で撮る。
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SqliteActivityStore } from "../../apps/daemon/dist/activity.js";
-import { SqliteProjectStore } from "../../apps/daemon/dist/projects.js";
-import { project } from "../../packages/core/dist/index.js";
+import { openSeed } from "./seed-lib.mjs";
 
-const [home, lang = "ja"] = process.argv.slice(2);
-if (!home) {
-  console.error("usage: seed.mjs <SACTY_HOME> <ja|en>");
-  process.exit(2);
-}
-const L = (ja, en) => (lang === "en" ? en : ja);
-mkdirSync(home, { recursive: true });
-
-const HOUR = 3_600_000;
-const NOW = Date.now();
-let clock = NOW;
-const db = join(home, "sacty.db");
-const activity = new SqliteActivityStore(db, () => new Date(clock));
-const projects = new SqliteProjectStore(db, () => new Date(NOW - 30 * 24 * HOUR));
+const { L, projects, task, usage, finish } = openSeed("seed.mjs");
 
 // ---- コンテキストリポジトリ（ホームのディレクトリの下のローカルのディレクトリ。画面には ~/sacty-context と出る） ----
 const contextDir = join(homedir(), "sacty-context");
@@ -67,136 +53,6 @@ projects.put(PORTAL, {
   targets: [{ scope: "repo", target: "https://github.com/acme/portal" }],
   githubAccounts: { "github.com": "acme-dev" },
 });
-
-// ---- イベントを書く道具 ----
-let runSeq = 0;
-const usage = (input, output) => ({
-  input,
-  cacheRead: Math.round(input * 0.6),
-  cacheWrite: 0,
-  output,
-});
-function task(id, projectId) {
-  const add = (hoursAgo, actor, type, payload) => {
-    clock = NOW - hoursAgo * HOUR;
-    activity.append({ taskId: id, projectId, events: [{ actor, event: { type, payload } }] });
-  };
-  return {
-    add,
-    create(hoursAgo, title, body, extra = {}) {
-      add(hoursAgo, "person", "TaskCreated", {
-        title,
-        body,
-        start: "sacty",
-        budgetCapUsd: 5,
-        ...extra,
-      });
-    },
-    repo(hoursAgo, url) {
-      add(hoursAgo, "sacty", "RepositoryPrepared", {
-        url,
-        baseBranch: "main",
-        baseCommit: "4f2c9a1e7b3d",
-      });
-    },
-    plan(hoursAgo, plan, steps, reason, extra = {}) {
-      add(hoursAgo, "orchestrator", "StepsChosen", {
-        steps,
-        plan,
-        reason,
-        agentId: "codex_lite",
-        authMode: "api-key",
-        model: "gpt-6-luna",
-        usage: usage(18000, 900),
-        costUsd: 0.03,
-        ...extra,
-      });
-    },
-    run(hoursAgo, step, output, cost, extra = {}) {
-      const runId = `run-${id}-${++runSeq}`;
-      const agent = { agentId: "codex_standard", authMode: extra.authMode ?? "api-key" };
-      add(hoursAgo, "sacty", "AgentRunStarted", {
-        runId,
-        step,
-        ...agent,
-        model: "gpt-6.1-sol",
-        reasoningEffort: "low",
-      });
-      add(hoursAgo - 0.3, "agent", "AgentRunCompleted", {
-        runId,
-        step,
-        ...agent,
-        usage: usage(Math.round(cost * 400000), Math.round(cost * 20000)),
-        costUsd: cost,
-        estimated: false,
-        output,
-        ...extra,
-      });
-    },
-    fail(hoursAgo, step, reason, message) {
-      const runId = `run-${id}-${++runSeq}`;
-      add(hoursAgo, "sacty", "AgentRunStarted", {
-        runId,
-        step,
-        agentId: "codex_standard",
-        authMode: "api-key",
-        model: "gpt-6.1-sol",
-      });
-      add(hoursAgo - 0.1, "sacty", "AgentRunFailed", {
-        runId,
-        step,
-        agentId: "codex_standard",
-        reason,
-        message,
-      });
-      add(hoursAgo - 0.1, "sacty", "TaskPaused", { reason, message });
-    },
-    complete(hoursAgo, step) {
-      add(hoursAgo, "sacty", "StepCompleted", { step, next: "queued" });
-    },
-    submit(hoursAgo, step, submission = 1) {
-      add(hoursAgo, "sacty", "StepSubmitted", { step, submission });
-    },
-    approve(hoursAgo, step, next) {
-      add(hoursAgo, "person", "StepApproved", { step, next });
-    },
-    review(hoursAgo, viewpoints, tests = {}) {
-      add(hoursAgo, "guardian", "FinalReviewed", {
-        passed: true,
-        viewpoints: viewpoints.map((viewpointId) => ({
-          viewpointId,
-          verified: true,
-          reason: L("テストが観点を確かめている", "The test checks the viewpoint"),
-        })),
-        remarks: [],
-        summary: L("すべての観点を満たしている。", "All viewpoints are satisfied."),
-        tests: { command: "npm test", exitCode: 0, output: "Tests  42 passed (42)", ...tests },
-        agentId: "codex_standard",
-        authMode: "api-key",
-        model: "gpt-6.1-sol",
-        usage: usage(60000, 2500),
-        costUsd: 0.18,
-      });
-    },
-    pr(hoursAgo, repo, number) {
-      add(hoursAgo, "sacty", "PullRequestPublished", {
-        branch: `sacty/task-${id.slice(0, 8)}`,
-        commit: "9e1d0c4b2a7f",
-        url: `${repo}/pull/${number}`,
-        number,
-        repo,
-      });
-    },
-    merged(hoursAgo, number) {
-      add(hoursAgo, "sacty", "PullRequestMerged", {
-        number,
-        by: "acme-lead",
-        commit: "9e1d0c4b2a7f",
-        mergeCommit: "b81f3e5d6c20",
-      });
-    },
-  };
-}
 
 const investigation = L(
   "## 調査の結果\n\n- 決済 API のタイムアウトは `src/client.ts` で 10 秒に固定されている。\n- 設定ファイルから読む仕組みは既にあり、そこに項目を足せばよい。\n",
@@ -596,9 +452,4 @@ const selfReview = { rounds: 2, passed: true, remaining: [], notReviewed: [], su
   t.add(hoursAgo - 2, "person", "TaskCancelled", { cleanup: [] });
 });
 
-// 作業履歴が投影できることを確かめる（デーモンの起動と同じ読み方）
-const tasks = project(activity.all());
-console.log(`seeded ${tasks.size} tasks into ${db}`);
-for (const t of tasks.values()) console.log(`  ${t.status.padEnd(18)} ${t.title}`);
-activity.close();
-projects.close();
+finish();
