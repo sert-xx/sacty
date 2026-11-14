@@ -11,7 +11,7 @@ sacty can export results that a human has approved to Confluence, Notion, and si
 - Design (including Test viewpoints)
 - Document drafts
 
-In a Document task, when the agent wrote external documents directly as the task body instructed, those documents are the deliverable and nothing is exported ([Working with tasks](tasks.en.md#documents-and-one-off-external-work)).
+In a Document task, when the agent wrote external documents directly as the task body instructed, those documents are the deliverable and nothing is exported ([Creating or editing external documents directly](tasks.en.md#creating-or-editing-external-documents-directly)).
 
 To export, write the connection for the destination beforehand ([Configure the destinations](#configure-the-destinations)). The Orchestrator decides whether to export and where ([How exporting works](#how-exporting-works)).
 
