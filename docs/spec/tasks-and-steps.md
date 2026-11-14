@@ -1660,6 +1660,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   レビューの子タスクは、親が PR を更新して承認待ちに戻ったときにも、sacty が同じように戻す（`reason: updated`。[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）。
   GitHub のレビュー再依頼では、完了タスクを戻さず、別のレビュー専用タスクを作る（[取り込み](intake.md)）。
   どちらも、前回の本文・行へのコメント・レビューしたコミット・投稿の時刻を `previousReview` に残す。
+  「再レビュー」で `previousReview` を置き換えるときは、置き換える前のものを `earlierReviews` に古い順に積む（新しい 5 件まで。GitHub の再依頼で作った別のタスクには無い。PBI-342）。3回目以降の指示には、前々回以前のレビュー（本文は 1 件 5000 文字まで）もデータに入れ、前回までの要修正と原因を照らすのに使わせる（対応を確かめるのは前回の指摘だけ）。
   指示には、前回の指摘と、前回の投稿の後の PR の作者の返答を、指示とは分けた JSON のデータとして入れる。
   作者の返答は、PR のレビュー・行へのコメント・通常のコメントのうち、作者の login のもの（sacty のレビューの目印で始まるものを除く。新しい 30 件、1件 2000 文字まで）。
   前回の指摘ごとに、対応を確かめたか・未対応かを書かせる（確かめ方は、上の既存の指摘と同じく、今回の先頭のコミットのファイルで確かめ、未対応には読んだ箇所を添えさせる。重ねて書かず、再レビューの節に書く）。
@@ -1669,4 +1670,4 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   エージェントの本文と指摘の文は、対象のリポジトリの文章の決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`HEAD_CHECK_LINES`・`reviewVerificationLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）、`packages/core/src/projection.ts`（`applyEvent` の `ReviewRestarted`・`EARLIER_REVIEWS_MAX`）

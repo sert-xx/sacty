@@ -370,6 +370,8 @@ const PREVIOUS_REVIEW_IN_PROMPT = 20_000;
 /** 再レビューのプロンプトに入れる、作者の返答の件数と1件の上限。 */
 const REPLIES_IN_PROMPT = 30;
 const REPLY_IN_PROMPT = 2_000;
+/** 再レビューのプロンプトに入れる、前々回以前のレビューの本文の上限（1件あたり。PBI-342）。 */
+const EARLIER_REVIEW_IN_PROMPT = 5_000;
 
 /**
  * 前の指摘（前回のレビューの指摘・PR にある既存の指摘）の対応を、今回レビューする先頭のコミットの内容で確かめさせる決まり（PBI-302 B2）。
@@ -403,6 +405,19 @@ function rereviewLines(
           : previous.body,
       comments: previous.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
     },
+    ...(task.earlierReviews && task.earlierReviews.length > 0
+      ? {
+          earlierReviews: task.earlierReviews.map((r) => ({
+            round: r.round,
+            commit: r.headCommit,
+            body:
+              r.body.length > EARLIER_REVIEW_IN_PROMPT
+                ? `${r.body.slice(0, EARLIER_REVIEW_IN_PROMPT)}…（長いため省略）`
+                : r.body,
+            comments: r.comments.map((c) => ({ path: c.path, line: c.line, body: c.body })),
+          })),
+        }
+      : {}),
     ...(replies === "unreadable"
       ? {}
       : {
@@ -420,11 +435,17 @@ function rereviewLines(
     "--- 再レビュー ---",
     `これは ${task.reviewRound ?? 2} 回目のレビューです。前回（${previous.round} 回目）は ${previous.headCommit.slice(0, 7)} のコードをレビューして投稿しました。今回は ${head ? head.slice(0, 7) : "PR の最新"} のコードです。`,
     "- 範囲は PR 全体にする（前回の後の変更だけを見ない）",
+    `- 今回の ${MUST_TAG} が、前回までの ${MUST_TAG} と同じ原因の別の現れなら、スキルの集約の規則（「回をまたいで同じ原因が続くとき」）どおりに扱う。方針の観点（コードは C-17、設計書は D-1）に方針を見直させ、方針を変える ${MUST_TAG} が出ればその指摘にまとめる。出なければ、または方針の指摘が ${SUGGESTION_TAG} なら、現れを ${MUST_TAG} のまま残す。利用者向け文書のレビューには当てはめない`,
     "- 再レビューでも、スキル review-dispatch（流れは pr-review）でレビューし、検証は今回のコードで実行し直す（前回の結果や CI の結果だけで済ませない）",
     "- 本文に「前回の指摘」の節を作り、前回の指摘ごとに、対応を確かめた（直っている）か、未対応かを1行ずつ書く。この節の行の頭には、指摘の頭を付けない",
     ...HEAD_CHECK_LINES(head ? head.slice(0, 7) : "PR の最新のコミット"),
     "- 未対応の指摘は、新しい指摘として繰り返さない（行へのコメントにもしない）。未対応の前回の [要修正] があれば、判定は changes_required にする",
     "- 作者が「対象外」「後続で対応」と返した論点は、範囲が変わるか、今回の変更が直接の原因になっていない限り、もう一度指摘しない",
+    ...(task.earlierReviews && task.earlierReviews.length > 0
+      ? [
+          `- earlierReviews は、前々回以前に投稿したレビュー（古い順）です。前回までの ${MUST_TAG} と原因を照らすときに、前回の指摘と合わせて使う（対応を確かめて「前回の指摘」の節に書くのは、前回の指摘だけ）`,
+        ]
+      : []),
     replies === "unreadable"
       ? "- PR の作者の返答は読めませんでした。前回の指摘への対応は、コードから確かめてください"
       : "- authorReplies は、前回の投稿の後の、PR の作者のコメント・レビュー（古い順）です",
@@ -2675,6 +2696,8 @@ export function buildPrompt(
         "- 指摘は重要なものから順に書く。不具合・セキュリティ・データの破損・互換性を、好みの問題より優先する",
         `- 指摘の頭に重さを付ける。マージの前に直すべきもの（スキルの must）は ${MUST_TAG}、直すとよいもの（should・nit）は ${SUGGESTION_TAG}`,
         "- 指摘には、ファイルと行（例：src/pay.ts:12）、何が問題か、どう直すとよいかを添える。推測と、コードで確かめた事実を区別する",
+        // 指摘を回ごとに1つずつ出すと、直すたびに同じ原因の別の現れが見つかり、往復が終わらない（PBI-342）
+        "- 指摘はこのレビューで出し切る。欠陥を見つけたら、同じ原因のほかの現れ（入力の形の違い・別の箇所）も探して1件にまとめ、直し方は個々の現れではなく原因に向ける。方針そのものが欠陥を生んでいるなら、方針を見直す指摘にする（スキルの方針の観点。コードは C-17、設計書は D-1）",
         "- 問題が無ければ、無理に指摘を作らない",
         "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
         ...reviewVerificationLines(task, extra.reviewVerification),
