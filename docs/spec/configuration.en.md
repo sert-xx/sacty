@@ -18,7 +18,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 
 | Item | Default | Meaning |
 | --- | --- | --- |
-| `image` | `sacty-agent:1.24.1` (`DEFAULT_IMAGE`) | The default image. Used to run agents |
+| `image` | `sacty-agent:1.25.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents |
 | `providers` | `{}` | The endpoint per runtime ("Providers" below). Only the names `codex` and `claude` |
 | `default_agent` | The first usable one in `default_agent` of `config/agents.yaml` | The default AI. An agent name |
 | `guardian_agent` | None | Not used. Even if written, it is not an error; it is ignored with a warning (`config.guardianAgentIgnored`; shown in the web UI's warnings) |

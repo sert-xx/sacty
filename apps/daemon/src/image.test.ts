@@ -29,7 +29,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("設定ファイルが無ければ既定で作り、設定ファイルに誤りがあれば既定に戻さずに止める（レビュー指摘）", () => {
     expect(
       imageBuildSettings({ ok: false, problem: message("config.missing", { path: "/x" }) }),
-    ).toEqual({ ok: true, image: "sacty-agent:1.24.1", build: {}, images: {} });
+    ).toEqual({ ok: true, image: "sacty-agent:1.25.0", build: {}, images: {} });
     const invalid = message("config.invalid", { path: "image_build.npm_registry", detail: "URL" });
     expect(imageBuildSettings({ ok: false, problem: invalid })).toEqual({
       ok: false,
@@ -55,7 +55,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("元のイメージは build-arg で、npm の設定はファイルの場所だけを secret で渡す", () => {
     expect(
       imageBuildArgs({
-        image: "registry.example.com/sacty-agent:1.24.1",
+        image: "registry.example.com/sacty-agent:1.25.0",
         dockerDir: "/pkg/docker",
         baseImage: "registry.example.com/library/node:26",
         npmrcPath: "/tmp/x/npmrc",
@@ -67,7 +67,7 @@ describe("イメージの作成（PBI-33）", () => {
     ).toEqual([
       "build",
       "-t",
-      "registry.example.com/sacty-agent:1.24.1",
+      "registry.example.com/sacty-agent:1.25.0",
       "--build-arg",
       "BASE_IMAGE=registry.example.com/library/node:26",
       "--build-arg",
@@ -91,7 +91,7 @@ describe("イメージの作成（PBI-33）", () => {
     // 書かなければ、Dockerfile の既定（Docker Hub の node・その npm）のまま
     expect(
       imageBuildArgs({
-        image: "sacty-agent:1.24.1",
+        image: "sacty-agent:1.25.0",
         dockerDir: "/d",
         npmrcPath: "/n",
         npmConfigPath: "/c",
@@ -104,7 +104,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("トークンはビルドの引数に出さず、作った一時ファイル（本人だけが読める）は終わったら消す", async () => {
     const seen: { args: string[]; npmrc: string; mode: number; path: string }[] = [];
     const failure = await buildImage({
-      image: "sacty-agent:1.24.1",
+      image: "sacty-agent:1.25.0",
       build: { npmRegistry: "https://npm.example.com/", npmToken: "npm-token" },
       dockerDir: "/d",
       secrets: new MemorySecretStore({ "npm-token": "npm_SECRET" }),
@@ -129,7 +129,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("npm 全体の設定は、イメージに残すファイルに書き、認証のトークンは含めない（PBI-40）", async () => {
     const seen: { config: string; npmrc: string; dir: string }[] = [];
     await buildImage({
-      image: "sacty-agent:1.24.1",
+      image: "sacty-agent:1.25.0",
       build: {
         npmRegistry: "https://npm.example.com/",
         npmToken: "npm-token",
@@ -161,7 +161,7 @@ describe("イメージの作成（PBI-33）", () => {
     const hashes: string[] = [];
     for (const audit of ["false", "true", "true"]) {
       await buildImage({
-        image: "sacty-agent:1.24.1",
+        image: "sacty-agent:1.25.0",
         build: { npmConfig: { audit } },
         dockerDir: "/d",
         secrets: new MemorySecretStore({}),
@@ -192,7 +192,7 @@ describe("イメージの作成（PBI-33）", () => {
     const secrets = new MemorySecretStore({});
     const language = {
       name: "go",
-      image: "sacty-agent-go:1.24.1",
+      image: "sacty-agent-go:1.25.0",
       description: "Go",
       baseImage: "registry.example.com/ci/go:1.23",
     };
@@ -215,7 +215,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("失敗したら確かめることを返し、一時ファイルは消す。トークンが無ければ作らずに止める", async () => {
     let path = "";
     const failure = await buildImage({
-      image: "sacty-agent:1.24.1",
+      image: "sacty-agent:1.25.0",
       build: { baseImage: "registry.example.com/library/node:26" },
       dockerDir: "/d",
       secrets: new MemorySecretStore({}),
@@ -231,7 +231,7 @@ describe("イメージの作成（PBI-33）", () => {
     let ran = false;
     await expect(
       buildImage({
-        image: "sacty-agent:1.24.1",
+        image: "sacty-agent:1.25.0",
         build: { npmToken: "missing" },
         dockerDir: "/d",
         secrets: new MemorySecretStore({}),
@@ -247,7 +247,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("言語ごとのイメージは、元のイメージに Node.js を写す指定（BASE_KIND=lang）と Maven のミラーを渡す（PBI-41）", async () => {
     const java = {
       name: "java",
-      image: "sacty-agent-java:1.24.1",
+      image: "sacty-agent-java:1.25.0",
       description: "Java 17",
       baseImage: "registry.example.com/ci/java:17",
       env: { GOPROXY: "https://proxy.example.com" },
@@ -255,7 +255,7 @@ describe("イメージの作成（PBI-33）", () => {
     };
     let args: string[] = [];
     const failure = await buildImage({
-      image: "sacty-agent:1.24.1",
+      image: "sacty-agent:1.25.0",
       // Node.js を写す元は、指定が無ければ既定のイメージの元（プライベートのレジストリの node）
       build: { baseImage: "registry.example.com/library/node:26" },
       dockerDir: "/d",
@@ -270,7 +270,7 @@ describe("イメージの作成（PBI-33）", () => {
     expect(args.slice(0, 11)).toEqual([
       "build",
       "-t",
-      "sacty-agent-java:1.24.1",
+      "sacty-agent-java:1.25.0",
       "--build-arg",
       "BASE_IMAGE=registry.example.com/ci/java:17",
       "--build-arg",
@@ -314,7 +314,7 @@ describe("イメージの作成（PBI-33）", () => {
     expect(args).toContain("NODE_IMAGE=registry.example.com/node:26-slim");
     // 既定のイメージは BASE_KIND を渡さない（元のイメージをそのまま使う）
     await buildImage({
-      image: "sacty-agent:1.24.1",
+      image: "sacty-agent:1.25.0",
       build: {},
       dockerDir: "/d",
       secrets: new MemorySecretStore({}),
@@ -329,7 +329,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("名前を指定しなければ、既定と images のすべてを作る。default は既定、無い名前は作らずに返す（PBI-41）", () => {
     const image = (name: string) => ({
       name,
-      image: `sacty-agent-${name}:1.24.1`,
+      image: `sacty-agent-${name}:1.25.0`,
       description: name,
       baseImage: name,
       env: {},
@@ -353,7 +353,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("言語ごとのイメージの packages と run を渡し、変えたら作り直させる（PBI-50）", async () => {
     const base = {
       name: "rocky",
-      image: "sacty-agent-rocky:1.24.1",
+      image: "sacty-agent-rocky:1.25.0",
       description: "Rocky",
       baseImage: "rockylinux:9",
       env: {},
@@ -408,7 +408,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("有効にするリポジトリを渡し、変えたら作り直させる。書かなければ、これまでと同じ（PBI-59）", async () => {
     const base = {
       name: "rocky",
-      image: "sacty-agent-rocky:1.24.1",
+      image: "sacty-agent-rocky:1.25.0",
       description: "Rocky",
       baseImage: "rockylinux:9",
       env: {},
@@ -604,7 +604,7 @@ describe("古い版のイメージの片付け（PBI-313）", () => {
           "sacty-agent:1.9.1",
           "sacty-agent:1.10.0",
           "sacty-agent:1.18.0",
-          "sacty-agent:1.24.1",
+          "sacty-agent:1.25.0",
           "sacty-agent-java17:1.9.1",
           "sacty-agent-java17:1.10.0",
           "sacty-agent-java17:1.11.0",
