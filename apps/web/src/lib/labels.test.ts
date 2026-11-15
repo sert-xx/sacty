@@ -1447,6 +1447,57 @@ describe("オーケストレーターのセッションの記録の表示（PBI-
   });
 });
 
+describe("終わっていない実装の記録の表示（PBI-347・PBI-348・PBI-350）", () => {
+  const event = (type: string, payload: Record<string, unknown>) =>
+    ({ type, payload, actor: "sacty" }) as unknown as ActivityEvent;
+
+  it("未完了の実行は、提出せずに実装を続けることと、残っていることを 3 件まで出す", () => {
+    const incomplete = event("ImplementationIncomplete", {
+      remaining: ["API の入力", "候補の絞り込み", "docs", "4件目"],
+    });
+    expect(describeEvent(incomplete)).toBe(
+      "実装が終わっていないため、提出せずに実装を続ける（残り：API の入力 / 候補の絞り込み / docs）",
+    );
+    expect(describeIn(incomplete, labels.en)).toBe(
+      "The implementation is unfinished, so it is continued without being submitted (remaining: API の入力 / 候補の絞り込み / docs)",
+    );
+    // 申告が無い・読めないとき。残っていることが無ければ、括弧を出さない
+    const undeclared = event("ImplementationIncomplete", { remaining: [], undeclared: true });
+    expect(describeEvent(undeclared)).toBe(
+      "実装し終えたかの申告が無いか読めないため、提出せずに実装を続ける",
+    );
+    expect(describeIn(undeclared, labels.en)).toBe(
+      "The declaration of whether the implementation finished is missing or unreadable, so it is continued without being submitted",
+    );
+  });
+
+  it("テストの対応していない観点があった実行は、その観点を出す", () => {
+    const unmapped = event("ImplementationIncomplete", {
+      remaining: ["TV-2 キーなし"],
+      unmapped: ["TV-2", "TV-3"],
+    });
+    expect(describeEvent(unmapped)).toBe(
+      "テストの対応していないテスト観点があるため、提出せずに実装を続ける（TV-2・TV-3）",
+    );
+    expect(describeIn(unmapped, labels.en)).toBe(
+      "Some test viewpoints have no test mapped, so the implementation is continued without being submitted (TV-2・TV-3)",
+    );
+  });
+
+  it("変更の無いやり直しは、PR の番号と先頭のコミットを出す", () => {
+    const unchanged = event("ImplementationUnchanged", {
+      repo: "https://github.com/acme/app",
+      number: 51,
+      commit: "7a1b2c3d4e5f6a7b",
+      reviewTaskId: "r1",
+    });
+    expect(describeEvent(unchanged)).toBe(
+      "やり直しの実装が、AI のレビューの指摘が残る PR #51（7a1b2c3）を何も変えなかったため、提出しない",
+    );
+    expect(describeIn(unchanged, labels.en)).toContain("PR #51 (7a1b2c3)");
+  });
+});
+
 describe("時間切れで止めた実行の記録の表示（PBI-280）", () => {
   const event = (type: string, payload: Record<string, unknown>) =>
     ({
