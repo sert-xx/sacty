@@ -200,7 +200,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 ## 既定の文章用スキル
 
-既定のコンテキストには、人が読む文章（PR の本文、レビューのコメント、Issue・PR へのコメント、要求要件・設計、調査の結果、報告）の書き方を決める `writing` がある。
+既定のコンテキストには、人が読む文章（PR の本文、レビューのコメント、Issue・PR へのコメント、要求要件・設計、調査の結果、報告と、ユーザーガイド・手順書・README などの文書）の書き方を決める `writing` がある。
 従う順は、依頼した人の指示、対象のリポジトリの文章の決まり（AGENTS.md・CONTRIBUTING・docs の方針など）、このスキルの順。
 日本語では「。」の後で改行し、英語ではピリオドの後で改行しない。
 改行の書き方は、書き出し先（GitHub のコメント、リポジトリの Markdown のファイル、Confluence のエディタとストレージ形式、チャット）ごとに決める。
@@ -210,17 +210,34 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 人に確認・判断を求める項目には、確認しないで進めた場合の具体的な懸念を1〜2文で添える。
 要求要件・設計は、スコープ（対象と対象外）を最初に書く。
 既定の `git`・`review-dispatch`・`review-execution` は、文章を書く所でこのスキルを参照する。
-情報を絞ることを、決まりの最初に置く。
-読む人は前提（暗黙知）を持っているとして、判断と作業に要ることだけを書き、最初は最小限にして、読む人が求めた所だけを足す。
+決まりの最初に、読む人がその件の前提を知っているかで、文章の種類を決めることを置く。
+承認・判断・返信のための文章（PR の本文、レビュー、コメント、要求要件・設計、調査の結果、報告）は、読む人が前提（暗黙知）を持っているとして情報を絞る。判断と作業に要ることだけを書き、最初は最小限にして、読む人が求めた所だけを足す。
+後から読まれる文書（ユーザーガイド、手順書、README、運用の文書）は、読む人が前提を知らないとして、読む人が目的を果たすのに要ることを省かずに書く。読む人が知らない語と前提も、要る情報として書く。目的に要らないこと（内部の仕組み・経緯・検討の過程）は、どちらの種類でも書かない。
+後から読まれる文書の組み立て方は、`references/documents.md` に持つ。
+
+- 最初の数行に、何の文書か・誰のためか・先に要るもの（環境・権限・先に読む文書）を書く。
+- 全体像、ふつうの使い方、細かい条件と例外、引くための一覧の順に並べ、節は読む人が進む順にする。
+- 節の最初に、その節の要点を1〜2文で書く（「この節では〜を説明します」という予告にしない）。
+- 読む人がすることは番号付きの手順にし、手順の前に前提を、手順ごとに結果を書く。
+- 今の状態だけを書く（経緯は変更履歴に書く）。ほかの節・文書は、位置（「下の」「上記の」）ではなく、名前とリンクで指す。
+- 既存の文書に書き足すときは、箇条書きの最後に足すだけにせず、節の流れのどこに入るかを決める。
+
+図と画像の使い方は、`references/figures.md` に持つ。
+
+- 図にするのは、文章で書くと長くなる関係（構成・流れ・状態の移り方・層・やり取りの順序）だけ。1列に並ぶだけの手順は番号付きの箇条書きに、比べる情報は表にする。
+- 1つの図で言うことは1つにし、図の中の語は本文と同じにし、図の前に何の図かを1文で書く。図にしか無い情報は作らない。
+- 図の形式は、書き出し先で決める。テキストで書いた図（Mermaid など）を表示できる所ではテキストで書き、表示できない所では画像にして、後から直せる形で残す（元のファイルを一緒に置くか、元のデータを埋め込んだ画像にする）。リポジトリが図の作り方を決めていれば、それに従う。図を作るためのスキル（既定の `drawio` など）があれば、それに従って作る。
+- スクリーンショットは、見る所・押す所が言葉で伝わりにくい所に絞り、架空のデータで撮る。画面を撮れないときは、撮ったことにしない（無い画像を参照せず、画面の名前と見る所を言葉で書く）。
+
 要求要件・設計・文書・調査の結果の工程の指示も、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
 既定の規則（`rules.md`。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡る）でも、人が読む文章は必ずこのスキルを使って書くよう求める。
 依頼した人の指示と対象のリポジトリの文章の決まりは、このスキルより優先する。
 同じ規則は、人に確認・判断を求めるとき（確認したいこと、人が確かめること、質問、変更の申し出など）に、確認しないで進めた場合の具体的な懸念を項目ごとに1〜2文で添えることも求める（PBI-340）。
 同じ規則は、人が読む文章に、sacty の作業領域の内部のパス（`/sacty-input` など、コンテナの内部のパス）を書かないことも求める。人は辿れないので、リポジトリのパス・タスクの依頼の文言・人の指摘の ID で示させる（PBI-301 A7）。
 
-関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-superseded-minimal-first-drafts.md)、[要求要件・設計はスコープを最初に置き、人への確認には確認しない場合の懸念を添える](../adr/20261113-0708-scope-first-and-concerns-in-questions.md)
+関係する ADR: [既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)、[人間が読む成果物の初版を最小限にし、詳しさは人間の差し戻しで足す](../adr/20261025-0222-superseded-minimal-first-drafts.md)、[要求要件・設計はスコープを最初に置き、人への確認には確認しない場合の懸念を添える](../adr/20261113-0708-scope-first-and-concerns-in-questions.md)、[文章の種類を読む人が前提を知っているかで分け、後から読まれる文書の組み立て方と図・画像の決まりを writing に足し、文書作成の工程でもセルフレビューをさせる](../adr/20261115-0017-writing-kinds-figures-and-document-self-review.md)
 
-コード: `apps/daemon/default-context/rules.md`、`apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`、`apps/daemon/default-context/skills/writing/references/wording.md`
+コード: `apps/daemon/default-context/rules.md`、`apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`、`apps/daemon/default-context/skills/writing/references/wording.md`、`apps/daemon/default-context/skills/writing/references/documents.md`、`apps/daemon/default-context/skills/writing/references/figures.md`、`apps/daemon/src/default-skills.test.ts`
 
 ## 既定の要求要件用スキル
 

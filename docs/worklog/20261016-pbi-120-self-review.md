@@ -4,7 +4,7 @@
 - タスク: PBI-120
 - PR: #130
 - ブランチ: feat/issue-120-self-review
-- 関係する ADR: [要求要件・設計・実装の工程で、提出の前に review-dispatch のセルフレビューをパスするまで繰り返させ、結果を記録して画面に出す](../adr/20261016-2354-self-review-before-submitting.md)
+- 関係する ADR: [要求要件・設計・実装の工程で、提出の前に review-dispatch のセルフレビューをパスするまで繰り返させ、結果を記録して画面に出す](../adr/20261016-2354-superseded-self-review-before-submitting.md)
 
 ## 目的
 

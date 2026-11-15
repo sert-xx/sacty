@@ -145,7 +145,7 @@ In a repository with few docs, agents cannot get enough context and may not prod
 Like a normal task, the Orchestrator chooses how to proceed, and the task goes through approvals and PRs. The agent does the following. It does not change the code.
 
 - It takes stock of the existing docs (README, docs, AGENTS.md, and so on) and writes the result as a table in the PR description. Existing docs are not deleted, moved, or rewritten; the new docs link to them. If the location and format are already decided, it follows them (otherwise the docs go in `docs/` with `docs/README.md` as the index).
-- From the code, it writes what cannot be learned by reading a little code (purpose and terms, overall structure, main flows, data, external connections, and conventions). How to build and test is set up by the "Sacty setup" template.
+- From the code, it writes what cannot be learned by reading a little code (purpose and terms, overall structure, main flows, data, external connections, and conventions). It also adds figures for the overall structure and the main flows. The figures use the format of the figures in the repository's existing docs (or, if there are none, a format written as text inside Markdown). How to build and test is set up by the "Sacty setup" template.
 - It creates two skills. The originals go under `.agents/skills/`, and the ones under `.claude/skills/` for Claude Code are relative symbolic links to the originals.
   - `docs-lookup`: a skill to find and read the docs before working.
   - `docs-update`: a skill to update the docs in the same PR when the code changes.
@@ -368,7 +368,7 @@ The AI it uses and its cost are as follows.
 
 ## Self-review before submitting
 
-In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting.
+In the Requirements, Design, Implementation, and Document steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting.
 It fixes the work until no `must` findings (the severity that requires a fix) are left, then submits it (up to 5 rounds including the first).
 
 In the Requirements and Design steps, the agent also runs the document verification the repository defines (a document formatter, a document lint, a link check, and so on) before submitting, and makes it pass.
@@ -396,6 +396,14 @@ The viewpoints a re-review did not use are recorded in the agent's run log as "n
 
 When the deliverable of a request is judged to be document files only, the self-review of the implementation also uses the document viewpoints (sync with the code, whether the steps work, fit to the reader, static quality) instead of the code viewpoints.
 A request that also changes code is reviewed with the code viewpoints.
+
+The draft of the Document step is reviewed with the document viewpoints that fit the kind of draft.
+
+- User guides, procedures, READMEs, operations documents, reports, and so on: the viewpoints for user-facing documents (sync with the code, whether the steps work, fit to the reader, static quality)
+- Design documents, records of comparisons or decisions, and so on: the viewpoints for design documents
+
+The draft does not become a file in the repository, so the repository's verification (formatter, lint, and so on) is not run.
+In a request to write external documents directly, the agent self-reviews the draft before writing, and writes externally after it finishes fixing.
 
 When the target repository has skills or instruction files that apply to this change, the self-review adds the following.
 Neither reduces the default viewpoints.
@@ -432,8 +440,8 @@ However, the agent reviews the whole deliverable as usual in the following cases
 - The previous deliverable is empty
 - The remark changes the direction
 
-The narrowing of the range is not applied to changes requested on the implementation.
-However, a fix run of the implementation is also reviewed with only the viewpoints related to the findings and centered on what was fixed in that run, when the previous submission's self-review passed.
+The narrowing of the range and the number of rounds is not applied to changes requested on the implementation or on a document draft.
+However, a fix run of the implementation or of a document draft is also reviewed with only the viewpoints related to the findings and centered on what was fixed in that run, when the previous submission's self-review passed (for a document draft, only when the previous draft is not empty).
 
 Some reworks skip the self-review.
 When a PR comment only answers the "確認したいこと" (questions) and every answer is as recommended, the deliverable is not redone and not self-reviewed ([Cause of a request for changes](#cause-of-a-request-for-changes)).
@@ -677,8 +685,10 @@ In more detail, each section holds the following.
 - 既定で決めたこと
   - A decision about the purpose of your request, and a default that can harm you (cannot be undone, becomes unusable, and so on), is not put here; it appears in 確認したいこと.
 
-Requirements, designs, documents, and investigation results are written minimal in their first draft.
+Requirements, designs, and investigation results are written minimal in their first draft.
 Assuming that you know the project's background, the agent writes only what you need to decide and work.
+For a document draft, the level of detail is decided by the reader ([Draft detail and figures](#draft-detail-and-figures)).
+
 For requirements and designs, the target is about 25 lines for a small change and about 65 lines even for a large change.
 The agent does not write the following.
 
@@ -1213,16 +1223,41 @@ In document creation, normally the deliverable is one draft, and you approve the
 To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
 
 1. Write the audience, purpose, and source contents in the task.
+   - The level of detail of the draft depends on whether the audience knows the background of the matter ([Draft detail and figures](#draft-detail-and-figures)).
    - To write a procedure document based on a repository's code, choose that repository (the Document step reads the code; the repository is not changed).
    - To have the agent use external material, write which destination to read and what to read in the task body or in a Request changes comment.
    - If the Orchestrator chooses a different plan, choose "Document" in "Plan".
 2. The agent of the Document step writes the draft.
    - Like the other steps, it can use the project context (rules, skills, and MCP servers), external destinations, and GitHub reads.
    - A work report (that something was created, the agent ID, and so on) is written neither in the draft nor externally.
+   - Before submitting, it self-reviews the draft and fixes it ([Self-review before submitting](#self-review-before-submitting)).
 3. Review the Markdown draft under "Document" and approve it (you can also request changes).
 4. sacty exports the draft after approval only if the Orchestrator selected a destination.
    - Check the selected destination and reason on the "Step settings" tab of the task details ([Exporting results](result-export.en.md)).
    - An export failure does not stop the draft from completing. Also check whether the external publication succeeded.
+
+#### Draft detail and figures
+
+The agent decides the level of detail and the structure of the draft by whether the reader knows the background of the matter. Write who the reader is (the audience) in the task. If you do not, the agent decides from the kind of draft and the export destination.
+
+| Reader | Example drafts | How it is written |
+| --- | --- | --- |
+| Someone who knows the background (the requester, people involved in the matter) | Reports, minutes, rough drafts | Written minimally. Background and explanations of terms the reader already knows are left out |
+| Someone who does not know the background (someone who was not there, reading later) | User guides, procedures, READMEs, operations documents | Everything the reader needs to achieve their goal is written, with nothing left out |
+
+A draft for a reader who does not know the background is structured as follows.
+
+- The first few lines say what the document is, who it is for, and what is needed first (environment, permissions, and so on).
+- Sections follow the order in which the reader proceeds (prepare, start, use, when in trouble), and each section starts with its main point.
+- What the reader does is written as numbered steps, with the result after each step.
+- Terms the reader does not know are explained where they first appear.
+
+Figures and images are used only where they convey something faster than prose.
+
+- Relationships such as structure, flow, and state transitions become figures. The format of a figure is one the export destination can render.
+- A screen image is not included when the agent cannot capture the screen. The agent writes the screen's name and what to look at in words, and lists the screens it wants captured as unconfirmed items.
+
+If you want a part written in more detail or made shorter, write that part in a comment and request changes. The agent changes only the part you pointed out.
 
 #### Creating or editing external documents directly
 
@@ -1231,7 +1266,7 @@ You can also have the agent create or edit external documents directly. In that 
 Documents written externally are changed when the agent writes them, without waiting for approval. Instruct direct editing only when the external documents may change before approval.
 
 1. Write in the task body that you want external documents created or edited directly.
-2. The agent writes those documents directly.
+2. The agent self-reviews a draft and fixes it, then writes those documents directly.
 3. "Document" shows the content of each document after the edit; review it and approve. The documents written externally are listed under "Pages written externally".
    - When you request changes, the agent edits those documents (it does not create another document with the same content).
    - You can also request changes to add target documents.
