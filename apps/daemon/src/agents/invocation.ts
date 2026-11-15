@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { StepKey } from "@sacty/core";
+import { takeFences } from "../agent-json.js";
 import { COMPLETION_FENCE, completionBlock } from "../completion.js";
 import type { AgentConfig } from "../config.js";
 import { CLAUDE_MCP_CONFIG, GATEWAY_TOKEN_SECRET, type PlacedContext } from "../context.js";
@@ -425,6 +426,7 @@ export async function buildInvocation(
  * 書いていないスタブの設定でも、今までどおり提出まで進むようにする。申告を書いた出力（未完了の再現など）は、そのまま使う。
  */
 function withStubCompletion(output: string): string {
-  if (output.includes(COMPLETION_FENCE)) return output;
+  // 申告のコードブロックがあるかで決める（説明の文に名前を書いただけの出力には、足す）
+  if (takeFences(output, COMPLETION_FENCE).fences.length > 0) return output;
   return `${output}\n\n${completionBlock({ status: "complete" })}`;
 }

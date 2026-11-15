@@ -2183,6 +2183,11 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     expect(await resultOf(stubbed({ outputs: { implement: incomplete } }), "implement")).toBe(
       incomplete,
     );
+    // 申告のコードブロックが無ければ、説明の文に名前が出てきても足す
+    const mentioned = "# 実装\n\nsacty-completion の読み方を変えた。";
+    expect(await resultOf(stubbed({ outputs: { implement: mentioned } }), "implement")).toBe(
+      `${mentioned}\n\n${complete}`,
+    );
     // 実装でない工程の出力には足さない
     expect(await resultOf(stubbed({}), "requirements")).toBe("# 実装（スタブ）");
   });

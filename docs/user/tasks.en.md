@@ -1518,7 +1518,8 @@ When the implementation does not finish, the task proceeds as follows.
 2. sacty redoes the implementation, passing along what remains.
 3. If it does not finish 3 times in a row, the task becomes "Paused: the implementation keeps ending unfinished".
    If redoing changed nothing in the workspace, the task stops without waiting for 3 times.
-4. The reason it stopped shows what remains. Check it, then resume.
+4. If the agent declared what remains, the reason it stopped shows it. Check it, then resume.
+   When the task stopped with the declaration missing or unreadable, what remains is not shown.
    If you think the same agent will not get further, you can change the agent of the Implementation step in the resume form ([Resuming a stopped task](#resuming-a-stopped-task)).
 
 When a rework changes nothing, the task proceeds as follows.

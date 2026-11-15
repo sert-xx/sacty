@@ -208,7 +208,7 @@ PR にラベルは付けない（レビュー用のラベル `reviewLabel` は�
      止めた実行が正常に終わった費用で先に一時停止していた（予算など）ときも、確かめられなかった実行を `unstoppedRuns` に足す（一時停止の理由はそのまま。すでに一時停止しているタスクへの `TaskPaused` は、`unstoppedRuns` を足すときだけ受け付ける）。確かめるまで承認へ進まない。
   2. 止めている間に、承認待ちになった・中止された・別の状態になったなら、ここでは記録しない（承認待ちになったなら、上の確認が扱う）。
   3. `ReworkStoppedByMerge`（actor `sacty`）に続けて、`PullRequestMerged`・`StepApproved`（actor `person`。マージの後の監視の開始も、上の「マージされた」と同じ）を同じ追記で記録する。
-- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。理由はマージ。
+- `ReworkStoppedByMerge` の内容：マージされた PR の番号、止めたときの段階（`was`：`queued`・`running`・`verifying`・`publishing`・`paused`）、止めた実行（`stoppedRuns`）、作り直しに渡す前に捨てた指摘（`discardedRemarks`：id と本文。最後の差し戻しの指摘のうち、提出済みの PR に渡していないもの）、捨てた検証の結果の種類（`discardedFeedback`：`tests`・`review`・`merge`・`incomplete`・`unchanged`）、一時停止の間に届いて反映していなかった PR の指摘の件数（`discardedReview`。[一時停止の間に届いた指摘](#一時停止の間に届いた指摘)）。理由はマージ。
   - projection は、実装の承認待ち（ゲートの提出回は、これまでの提出の回数。提出が無ければ 1）に戻し、捨てた指摘を無効にし、検証・PR の作成の待ち・一時停止の状態を消す。続く `PullRequestMerged`・`StepApproved` が承認として進める。
   - 承認した成果の本文（`approved.implement.output`）は、記録している最新の実装の報告。マージされた内容は PR のコミットが正。
 - PR の更新の直前（`publish`。引き継いだ既存の PR の更新も含む）にも、前の PR がマージされていないかを確かめる。マージされていれば、プッシュも PR の作成もせず、同じ記録で承認として進める（確認の前に PR の更新が始まる場合）。
