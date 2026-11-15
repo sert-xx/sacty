@@ -8868,6 +8868,8 @@ export class TaskService {
           })
         : undefined;
     const inputDir = inputs ? join(this.deps.workspaceRoot, "_input", runId) : undefined;
+    // 提出を PR のレビューの子タスクがレビューする工程か（PBI-346）。指示と記録で同じ判定を使うよう、実行の前に1回だけ決める
+    const pullRequestReview = this.reviewedByPullRequest(this.mustGet(task.id), step);
     try {
       // 対象リポジトリの無いタスク（PBI-73）は、コードを書き出さない（空の作業領域）
       if (snapshotDir && !repoless) {
@@ -9016,6 +9018,8 @@ export class TaskService {
             ...(continuedFeedback !== undefined ? { continuedFeedback } : {}),
             ...(mergeConflicts.length > 0 ? { mergeConflicts } : {}),
             ...(inputDir ? { inputDir: CONTAINER_INPUT_DIR } : {}),
+            // 提出を PR のレビューの子タスクがレビューする工程は、セルフレビューを省く（PBI-346）
+            ...(pullRequestReview ? { pullRequestReview } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
@@ -9256,8 +9260,9 @@ export class TaskService {
             ...(step === "implement" && extracted.verificationRecord
               ? { verificationRecord: extracted.verificationRecord }
               : {}),
-            // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）
-            ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step)
+            // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）。
+            // PR のレビューに任せて省いた実行（PBI-346）は、させていないので記録しない
+            ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step) && !pullRequestReview
               ? { selfReview: extracted.selfReview ?? null }
               : {}),
             // 出典の分類。分類させた工程で答えが無い・読めなければ null（記録なし）
@@ -9933,6 +9938,20 @@ export class TaskService {
     if (task.submissions.requirements || task.submissions.design) return false;
     const repo = this.taskRepo(task);
     return Boolean(repo && this.githubAccountOf(task, repo).account);
+  }
+
+  /**
+   * その工程の提出が sacty の作る PR になり、PR のレビューの子タスクがレビューするか（PBI-346）。レビューするなら、提出の前の
+   * セルフレビューを省く（同じ成果物を二重にレビューしない）。
+   * - 子タスクを作らないデーモン（reviewTasks が無効）と、既存の PR を引き継ぐタスク（子タスクを作らない）は、省かない
+   * - 要求要件・設計は、PR で承認するタスクだけ（画面で承認するタスクは、PR が無いので省かない）
+   * - 実装（不具合の修正を含む）は、対象のリポジトリがあるタスク（実装の PR を作る）
+   * - 文書作成などのほかの工程は、PR にならないので省かない
+   */
+  private reviewedByPullRequest(task: Task, step: StepKey): boolean {
+    if (this.deps.reviewTasks !== true || task.continuedPullRequest) return false;
+    if (step === "requirements" || step === "design") return this.stepPullRequestsOn(task);
+    return step === "implement" && !!task.repository;
   }
 
   /**

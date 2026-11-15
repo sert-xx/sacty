@@ -257,6 +257,21 @@
 - 実装・修正の工程（要求要件・設計あり、要求要件を省いた、テストの仕組みが無い、文書だけ、不具合の修正のどれも）は、セルフレビューと提出の前の検証の前に、範囲外の変更などの基準を、提出の前に差分で1つずつ確かめさせる（`implementReviewCriteriaLines`。PBI-315。もとは以前の版の最終レビューの不合格の基準を先に渡すためのもの。指示の見出しは「提出の前に確かめる、レビューの基準」で、実装の PR のレビューがこれらに当たる変更を指摘する（指摘があると実装を直す）と伝える）。基準は、求められていない振る舞いの変更、既存のテストの期待を弱める変更、リファクタリングでの既存の振る舞いの変化、リポジトリの決まりが求める変更、観点を検証していないテスト（テストの仕組みがあるタスクだけ）、受け入れの確かめを縮めること、共有の仕組みの異常の後の回復、リポジトリのファイルに書いた sacty の作業領域の内部の名前。AI のレビューの過去の指摘があれば、応えるときは要求に対する欠陥の修正にとどめさせる。これは基準とは分けて伝える（指示の文は、AI の指摘に応えるときは要求に対する欠陥の修正にとどめ、それを超えて振る舞いを変えないこと、既存のテストの期待を弱める変更は AI の指摘に応えたものでも上の基準に当たること、と書く）。範囲外の変更の基準と AI の指摘への応え方は、セキュリティ対応には入れない（観点 SEC-MIN が見る）。何が当たるかの言葉は、`apps/daemon/src/final-review-criteria.ts` の定数（`UNREQUESTED_BEHAVIOR`・`TEST_WEAKENING`・`EXISTING_BEHAVIOR`・`CONVENTION_CHANGES`・`HOLLOW_TEST`・`SHALLOW_ACCEPTANCE`・`SHARED_MECHANISM`・`INTERNAL_NAMES`）を使う（一覧の `FINAL_REVIEW_CRITERIA` は、指示にすべての基準があることをテストで確かめるためのもの）。範囲の拠り所は、タスクの進め方の言葉にする（要求要件を省いたタスクには、承認済みの要求要件と書かない）。
 - 実装・修正の工程は、セルフレビューの前に、提出の前の検証を指示する（`implementVerificationLines`。PBI-301 A3。実験 S18 r4）。リポジトリが定めるフォーマッター・リンター・型チェックなどの検証を、PR に入る変更すべて（コード・テスト・文書・設定。エージェントが足したファイルを含む）に対して実行し、通してから提出させる。対象を変更したファイルに絞れるツールは絞ってよいが、文書など種類で対象から外させない。文書だけの依頼（`documentsOnly`）では、文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査など）に限り、テスト・ビルド・型チェック・コードのリンターは実行させない（文書向けのセルフレビューの規則と食い違わせない）。sacty が PR に足す成果物のファイル（作業領域に無い）があるタスクでは、リポジトリ全体を対象にする検証がそのファイルも検査することを伝え、落ちたときの直し方は、PR のレビューの指摘に従わせる。実行しなかった検証・実行できなかった検証は、理由を実装の説明に書かせる（理由なしに省かせない）。検証を通すために、設定やテストを弱めさせない。テストは、途中は関係するものだけ、全件は最後の変更の後に1回実行させる（[実装の途中のテストの範囲](#実装の途中のテストの範囲)）。あわせて、セルフレビューの指示（`selfReviewLines`。どの主対象の種類にも）で、検証の実行は既定のスキルの `references/verification-run.md` の手順の全体に従わせ、見出しや一部の行だけを読んで進めさせない。
 - 要求要件・設計の工程も、セルフレビューの前に、PR に入る成果物のファイルの検証を指示する（`documentVerificationLines`。PBI-301 A3。実験 S18 r4：要求要件の PR で Prettier に通らない表が出た）。成果物は sacty が `<documentsDir>/<タスクの短い ID>/<工程>.md`（`stepDocumentPath`）に置いて PR に入れる。下書きは作業領域の外の一時ファイルなので、置かれる場所のパスとして検査できる方法で、リポジトリが定める文書に効く検証（文書のフォーマッター・文書の lint・リンクや参照の検査）を実行し、通してから提出させる。実行するのは文書に効く検証だけで、テスト・ビルド・型チェック・コードのリンターは実行させない（文書が主対象のときの決まり。PBI-285）。実行しなかった検証・実行できなかった検証は、理由をセルフレビューの報告の `summary` に書かせる。成果物を PR に足さないタスク（既存の PR を引き継ぐ）には入れない。
+- 提出が sacty の作る PR になり、PR のレビューの子タスク（[承認](approval.md)）がレビューする工程では、セルフレビューをさせない（`reviewedByPullRequest`・`skippedSelfReviewLines`。PBI-346）。
+  同じ成果物を、提出の前と PR で二重にレビューしないため。
+  - 省くのは、次のすべてに当てはまる実行。直しの実行（人の差し戻し・AI のレビューの指摘）も同じ。
+    - デーモンがレビューの子タスクを作る（`ServiceDeps` の `reviewTasks`。`main.ts` が有効にする）。
+    - 既存の PR を引き継ぐタスクではない（引き継いだ PR には子タスクを作らない）。
+    - 要求要件・設計は、PR で承認するタスク（`stepPullRequestsOn`）。実装（不具合の修正を含む）は、対象のリポジトリがあるタスク。
+  - 文書作成の工程、対象のリポジトリが無いタスク、要求要件・設計を画面で承認するタスクは、PR にならないので、今までどおりセルフレビューをさせる。
+  - 判定は、工程の実行の前に1回だけ行い、指示と記録に同じ結果を使う。
+    実行の後に PR を作れなかった（PR で承認するタスクでなくなった）ときは、その提出はセルフレビューも PR のレビューも受けない。
+  - 指示には、セルフレビューを行わないことと理由、省くのはセルフレビューだけで提出の前の検証は省かないこと、報告（`sacty-self-review`）を付けないことを書く。
+    提出の前の検証（実装は「提出の前の検証」・検証の記録・テストの全件、要求要件・設計は成果物のファイルの検証）と、実装の「提出の前に確かめる、レビューの基準」は、今までどおり指示する。
+    検証・テストの範囲・本文の読み直し・出典の分類の指示は、セルフレビューに触れない文にする。
+    要求要件・設計で実行できなかった検証の理由は、報告が無いので書かせない（PR の CI と PR のレビューが確かめる）。
+  - 答えの反映だけの直し（`answerOnlyCheckLines`）は、今までどおり。
+  - 省いた実行は、`AgentRunCompleted` に `selfReview` を持たない（記録なしの `null` にもしない）。画面には何も出さない。
 - 結果は、見出し `sacty-self-review` の JSON（`rounds`・`passed`・`remaining`・`notReviewed`・`summary`）で報告させる。
   sacty は最後のものだけを読み（`extractBlocks`）、報告はすべて成果物の本文から取り除く。
   報告は、見出しを最初のキーに持つオブジェクトとして、JSON として読めなくても見つける（`headingSpans`）。
@@ -274,7 +289,9 @@
   パスしていない・記録なしは警告の色にし、パスしていなければ残った指摘と見られなかった観点を開いたまま出す。
   作業履歴の「実行が完了」の行にも添える。
 
-コード: `apps/daemon/src/prompts.ts`（`selfReviewLines`・`implementVerificationLines`・`SELF_REVIEW_HEADING`・`extractBlocks`）、`packages/core/src/events.ts`（`SelfReview`・`SELF_REVIEW_STEPS`）、`packages/core/src/projection.ts`、`apps/web/src/components/self-review.tsx`（`SelfReviewNote`）
+コード: `apps/daemon/src/prompts.ts`（`selfReviewLines`・`skippedSelfReviewLines`・`implementVerificationLines`・`SELF_REVIEW_HEADING`・`extractBlocks`）、`apps/daemon/src/service.ts`（`reviewedByPullRequest`）、`packages/core/src/events.ts`（`SelfReview`・`SELF_REVIEW_STEPS`）、`packages/core/src/projection.ts`、`apps/web/src/components/self-review.tsx`（`SelfReviewNote`）
+
+関係する ADR: [PR のレビューの子タスクがレビューする工程では、提出の前のセルフレビューを省く](../adr/20261115-0810-skip-self-review-when-pull-request-is-reviewed.md)
 
 ### 提出の前の出典の分類
 

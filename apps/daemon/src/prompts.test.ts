@@ -3475,6 +3475,103 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     expect(prompt).toContain(HEADING);
   });
 
+  describe("PR のレビューの子タスクがレビューする工程は、セルフレビューを省く（PBI-346）", () => {
+    const SKIPPED = "--- 提出の前のセルフレビュー（行わない） ---";
+    const reviewed = { pullRequestReview: true };
+    const reproduction = {
+      reproduction: {
+        reproduced: true,
+        tests: ["t › x"],
+        command: "npm test",
+        exitCode: 1,
+        output: "1 failed",
+      },
+    } as Partial<Task>;
+
+    it("要求要件・設計・実装（標準・direct・不具合の修正・文書だけ）に、セルフレビューの指示と報告の形を出さず、行わないことと理由を書く", () => {
+      const cases: [string, string][] = [
+        [buildPrompt(task(steps), "requirements", reviewed), "要求要件"],
+        [buildPrompt(task(steps), "design", reviewed), "設計とテスト観点"],
+        [buildPrompt(task(steps), "implement", reviewed), "実装（コードとテスト）"],
+        [buildPrompt(task(["implement"]), "implement", reviewed), "実装（コードとテスト）"],
+        [
+          buildPrompt(
+            task(["investigate", "reproduce", "implement"], reproduction),
+            "implement",
+            reviewed,
+          ),
+          "修正（コードとテスト）",
+        ],
+        [
+          buildPrompt(task(steps, { documentsOnly: true } as Partial<Task>), "implement", reviewed),
+          "実装（文書）",
+        ],
+      ];
+      for (const [prompt, target] of cases) {
+        expect(prompt, target).toContain(SKIPPED);
+        expect(prompt, target).toContain(
+          `同じ${target}を二重にレビューしないよう、提出の前のセルフレビュー（既定のスキル review-dispatch、観点の担当の起動）は行わない`,
+        );
+        expect(prompt, target).toContain(
+          "- セルフレビューの報告（sacty-self-review の JSON）は付けない",
+        );
+        expect(prompt, target).not.toContain("流れは self-review");
+        expect(prompt, target).not.toContain(HEADING);
+        expect(prompt, target).not.toContain("--- 提出の前のセルフレビュー ---");
+        // 検証の手順やテストの範囲の指示が、行わないセルフレビューに触れない
+        expect(prompt, target).not.toContain("セルフレビューの各回");
+        expect(prompt, target).not.toContain("セルフレビューを終え");
+        expect(prompt, target).not.toContain("セルフレビューの検証");
+        expect(prompt, target).not.toContain("セルフレビューの報告の summary");
+        expect(prompt, target).not.toContain("セルフレビューの観点");
+      }
+    });
+
+    it("提出の前の検証は省かない（要求要件・設計は成果物のファイルの検証、実装は検証・テストの全件・検証の記録）", () => {
+      for (const step of ["requirements", "design"] as const) {
+        const prompt = buildPrompt(task(steps), step, reviewed);
+        expect(prompt, step).toContain("--- 提出の前の検証（成果物のファイル） ---");
+        expect(prompt, step).toContain("通してから提出する");
+        expect(prompt, step).toContain(
+          "- 省くのはセルフレビューだけで、上の提出の前の検証は省かない",
+        );
+      }
+      const implement = buildPrompt(task(steps), "implement", reviewed);
+      expect(implement).toContain("--- 提出の前に確かめる、レビューの基準 ---");
+      expect(implement).toContain("--- 提出の前の検証 ---");
+      expect(implement).toContain(
+        "- 最後の変更の後（もう作業領域を変えないとき）に、テストの全件を1回実行し、通してから提出する",
+      );
+      expect(implement).toContain("--- 実行した検証の記録 ---");
+      expect(implement).toContain("- 作業領域を変えていないのに、同じコマンドを重ねて実行しない");
+      // 順序：検証 → セルフレビューを行わないこと → 検証の記録
+      expect(implement.indexOf("--- 提出の前の検証 ---")).toBeLessThan(implement.indexOf(SKIPPED));
+      expect(implement.indexOf(SKIPPED)).toBeLessThan(
+        implement.indexOf("--- 実行した検証の記録 ---"),
+      );
+    });
+
+    it("出典の分類は、提出する最終版に対してさせる", () => {
+      const prompt = buildPrompt(task(steps), "requirements", { ...reviewed, inputDir: "/input" });
+      expect(prompt).toContain("- 提出する最終版に対して、既定のスキル classify-provenance");
+      expect(buildPrompt(task(steps), "requirements", { inputDir: "/input" })).toContain(
+        "- セルフレビューを終えた最終版に対して、既定のスキル classify-provenance",
+      );
+    });
+
+    it("文書作成の工程は、PR にならないので、渡されても省かない。渡さない工程は今までどおり", () => {
+      const document = buildPrompt(task(["document"]), "document", reviewed);
+      expect(document).toContain("--- 提出の前のセルフレビュー ---");
+      expect(document).not.toContain(SKIPPED);
+      for (const step of ["requirements", "design", "implement"] as const) {
+        const prompt = buildPrompt(task(steps), step);
+        expect(prompt, step).toContain("--- 提出の前のセルフレビュー ---");
+        expect(prompt, step).not.toContain(SKIPPED);
+        expect(prompt, step).toContain(HEADING);
+      }
+    });
+  });
+
   it("調査の工程には付けない", () => {
     expect(buildPrompt(task(["investigate"]), "investigate")).not.toContain("sacty-self-review");
   });
