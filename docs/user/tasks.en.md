@@ -927,15 +927,18 @@ A task that takes over an existing PR ([Fixing an existing PR](#fixing-an-existi
 ### Test viewpoints of the child tasks of a split
 
 A task split assigns the test viewpoints of the parent task's design to the child tasks.
-The implementation of a child task maps a test to every viewpoint assigned to it.
+A child task that is implemented without Requirements and Design (a child task with no Design or Reproduction step) maps a test, or a reason for writing no test, to every viewpoint assigned to it.
 
 - "Subtasks" in the parent task's details shows the IDs of the test viewpoints of each child task.
-  Viewpoints that are assigned to no child task and checked in the integration review are shown below them, with the reasons.
+  Viewpoints to check in the integration review (viewpoints the child tasks alone cannot fully check) are shown below them, with the reasons. The same viewpoint may also be assigned to a child task.
 - "Assigned test viewpoints" in a child task's details shows the content of each viewpoint (its input and expected result).
-- If the viewpoint-to-test mapping of a child task's implementation misses an assigned viewpoint, sacty does not submit the implementation.
+- If the viewpoint-to-test mapping of the implementation of a child task with no Design or Reproduction step misses an assigned viewpoint, sacty does not submit the implementation.
   It redoes the implementation with the missing viewpoints, and the task pauses if they keep missing ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
 - If the result of the split leaves a viewpoint that is in no child task and not in the integration review, no child task is created and the parent task pauses.
   The reason it stopped shows the viewpoints that are left out. Resuming redoes the task split.
+- For the following child tasks, the mapping of the assigned viewpoints is not checked.
+  - A child task with a Design or Reproduction step: it uses the viewpoints decided in that step (the test viewpoints of its own design, or the reproduction test).
+  - A child task without tests, and a child task whose request changes only documents: it writes no tests, so it describes in the implementation description how it meets each viewpoint.
 - When the parent task's design has no test viewpoints, no viewpoints are assigned. A child task then uses meeting the purpose of the task as its viewpoint.
 
 ### PRs of dependent child tasks (stacked PRs)

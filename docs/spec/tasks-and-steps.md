@@ -904,6 +904,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 - 飛ばした後の工程：要求要件を飛ばした設計は、タスクの内容を要求要件として扱う。
   要求要件・設計を経ない実装（`direct`・両方を飛ばした）は、タスクの内容と集めた情報（前段の調査があればその結果。`basisWithoutRequirements`）に従い、観点 `REQ` をタスクの目的（依頼の内容）として確かめる（`withoutRequirements`・`directImplementLines`）。
   PR の本文も、`REQ` をタスクの目的として扱う。
+  親タスクの分割でテスト観点を割り当てられた子タスクは、指示も PR の本文も、`REQ` の代わりに、割り当てられた観点を使う（[実装がテストを対応させる観点](#実装がテストを対応させる観点)）。
   検証の基準（`verificationBasis`）は、飛ばした工程を無いものとして決める。
 
 コード: `packages/core/src/events.ts`（`SKIPPABLE_STEPS`・`StepsSkipped`）、`packages/core/src/projection.ts`（`skippableSteps`・`advance`・`reworkTargets`）、`apps/daemon/src/service.ts`（`runNextInner`・`reviewSteps`）、`apps/daemon/src/prompts.ts`（`buildStepReviewPrompt`・`extractStepReview`・`withoutRequirements`・`directImplementLines`・`verificationBasis`）

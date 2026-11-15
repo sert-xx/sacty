@@ -1739,7 +1739,7 @@ function Subtasks({ task, subtasks }: { task: Task; subtasks: Task[] }) {
           </li>
         ))}
       </ol>
-      {/* 子タスクに割り当てず、統合レビューで確かめるテスト観点と理由（PBI-348） */}
+      {/* 統合レビューで確かめるテスト観点と理由（PBI-348）。子タスクにも割り当てていることがある */}
       {task.split?.integrationViewpoints && task.split.integrationViewpoints.length > 0 && (
         <div className="text-sm leading-6 text-muted-foreground">
           <p>{m.integrationViewpoints}</p>

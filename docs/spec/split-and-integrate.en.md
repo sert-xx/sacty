@@ -12,8 +12,8 @@ Related ADRs: [Dependent child tasks start stacked on the dependency's PR branch
 - The agent's answer (heading `sacty-split`) is checked for the count, duplicate `key` values, missing dependencies, self-dependencies, and dependency cycles. If it cannot be read, the task is paused.
 - Assigning test viewpoints: in the first split, when the parent's approved design has test viewpoints, the split instruction includes them and makes the agent assign them to child tasks (`splitViewpointLines`; [ADR](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)).
   - Each child task in the answer lists, in `viewpoints`, the IDs of the viewpoints that child satisfies with its implementation and tests. One viewpoint may be assigned to several child tasks.
-  - A viewpoint that no child task can check is not assigned; the answer lists its ID and a reason in `integrationViewpoints` (it is checked in the integration review).
-    The integration review judges every test viewpoint anyway. Its instruction also lists the viewpoints assigned to no child task with their reasons, and says that the implementations and reviews of the child tasks did not check them (`integrationOnlyViewpointLines`).
+  - A viewpoint that the child tasks alone cannot fully check is listed, with its ID and a reason, in `integrationViewpoints` of the answer (it is checked in the integration review). If a child task can check part of it, the same viewpoint may also be assigned to that child task.
+    The integration review judges every test viewpoint anyway. Its instruction also lists the viewpoints marked for the integration review with their reasons, and says for each one whether it is also assigned to a child task (if it is not, the implementations and reviews of the child tasks did not check it) (`splitIntegrationViewpointLines`).
   - sacty checks that every viewpoint is in the `viewpoints` of some child task or in `integrationViewpoints`.
     If any of the following is found, no child task is created and the task is paused (resuming redoes the split).
     - A viewpoint that is listed nowhere (`split.viewpointUnassigned`)

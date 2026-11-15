@@ -679,7 +679,7 @@ export type Task = {
     rounds: number;
     reason: string;
     at: string;
-    /** 親の設計のテスト観点のうち、子タスクに割り当てず、統合レビューで確かめるものと理由（PBI-348）。 */
+    /** 親の設計のテスト観点のうち、統合レビューで確かめるものと理由（PBI-348）。子タスクにも割り当てていることがある。 */
     integrationViewpoints?: { id: string; reason: string }[];
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
     acceptedCancellations: string[];

@@ -42,7 +42,7 @@ const ja = {
   },
   inheritedViewpoints: {
     title: "割り当てられたテスト観点",
-    hint: "親タスクのタスク分割で、このタスクに割り当てられたテスト観点です。実装は、このすべてにテストを対応させます。対応が欠けた実装は、提出しません。",
+    hint: "親タスクのタスク分割で、このタスクに割り当てられたテスト観点です。設計・再現の工程が無く、テストを書くタスクでは、実装が観点ごとにテスト（か、書かない理由）を対応させ、欠けると提出しません。設計・再現の工程があるタスクは、その工程の観点を使います。",
     count: (n: number) => `${n} 件`,
   },
   operationSettings: {
@@ -266,7 +266,7 @@ const ja = {
     reason: (reason: string) => `分け方：${reason}`,
     dependsOn: (titles: string[]) => `依存：${titles.map((t) => `「${t}」`).join("・")}`,
     viewpoints: (ids: string[]) => `テスト観点：${ids.join("・")}`,
-    integrationViewpoints: "子タスクに割り当てず、統合レビューで確かめるテスト観点",
+    integrationViewpoints: "統合レビューで確かめるテスト観点",
     pullRequest: "PR",
     missing: "（作成中）",
     fix: "修正",
@@ -577,7 +577,7 @@ const en: TaskMessages = {
   },
   inheritedViewpoints: {
     title: "Assigned test viewpoints",
-    hint: "The test viewpoints the parent task's split assigned to this task. The implementation maps a test to every one of them. An implementation that misses one is not submitted.",
+    hint: "The test viewpoints the parent task's split assigned to this task. In a task that writes tests and has no Design or Reproduction step, the implementation maps a test (or a reason for writing none) to each one, and is not submitted if one is missing. A task with a Design or Reproduction step uses that step's viewpoints.",
     count: (n: number) => `${n}`,
   },
   operationSettings: {
@@ -794,8 +794,7 @@ const en: TaskMessages = {
     reason: (reason) => `How it was split: ${reason}`,
     dependsOn: (titles) => `Depends on: ${titles.map((t) => `"${t}"`).join(", ")}`,
     viewpoints: (ids) => `Test viewpoints: ${ids.join(", ")}`,
-    integrationViewpoints:
-      "Test viewpoints assigned to no subtask and checked in the integration review",
+    integrationViewpoints: "Test viewpoints to check in the integration review",
     pullRequest: "PR",
     missing: "(being created)",
     fix: "Fix",

@@ -1300,7 +1300,7 @@ describe("タスクの詳細：タスク分割で割り当てたテスト観点�
     expect(text()).toContain("テスト観点：TV-1・TV-2");
     // 割り当ての無い子タスクには、観点の行を出さない
     expect(text().match(/テスト観点：TV-/g)).toHaveLength(1);
-    expect(text()).toContain("子タスクに割り当てず、統合レビューで確かめるテスト観点");
+    expect(text()).toContain("統合レビューで確かめるテスト観点");
     expect(text()).toContain("TV-3：子タスクを組み合わせた後に確かめる");
   });
 });

@@ -2106,7 +2106,7 @@ function splitViewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
   if (viewpoints.length === 0) return [];
   return [
     "- 下の承認済みのテスト観点を、子タスクに割り当てる。観点ごとに、その観点を実装とテストで満たす子タスクの viewpoints に、観点の ID を書く（1つの観点を、複数の子タスクに割り当ててよい）。子タスクの実装は、割り当てられた観点のすべてにテストを対応させる（対応が欠けると、提出できない）",
-    "- 子タスクでは確かめられない観点（子タスクを組み合わせた後でないと確かめられない・人が確かめる、など）は、子タスクに割り当てずに、integrationViewpoints に、観点の ID と、子タスクで確かめられない理由を書く（統合レビューで確かめる）",
+    "- 子タスクだけでは確かめきれない観点（子タスクを組み合わせた後でないと確かめられない・人が確かめる、など）は、integrationViewpoints に、観点の ID と、子タスクだけでは確かめきれない理由を書く（統合レビューで確かめる）。一部を確かめられる子タスクがあれば、その子タスクの viewpoints にも書く",
     "- すべての観点を、どれかの子タスクの viewpoints か integrationViewpoints に入れる。入っていない観点があると、sacty は子タスクを作らずに止める",
   ];
 }
@@ -2121,7 +2121,7 @@ function splitViewpointField(viewpoints: readonly TestViewpoint[], index: number
 function splitIntegrationField(viewpoints: readonly TestViewpoint[]): string {
   const id = viewpoints.at(-1)?.id;
   return id
-    ? `, "integrationViewpoints": [{"id": "${id}", "reason": "子タスクで確かめられない理由（あるときだけ）"}]`
+    ? `, "integrationViewpoints": [{"id": "${id}", "reason": "子タスクだけでは確かめきれない理由（あるときだけ）"}]`
     : "";
 }
 
@@ -3278,9 +3278,14 @@ export function buildPrompt(
               `${NO_TESTS_JUDGE_BY}が、タスクの目的・要求要件${designed ? "・設計" : ""}と、実装後のコード・差分・あなたの実装の説明から、観点ごとに受け入れをレビューします。`,
               ...(designed
                 ? []
-                : [
-                    `（このタスクは、オーケストレーターの判断で設計の工程を省いています。観点は、受け入れ条件の観点 ${REQUIREMENTS_VIEWPOINT} です）`,
-                  ]),
+                : inherited.length > 0
+                  ? [
+                      // 割り当てられた観点を持つ子タスクは、後ろに並べる観点（割り当てられた観点）と同じ説明にする（PBI-348）
+                      "（このタスクは、オーケストレーターの判断で設計の工程を省いています。観点は、親タスクの設計のテスト観点のうち、このタスクに割り当てられたものです）",
+                    ]
+                  : [
+                      `（このタスクは、オーケストレーターの判断で設計の工程を省いています。観点は、受け入れ条件の観点 ${REQUIREMENTS_VIEWPOINT} です）`,
+                    ]),
             ]
           : designed
             ? [
@@ -4061,17 +4066,24 @@ export function integrationViewpointIds(task: Task): string[] {
 }
 
 /**
- * タスク分割で、どの子タスクにも割り当てなかったテスト観点（PBI-348）。子タスクの実装とレビューでは確かめていないので、
- * 統合レビューに、どの観点かと、分割のエージェントが書いた理由を渡す。無ければ、何も足さない。
+ * タスク分割で、統合レビューで確かめるとしたテスト観点（PBI-348）。分割のエージェントが、子タスクだけでは確かめきれないとして、
+ * 理由と一緒に挙げたもの。統合レビューは、もともとすべてのテスト観点を判定するので、ここでは、どの観点を特に確かめるかと、
+ * 子タスクの実装とレビューで確かめていない観点（どの子タスクにも割り当てていない観点）を伝える。無ければ、何も足さない。
  */
-function integrationOnlyViewpointLines(task: Task): string[] {
-  const only = task.split?.integrationViewpoints ?? [];
-  if (only.length === 0) return [];
+function splitIntegrationViewpointLines(task: Task): string[] {
+  const listed = task.split?.integrationViewpoints ?? [];
+  if (listed.length === 0) return [];
+  const assigned = new Set(
+    (task.split?.children ?? []).flatMap((c) => (c.viewpoints ?? []).map((v) => v.id)),
+  );
   return [
     "",
-    "--- 子タスクに割り当てなかったテスト観点 ---",
-    "次の観点は、タスク分割のときに、どの子タスクにも割り当てていません。子タスクの実装とレビューでは確かめていないので、この統合レビューで、コードとテストを読んで確かめてください。",
-    ...only.map((v) => `- [${v.id}] 子タスクで確かめられない理由：${v.reason}`),
+    "--- タスク分割で、統合レビューで確かめるとしたテスト観点 ---",
+    "次の観点は、タスク分割のときに、子タスクだけでは確かめきれないとして、統合レビューで確かめることにしたものです。この統合レビューで、コードとテストを読んで確かめてください。「子タスクに割り当てなし」の観点は、子タスクの実装とレビューでは確かめていません。",
+    ...listed.map(
+      (v) =>
+        `- [${v.id}] ${assigned.has(v.id) ? "子タスクにも割り当てあり" : "子タスクに割り当てなし"}。子タスクだけでは確かめきれない理由：${v.reason}`,
+    ),
   ];
 }
 
@@ -4138,7 +4150,7 @@ export function buildIntegrationReviewPrompt(
       : [
           `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計にテスト観点が無いため、受け入れ条件をすべて満たすかを、この観点で判定する）`,
         ]),
-    ...integrationOnlyViewpointLines(task),
+    ...splitIntegrationViewpointLines(task),
     "",
     "--- 子タスク ---",
     ...subtaskLines(subtasks),
@@ -6625,7 +6637,10 @@ export type SplitChild = {
   viewpoints?: string[];
 };
 
-/** 読んだ分割案。integrationViewpoints は、子タスクに割り当てず、統合レビューで確かめるテスト観点と理由（PBI-348）。 */
+/**
+ * 読んだ分割案。integrationViewpoints は、統合レビューで確かめるテスト観点と、子タスクだけでは確かめきれない理由（PBI-348）。
+ * 同じ観点を、子タスクにも割り当てていることがある。
+ */
 export type SplitPlan = {
   ok: true;
   reason: string;

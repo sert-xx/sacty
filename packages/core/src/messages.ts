@@ -1260,7 +1260,7 @@ const ja: MessageDictionary = {
   "split.viewpointUnassigned": ({ ids, total }) =>
     `分割案で、どの子タスクにも割り当てられず、統合レビューで確かめる観点にも挙げられていないテスト観点があります（${ids}${total > 10 ? ` ほか、全${total}件` : ""}）。再開すると、分割をやり直します。`,
   "split.integrationReasonMissing": ({ id }) =>
-    `分割案で、統合レビューで確かめるテスト観点（${id}）に、子タスクで確かめられない理由がありません。再開すると、分割をやり直します。`,
+    `分割案で、統合レビューで確かめるテスト観点（${id}）に、子タスクだけでは確かめきれない理由がありません。再開すると、分割をやり直します。`,
   "split.repoMissing": ({ key }) =>
     `リポジトリの無いタスクを分けるときは、子タスクごとにプロジェクトの対象からリポジトリを付けてください（子タスク「${key}」にありません）。再開すると、分割をやり直します。`,
   "split.repoNotCandidate": ({ key, repo }) =>
@@ -2067,7 +2067,7 @@ const en: MessageDictionary = {
   "split.viewpointUnassigned": ({ ids, total }) =>
     `The split leaves test viewpoints that are assigned to no subtask and not listed for the integration review (${ids}${total > 10 ? ` and more, ${total} in total` : ""}). Resume to split again.`,
   "split.integrationReasonMissing": ({ id }) =>
-    `The split lists the test viewpoint ${id} for the integration review without a reason why subtasks cannot check it. Resume to split again.`,
+    `The split lists the test viewpoint ${id} for the integration review without a reason why subtasks alone cannot fully check it. Resume to split again.`,
   "split.repoMissing": ({ key }) =>
     `When splitting a task without a repository, give each subtask a repository from the project's targets (subtask "${key}" has none). Resume to redo the split.`,
   "split.repoNotCandidate": ({ key, repo }) =>

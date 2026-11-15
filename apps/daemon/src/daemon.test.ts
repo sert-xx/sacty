@@ -19149,7 +19149,11 @@ describe("分割の子タスクに、親の設計のテスト観点を割り当�
     const prompt = promptOf(executor, 2);
     expect(prompt).toContain("下の承認済みのテスト観点を、子タスクに割り当てる");
     expect(prompt).toContain(
-      "integrationViewpoints に、観点の ID と、子タスクで確かめられない理由を書く",
+      "integrationViewpoints に、観点の ID と、子タスクだけでは確かめきれない理由を書く",
+    );
+    // 統合レビューで確かめる観点を、子タスクにも割り当ててよいことを伝える
+    expect(prompt).toContain(
+      "一部を確かめられる子タスクがあれば、その子タスクの viewpoints にも書く",
     );
     expect(prompt).toContain("入っていない観点があると、sacty は子タスクを作らずに止める");
     expect(prompt).toContain('"viewpoints": ["TV-1"]');
@@ -19215,7 +19219,9 @@ describe("分割の子タスクに、親の設計のテスト観点を割り当�
     );
     service.resume(id, {});
     await service.runNext(id);
-    expect(paused()).toMatch(/テスト観点（TV-3）に、子タスクで確かめられない理由がありません/);
+    expect(paused()).toMatch(
+      /テスト観点（TV-3）に、子タスクだけでは確かめきれない理由がありません/,
+    );
     service.resume(id, {});
     await service.runNext(id);
     expect(taskOf(service, id).split?.children).toHaveLength(2);

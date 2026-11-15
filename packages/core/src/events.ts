@@ -849,8 +849,8 @@ const TaskSplit = z.object({
     /** 分割のエージェントが書いた、分け方の理由。 */
     reason: z.string(),
     /**
-     * 親の設計のテスト観点のうち、どの子タスクにも割り当てず、統合レビューで確かめるもの（PBI-348）。観点の ID と、
-     * 子タスクでは確かめられない理由。
+     * 親の設計のテスト観点のうち、統合レビューで確かめるもの（PBI-348。子タスクにも割り当てていることがある）。観点の ID と、
+     * 子タスクだけでは確かめきれない理由。
      */
     integrationViewpoints: z
       .array(z.object({ id: z.string().min(1), reason: z.string().min(1).max(2000) }))
