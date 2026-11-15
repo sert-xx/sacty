@@ -121,7 +121,8 @@ export interface RepositoryWorkspace {
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
   /**
    * 作業領域の内容の目印（新しく作ったファイルを含む、git のツリーの ID。PBI-347）。同じ内容なら同じ ID になる。差分（diff）と
-   * 違って切り詰めないので、やり直しの前後で作業領域が変わったかを、差分の大きさによらず見分けられる。
+   * 違って切り詰めないので、やり直しの前後で作業領域が変わったかを、差分の大きさによらず見分けられる。読めないファイルが
+   * あれば失敗にする（除いた ID を返すと、そのファイルの変更を見落とす）。
    */
   treeId(dir: string, gitDir: string, baseCommit: string): Promise<string>;
   /**
@@ -515,6 +516,11 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     gitDir: string,
     baseCommit: string,
     then: (git: (label: string, args: string[]) => Promise<string>) => Promise<T>,
+    /**
+     * 読めないために載せられなかったファイルが1つでもあれば、失敗にする（起点で追跡していない新しいファイルでも）。作業領域の
+     * 内容の目印（treeId）は、載せなかったファイルがあると、そのファイルの変更を見落とすため（PBI-347）。
+     */
+    strict = false,
   ): Promise<T> {
     if (!COMMIT_RE.test(baseCommit)) throw new MessageError(message("git.invalidBaseCommit"));
     // インデックスは一時ファイルにする
@@ -543,7 +549,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         // 読めないために載せられなかったのが、起点で追跡していない新しいファイル（権限 0000 のツールのファイルなど）だけなら
         // 進める。起点で追跡しているファイルを読めないと、その変更が黙って落ちるので、ほかの失敗と同じく失敗にする
         const unreadable = unreadablePaths(added.err);
-        if (!unreadable || (await this.trackedAtBase(run, baseCommit, unreadable))) {
+        if (strict || !unreadable || (await this.trackedAtBase(run, baseCommit, unreadable))) {
           throw new MessageError(
             message("git.failed", { command: "add", detail: added.err || `exit ${added.code}` }),
           );
@@ -702,8 +708,13 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   async treeId(dir: string, gitDir: string, baseCommit: string) {
-    return this.stage(dir, gitDir, baseCommit, async (run) =>
-      (await run("write-tree", ["write-tree"])).trim(),
+    // 読めないファイルを除いた ID は返さない（そのファイルだけが変わっても、同じ ID になってしまうため）
+    return this.stage(
+      dir,
+      gitDir,
+      baseCommit,
+      async (run) => (await run("write-tree", ["write-tree"])).trim(),
+      true,
     );
   }
 

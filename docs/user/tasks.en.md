@@ -796,7 +796,10 @@ At every PR check (every minute), sacty checks the PR's draft state and sets it 
 
 To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub.
 When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it ([Pause, resume, and cancel](#pause-resume-and-cancel)).
-Only for a task paused because a rework changed nothing, sacty does not turn the PR back into a draft when you mark it ready ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
+However, sacty does not turn the following PRs back into drafts when you mark them ready while the task is paused.
+
+- A PR stacked on a dependency's PR that is waiting for "No findings" ([PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs))
+- The PR of a task paused because a rework changed nothing ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing))
 
 To convert a PR to a draft and to remove the draft, sacty needs the same permission for the project's GitHub account as for opening a PR.
 If the draft cannot be removed, sacty tries again at the next PR check.
@@ -1522,7 +1525,7 @@ When a rework changes nothing, the task proceeds as follows.
 1. Suppose the PR-review child task finished reviewing the current content of the PR and left findings.
    If the reworked implementation changed nothing in that PR, it is not submitted.
    The same content is not reviewed again, so the PR would stay a draft and never move on.
-   When the child task has not reviewed it yet, or is still reviewing it, the rework is submitted as before even if it changed nothing.
+   When the child task has not reviewed it yet, or is still reviewing it, the rework is submitted even if it changed nothing.
 2. The task becomes "Paused: the rework changed nothing".
 3. Check the findings of the PR review, then do one of the following.
    - If the findings should be fixed, resume (you can also change the agent of the Implementation step). sacty redoes the implementation with the findings.

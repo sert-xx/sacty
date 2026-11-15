@@ -679,6 +679,33 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(await workspace.treeId(clone, gitDir, baseCommit)).toBe(first);
   });
 
+  itUnreadable(
+    "作業領域の内容の目印は、読めない新しいファイルがあると、そのファイルを除いた ID を返さずに失敗にする（PBI-347）",
+    async () => {
+      const origin = makeOrigin();
+      const workspace = new GitRepositoryWorkspace();
+      const clone = join(dir, "task", "repo");
+      const gitDir = join(dir, "_git", "task.git");
+      const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+      writeFileSync(join(clone, "pay.test.ts"), "test\n");
+      const readable = await workspace.treeId(clone, gitDir, baseCommit);
+      // 起点で追跡していない、読めないファイル：差分（diffStats）は除いて進めるが、目印は取れない
+      mkdirSync(join(clone, "tools"), { recursive: true });
+      writeFileSync(join(clone, "tools/chromium.png"), "png");
+      chmodSync(join(clone, "tools/chromium.png"), 0o000);
+      try {
+        expect((await workspace.diffStats(clone, gitDir, baseCommit)).map((f) => f.path)).toEqual([
+          "pay.test.ts",
+        ]);
+        await expect(workspace.treeId(clone, gitDir, baseCommit)).rejects.toThrow();
+      } finally {
+        chmodSync(join(clone, "tools/chromium.png"), 0o644);
+      }
+      // 読めるようになれば、そのファイルを含めた ID になる
+      expect(await workspace.treeId(clone, gitDir, baseCommit)).not.toBe(readable);
+    },
+  );
+
   it("作業領域の .gitattributes で差分を隠したファイル・バイナリも、中身の行の数で数える", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

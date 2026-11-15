@@ -865,7 +865,7 @@ A run that ended after implementing only part of its scope, and a run that chang
     An `incomplete` declaration is unfinished even when `remaining` is missing or unreadable. A `complete` declaration is also unfinished when `remaining` lists something.
   - The declaration is kept in `completion` of `AgentRunCompleted` and removed from the implementation description (the PR body). When there is no readable declaration, it is `null`.
     JSON under the same heading in the output of a step other than Implementation is not read as a declaration and stays in the body.
-  - Records from versions before the declaration have no `completion`. Such records go on to the submission as before.
+  - Records from versions before the declaration have no `completion`. Such records go on to the submission without the declaration being checked.
 - When unfinished: before `FinalReviewSkipped`, sacty checks the declaration of the last run (`Task.implementCompletion`).
   If it is `incomplete` or `null`, sacty records `ImplementationIncomplete` and redoes the implementation. It does not open or update the PR.
   The record holds what remains, that nothing was declared (`undeclared`), and a mark of the workspace content (`fingerprint`).
@@ -873,7 +873,7 @@ A run that ended after implementing only part of its scope, and a run that chang
   - When the count in a row (`Task.incompleteRuns`) reaches 3 (`MAX_VERIFY_ATTEMPTS`), the task pauses (`nextIncompleteRuns`; the reason is `incomplete`, the message is `implement.incomplete`).
     The message shows up to 5 of the remaining items.
   - If redoing does not change the workspace content, the task pauses without waiting for the count.
-    The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, sacty counts up to the limit without a mark.
+    The mark is the git tree ID of the workspace content; when it equals the one of the previous unfinished run, nothing changed (`workspaceFingerprint`, `treeId`). The diff text is not used, because a large diff is truncated. If the workspace cannot be read, or even one file in it cannot be read, sacty counts up to the limit without a mark (an ID that leaves out an unreadable file would miss changes to that file).
   - When it stops, sacty records the unfinished run and the pause in the same append (even if the daemon stops in between, the implementation that should stop is not redone).
   - Resuming counts again from zero and redoes the implementation. The mark is kept, so if nothing changes after resuming either, the task stops after one run.
     Going on to the submission, or redoing from an earlier step, clears the count and the mark.
@@ -887,7 +887,7 @@ A run that ended after implementing only part of its scope, and a run that chang
   - Resuming redoes the implementation with the findings and the fact that the previous run changed nothing (`unchanged` of `Task.verifyFeedback`).
   - While the task is paused for this reason, sacty does not turn the PR back into a draft when a person marks it ready (`settlePausedDraft`).
     When a person decides not to take the AI review findings and merges the PR, the merge is taken as the approval ([Merging during a rework of the implementation](approval.en.md#merging-during-a-rework-of-the-implementation)).
-  - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits as before.
+  - When the child task concluded with no findings on that head, has not reviewed it yet, or is still reviewing it, and for PRs that do not wait for the child task (such as a task that takes over an existing PR), sacty submits even if nothing changed.
 - Neither pause is the verification pause of older versions (`verification`), so neither can be moved on without passing (`submitForReview`).
 
 Code: `apps/daemon/src/completion.ts` (`implementCompletionLines`, `extractCompletion`), `apps/daemon/src/service.ts` (`implementationCompleted`, `workspaceFingerprint`, `reviewLeftFindingsOn`, `publish`, `settlePausedDraft`), `apps/daemon/src/repository.ts` (`treeId`), `apps/daemon/src/prompts.ts` (`feedbackLines`, `extractBlocks`), `packages/core/src/events.ts` (`ImplementationCompletion`, `ImplementationIncomplete`, `ImplementationUnchanged`), `packages/core/src/projection.ts` (`implementCompletion`, `incompleteRuns`, `nextIncompleteRuns`)

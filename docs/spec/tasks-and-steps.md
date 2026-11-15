@@ -1266,7 +1266,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
     `incomplete` の申告は、`remaining` が無い・読めなくても未完了にする。`complete` の申告でも、`remaining` に残っていることがあれば未完了にする。
   - 申告は `AgentRunCompleted` の `completion` に残し、実装の説明（PR の本文）からは取り除く。申告が無い・読めなければ `null` にする。
     実装でない工程の出力にある同じ見出しの JSON は、申告として読まず、本文に残す。
-  - 申告させる前の版の記録には `completion` が無い。無い記録は、今までどおり提出に進める。
+  - 申告させる前の版の記録には `completion` が無い。無い記録は、申告を確かめずに提出に進める。
 - 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
   `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
   記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の内容の目印（`fingerprint`）を持つ。
@@ -1274,7 +1274,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
     文言には、残っていることを 5 件まで出す。
   - やり直しても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
-    目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めなければ、目印なしで回数まで数える。
+    目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めない・読めないファイルが1つでもあるときは、目印なしで回数まで数える（読めないファイルを除いた ID では、そのファイルの変更を見落とす）。
   - 止めるときは、未完了の記録と一時停止を、同じ追記で記録する（間でデーモンが止まっても、止めるはずの実装をやり直さない）。
   - 再開すると、回数を数え直して実装をやり直す。目印は残すので、再開の後も何も変わらなければ、1回で止まる。
     提出に進む・前の工程からやり直すと、回数と目印は消える。
@@ -1288,7 +1288,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 再開すると、指摘と、前回が何も変えなかったこと（`Task.verifyFeedback` の `unchanged`）を渡して、実装をやり直す。
   - この理由で止まっている間は、人が PR のドラフトを外しても、sacty はドラフトに戻さない（`settlePausedDraft`）。
     人が AI のレビューの指摘を採らないと判断して PR をマージすると、マージを承認として進める（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
-  - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、今までどおり提出する。
+  - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
 - どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
 
 コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
