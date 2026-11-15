@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-15（UTC）
 - タスク: PBI-349
-- PR: （作成後に書く）
+- PR: #379
 - ブランチ: feat/issue-349-review-document-range
 - 関係する ADR: [PR のレビューで親が担当に渡す範囲を差分で決め、観点をどう見たかを本文に書く](../adr/20261115-1515-review-range-decided-by-diff-and-viewpoint-line.md)
 
@@ -43,4 +43,12 @@ PR #378 のレビューが、4回目から「レビューを完了できませ�
 
 ## 確かめたこと
 
-（下に書く）
+- `npm run typecheck`・`npm run build`：エラーなし。
+- `npm run lint`：リポジトリのファイルはエラーなし（手元の git 管理外の設定ファイル1つが整形の指摘を受けたので、それを退けて 629 ファイルを確かめた）。
+- `./node_modules/.bin/vitest run --no-file-parallelism`：219 ファイルのうち、作業履歴の PR の番号の行（PR を作る前で空だった）の1件を除いて通った（4296 件が通り、1 件を飛ばした）。番号を書いた後に `./node_modules/.bin/vitest run --no-file-parallelism tests/docs apps/daemon/src/prompts.test.ts apps/daemon/src/default-skills.test.ts` を実行し直し、通った。
+- 足したテスト（`default-skills.test.ts` の PBI-349 の5件、`prompts.test.ts` の範囲と観点の見方の行）：スキルと指示に決まりの文があることを確かめる。直す前の文言では落ちる（最初の実行で、書き換えた文に合わない既存のテスト1件と合わせて確かめた）。
+
+## 確かめていないこと
+
+- 実際のエージェントで、長い文書を変えた PR のレビューが判定まで進むこと。動いている sacty でレビューを流すと PR に投稿されるので、流していない。
+  マージして sacty を起動し直した後に、PR #378 の再レビューで確かめる。
