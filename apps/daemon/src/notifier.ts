@@ -70,6 +70,8 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
     verification: "実装の検証に通らない",
     manual: "人間が一時停止",
     child_cancelled: "子タスクの中止",
+    incomplete: "実装が終わらない",
+    unchanged: "やり直しで変更が無い",
   },
   en: {
     budget: "budget cap",
@@ -79,6 +81,8 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
     verification: "the implementation keeps failing verification",
     manual: "paused by a person",
     child_cancelled: "a subtask was cancelled",
+    incomplete: "the implementation keeps ending unfinished",
+    unchanged: "the rework changed nothing",
   },
 };
 

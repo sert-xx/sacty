@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { StepKey } from "@sacty/core";
+import { takeFences } from "../agent-json.js";
+import { COMPLETION_FENCE, completionBlock } from "../completion.js";
 import type { AgentConfig } from "../config.js";
 import { CLAUDE_MCP_CONFIG, GATEWAY_TOKEN_SECRET, type PlacedContext } from "../context.js";
 import type { SecretStore } from "../secrets.js";
@@ -400,7 +402,9 @@ export async function buildInvocation(
                                 ? stub.export
                                 : role === "deployment"
                                   ? stub.deployment
-                                  : ((role && stub.outputs[role]) ?? stub.output),
+                                  : role === "implement"
+                                    ? withStubCompletion(stub.outputs.implement ?? stub.output)
+                                    : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,
@@ -415,4 +419,14 @@ export async function buildInvocation(
       };
     }
   }
+}
+
+/**
+ * スタブの実装の工程の出力に、完了の申告が無ければ足す（PBI-347）。sacty は、完了の申告の無い実装を提出しないので、申告を
+ * 書いていないスタブの設定でも、今までどおり提出まで進むようにする。申告を書いた出力（未完了の再現など）は、そのまま使う。
+ */
+function withStubCompletion(output: string): string {
+  // 申告のコードブロックがあるかで決める（説明の文に名前を書いただけの出力には、足す）
+  if (takeFences(output, COMPLETION_FENCE).fences.length > 0) return output;
+  return `${output}\n\n${completionBlock({ status: "complete" })}`;
 }

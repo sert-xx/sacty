@@ -20,7 +20,7 @@ This page is long, so pick the sections to read by what you want to do.
 | Learn what sacty does on its own | [Information gathering at the start of a task](#information-gathering-at-the-start-of-a-task), [Self-review before submitting](#self-review-before-submitting) |
 | Check results, then approve or request changes | [Approval in PRs (Requirements, Design, Implement)](#approval-in-prs-requirements-design-implement), [Reading requirements and designs](#reading-requirements-and-designs), [Items to check (provenance)](#items-to-check-provenance), [Review of the implementation PR](#review-of-the-implementation-pr), [How the agent revises after you request changes](#how-the-agent-revises-after-you-request-changes), [Cause of a request for changes](#cause-of-a-request-for-changes), [Change requests](#change-requests), [Comments on PRs and issues](#comments-on-prs-and-issues) |
 | Change a task that is under way | [Ask the Orchestrator](#ask-the-orchestrator), [Renaming a task](#renaming-a-task), [Changing the task image](#changing-the-task-image), [Changing a step's agent](#changing-a-steps-agent), [Pause, resume, and cancel](#pause-resume-and-cancel), [Create a follow-up task from a completed task](#create-a-follow-up-task-from-a-completed-task) |
-| Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes) |
+| Learn how each kind of request proceeds | [Documents and one-off external work](#documents-and-one-off-external-work), [Fixing an existing PR](#fixing-an-existing-pr), [Security checks and fixes](#security-checks-and-fixes), [Repositories without tests](#repositories-without-tests), [When the implementation has no changes](#when-the-implementation-has-no-changes), [When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing) |
 | Handle tasks created with an earlier version | [Tasks from earlier versions (with the Open PR step)](#tasks-from-earlier-versions-with-the-open-pr-step), [Tasks from earlier versions (with the final review)](#tasks-from-earlier-versions-with-the-final-review) |
 
 ## Create a task
@@ -796,6 +796,10 @@ At every PR check (every minute), sacty checks the PR's draft state and sets it 
 
 To hold the merge, pause the task or send it back instead of making the PR a draft on GitHub.
 When you pause the task, sacty turns the PR back into a draft, and removes the draft again when you resume it ([Pause, resume, and cancel](#pause-resume-and-cancel)).
+However, sacty does not turn the following PRs back into drafts when you mark them ready while the task is paused.
+
+- A PR stacked on a dependency's PR that is waiting for "No findings" ([PRs of dependent child tasks (stacked PRs)](#prs-of-dependent-child-tasks-stacked-prs))
+- The PR of a task paused because a rework changed nothing ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing))
 
 To convert a PR to a draft and to remove the draft, sacty needs the same permission for the project's GitHub account as for opening a PR.
 If the draft cannot be removed, sacty tries again at the next PR check.
@@ -817,6 +821,7 @@ In the following cases, the PR is created differently.
 
 - If the repository cannot use draft PRs (because of the GitHub plan, for example), the same flow runs with a normal PR.
 - If the implementation changed nothing, no PR is opened ([When the implementation has no changes](#when-the-implementation-has-no-changes)).
+- If the Implementation step ended before it finished its scope, no PR is opened or updated ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
 - A task that takes over an existing PR does not make it a draft, because it is your PR, and pushes to the PR it took over ([Fixing an existing PR](#fixing-an-existing-pr)).
 
 In earlier versions, after the Implementation step, sacty ran the final review (running the tests and judging pass or fail) and waited for and reran the PR's CI.
@@ -1148,6 +1153,7 @@ Resume the task as follows, depending on why it stopped.
 | --- | --- |
 | The budget limit | Enter the new cumulative limit and press "Change cap and resume" (for the budget settings, see [config.yaml settings](config.en.md#budget)) |
 | An AI usage limit, an authentication error, an error, and so on | Check the cause, then press "Resume" |
+| The implementation does not finish, or a rework changed nothing | Check the reason, change the step's agent if needed, then press "Resume" ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)) |
 | The chosen agent can no longer be used | Choose the agent again, then resume ([Changing a step's agent](#changing-a-steps-agent)) |
 
 What to check for each reason is also in [Troubleshooting](troubleshooting.en.md#tasks-stop-or-do-not-progress).
@@ -1498,7 +1504,35 @@ When the Implementation step changes nothing (it decided the requirements are al
 
 In tasks whose Requirements and Design were approved in PRs, the task branch remains (delete it on GitHub if you do not need it).
 
-If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
+If a PR was already created and the implementation redone after a request for changes no longer differs from the base branch at all, the task stops with an error. Decide what to do with the open PR, then cancel the task or request changes again.
+When the redone implementation changes nothing from the content of the PR it published before, the task is handled differently ([When the implementation does not finish, or a rework changes nothing](#when-the-implementation-does-not-finish-or-a-rework-changes-nothing)).
+
+## When the implementation does not finish, or a rework changes nothing
+
+At the end of a run, the agent of the Implementation step declares whether it finished its scope (what the request, the requirements, the design, and the feedback ask for).
+sacty submits only runs that declared they finished (it opens or updates the PR).
+
+When the implementation does not finish, the task proceeds as follows.
+
+1. A run that declared it is unfinished, or whose declaration is missing or unreadable, is not submitted. No PR is opened, and an existing PR is not updated.
+2. sacty redoes the implementation, passing along what remains.
+3. If it does not finish 3 times in a row, the task becomes "Paused: the implementation keeps ending unfinished".
+   If redoing changed nothing in the workspace, the task stops without waiting for 3 times.
+4. If the agent declared what remains, the reason it stopped shows it. Check it, then resume.
+   When the task stopped with the declaration missing or unreadable, what remains is not shown.
+   If you think the same agent will not get further, you can change the agent of the Implementation step in the resume form ([Resuming a stopped task](#resuming-a-stopped-task)).
+
+When a rework changes nothing, the task proceeds as follows.
+
+1. Suppose the PR-review child task finished reviewing the current content of the PR and left findings.
+   If the reworked implementation changed nothing in that PR, it is not submitted.
+   The same content is not reviewed again, so the PR would stay a draft and never move on.
+   When the child task has not reviewed it yet, or is still reviewing it, the rework is submitted even if it changed nothing.
+2. The task becomes "Paused: the rework changed nothing".
+3. Check the findings of the PR review, then do one of the following.
+   - If the findings should be fixed, resume (you can also change the agent of the Implementation step). sacty redoes the implementation with the findings.
+   - If the findings do not apply, check the PR and decide yourself.
+     Marking the PR ready and merging it on GitHub approves the implementation (while the task is paused for this reason, sacty does not turn the PR back into a draft).
 
 ## Tasks from earlier versions (with the Open PR step)
 

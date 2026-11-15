@@ -89,6 +89,7 @@ import {
   mergeProjectDefinitions,
   message,
   nextAuditDive,
+  nextIncompleteRuns,
   OperationSettings,
   openProposal,
   type PauseReason,
@@ -8380,6 +8381,10 @@ export class TaskService {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
       // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
       // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+      // 実装し終えたと申告されていなければ、PR を作らずに（更新せずに）実装をやり直す（PBI-347）。競合の確認より先に確かめる：
+      // 先に競合で戻ると、未完了の記録が残らず、残っていることが次の指示に渡らない。競合は、完了と申告した実行で確かめる
+      // （競合したファイルは、解消するまで、実装の指示に載り続ける）
+      if (!(await this.implementationCompleted(initial))) return;
       if (!(await this.headSyncedBeforePublish(initial))) return;
       if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
       const securityScope = await this.checkSecurityScope(initial);
@@ -9175,6 +9180,8 @@ export class TaskService {
       {
         testCommand: step === "implement" && Boolean(latest.noTestsReason),
         keepIndent: step === "implement",
+        // 完了の申告を読むのは、実装の工程だけ（PBI-347）
+        completion: step === "implement",
       },
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
@@ -9260,6 +9267,8 @@ export class TaskService {
             ...(step === "implement" && extracted.verificationRecord
               ? { verificationRecord: extracted.verificationRecord }
               : {}),
+            // 実装の完了の申告（PBI-347）。申告が無い・読めなければ null（提出の前に、未完了として扱う）
+            ...(step === "implement" ? { completion: extracted.completion ?? null } : {}),
             // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）。
             // PR のレビューに任せて省いた実行（PBI-346）は、させていないので記録しない
             ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step) && !pullRequestReview
@@ -10600,6 +10609,29 @@ export class TaskService {
           { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
         ]);
       }
+      // やり直しの実装が何も変えず、出すコミットが、AI のレビューの指摘が残る PR の先頭のままなら、提出にせずに止める（同じ
+      // 先頭は再レビューされず、ドラフトのまま進まなくなるため。PBI-347）。再開すると、実装をやり直す
+      const reviewer = this.reviewLeftFindingsOn(task, commit);
+      if (reviewer && task.pullRequest?.number && task.pullRequest.repo) {
+        const { number, repo: reviewedRepo } = task.pullRequest;
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ImplementationUnchanged",
+              payload: { repo: reviewedRepo, number, commit, reviewTaskId: reviewer.id },
+            },
+          },
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "unchanged", message: message("implement.unchanged", { number }) },
+            },
+          },
+        ]);
+        return "stopped";
+      }
       // PR は常に作る（PR を作るかの設定は無い。PBI-25）
       const prRepo = repo.pullRequest.repo;
       const token = await this.githubToken(task, prRepo, usedSecrets);
@@ -11201,6 +11233,99 @@ export class TaskService {
   }
 
   /**
+   * 実装の実行が、範囲を実装し終えたと申告したか（PBI-347）。未完了と申告した・申告が無い（読めない）なら、
+   * ImplementationIncomplete を記録して実装をやり直させ（続けて終わらなければ一時停止する）、false。申告させる前の記録
+   * （完了の実行に申告の項目が無い）は、今までどおり true。
+   */
+  private async implementationCompleted(task: Task): Promise<boolean> {
+    const completion = task.implementCompletion;
+    if (completion === undefined || completion?.status === "complete") return true;
+    const fingerprint = await this.workspaceFingerprint(task);
+    const latest = this.mustGet(task.id);
+    const remaining = completion?.remaining ?? [];
+    const undeclared = completion === null;
+    // 続いた回数が上限に達したか、やり直しても作業領域が何も変わらなければ（同じエージェントでやり直しても進まない）、
+    // 実装のやり直しを止めて人間に判断してもらう。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
+    // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
+    const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
+    const stop = runs.runs >= MAX_VERIFY_ATTEMPTS || runs.stalled === true;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ImplementationIncomplete",
+          payload: {
+            remaining,
+            ...(undeclared ? { undeclared: true as const } : {}),
+            ...(fingerprint ? { fingerprint } : {}),
+          },
+        },
+      },
+      ...(stop
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "TaskPaused" as const,
+                payload: {
+                  reason: "incomplete" as const,
+                  message: message("implement.incomplete", {
+                    count: runs.runs,
+                    stalled: runs.stalled === true,
+                    declared: !undeclared,
+                    remaining: remaining.slice(0, 5).join(" / "),
+                    total: remaining.length,
+                  }),
+                },
+              },
+            },
+          ]
+        : []),
+    ]);
+    return false;
+  }
+
+  /**
+   * 作業領域の内容の目印（git のツリーの ID。PBI-347）。やり直しの前後で同じなら、やり直しが何も変えなかったことが分かる。
+   * 差分の文字列は大きいと切り詰められる（後ろだけが変わっても同じに見える）ので、使わない。作業領域が無い・読めなければ
+   * undefined（目印なしで数える）。
+   */
+  private async workspaceFingerprint(task: Task): Promise<string | undefined> {
+    if (!task.repository || !existsSync(this.repoDir(task))) return undefined;
+    try {
+      return await this.deps.repos.treeId(
+        this.repoDir(task),
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * これから PR に出すコミット（やり直しの実装が何も変えなかった先頭）に、AI のレビューの指摘が残っているか（PBI-347）。
+   * 残っていれば、その指摘を残した PR のレビューの子タスク。同じ先頭は再レビューされない（reconcileReviewTasks）ので、そのまま
+   * 提出すると、指摘なしにも作り直しにもならず、ドラフトのまま進まなくなる。先頭は、sacty が前に出したコミットのことも、人が
+   * PR に足したコミット（取り込んだ先頭）のこともある。次のときは undefined（今までどおり提出する）。
+   * - PR のレビューの子タスクの指摘なしを待たない PR（引き継いだ人の PR など）
+   * - 子タスクが、その先頭を指摘なしにしている・まだレビューしていない・レビューの途中
+   */
+  private reviewLeftFindingsOn(task: Task, commit: string): Task | undefined {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo || !this.awaitsReview(task)) return undefined;
+    const { number, repo } = pr;
+    const record = (task.reviewTasks ?? []).findLast(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    const child = record && this.tasks.get(record.taskId);
+    if (!child || !isCompleted(child) || child.reviewTarget?.headCommit !== commit) {
+      return undefined;
+    }
+    return reviewCleared(child) ? undefined : child;
+  }
+
+  /**
    * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らす（PBI-331。PR の本文と PR のレビューの子タスクに
    * 渡す）。セキュリティ対応でなければ undefined。差分を取れなければ止める（"stopped"）。
    */
@@ -11389,6 +11514,9 @@ export class TaskService {
       if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
       // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
       if (latest.pullRequest.awaitingReview && latest.stack) return;
+      // やり直しが PR を何も変えずに止まったタスク（PBI-347）は、人が PR を確かめて判断する。人がドラフトを外したら戻さない
+      // （AI のレビューの指摘を採らないと判断して、マージで実装を承認できるように）
+      if (latest.pausedReason === "unchanged") return;
       await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
     } catch (error) {
       console.warn(

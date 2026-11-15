@@ -6,6 +6,7 @@ import type {
   AuditTarget,
   ContinuedPullRequest,
   ExportPlan,
+  ImplementationCompletion,
   InvestigationKind,
   MemoryDeleteReason,
   OrchestratorSessionReason,
@@ -876,7 +877,22 @@ export type Task = {
     | { kind: "tests"; tests: TestsRunResult }
     | { kind: "review"; review: FinalReview }
     /** 提出の前に、ベースブランチとの競合の目印が作業領域に残っていた（BaseConflictsRemained）。 */
-    | { kind: "merge"; files: string[] };
+    | { kind: "merge"; files: string[] }
+    /** 実装の実行が、範囲を実装し終えたと申告しなかった（ImplementationIncomplete。PBI-347）。 */
+    | { kind: "incomplete"; remaining: string[]; undeclared?: true }
+    /** AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（ImplementationUnchanged。PBI-347）。 */
+    | { kind: "unchanged"; number: number };
+  /**
+   * 実装の最後の実行の、完了の申告（PBI-347）。null は、申告させたが無い・読めなかった。申告させる前の記録には無い
+   * （無ければ、今までどおり提出に進める）。
+   */
+  implementCompletion?: ImplementationCompletion | null;
+  /**
+   * 続けて終わらなかった実装の実行（ImplementationIncomplete。PBI-347）。runs は続いた回数、fingerprint はそのときの作業領域の
+   * 内容の目印、stalled は、やり直しても作業領域が変わらなかった（回数を待たずに止める）。提出に進む・前の工程からやり直すと消える。
+   * 人が再開すると、回数は数え直すが、目印は残す（再開の後も何も進まなければ、回数に関係なく止める）。
+   */
+  incompleteRuns?: { runs: number; fingerprint?: string; stalled?: true };
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
   escalation?: {
     step: StepKey;
@@ -1172,11 +1188,29 @@ function mergeTestMaps(previous: TestMapping[], next: TestMapping[]): TestMappin
   });
 }
 
+/**
+ * 実装の実行がまた終わらなかったときの、続いた回数と作業領域の目印（PBI-347。ImplementationIncomplete の投影）。前の未完了の
+ * ときから作業領域の目印が変わっていなければ、やり直しても進まなかった（stalled）。目印が無い（読めなかった）ときは、
+ * 進まなかったとしない。記録の前に、止めるかを決めるのにも使う（未完了の記録と一時停止を、同じ追記で書くため）。
+ */
+export function nextIncompleteRuns(
+  previous: Task["incompleteRuns"],
+  fingerprint: string | undefined,
+): NonNullable<Task["incompleteRuns"]> {
+  const stalled = fingerprint !== undefined && previous?.fingerprint === fingerprint;
+  return {
+    runs: (previous?.runs ?? 0) + 1,
+    ...(fingerprint ? { fingerprint } : {}),
+    ...(stalled ? { stalled: true as const } : {}),
+  };
+}
+
 /** 検証の失敗の回数と一緒に、回をまたいで比べる失敗の記憶も消す（PBI-308）。 */
 function resetVerifyFailures(task: Task) {
   task.verifyFailures = 0;
   task.failedTests = undefined;
   task.verifyStalled = undefined;
+  task.incompleteRuns = undefined;
 }
 
 function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback"]>) {
@@ -1467,6 +1501,8 @@ export function applyEvent(
         }
         if (event.payload.step === "implement") {
           task.implementVerification = event.payload.verificationRecord;
+          // 完了の申告（PBI-347）。申告させる前の記録には無い（undefined のまま、提出に進める）
+          task.implementCompletion = event.payload.completion;
           // 直しの提出は、PR 全体の対応にする：前の提出までに対応させたテストを、今回の申告に出てくる観点に残す（PBI-299）
           task.testMap = mergeTestMaps(
             (task.implementHistory?.length ?? 0) > 0 ? task.testMap : [],
@@ -2149,6 +2185,45 @@ export function applyEvent(
       task.publishPending = undefined;
       task.noChanges = { submission: event.payload.submission };
       task.status = "idle";
+      break;
+
+    case "ImplementationIncomplete": {
+      // 提出の前の検証の待ちで、実装が終わったと申告されていなかったので、提出に進まず実装をやり直す（PBI-347）
+      if (
+        task.status !== "idle" ||
+        activeStep(task) !== "implement" ||
+        task.verification === undefined
+      ) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for verification",
+        );
+      }
+      task.verification = undefined;
+      task.verifyFeedback = {
+        kind: "incomplete",
+        remaining: event.payload.remaining,
+        ...(event.payload.undeclared ? { undeclared: true as const } : {}),
+      };
+      task.incompleteRuns = nextIncompleteRuns(task.incompleteRuns, event.payload.fingerprint);
+      task.status = "queued";
+      break;
+    }
+
+    case "ImplementationUnchanged":
+      // PR を更新しようとしたら、AI のレビューの指摘が残る先頭から、やり直しの実装が何も変えていなかった（PBI-347）。
+      // 提出にせず、実装のやり直しに戻す（続けて記録する一時停止で止まり、再開すると実装をやり直す）
+      if (task.status !== "queued" || activeStep(task) !== "implement" || !task.publishPending) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for a pull request",
+        );
+      }
+      if (task.pullRequest?.number !== event.payload.number) {
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
+      }
+      task.publishPending = undefined;
+      task.verifyFeedback = { kind: "unchanged", number: event.payload.number };
       break;
 
     case "ReviewTaskCreated": {
@@ -3253,6 +3328,11 @@ export function applyEvent(
         // 回数は数え直すが、失敗の記憶は残す（再開の後に同じ失敗なら、回数に関係なく止める。PBI-308）
         task.verifyFailures = 0;
         task.verifyStalled = undefined;
+      }
+      // 終わらない実装で止まったタスクも、回数は数え直すが、作業領域の目印は残す（再開の後も進まなければ止める。PBI-347）
+      if (task.pausedReason === "incomplete" && task.incompleteRuns) {
+        const { fingerprint } = task.incompleteRuns;
+        task.incompleteRuns = { runs: 0, ...(fingerprint ? { fingerprint } : {}) };
       }
       task.unreadableReviews = undefined;
       // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）

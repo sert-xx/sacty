@@ -528,6 +528,10 @@ export const PauseReason = z.enum([
   "manual",
   // 子タスクが中止された（親は人間の判断を待つ。PBI-27）
   "child_cancelled",
+  // 実装の工程が、範囲を実装し終える前に終わることが続いた（PBI-347）
+  "incomplete",
+  // AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（PBI-347）
+  "unchanged",
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
@@ -1156,6 +1160,24 @@ const AgentRunStarted = z.object({
 /** 文書作成の1回の実行で申告できる、外部に直接書いたページの数の上限。 */
 export const DOCUMENT_PAGES_MAX = 200;
 
+/** 完了の申告で、残っていることに書ける件数と、1件の長さの上限（PBI-347）。 */
+export const COMPLETION_REMAINING_MAX = 20;
+export const COMPLETION_REMAINING_ITEM_MAX = 300;
+
+/**
+ * 実装の工程の、完了の申告（PBI-347）。範囲（依頼・要求要件・設計・指摘）を実装し終えたか。未完了なら、残っていること。
+ */
+export const ImplementationCompletion = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("complete") }),
+  z.object({
+    status: z.literal("incomplete"),
+    remaining: z
+      .array(z.string().min(1).max(COMPLETION_REMAINING_ITEM_MAX))
+      .max(COMPLETION_REMAINING_MAX),
+  }),
+]);
+export type ImplementationCompletion = z.infer<typeof ImplementationCompletion>;
+
 const AgentRunCompleted = z.object({
   type: z.literal("AgentRunCompleted"),
   payload: z.object({
@@ -1200,6 +1222,11 @@ const AgentRunCompleted = z.object({
      * 読めなかった。セルフレビューをさせない工程と、それより前の記録には無い。
      */
     selfReview: SelfReview.nullable().optional(),
+    /**
+     * 実装の工程の、完了の申告（PBI-347）。null は、申告させたが無い・読めなかった。申告させる前の記録と、実装でない工程
+     * には無い（無い記録は、今までどおり提出に進める）。
+     */
+    completion: ImplementationCompletion.nullable().optional(),
     /**
      * 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）。最終レビュー・PR のレビューが、同じ内容の結果として
      * 使い回す。申告が無い・読めない・実装でない工程と、それより前の記録には無い。
@@ -2417,6 +2444,44 @@ const NoChangesFound = z.object({
 });
 
 /**
+ * 実装の実行が、範囲を実装し終えたと申告しなかった（未完了と申告した・申告が無い。PBI-347）。提出に進まず（PR を作らない・
+ * 更新しない）、残っていることを渡して実装をやり直す。続けて終わらなければ一時停止する。
+ */
+const ImplementationIncomplete = z.object({
+  type: z.literal("ImplementationIncomplete"),
+  payload: z.object({
+    /** 未完了の申告にあった、残っていること。申告が無いときは空。 */
+    remaining: z
+      .array(z.string().min(1).max(COMPLETION_REMAINING_ITEM_MAX))
+      .max(COMPLETION_REMAINING_MAX),
+    /** 完了の申告が無い・読めなかった。 */
+    undeclared: z.literal(true).optional(),
+    /**
+     * そのときの作業領域の内容の目印（git のツリーの ID）。前の未完了のときと同じなら、やり直しても何も進まなかったので、
+     * 回数を待たずに止める。作業領域を読めなかったときは無い。
+     */
+    fingerprint: z.string().min(1).max(100).optional(),
+  }),
+});
+
+/**
+ * AI のレビューが指摘を残した実装の PR の先頭を、やり直しの実装が何も変えなかった（出すコミットが、レビューされた先頭と同じ。
+ * PBI-347）。同じ先頭は再レビューされないので、提出にせず（PR を更新しない）、一時停止して人に知らせる。再開すると、実装を
+ * やり直す。
+ */
+const ImplementationUnchanged = z.object({
+  type: z.literal("ImplementationUnchanged"),
+  payload: z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    /** 変わらなかった PR の先頭のコミット（sacty が前に出したコミットか、人が PR に足して sacty が取り込んだ先頭）。 */
+    commit: z.string().min(1),
+    /** その先頭に指摘を残した、PR のレビューの子タスク。 */
+    reviewTaskId: z.string().min(1),
+  }),
+});
+
+/**
  * 引き継いだ既存の PR（StepsChosen の continuedPullRequest）の指摘を、実装の工程の実行の指示に渡した。keys は渡した指摘
  * （PullRequestFeedback の key）。実装に対応させたので、PR の指摘として取り込み直さない（渡さなかった指摘は取り込む）。
  */
@@ -2610,8 +2675,11 @@ const ReworkStoppedByMerge = z.object({
     stoppedRuns: z.array(z.string()),
     /** 作り直しに渡す前に捨てた、PR の指摘（まだ提出に反映していないもの）。 */
     discardedRemarks: z.array(z.object({ id: z.string(), text: z.string() })),
-    /** 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印）の種類。 */
-    discardedFeedback: z.enum(["tests", "review", "merge"]).optional(),
+    /**
+     * 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印・終わっていない実装・変更の無い
+     * やり直し）の種類。
+     */
+    discardedFeedback: z.enum(["tests", "review", "merge", "incomplete", "unchanged"]).optional(),
     /** 捨てた、一時停止の間に届いて、まだ作り直しに渡していない PR の指摘の件数（PBI-279）。 */
     discardedReview: z.number().int().positive().optional(),
   }),
@@ -3533,6 +3601,8 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewSkipped,
   PullRequestMarkedReady,
   NoChangesFound,
+  ImplementationIncomplete,
+  ImplementationUnchanged,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,

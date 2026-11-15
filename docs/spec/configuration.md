@@ -128,7 +128,7 @@
 | `reasoning_effort` | リーズニングエフォート（任意。`^[a-z][a-z0-9_-]{0,30}$`）。Codex は `model_reasoning_effort`、Claude Code は `--effort` で渡す |
 | `fallback` | 実行が失敗したとき（理由は問わない）に代わりに使うエージェントの名前（任意。1つか並びで、上から順に試す）。`agents` に無い名前は誤り（`config.agentMissing`）、自分自身も誤り（`config.agentFallbackSelf`）。使えないエージェントは警告して外す（`config.agentFallbackUnavailable`） |
 | `price_per_mtok_usd` | `runtime: stub` だけ。単価（書き方は `available_models` と同じ。書かなければ 0） |
-| `stub` | `runtime: stub` の出力（工程・オーケストレーターなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
+| `stub` | `runtime: stub` の出力（工程・オーケストレーターなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現）。実装の工程の出力に完了の申告（`sacty-completion`）が無ければ、完了の申告を足す |
 
 - 既定と同じ名前は、書いた項目だけを既定に重ねる（書いていない項目は既定のまま）。
   既定に無い名前は、そのエージェントを足す。

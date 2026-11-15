@@ -1062,7 +1062,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
 
 ## 実装の検証
 
-実装の工程の後、sacty は最終レビュー（テストの実行と合否の判定）も PR の CI の待ちもしない。実装の PR はドラフトで作り、PR のレビューの子タスクがレビューする（[最終レビューをしない流れ](#最終レビューをしない流れ)。[ADR](../adr/20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)）。
+実装の工程の後、sacty は最終レビュー（テストの実行と合否の判定）も PR の CI の待ちもしない。実装の PR はドラフトで作り、PR のレビューの子タスクがレビューする（[最終レビューをしない流れ](#最終レビューをしない流れ)。[ADR](../adr/20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)）。
 以前の版の最終レビューの記録を持つタスクの扱いは、[最終レビューがあった版のタスク](#最終レビューがあった版のタスク)にある。
 
 ### 最終レビューをしない流れ
@@ -1073,6 +1073,8 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     続けて、ベースブランチとの競合の目印が作業領域に残っていないかを確かめる（`conflictsResolved`）。
     残っていれば記録せず、`BaseConflictsRemained` を記録して実装をやり直す（数え方・止め方は[ベースブランチの取り込み](#ベースブランチの取り込み)と同じ）。
     確かめられなければ一時停止する（`merge.failed`）。
+  - その後に、実装の実行が範囲を実装し終えたと申告したかを確かめる（`implementationCompleted`）。
+    未完了と申告した・申告が無ければ記録せず、`ImplementationIncomplete` を記録して実装をやり直す（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。
   - セキュリティ対応のタスクは、`FinalReviewSkipped` の前に、差分を前段の調査が宣言した修正の範囲と照らす（`checkSecurityScope`。照合の仕方は下の「セキュリティ対応」と同じ）。
     結果を `FinalReviewSkipped` の `securityScope`（違反があれば `violation` に範囲の外のファイル・変えた行の数・上限）に記録する（`Task.securityScopeCheck`）。
     差分を取れなければ、記録せずに一時停止する（`verify.diffUnavailable`）。
@@ -1102,8 +1104,7 @@ AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定�
     - 外し直す間に差し戻された・PR を更新した・子タスクの再レビューが始まった・先頭が変わった、または外した答えを受け取れなかったら、
       タスクが終わっておらず PR の番号が同じならドラフトに戻す。外した答えを今の記録のまま受け取れなければ、外す要求が後から届くかもしれないので、
       次の提出でも指摘なしで外すまで確認のたびにドラフトに戻す（`undraftUnsettled`）。
-    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、
-      指摘なしを待つ PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
+    - 一時停止したタスクの PR は、GitHub でドラフトでなければ、ドラフトに戻す（`settlePausedDrafts`。止めている間はマージさせない。依存先の PR に重ねた、指摘なしを待つ PR と、やり直しが何も変えずに止まったタスク（`unchanged`）の PR は除く。`DRAFT_CHECK_CONCURRENCY`（4）件ずつ並べて確かめる）。外し直す間に止めた・戻せなかった・答えが返らなかった（`DRAFT_TIMEOUT_MS`）ときも、止めている間は確認のたびにやり直す。
       再開したら、指摘なしで記録した PR は、上と同じく外し直す。
   - 実装の PR のコミットの日時と題は、実装の工程が終わったとき（`outputAt`）にする（最終レビューの日時が無いため）。
   - 外す要求の答えがドラフトのままなら、記録せずに次の確認でやり直す。
@@ -1236,6 +1237,7 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
   - 既存の PR を引き継ぐタスクは、人の PR のブランチに積み、新しい PR を作らない（[既存の PR の引き継ぎ](#既存の-pr-の引き継ぎ)）。
 - PR を作ったら、同じ追記で `PullRequestPublished` と、実装の提出（`StepSubmitted`。`step` は `implement`）を記録し、実装の承認待ちにする。
   実装に変更が無く、まだ PR が無ければ、PR を作らずに `NoChangesFound` と実装の提出を記録する（[承認と差し戻し](approval.md#実装に変更が無いとき)）。
+  すでにある PR を、やり直しの実装が何も変えず、その先頭に AI のレビューの指摘が残っていれば、提出にせずに一時停止する（[終わっていない実装と、変更の無いやり直し](#終わっていない実装と変更の無いやり直し)）。
 - PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。
   再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、一時停止・再起動の後も残る）。
 - 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。本文が重なったときのエージェントは、予算の上限に達していれば実行せず、人の本文のまま変えない。
@@ -1249,6 +1251,62 @@ sacty は、そのコミットを実装の作業領域に取り込んでから�
 - 差し戻し・PR の指摘で実装を作り直している間に、人が実装の PR をマージしたら、作り直し（実行・PR の更新）を止めて、マージを承認として進める。新しい PR は作らない（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
 
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`commitSubjectFor`・`implementSubmitted`・`submitEvents`・`pause`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.upsert`・`GitHubPullRequests.setDraft`）、`apps/daemon/src/commit-message.ts`（`COMMIT_CONVENTION_FILES`・`detectCommitConvention`・`commitSubject`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
+
+### 終わっていない実装と、変更の無いやり直し
+
+関係する ADR: [終わっていない実装を提出にせず、変更の無いやり直しで行き止まりにしない](../adr/20261115-1224-stop-incomplete-implementation-and-unchanged-rework.md)
+
+実装の実行が終わると、sacty は作業領域の内容をそのまま提出する（PR を作る・更新する）。
+範囲の一部だけを実装して終わった実行と、AI のレビューの指摘を受けても何も変えなかった実行は、提出にしない（PBI-347）。
+
+- 完了の申告：実装の工程の指示は、範囲を実装し終えたかを、言語の名前が `sacty-completion` のコードブロックで必ず申告させる（`implementCompletionLines`）。
+  - 申告は、コードブロックの中に、JSON のオブジェクトで書く。キーは、`status`（`complete` か `incomplete`）と、`remaining`（残っていることの一覧。省いてよい）だけ。
+    `remaining` は 20 件まで、1件は 300 文字までで、超えた分は切る（`COMPLETION_REMAINING_MAX`・`COMPLETION_REMAINING_ITEM_MAX`。文字の途中では切らない）。
+  - 申告として読むのは、このコードブロックの中だけ（`extractCompletion`・`takeFences`）。どこからどこまでが申告かを、コードブロックで区切る。
+    コードブロックは、テストのコマンドの申告と同じ、CommonMark のフェンスの規則で見つける。
+    コードブロックの外の JSON や文と、ほかのコードブロックの中に例として書いたものは、申告として扱わない。
+  - 申告のコードブロックは、中身のすべてを、決まった形どおりに読めたときだけ使う（`readDeclaration`）。次のどれかに当たるものは、読めない申告にする（どちらを意図したかを、推し量って決めない）。
+    - JSON として読めない・オブジェクトでない・コードブロックが閉じていない
+    - `status` と `remaining` のほかのキーがある
+    - 同じキーが重複している（`hasDuplicateKeys`。JSON は後の値で上書きして読まれる。重複を調べられないほど入れ子が深いものも同じ）
+    - `status` が `complete` でも `incomplete` でもない
+    - `remaining` が、文の一覧でない
+  - 完了にするのは、申告のコードブロックのすべてを読めて、すべてが完了のときだけ。
+    - 申告のコードブロックが無い・読めない申告が1つでもある：申告なし（未完了として扱い、提出しない）
+    - すべて読めて、最後の申告が未完了：未完了（残っていることは、最後の申告のもの）
+    - すべて読めて、最後の申告が完了で、ほかに未完了の申告がある：申告なし
+    - `complete` の申告でも、`remaining` に残っていることがあれば、未完了として読む
+  - 申告は `AgentRunCompleted` の `completion` に残す。申告なしなら `null` にする。
+    申告のコードブロックは、読めないものも、実装の説明（PR の本文）から取り除く。
+    実装でない工程の出力にある同じ名前のコードブロックは、申告として読まず、本文に残す。
+  - 申告させる前の版の記録には `completion` が無い。無い記録は、申告を確かめずに提出に進める。
+- 未完了のとき：`FinalReviewSkipped` の前に、最後の実行の申告（`Task.implementCompletion`）を確かめる。
+  `incomplete` か `null` なら、`ImplementationIncomplete` を記録して、実装をやり直す。PR は作らず、更新もしない。
+  記録には、残っていること・申告が無かったこと（`undeclared`）・作業領域の内容の目印（`fingerprint`）を持つ。
+  - 申告は、競合の確認（人が PR に足したコミットの取り込みと、競合の目印の確認。`headSyncedBeforePublish`・`conflictsResolved`）より先に確かめる。
+    未完了の実行は、競合の目印が残っていても、未完了として記録し、残っていることを次の指示に渡す。競合は、完了と申告した実行で確かめる（競合したファイルは、解消するまで、実装の指示に載り続ける）。
+  - やり直しの指示には、前回が未完了だった（申告が無かった）ことと、残っていることを渡す（`feedbackLines`。`Task.verifyFeedback` の `incomplete`）。
+  - 続いた回数（`Task.incompleteRuns`）が 3 回（`MAX_VERIFY_ATTEMPTS`）になったら、一時停止する（`nextIncompleteRuns`。理由は `incomplete`、文言は `implement.incomplete`）。
+    文言には、残っていることを 5 件まで出す。
+  - やり直しても作業領域の内容が変わらなければ、回数を待たずに一時停止する。
+    目印は、作業領域の内容の git のツリーの ID で、前の未完了のときと同じなら、変わらなかったとする（`workspaceFingerprint`・`treeId`）。差分の文字列は大きいと切り詰めるので、使わない。作業領域を読めない・読めないファイルが1つでもあるときは、目印なしで回数まで数える（読めないファイルを除いた ID では、そのファイルの変更を見落とす）。
+  - 止めるときは、未完了の記録と一時停止を、同じ追記で記録する（間でデーモンが止まっても、止めるはずの実装をやり直さない）。
+  - 再開すると、回数を数え直して実装をやり直す。目印は残すので、再開の後も何も変わらなければ、1回で止まる。
+    提出に進む・前の工程からやり直すと、回数と目印は消える。
+- 変更の無いやり直し：PR を更新する前（コミットを作った後）に、次のすべてに当たれば、提出にしない（`reviewLeftFindingsOn`）。
+  - PR のレビューの子タスクの指摘なしを待つ PR である（`awaitsReview`）。
+  - 子タスクが、これから PR に出すコミットを先頭としてレビューを終えていて、指摘なしにしていない。
+    やり直しの実装が作業領域を何も変えなければ、出すコミットは、sacty が前に出したコミットか、人が PR に足して sacty が取り込んだ先頭のままになる。
+- 変更の無いやり直しに当たったら、`ImplementationUnchanged`（PR・先頭のコミット・子タスク）と一時停止（理由は `unchanged`、文言は `implement.unchanged`）を、同じ追記で記録する。
+  PR は更新せず、提出の回も進めない。
+  同じ先頭は再レビューされないので（[PR のレビューの子タスク](approval.md#pr-のレビューの子タスク)）、そのまま提出すると、指摘なしにも作り直しにもならず、ドラフトのまま進まなくなるためである。
+  - 再開すると、指摘と、前回が何も変えなかったこと（`Task.verifyFeedback` の `unchanged`）を渡して、実装をやり直す。
+  - この理由で止まっている間は、人が PR のドラフトを外しても、sacty はドラフトに戻さない（`settlePausedDraft`）。
+    人が AI のレビューの指摘を採らないと判断して PR をマージすると、マージを承認として進める（[実装の作り直しの間のマージ](approval.md#実装の作り直しの間のマージ)）。
+  - 子タスクがその先頭を指摘なしにしている・まだレビューしていない・レビューの途中のときと、子タスクを待たない PR（既存の PR を引き継ぐタスクなど）は、何も変えていなくても提出する。
+- どちらの一時停止も、以前の版の検証の一時停止（`verification`）ではないので、不合格のまま進める操作（`submitForReview`）の対象にしない。
+
+コード: `apps/daemon/src/completion.ts`（`implementCompletionLines`・`extractCompletion`）、`apps/daemon/src/agent-json.ts`（`takeFences`・`hasDuplicateKeys`）、`apps/daemon/src/service.ts`（`implementationCompleted`・`workspaceFingerprint`・`reviewLeftFindingsOn`・`publish`・`settlePausedDraft`）、`apps/daemon/src/repository.ts`（`treeId`）、`apps/daemon/src/prompts.ts`（`feedbackLines`・`extractBlocks`）、`packages/core/src/events.ts`（`ImplementationCompletion`・`ImplementationIncomplete`・`ImplementationUnchanged`）、`packages/core/src/projection.ts`（`implementCompletion`・`incompleteRuns`・`nextIncompleteRuns`）
 
 ### 同じ内容の検証の使い回し
 
@@ -1447,7 +1505,7 @@ PR の指摘の戻し先の判断・統合レビュー・質問への答え・�
   上限に達したら、工程を選ぶ前と工程を実行する前に一時停止（`budget`）にする（実装の工程の中で sacty が実装の PR を作るとき（`publishPending`）は、費用がかからないので止めずに作る）。
   承認待ちのタスクは止めない。
   予算で止まったタスクの再開には、使った額より大きい累計の新しい上限（10000 米ドルまで）が要る（`BudgetCapRaised`）。
-- 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・`verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）。
+- 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・`verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）・`incomplete`（実装が続けて終わらない）・`unchanged`（やり直しが PR を何も変えなかった）。
   AI の実行の失敗は、その理由のまま一時停止にする（人が止めていたら `manual`）。
   時間をおいて自動で再開する仕組みは無い。
 - 人の一時停止：エスカレーション（変更の申し出の人の判断待ちを含む）・子タスク待ちは止められない。

@@ -17,6 +17,7 @@ import {
   GATHERED_BRIEF_MAX,
   guardianTestsPassed,
   humanVisibleEnvironmentFailures,
+  type ImplementationCompletion,
   type IntegrationReview,
   InvestigationKind,
   investigationIsGoal,
@@ -76,11 +77,13 @@ import {
   lastLenientJsonAnswer,
   type RepairNote,
   safeNear,
+  takeFences,
   withoutCandidates,
 } from "./agent-json.js";
 import { redact } from "./agents/redact.js";
 import { redactDeep } from "./audit-evidence.js";
 import { redactLog, redactUrlCredentials } from "./ci.js";
+import { COMPLETION_FENCE, extractCompletion, implementCompletionLines } from "./completion.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import {
   implementReviewCriteriaLines,
@@ -849,6 +852,39 @@ function feedbackLines(task: Task): string[] {
         : "--- 前回の検証：ベースブランチとの競合の目印が残っていました ---",
       "実装の PR を作る前に、競合の目印（<<<<<<<・=======・>>>>>>>）が作業領域のファイルに残っていました。PR は、まだ作っていません（更新もしていません）。",
       ...feedback.files.slice(0, MERGE_FILES_IN_PROMPT).map((f) => `- ${promptPath(f)}`),
+    ];
+  }
+  if (feedback.kind === "incomplete") {
+    // 前の実行が、実装し終えたと申告しなかった（PBI-347）。作業領域には前の実行の変更が残っている
+    return [
+      "",
+      feedback.undeclared
+        ? "--- 前回の実行：実装し終えたかの申告を読めませんでした ---"
+        : "--- 前回の実行：実装が終わっていませんでした ---",
+      feedback.undeclared
+        ? "前回の実装の実行は、完了の申告（下の「完了の申告」）が無いか、決まった形どおりに読めないまま終わりました。sacty は提出していません（PR は、作っていません・更新していません）。"
+        : "前回の実装の実行は、範囲を実装し終える前に終わり、未完了と申告しました。sacty は提出していません（PR は、作っていません・更新していません）。",
+      "作業領域には、前回までの変更が残っています。差分を読んで、どこまで実装されているかを確かめてから続けてください。",
+      ...(feedback.remaining.length > 0
+        ? ["前回の申告にあった、残っていること：", ...feedback.remaining.map((r) => `- ${r}`)]
+        : []),
+      "- 上の一覧だけでなく、範囲（この指示が求める、実装すること・観点・指摘への対応のすべて）を実装し終えてから、実行を終える",
+      "- 実装し終えているなら、変えずに、完了と申告する。この実行でも終えられない理由があるなら、その理由を実装の説明に書いて、未完了と申告する",
+      ...(feedback.undeclared
+        ? [
+            `- 申告は、下の「完了の申告」の形どおりに、言語の名前を ${COMPLETION_FENCE} にしたコードブロックで、出力の最後に1つだけ書く`,
+          ]
+        : []),
+    ];
+  }
+  if (feedback.kind === "unchanged") {
+    // AI のレビューの指摘が残る PR を、前のやり直しが何も変えなかった（PBI-347）
+    return [
+      "",
+      "--- 前回の実行：PR の内容を何も変えませんでした ---",
+      `前回のやり直しの実行は、AI のレビューが指摘を残した PR #${feedback.number} の内容を、何も変えずに終わりました。同じ内容は再レビューされないので、sacty は提出せず、人が再開しました。`,
+      "- 下の指摘に対応する変更を、作業領域に加える。対応しないと判断した指摘は、その理由を指摘への対応に書く",
+      "- すべての指摘に対応しないと判断したなら、何も変えずに、その理由を実装の説明と指摘への対応に書く（人が PR を確かめて判断する）",
     ];
   }
   if (feedback.kind === "tests") {
@@ -2197,6 +2233,8 @@ function implementSelfReviewLines(
         ? selfReviewLines("user-doc", `${verb}（文書）`, undefined, fixCauses)
         : selfReviewLines("code", `${verb}（コードとテスト）`, undefined, fixCauses)),
     ...implementVerificationRecordLines(runsTests(task), !pullRequestReview),
+    // 実装し終えたかを申告させる（未完了の実行を提出にしない。PBI-347）
+    ...implementCompletionLines(),
   ];
 }
 
@@ -3258,6 +3296,8 @@ export type Extracted = {
   selfReview?: SelfReview;
   /** 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）。無い・読めなければ undefined。 */
   verificationRecord?: VerificationRecord;
+  /** 実装の工程の、完了の申告（PBI-347）。読ませていない・無い・読めなければ undefined。 */
+  completion?: ImplementationCompletion;
   /**
    * 出典の分類の答え（見出し sacty-provenance の値。最後のもの）。中身はまだ確かめていない（checkProvenance で読む）。
    * 無い・JSON として読めなければ undefined。
@@ -3389,6 +3429,11 @@ export function extractBlocks(
      * コードのとき、字下げを消すと、コードを普通の文と見分けられなくなるため（PBI-264）。ほかの工程は従来どおり前後の空白を除く。
      */
     keepIndent?: boolean;
+    /**
+     * 完了の申告（言語の名前が sacty-completion のコードブロック）を読み、本文から取り除くか（PBI-347）。実装の工程だけ true に
+     * する。ほかの工程の成果物（要求要件・設計など）に同じ名前のコードブロックが書かれていても、申告として扱わず、本文のまま残す。
+     */
+    completion?: boolean;
   } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
@@ -3399,7 +3444,11 @@ export function extractBlocks(
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
   const declared = options.testCommand ? extractTestCommandFences(output) : { output };
-  const body = declared.output;
+  // 完了の申告（PBI-347）も、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く
+  const completed = options.completion
+    ? extractCompletion(declared.output)
+    : { output: declared.output };
+  const body = completed.output;
   const used: JsonCandidate[] = [];
   // 提出の前のセルフレビューの報告（PBI-120）。JSON として読めるものと、読めないが見出しでわかるもの（PR #130 レビュー指摘）
   const reports: { start: number; end: number; value: unknown }[] = headingSpans(
@@ -3508,6 +3557,9 @@ export function extractBlocks(
     testMap: testMap ?? [],
     ...(selfReview ? { selfReview } : {}),
     ...(verification.record ? { verificationRecord: verification.record } : {}),
+    ...("completion" in completed && completed.completion
+      ? { completion: completed.completion }
+      : {}),
     ...(lastClassified?.value !== undefined ? { provenance: lastClassified.value } : {}),
     ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),
@@ -3526,18 +3578,18 @@ export function extractTestCommandFences(output: string): {
   testCommand?: string;
   invalid?: true;
 } {
-  const lines = output.split("\n");
-  const kept: string[] = [];
-  let fence: { char: string; size: number; ours: boolean; body: string[] } | undefined;
+  const taken = takeFences(output, TEST_COMMAND_FENCE);
   let testCommand: string | undefined;
   let invalid = false;
-  const read = (body: string[]) => {
+  for (const fence of taken.fences) {
     let value: unknown;
     try {
-      value = JSON.parse(body.join("\n"));
+      // 閉じていない申告のフェンスは、どこまでが申告か決められないので、正しくない申告とする
+      if (!fence.closed) throw new Error("unclosed fence");
+      value = JSON.parse(fence.body);
     } catch {
       invalid = true;
-      return;
+      continue;
     }
     const raw =
       value && typeof value === "object" && !Array.isArray(value)
@@ -3546,36 +3598,9 @@ export function extractTestCommandFences(output: string): {
     const command = typeof raw === "string" ? raw.trim() : "";
     if (command && command.length <= 1000) testCommand = command;
     else invalid = true;
-  };
-  for (const line of lines) {
-    if (!fence) {
-      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-      const marker = open?.[1];
-      const info = (open?.[2] ?? "").trim();
-      // バッククォートのフェンスの情報文字列には、バッククォートを書けない（CommonMark）
-      if (marker && !(marker.startsWith("`") && info.includes("`"))) {
-        const ours = info.split(/\s+/)[0] === TEST_COMMAND_FENCE;
-        fence = { char: marker.charAt(0), size: marker.length, ours, body: [] };
-        if (!ours) kept.push(line);
-        continue;
-      }
-      kept.push(line);
-      continue;
-    }
-    const close = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
-    if (close && close.charAt(0) === fence.char && close.length >= fence.size) {
-      if (fence.ours) read(fence.body);
-      else kept.push(line);
-      fence = undefined;
-      continue;
-    }
-    if (fence.ours) fence.body.push(line);
-    else kept.push(line);
   }
-  // 閉じていない申告のフェンスは、どこまでが申告か決められないので、正しくない申告とする
-  if (fence?.ours) invalid = true;
   return {
-    output: kept.join("\n"),
+    output: taken.output,
     ...(testCommand && !invalid ? { testCommand } : {}),
     ...(invalid ? { invalid: true as const } : {}),
   };

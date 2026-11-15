@@ -8,7 +8,7 @@
 
 ## 背景
 
-[実装の最終レビュー（テストの実行）と PR の CI の待ちをやめた](20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)
+[実装の最終レビュー（テストの実行）と PR の CI の待ちをやめた](20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)
 とき、最終レビューの仕組み（テストの実行・CI の待ち・失敗した CI の再実行・不安定なテストの台帳への記録）は、デーモンの依存
 `finalReview` を有効にしたときだけ動く形で残した（デーモンの起動では無効）。工程の流れを確かめる既存のテストの多くが最終レビューを
 通る形で書かれていて、一度に書き換えると変更が大きくなるためで、[ゴールガーディアンの撤去](20261112-0820-remove-goal-guardian.md)
