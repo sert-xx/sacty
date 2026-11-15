@@ -145,7 +145,7 @@ In a repository with few docs, agents cannot get enough context and may not prod
 Like a normal task, the Orchestrator chooses how to proceed, and the task goes through approvals and PRs. The agent does the following. It does not change the code.
 
 - It takes stock of the existing docs (README, docs, AGENTS.md, and so on) and writes the result as a table in the PR description. Existing docs are not deleted, moved, or rewritten; the new docs link to them. If the location and format are already decided, it follows them (otherwise the docs go in `docs/` with `docs/README.md` as the index).
-- From the code, it writes what cannot be learned by reading a little code (purpose and terms, overall structure, main flows, data, external connections, and conventions). It also adds figures for the overall structure and the main flows. The figures use the format of the figures in the repository's existing docs (or, if there are none, a format written as text inside Markdown). How to build and test is set up by the "Sacty setup" template.
+- From the code, it writes what cannot be learned by reading a little code (purpose and terms, overall structure, main flows, data, external connections, and conventions). It also adds figures for the overall structure and the main flows. The figures use the format of the figures in the repository's existing docs (or, when there are none or the same format cannot be produced, a format written as text inside Markdown). How to build and test is set up by the "Sacty setup" template.
 - It creates two skills. The originals go under `.agents/skills/`, and the ones under `.claude/skills/` for Claude Code are relative symbolic links to the originals.
   - `docs-lookup`: a skill to find and read the docs before working.
   - `docs-update`: a skill to update the docs in the same PR when the code changes.
@@ -404,6 +404,7 @@ The draft of the Document step is reviewed with the document viewpoints that fit
 
 The draft does not become a file in the repository, so the repository's verification (formatter, lint, and so on) is not run.
 In a request to write external documents directly, the agent self-reviews the draft before writing, and writes externally after it finishes fixing.
+In a request to fix existing external documents, the review is limited to what was fixed and what that fix requires (so that parts you did not ask about are not rewritten before approval).
 
 When the target repository has skills or instruction files that apply to this change, the self-review adds the following.
 Neither reduces the default viewpoints.
@@ -1249,13 +1250,14 @@ A draft for a reader who does not know the background is structured as follows.
 
 - The first few lines say what the document is, who it is for, and what is needed first (environment, permissions, and so on).
 - Sections follow the order in which the reader proceeds (prepare, start, use, when in trouble), and each section starts with its main point.
-- What the reader does is written as numbered steps, with the result after each step.
+- What the reader does in order is written as numbered steps, with the results and how to check that it worked.
 - Terms the reader does not know are explained where they first appear.
 
-Figures and images are used only where they convey something faster than prose.
+Image files cannot be attached to a draft. Only the text of the draft reaches the approval screen and the export.
 
-- Relationships such as structure, flow, and state transitions become figures. The format of a figure is one the export destination can render.
-- A screen image is not included when the agent cannot capture the screen. The agent writes the screen's name and what to look at in words, and lists the screens it wants captured as unconfirmed items.
+- Relationships such as structure, flow, and state transitions become figures only when the agent knows that the export destination renders text-based figures (such as Mermaid). Otherwise they are written as a list or a table (sacty's screens do not draw text-based figures).
+- Where a screen image is needed, the agent writes the screen's name and what to look at in words, and collects those places under the unconfirmed items at the end of the draft.
+- In a request to write external documents directly, the agent may use images when they can be placed at the destination.
 
 If you want a part written in more detail or made shorter, write that part in a comment and request changes. The agent changes only the part you pointed out.
 

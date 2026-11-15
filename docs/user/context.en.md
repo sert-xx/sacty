@@ -443,7 +443,7 @@ The default writing skill `writing` sets how agents write PR descriptions, revie
 - It changes how it writes by whether the reader knows the background of the matter.
   - Text for approving, deciding, or replying (PR descriptions, comments, requirements, designs, reports, and so on) is kept to what the reader needs, because the reader knows the background.
   - Documents read later (user guides, procedures, READMEs, and so on) start with what the document is and who it is for, order the sections the way the reader proceeds, and give what the reader does as numbered steps, because the reader does not know the background.
-- It uses figures only where they convey a relationship such as structure or flow. It limits screenshots to places where what to look at is hard to convey in words, and when it cannot capture a screen, it writes the screen's name and what to look at in words.
+- It uses figures only where they convey a relationship such as structure or flow, and writes a list or a table where a figure cannot be shown. It limits screenshots to places where what to look at is hard to convey in words, and when it cannot capture a screen, it writes the screen's name and what to look at in words.
 - In Japanese text, it adds a line break after each "。" and writes the line breaks in the way the destination (GitHub comments, Markdown files, Confluence, and so on) expects.
 - It puts structured information in lists and tables.
 - It does not translate English word for word, keeps loanwords established in katakana (such as エンドポイント for endpoint) as they are, and uses phrasing common in Japanese.
