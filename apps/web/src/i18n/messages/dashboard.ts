@@ -52,6 +52,8 @@ const ja = {
       verification: "検証の不合格",
       manual: "人が止めた",
       child_cancelled: "子タスクの中止",
+      incomplete: "実装が終わらない",
+      unchanged: "やり直しで変更なし",
     } satisfies Record<PauseReason, string>,
   },
   /** 費用と予算（PBI-118）。 */
@@ -185,6 +187,8 @@ const en: DashboardMessages = {
       verification: "Verification failed",
       manual: "Paused by a person",
       child_cancelled: "Subtask cancelled",
+      incomplete: "Implementation unfinished",
+      unchanged: "Rework changed nothing",
     },
   },
   costs: {

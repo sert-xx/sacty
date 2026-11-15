@@ -709,6 +709,17 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "NoChangesFound":
       return e.NoChangesFound;
+    case "ImplementationIncomplete":
+      // 完了と申告したが、テストの対応していないテスト観点があった（PBI-348）
+      if (event.payload.unmapped?.length) {
+        return e.ImplementationUnmapped(event.payload.unmapped.slice(0, 5).join("・"));
+      }
+      return e.ImplementationIncomplete(
+        event.payload.undeclared === true,
+        event.payload.remaining.slice(0, 3).join(" / "),
+      );
+    case "ImplementationUnchanged":
+      return e.ImplementationUnchanged(event.payload.number, event.payload.commit.slice(0, 7));
     case "PullRequestCiFinished":
       return e.PullRequestCiFinished(
         event.payload.result,
@@ -847,9 +858,16 @@ function describeEventBody(event: ActivityEvent, l: LabelMessages): string {
     case "AgentRunContinued": {
       const p = event.payload;
       const role = runRoleLabel(l, p.role);
+      const reason = l.agentRunContinuedReason[p.reason ?? "no_session"];
+      // 未完了で終わった実装の実行の続き（PBI-350）。cause の無い記録は、時間切れの続き
+      if (p.cause === "incomplete") {
+        return p.mode === "resumed"
+          ? e.IncompleteRunResumed(role, p.sessionId ?? "")
+          : e.IncompleteRunRestarted(role, reason);
+      }
       return p.mode === "resumed"
         ? e.AgentRunResumed(role, p.sessionId ?? "")
-        : e.AgentRunRestarted(role, l.agentRunContinuedReason[p.reason ?? "no_session"]);
+        : e.AgentRunRestarted(role, reason);
     }
     case "OrchestratorSessionUsed": {
       const p = event.payload;

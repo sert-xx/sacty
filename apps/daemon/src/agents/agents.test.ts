@@ -2144,6 +2144,54 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     expect(inv.command).not.toContain("--resume");
   });
 
+  it("スタブの実装の工程の出力に、完了の申告が無ければ足す。申告を書いた出力・ほかの工程の出力は変えない（PBI-347）", async () => {
+    const stubbed = (stub: Record<string, unknown>): AgentConfig => ({
+      ...base,
+      id: "s",
+      runtime: "stub",
+      auth: { mode: "stub" },
+      stub: {
+        output: "# 実装（スタブ）",
+        outputs: {},
+        audit: "",
+        audit_dive: "",
+        guardian: "",
+        final_review: "",
+        rework: "",
+        orchestrator: "",
+        gather: "",
+        chat: "",
+        export: "",
+        deployment: "",
+        usage: { input: 1, cache_read: 0, cache_write: 0, output: 1 },
+        ...stub,
+      } as AgentConfig["stub"],
+    });
+    const resultOf = async (agent: AgentConfig, role: string) => {
+      const inv = await buildInvocation(agent, "prompt", secrets, () => {}, role);
+      return (JSON.parse(inv.env.SACTY_STUB_RESULT ?? "{}") as { result: string }).result;
+    };
+    const complete = '```sacty-completion\n{"status":"complete"}\n```';
+    expect(await resultOf(stubbed({}), "implement")).toBe(`# 実装（スタブ）\n\n${complete}`);
+    // 工程ごとの出力でも同じ
+    expect(await resultOf(stubbed({ outputs: { implement: "# 実装 A" } }), "implement")).toBe(
+      `# 実装 A\n\n${complete}`,
+    );
+    // 申告を書いた出力（未完了の再現）は、そのまま
+    const incomplete =
+      '途中まで\n\n```sacty-completion\n{"status":"incomplete","remaining":["docs"]}\n```';
+    expect(await resultOf(stubbed({ outputs: { implement: incomplete } }), "implement")).toBe(
+      incomplete,
+    );
+    // 申告のコードブロックが無ければ、説明の文に名前が出てきても足す
+    const mentioned = "# 実装\n\nsacty-completion の読み方を変えた。";
+    expect(await resultOf(stubbed({ outputs: { implement: mentioned } }), "implement")).toBe(
+      `${mentioned}\n\n${complete}`,
+    );
+    // 実装でない工程の出力には足さない
+    expect(await resultOf(stubbed({}), "requirements")).toBe("# 実装（スタブ）");
+  });
+
   describe("偽の docker コマンド", () => {
     let dir: string;
     const originalPath = process.env.PATH;

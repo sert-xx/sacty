@@ -1,4 +1,4 @@
-import type { DashboardSummary, Task, TaskStatus } from "@sacty/core";
+import { type DashboardSummary, PauseReason, type Task, type TaskStatus } from "@sacty/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 
@@ -321,6 +321,20 @@ describe("ダッシュボードの止まっているタスクの理由（PBI-118
       ["manual", ["f"]],
     ]);
     expect(PAUSE_REASON_ORDER.slice(0, 2)).toEqual(["usage_limit", "auth"]);
+    // どの一時停止の理由も、並びに入っている（入っていない理由で止まったタスクは、欄から消える）
+    expect([...PAUSE_REASON_ORDER].sort()).toEqual([...PauseReason.options].sort());
+    // 実装が終わらない・やり直しで変更が無い（PBI-347）で止まったタスクも出す
+    expect(
+      pausedGroups(projects, [
+        task({ id: "u", status: "paused", pausedReason: "unchanged" }),
+        task({ id: "i", status: "paused", pausedReason: "incomplete" }),
+        task({ id: "m", status: "paused", pausedReason: "manual" }),
+      ]).map((g) => [g.reason, g.tasks.map((t) => t.id)]),
+    ).toEqual([
+      ["incomplete", ["i"]],
+      ["unchanged", ["u"]],
+      ["manual", ["m"]],
+    ]);
     expect(pausedGroups(projects, [])).toEqual([]);
     expect(
       pausedGroups(projects, [task({ id: "t1", status: "paused", pausedReason: "error" })]),

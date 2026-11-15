@@ -14,6 +14,20 @@
   修正の子タスクを足す2回目からは1件から作れる。
 - エージェントの答え（見出し `sacty-split`）は、数・`key` の重複・無い依存・自分への依存・依存の循環を確かめる。
   読めなければ一時停止する。
+- テスト観点の割り当て：最初の分割で、親の承認済みの設計にテスト観点があるときは、分割の指示にテスト観点を添えて、子タスクに割り当てさせる（`splitViewpointLines`。[ADR](../adr/20261115-1345-assign-test-viewpoints-to-child-tasks.md)）。
+  - 答えの子タスクごとの `viewpoints` に、その子タスクが実装とテストで満たす観点の ID を書かせる。1つの観点を、複数の子タスクに割り当ててよい。
+  - 子タスクだけでは確かめきれない観点は、答えの `integrationViewpoints` に、観点の ID と理由を書かせる（統合レビューで確かめる）。一部を確かめられる子タスクがあれば、同じ観点を、その子タスクにも割り当ててよい。
+    統合レビューは、もともとすべてのテスト観点を判定する。その指示に、統合レビューで確かめるとした観点と理由を添え、観点ごとに、子タスクにも割り当てているか（割り当てていなければ、子タスクの実装とレビューでは確かめていない）を伝える（`splitIntegrationViewpointLines`）。
+  - すべての観点が、どれかの子タスクの `viewpoints` か `integrationViewpoints` に入っていることを確かめる。
+    次のどれかがあれば、子タスクを作らずに一時停止する（再開すると、分割をやり直す）。
+    - どこにも入っていない観点（`split.viewpointUnassigned`）
+    - 設計に無い ID（`split.unknownViewpoint`・`split.unknownIntegrationViewpoint`）
+    - 理由の無い `integrationViewpoints` の観点（`split.integrationReasonMissing`）
+  - 割り当てた観点は、`TaskSplit` の子タスクごとの `viewpoints`（観点の中身ごと）と `integrationViewpoints` に記録する。
+    子タスクは、`TaskCreated` の `viewpoints` で受け取る（`Task.inheritedViewpoints`）。
+  - 子タスクの実装は、割り当てられた観点のすべてにテストを対応させる（[実装がテストを対応させる観点](tasks-and-steps.md#実装がテストを対応させる観点)）。
+  - 親の設計にテスト観点が無い分割と、修正の子タスクの追加（2回目から）は、観点を割り当てない。
+    割り当ての無い子タスクは、タスクの目的（`REQ`）を観点にする。
 - 子タスクは `start: split`・`parent`（親の ID と `dependsOn`）で作る。
   本文には、親の承認済みの要求要件・設計と、親がタスクの開始時に集めた情報（あれば）を添える。
   子タスクは情報を集め直さない（[タスクと工程](tasks-and-steps.md#情報収集)）。
@@ -21,6 +35,8 @@
   依存先の PR を PR のレビューの子タスクが指摘なしにして、ドラフトを外したら、片付くのを待たずに、その PR に重ねて始めることもある（下の「依存先の PR に重ねる子タスク」）。
 - 子タスクのリポジトリは、子タスクの `repo`、無ければ親のリポジトリ。
   リポジトリの無い親の分割では、子タスクごとの `repo` をプロジェクトの対象と照らし、無い・対象に無いときは分割を使わずに止める。
+  複数を指定した親では、リポジトリを選んだ後も、子ごとに指定一覧から選ばせる。
+  指定外の答えは名前を示して止め、再開すると分割をやり直す。
   エージェントには、1つの子タスクは1つのリポジトリで完結させ、またがる変更は分けて `dependsOn` でつなぐよう指示する。
 - 分割は1段だけ（子タスクは `split` を選べない）。
 - 親は `waiting_children` で子タスクを待つ。
@@ -28,7 +44,7 @@
 - 子タスクが中止されたら、親を一時停止（`child_cancelled`）にする。
   親を再開すると、その中止を認めたことになる。
 
-コード: `apps/daemon/src/service.ts`（`settleSplit`・`childSettled`・`splitWithRepositories`）、`apps/daemon/src/prompts.ts`（`extractSplitPlan`・`buildChildBody`・`splitRepositoryLines`）、`packages/core/src/events.ts`（`MIN_SPLIT_CHILDREN`・`MAX_SPLIT_CHILDREN`）
+コード: `apps/daemon/src/service.ts`（`settleSplit`・`childSettled`・`splitWithRepositories`）、`apps/daemon/src/prompts.ts`（`extractSplitPlan`・`buildChildBody`・`splitRepositoryLines`・`splitViewpointLines`）、`packages/core/src/events.ts`（`MIN_SPLIT_CHILDREN`・`MAX_SPLIT_CHILDREN`・`TaskSplit`・`TaskCreated`）、`packages/core/src/projection.ts`（`inheritedViewpoints`）
 
 ## 依存先の PR に重ねる子タスク
 
@@ -83,7 +99,7 @@
 
 - AI は、統合レビューの工程のエージェント（`step_agents.integrate`、無ければ `default_agent`）。タスクごとには変えられない（`agent.stepNotChangeable`）。作業履歴の actor は `agent`。
 - ベースブランチの最新を取得して使い捨ての写しで渡す。
-  リポジトリの無い親では、子タスクのリポジトリとベースブランチごとに写しを並べる。
+  リポジトリの無い親と複数を指定した親では、リポジトリを選んだ後も、子タスクのリポジトリとベースブランチごとに写しを並べる。
   指示には、承認済みの要求要件・設計、テスト観点（無ければ `REQ`）、子タスクの要約（題・状態・PR の URL・回・リポジトリ）、人の過去の指摘と AI のレビューの過去の指摘（節を分けて）を入れる。
   出力の形式の例の観点の ID は、判定する観点の ID（`integrationViewpointIds`）にする（PBI-137）。
 - 指示は、受け入れ条件の確かめを名前・項目・ファイル・リンクが存在することの確認に縮めさせず（`ACCEPTANCE_DEPTH_REVIEW_LINE`）、共有の仕組み（キュー・ロック・キャッシュ・フラグなど）を新しく入れた・変えたときは、異常や失敗の後に後続の処理が続くかを確かめさせ（`sharedMechanismLines`。人が確かめることの欄が無いので、確かめられなかったことは判定の説明に書かせる）、出力の文をタスクの言語で書かせる（`OUTPUT_LANGUAGE_LINE`。PBI-301）。

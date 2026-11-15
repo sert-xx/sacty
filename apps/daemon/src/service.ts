@@ -27,6 +27,8 @@ import {
   type CiCheck,
   type CiFailure,
   type CleanupTarget,
+  COMPLETION_REMAINING_ITEM_MAX,
+  COMPLETION_REMAINING_MAX,
   type ContinuedPullRequest,
   CreateTaskInput,
   CreateTemplateTaskInput,
@@ -68,6 +70,7 @@ import {
   humanAsks,
   type IntakeKind,
   implementationMerged,
+  implementViewpoints,
   investigationIsGoal,
   isAuditTarget,
   isCompleted,
@@ -79,6 +82,7 @@ import {
   MAX_BASE_CONFLICTS,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
+  MAX_INCOMPLETE_CONTINUATIONS,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
   MEMORY_BODY_MAX,
@@ -89,6 +93,7 @@ import {
   mergeProjectDefinitions,
   message,
   nextAuditDive,
+  nextIncompleteRuns,
   OperationSettings,
   openProposal,
   type PauseReason,
@@ -153,6 +158,7 @@ import {
   targetImageOf,
   taskPlan,
   exportProject as toProjectExport,
+  unmappedViewpoints,
   unreflectedImplementRemarks,
   type VerificationRecord,
   verificationImageOf,
@@ -392,6 +398,7 @@ import {
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
+  type SplitPlan,
   STEP_NAME,
   type SubtaskSummary,
   selectablePlans,
@@ -455,8 +462,10 @@ import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 import {
+  type ContinueCause,
   type ContinuePlan,
-  planTimeoutResume,
+  incompleteResumeLines,
+  planContinuation,
   timeoutMinutes,
   timeoutResumeLines,
 } from "./timeout-resume.js";
@@ -877,6 +886,11 @@ type Executed = {
   estimated: boolean;
   /** 使った分の全体を読めなかった（costUsd は読めた分の下限で、無ければ 0。時間切れなど。PBI-281）。 */
   costUnknown?: true;
+  /**
+   * 未完了で終わった実装の実行のセッションを続けようとして、AI が再開を受け付けなかった失敗（PBI-350）。この失敗では
+   * タスクを止めず、次の実行で、新しいセッションで最初から実行し直す。
+   */
+  incompleteResumeRejected?: true;
 };
 
 /** エージェントの1回の実行（TaskService.execute）に渡すもの。 */
@@ -3664,9 +3678,25 @@ export class TaskService {
       : [];
     // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
     const contextSource = this.deps.projects.get(task.projectId)?.context;
+    const listedCandidates =
+      isRepoless(task) || task.repos ? await this.taskRepositoryCandidates(task) : undefined;
+    if (listedCandidates && "missing" in listedCandidates) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("repo.noLongerTarget", { repo: listedCandidates.missing }),
+          agentId: "unknown",
+          costUsd: 0,
+          estimated: false,
+        },
+      };
+    }
     const repoless = isRepoless(task)
       ? {
-          repositories: (await this.projectRepositories(task.projectId))?.repositories ?? [],
+          repositories:
+            listedCandidates && "repositories" in listedCandidates
+              ? listedCandidates.repositories
+              : [],
           ...(contextSource
             ? {
                 context: `${contextSource.repo}${contextSource.path ? `の ${contextSource.path}` : ""}${contextSource.ref ? `（${contextSource.ref}）` : ""}`,
@@ -3689,7 +3719,13 @@ export class TaskService {
         choice.steps.some((step) => REPO_STEPS.includes(step)) ||
         choice.plan === "security-check"
       ) {
-        return this.repositoryFromPlan(choice, chosenRepo, repoReason, repoless.repositories);
+        return this.repositoryFromPlan(
+          choice,
+          chosenRepo,
+          repoReason,
+          repoless.repositories,
+          Boolean(task.repos),
+        );
       }
       // リポジトリの無いまま進めるので、リポジトリのコードに関わる決めごとは使わない
       const {
@@ -3745,6 +3781,7 @@ export class TaskService {
     repo: string | undefined,
     reason: string | undefined,
     candidates: readonly string[],
+    specified = false,
   ):
     | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
     | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
@@ -3764,7 +3801,7 @@ export class TaskService {
       return { repository: { repo: found, reason: reason || choice.reason || "", ...cost } };
     }
     const detail = repo
-      ? message("repo.notCandidate", { repo })
+      ? message(specified ? "repo.notSpecified" : "repo.notCandidate", { repo })
       : reason
         ? reason
         : message("repo.notChosen");
@@ -3792,9 +3829,14 @@ export class TaskService {
     if (!awaitingRepository(task) || task.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
     }
-    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
-    const chosen = candidates.find((c) => sameGitHubUrl(c, repo));
-    if (!chosen) throw new InvalidOperationError(message("repo.notCandidate", { repo }));
+    const candidates = await this.taskRepositoryCandidates(task);
+    if ("missing" in candidates)
+      throw new InvalidOperationError(message("repo.noLongerTarget", { repo: candidates.missing }));
+    const chosen = candidates.repositories.find((c) => sameGitHubUrl(c, repo));
+    if (!chosen)
+      throw new InvalidOperationError(
+        message(task.repos ? "repo.notSpecified" : "repo.notCandidate", { repo }),
+      );
     const latest = this.mustGet(id);
     if (!awaitingRepository(latest) || latest.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
@@ -5386,6 +5428,21 @@ export class TaskService {
     };
   }
 
+  private async taskRepositoryCandidates(
+    task: Task,
+  ): Promise<
+    { repositories: string[]; errors: { org: string; message: DaemonText }[] } | { missing: string }
+  > {
+    const listed = await this.projectRepositories(task.projectId);
+    const repositories = listed?.repositories ?? [];
+    if (!task.repos) return { repositories, errors: listed?.errors ?? [] };
+    for (const repo of task.repos) {
+      if (!repositories.some((candidate) => sameGitHubUrl(candidate, repo)))
+        return { missing: repo };
+    }
+    return { repositories: task.repos, errors: [] };
+  }
+
   /**
    * プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。
    * 変えるときに `base`（読み込んだときの `updatedAt`）を渡すと、その後にほかの保存で変わっていれば、上書きせずに、互いの変更を
@@ -6027,8 +6084,25 @@ export class TaskService {
     // 一覧を読めなかった Org（認証切れ・権限不足など）は、調べられなかった情報源として指示に伝える（候補に入らないので）
     const listed =
       !task.repository && !triage && isRepoless(task)
-        ? await this.projectRepositories(task.projectId)
+        ? await this.taskRepositoryCandidates(task)
         : undefined;
+    if (listed && "missing" in listed) {
+      const failure = {
+        reason: "error" as const,
+        message: message("repo.noLongerTarget", { repo: listed.missing }),
+        agentId: "unknown",
+        costUsd: 0,
+        estimated: false,
+      };
+      this.append(task, [
+        { actor: "gatherer", event: { type: "OrchestratorFailed", payload: failure } },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: failure.message } },
+        },
+      ]);
+      return true;
+    }
     const candidates = listed?.repositories ?? [];
     const unreadable = triaging?.unreadable ?? listed?.errors ?? [];
     // 共用の compose（PBI-70）は、サービスを分けるときの候補にする（PBI-152。使うかはオーケストレーターが決める）
@@ -6812,10 +6886,34 @@ export class TaskService {
     if (project.targets.length === 0) {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
+    if (input.repo !== undefined && input.repos !== undefined) {
+      throw new InvalidOperationError(message("task.repositoriesConflict"));
+    }
+    const repositories: string[] = [];
+    for (const name of input.repos ?? []) {
+      let normalized: string;
+      try {
+        normalized = this.projectRepository(project, name);
+      } catch {
+        throw new InvalidOperationError(message("task.repositoriesUnknown", { repo: name }));
+      }
+      if (!repositories.some((repo) => repoKey(repo) === repoKey(normalized))) {
+        repositories.push(normalized);
+      }
+    }
+    if (repositories.length > 10) {
+      throw new InvalidOperationError(message("task.repositoriesLimit"));
+    }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
-    const repo = wanted ? this.projectRepository(project, wanted) : undefined;
+    const repo = input.repos
+      ? repositories.length === 1
+        ? repositories[0]
+        : undefined
+      : wanted
+        ? this.projectRepository(project, wanted)
+        : undefined;
     // 人が指定した進め方は、タスクの形で選べるものだけ（レビューは、対象リポジトリの PR のリンクがあるときだけ）
     const plan = input.plan;
     if (
@@ -6847,6 +6945,7 @@ export class TaskService {
         start: "sacty",
         // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
         ...(repo ? { repo } : { noRepo: true as const }),
+        ...(repositories.length > 1 ? { repos: repositories } : {}),
         budgetCapUsd,
         ...(plan ? { plan } : {}),
         ...stepSettings,
@@ -8380,6 +8479,10 @@ export class TaskService {
       // 最終レビュー（テストの実行）も CI の待ちもせずに、PR の作成へ進める（PR のレビューの子タスクがレビューする。PBI-331）。
       // ベースブランチは取り込み直さないが、実装の間に人が PR のブランチに足したコミットは取り込む（PBI-334）。実装の前の
       // 取り込みで競合した目印が残っていれば、PR を作らずに実装をやり直す
+      // 実装し終えたと申告されていなければ、PR を作らずに（更新せずに）実装をやり直す（PBI-347）。競合の確認より先に確かめる：
+      // 先に競合で戻ると、未完了の記録が残らず、残っていることが次の指示に渡らない。競合は、完了と申告した実行で確かめる
+      // （競合したファイルは、解消するまで、実装の指示に載り続ける）
+      if (!(await this.implementationCompleted(initial))) return;
       if (!(await this.headSyncedBeforePublish(initial))) return;
       if (!(await this.conflictsResolved(this.mustGet(taskId)))) return;
       const securityScope = await this.checkSecurityScope(initial);
@@ -8744,6 +8847,7 @@ export class TaskService {
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
     // 対象リポジトリの無いタスク（PBI-73）は、空の作業領域で実行する。コードが要る工程は選ばせないが、選ばれていたら止める
     const repoless = isRepoless(this.mustGet(task.id));
+    const splitRepositories = repoless || Boolean(task.repos);
     const ready: Awaited<ReturnType<TaskService["prepareRepository"]>> = repoless
       ? REPO_STEPS.includes(step)
         ? { ok: false, message: message("repo.stepNeedsRepository", { step }) }
@@ -8821,10 +8925,33 @@ export class TaskService {
       if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
 
       // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-      splitCandidates =
-        step === "split" && repoless
-          ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
-          : undefined;
+      if (task.repos && (step === "requirements" || step === "design" || step === "split")) {
+        const candidates = await this.taskRepositoryCandidates(task);
+        if ("missing" in candidates) {
+          this.append(task, [
+            {
+              actor: "sacty",
+              event: {
+                type: "AgentRunFailed",
+                payload: {
+                  runId,
+                  step,
+                  agentId: agent.id,
+                  reason: "error",
+                  message: message("repo.noLongerTarget", { repo: candidates.missing }),
+                },
+              },
+            },
+            { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+          ]);
+          context?.dispose();
+          return;
+        }
+        if (step === "split") splitCandidates = candidates.repositories;
+      } else if (step === "split" && splitRepositories) {
+        const candidates = await this.taskRepositoryCandidates(task);
+        splitCandidates = "repositories" in candidates ? candidates.repositories : [];
+      }
     } catch (error) {
       context?.dispose();
       throw error;
@@ -9023,7 +9150,9 @@ export class TaskService {
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
-            ...(step === "split" && repoless ? { repositories: splitCandidates ?? [] } : {}),
+            ...(step === "split" && splitRepositories
+              ? { repositories: splitCandidates ?? [] }
+              : {}),
           }),
           // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
           ...platformPromptLines(runPlatforms.platforms),
@@ -9063,24 +9192,33 @@ export class TaskService {
 
     if (outcome.kind === "failed") {
       const manual = await this.manualPauseInfo(task.id);
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "AgentRunFailed",
-            payload: {
-              runId,
-              step,
-              agentId: agent.id,
-              reason: outcome.reason,
-              message: outcome.message,
-              usage: outcome.usage,
-              costUsd,
-              estimated,
-              ...unknownCost(executed),
-            },
+      const failed: ActivityItem = {
+        actor: "sacty",
+        event: {
+          type: "AgentRunFailed",
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            reason: outcome.reason,
+            message: outcome.message,
+            usage: outcome.usage,
+            costUsd,
+            estimated,
+            ...unknownCost(executed),
           },
         },
+      };
+      // 未完了の続きで、AI がセッションの再開を受け付けなかった（何も使わずに失敗した）ときは、タスクを止めず、エージェントも
+      // 変えない（PBI-350）。失敗を記録して実行待ちに戻すので、次の実行は、新しいセッションで、指示の全文から実行し直す
+      // （失敗の記録が後にあるので、続きにはしない）。人間が止めた・中止したときは、今までどおり止める
+      if (executed.incompleteResumeRejected && !this.stopRequested(task.id)) {
+        this.append(task, [failed]);
+        this.warnIfNeeded(this.mustGet(task.id));
+        return;
+      }
+      this.append(task, [
+        failed,
         // 失敗したら、止めずに代わりのエージェントでやり直す
         this.pauseOrFallBack(
           task.id,
@@ -9108,12 +9246,19 @@ export class TaskService {
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
       // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
-      const extractedPlan = extractSplitPlan(outcome.output, latest.split ? 1 : undefined);
+      // 最初の分割では、親の設計のテスト観点を子タスクに割り当てさせ、割り当てを確かめる（PBI-348）。修正の子タスクの
+      // 追加（2回目から）は、観点を割り当てない
+      const designViewpoints = latest.split ? [] : (latest.approved.design?.testViewpoints ?? []);
+      const extractedPlan = extractSplitPlan(
+        outcome.output,
+        latest.split ? 1 : undefined,
+        designViewpoints.map((v) => v.id),
+      );
       // 対象リポジトリの無いタスクは、子タスクごとのリポジトリがプロジェクトの対象にあるかを確かめる（PBI-73）。
       // 無い・対象に無いなら使わない（再開すると分割をやり直して、選び直す）
       const plan =
-        extractedPlan.ok && repoless
-          ? splitWithRepositories(extractedPlan, splitCandidates ?? [])
+        extractedPlan.ok && splitRepositories
+          ? splitWithRepositories(extractedPlan, splitCandidates ?? [], Boolean(task.repos))
           : extractedPlan;
       const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
       // 人間の差し戻しの指摘（統合レビューの承認待ちから。PBI-31）への対応
@@ -9157,9 +9302,20 @@ export class TaskService {
                 title: c.title,
                 body: buildChildBody(latest, c, titles),
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
-                ...(repoless && c.repo ? { repo: c.repo } : {}),
-                ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
+                ...(splitRepositories && c.repo ? { repo: c.repo } : {}),
+                ...(splitRepositories && c.repo && c.repoReason
+                  ? { repoReason: c.repoReason }
+                  : {}),
+                // 割り当てたテスト観点は、中身ごと記録する（子タスクが、親の設計を読み直さずに持てるように。PBI-348）
+                ...(c.viewpoints?.length
+                  ? {
+                      viewpoints: designViewpoints.filter((v) => c.viewpoints?.includes(v.id)),
+                    }
+                  : {}),
               })),
+              ...(plan.integrationViewpoints
+                ? { integrationViewpoints: plan.integrationViewpoints }
+                : {}),
             },
           },
         },
@@ -9175,6 +9331,8 @@ export class TaskService {
       {
         testCommand: step === "implement" && Boolean(latest.noTestsReason),
         keepIndent: step === "implement",
+        // 完了の申告を読むのは、実装の工程だけ（PBI-347）
+        completion: step === "implement",
       },
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
@@ -9260,6 +9418,8 @@ export class TaskService {
             ...(step === "implement" && extracted.verificationRecord
               ? { verificationRecord: extracted.verificationRecord }
               : {}),
+            // 実装の完了の申告（PBI-347）。申告が無い・読めなければ null（提出の前に、未完了として扱う）
+            ...(step === "implement" ? { completion: extracted.completion ?? null } : {}),
             // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）。
             // PR のレビューに任せて省いた実行（PBI-346）は、させていないので記録しない
             ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step) && !pullRequestReview
@@ -10600,6 +10760,29 @@ export class TaskService {
           { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
         ]);
       }
+      // やり直しの実装が何も変えず、出すコミットが、AI のレビューの指摘が残る PR の先頭のままなら、提出にせずに止める（同じ
+      // 先頭は再レビューされず、ドラフトのまま進まなくなるため。PBI-347）。再開すると、実装をやり直す
+      const reviewer = this.reviewLeftFindingsOn(task, commit);
+      if (reviewer && task.pullRequest?.number && task.pullRequest.repo) {
+        const { number, repo: reviewedRepo } = task.pullRequest;
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ImplementationUnchanged",
+              payload: { repo: reviewedRepo, number, commit, reviewTaskId: reviewer.id },
+            },
+          },
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: "unchanged", message: message("implement.unchanged", { number }) },
+            },
+          },
+        ]);
+        return "stopped";
+      }
       // PR は常に作る（PR を作るかの設定は無い。PBI-25）
       const prRepo = repo.pullRequest.repo;
       const token = await this.githubToken(task, prRepo, usedSecrets);
@@ -11201,6 +11384,120 @@ export class TaskService {
   }
 
   /**
+   * 実装の実行が、範囲を実装し終えたと申告したか（PBI-347）。未完了と申告した・申告が無い（読めない）なら、
+   * ImplementationIncomplete を記録して実装をやり直させ（続けて終わらなければ一時停止する）、false。申告させる前の記録
+   * （完了の実行に申告の項目が無い）は、今までどおり true。
+   */
+  private async implementationCompleted(task: Task): Promise<boolean> {
+    const completion = task.implementCompletion;
+    // 完了と申告していても、観点とテストの対応に欠けているテスト観点があれば、提出に進めない（PBI-348）。申告させる前の
+    // 記録（申告の項目が無い）は、対応も確かめずに、今までどおり進める
+    const unmapped =
+      completion?.status === "complete" ? unmappedViewpoints(task).map((v) => v.id) : [];
+    if (completion === undefined || (completion?.status === "complete" && unmapped.length === 0)) {
+      return true;
+    }
+    const fingerprint = await this.workspaceFingerprint(task);
+    const latest = this.mustGet(task.id);
+    const titles = new Map(implementViewpoints(task).map((v) => [v.id, v.title]));
+    const remaining =
+      completion?.status === "incomplete"
+        ? completion.remaining
+        : unmapped.map((id) =>
+            cut(`${id} ${titles.get(id) ?? ""}`.trim(), COMPLETION_REMAINING_ITEM_MAX),
+          );
+    const undeclared = completion === null;
+    // 続きの実行が上限の回数に達しても未完了か（未完了の実行の数は、最初の実行と続きの実行の合計）、続けても作業領域が何も
+    // 変わらなければ（同じエージェントで続けても進まない）、実装を止めて人間に判断してもらう（PBI-350）。未完了の記録と一時停止は、同じ追記で記録する（間でデーモンが止まると、
+    // 止めるはずの実装を、再起動の後にもう一度実行してしまうため）
+    const runs = nextIncompleteRuns(latest.incompleteRuns, fingerprint);
+    const stop = runs.runs > MAX_INCOMPLETE_CONTINUATIONS || runs.stalled === true;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ImplementationIncomplete",
+          payload: {
+            remaining: remaining.slice(0, COMPLETION_REMAINING_MAX),
+            ...(undeclared ? { undeclared: true as const } : {}),
+            ...(unmapped.length > 0 ? { unmapped } : {}),
+            ...(fingerprint ? { fingerprint } : {}),
+          },
+        },
+      },
+      ...(stop
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "TaskPaused" as const,
+                payload: {
+                  reason: "incomplete" as const,
+                  message:
+                    unmapped.length > 0
+                      ? message("implement.unmappedViewpoints", {
+                          count: runs.runs,
+                          stalled: runs.stalled === true,
+                          ids: unmapped.slice(0, 10).join(", "),
+                          total: unmapped.length,
+                        })
+                      : message("implement.incomplete", {
+                          count: runs.runs,
+                          stalled: runs.stalled === true,
+                          declared: !undeclared,
+                          remaining: remaining.slice(0, 5).join(" / "),
+                          total: remaining.length,
+                        }),
+                },
+              },
+            },
+          ]
+        : []),
+    ]);
+    return false;
+  }
+
+  /**
+   * 作業領域の内容の目印（git のツリーの ID。PBI-347）。やり直しの前後で同じなら、やり直しが何も変えなかったことが分かる。
+   * 差分の文字列は大きいと切り詰められる（後ろだけが変わっても同じに見える）ので、使わない。作業領域が無い・読めなければ
+   * undefined（目印なしで数える）。
+   */
+  private async workspaceFingerprint(task: Task): Promise<string | undefined> {
+    if (!task.repository || !existsSync(this.repoDir(task))) return undefined;
+    try {
+      return await this.deps.repos.treeId(
+        this.repoDir(task),
+        this.trustedGitDir(task),
+        workBaseCommit(task.repository, task.baseMerge),
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * これから PR に出すコミット（やり直しの実装が何も変えなかった先頭）に、AI のレビューの指摘が残っているか（PBI-347）。
+   * 残っていれば、その指摘を残した PR のレビューの子タスク。同じ先頭は再レビューされない（reconcileReviewTasks）ので、そのまま
+   * 提出すると、指摘なしにも作り直しにもならず、ドラフトのまま進まなくなる。先頭は、sacty が前に出したコミットのことも、人が
+   * PR に足したコミット（取り込んだ先頭）のこともある。次のときは undefined（今までどおり提出する）。
+   * - PR のレビューの子タスクの指摘なしを待たない PR（引き継いだ人の PR など）
+   * - 子タスクが、その先頭を指摘なしにしている・まだレビューしていない・レビューの途中
+   */
+  private reviewLeftFindingsOn(task: Task, commit: string): Task | undefined {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo || !this.awaitsReview(task)) return undefined;
+    const { number, repo } = pr;
+    const record = (task.reviewTasks ?? []).findLast(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    const child = record && this.tasks.get(record.taskId);
+    if (!child || !isCompleted(child) || child.reviewTarget?.headCommit !== commit) {
+      return undefined;
+    }
+    return reviewCleared(child) ? undefined : child;
+  }
+
+  /**
    * セキュリティ対応の差分を、前段の調査が宣言した修正の範囲と照らす（PBI-331。PR の本文と PR のレビューの子タスクに
    * 渡す）。セキュリティ対応でなければ undefined。差分を取れなければ止める（"stopped"）。
    */
@@ -11389,6 +11686,9 @@ export class TaskService {
       if (latest?.status !== "paused" || latest.pullRequest?.number !== pr.number) return;
       // 依存先の PR に重ねた、指摘なしを待つ PR は、人がドラフトを外してマージしてよい
       if (latest.pullRequest.awaitingReview && latest.stack) return;
+      // やり直しが PR を何も変えずに止まったタスク（PBI-347）は、人が PR を確かめて判断する。人がドラフトを外したら戻さない
+      // （AI のレビューの指摘を採らないと判断して、マージで実装を承認できるように）
+      if (latest.pausedReason === "unchanged") return;
       await this.redraftFor(task.id, pr.repo, pr.number, token, "タスクが一時停止している");
     } catch (error) {
       console.warn(
@@ -12055,7 +12355,7 @@ export class TaskService {
       estimated: false,
     });
     // 対象リポジトリの無い親（PBI-73）は、子タスクのリポジトリごとにベースブランチの最新を用意する
-    const repoless = isRepoless(task);
+    const repoless = isRepoless(task) || Boolean(task.repos);
     let repositories:
       | { repo: string; baseBranch: string; commit: string; dir: string }[]
       | undefined;
@@ -12548,6 +12848,8 @@ export class TaskService {
               ...((child.repo ?? repo) ? { repo: child.repo ?? repo } : {}),
               ...(child.repo && child.repoReason ? { repoReason: child.repoReason } : {}),
               parent: { taskId: parent.id, dependsOn: child.dependsOn },
+              // 親の分割で割り当てられたテスト観点（PBI-348）
+              ...(child.viewpoints?.length ? { viewpoints: child.viewpoints } : {}),
             },
           },
         },
@@ -12615,20 +12917,21 @@ export class TaskService {
    * 工程などの1回の実行（オーケストレーターと質問への答え以外）。直前の実行が時間切れで止まったものなら、同じエージェントの
    * セッションの続きから進め、続けられなければ最初から実行し直す。どちらも作業履歴に残す。時間切れで止めた実行も、次に続けられる
    * ように作業履歴に残す（PBI-280）。
+   * 直前の実装の実行が未完了で終わったものでも、同じようにセッションの続きから進める（PBI-350）。
    */
   private async executeResumable(run: ExecuteRun): Promise<Executed & { runId: string }> {
     const runtime = run.agent.runtime;
     let plan: ContinuePlan | undefined;
     if (runtime === "claude-code" || runtime === "codex") {
       try {
-        plan = await planTimeoutResume(
+        plan = await planContinuation(
           this.deps.activity.forTask(run.taskId),
           { role: run.role, agentId: run.agent.id, runtime, runId: run.runId },
           (runId) => this.deps.sessionLogs?.agentFilesDir(run.taskId, runId),
         );
       } catch (error) {
         console.warn(
-          `[daemon] 時間切れで止めた実行のセッションを確かめられませんでした（${run.taskId}）：`,
+          `[daemon] 続ける前の実行のセッションを確かめられませんでした（${run.taskId}）：`,
           error instanceof Error ? error.message : error,
         );
       }
@@ -12649,6 +12952,8 @@ export class TaskService {
               mode,
               ...(mode === "resumed" && resuming ? { sessionId: resuming.sessionId } : {}),
               ...(reason ? { reason } : {}),
+              // 時間切れの続きは、今までどおり何も足さない（無ければ時間切れの続き）
+              ...(plan.cause.kind === "incomplete" ? { cause: "incomplete" as const } : {}),
             },
           })
         : undefined;
@@ -12660,20 +12965,20 @@ export class TaskService {
       resuming
         ? {
             ...run,
-            prompt: [...timeoutResumeLines(run.role, resuming.stopped.minutes), run.prompt].join(
-              "\n",
-            ),
+            prompt: this.continuedPrompt(run, resuming.cause),
             session: { resume: resuming.sessionId, filesDir: resuming.filesDir },
           }
         : run,
     );
     // AI が再開を受け付けなかった・別のセッションで始めた（再開したつもりが、続きではない）なら、続けたとは言えないので、
     // 理由を記録し直す（新しい記録が優先される）
+    const rejected =
+      resuming !== undefined &&
+      (runtime === "claude-code" || runtime === "codex") &&
+      resumeRejected(runtime, executed.outcome);
     if (
       resuming &&
-      (runtime === "claude-code" || runtime === "codex") &&
-      (resumeRejected(runtime, executed.outcome) ||
-        (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
+      (rejected || (archived?.sessionId !== undefined && archived.sessionId !== resuming.sessionId))
     ) {
       continued("restarted", "resume_failed");
     }
@@ -12691,7 +12996,28 @@ export class TaskService {
         },
       });
     }
-    return { ...executed, runId: run.runId };
+    return {
+      ...executed,
+      runId: run.runId,
+      // 未完了の続きは、人が再開した直後とは限らない（自動で続く）。再開を拒まれた失敗でタスクを止めると、人が再開するまで
+      // 進まないので、呼び出し側が、止めずに次の実行で最初から実行し直せるように知らせる。時間切れの続きは、今までどおり
+      ...(rejected && resuming?.cause.kind === "incomplete"
+        ? { incompleteResumeRejected: true as const }
+        : {}),
+    };
+  }
+
+  /**
+   * セッションの続きから進める実行の指示。時間切れの続きも、未完了の続き（PBI-350）も、続きであることの知らせの後に、指示の
+   * 全文を続ける（実行ごとに変わる部分を落とさないため。再開できずに別のセッションで始まっても、指示の全文が渡る）。
+   */
+  private continuedPrompt(run: ExecuteRun, cause: ContinueCause): string {
+    if (cause.kind === "timeout") {
+      return [...timeoutResumeLines(run.role, cause.minutes), run.prompt].join("\n");
+    }
+    const feedback = this.tasks.get(run.taskId)?.verifyFeedback;
+    const incomplete = feedback?.kind === "incomplete" ? feedback : undefined;
+    return [...incompleteResumeLines(incomplete), run.prompt].join("\n");
   }
 
   /** 時間切れの実行と、その続きの記録を作業履歴に残す。記録できなくても、実行の結果は変えない（中止したタスクなど）。 */
@@ -15864,9 +16190,10 @@ const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review"];
  * 無いなら理由を返す（使わない）。登録した名前にそろえる。
  */
 function splitWithRepositories(
-  plan: { ok: true; reason: string; children: SplitChild[] },
+  plan: SplitPlan,
   candidates: readonly string[],
-): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
+  specified = false,
+): SplitPlan | { ok: false; message: DaemonText } {
   const children: SplitChild[] = [];
   for (const child of plan.children) {
     if (!child.repo)
@@ -15875,7 +16202,10 @@ function splitWithRepositories(
     if (!found) {
       return {
         ok: false,
-        message: message("split.repoNotCandidate", { key: child.key, repo: child.repo }),
+        message: message(specified ? "split.repoNotSpecified" : "split.repoNotCandidate", {
+          key: child.key,
+          repo: child.repo,
+        }),
       };
     }
     children.push({ ...child, repo: found });

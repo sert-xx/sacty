@@ -54,6 +54,9 @@ const PARAMS = {
   "task.notFound": null,
   "task.repositoryMissing": z.object({ project: z.string() }),
   "task.repositoryUnknown": z.object({ project: z.string() }),
+  "task.repositoriesUnknown": z.object({ repo: z.string() }),
+  "task.repositoriesLimit": null,
+  "task.repositoriesConflict": null,
   "task.templateRepositoryRequired": null,
   "task.reviewPlanNeedsPullRequest": null,
   "task.flakyTestNotFound": null,
@@ -281,6 +284,9 @@ const PARAMS = {
   "repo.chooseFailed": z.object({ detail: TextParam }),
   "repo.notChosen": null,
   "repo.notCandidate": z.object({ repo: z.string() }),
+  "repo.notSpecified": z.object({ repo: z.string() }),
+  "repo.noLongerTarget": z.object({ repo: z.string() }),
+  "repo.snapshotFailed": z.object({ repo: z.string(), detail: TextParam }),
   "repo.chosenByPerson": null,
   "repo.notChoosable": null,
   "repo.stepNeedsRepository": z.object({ step: z.string() }),
@@ -371,11 +377,16 @@ const PARAMS = {
   "split.duplicateKey": z.object({ key: z.string() }),
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
+  "split.unknownViewpoint": z.object({ key: z.string(), id: z.string() }),
+  "split.unknownIntegrationViewpoint": z.object({ id: z.string() }),
+  "split.viewpointUnassigned": z.object({ ids: z.string(), total: Count }),
+  "split.integrationReasonMissing": z.object({ id: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
   // 依存先の PR に重ねた子タスク（PBI-317）
   "stack.dependencyCancelled": z.object({ title: z.string() }),
   "split.repoMissing": z.object({ key: z.string() }),
   "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
+  "split.repoNotSpecified": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
   "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "integrate.unreadable": null,
@@ -466,6 +477,23 @@ const PARAMS = {
     files: TextParam,
     total: z.number().int().nonnegative(),
   }),
+  "implement.incomplete": z.object({
+    count: Count,
+    /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
+    stalled: z.boolean(),
+    /** 未完了と申告した（false は、完了の申告が無い・読めなかった）。 */
+    declared: z.boolean(),
+    remaining: TextParam,
+    total: z.number().int().nonnegative(),
+  }),
+  "implement.unmappedViewpoints": z.object({
+    count: Count,
+    /** やり直しても、作業領域の内容が変わらなかった（回数を待たずに止めた）。 */
+    stalled: z.boolean(),
+    ids: TextParam,
+    total: Count,
+  }),
+  "implement.unchanged": z.object({ number: z.number() }),
   "merge.failed": z.object({ detail: TextParam }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
@@ -828,6 +856,10 @@ const ja: MessageDictionary = {
     `プロジェクト「${project}」に対象（Org・リポジトリ）がありません。プロジェクトの設定で対象を追加してから、タスクを作ってください。`,
   "task.repositoryUnknown": ({ project }) =>
     `対象リポジトリを、プロジェクト「${project}」の対象（Org・リポジトリ）の中から選んでください。`,
+  "task.repositoriesUnknown": ({ repo }) =>
+    `リポジトリ（${repo}）はプロジェクトの対象にありません。`,
+  "task.repositoriesLimit": "リポジトリは10件まで指定できます。",
+  "task.repositoriesConflict": "repo と repos のどちらか一方を指定してください。",
   "task.templateRepositoryRequired":
     "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
   "task.flakyTestNotFound":
@@ -1067,6 +1099,11 @@ const ja: MessageDictionary = {
     `オーケストレーターが、作業するリポジトリを決められませんでした：${text(detail)} プロジェクトの対象からリポジトリを選んで再開してください。`,
   "repo.notChosen": "コードの変更が要る進め方を選びましたが、作業するリポジトリを書いていません。",
   "repo.notCandidate": ({ repo }) => `リポジトリ（${repo}）は、プロジェクトの対象にありません。`,
+  "repo.notSpecified": ({ repo }) => `リポジトリ（${repo}）は、このタスクに指定されていません。`,
+  "repo.noLongerTarget": ({ repo }) =>
+    `指定したリポジトリ（${repo}）を現在のプロジェクトの対象で確認できません。`,
+  "repo.snapshotFailed": ({ repo, detail }, text) =>
+    `リポジトリ（${repo}）の写しを用意できませんでした：${text(detail)}`,
   "repo.chosenByPerson": "人がリポジトリを選びました。",
   "repo.notChoosable":
     "リポジトリを選べるのは、リポジトリを指定せずに作り、まだ工程が決まっていない、止まっているタスクだけです。",
@@ -1232,10 +1269,20 @@ const ja: MessageDictionary = {
     `分割案の子タスク「${key}」が、存在しない子タスク「${dependsOn}」に依存しています。再開すると、分割をやり直します。`,
   "split.cycle": ({ keys }) =>
     `分割案の子タスクの依存が循環しています（${keys}）。再開すると、分割をやり直します。`,
+  "split.unknownViewpoint": ({ key, id }) =>
+    `分割案の子タスク「${key}」に、承認済みの設計に無いテスト観点（${id}）が割り当てられています。再開すると、分割をやり直します。`,
+  "split.unknownIntegrationViewpoint": ({ id }) =>
+    `分割案の、統合レビューで確かめる観点に、承認済みの設計に無いテスト観点（${id}）があります。再開すると、分割をやり直します。`,
+  "split.viewpointUnassigned": ({ ids, total }) =>
+    `分割案で、どの子タスクにも割り当てられず、統合レビューで確かめる観点にも挙げられていないテスト観点があります（${ids}${total > 10 ? ` ほか、全${total}件` : ""}）。再開すると、分割をやり直します。`,
+  "split.integrationReasonMissing": ({ id }) =>
+    `分割案で、統合レビューで確かめるテスト観点（${id}）に、子タスクだけでは確かめきれない理由がありません。再開すると、分割をやり直します。`,
   "split.repoMissing": ({ key }) =>
     `リポジトリの無いタスクを分けるときは、子タスクごとにプロジェクトの対象からリポジトリを付けてください（子タスク「${key}」にありません）。再開すると、分割をやり直します。`,
   "split.repoNotCandidate": ({ key, repo }) =>
     `子タスク「${key}」に付けたリポジトリ（${repo}）は、プロジェクトの対象にありません。再開すると、分割をやり直します（対象のリポジトリから選び直します）。`,
+  "split.repoNotSpecified": ({ key, repo }) =>
+    `子タスク「${key}」のリポジトリ（${repo}）は、このタスクに指定されていません。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
   "stack.dependencyCancelled": ({ title }) =>
@@ -1381,6 +1428,20 @@ const ja: MessageDictionary = {
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。再開すると実装をやり直します。PR を確かめて人が判断するなら、レビューへ進められます。`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `ベースブランチとの競合の目印が、${count}回続けて作業領域に残りました（${text(files)}${total > 5 ? ` ほか、全${total}件` : ""}）。目印を消して提出し直す必要があります。再開すると、目印の残るファイルを渡して実装をやり直します（レビューへは進められません）。`,
+  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+    `${
+      declared
+        ? "実装の工程が、範囲を実装し終える前に終わりました"
+        : "実装の工程が、実装し終えたかの申告が無いか読めないまま終わりました"
+    }（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。${
+      total > 0
+        ? `残っていること：${text(remaining)}${total > 5 ? ` ほか、全${total}件` : ""}。`
+        : ""
+    }再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
+    `実装の工程が、テストの対応していないテスト観点を残して終わりました（${stalled ? "やり直しても、作業領域が何も変わりませんでした" : `${count}回続けて`}）。提出していません（PR は作っていません・更新していません）。テストが対応していない観点：${text(ids)}${total > 10 ? ` ほか、全${total}件` : ""}。再開すると、実装をやり直します。工程のエージェントを変えて再開することもできます。`,
+  "implement.unchanged": ({ number }) =>
+    `AI のレビューが指摘を残した PR #${number} を、やり直しの実装が何も変えませんでした。同じ内容は再レビューされないので、提出していません。再開すると、指摘を渡して実装をやり直します（工程のエージェントを変えて再開することもできます）。指摘が当たらないと考えるなら、PR を確かめて人が判断してください。`,
   "merge.failed": ({ detail }, text) =>
     `ベースブランチの最新を作業領域に取り込めませんでした：${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
@@ -1607,6 +1668,9 @@ const en: MessageDictionary = {
     `The project "${project}" has no targets (organizations or repositories). Add one in the project settings, then create the task.`,
   "task.repositoryUnknown": ({ project }) =>
     `Choose the target repository from the targets (organizations or repositories) of the project "${project}".`,
+  "task.repositoriesUnknown": ({ repo }) => `The repository (${repo}) is not a project target.`,
+  "task.repositoriesLimit": "Specify at most 10 repositories.",
+  "task.repositoriesConflict": "Specify either repo or repos.",
   "task.templateRepositoryRequired":
     "Choose a target repository for this template (it cannot be created without one).",
   "task.flakyTestNotFound":
@@ -1847,6 +1911,11 @@ const en: MessageDictionary = {
   "repo.notChosen":
     "The Orchestrator chose a plan that changes code but did not name the repository to work in.",
   "repo.notCandidate": ({ repo }) => `The repository (${repo}) is not a target of the project.`,
+  "repo.notSpecified": ({ repo }) => `The repository (${repo}) was not specified for this task.`,
+  "repo.noLongerTarget": ({ repo }) =>
+    `The specified repository (${repo}) cannot be verified among the current project targets.`,
+  "repo.snapshotFailed": ({ repo, detail }, text) =>
+    `Could not prepare a copy of the repository (${repo}): ${text(detail)}`,
   "repo.chosenByPerson": "A person chose the repository.",
   "repo.notChoosable":
     "A repository can be chosen only for a paused task created without a repository whose steps are not decided yet.",
@@ -2017,10 +2086,20 @@ const en: MessageDictionary = {
     `Subtask "${key}" depends on "${dependsOn}", which is not in the split. Resume to split again.`,
   "split.cycle": ({ keys }) =>
     `The subtask dependencies form a cycle (${keys}). Resume to split again.`,
+  "split.unknownViewpoint": ({ key, id }) =>
+    `Subtask "${key}" is assigned a test viewpoint (${id}) that is not in the approved design. Resume to split again.`,
+  "split.unknownIntegrationViewpoint": ({ id }) =>
+    `The split lists a test viewpoint (${id}) for the integration review that is not in the approved design. Resume to split again.`,
+  "split.viewpointUnassigned": ({ ids, total }) =>
+    `The split leaves test viewpoints that are assigned to no subtask and not listed for the integration review (${ids}${total > 10 ? ` and more, ${total} in total` : ""}). Resume to split again.`,
+  "split.integrationReasonMissing": ({ id }) =>
+    `The split lists the test viewpoint ${id} for the integration review without a reason why subtasks alone cannot fully check it. Resume to split again.`,
   "split.repoMissing": ({ key }) =>
     `When splitting a task without a repository, give each subtask a repository from the project's targets (subtask "${key}" has none). Resume to redo the split.`,
   "split.repoNotCandidate": ({ key, repo }) =>
     `The repository given to subtask "${key}" (${repo}) is not a target of the project. Resume to redo the split (choosing from the target repositories).`,
+  "split.repoNotSpecified": ({ key, repo }) =>
+    `The repository (${repo}) for subtask "${key}" was not specified for this task.`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
   "stack.dependencyCancelled": ({ title }) =>
@@ -2170,6 +2249,20 @@ const en: MessageDictionary = {
     `Verification of the implementation (tests and final review) failed ${count} times in a row. Resuming redoes the implementation. If a person checks the PR and decides, the task can be moved to review.`,
   "verify.mergeConflictsRemain": ({ count, files, total }, text) =>
     `Conflict markers with the base branch stayed in the workspace ${count} times in a row (${text(files)}${total > 5 ? ` and more, ${total} in total` : ""}). The markers must be removed before the implementation can be submitted. Resuming redoes the implementation with the files that still have markers (the task cannot be moved to review).`,
+  "implement.incomplete": ({ count, stalled, declared, remaining, total }, text) =>
+    `${
+      declared
+        ? "The implementation step ended before it finished its scope"
+        : "The implementation step ended with its declaration of whether it finished missing or unreadable"
+    } (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). ${
+      total > 0
+        ? `What remains: ${text(remaining)}${total > 5 ? ` and more, ${total} in total` : ""}. `
+        : ""
+    }Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+  "implement.unmappedViewpoints": ({ count, stalled, ids, total }, text) =>
+    `The implementation step ended with test viewpoints that have no test mapped (${stalled ? "redoing it changed nothing in the workspace" : `${count} times in a row`}). Nothing was submitted (no PR was opened or updated). Viewpoints without a test: ${text(ids)}${total > 10 ? ` and more, ${total} in total` : ""}. Resuming redoes the implementation. You can also change the agent of the step and then resume.`,
+  "implement.unchanged": ({ number }) =>
+    `The rework of the implementation changed nothing in PR #${number}, on which the AI review left findings. The same content is not reviewed again, so nothing was submitted. Resuming redoes the implementation with the findings (you can also change the agent of the step and then resume). If you think the findings do not apply, check the PR and decide.`,
   "merge.failed": ({ detail }, text) =>
     `Could not merge the latest base branch into the workspace: ${text(detail)}`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,

@@ -1234,3 +1234,73 @@ describe("開いている間に対象が無くなったとき（プロジェク�
     refresh.mockClear();
   });
 });
+
+describe("タスクの詳細：タスク分割で割り当てたテスト観点（PBI-348）", () => {
+  const tv = (n: number, title: string) => ({
+    id: `TV-${n}`,
+    title,
+    input: "入力",
+    expected: "期待",
+  });
+  const show = (data: TaskDetailData) => {
+    server = data;
+    render(h(LiveTaskDetail, { id: "t1", initial: data, initialVersion: liveVersion(server) }));
+  };
+
+  it("子タスクの詳細に、割り当てられたテスト観点の内容を出す。割り当てが無ければ出さない", () => {
+    show(
+      detail(
+        task({
+          parent: { taskId: "p0", dependsOn: [] },
+          inheritedViewpoints: [tv(1, "同じキーの再送"), tv(2, "キーなし")],
+        }),
+      ),
+    );
+    expect(container.querySelector("#inherited-viewpoints")).not.toBeNull();
+    expect(text()).toContain("割り当てられたテスト観点");
+    expect(text()).toContain("2 件");
+    expect(text()).toContain("TV-1同じキーの再送");
+    expect(text()).toContain("TV-2キーなし");
+    act(() => root.unmount());
+    root = createRoot(container);
+    show(detail(task({ parent: { taskId: "p0", dependsOn: [] } })));
+    expect(container.querySelector("#inherited-viewpoints")).toBeNull();
+    expect(text()).not.toContain("割り当てられたテスト観点");
+  });
+
+  it("親タスクの詳細の子タスクに、子タスクごとの観点の ID と、統合レビューで確かめる観点と理由を出す", () => {
+    const parent = task({
+      status: "waiting_children",
+      split: {
+        children: [
+          {
+            taskId: "c1",
+            title: "決済の API",
+            body: "",
+            dependsOn: [],
+            round: 1,
+            viewpoints: [tv(1, "同じキーの再送"), tv(2, "キーなし")],
+          },
+          { taskId: "c2", title: "決済の画面", body: "", dependsOn: ["c1"], round: 1 },
+        ],
+        rounds: 1,
+        reason: "API と画面に分ける",
+        at: "2026-11-15T00:00:00.000Z",
+        acceptedCancellations: [],
+        integrationViewpoints: [{ id: "TV-3", reason: "子タスクを組み合わせた後に確かめる" }],
+      },
+    });
+    show({
+      ...detail(parent),
+      children: [
+        task({ id: "c1", title: "決済の API", parent: { taskId: "t1", dependsOn: [] } }),
+        task({ id: "c2", title: "決済の画面", parent: { taskId: "t1", dependsOn: ["c1"] } }),
+      ],
+    });
+    expect(text()).toContain("テスト観点：TV-1・TV-2");
+    // 割り当ての無い子タスクには、観点の行を出さない
+    expect(text().match(/テスト観点：TV-/g)).toHaveLength(1);
+    expect(text()).toContain("統合レビューで確かめるテスト観点");
+    expect(text()).toContain("TV-3：子タスクを組み合わせた後に確かめる");
+  });
+});

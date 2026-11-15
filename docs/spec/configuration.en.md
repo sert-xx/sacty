@@ -110,7 +110,7 @@ The items of `agents` in `config.yaml` (`AgentFile`) are as follows.
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
 | `fallback` | The names of the agents used instead when a run fails (for any reason) (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
 | `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
-| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
+| `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures). If the output of the Implementation step has no completion declaration (`sacty-completion`), a declaration of completion is added |
 
 - For a name that is in the defaults, only the items written are laid over the default (items not written keep the default). A name not in the defaults adds that agent.
 - Writing `auth`, `provider`, or `via_gateway` on an agent is an error. Writing `price_per_mtok_usd` on an agent other than `stub` is also an error (`config.agentLegacyKey`). That error says to write them in `auth`, `via_gateway`, and `available_models` of `providers`. The former format is not converted automatically.

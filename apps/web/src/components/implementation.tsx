@@ -4,6 +4,7 @@ import {
   type DaemonText,
   displayTestNames,
   humanVisibleEnvironmentFailures,
+  implementViewpoints,
   isCompleted,
   reviewFlakyFailures,
   SCOPE_VIEWPOINT,
@@ -92,8 +93,9 @@ export function Implementation({ task }: { task: Task }) {
   const messages = useMessages();
   const m = messages.parts.implementation;
   const step = task.steps.find((s) => s.key === "implement");
-  // 設計の無いタスク（direct・skip-design）は、実装が観点 REQ にテストか差分での確認を対応させていれば、REQ を出す
-  const designViewpoints = task.approved.design?.testViewpoints ?? [];
+  // 設計の無いタスク（direct・skip-design）は、実装が観点 REQ にテストか差分での確認を対応させていれば、REQ を出す。
+  // 親タスクの分割でテスト観点を割り当てられた子タスクは、その観点を出す（PBI-348）
+  const designViewpoints = implementViewpoints(task);
   const viewpoints =
     designViewpoints.length === 0 && task.testMap.some((entry) => entry.viewpointId === "REQ")
       ? [{ id: "REQ", title: m.requirementsViewpoint }]

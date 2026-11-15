@@ -4,7 +4,7 @@
 - タスク: PBI-331
 - PR: #348
 - ブランチ: feat/issue-331-drop-final-review-and-ci-wait
-- 関係する ADR: [実装の最終レビュー（テストの実行）と PR の CI の待ちをやめ、PR のレビューの子タスクの指摘なしでドラフトを外す](../adr/20261112-0714-review-child-task-replaces-final-review-and-ci-wait.md)
+- 関係する ADR: [実装の最終レビュー（テストの実行）と PR の CI の待ちをやめ、PR のレビューの子タスクの指摘なしでドラフトを外す](../adr/20261112-0714-superseded-review-child-task-replaces-final-review-and-ci-wait.md)
 
 ## 目的
 

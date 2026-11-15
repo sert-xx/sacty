@@ -494,6 +494,12 @@ export type Verdict = z.infer<typeof Verdict>;
 export const MAX_VERIFY_ATTEMPTS = 3;
 
 /**
+ * 未完了で終わった実装の実行を、続けて実行する回数の上限（PBI-350）。未完了の実行の次は、同じセッションの続きから進める。
+ * 作業領域が進んでいる間は続け、続きの実行がこの回数に達しても未完了なら、一時停止する（人が再開すると数え直す）。
+ */
+export const MAX_INCOMPLETE_CONTINUATIONS = 10;
+
+/**
  * 最終レビューの出力から判定を読み取れなかった（FinalReviewFailed の verdictUnreadable）回数が、続けてこの回数になったら止める。
  * 読み取れなかった回は不合格にせず、最終レビューを出し直させる（実装には戻さない）。
  */
@@ -528,6 +534,10 @@ export const PauseReason = z.enum([
   "manual",
   // 子タスクが中止された（親は人間の判断を待つ。PBI-27）
   "child_cancelled",
+  // 実装の工程が、範囲を実装し終える前に終わることが続いた（PBI-347）
+  "incomplete",
+  // AI のレビューの指摘が残る PR を、やり直しの実装が何も変えなかった（PBI-347）
+  "unchanged",
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
@@ -743,6 +753,12 @@ const TaskCreated = z.object({
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
     /**
+     * 親タスクの分割で、この子タスクに割り当てられたテスト観点（親の設計のテスト観点。PBI-348）。子タスクが自分の設計を
+     * 持たないとき（要求要件・設計を省いた実装など）、実装はこのすべてにテストを対応させる。割り当ての無い子タスク・
+     * 子タスクでないタスク・それより前の記録には無い。
+     */
+    viewpoints: z.array(TestViewpoint).min(1).optional(),
+    /**
      * sacty が作った PR をレビューする子タスクの、親（PR を作ったタスク）と、その PR を作った工程（PBI-330）。source は、その PR
      * （review: sacty）。分割の子タスク（parent）とは別で、分割の待ち・統合レビューの対象にしない。
      */
@@ -830,11 +846,24 @@ const TaskSplit = z.object({
            */
           repo: z.string().min(1).optional(),
           repoReason: z.string().max(2000).optional(),
+          /**
+           * 親の設計のテスト観点のうち、この子タスクに割り当てたもの（PBI-348）。子タスクの実装は、このすべてにテストを
+           * 対応させる。親に設計のテスト観点が無い分割・修正の子タスクの追加・それより前の記録には無い。
+           */
+          viewpoints: z.array(TestViewpoint).min(1).optional(),
         }),
       )
       .min(1),
     /** 分割のエージェントが書いた、分け方の理由。 */
     reason: z.string(),
+    /**
+     * 親の設計のテスト観点のうち、統合レビューで確かめるもの（PBI-348。子タスクにも割り当てていることがある）。観点の ID と、
+     * 子タスクだけでは確かめきれない理由。
+     */
+    integrationViewpoints: z
+      .array(z.object({ id: z.string().min(1), reason: z.string().min(1).max(2000) }))
+      .min(1)
+      .optional(),
   }),
 });
 
@@ -1158,6 +1187,24 @@ const AgentRunStarted = z.object({
 /** 文書作成の1回の実行で申告できる、外部に直接書いたページの数の上限。 */
 export const DOCUMENT_PAGES_MAX = 200;
 
+/** 完了の申告で、残っていることに書ける件数と、1件の長さの上限（PBI-347）。 */
+export const COMPLETION_REMAINING_MAX = 20;
+export const COMPLETION_REMAINING_ITEM_MAX = 300;
+
+/**
+ * 実装の工程の、完了の申告（PBI-347）。範囲（依頼・要求要件・設計・指摘）を実装し終えたか。未完了なら、残っていること。
+ */
+export const ImplementationCompletion = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("complete") }),
+  z.object({
+    status: z.literal("incomplete"),
+    remaining: z
+      .array(z.string().min(1).max(COMPLETION_REMAINING_ITEM_MAX))
+      .max(COMPLETION_REMAINING_MAX),
+  }),
+]);
+export type ImplementationCompletion = z.infer<typeof ImplementationCompletion>;
+
 const AgentRunCompleted = z.object({
   type: z.literal("AgentRunCompleted"),
   payload: z.object({
@@ -1202,6 +1249,11 @@ const AgentRunCompleted = z.object({
      * 読めなかった。セルフレビューをさせない工程と、それより前の記録には無い。
      */
     selfReview: SelfReview.nullable().optional(),
+    /**
+     * 実装の工程の、完了の申告（PBI-347）。null は、申告させたが無い・読めなかった。申告させる前の記録と、実装でない工程
+     * には無い（無い記録は、今までどおり提出に進める）。
+     */
+    completion: ImplementationCompletion.nullable().optional(),
     /**
      * 実装の工程が、最後の変更の後に実行した検証の記録（PBI-305）。最終レビュー・PR のレビューが、同じ内容の結果として
      * 使い回す。申告が無い・読めない・実装でない工程と、それより前の記録には無い。
@@ -1857,6 +1909,7 @@ export type AgentRunContinuedReason = z.infer<typeof AgentRunContinuedReason>;
 /**
  * 時間切れで止めた実行（AgentRunTimedOut）の次に、同じ役割を実行した（PBI-280）。同じエージェントのセッションの続きから進めた
  * （resumed）か、続けられずに最初から実行し直した（restarted。理由を残す）。stoppedRunId は、止めた実行。
+ * 未完了で終わった実装の実行（ImplementationIncomplete）の次の実装の実行も、同じ形で残す（cause が incomplete。PBI-350）。
  */
 const AgentRunContinued = z.object({
   type: z.literal("AgentRunContinued"),
@@ -1867,6 +1920,11 @@ const AgentRunContinued = z.object({
     runtime: z.enum(["claude-code", "codex"]),
     mode: z.enum(["resumed", "restarted"]),
     stoppedRunId: z.string().min(1),
+    /**
+     * 何の続きか（PBI-350）。timeout は時間切れで止めた実行の続き、incomplete は未完了で終わった実装の実行の続き
+     * （stoppedRunId は、未完了で終わった実行）。無い記録（それより前の版）は、時間切れの続き。
+     */
+    cause: z.enum(["timeout", "incomplete"]).optional(),
     /** 続けたセッションの ID（mode が resumed のとき）。 */
     sessionId: z.string().optional(),
     /** 最初から実行し直した理由（mode が restarted のとき）。 */
@@ -2419,6 +2477,49 @@ const NoChangesFound = z.object({
 });
 
 /**
+ * 実装の実行が、範囲を実装し終えたと申告しなかった（未完了と申告した・申告が無い。PBI-347）。提出に進まず（PR を作らない・
+ * 更新しない）、残っていることを渡して実装をやり直す。続けて終わらなければ一時停止する。
+ */
+const ImplementationIncomplete = z.object({
+  type: z.literal("ImplementationIncomplete"),
+  payload: z.object({
+    /** 未完了の申告にあった、残っていること。申告が無いときは空。 */
+    remaining: z
+      .array(z.string().min(1).max(COMPLETION_REMAINING_ITEM_MAX))
+      .max(COMPLETION_REMAINING_MAX),
+    /** 完了の申告が無い・読めなかった。 */
+    undeclared: z.literal(true).optional(),
+    /**
+     * 完了と申告したが、観点とテストの対応に欠けていたテスト観点の ID（PBI-348）。観点は、承認済みの設計のテスト観点か、
+     * 親タスクの分割で割り当てられた観点。
+     */
+    unmapped: z.array(z.string().min(1)).min(1).optional(),
+    /**
+     * そのときの作業領域の内容の目印（git のツリーの ID）。前の未完了のときと同じなら、やり直しても何も進まなかったので、
+     * 回数を待たずに止める。作業領域を読めなかったときは無い。
+     */
+    fingerprint: z.string().min(1).max(100).optional(),
+  }),
+});
+
+/**
+ * AI のレビューが指摘を残した実装の PR の先頭を、やり直しの実装が何も変えなかった（出すコミットが、レビューされた先頭と同じ。
+ * PBI-347）。同じ先頭は再レビューされないので、提出にせず（PR を更新しない）、一時停止して人に知らせる。再開すると、実装を
+ * やり直す。
+ */
+const ImplementationUnchanged = z.object({
+  type: z.literal("ImplementationUnchanged"),
+  payload: z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    /** 変わらなかった PR の先頭のコミット（sacty が前に出したコミットか、人が PR に足して sacty が取り込んだ先頭）。 */
+    commit: z.string().min(1),
+    /** その先頭に指摘を残した、PR のレビューの子タスク。 */
+    reviewTaskId: z.string().min(1),
+  }),
+});
+
+/**
  * 引き継いだ既存の PR（StepsChosen の continuedPullRequest）の指摘を、実装の工程の実行の指示に渡した。keys は渡した指摘
  * （PullRequestFeedback の key）。実装に対応させたので、PR の指摘として取り込み直さない（渡さなかった指摘は取り込む）。
  */
@@ -2612,8 +2713,11 @@ const ReworkStoppedByMerge = z.object({
     stoppedRuns: z.array(z.string()),
     /** 作り直しに渡す前に捨てた、PR の指摘（まだ提出に反映していないもの）。 */
     discardedRemarks: z.array(z.object({ id: z.string(), text: z.string() })),
-    /** 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印）の種類。 */
-    discardedFeedback: z.enum(["tests", "review", "merge"]).optional(),
+    /**
+     * 捨てた、やり直しの実装に渡すはずだった検証の結果（テスト・最終レビュー・競合の目印・終わっていない実装・変更の無い
+     * やり直し）の種類。
+     */
+    discardedFeedback: z.enum(["tests", "review", "merge", "incomplete", "unchanged"]).optional(),
     /** 捨てた、一時停止の間に届いて、まだ作り直しに渡していない PR の指摘の件数（PBI-279）。 */
     discardedReview: z.number().int().positive().optional(),
   }),
@@ -3535,6 +3639,8 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewSkipped,
   PullRequestMarkedReady,
   NoChangesFound,
+  ImplementationIncomplete,
+  ImplementationUnchanged,
   ContinuedFeedbackPassed,
   WorkspaceFilesSkipped,
   PullRequestLabeled,
@@ -3618,6 +3724,7 @@ export const CreateTaskInput = z.object({
    * null は、リポジトリを指定しない（対象がリポジトリ1つだけでも）。
    */
   repo: z.string().trim().min(1).nullable().optional(),
+  repos: z.array(z.string().trim().min(1)).min(1).optional(),
   /**
    * 工程の組み合わせ（進め方）。省略すると、オーケストレーターが選ぶ。対象リポジトリの有無などで選べない組み合わせは、
    * デーモンが理由を示して断る。

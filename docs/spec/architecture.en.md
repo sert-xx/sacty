@@ -113,7 +113,7 @@ Each dashboard section contains the following.
   - When there is none: "Nothing needs you right now."
 - Why tasks are paused
   - Paused tasks (`paused`) counted by reason (`pausedReason`; `manual` when missing).
-  - The order is usage limit, authentication, budget cap, error, verification failed, paused by a person, subtask cancelled (`PAUSE_REASON_ORDER`). Reasons with 0 tasks are not shown.
+  - The order is usage limit, authentication, budget cap, error, verification failed, implementation unfinished, rework changed nothing, paused by a person, subtask cancelled (`PAUSE_REASON_ORDER`). Reasons with 0 tasks are not shown.
   - Usage limit and authentication (`FIX_ONCE_REASONS`) are highlighted because one fix usually resumes all of them.
   - Each row is a `details`, and opening it expands that reason's tasks (title linking to the task details, project) inside the section. The same element survives a refetch, so the open state is kept.
   - When there is none: "No tasks are paused."

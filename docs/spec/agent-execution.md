@@ -253,7 +253,7 @@
     - `AgentRunTimedOut` ならその実行。`AgentRunContinued`（続けた記録）なら、すでに続けたので対象なし。
     - それ以外の実行のファイルの記録（`AgentSessionArchived`。質問への答え `chat` は除く）なら、時間切れの後に別の実行があったので対象なし。
     - 工程の実行の開始・失敗（`AgentRunStarted`・`AgentRunFailed`）も別の実行として数える。ただし、時間切れで止めた実行自身のものと、いま実行する実行のものは数えない。続けた実行がデーモンの停止で中断されると、ファイルの記録も続けた記録も残らないので、この開始・失敗で見分ける（進捗を含まない古い会話を続けない）。
-  - 対象の実行と、これから実行する役割が同じなら、続けられるかを決める（`planTimeoutResume`）。役割が違えば何もしない。
+  - 対象の実行と、これから実行する役割が同じなら、続けられるかを決める（`planContinuation`）。役割が違えば何もしない。
     - 続ける：同じエージェント（AI の種類と ID）で、止めた実行の `AgentSessionArchived` にセッション ID と本体のファイルがあり、省いたファイルが無く、写したファイルが記録のハッシュと一致する。
       写したファイル（`runs/<タスク ID>/<止めた実行 ID>/agent/`）を設定の場所に戻して、Claude Code は `--resume <ID>`、Codex は `resume <ID>` で再開する。実行 ID は新しい（工程の記録はその実行 ID）。
       指示の先頭に、時間切れで止めて再開したこと、止める前の作業領域のファイル（実装と再現だけ残る）とコンテナの中のファイル（残らない）の扱いを足す（`timeoutResumeLines`）。
@@ -262,8 +262,21 @@
     再開したつもりが別のセッションで始まった・AI が再開を断ったときは、実行の後に `restarted`（`resume_failed`）を記録し直す（新しい記録が優先される）。この場合は新しい実行 ID でやり直さず、失敗はそのまま返す（次の再開は最初から実行する）。
   - 実装と再現の作業領域（タスクの clone）は、止めても消さない（完了したタスクだけを片付ける）。再開した実行は、止める前の変更が残る同じ作業領域で動く。
     要求要件・設計などは、実行ごとに用意する写しなので、止める前に書いたファイルは残らない。
+- 未完了で終わった実装の実行の次の実装の実行も、同じ仕組みで、同じエージェントのセッションの続きから進める（PBI-350。[終わっていない実装と、変更の無いやり直し](tasks-and-steps.md#終わっていない実装と変更の無いやり直し)）。
+  - 直前の実装の実行が未完了で終わったかは、時間切れと同じ見方で決める（`incompleteRunBefore`）。作業履歴を新しいほうから見て、ほかの実行の記録より先に `ImplementationIncomplete` に出会えば、その前の実装の完了（`AgentRunCompleted`）の実行が対象になる。
+    時間切れで止めた実行が後にあれば、時間切れの続きとして扱う。
+  - 続けられるか・続けない理由の決め方は、時間切れの続きと同じ（`planContinuation`）。記録も同じ `AgentRunContinued` で、`cause` に `incomplete` を残す（`cause` の無い記録は、時間切れの続き）。
+  - 続きの実行の指示は、続きであることの知らせ（`incompleteResumeLines`）の後に、指示の全文を続ける（`continuedPrompt`。時間切れの続きと同じ形。自動の続きでも、人が再開した続きでも同じ）。
+    - 知らせは、セッションの続きであること・提出していないこと・この実行の中で最後まで実装すること・最後のメッセージを出し直すことを伝える。
+    - 指示の全文には、直前の実行の状況（残っていること）と、その後に足されたもの（人の補足・引き継いだ PR に新しく届いた指摘・始める前の取り込みで競合したファイルなど）が入る。
+      知らせだけを渡す形にはしない。実行ごとに変わる部分を落とすと、渡していない指摘を、渡したと記録してしまう。再開したつもりが別のセッションで始まると、範囲を知らない実行が、完了と申告しうる。
+  - 再開したつもりが別のセッションで始まったときは、時間切れの続きと同じく、実行の後に `restarted`（`resume_failed`）を記録し直す。指示の全文を渡してあるので、結果はそのまま使う。
+  - AI が再開を断って失敗したときは、同じく記録し直したうえで、失敗（`AgentRunFailed`）を記録して、実行待ちに戻す。タスクは止めず、代わりのエージェントにも変えない（`incompleteResumeRejected`）。
+    - 次の実行は、失敗の記録が後にあるので続きにせず、新しいセッションで、指示の全文から実行し直す。
+    - 時間切れの続きと扱いが違うのは、未完了の続きが、人の再開を待たずに自動で進むためである（止めると、人が再開するまで進まない）。
+    - 人が止めた・中止した実行は、今までどおり止める。
 
-コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`planTimeoutResume`・`timeoutResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）
+コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/timeout-resume.ts`（`timedOutRunBefore`・`incompleteRunBefore`・`planContinuation`・`timeoutResumeLines`・`incompleteResumeLines`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`・`executeResumable`）
 
 ## イメージ
 

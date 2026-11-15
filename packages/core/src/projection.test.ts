@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
-import type { ActivityEvent, EventInput } from "./events.js";
+import type { ActivityEvent, EventInput, StepKey } from "./events.js";
 import {
   bodyWithResumeNote,
   DERIVE_RECORD_HEADING,
@@ -42,6 +42,7 @@ import {
   heldReview,
   humanAsks,
   implementationMerged,
+  implementViewpoints,
   isCompleted,
   isFinished,
   isRepoless,
@@ -63,6 +64,7 @@ import {
   stepRunning,
   type Task,
   testToolsMissing,
+  unmappedViewpoints,
   unreflectedImplementRemarks,
   verificationImageOf,
   workBaseCommit,
@@ -4401,6 +4403,405 @@ describe("ベースブランチの取り込み", () => {
         ev("t2", { type: "BaseConflictsRemained", payload: { files: ["README.md"] } }),
       ]),
     ).toThrow(/not waiting for verification/);
+  });
+});
+
+describe("終わっていない実装と、変更の無いやり直し（PBI-347）", () => {
+  const prepared = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+  ];
+  /** 実装の実行の開始と完了。completion を渡さなければ、申告の項目の無い（申告させる前の）記録にする。 */
+  const implemented = (
+    id: string,
+    runId: string,
+    completion?: Extract<EventInput, { type: "AgentRunCompleted" }>["payload"]["completion"],
+  ) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId, step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装",
+        ...(completion !== undefined ? { completion } : {}),
+      },
+    }),
+  ];
+  const incomplete = (id: string, remaining: string[], fingerprint?: string, undeclared = false) =>
+    ev(id, {
+      type: "ImplementationIncomplete",
+      payload: {
+        remaining,
+        ...(undeclared ? { undeclared: true as const } : {}),
+        ...(fingerprint ? { fingerprint } : {}),
+      },
+    });
+  const skipped = (id: string) => ev(id, { type: "FinalReviewSkipped", payload: {} });
+  const publishedPr = (id: string, commit: string) =>
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/task-1",
+        commit,
+        url: "https://github.com/acme/app/pull/7",
+        number: 7,
+        repo: "https://github.com/acme/app",
+        draft: true,
+        awaitingReview: true,
+      },
+    });
+  const submitted = (id: string, submission: number) =>
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission } });
+  const unchanged = (id: string, commit: string, number = 7) =>
+    ev(id, {
+      type: "ImplementationUnchanged",
+      payload: { repo: "https://github.com/acme/app", number, commit, reviewTaskId: "r1" },
+    });
+
+  it("実装の実行の完了の申告を、最後の実行のものとして持つ。申告の項目の無い記録は undefined のまま", () => {
+    seq = 0;
+    const legacy = project([...prepared("t1"), ...implemented("t1", "r1")]).get("t1");
+    expect(legacy?.implementCompletion).toBeUndefined();
+    expect(legacy?.verification).toBe("pending");
+    const none = project([...prepared("t2"), ...implemented("t2", "r1", null)]).get("t2");
+    expect(none?.implementCompletion).toBeNull();
+    const done = project([
+      ...prepared("t3"),
+      ...implemented("t3", "r1", { status: "incomplete", remaining: ["docs"] }),
+      incomplete("t3", ["docs"]),
+      ...implemented("t3", "r2", { status: "complete" }),
+    ]).get("t3");
+    expect(done?.implementCompletion).toEqual({ status: "complete" });
+  });
+
+  it("申告の項目の無い（申告させる前の）実装の完了は、今までどおり PR の作成へ進められる（受け入れ条件 6）", () => {
+    seq = 0;
+    const task = project([...prepared("t1"), ...implemented("t1", "r1"), skipped("t1")]).get("t1");
+    expect(task?.status).toBe("queued");
+    expect(task?.publishPending).toBe(true);
+    expect(task?.incompleteRuns).toBeUndefined();
+  });
+
+  it("未完了の記録で、検証に進まず実装をやり直す。続いた回数を数え、提出に進むと消える", () => {
+    seq = 0;
+    const base = [
+      ...prepared("t1"),
+      ...implemented("t1", "r1", { status: "incomplete", remaining: ["API", "docs"] }),
+      incomplete("t1", ["API", "docs"], "f1"),
+    ];
+    const first = project(base).get("t1");
+    expect(first?.status).toBe("queued");
+    expect(first?.verification).toBeUndefined();
+    expect(first?.publishPending).toBeUndefined();
+    expect(first?.verifyFeedback).toEqual({ kind: "incomplete", remaining: ["API", "docs"] });
+    expect(first?.incompleteRuns).toEqual({ runs: 1, fingerprint: "f1" });
+    // 検証の失敗の回数（競合の目印など）とは別に数える
+    expect(first?.verifyFailures).toBe(0);
+    // 2回目：差分が変わっていれば、進んでいる
+    const second = project([
+      ...base,
+      ...implemented("t1", "r2", { status: "incomplete", remaining: ["docs"] }),
+      incomplete("t1", ["docs"], "f2"),
+    ]).get("t1");
+    expect(second?.incompleteRuns).toEqual({ runs: 2, fingerprint: "f2" });
+    expect(second?.verifyFeedback).toEqual({ kind: "incomplete", remaining: ["docs"] });
+    // 完了と申告して PR の作成へ進むと、回数も、やり直しに渡す内容も消える
+    const passed = project([
+      ...base,
+      ...implemented("t1", "r2", { status: "complete" }),
+      skipped("t1"),
+    ]).get("t1");
+    expect(passed?.incompleteRuns).toBeUndefined();
+    expect(passed?.verifyFeedback).toBeUndefined();
+    expect(passed?.publishPending).toBe(true);
+  });
+
+  it("やり直しても作業領域の目印が同じなら、進まなかった（stalled）とする。目印が無い記録どうしは、進まなかったとしない", () => {
+    seq = 0;
+    const run = (id: string, runId: string) =>
+      implemented(id, runId, { status: "incomplete", remaining: ["docs"] });
+    const same = project([
+      ...prepared("t1"),
+      ...run("t1", "r1"),
+      incomplete("t1", ["docs"], "f1"),
+      ...run("t1", "r2"),
+      incomplete("t1", ["docs"], "f1"),
+    ]).get("t1");
+    expect(same?.incompleteRuns).toEqual({ runs: 2, fingerprint: "f1", stalled: true });
+    const unknown = project([
+      ...prepared("t2"),
+      ...run("t2", "r1"),
+      incomplete("t2", ["docs"]),
+      ...run("t2", "r2"),
+      incomplete("t2", ["docs"]),
+    ]).get("t2");
+    expect(unknown?.incompleteRuns).toEqual({ runs: 2 });
+  });
+
+  it("完了の申告が無かったことを、やり直しに渡す内容に残す", () => {
+    seq = 0;
+    const task = project([
+      ...prepared("t1"),
+      ...implemented("t1", "r1", null),
+      incomplete("t1", [], "f1", true),
+    ]).get("t1");
+    expect(task?.verifyFeedback).toEqual({ kind: "incomplete", remaining: [], undeclared: true });
+  });
+
+  it("終わらない実装で止まったタスクを再開すると、回数は数え直し、作業領域の目印は残す。不合格のまま進める対象にはしない", () => {
+    seq = 0;
+    const events = [
+      ...prepared("t1"),
+      ...implemented("t1", "r1", { status: "incomplete", remaining: ["docs"] }),
+      incomplete("t1", ["docs"], "f1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "incomplete" } }),
+    ];
+    const paused = project(events).get("t1") as Task;
+    expect(paused.status).toBe("paused");
+    expect(paused.pausedReason).toBe("incomplete");
+    expect(canOverrideVerification(paused)).toBe(false);
+    const resumed = project([
+      ...events,
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ]).get("t1");
+    expect(resumed?.status).toBe("queued");
+    expect(resumed?.incompleteRuns).toEqual({ runs: 0, fingerprint: "f1" });
+    // 再開の後も差分が同じなら、1回で進まなかったと分かる
+    const again = project([
+      ...events,
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+      ...implemented("t1", "r2", { status: "incomplete", remaining: ["docs"] }),
+      incomplete("t1", ["docs"], "f1"),
+    ]).get("t1");
+    expect(again?.incompleteRuns).toEqual({ runs: 1, fingerprint: "f1", stalled: true });
+  });
+
+  it("未完了は、実装の検証の待ちでなければ記録できない", () => {
+    seq = 0;
+    expect(() => project([...prepared("t1"), incomplete("t1", ["docs"])])).toThrow(
+      /not waiting for verification/,
+    );
+    // PR の作成の待ち（検証の後）でも記録できない
+    expect(() =>
+      project([
+        ...prepared("t2"),
+        ...implemented("t2", "r1", { status: "complete" }),
+        skipped("t2"),
+        incomplete("t2", ["docs"]),
+      ]),
+    ).toThrow(/not waiting for verification/);
+  });
+
+  it("変更の無いやり直しの記録で、PR の作成の待ちをやめて、実装のやり直しに戻す。提出の回は進めない", () => {
+    seq = 0;
+    const base = [
+      ...prepared("t1"),
+      ...implemented("t1", "r1", { status: "complete" }),
+      skipped("t1"),
+      publishedPr("t1", "c1"),
+      submitted("t1", 1),
+      ev(
+        "t1",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 1,
+            remarks: [{ id: "implement-1-1", text: "受け入れ条件が足りない" }],
+          },
+        },
+        "person",
+      ),
+      ...implemented("t1", "r2", { status: "complete" }),
+      skipped("t1"),
+    ];
+    const before = project(base).get("t1");
+    expect(before?.publishPending).toBe(true);
+    const task = project([
+      ...base,
+      unchanged("t1", "c1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "unchanged" } }),
+    ]).get("t1") as Task;
+    expect(task.status).toBe("paused");
+    expect(task.pausedReason).toBe("unchanged");
+    expect(task.publishPending).toBeUndefined();
+    expect(task.verification).toBeUndefined();
+    expect(task.verifyFeedback).toEqual({ kind: "unchanged", number: 7 });
+    expect(task.submissions.implement).toBe(1);
+    expect(task.pullRequest?.commit).toBe("c1");
+    expect(canOverrideVerification(task)).toBe(false);
+    // 再開すると、実装をやり直す（実行待ち）
+    const resumed = project([
+      ...base,
+      unchanged("t1", "c1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "unchanged" } }),
+      ev("t1", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ]).get("t1");
+    expect(resumed?.status).toBe("queued");
+    expect(resumed?.publishPending).toBeUndefined();
+    expect(resumed?.verifyFeedback).toEqual({ kind: "unchanged", number: 7 });
+    // PR の作成の待ちでない・このタスクの PR ではないときは記録できない
+    expect(() => project([...base.slice(0, -1), unchanged("t1", "c1")])).toThrow(
+      /not waiting for a pull request/,
+    );
+    expect(() => project([...base, unchanged("t1", "c1", 8)])).toThrow(
+      /not the pull request of the task/,
+    );
+    // 人が PR に足したコミットを取り込んだ先頭（sacty が前に出したコミットではない）でも記録できる
+    expect(project([...base, unchanged("t1", "h1")]).get("t1")?.verifyFeedback).toEqual({
+      kind: "unchanged",
+      number: 7,
+    });
+  });
+});
+
+describe("実装がテストを対応させるテスト観点（PBI-348）", () => {
+  const tv = (n: number) => ({ id: `TV-${n}`, title: `観点${n}`, input: "i", expected: "e" });
+  const child = (id: string, viewpoints?: ReturnType<typeof tv>[]) =>
+    ev(
+      id,
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "子",
+          body: "",
+          start: "split",
+          parent: { taskId: "p", dependsOn: [] },
+          ...(viewpoints ? { viewpoints } : {}),
+        },
+      },
+      "sacty",
+    );
+  const base = (overrides: Partial<Task> = {}): Task =>
+    ({ ...(project([child("c1", [tv(1), tv(2)])]).get("c1") as Task), ...overrides }) as Task;
+
+  it("子タスクは、親の分割で割り当てられた観点を持つ。割り当ての無い子タスクは持たない", () => {
+    seq = 0;
+    const tasks = project([child("c1", [tv(1), tv(2)]), child("c2")]);
+    expect(tasks.get("c1")?.inheritedViewpoints).toEqual([tv(1), tv(2)]);
+    expect(tasks.get("c2")?.inheritedViewpoints).toBeUndefined();
+  });
+
+  it("実装の観点は、設計の工程があれば自分の設計のテスト観点、再現の工程があれば無し、どちらも無ければ割り当てられた観点（実装の指示と同じ決め方）", () => {
+    seq = 0;
+    const steps = (keys: StepKey[], skipped: StepKey[] = []): Task["steps"] =>
+      keys.map((key) => ({ key, state: skipped.includes(key) ? "skip" : "todo" }));
+    const design = (testViewpoints: ReturnType<typeof tv>[]) => ({
+      approved: {
+        design: { submission: 1, output: "# 設計", testViewpoints, at: "2026-11-15" },
+      },
+    });
+    // 設計も再現も無い子タスク（要求要件・設計を省いた実装）は、割り当てられた観点
+    const inherited = base({ steps: steps(["implement"]) });
+    expect(implementViewpoints(inherited).map((v) => v.id)).toEqual(["TV-1", "TV-2"]);
+    expect(
+      implementViewpoints(base({ steps: steps(["requirements", "implement"]) })).map((v) => v.id),
+    ).toEqual(["TV-1", "TV-2"]);
+    // 設計の工程があれば、自分の設計のテスト観点。指示はこの観点だけを並べるので、設計に観点が無くても、割り当てられた観点は使わない
+    const designSteps = steps(["requirements", "design", "implement"]);
+    expect(
+      implementViewpoints(base({ steps: designSteps, ...design([tv(7)]) })).map((v) => v.id),
+    ).toEqual(["TV-7"]);
+    expect(implementViewpoints(base({ steps: designSteps, ...design([]) }))).toEqual([]);
+    expect(implementViewpoints(base({ steps: designSteps }))).toEqual([]);
+    // 再現の工程があれば（不具合の修正）、観点は再現のテストが通ることなので、無し
+    expect(implementViewpoints(base({ steps: steps(["reproduce", "implement"]) }))).toEqual([]);
+    // 工程の見直しで飛ばした工程は、無いものとして扱う
+    expect(
+      implementViewpoints(
+        base({ steps: steps(["requirements", "design", "implement"], ["design"]) }),
+      ).map((v) => v.id),
+    ).toEqual(["TV-1", "TV-2"]);
+    expect(
+      implementViewpoints(base({ steps: steps(["reproduce", "implement"], ["reproduce"]) })).map(
+        (v) => v.id,
+      ),
+    ).toEqual(["TV-1", "TV-2"]);
+    // 割り当ての無いタスクは空
+    expect(
+      implementViewpoints(base({ steps: steps(["implement"]), inheritedViewpoints: undefined })),
+    ).toEqual([]);
+  });
+
+  it("対応の欠けた観点は、テストもテストを書かない理由も対応していない観点。テストを書かないタスクでは求めない", () => {
+    seq = 0;
+    const mapped = (testMap: Task["testMap"], overrides: Partial<Task> = {}) =>
+      unmappedViewpoints(base({ testMap, ...overrides })).map((v) => v.id);
+    expect(mapped([])).toEqual(["TV-1", "TV-2"]);
+    expect(mapped([{ viewpointId: "TV-1", tests: ["a"] }])).toEqual(["TV-2"]);
+    expect(
+      mapped([
+        { viewpointId: "TV-1", tests: ["a"] },
+        { viewpointId: "TV-2", tests: [], untested: "文言だけ" },
+      ]),
+    ).toEqual([]);
+    // テストも理由も無い対応は、対応していない
+    expect(mapped([{ viewpointId: "TV-1", tests: [] }])).toEqual(["TV-1", "TV-2"]);
+    // 知らない観点（REQ など）の対応は、欠けを埋めない
+    expect(mapped([{ viewpointId: "REQ", tests: ["a"] }])).toEqual(["TV-1", "TV-2"]);
+    // テストの仕組みが無いタスク・文書だけの依頼は、対応を求めない
+    expect(mapped([], { noTestsReason: "テストの仕組みが無い" })).toEqual([]);
+    expect(mapped([], { documentsOnly: true })).toEqual([]);
+    // 観点の無いタスク（REQ だけ）は、欠けが無い
+    expect(mapped([], { inheritedViewpoints: undefined })).toEqual([]);
+    // 再現の工程があるタスク（不具合の修正）は、指示が割り当てられた観点を並べないので、対応を求めない
+    expect(
+      mapped([], {
+        steps: [
+          { key: "reproduce", state: "done" },
+          { key: "implement", state: "active" },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("未完了の記録に、対応の欠けた観点を残す", () => {
+    seq = 0;
+    const events = [
+      created("t1"),
+      ev("t1", { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ev("t1", {
+        type: "AgentRunStarted",
+        payload: { runId: "r1", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t1", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "r1",
+          step: "implement",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 実装",
+          completion: { status: "complete" },
+        },
+      }),
+      ev("t1", {
+        type: "ImplementationIncomplete",
+        payload: { remaining: ["TV-2 観点2"], unmapped: ["TV-2"] },
+      }),
+    ];
+    expect(project(events).get("t1")?.verifyFeedback).toEqual({
+      kind: "incomplete",
+      remaining: ["TV-2 観点2"],
+      unmapped: ["TV-2"],
+    });
   });
 });
 
