@@ -2,7 +2,7 @@
 
 - 日付: 2026-11-15（UTC）
 - タスク: PBI-345
-- PR: なし
+- PR: #373
 - ブランチ: feat/issue-345-review-child-inherits-gathered
 - 関係する ADR: [PR のレビューの子タスクは、親タスクが開始時に集めた情報を引き継ぎ、情報収集をし直さない](../adr/20261115-0230-review-child-task-inherits-gathered-information.md)
 
