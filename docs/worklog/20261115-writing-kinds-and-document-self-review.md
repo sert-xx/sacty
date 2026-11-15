@@ -79,7 +79,28 @@
 
 ## 確かめたこと
 
-（PR を作る前に書く）
+- `npm run lint`、`npm run typecheck`、`npm run build`：通過。
+- `npx vitest run`：219 ファイルのうち 214 が通過、5 が失敗（テストは 4258 件が通過、8 件が失敗、11 件がスキップ）。
+  失敗は、この環境が原因のもので、変更の前の `main` でも同じ8件が失敗する。
+  - ブラウザーのテスト2ファイル（`question-form.browser.test.ts`・`menus.browser.test.ts`）：合う版の Chromium が無い。
+  - `agent-sessions.test.ts` 1件・`context-mcp.test.ts` 1件・`host-mcp-processes.test.ts` 6件：root で実行しているため。
+- 足した・直したテスト
+  - `apps/daemon/src/default-skills.test.ts`：`writing` の説明・資料の一覧とリンク・文章の種類・後から読まれる文書・図と画像の決まり、前からある決まりが変わっていないこと、製品に限った語が無いこと。
+  - `apps/daemon/src/prompts.test.ts`：文書作成の原稿の書き方（読者で書く量を決める、組み立て方、図と画像）と、セルフレビューの指示（主対象の種類、一時ファイル、検証をしない、外部に直接書くとき、差し戻しの直し）。
+  - `apps/daemon/src/daemon.test.ts`：文書作成の実行で、セルフレビューの報告を記録し、原稿の本文から取り除くこと。
+  - `apps/daemon/src/task-templates.test.ts`：テンプレート「ドキュメント構築」の図と書き方の約束、説明が上限に収まること。
+- 変更を戻すと、足したテストが失敗することを確かめた。
+  - `writing` のファイルを変更の前に戻す：`default-skills.test.ts` の足した4件が失敗（前からある決まりを確かめる1件は通過）。
+  - `prompts.ts` を変更の前に戻す：`prompts.test.ts` の足した4件が失敗。
+  - `SELF_REVIEW_STEPS` から `document` を外す：`daemon.test.ts` の足した1件が失敗。
+  - `task-templates.ts` を変更の前に戻す：`task-templates.test.ts` の足した1件が失敗。
+- `npx vitest run tests/docs`：通過（リンク、ADR の置き換えの関係、日本語の版と英語の版の突き合わせ）。
+- 画像：`node scripts/docs-screenshots/capture.mjs docs` で撮り直した。
+  既定のコンテキストのファイルが増えたので、コンテキストのプレビュー（`context-preview.png`・`context-preview.en.png`）だけを置き換えた。
+  ほかの画像は、日時の表示のほかに差が無いので、置き換えていない。
+- 確かめていないこと
+  - 足した決まりで、エージェントが書く文書がどう変わるか（実際の AI での実行）。
+  - セルフレビューの指示を変えたときの手動の測定（`SACTY_REVIEW_EVAL=1`）。AI のコマンドが要る。
 
 ## レビューの指摘と対応
 
